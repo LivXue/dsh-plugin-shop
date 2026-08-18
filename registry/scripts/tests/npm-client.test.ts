@@ -88,6 +88,18 @@ describe('searchByKeyword', () => {
     const fetchImpl = (async () => new Response('nope', { status: 503 })) as unknown as typeof fetch
     await expect(searchByKeyword(fetchImpl)).rejects.toThrow(/503/)
   })
+
+  it('throws instead of paging forever when every page comes back full', async () => {
+    let call = 0
+    const fetchImpl = (async () => {
+      call += 1
+      const body = { objects: Array.from({ length: 250 }, (_, i) => ({ package: { name: `dsh-forever-${i}` } })) }
+      return new Response(JSON.stringify(body), { status: 200 })
+    }) as unknown as typeof fetch
+
+    await expect(searchByKeyword(fetchImpl)).rejects.toThrow(/100 pages/)
+    expect(call).toBe(100)
+  })
 })
 
 describe('fetchCandidate', () => {
@@ -127,5 +139,12 @@ describe('fetchCandidate', () => {
     const result = await fetchCandidate('dsh-no-name', fetchImpl)
     expect(result.ok).toBe(false)
     expect(!result.ok && result.detail).not.toContain('200')
+  })
+
+  it('reports a body that cannot be parsed as JSON as a rejection, not a thrown error', async () => {
+    const fetchImpl = (async () => new Response('not valid json{{{', { status: 200 })) as unknown as typeof fetch
+    const result = await fetchCandidate('dsh-malformed-body', fetchImpl)
+    expect(result.ok).toBe(false)
+    expect(!result.ok && result.detail).toContain('unreadable')
   })
 })

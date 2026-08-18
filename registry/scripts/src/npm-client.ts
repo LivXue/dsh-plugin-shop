@@ -9,6 +9,16 @@ export const HARVEST_KEYWORD = 'dsh-plugin'
 const REGISTRY = 'https://registry.npmjs.org'
 const PAGE_SIZE = 250
 
+/**
+ * Upper bound on the number of search pages fetched by {@link searchByKeyword}.
+ * Guards against an unbounded loop issuing endless requests against a public
+ * API if the registry ever kept returning full pages: at `PAGE_SIZE` names
+ * per page this bound covers catalog sizes far beyond the ecosystem's current
+ * scale, so hitting it means the harvest is broken, not that the ecosystem
+ * grew.
+ */
+const MAX_SEARCH_PAGES = 100
+
 /** Normalize an npm repository field to a plain https URL. */
 function normalizeRepository(value: unknown): string | null {
   const url = typeof value === 'string'
@@ -64,11 +74,18 @@ export function toCandidate(packument: unknown): Candidate | null {
  * pattern is trivially spoofed.
  * @param fetchImpl - the fetch implementation, injected for testing.
  * @returns every matching package name, in registry order.
- * @throws when the registry answers with a non-OK status.
+ * @throws when the registry answers with a non-OK status, or when more than
+ *   {@link MAX_SEARCH_PAGES} pages are fetched without the harvest completing.
  */
 export async function searchByKeyword(fetchImpl: typeof fetch = fetch): Promise<string[]> {
   const names: string[] = []
-  for (let from = 0; ; from += PAGE_SIZE) {
+  for (let page = 0; ; page += 1) {
+    if (page >= MAX_SEARCH_PAGES) {
+      throw new Error(
+        `npm search exceeded ${MAX_SEARCH_PAGES} pages (${MAX_SEARCH_PAGES * PAGE_SIZE} names) without completing; harvest is incomplete`,
+      )
+    }
+    const from = page * PAGE_SIZE
     const url = `${REGISTRY}/-/v1/search?text=keywords:${HARVEST_KEYWORD}&size=${PAGE_SIZE}&from=${from}`
     const response = await fetchImpl(url)
     if (!response.ok) throw new Error(`npm search failed: ${response.status}`)
@@ -103,7 +120,15 @@ export async function fetchCandidate(
 ): Promise<CandidateResult> {
   const response = await fetchImpl(`${REGISTRY}/${encodeURIComponent(name)}`)
   if (!response.ok) return { ok: false, detail: `npm registry returned ${response.status} fetching ${name}` }
-  const candidate = toCandidate(await response.json())
+  let body: unknown
+  try {
+    body = await response.json()
+  } catch {
+    // response.json() throws on a body that is not valid JSON; recorded as a
+    // rejection like any other unusable response, rather than aborting the build.
+    return { ok: false, detail: `${name}: response body was unreadable` }
+  }
+  const candidate = toCandidate(body)
   if (candidate === null) return { ok: false, detail: `${name}: packument names no usable latest version` }
   return { ok: true, candidate }
 }
