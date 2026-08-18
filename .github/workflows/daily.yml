@@ -8,18 +8,15 @@ on:
   pull_request:
   workflow_dispatch:
 
-permissions:
-  contents: write
-  pages: write
-  id-token: write
-
 concurrency:
-  group: catalog
-  cancel-in-progress: false
+  group: catalog-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -34,8 +31,14 @@ jobs:
         with:
           name: catalog-report
           path: dist/v1/report.md
+      - name: Publish to Pages
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
       - name: Commit the snapshot
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        continue-on-error: true
         run: |
           git config user.name 'dsh-plugin-store bot'
           git config user.email 'bot@users.noreply.github.com'
@@ -43,16 +46,14 @@ jobs:
           git diff --cached --quiet && exit 0
           git commit -m "chore(registry): daily catalog snapshot"
           git push
-      - name: Publish to Pages
-        if: github.event_name != 'pull_request'
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
 
   deploy:
     needs: build
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
     steps:
