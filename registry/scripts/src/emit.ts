@@ -1,8 +1,11 @@
 import { createHash } from 'node:crypto'
 import type { Entry, Rejection } from './types.ts'
 
-/** Catalog format version. A consumer refuses a higher value. */
-export const SCHEMA_VERSION = 1
+/**
+ * Catalog format version. A consumer refuses a higher value. Bumped to 2 when
+ * `Entry` gained `metadata` and `catalog.summary.zh` became optional (§6.2).
+ */
+export const SCHEMA_VERSION = 2
 
 /** The complete output of one catalog build. */
 export interface Artifacts {

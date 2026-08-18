@@ -32,7 +32,7 @@ Catalog 每日构建，以静态 JSON 发布：
 
 ## 让插件上架
 
-在自己的 `package.json` 里加上 keyword 和 `dsh.catalog` 段，然后发布到 npm，每日构建会自动收录。
+在自己的 `package.json` 里加上 keyword，然后发布到 npm，每日构建会自动收录。`dsh.catalog` 段是可选的：声明它可以自主控制分类、文案和能力列表；不声明的话，目录会用你 npm 的 `description` 推导出一条列表（详见 [schema 参考](docs/schema.zh.md)）。
 
 ```json
 {
@@ -49,7 +49,7 @@ Catalog 每日构建，以静态 JSON 发布：
 }
 ```
 
-没有 `dsh.bundle` 的包是库而不是可安装插件，不予收录。没有 license 或没有仓库地址的包同样不予收录：没有仓库地址就无法审计。
+没有 `dsh.bundle` 的包是库而不是可安装插件，不予收录。没有 license 或没有仓库地址的包同样不予收录：没有仓库地址就无法审计。既没有 `dsh.catalog` 也没有 npm `description` 的包也不予收录——没有任何文字可以展示。
 
 ## 许可
 

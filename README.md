@@ -32,7 +32,7 @@ It also carries no download counts, ratings, or reviews, and it will never offer
 
 ## Listing a plugin
 
-Add the keyword and a `dsh.catalog` section to your `package.json`, then publish to npm. The daily build picks it up.
+Add the keyword to your `package.json`, then publish to npm. The daily build picks it up. A `dsh.catalog` section is optional: declare it to control your own category, summary, and capabilities, or omit it and the catalog derives a listing from your npm `description` instead (see [the schema reference](docs/schema.md)).
 
 ```json
 {
@@ -49,7 +49,7 @@ Add the keyword and a `dsh.catalog` section to your `package.json`, then publish
 }
 ```
 
-A package without `dsh.bundle` is a library rather than an installable plugin and is not listed. A package without a license or a repository is not listed either: without a repository it cannot be audited.
+A package without `dsh.bundle` is a library rather than an installable plugin and is not listed. A package without a license or a repository is not listed either: without a repository it cannot be audited. Nor is a package with neither a `dsh.catalog` section nor an npm `description` — there would be nothing to show.
 
 ## License
 

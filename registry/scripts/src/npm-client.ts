@@ -45,6 +45,7 @@ export function toCandidate(packument: unknown): Candidate | null {
       license?: unknown
       repository?: unknown
       deprecated?: unknown
+      description?: unknown
       dsh?: { bundle?: unknown; catalog?: unknown }
     }>
   }
@@ -64,6 +65,7 @@ export function toCandidate(packument: unknown): Candidate | null {
     deprecated: manifest.deprecated !== undefined,
     hasBundle: manifest.dsh?.bundle !== undefined,
     catalog: manifest.dsh?.catalog ?? null,
+    description: typeof manifest.description === 'string' ? manifest.description : null,
   }
 }
 

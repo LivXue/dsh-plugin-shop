@@ -25,6 +25,7 @@ export function assignTier(accepted: Accepted, config: RegistryConfig): Entry {
     publishedAt: accepted.publishedAt,
     repository: accepted.repository,
     license: accepted.license,
+    metadata: accepted.metadata,
     catalog: accepted.catalog,
   }
   if (review === undefined) return { ...base, tier: 'community' }

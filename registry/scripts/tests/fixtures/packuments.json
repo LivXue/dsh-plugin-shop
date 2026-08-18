@@ -8,7 +8,8 @@
     "license": "MIT",
     "deprecated": false,
     "hasBundle": true,
-    "catalog": { "category": "tool", "summary": { "en": "Says hello", "zh": "打招呼" }, "capabilities": [] }
+    "catalog": { "category": "tool", "summary": { "en": "Says hello", "zh": "打招呼" }, "capabilities": [] },
+    "description": "A hello-world dsh plugin."
   },
   {
     "name": "dsh-fs-tool",
@@ -19,7 +20,8 @@
     "license": "Apache-2.0",
     "deprecated": false,
     "hasBundle": true,
-    "catalog": { "category": "tool", "summary": { "en": "Files", "zh": "文件" }, "capabilities": ["fs"] }
+    "catalog": { "category": "tool", "summary": { "en": "Files", "zh": "文件" }, "capabilities": ["fs"] },
+    "description": "Filesystem tools."
   },
   {
     "name": "dsh-lib-only",
@@ -30,7 +32,8 @@
     "license": "MIT",
     "deprecated": false,
     "hasBundle": false,
-    "catalog": null
+    "catalog": null,
+    "description": "A plain library, not a plugin."
   },
   {
     "name": "dsh-no-license",
@@ -41,7 +44,8 @@
     "license": null,
     "deprecated": false,
     "hasBundle": true,
-    "catalog": { "category": "tool", "summary": { "en": "x", "zh": "y" }, "capabilities": [] }
+    "catalog": { "category": "tool", "summary": { "en": "x", "zh": "y" }, "capabilities": [] },
+    "description": "x"
   },
   {
     "name": "dsh-fs-too1",
@@ -52,6 +56,31 @@
     "license": "MIT",
     "deprecated": false,
     "hasBundle": true,
-    "catalog": { "category": "tool", "summary": { "en": "Files", "zh": "文件" }, "capabilities": ["fs"] }
+    "catalog": { "category": "tool", "summary": { "en": "Files", "zh": "文件" }, "capabilities": ["fs"] },
+    "description": "Files."
+  },
+  {
+    "name": "dsh-derived-plugin",
+    "version": "1.0.0",
+    "integrity": "sha512-derived",
+    "publishedAt": "2026-08-12T12:00:00.000Z",
+    "repository": "https://github.com/you/derived-plugin",
+    "license": "MIT",
+    "deprecated": false,
+    "hasBundle": true,
+    "catalog": null,
+    "description": "A plugin listed from npm metadata, with no dsh.catalog section."
+  },
+  {
+    "name": "dsh-no-summary",
+    "version": "1.0.0",
+    "integrity": "sha512-nosummary",
+    "publishedAt": "2026-08-13T12:00:00.000Z",
+    "repository": "https://github.com/you/no-summary",
+    "license": "MIT",
+    "deprecated": false,
+    "hasBundle": true,
+    "catalog": null,
+    "description": null
   }
 ]

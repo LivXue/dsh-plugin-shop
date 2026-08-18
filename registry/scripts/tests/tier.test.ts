@@ -9,18 +9,19 @@ const config = parseRegistryConfig({
   allowedSimilar: '[]',
 })
 
-function accepted(name: string, version: string): Accepted {
+function accepted(name: string, version: string, metadata: Accepted['metadata'] = 'declared'): Accepted {
   return {
     candidate: {
       name, version, integrity: 'sha512-abc', publishedAt: '2026-08-01T12:00:00.000Z',
       repository: 'https://github.com/you/x', license: 'MIT', deprecated: false,
-      hasBundle: true, catalog: {},
+      hasBundle: true, catalog: {}, description: 'x',
     },
     catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
     integrity: 'sha512-abc',
     publishedAt: '2026-08-01T12:00:00.000Z',
     repository: 'https://github.com/you/x',
     license: 'MIT',
+    metadata,
   }
 }
 
@@ -64,5 +65,18 @@ describe('assignTier', () => {
       name: 'dsh-other-plugin', version: '1.0.0', integrity: 'sha512-abc',
       license: 'MIT', repository: 'https://github.com/you/x',
     })
+  })
+
+  it('copies metadata through unchanged', () => {
+    const declared = assignTier(accepted('dsh-other-plugin', '1.0.0', 'declared'), config)
+    const derived = assignTier(accepted('dsh-derived-plugin', '1.0.0', 'derived'), config)
+    expect(declared.metadata).toBe('declared')
+    expect(derived.metadata).toBe('derived')
+  })
+
+  it('lets a derived entry carry the verified tier, since a review reads the code, not the prose', () => {
+    const entry = assignTier(accepted('dsh-hello-plugin', '1.2.0', 'derived'), config)
+    expect(entry.tier).toBe('verified')
+    expect(entry.metadata).toBe('derived')
   })
 })

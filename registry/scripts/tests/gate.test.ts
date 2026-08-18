@@ -20,14 +20,16 @@ function candidate(overrides: Partial<Candidate> = {}): Candidate {
     deprecated: false,
     hasBundle: true,
     catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
+    description: 'A friendly hello-world plugin.',
     ...overrides,
   }
 }
 
 describe('gate', () => {
-  it('accepts a complete candidate', () => {
+  it('accepts a complete candidate and marks it declared', () => {
     const result = gate(candidate(), config)
     expect(result.ok).toBe(true)
+    expect(result.ok && result.accepted.metadata).toBe('declared')
   })
 
   it('rejects a package with no dsh.bundle', () => {
@@ -37,13 +39,37 @@ describe('gate', () => {
     expect(result.rejection.detail).toContain('dsh.bundle')
   })
 
-  it('rejects a package with no dsh.catalog', () => {
-    const result = gate(candidate({ catalog: undefined }), config)
-    if (result.ok) throw new Error('expected rejection')
-    expect(result.rejection.code).toBe('no-catalog')
+  it('derives a listing from the npm description when dsh.catalog is absent', () => {
+    const result = gate(candidate({ catalog: undefined, description: 'Does a helpful thing.' }), config)
+    if (!result.ok) throw new Error('expected acceptance')
+    expect(result.accepted.metadata).toBe('derived')
+    expect(result.accepted.catalog).toEqual({
+      category: 'other',
+      summary: { en: 'Does a helpful thing.' },
+      capabilities: [],
+    })
   })
 
-  it('rejects an invalid dsh.catalog and names the offending field', () => {
+  it('trims and caps a derived summary at 200 characters', () => {
+    const description = `  ${'a'.repeat(210)}  `
+    const result = gate(candidate({ catalog: null, description }), config)
+    if (!result.ok) throw new Error('expected acceptance')
+    expect(result.accepted.catalog.summary.en).toBe('a'.repeat(200))
+  })
+
+  it('rejects a package with neither dsh.catalog nor an npm description as no-summary', () => {
+    const result = gate(candidate({ catalog: undefined, description: null }), config)
+    if (result.ok) throw new Error('expected rejection')
+    expect(result.rejection.code).toBe('no-summary')
+  })
+
+  it('rejects a package whose description is blank as no-summary', () => {
+    const result = gate(candidate({ catalog: null, description: '   ' }), config)
+    if (result.ok) throw new Error('expected rejection')
+    expect(result.rejection.code).toBe('no-summary')
+  })
+
+  it('rejects an invalid dsh.catalog and names the offending field, never falling back to derived', () => {
     const result = gate(candidate({ catalog: { category: 'nope' } }), config)
     if (result.ok) throw new Error('expected rejection')
     expect(result.rejection.code).toBe('invalid-catalog')

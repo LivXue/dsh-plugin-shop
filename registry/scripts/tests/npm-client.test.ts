@@ -17,6 +17,7 @@ describe('toCandidate', () => {
         dist: { integrity: 'sha512-hello' },
         license: 'MIT',
         repository: { url: 'git+https://github.com/you/hello-plugin.git' },
+        description: 'Says hello.',
         dsh: {
           bundle: { patch: './cordis.patch.yml' },
           catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
@@ -27,6 +28,20 @@ describe('toCandidate', () => {
 
   it('reads the latest version', () => {
     expect(toCandidate(packument)?.version).toBe('1.2.0')
+  })
+
+  it('projects the npm description onto the candidate', () => {
+    expect(toCandidate(packument)?.description).toBe('Says hello.')
+  })
+
+  it('reports a missing description as null, not undefined', () => {
+    const noDescription = {
+      ...packument,
+      versions: {
+        '1.2.0': { ...packument.versions['1.2.0'], description: undefined },
+      },
+    }
+    expect(toCandidate(noDescription)?.description).toBeNull()
   })
 
   it('normalizes a git repository url to https', () => {

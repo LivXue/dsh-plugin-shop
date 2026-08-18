@@ -6,6 +6,7 @@ function entry(name: string, version = '1.0.0'): Entry {
   return {
     name, version, integrity: `sha512-${name}`, publishedAt: '2026-08-01T12:00:00.000Z',
     repository: `https://github.com/you/${name}`, license: 'MIT', tier: 'community',
+    metadata: 'declared',
     catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
   }
 }
@@ -47,6 +48,18 @@ describe('emit', () => {
     const { pluginsJson, indexJson } = emit([entry('dsh-a')], [], '2026-08-18T00:00:00.000Z')
     expect(JSON.parse(pluginsJson).schemaVersion).toBe(SCHEMA_VERSION)
     expect(JSON.parse(indexJson).schemaVersion).toBe(SCHEMA_VERSION)
+  })
+
+  it('publishes a derived entry with no summary.zh', () => {
+    const derived: Entry = {
+      ...entry('dsh-derived'),
+      metadata: 'derived',
+      catalog: { category: 'other', summary: { en: 'x' }, capabilities: [] },
+    }
+    const { pluginsJson } = emit([derived], [], '2026-08-18T00:00:00.000Z')
+    const parsed = JSON.parse(pluginsJson) as { plugins: { metadata: string; catalog: { summary: { zh?: string } } }[] }
+    expect(parsed.plugins[0]?.metadata).toBe('derived')
+    expect(parsed.plugins[0]?.catalog.summary.zh).toBeUndefined()
   })
 
   it('writes a sorted manifest lock of name, version, and integrity', () => {

@@ -17,10 +17,10 @@ const config = parseRegistryConfig({
 const BUILT_AT = '2026-08-18T00:00:00.000Z'
 
 describe('runPipeline', () => {
-  it('accepts the two listable plugins', () => {
+  it('accepts the three listable plugins', () => {
     const { pluginsJson } = runPipeline(candidates, config, BUILT_AT)
     const parsed = JSON.parse(pluginsJson) as { plugins: { name: string }[] }
-    expect(parsed.plugins.map(p => p.name)).toEqual(['dsh-fs-tool', 'dsh-hello-plugin'])
+    expect(parsed.plugins.map(p => p.name)).toEqual(['dsh-derived-plugin', 'dsh-fs-tool', 'dsh-hello-plugin'])
   })
 
   it('downgrades the verified plugin whose version moved past its review', () => {
@@ -29,11 +29,32 @@ describe('runPipeline', () => {
     expect(parsed.plugins.find(p => p.name === 'dsh-fs-tool')?.tier).toBe('verified-stale')
   })
 
-  it('reports all three rejections with their codes', () => {
+  it('lists a package with no dsh.catalog as a derived entry, from its npm description', () => {
+    const { pluginsJson } = runPipeline(candidates, config, BUILT_AT)
+    const parsed = JSON.parse(pluginsJson) as {
+      plugins: { name: string; metadata: string; catalog: { category: string; summary: { en: string; zh?: string }; capabilities: string[] } }[]
+    }
+    const derived = parsed.plugins.find(p => p.name === 'dsh-derived-plugin')
+    expect(derived?.metadata).toBe('derived')
+    expect(derived?.catalog).toEqual({
+      category: 'other',
+      summary: { en: 'A plugin listed from npm metadata, with no dsh.catalog section.' },
+      capabilities: [],
+    })
+  })
+
+  it('marks a declared listing as declared', () => {
+    const { pluginsJson } = runPipeline(candidates, config, BUILT_AT)
+    const parsed = JSON.parse(pluginsJson) as { plugins: { name: string; metadata: string }[] }
+    expect(parsed.plugins.find(p => p.name === 'dsh-hello-plugin')?.metadata).toBe('declared')
+  })
+
+  it('reports all four rejections with their codes', () => {
     const { report } = runPipeline(candidates, config, BUILT_AT)
     expect(report).toContain('| dsh-lib-only | no-bundle |')
     expect(report).toContain('| dsh-no-license | no-license |')
     expect(report).toContain('| dsh-fs-too1 | name-too-similar |')
+    expect(report).toContain('| dsh-no-summary | no-summary |')
   })
 
   it('merges a pre-existing rejection into the emitted report', () => {

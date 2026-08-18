@@ -2,13 +2,15 @@
 export type Category = 'tool' | 'provider' | 'ui' | 'workflow' | 'integration' | 'other'
 
 /**
- * The `dsh.catalog` section a plugin author declares. `capabilities` is
+ * The `dsh.catalog` section, either author-declared or derived from npm
+ * metadata (see {@link Entry.metadata}). `summary.zh` is absent on a derived
+ * section: the build never synthesizes a translation. `capabilities` is
  * self-declared and unenforced: it exists for display and MUST NOT be treated
  * as a permission by any consumer.
  */
 export interface CatalogSection {
   category: Category
-  summary: { en: string; zh: string }
+  summary: { en: string; zh?: string }
   capabilities: string[]
 }
 
@@ -24,13 +26,15 @@ export interface Candidate {
   hasBundle: boolean
   /** The raw `dsh.catalog` value; unvalidated until the gate runs. */
   catalog: unknown
+  /** The npm `description` field, used to derive a listing when `catalog` is absent. */
+  description: string | null
 }
 
 /** Why a candidate did not reach the catalog. */
 export type RejectionCode =
   | 'no-bundle'
-  | 'no-catalog'
   | 'invalid-catalog'
+  | 'no-summary'
   | 'denied'
   | 'deprecated'
   | 'no-license'
@@ -68,5 +72,11 @@ export interface Entry {
   license: string
   tier: Tier
   review?: Review
+  /**
+   * Whether `catalog` is the author's own section or one derived from npm
+   * metadata. Orthogonal to `tier`: a derived entry can still be `verified`,
+   * because a review reads the code, not the author's prose.
+   */
+  metadata: 'declared' | 'derived'
   catalog: CatalogSection
 }
