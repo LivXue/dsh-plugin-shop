@@ -1,0 +1,57 @@
+import { createHash } from 'node:crypto'
+import type { Entry, Rejection } from './types.ts'
+
+/** Catalog format version. A consumer refuses a higher value. */
+export const SCHEMA_VERSION = 1
+
+/** The complete output of one catalog build. */
+export interface Artifacts {
+  /** Content-addressed file name of the data file. */
+  pluginsFileName: string
+  pluginsJson: string
+  indexJson: string
+  manifestLock: string
+  report: string
+}
+
+/**
+ * Build every artifact of one catalog run.
+ *
+ * `builtAt` reaches the index and nothing else: putting it inside the hashed
+ * data would change the content hash daily, invalidating every CDN cache and
+ * filling each commit with noise.
+ * @param entries - accepted catalog entries, in any order.
+ * @param rejections - every rejected candidate with its reason.
+ * @param builtAt - ISO 8601 build timestamp, supplied by the caller.
+ * @returns the artifacts to publish and commit.
+ */
+export function emit(entries: Entry[], rejections: Rejection[], builtAt: string): Artifacts {
+  const sorted = [...entries].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+  const pluginsJson = `${JSON.stringify({ schemaVersion: SCHEMA_VERSION, plugins: sorted }, null, 2)}\n`
+  const sha256 = createHash('sha256').update(pluginsJson).digest('hex')
+  const pluginsFileName = `plugins.${sha256}.json`
+
+  const indexJson = `${JSON.stringify({
+    schemaVersion: SCHEMA_VERSION,
+    builtAt,
+    count: sorted.length,
+    plugins: { url: pluginsFileName, sha256 },
+  }, null, 2)}\n`
+
+  const manifestLock = sorted.map(e => `${e.name} ${e.version} ${e.integrity}`).join('\n') + (sorted.length > 0 ? '\n' : '')
+
+  const sortedRejections = [...rejections].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+  const lines = [
+    '# Catalog build report',
+    '',
+    `Accepted: ${sorted.length}`,
+    `Rejected: ${sortedRejections.length}`,
+    '',
+    '| Package | Reason | Detail |',
+    '|---|---|---|',
+    ...sortedRejections.map(r => `| ${r.name} | ${r.code} | ${r.detail} |`),
+  ]
+  const report = `${lines.join('\n')}\n`
+
+  return { pluginsFileName, pluginsJson, indexJson, manifestLock, report }
+}
