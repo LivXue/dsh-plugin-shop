@@ -1,0 +1,54 @@
+import { readFileSync } from 'node:fs'
+import { describe, expect, it } from 'vitest'
+import { runPipeline } from '../src/pipeline.ts'
+import { parseRegistryConfig } from '../src/config.ts'
+import type { Candidate } from '../src/types.ts'
+
+const candidates = JSON.parse(
+  readFileSync('registry/scripts/tests/fixtures/packuments.json', 'utf8'),
+) as Candidate[]
+
+const config = parseRegistryConfig({
+  verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: github:r\n  reviewCommit: abc\n  notes: fine\n',
+  denied: '[]',
+  allowedSimilar: '[]',
+})
+
+const BUILT_AT = '2026-08-18T00:00:00.000Z'
+
+describe('runPipeline', () => {
+  it('accepts the two listable plugins', () => {
+    const { pluginsJson } = runPipeline(candidates, config, BUILT_AT)
+    const parsed = JSON.parse(pluginsJson) as { plugins: { name: string }[] }
+    expect(parsed.plugins.map(p => p.name)).toEqual(['dsh-fs-tool', 'dsh-hello-plugin'])
+  })
+
+  it('downgrades the verified plugin whose version moved past its review', () => {
+    const { pluginsJson } = runPipeline(candidates, config, BUILT_AT)
+    const parsed = JSON.parse(pluginsJson) as { plugins: { name: string; tier: string }[] }
+    expect(parsed.plugins.find(p => p.name === 'dsh-fs-tool')?.tier).toBe('verified-stale')
+  })
+
+  it('reports all three rejections with their codes', () => {
+    const { report } = runPipeline(candidates, config, BUILT_AT)
+    expect(report).toContain('| dsh-lib-only | no-bundle |')
+    expect(report).toContain('| dsh-no-license | no-license |')
+    expect(report).toContain('| dsh-fs-too1 | name-too-similar |')
+  })
+
+  it('produces byte-identical artifacts for the same input', () => {
+    const first = runPipeline(candidates, config, BUILT_AT)
+    const second = runPipeline([...candidates].reverse(), config, BUILT_AT)
+    expect(second.pluginsJson).toBe(first.pluginsJson)
+    expect(second.pluginsFileName).toBe(first.pluginsFileName)
+    expect(second.manifestLock).toBe(first.manifestLock)
+    expect(second.report).toBe(first.report)
+  })
+
+  it('produces identical data across build times', () => {
+    const first = runPipeline(candidates, config, BUILT_AT)
+    const second = runPipeline(candidates, config, '2030-01-01T00:00:00.000Z')
+    expect(second.pluginsJson).toBe(first.pluginsJson)
+    expect(second.indexJson).not.toBe(first.indexJson)
+  })
+})

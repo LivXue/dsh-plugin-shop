@@ -1,0 +1,57 @@
+[
+  {
+    "name": "dsh-hello-plugin",
+    "version": "1.2.0",
+    "integrity": "sha512-hello",
+    "publishedAt": "2026-08-01T12:00:00.000Z",
+    "repository": "https://github.com/you/hello-plugin",
+    "license": "MIT",
+    "deprecated": false,
+    "hasBundle": true,
+    "catalog": { "category": "tool", "summary": { "en": "Says hello", "zh": "打招呼" }, "capabilities": [] }
+  },
+  {
+    "name": "dsh-fs-tool",
+    "version": "2.0.0",
+    "integrity": "sha512-fs",
+    "publishedAt": "2026-07-01T12:00:00.000Z",
+    "repository": "https://github.com/you/fs-tool",
+    "license": "Apache-2.0",
+    "deprecated": false,
+    "hasBundle": true,
+    "catalog": { "category": "tool", "summary": { "en": "Files", "zh": "文件" }, "capabilities": ["fs"] }
+  },
+  {
+    "name": "dsh-lib-only",
+    "version": "1.0.0",
+    "integrity": "sha512-lib",
+    "publishedAt": "2026-06-01T12:00:00.000Z",
+    "repository": "https://github.com/you/lib-only",
+    "license": "MIT",
+    "deprecated": false,
+    "hasBundle": false,
+    "catalog": null
+  },
+  {
+    "name": "dsh-no-license",
+    "version": "1.0.0",
+    "integrity": "sha512-nolic",
+    "publishedAt": "2026-06-01T12:00:00.000Z",
+    "repository": "https://github.com/you/no-license",
+    "license": null,
+    "deprecated": false,
+    "hasBundle": true,
+    "catalog": { "category": "tool", "summary": { "en": "x", "zh": "y" }, "capabilities": [] }
+  },
+  {
+    "name": "dsh-fs-too1",
+    "version": "1.0.0",
+    "integrity": "sha512-squat",
+    "publishedAt": "2026-08-10T12:00:00.000Z",
+    "repository": "https://github.com/someone/fs-too1",
+    "license": "MIT",
+    "deprecated": false,
+    "hasBundle": true,
+    "catalog": { "category": "tool", "summary": { "en": "Files", "zh": "文件" }, "capabilities": ["fs"] }
+  }
+]
