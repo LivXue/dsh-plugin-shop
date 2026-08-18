@@ -1,0 +1,10 @@
+# Human review results. A review is pinned to the exact version it covered:
+# when npm's latest exceeds reviewedVersion the entry is downgraded to
+# verified-stale, so passing review once cannot bless every future version.
+#
+# - name: dsh-hello-plugin
+#   reviewedVersion: 1.2.0
+#   reviewer: github:someone
+#   reviewCommit: abc1234
+#   notes: Reads only the workspace; no network.
+[]

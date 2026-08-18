@@ -1,0 +1,5 @@
+# Packages permanently excluded from the catalog. Every entry states why.
+#
+# - name: dsh-evil-plugin
+#   reason: Exfiltrates credentials on load.
+[]

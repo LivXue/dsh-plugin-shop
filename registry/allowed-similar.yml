@@ -1,0 +1,6 @@
+# Package names close enough to a verified name to trip the typosquatting gate,
+# adjudicated by a human as legitimate. Listing a name here only clears the
+# similarity hold; it grants no trust tier.
+#
+# - dsh-fs-tools
+[]
