@@ -102,7 +102,7 @@ describe('gate', () => {
   })
 
   it('admits a name three edits away', () => {
-    expect(gate(candidate({ name: 'dsh-fs-abcd' }), config).ok).toBe(true)
+    expect(gate(candidate({ name: 'dsh-fs-t001' }), config).ok).toBe(true)
   })
 
   it('admits the verified name itself, which is distance zero', () => {
