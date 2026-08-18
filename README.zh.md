@@ -8,6 +8,15 @@ DeepSeek Harness 的插件市场：从一份可浏览的 catalog 中发现、安
 
 设计完成，尚未开始实现。见[设计文档](docs/design/2026-08-18-dsh-plugin-store-design.md)（英文）。
 
+## Catalog
+
+Catalog 每日构建，以静态 JSON 发布：
+
+- `https://dsh-plugin-store.github.io/v1/index.json` —— 指针，携带 `schemaVersion`、`builtAt` 和内容哈希
+- `https://dsh-plugin-store.github.io/v1/plugins.<sha256>.json` —— 数据
+
+指针足够小，适合轮询；数据文件是内容寻址的，可以无限期缓存。每次构建的淘汰报告（每个被淘汰的包都附作者可读的原因）挂在对应的 workflow run 上。
+
 ## 它是什么
 
 - 一个**公开社区**市场。带 `dsh-plugin` keyword 发布到 npm 即可被发现，无需向本项目提交任何东西。
