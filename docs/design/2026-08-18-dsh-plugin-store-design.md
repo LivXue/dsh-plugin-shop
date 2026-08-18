@@ -35,7 +35,7 @@ dsh-plugin-store 补齐这三样。
 
 | 术语 | 含义 |
 |---|---|
-| catalog | 由 registry 仓每日构建产出的插件条目集合（静态 JSON） |
+| catalog | 由 `registry/` 每日构建产出的插件条目集合（静态 JSON） |
 | entry | catalog 中的一条插件记录 |
 | tier | 一条 entry 的信任层级：`verified` / `verified-stale` / `community` |
 | profile | dsh 的运行时组合，位于 `$DSH_HOME/profiles/<name>` |
@@ -55,22 +55,29 @@ dsh-plugin-store 补齐这三样。
 
 ## 5. 架构
 
-### 5.1 三个组件
+### 5.1 组件与仓库布局
 
-**R — `dsh-plugin-store/registry`（纯数据仓，无运行时代码）**
+本仓单仓两目录。`registry/` 是纯数据与构建脚本，`plugin/` 是发布到 npm 的插件包；两者无代码依赖，仅共享 §6 的 schema。
 
 ```
-schema/plugin-entry.schema.json   catalog 条目 schema，带 schemaVersion
-registry/verified.yml             人工白名单
-registry/denied.yml               封禁名单
-snapshots/manifest.lock           每日提交的 名称→版本→integrity 快照
-scripts/build.ts                  harvest → validate → merge → emit
-.github/workflows/daily.yml       每日 + PR 触发
+registry/
+  schema/plugin-entry.schema.json   catalog 条目 schema，带 schemaVersion
+  verified.yml                      人工白名单（钉版本）
+  denied.yml                        封禁名单
+  allowed-similar.yml               近似名称的显式放行
+  snapshots/manifest.lock           每日提交的 名称→版本→integrity 快照
+  scripts/build.ts                  harvest → validate → merge → emit
+plugin/                             npm 包 dsh-plugin-store
+  src/host/                         StoreGateway
+  src/client/                       浏览器半边
+.github/workflows/daily.yml         每日 + PR 触发 registry 构建
 ```
+
+**R — `registry/`（纯数据，无运行时代码）**
 
 产物发布到 CDN：`/v1/index.json`（指针）与 `/v1/plugins.<sha256>.json`（数据）。指针与数据分离，使客户端可长缓存数据文件而只轮询几百字节的指针。
 
-**S — `dsh-plugin-store`（发布到 npm 的插件包，两个半边）**
+**S — `plugin/`（发布到 npm 的 `dsh-plugin-store` 包，两个半边）**
 
 - **Host 半边** `StoreGateway`：注册 `store/*` Remote。它是唯一接触网络与 profile 目录的地方。
 - **Client 半边** `dsh-plugin-store/client`：走 `dsh.client` 约定，`ctx.remote.$mount()` 挂载 store 的 Remote，向 `settings.plugins.tab` 插入一个 tab。**不接触网络，不接触文件系统。**
@@ -92,7 +99,7 @@ scripts/build.ts                  harvest → validate → merge → emit
 
 ### 5.3 三条边界硬线
 
-1. **Client 半边零特权。** 它能做的一切就是 `store/*` 四个方法。UI 被 XSS 打穿，攻击面也只是这四个方法的参数。
+1. **Client 半边零特权。** 它能做的一切就是 §7.3 那五个 `store/*` 方法。UI 被 XSS 打穿，攻击面也只是这五个方法的参数。
 2. **Host 只接受包名与版本，不接受任意 spec。** `store/install` 的参数是 `{ name, version }`，不是 pnpm 命令行。Host 用自己缓存的 catalog 快照校验后自行构造 spec。
 3. **catalog 快照是 Host 的真相源。** 浏览器传包名，Host 用自己的快照判定，不信任浏览器传来的任何元数据。
 
@@ -189,7 +196,7 @@ harvest → fetch manifest → gate → tier → emit → commit 快照
    - 命中 `denied.yml` → 排除。
    - npm 已标记 deprecated → 排除。
    - 无 license 或无 repository → 排除。理由不是洁癖：没有仓库地址就无法审计，而一个想上架的正经插件不会藏源码。
-   - 与 `verified.yml` 中任一名称的编辑距离过近 → **卡住等人工裁决**（进 `denied.yml` 或显式放行），不自动上架。这是 typosquatting 的闸门。
+   - 与 `verified.yml` 中任一名称的 Levenshtein 距离 ≤ 2 且不等于 0 → **卡住等人工裁决**（进 `denied.yml` 或写入 `allowed-similar.yml` 显式放行），不自动上架。这是 typosquatting 的闸门。阈值 2 是起点，可依实际误报率调整；调整它要改的是常量与其测试，不是流程。
 4. **Tier 标注**：与 `verified.yml` 求交。
 
    > **verified 必须钉版本，不能挂包名。**
@@ -198,7 +205,7 @@ harvest → fetch manifest → gate → tier → emit → commit 快照
 
    绝大多数市场把 verified 挂在包名上，结果是作者审核通过后再发一个恶意版本即自动继承信任——这是供应链攻击最省力的入口。
 5. **Emit**：按包名字典序排序（保证确定性），产出 `plugins.<sha256>.json` 与 `index.json`；构建报告作为 CI artifact。
-6. **Commit 快照**：把 `manifest.lock`（名称 → 版本 → integrity）提交回 registry 仓。
+6. **Commit 快照**：把 `manifest.lock`（名称 → 版本 → integrity）提交回本仓 `registry/snapshots/`。
 
    **这一步是本方案相对服务端方案的全部价值所在。** 少了它，方案就退化成"一个跑在 CI 上的黑盒服务端"。
 
@@ -278,7 +285,7 @@ Browser                     Host (StoreGateway)                    子进程
 | 恶意作者 | verified 分层；community 强制二次确认 | community 层本身有风险，只能靠如实告知 |
 | typosquatting | 构建期编辑距离检测，命中则卡住等人工裁决 | 新颖仿冒手法 |
 | 账号被盗 / 恶意新版本 | verified 钉版本；`manifest.lock` 记 integrity，版本与哈希变化在 git diff 中一眼可见 | 发现有延迟 |
-| catalog 中间人 | `index.json` 指向内容寻址的数据文件，Host 拉取后校验 sha256 与 index 一致；registry 仓 git 历史是第二真相源 | `index.json` 自身被换，靠 HTTPS 兜底 |
+| catalog 中间人 | `index.json` 指向内容寻址的数据文件，Host 拉取后校验 sha256 与 index 一致；本仓 git 历史是第二真相源 | `index.json` 自身被换，靠 HTTPS 兜底 |
 | catalog 文本注入 | Client 零特权；`summary`/`description` 一律按纯文本渲染，不过 Markdown、不渲染链接 | — |
 | 安装期代码执行 | pnpm ≥10 默认拦截构建脚本，store 永不写 `allowBuilds` | 用户此前手动开启过的条目 |
 
