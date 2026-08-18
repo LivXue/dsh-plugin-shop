@@ -1,0 +1,25 @@
+{
+  "name": "dsh-plugin-store-registry",
+  "private": true,
+  "type": "module",
+  "engines": { "node": "^22.19.0 || >=24.0.0" },
+  "packageManager": "pnpm@11.7.0",
+  "scripts": {
+    "build:catalog": "node --experimental-strip-types registry/scripts/src/build.ts",
+    "emit:schema": "node --experimental-strip-types registry/scripts/src/emit-schema.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "fastest-levenshtein": "^1.0.16",
+    "semver": "^7.6.3",
+    "yaml": "^2.5.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@types/semver": "^7.5.8",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}

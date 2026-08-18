@@ -1,0 +1,54 @@
+{
+  "$id": "https://dsh-plugin-store.dev/schema/plugin-entry.schema.json",
+  "title": "dsh.catalog",
+  "description": "The catalog section a dsh plugin declares in its package.json.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "category": {
+      "type": "string",
+      "enum": [
+        "tool",
+        "provider",
+        "ui",
+        "workflow",
+        "integration",
+        "other"
+      ]
+    },
+    "summary": {
+      "type": "object",
+      "properties": {
+        "en": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "zh": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "en",
+        "zh"
+      ],
+      "additionalProperties": false
+    },
+    "capabilities": {
+      "maxItems": 20,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "required": [
+    "category",
+    "summary",
+    "capabilities"
+  ],
+  "additionalProperties": false
+}
