@@ -1,7 +1,12 @@
 /**
- * Catalog build entry point: the only module that both fetches and writes.
- * Everything it composes is pure, so a failure here is an I/O failure rather
- * than a policy one.
+ * Catalog build entry point.
+ *
+ * Network access is confined to `npm-client.ts`. Filesystem access lives in
+ * this module (writing the build artifacts), in `config.ts` (reading the
+ * registry inputs), and in `emit-schema.ts` (writing the generated schema).
+ * The pure core — `gate.ts`, `tier.ts`, `emit.ts`, `pipeline.ts`, `schema.ts`,
+ * and `types.ts` — touches neither, so a failure here is an I/O failure
+ * rather than a policy one.
  * @module build
  */
 
