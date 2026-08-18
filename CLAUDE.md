@@ -2,6 +2,8 @@
 
 dsh-plugin-store is the plugin market for [DeepSeek Harness](https://github.com/deepseek-harness). It harvests dsh plugins from npm, decides which may be listed, and publishes a catalog people install software from.
 
+**Starting work? Read [docs/plans/2026-08-18-remaining-work.md](docs/plans/2026-08-18-remaining-work.md) first** — what is built, what is not, and what needs a human decision.
+
 **The spec in [docs/design/](docs/design/) is the authority.** Code, tests, and prose follow it; when they disagree, the spec wins or the spec gets amended in the same change. Amending it is normal — [D7](docs/design/2026-08-18-dsh-plugin-store-design.md) exists because running the harvest against the live registry disproved a premise the design was built on.
 
 ## Layout
