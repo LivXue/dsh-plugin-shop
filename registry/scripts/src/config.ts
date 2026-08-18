@@ -46,17 +46,29 @@ function parseFile<T>(label: string, text: string, schema: z.ZodType<T>): T {
 }
 
 /**
+ * Insert into a map, failing loudly on a name already present. `verified.yml`
+ * and `denied.yml` are each a human review record for one package; a second
+ * entry for the same name would otherwise silently keep whichever one was
+ * inserted last, with the outcome depending on file order.
+ */
+function setUnique<V>(map: Map<string, V>, label: string, name: string, value: V): void {
+  if (map.has(name)) throw new Error(`${label}: duplicate entry for ${name}`)
+  map.set(name, value)
+}
+
+/**
  * Parse the three registry files from their text.
  * @param input - the raw text of each file.
  * @returns the parsed configuration.
- * @throws when any file is malformed.
+ * @throws when any file is malformed, or when `verified.yml` or `denied.yml`
+ *   lists the same package name twice.
  */
 export function parseRegistryConfig(
   input: { verified: string; denied: string; allowedSimilar: string },
 ): RegistryConfig {
   const verified = new Map<string, Review>()
   for (const row of parseFile('verified.yml', input.verified, verifiedSchema)) {
-    verified.set(row.name, {
+    setUnique(verified, 'verified.yml', row.name, {
       reviewedVersion: row.reviewedVersion,
       reviewer: row.reviewer,
       reviewCommit: row.reviewCommit,
@@ -64,7 +76,9 @@ export function parseRegistryConfig(
     })
   }
   const denied = new Map<string, string>()
-  for (const row of parseFile('denied.yml', input.denied, deniedSchema)) denied.set(row.name, row.reason)
+  for (const row of parseFile('denied.yml', input.denied, deniedSchema)) {
+    setUnique(denied, 'denied.yml', row.name, row.reason)
+  }
   const allowedSimilar = new Set(parseFile('allowed-similar.yml', input.allowedSimilar, allowedSimilarSchema))
   return { verified, denied, allowedSimilar }
 }

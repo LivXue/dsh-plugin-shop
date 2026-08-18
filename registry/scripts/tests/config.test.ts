@@ -61,4 +61,37 @@ describe('parseRegistryConfig', () => {
   it('throws when a file is not a list', () => {
     expect(() => parseRegistryConfig({ ...empty, denied: 'name: x\n' })).toThrow(/list/)
   })
+
+  it('throws on a duplicate name in verified.yml instead of silently keeping the last entry', () => {
+    expect(() => parseRegistryConfig({
+      ...empty,
+      verified: `
+- name: dsh-hello-plugin
+  reviewedVersion: 1.0.0
+  reviewer: github:someone
+  reviewCommit: abc1234
+- name: dsh-hello-plugin
+  reviewedVersion: 2.0.0
+  reviewer: github:someone-else
+  reviewCommit: def5678
+`,
+    })).toThrow(/verified\.yml.*dsh-hello-plugin/s)
+  })
+
+  it('throws on a duplicate name in denied.yml instead of silently keeping the last entry', () => {
+    expect(() => parseRegistryConfig({
+      ...empty,
+      denied: `
+- name: dsh-evil-plugin
+  reason: Exfiltrates credentials.
+- name: dsh-evil-plugin
+  reason: Also does something else bad.
+`,
+    })).toThrow(/denied\.yml.*dsh-evil-plugin/s)
+  })
+
+  it('allows a duplicate name in allowed-similar.yml, treating it as a set', () => {
+    const config = parseRegistryConfig({ ...empty, allowedSimilar: '- dsh-fs-tools\n- dsh-fs-tools\n' })
+    expect(config.allowedSimilar.size).toBe(1)
+  })
 })
