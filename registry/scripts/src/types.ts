@@ -38,6 +38,7 @@ export type RejectionCode =
   | 'no-integrity'
   | 'no-publish-time'
   | 'name-too-similar'
+  | 'fetch-failed'
 
 /** One rejection, carrying an author-readable explanation. */
 export interface Rejection {

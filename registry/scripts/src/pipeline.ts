@@ -13,15 +13,19 @@ import type { Candidate, Entry, Rejection } from './types.ts'
  * @param candidates - packages fetched from npm, in any order.
  * @param config - the human-authored registry files.
  * @param builtAt - ISO 8601 build timestamp.
+ * @param preexistingRejections - rejections decided before this function ran, such as a
+ *   name that could not be turned into a candidate at all (e.g. a failed fetch); merged
+ *   into the emitted report alongside every rejection this function produces itself.
  * @returns the artifacts to publish and commit.
  */
 export function runPipeline(
   candidates: Candidate[],
   config: RegistryConfig,
   builtAt: string,
+  preexistingRejections: Rejection[] = [],
 ): Artifacts {
   const entries: Entry[] = []
-  const rejections: Rejection[] = []
+  const rejections: Rejection[] = [...preexistingRejections]
   for (const candidate of candidates) {
     const result = gate(candidate, config)
     if (result.ok) entries.push(assignTier(result.accepted, config))

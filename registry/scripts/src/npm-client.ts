@@ -82,16 +82,28 @@ export async function searchByKeyword(fetchImpl: typeof fetch = fetch): Promise<
 }
 
 /**
+ * The outcome of fetching one package: either a usable candidate, or the
+ * reason none could be produced. Distinguishing the two lets a caller record
+ * a transient fetch failure as its own audited rejection rather than
+ * conflating it with a package that simply carries no `dsh.catalog`.
+ */
+export type CandidateResult =
+  | { ok: true; candidate: Candidate }
+  | { ok: false; detail: string }
+
+/**
  * Fetch one package's full packument and project it into a candidate.
  * @param name - the package name.
  * @param fetchImpl - the fetch implementation, injected for testing.
- * @returns the candidate, or null when the package is unreadable or has no usable latest version.
+ * @returns the candidate, or the reason none could be produced.
  */
 export async function fetchCandidate(
   name: string,
   fetchImpl: typeof fetch = fetch,
-): Promise<Candidate | null> {
+): Promise<CandidateResult> {
   const response = await fetchImpl(`${REGISTRY}/${encodeURIComponent(name)}`)
-  if (!response.ok) return null
-  return toCandidate(await response.json())
+  if (!response.ok) return { ok: false, detail: `npm registry returned ${response.status} fetching ${name}` }
+  const candidate = toCandidate(await response.json())
+  if (candidate === null) return { ok: false, detail: `${name}: packument names no usable latest version` }
+  return { ok: true, candidate }
 }

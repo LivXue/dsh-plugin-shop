@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { HARVEST_KEYWORD, searchByKeyword, toCandidate } from '../src/npm-client.ts'
+import { fetchCandidate, HARVEST_KEYWORD, searchByKeyword, toCandidate } from '../src/npm-client.ts'
 
 describe('HARVEST_KEYWORD', () => {
   it('is the ecosystem-neutral keyword, not a branded one', () => {
@@ -87,5 +87,45 @@ describe('searchByKeyword', () => {
   it('throws when the registry answers with an error status', async () => {
     const fetchImpl = (async () => new Response('nope', { status: 503 })) as unknown as typeof fetch
     await expect(searchByKeyword(fetchImpl)).rejects.toThrow(/503/)
+  })
+})
+
+describe('fetchCandidate', () => {
+  const packument = {
+    name: 'dsh-hello-plugin',
+    'dist-tags': { latest: '1.2.0' },
+    time: { '1.2.0': '2026-08-01T12:00:00.000Z' },
+    versions: {
+      '1.2.0': {
+        dist: { integrity: 'sha512-hello' },
+        license: 'MIT',
+        repository: { url: 'git+https://github.com/you/hello-plugin.git' },
+        dsh: {
+          bundle: { patch: './cordis.patch.yml' },
+          catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
+        },
+      },
+    },
+  }
+
+  it('returns the candidate for a readable packument', async () => {
+    const fetchImpl = (async () => new Response(JSON.stringify(packument), { status: 200 })) as unknown as typeof fetch
+    const result = await fetchCandidate('dsh-hello-plugin', fetchImpl)
+    expect(result.ok).toBe(true)
+    expect(result.ok && result.candidate.name).toBe('dsh-hello-plugin')
+  })
+
+  it('reports the HTTP status when the registry answers with a non-OK status', async () => {
+    const fetchImpl = (async () => new Response('nope', { status: 429 })) as unknown as typeof fetch
+    const result = await fetchCandidate('dsh-rate-limited', fetchImpl)
+    expect(result.ok).toBe(false)
+    expect(!result.ok && result.detail).toContain('429')
+  })
+
+  it('reports an unusable packument distinctly from an HTTP failure', async () => {
+    const fetchImpl = (async () => new Response(JSON.stringify({ 'dist-tags': { latest: '1.0.0' } }), { status: 200 })) as unknown as typeof fetch
+    const result = await fetchCandidate('dsh-no-name', fetchImpl)
+    expect(result.ok).toBe(false)
+    expect(!result.ok && result.detail).not.toContain('200')
   })
 })

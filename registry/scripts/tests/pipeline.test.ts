@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { runPipeline } from '../src/pipeline.ts'
 import { parseRegistryConfig } from '../src/config.ts'
-import type { Candidate } from '../src/types.ts'
+import type { Candidate, Rejection } from '../src/types.ts'
 
 const candidates = JSON.parse(
   readFileSync('registry/scripts/tests/fixtures/packuments.json', 'utf8'),
@@ -34,6 +34,14 @@ describe('runPipeline', () => {
     expect(report).toContain('| dsh-lib-only | no-bundle |')
     expect(report).toContain('| dsh-no-license | no-license |')
     expect(report).toContain('| dsh-fs-too1 | name-too-similar |')
+  })
+
+  it('merges a pre-existing rejection into the emitted report', () => {
+    const preexisting: Rejection[] = [
+      { name: 'dsh-rate-limited', code: 'fetch-failed', detail: 'npm registry returned 429 fetching dsh-rate-limited' },
+    ]
+    const { report } = runPipeline(candidates, config, BUILT_AT, preexisting)
+    expect(report).toContain('| dsh-rate-limited | fetch-failed | npm registry returned 429 fetching dsh-rate-limited |')
   })
 
   it('produces byte-identical artifacts for the same input', () => {
