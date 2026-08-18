@@ -71,6 +71,15 @@ describe('emit', () => {
     expect(report.indexOf('dsh-a')).toBeLessThan(report.indexOf('dsh-z'))
   })
 
+  it('escapes a rejection detail containing a pipe and a newline so the row stays intact', () => {
+    const { report } = emit([], [
+      { name: 'dsh-x', code: 'invalid-catalog', detail: 'dsh.catalog.foo | bar\nbaz: unrecognized key' },
+    ], '2026-08-18T00:00:00.000Z')
+    const tableLines = report.split('\n').filter(line => line.startsWith('| dsh-x'))
+    expect(tableLines).toHaveLength(1)
+    expect(tableLines[0]).toBe('| dsh-x | invalid-catalog | dsh.catalog.foo \\| bar baz: unrecognized key |')
+  })
+
   it('ends every text artifact with exactly one newline', () => {
     const { pluginsJson, indexJson, manifestLock, report } = emit(
       [entry('dsh-a')], [], '2026-08-18T00:00:00.000Z')

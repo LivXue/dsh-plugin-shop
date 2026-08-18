@@ -15,6 +15,20 @@ export interface Artifacts {
 }
 
 /**
+ * Escape one field for placement inside a markdown table cell.
+ *
+ * A rejection's `name`, `code`, and `detail` can all carry text sourced from
+ * a third party's `package.json` — `detail` in particular reaches here
+ * carrying a zod validation message that echoes back an unrecognized key an
+ * author supplied. An unescaped `|` would split the cell into extra columns
+ * and an unescaped newline would break the row into extra lines, letting
+ * that text forge or corrupt neighboring rows in the published report.
+ */
+function escapeCell(value: string): string {
+  return value.replace(/\|/g, '\\|').replace(/\r\n|\r|\n/g, ' ')
+}
+
+/**
  * Build every artifact of one catalog run.
  *
  * `builtAt` reaches the index and nothing else: putting it inside the hashed
@@ -49,7 +63,7 @@ export function emit(entries: Entry[], rejections: Rejection[], builtAt: string)
     '',
     '| Package | Reason | Detail |',
     '|---|---|---|',
-    ...sortedRejections.map(r => `| ${r.name} | ${r.code} | ${r.detail} |`),
+    ...sortedRejections.map(r => `| ${escapeCell(r.name)} | ${escapeCell(r.code)} | ${escapeCell(r.detail)} |`),
   ]
   const report = `${lines.join('\n')}\n`
 
