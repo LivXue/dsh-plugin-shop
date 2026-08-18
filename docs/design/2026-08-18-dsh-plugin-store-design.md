@@ -48,6 +48,7 @@ dsh-plugin-store supplies those three.
 |---|---|---|
 | D1 | Public community market with a self-hosted registry | The ecosystem data belongs to the project, rather than depending on a third party's availability and governance |
 | D2 | Plugin metadata is **harvested from npm by keyword** | Publishing is listing; zero human step. Frictionless listing is a precondition for a community market reaching volume |
+| D7 | A listing is **dual-track**: declared or derived | Measured after D1-D6 were fixed: the `dsh-plugin` keyword already carries ~1390 npm packages, of which a 100-package sample showed 94% declaring `dsh.bundle` and **0% declaring `dsh.catalog`**. Requiring a field this project invented would have shipped an empty catalog against a live ecosystem, contradicting D2's own premise |
 | D3 | **verified / community** tiering | Automatic harvesting necessarily admits unreviewed packages. A market cannot both have zero friction and pretend everything is safe |
 | D4 | The store itself is an **out-of-tree bundle** | Independent release cadence, free of the dsh repository's gates. Verified that v0 needs no upstream change |
 | D5 | The catalog is **static JSON built by daily CI**, not a service | Zero operations, and it makes the catalog a git-auditable artifact — the whole value of this approach over a server |
@@ -135,13 +136,33 @@ Two identifiers stay **ecosystem-neutral and deliberately unbranded**:
 
 `capabilities` is **self-declared and unenforced**. v0 has no sandbox, so it exists for display only. The UI must not let it read as an enforced permission list; a false sense of safety is worse than none.
 
+### Declared and derived listings
+
+`dsh.catalog` is **optional**. A package that omits it is still listed, from what npm already knows:
+
+| Entry field | Declared (`dsh.catalog` present) | Derived (absent) |
+|---|---|---|
+| `metadata` | `declared` | `derived` |
+| `summary.en` | the author's text | the npm `description`, trimmed and capped at 200 characters |
+| `summary.zh` | the author's text | absent |
+| `category` | the author's choice | `other` |
+| `capabilities` | the author's list | empty |
+
+Three rules keep the fallback from eroding the format:
+
+- **A malformed `dsh.catalog` is still rejected, never downgraded to derived.** An author who declared the section and got it wrong has made a mistake worth reporting; silently falling back would hide it and leave them wondering why their text never appeared.
+- **A package with neither `dsh.catalog` nor an npm `description` is rejected** as `no-summary`. There is nothing to show a user, and an entry that displays only a package name is not a listing.
+- **Tiering stays orthogonal to metadata.** A derived entry can be `verified`, because a review reads the code, not the description. The two axes answer different questions: `tier` is "has a human read this?", `metadata` is "did the author describe it?".
+
+A consumer presents a derived entry as unclaimed, which is also the signal that prompts an author to add the section.
+
 ### 6.2 Published artifacts
 
 `/v1/index.json`:
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "builtAt": "2026-08-18T00:00:00Z",
   "count": 137,
   "plugins": { "url": "plugins.<sha256>.json", "sha256": "<sha256>" }
@@ -152,7 +173,7 @@ Two identifiers stay **ecosystem-neutral and deliberately unbranded**:
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "plugins": [
     {
       "name": "dsh-hello-plugin",
@@ -162,6 +183,7 @@ Two identifiers stay **ecosystem-neutral and deliberately unbranded**:
       "repository": "https://github.com/you/hello-plugin",
       "license": "MIT",
       "tier": "verified",
+      "metadata": "declared",
       "review": {
         "reviewedVersion": "1.2.0",
         "reviewer": "github:someone",
@@ -178,6 +200,8 @@ Two identifiers stay **ecosystem-neutral and deliberately unbranded**:
 }
 ```
 
+`summary.zh` is optional in the published format because a derived entry has none, so `schemaVersion` is `2`.
+
 `builtAt` appears **only in index.json and never inside the hashed content**. Otherwise the hash changes daily, every CDN cache is invalidated, and every git diff is noise.
 
 ## 7. Data flow
@@ -192,7 +216,8 @@ harvest -> fetch manifest -> gate -> tier -> emit -> commit snapshot
 2. **Fetch manifest** — for each candidate, read the latest packument's `dsh.bundle`, `dsh.catalog`, `version`, `dist.integrity`, `repository`, `license`, and `deprecated`.
 3. **Gate** — every rejection must leave an **author-readable reason** in the build report.
    - No `dsh.bundle` — a library, not an installable plugin. Rejected. Same criterion as the CLI's "declares no dsh.bundle" warning.
-   - `dsh.catalog` missing or failing schema validation. Rejected.
+   - `dsh.catalog` present but failing schema validation. Rejected. A missing section is **not** a rejection — it produces a derived listing (§6.1).
+   - Neither `dsh.catalog` nor an npm `description`. Rejected as `no-summary`: there is nothing to show.
    - Listed in `denied.yml`. Rejected.
    - Marked deprecated on npm. Rejected.
    - No license or no repository. Rejected. This is not fastidiousness: without a repository the package cannot be audited, and a plugin that wants to be listed has no reason to hide its source.
