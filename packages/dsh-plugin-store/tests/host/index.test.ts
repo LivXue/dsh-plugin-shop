@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import StoreGateway from '../../src/host/index.ts'
-import type { CatalogResult } from '../../src/host/catalog.ts'
+import type { CatalogResult, CatalogSnapshot } from '../../src/host/catalog.ts'
 
 function stubCtx(): never {
   return { get: () => undefined, reflect: { provide: () => {} } } as never
@@ -83,5 +86,91 @@ describe('StoreGateway.catalog', () => {
 
     await gateway.catalog({})
     expect(calls).toEqual([expect.objectContaining({ baseUrl: 'https://row.test/v1/', cacheDir: '/row-cache' })])
+  })
+})
+
+// A fixture `dsh` that records its argv and exits 0; the calls log path lets
+// a rejection's no-spawn property be proven by the file's absence.
+function gatewayWithSnapshot(snapshot: CatalogSnapshot): { gateway: StoreGateway; callsLog: string } {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-gateway-fixture-'))
+  const bin = join(dir, 'dsh')
+  writeFileSync(bin, [
+    '#!/bin/sh',
+    `echo "$1 $2 $3 $4 $5" >> "${join(dir, 'calls.log')}"`,
+    'exit 0',
+    '',
+  ].join('\n'))
+  chmodSync(bin, 0o755)
+  const gateway = new StoreGateway(stubCtx(), {
+    catalogUrl: 'https://store.test/v1/',
+    cacheDir: '/cache',
+    profile: 'web',
+    loadCatalog: async () => ({ snapshot, stale: false }) as CatalogResult,
+    dshBin: bin,
+  })
+  return { gateway, callsLog: join(dir, 'calls.log') }
+}
+
+describe('StoreGateway.install — the four rejection paths, through the executor', () => {
+  const listed = { name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived' }
+
+  it('rejects not-in-catalog without spawning', async () => {
+    const { gateway, callsLog } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [] })
+    const result = await gateway.install({ name: 'dsh-unknown', version: '1.0.0' })
+    expect(result).toMatchObject({ ok: false, code: 'not-in-catalog' })
+    // A spawned fixture would have created the calls log within this settle window.
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(existsSync(callsLog)).toBe(false)
+  })
+
+  it('rejects denied without spawning', async () => {
+    const { gateway, callsLog } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [], denied: [{ name: 'dsh-blocked', detail: 'matched the denylist' }] })
+    const result = await gateway.install({ name: 'dsh-blocked', version: '1.0.0' })
+    expect(result).toMatchObject({ ok: false, code: 'denied' })
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(existsSync(callsLog)).toBe(false)
+  })
+
+  it('rejects version-mismatch without spawning', async () => {
+    const { gateway, callsLog } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [] })
+    const result = await gateway.install({ name: 'dsh-hello-plugin', version: '9.9.9' })
+    expect(result).toMatchObject({ ok: false, code: 'version-mismatch' })
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(existsSync(callsLog)).toBe(false)
+  })
+
+  it('rejects needs-acknowledgement without spawning', async () => {
+    const { gateway, callsLog } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [] })
+    const result = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0' })
+    expect(result).toMatchObject({ ok: false, code: 'needs-acknowledgement' })
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(existsSync(callsLog)).toBe(false)
+  })
+
+  it('spawns only for an acknowledged install and reports progress', async () => {
+    const { gateway, callsLog } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [] })
+    const result = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const status = gateway.installStatus({ installId: result.installId })
+    expect(status.found).toBe(true)
+    // The fixture dsh exits 0 immediately; the status may already be done.
+    expect(['running', 'done']).toContain(status.state)
+    // Poll the fixture's calls log (not installStatus: a finished install is
+    // dropped from the in-flight registry), then prove the exact argv was
+    // recorded — the profile and the pinned spec pass through to the
+    // subprocess.
+    const deadline = Date.now() + 5000
+    while (!existsSync(callsLog) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    expect(readFileSync(callsLog, 'utf8')).toContain('plugin --profile web add dsh-hello-plugin@1.2.0')
+  })
+
+  it('reports an unknown installId as not found', () => {
+    const { gateway } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [] })
+    const status = gateway.installStatus({ installId: 'nope' })
+    expect(status.found).toBe(false)
+    expect(status.detail).toContain('nope')
   })
 })
