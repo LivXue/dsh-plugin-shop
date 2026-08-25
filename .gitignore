@@ -1,5 +1,8 @@
 node_modules/
 lib/
+# The vendored typert protocol's compiled lib/ is committed (VENDORED.md).
+!packages/dsh-typert-protocol/lib/
+!packages/dsh-typert-protocol/lib/**
 dist/
 *.tsbuildinfo
 .env

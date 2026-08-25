@@ -1,2 +1,5 @@
+packages:
+  - packages/dsh-typert-protocol
+  - packages/dsh-plugin-store
 allowBuilds:
   esbuild: true

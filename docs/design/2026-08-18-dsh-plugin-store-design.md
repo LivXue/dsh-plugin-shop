@@ -58,7 +58,7 @@ dsh-plugin-store supplies those three.
 
 ### 5.1 Components and repository layout
 
-One repository, two directories. `registry/` holds data and build scripts; `plugin/` holds the npm package. They share no code, only the schema in §6.
+One repository, two directories. `registry/` holds data and build scripts; `packages/dsh-plugin-store/` holds the npm package. They share no code, only the schema in §6.
 
 ```
 registry/
@@ -68,17 +68,20 @@ registry/
   allowed-similar.yml               Explicit clearance for near-duplicate names
   snapshots/manifest.lock           Daily committed name -> version -> integrity
   scripts/build.ts                  harvest -> validate -> merge -> emit
-plugin/                             The npm package dsh-plugin-store
+packages/dsh-plugin-store/            The npm package dsh-plugin-store (under packages/ because the typert generator requires it; see the §5.1 note)
   src/host/                         StoreGateway
   src/client/                       Browser half
+packages/dsh-typert-protocol/         Vendored @deepseek-ai/dsh-typert-protocol, build-time only (VENDORED.md)
 .github/workflows/daily.yml         Daily and PR-triggered registry build
 ```
+
+The package directory is `packages/dsh-plugin-store/` rather than `plugin/` because `@deepseek-ai/dsh-typert-generator` hardcodes `packages/` as the package container; the published npm package name is unchanged.
 
 **R — `registry/` (data only, no runtime code)**
 
 Artifacts publish to a CDN as `/v1/index.json` (a pointer) and `/v1/plugins.<sha256>.json` (the data). Separating pointer from data lets a client cache the data file indefinitely while polling only a few hundred bytes.
 
-**S — `plugin/` (the npm package `dsh-plugin-store`, two halves)**
+**S — `packages/dsh-plugin-store/` (the npm package `dsh-plugin-store`, two halves)**
 
 - **Host half**, `StoreGateway`: registers the `store/*` Remote. It is the only place that touches the network or the profile directory.
 - **Client half**, `dsh-plugin-store/client`: follows the `dsh.client` convention, mounts the store's Remote through `ctx.remote.$mount()`, and contributes one tab to `settings.plugins.tab`. **It touches neither the network nor the filesystem.**

@@ -17,7 +17,8 @@ registry/          The catalog pipeline. All of P0.
   snapshots/       manifest.lock, committed daily
   scripts/src/     Pipeline modules
   scripts/tests/   One test file per module
-plugin/            The npm package dsh-plugin-store. P1; does not exist yet.
+packages/dsh-plugin-store/  The npm package dsh-plugin-store
+packages/dsh-typert-protocol/  Vendored @deepseek-ai/dsh-typert-protocol, build-time only
 docs/design/       Specs. English only.
 docs/plans/        Implementation plans.
 docs/schema.md     Author-facing reference. Bilingual.
