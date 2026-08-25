@@ -48,7 +48,7 @@ The store's server side: `packages/dsh-plugin-store/src/host/`, registering the 
 Build it in this order, because the failure-prone parts come first:
 
 1. **`store/catalog`** — fetch the published `index.json`, verify the data file's sha256 against the pointer, cache it on disk, and serve the cached copy with a `stale` flag when the network is unavailable. A `schemaVersion` higher than this build supports must be refused loudly, never silently degraded.
-2. **`store/install`** and **`store/installStatus`** — the five rejection paths (`not-in-catalog`, `denied`, `version-mismatch`, `needs-acknowledgement`, plus the pnpm failure path) must be **tested through the executor**, not by asserting that a UI disabled a button. Progress is polled, not pushed; see the constraint below.
+2. **`store/installStart`** and **`store/installStatus`** — the five rejection paths (`not-in-catalog`, `denied`, `version-mismatch`, `needs-acknowledgement`, plus the pnpm failure path) must be **tested through the executor**, not by asserting that a UI disabled a button. Progress is polled, not pushed; see the constraint below.
 3. **`store/setEnabled`** and **`store/outdated`** — P3 in the spec's phasing, but they share the profile plumbing, so pick them up when that plumbing is fresh.
 
 ### Constraints P1 inherits, verified against the dsh source during design
