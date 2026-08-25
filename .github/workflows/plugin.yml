@@ -1,0 +1,26 @@
+name: plugin
+
+on:
+  push:
+    paths: ['packages/dsh-plugin-store/**', 'pnpm-workspace.yaml']
+  pull_request:
+    paths: ['packages/dsh-plugin-store/**', 'pnpm-workspace.yaml']
+  workflow_dispatch:
+
+concurrency:
+  group: plugin-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: npm install -g @deepseek-ai/dsh@0.1.1-rc.2
+      - run: pnpm -C packages/dsh-plugin-store test
+      - run: pnpm -C packages/dsh-plugin-store typecheck
+      - run: pnpm -C packages/dsh-plugin-store build

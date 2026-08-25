@@ -37,14 +37,17 @@ function chain<T>(profile: string, task: () => Promise<T>): Promise<T> {
  * Never rolls back; a failure surfaces stderr verbatim plus the recovery hint
  * (§10). The store never passes build-script flags: `allowBuilds` stays the
  * user's explicit decision in the CLI (§7.2).
+ * The child inherits the current environment unless `env` is given — the
+ * real-install test pins DSH_HOME to a temporary directory this way.
  */
 export function startInstall(options: {
   profile: string
   spec: string
   dshBin?: string
+  env?: NodeJS.ProcessEnv
   onStatus?: (status: InstallStatus) => void
 }): RunningInstall {
-  const { profile, spec, dshBin = 'dsh', onStatus } = options
+  const { profile, spec, dshBin = 'dsh', env, onStatus } = options
   const installId = randomUUID()
   const log: string[] = []
   let logBytes = 0
@@ -76,6 +79,7 @@ export function startInstall(options: {
   const finished = chain(profile, () => new Promise<InstallStatus>((resolve) => {
     const child = spawn(dshBin, ['plugin', '--profile', profile, 'add', spec], {
       stdio: ['ignore', 'pipe', 'pipe'],
+      env: env ?? process.env,
     })
     child.stdout.on('data', (chunk: Buffer) => {
       for (const line of chunk.toString().split('\n')) if (line !== '') append(line)
