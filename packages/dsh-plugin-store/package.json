@@ -54,9 +54,9 @@
     }
   },
   "scripts": {
-    "prepare": "pnpm build",
+    "prepublishOnly": "pnpm build",
     "build": "tsc && tsdown && tsdown -c tsdown.client.config.ts",
-    "test": "vitest run",
+    "test": "tsdown && vitest run",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json"
   },
   "dependencies": {
