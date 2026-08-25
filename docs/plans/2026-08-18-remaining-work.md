@@ -1,7 +1,7 @@
 # Remaining work
 
-Date: 2026-08-18
-Status: P0 complete and unmerged; P1 not started
+Date: 2026-08-18 (launch state updated 2026-08-25)
+Status: P0 merged and published; P1 not started
 
 This is the handover document. It assumes you have no context from the session that built P0.
 
@@ -14,7 +14,7 @@ This is the handover document. It assumes you have no context from the session t
 
 ## Where things stand
 
-P0 — the catalog pipeline — is complete on branch `feat/p0-registry`, 24 commits, **not merged into `main` and never pushed**. There is no git remote configured.
+P0 — the catalog pipeline — is complete: 24 commits on branch `feat/p0-registry`, merged into `main` and published on 2026-08-25 as https://github.com/LivXue/dsh-plugin-store. Pages serves the catalog at https://LivXue.github.io/dsh-plugin-store/v1/index.json.
 
 - 82 tests across 7 files pass; `pnpm typecheck` is clean.
 - The pipeline harvests by keyword, gates, tiers, and emits deterministic artifacts. `pnpm build:catalog` has been run once against the live registry and works end to end.
@@ -31,9 +31,13 @@ The live ecosystem is real and it is large. Roughly 1390 npm packages already ca
 These block a real launch, not the code.
 
 1. **The GitHub owner and the published URL.** Both READMEs and the workflow assume `https://dsh-plugin-store.github.io/v1/index.json`, which is only correct if the GitHub account itself is named `dsh-plugin-store` and Pages serves from the repository root. If the repo lands under a different owner, the URL needs an extra path segment and both READMEs change together.
+   → Resolved 2026-08-25: the repo lives at https://github.com/LivXue/dsh-plugin-store; the published URL is https://LivXue.github.io/dsh-plugin-store/v1/index.json. Both READMEs and the deploy environment's `url:` carry it.
 2. **GitHub Pages must be configured with Source = "GitHub Actions"** in repository settings. Without it, `actions/deploy-pages` fails on its very first run with a "Get Pages site failed" error that reads like a workflow bug rather than a settings gap.
+   → Resolved 2026-08-25: Pages enabled via the API with `build_type=workflow`.
 3. **Whether `main` allows the Actions bot to push.** The daily workflow commits `registry/snapshots/manifest.lock`. Branch protection that blocks direct pushes makes that step fail — it is marked `continue-on-error` so the publish survives, but the snapshot then silently stops updating. Either allow the bot or move the snapshot to a pull request.
+   → Resolved 2026-08-25: `main` carries no branch protection (verified via API), so the Actions bot may push directly.
 4. **Who reviews.** The `verified` tier is worth exactly as much as the human review behind it. With no reviewers, every entry stays `community` and the store is an awesome-list with a UI. This is the project's largest non-technical risk and no amount of code addresses it.
+   → Resolved 2026-08-25: review will be handled by a future workflow, tracked in https://github.com/LivXue/dsh-plugin-store/issues/1. Until it exists, `verified` stays empty on purpose.
 
 ## P1 — the Host half
 
