@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createHash } from 'node:crypto'
-import { loadCatalog, SUPPORTED_SCHEMA_VERSION, type CatalogFs } from '../../src/host/catalog.ts'
+import { loadCatalog, type CatalogFs } from '../../src/host/catalog.ts'
 
 function dataJson(plugins: unknown[] = [], denied: unknown[] = []): string {
   return JSON.stringify({ schemaVersion: 2, plugins, denied })
@@ -70,6 +70,23 @@ describe('loadCatalog', () => {
       .rejects.toThrow(/integrity/)
   })
 
+  it('throws on an integrity mismatch even when a cache exists', async () => {
+    const data = dataJson([entry])
+    const tampered = data.replace('dsh-hello-plugin', 'dsh-evil-plugin')
+    const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
+    const fs = memFs()
+    fs.write('/cache/index.json', pointer)
+    fs.write(`/cache/${url}`, data)
+    const fetchImpl = (async (input: string | URL) => new Response(
+      String(input).endsWith('/index.json') ? pointer : tampered, { status: 200 },
+    )) as unknown as typeof fetch
+
+    await expect(loadCatalog({
+      baseUrl: 'https://store.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs,
+      now: () => new Date('2026-08-25T10:00:00Z'),
+    })).rejects.toThrow(/integrity/)
+  })
+
   it('throws when the schemaVersion is newer than this build supports', async () => {
     const fetchImpl = (async () => new Response(
       JSON.stringify({ schemaVersion: 3, builtAt: '', count: 0, plugins: { url: 'x.json', sha256: '0'.repeat(64) } }),
@@ -78,6 +95,23 @@ describe('loadCatalog', () => {
 
     await expect(loadCatalog({ baseUrl: 'https://store.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() }))
       .rejects.toThrow(/newer/)
+  })
+
+  it('throws on a newer schemaVersion even when a cache exists', async () => {
+    const data = dataJson([entry])
+    const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
+    const fs = memFs()
+    fs.write('/cache/index.json', pointer)
+    fs.write(`/cache/${url}`, data)
+    const fetchImpl = (async () => new Response(
+      JSON.stringify({ schemaVersion: 3, builtAt: '', count: 0, plugins: { url: 'x.json', sha256: '0'.repeat(64) } }),
+      { status: 200 },
+    )) as unknown as typeof fetch
+
+    await expect(loadCatalog({
+      baseUrl: 'https://store.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs,
+      now: () => new Date('2026-08-25T10:00:00Z'),
+    })).rejects.toThrow(/newer/)
   })
 
   it('throws when offline with no cache at all', async () => {
@@ -98,6 +132,42 @@ describe('loadCatalog', () => {
     const result = await loadCatalog({ baseUrl: 'https://store.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs, now: () => new Date('2026-08-25T00:03:00Z') })
     expect(result.stale).toBe(false)
     expect(calls).toBe(0)
+  })
+
+  it('serves a fresh cache via the sidecar without touching the network', async () => {
+    const data = dataJson([entry])
+    const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
+    const fs = memFs()
+    fs.write('/cache/index.json', pointer)
+    fs.write(`/cache/${url}`, data)
+    fs.write('/cache/index.meta.json', JSON.stringify({ fetchedAt: '2026-08-25T00:00:00Z' }))
+    let calls = 0
+    const fetchImpl = (async () => { calls += 1; throw new Error('should not be called') }) as unknown as typeof fetch
+
+    const result = await loadCatalog({ baseUrl: 'https://store.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs, now: () => new Date('2026-08-25T00:03:00Z') })
+    expect(result.stale).toBe(false)
+    expect(calls).toBe(0)
+  })
+
+  it('refetches the pointer when the sidecar says the cache is stale', async () => {
+    const data = dataJson([entry])
+    const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
+    const fs = memFs()
+    fs.write('/cache/index.json', pointer)
+    fs.write(`/cache/${url}`, data)
+    fs.write('/cache/index.meta.json', JSON.stringify({ fetchedAt: '2026-08-25T00:00:00Z' }))
+    let pointerCalls = 0
+    let dataCalls = 0
+    const fetchImpl = (async (input: string | URL) => {
+      if (String(input).endsWith('/index.json')) pointerCalls += 1
+      else dataCalls += 1
+      return new Response(String(input).endsWith('/index.json') ? pointer : data, { status: 200 })
+    }) as unknown as typeof fetch
+
+    const result = await loadCatalog({ baseUrl: 'https://store.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs, now: () => new Date('2026-08-25T10:00:00Z') })
+    expect(result.stale).toBe(false)
+    expect(pointerCalls).toBe(1)
+    expect(dataCalls).toBe(1)
   })
 
   it('passes the denied list through', async () => {

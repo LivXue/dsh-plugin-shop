@@ -92,8 +92,9 @@ function resolveDataUrl(baseUrl: string, url: string): string {
 /**
  * Load the catalog snapshot: fetch the pointer, verify the data file's sha256
  * against it, cache both on disk, and serve the cached copy with `stale: true`
- * when the network is unavailable (§10). A schemaVersion higher than this
- * build supports, or a data file that fails the hash or shape check, throws —
+ * only when the transport itself failed — the fetch threw or returned a
+ * non-2xx (§10). A schemaVersion higher than this build supports, a malformed
+ * pointer or data file, or a sha256 mismatch throws even when a cache exists —
  * never silently degraded.
  */
 export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogResult> {
@@ -149,32 +150,51 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
     }
   }
 
-  let pointer: z.infer<typeof pointerSchema> | undefined
-  let dataText: string
+  // Transport failures only (fetch threw, or a non-2xx response) degrade to
+  // the cached snapshot with `stale: true`. Everything that interprets the
+  // fetched bytes — pointer parse, schemaVersion checks, sha256 comparison,
+  // data parse — throws on any irregularity, cache or no cache (§9.2, §10).
+  let pointerText: string
   try {
     const response = await fetchImpl(new URL('index.json', baseUrl).href)
     if (!response.ok) throw new Error(`catalog pointer returned ${response.status}`)
-    pointer = pointerSchema.parse(JSON.parse(await response.text()))
-    if (pointer.schemaVersion > SUPPORTED_SCHEMA_VERSION) throw new Error(
-      `catalog schemaVersion ${pointer.schemaVersion} is newer than this build supports (${SUPPORTED_SCHEMA_VERSION})`,
-    )
-    const dataResponse = await fetchImpl(resolveDataUrl(baseUrl, pointer.plugins.url))
-    if (!dataResponse.ok) throw new Error(`catalog data returned ${dataResponse.status}`)
-    dataText = await dataResponse.text()
-    const actual = createHash('sha256').update(dataText).digest('hex')
-    if (actual !== pointer.plugins.sha256) {
-      throw new Error(`catalog data failed integrity check: expected ${pointer.plugins.sha256}, got ${actual}`)
-    }
+    pointerText = await response.text()
   } catch (error) {
     const cached = readCached()
     if (cached !== null) return { snapshot: cached, stale: true }
     throw error
   }
 
+  const pointer = pointerSchema.parse(JSON.parse(pointerText))
+  if (pointer.schemaVersion > SUPPORTED_SCHEMA_VERSION) {
+    throw new Error(
+      `catalog schemaVersion ${pointer.schemaVersion} is newer than this build supports (${SUPPORTED_SCHEMA_VERSION})`,
+    )
+  }
+
+  let dataText: string
+  try {
+    const dataResponse = await fetchImpl(resolveDataUrl(baseUrl, pointer.plugins.url))
+    if (!dataResponse.ok) throw new Error(`catalog data returned ${dataResponse.status}`)
+    dataText = await dataResponse.text()
+  } catch (error) {
+    const cached = readCached()
+    if (cached !== null) return { snapshot: cached, stale: true }
+    throw error
+  }
+
+  const actual = createHash('sha256').update(dataText).digest('hex')
+  if (actual !== pointer.plugins.sha256) {
+    throw new Error(`catalog data failed integrity check: expected ${pointer.plugins.sha256}, got ${actual}`)
+  }
+
   const data = dataSchema.parse(JSON.parse(dataText))
-  if (data.schemaVersion > SUPPORTED_SCHEMA_VERSION) throw new Error(
-    `catalog schemaVersion ${data.schemaVersion} is newer than this build supports (${SUPPORTED_SCHEMA_VERSION})`,
-  )
+  if (data.schemaVersion > SUPPORTED_SCHEMA_VERSION) {
+    throw new Error(
+      `catalog schemaVersion ${data.schemaVersion} is newer than this build supports (${SUPPORTED_SCHEMA_VERSION})`,
+    )
+  }
+
   const snapshot: CatalogSnapshot = {
     schemaVersion: pointer.schemaVersion,
     builtAt: pointer.builtAt,
