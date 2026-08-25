@@ -42,7 +42,7 @@ export interface StoreGatewayOptions {
   dshBin?: string
 }
 
-/** `store/install` result (§7.3): rejections are typed wire values with an
+/** `store/installStart` result (§7.3): rejections are typed wire values with an
  * author-readable `detail`, not thrown RPC errors. */
 export type StoreInstallResult =
   | { ok: true; installId: string }
@@ -177,7 +177,12 @@ export class StoreGateway extends TypertRemoteService {
    * paths run against this Host's snapshot before anything is spawned; only a
    * passing request reaches the executor.
    */
-  @Remote('install')
+  // The wire method is `installStart`, never `install`: the client api's
+  // RemoteNamespaceService owns a method named `install` (its internal mount
+  // primitive), and mounting a namespace method with that name throws
+  // "conflicts with its namespace service" — the web full-flow e2e exposed
+  // this on the real composition (§7.3 amendment, 2026-08-25).
+  @Remote('installStart')
   async install(args: InstallArgs): Promise<StoreInstallResult> {
     if (this.lastSnapshot === null) {
       const { catalogUrl, cacheDir } = this.rowConfig()

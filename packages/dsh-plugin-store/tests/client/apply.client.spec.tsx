@@ -18,9 +18,12 @@ const { SlotRegistry } = loadModule<typeof import('@deepseek-ai/dsh-client-runti
 
 afterEach(cleanup)
 
-/** One stubbed store method: return the wire envelope of your choice. */
+/** One stubbed store method: return the wire envelope of your choice. The
+ * stub speaks the WIRE name `installStart` — index.ts unwraps
+ * `ctx.remote.store.installStart` (§7.3 amendment: the wire method is
+ * installStart, never install, which the namespace service owns). */
 interface StoreStub {
-  install?: (args: InstallArgs) => Promise<unknown>
+  installStart?: (args: InstallArgs) => Promise<unknown>
 }
 
 /** Boot apply() against a stubbed remote and return the store tab entry's
@@ -42,13 +45,17 @@ async function boot(store: StoreStub = {}) {
   const disposer = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
   ctx.provide('remote', {
     $mount: vi.fn(async (contribution: unknown) => { mounted.push(contribution); return disposer }),
-    store: {
-      catalog: vi.fn(),
-      install: store.install ?? vi.fn(),
-      installStatus: vi.fn(),
-      setEnabled: vi.fn(),
-      outdated: vi.fn(),
-    },
+  })
+  // The tab's injected face reads the namespace through the reflect store
+  // (`ctx.get`), the same channel the real mount registers it on — index.ts
+  // cannot use `ctx.remote.store`, which the inject gate refuses (see the
+  // deadlock comment there). The stub speaks the WIRE names.
+  ctx.provide('remote.store', {
+    catalog: vi.fn(),
+    installStart: store.installStart ?? vi.fn(),
+    installStatus: vi.fn(),
+    setEnabled: vi.fn(),
+    outdated: vi.fn(),
   })
   await apply(ctx)
   const entry = ctx.slots.entries('settings.plugins.tab').find(e => e.options.id === 'store')
@@ -81,7 +88,7 @@ describe('store client apply', () => {
       detail: 'dsh-plugin-store: dsh-blocked is denied: matched the denylist',
     }
     const { injected } = await boot({
-      install: async () => ({ ok: true as const, value: rejection }),
+      installStart: async () => ({ ok: true as const, value: rejection }),
     })
     const args: InstallArgs = { name: 'dsh-blocked', version: '1.0.0', acknowledged: true }
     // The host's business rejection is a method RESULT, not a wire error: the
@@ -92,7 +99,7 @@ describe('store client apply', () => {
 
   it('maps a wire failure through the real unwrap to the failed view', async () => {
     const { injected } = await boot({
-      install: async () => ({ ok: false as const, error: { code: 'WIRE', message: 'boom' } }),
+      installStart: async () => ({ ok: false as const, error: { code: 'WIRE', message: 'boom' } }),
     })
     const args: InstallArgs = { name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true }
     // An envelope-level failure is a TRANSPORT failure: the real unwrap throws

@@ -104,7 +104,7 @@ Neither blocked capability stops v0: the store uses its own `store/*` Remote ins
 ### 5.3 Three hard boundaries
 
 1. **The Client half holds no privilege.** Everything it can do is the five `store/*` methods in §7.3. If the UI is compromised, the attack surface is those five methods' arguments.
-2. **The Host accepts a name and a version, never an arbitrary spec.** `store/install` takes `{ name, version }`, not a pnpm command line. The Host validates against its own cached catalog snapshot and constructs the spec itself.
+2. **The Host accepts a name and a version, never an arbitrary spec.** `store/installStart` takes `{ name, version }`, not a pnpm command line. The Host validates against its own cached catalog snapshot and constructs the spec itself.
 3. **The Host's catalog snapshot is the source of truth.** The browser sends a name; the Host decides using its own snapshot and trusts no metadata sent from the browser.
 
 A direct consequence of boundary 2: **the store UI will never have an "install from GitHub URL" button.** That capability stays in `dsh plugin add`, because it requires the user to explicitly enable `allowBuilds` and explicitly pin a commit SHA — two decisions that must not collapse into one click.
@@ -246,7 +246,7 @@ harvest -> fetch manifest -> gate -> tier -> emit -> commit snapshot
 
 ```
 Browser                     Host (StoreGateway)                  Subprocess
-  | store/install {name, version, acknowledged?}
+  | store/installStart {name, version, acknowledged?}
   |----------------------------->|
   |                              | 1. check the Host's cached catalog snapshot
   |                              |    absent           -> not-in-catalog
@@ -267,7 +267,7 @@ Implementation decisions:
 
 - **Pin the version.** The spec is `name@version`, not `name` and never `^version`. The user clicked a version in the snapshot; that is what must be installed.
 - **Spawn rather than reimplement.** dsh's own `stdio: 'inherit'` inherits the pipe we provide, so streaming logs come for free with no upstream change. The orchestration — init, pnpm, reconcile — lives in `runPlugin` in `apps/cli/src/plugin.ts` and is **exported from no package**; `dsh-app-boot` exports only the primitives. Copying the reconcile loop would drift, and its "by installed state, not by dependency diff" semantics are subtle enough not to duplicate.
-- **Poll for progress rather than push.** `API_REMOTE_FORWARDED_EVENTS` is a hardcoded in-repository array, so an out-of-tree plugin cannot push events to the browser. `store/install` returns an `installId` immediately and the client polls `store/installStatus` once per second. A side benefit is that it survives a page reload.
+- **Poll for progress rather than push.** `API_REMOTE_FORWARDED_EVENTS` is a hardcoded in-repository array, so an out-of-tree plugin cannot push events to the browser. `store/installStart` returns an `installId` immediately and the client polls `store/installStatus` once per second. A side benefit is that it survives a page reload.
 - **Serialize per profile.** pnpm locks itself, but its concurrent-access errors are unreadable to a user. One mutex per profile on the Host side.
 - **Never roll back automatically.** After a pnpm failure `dsh.profile.bundles` is still consistent, because reconcile runs only on exit 0, but `dependencies` may already have been rewritten. The response is to surface stderr verbatim and suggest `dsh plugin --profile <p> install`. **Automatically rolling back a package manager's intermediate state breaks environments more often than leaving it alone.**
 - **The store never writes `allowBuilds`.** pnpm 10 and later block build scripts by default, which is a security property obtained for free. A plugin that needs a build script simply cannot be installed from the store; the UI says so plainly and prints the CLI command.
@@ -277,10 +277,14 @@ Implementation decisions:
 | Method | Arguments | Returns |
 |---|---|---|
 | `store/catalog` | `{ refresh?: boolean }` | `{ schemaVersion, builtAt, stale, plugins[] }` |
-| `store/install` | `{ name, version, acknowledged? }` | `{ installId }` |
+| `store/installStart` | `{ name, version, acknowledged? }` | `{ installId }` |
 | `store/installStatus` | `{ installId }` | `{ state, log[], needsRestart? }` |
 | `store/setEnabled` | `{ name, enabled }` | `{ ok }` |
 | `store/outdated` | none | `{ name, installed, latest }[]` |
+
+**Amendment (2026-08-25): the install method is `store/installStart`, not `store/install`.** The web full-flow e2e against the real composition exposed that the client api's `RemoteNamespaceService` owns a method named `install` (its internal mount primitive), so a Remote namespace cannot expose one: mounting `store/install` throws "method \"store/install\" conflicts with its namespace service". The wire method is renamed to `store/installStart` (pairing with `store/installStatus`); the client-visible injected face keeps the name `install`, and the host-side code method is unchanged — only the wire name differs.
+
+**Amendment (2026-08-25): a client package that mounts its own Remote must consume it through the reflect store, not the inject face.** The same e2e exposed that `ctx.remote.<ns>` refuses a namespace to a fiber whose inject face does not name it ("cannot get property remote.store without inject"), while naming it in the face deadlocks the boot's activation gate: the gate waits for `remote.store` to be provided, and only the package's own apply — which the gate is holding back — can mount it ("pending (waiting for service: remote.store)"). The client half therefore reads the mounted namespace via `ctx.get('remote.store')`, the reflect store's documented inject-free read, after `$mount` settles. Third-party client packages that self-mount should follow the same pattern.
 
 ## 8. When changes take effect
 
@@ -349,7 +353,7 @@ Wording such as "this plugin comes from the community, please install with care"
 dsh-plugin-store sits outside the dsh repository and is not bound by its 100% coverage, invariant, or doc-sync gates. Four of its practices are adopted deliberately:
 
 1. **`build.ts` must be a pure function** — npm response fixtures in, JSON out. One case per gate rule, plus a **determinism test**: the same input twice produces byte-identical output. That test directly protects the "`builtAt` stays out of the hash" decision in §6.2.
-2. **Rejections must be tested through the executor** — one test each for `not-in-catalog`, `denied`, `version-mismatch`, and `needs-acknowledgement`, calling `store/install` directly rather than asserting that the UI disabled a button. Per dsh's own rule: "facades, wrappers, and listener order are not enforcement when direct or alternate callers can bypass them; test denial through the executor."
+2. **Rejections must be tested through the executor** — one test each for `not-in-catalog`, `denied`, `version-mismatch`, and `needs-acknowledgement`, calling `store/installStart` directly rather than asserting that the UI disabled a button. Per dsh's own rule: "facades, wrappers, and listener order are not enforcement when direct or alternate callers can bypass them; test denial through the executor."
 3. **One real installation test** — a temporary `DSH_HOME` and a fixture plugin package (a `file:` spec suffices; no verdaccio needed), asserting afterwards that the profile `package.json`'s `dsh.profile.bundles` gained an entry.
 4. **An XSS regression** — a catalog fixture whose `summary` is `<img src=x onerror=...>`, asserting it renders as text.
 
@@ -358,7 +362,7 @@ dsh-plugin-store sits outside the dsh repository and is not bound by its 100% co
 | Phase | Content | Exit criteria |
 |---|---|---|
 | P0 | R: schema, `build.ts`, CI, first published artifact; bilingual README and schema documentation | The catalog is fetchable; the determinism test passes |
-| P1 | S Host half: `store/catalog`, `store/install`, `store/installStatus` | The real installation test passes |
+| P1 | S Host half: `store/catalog`, `store/installStart`, `store/installStatus` | The real installation test passes |
 | P2 | S Client half: browse, detail, install, acknowledgement | The XSS regression passes; the full flow works in a web profile |
 | P3 | Enable/disable (hot) and `store/outdated` | Toggling takes effect without a restart |
 
