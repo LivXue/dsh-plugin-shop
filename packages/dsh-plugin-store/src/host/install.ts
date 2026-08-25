@@ -26,7 +26,10 @@ export function validateInstall(snapshot: CatalogSnapshot, args: InstallArgs): V
     return { ok: false, code: 'version-mismatch', detail: `dsh-plugin-store: ${args.name}@${args.version} is not the cataloged version (${entry.version})` }
   }
   if (entry.tier !== 'verified' && !args.acknowledged) {
-    return { ok: false, code: 'needs-acknowledgement', detail: `dsh-plugin-store: ${args.name} is ${entry.tier}-tier and has not been reviewed; acknowledgement is required` }
+    const detail = entry.tier === 'verified-stale'
+      ? `dsh-plugin-store: ${args.name} is verified-stale: a newer version than the review is current and has not been reviewed; acknowledgement is required`
+      : `dsh-plugin-store: ${args.name} is ${entry.tier}-tier and has not been reviewed; acknowledgement is required`
+    return { ok: false, code: 'needs-acknowledgement', detail }
   }
   return { ok: true }
 }

@@ -55,9 +55,17 @@ export class StoreGateway extends TypertRemoteService {
   private readonly profile: string
   /** The install gate runs against the last loaded snapshot, never a fresh
    * fetch per request (§7.2: the Host's cached snapshot is the truth). */
+  /** Finished install records retained, so a poll sees the true terminal
+   * state (§8: done / needsRestart / failure detail). Oldest evicted on add. */
+  private static readonly MAX_FINISHED_INSTALLS = 32
+
+  /** The install gate runs against the last loaded snapshot, never a fresh
+   * fetch per request (§7.2: the Host's cached snapshot is the truth). */
   private lastSnapshot: CatalogSnapshot | null = null
-  /** In-flight installs; an installStatus poll finds one here or reports not found. */
+  /** Install records, running and finished; a poll finds one here or reports not found. */
   private readonly installs = new Map<string, ReturnType<typeof startInstall>>()
+  /** Every install id in insertion order, oldest first; finished-record eviction walks this from the front. */
+  private readonly installOrder: string[] = []
 
   constructor(ctx: Context, options: StoreGatewayOptions = {}) {
     super(ctx, 'store')
@@ -119,8 +127,22 @@ export class StoreGateway extends TypertRemoteService {
     if (!verdict.ok) return { ok: false, code: verdict.code, detail: verdict.detail }
     const running = startInstall({ profile: this.profile, spec: `${args.name}@${args.version}`, dshBin: this.options.dshBin })
     this.installs.set(running.installId, running)
-    void running.finished.then(() => this.installs.delete(running.installId))
+    this.installOrder.push(running.installId)
+    this.evictFinishedInstalls()
     return { ok: true, installId: running.installId }
+  }
+
+  /** Bound retained finished records at MAX_FINISHED_INSTALLS, evicting the
+   * oldest finished ones (insertion order, oldest first). Running records
+   * are never evicted; an id absent from the map reports `found: false`. */
+  private evictFinishedInstalls(): void {
+    const finishedIds: string[] = []
+    for (const id of this.installOrder) {
+      const record = this.installs.get(id)
+      if (record !== undefined && record.status().state !== 'running') finishedIds.push(id)
+    }
+    const excess = finishedIds.length - StoreGateway.MAX_FINISHED_INSTALLS
+    for (const id of finishedIds.slice(0, excess)) this.installs.delete(id)
   }
 
   /** Poll one install's progress (§7.2); unknown ids report `found: false`. */

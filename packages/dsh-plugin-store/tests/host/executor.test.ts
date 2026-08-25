@@ -78,5 +78,51 @@ describe('startInstall', () => {
     // The two `web` installs never interleave: each start is followed by its own end.
     const web = events.filter(line => line.includes('web'))
     expect(web).toEqual(['start web', 'end web', 'start web', 'end web'])
+    // The mutex is per profile, not global: `tui` installs in parallel with
+    // `web`, so its start lands while web's first install is still sleeping —
+    // before the first `end web`. A global mutex would serialize it behind
+    // web's second install and this assertion would fail.
+    expect(events.indexOf('start tui')).toBeLessThan(events.indexOf('end web'))
+  })
+
+  it('caps the log at 200 lines, dropping the oldest', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-cap-'))
+    const bin = join(dir, 'dsh')
+    writeFileSync(bin, [
+      '#!/bin/sh',
+      'i=1',
+      'while [ $i -le 250 ]; do',
+      '  echo "line $i"',
+      '  i=$((i+1))',
+      'done',
+      'exit 0',
+      '',
+    ].join('\n'))
+    chmodSync(bin, 0o755)
+    const install = startInstall({ profile: 'web', spec: 'a@1.0.0', dshBin: bin })
+    const status = await install.finished
+    // 250 newline-terminated lines: the cap keeps exactly the newest 200,
+    // regardless of chunk boundaries, and the last is the 250th line.
+    expect(status.log).toHaveLength(200)
+    expect(status.log[199]).toBe('line 250')
+  })
+
+  it('surfaces stderr verbatim in the log with the recovery hint on failure', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-stderr-'))
+    const bin = join(dir, 'dsh')
+    writeFileSync(bin, [
+      '#!/bin/sh',
+      'echo "boom one" >&2',
+      'echo "boom two" >&2',
+      'exit 1',
+      '',
+    ].join('\n'))
+    chmodSync(bin, 0o755)
+    const install = startInstall({ profile: 'web', spec: 'a@1.0.0', dshBin: bin })
+    const status = await install.finished
+    expect(status.state).toBe('failed')
+    expect(status.log).toContain('boom one')
+    expect(status.log).toContain('boom two')
+    expect(status.detail).toContain('dsh plugin --profile web install')
   })
 })

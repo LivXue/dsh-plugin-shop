@@ -156,15 +156,65 @@ describe('StoreGateway.install — the four rejection paths, through the executo
     expect(status.found).toBe(true)
     // The fixture dsh exits 0 immediately; the status may already be done.
     expect(['running', 'done']).toContain(status.state)
-    // Poll the fixture's calls log (not installStatus: a finished install is
-    // dropped from the in-flight registry), then prove the exact argv was
-    // recorded — the profile and the pinned spec pass through to the
-    // subprocess.
+    // Poll installStatus until the fixture's subprocess is done (finished
+    // records are retained), then prove the exact argv was recorded — the
+    // profile and the pinned spec pass through to the subprocess.
     const deadline = Date.now() + 5000
-    while (!existsSync(callsLog) && Date.now() < deadline) {
+    let terminal = status
+    while (terminal.state === 'running' && Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 10))
+      terminal = gateway.installStatus({ installId: result.installId })
     }
+    expect(terminal.state).toBe('done')
     expect(readFileSync(callsLog, 'utf8')).toContain('plugin --profile web add dsh-hello-plugin@1.2.0')
+  })
+
+  it('returns the true terminal state for a finished install', async () => {
+    const { gateway } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [] })
+    const result = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // The fixture exits 0 immediately; poll installStatus until terminal.
+    // Polling the gateway's own remote method is the honest seam — the map
+    // is private, and this exercises the exact contract a client sees: a
+    // finished install keeps reporting its true state, found: true.
+    const deadline = Date.now() + 5000
+    let status = gateway.installStatus({ installId: result.installId })
+    while (status.state === 'running' && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+      status = gateway.installStatus({ installId: result.installId })
+    }
+    expect(status.found).toBe(true)
+    expect(status.state).toBe('done')
+    expect(status.needsRestart).toBe(true)
+  })
+
+  it('retains at most 32 finished installs, evicting the oldest on the next add', async () => {
+    const { gateway } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [] })
+    const ids: string[] = []
+    for (let i = 0; i < 33; i += 1) {
+      const result = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
+      if (!result.ok) throw new Error('fixture install was rejected')
+      ids.push(result.installId)
+    }
+    const firstId = ids[0]
+    const lastId = ids[ids.length - 1]
+    if (firstId === undefined || lastId === undefined) throw new Error('no install ids collected')
+    // The per-profile mutex serializes the fixtures; when the last one is
+    // terminal, all 33 are finished.
+    const deadline = Date.now() + 15000
+    let last = gateway.installStatus({ installId: lastId })
+    while (last.state === 'running' && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+      last = gateway.installStatus({ installId: lastId })
+    }
+    expect(last.state).not.toBe('running')
+    // Adding one more install with 33 finished records evicts the oldest.
+    const extra = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
+    expect(extra.ok).toBe(true)
+    if (!extra.ok) return
+    expect(gateway.installStatus({ installId: firstId }).found).toBe(false)
+    expect(gateway.installStatus({ installId: lastId }).found).toBe(true)
   })
 
   it('reports an unknown installId as not found', () => {

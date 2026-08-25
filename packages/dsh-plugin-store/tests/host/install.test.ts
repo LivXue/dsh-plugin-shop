@@ -37,11 +37,17 @@ describe('validateInstall', () => {
   it('requires acknowledgement for a community entry', () => {
     const result = validateInstall(snapshot(), { name: 'dsh-hello-plugin', version: '1.2.0' })
     expect(result).toMatchObject({ ok: false, code: 'needs-acknowledgement' })
+    if (!result.ok) {
+      expect(result.detail).toBe('dsh-plugin-store: dsh-hello-plugin is community-tier and has not been reviewed; acknowledgement is required')
+    }
   })
 
   it('requires acknowledgement for a verified-stale entry', () => {
     const result = validateInstall(snapshot({ tier: 'verified-stale' }), { name: 'dsh-hello-plugin', version: '1.2.0' })
     expect(result).toMatchObject({ ok: false, code: 'needs-acknowledgement' })
+    if (!result.ok) {
+      expect(result.detail).toBe('dsh-plugin-store: dsh-hello-plugin is verified-stale: a newer version than the review is current and has not been reviewed; acknowledgement is required')
+    }
   })
 
   it('passes an acknowledged community install', () => {

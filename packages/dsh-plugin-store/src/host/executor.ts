@@ -58,17 +58,17 @@ export function startInstall(options: {
     ...(detail !== undefined ? { detail } : {}),
   })
 
-  // Chunks are split into lines, and a trailing partial line (a chunk that
-  // does not end in \n) is dropped; acceptable at v0, the log is
-  // informational and the next chunk usually completes the line.
+  // Chunks are split into lines; a trailing partial line (a chunk that does
+  // not end in \n) is appended as-is — the next chunk usually completes it
+  // and the log renders plain text, so a fragment is acceptable at v0.
   const append = (line: string): void => {
     log.push(line)
-    logBytes += line.length
+    logBytes += Buffer.byteLength(line)
     // Drop oldest until both caps hold; the newest line is never dropped,
     // even when a single pathological line alone exceeds the byte cap.
     while ((log.length > MAX_LOG_LINES || logBytes > MAX_LOG_BYTES) && log.length > 1) {
       const oldest = log.shift()
-      if (oldest !== undefined) logBytes -= oldest.length
+      if (oldest !== undefined) logBytes -= Buffer.byteLength(oldest)
     }
     onStatus?.(status())
   }
