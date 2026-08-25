@@ -228,7 +228,17 @@ export class StoreGateway extends TypertRemoteService {
     for (const entry of this.lastSnapshot.entries) {
       const installed = dependencies[entry.name]
       if (installed === undefined) continue
-      const floor = installed === entry.version ? installed : minVersion(installed)?.version ?? null
+      let floor: string | null
+      if (installed === entry.version) {
+        floor = installed
+      } else {
+        try {
+          floor = minVersion(installed)?.version ?? null
+        } catch {
+          // A pnpm-written non-semver spec like `workspace:*` is not reportable and must not kill the RPC.
+          floor = null
+        }
+      }
       if (floor !== null && lt(floor, entry.version)) {
         outdated.push({ name: entry.name, installed, latest: entry.version })
       }

@@ -319,4 +319,27 @@ describe('StoreGateway.outdated', () => {
     await gateway.catalog({})
     expect(await gateway.outdated()).toEqual([])
   })
+
+  it('skips a non-semver installed spec instead of throwing', async () => {
+    const gateway = gatewayWithManifest({ 'dsh-one': '^1.0.0', 'dsh-two': 'workspace:*' })
+    await gateway.catalog({})
+    const outdated = await gateway.outdated()
+    expect(outdated).toEqual([{ name: 'dsh-one', installed: '^1.0.0', latest: '2.0.0' }])
+  })
+
+  it('lazily loads the catalog when outdated() is called without a prior catalog()', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-outdated-'))
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: { 'dsh-one': '^1.0.0' } }))
+    let loadCalls = 0
+    const gateway = new StoreGateway(stubCtx(), {
+      catalogUrl: 'https://store.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
+      loadCatalog: async () => {
+        loadCalls += 1
+        return { snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [] }, stale: false } as CatalogResult
+      },
+    })
+    const outdated = await gateway.outdated()
+    expect(loadCalls).toBe(1)
+    expect(outdated).toEqual([{ name: 'dsh-one', installed: '^1.0.0', latest: '2.0.0' }])
+  })
 })
