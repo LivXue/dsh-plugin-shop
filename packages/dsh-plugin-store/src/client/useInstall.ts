@@ -21,12 +21,22 @@ export function useInstall(
 
   const start = useCallback(async (args: InstallArgs) => {
     setView({ kind: 'idle' })
-    const result = await install(args)
-    if (!result.ok) {
-      setView({ kind: 'rejected', code: result.code, detail: result.detail })
-      return
+    try {
+      const result = await install(args)
+      if (!result.ok) {
+        setView({ kind: 'rejected', code: result.code, detail: result.detail })
+        return
+      }
+      setView({ kind: 'running', installId: result.installId, log: [] })
+    } catch (error) {
+      // A thrown install is a TRANSPORT failure (the wire envelope rejected —
+      // index.ts's unwrap throws the prefixed wire code and message), not a
+      // business rejection: the `rejected` state stays reserved for the host's
+      // StoreInstallResult union (§7.2). The thrown message maps verbatim into
+      // the failed view; nothing else can reach this catch, because the
+      // business union is a resolved value, never a throw.
+      setView({ kind: 'failed', detail: error instanceof Error ? error.message : String(error), log: [] })
     }
-    setView({ kind: 'running', installId: result.installId, log: [] })
   }, [install])
 
   useEffect(() => {
