@@ -36,6 +36,12 @@ export const zh = {
   notInCatalogCode: '不在目录中',
   versionMismatchCode: '版本不匹配',
   needsAcknowledgementCode: '需要确认',
+  installedSection: '已安装',
+  installedVersion: '已安装 v{version}',
+  latestVersion: '最新 v{version}',
+  update: '更新',
+  enabledSwitch: '启用',
+  hotApplyNote: '无需重启，立即生效',
 } satisfies Record<string, string>
 
 /** Store locale key union. */
@@ -75,4 +81,10 @@ export const en = {
   notInCatalogCode: 'Not in the catalog',
   versionMismatchCode: 'Version mismatch',
   needsAcknowledgementCode: 'Acknowledgement required',
+  installedSection: 'Installed',
+  installedVersion: 'installed v{version}',
+  latestVersion: 'latest v{version}',
+  update: 'Update',
+  enabledSwitch: 'Enable',
+  hotApplyNote: 'takes effect without a restart',
 } satisfies Record<StoreLocaleKey, string>

@@ -46,6 +46,8 @@ async function boot(store: StoreStub = {}) {
       catalog: vi.fn(),
       install: store.install ?? vi.fn(),
       installStatus: vi.fn(),
+      setEnabled: vi.fn(),
+      outdated: vi.fn(),
     },
   })
   await apply(ctx)

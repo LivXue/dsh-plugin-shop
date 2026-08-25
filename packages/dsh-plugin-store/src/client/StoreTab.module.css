@@ -363,3 +363,85 @@
 .installButton:hover {
   filter: brightness(1.08);
 }
+
+.outdatedSection {
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  padding-top: 12px;
+  margin-top: 4px;
+}
+
+.outdatedList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.outdatedRow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.outdatedInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.outdatedVersions {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.outdatedActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.switch {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-3);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition: background 0.15s var(--ds-ease-in-out);
+}
+
+.switch[disabled] {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.switchOn {
+  background: var(--dsw-alias-state-success);
+  border-color: var(--dsw-alias-state-success);
+}
+
+.switchKnob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--dsw-alias-bg-layer-1);
+  transition: transform 0.15s var(--ds-ease-in-out);
+}
+
+.switchOn .switchKnob {
+  transform: translateX(16px);
+}

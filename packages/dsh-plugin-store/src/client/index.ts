@@ -48,6 +48,8 @@ export async function apply(ctx: ClientContext): Promise<void> {
     catalog: async args => unwrap(await ctx.remote.store.catalog(args)),
     install: async args => unwrap(await ctx.remote.store.install(args)),
     installStatus: async args => unwrap(await ctx.remote.store.installStatus(args)),
+    setEnabled: async args => unwrap(await ctx.remote.store.setEnabled(args)),
+    outdated: async () => unwrap(await ctx.remote.store.outdated()),
   })
 
   ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register({

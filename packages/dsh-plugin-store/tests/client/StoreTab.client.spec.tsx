@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ACKNOWLEDGEMENT_EN, ACKNOWLEDGEMENT_ZH, rejectionCodeKey } from '../../src/client/present.ts'
 import { en, zh, type StoreLocaleKey } from '../../src/client/locales.ts'
 import { StoreTab, type StoreTabInjected, type StoreTabProps } from '../../src/client/StoreTab.tsx'
-import type { StoreCatalogResult } from '../../src/host/index.ts'
+import type { StoreCatalogResult, StoreOutdatedEntry } from '../../src/host/index.ts'
 
 afterEach(cleanup)
 
@@ -24,12 +24,14 @@ function snapshot(overrides: Partial<StoreCatalogResult['plugins'][number]> = {}
   }
 }
 
-function bench(catalogResult: StoreCatalogResult) {
+function bench(catalogResult: StoreCatalogResult, outdatedEntries: StoreOutdatedEntry[] = []) {
   const catalog = vi.fn<StoreTabInjected['catalog']>().mockResolvedValue(catalogResult)
   const install = vi.fn<StoreTabInjected['install']>().mockResolvedValue({ ok: true, installId: 'i1' })
   const installStatus = vi.fn<StoreTabInjected['installStatus']>().mockResolvedValue({ found: true, state: 'done', log: [], needsRestart: true })
-  const injected: StoreTabInjected = { catalog, install, installStatus }
-  return { catalog, install, installStatus, injected }
+  const setEnabled = vi.fn<StoreTabInjected['setEnabled']>().mockResolvedValue({ ok: true })
+  const outdated = vi.fn<StoreTabInjected['outdated']>().mockResolvedValue(outdatedEntries)
+  const injected: StoreTabInjected = { catalog, install, installStatus, setEnabled, outdated }
+  return { catalog, install, installStatus, setEnabled, outdated, injected }
 }
 
 function renderTab(injected: StoreTabInjected) {
@@ -204,5 +206,43 @@ describe('StoreTab', () => {
   it('pins the acknowledgement wording to §9.3 in both dictionaries', () => {
     expect(en.acknowledgementBody).toBe(ACKNOWLEDGEMENT_EN)
     expect(zh.acknowledgementBody).toBe(ACKNOWLEDGEMENT_ZH)
+  })
+
+  it('lists outdated installs with their installed and latest versions', async () => {
+    const { injected, outdated } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0' }])
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText(en.installedSection)).toBeTruthy())
+    expect(screen.getByText('installed v1.0.0')).toBeTruthy()
+    expect(screen.getByText('latest v1.2.0')).toBeTruthy()
+    expect(outdated).toHaveBeenCalled()
+  })
+
+  it('toggles an outdated install with setEnabled and shows the hot-apply note', async () => {
+    const { injected, setEnabled } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0' }])
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    const toggle = screen.getByRole('switch')
+    fireEvent.click(toggle)
+    await waitFor(() => expect(setEnabled).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', enabled: false }))
+    expect(screen.getByText(en.hotApplyNote)).toBeTruthy()
+  })
+
+  it('updates an outdated install to the latest version directly when verified', async () => {
+    const { injected, install } = bench(snapshot({ tier: 'verified' }), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0' }])
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    fireEvent.click(screen.getByText(en.update))
+    await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: undefined }))
+  })
+
+  it('gates a community-tier update behind the acknowledgement', async () => {
+    const { injected, install } = bench(snapshot({ tier: 'community' }), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0' }])
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    fireEvent.click(screen.getByText(en.update))
+    await waitFor(() => expect(screen.getByText(en.acknowledgementBody)).toBeTruthy())
+    expect(install).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByText(en.confirm))
+    await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true }))
   })
 })
