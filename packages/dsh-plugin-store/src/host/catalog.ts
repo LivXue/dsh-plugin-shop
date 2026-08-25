@@ -88,12 +88,16 @@ export interface LoadCatalogOptions {
 /** Resolve the pointer's data URL against the catalog base. An absolute URL —
  * any scheme, or a protocol-relative `//host/...` — would hand the pointer a
  * fetch primitive to arbitrary hosts, so it is refused loudly before any
- * fetch (§9.2). */
+ * fetch (§9.2). The guard is the resolved origin, not the raw string: WHATWG
+ * normalization strips leading whitespace and accepts backslash spellings
+ * before the string could be inspected, so only comparing the resolved URL's
+ * origin to the base's closes every spelling class. */
 function resolveDataUrl(baseUrl: string, url: string): string {
-  if (/^[a-z][a-z0-9+.-]*:/i.test(url) || url.startsWith('//')) {
+  const resolved = new URL(url, baseUrl)
+  if (resolved.origin !== new URL(baseUrl).origin) {
     throw new Error('catalog data url must be relative to the catalog base')
   }
-  return new URL(url, baseUrl).href
+  return resolved.href
 }
 
 /**

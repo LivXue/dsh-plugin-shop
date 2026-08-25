@@ -239,6 +239,26 @@ describe('loadCatalog', () => {
     expect(dataCalls).toBe(0)
   })
 
+  it('refuses a data url whose leading whitespace hides an absolute fetch', async () => {
+    // WHATWG URL normalization strips the leading space before the raw string
+    // could be inspected; the origin comparison must catch it.
+    const data = dataJson([entry])
+    const sha = createHash('sha256').update(data).digest('hex')
+    const pointer = JSON.stringify({
+      schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', count: 0,
+      plugins: { url: ' http://169.254.169.254/latest', sha256: sha },
+    })
+    const fetched: string[] = []
+    const fetchImpl = (async (input: string | URL) => {
+      fetched.push(String(input))
+      return new Response(String(input).endsWith('/index.json') ? pointer : data, { status: 200 })
+    }) as unknown as typeof fetch
+
+    await expect(loadCatalog({ baseUrl: 'https://store.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() }))
+      .rejects.toThrow(/must be relative/)
+    expect(fetched.filter(h => h.includes('169.254.169.254'))).toHaveLength(0)
+  })
+
   it('resolves a relative data url against the catalog base', async () => {
     const data = dataJson([entry])
     const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
