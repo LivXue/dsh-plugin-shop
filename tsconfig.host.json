@@ -11,6 +11,10 @@
   },
   "references": [
     { "path": "./packages/dsh-typert-protocol" },
-    { "path": "./packages/dsh-plugin-store" }
+    // The package's own tsconfig.json includes src/client; the typert host
+    // analysis must not see the client half (its npm-declared augmentations
+    // are unregistered — "declaration outside this face"), so the host face
+    // registers the package through its host-only config.
+    { "path": "./packages/dsh-plugin-store/tsconfig.host.json" }
   ]
 }
