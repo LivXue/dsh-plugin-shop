@@ -10,9 +10,34 @@
  * checkout (`/tmp/dsh/packages/client/tsdown.client.ts`).
  */
 import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
 
 const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { name: string }
 const id = pkg.name
+
+/** Deterministic content-derived class-name hash (FNV-1a 32-bit, hex): no
+ * clock, no entropy — the same css maps to the same names on every build. */
+function hashOf(text: string): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i)
+    h = Math.imul(h, 0x01000193)
+  }
+  return (h >>> 0).toString(16)
+}
+
+/** CSS modules for the browser half, resolved the way the dsh pipeline does
+ * it (`/tmp/dsh/packages/client/tsdown.client.ts`): every local class name is
+ * mapped to `[hash]_[local]`, the same names replace the selectors in the
+ * injected stylesheet, and the style tag lands at factory execution — scoped
+ * so a collision with another plugin's classes cannot leak styles. The dsh
+ * pipeline transforms with lightningcss; this rewrite covers the selector
+ * subset the store tab emits (`.local` class selectors only — no class names
+ * inside string/url() values, which this package's css never does). */
+const CSS_MODULE = '\0dsh-plugin-store-css:'
+// Virtual ids must not end in `.css`: tsdown's built-in css-guard matches the
+// extension and demands @tsdown/css before this plugin's load hook can run.
+const cssPaths = new Map<string, string>()
 
 /** Module-table rows the web shell seeds or parser-preloads (never bundled). */
 const BASELINE = new Set([
@@ -60,7 +85,52 @@ export default {
     'import.meta.env.MODE': JSON.stringify(process.env.NODE_ENV ?? 'production'),
     'import.meta.env': JSON.stringify({ MODE: process.env.NODE_ENV ?? 'production' }),
   },
-  plugins: [{
+  plugins: [
+    {
+      // css module imports become a virtual module carrying the hashed class
+      // map plus the stylesheet, injected once per document under a
+      // content-derived style tag id (mirrors the dsh pipeline's style-tag
+      // injection; the tag id doubles as the dedupe key).
+      name: 'dsh-plugin-store-css-modules',
+      resolveId(source: string, importer: string | undefined) {
+        if (!source.endsWith('.module.css') || importer === undefined) return null
+        const filename = resolve(dirname(importer), source)
+        const virtualId = CSS_MODULE + hashOf(filename)
+        cssPaths.set(virtualId, filename)
+        return virtualId
+      },
+      load(id: string) {
+        if (!id.startsWith(CSS_MODULE)) return null
+        const filename = cssPaths.get(id)
+        if (filename === undefined) return null
+        const css = readFileSync(filename, 'utf8')
+        const locals = new Set<string>()
+        for (const match of css.matchAll(/\.([a-zA-Z_][\w-]*)/g)) {
+          const name = match[1]
+          if (name !== undefined) locals.add(name)
+        }
+        const names = new Map<string, string>()
+        for (const local of locals) {
+          names.set(local, `${hashOf(`${filename}:${local}`).slice(0, 6)}_${local}`)
+        }
+        const rewritten = css.replace(/\.([a-zA-Z_][\w-]*)/g, (match, local: string) => {
+          const mapped = names.get(local)
+          return mapped === undefined ? match : `.${mapped}`
+        })
+        const tagKey = hashOf(filename).slice(0, 8)
+        return [
+          `const css = ${JSON.stringify(rewritten)};`,
+          `if (typeof document !== 'undefined' && !document.querySelector('style[data-plugin-css="${tagKey}"]')) {`,
+          `  const tag = document.createElement('style');`,
+          `  tag.dataset.pluginCss = ${JSON.stringify(tagKey)};`,
+          `  tag.textContent = css;`,
+          `  document.head.appendChild(tag);`,
+          `}`,
+          `export default ${JSON.stringify(Object.fromEntries(names))};`,
+        ].join('\n')
+      },
+    },
+    {
     // Bundle purity gate (build-time mirror of the module-edge rules): the
     // baseline stays external, inline-safe wire layers inline, and every other
     // @deepseek-ai value import is a build error — a cross-plugin value import

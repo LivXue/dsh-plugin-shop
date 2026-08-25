@@ -1,0 +1,365 @@
+/* Store tab styles, in the settings surface's token language. Class names
+ * are mapped to content-derived names at bundle time (tsdown.client.config.ts)
+ * and stubbed in tests; only the keys are relied on. */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.stateLine {
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+}
+
+.actionButton {
+  align-self: flex-start;
+  padding: 4px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.actionButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.searchInput {
+  width: min(280px, 100%);
+  padding: 6px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+}
+
+.staleBlock {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.staleBadge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-3);
+  border: 1px solid var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+}
+
+.catalogHeading {
+  margin: 4px 0 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.emptyLine {
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+}
+
+.cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.card {
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: var(--dsw-shadow-lv1);
+  overflow: hidden;
+}
+
+.entryHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.entryHeader:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--ds-font-family-code);
+  overflow-wrap: anywhere;
+}
+
+.badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.tierBadge,
+.unclaimedBadge {
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.tierBadge {
+  background: var(--dsw-alias-bg-layer-3);
+  border: 1px solid var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-primary);
+}
+
+.unclaimedBadge {
+  background: var(--dsw-alias-bg-layer-3);
+  border: 1px solid var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-primary);
+}
+
+.chevron,
+.chevronOpen {
+  color: var(--dsw-alias-label-primary);
+  transition: transform 0.15s var(--ds-ease-in-out);
+  flex-shrink: 0;
+}
+
+.chevronOpen {
+  transform: rotate(180deg);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+
+.summary {
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.summaryZh {
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.capabilitiesBlock {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.capabilitiesNote {
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+}
+
+.capabilities {
+  display: flex;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  flex-wrap: wrap;
+}
+
+.capabilities li {
+  padding: 1px 8px;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-3);
+  border: 1px solid var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  font-family: var(--ds-font-family-code);
+}
+
+.detail {
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  padding-top: 8px;
+}
+
+.detailRows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+}
+
+.detailRow {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.detailRow dt {
+  flex-shrink: 0;
+  color: var(--dsw-alias-label-primary);
+}
+
+.detailRow dd {
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
+.reviewedLine {
+  margin: 8px 0 0;
+  color: var(--dsw-alias-state-error);
+  font-size: 12px;
+}
+
+.installPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.installing {
+  margin: 0;
+  color: var(--dsw-alias-state-success);
+  font-size: 13px;
+}
+
+.notice {
+  margin: 4px 0 0;
+  color: var(--dsw-alias-state-success);
+  font-size: 13px;
+}
+
+.log {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.logLine {
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  font-family: var(--ds-font-family-code);
+  overflow-wrap: anywhere;
+}
+
+.failedHeading {
+  margin: 0;
+  color: var(--dsw-alias-state-error);
+  font-size: 13px;
+}
+
+.failedDetail,
+.rejectedDetail {
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.rejectedCode {
+  margin: 0;
+  color: var(--dsw-alias-state-error);
+  font-size: 13px;
+}
+
+.gate {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.gateTitle {
+  margin: 0;
+  color: var(--dsw-alias-state-error);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.gateBody {
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.gateActions {
+  display: flex;
+  gap: 8px;
+}
+
+.confirmButton {
+  padding: 4px 12px;
+  border: 1px solid var(--dsw-alias-state-error);
+  border-radius: 6px;
+  background: var(--dsw-alias-state-error);
+  color: var(--dsw-alias-bg-layer-1);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.cancelButton {
+  padding: 4px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.installButton {
+  align-self: flex-start;
+  padding: 4px 14px;
+  border: 1px solid var(--dsw-alias-state-success);
+  border-radius: 6px;
+  background: var(--dsw-alias-state-success);
+  color: var(--dsw-alias-bg-layer-1);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.installButton:hover {
+  filter: brightness(1.08);
+}

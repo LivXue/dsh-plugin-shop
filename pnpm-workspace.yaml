@@ -3,3 +3,5 @@ packages:
   - packages/dsh-plugin-store
 allowBuilds:
   esbuild: true
+overrides:
+  '@deepseek-ai/dsh-typert-protocol': link:packages/dsh-typert-protocol

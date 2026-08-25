@@ -32,6 +32,21 @@ export function staleLabelKey(): StoreLocaleKey {
 export const ACKNOWLEDGEMENT_EN =
   'Once installed, this plugin holds the same privileges as a built-in one: reading and writing your files, running shell commands, and reading and modifying the requests sent to the model. It has not been reviewed.'
 
+/** Spec §9.3 in the zh register — the same facts, the same force. */
+export const ACKNOWLEDGEMENT_ZH =
+  '安装后，此插件将拥有与内置插件相同的权限：读写你的文件、执行 shell 命令，以及读取和修改发送给模型的请求。它未经审核。'
+
+/** Install rejection code → locale key, for the rejected-state code label
+ * (§7.2): every rejection the host can return has a human label here. */
+export function rejectionCodeKey(code: InstallRejectionCode): StoreLocaleKey {
+  switch (code) {
+    case 'denied': return 'deniedCode'
+    case 'not-in-catalog': return 'notInCatalogCode'
+    case 'version-mismatch': return 'versionMismatchCode'
+    case 'needs-acknowledgement': return 'needsAcknowledgementCode'
+  }
+}
+
 /** One polled install status (§7.3 wire data), structural. */
 export interface InstallStatusShape {
   found: boolean

@@ -11,6 +11,7 @@
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "allowImportingTsExtensions": true,
+    "jsx": "react-jsx",
     "types": ["node"]
   },
   "include": ["src"]
