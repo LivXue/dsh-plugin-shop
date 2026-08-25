@@ -32,5 +32,6 @@ describe('store client apply', () => {
     expect(mounted[0]).toMatchObject({ package: 'dsh-plugin-store' })
     expect(locale.bind(NS)('tab')).toBe('Plugin store')
     await ctx.fiber.dispose()
+    expect(disposer).toHaveBeenCalled()
   })
 })

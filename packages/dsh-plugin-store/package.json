@@ -35,7 +35,7 @@
     }
   },
   "scripts": {
-    "prepare": "tsdown",
+    "prepare": "pnpm build",
     "build": "tsc && tsdown && tsdown -c tsdown.client.config.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json"
