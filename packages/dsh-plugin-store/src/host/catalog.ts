@@ -85,8 +85,15 @@ export interface LoadCatalogOptions {
   sleep?: (ms: number) => Promise<void>
 }
 
+/** Resolve the pointer's data URL against the catalog base. An absolute URL —
+ * any scheme, or a protocol-relative `//host/...` — would hand the pointer a
+ * fetch primitive to arbitrary hosts, so it is refused loudly before any
+ * fetch (§9.2). */
 function resolveDataUrl(baseUrl: string, url: string): string {
-  return /^https?:\/\//.test(url) ? url : new URL(url, baseUrl).href
+  if (/^[a-z][a-z0-9+.-]*:/i.test(url) || url.startsWith('//')) {
+    throw new Error('catalog data url must be relative to the catalog base')
+  }
+  return new URL(url, baseUrl).href
 }
 
 /**
@@ -94,8 +101,8 @@ function resolveDataUrl(baseUrl: string, url: string): string {
  * against it, cache both on disk, and serve the cached copy with `stale: true`
  * only when the transport itself failed — the fetch threw or returned a
  * non-2xx (§10). A schemaVersion higher than this build supports, a malformed
- * pointer or data file, or a sha256 mismatch throws even when a cache exists —
- * never silently degraded.
+ * pointer or data file, an absolute data URL, or a sha256 mismatch — fresh or
+ * cached — throws even when a cache exists; never silently degraded.
  */
 export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogResult> {
   const {
@@ -128,7 +135,15 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
         `catalog schemaVersion ${pointer.schemaVersion} is newer than this build supports (${SUPPORTED_SCHEMA_VERSION})`,
       )
       const dataPath = join(cacheDir, basename(pointer.plugins.url))
-      const data = dataSchema.parse(JSON.parse(fsImpl.read(dataPath)))
+      const dataText = fsImpl.read(dataPath)
+      // The cached bytes must still bind to the pointer's sha: installed
+      // plugins hold full fs access and could rewrite the cache, so a file
+      // that fails the check is treated as absent, never served (§9.2).
+      const actual = createHash('sha256').update(dataText).digest('hex')
+      if (actual !== pointer.plugins.sha256) {
+        throw new Error(`cached catalog data failed integrity check: expected ${pointer.plugins.sha256}, got ${actual}`)
+      }
+      const data = dataSchema.parse(JSON.parse(dataText))
       if (data.schemaVersion > SUPPORTED_SCHEMA_VERSION) throw new Error(
         `catalog schemaVersion ${data.schemaVersion} is newer than this build supports (${SUPPORTED_SCHEMA_VERSION})`,
       )
@@ -172,9 +187,13 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
     )
   }
 
+  // Resolve (and refuse absolute URLs) before any fetch; a refused URL is a
+  // loud error like the other pointer-interpretation failures, never a stale
+  // fallback.
+  const dataUrl = resolveDataUrl(baseUrl, pointer.plugins.url)
   let dataText: string
   try {
-    const dataResponse = await fetchImpl(resolveDataUrl(baseUrl, pointer.plugins.url))
+    const dataResponse = await fetchImpl(dataUrl)
     if (!dataResponse.ok) throw new Error(`catalog data returned ${dataResponse.status}`)
     dataText = await dataResponse.text()
   } catch (error) {

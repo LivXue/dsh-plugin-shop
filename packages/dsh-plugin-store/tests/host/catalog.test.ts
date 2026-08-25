@@ -180,4 +180,78 @@ describe('loadCatalog', () => {
     const result = await loadCatalog({ baseUrl: 'https://store.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() })
     expect(result.snapshot.denied).toEqual([{ name: 'dsh-blocked', detail: 'matched the denylist' }])
   })
+
+  it('treats a tampered cached data file as absent when the network is down', async () => {
+    const data = dataJson([entry])
+    const tampered = data.replace('dsh-hello-plugin', 'dsh-evil-plugin')
+    const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
+    const fs = memFs()
+    fs.write('/cache/index.json', pointer)
+    fs.write(`/cache/${url}`, tampered)
+    fs.write('/cache/index.meta.json', JSON.stringify({ fetchedAt: '2026-08-25T00:00:00Z' }))
+    const fetchImpl = (async () => { throw new Error('offline') }) as unknown as typeof fetch
+
+    await expect(loadCatalog({
+      baseUrl: 'https://store.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs,
+      now: () => new Date('2026-08-25T00:03:00Z'),
+    })).rejects.toThrow(/offline/)
+  })
+
+  it('ignores a tampered cached data file and serves the fresh fetch', async () => {
+    const data = dataJson([entry])
+    const tampered = data.replace('dsh-hello-plugin', 'dsh-evil-plugin')
+    const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
+    const fs = memFs()
+    fs.write('/cache/index.json', pointer)
+    fs.write(`/cache/${url}`, tampered)
+    fs.write('/cache/index.meta.json', JSON.stringify({ fetchedAt: '2026-08-25T00:00:00Z' }))
+    let pointerCalls = 0
+    const fetchImpl = (async (input: string | URL) => {
+      if (String(input).endsWith('/index.json')) pointerCalls += 1
+      return new Response(String(input).endsWith('/index.json') ? pointer : data, { status: 200 })
+    }) as unknown as typeof fetch
+
+    const result = await loadCatalog({
+      baseUrl: 'https://store.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs,
+      now: () => new Date('2026-08-25T00:03:00Z'),
+    })
+    expect(result.stale).toBe(false)
+    expect(result.snapshot.entries[0]?.name).toBe('dsh-hello-plugin')
+    expect(pointerCalls).toBe(1)
+  })
+
+  it('refuses an absolute data url before fetching it', async () => {
+    const data = dataJson([entry])
+    const sha = createHash('sha256').update(data).digest('hex')
+    const pointer = JSON.stringify({
+      schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', count: 0,
+      plugins: { url: 'http://169.254.169.254/latest', sha256: sha },
+    })
+    let dataCalls = 0
+    const fetchImpl = (async (input: string | URL) => {
+      if (String(input).endsWith('/index.json')) return new Response(pointer, { status: 200 })
+      dataCalls += 1
+      return new Response(data, { status: 200 })
+    }) as unknown as typeof fetch
+
+    await expect(loadCatalog({ baseUrl: 'https://store.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() }))
+      .rejects.toThrow(/must be relative/)
+    expect(dataCalls).toBe(0)
+  })
+
+  it('resolves a relative data url against the catalog base', async () => {
+    const data = dataJson([entry])
+    const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
+    let dataUrl = ''
+    const fetchImpl = (async (input: string | URL) => {
+      const text = String(input)
+      if (text.endsWith('/index.json')) return new Response(pointer, { status: 200 })
+      dataUrl = text
+      return new Response(data, { status: 200 })
+    }) as unknown as typeof fetch
+
+    const result = await loadCatalog({ baseUrl: 'https://store.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() })
+    expect(dataUrl).toBe(`https://store.test/v1/${url}`)
+    expect(result.stale).toBe(false)
+  })
 })
