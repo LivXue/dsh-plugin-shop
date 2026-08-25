@@ -258,14 +258,17 @@ function OutdatedRow({ row, tier, t, setEnabled, install, installStatus }: {
         setToggle({ kind: 'saved' })
       } else {
         // The host's business failure carries an author- and user-readable
-        // detail (§7.3); surface it verbatim.
-        setToggle({ kind: 'error', detail: result.detail ?? 'setEnabled failed' })
+        // detail (§7.3); surface it verbatim. A missing detail falls back to
+        // the localized failure line, never hardcoded English.
+        setToggle({ kind: 'error', detail: result.detail ?? t('toggleFailed') })
       }
-    } catch (error) {
+    } catch {
       // A thrown toggle is a TRANSPORT failure (index.ts's unwrap throws the
       // prefixed wire message); nothing else can reach this catch, because the
-      // business result is a resolved value, never a throw.
-      setToggle({ kind: 'error', detail: error instanceof Error ? error.message : String(error) })
+      // business result is a resolved value, never a throw. The transport
+      // detail is private (it can name hosts and ports) and never rendered;
+      // the localized failure line is the readable face of it.
+      setToggle({ kind: 'error', detail: t('toggleFailed') })
     }
   }
 

@@ -41,6 +41,7 @@ export const zh = {
   latestVersion: '最新 v{version}',
   update: '更新',
   enabledSwitch: '启用',
+  toggleFailed: '设置失败，请重试。',
   hotApplyNote: '无需重启，立即生效',
 } satisfies Record<string, string>
 
@@ -86,5 +87,6 @@ export const en = {
   latestVersion: 'latest v{version}',
   update: 'Update',
   enabledSwitch: 'Enable',
+  toggleFailed: 'Failed to update. Please retry.',
   hotApplyNote: 'takes effect without a restart',
 } satisfies Record<StoreLocaleKey, string>
