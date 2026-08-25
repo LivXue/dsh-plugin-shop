@@ -11,7 +11,10 @@ function stubCtx(): never {
 
 describe('StoreGateway', () => {
   it('registers the store namespace as a Typert remote service', () => {
-    const gateway = new StoreGateway(stubCtx())
+    // The constructor discovers the production profile from the module's own
+    // location; a bare test instance lives outside any profile, so the test
+    // supplies one, like every other test in this file.
+    const gateway = new StoreGateway(stubCtx(), { profile: 'web' })
     expect(gateway.name).toBe('store')
     expect(gateway.typertRemote.serviceKey).toBe('store')
     expect(gateway.typertRemote.namespace).toBe('store')
@@ -31,6 +34,7 @@ describe('StoreGateway.catalog', () => {
     const gateway = new StoreGateway(stubCtx(), {
       catalogUrl: 'https://store.test/v1/',
       cacheDir: '/cache',
+      profile: 'web',
       loadCatalog: async options => { calls.push(options); return { snapshot, stale: false } as CatalogResult },
     })
 
@@ -45,6 +49,7 @@ describe('StoreGateway.catalog', () => {
     const gateway = new StoreGateway(stubCtx(), {
       catalogUrl: 'https://store.test/v1/',
       cacheDir: '/cache',
+      profile: 'web',
       loadCatalog: async () => ({ snapshot, stale: true }) as CatalogResult,
     })
 
@@ -57,7 +62,7 @@ describe('StoreGateway.catalog', () => {
       get: () => undefined,
       reflect: { provide: () => {} },
       loader: { entries: () => [] },
-    } as never)
+    } as never, { profile: 'web' })
 
     await expect(gateway.catalog({})).rejects.toThrow(
       'dsh-plugin-store: the store row is missing catalogUrl or cacheDir config',
@@ -80,6 +85,7 @@ describe('StoreGateway.catalog', () => {
         },
       } as never,
       {
+        profile: 'web',
         loadCatalog: async options => { calls.push(options); return { snapshot, stale: false } as CatalogResult },
       },
     )
@@ -250,5 +256,38 @@ describe('StoreGateway.install — the four rejection paths, through the executo
     const status = gateway.installStatus({ installId: 'nope' })
     expect(status.found).toBe(false)
     expect(status.detail).toContain('nope')
+  })
+})
+
+describe('StoreGateway.setEnabled', () => {
+  it('setEnabled writes a disable row for an installed plugin', async () => {
+    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-store-'))
+    writeFileSync(join(profileDir, 'cordis.yml'), '[]\n')
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
+    const gateway = new StoreGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: () => [{ entryId: 'hello-row', moduleName: 'dsh-hello-fixture', enabled: true }] } })
+    const result = await gateway.setEnabled({ name: 'dsh-hello-fixture', enabled: false })
+    expect(result.ok).toBe(true)
+    expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toContain('hello-row')
+  })
+
+  it('setEnabled on an enabled plugin removes the disable row', async () => {
+    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-store-'))
+    writeFileSync(join(profileDir, 'cordis.yml'), '[]\n')
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
+    writeFileSync(join(profileDir, 'cordis.patch.yml'), '- id: hello-row\n  disabled: true\n')
+    const gateway = new StoreGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: () => [{ entryId: 'hello-row', moduleName: 'dsh-hello-fixture', enabled: false }] } })
+    const result = await gateway.setEnabled({ name: 'dsh-hello-fixture', enabled: true })
+    expect(result.ok).toBe(true)
+    expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).not.toContain('hello-row')
+  })
+
+  it('reports not installed for an unknown name without writing', async () => {
+    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-store-'))
+    writeFileSync(join(profileDir, 'cordis.yml'), '[]\n')
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
+    const gateway = new StoreGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: () => [] } })
+    const result = await gateway.setEnabled({ name: 'dsh-not-here', enabled: false })
+    expect(result).toEqual({ ok: false, detail: 'dsh-plugin-store: dsh-not-here is not installed' })
+    expect(existsSync(join(profileDir, 'cordis.patch.yml'))).toBe(false)
   })
 })

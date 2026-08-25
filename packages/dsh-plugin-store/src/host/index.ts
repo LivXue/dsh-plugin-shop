@@ -2,24 +2,39 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
+import { fileURLToPath } from 'node:url'
 import { loadCatalog, type LoadCatalogOptions } from './catalog.ts'
 import type { CatalogSnapshot } from './catalog.ts'
 import type { CatalogEntry, DeniedEntry } from './types.ts'
 import { validateInstall, type InstallArgs, type InstallRejectionCode } from './install.ts'
 import { startInstall, type InstallStatus } from './executor.ts'
+import { discoverProfile, setUserLayerRow } from './profile.ts'
 
 // Re-exported so the boundary type is reachable from the package's public
 // ./types subpath; the typert generator refuses remote parameter types it
 // cannot import from there.
 export type { InstallArgs } from './install.ts'
 
+/** One Loader inventory entry, structurally — the store never depends on
+ * cordis-plugin-loader, whose types do not reach this package's typecheck. */
+export interface InventoryEntry {
+  entryId: string
+  moduleName: string
+  enabled: boolean
+}
+
 /** Test-only injection points; production callers pass nothing. */
 export interface StoreGatewayOptions {
   catalogUrl?: string
   cacheDir?: string
   loadCatalog?: (options: LoadCatalogOptions) => ReturnType<typeof loadCatalog>
-  /** The profile dsh installs into; discovery lands in Task 7. */
+  /** The profile dsh installs into; discovered from this module's own
+   * location when omitted. */
   profile?: string
+  /** The profile directory the user layer lives in; discovered when omitted. */
+  profileDir?: string
+  /** The Loader plugin inventory; read from `ctx` when omitted. */
+  inventory?: { list(): InventoryEntry[] }
   dshBin?: string
 }
 
@@ -30,6 +45,10 @@ export type StoreInstallResult =
   | { ok: false; code: InstallRejectionCode; detail: string }
 
 export interface StoreInstallStatusResult extends InstallStatus { found: boolean }
+
+/** `store/setEnabled` result (§7.3): an unknown name is a typed wire value,
+ * not a thrown RPC error. */
+export interface StoreSetEnabledResult { ok: boolean; detail?: string }
 
 /** One row of the row config the bundle patch (§cordis.patch.yml) supplies. */
 interface StoreRowConfig {
@@ -46,13 +65,17 @@ export interface StoreCatalogResult {
   denied: DeniedEntry[]
 }
 
-/** Remote-only service exposing the five store methods of §7.3.
+/** Remote-only service exposing the store Remote methods of §7.3.
  *
  * @typert service store */
 export class StoreGateway extends TypertRemoteService {
   private readonly options: StoreGatewayOptions
-  /** The profile dsh installs into; discovery (Task 7) fills the default. */
+  /** The profile dsh installs into; discovered from this module's own
+   * location when the caller does not supply one. */
   private readonly profile: string
+  private readonly profileDir?: string
+  private readonly inventory?: StoreGatewayOptions['inventory']
+  private readonly dshBin: string
   /** The install gate runs against the last loaded snapshot, never a fresh
    * fetch per request (§7.2: the Host's cached snapshot is the truth). */
   /** Finished install records retained, so a poll sees the true terminal
@@ -70,7 +93,38 @@ export class StoreGateway extends TypertRemoteService {
   constructor(ctx: Context, options: StoreGatewayOptions = {}) {
     super(ctx, 'store')
     this.options = options
-    this.profile = options.profile ?? ''
+    this.profile = options.profile ?? discoverProfile(fileURLToPath(import.meta.url)).name
+    this.profileDir = options.profileDir
+    this.inventory = options.inventory
+    this.dshBin = options.dshBin ?? 'dsh'
+  }
+
+  /** The profile directory the user layer lives in — the discovered default
+   * stays lazy so `setEnabled` works in tests via the `profileDir` option
+   * without requiring a real profile above this module. */
+  private profileDirResolved(): string {
+    if (this.profileDir !== undefined) return this.profileDir
+    return discoverProfile(fileURLToPath(import.meta.url)).dir
+  }
+
+  private listInventory(): InventoryEntry[] {
+    if (this.inventory !== undefined) return this.inventory.list()
+    const inventory = (this.ctx as { get?: (name: string) => unknown }).get?.('pluginInventory') as
+      | { list(): InventoryEntry[] }
+      | undefined
+    if (inventory === undefined) throw new Error('dsh-plugin-store: pluginInventory service is not mounted')
+    return inventory.list()
+  }
+
+  /** Enable or disable one installed plugin, hot (§8): a disable writes the
+   * row to the user layer, an enable drops it again so the bundle default
+   * rules — the CLI's watchUserPatches applies either through HMR. */
+  @Remote('setEnabled')
+  setEnabled(args: { name: string; enabled: boolean }): StoreSetEnabledResult {
+    const entry = this.listInventory().find(entry => entry.moduleName === args.name)
+    if (entry === undefined) return { ok: false, detail: `dsh-plugin-store: ${args.name} is not installed` }
+    setUserLayerRow({ profileDir: this.profileDirResolved(), row: { id: entry.entryId, disabled: !args.enabled } })
+    return { ok: true }
   }
 
   private rowConfig(): { catalogUrl: string; cacheDir: string } {
@@ -78,10 +132,11 @@ export class StoreGateway extends TypertRemoteService {
       return { catalogUrl: this.options.catalogUrl, cacheDir: this.options.cacheDir }
     }
     // Structural cast instead of the cordis-plugin-loader Context augmentation:
-    // the store must not depend on that package, whose types never reach this
-    // package's typecheck. The loader's own type of `config` is `unknown`,
-    // so the row's shape is re-validated below before it is trusted.
-    const loader = (this.ctx as {
+    // the store must not depend on that package. The augmentation reaches
+    // this package's typecheck through dsh-app-boot's include types, so the
+    // cast goes through `unknown`. The loader's own type of `config` is
+    // `unknown`, so the row's shape is re-validated below before it is trusted.
+    const loader = (this.ctx as unknown as {
       loader?: { entries(): Array<{ options: { name?: string; config?: unknown } }> }
     }).loader
     const entry = loader?.entries().find(entry => entry.options.name === 'dsh-plugin-store')
@@ -125,7 +180,7 @@ export class StoreGateway extends TypertRemoteService {
     }
     const verdict = validateInstall(this.lastSnapshot, args)
     if (!verdict.ok) return { ok: false, code: verdict.code, detail: verdict.detail }
-    const running = startInstall({ profile: this.profile, spec: `${args.name}@${args.version}`, dshBin: this.options.dshBin })
+    const running = startInstall({ profile: this.profile, spec: `${args.name}@${args.version}`, dshBin: this.dshBin })
     this.installs.set(running.installId, running)
     this.installOrder.push(running.installId)
     this.evictFinishedInstalls()
