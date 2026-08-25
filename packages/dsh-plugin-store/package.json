@@ -55,9 +55,9 @@
   },
   "scripts": {
     "prepublishOnly": "pnpm build",
-    "build": "tsc && tsdown && tsdown -c tsdown.client.config.ts",
+    "build": "tsdown && tsc && tsdown -c tsdown.client.config.ts",
     "test": "tsdown && vitest run",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json"
+    "typecheck": "tsdown && tsc --noEmit && tsc -p tsconfig.test.json"
   },
   "dependencies": {
     "js-yaml": "^4.2.0",
