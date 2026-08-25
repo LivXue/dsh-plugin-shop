@@ -107,10 +107,13 @@ describe('store client apply', () => {
     await expect(injected.install(args)).rejects.toThrow('store remote: WIRE: boom')
     // And useInstall.start catches that throw into the failed view — the
     // `rejected` state stays reserved for the host's business union (§7.2).
+    // The transport detail is private (it can name hosts and ports) and never
+    // rendered, so the failed view carries an EMPTY detail; StoreTab falls
+    // back to the localized installTransportFailed line (R-P2-15).
     const { result } = renderHook(() => useInstall(injected.install, injected.installStatus))
     await act(async () => {
       await result.current.start(args)
     })
-    expect(result.current.view).toEqual({ kind: 'failed', detail: 'store remote: WIRE: boom', log: [] })
+    expect(result.current.view).toEqual({ kind: 'failed', detail: '', log: [] })
   })
 })

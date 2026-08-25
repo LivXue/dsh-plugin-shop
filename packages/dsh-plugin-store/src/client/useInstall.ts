@@ -28,14 +28,16 @@ export function useInstall(
         return
       }
       setView({ kind: 'running', installId: result.installId, log: [] })
-    } catch (error) {
+    } catch {
       // A thrown install is a TRANSPORT failure (the wire envelope rejected —
       // index.ts's unwrap throws the prefixed wire code and message), not a
       // business rejection: the `rejected` state stays reserved for the host's
-      // StoreInstallResult union (§7.2). The thrown message maps verbatim into
-      // the failed view; nothing else can reach this catch, because the
-      // business union is a resolved value, never a throw.
-      setView({ kind: 'failed', detail: error instanceof Error ? error.message : String(error), log: [] })
+      // StoreInstallResult union (§7.2). The transport detail is private (it
+      // can name hosts and ports) and never rendered: the failed view carries
+      // an EMPTY detail, and StoreTab falls back to the localized
+      // `installTransportFailed` line. Nothing else can reach this catch,
+      // because the business union is a resolved value, never a throw.
+      setView({ kind: 'failed', detail: '', log: [] })
     }
   }, [install])
 

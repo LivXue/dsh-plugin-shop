@@ -21,12 +21,6 @@ export function isUnclaimed(entry: CatalogEntry): boolean {
   return entry.metadata === 'derived'
 }
 
-/** Locale key for the §10 stale badge; the date is formatted at render time
- * from `builtAt`. */
-export function staleLabelKey(): StoreLocaleKey {
-  return 'staleLabel'
-}
-
 /** Spec §9.3 verbatim — the community-tier acknowledgement. The zh dictionary
  * states the same facts in its own register; never soften this wording. */
 export const ACKNOWLEDGEMENT_EN =

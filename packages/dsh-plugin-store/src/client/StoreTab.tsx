@@ -170,7 +170,11 @@ function InstallPanel({ name, version, tier, variant = 'install', t, install, in
         <div className={css.log}>
           {view.log.map((line, index) => <div key={index} className={css.logLine}>{line}</div>)}
         </div>
-        <p className={css.failedDetail}>{view.detail}</p>
+        {/* An empty detail marks a TRANSPORT failure (useInstall's start catch):
+            the wire detail is private and never rendered, so the localized line
+            is its readable face. A non-empty detail is the host's published copy
+            (§7.2 stderr plus the recovery hint) and renders verbatim. */}
+        <p className={css.failedDetail}>{view.detail === '' ? t('installTransportFailed') : view.detail}</p>
       </div>
     )
   }

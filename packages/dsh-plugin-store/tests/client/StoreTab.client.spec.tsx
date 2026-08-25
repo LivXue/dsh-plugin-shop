@@ -138,6 +138,17 @@ describe('StoreTab', () => {
     expect(screen.getByText('pnpm failed — run: dsh plugin --profile web install')).toBeTruthy()
   })
 
+  it('never renders the transport detail of a thrown install', async () => {
+    const { injected, install } = bench(snapshot({ tier: 'verified' }))
+    install.mockRejectedValueOnce(new Error('store remote: WIRE: boom'))
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText(en.install))
+    await waitFor(() => expect(screen.getByText(en.installTransportFailed)).toBeTruthy())
+    expect(screen.queryByText('WIRE')).toBeNull() // private transport detail stays out of the UI
+    expect(screen.queryByText('boom')).toBeNull()
+  })
+
   it('labels a stale catalog with its builtAt and offers a refresh', async () => {
     const { injected, catalog } = bench({ ...snapshot(), stale: true })
     renderTab(injected)

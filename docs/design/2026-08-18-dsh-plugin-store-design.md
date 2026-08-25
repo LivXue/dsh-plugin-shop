@@ -341,7 +341,7 @@ Wording such as "this plugin comes from the community, please install with care"
 | Failure | Presentation | Handling |
 |---|---|---|
 | Catalog unreachable (offline, CDN outage) | Serve the last cached snapshot, labelled with its date | **Degrade and stay usable**; not an error |
-| Catalog `schemaVersion` newer than the client supports | Refuse to load, prompt to upgrade dsh-plugin-store | **Fail loudly**; never degrade silently |
+| Catalog `schemaVersion` newer than the client supports | Refusal is **host-side**: the store throws rather than degrade, the Host's log carries the upgrade instruction, and the client shows its generic error state with retry — the browser-level upgrade prompt is deferred until the wire carries a structured error signal | **Fail loudly**; never degrade silently |
 | pnpm absent from PATH | The CLI already diagnoses this with exit 127 | Surface verbatim |
 | pnpm install fails | stderr verbatim plus a `dsh plugin --profile <p> install` recovery hint | No automatic rollback |
 | Install succeeded but `bundles` unchanged | The package was a library, not a plugin, which the gate should have caught | Report a stale catalog and force a refresh |
@@ -363,8 +363,10 @@ dsh-plugin-store sits outside the dsh repository and is not bound by its 100% co
 |---|---|---|
 | P0 | R: schema, `build.ts`, CI, first published artifact; bilingual README and schema documentation | The catalog is fetchable; the determinism test passes |
 | P1 | S Host half: `store/catalog`, `store/installStart`, `store/installStatus` | The real installation test passes |
-| P2 | S Client half: browse, detail, install, acknowledgement | The XSS regression passes; the full flow works in a web profile |
-| P3 | Enable/disable (hot) and `store/outdated` | Toggling takes effect without a restart |
+| P2 | S Client half: browse, detail, install, acknowledgement — plus enable/disable (hot) and `store/outdated` client-side (P3 absorbed into P2, 2026-08-25) | The XSS regression passes; the full flow works in a web profile |
+| P3 | Absorbed into P2 (2026-08-25): enable/disable (hot) and `store/outdated` client-side shipped in P2 Task 4 — no remaining content | — |
+
+**P2 exit criterion (2026-08-25, met with a recorded deviation):** a successful store-driven install is deferred until a real npm package with a `dsh.bundle` exists — an external fact, not a gap in the client. The executor's success path is proven by P1's real-installation test (§11.3.3), and the terminal-state poll by the web full-flow e2e, which proves browse → acknowledge → install-to-terminal through the real machinery.
 
 P0 comes first because a schema change forces the Client to be rewritten. P1 comes next because it is the only part that genuinely fails at runtime — subprocesses and profile state — and the UI is the easiest thing to change.
 
