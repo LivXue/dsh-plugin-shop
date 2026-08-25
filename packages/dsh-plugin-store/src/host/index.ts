@@ -15,7 +15,9 @@ import { discoverProfile, setUserLayerRow } from './profile.ts'
 // Re-exported so the boundary type is reachable from the package's public
 // ./types subpath; the typert generator refuses remote parameter types it
 // cannot import from there.
-export type { InstallArgs } from './install.ts'
+export type { InstallArgs, InstallRejectionCode } from './install.ts'
+// The catalog entry shape reaches the client half through this same boundary.
+export type { CatalogEntry } from './types.ts'
 
 /** One Loader inventory entry, structurally — the store never depends on
  * cordis-plugin-loader, whose types do not reach this package's typecheck. */
