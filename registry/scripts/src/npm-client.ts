@@ -41,21 +41,27 @@ function defaultSleep(ms: number): Promise<void> {
  * @param url - the registry URL.
  * @param fetchImpl - the fetch implementation, injected for testing.
  * @param sleep - the delay implementation, injected so tests do not wait.
+ * @param token - an optional npm access token, sent as a Bearer header. npm
+ *   rate-limits by IP and a CI runner shares its egress IP, so an
+ *   unauthenticated search can be throttled before the first request; a
+ *   read-only token lifts the limit onto the token instead of the IP.
  * @returns the first non-429 response, or the final 429 after the retries.
  */
 async function fetchWithRetry(
   url: string,
   fetchImpl: typeof fetch,
   sleep: (ms: number) => Promise<void>,
+  token: string | undefined,
 ): Promise<Response> {
-  let response = await fetchImpl(url)
+  const init = token === undefined ? undefined : { headers: { Authorization: `Bearer ${token}` } }
+  let response = await fetchImpl(url, init)
   for (let attempt = 0; response.status === 429 && attempt < RETRY_LIMIT - 1; attempt += 1) {
     const retryAfter = Number(response.headers.get('retry-after'))
     const delay = Number.isFinite(retryAfter) && retryAfter > 0
       ? Math.min(retryAfter * 1000, RETRY_MAX_DELAY_MS)
       : Math.min(RETRY_BASE_DELAY_MS * 2 ** attempt, RETRY_MAX_DELAY_MS)
     await sleep(delay)
-    response = await fetchImpl(url)
+    response = await fetchImpl(url, init)
   }
   return response
 }
@@ -117,6 +123,7 @@ export function toCandidate(packument: unknown): Candidate | null {
  * pattern is trivially spoofed.
  * @param fetchImpl - the fetch implementation, injected for testing.
  * @param sleep - the delay implementation, injected so tests do not wait.
+ * @param token - an optional read-only npm token; see {@link fetchWithRetry}.
  * @returns every matching package name, in registry order.
  * @throws when the registry answers with a non-OK status after the 429
  *   retries are exhausted, or when more than {@link MAX_SEARCH_PAGES} pages
@@ -125,6 +132,7 @@ export function toCandidate(packument: unknown): Candidate | null {
 export async function searchByKeyword(
   fetchImpl: typeof fetch = fetch,
   sleep: (ms: number) => Promise<void> = defaultSleep,
+  token: string | undefined = undefined,
 ): Promise<string[]> {
   const names: string[] = []
   for (let page = 0; ; page += 1) {
@@ -135,7 +143,7 @@ export async function searchByKeyword(
     }
     const from = page * PAGE_SIZE
     const url = `${REGISTRY}/-/v1/search?text=keywords:${HARVEST_KEYWORD}&size=${PAGE_SIZE}&from=${from}`
-    const response = await fetchWithRetry(url, fetchImpl, sleep)
+    const response = await fetchWithRetry(url, fetchImpl, sleep, token)
     if (!response.ok) throw new Error(`npm search failed: ${response.status}`)
     const body = await response.json() as { objects?: { package?: { name?: unknown } }[] }
     const objects = body.objects ?? []
@@ -161,6 +169,7 @@ export type CandidateResult =
  * @param name - the package name.
  * @param fetchImpl - the fetch implementation, injected for testing.
  * @param sleep - the delay implementation, injected so tests do not wait.
+ * @param token - an optional read-only npm token; see {@link fetchWithRetry}.
  * @returns the candidate, or the reason none could be produced. A 429 is
  *   retried a bounded number of times before it becomes a rejection, so a
  *   rate-limited runner does not reject the whole ecosystem at once.
@@ -169,8 +178,9 @@ export async function fetchCandidate(
   name: string,
   fetchImpl: typeof fetch = fetch,
   sleep: (ms: number) => Promise<void> = defaultSleep,
+  token: string | undefined = undefined,
 ): Promise<CandidateResult> {
-  const response = await fetchWithRetry(`${REGISTRY}/${encodeURIComponent(name)}`, fetchImpl, sleep)
+  const response = await fetchWithRetry(`${REGISTRY}/${encodeURIComponent(name)}`, fetchImpl, sleep, token)
   if (!response.ok) return { ok: false, detail: `npm registry returned ${response.status} fetching ${name}` }
   let body: unknown
   try {

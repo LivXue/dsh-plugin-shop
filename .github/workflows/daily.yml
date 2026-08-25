@@ -17,6 +17,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      # Optional read-only npm token; lifts the search API's per-IP rate
+      # limit onto the token. Empty (e.g. on fork PRs) = unauthenticated.
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

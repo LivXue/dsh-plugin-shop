@@ -21,6 +21,12 @@ const REGISTRY_DIR = 'registry'
 const OUT_DIR = 'dist/v1'
 const CONCURRENCY = 8
 
+// Optional read-only npm token. npm rate-limits the search API by IP, and a
+// CI runner shares its egress IP with every other tenant, so unauthenticated
+// searches can be throttled before the first request. When NPM_TOKEN is set,
+// requests carry it as a Bearer header and the quota lands on the token.
+const npmToken = process.env.NPM_TOKEN
+
 /**
  * Fetch every candidate with a bounded number of concurrent requests.
  *
@@ -34,7 +40,7 @@ async function fetchAll(names: string[]): Promise<{ candidates: Candidate[]; rej
   const rejections: Rejection[] = []
   for (let i = 0; i < names.length; i += CONCURRENCY) {
     const batch = names.slice(i, i + CONCURRENCY)
-    const results = await Promise.all(batch.map(async name => ({ name, result: await fetchCandidate(name) })))
+    const results = await Promise.all(batch.map(async name => ({ name, result: await fetchCandidate(name, fetch, undefined, npmToken) })))
     for (const { name, result } of results) {
       if (result.ok) candidates.push(result.candidate)
       else rejections.push({ name, code: 'fetch-failed', detail: result.detail })
@@ -44,7 +50,7 @@ async function fetchAll(names: string[]): Promise<{ candidates: Candidate[]; rej
 }
 
 const config = loadRegistryConfig(REGISTRY_DIR)
-const names = await searchByKeyword()
+const names = await searchByKeyword(fetch, undefined, npmToken)
 process.stderr.write(`harvested ${names.length} candidate(s)\n`)
 
 const { candidates, rejections } = await fetchAll(names)

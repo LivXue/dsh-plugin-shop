@@ -158,6 +158,32 @@ describe('searchByKeyword', () => {
     expect(delays).toEqual([1000, 2000, 4000])
   })
 
+  it('sends an Authorization header when a token is given', async () => {
+    const sleep = async (_ms: number) => {}
+    const headersSeen: Array<Record<string, string> | undefined> = []
+    const fetchImpl = (async (_url: string | URL, init?: RequestInit) => {
+      headersSeen.push(init?.headers as Record<string, string> | undefined)
+      return new Response(JSON.stringify({ objects: [] }), { status: 200 })
+    }) as unknown as typeof fetch
+
+    await searchByKeyword(fetchImpl, sleep, 'npm_readonly_token')
+    expect(headersSeen).toHaveLength(1)
+    expect(headersSeen[0]?.Authorization).toBe('Bearer npm_readonly_token')
+  })
+
+  it('sends no Authorization header without a token', async () => {
+    const sleep = async (_ms: number) => {}
+    const headersSeen: Array<Record<string, string> | undefined> = []
+    const fetchImpl = (async (_url: string | URL, init?: RequestInit) => {
+      headersSeen.push(init?.headers as Record<string, string> | undefined)
+      return new Response(JSON.stringify({ objects: [] }), { status: 200 })
+    }) as unknown as typeof fetch
+
+    await searchByKeyword(fetchImpl, sleep)
+    expect(headersSeen).toHaveLength(1)
+    expect(headersSeen[0]).toBeUndefined()
+  })
+
   it('throws instead of paging forever when every page comes back full', async () => {
     let call = 0
     const fetchImpl = (async () => {
@@ -208,6 +234,19 @@ describe('fetchCandidate', () => {
     const result = await fetchCandidate('dsh-hello-plugin', fetchImpl, sleep)
     expect(result.ok).toBe(true)
     expect(call).toBe(2)
+  })
+
+  it('sends an Authorization header when a token is given', async () => {
+    const sleep = async (_ms: number) => {}
+    const headersSeen: Array<Record<string, string> | undefined> = []
+    const fetchImpl = (async (_url: string | URL, init?: RequestInit) => {
+      headersSeen.push(init?.headers as Record<string, string> | undefined)
+      return new Response(JSON.stringify(packument), { status: 200 })
+    }) as unknown as typeof fetch
+
+    const result = await fetchCandidate('dsh-hello-plugin', fetchImpl, sleep, 'npm_readonly_token')
+    expect(result.ok).toBe(true)
+    expect(headersSeen[0]?.Authorization).toBe('Bearer npm_readonly_token')
   })
 
   it('reports the HTTP status when the registry answers with a non-OK status', async () => {
