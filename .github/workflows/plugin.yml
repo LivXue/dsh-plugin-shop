@@ -2,9 +2,9 @@ name: plugin
 
 on:
   push:
-    paths: ['packages/dsh-plugin-store/**', 'pnpm-workspace.yaml']
+    paths: ['packages/dsh-plugin-store/**', 'packages/dsh-typert-protocol/**', 'pnpm-workspace.yaml']
   pull_request:
-    paths: ['packages/dsh-plugin-store/**', 'pnpm-workspace.yaml']
+    paths: ['packages/dsh-plugin-store/**', 'packages/dsh-typert-protocol/**', 'pnpm-workspace.yaml']
   workflow_dispatch:
 
 concurrency:
@@ -21,6 +21,7 @@ jobs:
         with: { node-version: 24, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: npm install -g @deepseek-ai/dsh@0.1.1-rc.2
+      - run: dsh --version
       - run: pnpm -C packages/dsh-plugin-store test
       - run: pnpm -C packages/dsh-plugin-store typecheck
       - run: pnpm -C packages/dsh-plugin-store build

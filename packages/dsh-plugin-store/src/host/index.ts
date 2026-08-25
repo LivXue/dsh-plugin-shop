@@ -185,7 +185,14 @@ export class StoreGateway extends TypertRemoteService {
     }
     const verdict = validateInstall(this.lastSnapshot, args)
     if (!verdict.ok) return { ok: false, code: verdict.code, detail: verdict.detail }
-    const running = startInstall({ profile: this.profile, spec: `${args.name}@${args.version}`, dshBin: this.dshBin })
+    const running = startInstall({
+      profile: this.profile,
+      spec: `${args.name}@${args.version}`,
+      dshBin: this.dshBin,
+      // §7.2 step 6: exit 0 must be confirmed against the profile manifest —
+      // a bundle that did not land is a stale catalog, not a done install.
+      expectedName: args.name,
+    })
     this.installs.set(running.installId, running)
     this.installOrder.push(running.installId)
     this.evictFinishedInstalls()

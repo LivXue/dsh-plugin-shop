@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mkdtempSync, writeFileSync, chmodSync, readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync, chmodSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { startInstall, type InstallStatus } from '../../src/host/executor.ts'
@@ -124,5 +124,71 @@ describe('startInstall', () => {
     expect(status.log).toContain('boom one')
     expect(status.log).toContain('boom two')
     expect(status.detail).toContain('dsh plugin --profile web install')
+  })
+})
+
+describe('startInstall post-install confirm (§7.2 step 6)', () => {
+  // The confirm reads the profile manifest through app-boot's real
+  // resolveProfileDir, honoring the DSH_HOME the child was spawned with; each
+  // case builds a fixture home and pins it via the env option. No dsh
+  // reconcile is needed — the fixture dsh exits 0 and the manifest is what
+  // the confirm must verify against.
+  function confirmHome(bundles: string[]): string {
+    const home = mkdtempSync(join(tmpdir(), 'dsh-confirm-'))
+    mkdirSync(join(home, 'profiles', 'web'), { recursive: true })
+    writeFileSync(
+      join(home, 'profiles', 'web', 'package.json'),
+      JSON.stringify({ dsh: { profile: { bundles } } }),
+    )
+    return home
+  }
+
+  it('reports done when the profile manifest gained the expected bundle', async () => {
+    const home = confirmHome(['dsh-hello-fixture'])
+    const install = startInstall({
+      profile: 'web',
+      spec: 'dsh-hello-fixture@1.0.0',
+      dshBin: fixtureDsh(0),
+      env: { ...process.env, DSH_HOME: home },
+      expectedName: 'dsh-hello-fixture',
+    })
+    const status = await install.finished
+    expect(status.state).toBe('done')
+    expect(status.needsRestart).toBe(true)
+    expect(status.log.join('\n')).toContain('installing...')
+  })
+
+  it('reports failed with the stale-catalog detail when bundles did not change', async () => {
+    const home = confirmHome(['dsh-something-else'])
+    const install = startInstall({
+      profile: 'web',
+      spec: 'dsh-hello-fixture@1.0.0',
+      dshBin: fixtureDsh(0),
+      env: { ...process.env, DSH_HOME: home },
+      expectedName: 'dsh-hello-fixture',
+    })
+    const status = await install.finished
+    expect(status.state).toBe('failed')
+    expect(status.detail).toBe('installed but dsh.profile.bundles did not change — the catalog may be stale; refresh it')
+    // The collected log lines are kept on the confirm failure path too.
+    expect(status.log.join('\n')).toContain('installing...')
+  })
+
+  it('reports failed, naming the file, when the manifest cannot be read', async () => {
+    // A profile dir that does not exist at all — readProfileManifest throws,
+    // and the executor must not crash: it reports the same failed outcome.
+    const home = mkdtempSync(join(tmpdir(), 'dsh-confirm-missing-'))
+    const install = startInstall({
+      profile: 'web',
+      spec: 'dsh-hello-fixture@1.0.0',
+      dshBin: fixtureDsh(0),
+      env: { ...process.env, DSH_HOME: home },
+      expectedName: 'dsh-hello-fixture',
+    })
+    const status = await install.finished
+    expect(status.state).toBe('failed')
+    expect(status.detail).toBe(
+      `installed but the profile manifest could not be read (${join(home, 'profiles', 'web', 'package.json')}) — the catalog may be stale; refresh it`,
+    )
   })
 })

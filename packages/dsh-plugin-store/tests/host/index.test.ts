@@ -1,9 +1,26 @@
-import { describe, expect, it } from 'vitest'
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { afterAll, describe, expect, it } from 'vitest'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import StoreGateway from '../../src/host/index.ts'
 import type { CatalogResult, CatalogSnapshot } from '../../src/host/catalog.ts'
+import type { CatalogEntry } from '../../src/host/types.ts'
+
+// The install tests drive the full §7.2 path including the post-install
+// confirm, which re-reads the profile manifest through app-boot's
+// resolveProfileDir honoring DSH_HOME. Pin it to a fixture home whose `web`
+// profile manifest already lists the bundle the install tests install, so the
+// exit-0 fixture dsh passes the confirm without any dsh reconcile. Each test
+// file runs in its own vitest worker, so the pin never leaves this file.
+const storeHome = mkdtempSync(join(tmpdir(), 'dsh-gateway-home-'))
+process.env.DSH_HOME = storeHome
+mkdirSync(join(storeHome, 'profiles', 'web'), { recursive: true })
+writeFileSync(join(storeHome, 'profiles', 'web', 'package.json'), JSON.stringify({ dsh: { profile: { bundles: ['dsh-hello-plugin'] } } }))
+
+afterAll(() => {
+  delete process.env.DSH_HOME
+  rmSync(storeHome, { recursive: true, force: true })
+})
 
 function stubCtx(): never {
   return { get: () => undefined, reflect: { provide: () => {} } } as never
@@ -118,7 +135,9 @@ function gatewayWithSnapshot(snapshot: CatalogSnapshot): { gateway: StoreGateway
 }
 
 describe('StoreGateway.install — the four rejection paths, through the executor', () => {
-  const listed = { name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived' }
+  // Annotated so the literal's tier/metadata do not widen to `string`, which
+  // would not be assignable to the CatalogEntry union members.
+  const listed: CatalogEntry = { name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived' }
 
   it('rejects not-in-catalog without spawning', async () => {
     const { gateway, callsLog } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [] })

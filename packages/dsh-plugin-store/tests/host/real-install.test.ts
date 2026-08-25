@@ -43,6 +43,9 @@ describe('real installation', () => {
         // Pin the profile home to the temp dir: without this override the
         // child dsh would write to the developer's real DSH_HOME.
         env: { ...process.env, DSH_HOME: tmpHome },
+        // The full §7.2 step-6 confirm runs end to end: the fixture IS a
+        // bundle, reconcile adds it, and the manifest read must confirm it.
+        expectedName: 'dsh-hello-fixture',
       })
       const status = await install.finished
       // The log carries the dsh/pnpm stderr verbatim; surface it when the

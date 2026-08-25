@@ -2,6 +2,8 @@
 
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { join } from 'node:path'
+import { readProfileManifest, resolveProfileDir } from '@deepseek-ai/dsh-app-boot'
 
 export type InstallState = 'running' | 'done' | 'failed'
 
@@ -33,21 +35,46 @@ function chain<T>(profile: string, task: () => Promise<T>): Promise<T> {
 }
 
 /**
+ * The §7.2 step-6 confirm: after a zero exit, re-read the profile manifest and
+ * verify the bundle actually landed in `dsh.profile.bundles`. Exit 0 alone is
+ * not success — a library-that-looked-like-a-plugin, or a stale catalog,
+ * exits 0 while changing nothing (§10). The store cannot force a client
+ * refresh in P1, so the detail carries the signal. A manifest that cannot be
+ * read or parsed is the same outcome, naming the file: the install's result
+ * is then unknown, and a bare `done` would be plausible-but-wrong. `home` is
+ * the DSH_HOME the child was spawned with — the parent's own DSH_HOME may
+ * differ when `env` pinned it.
+ */
+function confirmBundleActivation(profile: string, home: string | undefined, expectedName: string): string | null {
+  const profileDir = resolveProfileDir(profile, home)
+  try {
+    const manifest = readProfileManifest('dsh-plugin-store', profileDir)
+    if (manifest.dsh?.profile?.bundles?.includes(expectedName)) return null
+    return 'installed but dsh.profile.bundles did not change — the catalog may be stale; refresh it'
+  } catch {
+    return `installed but the profile manifest could not be read (${join(profileDir, 'package.json')}) — the catalog may be stale; refresh it`
+  }
+}
+
+/**
  * Run one `dsh plugin --profile <profile> add <spec>` and track it.
  * Never rolls back; a failure surfaces stderr verbatim plus the recovery hint
  * (§10). The store never passes build-script flags: `allowBuilds` stays the
  * user's explicit decision in the CLI (§7.2).
  * The child inherits the current environment unless `env` is given — the
  * real-install test pins DSH_HOME to a temporary directory this way.
+ * When `expectedName` is given, a zero exit is confirmed against the profile
+ * manifest (§7.2 step 6) before the install reports `done`.
  */
 export function startInstall(options: {
   profile: string
   spec: string
   dshBin?: string
   env?: NodeJS.ProcessEnv
+  expectedName?: string
   onStatus?: (status: InstallStatus) => void
 }): RunningInstall {
-  const { profile, spec, dshBin = 'dsh', env, onStatus } = options
+  const { profile, spec, dshBin = 'dsh', env, expectedName, onStatus } = options
   const installId = randomUUID()
   const log: string[] = []
   let logBytes = 0
@@ -100,6 +127,13 @@ export function startInstall(options: {
       if (state !== 'running') return
       if (exitCode === 0) {
         state = 'done'
+        if (expectedName !== undefined) {
+          const confirmDetail = confirmBundleActivation(profile, env?.DSH_HOME, expectedName)
+          if (confirmDetail !== null) {
+            state = 'failed'
+            detail = confirmDetail
+          }
+        }
       } else {
         state = 'failed'
         const lastLogLine = log[log.length - 1] ?? ''
