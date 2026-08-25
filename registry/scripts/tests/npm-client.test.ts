@@ -104,6 +104,60 @@ describe('searchByKeyword', () => {
     await expect(searchByKeyword(fetchImpl)).rejects.toThrow(/503/)
   })
 
+  it('retries a rate-limited search and succeeds when the registry recovers', async () => {
+    const sleep = async (_ms: number) => {}
+    let call = 0
+    const fetchImpl = (async () => {
+      call += 1
+      if (call === 1) return new Response('rate limited', { status: 429 })
+      return new Response(JSON.stringify({ objects: [] }), { status: 200 })
+    }) as unknown as typeof fetch
+
+    const names = await searchByKeyword(fetchImpl, sleep)
+    expect(names).toHaveLength(0)
+    expect(call).toBe(2)
+  })
+
+  it('gives up after bounded retries and throws the final 429', async () => {
+    const sleep = async (_ms: number) => {}
+    let call = 0
+    const fetchImpl = (async () => {
+      call += 1
+      return new Response('rate limited', { status: 429 })
+    }) as unknown as typeof fetch
+
+    await expect(searchByKeyword(fetchImpl, sleep)).rejects.toThrow(/429/)
+    expect(call).toBe(4)
+  })
+
+  it('honors Retry-After when backing off a rate-limited search', async () => {
+    const delays: number[] = []
+    const sleep = async (ms: number) => { delays.push(ms) }
+    let call = 0
+    const fetchImpl = (async () => {
+      call += 1
+      if (call === 1) return new Response('rate limited', { status: 429, headers: { 'Retry-After': '3' } })
+      return new Response(JSON.stringify({ objects: [] }), { status: 200 })
+    }) as unknown as typeof fetch
+
+    await searchByKeyword(fetchImpl, sleep)
+    expect(delays).toEqual([3000])
+  })
+
+  it('backs off exponentially when a 429 carries no Retry-After', async () => {
+    const delays: number[] = []
+    const sleep = async (ms: number) => { delays.push(ms) }
+    let call = 0
+    const fetchImpl = (async () => {
+      call += 1
+      if (call < 4) return new Response('rate limited', { status: 429 })
+      return new Response(JSON.stringify({ objects: [] }), { status: 200 })
+    }) as unknown as typeof fetch
+
+    await searchByKeyword(fetchImpl, sleep)
+    expect(delays).toEqual([1000, 2000, 4000])
+  })
+
   it('throws instead of paging forever when every page comes back full', async () => {
     let call = 0
     const fetchImpl = (async () => {
@@ -142,9 +196,26 @@ describe('fetchCandidate', () => {
     expect(result.ok && result.candidate.name).toBe('dsh-hello-plugin')
   })
 
+  it('retries a rate-limited packument fetch and succeeds when the registry recovers', async () => {
+    const sleep = async (_ms: number) => {}
+    let call = 0
+    const fetchImpl = (async () => {
+      call += 1
+      if (call === 1) return new Response('rate limited', { status: 429 })
+      return new Response(JSON.stringify(packument), { status: 200 })
+    }) as unknown as typeof fetch
+
+    const result = await fetchCandidate('dsh-hello-plugin', fetchImpl, sleep)
+    expect(result.ok).toBe(true)
+    expect(call).toBe(2)
+  })
+
   it('reports the HTTP status when the registry answers with a non-OK status', async () => {
+    // The 429 is retried a bounded number of times; when the registry never
+    // recovers, the last response's status still reaches the rejection detail.
+    const sleep = async (_ms: number) => {}
     const fetchImpl = (async () => new Response('nope', { status: 429 })) as unknown as typeof fetch
-    const result = await fetchCandidate('dsh-rate-limited', fetchImpl)
+    const result = await fetchCandidate('dsh-rate-limited', fetchImpl, sleep)
     expect(result.ok).toBe(false)
     expect(!result.ok && result.detail).toContain('429')
   })

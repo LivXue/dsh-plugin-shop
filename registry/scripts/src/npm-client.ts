@@ -19,6 +19,47 @@ const PAGE_SIZE = 250
  */
 const MAX_SEARCH_PAGES = 100
 
+/**
+ * Bound on HTTP 429 retries per request. npm rate-limits aggressively by IP,
+ * and a CI runner shares its egress IP with every other tenant, so a single
+ * 429 must not fail the daily publish. The retry is bounded: after
+ * {@link RETRY_LIMIT} total attempts the last response is returned as-is and
+ * the caller reports it the way it reports any other failure.
+ */
+const RETRY_LIMIT = 4
+
+const RETRY_BASE_DELAY_MS = 1000
+const RETRY_MAX_DELAY_MS = 8000
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * Fetch one URL with bounded retries on HTTP 429, honoring a Retry-After
+ * header when the registry sends one and backing off exponentially otherwise.
+ * @param url - the registry URL.
+ * @param fetchImpl - the fetch implementation, injected for testing.
+ * @param sleep - the delay implementation, injected so tests do not wait.
+ * @returns the first non-429 response, or the final 429 after the retries.
+ */
+async function fetchWithRetry(
+  url: string,
+  fetchImpl: typeof fetch,
+  sleep: (ms: number) => Promise<void>,
+): Promise<Response> {
+  let response = await fetchImpl(url)
+  for (let attempt = 0; response.status === 429 && attempt < RETRY_LIMIT - 1; attempt += 1) {
+    const retryAfter = Number(response.headers.get('retry-after'))
+    const delay = Number.isFinite(retryAfter) && retryAfter > 0
+      ? Math.min(retryAfter * 1000, RETRY_MAX_DELAY_MS)
+      : Math.min(RETRY_BASE_DELAY_MS * 2 ** attempt, RETRY_MAX_DELAY_MS)
+    await sleep(delay)
+    response = await fetchImpl(url)
+  }
+  return response
+}
+
 /** Normalize an npm repository field to a plain https URL. */
 function normalizeRepository(value: unknown): string | null {
   const url = typeof value === 'string'
@@ -75,11 +116,16 @@ export function toCandidate(packument: unknown): Candidate | null {
  * Harvesting by keyword rather than by name pattern is deliberate: a name
  * pattern is trivially spoofed.
  * @param fetchImpl - the fetch implementation, injected for testing.
+ * @param sleep - the delay implementation, injected so tests do not wait.
  * @returns every matching package name, in registry order.
- * @throws when the registry answers with a non-OK status, or when more than
- *   {@link MAX_SEARCH_PAGES} pages are fetched without the harvest completing.
+ * @throws when the registry answers with a non-OK status after the 429
+ *   retries are exhausted, or when more than {@link MAX_SEARCH_PAGES} pages
+ *   are fetched without the harvest completing.
  */
-export async function searchByKeyword(fetchImpl: typeof fetch = fetch): Promise<string[]> {
+export async function searchByKeyword(
+  fetchImpl: typeof fetch = fetch,
+  sleep: (ms: number) => Promise<void> = defaultSleep,
+): Promise<string[]> {
   const names: string[] = []
   for (let page = 0; ; page += 1) {
     if (page >= MAX_SEARCH_PAGES) {
@@ -89,7 +135,7 @@ export async function searchByKeyword(fetchImpl: typeof fetch = fetch): Promise<
     }
     const from = page * PAGE_SIZE
     const url = `${REGISTRY}/-/v1/search?text=keywords:${HARVEST_KEYWORD}&size=${PAGE_SIZE}&from=${from}`
-    const response = await fetchImpl(url)
+    const response = await fetchWithRetry(url, fetchImpl, sleep)
     if (!response.ok) throw new Error(`npm search failed: ${response.status}`)
     const body = await response.json() as { objects?: { package?: { name?: unknown } }[] }
     const objects = body.objects ?? []
@@ -114,13 +160,17 @@ export type CandidateResult =
  * Fetch one package's full packument and project it into a candidate.
  * @param name - the package name.
  * @param fetchImpl - the fetch implementation, injected for testing.
- * @returns the candidate, or the reason none could be produced.
+ * @param sleep - the delay implementation, injected so tests do not wait.
+ * @returns the candidate, or the reason none could be produced. A 429 is
+ *   retried a bounded number of times before it becomes a rejection, so a
+ *   rate-limited runner does not reject the whole ecosystem at once.
  */
 export async function fetchCandidate(
   name: string,
   fetchImpl: typeof fetch = fetch,
+  sleep: (ms: number) => Promise<void> = defaultSleep,
 ): Promise<CandidateResult> {
-  const response = await fetchImpl(`${REGISTRY}/${encodeURIComponent(name)}`)
+  const response = await fetchWithRetry(`${REGISTRY}/${encodeURIComponent(name)}`, fetchImpl, sleep)
   if (!response.ok) return { ok: false, detail: `npm registry returned ${response.status} fetching ${name}` }
   let body: unknown
   try {
