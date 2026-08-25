@@ -141,7 +141,7 @@ export class StoreGateway extends TypertRemoteService {
       const record = this.installs.get(id)
       if (record !== undefined && record.status().state !== 'running') finishedIds.push(id)
     }
-    const excess = finishedIds.length - StoreGateway.MAX_FINISHED_INSTALLS
+    const excess = Math.max(0, finishedIds.length - StoreGateway.MAX_FINISHED_INSTALLS)
     for (const id of finishedIds.slice(0, excess)) this.installs.delete(id)
   }
 

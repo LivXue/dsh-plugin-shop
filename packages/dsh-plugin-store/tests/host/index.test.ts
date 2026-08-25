@@ -217,6 +217,34 @@ describe('StoreGateway.install — the four rejection paths, through the executo
     expect(gateway.installStatus({ installId: lastId }).found).toBe(true)
   })
 
+  it('retains every finished install below the 32-record cap (no eviction under the cap)', async () => {
+    const { gateway } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [] })
+    const ids: string[] = []
+    for (let i = 0; i < 20; i += 1) {
+      const result = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
+      if (!result.ok) throw new Error('fixture install was rejected')
+      ids.push(result.installId)
+      // Await this install's completion before the next add, so the next add's
+      // eviction pass sees the prior records as finished. The per-profile mutex
+      // serializes the fixtures; poll installStatus — the honest client seam.
+      const deadline = Date.now() + 5000
+      let status = gateway.installStatus({ installId: result.installId })
+      while (status.state === 'running' && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 10))
+        status = gateway.installStatus({ installId: result.installId })
+      }
+    }
+    // Below the cap nothing may be evicted: all 20 records must still report
+    // their true terminal state. The unclamped eviction math slices from the
+    // front once the finished count clears ~16, so earlier ids report
+    // found: false here and the test fails.
+    for (const id of ids) {
+      const status = gateway.installStatus({ installId: id })
+      expect(status.found).toBe(true)
+      expect(status.state).toBe('done')
+    }
+  })
+
   it('reports an unknown installId as not found', () => {
     const { gateway } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [] })
     const status = gateway.installStatus({ installId: 'nope' })
