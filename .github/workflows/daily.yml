@@ -56,5 +56,6 @@ jobs:
       id-token: write
     environment:
       name: github-pages
+      url: https://LivXue.github.io/dsh-plugin-store
     steps:
       - uses: actions/deploy-pages@v4
