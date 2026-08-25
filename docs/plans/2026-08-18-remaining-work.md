@@ -1,7 +1,7 @@
 # Remaining work
 
-Date: 2026-08-18 (launch state updated 2026-08-25)
-Status: P0 merged and published; P1 not started
+Date: 2026-08-18 (launch state updated 2026-08-25; P1 state updated 2026-08-25)
+Status: P0 merged and published; P1 complete; P2 not started
 
 This is the handover document. It assumes you have no context from the session that built P0.
 
@@ -20,7 +20,9 @@ P0 — the catalog pipeline — is complete: 24 commits on branch `feat/p0-regis
 - The pipeline harvests by keyword, gates, tiers, and emits deterministic artifacts. `pnpm build:catalog` has been run once against the live registry and works end to end.
 - The catalog format is at `schemaVersion` 2, because dual-track listings (spec D7) made `summary.zh` optional.
 
-What does **not** exist yet: the `plugin/` directory, the npm package `dsh-plugin-store`, and everything in spec sections 5.1 (component S), 7.2, 7.3, and 8.
+P1 — the Host half — is complete (2026-08-25, branch `feat/p1-host`, merged): the npm package `dsh-plugin-store` lives at `packages/dsh-plugin-store/` (the typert generator hardcodes `packages/` as its package container; spec §5.1 was amended accordingly), exposing the five `store/*` Remote methods. The P1 exit criterion — the real-installation test of spec §11.3.3 — passes against the real dsh CLI, locally and in CI (`plugin.yml`). Execution record: [2026-08-25-p1-host.md](2026-08-25-p1-host.md).
+
+What does **not** exist yet: the Client half (`packages/dsh-plugin-store/src/client/`), and everything in spec sections 5.1 (component S Client half), 6.1 (the unclaimed rendering rule), 7.3 (the browser side of the contract), and 9.3 (the acknowledgement wording). That is P2.
 
 ### The one thing to understand before touching anything
 
@@ -39,9 +41,9 @@ These block a real launch, not the code.
 4. **Who reviews.** The `verified` tier is worth exactly as much as the human review behind it. With no reviewers, every entry stays `community` and the store is an awesome-list with a UI. This is the project's largest non-technical risk and no amount of code addresses it.
    → Resolved 2026-08-25: review will be handled by a future workflow, tracked in https://github.com/LivXue/dsh-plugin-store/issues/1. Until it exists, `verified` stays empty on purpose.
 
-## P1 — the Host half
+## P1 — the Host half (done 2026-08-25)
 
-The store's server side: `plugin/src/host/`, registering the `store/*` Remote. Spec sections 5.3, 7.2, 7.3, and 9 define it. Exit criterion: the real-installation test in spec section 11.3 passes.
+The store's server side: `packages/dsh-plugin-store/src/host/`, registering the `store/*` Remote. Spec sections 5.3, 7.2, 7.3, and 9 define it. Exit criterion: the real-installation test in spec section 11.3 passes. Implemented per [2026-08-25-p1-host.md](2026-08-25-p1-host.md): all five `store/*` methods, catalog fetch/verify/cache with stale degradation, the four rejection paths through the executor, per-profile mutex, hot setEnabled, and the CI gate. Kept below as the record of the constraints P1 was built under.
 
 Build it in this order, because the failure-prone parts come first:
 
@@ -59,7 +61,7 @@ Build it in this order, because the failure-prone parts come first:
 
 ## P2 — the Client half
 
-`plugin/src/client/`, contributing one tab to `settings.plugins.tab`. It holds no privilege beyond the five `store/*` methods.
+`packages/dsh-plugin-store/src/client/`, contributing one tab to `settings.plugins.tab`. It holds no privilege beyond the five `store/*` methods.
 
 Two requirements that are easy to miss:
 
