@@ -101,4 +101,17 @@ describe('emit', () => {
       expect(text.endsWith('\n\n')).toBe(false)
     }
   })
+
+  it('publishes only denylist rejections as the denied list, with their details', () => {
+    const artifacts = emit(
+      [entry('dsh-listed')],
+      [
+        { name: 'dsh-blocked', code: 'denied', detail: 'matched the denylist' },
+        { name: 'dsh-no-summary', code: 'no-summary', detail: 'nothing to show' },
+      ],
+      '2026-08-25T00:00:00.000Z',
+    )
+    const data = JSON.parse(artifacts.pluginsJson)
+    expect(data.denied).toEqual([{ name: 'dsh-blocked', detail: 'matched the denylist' }])
+  })
 })

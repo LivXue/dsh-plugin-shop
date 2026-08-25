@@ -199,9 +199,14 @@ A consumer presents a derived entry as unclaimed, which is also the signal that 
         "capabilities": ["fs", "shell"]
       }
     }
+  ],
+  "denied": [
+    { "name": "dsh-hllo-plugin", "detail": "Denied by the registry: possible typosquat of dsh-hello-plugin" }
   ]
 }
 ```
+
+`denied` carries every denylisted package with its author-readable reason; the Host consults it for the `store/install` gate (§7.2). Rejections that are not denials stay in the build report.
 
 `summary.zh` is optional in the published format because a derived entry has none, so `schemaVersion` is `2`.
 

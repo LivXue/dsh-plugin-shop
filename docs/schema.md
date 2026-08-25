@@ -46,3 +46,7 @@ Omit the section entirely and your package is still listed, from your npm `packa
 A package with no `dsh.catalog` and no npm `description` is not listed at all — there is nothing to show. A derived listing carries `metadata: "derived"` in the published entry, which a consumer can present as unclaimed; adding a `dsh.catalog` section is how you claim it.
 
 `metadata` is independent of trust tier: a derived listing can still be `verified`, because review reads the plugin's code, not its prose.
+
+## The published catalog data file
+
+Each build publishes the catalog as a content-addressed data file, `plugins.<sha256>.json`, named by the hash of its own contents. Besides the accepted `plugins` array, it carries a `denied` array: every denylisted package with the author-readable reason it was blocked. The Host consults `denied` when a `store/install` request names a blocked package. Rejections that are not denials — a missing bundle, a `dsh.catalog` that failed validation, a name too similar to an existing plugin — appear only in the build report, never in the published data.

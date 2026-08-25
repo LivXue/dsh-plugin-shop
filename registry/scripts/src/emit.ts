@@ -44,7 +44,11 @@ function escapeCell(value: string): string {
  */
 export function emit(entries: Entry[], rejections: Rejection[], builtAt: string): Artifacts {
   const sorted = [...entries].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-  const pluginsJson = `${JSON.stringify({ schemaVersion: SCHEMA_VERSION, plugins: sorted }, null, 2)}\n`
+  const denied = rejections
+    .filter(r => r.code === 'denied')
+    .map(r => ({ name: r.name, detail: r.detail }))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+  const pluginsJson = `${JSON.stringify({ schemaVersion: SCHEMA_VERSION, plugins: sorted, denied }, null, 2)}\n`
   const sha256 = createHash('sha256').update(pluginsJson).digest('hex')
   const pluginsFileName = `plugins.${sha256}.json`
 
