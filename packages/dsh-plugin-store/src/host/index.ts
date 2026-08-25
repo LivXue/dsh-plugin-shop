@@ -2,6 +2,8 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
+import { readProfileManifest } from '@deepseek-ai/dsh-app-boot'
+import { lt, minVersion } from 'semver'
 import { fileURLToPath } from 'node:url'
 import { loadCatalog, type LoadCatalogOptions } from './catalog.ts'
 import type { CatalogSnapshot } from './catalog.ts'
@@ -49,6 +51,9 @@ export interface StoreInstallStatusResult extends InstallStatus { found: boolean
 /** `store/setEnabled` result (§7.3): an unknown name is a typed wire value,
  * not a thrown RPC error. */
 export interface StoreSetEnabledResult { ok: boolean; detail?: string }
+
+/** `store/outdated` entry (§7.3): one installed plugin behind the catalog. */
+export interface StoreOutdatedEntry { name: string; installed: string; latest: string }
 
 /** One row of the row config the bundle patch (§cordis.patch.yml) supplies. */
 interface StoreRowConfig {
@@ -206,6 +211,29 @@ export class StoreGateway extends TypertRemoteService {
     const running = this.installs.get(args.installId)
     if (running === undefined) return { found: false, state: 'failed', log: [], detail: `unknown installId: ${args.installId}` }
     return { found: true, ...running.status() }
+  }
+
+  /** Installed plugins whose installed version is older than the catalog's (§7.3). */
+  @Remote('outdated')
+  async outdated(): Promise<StoreOutdatedEntry[]> {
+    if (this.lastSnapshot === null) {
+      const { catalogUrl, cacheDir } = this.rowConfig()
+      const load = this.options.loadCatalog ?? loadCatalog
+      const { snapshot } = await load({ baseUrl: catalogUrl, cacheDir })
+      this.lastSnapshot = snapshot
+    }
+    const manifest = readProfileManifest('dsh-plugin-store', this.profileDirResolved())
+    const dependencies = manifest.dependencies ?? {}
+    const outdated: StoreOutdatedEntry[] = []
+    for (const entry of this.lastSnapshot.entries) {
+      const installed = dependencies[entry.name]
+      if (installed === undefined) continue
+      const floor = installed === entry.version ? installed : minVersion(installed)?.version ?? null
+      if (floor !== null && lt(floor, entry.version)) {
+        outdated.push({ name: entry.name, installed, latest: entry.version })
+      }
+    }
+    return outdated
   }
 }
 

@@ -291,3 +291,32 @@ describe('StoreGateway.setEnabled', () => {
     expect(existsSync(join(profileDir, 'cordis.patch.yml'))).toBe(false)
   })
 })
+
+describe('StoreGateway.outdated', () => {
+  const entries = [
+    { name: 'dsh-one', version: '2.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived' },
+    { name: 'dsh-two', version: '1.5.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived' },
+  ]
+
+  function gatewayWithManifest(dependencies: Record<string, string>): StoreGateway {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-outdated-'))
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies }))
+    return new StoreGateway(stubCtx(), {
+      catalogUrl: 'https://store.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [] }, stale: false }) as CatalogResult,
+    })
+  }
+
+  it('reports an installed plugin whose installed version is older than the catalog', async () => {
+    const gateway = gatewayWithManifest({ 'dsh-one': '^1.0.0' })
+    await gateway.catalog({}) // populates lastSnapshot
+    const outdated = await gateway.outdated()
+    expect(outdated).toEqual([{ name: 'dsh-one', installed: '^1.0.0', latest: '2.0.0' }])
+  })
+
+  it('does not report a plugin that is current', async () => {
+    const gateway = gatewayWithManifest({ 'dsh-one': '^2.0.0' })
+    await gateway.catalog({})
+    expect(await gateway.outdated()).toEqual([])
+  })
+})
