@@ -9,6 +9,7 @@
     ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" },
     "./remote": { "types": "./lib/typert.remote-client.d.ts", "default": "./lib/typert.remote-client.js" },
     "./typert": { "types": "./lib/typert.host.d.ts", "default": "./lib/typert.host.js" },
+    "./types": { "types": "./lib/types/host/index.d.ts", "default": "./lib/index.js" },
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
