@@ -39,12 +39,16 @@ Two tracks below. They do the same thing; pick the one that matches who is readi
 
 ### 🧑 For people
 
-**Prerequisites:** Node.js, and the `dsh` CLI itself — install it once with
-`npm install -g @deepseek-ai/dsh` and verify with `dsh --version`. The shop
-install assumes `dsh` is already on your PATH.
+**Prerequisites:** Node.js. Running the harness itself needs no install — the
+upstream-documented form is `npx -y @deepseek-ai/dsh web`. But the shop installs
+plugins by spawning the `dsh` command, so put it on your PATH once
+(`npm install -g @deepseek-ai/dsh`) and verify with `dsh --version`.
 
 ```sh
+# dsh on PATH (global install):
 dsh plugin --profile web add dsh-plugin-shop
+# or straight through npx, nothing installed:
+npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop
 ```
 
 Replace `web` with your profile if you use another one. Then restart `dsh` once — a

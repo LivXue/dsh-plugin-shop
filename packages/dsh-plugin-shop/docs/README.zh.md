@@ -39,12 +39,16 @@
 
 ### 🧑 给人看
 
-**前置条件：** Node.js，以及 `dsh` CLI 本身——先执行一次
-`npm install -g @deepseek-ai/dsh` 安装，再用 `dsh --version` 验证。商店的安装
-指令假设 `dsh` 已在你的 PATH 上。
+**前置条件：** Node.js。运行 harness 本身无需安装——上游文档的形式是
+`npx -y @deepseek-ai/dsh web`。但商店安装插件时自己会 spawn `dsh` 命令，所以请
+把它放进你的 PATH 一次（`npm install -g @deepseek-ai/dsh`），并用
+`dsh --version` 验证。
 
 ```sh
+# dsh 在 PATH 上（全局安装）：
 dsh plugin --profile web add dsh-plugin-shop
+# 或全程走 npx，什么都不装：
+npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop
 ```
 
 如果你用的不是 `web` profile，把它换成你自己的。然后重启一次 `dsh`——新加的 bundle 不会作用于
