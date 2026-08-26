@@ -35,6 +35,9 @@ jobs:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       # LLM classifier (categories.yml). The key is a secret; an empty value
       # (fork PRs) skips classification — the classify step is designed for it.
+      # The gateway serves plain HTTP only (no TLS listener) — the Bearer key
+      # rides plaintext on the runner→gateway path; rotate-able key, gateway
+      # owner's transport choice. Switch to https when the mirror gains TLS.
       LLM_BASE_URL: http://8.141.31.123:3000/v1
       LLM_MODEL: deepseek-v4-flash
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
@@ -50,6 +53,7 @@ jobs:
         run: node --experimental-strip-types registry/scripts/src/classify.ts
       - name: Commit the category list
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        continue-on-error: true
         run: |
           git config user.name 'dsh-plugin-shop bot'
           git config user.email 'bot@users.noreply.github.com'

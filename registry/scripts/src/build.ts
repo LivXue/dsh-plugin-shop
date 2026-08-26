@@ -21,6 +21,9 @@ import type { Candidate, Rejection } from './types.ts'
 // here so the daily run does not fetch the ecosystem twice.
 const harvestFromIndex = process.argv.indexOf('--harvest-from')
 const harvestFrom = harvestFromIndex === -1 ? undefined : process.argv[harvestFromIndex + 1]
+if (harvestFromIndex !== -1 && harvestFrom === undefined) {
+  throw new Error('--harvest-from requires a path')
+}
 
 const REGISTRY_DIR = 'registry'
 const OUT_DIR = 'dist/v1'

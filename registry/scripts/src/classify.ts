@@ -26,6 +26,10 @@ import type { Category } from './types.ts'
 const REGISTRY_DIR = 'registry'
 const OUT_DIR = 'dist/v1'
 
+// The gateway serves plain HTTP only (probed: no TLS listener). The Bearer
+// key therefore rides plaintext on the runner→gateway path; the key is a
+// rotate-able classification credential and the transport choice belongs to
+// the gateway owner. Point LLM_BASE_URL at an https mirror when one exists.
 const baseUrl = process.env.LLM_BASE_URL ?? 'http://8.141.31.123:3000/v1'
 const model = process.env.LLM_MODEL ?? 'deepseek-v4-flash'
 const apiKey = process.env.LLM_API_KEY ?? ''
