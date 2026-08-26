@@ -16,7 +16,24 @@ English | [中文](https://github.com/LivXue/dsh-plugin-shop/blob/main/packages/
 
 ---
 
-## Install
+## 🖼️ Screenshots
+
+<div align="center">
+<img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/shelf-light.png" alt="The plugin store shelf inside dsh Settings" width="860">
+</div>
+
+<table>
+<tr>
+<td width="50%"><img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/gate-light.png" alt="Installing an unreviewed plugin requires an explicit acknowledgement"></td>
+<td width="50%"><img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/shelf-dark.png" alt="The same shelf in the dark theme"></td>
+</tr>
+<tr>
+<td align="center"><sub>Installing an unreviewed plugin requires an explicit acknowledgement</sub></td>
+<td align="center"><sub>The same shelf in the dark theme</sub></td>
+</tr>
+</table>
+
+## 📦 Install
 
 Two tracks below. They do the same thing; pick the one that matches who is reading.
 
@@ -80,7 +97,7 @@ bundle is not.
 | `no profile directory found above <path>` | the plugin could not locate its profile | Please report it — this is resolved from `ctx.baseUrl` and should not fail |
 | The tab is missing after a restart | the bundle is not in the profile's `bundles` | Re-run step 3; if it is absent, step 2 did not complete |
 
-## What it does
+## ✨ What it does
 
 | | |
 |---|---|
@@ -89,7 +106,7 @@ bundle is not.
 | **Enable / disable** | Applies to an installed plugin without a restart |
 | **Outdated installs** | Compared against the catalog's current version |
 
-## How it is put together
+## 🧩 How it is put together
 
 Two halves ship in this one package, and the split between them is the security
 boundary:
@@ -101,13 +118,13 @@ boundary:
 
 Compromising the browser half buys an attacker those five calls and nothing more.
 
-## Configuration
+## ⚙️ Configuration
 
 | Variable | Effect |
 |---|---|
 | `DSH_STORE_CATALOG_URL` | Point the store at your own catalog mirror instead of the public one |
 
-## The catalog
+## 📚 The catalog
 
 Built daily from the public npm registry and published as static JSON:
 
@@ -117,7 +134,7 @@ Built daily from the public npm registry and published as static JSON:
 The pointer is small enough to poll. The store verifies the data file's sha256 against
 the pointer before trusting a byte of it.
 
-## What it does not claim
+## ⚠️ What it does not claim
 
 A listing is not an endorsement.
 
@@ -127,7 +144,7 @@ list. The `verified` tier means a human read *that exact version*; a newer publi
 downgrades it to `verified-stale` and keeps the review pinned to the version it was
 actually given — so passing review once cannot buy trust for every future release.
 
-## For plugin authors
+## 🏷️ For plugin authors
 
 Add `"keywords": ["dsh-plugin"]` to `package.json` and publish. The daily build finds
 you; nothing is submitted to this project. Declare a `dsh.catalog` section to control
@@ -136,6 +153,6 @@ listing from your npm `description`.
 
 Full reference: [docs/schema.md](https://github.com/LivXue/dsh-plugin-shop/blob/main/docs/schema.md).
 
-## License
+## 📄 License
 
 [MIT](https://github.com/LivXue/dsh-plugin-shop/blob/main/LICENSE) © LivXue

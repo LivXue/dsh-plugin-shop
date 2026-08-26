@@ -16,7 +16,24 @@
 
 ---
 
-## 整体是怎么串起来的
+## 🖼️ 界面预览
+
+<div align="center">
+<img src="docs/images/shelf-light.png" alt="dsh 设置页里的插件市场货架" width="860">
+</div>
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/gate-light.png" alt="安装未评审插件需要显式确认"></td>
+<td width="50%"><img src="docs/images/shelf-dark.png" alt="深色主题下的同一片货架"></td>
+</tr>
+<tr>
+<td align="center"><sub>安装未评审插件需要显式确认</sub></td>
+<td align="center"><sub>深色主题下的同一片货架</sub></td>
+</tr>
+</table>
+
+## 🗺️ 整体是怎么串起来的
 
 ```mermaid
 flowchart LR
@@ -30,7 +47,7 @@ flowchart LR
 Pages 那个框左边的一切属于本仓库的 `registry/`，右边的一切属于 `packages/dsh-plugin-shop/`
 里的 npm 包。两者不共享代码，只共享 schema。
 
-## 安装商店
+## 📦 安装商店
 
 两条路做的是同一件事，按读者是谁挑一条。
 
@@ -68,7 +85,7 @@ dsh --profile <profile>
 `dsh.profile.bundles`——如果你更愿意读清单而不是解析 CLI 输出。逐条的失败诊断见
 [包内 README](packages/dsh-plugin-shop/docs/README.zh.md#失败模式)。
 
-## 它是什么
+## ✅ 它是什么
 
 | | |
 |---|---|
@@ -77,7 +94,7 @@ dsh --profile <profile>
 | **分层信任** | 已评审与未评审的插件在视觉上可区分，且评审钉在它当初覆盖的那个确切版本上——作者过了一次评审，不能靠发布恶意新版本来继承这份信任。 |
 | **零权限界面** | 攻破浏览器界面并不等于攻破运行时。 |
 
-## 它不是什么
+## 🚫 它不是什么
 
 > **它不是沙箱。** dsh 插件一旦挂载，就持有完整的 `ctx`——你的文件系统、你的 shell、以及发往
 > 模型的请求。安装一个插件就是完全信任。本项目不改变这一点，它只是在你点下去之前把真相告诉你。
@@ -85,7 +102,7 @@ dsh --profile <profile>
 它也不提供下载量、评分或评论，并且永远不会提供"从任意 URL 安装"的按钮。那个能力留在
 `dsh plugin add` 里——在那里，是否启用构建脚本、是否钉住某个 commit，都是你显式作出的决定。
 
-## 目录（catalog）
+## 📚 目录（catalog）
 
 每日构建，以静态 JSON 发布：
 
@@ -97,7 +114,7 @@ dsh --profile <profile>
 每次构建的拒绝报告都会附在该次 workflow run 上，其中对每个被拒包都写明作者可读的原因。不会有
 任何东西在没有理由的情况下消失。
 
-## 让你的插件上架
+## 🏷️ 让你的插件上架
 
 在 `package.json` 里加上关键字并发布到 npm，每日构建就会收录。`dsh.catalog` 段是可选的——声明
 它可以自己掌控分类、简介和 capabilities；不声明，目录会从你的 npm `description` 推导一条 listing。
@@ -122,7 +139,7 @@ dsh --profile <profile>
 **哪些不会上架，以及为什么：** 没有 `dsh.bundle` 的包是库而不是可安装插件；没有 license 或没有
 仓库地址的包无法被审计；既没有 `dsh.catalog` 段也没有 npm `description` 的包，没有任何内容可展示。
 
-## 仓库结构
+## 🗂️ 仓库结构
 
 | 路径 | 内容 |
 |---|---|
@@ -133,7 +150,7 @@ dsh --profile <profile>
 | `packages/dsh-plugin-shop/` | npm 包——Host 半边与 Client 半边 |
 | `docs/design/` | 规格说明。它是权威，代码跟随它。（英文） |
 
-## 开发
+## 🛠️ 开发
 
 ```sh
 pnpm install
@@ -147,6 +164,6 @@ pnpm typecheck
 状态与未完成工作：[docs/plans/2026-08-18-remaining-work.md](docs/plans/2026-08-18-remaining-work.md)。
 规格说明：[docs/design/2026-08-18-dsh-plugin-shop-design.md](docs/design/2026-08-18-dsh-plugin-shop-design.md)。
 
-## 许可
+## 📄 许可
 
 [MIT](LICENSE) © LivXue

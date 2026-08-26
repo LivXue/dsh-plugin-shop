@@ -16,7 +16,24 @@ English | [中文](README.zh.md)
 
 ---
 
-## How it fits together
+## 🖼️ Screenshots
+
+<div align="center">
+<img src="docs/images/shelf-light.png" alt="The plugin store shelf inside dsh Settings" width="860">
+</div>
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/gate-light.png" alt="Installing an unreviewed plugin requires an explicit acknowledgement"></td>
+<td width="50%"><img src="docs/images/shelf-dark.png" alt="The same shelf in the dark theme"></td>
+</tr>
+<tr>
+<td align="center"><sub>Installing an unreviewed plugin requires an explicit acknowledgement</sub></td>
+<td align="center"><sub>The same shelf in the dark theme</sub></td>
+</tr>
+</table>
+
+## 🗺️ How it fits together
 
 ```mermaid
 flowchart LR
@@ -31,7 +48,7 @@ Everything left of the Pages box is this repository's `registry/`. Everything ri
 it is the npm package in `packages/dsh-plugin-shop/`. They share no code — only the
 schema.
 
-## Install the store
+## 📦 Install the store
 
 Two tracks. They do the same thing; pick the one that matches who is reading.
 
@@ -70,7 +87,7 @@ The same fact as step 3 lives in `$DSH_HOME/profiles/<profile>/package.json` und
 Per-failure diagnostics are in the
 [package README](packages/dsh-plugin-shop/README.md#failure-modes).
 
-## What it is
+## ✅ What it is
 
 | | |
 |---|---|
@@ -79,7 +96,7 @@ Per-failure diagnostics are in the
 | **Tiered trust** | Reviewed and unreviewed plugins are visually distinct, and a review is pinned to the exact version it covered — an author who passes review cannot publish a malicious version and inherit the trust. |
 | **Zero-privilege UI** | Compromising the browser interface does not compromise the runtime. |
 
-## What it is not
+## 🚫 What it is not
 
 > **It is not a sandbox.** A dsh plugin, once mounted, holds the full `ctx` — your
 > filesystem, your shell, and the requests going to the model. Installing one is
@@ -90,7 +107,7 @@ It also carries no download counts, ratings, or reviews, and it will never offer
 "install from arbitrary URL" button. That capability stays in `dsh plugin add`, where
 enabling build scripts and pinning a commit are decisions you make explicitly.
 
-## The catalog
+## 📚 The catalog
 
 Built daily and published as static JSON:
 
@@ -103,7 +120,7 @@ Each build's rejection report, carrying an author-readable reason for every reje
 package, is attached to the workflow run. Nothing disappears without a reason attached
 to its name.
 
-## Listing a plugin
+## 🏷️ Listing a plugin
 
 Add the keyword to your `package.json` and publish to npm; the daily build picks it up.
 A `dsh.catalog` section is optional — declare it to control your own category, summary
@@ -132,7 +149,7 @@ installable plugin. A package without a license or a repository cannot be audite
 package with neither a `dsh.catalog` section nor an npm `description` has nothing to
 show.
 
-## Repository layout
+## 🗂️ Repository layout
 
 | Path | What lives there |
 |---|---|
@@ -143,7 +160,7 @@ show.
 | `packages/dsh-plugin-shop/` | The npm package — Host half and Client half |
 | `docs/design/` | The specification. It is the authority; code follows it. |
 
-## Development
+## 🛠️ Development
 
 ```sh
 pnpm install
@@ -158,6 +175,6 @@ network, so reach for it only when you have changed the fetching or writing laye
 Status and open work: [docs/plans/2026-08-18-remaining-work.md](docs/plans/2026-08-18-remaining-work.md).
 Specification: [docs/design/2026-08-18-dsh-plugin-shop-design.md](docs/design/2026-08-18-dsh-plugin-shop-design.md).
 
-## License
+## 📄 License
 
 [MIT](LICENSE) © LivXue

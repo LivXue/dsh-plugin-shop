@@ -16,7 +16,24 @@
 
 ---
 
-## 安装
+## 🖼️ 界面预览
+
+<div align="center">
+<img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/shelf-light.png" alt="dsh 设置页里的插件市场货架" width="860">
+</div>
+
+<table>
+<tr>
+<td width="50%"><img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/gate-light.png" alt="安装未评审插件需要显式确认"></td>
+<td width="50%"><img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/shelf-dark.png" alt="深色主题下的同一片货架"></td>
+</tr>
+<tr>
+<td align="center"><sub>安装未评审插件需要显式确认</sub></td>
+<td align="center"><sub>深色主题下的同一片货架</sub></td>
+</tr>
+</table>
+
+## 📦 安装
 
 下面两条路做的是同一件事，按读者是谁挑一条。
 
@@ -74,7 +91,7 @@ dsh plugin --profile <profile> list --depth 0
 | `no profile directory found above <path>` | 插件定位不到自己的 profile | 请报告——这是由 `ctx.baseUrl` 解析的，不该失败 |
 | 重启后标签没出现 | bundle 不在 profile 的 `bundles` 里 | 重跑第 3 步；若确实不在，说明第 2 步没走完 |
 
-## 能做什么
+## ✨ 能做什么
 
 | | |
 |---|---|
@@ -83,7 +100,7 @@ dsh plugin --profile <profile> list --depth 0
 | **启停** | 对已安装插件生效，无需重启 |
 | **过期提示** | 与目录中的当前版本比对 |
 
-## 结构
+## 🧩 结构
 
 一个包里装了两半，两者之间的分界就是安全边界：
 
@@ -94,13 +111,13 @@ dsh plugin --profile <profile> list --depth 0
 
 攻破浏览器那一半，攻击者拿到的就是那五个调用，别无其他。
 
-## 配置
+## ⚙️ 配置
 
 | 变量 | 作用 |
 |---|---|
 | `DSH_STORE_CATALOG_URL` | 把目录源指向你自己的镜像，替代公共源 |
 
-## 目录
+## 📚 目录
 
 每日从公共 npm registry 构建，以静态 JSON 发布：
 
@@ -109,7 +126,7 @@ dsh plugin --profile <profile> list --depth 0
 
 指针足够小，适合轮询。在信任数据文件的任何一个字节之前，商店会先用指针里的 sha256 校验它。
 
-## 不作何承诺
+## ⚠️ 不作何承诺
 
 出现在货架上不等于背书。
 
@@ -117,7 +134,7 @@ dsh plugin --profile <profile> list --depth 0
 执行的权限清单。`verified` 层的含义是有人读过**那个确切版本**；一旦发布新版本就降级为
 `verified-stale`，评审记录仍钉在它当初对应的版本上——所以过一次评审，买不到后续每个版本的信任。
 
-## 面向插件作者
+## 🏷️ 面向插件作者
 
 在 `package.json` 里加上 `"keywords": ["dsh-plugin"]` 然后发布，每日构建就会找到你，不需要向本
 项目提交任何东西。声明 `dsh.catalog` 段可以自己掌控分类、简介和 capabilities；不声明，目录会从
@@ -125,6 +142,6 @@ dsh plugin --profile <profile> list --depth 0
 
 完整参考：[docs/schema.zh.md](https://github.com/LivXue/dsh-plugin-shop/blob/main/docs/schema.zh.md)。
 
-## 许可
+## 📄 许可
 
 [MIT](https://github.com/LivXue/dsh-plugin-shop/blob/main/LICENSE) © LivXue
