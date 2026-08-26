@@ -76,4 +76,14 @@ describe('fetchStarCounts', () => {
     expect(result.stars.size).toBe(0)
     expect(result.skipped[0]).toContain('503')
   })
+
+  it('records a gateway-unreachable discard for every repo when the fetch rejects', async () => {
+    const fetchImpl = (async () => { throw new Error('ECONNREFUSED') }) as unknown as typeof fetch
+    const result = await fetchStarCounts([{ owner: 'a', name: 'b' }, { owner: 'c', name: 'd' }], { token: 't', fetchImpl })
+    expect(result.stars.size).toBe(0)
+    expect(result.skipped).toEqual([
+      'a/b: gateway unreachable: ECONNREFUSED',
+      'c/d: gateway unreachable: ECONNREFUSED',
+    ])
+  })
 })

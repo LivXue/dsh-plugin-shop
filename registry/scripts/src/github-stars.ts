@@ -38,45 +38,57 @@ export async function fetchStarCounts(
   for (let i = 0; i < repos.length; i += STAR_BATCH_SIZE) batches.push(repos.slice(i, i + STAR_BATCH_SIZE))
 
   for (const batch of batches) {
-    const aliases = batch.map((r, i) => `a${i}: repository(owner: ${JSON.stringify(r.owner)}, name: ${JSON.stringify(r.name)}) { stargazerCount }`).join('\n')
-    const query = `query {\n${aliases}\n}`
-    const request = (): Promise<Response> => fetchImpl(ENDPOINT, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query }),
-    })
-    let response = await request()
-    for (let attempt = 0; (response.status === 429 || response.status >= 500) && attempt < RETRY_LIMIT - 1; attempt += 1) {
-      const retryAfter = Number(response.headers.get('retry-after'))
-      const delay = Number.isFinite(retryAfter) && retryAfter > 0
-        ? Math.min(retryAfter * 1000, RETRY_MAX_DELAY_MS)
-        : Math.min(RETRY_BASE_DELAY_MS * 2 ** attempt, RETRY_MAX_DELAY_MS)
-      await sleep(delay)
-      response = await request()
-    }
-    if (!response.ok) {
-      for (const r of batch) skipped.push(`${r.owner}/${r.name}: gateway ${response.status}`)
-      continue
-    }
-    let body: { data?: Record<string, { stargazerCount?: unknown }>; errors?: unknown[] }
     try {
-      body = await response.json() as typeof body
-    } catch {
-      // A 200 whose body is not JSON: the batch has no readable counts.
-      for (const r of batch) skipped.push(`${r.owner}/${r.name}: unreadable body`)
-      continue
-    }
-    if (body.errors !== undefined) {
-      for (const r of batch) skipped.push(`${r.owner}/${r.name}: graphql errors`)
-      continue
-    }
-    for (let i = 0; i < batch.length; i++) {
-      const r = batch[i]
-      if (r === undefined) continue
-      const count = body.data?.[`a${i}`]?.stargazerCount
-      const key = `${r.owner}/${r.name}`
-      if (typeof count === 'number') stars.set(key, count)
-      else skipped.push(`${key}: no count`)
+      const aliases = batch.map((r, i) => `a${i}: repository(owner: ${JSON.stringify(r.owner)}, name: ${JSON.stringify(r.name)}) { stargazerCount }`).join('\n')
+      const query = `query {\n${aliases}\n}`
+      const request = (): Promise<Response> => fetchImpl(ENDPOINT, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query }),
+      })
+      let response = await request()
+      for (let attempt = 0; (response.status === 429 || response.status >= 500) && attempt < RETRY_LIMIT - 1; attempt += 1) {
+        const retryAfter = Number(response.headers.get('retry-after'))
+        const delay = Number.isFinite(retryAfter) && retryAfter > 0
+          ? Math.min(retryAfter * 1000, RETRY_MAX_DELAY_MS)
+          : Math.min(RETRY_BASE_DELAY_MS * 2 ** attempt, RETRY_MAX_DELAY_MS)
+        await sleep(delay)
+        response = await request()
+      }
+      if (!response.ok) {
+        for (const r of batch) skipped.push(`${r.owner}/${r.name}: gateway ${response.status}`)
+        continue
+      }
+      let body: { data?: Record<string, { stargazerCount?: unknown }>; errors?: unknown[] } = {}
+      try {
+        const parsed = await response.json() as unknown
+        // A `null` body or a primitive parses without throwing but has no
+        // `.errors`/`.data` to read; default to an empty object so the access
+        // below cannot throw (spec D4 — every failure mode stays in `skipped`).
+        if (parsed !== null && typeof parsed === 'object') body = parsed as typeof body
+      } catch {
+        // A 200 whose body is not JSON: the batch has no readable counts.
+        for (const r of batch) skipped.push(`${r.owner}/${r.name}: unreadable body`)
+        continue
+      }
+      if (body.errors !== undefined) {
+        for (const r of batch) skipped.push(`${r.owner}/${r.name}: graphql errors`)
+        continue
+      }
+      for (let i = 0; i < batch.length; i++) {
+        const r = batch[i]
+        if (r === undefined) continue
+        const count = body.data?.[`a${i}`]?.stargazerCount
+        const key = `${r.owner}/${r.name}`
+        if (typeof count === 'number') stars.set(key, count)
+        else skipped.push(`${key}: no count`)
+      }
+    } catch (error) {
+      // A transport failure (connection refused, DNS, TLS) or any other throw
+      // from this batch's own logic: every repo in the batch becomes a
+      // gateway-unreachable discard. A down gateway never fails the star fetch
+      // (spec D4) — the module never rejects.
+      for (const r of batch) skipped.push(`${r.owner}/${r.name}: gateway unreachable: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
   return { stars, skipped }
