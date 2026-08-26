@@ -7,7 +7,7 @@
 import { useEffect, useId, useMemo, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, InstallArgs, StoreCatalogResult, StoreInstallResult, StoreInstallStatusResult, StoreOutdatedEntry, StoreSetEnabledResult } from '../host/index.ts'
-import { isUnclaimed, rejectionCodeKey, tierKey } from './present.ts'
+import { categoryKey, isStoreLike, isUnclaimed, rejectionCodeKey, tierKey } from './present.ts'
 import { useInstall } from './useInstall.ts'
 import css from './StoreTab.module.css'
 
@@ -55,9 +55,10 @@ function ChevronIcon({ open }: { open: boolean }): ReactNode {
   )
 }
 
-/** One entry card: the expandable header (name, tier, unclaimed marker), the
- * plain-text summary in both languages, the self-declared capabilities, the
- * detail section, and the install controls. */
+/** One entry card: the category spine and cover band, the expandable header
+ * (name, tier, category, unclaimed marker), the plain-text summary in both
+ * languages, the self-declared capabilities, the detail section, and the
+ * install controls. */
 function EntryCard({ entry, t, install, installStatus }: {
   entry: CatalogEntry
   t: StoreTabProps['t']
@@ -67,8 +68,13 @@ function EntryCard({ entry, t, install, installStatus }: {
   const [open, setOpen] = useState(false)
   const detailId = useId()
   const summary = entry.catalog?.summary
+  const category = entry.catalog?.category ?? 'other'
   return (
-    <div className={css.card} data-store-entry={entry.name}>
+    <div className={css.card} data-store-entry={entry.name} data-category={category}>
+      <span className={css.cardSpine} aria-hidden="true" />
+      <span className={css.cardCover} aria-hidden="true">
+        <span className={css.coverLabel}>{t(categoryKey(entry))}</span>
+      </span>
       <button
         type="button"
         className={css.entryHeader}
@@ -396,8 +402,11 @@ export function StoreTab(props: StoreTabProps): ReactNode {
   const filtered = useMemo(() => {
     if (catalogState.kind !== 'ready') return []
     const q = query.trim().toLowerCase()
-    if (q === '') return catalogState.result.plugins
     return catalogState.result.plugins.filter(entry => {
+      // Store-like plugins (competing markets) are not advertised; an
+      // INSTALLED one stays manageable in the installed section below.
+      if (isStoreLike(entry.name)) return false
+      if (q === '') return true
       const summaryEn = entry.catalog?.summary.en ?? ''
       const summaryZh = entry.catalog?.summary.zh ?? ''
       return entry.name.toLowerCase().includes(q)
@@ -456,6 +465,7 @@ export function StoreTab(props: StoreTabProps): ReactNode {
         )}
       </div>
       <h2 className={css.catalogHeading}>{t('catalog')}</h2>
+      <p className={css.catalogStats}>{t('catalogStats', { count: String(result.plugins.length), date: result.builtAt.slice(0, 10) })}</p>
       {result.plugins.length === 0 ? (
         <p className={css.emptyLine}>{t('empty')}</p>
       ) : filtered.length === 0 ? (

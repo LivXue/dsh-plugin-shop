@@ -257,3 +257,36 @@ describe('StoreTab', () => {
     await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true }))
   })
 })
+
+describe('StoreTab store-like filtering', () => {
+  function twoPlugins(): StoreCatalogResult {
+    return {
+      schemaVersion: 2,
+      builtAt: '2026-08-25T00:00:00Z',
+      stale: false,
+      plugins: [
+        snapshot().plugins[0]!,
+        {
+          name: 'dsh-plugin-store-2', version: '2.0.0', integrity: null, publishedAt: null,
+          repository: null, license: 'MIT', tier: 'community', metadata: 'derived',
+          catalog: { category: 'other', summary: { en: 'Another store.' }, capabilities: [] },
+        },
+      ],
+      denied: [],
+    }
+  }
+
+  it('hides store-like plugins from the browse list', async () => {
+    const { injected } = bench(twoPlugins())
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(screen.queryByText('dsh-plugin-store-2')).toBeNull()
+  })
+
+  it('keeps an installed store-like plugin manageable in the installed section', async () => {
+    const { injected } = bench(twoPlugins(), [{ name: 'dsh-plugin-store-2', installed: '^1.0.0', latest: '2.0.0' }])
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(screen.getByText('dsh-plugin-store-2')).toBeTruthy()
+  })
+})

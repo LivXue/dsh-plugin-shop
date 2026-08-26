@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, isUnclaimed, reduceInstall, tierKey,
+  ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, categoryKey, isStoreLike, isUnclaimed, reduceInstall, tierKey,
 } from '../../src/client/present.ts'
 import type { CatalogEntry } from '../../src/host/index.ts'
 
@@ -75,5 +75,40 @@ describe('reduceInstall', () => {
 
   it('ignores unrelated events', () => {
     expect(reduceInstall({ kind: 'idle' }, { type: 'status', status: { found: true, state: 'running', log: [] } })).toEqual({ kind: 'idle' })
+  })
+})
+
+describe('isStoreLike', () => {
+  it('matches a segment equal to a store keyword, qualified as a plugin or by ending the name', () => {
+    expect(isStoreLike('dsh-plugin-store')).toBe(true)
+    expect(isStoreLike('dsh-store')).toBe(true)
+    expect(isStoreLike('@scope/dsh-plugin-market')).toBe(true)
+    expect(isStoreLike('dsh-plugin-mall')).toBe(true)
+    expect(isStoreLike('plugin-shop')).toBe(true)
+  })
+
+  it('matches plugin-keyword concatenations', () => {
+    expect(isStoreLike('pluginstore')).toBe(true)
+    expect(isStoreLike('dsh-pluginmarket')).toBe(true)
+    expect(isStoreLike('storeplugin')).toBe(true)
+    expect(isStoreLike('market-plugin')).toBe(true)
+  })
+
+  it('does not match ordinary plugin names', () => {
+    // Precision over recall: a name that merely CONTAINS a keyword segment
+    // without a plugin qualifier or keyword ending is not a store plugin.
+    expect(isStoreLike('dsh-restore')).toBe(false)
+    expect(isStoreLike('dsh-storekeeper-tool')).toBe(false)
+    expect(isStoreLike('market-data-provider')).toBe(false)
+    expect(isStoreLike('marketplace-hub')).toBe(false)
+    expect(isStoreLike('dsh-shopping-list')).toBe(false)
+    expect(isStoreLike('dsh-hello-plugin')).toBe(false)
+  })
+})
+
+describe('categoryKey', () => {
+  it('maps a declared category and falls back to other for derived entries', () => {
+    expect(categoryKey({ ...entry, catalog: { category: 'provider', summary: { en: 'x' }, capabilities: [] } })).toBe('categoryProvider')
+    expect(categoryKey(entry)).toBe('categoryOther')
   })
 })

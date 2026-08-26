@@ -95,3 +95,42 @@ export function reduceInstall(state: InstallView, event: InstallEvent): InstallV
     }
   }
 }
+
+const STORE_KEYWORDS = ['store', 'market', 'mall', 'shop', 'marketplace'] as const
+
+/**
+ * Whether a package name reads as a plugin store (a marketplace for dsh
+ * plugins, e.g. `dsh-plugin-store`, `dsh-store`, `pluginstore`). The store
+ * tab hides these so the market does not list competing markets.
+ *
+ * Precision over recall: a name merely CONTAINING a keyword segment without
+ * a plugin qualifier or a keyword ending (`market-data-provider`,
+ * `marketplace-hub`) is NOT a store plugin, and `dsh-restore` must never
+ * match on the substring "store".
+ */
+export function isStoreLike(name: string): boolean {
+  const segments = name.toLowerCase().split(/[-_.]+/)
+  const hasPlugin = segments.includes('plugin')
+  const concatenated = segments.some(segment =>
+    /plugin(store|market|mall|shop|marketplace)/.test(segment)
+    || /(store|market|mall|shop|marketplace)plugin/.test(segment))
+  if (concatenated) return true
+  const keywordSegments = segments.filter(segment => (STORE_KEYWORDS as readonly string[]).includes(segment))
+  if (keywordSegments.length === 0) return false
+  return hasPlugin || STORE_KEYWORDS.includes(segments.at(-1) as (typeof STORE_KEYWORDS)[number])
+}
+
+const CATEGORY_KEYS = {
+  tool: 'categoryTool',
+  provider: 'categoryProvider',
+  ui: 'categoryUi',
+  workflow: 'categoryWorkflow',
+  integration: 'categoryIntegration',
+  other: 'categoryOther',
+} as const
+
+/** The locale key for one entry's category — derived entries read as `other`
+ * (§6.1: a derived listing has no declared category). */
+export function categoryKey(entry: CatalogEntry): StoreLocaleKey {
+  return CATEGORY_KEYS[entry.catalog?.category ?? 'other']
+}
