@@ -44,12 +44,34 @@
 }
 
 .skeletonCard {
+  position: relative;
   display: flex;
   flex-direction: column;
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: 10px;
   background: var(--dsw-alias-bg-layer-1);
   overflow: hidden;
+}
+
+/* The shimmer sweep: one gradient band travels across each ghost card while
+ * the bars breathe, so the loading state reads as "the shelf is scanning". */
+.skeletonCard::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 25%,
+    color-mix(in srgb, var(--dsw-alias-bg-layer-2) 65%, transparent) 50%,
+    transparent 75%
+  );
+  transform: translateX(-100%);
+  animation: dshStoreSkeletonSweep 1.4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes dshStoreSkeletonSweep {
+  to { transform: translateX(100%); }
 }
 
 .skeletonCover {
@@ -93,6 +115,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .skeletonCard span { animation: none; opacity: 0.75; }
+  .skeletonCard::after { content: none; }
 }
 
 .actionButton {
