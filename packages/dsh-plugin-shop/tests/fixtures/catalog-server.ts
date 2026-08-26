@@ -34,7 +34,7 @@ const FIXTURE_ENTRY = {
   version: '1.0.0',
   integrity: null,
   publishedAt: '2026-08-25T00:00:00.000Z',
-  repository: null,
+  repository: 'https://github.com/octocat/dsh-e2e-fixture',
   license: null,
   tier: 'community',
   metadata: 'derived',
@@ -44,15 +44,20 @@ export async function startCatalogServer(): Promise<CatalogServer> {
   const data = JSON.stringify({ schemaVersion: 2, plugins: [FIXTURE_ENTRY], denied: [] })
   const sha256 = createHash('sha256').update(data).digest('hex')
   const dataName = `plugins.${sha256}.json`
+  const stars = JSON.stringify({ stars: { 'dsh-e2e-fixture-plugin': 4321 } })
+  const starsSha = createHash('sha256').update(stars).digest('hex')
+  const starsName = `stars.${starsSha}.json`
   const pointer = JSON.stringify({
     schemaVersion: 2,
     builtAt: new Date().toISOString(),
     count: 1,
     plugins: { url: dataName, sha256 },
+    stars: { url: starsName, sha256: starsSha },
   })
   const routes = new Map<string, string>([
     ['/v1/index.json', pointer],
     [`/v1/${dataName}`, data],
+    [`/v1/${starsName}`, stars],
   ])
   const server: Server = createServer((req, res) => {
     const body = routes.get(req.url ?? '')

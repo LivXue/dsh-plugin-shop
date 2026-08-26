@@ -192,6 +192,10 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       expect(await card.textContent()).toContain('作者未认领')
       expect(await card.textContent()).toContain('社区')
 
+      // The starred fixture renders its badge through the real wire → host →
+      // client path.
+      await dialog.getByText('★ 4.3k').waitFor({ state: 'visible', timeout: 15_000 })
+
       // Install → the §9.3 acknowledgement gate: the confirm button marks the
       // gate, and the body is the spec text verbatim (zh register).
       await card.locator('[data-shop-install]').click()
