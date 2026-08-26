@@ -75,6 +75,23 @@ describe('runPipeline', () => {
     expect(second.report).toBe(first.report)
   })
 
+  it('stays byte-identical when a derived listing carries a categories row', () => {
+    const categorized = parseRegistryConfig({
+      verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: github:r\n  reviewCommit: abc\n  notes: fine\n',
+      denied: '[]',
+      allowedSimilar: '[]',
+      categories: '- name: dsh-derived-plugin\n  category: tool\n',
+    })
+    const first = runPipeline(candidates, categorized, BUILT_AT)
+    const second = runPipeline(candidates, categorized, BUILT_AT)
+    expect(second.pluginsJson).toBe(first.pluginsJson)
+    const parsed = JSON.parse(first.pluginsJson) as {
+      plugins: { name: string; metadata: string; catalog: { category: string } }[]
+    }
+    const derived = parsed.plugins.find(p => p.name === 'dsh-derived-plugin')
+    expect(derived?.catalog.category).toBe('tool')
+  })
+
   it('produces identical data across build times', () => {
     const first = runPipeline(candidates, config, BUILT_AT)
     const second = runPipeline(candidates, config, '2030-01-01T00:00:00.000Z')

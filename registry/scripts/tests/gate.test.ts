@@ -26,6 +26,14 @@ function candidate(overrides: Partial<Candidate> = {}): Candidate {
   }
 }
 
+const withCategories = (rows: Record<string, string>): ReturnType<typeof parseRegistryConfig> =>
+  parseRegistryConfig({
+    verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: github:r\n  reviewCommit: abc\n',
+    denied: '- name: dsh-evil-plugin\n  reason: Exfiltrates credentials.\n',
+    allowedSimilar: '- dsh-fs-tools\n',
+    categories: Object.keys(rows).length === 0 ? '[]' : Object.entries(rows).map(([name, category]) => `- name: ${name}\n  category: ${category}\n`).join(''),
+  })
+
 describe('gate', () => {
   it('accepts a complete candidate and marks it declared', () => {
     const result = gate(candidate(), config)
@@ -49,6 +57,30 @@ describe('gate', () => {
       summary: { en: 'Does a helpful thing.' },
       capabilities: [],
     })
+  })
+
+  it('fills a derived listing with its LLM-assigned category', () => {
+    const result = gate(
+      candidate({ catalog: undefined, description: 'Does a helpful thing.' }),
+      withCategories({ 'dsh-hello-plugin': 'tool' }),
+    )
+    if (!result.ok) throw new Error('expected acceptance')
+    expect(result.accepted.metadata).toBe('derived')
+    expect(result.accepted.catalog.category).toBe('tool')
+  })
+
+  it('defaults a derived listing without a row to other', () => {
+    const result = gate(candidate({ catalog: undefined, description: 'Does a helpful thing.' }), withCategories({}))
+    if (!result.ok) throw new Error('expected acceptance')
+    expect(result.accepted.catalog.category).toBe('other')
+  })
+
+  it('never overrides a declared category', () => {
+    // candidate() declares category: 'tool' (line 22); a provider row must not win
+    const result = gate(candidate(), withCategories({ 'dsh-hello-plugin': 'provider' }))
+    if (!result.ok) throw new Error('expected acceptance')
+    expect(result.accepted.metadata).toBe('declared')
+    expect(result.accepted.catalog.category).toBe('tool')
   })
 
   it('trims and caps a derived summary at 200 characters', () => {

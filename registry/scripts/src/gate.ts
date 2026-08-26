@@ -84,7 +84,9 @@ export function gate(
         'Declares no dsh.catalog and npm reports no description, so there is nothing to list.')
     }
     catalog = {
-      category: 'other',
+      // LLM-assigned when the classifier has a row for this name (spec
+      // 2026-08-26-llm-categorization-design.md); `other` until it does.
+      category: config.categories.get(name) ?? 'other',
       summary: { en: description.slice(0, DERIVED_SUMMARY_MAX_LENGTH) },
       capabilities: [],
     }
