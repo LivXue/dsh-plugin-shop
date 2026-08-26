@@ -46,8 +46,8 @@ const liveNames = new Set<string>()
 for (const candidate of candidates) {
   const result = gate(candidate, config)
   if (!result.ok) continue
-  liveNames.add(candidate.name)
   if (result.accepted.metadata !== 'derived') continue
+  liveNames.add(candidate.name)
   if (config.categories.has(candidate.name)) continue
   pending.push({ name: candidate.name, description: candidate.description, keywords: candidate.keywords })
 }

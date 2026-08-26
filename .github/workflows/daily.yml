@@ -52,7 +52,7 @@ jobs:
       - name: Classify new listings
         run: node --experimental-strip-types registry/scripts/src/classify.ts
       - name: Commit the category list
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
         continue-on-error: true
         run: |
           git config user.name 'dsh-plugin-shop bot'

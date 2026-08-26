@@ -228,7 +228,7 @@ A derived listing may carry an LLM-assigned `catalog.category` sourced from `reg
 ### 7.1 Catalog build (daily and on PR)
 
 ```
-harvest -> fetch manifest -> gate -> tier -> emit -> commit snapshot
+harvest -> fetch manifest -> classify -> gate -> tier -> emit -> commit snapshot
 ```
 
 1. **Harvest** — `registry.npmjs.org/-/v1/search?text=keywords:dsh-plugin`, paged, for the full candidate set. **Harvest by keyword, never by name pattern**; a name pattern is trivially spoofed.

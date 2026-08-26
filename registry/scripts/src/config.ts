@@ -64,11 +64,11 @@ function setUnique<V>(map: Map<string, V>, label: string, name: string, value: V
 }
 
 /**
- * Parse the three registry files from their text.
+ * Parse the four registry files from their text.
  * @param input - the raw text of each file.
  * @returns the parsed configuration.
- * @throws when any file is malformed, or when `verified.yml` or `denied.yml`
- *   lists the same package name twice.
+ * @throws when any file is malformed, or when `verified.yml`, `denied.yml`, or
+ *   `categories.yml` lists the same package name twice.
  */
 export function parseRegistryConfig(
   input: { verified: string; denied: string; allowedSimilar: string; categories: string },

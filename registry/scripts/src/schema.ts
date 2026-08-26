@@ -1,8 +1,8 @@
 import { z } from 'zod'
-import type { CatalogSection } from './types.ts'
+import { CATEGORIES, type CatalogSection } from './types.ts'
 
 /** Closed category enum; adding a member is a schema change. */
-export const categorySchema = z.enum(['tool', 'provider', 'ui', 'workflow', 'integration', 'other'])
+export const categorySchema = z.enum(CATEGORIES)
 
 /**
  * The `dsh.catalog` section. Both summary languages are required and neither
