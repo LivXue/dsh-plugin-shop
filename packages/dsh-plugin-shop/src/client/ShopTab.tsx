@@ -110,7 +110,17 @@ const EntryCard = memo(function EntryCard({ entry, t, install, installStatus }: 
               {entry.repository !== null && (
                 <div className={css.detailRow}>
                   <dt>{t('repository')}</dt>
-                  <dd>{entry.repository}</dd>
+                  <dd>
+                    {/^https?:\/\//.test(entry.repository) ? (
+                      // The catalog is untrusted input: only a value that IS
+                      // an http(s) URL becomes a link; anything else renders
+                      // as plain text. New tab + noopener/noreferrer keeps the
+                      // opened page from reaching back into this tab.
+                      <a href={entry.repository} target="_blank" rel="noopener noreferrer">
+                        {entry.repository}
+                      </a>
+                    ) : entry.repository}
+                  </dd>
                 </div>
               )}
               {entry.license !== null && (

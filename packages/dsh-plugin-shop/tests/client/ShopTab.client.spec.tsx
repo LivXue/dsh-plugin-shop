@@ -214,6 +214,26 @@ describe('ShopTab', () => {
     expect(screen.getByText('MIT')).toBeTruthy()
   })
 
+  it('renders a https repository as a link that opens safely in a new tab', async () => {
+    const { injected } = bench(snapshot())
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText('dsh-hello-plugin'))
+    const link = screen.getByRole('link', { name: 'https://github.com/you/hello-plugin' })
+    expect(link.getAttribute('href')).toBe('https://github.com/you/hello-plugin')
+    expect(link.getAttribute('target')).toBe('_blank')
+    expect(link.getAttribute('rel')).toBe('noopener noreferrer')
+  })
+
+  it('renders a repository that is not an http(s) URL as plain text, never a link', async () => {
+    const { injected } = bench(snapshot({ repository: 'not-a-url' }))
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText('dsh-hello-plugin'))
+    expect(screen.getByText('not-a-url')).toBeTruthy()
+    expect(screen.queryByRole('link', { name: 'not-a-url' })).toBeNull()
+  })
+
   it('pins the acknowledgement wording to §9.3 in both dictionaries', () => {
     expect(en.acknowledgementBody).toBe(ACKNOWLEDGEMENT_EN)
     expect(zh.acknowledgementBody).toBe(ACKNOWLEDGEMENT_ZH)
