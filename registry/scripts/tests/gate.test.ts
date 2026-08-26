@@ -7,6 +7,7 @@ const config = parseRegistryConfig({
   verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: github:r\n  reviewCommit: abc\n',
   denied: '- name: dsh-evil-plugin\n  reason: Exfiltrates credentials.\n',
   allowedSimilar: '- dsh-fs-tools\n',
+  categories: '[]',
 })
 
 function candidate(overrides: Partial<Candidate> = {}): Candidate {
@@ -144,6 +145,7 @@ describe('gate', () => {
       verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: r\n  reviewCommit: c\n',
       denied: '- name: dsh-fs-too1\n  reason: Typosquat.\n',
       allowedSimilar: '[]',
+      categories: '[]',
     })
     const result = gate(candidate({ name: 'dsh-fs-too1' }), denied)
     if (result.ok) throw new Error('expected rejection')

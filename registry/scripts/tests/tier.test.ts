@@ -7,6 +7,7 @@ const config = parseRegistryConfig({
   verified: '- name: dsh-hello-plugin\n  reviewedVersion: 1.2.0\n  reviewer: github:r\n  reviewCommit: abc\n  notes: fine\n',
   denied: '[]',
   allowedSimilar: '[]',
+  categories: '[]',
 })
 
 function accepted(name: string, version: string, metadata: Accepted['metadata'] = 'declared'): Accepted {

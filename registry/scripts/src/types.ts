@@ -1,5 +1,6 @@
 /** Closed set of catalog categories. Adding one is a schema change. */
-export type Category = 'tool' | 'provider' | 'ui' | 'workflow' | 'integration' | 'other'
+export const CATEGORIES = ['tool', 'provider', 'ui', 'workflow', 'integration', 'other'] as const
+export type Category = typeof CATEGORIES[number]
 
 /**
  * The `dsh.catalog` section, either author-declared or derived from npm

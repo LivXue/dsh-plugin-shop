@@ -1,8 +1,8 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parse } from 'yaml'
 import { z } from 'zod'
-import type { Review } from './types.ts'
+import { CATEGORIES, type Category, type Review } from './types.ts'
 
 const verifiedSchema = z.array(z.object({
   name: z.string().min(1),
@@ -19,6 +19,11 @@ const deniedSchema = z.array(z.object({
 
 const allowedSimilarSchema = z.array(z.string().min(1))
 
+const categoriesSchema = z.array(z.object({
+  name: z.string().min(1),
+  category: z.enum(CATEGORIES),
+}).strict())
+
 /** The human-authored inputs to one catalog build. */
 export interface RegistryConfig {
   /** Package name to its pinned review. */
@@ -27,6 +32,8 @@ export interface RegistryConfig {
   denied: Map<string, string>
   /** Names cleared past the similarity hold. */
   allowedSimilar: Set<string>
+  /** Package name to its LLM-assigned category (spec 2026-08-26-llm-categorization-design.md). */
+  categories: Map<string, Category>
 }
 
 /**
@@ -64,7 +71,7 @@ function setUnique<V>(map: Map<string, V>, label: string, name: string, value: V
  *   lists the same package name twice.
  */
 export function parseRegistryConfig(
-  input: { verified: string; denied: string; allowedSimilar: string },
+  input: { verified: string; denied: string; allowedSimilar: string; categories: string },
 ): RegistryConfig {
   const verified = new Map<string, Review>()
   for (const row of parseFile('verified.yml', input.verified, verifiedSchema)) {
@@ -80,7 +87,11 @@ export function parseRegistryConfig(
     setUnique(denied, 'denied.yml', row.name, row.reason)
   }
   const allowedSimilar = new Set(parseFile('allowed-similar.yml', input.allowedSimilar, allowedSimilarSchema))
-  return { verified, denied, allowedSimilar }
+  const categories = new Map<string, Category>()
+  for (const row of parseFile('categories.yml', input.categories, categoriesSchema)) {
+    setUnique(categories, 'categories.yml', row.name, row.category)
+  }
+  return { verified, denied, allowedSimilar, categories }
 }
 
 /**
@@ -93,5 +104,11 @@ export function loadRegistryConfig(dir: string): RegistryConfig {
     verified: readFileSync(join(dir, 'verified.yml'), 'utf8'),
     denied: readFileSync(join(dir, 'denied.yml'), 'utf8'),
     allowedSimilar: readFileSync(join(dir, 'allowed-similar.yml'), 'utf8'),
+    categories: readOptional(dir, 'categories.yml'),
   })
+}
+
+function readOptional(dir: string, file: string): string {
+  const path = join(dir, file)
+  return existsSync(path) ? readFileSync(path, 'utf8') : '[]'
 }

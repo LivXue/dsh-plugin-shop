@@ -12,6 +12,7 @@ const config = parseRegistryConfig({
   verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: github:r\n  reviewCommit: abc\n  notes: fine\n',
   denied: '[]',
   allowedSimilar: '[]',
+  categories: '[]',
 })
 
 const BUILT_AT = '2026-08-18T00:00:00.000Z'
