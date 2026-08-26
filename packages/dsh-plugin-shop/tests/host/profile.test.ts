@@ -16,14 +16,14 @@ function fixtureProfile(): string {
 describe('discoverProfile', () => {
   it('finds the profile directory above the start path', () => {
     const dir = fixtureProfile()
-    expect(discoverProfile(join(dir, 'node_modules', 'dsh-plugin-store', 'lib', 'index.js'))).toEqual({ name: 'web', dir })
+    expect(discoverProfile(join(dir, 'node_modules', 'dsh-plugin-shop', 'lib', 'index.js'))).toEqual({ name: 'web', dir })
   })
 
   it('resolves symlinks in the start path back to the real profile directory', () => {
     const dir = fixtureProfile()
     const link = join(dirname(dir), 'web-link')
     symlinkSync(dir, link)
-    expect(discoverProfile(join(link, 'node_modules', 'dsh-plugin-store', 'lib', 'index.js'))).toEqual({ name: 'web', dir })
+    expect(discoverProfile(join(link, 'node_modules', 'dsh-plugin-shop', 'lib', 'index.js'))).toEqual({ name: 'web', dir })
   })
 
   it('uses the boot-provided base directory when the start path is not under any profile', () => {
@@ -32,14 +32,14 @@ describe('discoverProfile', () => {
     // profile's cordis.yml directory) is the authoritative fallback.
     const dir = fixtureProfile()
     const linkedSource = mkdtempSync(join(tmpdir(), 'dsh-linked-source-'))
-    expect(discoverProfile(join(linkedSource, 'packages', 'dsh-plugin-store', 'lib', 'index.js'), dir))
+    expect(discoverProfile(join(linkedSource, 'packages', 'dsh-plugin-shop', 'lib', 'index.js'), dir))
       .toEqual({ name: 'web', dir })
   })
 
   it('ignores a base directory that is not a profile and walks up as before', () => {
     const dir = fixtureProfile()
     const stray = mkdtempSync(join(tmpdir(), 'dsh-stray-'))
-    expect(discoverProfile(join(dir, 'node_modules', 'dsh-plugin-store', 'lib', 'index.js'), stray))
+    expect(discoverProfile(join(dir, 'node_modules', 'dsh-plugin-shop', 'lib', 'index.js'), stray))
       .toEqual({ name: 'web', dir })
   })
 

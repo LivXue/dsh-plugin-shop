@@ -1,10 +1,10 @@
 # CLAUDE.md
 
-dsh-plugin-store is the plugin market for [DeepSeek Harness](https://github.com/deepseek-harness). It harvests dsh plugins from npm, decides which may be listed, and publishes a catalog people install software from.
+dsh-plugin-shop is the plugin market for [DeepSeek Harness](https://github.com/deepseek-harness). It harvests dsh plugins from npm, decides which may be listed, and publishes a catalog people install software from.
 
 **Starting work? Read [docs/plans/2026-08-18-remaining-work.md](docs/plans/2026-08-18-remaining-work.md) first** — what is built, what is not, and what needs a human decision.
 
-**The spec in [docs/design/](docs/design/) is the authority.** Code, tests, and prose follow it; when they disagree, the spec wins or the spec gets amended in the same change. Amending it is normal — [D7](docs/design/2026-08-18-dsh-plugin-store-design.md) exists because running the harvest against the live registry disproved a premise the design was built on.
+**The spec in [docs/design/](docs/design/) is the authority.** Code, tests, and prose follow it; when they disagree, the spec wins or the spec gets amended in the same change. Amending it is normal — [D7](docs/design/2026-08-18-dsh-plugin-shop-design.md) exists because running the harvest against the live registry disproved a premise the design was built on.
 
 ## Layout
 
@@ -17,7 +17,7 @@ registry/          The catalog pipeline. All of P0.
   snapshots/       manifest.lock, committed daily
   scripts/src/     Pipeline modules
   scripts/tests/   One test file per module
-packages/dsh-plugin-store/  The npm package dsh-plugin-store
+packages/dsh-plugin-shop/  The npm package dsh-plugin-shop
 packages/dsh-typert-protocol/  Vendored @deepseek-ai/dsh-typert-protocol, build-time only
 docs/design/       Specs. English only.
 docs/plans/        Implementation plans.

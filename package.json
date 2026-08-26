@@ -1,5 +1,5 @@
 {
-  "name": "dsh-plugin-store-registry",
+  "name": "dsh-plugin-shop-registry",
   "private": true,
   "type": "module",
   "engines": { "node": "^22.19.0 || >=24.0.0" },

@@ -29,7 +29,7 @@ export function discoverProfile(startPath: string, baseDir?: string): { name: st
     if (parent === dir) break
     dir = parent
   }
-  throw new Error(`dsh-plugin-store: no profile directory found above ${startPath}`)
+  throw new Error(`dsh-plugin-shop: no profile directory found above ${startPath}`)
 }
 
 /** A directory is a profile when it holds the Loader root next to the bundle
@@ -70,7 +70,7 @@ function realpathNearestExisting(startPath: string): string {
  */
 export function setUserLayerRow(options: { profileDir: string; row: UserLayerRow }): void {
   const file = join(options.profileDir, 'cordis.patch.yml')
-  const rows = loadOptionalPatches('dsh-plugin-store', file) ?? []
+  const rows = loadOptionalPatches('dsh-plugin-shop', file) ?? []
   const others = rows.filter(row => row.id !== options.row.id)
   const next = options.row.disabled
     ? [...others, { id: options.row.id, disabled: true }]

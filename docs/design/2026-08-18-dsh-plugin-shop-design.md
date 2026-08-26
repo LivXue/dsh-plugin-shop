@@ -1,4 +1,4 @@
-# dsh-plugin-store Design
+# dsh-plugin-shop Design
 
 Status: reviewed, implementation plan pending
 Date: 2026-08-18
@@ -13,7 +13,7 @@ What is missing is not installation. It is three other things:
 - **Trust** — no source tiering, so installing a plugin means trusting an unknown body of code completely.
 - **Interface** — no visual entry point for browsing, enabling, or updating.
 
-dsh-plugin-store supplies those three.
+dsh-plugin-shop supplies those three.
 
 ## 2. Goals and non-goals
 
@@ -58,7 +58,7 @@ dsh-plugin-store supplies those three.
 
 ### 5.1 Components and repository layout
 
-One repository, two directories. `registry/` holds data and build scripts; `packages/dsh-plugin-store/` holds the npm package. They share no code, only the schema in §6.
+One repository, two directories. `registry/` holds data and build scripts; `packages/dsh-plugin-shop/` holds the npm package. They share no code, only the schema in §6.
 
 ```
 registry/
@@ -68,23 +68,32 @@ registry/
   allowed-similar.yml               Explicit clearance for near-duplicate names
   snapshots/manifest.lock           Daily committed name -> version -> integrity
   scripts/build.ts                  harvest -> validate -> merge -> emit
-packages/dsh-plugin-store/            The npm package dsh-plugin-store (under packages/ because the typert generator requires it; see the §5.1 note)
+packages/dsh-plugin-shop/            The npm package dsh-plugin-shop (under packages/ because the typert generator requires it; see the §5.1 note)
   src/host/                         StoreGateway
   src/client/                       Browser half
 packages/dsh-typert-protocol/         Vendored @deepseek-ai/dsh-typert-protocol, build-time only (VENDORED.md)
 .github/workflows/daily.yml         Daily and PR-triggered registry build
 ```
 
-The package directory is `packages/dsh-plugin-store/` rather than `plugin/` because `@deepseek-ai/dsh-typert-generator` hardcodes `packages/` as the package container; the published npm package name is unchanged.
+The package directory is `packages/dsh-plugin-shop/` rather than `plugin/` because `@deepseek-ai/dsh-typert-generator` hardcodes `packages/` as the package container.
+
+The published npm package is named `dsh-plugin-shop`, not `dsh-plugin-store`. The
+latter was taken on npm on 2026-08-14 by an unrelated project of the same
+concept, as were `dsh-plugin-hub`, `dsh-plugin-market`, `dsh-store`,
+`dsh-marketplace`, `dsh-catalog` and `dsh-plugin-catalog` — six different
+maintainers publishing inside ten days. The repository, the Pages deployment
+and the catalog URL were renamed to match, so one name spans all of them.
+Note that `isStoreLike` (§7.2 client filter) matches our own name by design:
+the shelf does not list itself, because the store is bootstrap-installed.
 
 **R — `registry/` (data only, no runtime code)**
 
 Artifacts publish to a CDN as `/v1/index.json` (a pointer) and `/v1/plugins.<sha256>.json` (the data). Separating pointer from data lets a client cache the data file indefinitely while polling only a few hundred bytes.
 
-**S — `packages/dsh-plugin-store/` (the npm package `dsh-plugin-store`, two halves)**
+**S — `packages/dsh-plugin-shop/` (the npm package `dsh-plugin-shop`, two halves)**
 
 - **Host half**, `StoreGateway`: registers the `store/*` Remote. It is the only place that touches the network or the profile directory.
-- **Client half**, `dsh-plugin-store/client`: follows the `dsh.client` convention, mounts the store's Remote through `ctx.remote.$mount()`, and contributes one tab to `settings.plugins.tab`. **It touches neither the network nor the filesystem.**
+- **Client half**, `dsh-plugin-shop/client`: follows the `dsh.client` convention, mounts the store's Remote through `ctx.remote.$mount()`, and contributes one tab to `settings.plugins.tab`. **It touches neither the network nor the filesystem.**
 
 **Upstream dsh: no change required for v0.**
 
@@ -132,7 +141,7 @@ An author edits only their own `package.json`:
 
 Two identifiers stay **ecosystem-neutral and deliberately unbranded**:
 
-- The keyword is `dsh-plugin`, not `dsh-plugin-store`. An author declares "I am a dsh plugin", not "I want to be on your shelf".
+- The keyword is `dsh-plugin`, not `dsh-plugin-shop`. An author declares "I am a dsh plugin", not "I want to be on your shelf".
 - The field is `dsh.catalog`, not `dsh.store`. The `dsh` section is DeepSeek's namespace — its JSDoc states that "other consumers own additional keys", so adding one is sanctioned — but adding a key named after this project would plant our sign in someone else's namespace. `catalog` names what the data is, so a second store can reuse it directly. For a public community market that is the honest choice.
 
 `category` is a closed enum: `tool` | `provider` | `ui` | `workflow` | `integration` | `other`.
@@ -350,7 +359,7 @@ Wording such as "this plugin comes from the community, please install with care"
 
 ## 11. Testing and acceptance
 
-dsh-plugin-store sits outside the dsh repository and is not bound by its 100% coverage, invariant, or doc-sync gates. Four of its practices are adopted deliberately:
+dsh-plugin-shop sits outside the dsh repository and is not bound by its 100% coverage, invariant, or doc-sync gates. Four of its practices are adopted deliberately:
 
 1. **`build.ts` must be a pure function** — npm response fixtures in, JSON out. One case per gate rule, plus a **determinism test**: the same input twice produces byte-identical output. That test directly protects the "`builtAt` stays out of the hash" decision in §6.2.
 2. **Rejections must be tested through the executor** — one test each for `not-in-catalog`, `denied`, `version-mismatch`, and `needs-acknowledgement`, calling `store/installStart` directly rather than asserting that the UI disabled a button. Per dsh's own rule: "facades, wrappers, and listener order are not enforcement when direct or alternate callers can bypass them; test denial through the executor."

@@ -1,4 +1,4 @@
-# dsh-plugin-store
+# dsh-plugin-shop
 
 [English](README.md) | 中文
 
@@ -6,14 +6,14 @@ DeepSeek Harness 的插件市场：从一份可浏览的 catalog 中发现、安
 
 ## 状态
 
-P0（catalog 流水线）已在本仓库上线。插件 Host 与 Client（P1/P2）尚未开始；见[剩余工作](docs/plans/2026-08-18-remaining-work.md)与[设计文档](docs/design/2026-08-18-dsh-plugin-store-design.md)（均为英文）。
+P0（catalog 流水线）、P1（插件 Host）与 P2（设置页 Client）均已完成；npm 包以 [`dsh-plugin-shop`](https://www.npmjs.com/package/dsh-plugin-shop) 发布。尚未完成的是填充 `verified` 层的评审 workflow；见[剩余工作](docs/plans/2026-08-18-remaining-work.md)与[设计文档](docs/design/2026-08-18-dsh-plugin-shop-design.md)（均为英文）。
 
 ## Catalog
 
 Catalog 每日构建，以静态 JSON 发布：
 
-- `https://LivXue.github.io/dsh-plugin-store/v1/index.json` —— 指针，携带 `schemaVersion`、`builtAt` 和内容哈希
-- `https://LivXue.github.io/dsh-plugin-store/v1/plugins.<sha256>.json` —— 数据
+- `https://LivXue.github.io/dsh-plugin-shop/v1/index.json` —— 指针，携带 `schemaVersion`、`builtAt` 和内容哈希
+- `https://LivXue.github.io/dsh-plugin-shop/v1/plugins.<sha256>.json` —— 数据
 
 指针足够小，适合轮询；数据文件是内容寻址的，可以无限期缓存。每次构建的淘汰报告（每个被淘汰的包都附作者可读的原因）挂在对应的 workflow run 上。
 

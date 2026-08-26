@@ -11,7 +11,7 @@ export const SCHEMA_PATH = 'registry/schema/plugin-entry.schema.json'
  */
 export function renderJsonSchema(): string {
   const schema = {
-    $id: 'https://dsh-plugin-store.dev/schema/plugin-entry.schema.json',
+    $id: 'https://dsh-plugin-shop.dev/schema/plugin-entry.schema.json',
     title: 'dsh.catalog',
     description: 'The catalog section a dsh plugin declares in its package.json.',
     ...z.toJSONSchema(catalogSectionSchema),

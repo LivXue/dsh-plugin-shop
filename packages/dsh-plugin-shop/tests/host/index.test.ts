@@ -47,7 +47,7 @@ describe('StoreGateway', () => {
     const profileDir = join(home, 'profiles', 'web')
     mkdirSync(profileDir, { recursive: true })
     writeFileSync(join(profileDir, 'cordis.yml'), '[]\n')
-    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: ['dsh-plugin-store'] } } }))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: ['dsh-plugin-shop'] } } }))
     const ctx = {
       get: () => undefined,
       reflect: { provide: () => {} },
@@ -58,9 +58,9 @@ describe('StoreGateway', () => {
     // end to end — the observable proof of the discovery.
     const gateway = new StoreGateway(ctx)
     expect(gateway.name).toBe('store')
-    const inventory = [{ entryId: 'store-row', moduleName: 'dsh-plugin-store', enabled: true }]
+    const inventory = [{ entryId: 'store-row', moduleName: 'dsh-plugin-shop', enabled: true }]
     const withInventory = new StoreGateway(ctx, { inventory: { list: () => inventory } })
-    const result = withInventory.setEnabled({ name: 'dsh-plugin-store', enabled: false })
+    const result = withInventory.setEnabled({ name: 'dsh-plugin-shop', enabled: false })
     expect(result.ok).toBe(true)
     expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toContain('store-row')
   })
@@ -110,7 +110,7 @@ describe('StoreGateway.catalog', () => {
     } as never, { profile: 'web' })
 
     await expect(gateway.catalog({})).rejects.toThrow(
-      'dsh-plugin-store: the store row is missing catalogUrl or cacheDir config',
+      'dsh-plugin-shop: the store row is missing catalogUrl or cacheDir config',
     )
   })
 
@@ -123,7 +123,7 @@ describe('StoreGateway.catalog', () => {
         loader: {
           entries: () => [{
             options: {
-              name: 'dsh-plugin-store',
+              name: 'dsh-plugin-shop',
               config: { catalogUrl: 'https://row.test/v1/', cacheDir: '/row-cache' },
             },
           }],
@@ -334,7 +334,7 @@ describe('StoreGateway.setEnabled', () => {
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
     const gateway = new StoreGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: () => [] } })
     const result = await gateway.setEnabled({ name: 'dsh-not-here', enabled: false })
-    expect(result).toEqual({ ok: false, detail: 'dsh-plugin-store: dsh-not-here is not installed' })
+    expect(result).toEqual({ ok: false, detail: 'dsh-plugin-shop: dsh-not-here is not installed' })
     expect(existsSync(join(profileDir, 'cordis.patch.yml'))).toBe(false)
   })
 })

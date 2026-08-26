@@ -100,7 +100,7 @@ const STORE_KEYWORDS = ['store', 'market', 'mall', 'shop', 'marketplace'] as con
 
 /**
  * Whether a package name reads as a plugin store (a marketplace for dsh
- * plugins, e.g. `dsh-plugin-store`, `dsh-store`, `pluginstore`). The store
+ * plugins, e.g. `dsh-plugin-shop`, `dsh-store`, `pluginstore`). The store
  * tab hides these so the market does not list competing markets.
  *
  * Precision over recall: a name merely CONTAINING a keyword segment without

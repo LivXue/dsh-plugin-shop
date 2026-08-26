@@ -1,6 +1,6 @@
 packages:
   - packages/dsh-typert-protocol
-  - packages/dsh-plugin-store
+  - packages/dsh-plugin-shop
 allowBuilds:
   esbuild: true
 overrides:

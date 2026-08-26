@@ -44,7 +44,7 @@ jobs:
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         continue-on-error: true
         run: |
-          git config user.name 'dsh-plugin-store bot'
+          git config user.name 'dsh-plugin-shop bot'
           git config user.email 'bot@users.noreply.github.com'
           git add registry/snapshots/manifest.lock
           git diff --cached --quiet && exit 0
@@ -60,6 +60,6 @@ jobs:
       id-token: write
     environment:
       name: github-pages
-      url: https://LivXue.github.io/dsh-plugin-store
+      url: https://LivXue.github.io/dsh-plugin-shop
     steps:
       - uses: actions/deploy-pages@v4

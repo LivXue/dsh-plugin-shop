@@ -10,7 +10,7 @@
  *
  * Install-target decision (documented in the task report): no usable
  * dsh.bundle-declaring package exists on npm for a REAL successful install —
- * the only candidate, dsh-plugin-store@0.1.0, is a stale pre-tab artifact.
+ * the only candidate, dsh-plugin-shop@0.1.0, is a stale pre-tab artifact.
  * The fixture entry therefore names `dsh-e2e-fixture-plugin@1.0.0`, which
  * does NOT exist on npm: the browser install fails with REAL pnpm stderr, and
  * the failed view's recovery hint (`pnpm failed in the profile. Run: …`) is
@@ -73,7 +73,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
 
   const storePackageDir = fileURLToPath(new URL('../../', import.meta.url))
   const helloFixtureDir = fileURLToPath(
-    new URL('../fixtures/hello-packages/dsh-plugin-store', import.meta.url),
+    new URL('../fixtures/hello-packages/dsh-plugin-shop', import.meta.url),
   )
 
   beforeAll(async () => {
@@ -83,7 +83,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
     // The REAL install path: the same executor the gateway runs, spawning
     // `dsh plugin --profile web add file:<…>` in the profile.
     for (const [spec, expectedName] of [
-      [pathToFileURL(storePackageDir).href, 'dsh-plugin-store'],
+      [pathToFileURL(storePackageDir).href, 'dsh-plugin-shop'],
       [pathToFileURL(helloFixtureDir).href, 'dsh-hello-fixture'],
     ] as const) {
       const install = startInstall({
@@ -218,12 +218,12 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       const manifest = JSON.parse(
         readFileSync(join(tmpHome, 'profiles', 'web', 'package.json'), 'utf8'),
       ) as { dependencies?: Record<string, string>; dsh?: { profile?: { bundles?: string[] } } }
-      expect(manifest.dsh?.profile?.bundles).toContain('dsh-plugin-store')
+      expect(manifest.dsh?.profile?.bundles).toContain('dsh-plugin-shop')
       expect(manifest.dsh?.profile?.bundles).toContain('dsh-hello-fixture')
       expect(manifest.dsh?.profile?.bundles).not.toContain('dsh-e2e-fixture-plugin')
       // pnpm records the spec under the package's true name; the value is
       // the normalized file: spec (a file:///… URL is written as file:/…).
-      expect(manifest.dependencies?.['dsh-plugin-store']).toMatch(/^file:/)
+      expect(manifest.dependencies?.['dsh-plugin-shop']).toMatch(/^file:/)
       expect(manifest.dependencies?.['dsh-hello-fixture']).toMatch(/^file:/)
     },
     120_000,

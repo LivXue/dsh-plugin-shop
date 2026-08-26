@@ -1,4 +1,4 @@
-# dsh-plugin-store
+# dsh-plugin-shop
 
 English | [中文](README.zh.md)
 
@@ -6,14 +6,14 @@ The plugin store for DeepSeek Harness — discover, install, enable, and update 
 
 ## Status
 
-P0 — the catalog pipeline — is live in this repository. The plugin host and client (P1/P2) are not started; see [the remaining work](docs/plans/2026-08-18-remaining-work.md) and [the design](docs/design/2026-08-18-dsh-plugin-store-design.md).
+P0 (the catalog pipeline), P1 (the plugin host) and P2 (the settings-tab client) are complete; the package is published on npm as [`dsh-plugin-shop`](https://www.npmjs.com/package/dsh-plugin-shop). What is left is the review workflow that fills the `verified` tier — see [the remaining work](docs/plans/2026-08-18-remaining-work.md) and [the design](docs/design/2026-08-18-dsh-plugin-shop-design.md).
 
 ## The catalog
 
 The catalog is built daily and published as static JSON:
 
-- `https://LivXue.github.io/dsh-plugin-store/v1/index.json` — the pointer, carrying `schemaVersion`, `builtAt`, and the content hash
-- `https://LivXue.github.io/dsh-plugin-store/v1/plugins.<sha256>.json` — the data
+- `https://LivXue.github.io/dsh-plugin-shop/v1/index.json` — the pointer, carrying `schemaVersion`, `builtAt`, and the content hash
+- `https://LivXue.github.io/dsh-plugin-shop/v1/plugins.<sha256>.json` — the data
 
 The pointer is small enough to poll; the data file is content-addressed and safe to cache indefinitely. Each build's rejection report, with an author-readable reason per rejected package, is attached to the workflow run.
 

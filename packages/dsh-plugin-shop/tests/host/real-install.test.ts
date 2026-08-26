@@ -28,7 +28,7 @@ const hasDsh = (() => {
 
 describe('real installation', () => {
   const tmpHome = mkdtempSync(join(tmpdir(), 'dsh-home-'))
-  const fixtureDir = fileURLToPath(new URL('../fixtures/hello-packages/dsh-plugin-store', import.meta.url))
+  const fixtureDir = fileURLToPath(new URL('../fixtures/hello-packages/dsh-plugin-shop', import.meta.url))
 
   afterAll(() => {
     rmSync(tmpHome, { recursive: true, force: true })

@@ -1,4 +1,4 @@
-/** StoreGateway: the Host half of dsh-plugin-store (§5.1). */
+/** StoreGateway: the Host half of dsh-plugin-shop (§5.1). */
 
 import type { Context } from '@deepseek-ai/cordis'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
@@ -135,7 +135,7 @@ export class StoreGateway extends TypertRemoteService {
     const inventory = (this.ctx as { get?: (name: string) => unknown }).get?.('pluginInventory') as
       | { list(): InventoryEntry[] }
       | undefined
-    if (inventory === undefined) throw new Error('dsh-plugin-store: pluginInventory service is not mounted')
+    if (inventory === undefined) throw new Error('dsh-plugin-shop: pluginInventory service is not mounted')
     return inventory.list()
   }
 
@@ -145,7 +145,7 @@ export class StoreGateway extends TypertRemoteService {
   @Remote('setEnabled')
   setEnabled(args: { name: string; enabled: boolean }): StoreSetEnabledResult {
     const entry = this.listInventory().find(entry => entry.moduleName === args.name)
-    if (entry === undefined) return { ok: false, detail: `dsh-plugin-store: ${args.name} is not installed` }
+    if (entry === undefined) return { ok: false, detail: `dsh-plugin-shop: ${args.name} is not installed` }
     setUserLayerRow({ profileDir: this.profileDirResolved(), row: { id: entry.entryId, disabled: !args.enabled } })
     return { ok: true }
   }
@@ -162,12 +162,12 @@ export class StoreGateway extends TypertRemoteService {
     const loader = (this.ctx as unknown as {
       loader?: { entries(): Array<{ options: { name?: string; config?: unknown } }> }
     }).loader
-    const entry = loader?.entries().find(entry => entry.options.name === 'dsh-plugin-store')
+    const entry = loader?.entries().find(entry => entry.options.name === 'dsh-plugin-shop')
     const config = entry?.options.config as StoreRowConfig | undefined
     const catalogUrl = config?.catalogUrl
     const cacheDir = config?.cacheDir
     if (typeof catalogUrl !== 'string' || typeof cacheDir !== 'string') {
-      throw new Error('dsh-plugin-store: the store row is missing catalogUrl or cacheDir config')
+      throw new Error('dsh-plugin-shop: the store row is missing catalogUrl or cacheDir config')
     }
     return { catalogUrl, cacheDir }
   }
@@ -252,7 +252,7 @@ export class StoreGateway extends TypertRemoteService {
       const { snapshot } = await load({ baseUrl: catalogUrl, cacheDir })
       this.lastSnapshot = snapshot
     }
-    const manifest = readProfileManifest('dsh-plugin-store', this.profileDirResolved())
+    const manifest = readProfileManifest('dsh-plugin-shop', this.profileDirResolved())
     const dependencies = manifest.dependencies ?? {}
     const outdated: StoreOutdatedEntry[] = []
     for (const entry of this.lastSnapshot.entries) {

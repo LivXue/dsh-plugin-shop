@@ -104,10 +104,10 @@ describe('StoreTab', () => {
   })
 
   it.each([
-    ['denied', 'dsh-plugin-store: dsh-blocked is denied: matched the denylist'],
-    ['not-in-catalog', 'dsh-plugin-store: dsh-ghost is not in the catalog snapshot'],
-    ['version-mismatch', 'dsh-plugin-store: catalog version 1.2.0, requested 9.9.9'],
-    ['needs-acknowledgement', 'dsh-plugin-store: dsh-risky is community-tier; installation requires acknowledgement'],
+    ['denied', 'dsh-plugin-shop: dsh-blocked is denied: matched the denylist'],
+    ['not-in-catalog', 'dsh-plugin-shop: dsh-ghost is not in the catalog snapshot'],
+    ['version-mismatch', 'dsh-plugin-shop: catalog version 1.2.0, requested 9.9.9'],
+    ['needs-acknowledgement', 'dsh-plugin-shop: dsh-risky is community-tier; installation requires acknowledgement'],
   ] as const)('renders the %s rejection detail verbatim', async (code, detail) => {
     const { injected, install } = bench(snapshot({ tier: 'verified' }))
     install.mockResolvedValue({ ok: false, code, detail })
@@ -189,7 +189,7 @@ describe('StoreTab', () => {
 
   it('renders the error state on a failed load and recovers on retry', async () => {
     const { injected, catalog } = bench(snapshot())
-    catalog.mockRejectedValueOnce(new Error('dsh-plugin-store: store/catalog: net::ERR_CONNECTION_RESET'))
+    catalog.mockRejectedValueOnce(new Error('dsh-plugin-shop: store/catalog: net::ERR_CONNECTION_RESET'))
     renderTab(injected)
     await waitFor(() => expect(screen.getByText(en.error)).toBeTruthy())
     expect(screen.queryByText('net::ERR_CONNECTION_RESET')).toBeNull() // private transport detail stays out of the UI
@@ -267,7 +267,7 @@ describe('StoreTab store-like filtering', () => {
       plugins: [
         snapshot().plugins[0]!,
         {
-          name: 'dsh-plugin-store-2', version: '2.0.0', integrity: null, publishedAt: null,
+          name: 'dsh-plugin-shop-2', version: '2.0.0', integrity: null, publishedAt: null,
           repository: null, license: 'MIT', tier: 'community', metadata: 'derived',
           catalog: { category: 'other', summary: { en: 'Another store.' }, capabilities: [] },
         },
@@ -280,14 +280,14 @@ describe('StoreTab store-like filtering', () => {
     const { injected } = bench(twoPlugins())
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
-    expect(screen.queryByText('dsh-plugin-store-2')).toBeNull()
+    expect(screen.queryByText('dsh-plugin-shop-2')).toBeNull()
   })
 
   it('keeps an installed store-like plugin manageable in the installed section', async () => {
-    const { injected } = bench(twoPlugins(), [{ name: 'dsh-plugin-store-2', installed: '^1.0.0', latest: '2.0.0' }])
+    const { injected } = bench(twoPlugins(), [{ name: 'dsh-plugin-shop-2', installed: '^1.0.0', latest: '2.0.0' }])
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
-    expect(screen.getByText('dsh-plugin-store-2')).toBeTruthy()
+    expect(screen.getByText('dsh-plugin-shop-2')).toBeTruthy()
   })
 })
 

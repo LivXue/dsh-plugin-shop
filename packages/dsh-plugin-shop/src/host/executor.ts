@@ -48,7 +48,7 @@ function chain<T>(profile: string, task: () => Promise<T>): Promise<T> {
 function confirmBundleActivation(profile: string, home: string | undefined, expectedName: string): string | null {
   const profileDir = resolveProfileDir(profile, home)
   try {
-    const manifest = readProfileManifest('dsh-plugin-store', profileDir)
+    const manifest = readProfileManifest('dsh-plugin-shop', profileDir)
     if (manifest.dsh?.profile?.bundles?.includes(expectedName)) return null
     return 'installed but dsh.profile.bundles did not change — the catalog may be stale; refresh it'
   } catch {

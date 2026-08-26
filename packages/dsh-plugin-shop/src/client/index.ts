@@ -11,7 +11,7 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { TypertRemoteNamespaceMap } from '@deepseek-ai/dsh-typert-protocol'
-import storeRemote from 'dsh-plugin-store/remote'
+import storeRemote from 'dsh-plugin-shop/remote'
 import type { StoreLocaleKey } from './locales.ts'
 import { en, zh } from './locales.ts'
 import { StoreTab, type StoreTabInjected } from './StoreTab.tsx'
@@ -44,12 +44,12 @@ type StoreRemoteNamespace = TypertRemoteNamespaceMap['store']
 
 /** Mount the store Remote and contribute the store tab. */
 export async function apply(ctx: ClientContext): Promise<void> {
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-plugin-store: dictionaries')
+  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-plugin-shop: dictionaries')
 
   // `ctx.on('dispose')` never fires in cordis 4.0.1; an effect whose body
   // returns the mount disposer is what actually runs it on teardown.
   const dispose = await ctx.remote.$mount(storeRemote)
-  ctx.effect(() => dispose, 'dsh-plugin-store: store remote mount')
+  ctx.effect(() => dispose, 'dsh-plugin-shop: store remote mount')
 
   // The mount registered the `remote.store` service on the gateway's fiber;
   // `ctx.remote.store` would still refuse it here ("cannot get property
@@ -60,7 +60,7 @@ export async function apply(ctx: ClientContext): Promise<void> {
   // check passes.
   const ns = ctx.get('remote.store') as StoreRemoteNamespace | undefined
   if (ns === undefined) {
-    throw new Error('dsh-plugin-store: the store remote did not register (service "remote.store" missing after $mount)')
+    throw new Error('dsh-plugin-shop: the store remote did not register (service "remote.store" missing after $mount)')
   }
 
   // The wire envelope is unwrapped here, once: the tab sees either the value

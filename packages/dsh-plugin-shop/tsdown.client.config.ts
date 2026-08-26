@@ -43,7 +43,7 @@ export function classNameFor(filename: string, local: string): string {
  * pipeline transforms with lightningcss; this rewrite covers the selector
  * subset the store tab emits (`.local` class selectors only — no class names
  * inside string/url() values, which this package's css never does). */
-const CSS_MODULE = '\0dsh-plugin-store-css:'
+const CSS_MODULE = '\0dsh-plugin-shop-css:'
 // Virtual ids must not end in `.css`: tsdown's built-in css-guard matches the
 // extension and demands @tsdown/css before this plugin's load hook can run.
 const cssPaths = new Map<string, string>()
@@ -100,7 +100,7 @@ export default {
       // map plus the stylesheet, injected once per document under a
       // content-derived style tag id (mirrors the dsh pipeline's style-tag
       // injection; the tag id doubles as the dedupe key).
-      name: 'dsh-plugin-store-css-modules',
+      name: 'dsh-plugin-shop-css-modules',
       resolveId(source: string, importer: string | undefined) {
         if (!source.endsWith('.module.css') || importer === undefined) return null
         const filename = resolve(dirname(importer), source)

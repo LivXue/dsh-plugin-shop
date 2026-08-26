@@ -15,6 +15,6 @@
     // analysis must not see the client half (its npm-declared augmentations
     // are unregistered — "declaration outside this face"), so the host face
     // registers the package through its host-only config.
-    { "path": "./packages/dsh-plugin-store/tsconfig.package-host.json" }
+    { "path": "./packages/dsh-plugin-shop/tsconfig.package-host.json" }
   ]
 }

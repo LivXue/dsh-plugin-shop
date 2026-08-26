@@ -2,9 +2,9 @@ name: plugin
 
 on:
   push:
-    paths: ['packages/dsh-plugin-store/**', 'packages/dsh-typert-protocol/**', 'pnpm-workspace.yaml']
+    paths: ['packages/dsh-plugin-shop/**', 'packages/dsh-typert-protocol/**', 'pnpm-workspace.yaml']
   pull_request:
-    paths: ['packages/dsh-plugin-store/**', 'packages/dsh-typert-protocol/**', 'pnpm-workspace.yaml']
+    paths: ['packages/dsh-plugin-shop/**', 'packages/dsh-typert-protocol/**', 'pnpm-workspace.yaml']
   workflow_dispatch:
 
 concurrency:
@@ -25,7 +25,7 @@ jobs:
       # The web full-flow e2e (P2 exit criterion) needs a playwright browser;
       # without --with-deps for now — the ubuntu-latest image already carries
       # chromium's system libraries, add it only if the runner proves otherwise.
-      - run: pnpm -C packages/dsh-plugin-store exec playwright install chromium
-      - run: pnpm -C packages/dsh-plugin-store test
-      - run: pnpm -C packages/dsh-plugin-store typecheck
-      - run: pnpm -C packages/dsh-plugin-store build
+      - run: pnpm -C packages/dsh-plugin-shop exec playwright install chromium
+      - run: pnpm -C packages/dsh-plugin-shop test
+      - run: pnpm -C packages/dsh-plugin-shop typecheck
+      - run: pnpm -C packages/dsh-plugin-shop build

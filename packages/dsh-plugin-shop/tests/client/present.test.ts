@@ -69,8 +69,8 @@ describe('reduceInstall', () => {
   })
 
   it('records a rejection with its author-readable detail', () => {
-    const next = reduceInstall({ kind: 'idle' }, { type: 'rejected', code: 'denied', detail: 'dsh-plugin-store: dsh-blocked is denied: matched the denylist' })
-    expect(next).toEqual({ kind: 'rejected', code: 'denied', detail: 'dsh-plugin-store: dsh-blocked is denied: matched the denylist' })
+    const next = reduceInstall({ kind: 'idle' }, { type: 'rejected', code: 'denied', detail: 'dsh-plugin-shop: dsh-blocked is denied: matched the denylist' })
+    expect(next).toEqual({ kind: 'rejected', code: 'denied', detail: 'dsh-plugin-shop: dsh-blocked is denied: matched the denylist' })
   })
 
   it('ignores unrelated events', () => {
@@ -80,7 +80,7 @@ describe('reduceInstall', () => {
 
 describe('isStoreLike', () => {
   it('matches a segment equal to a store keyword, qualified as a plugin or by ending the name', () => {
-    expect(isStoreLike('dsh-plugin-store')).toBe(true)
+    expect(isStoreLike('dsh-plugin-shop')).toBe(true)
     expect(isStoreLike('dsh-store')).toBe(true)
     expect(isStoreLike('@scope/dsh-plugin-market')).toBe(true)
     expect(isStoreLike('dsh-plugin-mall')).toBe(true)

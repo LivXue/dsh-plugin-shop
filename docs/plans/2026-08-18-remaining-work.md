@@ -8,19 +8,19 @@ This is the handover document. It assumes you have no context from the session t
 ## How to pick this up
 
 1. Read [CLAUDE.md](../../CLAUDE.md) — the architectural rules and invariants.
-2. Read the spec, [docs/design/2026-08-18-dsh-plugin-store-design.md](../design/2026-08-18-dsh-plugin-store-design.md). It is the authority. Sections 5, 7, 8, and 9 are what P1 implements.
+2. Read the spec, [docs/design/2026-08-18-dsh-plugin-shop-design.md](../design/2026-08-18-dsh-plugin-shop-design.md). It is the authority. Sections 5, 7, 8, and 9 are what P1 implements.
 3. Skim [docs/notes/2026-08-18-p0-execution-ledger.md](../notes/2026-08-18-p0-execution-ledger.md) if you want to know why a decision was made the way it was. Every ruling taken during P0 is recorded there with its cost if wrong.
 4. Then start at "Decisions only a human can make" below.
 
 ## Where things stand
 
-P0 — the catalog pipeline — is complete: 24 commits on branch `feat/p0-registry`, merged into `main` and published on 2026-08-25 as https://github.com/LivXue/dsh-plugin-store. Pages serves the catalog at https://LivXue.github.io/dsh-plugin-store/v1/index.json.
+P0 — the catalog pipeline — is complete: 24 commits on branch `feat/p0-registry`, merged into `main` and published on 2026-08-25 as https://github.com/LivXue/dsh-plugin-shop. Pages serves the catalog at https://LivXue.github.io/dsh-plugin-shop/v1/index.json.
 
 - 82 tests across 7 files pass; `pnpm typecheck` is clean.
 - The pipeline harvests by keyword, gates, tiers, and emits deterministic artifacts. `pnpm build:catalog` has been run once against the live registry and works end to end.
 - The catalog format is at `schemaVersion` 2, because dual-track listings (spec D7) made `summary.zh` optional.
 
-P1 — the Host half — is complete (2026-08-25, branch `feat/p1-host`, merged): the npm package `dsh-plugin-store` lives at `packages/dsh-plugin-store/` (the typert generator hardcodes `packages/` as its package container; spec §5.1 was amended accordingly), exposing the five `store/*` Remote methods. The P1 exit criterion — the real-installation test of spec §11.3.3 — passes against the real dsh CLI, locally and in CI (`plugin.yml`). Execution record: [2026-08-25-p1-host.md](2026-08-25-p1-host.md).
+P1 — the Host half — is complete (2026-08-25, branch `feat/p1-host`, merged): the npm package `dsh-plugin-shop` lives at `packages/dsh-plugin-shop/` (the typert generator hardcodes `packages/` as its package container; spec §5.1 was amended accordingly), exposing the five `store/*` Remote methods. The P1 exit criterion — the real-installation test of spec §11.3.3 — passes against the real dsh CLI, locally and in CI (`plugin.yml`). Execution record: [2026-08-25-p1-host.md](2026-08-25-p1-host.md).
 
 P2 — the Client half — is complete (2026-08-25, branch `feat/p2-client`, merged): the store tab under `settings.plugins.tab` (browse, detail, the §9.3 acknowledgement gate, install with polling, enable/disable, and the outdated list), the XSS regression of §11.3.4, and the web full-flow e2e. Execution record: [2026-08-25-p2-client.md](2026-08-25-p2-client.md). Two wire-level facts the spec gained as §7.3 amendments: the install method is `store/installStart` (the namespace service owns `install`), and a self-mounting client consumes its namespace via `ctx.get('remote.store')`. P3 was absorbed into P2 (enable/disable and `store/outdated` shipped there); the §12 deviation note records that a successful store-driven install is deferred until a real npm package with `dsh.bundle` exists.
 
@@ -34,18 +34,22 @@ The live ecosystem is real and it is large. Roughly 1390 npm packages already ca
 
 These block a real launch, not the code.
 
-1. **The GitHub owner and the published URL.** Both READMEs and the workflow assume `https://dsh-plugin-store.github.io/v1/index.json`, which is only correct if the GitHub account itself is named `dsh-plugin-store` and Pages serves from the repository root. If the repo lands under a different owner, the URL needs an extra path segment and both READMEs change together.
-   → Resolved 2026-08-25: the repo lives at https://github.com/LivXue/dsh-plugin-store; the published URL is https://LivXue.github.io/dsh-plugin-store/v1/index.json. Both READMEs and the deploy environment's `url:` carry it.
+1. **The GitHub owner and the published URL.** Both READMEs and the workflow assume `https://dsh-plugin-shop.github.io/v1/index.json`, which is only correct if the GitHub account itself is named `dsh-plugin-shop` and Pages serves from the repository root. If the repo lands under a different owner, the URL needs an extra path segment and both READMEs change together.
+   → Resolved 2026-08-25: the repo lives at https://github.com/LivXue/dsh-plugin-shop; the published URL is https://LivXue.github.io/dsh-plugin-shop/v1/index.json. Both READMEs and the deploy environment's `url:` carry it.
+   → Renamed 2026-08-26: the npm name `dsh-plugin-store` was already taken (see the
+   §5.1 note in the design), so the package, the repository and the Pages URL all
+   became `dsh-plugin-shop`. The catalog now publishes at
+   https://LivXue.github.io/dsh-plugin-shop/v1/index.json.
 2. **GitHub Pages must be configured with Source = "GitHub Actions"** in repository settings. Without it, `actions/deploy-pages` fails on its very first run with a "Get Pages site failed" error that reads like a workflow bug rather than a settings gap.
    → Resolved 2026-08-25: Pages enabled via the API with `build_type=workflow`.
 3. **Whether `main` allows the Actions bot to push.** The daily workflow commits `registry/snapshots/manifest.lock`. Branch protection that blocks direct pushes makes that step fail — it is marked `continue-on-error` so the publish survives, but the snapshot then silently stops updating. Either allow the bot or move the snapshot to a pull request.
    → Resolved 2026-08-25: `main` carries no branch protection (verified via API), so the Actions bot may push directly.
 4. **Who reviews.** The `verified` tier is worth exactly as much as the human review behind it. With no reviewers, every entry stays `community` and the store is an awesome-list with a UI. This is the project's largest non-technical risk and no amount of code addresses it.
-   → Resolved 2026-08-25: review will be handled by a future workflow, tracked in https://github.com/LivXue/dsh-plugin-store/issues/1. Until it exists, `verified` stays empty on purpose.
+   → Resolved 2026-08-25: review will be handled by a future workflow, tracked in https://github.com/LivXue/dsh-plugin-shop/issues/1. Until it exists, `verified` stays empty on purpose.
 
 ## P1 — the Host half (done 2026-08-25)
 
-The store's server side: `packages/dsh-plugin-store/src/host/`, registering the `store/*` Remote. Spec sections 5.3, 7.2, 7.3, and 9 define it. Exit criterion: the real-installation test in spec section 11.3 passes. Implemented per [2026-08-25-p1-host.md](2026-08-25-p1-host.md): all five `store/*` methods, catalog fetch/verify/cache with stale degradation, the four rejection paths through the executor, per-profile mutex, hot setEnabled, and the CI gate. Kept below as the record of the constraints P1 was built under.
+The store's server side: `packages/dsh-plugin-shop/src/host/`, registering the `store/*` Remote. Spec sections 5.3, 7.2, 7.3, and 9 define it. Exit criterion: the real-installation test in spec section 11.3 passes. Implemented per [2026-08-25-p1-host.md](2026-08-25-p1-host.md): all five `store/*` methods, catalog fetch/verify/cache with stale degradation, the four rejection paths through the executor, per-profile mutex, hot setEnabled, and the CI gate. Kept below as the record of the constraints P1 was built under.
 
 Build it in this order, because the failure-prone parts come first:
 
@@ -63,7 +67,7 @@ Build it in this order, because the failure-prone parts come first:
 
 ## P2 — the Client half (done 2026-08-25)
 
-`packages/dsh-plugin-store/src/client/`, contributing one tab to `settings.plugins.tab`. It holds no privilege beyond the five `store/*` methods.
+`packages/dsh-plugin-shop/src/client/`, contributing one tab to `settings.plugins.tab`. It holds no privilege beyond the five `store/*` methods.
 
 Two requirements that are easy to miss:
 

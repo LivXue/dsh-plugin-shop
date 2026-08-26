@@ -70,7 +70,7 @@ describe('store client apply', () => {
 
     expect(inject).toEqual(['remote', 'slots', 'locale'])
     expect(mounted).toHaveLength(1)
-    expect(mounted[0]).toMatchObject({ package: 'dsh-plugin-store' })
+    expect(mounted[0]).toMatchObject({ package: 'dsh-plugin-shop' })
     expect(locale.bind(NS)('tab')).toBe('Plugin store')
     // The runtime augments the cordis Context with the slots service; the
     // accessor is typed, so there is no cast to the class.
@@ -85,7 +85,7 @@ describe('store client apply', () => {
     const rejection: StoreInstallResult = {
       ok: false,
       code: 'denied',
-      detail: 'dsh-plugin-store: dsh-blocked is denied: matched the denylist',
+      detail: 'dsh-plugin-shop: dsh-blocked is denied: matched the denylist',
     }
     const { injected } = await boot({
       installStart: async () => ({ ok: true as const, value: rejection }),

@@ -1,5 +1,5 @@
 {
-  "$id": "https://dsh-plugin-store.dev/schema/plugin-entry.schema.json",
+  "$id": "https://dsh-plugin-shop.dev/schema/plugin-entry.schema.json",
   "title": "dsh.catalog",
   "description": "The catalog section a dsh plugin declares in its package.json.",
   "$schema": "https://json-schema.org/draft/2020-12/schema",

@@ -1,6 +1,6 @@
 # SDD ledger — plan: docs/plans/2026-08-18-p0-registry.md
 
-Spec: docs/design/2026-08-18-dsh-plugin-store-design.md (read; binding authority)
+Spec: docs/design/2026-08-18-dsh-plugin-shop-design.md (read; binding authority)
 Branch: feat/p0-registry (merge-base c8250f7 on main)
 Toolchain verified: node v22.23.2, pnpm 11.7.0, python3+pyyaml
 
@@ -90,7 +90,7 @@ Task 8: review found 3 Important (all plan-mandated) — workflow-level permissi
 Task 8: Ruling: all three are correct and all three are defects I wrote into the plan. Scope permissions per job (contents:write on build, pages/id-token:write on deploy); scope the concurrency group by github.ref with cancel-in-progress only for pull_request, which keeps the serialization the snapshot push needs while giving each PR its own lane; and both reorder the Pages upload ahead of the snapshot commit AND mark that commit continue-on-error, so a refused push stays visibly failed without taking down the publish — cost if wrong: a CI config change with no product surface, correctable on the first real run.
 Task 8: minor (deferred): the github-pages environment has no url: wired to the deployment output, so the deployed URL does not surface in the GitHub UI.
 Task 8: minor (deferred): the step named "Publish to Pages" only uploads the artifact; the actual publish is the deploy job's step. Misleading when debugging a failed publish.
-Task 8: OPEN for final review: the Pages URL https://dsh-plugin-store.github.io/v1/index.json in both READMEs is only correct if the GitHub owner is itself named dsh-plugin-store and Pages serves from root; no origin remote is configured yet, so it is unverified. Also unverified: whether Pages is configured with Source = GitHub Actions, without which deploy-pages fails on the first run.
+Task 8: OPEN for final review: the Pages URL https://dsh-plugin-shop.github.io/v1/index.json in both READMEs is only correct if the GitHub owner is itself named dsh-plugin-shop and Pages serves from root; no origin remote is configured yet, so it is unverified. Also unverified: whether Pages is configured with Source = GitHub Actions, without which deploy-pages fails on the first run.
 Task 8: fix round 1/5 (3 addressed, 0 open — per-job permissions, ref-scoped concurrency, publish-before-commit + continue-on-error; commits 3f63a9c..f94380a)
 Task 8: complete (commits e0d68ee..f94380a, review clean)
 ALL TASKS COMPLETE. Final whole-branch review next. Merge base: c8250f72c2dfee6ab4d5bb3731a82e3df351da59

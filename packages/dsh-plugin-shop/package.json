@@ -1,7 +1,15 @@
 {
-  "name": "dsh-plugin-store",
+  "name": "dsh-plugin-shop",
   "version": "0.1.0",
   "description": "The DeepSeek Harness plugin store: browse, install, enable, and update dsh plugins from a git-auditable catalog.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LivXue/dsh-plugin-shop.git"
+  },
+  "homepage": "https://github.com/LivXue/dsh-plugin-shop#readme",
+  "bugs": {
+    "url": "https://github.com/LivXue/dsh-plugin-shop/issues"
+  },
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
