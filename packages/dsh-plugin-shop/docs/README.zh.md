@@ -2,7 +2,7 @@
 
 # dsh-plugin-shop
 
-**[DeepSeek Harness](https://github.com/deepseek-harness) 的插件市场** —— 在设置页的一个标签里
+**[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的插件市场** —— 在设置页的一个标签里
 浏览 dsh 插件目录、一次确认完成安装、管理已装插件。
 
 [![npm](https://img.shields.io/npm/v/dsh-plugin-shop?logo=npm&color=cb3837)](https://www.npmjs.com/package/dsh-plugin-shop)

@@ -2,7 +2,7 @@
 
 # dsh-plugin-shop
 
-**The plugin store for [DeepSeek Harness](https://github.com/deepseek-harness)** — browse a catalog of
+**The plugin store for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)** — browse a catalog of
 dsh plugins, install one with a single confirmation, and manage what you have, from a tab inside Settings.
 
 [![npm](https://img.shields.io/npm/v/dsh-plugin-shop?logo=npm&color=cb3837)](https://www.npmjs.com/package/dsh-plugin-shop)

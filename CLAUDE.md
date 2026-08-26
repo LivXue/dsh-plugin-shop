@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-dsh-plugin-shop is the plugin market for [DeepSeek Harness](https://github.com/deepseek-harness). It harvests dsh plugins from npm, decides which may be listed, and publishes a catalog people install software from.
+dsh-plugin-shop is the plugin market for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It harvests dsh plugins from npm, decides which may be listed, and publishes a catalog people install software from.
 
 **Starting work? Read [docs/plans/2026-08-18-remaining-work.md](docs/plans/2026-08-18-remaining-work.md) first** — what is built, what is not, and what needs a human decision.
 
