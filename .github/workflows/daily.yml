@@ -41,6 +41,9 @@ jobs:
       LLM_BASE_URL: http://8.141.31.123:3000/v1
       LLM_MODEL: deepseek-v4-flash
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      # GitHub star counts (public GraphQL). Empty on forks/local runs; the
+      # stars step skips and the catalog publishes without them.
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
