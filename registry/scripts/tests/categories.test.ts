@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { parse } from 'yaml'
 import { mergeCategoryRows, serializeCategoryRows } from '../src/categories.ts'
 
 describe('mergeCategoryRows', () => {
@@ -35,5 +36,18 @@ describe('serializeCategoryRows', () => {
       + '- name: dsh-beta\n'
       + '  category: ui\n',
     )
+  })
+
+  it('still writes a valid YAML list when there are no rows', () => {
+    const text = serializeCategoryRows(new Map())
+    expect(text).toBe(
+      '# LLM-assigned categories for derived listings (design 2026-08-26-llm-categorization-design.md).\n'
+      + '# A declared `dsh.catalog.category` always wins; a name absent from this file is simply\n'
+      + '# "not yet classified" and is retried on the next build.\n'
+      + '[]\n',
+    )
+    // The loader (config.ts) requires a YAML list; a comment-only document
+    // parses to `null` and kills the next build. Parse with the same library.
+    expect(parse(text)).toEqual([])
   })
 })

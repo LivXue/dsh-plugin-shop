@@ -33,6 +33,11 @@ jobs:
       # Optional read-only npm token; lifts the search API's per-IP rate
       # limit onto the token. Empty (e.g. on fork PRs) = unauthenticated.
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # LLM classifier (categories.yml). The key is a secret; an empty value
+      # (fork PRs) skips classification — the classify step is designed for it.
+      LLM_BASE_URL: http://8.141.31.123:3000/v1
+      LLM_MODEL: deepseek-v4-flash
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -41,12 +46,25 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
       - run: pnpm typecheck
-      - run: pnpm build:catalog
+      - name: Classify new listings
+        run: node --experimental-strip-types registry/scripts/src/classify.ts
+      - name: Commit the category list
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: |
+          git config user.name 'dsh-plugin-shop bot'
+          git config user.email 'bot@users.noreply.github.com'
+          git add registry/categories.yml
+          git diff --cached --quiet && exit 0
+          git commit -m "chore(registry): llm category update"
+          git push
+      - run: pnpm build:catalog -- --harvest-from dist/v1/harvest.json
       - name: Upload build report
         uses: actions/upload-artifact@v4
         with:
           name: catalog-report
-          path: dist/v1/report.md
+          path: |
+            dist/v1/report.md
+            dist/v1/classification-report.md
       - name: Publish to Pages
         if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3

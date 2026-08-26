@@ -10,11 +10,17 @@
  * @module build
  */
 
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { loadRegistryConfig } from './config.ts'
 import { fetchCandidates, searchByKeyword } from './npm-client.ts'
 import { runPipeline } from './pipeline.ts'
+import type { Candidate, Rejection } from './types.ts'
+
+// `classify.ts` writes the harvest it already paid for; the workflow passes it
+// here so the daily run does not fetch the ecosystem twice.
+const harvestFromIndex = process.argv.indexOf('--harvest-from')
+const harvestFrom = harvestFromIndex === -1 ? undefined : process.argv[harvestFromIndex + 1]
 
 const REGISTRY_DIR = 'registry'
 const OUT_DIR = 'dist/v1'
@@ -26,10 +32,23 @@ const OUT_DIR = 'dist/v1'
 const npmToken = process.env.NPM_TOKEN
 
 const config = loadRegistryConfig(REGISTRY_DIR)
-const names = await searchByKeyword(fetch, undefined, npmToken)
-process.stderr.write(`harvested ${names.length} candidate(s)\n`)
-
-const { candidates, rejections } = await fetchCandidates(names, fetch, npmToken)
+let candidates: Candidate[]
+let rejections: Rejection[]
+if (harvestFrom === undefined) {
+  const names = await searchByKeyword(fetch, undefined, npmToken)
+  process.stderr.write(`harvested ${names.length} candidate(s)\n`)
+  const harvested = await fetchCandidates(names, fetch, npmToken)
+  candidates = harvested.candidates
+  rejections = harvested.rejections
+} else {
+  const parsed = JSON.parse(readFileSync(harvestFrom, 'utf8')) as { candidates?: unknown; rejections?: unknown }
+  if (!Array.isArray(parsed.candidates) || !Array.isArray(parsed.rejections)) {
+    throw new Error(`--harvest-from ${harvestFrom}: expected { candidates, rejections } arrays`)
+  }
+  candidates = parsed.candidates as Candidate[]
+  rejections = parsed.rejections as Rejection[]
+  process.stderr.write(`reusing harvest: ${candidates.length} candidate(s)\n`)
+}
 const artifacts = runPipeline(candidates, config, new Date().toISOString(), rejections)
 
 mkdirSync(OUT_DIR, { recursive: true })

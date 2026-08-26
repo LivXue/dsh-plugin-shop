@@ -28,6 +28,10 @@ export function mergeCategoryRows(
 
 /** Serialize rows to the file text: header, sorted rows, trailing newline. */
 export function serializeCategoryRows(rows: ReadonlyMap<string, Category>): string {
-  const lines = [HEADER, ...[...rows].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map(([name, category]) => `- name: ${name}\n  category: ${category}`)]
-  return `${lines.join('\n')}\n`
+  const rowsText = [...rows].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map(([name, category]) => `- name: ${name}\n  category: ${category}`)
+  // A document made of comments alone parses to `null`, and the loader
+  // requires a list; a zero-row file (no key, or nothing new classified) must
+  // still be one, or the very next build dies reading what this step wrote.
+  const body = rowsText.length === 0 ? ['[]'] : rowsText
+  return `${[HEADER, ...body].join('\n')}\n`
 }
