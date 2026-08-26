@@ -51,14 +51,21 @@ Loader rules (in `config.ts`, failing loudly):
 | Name has a declared `dsh.catalog.category` | The row is ignored at emit (author wins) and **pruned** from the file at build time |
 | Name no longer in the catalog | **Pruned** at build time (dead rows are noise) |
 
-The build writes the file back **sorted by name** after pruning, so the file
-itself obeys the sort-before-emit invariant.
+**One step owns the file.** The classify step alone reads and writes it: after
+classifying, it appends the new rows, prunes rows whose name has left the
+catalog or gained a declared category, sorts by name, writes, and commits. The
+pipeline step that follows only READS it, exactly like `verified.yml`. The
+file therefore obeys the sort-before-emit invariant and no two steps race over
+it.
 
 ## 3. What the LLM sees
 
 Input per package: `name`, npm `description` (the derived summary source), and
-`keywords` when present. The classifier never receives anything but public npm
-metadata, so sending it to the gateway crosses no data boundary.
+`keywords` when present. The harvest's `fetchCandidate` already downloads the
+full packument for every candidate, so extracting `keywords` there is a small
+shell-only addition to the candidate shape — no extra network requests. The
+classifier never receives anything but public npm metadata, so sending it to
+the gateway crosses no data boundary.
 
 Vocabulary is **fixed**: `tool | provider | ui | workflow | integration |
 other` — the six the schema and UI already know. The model may not invent
