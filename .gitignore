@@ -7,3 +7,4 @@ dist/
 *.tsbuildinfo
 .env
 .DS_Store
+.playwright-mcp/
