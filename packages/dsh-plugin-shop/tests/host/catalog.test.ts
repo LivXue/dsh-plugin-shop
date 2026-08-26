@@ -6,14 +6,26 @@ function dataJson(plugins: unknown[] = [], denied: unknown[] = []): string {
   return JSON.stringify({ schemaVersion: 2, plugins, denied })
 }
 
-function pointerFor(data: string, builtAt: string): { pointer: string; url: string; sha: string } {
+function pointerFor(data: string, builtAt: string, stars?: { url: string; sha256: string }): { pointer: string; url: string; sha: string } {
   const sha = createHash('sha256').update(data).digest('hex')
   const url = `plugins.${sha}.json`
   return {
-    pointer: JSON.stringify({ schemaVersion: 2, builtAt, count: 0, plugins: { url, sha256: sha } }),
+    pointer: JSON.stringify({
+      schemaVersion: 2, builtAt, count: 0,
+      plugins: { url, sha256: sha },
+      ...(stars === undefined ? {} : { stars }),
+    }),
     url,
     sha,
   }
+}
+
+/** A publishable stars sidecar: content-addressed bytes whose sha the pointer
+ * must name, mirroring the plugins file's binding. */
+function starsFile(stars: Record<string, number>): { url: string; sha256: string; text: string } {
+  const text = JSON.stringify({ stars })
+  const sha256 = createHash('sha256').update(text).digest('hex')
+  return { url: `stars.${sha256}.json`, sha256, text }
 }
 
 function memFs(): CatalogFs & { files: Map<string, string> } {
@@ -273,5 +285,113 @@ describe('loadCatalog', () => {
     const result = await loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() })
     expect(dataUrl).toBe(`https://shop.test/v1/${url}`)
     expect(result.stale).toBe(false)
+  })
+
+  it('loads the stars sidecar when the pointer names one', async () => {
+    const data = dataJson([entry])
+    const stars = starsFile({ 'dsh-hello-plugin': 42 })
+    const { pointer } = pointerFor(data, '2026-08-25T00:00:00Z', stars)
+    const fetchImpl = (async (input: string | URL) => {
+      const text = String(input)
+      if (text.endsWith('/index.json')) return new Response(pointer, { status: 200 })
+      if (text.endsWith(stars.url)) return new Response(stars.text, { status: 200 })
+      return new Response(data, { status: 200 })
+    }) as unknown as typeof fetch
+
+    const result = await loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() })
+    expect(result.snapshot.stars).toEqual({ 'dsh-hello-plugin': 42 })
+    expect(result.stale).toBe(false)
+  })
+
+  it('degrades to an empty stars map when the sidecar fetch fails', async () => {
+    const data = dataJson([entry])
+    const stars = starsFile({ 'dsh-hello-plugin': 42 })
+    const { pointer } = pointerFor(data, '2026-08-25T00:00:00Z', stars)
+    const fetchImpl = (async (input: string | URL) => {
+      const text = String(input)
+      if (text.endsWith('/index.json')) return new Response(pointer, { status: 200 })
+      if (text.endsWith(stars.url)) return new Response('not found', { status: 404 })
+      return new Response(data, { status: 200 })
+    }) as unknown as typeof fetch
+
+    const result = await loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() })
+    expect(result.snapshot.stars).toEqual({})
+    expect(result.stale).toBe(false)
+    expect(result.snapshot.entries[0]?.name).toBe('dsh-hello-plugin')
+  })
+
+  it('degrades to an empty stars map on a sha256 mismatch', async () => {
+    const data = dataJson([entry])
+    const stars = starsFile({ 'dsh-hello-plugin': 42 })
+    const { pointer } = pointerFor(data, '2026-08-25T00:00:00Z', stars)
+    // Serve bytes that do not bind to the pointer's stars sha.
+    const tampered = JSON.stringify({ stars: { 'dsh-hello-plugin': 999 } })
+    const fetchImpl = (async (input: string | URL) => {
+      const text = String(input)
+      if (text.endsWith('/index.json')) return new Response(pointer, { status: 200 })
+      if (text.endsWith(stars.url)) return new Response(tampered, { status: 200 })
+      return new Response(data, { status: 200 })
+    }) as unknown as typeof fetch
+
+    const result = await loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() })
+    expect(result.snapshot.stars).toEqual({})
+    expect(result.snapshot.entries[0]?.name).toBe('dsh-hello-plugin')
+    expect(result.stale).toBe(false)
+  })
+
+  it('ignores unknown pointer keys so old hosts keep working', async () => {
+    const data = dataJson([entry])
+    const sha = createHash('sha256').update(data).digest('hex')
+    // A future index may carry keys this build does not know; the non-strict
+    // pointer schema must strip them, not refuse the catalog.
+    const pointer = JSON.stringify({
+      schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', count: 0,
+      plugins: { url: `plugins.${sha}.json`, sha256: sha },
+      futureField: true,
+    })
+    const fetchImpl = (async (input: string | URL) => new Response(
+      String(input).endsWith('/index.json') ? pointer : data, { status: 200 },
+    )) as unknown as typeof fetch
+
+    const result = await loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() })
+    expect(result.stale).toBe(false)
+    expect(result.snapshot.entries[0]?.name).toBe('dsh-hello-plugin')
+  })
+
+  it('serves cached stars without touching the network', async () => {
+    const data = dataJson([entry])
+    const stars = starsFile({ 'dsh-hello-plugin': 42 })
+    const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z', stars)
+    const fs = memFs()
+    fs.write('/cache/index.json', pointer)
+    fs.write(`/cache/${url}`, data)
+    fs.write(`/cache/${stars.url}`, stars.text)
+    fs.write('/cache/index.meta.json', JSON.stringify({ fetchedAt: '2026-08-25T00:00:00Z' }))
+    let calls = 0
+    const fetchImpl = (async () => { calls += 1; throw new Error('should not be called') }) as unknown as typeof fetch
+
+    const result = await loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs, now: () => new Date('2026-08-25T00:03:00Z') })
+    expect(result.stale).toBe(false)
+    expect(result.snapshot.stars).toEqual({ 'dsh-hello-plugin': 42 })
+    expect(calls).toBe(0)
+  })
+
+  it('degrades cached stars on a sha mismatch without invalidating the catalog cache', async () => {
+    const data = dataJson([entry])
+    const stars = starsFile({ 'dsh-hello-plugin': 42 })
+    const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z', stars)
+    const fs = memFs()
+    fs.write('/cache/index.json', pointer)
+    fs.write(`/cache/${url}`, data)
+    fs.write(`/cache/${stars.url}`, JSON.stringify({ stars: { 'dsh-hello-plugin': 999 } }))
+    fs.write('/cache/index.meta.json', JSON.stringify({ fetchedAt: '2026-08-25T00:00:00Z' }))
+    let calls = 0
+    const fetchImpl = (async () => { calls += 1; throw new Error('should not be called') }) as unknown as typeof fetch
+
+    const result = await loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs, now: () => new Date('2026-08-25T00:03:00Z') })
+    expect(result.stale).toBe(false)
+    expect(result.snapshot.stars).toEqual({})
+    expect(result.snapshot.entries[0]?.name).toBe('dsh-hello-plugin')
+    expect(calls).toBe(0)
   })
 })

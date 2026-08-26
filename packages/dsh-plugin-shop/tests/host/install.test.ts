@@ -12,6 +12,7 @@ function snapshot(overrides: Partial<CatalogSnapshot['entries'][number]> = {}): 
       ...overrides,
     }],
     denied: [{ name: 'dsh-blocked', detail: 'matched the denylist' }],
+    stars: {},
   }
 }
 

@@ -72,6 +72,7 @@ describe('ShopGateway.catalog', () => {
     builtAt: '2026-08-25T00:00:00Z',
     entries: [{ name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived' }],
     denied: [{ name: 'dsh-blocked', detail: 'matched the denylist' }],
+    stars: {},
   }
 
   it('forwards the refresh flag to the catalog loader and maps the snapshot', async () => {
@@ -168,7 +169,7 @@ describe('ShopGateway.install — the four rejection paths, through the executor
   const listed: CatalogEntry = { name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived' }
 
   it('rejects not-in-catalog without spawning', async () => {
-    const { gateway, callsLog } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [] })
+    const { gateway, callsLog } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} })
     const result = await gateway.install({ name: 'dsh-unknown', version: '1.0.0' })
     expect(result).toMatchObject({ ok: false, code: 'not-in-catalog' })
     // A spawned fixture would have created the calls log within this settle window.
@@ -177,7 +178,7 @@ describe('ShopGateway.install — the four rejection paths, through the executor
   })
 
   it('rejects denied without spawning', async () => {
-    const { gateway, callsLog } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [], denied: [{ name: 'dsh-blocked', detail: 'matched the denylist' }] })
+    const { gateway, callsLog } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [], denied: [{ name: 'dsh-blocked', detail: 'matched the denylist' }], stars: {} })
     const result = await gateway.install({ name: 'dsh-blocked', version: '1.0.0' })
     expect(result).toMatchObject({ ok: false, code: 'denied' })
     await new Promise(resolve => setTimeout(resolve, 50))
@@ -185,7 +186,7 @@ describe('ShopGateway.install — the four rejection paths, through the executor
   })
 
   it('rejects version-mismatch without spawning', async () => {
-    const { gateway, callsLog } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [] })
+    const { gateway, callsLog } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} })
     const result = await gateway.install({ name: 'dsh-hello-plugin', version: '9.9.9' })
     expect(result).toMatchObject({ ok: false, code: 'version-mismatch' })
     await new Promise(resolve => setTimeout(resolve, 50))
@@ -193,7 +194,7 @@ describe('ShopGateway.install — the four rejection paths, through the executor
   })
 
   it('rejects needs-acknowledgement without spawning', async () => {
-    const { gateway, callsLog } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [] })
+    const { gateway, callsLog } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} })
     const result = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0' })
     expect(result).toMatchObject({ ok: false, code: 'needs-acknowledgement' })
     await new Promise(resolve => setTimeout(resolve, 50))
@@ -201,7 +202,7 @@ describe('ShopGateway.install — the four rejection paths, through the executor
   })
 
   it('spawns only for an acknowledged install and reports progress', async () => {
-    const { gateway, callsLog } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [] })
+    const { gateway, callsLog } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} })
     const result = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -223,7 +224,7 @@ describe('ShopGateway.install — the four rejection paths, through the executor
   })
 
   it('returns the true terminal state for a finished install', async () => {
-    const { gateway } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [] })
+    const { gateway } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} })
     const result = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -243,7 +244,7 @@ describe('ShopGateway.install — the four rejection paths, through the executor
   })
 
   it('retains at most 32 finished installs, evicting the oldest on the next add', async () => {
-    const { gateway } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [] })
+    const { gateway } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} })
     const ids: string[] = []
     for (let i = 0; i < 33; i += 1) {
       const result = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
@@ -271,7 +272,7 @@ describe('ShopGateway.install — the four rejection paths, through the executor
   })
 
   it('retains every finished install below the 32-record cap (no eviction under the cap)', async () => {
-    const { gateway } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [] })
+    const { gateway } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} })
     const ids: string[] = []
     for (let i = 0; i < 20; i += 1) {
       const result = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
@@ -299,7 +300,7 @@ describe('ShopGateway.install — the four rejection paths, through the executor
   })
 
   it('reports an unknown installId as not found', () => {
-    const { gateway } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [] })
+    const { gateway } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} })
     const status = gateway.installStatus({ installId: 'nope' })
     expect(status.found).toBe(false)
     expect(status.detail).toContain('nope')
@@ -350,7 +351,7 @@ describe('ShopGateway.outdated', () => {
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies }))
     return new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [] }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [], stars: {} }, stale: false }) as CatalogResult,
     })
   }
 
@@ -382,7 +383,7 @@ describe('ShopGateway.outdated', () => {
       catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
       loadCatalog: async () => {
         loadCalls += 1
-        return { snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [] }, stale: false } as CatalogResult
+        return { snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [], stars: {} }, stale: false } as CatalogResult
       },
     })
     const outdated = await gateway.outdated()

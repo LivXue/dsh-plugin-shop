@@ -70,6 +70,9 @@ export interface ShopCatalogResult {
   stale: boolean
   plugins: CatalogEntry[]
   denied: DeniedEntry[]
+  /** GitHub star counts by package name; {} when the pointer names no sidecar
+   * or the sidecar could not be fetched/verified (§5). */
+  stars: Record<string, number>
 }
 
 /** Remote-only service exposing the shop Remote methods of §7.3.
@@ -185,6 +188,7 @@ export class ShopGateway extends TypertRemoteService {
       stale,
       plugins: snapshot.entries,
       denied: snapshot.denied,
+      stars: snapshot.stars,
     }
   }
 

@@ -44,11 +44,15 @@ const dataSchema = z.object({
   denied: z.array(z.object({ name: z.string(), detail: z.string() })).default([]),
 })
 
+// Non-strict on purpose: a future index may carry keys this build does not
+// know, and stripping them is what keeps old installed hosts working against
+// it. Do not add .strict().
 const pointerSchema = z.object({
   schemaVersion: z.number(),
   builtAt: z.string(),
   count: z.number(),
   plugins: z.object({ url: z.string(), sha256: z.string() }),
+  stars: z.object({ url: z.string(), sha256: z.string() }).optional(),
 })
 
 export interface CatalogSnapshot {
@@ -56,6 +60,9 @@ export interface CatalogSnapshot {
   builtAt: string
   entries: CatalogEntry[]
   denied: DeniedEntry[]
+  /** GitHub star counts by package name; {} when the pointer names no
+   * sidecar or the sidecar could not be fetched/verified (spec §5). */
+  stars: Record<string, number>
 }
 
 export interface CatalogResult { snapshot: CatalogSnapshot; stale: boolean }
@@ -98,6 +105,22 @@ function resolveDataUrl(baseUrl: string, url: string): string {
     throw new Error('catalog data url must be relative to the catalog base')
   }
   return resolved.href
+}
+
+/** Read and verify a cached/fetched stars sidecar; ANY irregularity degrades
+ * to an empty map — stars are advisory (spec §5). */
+function parseStarsText(text: string): Record<string, number> {
+  try {
+    const parsed = JSON.parse(text) as { stars?: unknown }
+    if (typeof parsed.stars !== 'object' || parsed.stars === null) return {}
+    const out: Record<string, number> = {}
+    for (const [key, value] of Object.entries(parsed.stars)) {
+      if (typeof value === 'number') out[key] = value
+    }
+    return out
+  } catch {
+    return {}
+  }
 }
 
 /**
@@ -151,7 +174,24 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
       if (data.schemaVersion > SUPPORTED_SCHEMA_VERSION) throw new Error(
         `catalog schemaVersion ${data.schemaVersion} is newer than this build supports (${SUPPORTED_SCHEMA_VERSION})`,
       )
-      return { schemaVersion: pointer.schemaVersion, builtAt: pointer.builtAt, entries: data.plugins, denied: data.denied }
+      let stars: Record<string, number> = {}
+      if (pointer.stars !== undefined) {
+        try {
+          const starsText = fsImpl.read(join(cacheDir, basename(pointer.stars.url)))
+          const starsActual = createHash('sha256').update(starsText).digest('hex')
+          if (starsActual === pointer.stars.sha256) stars = parseStarsText(starsText)
+        } catch {
+          // A missing or tampered cached sidecar means no stars this boot; the
+          // catalog bytes are already verified above, so nothing else fails.
+        }
+      }
+      return {
+        schemaVersion: pointer.schemaVersion,
+        builtAt: pointer.builtAt,
+        entries: data.plugins,
+        denied: data.denied,
+        stars,
+      }
     } catch {
       // Cache unreadable or invalid — treat as absent rather than failing a
       // boot that could instead fetch a fresh catalog.
@@ -218,11 +258,30 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
     )
   }
 
+  let stars: Record<string, number> = {}
+  if (pointer.stars !== undefined) {
+    const starsUrl = resolveDataUrl(baseUrl, pointer.stars.url)
+    try {
+      const starsResponse = await fetchImpl(starsUrl)
+      if (starsResponse.ok) {
+        const starsText = await starsResponse.text()
+        const starsActual = createHash('sha256').update(starsText).digest('hex')
+        if (starsActual === pointer.stars.sha256) {
+          stars = parseStarsText(starsText)
+          fsImpl.write(join(cacheDir, basename(pointer.stars.url)), starsText)
+        }
+      }
+    } catch {
+      // Advisory: an unreachable sidecar means no stars this run (spec §5).
+    }
+  }
+
   const snapshot: CatalogSnapshot = {
     schemaVersion: pointer.schemaVersion,
     builtAt: pointer.builtAt,
     entries: data.plugins,
     denied: data.denied,
+    stars,
   }
   fsImpl.write(indexPath, JSON.stringify(pointer))
   fsImpl.write(join(cacheDir, basename(pointer.plugins.url)), dataText)
