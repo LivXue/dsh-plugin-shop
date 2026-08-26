@@ -238,6 +238,24 @@
   background: var(--dsw-alias-bg-layer-1);
   overflow: hidden;
   transition: border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+  /* Off-screen cards skip layout and paint; the placeholder keeps scrollbar
+   * estimation sane before the browser has measured the real height. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 240px;
+}
+
+/* The sentinel that triggers the next shelf batch: zero visual footprint. */
+.cardsSentry {
+  height: 1px;
+  margin: 0;
+  padding: 0;
+}
+
+.showingLine {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--dsw-alias-label-secondary);
 }
 
 .card:hover {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, categoryKey, isShopLike, isUnclaimed, reduceInstall, tierKey,
+  ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, categoryKey, isShopLike, isUnclaimed, nextVisibleCount, reduceInstall, tierKey,
 } from '../../src/client/present.ts'
 import type { CatalogEntry } from '../../src/host/index.ts'
 
@@ -29,6 +29,16 @@ describe('ACKNOWLEDGEMENT_EN', () => {
     expect(ACKNOWLEDGEMENT_EN).toBe(
       'Once installed, this plugin holds the same privileges as a built-in one: reading and writing your files, running shell commands, and reading and modifying the requests sent to the model. It has not been reviewed.',
     )
+  })
+})
+
+describe('nextVisibleCount', () => {
+  it('grows by the batch and clamps at the total', () => {
+    expect(SHOP_VISIBLE_BATCH).toBe(48)
+    expect(nextVisibleCount(0, 5, 48)).toBe(5)
+    expect(nextVisibleCount(48, 100, 48)).toBe(96)
+    expect(nextVisibleCount(96, 100, 48)).toBe(100)
+    expect(nextVisibleCount(100, 100, 48)).toBe(100)
   })
 })
 

@@ -67,6 +67,17 @@ export type InstallEvent =
 /** §7.2 once-per-second poll cadence, as a named constant. */
 export const INSTALL_POLL_MS = 1000
 
+/** How many shelf cards mount at a time. The shelf holds ~1900 entries; one
+ * commit of the whole grid is ~28k DOM nodes, so the list renders in batches
+ * behind a sentinel (§A1) and grows on scroll. 48 is ~3-4 rows. */
+export const SHOP_VISIBLE_BATCH = 48
+
+/** The next number of cards to show: the current window plus one batch,
+ * clamped so the window never claims more cards than the list holds. */
+export function nextVisibleCount(visible: number, total: number, batch: number): number {
+  return Math.min(visible + batch, total)
+}
+
 /** Pure install view reducer. A `status` event only applies to the install the
  * view is tracking — a status for an install it never started (idle) is an
  * unrelated event and a no-op, like any other event it does not recognize. */

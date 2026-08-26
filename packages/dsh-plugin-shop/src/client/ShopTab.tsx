@@ -4,10 +4,10 @@
  * details — never markup, so hostile npm descriptions cannot inject (spec
  * §11.3.4): no render path here may ever use dangerouslySetInnerHTML. */
 
-import { useEffect, useId, useMemo, useState, type ReactNode } from 'react'
+import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstallResult, ShopInstallStatusResult, ShopOutdatedEntry, ShopSetEnabledResult } from '../host/index.ts'
-import { categoryKey, isShopLike, isUnclaimed, rejectionCodeKey, tierKey } from './present.ts'
+import { SHOP_VISIBLE_BATCH, categoryKey, isShopLike, isUnclaimed, nextVisibleCount, rejectionCodeKey, tierKey } from './present.ts'
 import { useInstall } from './useInstall.ts'
 import css from './ShopTab.module.css'
 
@@ -59,7 +59,7 @@ function ChevronIcon({ open }: { open: boolean }): ReactNode {
  * (name, tier, category, unclaimed marker), the plain-text summary in both
  * languages, the self-declared capabilities, the detail section, and the
  * install controls. */
-function EntryCard({ entry, t, install, installStatus }: {
+const EntryCard = memo(function EntryCard({ entry, t, install, installStatus }: {
   entry: CatalogEntry
   t: ShopTabProps['t']
   install: ShopTabInjected['install']
@@ -131,7 +131,7 @@ function EntryCard({ entry, t, install, installStatus }: {
       </div>
     </div>
   )
-}
+})
 
 /** One entry's install flow: the button, the §9.3 acknowledgement gate for
  * community-tier entries, and the live view — running log, restart notice,
@@ -359,6 +359,15 @@ export function ShopTab(props: ShopTabProps): ReactNode {
   const [request, setRequest] = useState<LoadRequest>({ kind: 'initial' })
   const [query, setQuery] = useState('')
 
+  // The shelf renders in batches (§A1): ~1900 cards in one commit is ~28k
+  // DOM nodes. `incremental` stays off where IntersectionObserver does not
+  // exist (jsdom without a stub, ancient engines) and the whole list renders —
+  // which is also what every test above the batching block relies on.
+  const incremental = typeof IntersectionObserver !== 'undefined'
+  const [visibleCount, setVisibleCount] = useState(SHOP_VISIBLE_BATCH)
+  const sentinelRef = useRef<HTMLLIElement>(null)
+  const filteredLenRef = useRef(0)
+
   useEffect(() => {
     let cancelled = false
     // A refresh keeps the stale snapshot visible during the background
@@ -414,6 +423,27 @@ export function ShopTab(props: ShopTabProps): ReactNode {
         || summaryZh.toLowerCase().includes(q)
     })
   }, [catalogState, query])
+  filteredLenRef.current = filtered.length
+
+  // The sentinel that grows the shelf: when the last rendered card's footer
+  // comes within a screen and a half of the viewport, the window widens by
+  // one batch. The effect re-runs as the window grows so it always observes
+  // the CURRENT sentinel node; the length is read through a ref because the
+  // callback must not close over a stale filtered list.
+  useEffect(() => {
+    if (!incremental) return
+    const node = sentinelRef.current
+    if (node === null) return
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some(entry => entry.isIntersecting)) {
+        setVisibleCount(current => nextVisibleCount(current, filteredLenRef.current, SHOP_VISIBLE_BATCH))
+      }
+    }, { rootMargin: '0px 0px 1200px 0px' })
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [incremental, visibleCount, filtered.length])
+
+  const visible = incremental ? filtered.slice(0, visibleCount) : filtered
 
   // The outdated rows' update gate needs each entry's tier; the catalog is the
   // only source for it (ShopOutdatedEntry carries none). An entry missing from
@@ -463,7 +493,10 @@ export function ShopTab(props: ShopTabProps): ReactNode {
           aria-label={t('search')}
           placeholder={t('search')}
           value={query}
-          onChange={event => setQuery(event.target.value)}
+          onChange={event => {
+            setQuery(event.target.value)
+            setVisibleCount(SHOP_VISIBLE_BATCH)
+          }}
         />
         {result.stale && (
           <div className={css.staleBlock}>
@@ -481,13 +514,23 @@ export function ShopTab(props: ShopTabProps): ReactNode {
       ) : filtered.length === 0 ? (
         <p className={css.emptyLine}>{t('emptySearch')}</p>
       ) : (
-        <ul className={css.cards}>
-          {filtered.map(entry => (
-            <li key={entry.name}>
-              <EntryCard entry={entry} t={t} install={install} installStatus={installStatus} />
-            </li>
-          ))}
-        </ul>
+        <>
+          <ul className={css.cards}>
+            {visible.map(entry => (
+              <li key={entry.name}>
+                <EntryCard entry={entry} t={t} install={install} installStatus={installStatus} />
+              </li>
+            ))}
+            {incremental && visibleCount < filtered.length && (
+              <li ref={sentinelRef} className={css.cardsSentry} data-shop-sentry aria-hidden="true" />
+            )}
+          </ul>
+          {incremental && visibleCount < filtered.length && (
+            <p className={css.showingLine} aria-live="polite">
+              {t('showing', { shown: String(visibleCount), total: String(filtered.length) })}
+            </p>
+          )}
+        </>
       )}
       <OutdatedSection
         state={outdatedState}

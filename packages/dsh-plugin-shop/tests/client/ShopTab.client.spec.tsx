@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ACKNOWLEDGEMENT_EN, ACKNOWLEDGEMENT_ZH, rejectionCodeKey } from '../../src/client/present.ts'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ACKNOWLEDGEMENT_EN, ACKNOWLEDGEMENT_ZH, SHOP_VISIBLE_BATCH, rejectionCodeKey } from '../../src/client/present.ts'
 import { en, zh, type ShopLocaleKey } from '../../src/client/locales.ts'
 import { ShopTab, type ShopTabInjected, type ShopTabProps } from '../../src/client/ShopTab.tsx'
 import type { ShopCatalogResult, ShopOutdatedEntry } from '../../src/host/index.ts'
@@ -308,5 +308,99 @@ describe('ShopTab loading state', () => {
     // Settle the promise so the test exits cleanly through the ready state.
     await act(async () => { resolve(snapshot()) })
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+  })
+})
+
+/** Controllable IntersectionObserver for the batching tests. jsdom has none,
+ * so the component's incremental rendering only engages where a stub exists;
+ * the tests above (and any future ones without the stub) render everything. */
+class StubIntersectionObserver {
+  static instances: StubIntersectionObserver[] = []
+  callback: IntersectionObserverCallback
+  constructor(callback: IntersectionObserverCallback) {
+    this.callback = callback
+    StubIntersectionObserver.instances.push(this)
+  }
+  observe(): void {}
+  disconnect(): void {}
+  fire(): void {
+    this.callback([{ isIntersecting: true } as IntersectionObserverEntry], this as unknown as IntersectionObserver)
+  }
+}
+
+/** A catalog of n derived entries; names sort in index order. */
+function manyPlugins(n: number): ShopCatalogResult {
+  const plugins = Array.from({ length: n }, (_, i) => ({
+    name: `dsh-pkg-${String(i).padStart(3, '0')}`,
+    version: '1.0.0', integrity: null, publishedAt: null,
+    repository: null, license: 'MIT', tier: 'community', metadata: 'derived',
+  })) as ShopCatalogResult['plugins']
+  return { schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', stale: false, plugins, denied: [] }
+}
+
+const showingText = (shown: number, total: number): string =>
+  en.showing.replace('{shown}', String(shown)).replace('{total}', String(total))
+
+describe('ShopTab incremental rendering', () => {
+  beforeEach(() => {
+    StubIntersectionObserver.instances = []
+    vi.stubGlobal('IntersectionObserver', StubIntersectionObserver)
+  })
+
+  const cardCount = (): number => document.querySelectorAll('[data-category]').length
+
+  it('renders only the first batch of a large catalog, with a "showing" line and a sentinel', async () => {
+    const { injected } = bench(manyPlugins(100))
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-pkg-000')).toBeTruthy())
+    expect(cardCount()).toBe(SHOP_VISIBLE_BATCH)
+    expect(screen.getByText(showingText(48, 100))).toBeTruthy()
+    expect(document.querySelector('[data-shop-sentry]')).toBeTruthy()
+    expect(screen.queryByText('dsh-pkg-099')).toBeNull()
+  })
+
+  it('grows by one batch each time the sentinel intersects, and stops at the total', async () => {
+    const { injected } = bench(manyPlugins(100))
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-pkg-000')).toBeTruthy())
+
+    act(() => { StubIntersectionObserver.instances.at(-1)?.fire() })
+    await waitFor(() => expect(cardCount()).toBe(96))
+    expect(screen.getByText(showingText(96, 100))).toBeTruthy()
+
+    act(() => { StubIntersectionObserver.instances.at(-1)?.fire() })
+    await waitFor(() => expect(cardCount()).toBe(100))
+    // everything is shown: the sentinel and the showing line are gone
+    expect(document.querySelector('[data-shop-sentry]')).toBeNull()
+    expect(screen.queryByText(showingText(100, 100))).toBeNull()
+  })
+
+  it('shows every card at once when the catalog fits in one batch', async () => {
+    const { injected } = bench(manyPlugins(30))
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-pkg-000')).toBeTruthy())
+    expect(cardCount()).toBe(30)
+    expect(document.querySelector('[data-shop-sentry]')).toBeNull()
+    expect(screen.queryByText(showingText(30, 30))).toBeNull()
+  })
+
+  it('resets to the first batch when the query changes', async () => {
+    const plugins = [
+      ...Array.from({ length: 60 }, (_, i) => ({ name: `dsh-alpha-${String(i).padStart(2, '0')}`, version: '1.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived' })),
+      ...Array.from({ length: 60 }, (_, i) => ({ name: `dsh-beta-${String(i).padStart(2, '0')}`, version: '1.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived' })),
+    ] as ShopCatalogResult['plugins']
+    const { injected } = bench({ schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', stale: false, plugins, denied: [] })
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-alpha-00')).toBeTruthy())
+
+    // scroll two batches deep: 96 of 120 shown
+    act(() => { StubIntersectionObserver.instances.at(-1)?.fire() })
+    await waitFor(() => expect(cardCount()).toBe(96))
+
+    // a query that matches 60 entries: the batch resets, so only 48 render
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'alpha' } })
+    await waitFor(() => expect(screen.getByText(showingText(48, 60))).toBeTruthy())
+    expect(cardCount()).toBe(48)
+    expect(screen.queryByText('dsh-beta-00')).toBeNull()
   })
 })
