@@ -2,9 +2,10 @@
  * language is the dsh theme's alias tokens ONLY (the four tokens the previous
  * styles referenced that do not exist — bg-layer-3, interactive-bg-hover,
  * state-error, state-success — are corrected to bg-layer-2 and the
- * state-*-primary set). The signature is the category spine: one brand hue
- * at six opacities, one per category, with the category name as the cover
- * label. Class names are mapped to content-derived names at bundle time
+ * state-*-primary set). The signature is the category spine: one HUE per
+ * category (six fixed hues, not the brand token — the brand resolves to
+ * near-black in the light theme, so six brand opacities read as six shades
+ * of gray), with the category name as the cover label in the same hue. Class names are mapped to content-derived names at bundle time
  * (tsdown.client.config.ts) and stubbed in tests; only the keys are relied
  * on.
  *
@@ -269,28 +270,30 @@
   .card:hover { transform: none; }
 }
 
-/* The signature: a brand spine in the category's own opacity. */
+/* The signature: a spine and cover in the category's own hue. The hues are
+ * fixed mid-bright colors that read on both themes; `other` deliberately
+ * stays a neutral gray so the fallback category does not compete. */
 .cardSpine {
   position: absolute;
   top: 0;
   bottom: 0;
   left: 0;
   width: 3px;
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary) var(--spine-opacity, 40%), transparent);
+  background: var(--spine-hue, #8B8E96);
 }
 
-.card[data-category='tool'] { --spine-opacity: 100%; }
-.card[data-category='provider'] { --spine-opacity: 82%; }
-.card[data-category='ui'] { --spine-opacity: 64%; }
-.card[data-category='workflow'] { --spine-opacity: 48%; }
-.card[data-category='integration'] { --spine-opacity: 34%; }
-.card[data-category='other'] { --spine-opacity: 22%; }
+.card[data-category='tool'] { --spine-hue: #4C8DFF; }
+.card[data-category='provider'] { --spine-hue: #A78BFA; }
+.card[data-category='ui'] { --spine-hue: #2DD4BF; }
+.card[data-category='workflow'] { --spine-hue: #F59E0B; }
+.card[data-category='integration'] { --spine-hue: #34D399; }
+.card[data-category='other'] { --spine-hue: #8B8E96; }
 
 .cardCover {
   display: block;
   padding: 5px 12px 5px 12px;
   border-bottom: 1px solid var(--dsw-alias-border-l1);
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary) var(--spine-opacity, 40%), transparent);
+  background: color-mix(in srgb, var(--spine-hue, #8B8E96) 12%, transparent);
 }
 
 .coverLabel {
@@ -299,7 +302,7 @@
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--dsw-alias-brand-primary);
+  color: var(--spine-hue, #8B8E96);
 }
 
 .entryHeader {

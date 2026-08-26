@@ -53,6 +53,38 @@ const FILL_IS_THE_ONLY_AFFORDANCE = [
   '.capabilities li',
 ]
 
+describe('category spine hues', () => {
+  const SIX_HUES = ['#4C8DFF', '#A78BFA', '#2DD4BF', '#F59E0B', '#34D399', '#8B8E96']
+
+  it('assigns each category a distinct hue', () => {
+    for (const cat of ['tool', 'provider', 'ui', 'workflow', 'integration', 'other']) {
+      const rule = rules.get(`.card[data-category='${cat}']`)
+      expect(rule, `no hue rule for ${cat}`).toBeDefined()
+      expect(rule).toMatch(/--spine-hue:\s*(#[0-9A-Fa-f]{6})/)
+    }
+  })
+
+  it('uses six distinct hues, one per category', () => {
+    const hues = [...rules.entries()]
+      .filter(([sel]) => sel.startsWith('.card[data-category='))
+      .map(([, body]) => body.match(/--spine-hue:\s*(#[0-9A-Fa-f]{6})/)?.[1])
+    expect(hues.every(Boolean)).toBe(true)
+    expect(new Set(hues).size).toBe(6)
+    for (const hue of SIX_HUES) expect(hues).toContain(hue)
+  })
+
+  it('spine, cover, and label draw from the per-category hue, never the brand token', () => {
+    // The brand token resolved to near-black in the light theme, which made
+    // the six-opacity spine read as six shades of gray ("只有黑白灰").
+    expect(rules.get('.cardSpine')).toMatch(/var\(--spine-hue/)
+    expect(rules.get('.cardSpine')).not.toMatch(/brand-primary/)
+    expect(rules.get('.cardCover')).toMatch(/var\(--spine-hue/)
+    expect(rules.get('.cardCover')).not.toMatch(/brand-primary/)
+    expect(rules.get('.coverLabel')).toMatch(/var\(--spine-hue/)
+    expect(rules.get('.coverLabel')).not.toMatch(/brand-primary/)
+  })
+})
+
 describe('borderless fills', () => {
   for (const selector of FILL_IS_THE_ONLY_AFFORDANCE) {
     it(`${selector} derives its fill from the foreground token, not a background layer`, () => {
