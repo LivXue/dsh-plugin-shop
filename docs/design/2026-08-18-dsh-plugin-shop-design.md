@@ -219,6 +219,8 @@ A consumer presents a derived entry as unclaimed, which is also the signal that 
 
 `summary.zh` is optional in the published format because a derived entry has none, so `schemaVersion` is `2`.
 
+A derived listing may carry an LLM-assigned `catalog.category` sourced from `registry/categories.yml`; the assignment is advisory and never gates a listing.
+
 `builtAt` appears **only in index.json and never inside the hashed content**. Otherwise the hash changes daily, every CDN cache is invalidated, and every git diff is noise.
 
 ## 7. Data flow
@@ -231,7 +233,8 @@ harvest -> fetch manifest -> gate -> tier -> emit -> commit snapshot
 
 1. **Harvest** — `registry.npmjs.org/-/v1/search?text=keywords:dsh-plugin`, paged, for the full candidate set. **Harvest by keyword, never by name pattern**; a name pattern is trivially spoofed.
 2. **Fetch manifest** — for each candidate, read the latest packument's `dsh.bundle`, `dsh.catalog`, `version`, `dist.integrity`, `repository`, `license`, and `deprecated`.
-3. **Gate** — every rejection must leave an **author-readable reason** in the build report.
+3. **Classify** — derived listings without a declared category and without a row in `categories.yml` are classified in batches by the LLM gateway (`classify.ts`, shell); failures leave the entry as `other` and are retried next build.
+4. **Gate** — every rejection must leave an **author-readable reason** in the build report.
    - No `dsh.bundle` — a library, not an installable plugin. Rejected. Same criterion as the CLI's "declares no dsh.bundle" warning.
    - `dsh.catalog` present but failing schema validation. Rejected. A missing section is **not** a rejection — it produces a derived listing (§6.1).
    - Neither `dsh.catalog` nor an npm `description`. Rejected as `no-summary`: there is nothing to show.
@@ -239,15 +242,15 @@ harvest -> fetch manifest -> gate -> tier -> emit -> commit snapshot
    - Marked deprecated on npm. Rejected.
    - No license or no repository. Rejected. This is not fastidiousness: without a repository the package cannot be audited, and a plugin that wants to be listed has no reason to hide its source.
    - Levenshtein distance to any name in `verified.yml` is between 1 and 2 inclusive — **held for human adjudication** (into `denied.yml`, or cleared into `allowed-similar.yml`), never auto-listed. This is the typosquatting gate. The threshold of 2 is a starting point tunable against the observed false-positive rate; changing it touches a constant and its test, not the process.
-4. **Tier** — intersect with `verified.yml`.
+5. **Tier** — intersect with `verified.yml`.
 
    > **verified pins a version. It never attaches to a name.**
 
    `verified.yml` records `{ name, reviewedVersion, reviewer, reviewCommit, notes }`. If npm's latest exceeds `reviewedVersion`, the entry is **downgraded to `verified-stale`**, and the UI shows "reviewed v1.2.0 / current v1.3.0 unreviewed".
 
    Most markets attach verification to a package name, which means an author who passes review can then publish a malicious version and inherit the trust automatically. That is the cheapest supply-chain attack available.
-5. **Emit** — sort by package name for determinism; produce `plugins.<sha256>.json` and `index.json`, with the build report as a CI artifact.
-6. **Commit the snapshot** — write `manifest.lock` (name -> version -> integrity) back into `registry/snapshots/`.
+6. **Emit** — sort by package name for determinism; produce `plugins.<sha256>.json` and `index.json`, with the build report as a CI artifact.
+7. **Commit the snapshot** — write `manifest.lock` (name -> version -> integrity) back into `registry/snapshots/`.
 
    **This step is the entire value of this approach over a server.** Without it, the design degrades into an opaque service that happens to run on CI.
 

@@ -102,8 +102,7 @@ harvest → classify(pending derived names) → append categories.yml
   failure does not lose classification progress; re-runs only classify what is
   still absent.
 - The pipeline's pure core takes `categories.yml` as an input, exactly like
-  `verified.yml`/`denied.yml`. Emit fills `catalog.category` for derived
-  entries that have a row. The client already reads that field
+  `verified.yml`/`denied.yml`. `gate.ts` fills `catalog.category` for derived entries with a row (the derived section is built there). The client already reads that field
   (`categoryKey`), so the UI changes not at all.
 
 New shell module: `registry/scripts/src/llm-client.ts` — the second module that
@@ -131,7 +130,7 @@ build tries them again (D4). A permanently unclassifiable name costs one small
 batch per day, forever, until a human pins a category by hand-editing the file;
 that manual edit is the correction path, mirroring `verified.yml`/`denied.yml`.
 
-Every discarded classification is recorded in the build report with a reason —
+Every discarded classification is recorded in the classification report (`dist/v1/classification-report.md`, uploaded as an artifact alongside the build report) with a reason —
 nothing disappears without one, per the standing rule.
 
 ## 6. Determinism

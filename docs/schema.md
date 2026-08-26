@@ -27,6 +27,8 @@ If you declare `dsh.catalog`, both languages are required — declaring the sect
 | `summary.zh` | yes | The same, in Chinese |
 | `capabilities` | yes | Up to 20 free-form strings naming the dsh services the plugin uses |
 
+If you do not declare `category`, the shop may assign one by automated review; declare it to stay in control.
+
 **`capabilities` is self-declared and unenforced.** dsh does not sandbox plugins, so this field describes what the author says the plugin touches. It is displayed, never checked. Do not read it as a permission grant.
 
 Unknown fields are rejected rather than ignored, so a typo fails the build with a message naming the field instead of silently dropping your data. **A `dsh.catalog` section that fails validation is rejected outright** — it never falls back to a derived listing, because an author who declared the section and got it wrong deserves the build report to say so, not a silent substitute.

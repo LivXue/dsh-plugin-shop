@@ -41,7 +41,7 @@ pnpm build:catalog  # ~1390 live npm requests, several minutes — see below
 **A pure core, an impure shell.**
 
 - Pure: `gate.ts`, `tier.ts`, `emit.ts`, `pipeline.ts`, `schema.ts`, `types.ts`. No clock, no network, no filesystem, no environment. Every policy decision lives here, which is why fixtures can drive all of it.
-- Impure: `npm-client.ts` (the only module that reaches the network), `build.ts` (reads the clock once, writes the artifacts), `config.ts` (reads the registry YAML), `emit-schema.ts` (writes the generated schema).
+- Impure: `npm-client.ts` and `llm-client.ts` (the only modules that reach the network), `build.ts` (reads the clock once, writes the artifacts), `config.ts` (reads the registry YAML), `emit-schema.ts` (writes the generated schema).
 
 A policy decision that migrates into the shell becomes untestable. If a pure module needs the time, take it as a parameter — `build.ts` reads the clock exactly once and passes it down.
 
@@ -52,6 +52,7 @@ A policy decision that migrates into the shell becomes untestable. If a pure mod
 - **`verified` pins a version, never a name.** A published version newer than `reviewedVersion` downgrades to `verified-stale` and keeps the review. Attaching verification to a package name lets an author pass review once and inherit trust for every future version — the cheapest supply-chain attack there is.
 - **Tiering and metadata are orthogonal.** `tier` answers "has a human read this?", `metadata` answers "did the author describe it?". A derived listing can be verified; do not couple them.
 - **Harvest by keyword, never by name pattern.** A name pattern is trivially spoofed.
+- **LLM output is advisory.** The classifier may change a category, never gate a listing, never remove an entry, and never block a publish. A failed classification leaves the entry unclassified and is retried on the next build; `categories.yml` is a build input like `verified.yml`.
 
 ## Failing loudly
 
