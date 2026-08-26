@@ -25,15 +25,28 @@ describe('mergeCategoryRows', () => {
 })
 
 describe('serializeCategoryRows', () => {
+  it('round-trips scoped package names through the YAML loader', async () => {
+    const { parse } = await import('yaml')
+    const text = serializeCategoryRows(new Map([['@scope/dsh-plugin', 'tool'], ['dsh-plain', 'ui']]))
+    const parsed = parse(text) as { name: string; category: string }[]
+    expect(parsed).toEqual([
+      { name: '@scope/dsh-plugin', category: 'tool' },
+      { name: 'dsh-plain', category: 'ui' },
+    ])
+  })
+
+
   it('writes sorted rows with the standing header', () => {
     const text = serializeCategoryRows(new Map([['dsh-beta', 'ui'], ['dsh-alpha', 'tool']]))
     expect(text).toBe(
       '# LLM-assigned categories for derived listings (design 2026-08-26-llm-categorization-design.md).\n'
       + '# A declared `dsh.catalog.category` always wins; a name absent from this file is simply\n'
       + '# "not yet classified" and is retried on the next build.\n'
-      + '- name: dsh-alpha\n'
+      // Names are quoted since the scoped-name regression: an unquoted
+      // `@scope/pkg` row cannot be parsed back by the YAML loader.
+      + '- name: "dsh-alpha"\n'
       + '  category: tool\n'
-      + '- name: dsh-beta\n'
+      + '- name: "dsh-beta"\n'
       + '  category: ui\n',
     )
   })

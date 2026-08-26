@@ -28,7 +28,12 @@ export function mergeCategoryRows(
 
 /** Serialize rows to the file text: header, sorted rows, trailing newline. */
 export function serializeCategoryRows(rows: ReadonlyMap<string, Category>): string {
-  const rowsText = [...rows].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map(([name, category]) => `- name: ${name}\n  category: ${category}`)
+  // Names are ALWAYS double-quoted: npm scoped names start with `@`, which
+  // YAML forbids at the start of a plain scalar — an unquoted `@scope/pkg`
+  // row parses as YAMLParseError, so the file this step writes could not be
+  // read back by the loader (regression: the backfill's own output). npm
+  // names never contain `"` or `\`, so double quotes need no escaping.
+  const rowsText = [...rows].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map(([name, category]) => `- name: "${name}"\n  category: ${category}`)
   // A document made of comments alone parses to `null`, and the loader
   // requires a list; a zero-row file (no key, or nothing new classified) must
   // still be one, or the very next build dies reading what this step wrote.
