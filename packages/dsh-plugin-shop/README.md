@@ -1,6 +1,6 @@
 # dsh-plugin-shop
 
-English | [中文](README.zh.md)
+English | [中文](https://github.com/LivXue/dsh-plugin-shop/blob/main/packages/dsh-plugin-shop/docs/README.zh.md)
 
 The plugin store for [DeepSeek Harness](https://github.com/deepseek-harness), as a
 tab inside the Harness settings surface: browse a catalog of dsh plugins, install

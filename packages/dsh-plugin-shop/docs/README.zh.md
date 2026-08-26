@@ -1,6 +1,6 @@
 # dsh-plugin-shop
 
-[English](README.md) | 中文
+[English](https://github.com/LivXue/dsh-plugin-shop/blob/main/packages/dsh-plugin-shop/README.md) | 中文
 
 [DeepSeek Harness](https://github.com/deepseek-harness) 的插件市场，以设置页里的一个
 标签呈现：浏览 dsh 插件目录、一次确认完成安装、启停已安装的插件、看到哪些有了新版本。
