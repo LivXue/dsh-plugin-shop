@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, categoryKey, isShopLike, isUnclaimed, nextVisibleCount, reduceInstall, tierKey,
+  ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, categoryKey, formatStars, isShopLike, isUnclaimed, nextVisibleCount, reduceInstall, sortByStars, tierKey,
 } from '../../src/client/present.ts'
 import type { CatalogEntry } from '../../src/host/index.ts'
 
@@ -120,5 +120,39 @@ describe('categoryKey', () => {
   it('maps a declared category and falls back to other for derived entries', () => {
     expect(categoryKey({ ...entry, catalog: { category: 'provider', summary: { en: 'x' }, capabilities: [] } })).toBe('categoryProvider')
     expect(categoryKey(entry)).toBe('categoryOther')
+  })
+})
+
+describe('sortByStars', () => {
+  const make = (name: string): CatalogEntry => ({ ...entry, name })
+
+  it('sorts by stars descending, unstarred last, name asc on ties', () => {
+    const entries = [make('dsh-alpha'), make('dsh-mid'), make('dsh-top'), make('dsh-nostar'), make('dsh-mid-tie')]
+    const stars = { 'dsh-mid': 5, 'dsh-top': 100, 'dsh-mid-tie': 5 }
+    expect(sortByStars(entries, stars).map(e => e.name)).toEqual([
+      'dsh-top', 'dsh-mid', 'dsh-mid-tie', 'dsh-alpha', 'dsh-nostar',
+    ])
+  })
+
+  it('is case-insensitive on the name tiebreak', () => {
+    const a = make('dsh-Beta')
+    const b = make('dsh-alpha')
+    expect(sortByStars([a, b], {}).map(e => e.name)).toEqual(['dsh-alpha', 'dsh-Beta'])
+  })
+
+  it('keeps pure name order when stars is empty', () => {
+    const entries = [make('dsh-zebra'), make('dsh-alpha')]
+    expect(sortByStars(entries, {}).map(e => e.name)).toEqual(['dsh-alpha', 'dsh-zebra'])
+  })
+})
+
+describe('formatStars', () => {
+  it('formats the magnitude boundaries', () => {
+    expect(formatStars(0)).toBe('0')
+    expect(formatStars(999)).toBe('999')
+    expect(formatStars(1000)).toBe('1k')
+    expect(formatStars(1234)).toBe('1.2k')
+    expect(formatStars(1500)).toBe('1.5k')
+    expect(formatStars(99999)).toBe('100k')
   })
 })

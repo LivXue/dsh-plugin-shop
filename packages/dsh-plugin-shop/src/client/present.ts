@@ -146,3 +146,21 @@ const CATEGORY_KEYS = {
 export function categoryKey(entry: CatalogEntry): ShopLocaleKey {
   return CATEGORY_KEYS[entry.catalog?.category ?? 'other']
 }
+
+/** Sort the shelf: stars descending, un-starred entries last, name ascending
+ * (case-insensitive) on ties (spec 2026-08-26-github-stars-design.md D1).
+ * Display-time only — the catalog's own name sort is untouched. */
+export function sortByStars(entries: CatalogEntry[], stars: Record<string, number>): CatalogEntry[] {
+  const count = (e: CatalogEntry): number => stars[e.name] ?? -1
+  return [...entries].sort((a, b) => {
+    const byStars = count(b) - count(a)
+    if (byStars !== 0) return byStars
+    return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+  })
+}
+
+/** 999 → "999"; 1000 → "1k"; 1234 → "1.2k"; 1500 → "1.5k"; 99999 → "100k". */
+export function formatStars(n: number): string {
+  if (n < 1000) return String(n)
+  return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`
+}
