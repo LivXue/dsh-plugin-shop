@@ -64,7 +64,7 @@
   "scripts": {
     "prepublishOnly": "pnpm build",
     "build": "tsdown && tsc && tsdown -c tsdown.client.config.ts",
-    "test": "tsdown && vitest run",
+    "test": "tsdown && tsdown -c tsdown.client.config.ts && vitest run",
     "typecheck": "tsdown && tsc --noEmit && tsc -p tsconfig.test.json"
   },
   "dependencies": {
