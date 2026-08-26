@@ -54,9 +54,9 @@ Pages 那个框左边的一切属于本仓库的 `registry/`，右边的一切�
 ### 🧑 给人看
 
 **前置条件：** Node.js。运行 harness 本身无需安装——上游文档的形式是
-`npx -y @deepseek-ai/dsh web`。但商店安装插件时自己会 spawn `dsh` 命令，所以请
-把它放进你的 PATH 一次（`npm install -g @deepseek-ai/dsh`），并用
-`dsh --version` 验证。
+`npx -y @deepseek-ai/dsh web`。插件管理经由 `dsh plugin`，它会分别 spawn
+`dsh` 命令和 `pnpm`——用一条命令装好两者：`npm install -g @deepseek-ai/dsh
+pnpm`，并用 `dsh --version` 和 `pnpm --version` 验证。
 
 ```sh
 # dsh 在 PATH 上（全局安装）：

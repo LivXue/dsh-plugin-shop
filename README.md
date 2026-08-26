@@ -55,9 +55,10 @@ Two tracks. They do the same thing; pick the one that matches who is reading.
 ### 🧑 For people
 
 **Prerequisites:** Node.js. Running the harness itself needs no install — the
-upstream-documented form is `npx -y @deepseek-ai/dsh web`. But the shop installs
-plugins by spawning the `dsh` command, so put it on your PATH once
-(`npm install -g @deepseek-ai/dsh`) and verify with `dsh --version`.
+upstream-documented form is `npx -y @deepseek-ai/dsh web`. Plugin management
+goes through `dsh plugin`, which spawns both the `dsh` command and `pnpm` —
+install them once with `npm install -g @deepseek-ai/dsh pnpm` and verify with
+`dsh --version` and `pnpm --version`.
 
 ```sh
 # dsh on PATH (global install):

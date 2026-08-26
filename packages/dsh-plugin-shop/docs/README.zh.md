@@ -40,9 +40,9 @@
 ### 🧑 给人看
 
 **前置条件：** Node.js。运行 harness 本身无需安装——上游文档的形式是
-`npx -y @deepseek-ai/dsh web`。但商店安装插件时自己会 spawn `dsh` 命令，所以请
-把它放进你的 PATH 一次（`npm install -g @deepseek-ai/dsh`），并用
-`dsh --version` 验证。
+`npx -y @deepseek-ai/dsh web`。插件管理经由 `dsh plugin`，它会分别 spawn
+`dsh` 命令和 `pnpm`——用一条命令装好两者：`npm install -g @deepseek-ai/dsh
+pnpm`，并用 `dsh --version` 和 `pnpm --version` 验证。
 
 ```sh
 # dsh 在 PATH 上（全局安装）：
@@ -96,6 +96,7 @@ dsh plugin --profile <profile> list --depth 0
 | `error: required option '--profile <name>' not specified` | 漏了 `--profile` | 补上，它没有默认值 |
 | 装到的版本比 npm 的 `latest` 旧 | pnpm 11 会压住刚发布不久的版本 | 属预期而非错误，冷却期过后自然拿到最新 |
 | `client bundles not found ... lib/client.js` | 磁盘上那份没有构建浏览器半边 | 从 npm 安装而不是从源码 checkout，或在该 checkout 里跑 `pnpm build` |
+| `dsh: pnpm not found on PATH — install pnpm to manage profile plugins` | `dsh plugin` 转发给 pnpm，而 pnpm 缺失 | `npm install -g pnpm` |
 | `no profile directory found above <path>` | 插件定位不到自己的 profile | 请报告——这是由 `ctx.baseUrl` 解析的，不该失败 |
 | 重启后标签没出现 | bundle 不在 profile 的 `bundles` 里 | 重跑第 3 步；若确实不在，说明第 2 步没走完 |
 

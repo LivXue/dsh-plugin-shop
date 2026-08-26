@@ -40,9 +40,10 @@ Two tracks below. They do the same thing; pick the one that matches who is readi
 ### 🧑 For people
 
 **Prerequisites:** Node.js. Running the harness itself needs no install — the
-upstream-documented form is `npx -y @deepseek-ai/dsh web`. But the shop installs
-plugins by spawning the `dsh` command, so put it on your PATH once
-(`npm install -g @deepseek-ai/dsh`) and verify with `dsh --version`.
+upstream-documented form is `npx -y @deepseek-ai/dsh web`. Plugin management
+goes through `dsh plugin`, which spawns both the `dsh` command and `pnpm` —
+install them once with `npm install -g @deepseek-ai/dsh pnpm` and verify with
+`dsh --version` and `pnpm --version`.
 
 ```sh
 # dsh on PATH (global install):
@@ -102,6 +103,7 @@ bundle is not.
 | `error: required option '--profile <name>' not specified` | `--profile` was omitted | Pass it; there is no default |
 | A version older than npm's `latest` gets installed | pnpm 11 holds back very recently published versions | Expected, not an error; the newest lands once its cooldown passes |
 | `client bundles not found ... lib/client.js` | the copy on disk was built without its browser half | Install from npm rather than from a source checkout, or run `pnpm build` in that checkout |
+| `dsh: pnpm not found on PATH — install pnpm to manage profile plugins` | `dsh plugin` forwards to pnpm, and pnpm is missing | `npm install -g pnpm` |
 | `no profile directory found above <path>` | the plugin could not locate its profile | Please report it — this is resolved from `ctx.baseUrl` and should not fail |
 | The tab is missing after a restart | the bundle is not in the profile's `bundles` | Re-run step 3; if it is absent, step 2 did not complete |
 
