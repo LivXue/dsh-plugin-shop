@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ACKNOWLEDGEMENT_EN, ACKNOWLEDGEMENT_ZH, rejectionCodeKey } from '../../src/client/present.ts'
 import { en, zh, type StoreLocaleKey } from '../../src/client/locales.ts'
@@ -288,5 +288,25 @@ describe('StoreTab store-like filtering', () => {
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     expect(screen.getByText('dsh-plugin-store-2')).toBeTruthy()
+  })
+})
+
+describe('StoreTab loading state', () => {
+  it('renders a skeleton grid while the catalog loads and keeps the loading copy readable', async () => {
+    const { injected, catalog } = bench(snapshot())
+    let resolve!: (value: StoreCatalogResult) => void
+    catalog.mockReturnValue(new Promise(r => { resolve = r }))
+    const { container } = renderTab(injected)
+
+    // The panel is busy, the skeleton is present, and the loading copy stays
+    // in the accessibility tree (visually hidden).
+    expect(container.querySelector('[data-store-tab]')?.getAttribute('aria-busy')).toBe('true')
+    expect(container.querySelector('[data-store-skeleton]')).toBeTruthy()
+    expect(container.querySelectorAll('[data-store-skeleton] [class*="skeleton"]').length).toBeGreaterThan(0)
+    expect(screen.getByText(en.loading)).toBeTruthy()
+
+    // Settle the promise so the test exits cleanly through the ready state.
+    await act(async () => { resolve(snapshot()) })
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
   })
 })

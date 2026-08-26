@@ -428,8 +428,18 @@ export function StoreTab(props: StoreTabProps): ReactNode {
 
   if (catalogState.kind === 'loading') {
     return (
-      <div className={css.panel} data-store-tab>
-        <p className={css.stateLine}>{t('loading')}</p>
+      <div className={css.panel} data-store-tab aria-busy="true">
+        <p className={css.srOnly}>{t('loading')}</p>
+        <div className={css.skeletonGrid} data-store-skeleton aria-hidden="true">
+          {Array.from({ length: 8 }, (_, i) => (
+            <div key={i} className={css.skeletonCard}>
+              <span className={css.skeletonCover} />
+              <span className={css.skeletonName} />
+              <span className={css.skeletonSummary} />
+              <span className={css.skeletonSummaryShort} />
+            </div>
+          ))}
+        </div>
       </div>
     )
   }

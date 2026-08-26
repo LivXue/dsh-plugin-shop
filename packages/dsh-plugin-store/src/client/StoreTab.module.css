@@ -20,6 +20,81 @@
   font-size: 13px;
 }
 
+/* Visually hidden but screen-reader readable (the loading copy while the
+ * skeleton stands in visually). */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* The loading shelf: ghost cards with the same geometry as the real grid, so
+ * the swap to content is a same-shape handoff instead of a jump. */
+.skeletonGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.skeletonCard {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-1);
+  overflow: hidden;
+}
+
+.skeletonCover {
+  display: block;
+  height: 26px;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.skeletonName {
+  width: 55%;
+  height: 14px;
+  margin: 12px 12px 0;
+  border-radius: 4px;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.skeletonSummary {
+  width: 92%;
+  height: 12px;
+  margin: 10px 12px 0;
+  border-radius: 4px;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.skeletonSummaryShort {
+  width: 68%;
+  height: 12px;
+  margin: 6px 12px 14px;
+  border-radius: 4px;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.skeletonCard span {
+  animation: dshStoreSkeletonPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes dshStoreSkeletonPulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeletonCard span { animation: none; opacity: 0.75; }
+}
+
 .actionButton {
   align-self: flex-start;
   padding: 5px 14px;
@@ -109,6 +184,16 @@
   list-style: none;
   margin: 0;
   padding: 0;
+  animation: dshStoreCardsIn 220ms ease;
+}
+
+@keyframes dshStoreCardsIn {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cards { animation: none; }
 }
 
 .card {
@@ -168,9 +253,9 @@
 
 .entryHeader {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
   padding: 10px 12px 6px;
   border: none;
   background: transparent;
@@ -185,19 +270,20 @@
   outline-offset: -2px;
 }
 
+/* The name owns the full header width; badges sit on their own line below. */
 .name {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 13px;
   font-weight: 600;
-  word-break: break-all;
+  overflow-wrap: anywhere;
   color: var(--dsw-alias-label-primary);
 }
 
 .badges {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
-  flex-shrink: 0;
 }
 
 .tierBadge {
@@ -330,7 +416,7 @@
 .detailRow dd {
   margin: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  word-break: break-all;
+  overflow-wrap: anywhere;
   text-align: right;
   color: var(--dsw-alias-label-primary);
 }
@@ -421,6 +507,7 @@
 
 .gateActions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
