@@ -1,7 +1,7 @@
 # Remaining work
 
-Date: 2026-08-18 (launch state updated 2026-08-25; P1 state updated 2026-08-25)
-Status: P0 merged and published; P1 complete; P2 not started
+Date: 2026-08-18 (launch state updated 2026-08-25; P1 and P2 state updated 2026-08-25)
+Status: P0 merged and published; P1 complete; P2 complete; P3 absorbed into P2
 
 This is the handover document. It assumes you have no context from the session that built P0.
 
@@ -22,7 +22,9 @@ P0 — the catalog pipeline — is complete: 24 commits on branch `feat/p0-regis
 
 P1 — the Host half — is complete (2026-08-25, branch `feat/p1-host`, merged): the npm package `dsh-plugin-store` lives at `packages/dsh-plugin-store/` (the typert generator hardcodes `packages/` as its package container; spec §5.1 was amended accordingly), exposing the five `store/*` Remote methods. The P1 exit criterion — the real-installation test of spec §11.3.3 — passes against the real dsh CLI, locally and in CI (`plugin.yml`). Execution record: [2026-08-25-p1-host.md](2026-08-25-p1-host.md).
 
-What does **not** exist yet: the Client half (`packages/dsh-plugin-store/src/client/`), and everything in spec sections 5.1 (component S Client half), 6.1 (the unclaimed rendering rule), 7.3 (the browser side of the contract), and 9.3 (the acknowledgement wording). That is P2.
+P2 — the Client half — is complete (2026-08-25, branch `feat/p2-client`, merged): the store tab under `settings.plugins.tab` (browse, detail, the §9.3 acknowledgement gate, install with polling, enable/disable, and the outdated list), the XSS regression of §11.3.4, and the web full-flow e2e. Execution record: [2026-08-25-p2-client.md](2026-08-25-p2-client.md). Two wire-level facts the spec gained as §7.3 amendments: the install method is `store/installStart` (the namespace service owns `install`), and a self-mounting client consumes its namespace via `ctx.get('remote.store')`. P3 was absorbed into P2 (enable/disable and `store/outdated` shipped there); the §12 deviation note records that a successful store-driven install is deferred until a real npm package with `dsh.bundle` exists.
+
+What does **not** exist yet: nothing further in the P0-P3 plan. Remaining are the operational items below (review workflow, upstream PRs U1-U4, carried-over cleanups).
 
 ### The one thing to understand before touching anything
 
@@ -59,7 +61,7 @@ Build it in this order, because the failure-prone parts come first:
 - The store never writes `allowBuilds`. A plugin needing build scripts cannot be installed from the store; say so and print the CLI command.
 - Installs serialize per profile behind a mutex. A pnpm failure surfaces stderr verbatim and never rolls back automatically.
 
-## P2 — the Client half
+## P2 — the Client half (done 2026-08-25)
 
 `packages/dsh-plugin-store/src/client/`, contributing one tab to `settings.plugins.tab`. It holds no privilege beyond the five `store/*` methods.
 
