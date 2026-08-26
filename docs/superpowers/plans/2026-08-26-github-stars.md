@@ -821,7 +821,6 @@ it('sorts the shelf by stars and renders the badge on starred entries', async ()
   expect(names).toEqual(['dsh-top', 'dsh-nostar'])
   expect(screen.getByLabelText('1.2k stars')).toBeTruthy()
   expect(screen.getByText('★ 1.2k')).toBeTruthy()
-  expect(screen.queryByText('★')).toBeNull() // wait — see note below
 })
 
 it('shows no badge for an unstarred entry', async () => {
@@ -834,7 +833,7 @@ it('shows no badge for an unstarred entry', async () => {
 })
 ```
 
-**Note:** the second-to-last assertion in the first test (`queryByText('★')`) is wrong — the top card's badge contains ★. Drop that line; the two meaningful assertions are the name order and the aria-label.
+
 
 - [ ] **Step 2: run tests, verify they fail**
 
@@ -887,7 +886,7 @@ In `packages/dsh-plugin-shop/src/client/ShopTab.module.css`, add:
 - [ ] **Step 4: run tests, verify they pass**
 
 Run: `pnpm vitest run tests/client/ShopTab.client.spec.tsx` then `pnpm test` and `pnpm typecheck`
-Expected: PASS — including the sort/badge cases; the existing 29 ShopTab tests stay green (their fixtures are unstarred).
+Expected: PASS — including the sort/badge cases; the existing 31 ShopTab tests stay green (their fixtures are unstarred).
 
 - [ ] **Step 5: commit**
 
