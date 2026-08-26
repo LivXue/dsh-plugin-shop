@@ -6,7 +6,17 @@
  * at six opacities, one per category, with the category name as the cover
  * label. Class names are mapped to content-derived names at bundle time
  * (tsdown.client.config.ts) and stubbed in tests; only the keys are relied
- * on. */
+ * on.
+ *
+ * One token rule the theme forces: the background LAYERS do not carry
+ * contrast. In the light theme bg-base, bg-layer-1, bg-layer-2 and
+ * bg-layer-3 all resolve to the same white; only the dark theme spreads them
+ * (950/875/850/800). So a layer-2 fill on a layer-1 ground is invisible for
+ * half of all users, and anything whose fill is its ONLY affordance — the
+ * loading skeleton, the borderless capability chips — derives its fill from
+ * label-primary instead, which inverts with the theme by construction.
+ * Elements that also carry a border or text may keep a layer fill.
+ * `css-tokens.client.spec.ts` pins this. */
 
 .panel {
   display: flex;
@@ -62,7 +72,7 @@
   background: linear-gradient(
     100deg,
     transparent 25%,
-    color-mix(in srgb, var(--dsw-alias-bg-layer-2) 65%, transparent) 50%,
+    color-mix(in srgb, var(--dsw-alias-label-primary) 14%, transparent) 50%,
     transparent 75%
   );
   transform: translateX(-100%);
@@ -77,7 +87,7 @@
 .skeletonCover {
   display: block;
   height: 26px;
-  background: var(--dsw-alias-bg-layer-2);
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 10%, transparent);
 }
 
 .skeletonName {
@@ -85,7 +95,7 @@
   height: 14px;
   margin: 12px 12px 0;
   border-radius: 4px;
-  background: var(--dsw-alias-bg-layer-2);
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent);
 }
 
 .skeletonSummary {
@@ -93,7 +103,7 @@
   height: 12px;
   margin: 10px 12px 0;
   border-radius: 4px;
-  background: var(--dsw-alias-bg-layer-2);
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent);
 }
 
 .skeletonSummaryShort {
@@ -101,7 +111,7 @@
   height: 12px;
   margin: 6px 12px 14px;
   border-radius: 4px;
-  background: var(--dsw-alias-bg-layer-2);
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent);
 }
 
 .skeletonCard span {
@@ -407,7 +417,7 @@
 .capabilities li {
   padding: 1px 6px;
   border-radius: 4px;
-  background: var(--dsw-alias-bg-layer-2);
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 6%, transparent);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11px;
   color: var(--dsw-alias-label-secondary);
