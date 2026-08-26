@@ -26,6 +26,15 @@ function hashOf(text: string): string {
   return (h >>> 0).toString(16)
 }
 
+/** The generated class name for one local name. The `s` prefix is load-
+ * bearing: the hash is hex, and a hex prefix starting with a digit makes
+ * `.2b743e_local` an invalid selector (it tokenizes as a number), so the
+ * browser drops the whole rule — the store tab shipped unstyled until this
+ * was pinned by `css-names.client.spec.ts`. */
+export function classNameFor(filename: string, local: string): string {
+  return `s${hashOf(`${filename}:${local}`).slice(0, 6)}_${local}`
+}
+
 /** CSS modules for the browser half, resolved the way the dsh pipeline does
  * it (`/tmp/dsh/packages/client/tsdown.client.ts`): every local class name is
  * mapped to `[hash]_[local]`, the same names replace the selectors in the
@@ -111,7 +120,7 @@ export default {
         }
         const names = new Map<string, string>()
         for (const local of locals) {
-          names.set(local, `${hashOf(`${filename}:${local}`).slice(0, 6)}_${local}`)
+          names.set(local, classNameFor(filename, local))
         }
         const rewritten = css.replace(/\.([a-zA-Z_][\w-]*)/g, (match, local: string) => {
           const mapped = names.get(local)
