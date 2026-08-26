@@ -11,13 +11,17 @@ export interface UserLayerRow { id: string; disabled: boolean }
 interface ProfileShape { dsh?: { profile?: { bundles?: unknown } } }
 
 /**
- * Find the profile directory that owns `startPath` — the store bundle is a
- * dependency installed inside the active profile, so ascending from its own
- * module path to the nearest ancestor holding both the Loader root
- * (`cordis.yml`) and a `dsh.profile.bundles` manifest is filesystem fact,
- * not a guess.
+ * Find the profile directory that owns `startPath`.
+ *
+ * `baseDir` is the boot-provided profile directory (the Loader root's own
+ * directory, `ctx.baseUrl`) and is authoritative when it is a profile. The
+ * walk-up from `startPath` covers the case where the package is materialized
+ * inside the profile's node_modules — but a `link:` install keeps the package
+ * at its source location, so no ancestor of the module path is a profile at
+ * all. In that case only `baseDir` can answer.
  */
-export function discoverProfile(startPath: string): { name: string; dir: string } {
+export function discoverProfile(startPath: string, baseDir?: string): { name: string; dir: string } {
+  if (baseDir !== undefined && isProfileDir(baseDir)) return { name: basename(baseDir), dir: baseDir }
   let dir = realpathNearestExisting(startPath)
   for (;;) {
     if (isProfileDir(dir)) return { name: basename(dir), dir }

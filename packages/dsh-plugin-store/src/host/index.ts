@@ -100,10 +100,26 @@ export class StoreGateway extends TypertRemoteService {
   constructor(ctx: Context, options: StoreGatewayOptions = {}) {
     super(ctx, 'store')
     this.options = options
-    this.profile = options.profile ?? discoverProfile(fileURLToPath(import.meta.url)).name
+    this.profile = options.profile ?? discoverProfile(fileURLToPath(import.meta.url), this.bootBaseDir()).name
     this.profileDir = options.profileDir
     this.inventory = options.inventory
     this.dshBin = options.dshBin ?? 'dsh'
+  }
+
+  /** The boot's Loader root directory (the active profile's `cordis.yml`
+   * directory, carried on `ctx.baseUrl`), when present. A `link:` install
+   * keeps this package at its source location, so the walk-up from
+   * `import.meta.url` finds the repo rather than a profile; `ctx.baseUrl`
+   * is the boot-provided authoritative answer. */
+  private bootBaseDir(): string | undefined {
+    const baseUrl = (this.ctx as { baseUrl?: unknown }).baseUrl
+    if (typeof baseUrl !== 'string' || !baseUrl.startsWith('file:')) return undefined
+    try {
+      return fileURLToPath(baseUrl)
+    } catch {
+      // A malformed baseUrl is not a profile answer; the walk-up decides.
+    }
+    return undefined
   }
 
   /** The profile directory the user layer lives in — the discovered default
@@ -111,7 +127,7 @@ export class StoreGateway extends TypertRemoteService {
    * without requiring a real profile above this module. */
   private profileDirResolved(): string {
     if (this.profileDir !== undefined) return this.profileDir
-    return discoverProfile(fileURLToPath(import.meta.url)).dir
+    return discoverProfile(fileURLToPath(import.meta.url), this.bootBaseDir()).dir
   }
 
   private listInventory(): InventoryEntry[] {

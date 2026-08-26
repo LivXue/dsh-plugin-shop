@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import StoreGateway from '../../src/host/index.ts'
 import type { CatalogResult, CatalogSnapshot } from '../../src/host/catalog.ts'
 import type { CatalogEntry } from '../../src/host/types.ts'
@@ -35,6 +36,33 @@ describe('StoreGateway', () => {
     expect(gateway.name).toBe('store')
     expect(gateway.typertRemote.serviceKey).toBe('store')
     expect(gateway.typertRemote.namespace).toBe('store')
+  })
+
+  it('discovers the profile from the boot baseUrl when the module is not under a profile', () => {
+    // Regression for `link:` installs: pnpm keeps the package at its source,
+    // so the walk-up from import.meta.url finds the repo, not a profile. The
+    // boot's ctx.baseUrl — the profile's cordis.yml directory — is the
+    // authoritative source, and the constructor must use it.
+    const home = mkdtempSync(join(tmpdir(), 'dsh-linked-'))
+    const profileDir = join(home, 'profiles', 'web')
+    mkdirSync(profileDir, { recursive: true })
+    writeFileSync(join(profileDir, 'cordis.yml'), '[]\n')
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: ['dsh-plugin-store'] } } }))
+    const ctx = {
+      get: () => undefined,
+      reflect: { provide: () => {} },
+      baseUrl: pathToFileURL(profileDir).href + '/',
+    } as never
+    // The constructor must not throw (the link-install regression: no profile
+    // above the module path), and setEnabled resolves the baseUrl directory
+    // end to end — the observable proof of the discovery.
+    const gateway = new StoreGateway(ctx)
+    expect(gateway.name).toBe('store')
+    const inventory = [{ entryId: 'store-row', moduleName: 'dsh-plugin-store', enabled: true }]
+    const withInventory = new StoreGateway(ctx, { inventory: { list: () => inventory } })
+    const result = withInventory.setEnabled({ name: 'dsh-plugin-store', enabled: false })
+    expect(result.ok).toBe(true)
+    expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toContain('store-row')
   })
 })
 

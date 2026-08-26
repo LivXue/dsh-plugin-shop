@@ -26,7 +26,24 @@ describe('discoverProfile', () => {
     expect(discoverProfile(join(link, 'node_modules', 'dsh-plugin-store', 'lib', 'index.js'))).toEqual({ name: 'web', dir })
   })
 
-  it('throws when no ancestor is a profile directory', () => {
+  it('uses the boot-provided base directory when the start path is not under any profile', () => {
+    // A `link:` install keeps the package at its source location, so no
+    // ancestor of the module path is a profile; the boot's ctx.baseUrl (the
+    // profile's cordis.yml directory) is the authoritative fallback.
+    const dir = fixtureProfile()
+    const linkedSource = mkdtempSync(join(tmpdir(), 'dsh-linked-source-'))
+    expect(discoverProfile(join(linkedSource, 'packages', 'dsh-plugin-store', 'lib', 'index.js'), dir))
+      .toEqual({ name: 'web', dir })
+  })
+
+  it('ignores a base directory that is not a profile and walks up as before', () => {
+    const dir = fixtureProfile()
+    const stray = mkdtempSync(join(tmpdir(), 'dsh-stray-'))
+    expect(discoverProfile(join(dir, 'node_modules', 'dsh-plugin-store', 'lib', 'index.js'), stray))
+      .toEqual({ name: 'web', dir })
+  })
+
+  it('throws when no ancestor is a profile directory and no base directory is given', () => {
     const stray = mkdtempSync(join(tmpdir(), 'dsh-stray-'))
     expect(() => discoverProfile(join(stray, 'x.js'))).toThrow(/no profile directory/)
   })
