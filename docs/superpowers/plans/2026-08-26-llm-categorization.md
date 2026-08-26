@@ -44,6 +44,12 @@ In `registry/scripts/tests/config.test.ts`, change the fixture line 4 to include
 const empty = { verified: '[]', denied: '[]', allowedSimilar: '[]', categories: '[]' }
 ```
 
+`parseRegistryConfig` gains a required input, so every OTHER call site also needs the field (compile errors will name them; fix each by adding `categories: '[]'`):
+
+- `registry/scripts/tests/pipeline.test.ts:11-15` — add `categories: '[]',`
+- `registry/scripts/tests/tier.test.ts:6` — add `categories: '[]',`
+- `registry/scripts/tests/gate.test.ts:6-9` and `:143` — add `categories: '[]',`
+
 Append these tests (same file, inside the existing describe or a new one):
 
 ```ts
@@ -174,40 +180,47 @@ git commit -m "feat(registry): load LLM-assigned categories from categories.yml"
 
 In `registry/scripts/tests/gate.test.ts`, locate the existing helper that builds a `RegistryConfig` (the suite constructs configs for each test; find the minimal one — if none exists, build one):
 
-```ts
-const baseConfig = (over: Partial<RegistryConfig> = {}): RegistryConfig => ({
-  verified: new Map(),
-  denied: new Map(),
-  allowedSimilar: new Set(),
-  categories: new Map(),
-  ...over,
-})
-```
-
-Add:
+The file already has a `candidate()` factory (lines 18-34) and a `config` built via `parseRegistryConfig` (lines 6-9, now carrying `categories: '[]'`). Add this helper next to `candidate()`:
 
 ```ts
-it('fills a derived listing with its LLM-assigned category', () => {
-  const candidate = { /* the suite's standard derived candidate fixture */ }
-  const result = gate(candidate, baseConfig({ categories: new Map([['dsh-hello-plugin', 'tool']]) }))
-  expect(result.ok && result.accepted.metadata).toBe('derived')
-  expect(result.ok && result.accepted.catalog.category).toBe('tool')
-})
-
-it('defaults a derived listing without a row to other', () => {
-  const candidate = { /* the suite's standard derived candidate fixture */ }
-  const result = gate(candidate, baseConfig())
-  expect(result.ok && result.accepted.catalog.category).toBe('other')
-})
-
-it('never overrides a declared category', () => {
-  const candidate = { /* the suite's declared-catalog fixture, category: 'ui' */ }
-  const result = gate(candidate, baseConfig({ categories: new Map([['dsh-hello-plugin', 'provider']]) }))
-  expect(result.ok && result.accepted.catalog.category).toBe('ui')
-})
+const withCategories = (rows: Record<string, string>): ReturnType<typeof parseRegistryConfig> =>
+  parseRegistryConfig({
+    verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: github:r\n  reviewCommit: abc\n',
+    denied: '- name: dsh-evil-plugin\n  reason: Exfiltrates credentials.\n',
+    allowedSimilar: '- dsh-fs-tools\n',
+    categories: rows === undefined ? '[]' : Object.entries(rows).map(([name, category]) => `- name: ${name}\n  category: ${category}\n`).join(''),
+  })
 ```
 
-Fill `/* the suite's standard ... fixture */` from the existing fixtures in the file — read the file first and reuse its exact candidates. In `registry/scripts/tests/pipeline.test.ts`, find the determinism test and add a categories-populated variant alongside it: build a config with `categories: new Map([...])`, run `runPipeline` twice with the same inputs, and assert both runs' `pluginsJson` are `toBe` equal (copy the existing determinism test's shape, adding the populated map).
+Then add these three tests (note the derived candidate uses `catalog: undefined` so the derived branch runs):
+
+```ts
+  it('fills a derived listing with its LLM-assigned category', () => {
+    const result = gate(
+      candidate({ catalog: undefined, description: 'Does a helpful thing.' }),
+      withCategories({ 'dsh-hello-plugin': 'tool' }),
+    )
+    if (!result.ok) throw new Error('expected acceptance')
+    expect(result.accepted.metadata).toBe('derived')
+    expect(result.accepted.catalog.category).toBe('tool')
+  })
+
+  it('defaults a derived listing without a row to other', () => {
+    const result = gate(candidate({ catalog: undefined, description: 'Does a helpful thing.' }), withCategories({}))
+    if (!result.ok) throw new Error('expected acceptance')
+    expect(result.accepted.catalog.category).toBe('other')
+  })
+
+  it('never overrides a declared category', () => {
+    // candidate() declares category: 'tool' (line 22); a provider row must not win
+    const result = gate(candidate(), withCategories({ 'dsh-hello-plugin': 'provider' }))
+    if (!result.ok) throw new Error('expected acceptance')
+    expect(result.accepted.metadata).toBe('declared')
+    expect(result.accepted.catalog.category).toBe('tool')
+  })
+```
+
+In `registry/scripts/tests/pipeline.test.ts`, the existing determinism test is at line 68. Add a categories-populated variant right after it, same shape, with a config built by adding `categories: '- name: dsh-derived-plugin\n  category: tool\n'` to the file's `parseRegistryConfig` call and asserting the derived plugin's published `catalog.category` is `tool`; then run `runPipeline` twice with identical inputs and assert `toBe` equality of both `pluginsJson` (the file's existing determinism test shows the exact assertion style).
 
 - [ ] **Step 2: run tests, verify they fail**
 
@@ -645,14 +658,7 @@ const SYSTEM_PROMPT = [
 const USER_TEMPLATE = (items: ClassifyItem[]): string =>
   JSON.stringify(items.map(i => ({ name: i.name, description: i.description, keywords: i.keywords })))
 
-/** Fetch one batch with bounded retries, mirroring npm-client's discipline. */
-async function chatOnce(
-  items: ClassifyItem[],
-  options: Required<Pick<typeof classifyPackages extends never ? never : never, never>>,
-): Promise<Response> { /* filled below */ }
-```
-
-**Do not use the half-written `chatOnce` above** — it is a sketch. Implement `classifyPackages` concretely:
+Then implement `classifyPackages` concretely:
 
 ```ts
 interface Options {
@@ -947,7 +953,6 @@ import { gate } from './gate.ts'
 import { loadRegistryConfig } from './config.ts'
 import { classifyPackages, type ClassifyItem } from './llm-client.ts'
 import { fetchCandidates, searchByKeyword } from './npm-client.ts'
-import { parseRegistryConfig } from './config.ts'
 
 const REGISTRY_DIR = 'registry'
 const OUT_DIR = 'dist/v1'
@@ -985,17 +990,7 @@ if (apiKey === '') {
   discarded = result.discarded
 }
 
-const existingText = (() => {
-  try { return readFileSync(join(REGISTRY_DIR, 'categories.yml'), 'utf8') } catch { return '[]' }
-})()
-// re-parse through the loader's own schema so a malformed committed file fails loudly here too
-const existing = parseRegistryConfig({
-  verified: '[]', denied: '[]', allowedSimilar: '[]',
-  categories: existingText.startsWith('#') ? '[]' : existingText,
-}).categories
-```
-
-**Careful — the trick above is wrong.** `parseRegistryConfig` runs `parse()` on YAML with comments — the yaml library handles comments fine, so parse the file text directly. Replace that last block with a dedicated read: since `loadRegistryConfig` already loaded the committed file through the same schema, `config.categories` IS the existing map — no second read needed. The classify step's existing rows are exactly `config.categories`. Final version of the tail:
+**Existing rows need no second read:** `loadRegistryConfig` already parsed the committed file through the same schema, so `config.categories` IS the existing map — and a malformed committed file has already thrown. The tail of the script is:
 
 ```ts
 const merged = mergeCategoryRows(config.categories, fresh, liveNames)
