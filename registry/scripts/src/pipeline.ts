@@ -1,6 +1,6 @@
 import { gate } from './gate.ts'
 import { assignTier } from './tier.ts'
-import { emit, type Artifacts } from './emit.ts'
+import { emit, type Artifacts, type StarsPointer } from './emit.ts'
 import type { RegistryConfig } from './config.ts'
 import type { Candidate, Entry, Rejection } from './types.ts'
 
@@ -16,6 +16,7 @@ import type { Candidate, Entry, Rejection } from './types.ts'
  * @param preexistingRejections - rejections decided before this function ran, such as a
  *   name that could not be turned into a candidate at all (e.g. a failed fetch); merged
  *   into the emitted report alongside every rejection this function produces itself.
+ * @param stars - optional pointer to a published stars sidecar, passed through to emit.
  * @returns the artifacts to publish and commit.
  */
 export function runPipeline(
@@ -23,6 +24,7 @@ export function runPipeline(
   config: RegistryConfig,
   builtAt: string,
   preexistingRejections: Rejection[] = [],
+  stars: StarsPointer | null = null,
 ): Artifacts {
   const entries: Entry[] = []
   const rejections: Rejection[] = [...preexistingRejections]
@@ -31,5 +33,5 @@ export function runPipeline(
     if (result.ok) entries.push(assignTier(result.accepted, config))
     else rejections.push(result.rejection)
   }
-  return emit(entries, rejections, builtAt)
+  return emit(entries, rejections, builtAt, stars)
 }

@@ -114,4 +114,17 @@ describe('emit', () => {
     const data = JSON.parse(artifacts.pluginsJson)
     expect(data.denied).toEqual([{ name: 'dsh-blocked', detail: 'matched the denylist' }])
   })
+
+  it('emits a stars pointer when one is supplied and omits it when null', () => {
+    const entries: Entry[] = []
+    const withStars = emit(entries, [], '2026-08-26T00:00:00.000Z', { url: 'stars.abc.json', sha256: 'abc' })
+    const parsed = JSON.parse(withStars.indexJson) as { stars?: { url: string; sha256: string } }
+    expect(parsed.stars).toEqual({ url: 'stars.abc.json', sha256: 'abc' })
+
+    const without = emit(entries, [], '2026-08-26T00:00:00.000Z', null)
+    expect('stars' in (JSON.parse(without.indexJson) as object)).toBe(false)
+
+    const omitted = emit(entries, [], '2026-08-26T00:00:00.000Z')
+    expect('stars' in (JSON.parse(omitted.indexJson) as object)).toBe(false)
+  })
 })

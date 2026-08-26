@@ -101,4 +101,13 @@ describe('runPipeline', () => {
     expect(second.report).toBe(first.report)
     expect(second.indexJson).not.toBe(first.indexJson)
   })
+
+  it('produces byte-identical artifacts with a stars pointer across runs', () => {
+    const stars = { url: 'stars.deadbeef.json', sha256: 'deadbeef' }
+    const first = runPipeline(candidates, config, BUILT_AT, [], stars)
+    const second = runPipeline(candidates, config, BUILT_AT, [], stars)
+    expect(first.indexJson).toBe(second.indexJson)
+    expect(first.pluginsJson).toBe(second.pluginsJson)
+    expect(JSON.parse(first.indexJson).stars).toEqual(stars)
+  })
 })
