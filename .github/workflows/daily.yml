@@ -5,7 +5,19 @@ on:
     - cron: '17 3 * * *'
   push:
     branches: [main]
+    # A full harvest is ~1390 live npm requests. Without this filter every
+    # commit ran one, docs included: on 2026-08-26 a burst of README pushes
+    # fired seventeen harvests in a morning and npm throttled the search
+    # endpoint, so the badge went red for reasons that had nothing to do with
+    # the catalog. Only the inputs to the build belong here.
+    paths: &catalog-inputs
+      - 'registry/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.github/workflows/daily.yml'
   pull_request:
+    paths: *catalog-inputs
   workflow_dispatch:
 
 concurrency:

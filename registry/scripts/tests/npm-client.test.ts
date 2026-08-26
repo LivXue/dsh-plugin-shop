@@ -127,7 +127,7 @@ describe('searchByKeyword', () => {
     }) as unknown as typeof fetch
 
     await expect(searchByKeyword(fetchImpl, sleep)).rejects.toThrow(/429/)
-    expect(call).toBe(4)
+    expect(call).toBe(6)
   })
 
   it('honors Retry-After when backing off a rate-limited search', async () => {
@@ -150,12 +150,38 @@ describe('searchByKeyword', () => {
     let call = 0
     const fetchImpl = (async () => {
       call += 1
-      if (call < 4) return new Response('rate limited', { status: 429 })
+      if (call < 6) return new Response('rate limited', { status: 429 })
       return new Response(JSON.stringify({ objects: [] }), { status: 200 })
     }) as unknown as typeof fetch
 
     await searchByKeyword(fetchImpl, sleep)
-    expect(delays).toEqual([1000, 2000, 4000])
+    expect(delays).toEqual([2000, 4000, 8000, 16000, 32000])
+  })
+
+  it('spends about a minute of backoff before giving up on a rate limit', async () => {
+    // The budget is the point of the retry: an IP-level throttle takes minutes
+    // to clear, and the 7s this used to spend never outlived one. Pinned as a
+    // total so a change to either the count or the base has to be deliberate.
+    const delays: number[] = []
+    const sleep = async (ms: number) => { delays.push(ms) }
+    const fetchImpl = (async () => new Response('rate limited', { status: 429 })) as unknown as typeof fetch
+
+    await expect(searchByKeyword(fetchImpl, sleep)).rejects.toThrow(/429/)
+    expect(delays.reduce((a, b) => a + b, 0)).toBe(62_000)
+  })
+
+  it('clamps an absurd Retry-After to the maximum delay', async () => {
+    const delays: number[] = []
+    const sleep = async (ms: number) => { delays.push(ms) }
+    let call = 0
+    const fetchImpl = (async () => {
+      call += 1
+      if (call === 1) return new Response('rate limited', { status: 429, headers: { 'Retry-After': '3600' } })
+      return new Response(JSON.stringify({ objects: [] }), { status: 200 })
+    }) as unknown as typeof fetch
+
+    await searchByKeyword(fetchImpl, sleep)
+    expect(delays).toEqual([60_000])
   })
 
   it('sends an Authorization header when a token is given', async () => {

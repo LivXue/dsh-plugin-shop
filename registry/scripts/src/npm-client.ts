@@ -25,11 +25,25 @@ const MAX_SEARCH_PAGES = 100
  * 429 must not fail the daily publish. The retry is bounded: after
  * {@link RETRY_LIMIT} total attempts the last response is returned as-is and
  * the caller reports it the way it reports any other failure.
+ *
+ * The budget is sized for an IP-level throttle, not a blip. It was 4 attempts
+ * over 7s, and on 2026-08-26 two catalog builds died anyway: a burst of pushes
+ * ran the full harvest repeatedly from the same runner IP pool, npm throttled
+ * the search endpoint, and seven seconds of backoff never outlives that. Five
+ * delays of 2/4/8/16/32s give the limit ~62s to clear — still bounded, still
+ * loud when npm is genuinely unavailable rather than merely annoyed.
+ *
+ * Note that a token does not exempt the search endpoint: those two builds sent
+ * one (see the `token` parameter of {@link fetchWithRetry}) and were throttled
+ * regardless, which is consistent with `/-/v1/search` metering by IP. The token
+ * still lifts the per-packument limit, which is where most requests go.
  */
-const RETRY_LIMIT = 4
+const RETRY_LIMIT = 6
 
-const RETRY_BASE_DELAY_MS = 1000
-const RETRY_MAX_DELAY_MS = 8000
+const RETRY_BASE_DELAY_MS = 2000
+/** Also the clamp on a `Retry-After` the registry sends; npm has answered with
+ * values far larger than any build should wait for. */
+const RETRY_MAX_DELAY_MS = 60_000
 
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
