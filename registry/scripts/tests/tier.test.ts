@@ -15,7 +15,7 @@ function accepted(name: string, version: string, metadata: Accepted['metadata'] 
     candidate: {
       name, version, integrity: 'sha512-abc', publishedAt: '2026-08-01T12:00:00.000Z',
       repository: 'https://github.com/you/x', license: 'MIT', deprecated: false,
-      hasBundle: true, catalog: {}, description: 'x',
+      hasBundle: true, catalog: {}, description: 'x', keywords: [],
     },
     catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
     integrity: 'sha512-abc',

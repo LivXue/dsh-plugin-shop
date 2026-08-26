@@ -107,6 +107,7 @@ export function toCandidate(packument: unknown): Candidate | null {
       repository?: unknown
       deprecated?: unknown
       description?: unknown
+      keywords?: unknown
       dsh?: { bundle?: unknown; catalog?: unknown }
     }>
   }
@@ -127,6 +128,9 @@ export function toCandidate(packument: unknown): Candidate | null {
     hasBundle: manifest.dsh?.bundle !== undefined,
     catalog: manifest.dsh?.catalog ?? null,
     description: typeof manifest.description === 'string' ? manifest.description : null,
+    keywords: Array.isArray(manifest.keywords)
+      ? manifest.keywords.filter((k): k is string => typeof k === 'string')
+      : [],
   }
 }
 

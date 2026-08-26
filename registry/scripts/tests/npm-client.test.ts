@@ -77,6 +77,33 @@ describe('toCandidate', () => {
   it('returns null for a packument with no name', () => {
     expect(toCandidate({ 'dist-tags': { latest: '1.0.0' } })).toBeNull()
   })
+
+  it('extracts keywords from the manifest', () => {
+    const doc = {
+      ...packument,
+      versions: {
+        '1.2.0': { ...packument.versions['1.2.0'], keywords: ['dsh-plugin', 'files', 'git'] },
+      },
+    }
+    const candidate = toCandidate(doc)
+    expect(candidate?.keywords).toEqual(['dsh-plugin', 'files', 'git'])
+  })
+
+  it('uses an empty keyword list when the manifest has none', () => {
+    const candidate = toCandidate(packument)
+    expect(candidate?.keywords).toEqual([])
+  })
+
+  it('keeps only string keywords', () => {
+    const doc = {
+      ...packument,
+      versions: {
+        '1.2.0': { ...packument.versions['1.2.0'], keywords: ['ok', 42, null, 'also-ok'] },
+      },
+    }
+    const candidate = toCandidate(doc)
+    expect(candidate?.keywords).toEqual(['ok', 'also-ok'])
+  })
 })
 
 describe('searchByKeyword', () => {

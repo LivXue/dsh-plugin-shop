@@ -22,6 +22,7 @@ function candidate(overrides: Partial<Candidate> = {}): Candidate {
     hasBundle: true,
     catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
     description: 'A friendly hello-world plugin.',
+    keywords: [],
     ...overrides,
   }
 }

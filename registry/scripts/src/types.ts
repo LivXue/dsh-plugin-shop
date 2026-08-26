@@ -29,6 +29,8 @@ export interface Candidate {
   catalog: unknown
   /** The npm `description` field, used to derive a listing when `catalog` is absent. */
   description: string | null
+  /** npm manifest `keywords`, strings only, `[]` when absent. Classify input. */
+  keywords: string[]
 }
 
 /** Why a candidate did not reach the catalog. */

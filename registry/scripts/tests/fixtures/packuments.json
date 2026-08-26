@@ -9,7 +9,8 @@
     "deprecated": false,
     "hasBundle": true,
     "catalog": { "category": "tool", "summary": { "en": "Says hello", "zh": "打招呼" }, "capabilities": [] },
-    "description": "A hello-world dsh plugin."
+    "description": "A hello-world dsh plugin.",
+    "keywords": []
   },
   {
     "name": "dsh-fs-tool",
@@ -21,7 +22,8 @@
     "deprecated": false,
     "hasBundle": true,
     "catalog": { "category": "tool", "summary": { "en": "Files", "zh": "文件" }, "capabilities": ["fs"] },
-    "description": "Filesystem tools."
+    "description": "Filesystem tools.",
+    "keywords": []
   },
   {
     "name": "dsh-lib-only",
@@ -33,7 +35,8 @@
     "deprecated": false,
     "hasBundle": false,
     "catalog": null,
-    "description": "A plain library, not a plugin."
+    "description": "A plain library, not a plugin.",
+    "keywords": []
   },
   {
     "name": "dsh-no-license",
@@ -45,7 +48,8 @@
     "deprecated": false,
     "hasBundle": true,
     "catalog": { "category": "tool", "summary": { "en": "x", "zh": "y" }, "capabilities": [] },
-    "description": "x"
+    "description": "x",
+    "keywords": []
   },
   {
     "name": "dsh-fs-too1",
@@ -57,7 +61,8 @@
     "deprecated": false,
     "hasBundle": true,
     "catalog": { "category": "tool", "summary": { "en": "Files", "zh": "文件" }, "capabilities": ["fs"] },
-    "description": "Files."
+    "description": "Files.",
+    "keywords": []
   },
   {
     "name": "dsh-derived-plugin",
@@ -69,7 +74,8 @@
     "deprecated": false,
     "hasBundle": true,
     "catalog": null,
-    "description": "A plugin listed from npm metadata, with no dsh.catalog section."
+    "description": "A plugin listed from npm metadata, with no dsh.catalog section.",
+    "keywords": []
   },
   {
     "name": "dsh-no-summary",
@@ -81,6 +87,7 @@
     "deprecated": false,
     "hasBundle": true,
     "catalog": null,
-    "description": null
+    "description": null,
+    "keywords": []
   }
 ]
