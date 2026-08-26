@@ -54,6 +54,9 @@ Two tracks. They do the same thing; pick the one that matches who is reading.
 
 ### 🧑 For people
 
+**Prerequisites:** Node.js, and the `dsh` CLI itself — install it once with
+`npm install -g @deepseek-ai/dsh` and verify with `dsh --version`.
+
 ```sh
 dsh plugin --profile web add dsh-plugin-shop
 ```

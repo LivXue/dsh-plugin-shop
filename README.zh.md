@@ -53,6 +53,9 @@ Pages 那个框左边的一切属于本仓库的 `registry/`，右边的一切�
 
 ### 🧑 给人看
 
+**前置条件：** Node.js，以及 `dsh` CLI 本身——先执行一次
+`npm install -g @deepseek-ai/dsh` 安装，再用 `dsh --version` 验证。
+
 ```sh
 dsh plugin --profile web add dsh-plugin-shop
 ```

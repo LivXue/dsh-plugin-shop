@@ -39,6 +39,10 @@ Two tracks below. They do the same thing; pick the one that matches who is readi
 
 ### 🧑 For people
 
+**Prerequisites:** Node.js, and the `dsh` CLI itself — install it once with
+`npm install -g @deepseek-ai/dsh` and verify with `dsh --version`. The shop
+install assumes `dsh` is already on your PATH.
+
 ```sh
 dsh plugin --profile web add dsh-plugin-shop
 ```
