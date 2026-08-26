@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, categoryKey, isStoreLike, isUnclaimed, reduceInstall, tierKey,
+  ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, categoryKey, isShopLike, isUnclaimed, reduceInstall, tierKey,
 } from '../../src/client/present.ts'
 import type { CatalogEntry } from '../../src/host/index.ts'
 
@@ -78,31 +78,31 @@ describe('reduceInstall', () => {
   })
 })
 
-describe('isStoreLike', () => {
-  it('matches a segment equal to a store keyword, qualified as a plugin or by ending the name', () => {
-    expect(isStoreLike('dsh-plugin-shop')).toBe(true)
-    expect(isStoreLike('dsh-store')).toBe(true)
-    expect(isStoreLike('@scope/dsh-plugin-market')).toBe(true)
-    expect(isStoreLike('dsh-plugin-mall')).toBe(true)
-    expect(isStoreLike('plugin-shop')).toBe(true)
+describe('isShopLike', () => {
+  it('matches a segment equal to a shop keyword, qualified as a plugin or by ending the name', () => {
+    expect(isShopLike('dsh-plugin-shop')).toBe(true)
+    expect(isShopLike('dsh-store')).toBe(true)
+    expect(isShopLike('@scope/dsh-plugin-market')).toBe(true)
+    expect(isShopLike('dsh-plugin-mall')).toBe(true)
+    expect(isShopLike('plugin-shop')).toBe(true)
   })
 
   it('matches plugin-keyword concatenations', () => {
-    expect(isStoreLike('pluginstore')).toBe(true)
-    expect(isStoreLike('dsh-pluginmarket')).toBe(true)
-    expect(isStoreLike('storeplugin')).toBe(true)
-    expect(isStoreLike('market-plugin')).toBe(true)
+    expect(isShopLike('pluginstore')).toBe(true)
+    expect(isShopLike('dsh-pluginmarket')).toBe(true)
+    expect(isShopLike('storeplugin')).toBe(true)
+    expect(isShopLike('market-plugin')).toBe(true)
   })
 
   it('does not match ordinary plugin names', () => {
     // Precision over recall: a name that merely CONTAINS a keyword segment
-    // without a plugin qualifier or keyword ending is not a store plugin.
-    expect(isStoreLike('dsh-restore')).toBe(false)
-    expect(isStoreLike('dsh-storekeeper-tool')).toBe(false)
-    expect(isStoreLike('market-data-provider')).toBe(false)
-    expect(isStoreLike('marketplace-hub')).toBe(false)
-    expect(isStoreLike('dsh-shopping-list')).toBe(false)
-    expect(isStoreLike('dsh-hello-plugin')).toBe(false)
+    // without a plugin qualifier or keyword ending is not a shop plugin.
+    expect(isShopLike('dsh-restore')).toBe(false)
+    expect(isShopLike('dsh-storekeeper-tool')).toBe(false)
+    expect(isShopLike('market-data-provider')).toBe(false)
+    expect(isShopLike('marketplace-hub')).toBe(false)
+    expect(isShopLike('dsh-shopping-list')).toBe(false)
+    expect(isShopLike('dsh-hello-plugin')).toBe(false)
   })
 })
 

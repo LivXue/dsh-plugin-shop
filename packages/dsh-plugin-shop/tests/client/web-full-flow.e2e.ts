@@ -1,9 +1,9 @@
 // @vitest-environment node
 /**
  * The P2 exit criterion (spec §12): the full flow in a web profile. A REAL
- * `dsh --profile web` boots against a temporary DSH_HOME, the store package
+ * `dsh --profile web` boots against a temporary DSH_HOME, the shop package
  * and the hello fixture are installed with the REAL `dsh plugin --profile web
- * add file:…` path, and a real chromium walks the settings modal to the store
+ * add file:…` path, and a real chromium walks the settings modal to the shop
  * tab: the fixture entry renders unclaimed, the §9.3 acknowledgement gate
  * shows the spec text, and the install runs to its terminal state through the
  * once-per-second status poll.
@@ -31,10 +31,10 @@
  * - settings trigger: `page.getByRole('button', { name: '设置', exact: true })`
  * - settings modal: `page.getByRole('dialog', { name: '设置' })`
  * - plugins section: `dialog.getByRole('button', { name: '插件', exact: true })`
- * - store tab: `dialog.getByRole('tab', { name: '插件市场' })` — the panel
+ * - shop tab: `dialog.getByRole('tab', { name: '插件商店' })` — the panel
  *   renders lazily, only after the tab is activated
- * - store panel + entry: `[data-store-tab]`, `[data-store-entry=<name>]`
- * - install gate: `[data-store-confirm]`; failure view: 安装失败 + the detail
+ * - shop panel + entry: `[data-shop-tab]`, `[data-shop-entry=<name>]`
+ * - install gate: `[data-shop-confirm]`; failure view: 安装失败 + the detail
  *   paragraph; state lines are plain text (no data attributes)
  */
 
@@ -71,7 +71,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
   let browser: Browser | undefined
   let page: Page | undefined
 
-  const storePackageDir = fileURLToPath(new URL('../../', import.meta.url))
+  const shopPackageDir = fileURLToPath(new URL('../../', import.meta.url))
   const helloFixtureDir = fileURLToPath(
     new URL('../fixtures/hello-packages/dsh-plugin-shop', import.meta.url),
   )
@@ -83,7 +83,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
     // The REAL install path: the same executor the gateway runs, spawning
     // `dsh plugin --profile web add file:<…>` in the profile.
     for (const [spec, expectedName] of [
-      [pathToFileURL(storePackageDir).href, 'dsh-plugin-shop'],
+      [pathToFileURL(shopPackageDir).href, 'dsh-plugin-shop'],
       [pathToFileURL(helloFixtureDir).href, 'dsh-hello-fixture'],
     ] as const) {
       const install = startInstall({
@@ -104,7 +104,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
     // so the URL is parsed from stdout rather than guessed.
     dshProcess = spawn('dsh', ['--profile', 'web', '--no-open', '--port', '0'], {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, DSH_HOME: tmpHome, DSH_STORE_CATALOG_URL: catalogServer.baseUrl },
+      env: { ...process.env, DSH_HOME: tmpHome, DSH_SHOP_CATALOG_URL: catalogServer.baseUrl },
       detached: true, // its own process group, so teardown kills the whole tree
     })
     const stdout: string[] = []
@@ -155,7 +155,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
   }, 30_000)
 
   it(
-    'browses the store, installs with the §9.3 acknowledgement, sees the real failure and the recovery hint, and the manifest reflects the file: installs',
+    'browses the shop, installs with the §9.3 acknowledgement, sees the real failure and the recovery hint, and the manifest reflects the file: installs',
     async () => {
       expect(page).toBeDefined()
       const app = page!
@@ -177,25 +177,25 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         // that skips it must not fail the e2e.
       }
 
-      // Settings → 插件 → 插件市场: the pinned live-app selectors.
+      // Settings → 插件 → 插件商店: the pinned live-app selectors.
       await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
       const dialog = app.getByRole('dialog', { name: '设置' })
       await dialog.waitFor({ state: 'visible', timeout: 10_000 })
       await dialog.getByRole('button', { name: '插件', exact: true }).click()
-      await dialog.getByRole('tab', { name: '插件市场' }).click() // panel renders lazily
-      await dialog.locator('[data-store-tab]').waitFor({ state: 'visible', timeout: 15_000 })
+      await dialog.getByRole('tab', { name: '插件商店' }).click() // panel renders lazily
+      await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
 
       // The fixture entry renders with the unclaimed marker and the community
       // tier badge (derived metadata → 作者未认领, §6.1).
-      const card = dialog.locator('[data-store-entry="dsh-e2e-fixture-plugin"]')
+      const card = dialog.locator('[data-shop-entry="dsh-e2e-fixture-plugin"]')
       await card.waitFor({ state: 'visible', timeout: 15_000 })
       expect(await card.textContent()).toContain('作者未认领')
       expect(await card.textContent()).toContain('社区')
 
       // Install → the §9.3 acknowledgement gate: the confirm button marks the
       // gate, and the body is the spec text verbatim (zh register).
-      await card.locator('[data-store-install]').click()
-      await card.locator('[data-store-confirm]').waitFor({ state: 'visible', timeout: 10_000 })
+      await card.locator('[data-shop-install]').click()
+      await card.locator('[data-shop-confirm]').waitFor({ state: 'visible', timeout: 10_000 })
       expect(await card.textContent()).toContain('需要确认')
       expect(await card.textContent()).toContain(
         '安装后，此插件将拥有与内置插件相同的权限：读写你的文件、执行 shell 命令，以及读取和修改发送给模型的请求。它未经审核。',
@@ -205,7 +205,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // reaches the terminal state: pnpm fails against the real registry
       // (the name is not on npm), and the failed view renders the heading
       // plus the §10 recovery hint with the last pnpm stderr line.
-      await card.locator('[data-store-confirm]').click()
+      await card.locator('[data-shop-confirm]').click()
       await card.getByText('安装失败').waitFor({ timeout: 60_000 })
       await card
         .getByText(/pnpm failed in the profile\. Run: dsh plugin --profile web install —/)

@@ -2,7 +2,7 @@
 
 # dsh-plugin-shop
 
-**The plugin store for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)** — browse a catalog of
+**The plugin shop for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)** — browse a catalog of
 dsh plugins, install one with a single confirmation, and manage what you have, from a tab inside Settings.
 
 [![npm](https://img.shields.io/npm/v/dsh-plugin-shop?logo=npm&color=cb3837)](https://www.npmjs.com/package/dsh-plugin-shop)
@@ -19,7 +19,7 @@ English | [中文](https://github.com/LivXue/dsh-plugin-shop/blob/main/packages/
 ## 🖼️ Screenshots
 
 <div align="center">
-<img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/shelf-light.png" alt="The plugin store shelf inside dsh Settings" width="860">
+<img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/shelf-light.png" alt="The plugin shop shelf inside dsh Settings" width="860">
 </div>
 
 <table>
@@ -46,7 +46,7 @@ dsh plugin --profile web add dsh-plugin-shop
 Replace `web` with your profile if you use another one. Then restart `dsh` once — a
 newly added bundle is not applied to a running process — and open
 
-> **Settings → Plugins → Plugin store**
+> **Settings → Plugins → Plugin shop**
 
 You land on a shelf of plugin cards with a search box. The first load reads the catalog
 over the network and can take a few seconds; a shimmering skeleton stands in until the
@@ -114,7 +114,7 @@ boundary:
 | Half | Entry | Can reach | Cannot reach |
 |---|---|---|---|
 | **Host** | `dsh-plugin-shop` | The network (catalog fetch and sha256 verify), the filesystem (cache), `dsh plugin add` under a per-profile mutex | — |
-| **Client** | `dsh-plugin-shop/client` | Exactly five `store/*` Remote methods | The network, the filesystem |
+| **Client** | `dsh-plugin-shop/client` | Exactly five `shop/*` Remote methods | The network, the filesystem |
 
 Compromising the browser half buys an attacker those five calls and nothing more.
 
@@ -122,7 +122,7 @@ Compromising the browser half buys an attacker those five calls and nothing more
 
 | Variable | Effect |
 |---|---|
-| `DSH_STORE_CATALOG_URL` | Point the store at your own catalog mirror instead of the public one |
+| `DSH_SHOP_CATALOG_URL` | Point the shop at your own catalog mirror instead of the public one |
 
 ## 📚 The catalog
 
@@ -131,7 +131,7 @@ Built daily from the public npm registry and published as static JSON:
 - [`/v1/index.json`](https://LivXue.github.io/dsh-plugin-shop/v1/index.json) — the pointer, carrying `schemaVersion`, `builtAt`, and the content hash
 - `/v1/plugins.<sha256>.json` — the data, content-addressed and safe to cache indefinitely
 
-The pointer is small enough to poll. The store verifies the data file's sha256 against
+The pointer is small enough to poll. The shop verifies the data file's sha256 against
 the pointer before trusting a byte of it.
 
 ## ⚠️ What it does not claim

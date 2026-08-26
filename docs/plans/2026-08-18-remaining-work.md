@@ -20,9 +20,9 @@ P0 — the catalog pipeline — is complete: 24 commits on branch `feat/p0-regis
 - The pipeline harvests by keyword, gates, tiers, and emits deterministic artifacts. `pnpm build:catalog` has been run once against the live registry and works end to end.
 - The catalog format is at `schemaVersion` 2, because dual-track listings (spec D7) made `summary.zh` optional.
 
-P1 — the Host half — is complete (2026-08-25, branch `feat/p1-host`, merged): the npm package `dsh-plugin-shop` lives at `packages/dsh-plugin-shop/` (the typert generator hardcodes `packages/` as its package container; spec §5.1 was amended accordingly), exposing the five `store/*` Remote methods. The P1 exit criterion — the real-installation test of spec §11.3.3 — passes against the real dsh CLI, locally and in CI (`plugin.yml`). Execution record: [2026-08-25-p1-host.md](2026-08-25-p1-host.md).
+P1 — the Host half — is complete (2026-08-25, branch `feat/p1-host`, merged): the npm package `dsh-plugin-shop` lives at `packages/dsh-plugin-shop/` (the typert generator hardcodes `packages/` as its package container; spec §5.1 was amended accordingly), exposing the five `shop/*` Remote methods. The P1 exit criterion — the real-installation test of spec §11.3.3 — passes against the real dsh CLI, locally and in CI (`plugin.yml`). Execution record: [2026-08-25-p1-host.md](2026-08-25-p1-host.md).
 
-P2 — the Client half — is complete (2026-08-25, branch `feat/p2-client`, merged): the store tab under `settings.plugins.tab` (browse, detail, the §9.3 acknowledgement gate, install with polling, enable/disable, and the outdated list), the XSS regression of §11.3.4, and the web full-flow e2e. Execution record: [2026-08-25-p2-client.md](2026-08-25-p2-client.md). Two wire-level facts the spec gained as §7.3 amendments: the install method is `store/installStart` (the namespace service owns `install`), and a self-mounting client consumes its namespace via `ctx.get('remote.store')`. P3 was absorbed into P2 (enable/disable and `store/outdated` shipped there); the §12 deviation note records that a successful store-driven install is deferred until a real npm package with `dsh.bundle` exists.
+P2 — the Client half — is complete (2026-08-25, branch `feat/p2-client`, merged): the shop tab under `settings.plugins.tab` (browse, detail, the §9.3 acknowledgement gate, install with polling, enable/disable, and the outdated list), the XSS regression of §11.3.4, and the web full-flow e2e. Execution record: [2026-08-25-p2-client.md](2026-08-25-p2-client.md). Two wire-level facts the spec gained as §7.3 amendments: the install method is `shop/installStart` (the namespace service owns `install`), and a self-mounting client consumes its namespace via `ctx.get('remote.shop')`. P3 was absorbed into P2 (enable/disable and `shop/outdated` shipped there); the §12 deviation note records that a successful shop-driven install is deferred until a real npm package with `dsh.bundle` exists.
 
 What does **not** exist yet: nothing further in the P0-P3 plan. Remaining are the operational items below (review workflow, upstream PRs U1-U4, carried-over cleanups).
 
@@ -36,7 +36,7 @@ These block a real launch, not the code.
 
 1. **The GitHub owner and the published URL.** Both READMEs and the workflow assume `https://dsh-plugin-shop.github.io/v1/index.json`, which is only correct if the GitHub account itself is named `dsh-plugin-shop` and Pages serves from the repository root. If the repo lands under a different owner, the URL needs an extra path segment and both READMEs change together.
    → Resolved 2026-08-25: the repo lives at https://github.com/LivXue/dsh-plugin-shop; the published URL is https://LivXue.github.io/dsh-plugin-shop/v1/index.json. Both READMEs and the deploy environment's `url:` carry it.
-   → Renamed 2026-08-26: the npm name `dsh-plugin-store` was already taken (see the
+   → Renamed 2026-08-26: the npm name `dsh-plugin-shop` was already taken (see the
    §5.1 note in the design), so the package, the repository and the Pages URL all
    became `dsh-plugin-shop`. The catalog now publishes at
    https://LivXue.github.io/dsh-plugin-shop/v1/index.json.
@@ -44,30 +44,30 @@ These block a real launch, not the code.
    → Resolved 2026-08-25: Pages enabled via the API with `build_type=workflow`.
 3. **Whether `main` allows the Actions bot to push.** The daily workflow commits `registry/snapshots/manifest.lock`. Branch protection that blocks direct pushes makes that step fail — it is marked `continue-on-error` so the publish survives, but the snapshot then silently stops updating. Either allow the bot or move the snapshot to a pull request.
    → Resolved 2026-08-25: `main` carries no branch protection (verified via API), so the Actions bot may push directly.
-4. **Who reviews.** The `verified` tier is worth exactly as much as the human review behind it. With no reviewers, every entry stays `community` and the store is an awesome-list with a UI. This is the project's largest non-technical risk and no amount of code addresses it.
+4. **Who reviews.** The `verified` tier is worth exactly as much as the human review behind it. With no reviewers, every entry stays `community` and the shop is an awesome-list with a UI. This is the project's largest non-technical risk and no amount of code addresses it.
    → Resolved 2026-08-25: review will be handled by a future workflow, tracked in https://github.com/LivXue/dsh-plugin-shop/issues/1. Until it exists, `verified` stays empty on purpose.
 
 ## P1 — the Host half (done 2026-08-25)
 
-The store's server side: `packages/dsh-plugin-shop/src/host/`, registering the `store/*` Remote. Spec sections 5.3, 7.2, 7.3, and 9 define it. Exit criterion: the real-installation test in spec section 11.3 passes. Implemented per [2026-08-25-p1-host.md](2026-08-25-p1-host.md): all five `store/*` methods, catalog fetch/verify/cache with stale degradation, the four rejection paths through the executor, per-profile mutex, hot setEnabled, and the CI gate. Kept below as the record of the constraints P1 was built under.
+The shop's server side: `packages/dsh-plugin-shop/src/host/`, registering the `shop/*` Remote. Spec sections 5.3, 7.2, 7.3, and 9 define it. Exit criterion: the real-installation test in spec section 11.3 passes. Implemented per [2026-08-25-p1-host.md](2026-08-25-p1-host.md): all five `shop/*` methods, catalog fetch/verify/cache with stale degradation, the four rejection paths through the executor, per-profile mutex, hot setEnabled, and the CI gate. Kept below as the record of the constraints P1 was built under.
 
 Build it in this order, because the failure-prone parts come first:
 
-1. **`store/catalog`** — fetch the published `index.json`, verify the data file's sha256 against the pointer, cache it on disk, and serve the cached copy with a `stale` flag when the network is unavailable. A `schemaVersion` higher than this build supports must be refused loudly, never silently degraded.
-2. **`store/installStart`** and **`store/installStatus`** — the five rejection paths (`not-in-catalog`, `denied`, `version-mismatch`, `needs-acknowledgement`, plus the pnpm failure path) must be **tested through the executor**, not by asserting that a UI disabled a button. Progress is polled, not pushed; see the constraint below.
-3. **`store/setEnabled`** and **`store/outdated`** — P3 in the spec's phasing, but they share the profile plumbing, so pick them up when that plumbing is fresh.
+1. **`shop/catalog`** — fetch the published `index.json`, verify the data file's sha256 against the pointer, cache it on disk, and serve the cached copy with a `stale` flag when the network is unavailable. A `schemaVersion` higher than this build supports must be refused loudly, never silently degraded.
+2. **`shop/installStart`** and **`shop/installStatus`** — the five rejection paths (`not-in-catalog`, `denied`, `version-mismatch`, `needs-acknowledgement`, plus the pnpm failure path) must be **tested through the executor**, not by asserting that a UI disabled a button. Progress is polled, not pushed; see the constraint below.
+3. **`shop/setEnabled`** and **`shop/outdated`** — P3 in the spec's phasing, but they share the profile plumbing, so pick them up when that plumbing is fresh.
 
 ### Constraints P1 inherits, verified against the dsh source during design
 
 - The Host accepts `{ name, version }`, never an arbitrary pnpm spec, and validates against its own cached snapshot rather than anything the browser sent.
 - Installation shells out to `dsh plugin --profile <p> add <name>@<version>`. The orchestration lives in `apps/cli/src/plugin.ts` in the dsh repository and is **exported from no package**, so calling the binary is correct and copying its reconcile loop is not.
 - **Progress must be polled.** `API_REMOTE_FORWARDED_EVENTS` in `packages/api/remotes/src/remote-events.ts` is a hardcoded in-repository array, so an out-of-tree plugin cannot push events to the browser.
-- The store never writes `allowBuilds`. A plugin needing build scripts cannot be installed from the store; say so and print the CLI command.
+- The shop never writes `allowBuilds`. A plugin needing build scripts cannot be installed from the shop; say so and print the CLI command.
 - Installs serialize per profile behind a mutex. A pnpm failure surfaces stderr verbatim and never rolls back automatically.
 
 ## P2 — the Client half (done 2026-08-25)
 
-`packages/dsh-plugin-shop/src/client/`, contributing one tab to `settings.plugins.tab`. It holds no privilege beyond the five `store/*` methods.
+`packages/dsh-plugin-shop/src/client/`, contributing one tab to `settings.plugins.tab`. It holds no privilege beyond the five `shop/*` methods.
 
 Two requirements that are easy to miss:
 
@@ -101,10 +101,10 @@ None of these block anything. Each removes a workaround.
 
 | # | Change | What it buys |
 |---|---|---|
-| U1 | Lift `runPlugin` into `dsh-app-boot` with injectable stdio | The store calls a library instead of locating the `dsh` executable |
+| U1 | Lift `runPlugin` into `dsh-app-boot` with injectable stdio | The shop calls a library instead of locating the `dsh` executable |
 | U2 | Move settings-namespace exposure from `WEB_SETTINGS_NAMESPACES` to `settings.register()` | Out-of-tree plugins can expose their own configuration card. That file already lists this as deferred work |
 | U3 | Let out-of-tree plugins register forwarded events | Install progress becomes a push instead of a poll |
-| U4 | Give `pluginInventory` a write path | The store stops orchestrating profile mutation itself |
+| U4 | Give `pluginInventory` a write path | The shop stops orchestrating profile mutation itself |
 
 ## Working habits this repository earned the hard way
 

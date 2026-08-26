@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-shop",
   "version": "0.1.4",
-  "description": "The DeepSeek Harness plugin store: browse, install, enable, and update dsh plugins from a git-auditable catalog.",
+  "description": "The DeepSeek Harness plugin shop: browse, install, enable, and update dsh plugins from a git-auditable catalog.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/LivXue/dsh-plugin-shop.git"
@@ -63,7 +63,7 @@
   },
   "scripts": {
     "prepublishOnly": "pnpm build",
-    "build": "tsdown && tsc && tsdown -c tsdown.client.config.ts",
+    "build": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\" && tsdown && tsc && tsdown -c tsdown.client.config.ts",
     "test": "tsdown && tsdown -c tsdown.client.config.ts && vitest run",
     "typecheck": "tsdown && tsc --noEmit && tsc -p tsconfig.test.json"
   },

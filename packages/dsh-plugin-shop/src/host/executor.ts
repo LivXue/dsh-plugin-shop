@@ -38,7 +38,7 @@ function chain<T>(profile: string, task: () => Promise<T>): Promise<T> {
  * The §7.2 step-6 confirm: after a zero exit, re-read the profile manifest and
  * verify the bundle actually landed in `dsh.profile.bundles`. Exit 0 alone is
  * not success — a library-that-looked-like-a-plugin, or a stale catalog,
- * exits 0 while changing nothing (§10). The store cannot force a client
+ * exits 0 while changing nothing (§10). The shop cannot force a client
  * refresh in P1, so the detail carries the signal. A manifest that cannot be
  * read or parsed is the same outcome, naming the file: the install's result
  * is then unknown, and a bare `done` would be plausible-but-wrong. `home` is
@@ -59,7 +59,7 @@ function confirmBundleActivation(profile: string, home: string | undefined, expe
 /**
  * Run one `dsh plugin --profile <profile> add <spec>` and track it.
  * Never rolls back; a failure surfaces stderr verbatim plus the recovery hint
- * (§10). The store never passes build-script flags: `allowBuilds` stays the
+ * (§10). The shop never passes build-script flags: `allowBuilds` stays the
  * user's explicit decision in the CLI (§7.2).
  * The child inherits the current environment unless `env` is given — the
  * real-install test pins DSH_HOME to a temporary directory this way.

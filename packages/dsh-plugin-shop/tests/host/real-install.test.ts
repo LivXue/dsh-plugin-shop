@@ -2,7 +2,7 @@
  * One real installation (spec §11.3 item 3 — the P1 exit criterion): drive
  * the executor against the real `dsh` CLI with a temporary `DSH_HOME` and a
  * `file:`-spec fixture package, then assert the profile manifest gained the
- * bundle. Subprocesses and profile state are the only parts of the store
+ * bundle. Subprocesses and profile state are the only parts of the shop
  * that genuinely fail at runtime, so this cannot be a fixture test.
  */
 

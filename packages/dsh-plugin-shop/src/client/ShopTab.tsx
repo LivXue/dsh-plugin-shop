@@ -1,4 +1,4 @@
-/** The store tab: browse the catalog, detail an entry, install with the
+/** The shop tab: browse the catalog, detail an entry, install with the
  * acknowledgement gate, poll the install to its terminal state (§7.2).
  * Everything the tab renders is text — summaries, capabilities, log lines,
  * details — never markup, so hostile npm descriptions cannot inject (spec
@@ -6,27 +6,27 @@
 
 import { useEffect, useId, useMemo, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type { CatalogEntry, InstallArgs, StoreCatalogResult, StoreInstallResult, StoreInstallStatusResult, StoreOutdatedEntry, StoreSetEnabledResult } from '../host/index.ts'
-import { categoryKey, isStoreLike, isUnclaimed, rejectionCodeKey, tierKey } from './present.ts'
+import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstallResult, ShopInstallStatusResult, ShopOutdatedEntry, ShopSetEnabledResult } from '../host/index.ts'
+import { categoryKey, isShopLike, isUnclaimed, rejectionCodeKey, tierKey } from './present.ts'
 import { useInstall } from './useInstall.ts'
-import css from './StoreTab.module.css'
+import css from './ShopTab.module.css'
 
 /** The tab's Remote face: the Host result types, already unwrapped from the
  * wire envelope by `index.ts`; `catalog` throws on a wire error so the tab's
  * error state renders. */
-export interface StoreTabInjected {
-  catalog: (args?: { refresh?: boolean }) => Promise<StoreCatalogResult>
-  install: (args: InstallArgs) => Promise<StoreInstallResult>
-  installStatus: (args: { installId: string }) => Promise<StoreInstallStatusResult>
-  setEnabled: (args: { name: string; enabled: boolean }) => Promise<StoreSetEnabledResult>
-  outdated: () => Promise<StoreOutdatedEntry[]>
+export interface ShopTabInjected {
+  catalog: (args?: { refresh?: boolean }) => Promise<ShopCatalogResult>
+  install: (args: InstallArgs) => Promise<ShopInstallResult>
+  installStatus: (args: { installId: string }) => Promise<ShopInstallStatusResult>
+  setEnabled: (args: { name: string; enabled: boolean }) => Promise<ShopSetEnabledResult>
+  outdated: () => Promise<ShopOutdatedEntry[]>
 }
 
 /** Full component props assembled by the Settings slot renderer. */
-export type StoreTabProps =
+export type ShopTabProps =
   PropsRuntime<'settings.plugins.tab'>
-  & PropsLocale<'settings.store'>
-  & InjectFace<StoreTabInjected>
+  & PropsLocale<'settings.shop'>
+  & InjectFace<ShopTabInjected>
 
 /** What the tab is trying to load, and with which catalog cache behavior:
  * a refresh forces the network re-fetch while the stale snapshot stays
@@ -36,7 +36,7 @@ type LoadRequest = { kind: 'initial' } | { kind: 'refresh' } | { kind: 'retry' }
 type CatalogState =
   | { kind: 'loading' }
   | { kind: 'error' }
-  | { kind: 'ready'; result: StoreCatalogResult }
+  | { kind: 'ready'; result: ShopCatalogResult }
 
 /** The outdated list state. `outdated()` runs alongside `catalog()` and its
  * rows are the "installed" section (§7.3): the tab has no installed-state RPC,
@@ -45,7 +45,7 @@ type CatalogState =
 type OutdatedState =
   | { kind: 'loading' }
   | { kind: 'error' }
-  | { kind: 'ready'; entries: StoreOutdatedEntry[] }
+  | { kind: 'ready'; entries: ShopOutdatedEntry[] }
 
 function ChevronIcon({ open }: { open: boolean }): ReactNode {
   return (
@@ -61,16 +61,16 @@ function ChevronIcon({ open }: { open: boolean }): ReactNode {
  * install controls. */
 function EntryCard({ entry, t, install, installStatus }: {
   entry: CatalogEntry
-  t: StoreTabProps['t']
-  install: StoreTabInjected['install']
-  installStatus: StoreTabInjected['installStatus']
+  t: ShopTabProps['t']
+  install: ShopTabInjected['install']
+  installStatus: ShopTabInjected['installStatus']
 }): ReactNode {
   const [open, setOpen] = useState(false)
   const detailId = useId()
   const summary = entry.catalog?.summary
   const category = entry.catalog?.category ?? 'other'
   return (
-    <div className={css.card} data-store-entry={entry.name} data-category={category}>
+    <div className={css.card} data-shop-entry={entry.name} data-category={category}>
       <span className={css.cardSpine} aria-hidden="true" />
       <span className={css.cardCover} aria-hidden="true">
         <span className={css.coverLabel}>{t(categoryKey(entry))}</span>
@@ -143,9 +143,9 @@ function InstallPanel({ name, version, tier, variant = 'install', t, install, in
   version: string
   tier: CatalogEntry['tier']
   variant?: 'install' | 'update'
-  t: StoreTabProps['t']
-  install: StoreTabInjected['install']
-  installStatus: StoreTabInjected['installStatus']
+  t: ShopTabProps['t']
+  install: ShopTabInjected['install']
+  installStatus: ShopTabInjected['installStatus']
 }): ReactNode {
   const [gateOpen, setGateOpen] = useState(false)
   const { view, start } = useInstall(install, installStatus)
@@ -164,7 +164,7 @@ function InstallPanel({ name, version, tier, variant = 'install', t, install, in
   }
   if (view.kind === 'done') {
     return (
-      <p className={css.notice} data-store-restart-notice>
+      <p className={css.notice} data-shop-restart-notice>
         {view.needsRestart ? t('installedRestartNotice') : t('installedNoRestartNotice')}
       </p>
     )
@@ -203,7 +203,7 @@ function InstallPanel({ name, version, tier, variant = 'install', t, install, in
           <button
             type="button"
             className={css.confirmButton}
-            data-store-confirm
+            data-shop-confirm
             onClick={() => {
               setGateOpen(false)
               void start({ name, version, acknowledged: true })
@@ -223,7 +223,7 @@ function InstallPanel({ name, version, tier, variant = 'install', t, install, in
     <button
       type="button"
       className={css.installButton}
-      {...(update ? { 'data-store-update': true } : { 'data-store-install': true })}
+      {...(update ? { 'data-shop-update': true } : { 'data-shop-install': true })}
       onClick={() => {
         if (tier === 'verified') {
           // Reviewed: install directly; there is nothing to acknowledge (§9.3).
@@ -245,12 +245,12 @@ function InstallPanel({ name, version, tier, variant = 'install', t, install, in
  * so the first toggle sends the inverted value. After a successful `setEnabled`
  * the §8 hot note renders. */
 function OutdatedRow({ row, tier, t, setEnabled, install, installStatus }: {
-  row: StoreOutdatedEntry
+  row: ShopOutdatedEntry
   tier: CatalogEntry['tier']
-  t: StoreTabProps['t']
-  setEnabled: StoreTabInjected['setEnabled']
-  install: StoreTabInjected['install']
-  installStatus: StoreTabInjected['installStatus']
+  t: ShopTabProps['t']
+  setEnabled: ShopTabInjected['setEnabled']
+  install: ShopTabInjected['install']
+  installStatus: ShopTabInjected['installStatus']
 }): ReactNode {
   // v0 has no enabled-state RPC (§7.3), so the switch optimistically reads
   // "installed ⇒ enabled" and the first click disables.
@@ -283,7 +283,7 @@ function OutdatedRow({ row, tier, t, setEnabled, install, installStatus }: {
   }
 
   return (
-    <div className={css.outdatedRow} data-store-outdated-entry={row.name}>
+    <div className={css.outdatedRow} data-shop-outdated-entry={row.name}>
       <div className={css.outdatedInfo}>
         <span className={css.name}>{row.name}</span>
         <span className={css.outdatedVersions}>
@@ -297,7 +297,7 @@ function OutdatedRow({ row, tier, t, setEnabled, install, installStatus }: {
           role="switch"
           aria-checked={enabled}
           aria-label={t('enabledSwitch')}
-          data-store-toggle
+          data-shop-toggle
           className={`${css.switch} ${enabled ? css.switchOn : ''}`}
           onClick={() => void onToggle()}
           disabled={toggle.kind === 'saving'}
@@ -306,8 +306,8 @@ function OutdatedRow({ row, tier, t, setEnabled, install, installStatus }: {
         </button>
         <InstallPanel name={row.name} version={row.latest} tier={tier} variant="update" t={t} install={install} installStatus={installStatus} />
       </div>
-      {toggle.kind === 'saved' && <p className={css.notice} data-store-hot-apply>{t('hotApplyNote')}</p>}
-      {toggle.kind === 'error' && <p className={css.failedDetail} data-store-toggle-error>{toggle.detail}</p>}
+      {toggle.kind === 'saved' && <p className={css.notice} data-shop-hot-apply>{t('hotApplyNote')}</p>}
+      {toggle.kind === 'error' && <p className={css.failedDetail} data-shop-toggle-error>{toggle.detail}</p>}
     </div>
   )
 }
@@ -319,18 +319,18 @@ function OutdatedRow({ row, tier, t, setEnabled, install, installStatus }: {
 function OutdatedSection({ state, tiers, t, setEnabled, install, installStatus }: {
   state: OutdatedState
   tiers: ReadonlyMap<string, CatalogEntry['tier']>
-  t: StoreTabProps['t']
-  setEnabled: StoreTabInjected['setEnabled']
-  install: StoreTabInjected['install']
-  installStatus: StoreTabInjected['installStatus']
+  t: ShopTabProps['t']
+  setEnabled: ShopTabInjected['setEnabled']
+  install: ShopTabInjected['install']
+  installStatus: ShopTabInjected['installStatus']
 }): ReactNode {
   if (state.kind === 'loading') return null
   if (state.kind === 'error') {
-    return <p className={css.stateLine} data-store-outdated-error>{t('error')}</p>
+    return <p className={css.stateLine} data-shop-outdated-error>{t('error')}</p>
   }
   if (state.entries.length === 0) return null
   return (
-    <section className={css.outdatedSection} data-store-outdated>
+    <section className={css.outdatedSection} data-shop-outdated>
       <h2 className={css.catalogHeading}>{t('installedSection')}</h2>
       <ul className={css.outdatedList}>
         {state.entries.map(row => (
@@ -350,9 +350,9 @@ function OutdatedSection({ state, tiers, t, setEnabled, install, installStatus }
   )
 }
 
-/** The store tab root: browse, search, refresh, and render one card per
+/** The shop tab root: browse, search, refresh, and render one card per
  * entry. Data attributes on the e2e-relevant nodes follow the Task 3 list. */
-export function StoreTab(props: StoreTabProps): ReactNode {
+export function ShopTab(props: ShopTabProps): ReactNode {
   const { t, catalog, install, installStatus, setEnabled, outdated } = props
   const [catalogState, setCatalogState] = useState<CatalogState>({ kind: 'loading' })
   const [outdatedState, setOutdatedState] = useState<OutdatedState>({ kind: 'loading' })
@@ -403,9 +403,9 @@ export function StoreTab(props: StoreTabProps): ReactNode {
     if (catalogState.kind !== 'ready') return []
     const q = query.trim().toLowerCase()
     return catalogState.result.plugins.filter(entry => {
-      // Store-like plugins (competing markets) are not advertised; an
+      // Shop-like plugins (competing markets) are not advertised; an
       // INSTALLED one stays manageable in the installed section below.
-      if (isStoreLike(entry.name)) return false
+      if (isShopLike(entry.name)) return false
       if (q === '') return true
       const summaryEn = entry.catalog?.summary.en ?? ''
       const summaryZh = entry.catalog?.summary.zh ?? ''
@@ -416,7 +416,7 @@ export function StoreTab(props: StoreTabProps): ReactNode {
   }, [catalogState, query])
 
   // The outdated rows' update gate needs each entry's tier; the catalog is the
-  // only source for it (StoreOutdatedEntry carries none). An entry missing from
+  // only source for it (ShopOutdatedEntry carries none). An entry missing from
   // the loaded catalog defaults to the community gate at render.
   const tiers = useMemo(() => {
     const map = new Map<string, CatalogEntry['tier']>()
@@ -428,9 +428,9 @@ export function StoreTab(props: StoreTabProps): ReactNode {
 
   if (catalogState.kind === 'loading') {
     return (
-      <div className={css.panel} data-store-tab aria-busy="true">
+      <div className={css.panel} data-shop-tab aria-busy="true">
         <p className={css.srOnly}>{t('loading')}</p>
-        <div className={css.skeletonGrid} data-store-skeleton aria-hidden="true">
+        <div className={css.skeletonGrid} data-shop-skeleton aria-hidden="true">
           {Array.from({ length: 8 }, (_, i) => (
             <div key={i} className={css.skeletonCard}>
               <span className={css.skeletonCover} />
@@ -445,7 +445,7 @@ export function StoreTab(props: StoreTabProps): ReactNode {
   }
   if (catalogState.kind === 'error') {
     return (
-      <div className={css.panel} data-store-tab>
+      <div className={css.panel} data-shop-tab>
         <p className={css.stateLine}>{t('error')}</p>
         <button type="button" className={css.actionButton} onClick={() => setRequest({ kind: 'retry' })}>
           {t('retry')}
@@ -455,7 +455,7 @@ export function StoreTab(props: StoreTabProps): ReactNode {
   }
   const { result } = catalogState
   return (
-    <div className={css.panel} data-store-tab>
+    <div className={css.panel} data-shop-tab>
       <div className={css.toolbar}>
         <input
           type="search"

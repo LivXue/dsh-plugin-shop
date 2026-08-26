@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { INSTALL_POLL_MS, reduceInstall, type InstallView } from './present.ts'
-import type { InstallArgs, StoreInstallResult, StoreInstallStatusResult } from '../host/index.ts'
+import type { InstallArgs, ShopInstallResult, ShopInstallStatusResult } from '../host/index.ts'
 
 export interface UseInstallResult {
   view: InstallView
@@ -14,8 +14,8 @@ export interface UseInstallResult {
  * terminal states. The interval is cleared on unmount and whenever the view
  * leaves `running`, so a done/failed/rejected install never polls again. */
 export function useInstall(
-  install: (args: InstallArgs) => Promise<StoreInstallResult>,
-  installStatus: (args: { installId: string }) => Promise<StoreInstallStatusResult>,
+  install: (args: InstallArgs) => Promise<ShopInstallResult>,
+  installStatus: (args: { installId: string }) => Promise<ShopInstallStatusResult>,
 ): UseInstallResult {
   const [view, setView] = useState<InstallView>({ kind: 'idle' })
 
@@ -32,9 +32,9 @@ export function useInstall(
       // A thrown install is a TRANSPORT failure (the wire envelope rejected —
       // index.ts's unwrap throws the prefixed wire code and message), not a
       // business rejection: the `rejected` state stays reserved for the host's
-      // StoreInstallResult union (§7.2). The transport detail is private (it
+      // ShopInstallResult union (§7.2). The transport detail is private (it
       // can name hosts and ports) and never rendered: the failed view carries
-      // an EMPTY detail, and StoreTab falls back to the localized
+      // an EMPTY detail, and ShopTab falls back to the localized
       // `installTransportFailed` line. Nothing else can reach this catch,
       // because the business union is a resolved value, never a throw.
       setView({ kind: 'failed', detail: '', log: [] })

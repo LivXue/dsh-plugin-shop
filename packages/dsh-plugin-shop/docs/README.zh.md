@@ -2,7 +2,7 @@
 
 # dsh-plugin-shop
 
-**[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的插件市场** —— 在设置页的一个标签里
+**[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的插件商店** —— 在设置页的一个标签里
 浏览 dsh 插件目录、一次确认完成安装、管理已装插件。
 
 [![npm](https://img.shields.io/npm/v/dsh-plugin-shop?logo=npm&color=cb3837)](https://www.npmjs.com/package/dsh-plugin-shop)
@@ -19,7 +19,7 @@
 ## 🖼️ 界面预览
 
 <div align="center">
-<img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/shelf-light.png" alt="dsh 设置页里的插件市场货架" width="860">
+<img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/shelf-light.png" alt="dsh 设置页里的插件商店货架" width="860">
 </div>
 
 <table>
@@ -46,7 +46,7 @@ dsh plugin --profile web add dsh-plugin-shop
 如果你用的不是 `web` profile，把它换成你自己的。然后重启一次 `dsh`——新加的 bundle 不会作用于
 已在运行的进程——再打开
 
-> **设置 → 插件 → 插件市场**
+> **设置 → 插件 → 插件商店**
 
 进去是一片插件卡片货架，带搜索框。首次加载要联网读目录，可能要等几秒，期间由一层扫光骨架占位。
 
@@ -107,7 +107,7 @@ dsh plugin --profile <profile> list --depth 0
 | 半边 | 入口 | 能触及 | 不能触及 |
 |---|---|---|---|
 | **Host** | `dsh-plugin-shop` | 网络（取目录并校验 sha256）、文件系统（缓存）、per-profile 互斥锁下的 `dsh plugin add` | —— |
-| **Client** | `dsh-plugin-shop/client` | 仅五个 `store/*` Remote 方法 | 网络、文件系统 |
+| **Client** | `dsh-plugin-shop/client` | 仅五个 `shop/*` Remote 方法 | 网络、文件系统 |
 
 攻破浏览器那一半，攻击者拿到的就是那五个调用，别无其他。
 
@@ -115,7 +115,7 @@ dsh plugin --profile <profile> list --depth 0
 
 | 变量 | 作用 |
 |---|---|
-| `DSH_STORE_CATALOG_URL` | 把目录源指向你自己的镜像，替代公共源 |
+| `DSH_SHOP_CATALOG_URL` | 把目录源指向你自己的镜像，替代公共源 |
 
 ## 📚 目录
 

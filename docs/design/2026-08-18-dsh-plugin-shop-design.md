@@ -50,7 +50,7 @@ dsh-plugin-shop supplies those three.
 | D2 | Plugin metadata is **harvested from npm by keyword** | Publishing is listing; zero human step. Frictionless listing is a precondition for a community market reaching volume |
 | D7 | A listing is **dual-track**: declared or derived | Measured after D1-D6 were fixed: the `dsh-plugin` keyword already carries ~1390 npm packages, of which a 100-package sample showed 94% declaring `dsh.bundle` and **0% declaring `dsh.catalog`**. Requiring a field this project invented would have shipped an empty catalog against a live ecosystem, contradicting D2's own premise |
 | D3 | **verified / community** tiering | Automatic harvesting necessarily admits unreviewed packages. A market cannot both have zero friction and pretend everything is safe |
-| D4 | The store itself is an **out-of-tree bundle** | Independent release cadence, free of the dsh repository's gates. Verified that v0 needs no upstream change |
+| D4 | The shop itself is an **out-of-tree bundle** | Independent release cadence, free of the dsh repository's gates. Verified that v0 needs no upstream change |
 | D5 | The catalog is **static JSON built by daily CI**, not a service | Zero operations, and it makes the catalog a git-auditable artifact — the whole value of this approach over a server |
 | D6 | The catalog is **fetched and cached by the Host**, not by the browser | Avoids CORS/CSP, enables offline degradation and intranet mirrors, and collapses network egress to one auditable point |
 
@@ -69,7 +69,7 @@ registry/
   snapshots/manifest.lock           Daily committed name -> version -> integrity
   scripts/build.ts                  harvest -> validate -> merge -> emit
 packages/dsh-plugin-shop/            The npm package dsh-plugin-shop (under packages/ because the typert generator requires it; see the §5.1 note)
-  src/host/                         StoreGateway
+  src/host/                         ShopGateway
   src/client/                       Browser half
 packages/dsh-typert-protocol/         Vendored @deepseek-ai/dsh-typert-protocol, build-time only (VENDORED.md)
 .github/workflows/daily.yml         Daily and PR-triggered registry build
@@ -77,14 +77,14 @@ packages/dsh-typert-protocol/         Vendored @deepseek-ai/dsh-typert-protocol,
 
 The package directory is `packages/dsh-plugin-shop/` rather than `plugin/` because `@deepseek-ai/dsh-typert-generator` hardcodes `packages/` as the package container.
 
-The published npm package is named `dsh-plugin-shop`, not `dsh-plugin-store`. The
+The published npm package is named `dsh-plugin-shop`, not `dsh-plugin-shop`. The
 latter was taken on npm on 2026-08-14 by an unrelated project of the same
-concept, as were `dsh-plugin-hub`, `dsh-plugin-market`, `dsh-store`,
+concept, as were `dsh-plugin-hub`, `dsh-plugin-market`, `dsh-shop`,
 `dsh-marketplace`, `dsh-catalog` and `dsh-plugin-catalog` — six different
 maintainers publishing inside ten days. The repository, the Pages deployment
 and the catalog URL were renamed to match, so one name spans all of them.
-Note that `isStoreLike` (§7.2 client filter) matches our own name by design:
-the shelf does not list itself, because the store is bootstrap-installed.
+Note that `isShopLike` (§7.2 client filter) matches our own name by design:
+the shelf does not list itself, because the shop is bootstrap-installed.
 
 **R — `registry/` (data only, no runtime code)**
 
@@ -92,8 +92,8 @@ Artifacts publish to a CDN as `/v1/index.json` (a pointer) and `/v1/plugins.<sha
 
 **S — `packages/dsh-plugin-shop/` (the npm package `dsh-plugin-shop`, two halves)**
 
-- **Host half**, `StoreGateway`: registers the `store/*` Remote. It is the only place that touches the network or the profile directory.
-- **Client half**, `dsh-plugin-shop/client`: follows the `dsh.client` convention, mounts the store's Remote through `ctx.remote.$mount()`, and contributes one tab to `settings.plugins.tab`. **It touches neither the network nor the filesystem.**
+- **Host half**, `ShopGateway`: registers the `shop/*` Remote. It is the only place that touches the network or the profile directory.
+- **Client half**, `dsh-plugin-shop/client`: follows the `dsh.client` convention, mounts the shop's Remote through `ctx.remote.$mount()`, and contributes one tab to `settings.plugins.tab`. **It touches neither the network nor the filesystem.**
 
 **Upstream dsh: no change required for v0.**
 
@@ -108,15 +108,15 @@ Artifacts publish to a CDN as `/v1/index.json` (a pointer) and `/v1/plugins.<sha
 | Can expose its own settings namespace | No — blocked by an allowlist | `WEB_SETTINGS_NAMESPACES` is a hardcoded constant in `api-proxy.ts` |
 | Can push events to the browser | No — blocked by an allowlist | `API_REMOTE_FORWARDED_EVENTS` is a hardcoded array in `api/remotes/src/remote-events.ts` |
 
-Neither blocked capability stops v0: the store uses its own `store/*` Remote instead of a settings namespace, and polls for progress instead of receiving pushes (§7.2).
+Neither blocked capability stops v0: the shop uses its own `shop/*` Remote instead of a settings namespace, and polls for progress instead of receiving pushes (§7.2).
 
 ### 5.3 Three hard boundaries
 
-1. **The Client half holds no privilege.** Everything it can do is the five `store/*` methods in §7.3. If the UI is compromised, the attack surface is those five methods' arguments.
-2. **The Host accepts a name and a version, never an arbitrary spec.** `store/installStart` takes `{ name, version }`, not a pnpm command line. The Host validates against its own cached catalog snapshot and constructs the spec itself.
+1. **The Client half holds no privilege.** Everything it can do is the five `shop/*` methods in §7.3. If the UI is compromised, the attack surface is those five methods' arguments.
+2. **The Host accepts a name and a version, never an arbitrary spec.** `shop/installStart` takes `{ name, version }`, not a pnpm command line. The Host validates against its own cached catalog snapshot and constructs the spec itself.
 3. **The Host's catalog snapshot is the source of truth.** The browser sends a name; the Host decides using its own snapshot and trusts no metadata sent from the browser.
 
-A direct consequence of boundary 2: **the store UI will never have an "install from GitHub URL" button.** That capability stays in `dsh plugin add`, because it requires the user to explicitly enable `allowBuilds` and explicitly pin a commit SHA — two decisions that must not collapse into one click.
+A direct consequence of boundary 2: **the shop UI will never have an "install from GitHub URL" button.** That capability stays in `dsh plugin add`, because it requires the user to explicitly enable `allowBuilds` and explicitly pin a commit SHA — two decisions that must not collapse into one click.
 
 ## 6. Catalog data model
 
@@ -142,7 +142,7 @@ An author edits only their own `package.json`:
 Two identifiers stay **ecosystem-neutral and deliberately unbranded**:
 
 - The keyword is `dsh-plugin`, not `dsh-plugin-shop`. An author declares "I am a dsh plugin", not "I want to be on your shelf".
-- The field is `dsh.catalog`, not `dsh.store`. The `dsh` section is DeepSeek's namespace — its JSDoc states that "other consumers own additional keys", so adding one is sanctioned — but adding a key named after this project would plant our sign in someone else's namespace. `catalog` names what the data is, so a second store can reuse it directly. For a public community market that is the honest choice.
+- The field is `dsh.catalog`, not `dsh.shop`. The `dsh` section is DeepSeek's namespace — its JSDoc states that "other consumers own additional keys", so adding one is sanctioned — but adding a key named after this project would plant our sign in someone else's namespace. `catalog` names what the data is, so a second shop can reuse it directly. For a public community market that is the honest choice.
 
 `category` is a closed enum: `tool` | `provider` | `ui` | `workflow` | `integration` | `other`.
 
@@ -215,7 +215,7 @@ A consumer presents a derived entry as unclaimed, which is also the signal that 
 }
 ```
 
-`denied` carries every denylisted package with its author-readable reason; the Host consults it for the `store/installStart` gate (§7.2). Rejections that are not denials stay in the build report.
+`denied` carries every denylisted package with its author-readable reason; the Host consults it for the `shop/installStart` gate (§7.2). Rejections that are not denials stay in the build report.
 
 `summary.zh` is optional in the published format because a derived entry has none, so `schemaVersion` is `2`.
 
@@ -254,8 +254,8 @@ harvest -> fetch manifest -> gate -> tier -> emit -> commit snapshot
 ### 7.2 Install flow
 
 ```
-Browser                     Host (StoreGateway)                  Subprocess
-  | store/installStart {name, version, acknowledged?}
+Browser                     Host (ShopGateway)                  Subprocess
+  | shop/installStart {name, version, acknowledged?}
   |----------------------------->|
   |                              | 1. check the Host's cached catalog snapshot
   |                              |    absent           -> not-in-catalog
@@ -267,7 +267,7 @@ Browser                     Host (StoreGateway)                  Subprocess
   |                              | 4. take the per-profile mutex
   |<---- { installId } ----------| 5. spawn dsh plugin --profile <p> add <spec>
   |                              |--------------------------------->|
-  |  poll store/installStatus -->|<-------- stdout/stderr ----------|
+  |  poll shop/installStatus -->|<-------- stdout/stderr ----------|
   |<---- { state, log[] } -------| 6. exit 0 -> re-read the manifest, confirm
   |<---- { done, needsRestart } -|         dsh.profile.bundles changed
 ```
@@ -276,24 +276,24 @@ Implementation decisions:
 
 - **Pin the version.** The spec is `name@version`, not `name` and never `^version`. The user clicked a version in the snapshot; that is what must be installed.
 - **Spawn rather than reimplement.** dsh's own `stdio: 'inherit'` inherits the pipe we provide, so streaming logs come for free with no upstream change. The orchestration — init, pnpm, reconcile — lives in `runPlugin` in `apps/cli/src/plugin.ts` and is **exported from no package**; `dsh-app-boot` exports only the primitives. Copying the reconcile loop would drift, and its "by installed state, not by dependency diff" semantics are subtle enough not to duplicate.
-- **Poll for progress rather than push.** `API_REMOTE_FORWARDED_EVENTS` is a hardcoded in-repository array, so an out-of-tree plugin cannot push events to the browser. `store/installStart` returns an `installId` immediately and the client polls `store/installStatus` once per second. A side benefit is that it survives a page reload.
+- **Poll for progress rather than push.** `API_REMOTE_FORWARDED_EVENTS` is a hardcoded in-repository array, so an out-of-tree plugin cannot push events to the browser. `shop/installStart` returns an `installId` immediately and the client polls `shop/installStatus` once per second. A side benefit is that it survives a page reload.
 - **Serialize per profile.** pnpm locks itself, but its concurrent-access errors are unreadable to a user. One mutex per profile on the Host side.
 - **Never roll back automatically.** After a pnpm failure `dsh.profile.bundles` is still consistent, because reconcile runs only on exit 0, but `dependencies` may already have been rewritten. The response is to surface stderr verbatim and suggest `dsh plugin --profile <p> install`. **Automatically rolling back a package manager's intermediate state breaks environments more often than leaving it alone.**
-- **The store never writes `allowBuilds`.** pnpm 10 and later block build scripts by default, which is a security property obtained for free. A plugin that needs a build script simply cannot be installed from the store; the UI says so plainly and prints the CLI command.
+- **The shop never writes `allowBuilds`.** pnpm 10 and later block build scripts by default, which is a security property obtained for free. A plugin that needs a build script simply cannot be installed from the shop; the UI says so plainly and prints the CLI command.
 
 ### 7.3 RPC contract
 
 | Method | Arguments | Returns |
 |---|---|---|
-| `store/catalog` | `{ refresh?: boolean }` | `{ schemaVersion, builtAt, stale, plugins[] }` |
-| `store/installStart` | `{ name, version, acknowledged? }` | `{ installId }` |
-| `store/installStatus` | `{ installId }` | `{ state, log[], needsRestart? }` |
-| `store/setEnabled` | `{ name, enabled }` | `{ ok }` |
-| `store/outdated` | none | `{ name, installed, latest }[]` |
+| `shop/catalog` | `{ refresh?: boolean }` | `{ schemaVersion, builtAt, stale, plugins[] }` |
+| `shop/installStart` | `{ name, version, acknowledged? }` | `{ installId }` |
+| `shop/installStatus` | `{ installId }` | `{ state, log[], needsRestart? }` |
+| `shop/setEnabled` | `{ name, enabled }` | `{ ok }` |
+| `shop/outdated` | none | `{ name, installed, latest }[]` |
 
-**Amendment (2026-08-25): the install method is `store/installStart`, not `store/install`.** The web full-flow e2e against the real composition exposed that the client api's `RemoteNamespaceService` owns a method named `install` (its internal mount primitive), so a Remote namespace cannot expose one: mounting `store/install` throws "method \"store/install\" conflicts with its namespace service". The wire method is renamed to `store/installStart` (pairing with `store/installStatus`); the client-visible injected face keeps the name `install`, and the host-side code method is unchanged — only the wire name differs.
+**Amendment (2026-08-25): the install method is `shop/installStart`, not `shop/install`.** The web full-flow e2e against the real composition exposed that the client api's `RemoteNamespaceService` owns a method named `install` (its internal mount primitive), so a Remote namespace cannot expose one: mounting `shop/install` throws "method \"shop/install\" conflicts with its namespace service". The wire method is renamed to `shop/installStart` (pairing with `shop/installStatus`); the client-visible injected face keeps the name `install`, and the host-side code method is unchanged — only the wire name differs.
 
-**Amendment (2026-08-25): a client package that mounts its own Remote must consume it through the reflect store, not the inject face.** The same e2e exposed that `ctx.remote.<ns>` refuses a namespace to a fiber whose inject face does not name it ("cannot get property remote.store without inject"), while naming it in the face deadlocks the boot's activation gate: the gate waits for `remote.store` to be provided, and only the package's own apply — which the gate is holding back — can mount it ("pending (waiting for service: remote.store)"). The client half therefore reads the mounted namespace via `ctx.get('remote.store')`, the reflect store's documented inject-free read, after `$mount` settles. Third-party client packages that self-mount should follow the same pattern.
+**Amendment (2026-08-25): a client package that mounts its own Remote must consume it through the reflect shop, not the inject face.** The same e2e exposed that `ctx.remote.<ns>` refuses a namespace to a fiber whose inject face does not name it ("cannot get property remote.shop without inject"), while naming it in the face deadlocks the boot's activation gate: the gate waits for `remote.shop` to be provided, and only the package's own apply — which the gate is holding back — can mount it ("pending (waiting for service: remote.shop)"). The client half therefore reads the mounted namespace via `ctx.get('remote.shop')`, the reflect shop's documented inject-free read, after `$mount` settles. Third-party client packages that self-mount should follow the same pattern.
 
 ## 8. When changes take effect
 
@@ -320,7 +320,7 @@ The reasoning: adding a "restart the server process" RPC to a browser-reachable 
 | Typosquatter | `dsh-fs-tools` impersonating `dsh-fs-tool` |
 | Compromised legitimate plugin | Author's npm account stolen, or its dependency chain poisoned |
 | Catalog man-in-the-middle | Hijacks CDN or DNS and rewrites `plugins.json` |
-| Attack on the store itself | Injects through catalog text to attack the browser half |
+| Attack on the shop itself | Injects through catalog text to attack the browser half |
 
 **Out of scope:** the runtime behavior of an installed plugin; a compromise of npm itself.
 
@@ -333,7 +333,7 @@ The reasoning: adding a "restart the server process" RPC to a browser-reachable 
 | Stolen account / malicious new version | verified pins a version; `manifest.lock` records integrity, so version and hash changes are visible in a git diff | Detection lags publication |
 | Catalog man-in-the-middle | `index.json` points at content-addressed data; the Host verifies the fetched sha256 against the pointer; this repository's git history is the second source of truth | `index.json` itself being replaced, mitigated only by HTTPS |
 | Catalog text injection | Client holds no privilege; `summary` and `description` render as **plain text only** — no Markdown, no links |  |
-| Code execution at install time | pnpm 10+ blocks build scripts by default and the store never writes `allowBuilds` | Entries a user enabled manually beforehand |
+| Code execution at install time | pnpm 10+ blocks build scripts by default and the shop never writes `allowBuilds` | Entries a user enabled manually beforehand |
 
 ### 9.3 Wording of the acknowledgement
 
@@ -350,7 +350,7 @@ Wording such as "this plugin comes from the community, please install with care"
 | Failure | Presentation | Handling |
 |---|---|---|
 | Catalog unreachable (offline, CDN outage) | Serve the last cached snapshot, labelled with its date | **Degrade and stay usable**; not an error |
-| Catalog `schemaVersion` newer than the client supports | Refusal is **host-side**: the store throws rather than degrade, the Host's log carries the upgrade instruction, and the client shows its generic error state with retry — the browser-level upgrade prompt is deferred until the wire carries a structured error signal | **Fail loudly**; never degrade silently |
+| Catalog `schemaVersion` newer than the client supports | Refusal is **host-side**: the shop throws rather than degrade, the Host's log carries the upgrade instruction, and the client shows its generic error state with retry — the browser-level upgrade prompt is deferred until the wire carries a structured error signal | **Fail loudly**; never degrade silently |
 | pnpm absent from PATH | The CLI already diagnoses this with exit 127 | Surface verbatim |
 | pnpm install fails | stderr verbatim plus a `dsh plugin --profile <p> install` recovery hint | No automatic rollback |
 | Install succeeded but `bundles` unchanged | The package was a library, not a plugin, which the gate should have caught | Report a stale catalog and force a refresh |
@@ -362,7 +362,7 @@ Wording such as "this plugin comes from the community, please install with care"
 dsh-plugin-shop sits outside the dsh repository and is not bound by its 100% coverage, invariant, or doc-sync gates. Four of its practices are adopted deliberately:
 
 1. **`build.ts` must be a pure function** — npm response fixtures in, JSON out. One case per gate rule, plus a **determinism test**: the same input twice produces byte-identical output. That test directly protects the "`builtAt` stays out of the hash" decision in §6.2.
-2. **Rejections must be tested through the executor** — one test each for `not-in-catalog`, `denied`, `version-mismatch`, and `needs-acknowledgement`, calling `store/installStart` directly rather than asserting that the UI disabled a button. Per dsh's own rule: "facades, wrappers, and listener order are not enforcement when direct or alternate callers can bypass them; test denial through the executor."
+2. **Rejections must be tested through the executor** — one test each for `not-in-catalog`, `denied`, `version-mismatch`, and `needs-acknowledgement`, calling `shop/installStart` directly rather than asserting that the UI disabled a button. Per dsh's own rule: "facades, wrappers, and listener order are not enforcement when direct or alternate callers can bypass them; test denial through the executor."
 3. **One real installation test** — a temporary `DSH_HOME` and a fixture plugin package (a `file:` spec suffices; no verdaccio needed), asserting afterwards that the profile `package.json`'s `dsh.profile.bundles` gained an entry.
 4. **An XSS regression** — a catalog fixture whose `summary` is `<img src=x onerror=...>`, asserting it renders as text.
 
@@ -371,11 +371,11 @@ dsh-plugin-shop sits outside the dsh repository and is not bound by its 100% cov
 | Phase | Content | Exit criteria |
 |---|---|---|
 | P0 | R: schema, `build.ts`, CI, first published artifact; bilingual README and schema documentation | The catalog is fetchable; the determinism test passes |
-| P1 | S Host half: `store/catalog`, `store/installStart`, `store/installStatus` | The real installation test passes |
-| P2 | S Client half: browse, detail, install, acknowledgement — plus enable/disable (hot) and `store/outdated` client-side (P3 absorbed into P2, 2026-08-25) | The XSS regression passes; the full flow works in a web profile |
-| P3 | Absorbed into P2 (2026-08-25): enable/disable (hot) and `store/outdated` client-side shipped in P2 Task 4 — no remaining content | — |
+| P1 | S Host half: `shop/catalog`, `shop/installStart`, `shop/installStatus` | The real installation test passes |
+| P2 | S Client half: browse, detail, install, acknowledgement — plus enable/disable (hot) and `shop/outdated` client-side (P3 absorbed into P2, 2026-08-25) | The XSS regression passes; the full flow works in a web profile |
+| P3 | Absorbed into P2 (2026-08-25): enable/disable (hot) and `shop/outdated` client-side shipped in P2 Task 4 — no remaining content | — |
 
-**P2 exit criterion (2026-08-25, met with a recorded deviation):** a successful store-driven install is deferred until a real npm package with a `dsh.bundle` exists — an external fact, not a gap in the client. The executor's success path is proven by P1's real-installation test (§11.3.3), and the terminal-state poll by the web full-flow e2e, which proves browse → acknowledge → install-to-terminal through the real machinery.
+**P2 exit criterion (2026-08-25, met with a recorded deviation):** a successful shop-driven install is deferred until a real npm package with a `dsh.bundle` exists — an external fact, not a gap in the client. The executor's success path is proven by P1's real-installation test (§11.3.3), and the terminal-state poll by the web full-flow e2e, which proves browse → acknowledge → install-to-terminal through the real machinery.
 
 P0 comes first because a schema change forces the Client to be rewritten. P1 comes next because it is the only part that genuinely fails at runtime — subprocesses and profile state — and the UI is the easiest thing to change.
 
@@ -389,15 +389,15 @@ P0 comes first because a schema change forces the Client to be rewritten. P1 com
 
 | # | Change | Benefit |
 |---|---|---|
-| U1 | Lift `runPlugin` into `dsh-app-boot` with injectable stdio | The store calls a library instead of locating the `dsh` executable |
+| U1 | Lift `runPlugin` into `dsh-app-boot` with injectable stdio | The shop calls a library instead of locating the `dsh` executable |
 | U2 | Move settings-namespace exposure from `WEB_SETTINGS_NAMESPACES` to `settings.register()` | Out-of-tree plugins can expose their own configuration card; that file already lists this as deferred work |
 | U3 | Let out-of-tree plugins register forwarded events | Install progress can become a push |
-| U4 | Give `pluginInventory` a write path | The store no longer orchestrates profile mutation itself |
+| U4 | Give `pluginInventory` a write path | The shop no longer orchestrates profile mutation itself |
 
 ## 14. Known limitations and deferred work
 
 - **`capabilities` is self-declared and unenforced.** v0 has no sandbox. UI wording must not let it read as an enforced permission list.
-- **The verified tier depends on sustained human review.** With no reviewers, every entry stays in the community tier and the store degrades into an awesome-list with a UI. That is an operational problem rather than a technical one, but it determines whether the product has value; no technical measure substitutes for it.
+- **The verified tier depends on sustained human review.** With no reviewers, every entry stays in the community tier and the shop degrades into an awesome-list with a UI. That is an operational problem rather than a technical one, but it determines whether the product has value; no technical measure substitutes for it.
 - **No restart endpoint** (§8).
 - **No download counts, ratings, or reviews** (§2).
 - **A single catalog source.** An intranet mirror can replace the URL by configuration, but v0 does not merge multiple sources.

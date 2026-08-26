@@ -29,7 +29,7 @@ function hashOf(text: string): string {
 /** The generated class name for one local name. The `s` prefix is load-
  * bearing: the hash is hex, and a hex prefix starting with a digit makes
  * `.2b743e_local` an invalid selector (it tokenizes as a number), so the
- * browser drops the whole rule — the store tab shipped unstyled until this
+ * browser drops the whole rule — the shop tab shipped unstyled until this
  * was pinned by `css-names.client.spec.ts`. */
 export function classNameFor(filename: string, local: string): string {
   return `s${hashOf(`${filename}:${local}`).slice(0, 6)}_${local}`
@@ -41,7 +41,7 @@ export function classNameFor(filename: string, local: string): string {
  * injected stylesheet, and the style tag lands at factory execution — scoped
  * so a collision with another plugin's classes cannot leak styles. The dsh
  * pipeline transforms with lightningcss; this rewrite covers the selector
- * subset the store tab emits (`.local` class selectors only — no class names
+ * subset the shop tab emits (`.local` class selectors only — no class names
  * inside string/url() values, which this package's css never does). */
 const CSS_MODULE = '\0dsh-plugin-shop-css:'
 // Virtual ids must not end in `.css`: tsdown's built-in css-guard matches the

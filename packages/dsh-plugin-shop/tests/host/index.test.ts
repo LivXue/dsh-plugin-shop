@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import StoreGateway from '../../src/host/index.ts'
+import ShopGateway from '../../src/host/index.ts'
 import type { CatalogResult, CatalogSnapshot } from '../../src/host/catalog.ts'
 import type { CatalogEntry } from '../../src/host/types.ts'
 
@@ -13,29 +13,29 @@ import type { CatalogEntry } from '../../src/host/types.ts'
 // profile manifest already lists the bundle the install tests install, so the
 // exit-0 fixture dsh passes the confirm without any dsh reconcile. Each test
 // file runs in its own vitest worker, so the pin never leaves this file.
-const storeHome = mkdtempSync(join(tmpdir(), 'dsh-gateway-home-'))
-process.env.DSH_HOME = storeHome
-mkdirSync(join(storeHome, 'profiles', 'web'), { recursive: true })
-writeFileSync(join(storeHome, 'profiles', 'web', 'package.json'), JSON.stringify({ dsh: { profile: { bundles: ['dsh-hello-plugin'] } } }))
+const shopHome = mkdtempSync(join(tmpdir(), 'dsh-gateway-home-'))
+process.env.DSH_HOME = shopHome
+mkdirSync(join(shopHome, 'profiles', 'web'), { recursive: true })
+writeFileSync(join(shopHome, 'profiles', 'web', 'package.json'), JSON.stringify({ dsh: { profile: { bundles: ['dsh-hello-plugin'] } } }))
 
 afterAll(() => {
   delete process.env.DSH_HOME
-  rmSync(storeHome, { recursive: true, force: true })
+  rmSync(shopHome, { recursive: true, force: true })
 })
 
 function stubCtx(): never {
   return { get: () => undefined, reflect: { provide: () => {} } } as never
 }
 
-describe('StoreGateway', () => {
-  it('registers the store namespace as a Typert remote service', () => {
+describe('ShopGateway', () => {
+  it('registers the shop namespace as a Typert remote service', () => {
     // The constructor discovers the production profile from the module's own
     // location; a bare test instance lives outside any profile, so the test
     // supplies one, like every other test in this file.
-    const gateway = new StoreGateway(stubCtx(), { profile: 'web' })
-    expect(gateway.name).toBe('store')
-    expect(gateway.typertRemote.serviceKey).toBe('store')
-    expect(gateway.typertRemote.namespace).toBe('store')
+    const gateway = new ShopGateway(stubCtx(), { profile: 'web' })
+    expect(gateway.name).toBe('shop')
+    expect(gateway.typertRemote.serviceKey).toBe('shop')
+    expect(gateway.typertRemote.namespace).toBe('shop')
   })
 
   it('discovers the profile from the boot baseUrl when the module is not under a profile', () => {
@@ -56,17 +56,17 @@ describe('StoreGateway', () => {
     // The constructor must not throw (the link-install regression: no profile
     // above the module path), and setEnabled resolves the baseUrl directory
     // end to end — the observable proof of the discovery.
-    const gateway = new StoreGateway(ctx)
-    expect(gateway.name).toBe('store')
-    const inventory = [{ entryId: 'store-row', moduleName: 'dsh-plugin-shop', enabled: true }]
-    const withInventory = new StoreGateway(ctx, { inventory: { list: () => inventory } })
+    const gateway = new ShopGateway(ctx)
+    expect(gateway.name).toBe('shop')
+    const inventory = [{ entryId: 'shop-row', moduleName: 'dsh-plugin-shop', enabled: true }]
+    const withInventory = new ShopGateway(ctx, { inventory: { list: () => inventory } })
     const result = withInventory.setEnabled({ name: 'dsh-plugin-shop', enabled: false })
     expect(result.ok).toBe(true)
-    expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toContain('store-row')
+    expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toContain('shop-row')
   })
 })
 
-describe('StoreGateway.catalog', () => {
+describe('ShopGateway.catalog', () => {
   const snapshot = {
     schemaVersion: 2,
     builtAt: '2026-08-25T00:00:00Z',
@@ -76,23 +76,23 @@ describe('StoreGateway.catalog', () => {
 
   it('forwards the refresh flag to the catalog loader and maps the snapshot', async () => {
     const calls: Array<{ refresh?: boolean }> = []
-    const gateway = new StoreGateway(stubCtx(), {
-      catalogUrl: 'https://store.test/v1/',
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/',
       cacheDir: '/cache',
       profile: 'web',
       loadCatalog: async options => { calls.push(options); return { snapshot, stale: false } as CatalogResult },
     })
 
     const result = await gateway.catalog({ refresh: true })
-    expect(calls).toEqual([expect.objectContaining({ baseUrl: 'https://store.test/v1/', cacheDir: '/cache', refresh: true })])
+    expect(calls).toEqual([expect.objectContaining({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', refresh: true })])
     expect(result).toEqual(expect.objectContaining({ schemaVersion: 2, stale: false }))
     expect(result.plugins[0]?.name).toBe('dsh-hello-plugin')
     expect(result.denied[0]?.detail).toBe('matched the denylist')
   })
 
   it('reports the stale flag through to the client', async () => {
-    const gateway = new StoreGateway(stubCtx(), {
-      catalogUrl: 'https://store.test/v1/',
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/',
       cacheDir: '/cache',
       profile: 'web',
       loadCatalog: async () => ({ snapshot, stale: true }) as CatalogResult,
@@ -102,21 +102,21 @@ describe('StoreGateway.catalog', () => {
     expect(result.stale).toBe(true)
   })
 
-  it('rejects loudly when the store row is missing its config', async () => {
-    const gateway = new StoreGateway({
+  it('rejects loudly when the shop row is missing its config', async () => {
+    const gateway = new ShopGateway({
       get: () => undefined,
       reflect: { provide: () => {} },
       loader: { entries: () => [] },
     } as never, { profile: 'web' })
 
     await expect(gateway.catalog({})).rejects.toThrow(
-      'dsh-plugin-shop: the store row is missing catalogUrl or cacheDir config',
+      'dsh-plugin-shop: the shop row is missing catalogUrl or cacheDir config',
     )
   })
 
   it('reads the row config through the Loader when no options are given', async () => {
     const calls: Array<{ baseUrl: string; cacheDir: string; refresh?: boolean }> = []
-    const gateway = new StoreGateway(
+    const gateway = new ShopGateway(
       {
         get: () => undefined,
         reflect: { provide: () => {} },
@@ -142,7 +142,7 @@ describe('StoreGateway.catalog', () => {
 
 // A fixture `dsh` that records its argv and exits 0; the calls log path lets
 // a rejection's no-spawn property be proven by the file's absence.
-function gatewayWithSnapshot(snapshot: CatalogSnapshot): { gateway: StoreGateway; callsLog: string } {
+function gatewayWithSnapshot(snapshot: CatalogSnapshot): { gateway: ShopGateway; callsLog: string } {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-gateway-fixture-'))
   const bin = join(dir, 'dsh')
   writeFileSync(bin, [
@@ -152,8 +152,8 @@ function gatewayWithSnapshot(snapshot: CatalogSnapshot): { gateway: StoreGateway
     '',
   ].join('\n'))
   chmodSync(bin, 0o755)
-  const gateway = new StoreGateway(stubCtx(), {
-    catalogUrl: 'https://store.test/v1/',
+  const gateway = new ShopGateway(stubCtx(), {
+    catalogUrl: 'https://shop.test/v1/',
     cacheDir: '/cache',
     profile: 'web',
     loadCatalog: async () => ({ snapshot, stale: false }) as CatalogResult,
@@ -162,7 +162,7 @@ function gatewayWithSnapshot(snapshot: CatalogSnapshot): { gateway: StoreGateway
   return { gateway, callsLog: join(dir, 'calls.log') }
 }
 
-describe('StoreGateway.install — the four rejection paths, through the executor', () => {
+describe('ShopGateway.install — the four rejection paths, through the executor', () => {
   // Annotated so the literal's tier/metadata do not widen to `string`, which
   // would not be assignable to the CatalogEntry union members.
   const listed: CatalogEntry = { name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived' }
@@ -306,50 +306,50 @@ describe('StoreGateway.install — the four rejection paths, through the executo
   })
 })
 
-describe('StoreGateway.setEnabled', () => {
+describe('ShopGateway.setEnabled', () => {
   it('setEnabled writes a disable row for an installed plugin', async () => {
-    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-store-'))
+    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-shop-'))
     writeFileSync(join(profileDir, 'cordis.yml'), '[]\n')
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
-    const gateway = new StoreGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: () => [{ entryId: 'hello-row', moduleName: 'dsh-hello-fixture', enabled: true }] } })
+    const gateway = new ShopGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: () => [{ entryId: 'hello-row', moduleName: 'dsh-hello-fixture', enabled: true }] } })
     const result = await gateway.setEnabled({ name: 'dsh-hello-fixture', enabled: false })
     expect(result.ok).toBe(true)
     expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toContain('hello-row')
   })
 
   it('setEnabled on an enabled plugin removes the disable row', async () => {
-    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-store-'))
+    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-shop-'))
     writeFileSync(join(profileDir, 'cordis.yml'), '[]\n')
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
     writeFileSync(join(profileDir, 'cordis.patch.yml'), '- id: hello-row\n  disabled: true\n')
-    const gateway = new StoreGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: () => [{ entryId: 'hello-row', moduleName: 'dsh-hello-fixture', enabled: false }] } })
+    const gateway = new ShopGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: () => [{ entryId: 'hello-row', moduleName: 'dsh-hello-fixture', enabled: false }] } })
     const result = await gateway.setEnabled({ name: 'dsh-hello-fixture', enabled: true })
     expect(result.ok).toBe(true)
     expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).not.toContain('hello-row')
   })
 
   it('reports not installed for an unknown name without writing', async () => {
-    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-store-'))
+    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-shop-'))
     writeFileSync(join(profileDir, 'cordis.yml'), '[]\n')
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
-    const gateway = new StoreGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: () => [] } })
+    const gateway = new ShopGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: () => [] } })
     const result = await gateway.setEnabled({ name: 'dsh-not-here', enabled: false })
     expect(result).toEqual({ ok: false, detail: 'dsh-plugin-shop: dsh-not-here is not installed' })
     expect(existsSync(join(profileDir, 'cordis.patch.yml'))).toBe(false)
   })
 })
 
-describe('StoreGateway.outdated', () => {
+describe('ShopGateway.outdated', () => {
   const entries = [
     { name: 'dsh-one', version: '2.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived' },
     { name: 'dsh-two', version: '1.5.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived' },
   ]
 
-  function gatewayWithManifest(dependencies: Record<string, string>): StoreGateway {
+  function gatewayWithManifest(dependencies: Record<string, string>): ShopGateway {
     const dir = mkdtempSync(join(tmpdir(), 'dsh-outdated-'))
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies }))
-    return new StoreGateway(stubCtx(), {
-      catalogUrl: 'https://store.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
+    return new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
       loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [] }, stale: false }) as CatalogResult,
     })
   }
@@ -378,8 +378,8 @@ describe('StoreGateway.outdated', () => {
     const dir = mkdtempSync(join(tmpdir(), 'dsh-outdated-'))
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: { 'dsh-one': '^1.0.0' } }))
     let loadCalls = 0
-    const gateway = new StoreGateway(stubCtx(), {
-      catalogUrl: 'https://store.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
       loadCatalog: async () => {
         loadCalls += 1
         return { snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [] }, stale: false } as CatalogResult

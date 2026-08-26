@@ -2,11 +2,11 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-/** The store tab stylesheet, read as text: this suite asserts on the token
+/** The shop tab stylesheet, read as text: this suite asserts on the token
  * CHOICE, which is the only layer where this class of defect is visible. The
  * component tests stub the css module, and jsdom composites no colors, so a
  * fill that is invisible against its own ground passes every other test. */
-const css = readFileSync(new URL('../../src/client/StoreTab.module.css', import.meta.url), 'utf8')
+const css = readFileSync(new URL('../../src/client/ShopTab.module.css', import.meta.url), 'utf8')
 
 /** Top-level rules, keyed by selector (a brace-depth scan — the stylesheet
  * nests only inside @media/@keyframes, which this flattens one level). */

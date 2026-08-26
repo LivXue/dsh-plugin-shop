@@ -33,7 +33,7 @@ export function discoverProfile(startPath: string, baseDir?: string): { name: st
 }
 
 /** A directory is a profile when it holds the Loader root next to the bundle
- * manifest the store's own package.json declares itself part of. */
+ * manifest the shop's own package.json declares itself part of. */
 function isProfileDir(dir: string): boolean {
   if (!existsSync(join(dir, 'cordis.yml'))) return false
   try {
@@ -46,7 +46,7 @@ function isProfileDir(dir: string): boolean {
 }
 
 /** Resolve symlinks through the deepest ancestor of `startPath` that exists.
- * The leaf — the store's own module file — need not be present yet for
+ * The leaf — the shop's own module file — need not be present yet for
  * discovery to know where it lives. */
 function realpathNearestExisting(startPath: string): string {
   let current = startPath

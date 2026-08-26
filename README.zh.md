@@ -2,7 +2,7 @@
 
 # dsh-plugin-shop
 
-**[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的插件市场** —— 从一份可浏览、
+**[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的插件商店** —— 从一份可浏览、
 可用 git 审计的目录中发现、安装、启停和更新 dsh 插件。
 
 [![npm](https://img.shields.io/npm/v/dsh-plugin-shop?logo=npm&color=cb3837)](https://www.npmjs.com/package/dsh-plugin-shop)
@@ -19,7 +19,7 @@
 ## 🖼️ 界面预览
 
 <div align="center">
-<img src="docs/images/shelf-light.png" alt="dsh 设置页里的插件市场货架" width="860">
+<img src="docs/images/shelf-light.png" alt="dsh 设置页里的插件商店货架" width="860">
 </div>
 
 <table>
@@ -40,7 +40,7 @@ flowchart LR
   npm(["npm registry<br/>关键字：dsh-plugin"]) -->|每日采集| build["registry/ 流水线<br/>准入 · 分层 · 产出"]
   build -->|提交快照 + 静态 JSON| pages[["GitHub Pages<br/>/v1/index.json"]]
   pages -->|拉取、校验 sha256、缓存| host["Host 半边<br/>dsh-plugin-shop"]
-  host -->|五个 store/* 方法| client["Client 半边<br/>设置页标签"]
+  host -->|五个 shop/* 方法| client["Client 半边<br/>设置页标签"]
   host -->|dsh plugin add| profile[("你的 dsh profile")]
 ```
 
@@ -60,7 +60,7 @@ dsh plugin --profile web add dsh-plugin-shop
 用的不是 `web` 就换成你自己的 profile。重启一次 `dsh`——新加的 bundle 不会作用于已在运行的
 进程——然后打开
 
-> **设置 → 插件 → 插件市场**
+> **设置 → 插件 → 插件商店**
 
 ### 🤖 给 agent 看
 

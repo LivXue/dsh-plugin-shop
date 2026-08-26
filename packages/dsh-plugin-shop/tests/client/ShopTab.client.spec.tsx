@@ -2,13 +2,13 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ACKNOWLEDGEMENT_EN, ACKNOWLEDGEMENT_ZH, rejectionCodeKey } from '../../src/client/present.ts'
-import { en, zh, type StoreLocaleKey } from '../../src/client/locales.ts'
-import { StoreTab, type StoreTabInjected, type StoreTabProps } from '../../src/client/StoreTab.tsx'
-import type { StoreCatalogResult, StoreOutdatedEntry } from '../../src/host/index.ts'
+import { en, zh, type ShopLocaleKey } from '../../src/client/locales.ts'
+import { ShopTab, type ShopTabInjected, type ShopTabProps } from '../../src/client/ShopTab.tsx'
+import type { ShopCatalogResult, ShopOutdatedEntry } from '../../src/host/index.ts'
 
 afterEach(cleanup)
 
-function snapshot(overrides: Partial<StoreCatalogResult['plugins'][number]> = {}): StoreCatalogResult {
+function snapshot(overrides: Partial<ShopCatalogResult['plugins'][number]> = {}): ShopCatalogResult {
   return {
     schemaVersion: 2,
     builtAt: '2026-08-25T00:00:00Z',
@@ -24,30 +24,30 @@ function snapshot(overrides: Partial<StoreCatalogResult['plugins'][number]> = {}
   }
 }
 
-function bench(catalogResult: StoreCatalogResult, outdatedEntries: StoreOutdatedEntry[] = []) {
-  const catalog = vi.fn<StoreTabInjected['catalog']>().mockResolvedValue(catalogResult)
-  const install = vi.fn<StoreTabInjected['install']>().mockResolvedValue({ ok: true, installId: 'i1' })
-  const installStatus = vi.fn<StoreTabInjected['installStatus']>().mockResolvedValue({ found: true, state: 'done', log: [], needsRestart: true })
-  const setEnabled = vi.fn<StoreTabInjected['setEnabled']>().mockResolvedValue({ ok: true })
-  const outdated = vi.fn<StoreTabInjected['outdated']>().mockResolvedValue(outdatedEntries)
-  const injected: StoreTabInjected = { catalog, install, installStatus, setEnabled, outdated }
+function bench(catalogResult: ShopCatalogResult, outdatedEntries: ShopOutdatedEntry[] = []) {
+  const catalog = vi.fn<ShopTabInjected['catalog']>().mockResolvedValue(catalogResult)
+  const install = vi.fn<ShopTabInjected['install']>().mockResolvedValue({ ok: true, installId: 'i1' })
+  const installStatus = vi.fn<ShopTabInjected['installStatus']>().mockResolvedValue({ found: true, state: 'done', log: [], needsRestart: true })
+  const setEnabled = vi.fn<ShopTabInjected['setEnabled']>().mockResolvedValue({ ok: true })
+  const outdated = vi.fn<ShopTabInjected['outdated']>().mockResolvedValue(outdatedEntries)
+  const injected: ShopTabInjected = { catalog, install, installStatus, setEnabled, outdated }
   return { catalog, install, installStatus, setEnabled, outdated, injected }
 }
 
-function renderTab(injected: StoreTabInjected) {
+function renderTab(injected: ShopTabInjected) {
   // Dictionary-backed `t` with the published bundle's `{param}` substitution
   // semantics, so the tests exercise the real copy verbatim. The framework
   // seats PropsRuntime demands (useSessions/useWorkspaces) are exercised in
   // the apply and e2e lanes, not here.
-  const t = ((key: StoreLocaleKey, params?: Record<string, unknown>): string => {
+  const t = ((key: ShopLocaleKey, params?: Record<string, unknown>): string => {
     const template = en[key]
     if (params === undefined) return template
     return template.replace(/\{(\w+)\}/g, (match, name: string) => (name in params ? String(params[name]) : match))
-  }) as StoreTabProps['t']
-  return render(<StoreTab {...({ t, ...injected } as unknown as StoreTabProps)} />)
+  }) as ShopTabProps['t']
+  return render(<ShopTab {...({ t, ...injected } as unknown as ShopTabProps)} />)
 }
 
-describe('StoreTab', () => {
+describe('ShopTab', () => {
   it('renders a derived entry as unclaimed with a tier badge and the plain-text summary', async () => {
     const { injected } = bench(snapshot())
     const { container } = renderTab(injected)
@@ -140,7 +140,7 @@ describe('StoreTab', () => {
 
   it('never renders the transport detail of a thrown install', async () => {
     const { injected, install } = bench(snapshot({ tier: 'verified' }))
-    install.mockRejectedValueOnce(new Error('store remote: WIRE: boom'))
+    install.mockRejectedValueOnce(new Error('shop remote: WIRE: boom'))
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     fireEvent.click(screen.getByText(en.install))
@@ -189,7 +189,7 @@ describe('StoreTab', () => {
 
   it('renders the error state on a failed load and recovers on retry', async () => {
     const { injected, catalog } = bench(snapshot())
-    catalog.mockRejectedValueOnce(new Error('dsh-plugin-shop: store/catalog: net::ERR_CONNECTION_RESET'))
+    catalog.mockRejectedValueOnce(new Error('dsh-plugin-shop: shop/catalog: net::ERR_CONNECTION_RESET'))
     renderTab(injected)
     await waitFor(() => expect(screen.getByText(en.error)).toBeTruthy())
     expect(screen.queryByText('net::ERR_CONNECTION_RESET')).toBeNull() // private transport detail stays out of the UI
@@ -258,8 +258,8 @@ describe('StoreTab', () => {
   })
 })
 
-describe('StoreTab store-like filtering', () => {
-  function twoPlugins(): StoreCatalogResult {
+describe('ShopTab shop-like filtering', () => {
+  function twoPlugins(): ShopCatalogResult {
     return {
       schemaVersion: 2,
       builtAt: '2026-08-25T00:00:00Z',
@@ -269,21 +269,21 @@ describe('StoreTab store-like filtering', () => {
         {
           name: 'dsh-plugin-shop-2', version: '2.0.0', integrity: null, publishedAt: null,
           repository: null, license: 'MIT', tier: 'community', metadata: 'derived',
-          catalog: { category: 'other', summary: { en: 'Another store.' }, capabilities: [] },
+          catalog: { category: 'other', summary: { en: 'Another shop.' }, capabilities: [] },
         },
       ],
       denied: [],
     }
   }
 
-  it('hides store-like plugins from the browse list', async () => {
+  it('hides shop-like plugins from the browse list', async () => {
     const { injected } = bench(twoPlugins())
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     expect(screen.queryByText('dsh-plugin-shop-2')).toBeNull()
   })
 
-  it('keeps an installed store-like plugin manageable in the installed section', async () => {
+  it('keeps an installed shop-like plugin manageable in the installed section', async () => {
     const { injected } = bench(twoPlugins(), [{ name: 'dsh-plugin-shop-2', installed: '^1.0.0', latest: '2.0.0' }])
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
@@ -291,18 +291,18 @@ describe('StoreTab store-like filtering', () => {
   })
 })
 
-describe('StoreTab loading state', () => {
+describe('ShopTab loading state', () => {
   it('renders a skeleton grid while the catalog loads and keeps the loading copy readable', async () => {
     const { injected, catalog } = bench(snapshot())
-    let resolve!: (value: StoreCatalogResult) => void
+    let resolve!: (value: ShopCatalogResult) => void
     catalog.mockReturnValue(new Promise(r => { resolve = r }))
     const { container } = renderTab(injected)
 
     // The panel is busy, the skeleton is present, and the loading copy stays
     // in the accessibility tree (visually hidden).
-    expect(container.querySelector('[data-store-tab]')?.getAttribute('aria-busy')).toBe('true')
-    expect(container.querySelector('[data-store-skeleton]')).toBeTruthy()
-    expect(container.querySelectorAll('[data-store-skeleton] [class*="skeleton"]').length).toBeGreaterThan(0)
+    expect(container.querySelector('[data-shop-tab]')?.getAttribute('aria-busy')).toBe('true')
+    expect(container.querySelector('[data-shop-skeleton]')).toBeTruthy()
+    expect(container.querySelectorAll('[data-shop-skeleton] [class*="skeleton"]').length).toBeGreaterThan(0)
     expect(screen.getByText(en.loading)).toBeTruthy()
 
     // Settle the promise so the test exits cleanly through the ready state.

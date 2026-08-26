@@ -1,12 +1,12 @@
-/** Pure presentation core for the store tab (§5.1 Client half). No React, no
+/** Pure presentation core for the shop tab (§5.1 Client half). No React, no
  * timers, no I/O: every function here maps a value to a value, so fixtures
  * drive all of it. */
 
-import type { StoreLocaleKey } from './locales.ts'
+import type { ShopLocaleKey } from './locales.ts'
 import type { CatalogEntry, InstallRejectionCode } from '../host/index.ts'
 
 /** Tier → locale key, for the entry-card tier badge (§6.2). */
-export function tierKey(tier: CatalogEntry['tier']): StoreLocaleKey {
+export function tierKey(tier: CatalogEntry['tier']): ShopLocaleKey {
   switch (tier) {
     case 'verified': return 'tierVerified'
     case 'verified-stale': return 'tierVerifiedStale'
@@ -14,7 +14,7 @@ export function tierKey(tier: CatalogEntry['tier']): StoreLocaleKey {
   }
 }
 
-/** A derived listing has no author-declared catalog section; the store
+/** A derived listing has no author-declared catalog section; the shop
  * presents it as unclaimed, which is the signal that prompts an author to add
  * one (§6.1). Never present a derived entry as though the author wrote it. */
 export function isUnclaimed(entry: CatalogEntry): boolean {
@@ -32,7 +32,7 @@ export const ACKNOWLEDGEMENT_ZH =
 
 /** Install rejection code → locale key, for the rejected-state code label
  * (§7.2): every rejection the host can return has a human label here. */
-export function rejectionCodeKey(code: InstallRejectionCode): StoreLocaleKey {
+export function rejectionCodeKey(code: InstallRejectionCode): ShopLocaleKey {
   switch (code) {
     case 'denied': return 'deniedCode'
     case 'not-in-catalog': return 'notInCatalogCode'
@@ -96,28 +96,29 @@ export function reduceInstall(state: InstallView, event: InstallEvent): InstallV
   }
 }
 
-const STORE_KEYWORDS = ['store', 'market', 'mall', 'shop', 'marketplace'] as const
+const SHOP_KEYWORDS = ['store', 'market', 'mall', 'shop', 'marketplace'] as const
 
 /**
- * Whether a package name reads as a plugin store (a marketplace for dsh
- * plugins, e.g. `dsh-plugin-shop`, `dsh-store`, `pluginstore`). The store
+ * Whether a package name reads as a plugin shop (a marketplace for dsh
+ * plugins, e.g. `dsh-plugin-shop`, `dsh-store`, `pluginstore`). The shop
  * tab hides these so the market does not list competing markets.
  *
  * Precision over recall: a name merely CONTAINING a keyword segment without
  * a plugin qualifier or a keyword ending (`market-data-provider`,
- * `marketplace-hub`) is NOT a store plugin, and `dsh-restore` must never
- * match on the substring "store".
+ * `marketplace-hub`) is NOT a shop plugin, and `dsh-restore` must never
+ * match on the substring "store". The keyword list keeps "store" on purpose:
+ * it matches other people's package names, not ours.
  */
-export function isStoreLike(name: string): boolean {
+export function isShopLike(name: string): boolean {
   const segments = name.toLowerCase().split(/[-_.]+/)
   const hasPlugin = segments.includes('plugin')
   const concatenated = segments.some(segment =>
     /plugin(store|market|mall|shop|marketplace)/.test(segment)
     || /(store|market|mall|shop|marketplace)plugin/.test(segment))
   if (concatenated) return true
-  const keywordSegments = segments.filter(segment => (STORE_KEYWORDS as readonly string[]).includes(segment))
+  const keywordSegments = segments.filter(segment => (SHOP_KEYWORDS as readonly string[]).includes(segment))
   if (keywordSegments.length === 0) return false
-  return hasPlugin || STORE_KEYWORDS.includes(segments.at(-1) as (typeof STORE_KEYWORDS)[number])
+  return hasPlugin || SHOP_KEYWORDS.includes(segments.at(-1) as (typeof SHOP_KEYWORDS)[number])
 }
 
 const CATEGORY_KEYS = {
@@ -131,6 +132,6 @@ const CATEGORY_KEYS = {
 
 /** The locale key for one entry's category — derived entries read as `other`
  * (§6.1: a derived listing has no declared category). */
-export function categoryKey(entry: CatalogEntry): StoreLocaleKey {
+export function categoryKey(entry: CatalogEntry): ShopLocaleKey {
   return CATEGORY_KEYS[entry.catalog?.category ?? 'other']
 }

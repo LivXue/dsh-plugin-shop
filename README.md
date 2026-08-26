@@ -2,7 +2,7 @@
 
 # dsh-plugin-shop
 
-**The plugin store for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)** — discover, install,
+**The plugin shop for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)** — discover, install,
 enable and update dsh plugins from a browsable, git-auditable catalog.
 
 [![npm](https://img.shields.io/npm/v/dsh-plugin-shop?logo=npm&color=cb3837)](https://www.npmjs.com/package/dsh-plugin-shop)
@@ -19,7 +19,7 @@ English | [中文](README.zh.md)
 ## 🖼️ Screenshots
 
 <div align="center">
-<img src="docs/images/shelf-light.png" alt="The plugin store shelf inside dsh Settings" width="860">
+<img src="docs/images/shelf-light.png" alt="The plugin shop shelf inside dsh Settings" width="860">
 </div>
 
 <table>
@@ -40,7 +40,7 @@ flowchart LR
   npm(["npm registry<br/>keyword: dsh-plugin"]) -->|daily harvest| build["registry/ pipeline<br/>gate · tier · emit"]
   build -->|committed snapshot + static JSON| pages[["GitHub Pages<br/>/v1/index.json"]]
   pages -->|fetch, verify sha256, cache| host["Host half<br/>dsh-plugin-shop"]
-  host -->|five store/* methods| client["Client half<br/>the Settings tab"]
+  host -->|five shop/* methods| client["Client half<br/>the Settings tab"]
   host -->|dsh plugin add| profile[("your dsh profile")]
 ```
 
@@ -48,7 +48,7 @@ Everything left of the Pages box is this repository's `registry/`. Everything ri
 it is the npm package in `packages/dsh-plugin-shop/`. They share no code — only the
 schema.
 
-## 📦 Install the store
+## 📦 Install the shop
 
 Two tracks. They do the same thing; pick the one that matches who is reading.
 
@@ -61,7 +61,7 @@ dsh plugin --profile web add dsh-plugin-shop
 Replace `web` with your profile if you use another one. Restart `dsh` once — a newly
 added bundle is not applied to a running process — then open
 
-> **Settings → Plugins → Plugin store**
+> **Settings → Plugins → Plugin shop**
 
 ### 🤖 For agents
 

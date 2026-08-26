@@ -1,4 +1,4 @@
-/** StoreGateway: the Host half of dsh-plugin-shop (§5.1). */
+/** ShopGateway: the Host half of dsh-plugin-shop (§5.1). */
 
 import type { Context } from '@deepseek-ai/cordis'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
@@ -19,7 +19,7 @@ export type { InstallArgs, InstallRejectionCode } from './install.ts'
 // The catalog entry shape reaches the client half through this same boundary.
 export type { CatalogEntry } from './types.ts'
 
-/** One Loader inventory entry, structurally — the store never depends on
+/** One Loader inventory entry, structurally — the shop never depends on
  * cordis-plugin-loader, whose types do not reach this package's typecheck. */
 export interface InventoryEntry {
   entryId: string
@@ -28,7 +28,7 @@ export interface InventoryEntry {
 }
 
 /** Test-only injection points; production callers pass nothing. */
-export interface StoreGatewayOptions {
+export interface ShopGatewayOptions {
   catalogUrl?: string
   cacheDir?: string
   loadCatalog?: (options: LoadCatalogOptions) => ReturnType<typeof loadCatalog>
@@ -42,29 +42,29 @@ export interface StoreGatewayOptions {
   dshBin?: string
 }
 
-/** `store/installStart` result (§7.3): rejections are typed wire values with an
+/** `shop/installStart` result (§7.3): rejections are typed wire values with an
  * author-readable `detail`, not thrown RPC errors. */
-export type StoreInstallResult =
+export type ShopInstallResult =
   | { ok: true; installId: string }
   | { ok: false; code: InstallRejectionCode; detail: string }
 
-export interface StoreInstallStatusResult extends InstallStatus { found: boolean }
+export interface ShopInstallStatusResult extends InstallStatus { found: boolean }
 
-/** `store/setEnabled` result (§7.3): an unknown name is a typed wire value,
+/** `shop/setEnabled` result (§7.3): an unknown name is a typed wire value,
  * not a thrown RPC error. */
-export interface StoreSetEnabledResult { ok: boolean; detail?: string }
+export interface ShopSetEnabledResult { ok: boolean; detail?: string }
 
-/** `store/outdated` entry (§7.3): one installed plugin behind the catalog. */
-export interface StoreOutdatedEntry { name: string; installed: string; latest: string }
+/** `shop/outdated` entry (§7.3): one installed plugin behind the catalog. */
+export interface ShopOutdatedEntry { name: string; installed: string; latest: string }
 
 /** One row of the row config the bundle patch (§cordis.patch.yml) supplies. */
-interface StoreRowConfig {
+interface ShopRowConfig {
   catalogUrl?: unknown
   cacheDir?: unknown
 }
 
-/** `store/catalog` result (§7.3), plus the denied list for the install gate's UI. */
-export interface StoreCatalogResult {
+/** `shop/catalog` result (§7.3), plus the denied list for the install gate's UI. */
+export interface ShopCatalogResult {
   schemaVersion: number
   builtAt: string
   stale: boolean
@@ -72,16 +72,16 @@ export interface StoreCatalogResult {
   denied: DeniedEntry[]
 }
 
-/** Remote-only service exposing the store Remote methods of §7.3.
+/** Remote-only service exposing the shop Remote methods of §7.3.
  *
- * @typert service store */
-export class StoreGateway extends TypertRemoteService {
-  private readonly options: StoreGatewayOptions
+ * @typert service shop */
+export class ShopGateway extends TypertRemoteService {
+  private readonly options: ShopGatewayOptions
   /** The profile dsh installs into; discovered from this module's own
    * location when the caller does not supply one. */
   private readonly profile: string
   private readonly profileDir?: string
-  private readonly inventory?: StoreGatewayOptions['inventory']
+  private readonly inventory?: ShopGatewayOptions['inventory']
   private readonly dshBin: string
   /** The install gate runs against the last loaded snapshot, never a fresh
    * fetch per request (§7.2: the Host's cached snapshot is the truth). */
@@ -97,8 +97,8 @@ export class StoreGateway extends TypertRemoteService {
   /** Every install id in insertion order, oldest first; finished-record eviction walks this from the front. */
   private readonly installOrder: string[] = []
 
-  constructor(ctx: Context, options: StoreGatewayOptions = {}) {
-    super(ctx, 'store')
+  constructor(ctx: Context, options: ShopGatewayOptions = {}) {
+    super(ctx, 'shop')
     this.options = options
     this.profile = options.profile ?? discoverProfile(fileURLToPath(import.meta.url), this.bootBaseDir()).name
     this.profileDir = options.profileDir
@@ -143,7 +143,7 @@ export class StoreGateway extends TypertRemoteService {
    * row to the user layer, an enable drops it again so the bundle default
    * rules — the CLI's watchUserPatches applies either through HMR. */
   @Remote('setEnabled')
-  setEnabled(args: { name: string; enabled: boolean }): StoreSetEnabledResult {
+  setEnabled(args: { name: string; enabled: boolean }): ShopSetEnabledResult {
     const entry = this.listInventory().find(entry => entry.moduleName === args.name)
     if (entry === undefined) return { ok: false, detail: `dsh-plugin-shop: ${args.name} is not installed` }
     setUserLayerRow({ profileDir: this.profileDirResolved(), row: { id: entry.entryId, disabled: !args.enabled } })
@@ -155,7 +155,7 @@ export class StoreGateway extends TypertRemoteService {
       return { catalogUrl: this.options.catalogUrl, cacheDir: this.options.cacheDir }
     }
     // Structural cast instead of the cordis-plugin-loader Context augmentation:
-    // the store must not depend on that package. The augmentation reaches
+    // the shop must not depend on that package. The augmentation reaches
     // this package's typecheck through dsh-app-boot's include types, so the
     // cast goes through `unknown`. The loader's own type of `config` is
     // `unknown`, so the row's shape is re-validated below before it is trusted.
@@ -163,18 +163,18 @@ export class StoreGateway extends TypertRemoteService {
       loader?: { entries(): Array<{ options: { name?: string; config?: unknown } }> }
     }).loader
     const entry = loader?.entries().find(entry => entry.options.name === 'dsh-plugin-shop')
-    const config = entry?.options.config as StoreRowConfig | undefined
+    const config = entry?.options.config as ShopRowConfig | undefined
     const catalogUrl = config?.catalogUrl
     const cacheDir = config?.cacheDir
     if (typeof catalogUrl !== 'string' || typeof cacheDir !== 'string') {
-      throw new Error('dsh-plugin-shop: the store row is missing catalogUrl or cacheDir config')
+      throw new Error('dsh-plugin-shop: the shop row is missing catalogUrl or cacheDir config')
     }
     return { catalogUrl, cacheDir }
   }
 
   /** Browse the catalog (§7.3): cached snapshot, refreshed on demand. */
   @Remote('catalog')
-  async catalog(args?: { refresh?: boolean }): Promise<StoreCatalogResult> {
+  async catalog(args?: { refresh?: boolean }): Promise<ShopCatalogResult> {
     const { catalogUrl, cacheDir } = this.rowConfig()
     const load = this.options.loadCatalog ?? loadCatalog
     const { snapshot, stale } = await load({ baseUrl: catalogUrl, cacheDir, refresh: args?.refresh ?? false })
@@ -199,7 +199,7 @@ export class StoreGateway extends TypertRemoteService {
   // "conflicts with its namespace service" — the web full-flow e2e exposed
   // this on the real composition (§7.3 amendment, 2026-08-25).
   @Remote('installStart')
-  async install(args: InstallArgs): Promise<StoreInstallResult> {
+  async install(args: InstallArgs): Promise<ShopInstallResult> {
     if (this.lastSnapshot === null) {
       const { catalogUrl, cacheDir } = this.rowConfig()
       const load = this.options.loadCatalog ?? loadCatalog
@@ -231,13 +231,13 @@ export class StoreGateway extends TypertRemoteService {
       const record = this.installs.get(id)
       if (record !== undefined && record.status().state !== 'running') finishedIds.push(id)
     }
-    const excess = Math.max(0, finishedIds.length - StoreGateway.MAX_FINISHED_INSTALLS)
+    const excess = Math.max(0, finishedIds.length - ShopGateway.MAX_FINISHED_INSTALLS)
     for (const id of finishedIds.slice(0, excess)) this.installs.delete(id)
   }
 
   /** Poll one install's progress (§7.2); unknown ids report `found: false`. */
   @Remote('installStatus')
-  installStatus(args: { installId: string }): StoreInstallStatusResult {
+  installStatus(args: { installId: string }): ShopInstallStatusResult {
     const running = this.installs.get(args.installId)
     if (running === undefined) return { found: false, state: 'failed', log: [], detail: `unknown installId: ${args.installId}` }
     return { found: true, ...running.status() }
@@ -245,7 +245,7 @@ export class StoreGateway extends TypertRemoteService {
 
   /** Installed plugins whose installed version is older than the catalog's (§7.3). */
   @Remote('outdated')
-  async outdated(): Promise<StoreOutdatedEntry[]> {
+  async outdated(): Promise<ShopOutdatedEntry[]> {
     if (this.lastSnapshot === null) {
       const { catalogUrl, cacheDir } = this.rowConfig()
       const load = this.options.loadCatalog ?? loadCatalog
@@ -254,7 +254,7 @@ export class StoreGateway extends TypertRemoteService {
     }
     const manifest = readProfileManifest('dsh-plugin-shop', this.profileDirResolved())
     const dependencies = manifest.dependencies ?? {}
-    const outdated: StoreOutdatedEntry[] = []
+    const outdated: ShopOutdatedEntry[] = []
     for (const entry of this.lastSnapshot.entries) {
       const installed = dependencies[entry.name]
       if (installed === undefined) continue
@@ -277,4 +277,4 @@ export class StoreGateway extends TypertRemoteService {
   }
 }
 
-export default StoreGateway
+export default ShopGateway

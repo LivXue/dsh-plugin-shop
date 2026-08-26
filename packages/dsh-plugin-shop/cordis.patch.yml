@@ -1,9 +1,9 @@
-# The dsh-plugin-shop bundle patch: one row, the store Remote gateway.
+# The dsh-plugin-shop bundle patch: one row, the shop Remote gateway.
 # `dshHomePath` and `process.env` are in scope for !!js scalars, exactly as
 # the dsh-base bundle uses them.
 - insert:
-    - id: store
+    - id: shop
       name: 'dsh-plugin-shop'
       config:
-        catalogUrl: !!js process.env.DSH_STORE_CATALOG_URL ?? 'https://LivXue.github.io/dsh-plugin-shop/v1/'
-        cacheDir: !!js dshHomePath('store')
+        catalogUrl: !!js process.env.DSH_SHOP_CATALOG_URL ?? 'https://LivXue.github.io/dsh-plugin-shop/v1/'
+        cacheDir: !!js dshHomePath('shop')

@@ -39,7 +39,7 @@ describe('loadCatalog', () => {
       String(input).endsWith('/index.json') ? pointer : data, { status: 200 },
     )) as unknown as typeof fetch
 
-    const result = await loadCatalog({ baseUrl: 'https://store.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() })
+    const result = await loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() })
     expect(result.stale).toBe(false)
     expect(result.snapshot.entries).toHaveLength(1)
     expect(result.snapshot.entries[0]?.name).toBe('dsh-hello-plugin')
@@ -53,7 +53,7 @@ describe('loadCatalog', () => {
     fs.write(`/cache/${url}`, data)
     const fetchImpl = (async () => { throw new Error('offline') }) as unknown as typeof fetch
 
-    const result = await loadCatalog({ baseUrl: 'https://store.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs, now: () => new Date('2026-08-25T10:00:00Z') })
+    const result = await loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs, now: () => new Date('2026-08-25T10:00:00Z') })
     expect(result.stale).toBe(true)
     expect(result.snapshot.entries[0]?.name).toBe('dsh-hello-plugin')
   })
@@ -66,7 +66,7 @@ describe('loadCatalog', () => {
       String(input).endsWith('/index.json') ? pointer : tampered, { status: 200 },
     )) as unknown as typeof fetch
 
-    await expect(loadCatalog({ baseUrl: 'https://store.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() }))
+    await expect(loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() }))
       .rejects.toThrow(/integrity/)
   })
 
@@ -82,7 +82,7 @@ describe('loadCatalog', () => {
     )) as unknown as typeof fetch
 
     await expect(loadCatalog({
-      baseUrl: 'https://store.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs,
+      baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs,
       now: () => new Date('2026-08-25T10:00:00Z'),
     })).rejects.toThrow(/integrity/)
   })
@@ -93,7 +93,7 @@ describe('loadCatalog', () => {
       { status: 200 },
     )) as unknown as typeof fetch
 
-    await expect(loadCatalog({ baseUrl: 'https://store.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() }))
+    await expect(loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() }))
       .rejects.toThrow(/newer/)
   })
 
@@ -109,14 +109,14 @@ describe('loadCatalog', () => {
     )) as unknown as typeof fetch
 
     await expect(loadCatalog({
-      baseUrl: 'https://store.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs,
+      baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs,
       now: () => new Date('2026-08-25T10:00:00Z'),
     })).rejects.toThrow(/newer/)
   })
 
   it('throws when offline with no cache at all', async () => {
     const fetchImpl = (async () => { throw new Error('offline') }) as unknown as typeof fetch
-    await expect(loadCatalog({ baseUrl: 'https://store.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() }))
+    await expect(loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() }))
       .rejects.toThrow(/offline/)
   })
 
@@ -129,7 +129,7 @@ describe('loadCatalog', () => {
     let calls = 0
     const fetchImpl = (async () => { calls += 1; throw new Error('should not be called') }) as unknown as typeof fetch
 
-    const result = await loadCatalog({ baseUrl: 'https://store.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs, now: () => new Date('2026-08-25T00:03:00Z') })
+    const result = await loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs, now: () => new Date('2026-08-25T00:03:00Z') })
     expect(result.stale).toBe(false)
     expect(calls).toBe(0)
   })
@@ -144,7 +144,7 @@ describe('loadCatalog', () => {
     let calls = 0
     const fetchImpl = (async () => { calls += 1; throw new Error('should not be called') }) as unknown as typeof fetch
 
-    const result = await loadCatalog({ baseUrl: 'https://store.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs, now: () => new Date('2026-08-25T00:03:00Z') })
+    const result = await loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs, now: () => new Date('2026-08-25T00:03:00Z') })
     expect(result.stale).toBe(false)
     expect(calls).toBe(0)
   })
@@ -164,7 +164,7 @@ describe('loadCatalog', () => {
       return new Response(String(input).endsWith('/index.json') ? pointer : data, { status: 200 })
     }) as unknown as typeof fetch
 
-    const result = await loadCatalog({ baseUrl: 'https://store.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs, now: () => new Date('2026-08-25T10:00:00Z') })
+    const result = await loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs, now: () => new Date('2026-08-25T10:00:00Z') })
     expect(result.stale).toBe(false)
     expect(pointerCalls).toBe(1)
     expect(dataCalls).toBe(1)
@@ -177,7 +177,7 @@ describe('loadCatalog', () => {
       String(input).endsWith('/index.json') ? pointer : data, { status: 200 },
     )) as unknown as typeof fetch
 
-    const result = await loadCatalog({ baseUrl: 'https://store.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() })
+    const result = await loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() })
     expect(result.snapshot.denied).toEqual([{ name: 'dsh-blocked', detail: 'matched the denylist' }])
   })
 
@@ -192,7 +192,7 @@ describe('loadCatalog', () => {
     const fetchImpl = (async () => { throw new Error('offline') }) as unknown as typeof fetch
 
     await expect(loadCatalog({
-      baseUrl: 'https://store.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs,
+      baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs,
       now: () => new Date('2026-08-25T00:03:00Z'),
     })).rejects.toThrow(/offline/)
   })
@@ -212,7 +212,7 @@ describe('loadCatalog', () => {
     }) as unknown as typeof fetch
 
     const result = await loadCatalog({
-      baseUrl: 'https://store.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs,
+      baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs,
       now: () => new Date('2026-08-25T00:03:00Z'),
     })
     expect(result.stale).toBe(false)
@@ -234,7 +234,7 @@ describe('loadCatalog', () => {
       return new Response(data, { status: 200 })
     }) as unknown as typeof fetch
 
-    await expect(loadCatalog({ baseUrl: 'https://store.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() }))
+    await expect(loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() }))
       .rejects.toThrow(/must be relative/)
     expect(dataCalls).toBe(0)
   })
@@ -254,7 +254,7 @@ describe('loadCatalog', () => {
       return new Response(String(input).endsWith('/index.json') ? pointer : data, { status: 200 })
     }) as unknown as typeof fetch
 
-    await expect(loadCatalog({ baseUrl: 'https://store.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() }))
+    await expect(loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() }))
       .rejects.toThrow(/must be relative/)
     expect(fetched.filter(h => h.includes('169.254.169.254'))).toHaveLength(0)
   })
@@ -270,8 +270,8 @@ describe('loadCatalog', () => {
       return new Response(data, { status: 200 })
     }) as unknown as typeof fetch
 
-    const result = await loadCatalog({ baseUrl: 'https://store.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() })
-    expect(dataUrl).toBe(`https://store.test/v1/${url}`)
+    const result = await loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() })
+    expect(dataUrl).toBe(`https://shop.test/v1/${url}`)
     expect(result.stale).toBe(false)
   })
 })

@@ -21,13 +21,13 @@ import type { AddressInfo } from 'node:net'
 
 export interface CatalogServer {
   /** Catalog base, e.g. `http://127.0.0.1:<port>/v1/` — what the profile's
-   * store row reads from DSH_STORE_CATALOG_URL. */
+   * shop row reads from DSH_SHOP_CATALOG_URL. */
   baseUrl: string
   close: () => Promise<void>
 }
 
 /** The single fixture entry. No `catalog` section: derived metadata, so the
- * store presents the entry as unclaimed (§6.1) — the badge the e2e asserts.
+ * shop presents the entry as unclaimed (§6.1) — the badge the e2e asserts.
  * `publishedAt` stays fixed so the snapshot is deterministic per run. */
 const FIXTURE_ENTRY = {
   name: 'dsh-e2e-fixture-plugin',
@@ -68,7 +68,7 @@ export async function startCatalogServer(): Promise<CatalogServer> {
   return {
     baseUrl: `http://127.0.0.1:${port}/v1/`,
     close: () => new Promise<void>((resolve, reject) => {
-      // Drop every connection first: the store gateway's fetch pool keeps
+      // Drop every connection first: the shop gateway's fetch pool keeps
       // keep-alive sockets to this server open, and a bare close() would
       // wait on them forever even after the gateway process is dead.
       server.closeAllConnections()

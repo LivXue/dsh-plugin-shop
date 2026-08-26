@@ -1,10 +1,10 @@
-/** Copy dictionaries for the store Settings tab. */
+/** Copy dictionaries for the shop Settings tab. */
 
 import { ACKNOWLEDGEMENT_EN, ACKNOWLEDGEMENT_ZH } from './present.ts'
 
 /** Simplified Chinese dictionary and key source of truth. */
 export const zh = {
-  tab: '插件市场',
+  tab: '插件商店',
   loading: '正在读取目录…',
   error: '暂时无法读取目录。',
   retry: '重试',
@@ -53,12 +53,12 @@ export const zh = {
   hotApplyNote: '无需重启，立即生效',
 } satisfies Record<string, string>
 
-/** Store locale key union. */
-export type StoreLocaleKey = keyof typeof zh
+/** Shop locale key union. */
+export type ShopLocaleKey = keyof typeof zh
 
 /** English dictionary checked against the Chinese key set. */
 export const en = {
-  tab: 'Plugin store',
+  tab: 'Plugin shop',
   loading: 'Reading the catalog…',
   error: 'The catalog is temporarily unavailable.',
   retry: 'Retry',
@@ -105,4 +105,4 @@ export const en = {
   enabledSwitch: 'Enable',
   toggleFailed: 'Failed to update. Please retry.',
   hotApplyNote: 'takes effect without a restart',
-} satisfies Record<StoreLocaleKey, string>
+} satisfies Record<ShopLocaleKey, string>

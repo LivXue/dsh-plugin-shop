@@ -1,4 +1,4 @@
-/* Store tab styles — a market shelf inside the settings surface. The visual
+/* Shop tab styles — a market shelf inside the settings surface. The visual
  * language is the dsh theme's alias tokens ONLY (the four tokens the previous
  * styles referenced that do not exist — bg-layer-3, interactive-bg-hover,
  * state-error, state-success — are corrected to bg-layer-2 and the
@@ -76,11 +76,11 @@
     transparent 75%
   );
   transform: translateX(-100%);
-  animation: dshStoreSkeletonSweep 1.4s ease-in-out infinite;
+  animation: dshShopSkeletonSweep 1.4s ease-in-out infinite;
   pointer-events: none;
 }
 
-@keyframes dshStoreSkeletonSweep {
+@keyframes dshShopSkeletonSweep {
   to { transform: translateX(100%); }
 }
 
@@ -115,10 +115,10 @@
 }
 
 .skeletonCard span {
-  animation: dshStoreSkeletonPulse 1.6s ease-in-out infinite;
+  animation: dshShopSkeletonPulse 1.6s ease-in-out infinite;
 }
 
-@keyframes dshStoreSkeletonPulse {
+@keyframes dshShopSkeletonPulse {
   0%, 100% { opacity: 0.5; }
   50% { opacity: 1; }
 }
@@ -217,10 +217,10 @@
   list-style: none;
   margin: 0;
   padding: 0;
-  animation: dshStoreCardsIn 220ms ease;
+  animation: dshShopCardsIn 220ms ease;
 }
 
-@keyframes dshStoreCardsIn {
+@keyframes dshShopCardsIn {
   from { opacity: 0; transform: translateY(3px); }
   to { opacity: 1; transform: none; }
 }

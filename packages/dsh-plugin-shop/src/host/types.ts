@@ -1,4 +1,4 @@
-/** Wire and catalog types for the store Host half (§6.2, §7.3). */
+/** Wire and catalog types for the shop Host half (§6.2, §7.3). */
 
 export interface CatalogSummary { en: string; zh?: string }
 

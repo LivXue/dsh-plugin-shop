@@ -2,7 +2,7 @@ import type { Candidate } from './types.ts'
 
 /**
  * The keyword a plugin author declares. Ecosystem-neutral by design: an author
- * declares "I am a dsh plugin", not membership of this store.
+ * declares "I am a dsh plugin", not membership of this shop.
  */
 export const HARVEST_KEYWORD = 'dsh-plugin'
 
