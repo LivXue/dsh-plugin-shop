@@ -277,6 +277,31 @@ describe('ShopTab', () => {
     fireEvent.click(screen.getByText(en.confirm))
     await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true }))
   })
+
+  it('sorts the shelf by stars and renders the badge on starred entries', async () => {
+    const result = snapshot()
+    result.plugins = [
+      { ...result.plugins[0]!, name: 'dsh-nostar' },
+      { ...result.plugins[0]!, name: 'dsh-top' },
+    ]
+    result.stars = { 'dsh-top': 1234 }
+    const { injected } = bench(result)
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-top')).toBeTruthy())
+    const names = [...document.querySelectorAll('[class*="_name"]')].map(el => el.textContent)
+    expect(names).toEqual(['dsh-top', 'dsh-nostar'])
+    expect(screen.getByLabelText('1.2k stars')).toBeTruthy()
+    expect(screen.getByText('★ 1.2k')).toBeTruthy()
+  })
+
+  it('shows no badge for an unstarred entry', async () => {
+    const result = snapshot()
+    result.stars = {}
+    const { injected } = bench(result)
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(screen.queryByLabelText(/stars/)).toBeNull()
+  })
 })
 
 describe('ShopTab shop-like filtering', () => {

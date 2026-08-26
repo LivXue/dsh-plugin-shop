@@ -374,6 +374,11 @@
   color: var(--dsw-alias-label-secondary);
 }
 
+.starsBadge {
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+}
+
 .chevron, .chevronOpen {
   color: var(--dsw-alias-label-secondary);
   transition: transform 120ms ease;

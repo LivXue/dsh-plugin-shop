@@ -7,7 +7,7 @@
 import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstallResult, ShopInstallStatusResult, ShopOutdatedEntry, ShopSetEnabledResult } from '../host/index.ts'
-import { SHOP_VISIBLE_BATCH, categoryKey, isShopLike, isUnclaimed, nextVisibleCount, rejectionCodeKey, tierKey } from './present.ts'
+import { SHOP_VISIBLE_BATCH, categoryKey, formatStars, isShopLike, isUnclaimed, nextVisibleCount, rejectionCodeKey, sortByStars, tierKey } from './present.ts'
 import { useInstall } from './useInstall.ts'
 import css from './ShopTab.module.css'
 
@@ -59,8 +59,9 @@ function ChevronIcon({ open }: { open: boolean }): ReactNode {
  * (name, tier, category, unclaimed marker), the plain-text summary in both
  * languages, the self-declared capabilities, the detail section, and the
  * install controls. */
-const EntryCard = memo(function EntryCard({ entry, t, install, installStatus }: {
+const EntryCard = memo(function EntryCard({ entry, stars, t, install, installStatus }: {
   entry: CatalogEntry
+  stars: number | undefined
   t: ShopTabProps['t']
   install: ShopTabInjected['install']
   installStatus: ShopTabInjected['installStatus']
@@ -86,6 +87,9 @@ const EntryCard = memo(function EntryCard({ entry, t, install, installStatus }: 
         <span className={css.badges}>
           <span className={css.tierBadge} data-tier={entry.tier}>{t(tierKey(entry.tier))}</span>
           {isUnclaimed(entry) && <span className={css.unclaimedBadge}>{t('unclaimed')}</span>}
+          {stars !== undefined && (
+            <span className={css.starsBadge} aria-label={t('stars', { count: formatStars(stars) })}>★ {formatStars(stars)}</span>
+          )}
           <ChevronIcon open={open} />
         </span>
       </button>
@@ -435,6 +439,12 @@ export function ShopTab(props: ShopTabProps): ReactNode {
   }, [catalogState, query])
   filteredLenRef.current = filtered.length
 
+  // The shelf sorts by GitHub stars: the most-starred entries fill the first
+  // batch, so a fresh visitor sees what the community uses most (§D1). The
+  // stars sidecar is keyed by name; entries without a star count sort last.
+  const stars = catalogState.kind === 'ready' ? catalogState.result.stars : {}
+  const sorted = useMemo(() => sortByStars(filtered, stars), [filtered, stars])
+
   // The sentinel that grows the shelf: when the last rendered card's footer
   // comes within a screen and a half of the viewport, the window widens by
   // one batch. The effect re-runs as the window grows so it always observes
@@ -453,7 +463,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     return () => observer.disconnect()
   }, [incremental, visibleCount, filtered.length])
 
-  const visible = incremental ? filtered.slice(0, visibleCount) : filtered
+  const visible = incremental ? sorted.slice(0, visibleCount) : sorted
 
   // The outdated rows' update gate needs each entry's tier; the catalog is the
   // only source for it (ShopOutdatedEntry carries none). An entry missing from
@@ -528,7 +538,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
           <ul className={css.cards}>
             {visible.map(entry => (
               <li key={entry.name}>
-                <EntryCard entry={entry} t={t} install={install} installStatus={installStatus} />
+                <EntryCard entry={entry} stars={stars[entry.name]} t={t} install={install} installStatus={installStatus} />
               </li>
             ))}
             {incremental && visibleCount < filtered.length && (
