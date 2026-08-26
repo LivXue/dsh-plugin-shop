@@ -1,4 +1,4 @@
-import type { Candidate } from './types.ts'
+import type { Candidate, Rejection } from './types.ts'
 
 /**
  * The keyword a plugin author declares. Ecosystem-neutral by design: an author
@@ -211,4 +211,28 @@ export async function fetchCandidate(
   const candidate = toCandidate(body)
   if (candidate === null) return { ok: false, detail: `${name}: packument names no usable latest version` }
   return { ok: true, candidate }
+}
+
+export const HARVEST_CONCURRENCY = 8
+
+/**
+ * Fetch every name into a candidate, turning un-fetchable names into
+ * `fetch-failed` rejections rather than dropping them (build.ts rationale).
+ */
+export async function fetchCandidates(
+  names: string[],
+  fetchImpl: typeof fetch = fetch,
+  token: string | undefined = undefined,
+): Promise<{ candidates: Candidate[]; rejections: Rejection[] }> {
+  const candidates: Candidate[] = []
+  const rejections: Rejection[] = []
+  for (let i = 0; i < names.length; i += HARVEST_CONCURRENCY) {
+    const batch = names.slice(i, i + HARVEST_CONCURRENCY)
+    const results = await Promise.all(batch.map(async name => ({ name, result: await fetchCandidate(name, fetchImpl, undefined, token) })))
+    for (const { name, result } of results) {
+      if (result.ok) candidates.push(result.candidate)
+      else rejections.push({ name, code: 'fetch-failed', detail: result.detail })
+    }
+  }
+  return { candidates, rejections }
 }
