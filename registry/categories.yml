@@ -1,0 +1,4 @@
+# LLM-assigned categories for derived listings (design 2026-08-26-llm-categorization-design.md).
+# A declared `dsh.catalog.category` always wins; a name absent from this file is simply
+# "not yet classified" and is retried on the next build.
+[]
