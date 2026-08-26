@@ -67,4 +67,12 @@ describe('classifyPackages', () => {
     expect(result.classified.size).toBe(0)
     expect(result.discarded[0]?.reason).toContain('503')
   })
+
+  it('resolves with gateway-unreachable discards when the gateway rejects', async () => {
+    const fetchImpl = (async () => { throw new Error('ECONNREFUSED') }) as unknown as typeof fetch
+    const result = await classifyPackages([item(0), item(1)], { ...options, fetchImpl })
+    expect(result.classified.size).toBe(0)
+    expect(result.discarded.map(d => d.name).sort()).toEqual(['dsh-pkg-0', 'dsh-pkg-1'])
+    for (const d of result.discarded) expect(d.reason.startsWith('gateway unreachable')).toBe(true)
+  })
 })

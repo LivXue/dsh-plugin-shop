@@ -74,23 +74,8 @@ export async function classifyPackages(items: ClassifyItem[], options: Options):
     const slice = batches.slice(i, i + CONCURRENCY)
     await Promise.all(slice.map(async batch => {
       const expected = new Set(batch.map(b => b.name))
-      let response = await fetchImpl(`${options.baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${options.apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: options.model,
-          temperature: 0,
-          max_tokens: 4096,
-          messages: [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: USER_TEMPLATE(batch) }],
-        }),
-      })
-      for (let attempt = 0; (response.status === 429 || response.status >= 500) && attempt < RETRY_LIMIT - 1; attempt += 1) {
-        const retryAfter = Number(response.headers.get('retry-after'))
-        const delay = Number.isFinite(retryAfter) && retryAfter > 0
-          ? Math.min(retryAfter * 1000, RETRY_MAX_DELAY_MS)
-          : Math.min(RETRY_BASE_DELAY_MS * 2 ** attempt, RETRY_MAX_DELAY_MS)
-        await sleep(delay)
-        response = await fetchImpl(`${options.baseUrl}/chat/completions`, {
+      try {
+        let response = await fetchImpl(`${options.baseUrl}/chat/completions`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${options.apiKey}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -100,23 +85,46 @@ export async function classifyPackages(items: ClassifyItem[], options: Options):
             messages: [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: USER_TEMPLATE(batch) }],
           }),
         })
-      }
-      if (!response.ok) {
-        for (const b of batch) discarded.push({ name: b.name, reason: `gateway ${response.status}` })
-        return
-      }
-      let text = ''
-      try {
-        const body = await response.json() as { choices?: { message?: { content?: unknown } }[] }
-        text = typeof body.choices?.[0]?.message?.content === 'string' ? body.choices[0].message.content : ''
-      } catch {
-        text = ''
-      }
-      const adopted = parseClassificationResponse(text, expected)
-      for (const b of batch) {
-        const category = adopted.get(b.name)
-        if (category !== undefined) classified.set(b.name, category)
-        else discarded.push({ name: b.name, reason: 'unparseable batch' })
+        for (let attempt = 0; (response.status === 429 || response.status >= 500) && attempt < RETRY_LIMIT - 1; attempt += 1) {
+          const retryAfter = Number(response.headers.get('retry-after'))
+          const delay = Number.isFinite(retryAfter) && retryAfter > 0
+            ? Math.min(retryAfter * 1000, RETRY_MAX_DELAY_MS)
+            : Math.min(RETRY_BASE_DELAY_MS * 2 ** attempt, RETRY_MAX_DELAY_MS)
+          await sleep(delay)
+          response = await fetchImpl(`${options.baseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${options.apiKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: options.model,
+              temperature: 0,
+              max_tokens: 4096,
+              messages: [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: USER_TEMPLATE(batch) }],
+            }),
+          })
+        }
+        if (!response.ok) {
+          for (const b of batch) discarded.push({ name: b.name, reason: `gateway ${response.status}` })
+          return
+        }
+        let text = ''
+        try {
+          const body = await response.json() as { choices?: { message?: { content?: unknown } }[] }
+          text = typeof body.choices?.[0]?.message?.content === 'string' ? body.choices[0].message.content : ''
+        } catch {
+          // A 200 whose body is not JSON or not the OpenAI shape: the batch degrades to unparseable discards below.
+          text = ''
+        }
+        const adopted = parseClassificationResponse(text, expected)
+        for (const b of batch) {
+          const category = adopted.get(b.name)
+          if (category !== undefined) classified.set(b.name, category)
+          else discarded.push({ name: b.name, reason: 'unparseable batch' })
+        }
+      } catch (error) {
+        // A transport failure (connection refused, DNS, TLS) or any other throw from this
+        // batch's own logic: every name in the batch becomes a gateway-unreachable discard.
+        // A down gateway never fails the classification step (spec §5/D4).
+        for (const b of batch) discarded.push({ name: b.name, reason: `gateway unreachable: ${error instanceof Error ? error.message : String(error)}` })
       }
     }))
   }
