@@ -118,6 +118,7 @@ dsh --profile <profile>
 |---|---|
 | [`/v1/index.json`](https://LivXue.github.io/dsh-plugin-shop/v1/index.json) | 指针——`schemaVersion`、`builtAt` 和内容哈希。足够小，适合轮询。 |
 | `/v1/plugins.<sha256>.json` | 数据——内容寻址，可无限期缓存。 |
+| `/v1/stars.<sha256>.json` | 按包名的 GitHub star 数（每日构建成功获取时） |
 
 每次构建的拒绝报告都会附在该次 workflow run 上，其中对每个被拒包都写明作者可读的原因。不会有
 任何东西在没有理由的情况下消失。

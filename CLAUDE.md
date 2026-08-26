@@ -41,13 +41,14 @@ pnpm build:catalog  # ~1390 live npm requests, several minutes — see below
 **A pure core, an impure shell.**
 
 - Pure: `gate.ts`, `tier.ts`, `emit.ts`, `pipeline.ts`, `schema.ts`, `types.ts`. No clock, no network, no filesystem, no environment. Every policy decision lives here, which is why fixtures can drive all of it.
-- Impure: `npm-client.ts` and `llm-client.ts` (the only modules that reach the network), `build.ts` (reads the clock once, writes the artifacts), `config.ts` (reads the registry YAML), `emit-schema.ts` (writes the generated schema).
+- Impure: `npm-client.ts`, `llm-client.ts`, and `github-stars.ts` (the only modules that reach the network), `build.ts` (reads the clock once, writes the artifacts), `config.ts` (reads the registry YAML), `emit-schema.ts` (writes the generated schema).
 
 A policy decision that migrates into the shell becomes untestable. If a pure module needs the time, take it as a parameter — `build.ts` reads the clock exactly once and passes it down.
 
 ## Invariants worth breaking a build over
 
 - **`builtAt` never enters the hashed content.** It belongs to `index.json` alone. Putting it in the data changes the content hash daily, invalidating every CDN cache and filling each commit with noise. A determinism test in `pipeline.test.ts` enforces this; if you find yourself editing that test to pass, you have broken the property it protects.
+- **Live daily data stays in its own sidecar.** Star counts change every day; they live in a separate content-addressed `stars.<sha>.json` so the plugin data hash never churns daily. The same rule as `builtAt`, applied to data.
 - **Entries sort by package name before emit.** Output must not depend on the order npm returned them in.
 - **`verified` pins a version, never a name.** A published version newer than `reviewedVersion` downgrades to `verified-stale` and keeps the review. Attaching verification to a package name lets an author pass review once and inherit trust for every future version — the cheapest supply-chain attack there is.
 - **Tiering and metadata are orthogonal.** `tier` answers "has a human read this?", `metadata` answers "did the author describe it?". A derived listing can be verified; do not couple them.

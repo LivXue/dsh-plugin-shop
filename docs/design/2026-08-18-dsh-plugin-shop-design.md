@@ -181,6 +181,8 @@ A consumer presents a derived entry as unclaimed, which is also the signal that 
 }
 ```
 
+The pointer may carry an optional `stars` object naming a content-addressed sidecar of GitHub star counts keyed by package name; stars are live daily data and are quarantined there so the plugin data hash stays cache-stable. `schemaVersion` remains 2.
+
 `/v1/plugins.<sha256>.json`:
 
 ```json
@@ -249,8 +251,9 @@ harvest -> fetch manifest -> classify -> gate -> tier -> emit -> commit snapshot
    `verified.yml` records `{ name, reviewedVersion, reviewer, reviewCommit, notes }`. If npm's latest exceeds `reviewedVersion`, the entry is **downgraded to `verified-stale`**, and the UI shows "reviewed v1.2.0 / current v1.3.0 unreviewed".
 
    Most markets attach verification to a package name, which means an author who passes review can then publish a malicious version and inherit the trust automatically. That is the cheapest supply-chain attack available.
-6. **Emit** — sort by package name for determinism; produce `plugins.<sha256>.json` and `index.json`, with the build report as a CI artifact.
-7. **Commit the snapshot** — write `manifest.lock` (name -> version -> integrity) back into `registry/snapshots/`.
+6. **Stars** — GitHub GraphQL fetches star counts for github.com repositories into `dist/v1/stars.<sha>.json`; failures publish without stars and retry next build (`github-stars.ts`, shell).
+7. **Emit** — sort by package name for determinism; produce `plugins.<sha256>.json` and `index.json`, with the build report as a CI artifact.
+8. **Commit the snapshot** — write `manifest.lock` (name -> version -> integrity) back into `registry/snapshots/`.
 
    **This step is the entire value of this approach over a server.** Without it, the design degrades into an opaque service that happens to run on CI.
 

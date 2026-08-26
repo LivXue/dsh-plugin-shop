@@ -124,6 +124,7 @@ Built daily and published as static JSON:
 |---|---|
 | [`/v1/index.json`](https://LivXue.github.io/dsh-plugin-shop/v1/index.json) | The pointer — `schemaVersion`, `builtAt`, and the content hash. Small enough to poll. |
 | `/v1/plugins.<sha256>.json` | The data — content-addressed, safe to cache indefinitely. |
+| `/v1/stars.<sha256>.json` | GitHub star counts by package name, when the daily build could fetch them |
 
 Each build's rejection report, carrying an author-readable reason for every rejected
 package, is attached to the workflow run. Nothing disappears without a reason attached
