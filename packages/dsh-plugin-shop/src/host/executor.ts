@@ -90,6 +90,15 @@ function spawnPluginCli(options: {
   onStatus?: (status: InstallStatus) => void
 }): RunningInstall {
   const { profile, argv, dshBin, env, confirm, onStatus } = options
+  // Argv smuggling guard: an operand that begins with `-` would be parsed as
+  // a flag by the CLI. A legitimate target — a catalog name for remove, a
+  // `name@version` spec for add — never begins with `-`, so refusing here
+  // cannot reject a real install or uninstall. Failing loudly beats letting
+  // the CLI reinterpret an operand as an option.
+  const target = argv[1]
+  if (target === undefined || target.startsWith('-')) {
+    throw new Error(`dsh-plugin-shop: refusing to spawn with a flag-like operand: ${target ?? '(none)'}`)
+  }
   const installId = randomUUID()
   const log: string[] = []
   let logBytes = 0

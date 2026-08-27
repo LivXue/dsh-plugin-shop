@@ -194,6 +194,18 @@ describe('startInstall post-install confirm (§7.2 step 6)', () => {
 })
 
 describe('startUninstall', () => {
+  it('refuses a flag-like name instead of letting the CLI parse it as an option', () => {
+    // A name beginning with `-` would be argv smuggling (e.g. `--profile` as
+    // an operand); the executor must throw rather than spawn. The same guard
+    // covers startInstall, whose spec is `name@version`.
+    expect(() => startUninstall({ profile: 'web', name: '--profile' })).toThrow(
+      'dsh-plugin-shop: refusing to spawn with a flag-like operand: --profile',
+    )
+    expect(() => startInstall({ profile: 'web', spec: '-x@1.0.0' })).toThrow(
+      'dsh-plugin-shop: refusing to spawn with a flag-like operand: -x@1.0.0',
+    )
+  })
+
   it('spawns dsh plugin remove and reports done with needsRestart', async () => {
     const bin = fixtureDsh(0)
     const uninstall = startUninstall({ profile: 'web', name: 'dsh-hello-plugin', dshBin: bin })
