@@ -97,6 +97,24 @@ describe('isShopLike', () => {
     expect(isShopLike('plugin-shop')).toBe(true)
   })
 
+  it('matches glued dsh-keyword forms', () => {
+    // `dshmarket` is one segment — no hyphen to split on — so the segment
+    // rule never saw it; these are the unhyphenated spellings of the same
+    // competing-market names.
+    expect(isShopLike('dshmarket')).toBe(true)
+    expect(isShopLike('dshstore')).toBe(true)
+    expect(isShopLike('dshmall')).toBe(true)
+    expect(isShopLike('dshshop')).toBe(true)
+    expect(isShopLike('dshmarketplace')).toBe(true)
+  })
+
+  it('does not match a glued keyword with extra letters after it', () => {
+    // `dshstorekeeper` is dsh+storekeeper, not dsh+store — the same
+    // precision principle as the hyphenated `dsh-storekeeper-tool` case.
+    expect(isShopLike('dshstorekeeper-tool')).toBe(false)
+    expect(isShopLike('dshrestore')).toBe(false)
+  })
+
   it('matches plugin-keyword concatenations', () => {
     expect(isShopLike('pluginstore')).toBe(true)
     expect(isShopLike('dsh-pluginmarket')).toBe(true)

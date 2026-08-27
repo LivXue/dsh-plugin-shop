@@ -127,6 +127,13 @@ export function isShopLike(name: string): boolean {
     /plugin(store|market|mall|shop|marketplace)/.test(segment)
     || /(store|market|mall|shop|marketplace)plugin/.test(segment))
   if (concatenated) return true
+  // The glued spelling: `dshmarket` is one segment, so the keyword rules
+  // below never see it. A segment that IS a keyword with only the `dsh`
+  // prefix glued on is a store name; `dshstorekeeper` (extra letters after
+  // the keyword) is not — same precision as the hyphenated cases.
+  const glued = segments.some(segment =>
+    segment.startsWith('dsh') && (SHOP_KEYWORDS as readonly string[]).some(keyword => segment === `dsh${keyword}`))
+  if (glued) return true
   const keywordSegments = segments.filter(segment => (SHOP_KEYWORDS as readonly string[]).includes(segment))
   if (keywordSegments.length === 0) return false
   return hasPlugin || SHOP_KEYWORDS.includes(segments.at(-1) as (typeof SHOP_KEYWORDS)[number])
