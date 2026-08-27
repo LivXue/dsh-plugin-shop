@@ -76,6 +76,10 @@ export const RESTART_GRACE_MS = 3000
  * answer before reporting the manual restart command. */
 export const RESTART_WAIT_MS = 30000
 
+/** How long the check-update button reports "up to date" after a re-check
+ * finds no newer release, before reverting to its idle label. */
+export const CHECK_UP_TO_DATE_MS = 3000
+
 /** How many shelf cards mount at a time. The shelf holds ~1900 entries; one
  * commit of the whole grid is ~28k DOM nodes, so the list renders in batches
  * behind a sentinel (§A1) and grows on scroll. 48 is ~3-4 rows. */

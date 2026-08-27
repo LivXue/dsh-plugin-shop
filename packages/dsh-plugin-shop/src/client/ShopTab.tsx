@@ -7,7 +7,7 @@
 import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
-import { CATEGORY_ORDER, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Category, categoryKey, categoryLocaleKey, formatStars, isShopLike, isUnclaimed, nextVisibleCount, rejectionCodeKey, sortByStars, tierKey } from './present.ts'
+import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Category, categoryKey, categoryLocaleKey, formatStars, isShopLike, isUnclaimed, nextVisibleCount, rejectionCodeKey, sortByStars, tierKey } from './present.ts'
 import { useInstall } from './useInstall.ts'
 import { useUninstall } from './useUninstall.ts'
 import { useUpdateSelf } from './useUpdateSelf.ts'
@@ -639,17 +639,29 @@ export function ShopTab(props: ShopTabProps): ReactNode {
   }, [version, request])
 
   // The on-demand check behind the version number, with the same advisory
-  // failure rule as the mount check. `checkingVersion` only disables the
-  // button while the check is in flight.
-  const [checkingVersion, setCheckingVersion] = useState(false)
+  // failure rule as the mount check. A re-check that finds nothing newer
+  // flips the button to "up to date" for CHECK_UP_TO_DATE_MS; finding a
+  // newer release leaves the idle label and shows the update button. The
+  // button is disabled while checking and while reporting up-to-date.
+  const [checkState, setCheckState] = useState<'idle' | 'checking' | 'up-to-date'>('idle')
+  const upToDateTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => {
+    if (upToDateTimer.current !== null) clearTimeout(upToDateTimer.current)
+  }, [])
   const checkVersion = async (): Promise<void> => {
-    setCheckingVersion(true)
+    setCheckState('checking')
     try {
-      setSelfVersion(await version())
+      const result = await version()
+      setSelfVersion(result)
+      if (result.outdated) {
+        setCheckState('idle')
+      } else {
+        setCheckState('up-to-date')
+        upToDateTimer.current = setTimeout(() => setCheckState('idle'), CHECK_UP_TO_DATE_MS)
+      }
     } catch {
       // Advisory, like the mount check.
-    } finally {
-      setCheckingVersion(false)
+      setCheckState('idle')
     }
   }
 
@@ -820,10 +832,10 @@ export function ShopTab(props: ShopTabProps): ReactNode {
                 type="button"
                 className={css.checkUpdateButton}
                 data-shop-check-update
-                disabled={checkingVersion}
+                disabled={checkState !== 'idle'}
                 onClick={() => void checkVersion()}
               >
-                {t('checkUpdate')}
+                {checkState === 'up-to-date' ? t('upToDate') : t('checkUpdate')}
               </button>
               {selfVersion.outdated && selfVersion.latest !== null && selfUpdate.view.kind === 'idle' && (
                 <button
