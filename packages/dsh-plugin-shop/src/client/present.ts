@@ -109,6 +109,12 @@ export function reduceInstall(state: InstallView, event: InstallEvent): InstallV
 
 const SHOP_KEYWORDS = ['store', 'market', 'mall', 'shop', 'marketplace'] as const
 
+/** Competing marketplaces whose names carry no store/market keyword and so
+ * escape the pattern rules below. Named explicitly rather than guessed:
+ * `dsh-plugin` is the npm package of github.com/dshplugin/dsh-plugin-hub —
+ * a community plugin marketplace for DeepSeek Harness. */
+const SHOP_LIKE_NAMES = ['dsh-plugin'] as const
+
 /**
  * Whether a package name reads as a plugin shop (a marketplace for dsh
  * plugins, e.g. `dsh-plugin-shop`, `dsh-store`, `pluginstore`). The shop
@@ -121,6 +127,7 @@ const SHOP_KEYWORDS = ['store', 'market', 'mall', 'shop', 'marketplace'] as cons
  * it matches other people's package names, not ours.
  */
 export function isShopLike(name: string): boolean {
+  if ((SHOP_LIKE_NAMES as readonly string[]).includes(name.toLowerCase())) return true
   const segments = name.toLowerCase().split(/[-_.]+/)
   const hasPlugin = segments.includes('plugin')
   const concatenated = segments.some(segment =>

@@ -85,6 +85,9 @@ maintainers publishing inside ten days. The repository, the Pages deployment
 and the catalog URL were renamed to match, so one name spans all of them.
 Note that `isShopLike` (§7.2 client filter) matches our own name by design:
 the shelf does not list itself, because the shop is bootstrap-installed.
+Competing marketplaces whose names escape the keyword patterns are named
+explicitly in the filter (2026-08-27: `dsh-plugin`, the npm package of
+`github.com/dshplugin/dsh-plugin-hub`).
 
 **R — `registry/` (data only, no runtime code)**
 

@@ -141,6 +141,16 @@ describe('isShopLike', () => {
     expect(isShopLike('market-plugin')).toBe(true)
   })
 
+  it('matches the named competing marketplaces that no pattern catches', () => {
+    // `dsh-plugin` is the npm package of github.com/dshplugin/dsh-plugin-hub
+    // — a plugin marketplace whose name carries no store/market keyword, so
+    // it is on the explicit list rather than the pattern rules. Only the
+    // exact unscoped name matches.
+    expect(isShopLike('dsh-plugin')).toBe(true)
+    expect(isShopLike('@dshplugin/dsh-plugin')).toBe(false)
+    expect(isShopLike('dsh-plugin-tools')).toBe(false)
+  })
+
   it('does not match ordinary plugin names', () => {
     // Precision over recall: a name that merely CONTAINS a keyword segment
     // without a plugin qualifier or keyword ending is not a shop plugin.
