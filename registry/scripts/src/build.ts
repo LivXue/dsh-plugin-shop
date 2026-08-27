@@ -1,9 +1,11 @@
 /**
  * Catalog build entry point.
  *
- * Network access is confined to `npm-client.ts`. Filesystem access lives in
- * this module (writing the build artifacts), in `config.ts` (reading the
- * registry inputs), and in `emit-schema.ts` (writing the generated schema).
+ * Network access is confined to `npm-client.ts`, `llm-client.ts`, and
+ * `github-stars.ts` (the only modules that reach the network). Filesystem
+ * access lives in this module (writing the build artifacts), in `config.ts`
+ * (reading the registry inputs), and in `emit-schema.ts` (writing the
+ * generated schema).
  * The pure core — `gate.ts`, `tier.ts`, `emit.ts`, `pipeline.ts`, `schema.ts`,
  * and `types.ts` — touches neither, so a failure here is an I/O failure
  * rather than a policy one.
@@ -56,6 +58,13 @@ if (harvestFrom === undefined) {
   process.stderr.write(`reusing harvest: ${candidates.length} candidate(s)\n`)
 }
 
+// The stars sidecar and the final artifacts all land under OUT_DIR (the
+// committed manifest under snapshots); create both directories before any
+// write, so a standalone run on a fresh checkout does not fail the first
+// write with ENOENT.
+mkdirSync(OUT_DIR, { recursive: true })
+mkdirSync(join(REGISTRY_DIR, 'snapshots'), { recursive: true })
+
 // Stars are daily-changing live data: they are quarantined in their own
 // content-addressed sidecar so plugins.json keeps its cache-stable hash
 // (spec 2026-08-26-github-stars-design.md D3). Advisory: any failure — no
@@ -100,8 +109,6 @@ if (ghToken === '') {
 
 const artifacts = runPipeline(candidates, config, new Date().toISOString(), rejections, starsInfo)
 
-mkdirSync(OUT_DIR, { recursive: true })
-mkdirSync(join(REGISTRY_DIR, 'snapshots'), { recursive: true })
 writeFileSync(join(OUT_DIR, artifacts.pluginsFileName), artifacts.pluginsJson)
 writeFileSync(join(OUT_DIR, 'index.json'), artifacts.indexJson)
 writeFileSync(join(REGISTRY_DIR, 'snapshots/manifest.lock'), artifacts.manifestLock)

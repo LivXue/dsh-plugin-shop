@@ -129,7 +129,9 @@ function parseStarsText(text: string): Record<string, number> {
  * only when the transport itself failed — the fetch threw or returned a
  * non-2xx (§10). A schemaVersion higher than this build supports, a malformed
  * pointer or data file, an absolute data URL, or a sha256 mismatch — fresh or
- * cached — throws even when a cache exists; never silently degraded.
+ * cached — throws even when a cache exists; never silently degraded. The stars
+ * sidecar is the sole exception: any irregularity there, a refused url
+ * included, degrades to no stars (spec §5).
  */
 export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogResult> {
   const {
@@ -260,8 +262,12 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
 
   let stars: Record<string, number> = {}
   if (pointer.stars !== undefined) {
-    const starsUrl = resolveDataUrl(baseUrl, pointer.stars.url)
     try {
+      // Resolution sits inside the advisory catch: a refused (absolute or
+      // cross-origin) stars url must degrade to no stars like any other
+      // sidecar failure — it still prevents the fetch, but never throws the
+      // loader out of a catalog whose data fetched fine (spec §5, §9.2).
+      const starsUrl = resolveDataUrl(baseUrl, pointer.stars.url)
       const starsResponse = await fetchImpl(starsUrl)
       if (starsResponse.ok) {
         const starsText = await starsResponse.text()
@@ -272,7 +278,8 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
         }
       }
     } catch {
-      // Advisory: an unreachable sidecar means no stars this run (spec §5).
+      // Advisory: an unreachable or refused sidecar means no stars this run
+      // (spec §5).
     }
   }
 

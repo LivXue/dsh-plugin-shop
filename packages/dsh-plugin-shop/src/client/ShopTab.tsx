@@ -88,7 +88,10 @@ const EntryCard = memo(function EntryCard({ entry, stars, t, install, installSta
           <span className={css.tierBadge} data-tier={entry.tier}>{t(tierKey(entry.tier))}</span>
           {isUnclaimed(entry) && <span className={css.unclaimedBadge}>{t('unclaimed')}</span>}
           {stars !== undefined && (
-            <span className={css.starsBadge} aria-label={t('stars', { count: formatStars(stars) })}>★ {formatStars(stars)}</span>
+            // role="img" names the badge for assistive tech (ARIA refuses to
+            // name a generic element); the name carries the RAW count — the
+            // locale's "1234 stars" — while the visual text stays compact.
+            <span className={css.starsBadge} role="img" aria-label={t('stars', { count: stars })}>★ {formatStars(stars)}</span>
           )}
           <ChevronIcon open={open} />
         </span>

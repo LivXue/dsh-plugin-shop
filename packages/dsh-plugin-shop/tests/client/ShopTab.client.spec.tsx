@@ -290,7 +290,9 @@ describe('ShopTab', () => {
     await waitFor(() => expect(screen.getByText('dsh-top')).toBeTruthy())
     const names = [...document.querySelectorAll('[class*="_name"]')].map(el => el.textContent)
     expect(names).toEqual(['dsh-top', 'dsh-nostar'])
-    expect(screen.getByLabelText('1.2k stars')).toBeTruthy()
+    // The badge is an img-role node, so the raw count names it for assistive
+    // tech while the visual text stays the compact "★ 1.2k" form.
+    expect(screen.getByLabelText('1234 stars')).toBeTruthy()
     expect(screen.getByText('★ 1.2k')).toBeTruthy()
   })
 

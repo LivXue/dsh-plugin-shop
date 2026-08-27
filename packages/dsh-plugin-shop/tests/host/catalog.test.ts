@@ -320,6 +320,29 @@ describe('loadCatalog', () => {
     expect(result.snapshot.entries[0]?.name).toBe('dsh-hello-plugin')
   })
 
+  it('degrades to an empty stars map when the stars url is absolute', async () => {
+    // Unlike the plugins data url — which is refused loudly — the stars
+    // sidecar is advisory: a cross-origin stars url must never throw the
+    // loader, and must never reach the network (spec §5, §9.2).
+    const data = dataJson([entry])
+    const { pointer } = pointerFor(data, '2026-08-25T00:00:00Z', {
+      url: 'http://169.254.169.254/latest', sha256: '0'.repeat(64),
+    })
+    const fetched: string[] = []
+    const fetchImpl = (async (input: string | URL) => {
+      const text = String(input)
+      fetched.push(text)
+      if (text.endsWith('/index.json')) return new Response(pointer, { status: 200 })
+      return new Response(data, { status: 200 })
+    }) as unknown as typeof fetch
+
+    const result = await loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() })
+    expect(result.snapshot.stars).toEqual({})
+    expect(result.snapshot.entries[0]?.name).toBe('dsh-hello-plugin')
+    expect(result.stale).toBe(false)
+    expect(fetched.filter(h => h.includes('169.254.169.254'))).toHaveLength(0)
+  })
+
   it('degrades to an empty stars map on a sha256 mismatch', async () => {
     const data = dataJson([entry])
     const stars = starsFile({ 'dsh-hello-plugin': 42 })
