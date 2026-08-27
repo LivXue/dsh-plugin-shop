@@ -40,7 +40,7 @@ flowchart LR
   npm(["npm registry<br/>关键字：dsh-plugin"]) -->|每日采集| build["registry/ 流水线<br/>准入 · 分层 · 产出"]
   build -->|提交快照 + 静态 JSON| pages[["GitHub Pages<br/>/v1/index.json"]]
   pages -->|拉取、校验 sha256、缓存| host["Host 半边<br/>dsh-plugin-shop"]
-  host -->|五个 shop/* 方法| client["Client 半边<br/>设置页标签"]
+  host -->|九个 shop/* 方法| client["Client 半边<br/>设置页标签"]
   host -->|dsh plugin add| profile[("你的 dsh profile")]
 ```
 
@@ -62,9 +62,9 @@ pnpm`，并用 `dsh --version` 和 `pnpm --version` 验证。
 # dsh 在 PATH 上（全局安装）。必须钉版本号：pnpm 11 会拦下刚发布的新版本，
 # 不写版本号的裸安装可能给你旧版。下面是当前版本——用
 # `npm view dsh-plugin-shop version` 查最新值。
-dsh plugin --profile web add dsh-plugin-shop@0.4.4
+dsh plugin --profile web add dsh-plugin-shop@0.4.5
 # 或全程走 npx，什么都不装：
-npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.4.4
+npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.4.5
 ```
 
 用的不是 `web` 就换成你自己的 profile。重启一次 `dsh`——新加的 bundle 不会作用于已在运行的
@@ -82,7 +82,7 @@ npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.4.4
 ls -1 "${DSH_HOME:-$HOME/.dsh}/profiles" | grep -v '^node_modules$'
 
 # 2. 安装——钉版本号：绕过 pnpm 的发布冷却期，确定性安装也是 agent 路径的要点
-dsh plugin --profile <profile> add dsh-plugin-shop@0.4.4
+dsh plugin --profile <profile> add dsh-plugin-shop@0.4.5
 
 # 3. 验证——上一步返回 0 只说明 pnpm 解析到了这个包
 dsh plugin --profile <profile> list --depth 0   # dsh-plugin-shop 必须出现

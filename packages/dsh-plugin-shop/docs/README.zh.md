@@ -48,9 +48,9 @@ pnpm`，并用 `dsh --version` 和 `pnpm --version` 验证。
 # dsh 在 PATH 上（全局安装）。必须钉版本号：pnpm 11 会拦下刚发布的新版本，
 # 不写版本号的裸安装可能给你旧版。下面是当前版本——用
 # `npm view dsh-plugin-shop version` 查最新值。
-dsh plugin --profile web add dsh-plugin-shop@0.4.4
+dsh plugin --profile web add dsh-plugin-shop@0.4.5
 # 或全程走 npx，什么都不装：
-npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.4.4
+npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.4.5
 ```
 
 如果你用的不是 `web` profile，把它换成你自己的。然后重启一次 `dsh`——新加的 bundle 不会作用于
@@ -75,7 +75,7 @@ ls -1 "${DSH_HOME:-$HOME/.dsh}/profiles" | grep -v '^node_modules$'
 **2. 安装。** 钉版本号——显式钉版本能绕过 pnpm 的发布冷却期，确定性安装本来也是 agent 路径的要点。
 
 ```sh
-dsh plugin --profile <profile> add dsh-plugin-shop@0.4.4
+dsh plugin --profile <profile> add dsh-plugin-shop@0.4.5
 ```
 
 **3. 验证——这步别省。** 第 2 步返回 0 只说明 pnpm 解析到了这个包，不代表 profile 会加载它。

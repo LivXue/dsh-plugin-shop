@@ -40,7 +40,7 @@ flowchart LR
   npm(["npm registry<br/>keyword: dsh-plugin"]) -->|daily harvest| build["registry/ pipeline<br/>gate · tier · emit"]
   build -->|committed snapshot + static JSON| pages[["GitHub Pages<br/>/v1/index.json"]]
   pages -->|fetch, verify sha256, cache| host["Host half<br/>dsh-plugin-shop"]
-  host -->|five shop/* methods| client["Client half<br/>the Settings tab"]
+  host -->|nine shop/* methods| client["Client half<br/>the Settings tab"]
   host -->|dsh plugin add| profile[("your dsh profile")]
 ```
 
@@ -65,9 +65,9 @@ install them once with `npm install -g @deepseek-ai/dsh pnpm` and verify with
 # recent releases, so a bare `add dsh-plugin-shop` can hand you an older
 # version for a while. This is the current release — refresh it with
 # `npm view dsh-plugin-shop version`.
-dsh plugin --profile web add dsh-plugin-shop@0.4.4
+dsh plugin --profile web add dsh-plugin-shop@0.4.5
 # or straight through npx, nothing installed:
-npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.4.4
+npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.4.5
 ```
 
 Replace `web` with your profile if you use another one. Restart `dsh` once — a newly
@@ -86,7 +86,7 @@ ls -1 "${DSH_HOME:-$HOME/.dsh}/profiles" | grep -v '^node_modules$'
 
 # 2. install — pin the version: it bypasses pnpm's release cooldown and
 #    deterministic installs are the point of the agent path
-dsh plugin --profile <profile> add dsh-plugin-shop@0.4.4
+dsh plugin --profile <profile> add dsh-plugin-shop@0.4.5
 
 # 3. verify — a zero exit above only means pnpm resolved the package
 dsh plugin --profile <profile> list --depth 0   # dsh-plugin-shop must appear
