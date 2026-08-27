@@ -45,10 +45,12 @@
 pnpm`，并用 `dsh --version` 和 `pnpm --version` 验证。
 
 ```sh
-# dsh 在 PATH 上（全局安装）：
-dsh plugin --profile web add dsh-plugin-shop
+# dsh 在 PATH 上（全局安装）。必须钉版本号：pnpm 11 会拦下刚发布的新版本，
+# 不写版本号的裸安装可能给你旧版。下面是当前版本——用
+# `npm view dsh-plugin-shop version` 查最新值。
+dsh plugin --profile web add dsh-plugin-shop@0.4.4
 # 或全程走 npx，什么都不装：
-npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop
+npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.4.4
 ```
 
 如果你用的不是 `web` profile，把它换成你自己的。然后重启一次 `dsh`——新加的 bundle 不会作用于
@@ -70,10 +72,10 @@ npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop
 ls -1 "${DSH_HOME:-$HOME/.dsh}/profiles" | grep -v '^node_modules$'
 ```
 
-**2. 安装。**
+**2. 安装。** 钉版本号——显式钉版本能绕过 pnpm 的发布冷却期，确定性安装本来也是 agent 路径的要点。
 
 ```sh
-dsh plugin --profile <profile> add dsh-plugin-shop
+dsh plugin --profile <profile> add dsh-plugin-shop@0.4.4
 ```
 
 **3. 验证——这步别省。** 第 2 步返回 0 只说明 pnpm 解析到了这个包，不代表 profile 会加载它。
@@ -94,7 +96,7 @@ dsh plugin --profile <profile> list --depth 0
 | 你看到什么 | 含义 | 怎么办 |
 |---|---|---|
 | `error: required option '--profile <name>' not specified` | 漏了 `--profile` | 补上，它没有默认值 |
-| 装到的版本比 npm 的 `latest` 旧 | pnpm 11 会压住刚发布不久的版本 | 属预期而非错误，冷却期过后自然拿到最新 |
+| 装到的版本比 npm 的 `latest` 旧 | pnpm 11 会压住刚发布不久的版本 | 显式钉版本：`dsh plugin --profile <p> add dsh-plugin-shop@<版本号>` |
 | `client bundles not found ... lib/client.js` | 磁盘上那份没有构建浏览器半边 | 从 npm 安装而不是从源码 checkout，或在该 checkout 里跑 `pnpm build` |
 | `dsh: pnpm not found on PATH — install pnpm to manage profile plugins` | `dsh plugin` 转发给 pnpm，而 pnpm 缺失 | `npm install -g pnpm` |
 | `no profile directory found above <path>` | 插件定位不到自己的 profile | 请报告——这是由 `ctx.baseUrl` 解析的，不该失败 |

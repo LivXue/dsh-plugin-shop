@@ -78,6 +78,7 @@ Everything from npm is hostile: package names, descriptions, `dsh.catalog` conte
 - Files end with exactly one trailing newline.
 - The zod schema is the single definition of the catalog section. `registry/schema/plugin-entry.schema.json` is generated from it and freshness-tested — regenerate it, never edit it.
 - User-facing docs are bilingual (`X.md` + `X.zh.md`, `English | 中文` header link). The Chinese file states the same facts in its own register; it is not a word-for-word translation.
+- The READMEs pin the current version in their install commands (`dsh-plugin-shop@<version>` — the explicit pin is the only way past pnpm 11's release cooldown). A release commit updates the pin in all four READMEs together with `package.json`.
 - **Design documents and specs are English only.** They are engineering records, not user surfaces.
 - Catalog summaries carry the author's `en` and `zh`. The build never synthesizes a translation; a missing one stays missing.
 - An empty `catch` names what it swallows and why nothing else can reach it.

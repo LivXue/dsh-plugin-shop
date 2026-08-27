@@ -46,10 +46,13 @@ install them once with `npm install -g @deepseek-ai/dsh pnpm` and verify with
 `dsh --version` and `pnpm --version`.
 
 ```sh
-# dsh on PATH (global install):
-dsh plugin --profile web add dsh-plugin-shop
+# dsh on PATH (global install). The explicit version pin matters: pnpm 11
+# holds back very recent releases, so a bare `add dsh-plugin-shop` can hand
+# you an older version for a while. Pin the current release — refresh it
+# with `npm view dsh-plugin-shop version`.
+dsh plugin --profile web add dsh-plugin-shop@0.4.4
 # or straight through npx, nothing installed:
-npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop
+npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.4.4
 ```
 
 Replace `web` with your profile if you use another one. Then restart `dsh` once — a
@@ -75,10 +78,11 @@ profile.
 ls -1 "${DSH_HOME:-$HOME/.dsh}/profiles" | grep -v '^node_modules$'
 ```
 
-**2. Install.**
+**2. Install.** Pin the version — the explicit pin bypasses pnpm's release
+cooldown, and deterministic installs are the point of the agent path.
 
 ```sh
-dsh plugin --profile <profile> add dsh-plugin-shop
+dsh plugin --profile <profile> add dsh-plugin-shop@0.4.4
 ```
 
 **3. Verify — do not skip this.** A zero exit from step 2 means pnpm resolved the
@@ -101,7 +105,7 @@ bundle is not.
 | What you see | What it means | What to do |
 |---|---|---|
 | `error: required option '--profile <name>' not specified` | `--profile` was omitted | Pass it; there is no default |
-| A version older than npm's `latest` gets installed | pnpm 11 holds back very recently published versions | Expected, not an error; the newest lands once its cooldown passes |
+| A version older than npm's `latest` gets installed | pnpm 11 holds back very recently published versions | Pin the version explicitly: `dsh plugin --profile <p> add dsh-plugin-shop@<version>` |
 | `client bundles not found ... lib/client.js` | the copy on disk was built without its browser half | Install from npm rather than from a source checkout, or run `pnpm build` in that checkout |
 | `dsh: pnpm not found on PATH — install pnpm to manage profile plugins` | `dsh plugin` forwards to pnpm, and pnpm is missing | `npm install -g pnpm` |
 | `no profile directory found above <path>` | the plugin could not locate its profile | Please report it — this is resolved from `ctx.baseUrl` and should not fail |
