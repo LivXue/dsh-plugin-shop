@@ -78,6 +78,8 @@ export async function apply(ctx: ClientContext): Promise<void> {
     installed: async () => unwrap(await ns.installed()),
     uninstall: async args => unwrap(await ns.uninstallStart(args)),
     restart: async () => unwrap(await ns.restart()),
+    version: async () => unwrap(await ns.version()),
+    updateStart: async args => unwrap(await ns.updateStart(args)),
   })
 
   ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register({

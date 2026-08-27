@@ -3,15 +3,17 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { readProfileManifest } from '@deepseek-ai/dsh-app-boot'
-import { lt, minVersion } from 'semver'
+import { lt, minVersion, valid } from 'semver'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
+import { ownVersion } from '../own-version.ts'
 import { loadCatalog, type LoadCatalogOptions } from './catalog.ts'
 import type { CatalogSnapshot } from './catalog.ts'
 import type { CatalogEntry, DeniedEntry } from './types.ts'
 import { validateInstall, type InstallArgs, type InstallRejectionCode } from './install.ts'
 import { startInstall, startUninstall, type InstallStatus } from './executor.ts'
 import { startRestart, type RestartOutcome } from './restart.ts'
+import { fetchLatestVersion } from './self-update.ts'
 import { discoverProfile, setUserLayerRow } from './profile.ts'
 
 // Re-exported so the boundary type is reachable from the package's public
@@ -52,6 +54,9 @@ export interface ShopGatewayOptions {
    * defaults to this process. Tests point it at a dead pid so the fixture
    * runs immediately instead of waiting for the vitest worker to exit. */
   restartParentPid?: number
+  /** Test-only injection: the shop's latest-version lookup; production
+   * fetches the npm packument. */
+  fetchLatestVersion?: () => Promise<string | null>
   /** How long the gateway waits after a successful restart response before
    * exiting the old process; test-only shortening, production uses 2s. */
   restartExitDelayMs?: number
@@ -79,6 +84,18 @@ export type ShopUninstallResult =
 /** `shop/restart` result (§7.3): the restarted server's URL, or a typed
  * failure — on failure the old process is still serving. */
 export type ShopRestartResult = RestartOutcome
+
+/** `shop/version` result (§7.3): the RUNNING shop version (from the shipped
+ * package.json, not the manifest's range), the npm latest when the check
+ * could answer (`null` = no answer — advisory, never an error), and the
+ * comparison verdict. */
+export interface ShopVersionResult { installed: string; latest: string | null; outdated: boolean }
+
+/** `shop/updateStart` result (§7.3): the self-update spawn, or a typed
+ * refusal (a version that is not plain semver). */
+export type ShopUpdateResult =
+  | { ok: true; installId: string }
+  | { ok: false; detail: string }
 
 /** `shop/installed` entry (§7.3): one installed catalog plugin. `installed`
  * is the profile manifest's dependency spec verbatim (a range, a tag, or
@@ -123,6 +140,7 @@ export class ShopGateway extends TypertRemoteService {
   private readonly exit: (code?: number) => void
   private readonly restartExitDelayMs: number
   private readonly restartParentPid: number
+  private readonly latestVersion: () => Promise<string | null>
   /** The install gate runs against the last loaded snapshot, never a fresh
    * fetch per request (§7.2: the Host's cached snapshot is the truth). */
   /** Finished install records retained, so a poll sees the true terminal
@@ -152,6 +170,7 @@ export class ShopGateway extends TypertRemoteService {
     this.exit = options.exit ?? ((code?: number) => process.exit(code))
     this.restartExitDelayMs = options.restartExitDelayMs ?? ShopGateway.RESTART_EXIT_DELAY_MS
     this.restartParentPid = options.restartParentPid ?? process.pid
+    this.latestVersion = options.fetchLatestVersion ?? (() => fetchLatestVersion())
   }
 
   /** The boot's Loader root directory (the active profile's `cordis.yml`
@@ -397,6 +416,42 @@ export class ShopGateway extends TypertRemoteService {
     // free when the new dsh binds.
     setTimeout(() => this.exit(0), this.restartExitDelayMs)
     return { ok: true }
+  }
+
+  /** The shop's own version and whether npm has a newer one (§7.3). The
+   * check is advisory: a registry that cannot answer leaves `latest` null
+   * and the client shows the version alone. `installed` is the RUNNING
+   * version (own-version.ts), not the manifest's range spec. */
+  @Remote('version')
+  async version(): Promise<ShopVersionResult> {
+    const installed = ownVersion()
+    const latest = await this.latestVersion()
+    return {
+      installed,
+      latest,
+      outdated: latest !== null && lt(installed, latest),
+    }
+  }
+
+  /** Update the shop itself to a published version (§7.3): the explicit pin
+   * is the only install form that bypasses pnpm's release cooldown. The
+   * version is re-validated as plain semver at the boundary — the spec
+   * `dsh-plugin-shop@<version>` is built here, never from the wire. */
+  @Remote('updateStart')
+  async updateStart(args: { version: string }): Promise<ShopUpdateResult> {
+    if (valid(args.version) === null) {
+      return { ok: false, detail: `dsh-plugin-shop: ${args.version} is not a valid version` }
+    }
+    const running = startInstall({
+      profile: this.profile,
+      spec: `dsh-plugin-shop@${args.version}`,
+      dshBin: this.dshBin,
+      expectedName: 'dsh-plugin-shop',
+    })
+    this.installs.set(running.installId, running)
+    this.installOrder.push(running.installId)
+    this.evictFinishedInstalls()
+    return { ok: true, installId: running.installId }
   }
 }
 

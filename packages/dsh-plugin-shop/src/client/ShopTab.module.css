@@ -158,6 +158,57 @@
   flex-wrap: wrap;
 }
 
+.toolbarRight {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* The shop's own version, right of the search box: `v0.4.4`, plus the
+ * update button when the version check found a newer release. */
+.versionBlock {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.versionText {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.updateSelfButton {
+  padding: 2px 10px;
+  border: 1px solid var(--dsw-alias-brand-primary);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, transparent);
+  color: var(--dsw-alias-brand-primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.updateSelfButton:hover {
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 20%, transparent);
+}
+
+.updateSelfButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+
+/* The self-update's expanded states (running log / done + restart /
+ * failure detail) sit under the toolbar, above the category bar. */
+.selfUpdatePanel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .searchInput {
   width: min(280px, 100%);
   padding: 6px 10px;

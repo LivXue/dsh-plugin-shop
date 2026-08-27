@@ -16,7 +16,7 @@ import type { CatalogEntry } from '../../src/host/types.ts'
 const shopHome = mkdtempSync(join(tmpdir(), 'dsh-gateway-home-'))
 process.env.DSH_HOME = shopHome
 mkdirSync(join(shopHome, 'profiles', 'web'), { recursive: true })
-writeFileSync(join(shopHome, 'profiles', 'web', 'package.json'), JSON.stringify({ dsh: { profile: { bundles: ['dsh-hello-plugin'] } } }))
+writeFileSync(join(shopHome, 'profiles', 'web', 'package.json'), JSON.stringify({ dsh: { profile: { bundles: ['dsh-hello-plugin', 'dsh-plugin-shop'] } } }))
 
 afterAll(() => {
   delete process.env.DSH_HOME
@@ -491,5 +491,82 @@ describe('ShopGateway.restart', () => {
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.detail).toContain('restart could not be started')
     expect(exit).not.toHaveBeenCalled()
+  })
+})
+
+describe('ShopGateway.version', () => {
+  // The running version is read from the package.json next to src/host —
+  // the repo's own version. Keep the expectations on properties the gateway
+  // computes, not on the literal version string, so a version bump does not
+  // rewrite this test.
+  const versionGateway = (latest: string | null): ShopGateway => new ShopGateway(stubCtx(), {
+    catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web',
+    fetchLatestVersion: async () => latest,
+  })
+
+  it('reports the running version, the latest, and the outdated verdict', async () => {
+    const gateway = versionGateway('9.9.9')
+    const result = await gateway.version()
+    expect(result.installed).toMatch(/^\d+\.\d+\.\d+$/)
+    expect(result.latest).toBe('9.9.9')
+    expect(result.outdated).toBe(true)
+  })
+
+  it('is not outdated when the latest equals the running version', async () => {
+    const gateway = versionGateway('0.0.1')
+    const result = await gateway.version()
+    expect(result.outdated).toBe(false)
+  })
+
+  it('leaves latest null when the check cannot answer, and never reports outdated', async () => {
+    const gateway = versionGateway(null)
+    const result = await gateway.version()
+    expect(result.latest).toBeNull()
+    expect(result.outdated).toBe(false)
+  })
+})
+
+describe('ShopGateway.updateStart', () => {
+  it('refuses a version that is not plain semver', async () => {
+    const gateway = new ShopGateway(stubCtx(), { catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web' })
+    expect(await gateway.updateStart({ version: '9.9.9 --force' })).toEqual({
+      ok: false, detail: 'dsh-plugin-shop: 9.9.9 --force is not a valid version',
+    })
+  })
+
+  it('spawns the pinned self-update spec through the executor', async () => {
+    // The confirm re-reads the profile manifest for the shop's bundle, so
+    // the fixture home must already list it (an update keeps it listed).
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-self-update-'))
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({
+      name: 'dsh-profile-web',
+      dsh: { profile: { bundles: ['dsh-plugin-shop'] } },
+    }))
+    const binDir = mkdtempSync(join(tmpdir(), 'dsh-self-update-bin-'))
+    const bin = join(binDir, 'dsh')
+    writeFileSync(bin, [
+      '#!/bin/sh',
+      `echo "$1 $2 $3 $4 $5" >> "${join(binDir, 'calls.log')}"`,
+      'exit 0',
+      '',
+    ].join('\n'))
+    chmodSync(bin, 0o755)
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir, dshBin: bin,
+    })
+    const result = await gateway.updateStart({ version: '9.9.9' })
+    expect(result.ok).toBe(true)
+    // Poll the public status RPC — the record's private internals stay
+    // inside the gateway — until the pinned spec reaches done.
+    if (result.ok) {
+      const deadline = Date.now() + 5000
+      for (;;) {
+        const status = gateway.installStatus({ installId: result.installId })
+        if (status.state === 'done') break
+        if (Date.now() > deadline) throw new Error(`self-update did not finish: ${status.detail ?? status.state}`)
+        await new Promise(resolve => setTimeout(resolve, 50))
+      }
+    }
+    expect(readFileSync(join(binDir, 'calls.log'), 'utf8')).toContain('add dsh-plugin-shop@9.9.9')
   })
 })

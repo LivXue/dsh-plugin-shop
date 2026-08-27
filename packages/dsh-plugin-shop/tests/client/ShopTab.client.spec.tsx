@@ -39,8 +39,10 @@ function bench(catalogResult: ShopCatalogResult, installedEntries: ShopInstalled
   const installed = vi.fn<ShopTabInjected['installed']>().mockResolvedValue(installedEntries)
   const uninstall = vi.fn<ShopTabInjected['uninstall']>().mockResolvedValue({ ok: true, installId: 'u1' })
   const restart = vi.fn<ShopTabInjected['restart']>().mockResolvedValue({ ok: true })
-  const injected: ShopTabInjected = { catalog, install, installStatus, setEnabled, installed, uninstall, restart }
-  return { catalog, install, installStatus, setEnabled, installed, uninstall, restart, injected }
+  const version = vi.fn<ShopTabInjected['version']>().mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false })
+  const updateStart = vi.fn<ShopTabInjected['updateStart']>().mockResolvedValue({ ok: true, installId: 's1' })
+  const injected: ShopTabInjected = { catalog, install, installStatus, setEnabled, installed, uninstall, restart, version, updateStart }
+  return { catalog, install, installStatus, setEnabled, installed, uninstall, restart, version, updateStart, injected }
 }
 
 function renderTab(injected: ShopTabInjected) {
@@ -210,6 +212,47 @@ describe('ShopTab', () => {
     fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-uninstall]')!)
     await waitFor(() => expect(screen.getByText(en.uninstalledRestartNotice)).toBeTruthy(), { timeout: 3000 })
     expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-restart]')).toBeTruthy()
+  })
+
+  it('shows the shop version next to the search box, without an update button when current', async () => {
+    const { injected } = bench(snapshot())
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('v0.4.4')).toBeTruthy())
+    expect(container.querySelector('[data-shop-version]')?.textContent).toBe('v0.4.4')
+    expect(container.querySelector('[data-shop-update-self]')).toBeNull()
+  })
+
+  it('shows no update button when the version check has no answer', async () => {
+    const { injected, version } = bench(snapshot())
+    version.mockResolvedValue({ installed: '0.4.4', latest: null, outdated: false })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('v0.4.4')).toBeTruthy())
+    expect(container.querySelector('[data-shop-update-self]')).toBeNull()
+  })
+
+  it('shows the update button for a newer release and drives the self-update to the restart offer', async () => {
+    const { injected, version, updateStart } = bench(snapshot())
+    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('v0.4.3')).toBeTruthy())
+    const button = container.querySelector('[data-shop-update-self]')
+    expect(button).not.toBeNull()
+    fireEvent.click(button!)
+    await waitFor(() => expect(updateStart).toHaveBeenCalledWith({ version: '0.4.4' }))
+    // The poll reports done; the panel carries the restart offer.
+    await waitFor(() => expect(container.querySelector('[data-shop-self-update-done]')).toBeTruthy(), { timeout: 3000 })
+    expect(container.querySelector('[data-shop-self-update-done] [data-shop-restart]')).toBeTruthy()
+  })
+
+  it('renders the host detail when the self-update is refused', async () => {
+    const { injected, version, updateStart } = bench(snapshot())
+    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true })
+    updateStart.mockResolvedValue({ ok: false, detail: 'dsh-plugin-shop: 0.4.4 is not a valid version' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('v0.4.3')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-update-self]')!)
+    await waitFor(() => expect(screen.getByText('dsh-plugin-shop: 0.4.4 is not a valid version')).toBeTruthy())
+    expect(screen.getByText(en.updateFailed)).toBeTruthy()
   })
 
   it('renders the failed install with the host log and detail', async () => {

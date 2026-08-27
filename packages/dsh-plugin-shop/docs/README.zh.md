@@ -111,6 +111,7 @@ dsh plugin --profile <profile> list --depth 0
 | **启停** | 对已安装插件生效，无需重启 |
 | **已安装状态** | 已安装的插件在卡片上显示「已安装」，目录有新版本时改为「更新」按钮，另有「卸载」按钮；顶部「已安装」筛选只看已装插件 |
 | **重启** | 安装、更新、卸载后商店会提议重启 dsh，并先说明代价：页面会断开，进行中的工作会中断 |
+| **自更新** | 搜索框旁显示商店自己的版本号，自动查 npm 有没有新版本，有则一键用钉死版本更新，随后照常重启 |
 
 ## 🧩 结构
 
@@ -119,7 +120,7 @@ dsh plugin --profile <profile> list --depth 0
 | 半边 | 入口 | 能触及 | 不能触及 |
 |---|---|---|---|
 | **Host** | `dsh-plugin-shop` | 网络（取目录并校验 sha256）、文件系统（缓存）、per-profile 互斥锁下的 `dsh plugin add` | —— |
-| **Client** | `dsh-plugin-shop/client` | 仅七个 `shop/*` Remote 方法 | 网络、文件系统 |
+| **Client** | `dsh-plugin-shop/client` | 仅九个 `shop/*` Remote 方法 | 网络、文件系统 |
 
 攻破浏览器那一半，攻击者拿到的就是那五个调用，别无其他。
 

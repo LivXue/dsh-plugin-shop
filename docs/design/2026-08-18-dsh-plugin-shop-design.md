@@ -115,8 +115,8 @@ Neither blocked capability stops v0: the shop uses its own `shop/*` Remote inste
 
 ### 5.3 Three hard boundaries
 
-1. **The Client half holds no privilege.** Everything it can do is the seven `shop/*` methods in §7.3. If the UI is compromised, the attack surface is those seven methods' arguments.
-2. **The Host accepts a name and a version, never an arbitrary spec.** `shop/installStart` takes `{ name, version }`, not a pnpm command line; `shop/uninstallStart` takes `{ name }`, never a pnpm command line. The Host validates against its own cached catalog snapshot (and, for uninstall, the installed manifest) and constructs the spec itself. `shop/restart` takes no arguments and re-spawns the Host's own command line verbatim — it cannot make the server do anything the user did not already launch.
+1. **The Client half holds no privilege.** Everything it can do is the nine `shop/*` methods in §7.3. If the UI is compromised, the attack surface is those nine methods' arguments.
+2. **The Host accepts a name and a version, never an arbitrary spec.** `shop/installStart` takes `{ name, version }`, not a pnpm command line; `shop/uninstallStart` takes `{ name }`, never a pnpm command line. The Host validates against its own cached catalog snapshot (and, for uninstall, the installed manifest) and constructs the spec itself. `shop/restart` takes no arguments and re-spawns the Host's own command line verbatim — it cannot make the server do anything the user did not already launch. `shop/updateStart` takes `{ version }`, re-validated as plain semver, and the Host builds the pinned `dsh-plugin-shop@<version>` spec itself — the self-update path can never carry an arbitrary spec.
 3. **The Host's catalog snapshot is the source of truth.** The browser sends a name; the Host decides using its own snapshot and trusts no metadata sent from the browser.
 
 A direct consequence of boundary 2: **the shop UI will never have an "install from GitHub URL" button.** That capability stays in `dsh plugin add`, because it requires the user to explicitly enable `allowBuilds` and explicitly pin a commit SHA — two decisions that must not collapse into one click.
@@ -300,6 +300,8 @@ Implementation decisions:
 | `shop/setEnabled` | `{ name, enabled }` | `{ ok }` |
 | `shop/uninstallStart` | `{ name }` | `{ installId }` |
 | `shop/restart` | none | `{ ok }` |
+| `shop/version` | none | `{ installed, latest, outdated }` |
+| `shop/updateStart` | `{ version }` | `{ installId }` |
 | `shop/installed` | none | `{ name, installed, latest, outdated }[]` |
 
 **Amendment (2026-08-25): the install method is `shop/installStart`, not `shop/install`.** The web full-flow e2e against the real composition exposed that the client api's `RemoteNamespaceService` owns a method named `install` (its internal mount primitive), so a Remote namespace cannot expose one: mounting `shop/install` throws "method \"shop/install\" conflicts with its namespace service". The wire method is renamed to `shop/installStart` (pairing with `shop/installStatus`); the client-visible injected face keeps the name `install`, and the host-side code method is unchanged — only the wire name differs.

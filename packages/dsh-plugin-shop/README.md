@@ -120,6 +120,7 @@ bundle is not.
 | **Enable / disable** | Applies to an installed plugin without a restart |
 | **Installed state** | An installed plugin shows an Installed label on its card — or an Update button when the catalog has a newer version — plus an Uninstall button; the Installed filter in the category bar shows only installed plugins |
 | **Restart** | After an install, update, or uninstall, the shop offers to restart dsh — stating the cost first: the page disconnects and in-flight work is interrupted |
+| **Self-update** | The shop shows its own version next to the search box, checks npm for a newer release, and updates itself with the pinned version — then the usual restart |
 
 ## 🧩 How it is put together
 
@@ -129,9 +130,9 @@ boundary:
 | Half | Entry | Can reach | Cannot reach |
 |---|---|---|---|
 | **Host** | `dsh-plugin-shop` | The network (catalog fetch and sha256 verify), the filesystem (cache), `dsh plugin add` under a per-profile mutex | — |
-| **Client** | `dsh-plugin-shop/client` | Exactly seven `shop/*` Remote methods | The network, the filesystem |
+| **Client** | `dsh-plugin-shop/client` | Exactly nine `shop/*` Remote methods | The network, the filesystem |
 
-Compromising the browser half buys an attacker those seven calls and nothing more.
+Compromising the browser half buys an attacker those nine calls and nothing more.
 
 ## ⚙️ Configuration
 

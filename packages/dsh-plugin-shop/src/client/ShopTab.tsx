@@ -6,10 +6,11 @@
 
 import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult } from '../host/index.ts'
+import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
 import { CATEGORY_ORDER, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Category, categoryKey, categoryLocaleKey, formatStars, isShopLike, isUnclaimed, nextVisibleCount, rejectionCodeKey, sortByStars, tierKey } from './present.ts'
 import { useInstall } from './useInstall.ts'
 import { useUninstall } from './useUninstall.ts'
+import { useUpdateSelf } from './useUpdateSelf.ts'
 import css from './ShopTab.module.css'
 
 /** The tab's Remote face: the Host result types, already unwrapped from the
@@ -23,6 +24,8 @@ export interface ShopTabInjected {
   installed: () => Promise<ShopInstalledEntry[]>
   uninstall: (args: { name: string }) => Promise<ShopUninstallResult>
   restart: () => Promise<ShopRestartResult>
+  version: () => Promise<ShopVersionResult>
+  updateStart: (args: { version: string }) => Promise<ShopUpdateResult>
 }
 
 /** Full component props assembled by the Settings slot renderer. */
@@ -574,9 +577,14 @@ function OutdatedSection({ state, tiers, t, setEnabled, install, installStatus, 
 /** The shop tab root: browse, search, refresh, and render one card per
  * entry. Data attributes on the e2e-relevant nodes follow the Task 3 list. */
 export function ShopTab(props: ShopTabProps): ReactNode {
-  const { t, catalog, install, installStatus, setEnabled, installed, uninstall, restart } = props
+  const { t, catalog, install, installStatus, setEnabled, installed, uninstall, restart, version, updateStart } = props
   const [catalogState, setCatalogState] = useState<CatalogState>({ kind: 'loading' })
   const [installedState, setInstalledState] = useState<InstalledState>({ kind: 'loading' })
+  // The shop's own version row: null while the check is loading or failed
+  // (the check is advisory — a failed one leaves the row empty, the tab's
+  // own error states carry the bigger story).
+  const [selfVersion, setSelfVersion] = useState<ShopVersionResult | null>(null)
+  const selfUpdate = useUpdateSelf(updateStart, installStatus)
   const [request, setRequest] = useState<LoadRequest>({ kind: 'initial' })
   const [query, setQuery] = useState('')
   // `installed` is a filter mode alongside the six catalog categories, not a
@@ -613,6 +621,22 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     void load()
     return () => { cancelled = true }
   }, [catalog, request])
+
+  // The shop's own version check runs alongside the catalog, reloading on
+  // refresh/retry too.
+  useEffect(() => {
+    let cancelled = false
+    const load = async (): Promise<void> => {
+      try {
+        const result = await version()
+        if (!cancelled) setSelfVersion(result)
+      } catch {
+        // The check is advisory: a transport failure leaves the row empty.
+      }
+    }
+    void load()
+    return () => { cancelled = true }
+  }, [version, request])
 
   // The installed list runs against the same snapshot the catalog serves, so it
   // reloads on refresh/retry too — the host keeps `lastSnapshot` between calls.
@@ -765,15 +789,69 @@ export function ShopTab(props: ShopTabProps): ReactNode {
             setVisibleCount(SHOP_VISIBLE_BATCH)
           }}
         />
-        {result.stale && (
-          <div className={css.staleBlock}>
-            <span className={css.staleBadge}>{t('staleLabel', { date: result.builtAt.slice(0, 10) })}</span>
-            <button type="button" className={css.actionButton} onClick={() => setRequest({ kind: 'refresh' })}>
-              {t('refresh')}
-            </button>
-          </div>
-        )}
+        <div className={css.toolbarRight}>
+          {result.stale && (
+            <div className={css.staleBlock}>
+              <span className={css.staleBadge}>{t('staleLabel', { date: result.builtAt.slice(0, 10) })}</span>
+              <button type="button" className={css.actionButton} onClick={() => setRequest({ kind: 'refresh' })}>
+                {t('refresh')}
+              </button>
+            </div>
+          )}
+          {selfVersion !== null && (
+            <div className={css.versionBlock}>
+              <span className={css.versionText} data-shop-version>v{selfVersion.installed}</span>
+              {selfVersion.outdated && selfVersion.latest !== null && selfUpdate.view.kind === 'idle' && (
+                <button
+                  type="button"
+                  className={css.updateSelfButton}
+                  data-shop-update-self
+                  onClick={() => {
+                    // outdated implies the check answered; the guard keeps
+                    // the type honest without asserting a value the host
+                    // never produces.
+                    if (selfVersion.latest !== null) void selfUpdate.start({ version: selfVersion.latest })
+                  }}
+                >
+                  {t('update')}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
+      {selfUpdate.view.kind === 'running' && (
+        <div className={css.selfUpdatePanel} data-shop-self-updating>
+          <p className={css.installing}>{t('installing')}</p>
+          {selfUpdate.view.log.length > 0 && (
+            <div className={css.log}>
+              {selfUpdate.view.log.map((line, index) => <div key={index} className={css.logLine}>{line}</div>)}
+            </div>
+          )}
+        </div>
+      )}
+      {selfUpdate.view.kind === 'done' && (
+        <div className={css.selfUpdatePanel} data-shop-self-update-done>
+          <div className={css.installedActions}>
+            <p className={css.notice}>{t('installedRestartNotice')}</p>
+            <RestartPanel t={t} restart={restart} />
+          </div>
+        </div>
+      )}
+      {selfUpdate.view.kind === 'failed' && (
+        <div className={css.selfUpdatePanel} data-shop-self-update-failed>
+          <p className={css.failedHeading}>{t('updateFailed')}</p>
+          {selfUpdate.view.log.length > 0 && (
+            <div className={css.log}>
+              {selfUpdate.view.log.map((line, index) => <div key={index} className={css.logLine}>{line}</div>)}
+            </div>
+          )}
+          {/* Same transport rule as the install panel: an empty detail is a
+              TRANSPORT failure and falls back to the localized line; a
+              non-empty detail is the host's published copy. */}
+          <p className={css.failedDetail}>{selfUpdate.view.detail === '' ? t('updateTransportFailed') : selfUpdate.view.detail}</p>
+        </div>
+      )}
       <div className={css.categoryBar} role="group" aria-label={t('catalog')}>
         <button
           type="button"

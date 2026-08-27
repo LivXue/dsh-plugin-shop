@@ -58,6 +58,8 @@ async function boot(shop: ShopStub = {}) {
     installed: vi.fn(),
     uninstallStart: vi.fn(),
     restart: vi.fn(),
+    version: vi.fn(),
+    updateStart: vi.fn(),
   })
   await apply(ctx)
   const entry = ctx.slots.entries('settings.plugins.tab').find(e => e.options.id === 'shop')
