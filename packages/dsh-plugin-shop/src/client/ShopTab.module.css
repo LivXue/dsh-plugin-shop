@@ -419,6 +419,18 @@
   overflow: hidden;
 }
 
+/* Expanded cards show the full summary: the clamp is lifted, never raised —
+ * a higher number would still truncate the author's text, just later. */
+.summaryExpanded {
+  -webkit-line-clamp: unset;
+  display: block;
+}
+
+.summaryZhExpanded {
+  -webkit-line-clamp: unset;
+  display: block;
+}
+
 .capabilitiesBlock {
   display: flex;
   flex-direction: column;

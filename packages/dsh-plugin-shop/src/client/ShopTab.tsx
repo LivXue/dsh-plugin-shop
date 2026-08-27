@@ -97,8 +97,14 @@ const EntryCard = memo(function EntryCard({ entry, stars, t, install, installSta
         </span>
       </button>
       <div className={css.body}>
-        {summary !== undefined && <p className={css.summary}>{summary.en}</p>}
-        {summary?.zh !== undefined && <p className={css.summaryZh}>{summary.zh}</p>}
+        {summary !== undefined && (
+          // Collapsed cards clamp the summary to keep the shelf even; an
+          // expanded card lifts the clamp so the author's full text shows.
+          <p className={open ? `${css.summary} ${css.summaryExpanded}` : css.summary}>{summary.en}</p>
+        )}
+        {summary?.zh !== undefined && (
+          <p className={open ? `${css.summaryZh} ${css.summaryZhExpanded}` : css.summaryZh}>{summary.zh}</p>
+        )}
         {entry.catalog !== undefined && entry.catalog.capabilities.length > 0 && (
           <div className={css.capabilitiesBlock}>
             <p className={css.capabilitiesNote}>{t('capabilitiesNote')}</p>

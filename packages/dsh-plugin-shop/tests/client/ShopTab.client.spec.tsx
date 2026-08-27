@@ -235,6 +235,18 @@ describe('ShopTab', () => {
     expect(screen.queryByRole('link', { name: 'not-a-url' })).toBeNull()
   })
 
+  it('clamps the summary when collapsed and lifts the clamp when expanded', async () => {
+    const { injected } = bench(snapshot())
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    // collapsed: the clamped class, not the expanded one
+    expect(container.querySelector('[class*="_summary"]')).not.toBeNull()
+    expect(container.querySelector('[class*="_summaryExpanded"]')).toBeNull()
+    fireEvent.click(screen.getByText('dsh-hello-plugin'))
+    // expanded: the expanded class joins the base class
+    expect(container.querySelector('[class*="_summaryExpanded"]')).not.toBeNull()
+  })
+
   it('pins the acknowledgement wording to §9.3 in both dictionaries', () => {
     expect(en.acknowledgementBody).toBe(ACKNOWLEDGEMENT_EN)
     expect(zh.acknowledgementBody).toBe(ACKNOWLEDGEMENT_ZH)

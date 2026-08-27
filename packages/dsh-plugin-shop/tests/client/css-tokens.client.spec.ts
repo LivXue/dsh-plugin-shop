@@ -53,6 +53,20 @@ const FILL_IS_THE_ONLY_AFFORDANCE = [
   '.capabilities li',
 ]
 
+describe('summary clamp', () => {
+  it('lifts the line clamp in the expanded state and only there', () => {
+    const collapsed = rules.get('.summary')
+    expect(collapsed).toMatch(/-webkit-line-clamp:\s*2/)
+    const expanded = rules.get('.summaryExpanded')
+    expect(expanded, 'no .summaryExpanded rule').toBeDefined()
+    expect(expanded).not.toMatch(/line-clamp:\s*\d/)
+    // The zh summary follows the same contract with its own clamp count.
+    expect(rules.get('.summaryZh')).toMatch(/-webkit-line-clamp:\s*1/)
+    expect(rules.get('.summaryZhExpanded')).toBeDefined()
+    expect(rules.get('.summaryZhExpanded')).not.toMatch(/line-clamp:\s*\d/)
+  })
+})
+
 describe('category spine hues', () => {
   const SIX_HUES = ['#4C8DFF', '#A78BFA', '#2DD4BF', '#F59E0B', '#34D399', '#8B8E96']
 
