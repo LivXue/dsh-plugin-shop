@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-shop",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "description": "The DeepSeek Harness plugin shop: browse, install, enable, and update dsh plugins from a git-auditable catalog.",
   "repository": {
     "type": "git",
