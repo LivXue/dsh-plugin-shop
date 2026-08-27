@@ -1,89 +1,64 @@
-/** Restart executor: re-spawn the Host's own command line and hand the
- * browser the new server's URL. The child is detached (its own process
- * group), so it survives both the parent's exit and the launching
- * terminal's. The parent exits only AFTER the child printed its
- * `dsh web: <url>` line — a restart that fails to come up leaves the old
- * process running untouched. */
+/** Restart executor: hand the port to a new dsh instance, two-phase.
+ *
+ * The old process cannot wait for the new one: the new one must bind the
+ * port the old one still holds, and two live processes cannot bind it at
+ * once — the first implementation spawned the child and waited for its URL,
+ * and the child crashed in boot with EADDRINUSE every time. The handoff is
+ * therefore inverted: the parent commits and exits FIRST, and a detached
+ * helper waits for the parent's pid to disappear before exec'ing the same
+ * dsh command line. The browser monitors the origin and refreshes once the
+ * new server answers; a boot that fails is diagnosed from the log file,
+ * since nobody is attached to the child's pipes. */
 
+import { openSync, closeSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 
-/** `shop/restart` outcome: the new server's URL, or a typed failure with an
- * author-readable detail. A failure means the OLD process is still serving —
- * the restart is all-or-nothing. */
+/** `shop/restart` result: committed, or a typed refusal issued BEFORE
+ * anything is torn down. Once `ok` is returned the old process WILL exit —
+ * the client monitors the new server and reports a failed boot with the
+ * manual command. */
 export type RestartOutcome =
-  | { ok: true; url: string }
+  | { ok: true }
   | { ok: false; detail: string }
 
-/** How long to wait for the child to print its URL before declaring the
- * restart failed and killing the child. dsh web prints the URL once the
- * Loader tree settles; 20s is generous on slow machines. */
-const RESTART_UP_TIMEOUT_MS = 20_000
-
-/** Spawn the restarted server and wait for it to announce its URL.
+/** Spawn the two-phase handoff. The helper is a POSIX shell wrapper that
+ * polls the parent pid until it is gone, then replaces itself with the dsh
+ * command — `exec "$@"` keeps the argv verbatim, so no argument quoting is
+ * involved. The child's stdout/stderr go to `logFile`, opened here in
+ * append mode; opening throws on failure, and the caller treats a throw as
+ * a refusal (the restart is never committed without its log).
  *
- * The child runs the same `dsh` with the same argv the current process was
- * launched with (`process.argv.slice(2)` — node and the CLI script path
- * stripped), so the profile, port and flags reproduce the user's launch
- * verbatim. `--port 0` therefore yields a NEW port, and the returned URL is
- * how the browser finds it.
- *
- * On success the caller exits the old process — but only after delivering
- * the RPC response carrying `url`, which is the caller's sequencing duty,
- * not this module's. On failure (child exits before announcing, spawn
- * error, or the timeout) the child is killed if still running and the old
- * process is untouched. */
+ * The pid-poll has the usual tiny reuse race — if the parent's pid is
+ * recycled within the 0.2s polling gap the helper waits for the unrelated
+ * process too. Harmless: it only delays the boot. */
 export function startRestart(options: {
   dshBin: string
   argv: string[]
+  parentPid: number
+  logFile: string
   env?: NodeJS.ProcessEnv
-  timeoutMs?: number
-}): Promise<RestartOutcome> {
-  const { dshBin, argv, env, timeoutMs = RESTART_UP_TIMEOUT_MS } = options
-  const stderr: string[] = []
-
-  return new Promise<RestartOutcome>((resolve) => {
-    const child = spawn(dshBin, argv, {
-      stdio: ['ignore', 'pipe', 'pipe'],
+}): void {
+  const { dshBin, argv, parentPid, logFile, env } = options
+  // Opened by the parent: the descriptor is inherited by the helper and the
+  // dsh child; the parent's own copy closes right after the spawn.
+  const logFd = openSync(logFile, 'a')
+  try {
+    const helper = spawn('sh', [
+      '-c',
+      // $1 is the parent pid; once `kill -0` fails the loop ends, the pid
+      // is shifted away, and "$@" is the dsh command line verbatim.
+      'while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; shift; exec "$@"',
+      'sh',
+      String(parentPid),
+      dshBin,
+      ...argv,
+    ], {
+      stdio: ['ignore', logFd, logFd],
       env: env ?? process.env,
-      detached: true, // its own process group: survives the parent's exit
+      detached: true, // its own process group: survives this process's exit
     })
-    child.unref()
-    const timeout = setTimeout(() => {
-      child.kill()
-      resolve({ ok: false, detail: 'the restarted server did not announce its URL in time' })
-    }, timeoutMs)
-
-    child.stdout.on('data', (chunk: Buffer) => {
-      for (const line of chunk.toString().split('\n')) {
-        if (line === '') continue
-        const match = /dsh web: (http:\/\/\S+)/.exec(line)
-        if (match?.[1] !== undefined) {
-          clearTimeout(timeout)
-          resolve({ ok: true, url: match[1] })
-        }
-      }
-    })
-    child.stderr.on('data', (chunk: Buffer) => {
-      for (const line of chunk.toString().split('\n')) if (line !== '') stderr.push(line)
-    })
-    child.on('error', (error) => {
-      const code = (error as NodeJS.ErrnoException).code
-      clearTimeout(timeout)
-      resolve({
-        ok: false,
-        detail: code === 'ENOENT'
-          ? 'dsh not found on PATH — restart could not be launched'
-          : `restart spawn failed: ${error.message}`,
-      })
-    })
-    child.on('close', () => {
-      // A close before the URL line means the child died during boot: the
-      // old process must keep serving. The stderr tail names the reason.
-      clearTimeout(timeout)
-      resolve({
-        ok: false,
-        detail: `the restarted server exited during boot — ${stderr[stderr.length - 1] ?? 'no output'}`,
-      })
-    })
-  })
+    helper.unref()
+  } finally {
+    closeSync(logFd)
+  }
 }

@@ -67,6 +67,15 @@ export type InstallEvent =
 /** §7.2 once-per-second poll cadence, as a named constant. */
 export const INSTALL_POLL_MS = 1000
 
+/** §8 restart handoff: the client polls the origin only after this grace
+ * period (the host's exit delay plus margin), so an origin that answers is
+ * the NEW server, never the dying old one. */
+export const RESTART_GRACE_MS = 3000
+
+/** §8 restart handoff: how long the client waits for the new server to
+ * answer before reporting the manual restart command. */
+export const RESTART_WAIT_MS = 30000
+
 /** How many shelf cards mount at a time. The shelf holds ~1900 entries; one
  * commit of the whole grid is ~28k DOM nodes, so the list renders in batches
  * behind a sentinel (§A1) and grows on scroll. 48 is ~3-4 rows. */

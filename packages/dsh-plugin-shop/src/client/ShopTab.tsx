@@ -7,7 +7,7 @@
 import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult } from '../host/index.ts'
-import { CATEGORY_ORDER, SHOP_VISIBLE_BATCH, type Category, categoryKey, categoryLocaleKey, formatStars, isShopLike, isUnclaimed, nextVisibleCount, rejectionCodeKey, sortByStars, tierKey } from './present.ts'
+import { CATEGORY_ORDER, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Category, categoryKey, categoryLocaleKey, formatStars, isShopLike, isUnclaimed, nextVisibleCount, rejectionCodeKey, sortByStars, tierKey } from './present.ts'
 import { useInstall } from './useInstall.ts'
 import { useUninstall } from './useUninstall.ts'
 import css from './ShopTab.module.css'
@@ -360,9 +360,12 @@ function UninstallPanel({ name, t, uninstall, installStatus, restart }: {
 /** The §8 restart flow (amendment 2026-08-27): after an install, update, or
  * uninstall reports done, this panel offers a restart of dsh. The
  * confirmation gate states the cost — the page disconnects and in-flight
- * conversations/tasks are interrupted — and on confirm the restart RPC runs;
- * the returned URL is where the browser jumps. A failed restart renders the
- * host's published detail: the old server is still up, nothing was lost. */
+ * conversations/tasks are interrupted — and on confirm the restart RPC
+ * commits the two-phase handoff: the host exits, a helper re-runs dsh, and
+ * this panel polls the origin after a grace period, refreshing the page
+ * once the NEW server answers. A refused restart renders the host's
+ * published detail; a server that never comes back names the manual
+ * command. */
 function RestartPanel({ t, restart }: {
   t: ShopTabProps['t']
   restart: ShopTabInjected['restart']
@@ -372,16 +375,13 @@ function RestartPanel({ t, restart }: {
 
   const onConfirm = async (): Promise<void> => {
     setGateOpen(false)
-    setState({ kind: 'restarting' })
     try {
       const result = await restart()
-      if (result.ok) {
-        // The host exits the old process shortly after this response lands;
-        // the URL names the restarted server (a fresh port under --port 0).
-        window.location.href = result.url
-      } else {
+      if (!result.ok) {
         setState({ kind: 'failed', detail: result.detail })
+        return
       }
+      setState({ kind: 'restarting' })
     } catch {
       // Transport failure: the request never reached the host, and the wire
       // detail is private (hosts and ports) — the localized line is its
@@ -389,6 +389,29 @@ function RestartPanel({ t, restart }: {
       setState({ kind: 'failed', detail: t('restartTransportFailed') })
     }
   }
+
+  // The origin monitor: while restarting, poll the current URL after the
+  // grace period (the host exits within it, so an answer is the NEW server)
+  // and reload into it. If it never answers within the wait, the honest
+  // failure names the manual command.
+  useEffect(() => {
+    if (state.kind !== 'restarting') return
+    const started = Date.now()
+    const timer = setInterval(() => {
+      const elapsed = Date.now() - started
+      if (elapsed < RESTART_GRACE_MS) return
+      // Success reloads into the new server; a rejection just means the new
+      // server is not up yet — keep polling until the wait expires.
+      void fetch(window.location.href, { cache: 'no-store' }).then(() => {
+        window.location.reload()
+      }, () => {})
+      if (elapsed > RESTART_WAIT_MS) {
+        clearInterval(timer)
+        setState({ kind: 'failed', detail: t('restartFailedNotice') })
+      }
+    }, INSTALL_POLL_MS)
+    return () => clearInterval(timer)
+  }, [state, t])
 
   if (state.kind === 'restarting') {
     return <p className={css.notice} data-shop-restarting>{t('restarting')}</p>

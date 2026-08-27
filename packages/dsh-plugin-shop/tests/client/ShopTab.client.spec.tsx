@@ -1,12 +1,18 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ACKNOWLEDGEMENT_EN, ACKNOWLEDGEMENT_ZH, SHOP_VISIBLE_BATCH, rejectionCodeKey } from '../../src/client/present.ts'
+import { ACKNOWLEDGEMENT_EN, ACKNOWLEDGEMENT_ZH, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, rejectionCodeKey } from '../../src/client/present.ts'
 import { en, zh, type ShopLocaleKey } from '../../src/client/locales.ts'
 import { ShopTab, type ShopTabInjected, type ShopTabProps } from '../../src/client/ShopTab.tsx'
 import type { ShopCatalogResult, ShopInstalledEntry } from '../../src/host/index.ts'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  // The restart-origin test drives fake timers and a stubbed fetch; leak
+  // neither into the next test.
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
+})
 
 function snapshot(overrides: Partial<ShopCatalogResult['plugins'][number]> = {}): ShopCatalogResult {
   return {
@@ -32,7 +38,7 @@ function bench(catalogResult: ShopCatalogResult, installedEntries: ShopInstalled
   const setEnabled = vi.fn<ShopTabInjected['setEnabled']>().mockResolvedValue({ ok: true })
   const installed = vi.fn<ShopTabInjected['installed']>().mockResolvedValue(installedEntries)
   const uninstall = vi.fn<ShopTabInjected['uninstall']>().mockResolvedValue({ ok: true, installId: 'u1' })
-  const restart = vi.fn<ShopTabInjected['restart']>().mockResolvedValue({ ok: true, url: 'http://restarted.test/' })
+  const restart = vi.fn<ShopTabInjected['restart']>().mockResolvedValue({ ok: true })
   const injected: ShopTabInjected = { catalog, install, installStatus, setEnabled, installed, uninstall, restart }
   return { catalog, install, installStatus, setEnabled, installed, uninstall, restart, injected }
 }
@@ -159,15 +165,42 @@ describe('ShopTab', () => {
 
   it('renders the host detail when the restart fails and leaves the restarting state', async () => {
     const { injected, restart } = bench(snapshot({ tier: 'verified' }))
-    restart.mockResolvedValue({ ok: false, detail: 'the restarted server exited during boot — boom' })
+    restart.mockResolvedValue({ ok: false, detail: 'dsh-plugin-shop: restart is not supported when dsh was launched with --port 0; restart dsh manually' })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     fireEvent.click(screen.getByText(en.install))
     await waitFor(() => expect(container.querySelector('[data-shop-restart]')).toBeTruthy(), { timeout: 3000 })
     fireEvent.click(container.querySelector('[data-shop-restart]')!)
     fireEvent.click(screen.getByText(en.restartConfirm))
-    await waitFor(() => expect(screen.getByText('the restarted server exited during boot — boom')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('dsh-plugin-shop: restart is not supported when dsh was launched with --port 0; restart dsh manually')).toBeTruthy())
     expect(screen.queryByText(en.restarting)).toBeNull()
+  })
+
+  it('polls the origin after the grace period and names the manual command when the server never comes back', async () => {
+    const { injected } = bench(snapshot({ tier: 'verified' }))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText(en.install))
+    await waitFor(() => expect(container.querySelector('[data-shop-restart]')).toBeTruthy(), { timeout: 3000 })
+
+    // The origin monitor runs under fake timers: a rejecting fetch stands in
+    // for the dead old server and the not-yet-up new one.
+    vi.useFakeTimers()
+    const fetchMock = vi.fn().mockRejectedValue(new Error('connection refused'))
+    vi.stubGlobal('fetch', fetchMock)
+    fireEvent.click(container.querySelector('[data-shop-restart]')!)
+    fireEvent.click(screen.getByText(en.restartConfirm))
+    await act(async () => { await vi.advanceTimersByTimeAsync(100) })
+    expect(screen.getByText(en.restarting)).toBeTruthy()
+    // Inside the grace period the origin is not touched — an answering
+    // origin there would still be the dying old server.
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+    expect(fetchMock).not.toHaveBeenCalled()
+    // Past the grace period the poll runs; a server that never answers ends
+    // in the honest manual-command notice.
+    await act(async () => { await vi.advanceTimersByTimeAsync(RESTART_WAIT_MS) })
+    expect(fetchMock).toHaveBeenCalled()
+    expect(screen.getByText(en.restartFailedNotice)).toBeTruthy()
   })
 
   it('offers the restart button after a successful uninstall', async () => {

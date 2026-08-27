@@ -5,6 +5,7 @@ import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { readProfileManifest } from '@deepseek-ai/dsh-app-boot'
 import { lt, minVersion } from 'semver'
 import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
 import { loadCatalog, type LoadCatalogOptions } from './catalog.ts'
 import type { CatalogSnapshot } from './catalog.ts'
 import type { CatalogEntry, DeniedEntry } from './types.ts'
@@ -47,6 +48,10 @@ export interface ShopGatewayOptions {
   /** Test-only injection: the exit the restart calls after the response is
    * delivered. Production uses `process.exit`. */
   exit?: (code?: number) => void
+  /** The pid the restart helper waits on before exec'ing the new dsh;
+   * defaults to this process. Tests point it at a dead pid so the fixture
+   * runs immediately instead of waiting for the vitest worker to exit. */
+  restartParentPid?: number
   /** How long the gateway waits after a successful restart response before
    * exiting the old process; test-only shortening, production uses 2s. */
   restartExitDelayMs?: number
@@ -117,6 +122,7 @@ export class ShopGateway extends TypertRemoteService {
    * production, a spy in tests. */
   private readonly exit: (code?: number) => void
   private readonly restartExitDelayMs: number
+  private readonly restartParentPid: number
   /** The install gate runs against the last loaded snapshot, never a fresh
    * fetch per request (§7.2: the Host's cached snapshot is the truth). */
   /** Finished install records retained, so a poll sees the true terminal
@@ -145,6 +151,7 @@ export class ShopGateway extends TypertRemoteService {
     this.restartArgv = options.restartArgv ?? process.argv.slice(2)
     this.exit = options.exit ?? ((code?: number) => process.exit(code))
     this.restartExitDelayMs = options.restartExitDelayMs ?? ShopGateway.RESTART_EXIT_DELAY_MS
+    this.restartParentPid = options.restartParentPid ?? process.pid
   }
 
   /** The boot's Loader root directory (the active profile's `cordis.yml`
@@ -358,22 +365,38 @@ export class ShopGateway extends TypertRemoteService {
   }
 
   /** Restart the dsh process the shop runs in (§8 amendment, 2026-08-27):
-   * re-spawn this process's own command line, return the new server's URL
-   * once it announces itself, and only then exit. A failed restart returns a
-   * typed failure and the old process keeps serving — the restart is
-   * all-or-nothing. The response must reach the browser before the exit, so
-   * the exit is delayed past the RPC round-trip. */
+   * commit a two-phase handoff — a detached helper waits for this pid to
+   * exit, then re-runs this process's own command line — and exit once the
+   * response is out. The browser monitors the origin and refreshes when the
+   * new server answers. Refusals are issued before anything is torn down. */
   @Remote('restart')
   async restart(): Promise<ShopRestartResult> {
-    const outcome = await startRestart({
-      dshBin: this.dshBin,
-      argv: this.restartArgv,
-      env: process.env,
-    })
-    if (outcome.ok) {
-      setTimeout(() => this.exit(0), this.restartExitDelayMs)
+    // Under --port 0 the OS hands the NEW process a fresh port the browser
+    // cannot know; a restart would strand the client. Refuse before
+    // anything is torn down.
+    const portIndex = this.restartArgv.indexOf('--port')
+    if (portIndex !== -1 && this.restartArgv[portIndex + 1] === '0') {
+      return { ok: false, detail: 'dsh-plugin-shop: restart is not supported when dsh was launched with --port 0; restart dsh manually' }
     }
-    return outcome
+    try {
+      const { cacheDir } = this.rowConfig()
+      startRestart({
+        dshBin: this.dshBin,
+        argv: this.restartArgv,
+        parentPid: this.restartParentPid,
+        logFile: join(cacheDir, 'restart.log'),
+        env: process.env,
+      })
+    } catch (error) {
+      // A refused restart must not tear anything down; the detail names the
+      // config or log problem in the shop's own words.
+      return { ok: false, detail: `dsh-plugin-shop: restart could not be started: ${(error as Error).message}` }
+    }
+    // The response must reach the browser before this process exits; the
+    // helper holds the child back until this pid is gone, so the port is
+    // free when the new dsh binds.
+    setTimeout(() => this.exit(0), this.restartExitDelayMs)
+    return { ok: true }
   }
 }
 

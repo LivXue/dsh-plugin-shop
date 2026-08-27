@@ -432,54 +432,64 @@ describe('ShopGateway.uninstall', () => {
 })
 
 describe('ShopGateway.restart', () => {
-  // A fixture `dsh` for the success path: prints the announce line and then
-  // stays up, so the gateway's restart resolves the URL without a real web
-  // boot. The failure path uses a fixture that exits during boot.
-  function announcingDsh(): string {
+  // The handoff is two-phase: the helper waits for the parent pid before
+  // exec'ing dsh. Point it at a pid that is already dead so the fixture
+  // would run immediately — the gateway tests assert the RPC and the exit,
+  // not the helper's wait (covered in restart.test.ts).
+  // The helper exec's the fixture as soon as the (already dead) parent pid
+  // check passes; the fixture is a harmless echo-exit so no real dsh web is
+  // ever spawned by a test.
+  function restartingGateway(options: { exit: ReturnType<typeof vi.fn>; cacheDir?: string; restartArgv?: string[] }): ShopGateway {
     const dir = mkdtempSync(join(tmpdir(), 'dsh-gateway-restart-'))
     const bin = join(dir, 'dsh')
-    writeFileSync(bin, '#!/bin/sh\necho "dsh web: http://127.0.0.1:4567"\nsleep 60\n')
+    writeFileSync(bin, `#!/bin/sh\necho "$1 $2 $3" >> "${join(dir, 'calls.log')}"\nexit 0\n`)
     chmodSync(bin, 0o755)
-    return bin
-  }
-
-  function failingDsh(): string {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-gateway-restart-'))
-    const bin = join(dir, 'dsh')
-    writeFileSync(bin, '#!/bin/sh\necho "boom: cannot bind" >&2\nexit 1\n')
-    chmodSync(bin, 0o755)
-    return bin
-  }
-
-  it('re-spawns the original argv, resolves the announced URL, and exits after the response', async () => {
-    const exit = vi.fn<() => void>()
-    const gateway = new ShopGateway(stubCtx(), {
-      catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web',
-      dshBin: announcingDsh(),
-      restartArgv: ['web', '--no-open'],
-      exit,
+    return new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/',
+      cacheDir: options.cacheDir ?? mkdtempSync(join(tmpdir(), 'dsh-restart-cache-')),
+      profile: 'web',
+      dshBin: bin,
+      restartArgv: options.restartArgv ?? ['web'],
+      exit: options.exit,
       restartExitDelayMs: 5,
+      // The vitest worker is alive for the whole file; a pid beyond the
+      // kernel's pid_max is guaranteed dead, so the helper runs the fixture
+      // at once and never lingers past the test run.
+      restartParentPid: 1_000_000_000,
     })
+  }
+
+  it('commits the handoff with { ok: true } and exits after the response', async () => {
+    const exit = vi.fn<() => void>()
+    const gateway = restartingGateway({ exit })
     const result = await gateway.restart()
-    expect(result).toEqual({ ok: true, url: 'http://127.0.0.1:4567' })
+    expect(result).toEqual({ ok: true })
     // The exit is delayed past the RPC round-trip, then fires.
     await new Promise(resolve => setTimeout(resolve, 50))
     expect(exit).toHaveBeenCalledWith(0)
   })
 
-  it('reports the typed failure and does NOT exit when the child fails to boot', async () => {
+  it('refuses --port 0 without exiting: the new port would strand the browser', async () => {
+    const exit = vi.fn<() => void>()
+    const gateway = restartingGateway({ exit, restartArgv: ['web', '--port', '0'] })
+    const result = await gateway.restart()
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.detail).toContain('--port 0')
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(exit).not.toHaveBeenCalled()
+  })
+
+  it('reports a typed failure without exiting when the shop row config is missing', async () => {
     const exit = vi.fn<() => void>()
     const gateway = new ShopGateway(stubCtx(), {
-      catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web',
-      dshBin: failingDsh(),
+      profile: 'web',
       restartArgv: ['web'],
       exit,
       restartExitDelayMs: 5,
     })
     const result = await gateway.restart()
     expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.detail).toContain('exited during boot')
-    await new Promise(resolve => setTimeout(resolve, 50))
+    if (!result.ok) expect(result.detail).toContain('restart could not be started')
     expect(exit).not.toHaveBeenCalled()
   })
 })
