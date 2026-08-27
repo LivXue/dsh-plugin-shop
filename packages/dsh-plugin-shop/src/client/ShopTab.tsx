@@ -638,6 +638,21 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     return () => { cancelled = true }
   }, [version, request])
 
+  // The on-demand check behind the version number, with the same advisory
+  // failure rule as the mount check. `checkingVersion` only disables the
+  // button while the check is in flight.
+  const [checkingVersion, setCheckingVersion] = useState(false)
+  const checkVersion = async (): Promise<void> => {
+    setCheckingVersion(true)
+    try {
+      setSelfVersion(await version())
+    } catch {
+      // Advisory, like the mount check.
+    } finally {
+      setCheckingVersion(false)
+    }
+  }
+
   // The installed list runs against the same snapshot the catalog serves, so it
   // reloads on refresh/retry too — the host keeps `lastSnapshot` between calls.
   useEffect(() => {
@@ -801,6 +816,15 @@ export function ShopTab(props: ShopTabProps): ReactNode {
           {selfVersion !== null && (
             <div className={css.versionBlock}>
               <span className={css.versionText} data-shop-version>v{selfVersion.installed}</span>
+              <button
+                type="button"
+                className={css.checkUpdateButton}
+                data-shop-check-update
+                disabled={checkingVersion}
+                onClick={() => void checkVersion()}
+              >
+                {t('checkUpdate')}
+              </button>
               {selfVersion.outdated && selfVersion.latest !== null && selfUpdate.view.kind === 'idle' && (
                 <button
                   type="button"

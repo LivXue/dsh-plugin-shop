@@ -230,6 +230,20 @@ describe('ShopTab', () => {
     expect(container.querySelector('[data-shop-update-self]')).toBeNull()
   })
 
+  it('re-checks the version on demand from the check button next to it', async () => {
+    const { injected, version } = bench(snapshot())
+    version
+      .mockResolvedValueOnce({ installed: '0.4.4', latest: '0.4.4', outdated: false })
+      .mockResolvedValue({ installed: '0.4.4', latest: '0.4.5', outdated: true })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('v0.4.4')).toBeTruthy())
+    expect(container.querySelector('[data-shop-update-self]')).toBeNull()
+    fireEvent.click(container.querySelector('[data-shop-check-update]')!)
+    await waitFor(() => expect(version).toHaveBeenCalledTimes(2))
+    // The re-check found 0.4.5: the update button appears next to the row.
+    await waitFor(() => expect(container.querySelector('[data-shop-update-self]')).toBeTruthy())
+  })
+
   it('shows the update button for a newer release and drives the self-update to the restart offer', async () => {
     const { injected, version, updateStart } = bench(snapshot())
     version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true })

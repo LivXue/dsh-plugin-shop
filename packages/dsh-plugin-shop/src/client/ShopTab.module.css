@@ -200,6 +200,33 @@
   outline-offset: 1px;
 }
 
+/* The on-demand re-check next to the version number: a quiet pill; the
+ * border and text carry it in the light theme where bg layers are white. */
+.checkUpdateButton {
+  padding: 2px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.checkUpdateButton:hover {
+  border-color: var(--dsw-alias-label-secondary);
+  color: var(--dsw-alias-label-primary);
+}
+
+.checkUpdateButton:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.checkUpdateButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+
 /* The self-update's expanded states (running log / done + restart /
  * failure detail) sit under the toolbar, above the category bar. */
 .selfUpdatePanel {

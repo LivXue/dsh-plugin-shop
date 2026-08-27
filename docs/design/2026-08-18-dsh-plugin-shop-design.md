@@ -312,6 +312,8 @@ Implementation decisions:
 
 **Amendment (2026-08-27, follow-up): `shop/uninstallStart` joins the RPC surface, the shelf gains an Installed filter, and installed cards carry uninstall.** Removing a plugin revokes privilege rather than granting it, so uninstall sits inside the §9.1 Client-half threat model (the five-method boundary becomes six); the RPC validates the name against the catalog snapshot and the installed manifest, so it cannot remove profile dependencies the shop does not manage (the base bundle, the shop itself). The category bar gains an Installed button that filters the shelf to installed plugins; installed cards show the update button (when behind) plus an uninstall button, replacing the bare installed label. The "Plugin catalog" heading is dropped — the bar and stats carry the context.
 
+**Amendment (2026-08-27, follow-up): self-update.** The shop shows its own running version right of the search box (read from the shipped package.json), checks npm for a newer release on mount/refresh and on demand via a check button next to the version, and offers an update button when behind. `shop/version` reports `{ installed, latest, outdated }` with `latest` degrading to null when the registry cannot answer (advisory, like the stars sidecar); `shop/updateStart` runs the pinned `dsh-plugin-shop@<version>` spec (the only install form that bypasses pnpm's release cooldown) through the same executor, records, and polling as installs, with the version re-validated as plain semver at the boundary. The Client-half boundary becomes nine methods.
+
 ## 8. When changes take effect
 
 | Operation | Restart required | Evidence |
