@@ -247,6 +247,60 @@ describe('ShopTab', () => {
     expect(container.querySelector('[class*="_summaryExpanded"]')).not.toBeNull()
   })
 
+  it('filters the shelf by category and restores with All', async () => {
+    const result = snapshot()
+    result.plugins = [
+      { ...result.plugins[0]!, name: 'dsh-tool-a' },
+      { ...result.plugins[0]!, name: 'dsh-ui-a' },
+    ]
+    result.plugins[0]!.catalog = { category: 'tool', summary: { en: 'a tool' }, capabilities: [] }
+    result.plugins[1]!.catalog = { category: 'ui', summary: { en: 'a ui' }, capabilities: [] }
+    const { injected } = bench(result)
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-tool-a')).toBeTruthy())
+
+    fireEvent.click(screen.getByRole('button', { name: /Tool/ }))
+    expect(screen.getByText('dsh-tool-a')).toBeTruthy()
+    expect(screen.queryByText('dsh-ui-a')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /All/ }))
+    expect(screen.getByText('dsh-ui-a')).toBeTruthy()
+  })
+
+  it('combines the category filter with the search query as AND', async () => {
+    const result = snapshot()
+    result.plugins = [
+      { ...result.plugins[0]!, name: 'dsh-tool-alpha' },
+      { ...result.plugins[0]!, name: 'dsh-tool-beta' },
+      { ...result.plugins[0]!, name: 'dsh-ui-alpha' },
+    ]
+    result.plugins[0]!.catalog = { category: 'tool', summary: { en: 'a tool' }, capabilities: [] }
+    result.plugins[1]!.catalog = { category: 'tool', summary: { en: 'a tool' }, capabilities: [] }
+    result.plugins[2]!.catalog = { category: 'ui', summary: { en: 'a ui' }, capabilities: [] }
+    const { injected } = bench(result)
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-tool-alpha')).toBeTruthy())
+
+    fireEvent.click(screen.getByRole('button', { name: /Tool/ }))
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'alpha' } })
+    expect(screen.getByText('dsh-tool-alpha')).toBeTruthy()
+    expect(screen.queryByText('dsh-tool-beta')).toBeNull()
+    expect(screen.queryByText('dsh-ui-alpha')).toBeNull()
+  })
+
+  it('marks the selected category with aria-pressed', async () => {
+    const { injected } = bench(snapshot())
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const all = screen.getByRole('button', { name: /All/ })
+    expect(all.getAttribute('aria-pressed')).toBe('true')
+    const tool = screen.getByRole('button', { name: /Tool/ })
+    expect(tool.getAttribute('aria-pressed')).toBe('false')
+    fireEvent.click(tool)
+    expect(tool.getAttribute('aria-pressed')).toBe('true')
+    expect(all.getAttribute('aria-pressed')).toBe('false')
+  })
+
   it('pins the acknowledgement wording to §9.3 in both dictionaries', () => {
     expect(en.acknowledgementBody).toBe(ACKNOWLEDGEMENT_EN)
     expect(zh.acknowledgementBody).toBe(ACKNOWLEDGEMENT_ZH)

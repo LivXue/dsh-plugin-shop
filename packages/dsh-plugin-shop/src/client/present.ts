@@ -166,6 +166,18 @@ export function categoryKey(entry: CatalogEntry): ShopLocaleKey {
   return CATEGORY_KEYS[entry.catalog?.category ?? 'other']
 }
 
+/** The category vocabulary as a type, derived from the map above so the
+ * client never repeats the six literals. */
+export type Category = keyof typeof CATEGORY_KEYS
+
+/** The six categories in display order (map insertion order). */
+export const CATEGORY_ORDER = Object.keys(CATEGORY_KEYS) as Category[]
+
+/** The locale key for one bare category value (the filter buttons). */
+export function categoryLocaleKey(category: Category): ShopLocaleKey {
+  return CATEGORY_KEYS[category]
+}
+
 /** Sort the shelf: stars descending, un-starred entries last, name ascending
  * (case-insensitive) on ties (spec 2026-08-26-github-stars-design.md D1).
  * Display-time only — the catalog's own name sort is untouched. */

@@ -7,7 +7,7 @@
 import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstallResult, ShopInstallStatusResult, ShopOutdatedEntry, ShopSetEnabledResult } from '../host/index.ts'
-import { SHOP_VISIBLE_BATCH, categoryKey, formatStars, isShopLike, isUnclaimed, nextVisibleCount, rejectionCodeKey, sortByStars, tierKey } from './present.ts'
+import { CATEGORY_ORDER, SHOP_VISIBLE_BATCH, type Category, categoryKey, categoryLocaleKey, formatStars, isShopLike, isUnclaimed, nextVisibleCount, rejectionCodeKey, sortByStars, tierKey } from './present.ts'
 import { useInstall } from './useInstall.ts'
 import css from './ShopTab.module.css'
 
@@ -381,6 +381,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
   const [outdatedState, setOutdatedState] = useState<OutdatedState>({ kind: 'loading' })
   const [request, setRequest] = useState<LoadRequest>({ kind: 'initial' })
   const [query, setQuery] = useState('')
+  const [category, setCategory] = useState<Category | null>(null)
 
   // The shelf renders in batches (§A1): ~1900 cards in one commit is ~28k
   // DOM nodes. `incremental` stays off where IntersectionObserver does not
@@ -438,6 +439,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
       // Shop-like plugins (competing markets) are not advertised; an
       // INSTALLED one stays manageable in the installed section below.
       if (isShopLike(entry.name)) return false
+      if (category !== null && categoryKey(entry) !== categoryLocaleKey(category)) return false
       if (q === '') return true
       const summaryEn = entry.catalog?.summary.en ?? ''
       const summaryZh = entry.catalog?.summary.zh ?? ''
@@ -445,7 +447,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
         || summaryEn.toLowerCase().includes(q)
         || summaryZh.toLowerCase().includes(q)
     })
-  }, [catalogState, query])
+  }, [catalogState, query, category])
   filteredLenRef.current = filtered.length
 
   // The shelf sorts by GitHub stars: the most-starred entries fill the first
@@ -473,6 +475,21 @@ export function ShopTab(props: ShopTabProps): ReactNode {
   }, [incremental, visibleCount, filtered.length])
 
   const visible = incremental ? sorted.slice(0, visibleCount) : sorted
+
+  // One button per category plus All; each shows how many of the browsable
+  // (shop-like-excluded) entries carry that category.
+  const categoryCounts = useMemo(() => {
+    const counts = new Map<Category, number>()
+    if (catalogState.kind === 'ready') {
+      for (const entry of catalogState.result.plugins) {
+        if (isShopLike(entry.name)) continue
+        const key = categoryKey(entry)
+        const bare = CATEGORY_ORDER.find(c => categoryLocaleKey(c) === key)
+        if (bare !== undefined) counts.set(bare, (counts.get(bare) ?? 0) + 1)
+      }
+    }
+    return counts
+  }, [catalogState])
 
   // The outdated rows' update gate needs each entry's tier; the catalog is the
   // only source for it (ShopOutdatedEntry carries none). An entry missing from
@@ -535,6 +552,27 @@ export function ShopTab(props: ShopTabProps): ReactNode {
             </button>
           </div>
         )}
+      </div>
+      <div className={css.categoryBar} role="group" aria-label={t('catalog')}>
+        <button
+          type="button"
+          className={category === null ? `${css.categoryButton} ${css.categoryButtonOn}` : css.categoryButton}
+          aria-pressed={category === null}
+          onClick={() => { setCategory(null); setVisibleCount(SHOP_VISIBLE_BATCH) }}
+        >
+          {t('all')} {[...categoryCounts.values()].reduce((a, b) => a + b, 0)}
+        </button>
+        {CATEGORY_ORDER.map(key => (
+          <button
+            key={key}
+            type="button"
+            className={category === key ? `${css.categoryButton} ${css.categoryButtonOn}` : css.categoryButton}
+            aria-pressed={category === key}
+            onClick={() => { setCategory(key); setVisibleCount(SHOP_VISIBLE_BATCH) }}
+          >
+            {t(categoryLocaleKey(key))} {categoryCounts.get(key) ?? 0}
+          </button>
+        ))}
       </div>
       <h2 className={css.catalogHeading}>{t('catalog')}</h2>
       <p className={css.catalogStats}>{t('catalogStats', { count: String(result.plugins.length), date: result.builtAt.slice(0, 10) })}</p>
