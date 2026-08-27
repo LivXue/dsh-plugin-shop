@@ -9,7 +9,7 @@ import { loadCatalog, type LoadCatalogOptions } from './catalog.ts'
 import type { CatalogSnapshot } from './catalog.ts'
 import type { CatalogEntry, DeniedEntry } from './types.ts'
 import { validateInstall, type InstallArgs, type InstallRejectionCode } from './install.ts'
-import { startInstall, type InstallStatus } from './executor.ts'
+import { startInstall, startUninstall, type InstallStatus } from './executor.ts'
 import { discoverProfile, setUserLayerRow } from './profile.ts'
 
 // Re-exported so the boundary type is reachable from the package's public
@@ -53,6 +53,13 @@ export interface ShopInstallStatusResult extends InstallStatus { found: boolean 
 /** `shop/setEnabled` result (§7.3): an unknown name is a typed wire value,
  * not a thrown RPC error. */
 export interface ShopSetEnabledResult { ok: boolean; detail?: string }
+
+/** `shop/uninstallStart` result (§7.3): a name outside the catalog or not
+ * installed is a typed wire value with an author-readable `detail`, not a
+ * thrown RPC error. */
+export type ShopUninstallResult =
+  | { ok: true; installId: string }
+  | { ok: false; detail: string }
 
 /** `shop/installed` entry (§7.3): one installed catalog plugin. `installed`
  * is the profile manifest's dependency spec verbatim (a range, a tag, or
@@ -286,6 +293,40 @@ export class ShopGateway extends TypertRemoteService {
       floor = null
     }
     return floor !== null && lt(floor, latest)
+  }
+
+  /** Uninstall one installed catalog plugin from the profile (§7.3 follow-up
+   * amendment). Removing revokes privilege rather than granting it, so there
+   * is no acknowledgement gate. The name must be a catalog entry the profile
+   * manifest declares as a dependency — the RPC cannot remove profile
+   * dependencies the shop does not manage (the base bundle, the shop
+   * itself). The same install records/polling serve the client. */
+  @Remote('uninstallStart')
+  async uninstall(args: { name: string }): Promise<ShopUninstallResult> {
+    if (this.lastSnapshot === null) {
+      const { catalogUrl, cacheDir } = this.rowConfig()
+      const load = this.options.loadCatalog ?? loadCatalog
+      const { snapshot } = await load({ baseUrl: catalogUrl, cacheDir })
+      this.lastSnapshot = snapshot
+    }
+    if (!this.lastSnapshot.entries.some(entry => entry.name === args.name)) {
+      return { ok: false, detail: `dsh-plugin-shop: ${args.name} is not in the catalog` }
+    }
+    const manifest = readProfileManifest('dsh-plugin-shop', this.profileDirResolved())
+    const dependencies = manifest.dependencies ?? {}
+    if (dependencies[args.name] === undefined) {
+      return { ok: false, detail: `dsh-plugin-shop: ${args.name} is not installed` }
+    }
+    const running = startUninstall({
+      profile: this.profile,
+      name: args.name,
+      dshBin: this.dshBin,
+      expectedName: args.name,
+    })
+    this.installs.set(running.installId, running)
+    this.installOrder.push(running.installId)
+    this.evictFinishedInstalls()
+    return { ok: true, installId: running.installId }
   }
 }
 

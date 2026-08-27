@@ -114,7 +114,7 @@ bundle is not.
 | **Browse & search** | 1800+ packages harvested from npm by the `dsh-plugin` keyword, shown with the author's own summary when they declared one |
 | **Install** | One confirmation. An unreviewed plugin requires an explicit acknowledgement first — an installed plugin holds the same privileges as a built-in one |
 | **Enable / disable** | Applies to an installed plugin without a restart |
-| **Installed state** | An installed plugin shows an Installed label on its card — or an Update button when the catalog has a newer version — instead of an install button |
+| **Installed state** | An installed plugin shows an Installed label on its card — or an Update button when the catalog has a newer version — plus an Uninstall button; the Installed filter in the category bar shows only installed plugins |
 
 ## 🧩 How it is put together
 
@@ -124,9 +124,9 @@ boundary:
 | Half | Entry | Can reach | Cannot reach |
 |---|---|---|---|
 | **Host** | `dsh-plugin-shop` | The network (catalog fetch and sha256 verify), the filesystem (cache), `dsh plugin add` under a per-profile mutex | — |
-| **Client** | `dsh-plugin-shop/client` | Exactly five `shop/*` Remote methods | The network, the filesystem |
+| **Client** | `dsh-plugin-shop/client` | Exactly six `shop/*` Remote methods | The network, the filesystem |
 
-Compromising the browser half buys an attacker those five calls and nothing more.
+Compromising the browser half buys an attacker those six calls and nothing more.
 
 ## ⚙️ Configuration
 

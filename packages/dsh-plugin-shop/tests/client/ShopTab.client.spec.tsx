@@ -31,8 +31,9 @@ function bench(catalogResult: ShopCatalogResult, installedEntries: ShopInstalled
   const installStatus = vi.fn<ShopTabInjected['installStatus']>().mockResolvedValue({ found: true, state: 'done', log: [], needsRestart: true })
   const setEnabled = vi.fn<ShopTabInjected['setEnabled']>().mockResolvedValue({ ok: true })
   const installed = vi.fn<ShopTabInjected['installed']>().mockResolvedValue(installedEntries)
-  const injected: ShopTabInjected = { catalog, install, installStatus, setEnabled, installed }
-  return { catalog, install, installStatus, setEnabled, installed, injected }
+  const uninstall = vi.fn<ShopTabInjected['uninstall']>().mockResolvedValue({ ok: true, installId: 'u1' })
+  const injected: ShopTabInjected = { catalog, install, installStatus, setEnabled, installed, uninstall }
+  return { catalog, install, installStatus, setEnabled, installed, uninstall, injected }
 }
 
 function renderTab(injected: ShopTabInjected) {
@@ -354,6 +355,8 @@ describe('ShopTab', () => {
     expect(card?.querySelector('[data-shop-installed]')?.textContent).toBe(en.installed)
     expect(card?.querySelector('[data-shop-install]')).toBeNull()
     expect(card?.querySelector('[data-shop-update]')).toBeNull()
+    // The card still carries the uninstall control.
+    expect(card?.querySelector('[data-shop-uninstall]')).not.toBeNull()
     // A current install has no row in the installed section.
     expect(container.querySelector('[data-shop-outdated]')).toBeNull()
   })
@@ -365,8 +368,49 @@ describe('ShopTab', () => {
     const card = container.querySelector('[data-shop-entry="dsh-hello-plugin"]')
     expect(card?.querySelector('[data-shop-installed]')).toBeNull()
     expect(card?.querySelector('[data-shop-install]')).toBeNull()
+    // Update and uninstall sit side by side.
+    expect(card?.querySelector('[data-shop-uninstall]')).not.toBeNull()
     fireEvent.click(card!.querySelector('[data-shop-update]')!)
     await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: undefined }))
+  })
+
+  it('uninstalls an installed plugin through the card button and shows the restart notice', async () => {
+    const { injected, uninstall } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false }])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-uninstall]')!)
+    await waitFor(() => expect(uninstall).toHaveBeenCalledWith({ name: 'dsh-hello-plugin' }))
+    // The poll reports done; the notice replaces the button.
+    await waitFor(() => expect(screen.getByText(en.uninstalledRestartNotice)).toBeTruthy(), { timeout: 3000 })
+  })
+
+  it('renders the host detail when the uninstall is refused', async () => {
+    const { injected, uninstall } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false }])
+    uninstall.mockResolvedValue({ ok: false, detail: 'dsh-plugin-shop: dsh-hello-plugin is not installed' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-uninstall]')!)
+    await waitFor(() => expect(screen.getByText(en.uninstallFailed)).toBeTruthy())
+    expect(screen.getByText('dsh-plugin-shop: dsh-hello-plugin is not installed')).toBeTruthy()
+  })
+
+  it('filters the shelf to installed plugins through the Installed category button', async () => {
+    const result = snapshot()
+    result.plugins = [
+      { ...result.plugins[0]!, name: 'dsh-installed' },
+      { ...result.plugins[0]!, name: 'dsh-not-installed' },
+    ]
+    const { injected } = bench(result, [{ name: 'dsh-installed', installed: '1.2.0', latest: '1.2.0', outdated: false }])
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-not-installed')).toBeTruthy())
+    const installedButton = screen.getByRole('button', { name: /^Installed 1$/ })
+    fireEvent.click(installedButton)
+    await waitFor(() => expect(screen.queryByText('dsh-not-installed')).toBeNull())
+    expect(screen.getByText('dsh-installed')).toBeTruthy()
+    expect(installedButton.getAttribute('aria-pressed')).toBe('true')
+    // All restores the whole shelf.
+    fireEvent.click(screen.getByRole('button', { name: /^All 2$/ }))
+    await waitFor(() => expect(screen.getByText('dsh-not-installed')).toBeTruthy())
   })
 
   it('gates the card update button behind the acknowledgement for a community install', async () => {

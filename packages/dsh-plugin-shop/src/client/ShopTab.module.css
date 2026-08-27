@@ -192,7 +192,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-top: 10px;
+  margin-top: 6px;
 }
 
 .categoryButton {
@@ -231,7 +231,7 @@
 }
 
 .catalogStats {
-  margin: -8px 0 0;
+  margin: 6px 0 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
   letter-spacing: 0.02em;
@@ -612,6 +612,38 @@
   font-size: 13px;
   color: var(--dsw-alias-label-secondary);
   background: var(--dsw-alias-bg-layer-2);
+}
+
+/* An installed card's controls: the installed label or the update button,
+ * plus the uninstall button. The install panel's running/failed states are
+ * column layouts and sit as one item of this row. */
+.installedActions {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Uninstall revokes privilege; the quiet outline keeps it from competing
+ * with the primary action, and the error tint says "removes". */
+.uninstallButton {
+  align-self: flex-start;
+  padding: 5px 14px;
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-state-error-primary) 55%, transparent);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.uninstallButton:hover {
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 10%, transparent);
+}
+
+.uninstallButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-error-primary);
+  outline-offset: 1px;
 }
 
 .gate {

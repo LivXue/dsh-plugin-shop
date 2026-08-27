@@ -112,8 +112,8 @@ Neither blocked capability stops v0: the shop uses its own `shop/*` Remote inste
 
 ### 5.3 Three hard boundaries
 
-1. **The Client half holds no privilege.** Everything it can do is the five `shop/*` methods in §7.3. If the UI is compromised, the attack surface is those five methods' arguments.
-2. **The Host accepts a name and a version, never an arbitrary spec.** `shop/installStart` takes `{ name, version }`, not a pnpm command line. The Host validates against its own cached catalog snapshot and constructs the spec itself.
+1. **The Client half holds no privilege.** Everything it can do is the six `shop/*` methods in §7.3. If the UI is compromised, the attack surface is those six methods' arguments.
+2. **The Host accepts a name and a version, never an arbitrary spec.** `shop/installStart` takes `{ name, version }`, not a pnpm command line; `shop/uninstallStart` takes `{ name }`, never a pnpm command line. The Host validates against its own cached catalog snapshot (and, for uninstall, the installed manifest) and constructs the spec itself.
 3. **The Host's catalog snapshot is the source of truth.** The browser sends a name; the Host decides using its own snapshot and trusts no metadata sent from the browser.
 
 A direct consequence of boundary 2: **the shop UI will never have an "install from GitHub URL" button.** That capability stays in `dsh plugin add`, because it requires the user to explicitly enable `allowBuilds` and explicitly pin a commit SHA — two decisions that must not collapse into one click.
@@ -295,6 +295,7 @@ Implementation decisions:
 | `shop/installStart` | `{ name, version, acknowledged? }` | `{ installId }` |
 | `shop/installStatus` | `{ installId }` | `{ state, log[], needsRestart? }` |
 | `shop/setEnabled` | `{ name, enabled }` | `{ ok }` |
+| `shop/uninstallStart` | `{ name }` | `{ installId }` |
 | `shop/installed` | none | `{ name, installed, latest, outdated }[]` |
 
 **Amendment (2026-08-25): the install method is `shop/installStart`, not `shop/install`.** The web full-flow e2e against the real composition exposed that the client api's `RemoteNamespaceService` owns a method named `install` (its internal mount primitive), so a Remote namespace cannot expose one: mounting `shop/install` throws "method \"shop/install\" conflicts with its namespace service". The wire method is renamed to `shop/installStart` (pairing with `shop/installStatus`); the client-visible injected face keeps the name `install`, and the host-side code method is unchanged — only the wire name differs.
@@ -302,6 +303,8 @@ Implementation decisions:
 **Amendment (2026-08-25): a client package that mounts its own Remote must consume it through the reflect shop, not the inject face.** The same e2e exposed that `ctx.remote.<ns>` refuses a namespace to a fiber whose inject face does not name it ("cannot get property remote.shop without inject"), while naming it in the face deadlocks the boot's activation gate: the gate waits for `remote.shop` to be provided, and only the package's own apply — which the gate is holding back — can mount it ("pending (waiting for service: remote.shop)"). The client half therefore reads the mounted namespace via `ctx.get('remote.shop')`, the reflect shop's documented inject-free read, after `$mount` settles. Third-party client packages that self-mount should follow the same pattern.
 
 **Amendment (2026-08-27): `shop/outdated` is reshaped into `shop/installed`, which returns every installed catalog entry with an `outdated` flag.** The tab's shelf cards need the full installed set — not just the behind-version subset — so the card for an installed plugin shows its installed state (or the update button when behind) instead of an install button. The outdated section and the card state both derive from this one list; the semver comparison stays on the Host, and the client never does version math.
+
+**Amendment (2026-08-27, follow-up): `shop/uninstallStart` joins the RPC surface, the shelf gains an Installed filter, and installed cards carry uninstall.** Removing a plugin revokes privilege rather than granting it, so uninstall sits inside the §9.1 Client-half threat model (the five-method boundary becomes six); the RPC validates the name against the catalog snapshot and the installed manifest, so it cannot remove profile dependencies the shop does not manage (the base bundle, the shop itself). The category bar gains an Installed button that filters the shelf to installed plugins; installed cards show the update button (when behind) plus an uninstall button, replacing the bare installed label. The "Plugin catalog" heading is dropped — the bar and stats carry the context.
 
 ## 8. When changes take effect
 

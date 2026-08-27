@@ -392,3 +392,41 @@ describe('ShopGateway.installed', () => {
     expect(installed).toEqual([{ name: 'dsh-one', installed: '^1.0.0', latest: '2.0.0', outdated: true }])
   })
 })
+
+describe('ShopGateway.uninstall', () => {
+  const entries = [
+    { name: 'dsh-one', version: '2.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived' },
+  ]
+
+  function gatewayWithManifest(dependencies: Record<string, string>): ShopGateway {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-uninstall-'))
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies }))
+    return new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [], stars: {} }, stale: false }) as CatalogResult,
+    })
+  }
+
+  it('rejects a name outside the catalog without spawning', async () => {
+    const gateway = gatewayWithManifest({ 'dsh-one': '^2.0.0' })
+    await gateway.catalog({})
+    expect(await gateway.uninstall({ name: 'dsh-unknown' })).toEqual({
+      ok: false, detail: 'dsh-plugin-shop: dsh-unknown is not in the catalog',
+    })
+  })
+
+  it('rejects a catalog entry that is not installed', async () => {
+    const gateway = gatewayWithManifest({})
+    await gateway.catalog({})
+    expect(await gateway.uninstall({ name: 'dsh-one' })).toEqual({
+      ok: false, detail: 'dsh-plugin-shop: dsh-one is not installed',
+    })
+  })
+
+  it('lazily loads the catalog when uninstall() is called without a prior catalog()', async () => {
+    const gateway = gatewayWithManifest({})
+    expect(await gateway.uninstall({ name: 'dsh-unknown' })).toEqual({
+      ok: false, detail: 'dsh-plugin-shop: dsh-unknown is not in the catalog',
+    })
+  })
+})

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdirSync, mkdtempSync, writeFileSync, chmodSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { startInstall, type InstallStatus } from '../../src/host/executor.ts'
+import { startInstall, startUninstall, type InstallStatus } from '../../src/host/executor.ts'
 
 // A fixture `dsh` that records its full argv in a marker file and exits with
 // the requested code, proving the executor passes --profile and the pinned
@@ -189,6 +189,83 @@ describe('startInstall post-install confirm (§7.2 step 6)', () => {
     expect(status.state).toBe('failed')
     expect(status.detail).toBe(
       `installed but the profile manifest could not be read (${join(home, 'profiles', 'web', 'package.json')}) — the catalog may be stale; refresh it`,
+    )
+  })
+})
+
+describe('startUninstall', () => {
+  it('spawns dsh plugin remove and reports done with needsRestart', async () => {
+    const bin = fixtureDsh(0)
+    const uninstall = startUninstall({ profile: 'web', name: 'dsh-hello-plugin', dshBin: bin })
+    const status = await uninstall.finished
+    expect(status.state).toBe('done')
+    expect(status.needsRestart).toBe(true)
+    expect(status.log.join('\n')).toContain('installing...')
+    const calls = readFileSync(join(dirname(bin), 'calls.log'), 'utf8')
+    expect(calls).toContain('plugin --profile web remove dsh-hello-plugin')
+  })
+
+  it('reports failed with the recovery hint when pnpm fails', async () => {
+    const bin = fixtureDsh(1)
+    const uninstall = startUninstall({ profile: 'web', name: 'dsh-hello-plugin', dshBin: bin })
+    const status = await uninstall.finished
+    expect(status.state).toBe('failed')
+    expect(status.detail).toContain('dsh plugin --profile web install')
+  })
+})
+
+describe('startUninstall post-remove confirm', () => {
+  function confirmHome(bundles: string[]): string {
+    const home = mkdtempSync(join(tmpdir(), 'dsh-confirm-remove-'))
+    mkdirSync(join(home, 'profiles', 'web'), { recursive: true })
+    writeFileSync(
+      join(home, 'profiles', 'web', 'package.json'),
+      JSON.stringify({ dsh: { profile: { bundles } } }),
+    )
+    return home
+  }
+
+  it('reports done when the profile manifest lost the expected bundle', async () => {
+    const home = confirmHome(['dsh-something-else'])
+    const uninstall = startUninstall({
+      profile: 'web',
+      name: 'dsh-hello-fixture',
+      dshBin: fixtureDsh(0),
+      env: { ...process.env, DSH_HOME: home },
+      expectedName: 'dsh-hello-fixture',
+    })
+    const status = await uninstall.finished
+    expect(status.state).toBe('done')
+    expect(status.needsRestart).toBe(true)
+  })
+
+  it('reports failed with the re-run detail when the bundle is still present', async () => {
+    const home = confirmHome(['dsh-hello-fixture'])
+    const uninstall = startUninstall({
+      profile: 'web',
+      name: 'dsh-hello-fixture',
+      dshBin: fixtureDsh(0),
+      env: { ...process.env, DSH_HOME: home },
+      expectedName: 'dsh-hello-fixture',
+    })
+    const status = await uninstall.finished
+    expect(status.state).toBe('failed')
+    expect(status.detail).toBe('removed but dsh.profile.bundles did not change — re-run the uninstall')
+  })
+
+  it('reports failed, naming the file, when the manifest cannot be read', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'dsh-confirm-remove-missing-'))
+    const uninstall = startUninstall({
+      profile: 'web',
+      name: 'dsh-hello-fixture',
+      dshBin: fixtureDsh(0),
+      env: { ...process.env, DSH_HOME: home },
+      expectedName: 'dsh-hello-fixture',
+    })
+    const status = await uninstall.finished
+    expect(status.state).toBe('failed')
+    expect(status.detail).toBe(
+      `removed but the profile manifest could not be read (${join(home, 'profiles', 'web', 'package.json')}) — re-run the uninstall`,
     )
   })
 })

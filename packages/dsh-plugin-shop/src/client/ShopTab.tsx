@@ -6,9 +6,10 @@
 
 import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopSetEnabledResult } from '../host/index.ts'
+import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopSetEnabledResult, ShopUninstallResult } from '../host/index.ts'
 import { CATEGORY_ORDER, SHOP_VISIBLE_BATCH, type Category, categoryKey, categoryLocaleKey, formatStars, isShopLike, isUnclaimed, nextVisibleCount, rejectionCodeKey, sortByStars, tierKey } from './present.ts'
 import { useInstall } from './useInstall.ts'
+import { useUninstall } from './useUninstall.ts'
 import css from './ShopTab.module.css'
 
 /** The tab's Remote face: the Host result types, already unwrapped from the
@@ -20,6 +21,7 @@ export interface ShopTabInjected {
   installStatus: (args: { installId: string }) => Promise<ShopInstallStatusResult>
   setEnabled: (args: { name: string; enabled: boolean }) => Promise<ShopSetEnabledResult>
   installed: () => Promise<ShopInstalledEntry[]>
+  uninstall: (args: { name: string }) => Promise<ShopUninstallResult>
 }
 
 /** Full component props assembled by the Settings slot renderer. */
@@ -63,13 +65,14 @@ function ChevronIcon({ open }: { open: boolean }): ReactNode {
  * install controls. An installed plugin's card carries its installed row:
  * current → the non-interactive installed label, behind → the update button;
  * uninstalled → the install button. */
-const EntryCard = memo(function EntryCard({ entry, stars, installed, t, install, installStatus }: {
+const EntryCard = memo(function EntryCard({ entry, stars, installed, t, install, installStatus, uninstall }: {
   entry: CatalogEntry
   stars: number | undefined
   installed: ShopInstalledEntry | undefined
   t: ShopTabProps['t']
   install: ShopTabInjected['install']
   installStatus: ShopTabInjected['installStatus']
+  uninstall: ShopTabInjected['uninstall']
 }): ReactNode {
   const [open, setOpen] = useState(false)
   const detailId = useId()
@@ -157,12 +160,18 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, t, install,
         )}
         {installed === undefined ? (
           <InstallPanel name={entry.name} version={entry.version} tier={entry.tier} t={t} install={install} installStatus={installStatus} />
-        ) : installed.outdated ? (
-          // The update button drives the same install flow for the catalog's
-          // latest version; the community gate still applies (§9.3).
-          <InstallPanel name={entry.name} version={entry.version} tier={entry.tier} variant="update" t={t} install={install} installStatus={installStatus} />
         ) : (
-          <p className={css.installedLabel} data-shop-installed>{t('installed')}</p>
+          <div className={css.installedActions}>
+            {installed.outdated ? (
+              // The update button drives the same install flow for the
+              // catalog's latest version; the community gate still applies
+              // (§9.3).
+              <InstallPanel name={entry.name} version={entry.version} tier={entry.tier} variant="update" t={t} install={install} installStatus={installStatus} />
+            ) : (
+              <p className={css.installedLabel} data-shop-installed>{t('installed')}</p>
+            )}
+            <UninstallPanel name={entry.name} t={t} uninstall={uninstall} installStatus={installStatus} />
+          </div>
         )}
       </div>
     </div>
@@ -270,6 +279,65 @@ function InstallPanel({ name, version, tier, variant = 'install', t, install, in
       }}
     >
       {t(update ? 'update' : 'install')}
+    </button>
+  )
+}
+
+/** One installed entry's uninstall flow: remove from the profile through the
+ * same executor records and poll loop as installs. Uninstalling revokes
+ * privilege rather than granting it, so there is no acknowledgement gate —
+ * §9.3 is about granting. A business failure (not in the catalog / not
+ * installed) lands in the failed view with the host's published detail; a
+ * transport failure carries the empty detail and the localized fallback. */
+function UninstallPanel({ name, t, uninstall, installStatus }: {
+  name: string
+  t: ShopTabProps['t']
+  uninstall: ShopTabInjected['uninstall']
+  installStatus: ShopTabInjected['installStatus']
+}): ReactNode {
+  const { view, start } = useUninstall(uninstall, installStatus)
+
+  if (view.kind === 'running') {
+    return (
+      <div className={css.installPanel}>
+        <p className={css.installing}>{t('uninstalling')}</p>
+        {view.log.length > 0 && (
+          <div className={css.log}>
+            {view.log.map((line, index) => <div key={index} className={css.logLine}>{line}</div>)}
+          </div>
+        )}
+      </div>
+    )
+  }
+  if (view.kind === 'done') {
+    return <p className={css.notice} data-shop-uninstall-done>{t('uninstalledRestartNotice')}</p>
+  }
+  if (view.kind === 'failed') {
+    return (
+      <div className={css.installPanel}>
+        <p className={css.failedHeading}>{t('uninstallFailed')}</p>
+        <div className={css.log}>
+          {view.log.map((line, index) => <div key={index} className={css.logLine}>{line}</div>)}
+        </div>
+        {/* Same transport rule as the install panel: an empty detail is a
+            TRANSPORT failure and falls back to the localized line; a
+            non-empty detail is the host's published copy and renders
+            verbatim. */}
+        <p className={css.failedDetail}>{view.detail === '' ? t('uninstallTransportFailed') : view.detail}</p>
+      </div>
+    )
+  }
+  // `rejected` cannot occur for uninstall — that code belongs to the install
+  // gate — so anything left over is not a state to render.
+  if (view.kind !== 'idle') return null
+  return (
+    <button
+      type="button"
+      className={css.uninstallButton}
+      data-shop-uninstall
+      onClick={() => void start({ name })}
+    >
+      {t('uninstall')}
     </button>
   )
 }
@@ -393,12 +461,14 @@ function OutdatedSection({ state, tiers, t, setEnabled, install, installStatus }
 /** The shop tab root: browse, search, refresh, and render one card per
  * entry. Data attributes on the e2e-relevant nodes follow the Task 3 list. */
 export function ShopTab(props: ShopTabProps): ReactNode {
-  const { t, catalog, install, installStatus, setEnabled, installed } = props
+  const { t, catalog, install, installStatus, setEnabled, installed, uninstall } = props
   const [catalogState, setCatalogState] = useState<CatalogState>({ kind: 'loading' })
   const [installedState, setInstalledState] = useState<InstalledState>({ kind: 'loading' })
   const [request, setRequest] = useState<LoadRequest>({ kind: 'initial' })
   const [query, setQuery] = useState('')
-  const [category, setCategory] = useState<Category | null>(null)
+  // `installed` is a filter mode alongside the six catalog categories, not a
+  // seventh category: it selects by installed state, not by `catalog.category`.
+  const [category, setCategory] = useState<Category | 'installed' | null>(null)
 
   // The shelf renders in batches (§A1): ~1900 cards in one commit is ~28k
   // DOM nodes. `incremental` stays off where IntersectionObserver does not
@@ -449,6 +519,16 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     return () => { cancelled = true }
   }, [installed, request])
 
+  // Each shelf card looks its installed state up by name; the Installed
+  // filter below selects on the same map.
+  const installedByName = useMemo(() => {
+    const map = new Map<string, ShopInstalledEntry>()
+    if (installedState.kind === 'ready') {
+      for (const entry of installedState.entries) map.set(entry.name, entry)
+    }
+    return map
+  }, [installedState])
+
   const filtered = useMemo(() => {
     if (catalogState.kind !== 'ready') return []
     const q = query.trim().toLowerCase()
@@ -456,7 +536,11 @@ export function ShopTab(props: ShopTabProps): ReactNode {
       // Shop-like plugins (competing markets) are not advertised; an
       // INSTALLED one stays manageable in the installed section below.
       if (isShopLike(entry.name)) return false
-      if (category !== null && categoryKey(entry) !== categoryLocaleKey(category)) return false
+      if (category === 'installed') {
+        if (!installedByName.has(entry.name)) return false
+      } else if (category !== null && categoryKey(entry) !== categoryLocaleKey(category)) {
+        return false
+      }
       if (q === '') return true
       const summaryEn = entry.catalog?.summary.en ?? ''
       const summaryZh = entry.catalog?.summary.zh ?? ''
@@ -464,7 +548,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
         || summaryEn.toLowerCase().includes(q)
         || summaryZh.toLowerCase().includes(q)
     })
-  }, [catalogState, query, category])
+  }, [catalogState, query, category, installedByName])
   filteredLenRef.current = filtered.length
 
   // The shelf sorts by GitHub stars: the most-starred entries fill the first
@@ -508,13 +592,11 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     return counts
   }, [catalogState])
 
-  // Each shelf card looks its installed state up by name.
-  const installedByName = useMemo(() => {
-    const map = new Map<string, ShopInstalledEntry>()
-    if (installedState.kind === 'ready') {
-      for (const entry of installedState.entries) map.set(entry.name, entry)
-    }
-    return map
+  // The Installed button's count: installed entries the shelf would actually
+  // show (shop-like installed plugins stay in the installed section below).
+  const installedCount = useMemo(() => {
+    if (installedState.kind !== 'ready') return 0
+    return installedState.entries.filter(entry => !isShopLike(entry.name)).length
   }, [installedState])
 
   // The outdated rows' update gate needs each entry's tier; the catalog is the
@@ -599,8 +681,15 @@ export function ShopTab(props: ShopTabProps): ReactNode {
             {t(categoryLocaleKey(key))} {categoryCounts.get(key) ?? 0}
           </button>
         ))}
+        <button
+          type="button"
+          className={category === 'installed' ? `${css.categoryButton} ${css.categoryButtonOn}` : css.categoryButton}
+          aria-pressed={category === 'installed'}
+          onClick={() => { setCategory('installed'); setVisibleCount(SHOP_VISIBLE_BATCH) }}
+        >
+          {t('installed')} {installedCount}
+        </button>
       </div>
-      <h2 className={css.catalogHeading}>{t('catalog')}</h2>
       <p className={css.catalogStats}>{t('catalogStats', { count: String(result.plugins.length), date: result.builtAt.slice(0, 10) })}</p>
       {result.plugins.length === 0 ? (
         <p className={css.emptyLine}>{t('empty')}</p>
@@ -611,7 +700,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
           <ul className={css.cards}>
             {visible.map(entry => (
               <li key={entry.name}>
-                <EntryCard entry={entry} stars={stars[entry.name]} installed={installedByName.get(entry.name)} t={t} install={install} installStatus={installStatus} />
+                <EntryCard entry={entry} stars={stars[entry.name]} installed={installedByName.get(entry.name)} t={t} install={install} installStatus={installStatus} uninstall={uninstall} />
               </li>
             ))}
             {incremental && visibleCount < filtered.length && (
