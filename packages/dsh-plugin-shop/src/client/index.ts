@@ -1,9 +1,9 @@
 /**
  * Shop settings surface, browser half — one tab in `settings.plugins.tab`
  * that browses the catalog, installs with acknowledgement, toggles
- * enablement, and lists installed plugins. Mounts the shop Remote itself
- * (the assembly does not know this package) and holds no privilege beyond
- * the five `shop/*` methods (§5.3).
+ * enablement, lists installed plugins, and restarts dsh after installs.
+ * Mounts the shop Remote itself (the assembly does not know this package)
+ * and holds no privilege beyond the seven `shop/*` methods (§5.3).
  */
 
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
@@ -77,6 +77,7 @@ export async function apply(ctx: ClientContext): Promise<void> {
     setEnabled: async args => unwrap(await ns.setEnabled(args)),
     installed: async () => unwrap(await ns.installed()),
     uninstall: async args => unwrap(await ns.uninstallStart(args)),
+    restart: async () => unwrap(await ns.restart()),
   })
 
   ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register({

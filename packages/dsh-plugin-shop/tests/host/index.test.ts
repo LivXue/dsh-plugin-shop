@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -428,5 +428,58 @@ describe('ShopGateway.uninstall', () => {
     expect(await gateway.uninstall({ name: 'dsh-unknown' })).toEqual({
       ok: false, detail: 'dsh-plugin-shop: dsh-unknown is not in the catalog',
     })
+  })
+})
+
+describe('ShopGateway.restart', () => {
+  // A fixture `dsh` for the success path: prints the announce line and then
+  // stays up, so the gateway's restart resolves the URL without a real web
+  // boot. The failure path uses a fixture that exits during boot.
+  function announcingDsh(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-gateway-restart-'))
+    const bin = join(dir, 'dsh')
+    writeFileSync(bin, '#!/bin/sh\necho "dsh web: http://127.0.0.1:4567"\nsleep 60\n')
+    chmodSync(bin, 0o755)
+    return bin
+  }
+
+  function failingDsh(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-gateway-restart-'))
+    const bin = join(dir, 'dsh')
+    writeFileSync(bin, '#!/bin/sh\necho "boom: cannot bind" >&2\nexit 1\n')
+    chmodSync(bin, 0o755)
+    return bin
+  }
+
+  it('re-spawns the original argv, resolves the announced URL, and exits after the response', async () => {
+    const exit = vi.fn<() => void>()
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web',
+      dshBin: announcingDsh(),
+      restartArgv: ['web', '--no-open'],
+      exit,
+      restartExitDelayMs: 5,
+    })
+    const result = await gateway.restart()
+    expect(result).toEqual({ ok: true, url: 'http://127.0.0.1:4567' })
+    // The exit is delayed past the RPC round-trip, then fires.
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(exit).toHaveBeenCalledWith(0)
+  })
+
+  it('reports the typed failure and does NOT exit when the child fails to boot', async () => {
+    const exit = vi.fn<() => void>()
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web',
+      dshBin: failingDsh(),
+      restartArgv: ['web'],
+      exit,
+      restartExitDelayMs: 5,
+    })
+    const result = await gateway.restart()
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.detail).toContain('exited during boot')
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(exit).not.toHaveBeenCalled()
   })
 })

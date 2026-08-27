@@ -32,8 +32,9 @@ function bench(catalogResult: ShopCatalogResult, installedEntries: ShopInstalled
   const setEnabled = vi.fn<ShopTabInjected['setEnabled']>().mockResolvedValue({ ok: true })
   const installed = vi.fn<ShopTabInjected['installed']>().mockResolvedValue(installedEntries)
   const uninstall = vi.fn<ShopTabInjected['uninstall']>().mockResolvedValue({ ok: true, installId: 'u1' })
-  const injected: ShopTabInjected = { catalog, install, installStatus, setEnabled, installed, uninstall }
-  return { catalog, install, installStatus, setEnabled, installed, uninstall, injected }
+  const restart = vi.fn<ShopTabInjected['restart']>().mockResolvedValue({ ok: true, url: 'http://restarted.test/' })
+  const injected: ShopTabInjected = { catalog, install, installStatus, setEnabled, installed, uninstall, restart }
+  return { catalog, install, installStatus, setEnabled, installed, uninstall, restart, injected }
 }
 
 function renderTab(injected: ShopTabInjected) {
@@ -127,6 +128,55 @@ describe('ShopTab', () => {
     fireEvent.click(screen.getByText(en.install))
     await waitFor(() => expect(screen.getByText(en.installedRestartNotice)).toBeTruthy(), { timeout: 3000 })
     expect(installStatus).toHaveBeenCalledWith({ installId: 'i1' })
+  })
+
+  it('offers the restart button after a successful install, gated by the cost notice', async () => {
+    const { injected } = bench(snapshot({ tier: 'verified' }))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText(en.install))
+    await waitFor(() => expect(container.querySelector('[data-shop-restart]')).toBeTruthy(), { timeout: 3000 })
+    fireEvent.click(container.querySelector('[data-shop-restart]')!)
+    expect(screen.getByText(en.restartTitle)).toBeTruthy()
+    expect(screen.getByText(en.restartBody)).toBeTruthy()
+    // Cancel leaves everything as it was.
+    fireEvent.click(screen.getByText(en.cancel))
+    expect(screen.queryByText(en.restartTitle)).toBeNull()
+    expect(container.querySelector('[data-shop-restart]')).toBeTruthy()
+  })
+
+  it('confirms the restart, calls the RPC, and shows the restarting line', async () => {
+    const { injected, restart } = bench(snapshot({ tier: 'verified' }))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText(en.install))
+    await waitFor(() => expect(container.querySelector('[data-shop-restart]')).toBeTruthy(), { timeout: 3000 })
+    fireEvent.click(container.querySelector('[data-shop-restart]')!)
+    fireEvent.click(screen.getByText(en.restartConfirm))
+    await waitFor(() => expect(restart).toHaveBeenCalled())
+    expect(screen.getByText(en.restarting)).toBeTruthy()
+  })
+
+  it('renders the host detail when the restart fails and leaves the restarting state', async () => {
+    const { injected, restart } = bench(snapshot({ tier: 'verified' }))
+    restart.mockResolvedValue({ ok: false, detail: 'the restarted server exited during boot — boom' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText(en.install))
+    await waitFor(() => expect(container.querySelector('[data-shop-restart]')).toBeTruthy(), { timeout: 3000 })
+    fireEvent.click(container.querySelector('[data-shop-restart]')!)
+    fireEvent.click(screen.getByText(en.restartConfirm))
+    await waitFor(() => expect(screen.getByText('the restarted server exited during boot — boom')).toBeTruthy())
+    expect(screen.queryByText(en.restarting)).toBeNull()
+  })
+
+  it('offers the restart button after a successful uninstall', async () => {
+    const { injected } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false }])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-uninstall]')!)
+    await waitFor(() => expect(screen.getByText(en.uninstalledRestartNotice)).toBeTruthy(), { timeout: 3000 })
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-restart]')).toBeTruthy()
   })
 
   it('renders the failed install with the host log and detail', async () => {

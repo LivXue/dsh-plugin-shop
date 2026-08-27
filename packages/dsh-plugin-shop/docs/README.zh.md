@@ -108,6 +108,7 @@ dsh plugin --profile <profile> list --depth 0
 | **安装** | 一次确认。未经评审的插件需先显式确认——装上之后它与内置插件权限等同 |
 | **启停** | 对已安装插件生效，无需重启 |
 | **已安装状态** | 已安装的插件在卡片上显示「已安装」，目录有新版本时改为「更新」按钮，另有「卸载」按钮；顶部「已安装」筛选只看已装插件 |
+| **重启** | 安装、更新、卸载后商店会提议重启 dsh，并先说明代价：页面会断开，进行中的工作会中断 |
 
 ## 🧩 结构
 
@@ -116,7 +117,7 @@ dsh plugin --profile <profile> list --depth 0
 | 半边 | 入口 | 能触及 | 不能触及 |
 |---|---|---|---|
 | **Host** | `dsh-plugin-shop` | 网络（取目录并校验 sha256）、文件系统（缓存）、per-profile 互斥锁下的 `dsh plugin add` | —— |
-| **Client** | `dsh-plugin-shop/client` | 仅六个 `shop/*` Remote 方法 | 网络、文件系统 |
+| **Client** | `dsh-plugin-shop/client` | 仅七个 `shop/*` Remote 方法 | 网络、文件系统 |
 
 攻破浏览器那一半，攻击者拿到的就是那五个调用，别无其他。
 

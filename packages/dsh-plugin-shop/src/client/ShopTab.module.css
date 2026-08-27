@@ -646,6 +646,28 @@
   outline-offset: 1px;
 }
 
+/* The restart dsh button on a done install: quiet outline, same rank as
+ * the other secondary actions. */
+.restartButton {
+  align-self: flex-start;
+  padding: 5px 14px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.restartButton:hover {
+  border-color: var(--dsw-alias-label-secondary);
+}
+
+.restartButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+
 .gate {
   display: flex;
   flex-direction: column;

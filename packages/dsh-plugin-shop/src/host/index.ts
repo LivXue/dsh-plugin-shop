@@ -10,6 +10,7 @@ import type { CatalogSnapshot } from './catalog.ts'
 import type { CatalogEntry, DeniedEntry } from './types.ts'
 import { validateInstall, type InstallArgs, type InstallRejectionCode } from './install.ts'
 import { startInstall, startUninstall, type InstallStatus } from './executor.ts'
+import { startRestart, type RestartOutcome } from './restart.ts'
 import { discoverProfile, setUserLayerRow } from './profile.ts'
 
 // Re-exported so the boundary type is reachable from the package's public
@@ -40,6 +41,15 @@ export interface ShopGatewayOptions {
   /** The Loader plugin inventory; read from `ctx` when omitted. */
   inventory?: { list(): InventoryEntry[] }
   dshBin?: string
+  /** The dsh argv this process was launched with, for `shop/restart`;
+   * defaults to the real `process.argv` minus node and the script path. */
+  restartArgv?: string[]
+  /** Test-only injection: the exit the restart calls after the response is
+   * delivered. Production uses `process.exit`. */
+  exit?: (code?: number) => void
+  /** How long the gateway waits after a successful restart response before
+   * exiting the old process; test-only shortening, production uses 2s. */
+  restartExitDelayMs?: number
 }
 
 /** `shop/installStart` result (§7.3): rejections are typed wire values with an
@@ -60,6 +70,10 @@ export interface ShopSetEnabledResult { ok: boolean; detail?: string }
 export type ShopUninstallResult =
   | { ok: true; installId: string }
   | { ok: false; detail: string }
+
+/** `shop/restart` result (§7.3): the restarted server's URL, or a typed
+ * failure — on failure the old process is still serving. */
+export type ShopRestartResult = RestartOutcome
 
 /** `shop/installed` entry (§7.3): one installed catalog plugin. `installed`
  * is the profile manifest's dependency spec verbatim (a range, a tag, or
@@ -96,11 +110,22 @@ export class ShopGateway extends TypertRemoteService {
   private readonly profileDir?: string
   private readonly inventory?: ShopGatewayOptions['inventory']
   private readonly dshBin: string
+  /** The argv `shop/restart` re-spawns: the real process argv minus node and
+   * the CLI script path, or a test-provided substitute. */
+  private readonly restartArgv: string[]
+  /** The exit the restart calls once the response is out; `process.exit` in
+   * production, a spy in tests. */
+  private readonly exit: (code?: number) => void
+  private readonly restartExitDelayMs: number
   /** The install gate runs against the last loaded snapshot, never a fresh
    * fetch per request (§7.2: the Host's cached snapshot is the truth). */
   /** Finished install records retained, so a poll sees the true terminal
    * state (§8: done / needsRestart / failure detail). Oldest evicted on add. */
   private static readonly MAX_FINISHED_INSTALLS = 32
+
+  /** How long the gateway waits after a successful restart response before
+   * exiting the old process — the browser must receive the URL first. */
+  private static readonly RESTART_EXIT_DELAY_MS = 2000
 
   /** The install gate runs against the last loaded snapshot, never a fresh
    * fetch per request (§7.2: the Host's cached snapshot is the truth). */
@@ -117,6 +142,9 @@ export class ShopGateway extends TypertRemoteService {
     this.profileDir = options.profileDir
     this.inventory = options.inventory
     this.dshBin = options.dshBin ?? 'dsh'
+    this.restartArgv = options.restartArgv ?? process.argv.slice(2)
+    this.exit = options.exit ?? ((code?: number) => process.exit(code))
+    this.restartExitDelayMs = options.restartExitDelayMs ?? ShopGateway.RESTART_EXIT_DELAY_MS
   }
 
   /** The boot's Loader root directory (the active profile's `cordis.yml`
@@ -327,6 +355,25 @@ export class ShopGateway extends TypertRemoteService {
     this.installOrder.push(running.installId)
     this.evictFinishedInstalls()
     return { ok: true, installId: running.installId }
+  }
+
+  /** Restart the dsh process the shop runs in (§8 amendment, 2026-08-27):
+   * re-spawn this process's own command line, return the new server's URL
+   * once it announces itself, and only then exit. A failed restart returns a
+   * typed failure and the old process keeps serving — the restart is
+   * all-or-nothing. The response must reach the browser before the exit, so
+   * the exit is delayed past the RPC round-trip. */
+  @Remote('restart')
+  async restart(): Promise<ShopRestartResult> {
+    const outcome = await startRestart({
+      dshBin: this.dshBin,
+      argv: this.restartArgv,
+      env: process.env,
+    })
+    if (outcome.ok) {
+      setTimeout(() => this.exit(0), this.restartExitDelayMs)
+    }
+    return outcome
   }
 }
 

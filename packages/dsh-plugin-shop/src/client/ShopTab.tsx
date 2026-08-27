@@ -6,7 +6,7 @@
 
 import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopSetEnabledResult, ShopUninstallResult } from '../host/index.ts'
+import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult } from '../host/index.ts'
 import { CATEGORY_ORDER, SHOP_VISIBLE_BATCH, type Category, categoryKey, categoryLocaleKey, formatStars, isShopLike, isUnclaimed, nextVisibleCount, rejectionCodeKey, sortByStars, tierKey } from './present.ts'
 import { useInstall } from './useInstall.ts'
 import { useUninstall } from './useUninstall.ts'
@@ -22,6 +22,7 @@ export interface ShopTabInjected {
   setEnabled: (args: { name: string; enabled: boolean }) => Promise<ShopSetEnabledResult>
   installed: () => Promise<ShopInstalledEntry[]>
   uninstall: (args: { name: string }) => Promise<ShopUninstallResult>
+  restart: () => Promise<ShopRestartResult>
 }
 
 /** Full component props assembled by the Settings slot renderer. */
@@ -65,7 +66,7 @@ function ChevronIcon({ open }: { open: boolean }): ReactNode {
  * install controls. An installed plugin's card carries its installed row:
  * current → the non-interactive installed label, behind → the update button;
  * uninstalled → the install button. */
-const EntryCard = memo(function EntryCard({ entry, stars, installed, t, install, installStatus, uninstall }: {
+const EntryCard = memo(function EntryCard({ entry, stars, installed, t, install, installStatus, uninstall, restart }: {
   entry: CatalogEntry
   stars: number | undefined
   installed: ShopInstalledEntry | undefined
@@ -73,6 +74,7 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, t, install,
   install: ShopTabInjected['install']
   installStatus: ShopTabInjected['installStatus']
   uninstall: ShopTabInjected['uninstall']
+  restart: ShopTabInjected['restart']
 }): ReactNode {
   const [open, setOpen] = useState(false)
   const detailId = useId()
@@ -159,18 +161,18 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, t, install,
           </section>
         )}
         {installed === undefined ? (
-          <InstallPanel name={entry.name} version={entry.version} tier={entry.tier} t={t} install={install} installStatus={installStatus} />
+          <InstallPanel name={entry.name} version={entry.version} tier={entry.tier} t={t} install={install} installStatus={installStatus} restart={restart} />
         ) : (
           <div className={css.installedActions}>
             {installed.outdated ? (
               // The update button drives the same install flow for the
               // catalog's latest version; the community gate still applies
               // (§9.3).
-              <InstallPanel name={entry.name} version={entry.version} tier={entry.tier} variant="update" t={t} install={install} installStatus={installStatus} />
+              <InstallPanel name={entry.name} version={entry.version} tier={entry.tier} variant="update" t={t} install={install} installStatus={installStatus} restart={restart} />
             ) : (
               <p className={css.installedLabel} data-shop-installed>{t('installed')}</p>
             )}
-            <UninstallPanel name={entry.name} t={t} uninstall={uninstall} installStatus={installStatus} />
+            <UninstallPanel name={entry.name} t={t} uninstall={uninstall} installStatus={installStatus} restart={restart} />
           </div>
         )}
       </div>
@@ -183,7 +185,7 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, t, install,
  * failure detail, rejection detail — driven by `useInstall`. Shared by the
  * catalog cards (`variant: 'install'`) and the outdated rows' update button
  * (`variant: 'update'`, which drives the same install flow for `name@latest`). */
-function InstallPanel({ name, version, tier, variant = 'install', t, install, installStatus }: {
+function InstallPanel({ name, version, tier, variant = 'install', t, install, installStatus, restart }: {
   name: string
   version: string
   tier: CatalogEntry['tier']
@@ -191,6 +193,7 @@ function InstallPanel({ name, version, tier, variant = 'install', t, install, in
   t: ShopTabProps['t']
   install: ShopTabInjected['install']
   installStatus: ShopTabInjected['installStatus']
+  restart: ShopTabInjected['restart']
 }): ReactNode {
   const [gateOpen, setGateOpen] = useState(false)
   const { view, start } = useInstall(install, installStatus)
@@ -209,9 +212,15 @@ function InstallPanel({ name, version, tier, variant = 'install', t, install, in
   }
   if (view.kind === 'done') {
     return (
-      <p className={css.notice} data-shop-restart-notice>
-        {view.needsRestart ? t('installedRestartNotice') : t('installedNoRestartNotice')}
-      </p>
+      <div className={css.installedActions}>
+        <p className={css.notice} data-shop-restart-notice>
+          {view.needsRestart ? t('installedRestartNotice') : t('installedNoRestartNotice')}
+        </p>
+        {/* The §8 restart offer: only when the install actually needs one —
+            the needsRestart=false notice is the stale-catalog anomaly, where
+            a restart would change nothing. */}
+        {view.needsRestart && <RestartPanel t={t} restart={restart} />}
+      </div>
     )
   }
   if (view.kind === 'failed') {
@@ -289,11 +298,12 @@ function InstallPanel({ name, version, tier, variant = 'install', t, install, in
  * §9.3 is about granting. A business failure (not in the catalog / not
  * installed) lands in the failed view with the host's published detail; a
  * transport failure carries the empty detail and the localized fallback. */
-function UninstallPanel({ name, t, uninstall, installStatus }: {
+function UninstallPanel({ name, t, uninstall, installStatus, restart }: {
   name: string
   t: ShopTabProps['t']
   uninstall: ShopTabInjected['uninstall']
   installStatus: ShopTabInjected['installStatus']
+  restart: ShopTabInjected['restart']
 }): ReactNode {
   const { view, start } = useUninstall(uninstall, installStatus)
 
@@ -310,7 +320,12 @@ function UninstallPanel({ name, t, uninstall, installStatus }: {
     )
   }
   if (view.kind === 'done') {
-    return <p className={css.notice} data-shop-uninstall-done>{t('uninstalledRestartNotice')}</p>
+    return (
+      <div className={css.installedActions}>
+        <p className={css.notice} data-shop-uninstall-done>{t('uninstalledRestartNotice')}</p>
+        <RestartPanel t={t} restart={restart} />
+      </div>
+    )
   }
   if (view.kind === 'failed') {
     return (
@@ -342,19 +357,92 @@ function UninstallPanel({ name, t, uninstall, installStatus }: {
   )
 }
 
+/** The §8 restart flow (amendment 2026-08-27): after an install, update, or
+ * uninstall reports done, this panel offers a restart of dsh. The
+ * confirmation gate states the cost — the page disconnects and in-flight
+ * conversations/tasks are interrupted — and on confirm the restart RPC runs;
+ * the returned URL is where the browser jumps. A failed restart renders the
+ * host's published detail: the old server is still up, nothing was lost. */
+function RestartPanel({ t, restart }: {
+  t: ShopTabProps['t']
+  restart: ShopTabInjected['restart']
+}): ReactNode {
+  const [gateOpen, setGateOpen] = useState(false)
+  const [state, setState] = useState<{ kind: 'idle' } | { kind: 'restarting' } | { kind: 'failed'; detail: string }>({ kind: 'idle' })
+
+  const onConfirm = async (): Promise<void> => {
+    setGateOpen(false)
+    setState({ kind: 'restarting' })
+    try {
+      const result = await restart()
+      if (result.ok) {
+        // The host exits the old process shortly after this response lands;
+        // the URL names the restarted server (a fresh port under --port 0).
+        window.location.href = result.url
+      } else {
+        setState({ kind: 'failed', detail: result.detail })
+      }
+    } catch {
+      // Transport failure: the request never reached the host, and the wire
+      // detail is private (hosts and ports) — the localized line is its
+      // readable face.
+      setState({ kind: 'failed', detail: t('restartTransportFailed') })
+    }
+  }
+
+  if (state.kind === 'restarting') {
+    return <p className={css.notice} data-shop-restarting>{t('restarting')}</p>
+  }
+  if (state.kind === 'failed') {
+    return <p className={css.failedDetail} data-shop-restart-error>{state.detail}</p>
+  }
+  if (gateOpen) {
+    return (
+      <div className={css.gate}>
+        <p className={css.gateTitle}>{t('restartTitle')}</p>
+        <p className={css.gateBody}>{t('restartBody')}</p>
+        <div className={css.gateActions}>
+          <button
+            type="button"
+            className={css.confirmButton}
+            data-shop-restart-confirm
+            onClick={() => void onConfirm()}
+          >
+            {t('restartConfirm')}
+          </button>
+          <button type="button" className={css.cancelButton} onClick={() => setGateOpen(false)}>
+            {t('cancel')}
+          </button>
+        </div>
+      </div>
+    )
+  }
+  return (
+    <button
+      type="button"
+      className={css.restartButton}
+      data-shop-restart
+      onClick={() => setGateOpen(true)}
+    >
+      {t('restart')}
+    </button>
+  )
+}
+
 /** One outdated install row (§7.3): the name, the installed and latest
  * versions, an optimistic enable/disable switch, and the update button (the
  * install flow for `name@latest`, reusing `InstallPanel`). The switch has no
  * installed-state RPC behind it — the tab assumes an installed plugin is on,
  * so the first toggle sends the inverted value. After a successful `setEnabled`
  * the §8 hot note renders. */
-function OutdatedRow({ row, tier, t, setEnabled, install, installStatus }: {
+function OutdatedRow({ row, tier, t, setEnabled, install, installStatus, restart }: {
   row: ShopInstalledEntry
   tier: CatalogEntry['tier']
   t: ShopTabProps['t']
   setEnabled: ShopTabInjected['setEnabled']
   install: ShopTabInjected['install']
   installStatus: ShopTabInjected['installStatus']
+  restart: ShopTabInjected['restart']
 }): ReactNode {
   // v0 has no enabled-state RPC (§7.3), so the switch optimistically reads
   // "installed ⇒ enabled" and the first click disables.
@@ -408,7 +496,7 @@ function OutdatedRow({ row, tier, t, setEnabled, install, installStatus }: {
         >
           <span className={css.switchKnob} />
         </button>
-        <InstallPanel name={row.name} version={row.latest} tier={tier} variant="update" t={t} install={install} installStatus={installStatus} />
+        <InstallPanel name={row.name} version={row.latest} tier={tier} variant="update" t={t} install={install} installStatus={installStatus} restart={restart} />
       </div>
       {toggle.kind === 'saved' && <p className={css.notice} data-shop-hot-apply>{t('hotApplyNote')}</p>}
       {toggle.kind === 'error' && <p className={css.failedDetail} data-shop-toggle-error>{toggle.detail}</p>}
@@ -423,13 +511,14 @@ function OutdatedRow({ row, tier, t, setEnabled, install, installStatus }: {
  * tier for the update gate is looked up from the catalog by name (community →
  * acknowledgement); an entry absent from the catalog defaults to the
  * community gate (the safer read). */
-function OutdatedSection({ state, tiers, t, setEnabled, install, installStatus }: {
+function OutdatedSection({ state, tiers, t, setEnabled, install, installStatus, restart }: {
   state: InstalledState
   tiers: ReadonlyMap<string, CatalogEntry['tier']>
   t: ShopTabProps['t']
   setEnabled: ShopTabInjected['setEnabled']
   install: ShopTabInjected['install']
   installStatus: ShopTabInjected['installStatus']
+  restart: ShopTabInjected['restart']
 }): ReactNode {
   if (state.kind === 'loading') return null
   if (state.kind === 'error') {
@@ -450,6 +539,7 @@ function OutdatedSection({ state, tiers, t, setEnabled, install, installStatus }
               setEnabled={setEnabled}
               install={install}
               installStatus={installStatus}
+              restart={restart}
             />
           </li>
         ))}
@@ -461,7 +551,7 @@ function OutdatedSection({ state, tiers, t, setEnabled, install, installStatus }
 /** The shop tab root: browse, search, refresh, and render one card per
  * entry. Data attributes on the e2e-relevant nodes follow the Task 3 list. */
 export function ShopTab(props: ShopTabProps): ReactNode {
-  const { t, catalog, install, installStatus, setEnabled, installed, uninstall } = props
+  const { t, catalog, install, installStatus, setEnabled, installed, uninstall, restart } = props
   const [catalogState, setCatalogState] = useState<CatalogState>({ kind: 'loading' })
   const [installedState, setInstalledState] = useState<InstalledState>({ kind: 'loading' })
   const [request, setRequest] = useState<LoadRequest>({ kind: 'initial' })
@@ -700,7 +790,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
           <ul className={css.cards}>
             {visible.map(entry => (
               <li key={entry.name}>
-                <EntryCard entry={entry} stars={stars[entry.name]} installed={installedByName.get(entry.name)} t={t} install={install} installStatus={installStatus} uninstall={uninstall} />
+                <EntryCard entry={entry} stars={stars[entry.name]} installed={installedByName.get(entry.name)} t={t} install={install} installStatus={installStatus} uninstall={uninstall} restart={restart} />
               </li>
             ))}
             {incremental && visibleCount < filtered.length && (
@@ -721,6 +811,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
         setEnabled={setEnabled}
         install={install}
         installStatus={installStatus}
+        restart={restart}
       />
     </div>
   )
