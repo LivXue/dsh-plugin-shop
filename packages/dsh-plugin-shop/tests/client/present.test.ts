@@ -108,6 +108,25 @@ describe('isShopLike', () => {
     expect(isShopLike('dshmarketplace')).toBe(true)
   })
 
+  it('matches a dsh-prefixed name whose second segment is a keyword', () => {
+    expect(isShopLike('dsh-market-plus')).toBe(true)
+    expect(isShopLike('@scope/dsh-market-plus')).toBe(true)
+    expect(isShopLike('dsh-store-pro')).toBe(true)
+  })
+
+  it('does not match a dsh-prefixed name whose second segment merely starts with a keyword', () => {
+    // `marketing` starts with `market` but is not a market.
+    expect(isShopLike('dsh-marketing-tool')).toBe(false)
+  })
+
+  it('does not match a dsh-keyword name whose third segment is not a store qualifier', () => {
+    // The real false positive found in the live catalog: an ecommerce
+    // operators' tool, not a competing store.
+    expect(isShopLike('dsh-shop-assistant')).toBe(false)
+    expect(isShopLike('dsh-market-data')).toBe(false)
+    expect(isShopLike('dsh-store-tools')).toBe(false)
+  })
+
   it('does not match a glued keyword with extra letters after it', () => {
     // `dshstorekeeper` is dsh+storekeeper, not dsh+store — the same
     // precision principle as the hyphenated `dsh-storekeeper-tool` case.

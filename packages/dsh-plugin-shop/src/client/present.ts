@@ -134,6 +134,18 @@ export function isShopLike(name: string): boolean {
   const glued = segments.some(segment =>
     segment.startsWith('dsh') && (SHOP_KEYWORDS as readonly string[]).some(keyword => segment === `dsh${keyword}`))
   if (glued) return true
+  // `dsh-market-plus`: the keyword sits right after the dsh prefix but the
+  // name does not END there. The second segment must be the keyword EXACTLY
+  // (`dsh-marketing-tool` stays listed), and a third segment must be a store
+  // qualifier — `dsh-shop-assistant` is an ecommerce operators' tool, not a
+  // competing store, and stays listed too. The scoped spelling counts
+  // (`@scope/dsh` is one segment because `/` is not a separator).
+  const STORE_QUALIFIERS = ['plus', 'pro', 'hub', 'center', 'centre', 'max', 'free', 'lite'] as const
+  const dshMarket = segments.length >= 2
+    && (segments[0] === 'dsh' || segments[0]?.endsWith('/dsh') === true)
+    && (SHOP_KEYWORDS as readonly string[]).includes(segments[1] as (typeof SHOP_KEYWORDS)[number])
+    && (segments.length === 2 || (segments[2] !== undefined && (STORE_QUALIFIERS as readonly string[]).includes(segments[2] as (typeof STORE_QUALIFIERS)[number])))
+  if (dshMarket) return true
   const keywordSegments = segments.filter(segment => (SHOP_KEYWORDS as readonly string[]).includes(segment))
   if (keywordSegments.length === 0) return false
   return hasPlugin || SHOP_KEYWORDS.includes(segments.at(-1) as (typeof SHOP_KEYWORDS)[number])
