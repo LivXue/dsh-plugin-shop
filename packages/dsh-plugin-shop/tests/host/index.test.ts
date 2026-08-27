@@ -340,14 +340,14 @@ describe('ShopGateway.setEnabled', () => {
   })
 })
 
-describe('ShopGateway.outdated', () => {
+describe('ShopGateway.installed', () => {
   const entries = [
     { name: 'dsh-one', version: '2.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived' },
     { name: 'dsh-two', version: '1.5.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived' },
   ]
 
   function gatewayWithManifest(dependencies: Record<string, string>): ShopGateway {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-outdated-'))
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-installed-'))
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies }))
     return new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
@@ -355,28 +355,29 @@ describe('ShopGateway.outdated', () => {
     })
   }
 
-  it('reports an installed plugin whose installed version is older than the catalog', async () => {
+  it('reports an installed plugin behind the catalog with outdated: true', async () => {
     const gateway = gatewayWithManifest({ 'dsh-one': '^1.0.0' })
     await gateway.catalog({}) // populates lastSnapshot
-    const outdated = await gateway.outdated()
-    expect(outdated).toEqual([{ name: 'dsh-one', installed: '^1.0.0', latest: '2.0.0' }])
+    expect(await gateway.installed()).toEqual([{ name: 'dsh-one', installed: '^1.0.0', latest: '2.0.0', outdated: true }])
   })
 
-  it('does not report a plugin that is current', async () => {
+  it('reports a current installed plugin with outdated: false', async () => {
     const gateway = gatewayWithManifest({ 'dsh-one': '^2.0.0' })
     await gateway.catalog({})
-    expect(await gateway.outdated()).toEqual([])
+    expect(await gateway.installed()).toEqual([{ name: 'dsh-one', installed: '^2.0.0', latest: '2.0.0', outdated: false }])
   })
 
-  it('skips a non-semver installed spec instead of throwing', async () => {
+  it('reads a non-semver installed spec as current instead of throwing', async () => {
     const gateway = gatewayWithManifest({ 'dsh-one': '^1.0.0', 'dsh-two': 'workspace:*' })
     await gateway.catalog({})
-    const outdated = await gateway.outdated()
-    expect(outdated).toEqual([{ name: 'dsh-one', installed: '^1.0.0', latest: '2.0.0' }])
+    expect(await gateway.installed()).toEqual([
+      { name: 'dsh-one', installed: '^1.0.0', latest: '2.0.0', outdated: true },
+      { name: 'dsh-two', installed: 'workspace:*', latest: '1.5.0', outdated: false },
+    ])
   })
 
-  it('lazily loads the catalog when outdated() is called without a prior catalog()', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-outdated-'))
+  it('lazily loads the catalog when installed() is called without a prior catalog()', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-installed-'))
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: { 'dsh-one': '^1.0.0' } }))
     let loadCalls = 0
     const gateway = new ShopGateway(stubCtx(), {
@@ -386,8 +387,8 @@ describe('ShopGateway.outdated', () => {
         return { snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [], stars: {} }, stale: false } as CatalogResult
       },
     })
-    const outdated = await gateway.outdated()
+    const installed = await gateway.installed()
     expect(loadCalls).toBe(1)
-    expect(outdated).toEqual([{ name: 'dsh-one', installed: '^1.0.0', latest: '2.0.0' }])
+    expect(installed).toEqual([{ name: 'dsh-one', installed: '^1.0.0', latest: '2.0.0', outdated: true }])
   })
 })

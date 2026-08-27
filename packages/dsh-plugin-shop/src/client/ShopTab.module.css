@@ -600,6 +600,20 @@
   outline-offset: 1px;
 }
 
+/* The shelf card of a plugin that is installed and current carries this
+ * non-interactive label instead of an install button. Border + text do the
+ * work in the light theme, where every bg-layer token resolves to white. */
+.installedLabel {
+  align-self: flex-start;
+  margin: 0;
+  padding: 5px 14px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
 .gate {
   display: flex;
   flex-direction: column;

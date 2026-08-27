@@ -54,8 +54,11 @@ export interface ShopInstallStatusResult extends InstallStatus { found: boolean 
  * not a thrown RPC error. */
 export interface ShopSetEnabledResult { ok: boolean; detail?: string }
 
-/** `shop/outdated` entry (§7.3): one installed plugin behind the catalog. */
-export interface ShopOutdatedEntry { name: string; installed: string; latest: string }
+/** `shop/installed` entry (§7.3): one installed catalog plugin. `installed`
+ * is the profile manifest's dependency spec verbatim (a range, a tag, or
+ * `workspace:*`); `outdated` is the Host's verdict that the installed version
+ * sits behind the catalog's — the client never does version math. */
+export interface ShopInstalledEntry { name: string; installed: string; latest: string; outdated: boolean }
 
 /** One row of the row config the bundle patch (§cordis.patch.yml) supplies. */
 interface ShopRowConfig {
@@ -247,9 +250,12 @@ export class ShopGateway extends TypertRemoteService {
     return { found: true, ...running.status() }
   }
 
-  /** Installed plugins whose installed version is older than the catalog's (§7.3). */
-  @Remote('outdated')
-  async outdated(): Promise<ShopOutdatedEntry[]> {
+  /** Installed catalog plugins (§7.3): every entry of the snapshot the profile
+   * manifest declares as a dependency, with the Host's `outdated` verdict
+   * attached. The tab's shelf cards and its installed section both derive
+   * from this one list. */
+  @Remote('installed')
+  async installed(): Promise<ShopInstalledEntry[]> {
     if (this.lastSnapshot === null) {
       const { catalogUrl, cacheDir } = this.rowConfig()
       const load = this.options.loadCatalog ?? loadCatalog
@@ -258,26 +264,28 @@ export class ShopGateway extends TypertRemoteService {
     }
     const manifest = readProfileManifest('dsh-plugin-shop', this.profileDirResolved())
     const dependencies = manifest.dependencies ?? {}
-    const outdated: ShopOutdatedEntry[] = []
+    const installed: ShopInstalledEntry[] = []
     for (const entry of this.lastSnapshot.entries) {
-      const installed = dependencies[entry.name]
-      if (installed === undefined) continue
-      let floor: string | null
-      if (installed === entry.version) {
-        floor = installed
-      } else {
-        try {
-          floor = minVersion(installed)?.version ?? null
-        } catch {
-          // A pnpm-written non-semver spec like `workspace:*` is not reportable and must not kill the RPC.
-          floor = null
-        }
-      }
-      if (floor !== null && lt(floor, entry.version)) {
-        outdated.push({ name: entry.name, installed, latest: entry.version })
-      }
+      const spec = dependencies[entry.name]
+      if (spec === undefined) continue
+      installed.push({ name: entry.name, installed: spec, latest: entry.version, outdated: this.isBehind(spec, entry.version) })
     }
-    return outdated
+    return installed
+  }
+
+  /** Whether an installed dependency spec sits behind the catalog's version.
+   * A spec identical to the catalog version is current by definition; a
+   * pnpm-written non-semver spec like `workspace:*` is not reportable and
+   * reads as current rather than killing the RPC. */
+  private isBehind(spec: string, latest: string): boolean {
+    if (spec === latest) return false
+    let floor: string | null
+    try {
+      floor = minVersion(spec)?.version ?? null
+    } catch {
+      floor = null
+    }
+    return floor !== null && lt(floor, latest)
   }
 }
 

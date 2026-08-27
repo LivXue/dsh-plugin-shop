@@ -1,7 +1,7 @@
 /**
  * Shop settings surface, browser half — one tab in `settings.plugins.tab`
  * that browses the catalog, installs with acknowledgement, toggles
- * enablement, and lists outdated installs. Mounts the shop Remote itself
+ * enablement, and lists installed plugins. Mounts the shop Remote itself
  * (the assembly does not know this package) and holds no privilege beyond
  * the five `shop/*` methods (§5.3).
  */
@@ -75,7 +75,7 @@ export async function apply(ctx: ClientContext): Promise<void> {
     install: async args => unwrap(await ns.installStart(args)),
     installStatus: async args => unwrap(await ns.installStatus(args)),
     setEnabled: async args => unwrap(await ns.setEnabled(args)),
-    outdated: async () => unwrap(await ns.outdated()),
+    installed: async () => unwrap(await ns.installed()),
   })
 
   ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register({

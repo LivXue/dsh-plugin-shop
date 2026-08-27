@@ -295,11 +295,13 @@ Implementation decisions:
 | `shop/installStart` | `{ name, version, acknowledged? }` | `{ installId }` |
 | `shop/installStatus` | `{ installId }` | `{ state, log[], needsRestart? }` |
 | `shop/setEnabled` | `{ name, enabled }` | `{ ok }` |
-| `shop/outdated` | none | `{ name, installed, latest }[]` |
+| `shop/installed` | none | `{ name, installed, latest, outdated }[]` |
 
 **Amendment (2026-08-25): the install method is `shop/installStart`, not `shop/install`.** The web full-flow e2e against the real composition exposed that the client api's `RemoteNamespaceService` owns a method named `install` (its internal mount primitive), so a Remote namespace cannot expose one: mounting `shop/install` throws "method \"shop/install\" conflicts with its namespace service". The wire method is renamed to `shop/installStart` (pairing with `shop/installStatus`); the client-visible injected face keeps the name `install`, and the host-side code method is unchanged — only the wire name differs.
 
 **Amendment (2026-08-25): a client package that mounts its own Remote must consume it through the reflect shop, not the inject face.** The same e2e exposed that `ctx.remote.<ns>` refuses a namespace to a fiber whose inject face does not name it ("cannot get property remote.shop without inject"), while naming it in the face deadlocks the boot's activation gate: the gate waits for `remote.shop` to be provided, and only the package's own apply — which the gate is holding back — can mount it ("pending (waiting for service: remote.shop)"). The client half therefore reads the mounted namespace via `ctx.get('remote.shop')`, the reflect shop's documented inject-free read, after `$mount` settles. Third-party client packages that self-mount should follow the same pattern.
+
+**Amendment (2026-08-27): `shop/outdated` is reshaped into `shop/installed`, which returns every installed catalog entry with an `outdated` flag.** The tab's shelf cards need the full installed set — not just the behind-version subset — so the card for an installed plugin shows its installed state (or the update button when behind) instead of an install button. The outdated section and the card state both derive from this one list; the semver comparison stays on the Host, and the client never does version math.
 
 ## 8. When changes take effect
 

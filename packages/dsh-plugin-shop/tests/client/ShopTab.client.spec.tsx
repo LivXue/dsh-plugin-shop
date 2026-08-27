@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ACKNOWLEDGEMENT_EN, ACKNOWLEDGEMENT_ZH, SHOP_VISIBLE_BATCH, rejectionCodeKey } from '../../src/client/present.ts'
 import { en, zh, type ShopLocaleKey } from '../../src/client/locales.ts'
 import { ShopTab, type ShopTabInjected, type ShopTabProps } from '../../src/client/ShopTab.tsx'
-import type { ShopCatalogResult, ShopOutdatedEntry } from '../../src/host/index.ts'
+import type { ShopCatalogResult, ShopInstalledEntry } from '../../src/host/index.ts'
 
 afterEach(cleanup)
 
@@ -25,14 +25,14 @@ function snapshot(overrides: Partial<ShopCatalogResult['plugins'][number]> = {})
   }
 }
 
-function bench(catalogResult: ShopCatalogResult, outdatedEntries: ShopOutdatedEntry[] = []) {
+function bench(catalogResult: ShopCatalogResult, installedEntries: ShopInstalledEntry[] = []) {
   const catalog = vi.fn<ShopTabInjected['catalog']>().mockResolvedValue(catalogResult)
   const install = vi.fn<ShopTabInjected['install']>().mockResolvedValue({ ok: true, installId: 'i1' })
   const installStatus = vi.fn<ShopTabInjected['installStatus']>().mockResolvedValue({ found: true, state: 'done', log: [], needsRestart: true })
   const setEnabled = vi.fn<ShopTabInjected['setEnabled']>().mockResolvedValue({ ok: true })
-  const outdated = vi.fn<ShopTabInjected['outdated']>().mockResolvedValue(outdatedEntries)
-  const injected: ShopTabInjected = { catalog, install, installStatus, setEnabled, outdated }
-  return { catalog, install, installStatus, setEnabled, outdated, injected }
+  const installed = vi.fn<ShopTabInjected['installed']>().mockResolvedValue(installedEntries)
+  const injected: ShopTabInjected = { catalog, install, installStatus, setEnabled, installed }
+  return { catalog, install, installStatus, setEnabled, installed, injected }
 }
 
 function renderTab(injected: ShopTabInjected) {
@@ -307,16 +307,16 @@ describe('ShopTab', () => {
   })
 
   it('lists outdated installs with their installed and latest versions', async () => {
-    const { injected, outdated } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0' }])
+    const { injected, installed } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true }])
     renderTab(injected)
     await waitFor(() => expect(screen.getByText(en.installedSection)).toBeTruthy())
     expect(screen.getByText('installed v1.0.0')).toBeTruthy()
     expect(screen.getByText('latest v1.2.0')).toBeTruthy()
-    expect(outdated).toHaveBeenCalled()
+    expect(installed).toHaveBeenCalled()
   })
 
   it('toggles an outdated install with setEnabled and shows the hot-apply note', async () => {
-    const { injected, setEnabled } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0' }])
+    const { injected, setEnabled } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true }])
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
     const toggle = screen.getByRole('switch')
@@ -326,18 +326,54 @@ describe('ShopTab', () => {
   })
 
   it('updates an outdated install to the latest version directly when verified', async () => {
-    const { injected, install } = bench(snapshot({ tier: 'verified' }), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0' }])
-    renderTab(injected)
+    const { injected, install } = bench(snapshot({ tier: 'verified' }), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true }])
+    const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
-    fireEvent.click(screen.getByText(en.update))
+    // The card and the installed-section row both carry an update button; this
+    // test drives the section's.
+    fireEvent.click(container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-update]')!)
     await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: undefined }))
   })
 
   it('gates a community-tier update behind the acknowledgement', async () => {
-    const { injected, install } = bench(snapshot({ tier: 'community' }), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0' }])
-    renderTab(injected)
+    const { injected, install } = bench(snapshot({ tier: 'community' }), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true }])
+    const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
-    fireEvent.click(screen.getByText(en.update))
+    fireEvent.click(container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-update]')!)
+    await waitFor(() => expect(screen.getByText(en.acknowledgementBody)).toBeTruthy())
+    expect(install).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByText(en.confirm))
+    await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true }))
+  })
+
+  it('shows the installed label instead of an install button on the card of a current install', async () => {
+    const { injected } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false }])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const card = container.querySelector('[data-shop-entry="dsh-hello-plugin"]')
+    expect(card?.querySelector('[data-shop-installed]')?.textContent).toBe(en.installed)
+    expect(card?.querySelector('[data-shop-install]')).toBeNull()
+    expect(card?.querySelector('[data-shop-update]')).toBeNull()
+    // A current install has no row in the installed section.
+    expect(container.querySelector('[data-shop-outdated]')).toBeNull()
+  })
+
+  it('shows the update button instead of an install button on the card of an install behind the catalog', async () => {
+    const { injected, install } = bench(snapshot({ tier: 'verified' }), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true }])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    const card = container.querySelector('[data-shop-entry="dsh-hello-plugin"]')
+    expect(card?.querySelector('[data-shop-installed]')).toBeNull()
+    expect(card?.querySelector('[data-shop-install]')).toBeNull()
+    fireEvent.click(card!.querySelector('[data-shop-update]')!)
+    await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: undefined }))
+  })
+
+  it('gates the card update button behind the acknowledgement for a community install', async () => {
+    const { injected, install } = bench(snapshot({ tier: 'community' }), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true }])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-update]')!)
     await waitFor(() => expect(screen.getByText(en.acknowledgementBody)).toBeTruthy())
     expect(install).not.toHaveBeenCalled()
     fireEvent.click(screen.getByText(en.confirm))
@@ -399,7 +435,7 @@ describe('ShopTab shop-like filtering', () => {
   })
 
   it('keeps an installed shop-like plugin manageable in the installed section', async () => {
-    const { injected } = bench(twoPlugins(), [{ name: 'dsh-plugin-shop-2', installed: '^1.0.0', latest: '2.0.0' }])
+    const { injected } = bench(twoPlugins(), [{ name: 'dsh-plugin-shop-2', installed: '^1.0.0', latest: '2.0.0', outdated: true }])
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     expect(screen.getByText('dsh-plugin-shop-2')).toBeTruthy()

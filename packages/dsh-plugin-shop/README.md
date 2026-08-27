@@ -114,7 +114,7 @@ bundle is not.
 | **Browse & search** | 1800+ packages harvested from npm by the `dsh-plugin` keyword, shown with the author's own summary when they declared one |
 | **Install** | One confirmation. An unreviewed plugin requires an explicit acknowledgement first — an installed plugin holds the same privileges as a built-in one |
 | **Enable / disable** | Applies to an installed plugin without a restart |
-| **Outdated installs** | Compared against the catalog's current version |
+| **Installed state** | An installed plugin shows an Installed label on its card — or an Update button when the catalog has a newer version — instead of an install button |
 
 ## 🧩 How it is put together
 

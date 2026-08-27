@@ -6,7 +6,7 @@
 
 import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstallResult, ShopInstallStatusResult, ShopOutdatedEntry, ShopSetEnabledResult } from '../host/index.ts'
+import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopSetEnabledResult } from '../host/index.ts'
 import { CATEGORY_ORDER, SHOP_VISIBLE_BATCH, type Category, categoryKey, categoryLocaleKey, formatStars, isShopLike, isUnclaimed, nextVisibleCount, rejectionCodeKey, sortByStars, tierKey } from './present.ts'
 import { useInstall } from './useInstall.ts'
 import css from './ShopTab.module.css'
@@ -19,7 +19,7 @@ export interface ShopTabInjected {
   install: (args: InstallArgs) => Promise<ShopInstallResult>
   installStatus: (args: { installId: string }) => Promise<ShopInstallStatusResult>
   setEnabled: (args: { name: string; enabled: boolean }) => Promise<ShopSetEnabledResult>
-  outdated: () => Promise<ShopOutdatedEntry[]>
+  installed: () => Promise<ShopInstalledEntry[]>
 }
 
 /** Full component props assembled by the Settings slot renderer. */
@@ -38,14 +38,16 @@ type CatalogState =
   | { kind: 'error' }
   | { kind: 'ready'; result: ShopCatalogResult }
 
-/** The outdated list state. `outdated()` runs alongside `catalog()` and its
- * rows are the "installed" section (§7.3): the tab has no installed-state RPC,
- * so membership in this list IS the installed signal, and the enabled switch
- * per row is optimistic (v0 assumes an installed plugin is on). */
-type OutdatedState =
+/** The installed list state (§7.3). `installed()` runs alongside `catalog()`
+ * and its rows ARE the tab's installed signal: a shelf card for an installed
+ * entry shows its installed state — or the update button when behind —
+ * instead of the install button, and the entries rendered as the "installed"
+ * section are the same list filtered to `outdated`. The enabled switch per
+ * row is optimistic (v0 assumes an installed plugin is on). */
+type InstalledState =
   | { kind: 'loading' }
   | { kind: 'error' }
-  | { kind: 'ready'; entries: ShopOutdatedEntry[] }
+  | { kind: 'ready'; entries: ShopInstalledEntry[] }
 
 function ChevronIcon({ open }: { open: boolean }): ReactNode {
   return (
@@ -58,10 +60,13 @@ function ChevronIcon({ open }: { open: boolean }): ReactNode {
 /** One entry card: the category spine and cover band, the expandable header
  * (name, tier, category, unclaimed marker), the plain-text summary in both
  * languages, the self-declared capabilities, the detail section, and the
- * install controls. */
-const EntryCard = memo(function EntryCard({ entry, stars, t, install, installStatus }: {
+ * install controls. An installed plugin's card carries its installed row:
+ * current → the non-interactive installed label, behind → the update button;
+ * uninstalled → the install button. */
+const EntryCard = memo(function EntryCard({ entry, stars, installed, t, install, installStatus }: {
   entry: CatalogEntry
   stars: number | undefined
+  installed: ShopInstalledEntry | undefined
   t: ShopTabProps['t']
   install: ShopTabInjected['install']
   installStatus: ShopTabInjected['installStatus']
@@ -150,7 +155,15 @@ const EntryCard = memo(function EntryCard({ entry, stars, t, install, installSta
             )}
           </section>
         )}
-        <InstallPanel name={entry.name} version={entry.version} tier={entry.tier} t={t} install={install} installStatus={installStatus} />
+        {installed === undefined ? (
+          <InstallPanel name={entry.name} version={entry.version} tier={entry.tier} t={t} install={install} installStatus={installStatus} />
+        ) : installed.outdated ? (
+          // The update button drives the same install flow for the catalog's
+          // latest version; the community gate still applies (§9.3).
+          <InstallPanel name={entry.name} version={entry.version} tier={entry.tier} variant="update" t={t} install={install} installStatus={installStatus} />
+        ) : (
+          <p className={css.installedLabel} data-shop-installed>{t('installed')}</p>
+        )}
       </div>
     </div>
   )
@@ -268,7 +281,7 @@ function InstallPanel({ name, version, tier, variant = 'install', t, install, in
  * so the first toggle sends the inverted value. After a successful `setEnabled`
  * the §8 hot note renders. */
 function OutdatedRow({ row, tier, t, setEnabled, install, installStatus }: {
-  row: ShopOutdatedEntry
+  row: ShopInstalledEntry
   tier: CatalogEntry['tier']
   t: ShopTabProps['t']
   setEnabled: ShopTabInjected['setEnabled']
@@ -335,12 +348,15 @@ function OutdatedRow({ row, tier, t, setEnabled, install, installStatus }: {
   )
 }
 
-/** The §7.3 outdated list, rendered as the "installed" section: each row shows
- * both versions, a switch, and an update button. The tier for the update gate
- * is looked up from the catalog by name (community → acknowledgement); an entry
- * absent from the catalog defaults to the community gate (the safer read). */
+/** The §7.3 installed list, rendered as the "installed" section: each row
+ * shows both versions, a switch, and an update button. The rows are the
+ * installed entries filtered to `outdated` — a current install is already
+ * spoken for by its shelf card's installed label, and has no row here. The
+ * tier for the update gate is looked up from the catalog by name (community →
+ * acknowledgement); an entry absent from the catalog defaults to the
+ * community gate (the safer read). */
 function OutdatedSection({ state, tiers, t, setEnabled, install, installStatus }: {
-  state: OutdatedState
+  state: InstalledState
   tiers: ReadonlyMap<string, CatalogEntry['tier']>
   t: ShopTabProps['t']
   setEnabled: ShopTabInjected['setEnabled']
@@ -351,12 +367,13 @@ function OutdatedSection({ state, tiers, t, setEnabled, install, installStatus }
   if (state.kind === 'error') {
     return <p className={css.stateLine} data-shop-outdated-error>{t('error')}</p>
   }
-  if (state.entries.length === 0) return null
+  const outdated = state.entries.filter(entry => entry.outdated)
+  if (outdated.length === 0) return null
   return (
     <section className={css.outdatedSection} data-shop-outdated>
       <h2 className={css.catalogHeading}>{t('installedSection')}</h2>
       <ul className={css.outdatedList}>
-        {state.entries.map(row => (
+        {outdated.map(row => (
           <li key={row.name}>
             <OutdatedRow
               row={row}
@@ -376,9 +393,9 @@ function OutdatedSection({ state, tiers, t, setEnabled, install, installStatus }
 /** The shop tab root: browse, search, refresh, and render one card per
  * entry. Data attributes on the e2e-relevant nodes follow the Task 3 list. */
 export function ShopTab(props: ShopTabProps): ReactNode {
-  const { t, catalog, install, installStatus, setEnabled, outdated } = props
+  const { t, catalog, install, installStatus, setEnabled, installed } = props
   const [catalogState, setCatalogState] = useState<CatalogState>({ kind: 'loading' })
-  const [outdatedState, setOutdatedState] = useState<OutdatedState>({ kind: 'loading' })
+  const [installedState, setInstalledState] = useState<InstalledState>({ kind: 'loading' })
   const [request, setRequest] = useState<LoadRequest>({ kind: 'initial' })
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState<Category | null>(null)
@@ -414,23 +431,23 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     return () => { cancelled = true }
   }, [catalog, request])
 
-  // The outdated list runs against the same snapshot the catalog serves, so it
+  // The installed list runs against the same snapshot the catalog serves, so it
   // reloads on refresh/retry too — the host keeps `lastSnapshot` between calls.
   useEffect(() => {
     let cancelled = false
     const load = async (): Promise<void> => {
       try {
-        const entries = await outdated()
-        if (!cancelled) setOutdatedState({ kind: 'ready', entries })
+        const entries = await installed()
+        if (!cancelled) setInstalledState({ kind: 'ready', entries })
       } catch {
         // Same privacy rule as the catalog: the transport detail is never
         // rendered; the error line is the readable face of a failed load.
-        if (!cancelled) setOutdatedState({ kind: 'error' })
+        if (!cancelled) setInstalledState({ kind: 'error' })
       }
     }
     void load()
     return () => { cancelled = true }
-  }, [outdated, request])
+  }, [installed, request])
 
   const filtered = useMemo(() => {
     if (catalogState.kind !== 'ready') return []
@@ -491,8 +508,17 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     return counts
   }, [catalogState])
 
+  // Each shelf card looks its installed state up by name.
+  const installedByName = useMemo(() => {
+    const map = new Map<string, ShopInstalledEntry>()
+    if (installedState.kind === 'ready') {
+      for (const entry of installedState.entries) map.set(entry.name, entry)
+    }
+    return map
+  }, [installedState])
+
   // The outdated rows' update gate needs each entry's tier; the catalog is the
-  // only source for it (ShopOutdatedEntry carries none). An entry missing from
+  // only source for it (ShopInstalledEntry carries none). An entry missing from
   // the loaded catalog defaults to the community gate at render.
   const tiers = useMemo(() => {
     const map = new Map<string, CatalogEntry['tier']>()
@@ -585,7 +611,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
           <ul className={css.cards}>
             {visible.map(entry => (
               <li key={entry.name}>
-                <EntryCard entry={entry} stars={stars[entry.name]} t={t} install={install} installStatus={installStatus} />
+                <EntryCard entry={entry} stars={stars[entry.name]} installed={installedByName.get(entry.name)} t={t} install={install} installStatus={installStatus} />
               </li>
             ))}
             {incremental && visibleCount < filtered.length && (
@@ -600,7 +626,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
         </>
       )}
       <OutdatedSection
-        state={outdatedState}
+        state={installedState}
         tiers={tiers}
         t={t}
         setEnabled={setEnabled}
