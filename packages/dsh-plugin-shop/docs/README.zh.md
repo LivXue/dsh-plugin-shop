@@ -19,13 +19,13 @@
 ## 🖼️ 界面预览
 
 <div align="center">
-<img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/shelf-light.png" alt="dsh 设置页里的插件商店货架" width="860">
+<img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/shelf-light.zh.png" alt="dsh 设置页里的插件商店货架" width="860">
 </div>
 
 <table>
 <tr>
-<td width="50%"><img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/gate-light.png" alt="安装未评审插件需要显式确认"></td>
-<td width="50%"><img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/shelf-dark.png" alt="深色主题下的同一片货架"></td>
+<td width="50%"><img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/gate-light.zh.png" alt="安装未评审插件需要显式确认"></td>
+<td width="50%"><img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/shelf-dark.zh.png" alt="深色主题下的同一片货架"></td>
 </tr>
 <tr>
 <td align="center"><sub>安装未评审插件需要显式确认</sub></td>
