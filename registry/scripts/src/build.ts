@@ -18,7 +18,7 @@ import { join } from 'node:path'
 import { loadRegistryConfig } from './config.ts'
 import { fetchStarCounts } from './github-stars.ts'
 import { githubOwnerName } from './github-repo.ts'
-import { fetchCandidates, searchByKeyword } from './npm-client.ts'
+import { fetchCandidates, searchByKeywords } from './npm-client.ts'
 import { runPipeline } from './pipeline.ts'
 import type { Candidate, Rejection } from './types.ts'
 
@@ -43,7 +43,7 @@ const config = loadRegistryConfig(REGISTRY_DIR)
 let candidates: Candidate[]
 let rejections: Rejection[]
 if (harvestFrom === undefined) {
-  const names = await searchByKeyword(fetch, undefined, npmToken)
+  const names = await searchByKeywords(fetch, undefined, npmToken)
   process.stderr.write(`harvested ${names.length} candidate(s)\n`)
   const harvested = await fetchCandidates(names, fetch, npmToken)
   candidates = harvested.candidates

@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { fetchCandidate, HARVEST_KEYWORD, searchByKeyword, toCandidate } from '../src/npm-client.ts'
+import { fetchCandidate, HARVEST_KEYWORDS, searchByKeywords, toCandidate } from '../src/npm-client.ts'
 
-describe('HARVEST_KEYWORD', () => {
-  it('is the ecosystem-neutral keyword, not a branded one', () => {
-    expect(HARVEST_KEYWORD).toBe('dsh-plugin')
+describe('HARVEST_KEYWORDS', () => {
+  it('leads with the ecosystem keyword and adds the harness keyword, neither branded', () => {
+    expect(HARVEST_KEYWORDS).toEqual(['dsh-plugin', 'deepseek-harness'])
   })
 })
 
@@ -106,29 +106,56 @@ describe('toCandidate', () => {
   })
 })
 
-describe('searchByKeyword', () => {
-  it('pages until the registry returns fewer objects than requested', async () => {
+describe('searchByKeywords', () => {
+  it('pages every harvest keyword until the registry returns fewer objects than requested', async () => {
     const pages = [
       { objects: Array.from({ length: 250 }, (_, i) => ({ package: { name: `dsh-p${i}` } })) },
       { objects: [{ package: { name: 'dsh-last' } }] },
     ]
+    const urls: string[] = []
     let call = 0
     const fetchImpl = (async (url: string | URL) => {
-      expect(String(url)).toContain('keywords:dsh-plugin')
+      urls.push(String(url))
       const body = pages[call] ?? { objects: [] }
       call += 1
       return new Response(JSON.stringify(body), { status: 200 })
     }) as unknown as typeof fetch
 
-    const names = await searchByKeyword(fetchImpl)
+    const names = await searchByKeywords(fetchImpl)
     expect(names).toHaveLength(251)
-    expect(names.at(-1)).toBe('dsh-last')
-    expect(call).toBe(2)
+    expect(names).toContain('dsh-last') // the union is sorted, so it cannot anchor the tail
+    expect(call).toBe(3) // two pages for the primary keyword, one empty for the second
+    expect(urls.some(url => url.includes('keywords:dsh-plugin'))).toBe(true)
+    expect(urls.some(url => url.includes('keywords:deepseek-harness'))).toBe(true)
   })
 
-  it('throws when the registry answers with an error status', async () => {
+  it('unions the keywords, deduplicates, and sorts', async () => {
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      if (text.includes('keywords:dsh-plugin')) {
+        return new Response(JSON.stringify({ objects: [{ package: { name: 'b' } }, { package: { name: 'a' } }] }), { status: 200 })
+      }
+      if (text.includes('keywords:deepseek-harness')) {
+        return new Response(JSON.stringify({ objects: [{ package: { name: 'b' } }, { package: { name: 'c' } }] }), { status: 200 })
+      }
+      throw new Error(`unexpected url: ${text}`)
+    }) as unknown as typeof fetch
+
+    await expect(searchByKeywords(fetchImpl)).resolves.toEqual(['a', 'b', 'c'])
+  })
+
+  it('throws when the registry answers with an error status, naming the keyword', async () => {
     const fetchImpl = (async () => new Response('nope', { status: 503 })) as unknown as typeof fetch
-    await expect(searchByKeyword(fetchImpl)).rejects.toThrow(/503/)
+    await expect(searchByKeywords(fetchImpl)).rejects.toThrow(/keywords:dsh-plugin.*503/)
+  })
+
+  it('aborts when a later keyword search fails, rather than harvesting a subset', async () => {
+    const fetchImpl = (async (url: string | URL) => {
+      if (String(url).includes('keywords:deepseek-harness')) return new Response('nope', { status: 503 })
+      return new Response(JSON.stringify({ objects: [{ package: { name: 'fine' } }] }), { status: 200 })
+    }) as unknown as typeof fetch
+
+    await expect(searchByKeywords(fetchImpl)).rejects.toThrow(/keywords:deepseek-harness.*503/)
   })
 
   it('retries a rate-limited search and succeeds when the registry recovers', async () => {
@@ -140,9 +167,9 @@ describe('searchByKeyword', () => {
       return new Response(JSON.stringify({ objects: [] }), { status: 200 })
     }) as unknown as typeof fetch
 
-    const names = await searchByKeyword(fetchImpl, sleep)
+    const names = await searchByKeywords(fetchImpl, sleep)
     expect(names).toHaveLength(0)
-    expect(call).toBe(2)
+    expect(call).toBe(3) // the 429, its retry, then the second keyword's clean page
   })
 
   it('gives up after bounded retries and throws the final 429', async () => {
@@ -153,7 +180,7 @@ describe('searchByKeyword', () => {
       return new Response('rate limited', { status: 429 })
     }) as unknown as typeof fetch
 
-    await expect(searchByKeyword(fetchImpl, sleep)).rejects.toThrow(/429/)
+    await expect(searchByKeywords(fetchImpl, sleep)).rejects.toThrow(/429/)
     expect(call).toBe(6)
   })
 
@@ -167,7 +194,7 @@ describe('searchByKeyword', () => {
       return new Response(JSON.stringify({ objects: [] }), { status: 200 })
     }) as unknown as typeof fetch
 
-    await searchByKeyword(fetchImpl, sleep)
+    await searchByKeywords(fetchImpl, sleep)
     expect(delays).toEqual([3000])
   })
 
@@ -181,7 +208,7 @@ describe('searchByKeyword', () => {
       return new Response(JSON.stringify({ objects: [] }), { status: 200 })
     }) as unknown as typeof fetch
 
-    await searchByKeyword(fetchImpl, sleep)
+    await searchByKeywords(fetchImpl, sleep)
     expect(delays).toEqual([2000, 4000, 8000, 16000, 32000])
   })
 
@@ -193,7 +220,7 @@ describe('searchByKeyword', () => {
     const sleep = async (ms: number) => { delays.push(ms) }
     const fetchImpl = (async () => new Response('rate limited', { status: 429 })) as unknown as typeof fetch
 
-    await expect(searchByKeyword(fetchImpl, sleep)).rejects.toThrow(/429/)
+    await expect(searchByKeywords(fetchImpl, sleep)).rejects.toThrow(/429/)
     expect(delays.reduce((a, b) => a + b, 0)).toBe(62_000)
   })
 
@@ -207,7 +234,7 @@ describe('searchByKeyword', () => {
       return new Response(JSON.stringify({ objects: [] }), { status: 200 })
     }) as unknown as typeof fetch
 
-    await searchByKeyword(fetchImpl, sleep)
+    await searchByKeywords(fetchImpl, sleep)
     expect(delays).toEqual([60_000])
   })
 
@@ -219,9 +246,9 @@ describe('searchByKeyword', () => {
       return new Response(JSON.stringify({ objects: [] }), { status: 200 })
     }) as unknown as typeof fetch
 
-    await searchByKeyword(fetchImpl, sleep, 'npm_readonly_token')
-    expect(headersSeen).toHaveLength(1)
-    expect(headersSeen[0]?.Authorization).toBe('Bearer npm_readonly_token')
+    await searchByKeywords(fetchImpl, sleep, 'npm_readonly_token')
+    expect(headersSeen).toHaveLength(2) // one search per keyword
+    expect(headersSeen.every(headers => headers?.Authorization === 'Bearer npm_readonly_token')).toBe(true)
   })
 
   it('sends no Authorization header without a token', async () => {
@@ -232,9 +259,9 @@ describe('searchByKeyword', () => {
       return new Response(JSON.stringify({ objects: [] }), { status: 200 })
     }) as unknown as typeof fetch
 
-    await searchByKeyword(fetchImpl, sleep)
-    expect(headersSeen).toHaveLength(1)
-    expect(headersSeen[0]).toBeUndefined()
+    await searchByKeywords(fetchImpl, sleep)
+    expect(headersSeen).toHaveLength(2) // one search per keyword
+    expect(headersSeen.every(headers => headers === undefined)).toBe(true)
   })
 
   it('throws instead of paging forever when every page comes back full', async () => {
@@ -245,8 +272,8 @@ describe('searchByKeyword', () => {
       return new Response(JSON.stringify(body), { status: 200 })
     }) as unknown as typeof fetch
 
-    await expect(searchByKeyword(fetchImpl)).rejects.toThrow(/100 pages/)
-    expect(call).toBe(100)
+    await expect(searchByKeywords(fetchImpl)).rejects.toThrow(/keywords:dsh-plugin.*100 pages/)
+    expect(call).toBe(100) // the bound is per keyword; the primary one trips it
   })
 })
 

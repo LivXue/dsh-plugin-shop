@@ -106,7 +106,7 @@ dsh plugin --profile <profile> list --depth 0
 
 | | |
 |---|---|
-| **浏览与搜索** | 按 `dsh-plugin` 关键字从 npm 采集的 1800+ 个包；作者若自己声明了简介就用作者原话 |
+| **浏览与搜索** | 按 `dsh-plugin` 与 `deepseek-harness` 关键字从 npm 采集的 1800+ 个包；作者若自己声明了简介就用作者原话 |
 | **安装** | 一次确认。未经评审的插件需先显式确认——装上之后它与内置插件权限等同 |
 | **启停** | 对已安装插件生效，无需重启 |
 | **已安装状态** | 已安装的插件在卡片上显示「已安装」，目录有新版本时改为「更新」按钮，另有「卸载」按钮；顶部「已安装」筛选只看已装插件 |
@@ -149,8 +149,8 @@ dsh plugin --profile <profile> list --depth 0
 
 ## 🏷️ 面向插件作者
 
-在 `package.json` 里加上 `"keywords": ["dsh-plugin"]` 然后发布，每日构建就会找到你，不需要向本
-项目提交任何东西。声明 `dsh.catalog` 段可以自己掌控分类、简介和 capabilities；不声明，目录会从
+在 `package.json` 里加上采集关键字——`"keywords": ["dsh-plugin"]` 或
+`"keywords": ["deepseek-harness"]`——然后发布，每日构建就会找到你，不需要向本项目提交任何东西。声明 `dsh.catalog` 段可以自己掌控分类、简介和 capabilities；不声明，目录会从
 你的 npm `description` 推导一条 listing。
 
 完整参考：[docs/schema.zh.md](https://github.com/LivXue/dsh-plugin-shop/blob/main/docs/schema.zh.md)。

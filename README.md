@@ -104,7 +104,7 @@ Per-failure diagnostics are in the
 
 | | |
 |---|---|
-| **Public and community-run** | Publishing to npm with the `dsh-plugin` keyword is all it takes to be discovered. Nothing is submitted to this project. |
+| **Public and community-run** | Publishing to npm with the `dsh-plugin` or `deepseek-harness` keyword is all it takes to be discovered. Nothing is submitted to this project. |
 | **Git-auditable** | Every daily catalog change is a reviewable diff, not a row in someone's database. |
 | **Tiered trust** | Reviewed and unreviewed plugins are visually distinct, and a review is pinned to the exact version it covered — an author who passes review cannot publish a malicious version and inherit the trust. |
 | **Zero-privilege UI** | Compromising the browser interface does not compromise the runtime. |
@@ -136,7 +136,7 @@ to its name.
 
 ## 🏷️ Listing a plugin
 
-Add the keyword to your `package.json` and publish to npm; the daily build picks it up.
+Add a harvest keyword (`dsh-plugin` or `deepseek-harness`) to your `package.json` and publish to npm; the daily build picks it up.
 A `dsh.catalog` section is optional — declare it to control your own category, summary
 and capabilities, or omit it and the catalog derives a listing from your npm
 `description` instead.

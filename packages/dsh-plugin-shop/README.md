@@ -115,7 +115,7 @@ bundle is not.
 
 | | |
 |---|---|
-| **Browse & search** | 1800+ packages harvested from npm by the `dsh-plugin` keyword, shown with the author's own summary when they declared one |
+| **Browse & search** | 1800+ packages harvested from npm by the `dsh-plugin` and `deepseek-harness` keywords, shown with the author's own summary when they declared one |
 | **Install** | One confirmation. An unreviewed plugin requires an explicit acknowledgement first — an installed plugin holds the same privileges as a built-in one |
 | **Enable / disable** | Applies to an installed plugin without a restart |
 | **Installed state** | An installed plugin shows an Installed label on its card — or an Update button when the catalog has a newer version — plus an Uninstall button; the Installed filter in the category bar shows only installed plugins |
@@ -162,8 +162,8 @@ actually given — so passing review once cannot buy trust for every future rele
 
 ## 🏷️ For plugin authors
 
-Add `"keywords": ["dsh-plugin"]` to `package.json` and publish. The daily build finds
-you; nothing is submitted to this project. Declare a `dsh.catalog` section to control
+Add a harvest keyword — `"keywords": ["dsh-plugin"]` or `"keywords": ["deepseek-harness"]` — to
+`package.json` and publish. The daily build finds you; nothing is submitted to this project. Declare a `dsh.catalog` section to control
 your own category, summary and capabilities — or omit it, and the catalog derives a
 listing from your npm `description`.
 

@@ -144,7 +144,7 @@ An author edits only their own `package.json`:
 
 Two identifiers stay **ecosystem-neutral and deliberately unbranded**:
 
-- The keyword is `dsh-plugin`, not `dsh-plugin-shop`. An author declares "I am a dsh plugin", not "I want to be on your shelf".
+- The keywords are `dsh-plugin` and `deepseek-harness`, never `dsh-plugin-shop`. An author declares "I am a dsh plugin" (or "I integrate with deepseek-harness"), not "I want to be on your shelf".
 - The field is `dsh.catalog`, not `dsh.shop`. The `dsh` section is DeepSeek's namespace — its JSDoc states that "other consumers own additional keys", so adding one is sanctioned — but adding a key named after this project would plant our sign in someone else's namespace. `catalog` names what the data is, so a second shop can reuse it directly. For a public community market that is the honest choice.
 
 `category` is a closed enum: `tool` | `provider` | `ui` | `workflow` | `integration` | `other`.
@@ -236,7 +236,7 @@ A derived listing may carry an LLM-assigned `catalog.category` sourced from `reg
 harvest -> fetch manifest -> classify -> gate -> tier -> emit -> commit snapshot
 ```
 
-1. **Harvest** — `registry.npmjs.org/-/v1/search?text=keywords:dsh-plugin`, paged, for the full candidate set. **Harvest by keyword, never by name pattern**; a name pattern is trivially spoofed.
+1. **Harvest** — `registry.npmjs.org/-/v1/search?text=keywords:<keyword>`, paged per keyword (`dsh-plugin` and `deepseek-harness`), the two name sets unioned, deduplicated, and sorted. **Harvest by keyword, never by name pattern**; a name pattern is trivially spoofed. A keyword search that cannot complete aborts the harvest — harvesting only the keywords that answered would silently shrink the candidate set.
 2. **Fetch manifest** — for each candidate, read the latest packument's `dsh.bundle`, `dsh.catalog`, `version`, `dist.integrity`, `repository`, `license`, and `deprecated`.
 3. **Classify** — derived listings without a declared category and without a row in `categories.yml` are classified in batches by the LLM gateway (`classify.ts`, shell); failures leave the entry as `other` and are retried next build.
 4. **Gate** — every rejection must leave an **author-readable reason** in the build report.
@@ -337,7 +337,7 @@ The earlier ruling prescribed an opt-in flag, default off, loopback only. The au
 
 | Attacker | Method |
 |---|---|
-| Malicious author | Publishes a backdoored plugin carrying the `dsh-plugin` keyword |
+| Malicious author | Publishes a backdoored plugin carrying a harvest keyword |
 | Typosquatter | `dsh-fs-tools` impersonating `dsh-fs-tool` |
 | Compromised legitimate plugin | Author's npm account stolen, or its dependency chain poisoned |
 | Catalog man-in-the-middle | Hijacks CDN or DNS and rewrites `plugins.json` |

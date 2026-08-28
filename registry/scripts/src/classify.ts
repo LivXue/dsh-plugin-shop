@@ -20,7 +20,7 @@ import { mergeCategoryRows, serializeCategoryRows } from './categories.ts'
 import { gate } from './gate.ts'
 import { loadRegistryConfig } from './config.ts'
 import { classifyPackages, type ClassifyItem } from './llm-client.ts'
-import { fetchCandidates, searchByKeyword } from './npm-client.ts'
+import { fetchCandidates, searchByKeywords } from './npm-client.ts'
 import type { Category } from './types.ts'
 
 const REGISTRY_DIR = 'registry'
@@ -36,7 +36,7 @@ const apiKey = process.env.LLM_API_KEY ?? ''
 const npmToken = process.env.NPM_TOKEN
 
 const config = loadRegistryConfig(REGISTRY_DIR)
-const names = await searchByKeyword(fetch, undefined, npmToken)
+const names = await searchByKeywords(fetch, undefined, npmToken)
 process.stderr.write(`classify: harvested ${names.length} candidate(s)\n`)
 const { candidates, rejections } = await fetchCandidates(names, fetch, npmToken)
 

@@ -37,7 +37,7 @@
 
 ```mermaid
 flowchart LR
-  npm(["npm registry<br/>关键字：dsh-plugin"]) -->|每日采集| build["registry/ 流水线<br/>准入 · 分层 · 产出"]
+  npm(["npm registry<br/>关键字：dsh-plugin · deepseek-harness"]) -->|每日采集| build["registry/ 流水线<br/>准入 · 分层 · 产出"]
   build -->|提交快照 + 静态 JSON| pages[["GitHub Pages<br/>/v1/index.json"]]
   pages -->|拉取、校验 sha256、缓存| host["Host 半边<br/>dsh-plugin-shop"]
   host -->|九个 shop/* 方法| client["Client 半边<br/>设置页标签"]
@@ -99,7 +99,7 @@ dsh --profile <profile>
 
 | | |
 |---|---|
-| **公开、由社区驱动** | 带 `dsh-plugin` 关键字发布到 npm 就会被发现，不需要向本项目提交任何东西。 |
+| **公开、由社区驱动** | 带 `dsh-plugin` 或 `deepseek-harness` 关键字发布到 npm 就会被发现，不需要向本项目提交任何东西。 |
 | **可用 git 审计** | 每日目录变更都是一份可评审的 diff，而不是某个数据库里的一行。 |
 | **分层信任** | 已评审与未评审的插件在视觉上可区分，且评审钉在它当初覆盖的那个确切版本上——作者过了一次评审，不能靠发布恶意新版本来继承这份信任。 |
 | **零权限界面** | 攻破浏览器界面并不等于攻破运行时。 |
@@ -127,8 +127,9 @@ dsh --profile <profile>
 
 ## 🏷️ 让你的插件上架
 
-在 `package.json` 里加上关键字并发布到 npm，每日构建就会收录。`dsh.catalog` 段是可选的——声明
-它可以自己掌控分类、简介和 capabilities；不声明，目录会从你的 npm `description` 推导一条 listing。
+在 `package.json` 里加上采集关键字（`dsh-plugin` 或 `deepseek-harness`）并发布到 npm，每日构建就会
+收录。`dsh.catalog` 段是可选的——声明它可以自己掌控分类、简介和 capabilities；不声明，目录会从你的
+npm `description` 推导一条 listing。
 
 ```json
 {

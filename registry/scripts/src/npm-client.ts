@@ -1,16 +1,19 @@
 import type { Candidate, Rejection } from './types.ts'
 
 /**
- * The keyword a plugin author declares. Ecosystem-neutral by design: an author
- * declares "I am a dsh plugin", not membership of this shop.
+ * The keywords a plugin author declares. Ecosystem-neutral by design: an
+ * author declares "I am a dsh plugin" (or "I integrate with
+ * deepseek-harness"), not membership of this shop. The first entry is the
+ * primary keyword; the rest widen the net for authors who tag their package
+ * by the harness it plugs into rather than the plugin ecosystem's own tag.
  */
-export const HARVEST_KEYWORD = 'dsh-plugin'
+export const HARVEST_KEYWORDS: readonly string[] = ['dsh-plugin', 'deepseek-harness']
 
 const REGISTRY = 'https://registry.npmjs.org'
 const PAGE_SIZE = 250
 
 /**
- * Upper bound on the number of search pages fetched by {@link searchByKeyword}.
+ * Upper bound on the number of search pages fetched per keyword by {@link searchByKeywords}.
  * Guards against an unbounded loop issuing endless requests against a public
  * API if the registry ever kept returning full pages: at `PAGE_SIZE` names
  * per page this bound covers catalog sizes far beyond the ecosystem's current
@@ -135,41 +138,48 @@ export function toCandidate(packument: unknown): Candidate | null {
 }
 
 /**
- * List every package name carrying the harvest keyword.
+ * List every package name carrying one of the harvest keywords: one paged
+ * search per keyword, unioned and deduplicated, sorted for determinism.
  *
  * Harvesting by keyword rather than by name pattern is deliberate: a name
- * pattern is trivially spoofed.
+ * pattern is trivially spoofed. A keyword search that cannot complete
+ * aborts the harvest — harvesting only the keywords that answered would
+ * silently shrink the candidate set, which is indistinguishable from an
+ * empty ecosystem.
  * @param fetchImpl - the fetch implementation, injected for testing.
  * @param sleep - the delay implementation, injected so tests do not wait.
  * @param token - an optional read-only npm token; see {@link fetchWithRetry}.
- * @returns every matching package name, in registry order.
+ * @returns every matching package name, sorted and deduplicated.
  * @throws when the registry answers with a non-OK status after the 429
  *   retries are exhausted, or when more than {@link MAX_SEARCH_PAGES} pages
- *   are fetched without the harvest completing.
+ *   are fetched for one keyword without its search completing.
  */
-export async function searchByKeyword(
+export async function searchByKeywords(
   fetchImpl: typeof fetch = fetch,
   sleep: (ms: number) => Promise<void> = defaultSleep,
   token: string | undefined = undefined,
 ): Promise<string[]> {
-  const names: string[] = []
-  for (let page = 0; ; page += 1) {
-    if (page >= MAX_SEARCH_PAGES) {
-      throw new Error(
-        `npm search exceeded ${MAX_SEARCH_PAGES} pages (${MAX_SEARCH_PAGES * PAGE_SIZE} names) without completing; harvest is incomplete`,
-      )
+  const seen = new Set<string>()
+  for (const keyword of HARVEST_KEYWORDS) {
+    for (let page = 0; ; page += 1) {
+      if (page >= MAX_SEARCH_PAGES) {
+        throw new Error(
+          `npm search for keywords:${keyword} exceeded ${MAX_SEARCH_PAGES} pages (${MAX_SEARCH_PAGES * PAGE_SIZE} names) without completing; harvest is incomplete`,
+        )
+      }
+      const from = page * PAGE_SIZE
+      const url = `${REGISTRY}/-/v1/search?text=keywords:${keyword}&size=${PAGE_SIZE}&from=${from}`
+      const response = await fetchWithRetry(url, fetchImpl, sleep, token)
+      if (!response.ok) throw new Error(`npm search for keywords:${keyword} failed: ${response.status}`)
+      const body = await response.json() as { objects?: { package?: { name?: unknown } }[] }
+      const objects = body.objects ?? []
+      for (const object of objects) {
+        if (typeof object.package?.name === 'string') seen.add(object.package.name)
+      }
+      if (objects.length < PAGE_SIZE) break
     }
-    const from = page * PAGE_SIZE
-    const url = `${REGISTRY}/-/v1/search?text=keywords:${HARVEST_KEYWORD}&size=${PAGE_SIZE}&from=${from}`
-    const response = await fetchWithRetry(url, fetchImpl, sleep, token)
-    if (!response.ok) throw new Error(`npm search failed: ${response.status}`)
-    const body = await response.json() as { objects?: { package?: { name?: unknown } }[] }
-    const objects = body.objects ?? []
-    for (const object of objects) {
-      if (typeof object.package?.name === 'string') names.push(object.package.name)
-    }
-    if (objects.length < PAGE_SIZE) return names
   }
+  return [...seen].sort()
 }
 
 /**

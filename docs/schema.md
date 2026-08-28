@@ -2,7 +2,7 @@
 
 English | [中文](schema.zh.md)
 
-A plugin is listed by declaring the `dsh-plugin` keyword in its `package.json`. The `dsh.catalog` section below is **optional**: declare it to control your own listing text, category, and capabilities, or omit it and the catalog derives a listing from what npm already knows. The machine-readable schema for a declared section is [`registry/schema/plugin-entry.schema.json`](../registry/schema/plugin-entry.schema.json), generated from the validator the build runs, so it cannot drift from what is enforced.
+A plugin is listed by declaring a harvest keyword — `dsh-plugin` or `deepseek-harness` — in its `package.json`. The `dsh.catalog` section below is **optional**: declare it to control your own listing text, category, and capabilities, or omit it and the catalog derives a listing from what npm already knows. The machine-readable schema for a declared section is [`registry/schema/plugin-entry.schema.json`](../registry/schema/plugin-entry.schema.json), generated from the validator the build runs, so it cannot drift from what is enforced.
 
 ```json
 {
