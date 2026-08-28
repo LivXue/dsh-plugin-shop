@@ -224,9 +224,10 @@ describe('ShopTab', () => {
     expect(container.querySelector('[data-shop-update-self]')).toBeNull()
   })
 
-  it('links the project GitHub under the version row, independent of the version check', async () => {
+  it('links the project GitHub right of the version row, independent of the version check', async () => {
     // A version check that never answers leaves the version row empty;
-    // the static link must not go with it.
+    // the static icon link must not go with it. The octocat has no text,
+    // so the link's accessible name comes from its aria-label.
     const { injected, version } = bench(snapshot())
     version.mockRejectedValue(new Error('registry unreachable'))
     const { container } = renderTab(injected)
@@ -235,6 +236,8 @@ describe('ShopTab', () => {
     expect(link.getAttribute('href')).toBe('https://github.com/LivXue/dsh-plugin-shop')
     expect(link.target).toBe('_blank')
     expect(link.rel).toBe('noopener noreferrer')
+    expect(link.getAttribute('aria-label')).toBe(en.github)
+    expect(link.textContent).toBe('')
     expect(container.querySelector('[data-shop-version]')).toBeNull()
   })
 
