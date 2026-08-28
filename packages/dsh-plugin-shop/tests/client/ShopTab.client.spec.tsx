@@ -70,7 +70,9 @@ describe('ShopTab', () => {
     expect(screen.getByText(en.capabilitiesNote)).toBeTruthy()
     expect(screen.getByText('fs')).toBeTruthy()
     expect(screen.getByText('shell')).toBeTruthy()
-    expect(container.querySelector('a')).toBeNull() // summaries are plain text — no links
+    // Summaries are plain text — no links inside the card. (The toolbar's
+    // GitHub link is the one legitimate anchor the tab renders.)
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] a')).toBeNull()
   })
 
   it('renders a hostile summary as text, never as markup', async () => {
@@ -220,6 +222,20 @@ describe('ShopTab', () => {
     await waitFor(() => expect(screen.getByText('v0.4.4')).toBeTruthy())
     expect(container.querySelector('[data-shop-version]')?.textContent).toBe('v0.4.4')
     expect(container.querySelector('[data-shop-update-self]')).toBeNull()
+  })
+
+  it('links the project GitHub under the version row, independent of the version check', async () => {
+    // A version check that never answers leaves the version row empty;
+    // the static link must not go with it.
+    const { injected, version } = bench(snapshot())
+    version.mockRejectedValue(new Error('registry unreachable'))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(container.querySelector('[data-shop-github]')).toBeTruthy())
+    const link = container.querySelector('[data-shop-github]') as HTMLAnchorElement
+    expect(link.getAttribute('href')).toBe('https://github.com/LivXue/dsh-plugin-shop')
+    expect(link.target).toBe('_blank')
+    expect(link.rel).toBe('noopener noreferrer')
+    expect(container.querySelector('[data-shop-version]')).toBeNull()
   })
 
   it('shows no update button when the version check has no answer', async () => {

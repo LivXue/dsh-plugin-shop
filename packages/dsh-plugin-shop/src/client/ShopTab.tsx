@@ -13,6 +13,9 @@ import { useUninstall } from './useUninstall.ts'
 import { useUpdateSelf } from './useUpdateSelf.ts'
 import css from './ShopTab.module.css'
 
+/** The project's home on GitHub, linked from the toolbar. */
+const SHOP_REPO_URL = 'https://github.com/LivXue/dsh-plugin-shop'
+
 /** The tab's Remote face: the Host result types, already unwrapped from the
  * wire envelope by `index.ts`; `catalog` throws on a wire error so the tab's
  * error state renders. */
@@ -825,35 +828,40 @@ export function ShopTab(props: ShopTabProps): ReactNode {
               </button>
             </div>
           )}
-          {selfVersion !== null && (
-            <div className={css.versionBlock}>
-              <span className={css.versionText} data-shop-version>v{selfVersion.installed}</span>
-              <button
-                type="button"
-                className={css.checkUpdateButton}
-                data-shop-check-update
-                disabled={checkState !== 'idle'}
-                onClick={() => void checkVersion()}
-              >
-                {checkState === 'up-to-date' ? t('upToDate') : t('checkUpdate')}
-              </button>
-              {selfVersion.outdated && selfVersion.latest !== null && selfUpdate.view.kind === 'idle' && (
+          <div className={css.versionColumn}>
+            {selfVersion !== null && (
+              <div className={css.versionBlock}>
+                <span className={css.versionText} data-shop-version>v{selfVersion.installed}</span>
                 <button
                   type="button"
-                  className={css.updateSelfButton}
-                  data-shop-update-self
-                  onClick={() => {
-                    // outdated implies the check answered; the guard keeps
-                    // the type honest without asserting a value the host
-                    // never produces.
-                    if (selfVersion.latest !== null) void selfUpdate.start({ version: selfVersion.latest })
-                  }}
+                  className={css.checkUpdateButton}
+                  data-shop-check-update
+                  disabled={checkState !== 'idle'}
+                  onClick={() => void checkVersion()}
                 >
-                  {t('update')}
+                  {checkState === 'up-to-date' ? t('upToDate') : t('checkUpdate')}
                 </button>
-              )}
-            </div>
-          )}
+                {selfVersion.outdated && selfVersion.latest !== null && selfUpdate.view.kind === 'idle' && (
+                  <button
+                    type="button"
+                    className={css.updateSelfButton}
+                    data-shop-update-self
+                    onClick={() => {
+                      // outdated implies the check answered; the guard keeps
+                      // the type honest without asserting a value the host
+                      // never produces.
+                      if (selfVersion.latest !== null) void selfUpdate.start({ version: selfVersion.latest })
+                    }}
+                  >
+                    {t('update')}
+                  </button>
+                )}
+              </div>
+            )}
+            <a className={css.githubLink} href={SHOP_REPO_URL} target="_blank" rel="noopener noreferrer" data-shop-github>
+              {t('github')}
+            </a>
+          </div>
         </div>
       </div>
       {selfUpdate.view.kind === 'running' && (
