@@ -3,7 +3,7 @@
  * that browses the catalog, installs with acknowledgement, toggles
  * enablement, lists installed plugins, and restarts dsh after installs.
  * Mounts the shop Remote itself (the assembly does not know this package)
- * and holds no privilege beyond the seven `shop/*` methods (§5.3).
+ * and holds no privilege beyond the nine `shop/*` methods (§5.3).
  */
 
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
@@ -12,6 +12,7 @@ import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { TypertRemoteNamespaceMap } from '@deepseek-ai/dsh-typert-protocol'
 import shopRemote from 'dsh-plugin-shop/remote'
+import type { ShopCatalogResult } from '../host/index.ts'
 import type { ShopLocaleKey } from './locales.ts'
 import { en, zh } from './locales.ts'
 import { ShopTab, type ShopTabInjected } from './ShopTab.tsx'
@@ -25,6 +26,15 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 
 /** Dictionary namespace owned by this plugin. */
 export const NS = 'settings.shop'
+
+/** The boot-time warm fetch: the catalog the tab wants on its first open.
+ * Started in apply — the client bundle boots with the web app, long before
+ * the user reaches Settings — so the host's slow network fetch runs while
+ * nobody is looking at the shop, and the tab's mount consumes this promise
+ * instead of starting its own fetch. A rejection stays stored (the injected
+ * catalog falls back to a fresh call); the extra catch keeps the
+ * fire-and-forget from surfacing as an unhandled rejection. */
+let warmCatalog: Promise<ShopCatalogResult> | null = null
 
 /** Services required by the tab registration and the Remote mount.
  *
@@ -70,8 +80,39 @@ export async function apply(ctx: ClientContext): Promise<void> {
     return result.value
   }
 
+  // The boot-time warm: the catalog fetch starts now, in the background;
+  // the tab's first open consumes it instead of waiting on it. The smaller
+  // reads warm the host's snapshot too (their results are discarded — the
+  // tab re-requests them on mount and the host serves them from memory).
+  // Each boot starts its own warm fetch — a re-applied bundle must not
+  // serve the previous boot's catalog.
+  warmCatalog = null
+  // Promise.resolve wraps the wire result so a stub or an ill-behaved
+  // transport can never throw synchronously out of apply.
+  warmCatalog = Promise.resolve(ns.catalog(undefined)).then(result => unwrap(result))
+  void warmCatalog.catch(() => {})
+  void Promise.resolve(ns.installed()).then(result => unwrap(result)).catch(() => {})
+  void Promise.resolve(ns.version()).then(result => unwrap(result)).catch(() => {})
+
   const injected = (): ShopTabInjected => ({
-    catalog: async args => unwrap(await ns.catalog(args)),
+    catalog: async args => {
+      // A refresh always goes to the wire; a plain open consumes the
+      // boot-time fetch when it exists — the host's snapshot is the same
+      // one a fresh call would serve, so freshness semantics are
+      // unchanged (§10).
+      if (args?.refresh === true) return unwrap(await ns.catalog(args))
+      const warm = warmCatalog
+      if (warm !== null) {
+        try {
+          return await warm
+        } catch {
+          // The boot-time fetch failed; a fresh call is the retry.
+        }
+      }
+      const fresh = unwrap(await ns.catalog(args))
+      warmCatalog = Promise.resolve(fresh)
+      return fresh
+    },
     install: async args => unwrap(await ns.installStart(args)),
     installStatus: async args => unwrap(await ns.installStatus(args)),
     setEnabled: async args => unwrap(await ns.setEnabled(args)),

@@ -314,6 +314,8 @@ Implementation decisions:
 
 **Amendment (2026-08-27, follow-up): self-update.** The shop shows its own running version right of the search box (read from the shipped package.json), checks npm for a newer release on mount/refresh and on demand via a check button next to the version, and offers an update button when behind. `shop/version` reports `{ installed, latest, outdated }` with `latest` degrading to null when the registry cannot answer (advisory, like the stars sidecar); `shop/updateStart` runs the pinned `dsh-plugin-shop@<version>` spec (the only install form that bypasses pnpm's release cooldown) through the same executor, records, and polling as installs, with the version re-validated as plain semver at the boundary. The Client-half boundary becomes nine methods.
 
+**Amendment (2026-08-27, follow-up): boot-time warm.** The client bundle warms `shop/catalog` (plus the small `installed` and `version` reads) when its apply runs at web boot, so the shop's first open consumes the boot-time fetch instead of waiting on it — the host's slow network fetch happens while nobody is looking at the shop. The tab's plain open consumes the stashed promise (the host's snapshot is the same one a fresh call would serve, so §10 freshness semantics are unchanged); a refresh always goes to the wire, and a failed warm falls back to a fresh call. Each boot starts its own warm fetch.
+
 ## 8. When changes take effect
 
 | Operation | Restart required | Evidence |

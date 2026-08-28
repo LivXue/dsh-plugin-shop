@@ -24,6 +24,7 @@ afterEach(cleanup)
  * installStart, never install, which the namespace service owns). */
 interface ShopStub {
   installStart?: (args: InstallArgs) => Promise<unknown>
+  catalog?: () => Promise<unknown>
 }
 
 /** Boot apply() against a stubbed remote and return the shop tab entry's
@@ -51,7 +52,7 @@ async function boot(shop: ShopStub = {}) {
   // cannot use `ctx.remote.shop`, which the inject gate refuses (see the
   // deadlock comment there). The stub speaks the WIRE names.
   ctx.provide('remote.shop', {
-    catalog: vi.fn(),
+    catalog: shop.catalog ?? vi.fn(),
     installStart: shop.installStart ?? vi.fn(),
     installStatus: vi.fn(),
     setEnabled: vi.fn(),
@@ -119,5 +120,32 @@ describe('shop client apply', () => {
       await result.current.start(args)
     })
     expect(result.current.view).toEqual({ kind: 'failed', detail: '', log: [] })
+  })
+})
+
+describe('shop client apply warm', () => {
+  const fakeCatalog = {
+    schemaVersion: 2, builtAt: '2026-08-27T00:00:00Z', stale: false,
+    plugins: [], denied: [], stars: {},
+  }
+
+  it('warms the catalog at boot and serves the tab from the warm fetch', async () => {
+    const catalog = vi.fn().mockResolvedValue({ ok: true, value: fakeCatalog })
+    const { injected } = await boot({ catalog })
+    expect(catalog).toHaveBeenCalledTimes(1) // the boot-time warm
+    expect(await injected.catalog(undefined)).toBe(fakeCatalog)
+    expect(catalog).toHaveBeenCalledTimes(1) // consumed, no second wire call
+    // A refresh always goes to the wire.
+    await injected.catalog({ refresh: true })
+    expect(catalog).toHaveBeenCalledTimes(2)
+  })
+
+  it('falls back to a fresh call when the boot-time warm fetch failed', async () => {
+    const catalog = vi.fn()
+      .mockResolvedValueOnce({ ok: false, error: { code: 'WIRE', message: 'down' } })
+      .mockResolvedValue({ ok: true, value: fakeCatalog })
+    const { injected } = await boot({ catalog })
+    expect(await injected.catalog(undefined)).toBe(fakeCatalog)
+    expect(catalog).toHaveBeenCalledTimes(2)
   })
 })
