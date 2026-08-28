@@ -126,7 +126,16 @@ const SHOP_KEYWORDS = ['store', 'market', 'mall', 'shop', 'marketplace'] as cons
  * escape the pattern rules below. Named explicitly rather than guessed:
  * `dsh-plugin` is the npm package of github.com/dshplugin/dsh-plugin-hub —
  * a community plugin marketplace for DeepSeek Harness. */
-const SHOP_LIKE_NAMES = ['dsh-plugin'] as const
+/**
+ * Competing plugin marketplaces whose names carry no store/market keyword
+ * and so escape the pattern rules below (spec §7.2). Each is a real npm
+ * package that presents its own catalog of dsh plugins inside the Harness:
+ * `dsh-plugin` is the npm package of github.com/dshplugin/dsh-plugin-hub,
+ * `dsh-plugin-hub` and `@lanbaolu/dsh-plugin-hub` are app-store packages,
+ * and `@mutocenew/dsh-plugin-catalog` ships a plugin directory with agent
+ * query tools. Exact names only — nothing here is a pattern.
+ */
+const SHOP_LIKE_NAMES = ['dsh-plugin', 'dsh-plugin-hub', '@lanbaolu/dsh-plugin-hub', '@mutocenew/dsh-plugin-catalog'] as const
 
 /**
  * Whether a package name reads as a plugin shop (a marketplace for dsh

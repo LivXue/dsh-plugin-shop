@@ -87,7 +87,9 @@ Note that `isShopLike` (§7.2 client filter) matches our own name by design:
 the shelf does not list itself, because the shop is bootstrap-installed.
 Competing marketplaces whose names escape the keyword patterns are named
 explicitly in the filter (2026-08-27: `dsh-plugin`, the npm package of
-`github.com/dshplugin/dsh-plugin-hub`).
+`github.com/dshplugin/dsh-plugin-hub`; 2026-08-28, when the
+`deepseek-harness` harvest keyword brought the app-store packages in:
+`dsh-plugin-hub`, `@lanbaolu/dsh-plugin-hub`, `@mutocenew/dsh-plugin-catalog`).
 
 **R — `registry/` (data only, no runtime code)**
 
