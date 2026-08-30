@@ -151,7 +151,9 @@ dsh plugin --profile <profile> list --depth 0
 ## 🏷️ 面向插件作者
 
 在 `package.json` 里加上采集关键字——`"keywords": ["dsh-plugin"]` 或
-`"keywords": ["deepseek-harness"]`——然后发布，每日构建就会找到你，不需要向本项目提交任何东西。声明 `dsh.catalog` 段可以自己掌控分类、简介和 capabilities；不声明，目录会从
+`"keywords": ["deepseek-harness"]`——然后发布；或者不走 npm：把关键字作为 GitHub 仓库的 *topic*，
+并在仓库根放一个带 `name` 和 `dsh.bundle` 的 `package.json`——目录会收录该仓库并把默认分支的
+commit 钉为版本。每日构建就会找到你，不需要向本项目提交任何东西。声明 `dsh.catalog` 段可以自己掌控分类、简介和 capabilities；不声明，目录会从
 你的 npm `description` 推导一条 listing。
 
 完整参考：[docs/schema.zh.md](https://github.com/LivXue/dsh-plugin-shop/blob/main/docs/schema.zh.md)。

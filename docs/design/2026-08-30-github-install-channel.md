@@ -1,10 +1,13 @@
 # GitHub direct-install channel — design draft
 
-Status: **draft for decision.** This document proposes listing installable dsh
-plugin *repositories* alongside npm packages, using `dsh`'s native
-`github:owner/repo` install form. It is not yet part of the authority spec
-(`2026-08-18-dsh-plugin-shop-design.md`); if approved, the spec is amended in
-the same change that implements it. English only, per convention.
+Status: **decided and implemented (2026-08-30).** This document proposed
+listing installable dsh plugin *repositories* alongside npm packages, using
+`dsh`'s native `github:owner/repo` install form. The five open questions were
+answered: pin commits (not tags); ship end to end in one step; npm wins the
+bundle-name dedup; `verified.yml` repo entries ship with the install path;
+no repo-freshness gate. The authority spec
+(`2026-08-18-dsh-plugin-shop-design.md`) is amended in the same change that
+implements this. English only, per convention.
 
 ## 1. Why this exists — the measured evidence
 

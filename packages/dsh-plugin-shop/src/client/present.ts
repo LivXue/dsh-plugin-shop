@@ -38,7 +38,13 @@ export function rejectionCodeKey(code: InstallRejectionCode): ShopLocaleKey {
     case 'not-in-catalog': return 'notInCatalogCode'
     case 'version-mismatch': return 'versionMismatchCode'
     case 'needs-acknowledgement': return 'needsAcknowledgementCode'
+    case 'git-missing': return 'gitMissingCode'
   }
+}
+
+/** The version a card displays: full for npm, the short commit for github. */
+export function displayVersion(entry: { source: 'npm' | 'github'; version: string }): string {
+  return entry.source === 'github' ? entry.version.slice(0, 7) : entry.version
 }
 
 /** One polled install status (§7.3 wire data), structural. */
@@ -122,10 +128,6 @@ export function reduceInstall(state: InstallView, event: InstallEvent): InstallV
 
 const SHOP_KEYWORDS = ['store', 'market', 'mall', 'shop', 'marketplace'] as const
 
-/** Competing marketplaces whose names carry no store/market keyword and so
- * escape the pattern rules below. Named explicitly rather than guessed:
- * `dsh-plugin` is the npm package of github.com/dshplugin/dsh-plugin-hub —
- * a community plugin marketplace for DeepSeek Harness. */
 /**
  * Competing plugin marketplaces whose names carry no store/market keyword
  * and so escape the pattern rules below (spec §7.2). Each is a real npm

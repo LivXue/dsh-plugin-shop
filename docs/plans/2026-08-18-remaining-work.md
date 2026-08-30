@@ -1,7 +1,7 @@
 # Remaining work
 
-Date: 2026-08-18 (launch state updated 2026-08-25; P1 and P2 state updated 2026-08-25)
-Status: P0 merged and published; P1 complete; P2 complete; P3 absorbed into P2
+Date: 2026-08-18 (launch state updated 2026-08-25; P1 and P2 state updated 2026-08-25; github channel added 2026-08-30)
+Status: P0 merged and published; P1 complete; P2 complete; P3 absorbed into P2; github direct-install channel implemented (design: ../design/2026-08-30-github-install-channel.md, spec amendment in the main design)
 
 This is the handover document. It assumes you have no context from the session that built P0.
 

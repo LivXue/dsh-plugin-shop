@@ -137,7 +137,7 @@ to its name.
 
 ## 🏷️ Listing a plugin
 
-Add a harvest keyword (`dsh-plugin` or `deepseek-harness`) to your `package.json` and publish to npm; the daily build picks it up.
+Add a harvest keyword (`dsh-plugin` or `deepseek-harness`) to your `package.json` and publish to npm; the daily build picks it up. A plugin that never publishes to npm is listed from its GitHub repository instead: add the same keyword as a repo *topic* and keep a `package.json` at the root with a `name` and `dsh.bundle` — the catalog pins the default-branch commit as the version.
 A `dsh.catalog` section is optional — declare it to control your own category, summary
 and capabilities, or omit it and the catalog derives a listing from your npm
 `description` instead.

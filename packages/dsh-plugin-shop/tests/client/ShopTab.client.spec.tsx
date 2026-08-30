@@ -22,7 +22,7 @@ function snapshot(overrides: Partial<ShopCatalogResult['plugins'][number]> = {})
     plugins: [{
       name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null,
       repository: 'https://github.com/you/hello-plugin', license: 'MIT',
-      tier: 'community', metadata: 'derived',
+      tier: 'community', metadata: 'derived', source: 'npm',
       catalog: { category: 'tool', summary: { en: 'Says hello.', zh: '打个招呼。' }, capabilities: ['fs', 'shell'] },
       ...overrides,
     }],
@@ -351,7 +351,7 @@ describe('ShopTab', () => {
     const two = snapshot()
     two.plugins.push({
       name: 'dsh-goodbye-plugin', version: '0.9.0', integrity: null, publishedAt: null,
-      repository: null, license: null, tier: 'verified', metadata: 'declared',
+      repository: null, license: null, tier: 'verified', metadata: 'declared', source: 'npm',
       catalog: { category: 'tool', summary: { en: 'Waves goodbye.' }, capabilities: [] },
     })
     const { injected } = bench(two)
@@ -649,7 +649,7 @@ describe('ShopTab shop-like filtering', () => {
         snapshot().plugins[0]!,
         {
           name: 'dsh-plugin-shop-2', version: '2.0.0', integrity: null, publishedAt: null,
-          repository: null, license: 'MIT', tier: 'community', metadata: 'derived',
+          repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm',
           catalog: { category: 'other', summary: { en: 'Another shop.' }, capabilities: [] },
         },
       ],
@@ -714,7 +714,7 @@ function manyPlugins(n: number): ShopCatalogResult {
   const plugins = Array.from({ length: n }, (_, i) => ({
     name: `dsh-pkg-${String(i).padStart(3, '0')}`,
     version: '1.0.0', integrity: null, publishedAt: null,
-    repository: null, license: 'MIT', tier: 'community', metadata: 'derived',
+    repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm',
   })) as ShopCatalogResult['plugins']
   return { schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', stale: false, plugins, denied: [], stars: {} }
 }
@@ -767,8 +767,8 @@ describe('ShopTab incremental rendering', () => {
 
   it('resets to the first batch when the query changes', async () => {
     const plugins = [
-      ...Array.from({ length: 60 }, (_, i) => ({ name: `dsh-alpha-${String(i).padStart(2, '0')}`, version: '1.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived' })),
-      ...Array.from({ length: 60 }, (_, i) => ({ name: `dsh-beta-${String(i).padStart(2, '0')}`, version: '1.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived' })),
+      ...Array.from({ length: 60 }, (_, i) => ({ name: `dsh-alpha-${String(i).padStart(2, '0')}`, version: '1.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm' })),
+      ...Array.from({ length: 60 }, (_, i) => ({ name: `dsh-beta-${String(i).padStart(2, '0')}`, version: '1.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm' })),
     ] as ShopCatalogResult['plugins']
     const { injected } = bench({ schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', stale: false, plugins, denied: [], stars: {} })
     renderTab(injected)
@@ -783,5 +783,36 @@ describe('ShopTab incremental rendering', () => {
     await waitFor(() => expect(screen.getByText(showingText(48, 60))).toBeTruthy())
     expect(cardCount()).toBe(48)
     expect(screen.queryByText('dsh-beta-00')).toBeNull()
+  })
+})
+
+describe('ShopTab github entries', () => {
+  const commit = 'e'.repeat(40)
+
+  it('renders a github entry with the octocat badge and the short commit', async () => {
+    const { injected } = bench(snapshot({ source: 'github', repo: 'someone/dsh-hello-plugin', version: commit }))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-card-version]')?.textContent).toBe(`v${commit.slice(0, 7)}`)
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [class*="_sourceBadge"]')?.getAttribute('aria-label')).toBe(en.githubSource)
+  })
+
+  it('hides an entry whose repo slug is shop-like', async () => {
+    const { injected } = bench(snapshot({ source: 'github', repo: 'someone/dsh-store' }))
+    renderTab(injected)
+    // Every browsable entry is filtered away, so the shelf reports the
+    // empty-search state, not the empty-catalog one.
+    await waitFor(() => expect(screen.getByText(en.emptySearch)).toBeTruthy())
+    expect(screen.queryByText('dsh-hello-plugin')).toBeNull()
+  })
+
+  it('installs a github entry with the commit as the version', async () => {
+    const { injected, install } = bench(snapshot({ source: 'github', repo: 'someone/dsh-hello-plugin', version: commit }))
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText(en.install))
+    await waitFor(() => expect(screen.getByText(en.acknowledgementBody)).toBeTruthy())
+    fireEvent.click(screen.getByText(en.confirm))
+    await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: commit, acknowledged: true }))
   })
 })

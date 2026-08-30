@@ -6,8 +6,9 @@ import { basename, dirname, join } from 'node:path'
 import { z } from 'zod'
 import type { CatalogEntry, DeniedEntry } from './types.ts'
 
-/** Highest schemaVersion this build understands; a higher one is refused (§10). */
-export const SUPPORTED_SCHEMA_VERSION = 2
+/** Highest schemaVersion this build understands; a higher one is refused (§10).
+ * 3 adds `source` and repo entries (github install channel). */
+export const SUPPORTED_SCHEMA_VERSION = 3
 
 /** A cached catalog younger than this is served without touching the network. */
 const FRESH_MS = 5 * 60 * 1000
@@ -26,7 +27,8 @@ const entrySchema = z.object({
   tier: z.enum(['verified', 'verified-stale', 'community']),
   metadata: z.enum(['declared', 'derived']),
   review: z.object({
-    reviewedVersion: z.string(),
+    reviewedVersion: z.string().optional(),
+    reviewedCommit: z.string().optional(),
     reviewer: z.string(),
     reviewCommit: z.string(),
     notes: z.string(),
@@ -36,6 +38,9 @@ const entrySchema = z.object({
     summary: z.object({ en: z.string(), zh: z.string().optional() }),
     capabilities: z.array(z.string()),
   }).optional(),
+  // v3 (github channel); defaulted so a cached v2 catalog still parses.
+  source: z.enum(['npm', 'github']).default('npm'),
+  repo: z.string().optional(),
 })
 
 const dataSchema = z.object({

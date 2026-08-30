@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
-  ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, categoryKey, formatStars, isShopLike, isUnclaimed, nextVisibleCount, reduceInstall, sortByStars, tierKey,
+  ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, categoryKey, displayVersion, formatStars, isShopLike, isUnclaimed, nextVisibleCount, reduceInstall, sortByStars, tierKey,
 } from '../../src/client/present.ts'
 import type { CatalogEntry } from '../../src/host/index.ts'
 
 const entry: CatalogEntry = {
   name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null,
-  repository: null, license: 'MIT', tier: 'community', metadata: 'derived',
+  repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm',
 }
 
 describe('tierKey', () => {
@@ -20,7 +20,7 @@ describe('tierKey', () => {
 describe('isUnclaimed', () => {
   it('marks a derived listing as unclaimed and a declared one as claimed', () => {
     expect(isUnclaimed(entry)).toBe(true)
-    expect(isUnclaimed({ ...entry, metadata: 'declared' })).toBe(false)
+    expect(isUnclaimed({ ...entry, metadata: 'declared', source: 'npm' })).toBe(false)
   })
 })
 
@@ -207,5 +207,12 @@ describe('formatStars', () => {
     expect(formatStars(1234)).toBe('1.2k')
     expect(formatStars(1500)).toBe('1.5k')
     expect(formatStars(99999)).toBe('100k')
+  })
+})
+
+describe('displayVersion', () => {
+  it('shows npm versions in full and github commits short', () => {
+    expect(displayVersion({ source: 'npm', version: '1.2.3' })).toBe('1.2.3')
+    expect(displayVersion({ source: 'github', version: 'd'.repeat(40) })).toBe('ddddddd')
   })
 })

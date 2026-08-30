@@ -8,6 +8,7 @@ function entry(name: string, version = '1.0.0'): Entry {
     repository: `https://github.com/you/${name}`, license: 'MIT', tier: 'community',
     metadata: 'declared',
     catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
+    source: 'npm',
   }
 }
 

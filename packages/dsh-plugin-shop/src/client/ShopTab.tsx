@@ -7,7 +7,7 @@
 import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
-import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Category, categoryKey, categoryLocaleKey, formatStars, isShopLike, isUnclaimed, nextVisibleCount, rejectionCodeKey, sortByStars, tierKey } from './present.ts'
+import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Category, categoryKey, categoryLocaleKey, displayVersion, formatStars, isShopLike, isUnclaimed, nextVisibleCount, rejectionCodeKey, sortByStars, tierKey } from './present.ts'
 import { useInstall } from './useInstall.ts'
 import { useUninstall } from './useUninstall.ts'
 import { useUpdateSelf } from './useUpdateSelf.ts'
@@ -99,7 +99,16 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, t, install,
         <span className={css.name}>{entry.name}</span>
         <span className={css.badges}>
           <span className={css.categoryBadge}>{t(categoryKey(entry))}</span>
-          <span className={css.cardVersion} data-card-version>v{entry.version}</span>
+          {entry.source === 'github' && (
+            // The octocat marks an install-from-source entry; the aria-label
+            // names it for assistive tech.
+            <span className={css.sourceBadge} role="img" aria-label={t('githubSource')}>
+              <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="currentColor">
+                <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
+              </svg>
+            </span>
+          )}
+          <span className={css.cardVersion} data-card-version>v{displayVersion(entry)}</span>
           <span className={css.tierBadge} data-tier={entry.tier}>{t(tierKey(entry.tier))}</span>
           {isUnclaimed(entry) && <span className={css.unclaimedBadge}>{t('unclaimed')}</span>}
           {stars !== undefined && (
@@ -466,9 +475,10 @@ function RestartPanel({ t, restart }: {
  * installed-state RPC behind it — the tab assumes an installed plugin is on,
  * so the first toggle sends the inverted value. After a successful `setEnabled`
  * the §8 hot note renders. */
-function OutdatedRow({ row, tier, t, setEnabled, install, installStatus, restart }: {
+function OutdatedRow({ row, tier, source, t, setEnabled, install, installStatus, restart }: {
   row: ShopInstalledEntry
   tier: CatalogEntry['tier']
+  source: CatalogEntry['source']
   t: ShopTabProps['t']
   setEnabled: ShopTabInjected['setEnabled']
   install: ShopTabInjected['install']
@@ -510,7 +520,7 @@ function OutdatedRow({ row, tier, t, setEnabled, install, installStatus, restart
       <div className={css.outdatedInfo}>
         <span className={css.name}>{row.name}</span>
         <span className={css.outdatedVersions}>
-          <span className={css.outdatedVersion}>{t('installedVersion', { version: row.installed })}</span>
+          <span className={css.outdatedVersion}>{t('installedVersion', { version: source === 'github' ? row.installed.slice(0, 7) : row.installed })}</span>
           <span className={css.outdatedVersion}>{t('latestVersion', { version: row.latest })}</span>
         </span>
       </div>
@@ -542,9 +552,10 @@ function OutdatedRow({ row, tier, t, setEnabled, install, installStatus, restart
  * tier for the update gate is looked up from the catalog by name (community →
  * acknowledgement); an entry absent from the catalog defaults to the
  * community gate (the safer read). */
-function OutdatedSection({ state, tiers, t, setEnabled, install, installStatus, restart }: {
+function OutdatedSection({ state, tiers, sources, t, setEnabled, install, installStatus, restart }: {
   state: InstalledState
   tiers: ReadonlyMap<string, CatalogEntry['tier']>
+  sources: ReadonlyMap<string, CatalogEntry['source']>
   t: ShopTabProps['t']
   setEnabled: ShopTabInjected['setEnabled']
   install: ShopTabInjected['install']
@@ -566,6 +577,7 @@ function OutdatedSection({ state, tiers, t, setEnabled, install, installStatus, 
             <OutdatedRow
               row={row}
               tier={tiers.get(row.name) ?? 'community'}
+              source={sources.get(row.name) ?? 'npm'}
               t={t}
               setEnabled={setEnabled}
               install={install}
@@ -703,8 +715,9 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     const q = query.trim().toLowerCase()
     return catalogState.result.plugins.filter(entry => {
       // Shop-like plugins (competing markets) are not advertised; an
-      // INSTALLED one stays manageable in the installed section below.
-      if (isShopLike(entry.name)) return false
+      // INSTALLED one stays manageable in the installed section below. The
+      // repo slug gets the same check for github entries.
+      if (isShopLike(entry.name) || (entry.repo !== undefined && isShopLike(entry.repo))) return false
       if (category === 'installed') {
         if (!installedByName.has(entry.name)) return false
       } else if (category !== null && categoryKey(entry) !== categoryLocaleKey(category)) {
@@ -752,7 +765,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     const counts = new Map<Category, number>()
     if (catalogState.kind === 'ready') {
       for (const entry of catalogState.result.plugins) {
-        if (isShopLike(entry.name)) continue
+        if (isShopLike(entry.name) || (entry.repo !== undefined && isShopLike(entry.repo))) continue
         const key = categoryKey(entry)
         const bare = CATEGORY_ORDER.find(c => categoryLocaleKey(c) === key)
         if (bare !== undefined) counts.set(bare, (counts.get(bare) ?? 0) + 1)
@@ -775,6 +788,15 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     const map = new Map<string, CatalogEntry['tier']>()
     if (catalogState.kind === 'ready') {
       for (const entry of catalogState.result.plugins) map.set(entry.name, entry.tier)
+    }
+    return map
+  }, [catalogState])
+  // The same lookup shape for each entry's install source, so a github
+  // entry's 40-hex commit renders as the short form everywhere.
+  const sources = useMemo(() => {
+    const map = new Map<string, CatalogEntry['source']>()
+    if (catalogState.kind === 'ready') {
+      for (const entry of catalogState.result.plugins) map.set(entry.name, entry.source)
     }
     return map
   }, [catalogState])
@@ -948,7 +970,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
           <ul className={css.cards}>
             {visible.map(entry => (
               <li key={entry.name}>
-                <EntryCard entry={entry} stars={stars[entry.name]} installed={installedByName.get(entry.name)} t={t} install={install} installStatus={installStatus} uninstall={uninstall} restart={restart} />
+                <EntryCard entry={entry} stars={stars[entry.repo ?? entry.name]} installed={installedByName.get(entry.name)} t={t} install={install} installStatus={installStatus} uninstall={uninstall} restart={restart} />
               </li>
             ))}
             {incremental && visibleCount < filtered.length && (
@@ -965,6 +987,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
       <OutdatedSection
         state={installedState}
         tiers={tiers}
+        sources={sources}
         t={t}
         setEnabled={setEnabled}
         install={install}

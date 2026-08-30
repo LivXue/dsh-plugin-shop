@@ -33,6 +33,34 @@ export interface Candidate {
   keywords: string[]
 }
 
+/**
+ * One GitHub repository as fetched, before any gating decision. The unit of
+ * listing is the repo (`owner/slug`); `name` is the manifest's bundle name —
+ * what `dsh` registers on install. `version` and `integrity` both carry the
+ * pinned commit: a commit is the closest thing to content addressing git has.
+ */
+export interface RepoCandidate {
+  /** The manifest `name` — the bundle name dsh registers. */
+  name: string
+  /** `owner/slug`, the install target's identity. */
+  repo: string
+  /** The pinned default-branch commit, 40 hex chars. */
+  commit: string
+  /** The commit, repeated for field uniformity with npm candidates. */
+  version: string
+  /** The commit date, ISO 8601. */
+  publishedAt: string | null
+  /** The repo's https URL. */
+  repository: string
+  /** The repo's declared license (GitHub metadata `spdx_id`), null when none. */
+  license: string | null
+  hasBundle: boolean
+  /** The raw `dsh.catalog` value from the repo's manifest; unvalidated until the gate runs. */
+  catalog: unknown
+  /** The GitHub repo `description`, used to derive a listing when `catalog` is absent. */
+  description: string | null
+}
+
 /** Why a candidate did not reach the catalog. */
 export type RejectionCode =
   | 'no-bundle'
@@ -46,6 +74,8 @@ export type RejectionCode =
   | 'no-publish-time'
   | 'name-too-similar'
   | 'fetch-failed'
+  | 'no-manifest'
+  | 'shadowed-by-npm'
 
 /** One rejection, carrying an author-readable explanation. */
 export interface Rejection {
@@ -57,9 +87,14 @@ export interface Rejection {
 /** Trust level of a catalog entry. */
 export type Tier = 'verified' | 'verified-stale' | 'community'
 
-/** A human review, pinned to the exact version it covered. */
+/**
+ * A human review, pinned to the exact version (npm) or commit (github) it
+ * covered. Exactly one of the two pins is present, matching the entry's
+ * source: trust never inherits across unreviewed code on either source.
+ */
 export interface Review {
-  reviewedVersion: string
+  reviewedVersion?: string
+  reviewedCommit?: string
   reviewer: string
   reviewCommit: string
   notes: string
@@ -82,4 +117,8 @@ export interface Entry {
    */
   metadata: 'declared' | 'derived'
   catalog: CatalogSection
+  /** Where the entry installs from. */
+  source: 'npm' | 'github'
+  /** `owner/slug` of the repository; present exactly when `source` is github. */
+  repo?: string
 }

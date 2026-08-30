@@ -2,7 +2,7 @@
 
 import type { CatalogSnapshot } from './catalog.ts'
 
-export type InstallRejectionCode = 'not-in-catalog' | 'denied' | 'version-mismatch' | 'needs-acknowledgement'
+export type InstallRejectionCode = 'not-in-catalog' | 'denied' | 'version-mismatch' | 'needs-acknowledgement' | 'git-missing'
 
 export interface InstallArgs { name: string; version: string; acknowledged?: boolean }
 

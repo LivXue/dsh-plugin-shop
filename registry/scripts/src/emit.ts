@@ -3,9 +3,11 @@ import type { Entry, Rejection } from './types.ts'
 
 /**
  * Catalog format version. A consumer refuses a higher value. Bumped to 2 when
- * `Entry` gained `metadata` and `catalog.summary.zh` became optional (§6.2).
+ * `Entry` gained `metadata` and `catalog.summary.zh` became optional (§6.2);
+ * bumped to 3 when entries gained `source` and repo entries (`repo`, commit
+ * pinning) joined the npm ones (2026-08-30 github-channel design).
  */
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 3
 
 /** The stars sidecar pointer the index may carry (spec 2026-08-26-github-stars-design.md §4.1). */
 export interface StarsPointer { url: string; sha256: string }
@@ -64,7 +66,11 @@ export function emit(entries: Entry[], rejections: Rejection[], builtAt: string,
     ...(stars == null ? {} : { stars }),
   }, null, 2)}\n`
 
-  const manifestLock = sorted.map(e => `${e.name} ${e.version} ${e.integrity}`).join('\n') + (sorted.length > 0 ? '\n' : '')
+  // Repo entries carry their install target (`owner/slug`) so the daily diff
+  // keeps both identities visible; the commit is both `version` and `integrity`.
+  const manifestLock = sorted
+    .map(e => e.source === 'github' ? `${e.repo ?? e.name} ${e.name} ${e.version}` : `${e.name} ${e.version} ${e.integrity}`)
+    .join('\n') + (sorted.length > 0 ? '\n' : '')
 
   const sortedRejections = [...rejections].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
   const lines = [

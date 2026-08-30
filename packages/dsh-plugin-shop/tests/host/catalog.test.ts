@@ -101,7 +101,7 @@ describe('loadCatalog', () => {
 
   it('throws when the schemaVersion is newer than this build supports', async () => {
     const fetchImpl = (async () => new Response(
-      JSON.stringify({ schemaVersion: 3, builtAt: '', count: 0, plugins: { url: 'x.json', sha256: '0'.repeat(64) } }),
+      JSON.stringify({ schemaVersion: 4, builtAt: '', count: 0, plugins: { url: 'x.json', sha256: '0'.repeat(64) } }),
       { status: 200 },
     )) as unknown as typeof fetch
 
@@ -116,7 +116,7 @@ describe('loadCatalog', () => {
     fs.write('/cache/index.json', pointer)
     fs.write(`/cache/${url}`, data)
     const fetchImpl = (async () => new Response(
-      JSON.stringify({ schemaVersion: 3, builtAt: '', count: 0, plugins: { url: 'x.json', sha256: '0'.repeat(64) } }),
+      JSON.stringify({ schemaVersion: 4, builtAt: '', count: 0, plugins: { url: 'x.json', sha256: '0'.repeat(64) } }),
       { status: 200 },
     )) as unknown as typeof fetch
 

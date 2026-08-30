@@ -16,7 +16,7 @@ import type { CatalogEntry } from '../../src/host/types.ts'
 const shopHome = mkdtempSync(join(tmpdir(), 'dsh-gateway-home-'))
 process.env.DSH_HOME = shopHome
 mkdirSync(join(shopHome, 'profiles', 'web'), { recursive: true })
-writeFileSync(join(shopHome, 'profiles', 'web', 'package.json'), JSON.stringify({ dsh: { profile: { bundles: ['dsh-hello-plugin', 'dsh-plugin-shop'] } } }))
+writeFileSync(join(shopHome, 'profiles', 'web', 'package.json'), JSON.stringify({ dsh: { profile: { bundles: ['dsh-hello-plugin', 'dsh-repo-plugin', 'dsh-plugin-shop'] } } }))
 
 afterAll(() => {
   delete process.env.DSH_HOME
@@ -70,7 +70,7 @@ describe('ShopGateway.catalog', () => {
   const snapshot = {
     schemaVersion: 2,
     builtAt: '2026-08-25T00:00:00Z',
-    entries: [{ name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived' }],
+    entries: [{ name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm' }],
     denied: [{ name: 'dsh-blocked', detail: 'matched the denylist' }],
     stars: {},
   }
@@ -166,7 +166,7 @@ function gatewayWithSnapshot(snapshot: CatalogSnapshot): { gateway: ShopGateway;
 describe('ShopGateway.install — the four rejection paths, through the executor', () => {
   // Annotated so the literal's tier/metadata do not widen to `string`, which
   // would not be assignable to the CatalogEntry union members.
-  const listed: CatalogEntry = { name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived' }
+  const listed: CatalogEntry = { name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm' }
 
   it('rejects not-in-catalog without spawning', async () => {
     const { gateway, callsLog } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} })
@@ -342,8 +342,8 @@ describe('ShopGateway.setEnabled', () => {
 
 describe('ShopGateway.installed', () => {
   const entries = [
-    { name: 'dsh-one', version: '2.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived' },
-    { name: 'dsh-two', version: '1.5.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived' },
+    { name: 'dsh-one', version: '2.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm' },
+    { name: 'dsh-two', version: '1.5.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm' },
   ]
 
   function gatewayWithManifest(dependencies: Record<string, string>): ShopGateway {
@@ -395,7 +395,7 @@ describe('ShopGateway.installed', () => {
 
 describe('ShopGateway.uninstall', () => {
   const entries = [
-    { name: 'dsh-one', version: '2.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived' },
+    { name: 'dsh-one', version: '2.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm' },
   ]
 
   function gatewayWithManifest(dependencies: Record<string, string>): ShopGateway {
@@ -568,5 +568,89 @@ describe('ShopGateway.updateStart', () => {
       }
     }
     expect(readFileSync(join(binDir, 'calls.log'), 'utf8')).toContain('add dsh-plugin-shop@9.9.9')
+  })
+})
+
+describe('ShopGateway github entries', () => {
+  const commit = 'd'.repeat(40)
+  const repoEntry: CatalogEntry = {
+    name: 'dsh-repo-plugin', version: commit, integrity: commit, publishedAt: null,
+    repository: 'https://github.com/someone/dsh-repo-plugin', license: 'MIT',
+    tier: 'community', metadata: 'declared', source: 'github', repo: 'someone/dsh-repo-plugin',
+  }
+
+  function gatewayWithRepo(dir: string, hasGit = true): ShopGateway {
+    const bin = join(dir, 'fake-dsh')
+    writeFileSync(bin, [
+      '#!/bin/sh',
+      `echo "$1 $2 $3 $4 $5" >> "${join(dir, 'calls.log')}"`,
+      'exit 0',
+      '',
+    ].join('\n'))
+    chmodSync(bin, 0o755)
+    return new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web',
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 3, builtAt: '', entries: [repoEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      dshBin: bin,
+      hasGit: () => hasGit,
+    })
+  }
+
+  it('spawns github:owner/slug#commit from snapshot fields and records the pin', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-github-install-'))
+    const gateway = gatewayWithRepo(dir)
+    const result = await gateway.install({ name: 'dsh-repo-plugin', version: commit, acknowledged: true })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const deadline = Date.now() + 5000
+    let terminal = gateway.installStatus({ installId: result.installId })
+    while (terminal.state === 'running' && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+      terminal = gateway.installStatus({ installId: result.installId })
+    }
+    expect(terminal.state).toBe('done')
+    expect(readFileSync(join(dir, 'calls.log'), 'utf8')).toContain(`plugin --profile web add github:someone/dsh-repo-plugin#${commit}`)
+    expect(JSON.parse(readFileSync(join(dir, 'cache/github-pins.json'), 'utf8'))).toEqual({ 'dsh-repo-plugin': commit })
+  })
+
+  it('rejects git-missing before spawning when git is not on PATH', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-github-nogit-'))
+    const gateway = gatewayWithRepo(dir, false)
+    const result = await gateway.install({ name: 'dsh-repo-plugin', version: commit, acknowledged: true })
+    expect(result).toMatchObject({ ok: false, code: 'git-missing' })
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(existsSync(join(dir, 'calls.log'))).toBe(false)
+  })
+
+  it('reports a github install by its pin, outdated when the catalog commit moved', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-github-installed-'))
+    mkdirSync(join(dir, 'cache'), { recursive: true })
+    const oldCommit = 'a'.repeat(40)
+    writeFileSync(join(dir, 'cache/github-pins.json'), JSON.stringify({ 'dsh-repo-plugin': oldCommit }))
+    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-github-profile-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: { 'dsh-repo-plugin': 'github:someone/dsh-repo-plugin' } }))
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 3, builtAt: '', entries: [repoEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
+    })
+    await gateway.catalog({})
+    expect(await gateway.installed()).toEqual([{ name: 'dsh-repo-plugin', installed: oldCommit, latest: commit, outdated: true }])
+  })
+
+  it('forgets the pin on uninstall', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-github-uninstall-'))
+    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-github-profile-'))
+    mkdirSync(join(dir, 'cache'), { recursive: true })
+    writeFileSync(join(dir, 'cache/github-pins.json'), JSON.stringify({ 'dsh-repo-plugin': commit }))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: { 'dsh-repo-plugin': 'github:someone/dsh-repo-plugin' } }))
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 3, builtAt: '', entries: [repoEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      dshBin: '/bin/false',
+    })
+    await gateway.catalog({})
+    const result = await gateway.uninstall({ name: 'dsh-repo-plugin' })
+    expect(result.ok).toBe(true)
+    expect(JSON.parse(readFileSync(join(dir, 'cache/github-pins.json'), 'utf8'))).toEqual({})
   })
 })

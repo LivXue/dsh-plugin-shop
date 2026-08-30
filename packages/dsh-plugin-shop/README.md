@@ -164,7 +164,9 @@ actually given — so passing review once cannot buy trust for every future rele
 ## 🏷️ For plugin authors
 
 Add a harvest keyword — `"keywords": ["dsh-plugin"]` or `"keywords": ["deepseek-harness"]` — to
-`package.json` and publish. The daily build finds you; nothing is submitted to this project. Declare a `dsh.catalog` section to control
+`package.json` and publish. Or, without npm: add the keyword as a GitHub repo *topic* and keep a
+`package.json` at the root with a `name` and `dsh.bundle` — the catalog lists the repo and pins the
+default-branch commit as its version. The daily build finds you; nothing is submitted to this project. Declare a `dsh.catalog` section to control
 your own category, summary and capabilities — or omit it, and the catalog derives a
 listing from your npm `description`.
 

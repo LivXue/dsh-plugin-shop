@@ -18,12 +18,17 @@ export interface CatalogEntry {
   tier: 'verified' | 'verified-stale' | 'community'
   metadata: 'declared' | 'derived'
   review?: {
-    reviewedVersion: string
+    reviewedVersion?: string
+    reviewedCommit?: string
     reviewer: string
     reviewCommit: string
     notes: string
   }
   catalog?: CatalogSection
+  /** Where the entry installs from. */
+  source: 'npm' | 'github'
+  /** `owner/slug`; present exactly when `source` is github. */
+  repo?: string
 }
 
 export interface DeniedEntry { name: string; detail: string }

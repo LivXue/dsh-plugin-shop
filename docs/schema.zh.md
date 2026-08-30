@@ -2,7 +2,7 @@
 
 [English](schema.md) | 中文
 
-插件通过在 `package.json` 里声明采集 keyword（`dsh-plugin` 或 `deepseek-harness`）来上架。下面的 `dsh.catalog` 段是**可选**的：声明它可以自主控制展示文案、分类和能力列表；不声明也照样上架，目录会从 npm 已有的信息里推导出一条列表。声明该段时对应的机读 schema 是 [`registry/schema/plugin-entry.schema.json`](../registry/schema/plugin-entry.schema.json)，由构建实际使用的校验器生成，因此不会与实际执行的规则脱节。
+插件通过在 `package.json` 里声明采集 keyword（`dsh-plugin` 或 `deepseek-harness`）来上架。从不发布 npm 的插件则按其 GitHub 仓库上架：给仓库加上 `dsh-plugin` 或 `deepseek-harness` topic，在仓库根放一个带 `name` 和 `dsh.bundle` 段的 `package.json`，目录就会把默认分支的 commit 钉为它的版本。下面的 `dsh.catalog` 段是**可选**的：声明它可以自主控制展示文案、分类和能力列表；不声明也照样上架，目录会从 npm 已有的信息里推导出一条列表。声明该段时对应的机读 schema 是 [`registry/schema/plugin-entry.schema.json`](../registry/schema/plugin-entry.schema.json)，由构建实际使用的校验器生成，因此不会与实际执行的规则脱节。
 
 ```json
 {

@@ -4,8 +4,10 @@ import type { Context } from '@deepseek-ai/cordis'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { readProfileManifest } from '@deepseek-ai/dsh-app-boot'
 import { lt, minVersion, valid } from 'semver'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { ownVersion } from '../own-version.ts'
 import { loadCatalog, type LoadCatalogOptions } from './catalog.ts'
 import type { CatalogSnapshot } from './catalog.ts'
@@ -14,6 +16,7 @@ import { validateInstall, type InstallArgs, type InstallRejectionCode } from './
 import { startInstall, startUninstall, type InstallStatus } from './executor.ts'
 import { startRestart, type RestartOutcome } from './restart.ts'
 import { fetchLatestVersion } from './self-update.ts'
+import { readRepoPins, writeRepoPins, type RepoPinFs } from './repo-pins.ts'
 import { discoverProfile, setUserLayerRow } from './profile.ts'
 
 // Re-exported so the boundary type is reachable from the package's public
@@ -60,6 +63,11 @@ export interface ShopGatewayOptions {
   /** How long the gateway waits after a successful restart response before
    * exiting the old process; test-only shortening, production uses 2s. */
   restartExitDelayMs?: number
+  /** Whether `git` is on PATH — a github entry cannot install without it;
+   * test-only injection, production probes the real binary. */
+  hasGit?: () => boolean
+  /** Test-only injection: the pins file's filesystem; production uses node:fs. */
+  pinFs?: RepoPinFs
 }
 
 /** `shop/installStart` result (§7.3): rejections are typed wire values with an
@@ -99,8 +107,10 @@ export type ShopUpdateResult =
 
 /** `shop/installed` entry (§7.3): one installed catalog plugin. `installed`
  * is the profile manifest's dependency spec verbatim (a range, a tag, or
- * `workspace:*`); `outdated` is the Host's verdict that the installed version
- * sits behind the catalog's — the client never does version math. */
+ * `workspace:*`) — for a github entry it is the pinned commit the shop
+ * installed, falling back to the `github:owner/slug` spec when the pin is
+ * unknown; `outdated` is the Host's verdict that the installed version sits
+ * behind the catalog's — the client never does version math. */
 export interface ShopInstalledEntry { name: string; installed: string; latest: string; outdated: boolean }
 
 /** One row of the row config the bundle patch (§cordis.patch.yml) supplies. */
@@ -141,6 +151,8 @@ export class ShopGateway extends TypertRemoteService {
   private readonly restartExitDelayMs: number
   private readonly restartParentPid: number
   private readonly latestVersion: () => Promise<string | null>
+  private readonly hasGit: () => boolean
+  private readonly pinFs: RepoPinFs
   /** The install gate runs against the last loaded snapshot, never a fresh
    * fetch per request (§7.2: the Host's cached snapshot is the truth). */
   /** Finished install records retained, so a poll sees the true terminal
@@ -171,6 +183,20 @@ export class ShopGateway extends TypertRemoteService {
     this.restartExitDelayMs = options.restartExitDelayMs ?? ShopGateway.RESTART_EXIT_DELAY_MS
     this.restartParentPid = options.restartParentPid ?? process.pid
     this.latestVersion = options.fetchLatestVersion ?? (() => fetchLatestVersion())
+    this.hasGit = options.hasGit ?? (() => spawnSync('git', ['--version'], { stdio: 'ignore' }).status === 0)
+    this.pinFs = options.pinFs ?? {
+      exists: path => existsSync(path),
+      read: path => readFileSync(path, 'utf8'),
+      write: (path, data) => {
+        mkdirSync(dirname(path), { recursive: true })
+        writeFileSync(path, data)
+      },
+    }
+  }
+
+  /** The pins file lives in the shop's own cache, next to the catalog cache. */
+  private pinsPath(): string {
+    return join(this.rowConfig().cacheDir, 'github-pins.json')
   }
 
   /** The boot's Loader root directory (the active profile's `cordis.yml`
@@ -276,14 +302,43 @@ export class ShopGateway extends TypertRemoteService {
     }
     const verdict = validateInstall(this.lastSnapshot, args)
     if (!verdict.ok) return { ok: false, code: verdict.code, detail: verdict.detail }
+    const entry = this.lastSnapshot.entries.find(e => e.name === args.name)
+    // validateInstall passed, so the entry exists; the guard keeps the type
+    // honest without asserting a state the validator never produces.
+    if (entry === undefined) return { ok: false, code: 'not-in-catalog', detail: `dsh-plugin-shop: ${args.name} is not in the catalog` }
+    // The Host builds the spec itself: npm entries become `name@version`,
+    // github entries become `github:owner/slug#commit` — both from fields the
+    // snapshot validated, never from a client-supplied string (§7.2).
+    let spec: string
+    if (entry.source === 'github') {
+      if (entry.repo === undefined || !/^[0-9a-f]{40}$/.test(args.version)) {
+        return { ok: false, code: 'version-mismatch', detail: `dsh-plugin-shop: ${args.name} has no installable commit` }
+      }
+      // pnpm git installs need git on PATH; failing before the spawn turns a
+      // cryptic pnpm error into an author-readable rejection.
+      if (!this.hasGit()) {
+        return { ok: false, code: 'git-missing', detail: 'dsh-plugin-shop: git is not on PATH, which github installs require; install git and retry' }
+      }
+      spec = `github:${entry.repo}#${args.version}`
+    } else {
+      spec = `${args.name}@${args.version}`
+    }
     const running = startInstall({
       profile: this.profile,
-      spec: `${args.name}@${args.version}`,
+      spec,
       dshBin: this.dshBin,
       // §7.2 step 6: exit 0 must be confirmed against the profile manifest —
       // a bundle that did not land is a stale catalog, not a done install.
       expectedName: args.name,
     })
+    if (entry.source === 'github') {
+      // Remember the pinned commit: the manifest records only
+      // `github:owner/slug`, so the pins file is how `installed()` reports
+      // outdated honestly. A failed install leaves a pin behind, but the
+      // manifest presence gate keeps it invisible.
+      const pins = readRepoPins(this.pinFs, this.pinsPath())
+      writeRepoPins(this.pinFs, this.pinsPath(), { ...pins, [args.name]: args.version })
+    }
     this.installs.set(running.installId, running)
     this.installOrder.push(running.installId)
     this.evictFinishedInstalls()
@@ -325,11 +380,26 @@ export class ShopGateway extends TypertRemoteService {
     }
     const manifest = readProfileManifest('dsh-plugin-shop', this.profileDirResolved())
     const dependencies = manifest.dependencies ?? {}
+    const pins = readRepoPins(this.pinFs, this.pinsPath())
     const installed: ShopInstalledEntry[] = []
     for (const entry of this.lastSnapshot.entries) {
       const spec = dependencies[entry.name]
       if (spec === undefined) continue
-      installed.push({ name: entry.name, installed: spec, latest: entry.version, outdated: this.isBehind(spec, entry.version) })
+      if (entry.source === 'github') {
+        // The manifest spec is `github:owner/slug` — no commit. The pin the
+        // shop recorded at install time is the commit truth; without one the
+        // entry was installed by other means and reads as current rather
+        // than killing the RPC over an unknowable comparison.
+        const pin = pins[entry.name]
+        installed.push({
+          name: entry.name,
+          installed: pin ?? spec,
+          latest: entry.version,
+          outdated: pin !== undefined && pin !== entry.version,
+        })
+      } else {
+        installed.push({ name: entry.name, installed: spec, latest: entry.version, outdated: this.isBehind(spec, entry.version) })
+      }
     }
     return installed
   }
@@ -377,6 +447,13 @@ export class ShopGateway extends TypertRemoteService {
       dshBin: this.dshBin,
       expectedName: args.name,
     })
+    // Forget the commit pin alongside the dependency; a stale pin would
+    // otherwise outlive the uninstall in the shop's cache.
+    const pins = readRepoPins(this.pinFs, this.pinsPath())
+    if (pins[args.name] !== undefined) {
+      delete pins[args.name]
+      writeRepoPins(this.pinFs, this.pinsPath(), pins)
+    }
     this.installs.set(running.installId, running)
     this.installOrder.push(running.installId)
     this.evictFinishedInstalls()

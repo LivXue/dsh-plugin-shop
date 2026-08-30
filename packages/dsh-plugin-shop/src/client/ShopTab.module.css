@@ -513,6 +513,13 @@
   color: var(--dsw-alias-label-secondary);
 }
 
+/* The octocat marking a github-sourced entry, beside its short commit. */
+.sourceBadge {
+  display: inline-flex;
+  align-items: center;
+  color: var(--dsw-alias-label-secondary);
+}
+
 .tierBadge {
   padding: 1px 7px;
   border-radius: 999px;

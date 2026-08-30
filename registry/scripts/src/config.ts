@@ -6,11 +6,14 @@ import { CATEGORIES, type Category, type Review } from './types.ts'
 
 const verifiedSchema = z.array(z.object({
   name: z.string().min(1),
-  reviewedVersion: z.string().min(1),
+  reviewedVersion: z.string().min(1).optional(),
+  reviewedCommit: z.string().min(1).optional(),
   reviewer: z.string().min(1),
   reviewCommit: z.string().min(1),
   notes: z.string().default(''),
-}).strict())
+}).strict().refine(row => row.reviewedVersion !== undefined || row.reviewedCommit !== undefined, {
+  message: 'declare reviewedVersion (npm) or reviewedCommit (github)',
+}))
 
 const deniedSchema = z.array(z.object({
   name: z.string().min(1),
@@ -77,6 +80,7 @@ export function parseRegistryConfig(
   for (const row of parseFile('verified.yml', input.verified, verifiedSchema)) {
     setUnique(verified, 'verified.yml', row.name, {
       reviewedVersion: row.reviewedVersion,
+      reviewedCommit: row.reviewedCommit,
       reviewer: row.reviewer,
       reviewCommit: row.reviewCommit,
       notes: row.notes,

@@ -19,19 +19,19 @@ const BUILT_AT = '2026-08-18T00:00:00.000Z'
 
 describe('runPipeline', () => {
   it('accepts the three listable plugins', () => {
-    const { pluginsJson } = runPipeline(candidates, config, BUILT_AT)
+    const { pluginsJson } = runPipeline(candidates, [], config, BUILT_AT)
     const parsed = JSON.parse(pluginsJson) as { plugins: { name: string }[] }
     expect(parsed.plugins.map(p => p.name)).toEqual(['dsh-derived-plugin', 'dsh-fs-tool', 'dsh-hello-plugin'])
   })
 
   it('downgrades the verified plugin whose version moved past its review', () => {
-    const { pluginsJson } = runPipeline(candidates, config, BUILT_AT)
+    const { pluginsJson } = runPipeline(candidates, [], config, BUILT_AT)
     const parsed = JSON.parse(pluginsJson) as { plugins: { name: string; tier: string }[] }
     expect(parsed.plugins.find(p => p.name === 'dsh-fs-tool')?.tier).toBe('verified-stale')
   })
 
   it('lists a package with no dsh.catalog as a derived entry, from its npm description', () => {
-    const { pluginsJson } = runPipeline(candidates, config, BUILT_AT)
+    const { pluginsJson } = runPipeline(candidates, [], config, BUILT_AT)
     const parsed = JSON.parse(pluginsJson) as {
       plugins: { name: string; metadata: string; catalog: { category: string; summary: { en: string; zh?: string }; capabilities: string[] } }[]
     }
@@ -45,13 +45,13 @@ describe('runPipeline', () => {
   })
 
   it('marks a declared listing as declared', () => {
-    const { pluginsJson } = runPipeline(candidates, config, BUILT_AT)
+    const { pluginsJson } = runPipeline(candidates, [], config, BUILT_AT)
     const parsed = JSON.parse(pluginsJson) as { plugins: { name: string; metadata: string }[] }
     expect(parsed.plugins.find(p => p.name === 'dsh-hello-plugin')?.metadata).toBe('declared')
   })
 
   it('reports all four rejections with their codes', () => {
-    const { report } = runPipeline(candidates, config, BUILT_AT)
+    const { report } = runPipeline(candidates, [], config, BUILT_AT)
     expect(report).toContain('| dsh-lib-only | no-bundle |')
     expect(report).toContain('| dsh-no-license | no-license |')
     expect(report).toContain('| dsh-fs-too1 | name-too-similar |')
@@ -62,13 +62,13 @@ describe('runPipeline', () => {
     const preexisting: Rejection[] = [
       { name: 'dsh-rate-limited', code: 'fetch-failed', detail: 'npm registry returned 429 fetching dsh-rate-limited' },
     ]
-    const { report } = runPipeline(candidates, config, BUILT_AT, preexisting)
+    const { report } = runPipeline(candidates, [], config, BUILT_AT, preexisting)
     expect(report).toContain('| dsh-rate-limited | fetch-failed | npm registry returned 429 fetching dsh-rate-limited |')
   })
 
   it('produces byte-identical artifacts for the same input', () => {
-    const first = runPipeline(candidates, config, BUILT_AT)
-    const second = runPipeline([...candidates].reverse(), config, BUILT_AT)
+    const first = runPipeline(candidates, [], config, BUILT_AT)
+    const second = runPipeline([...candidates].reverse(), [], config, BUILT_AT)
     expect(second.pluginsJson).toBe(first.pluginsJson)
     expect(second.pluginsFileName).toBe(first.pluginsFileName)
     expect(second.manifestLock).toBe(first.manifestLock)
@@ -82,8 +82,8 @@ describe('runPipeline', () => {
       allowedSimilar: '[]',
       categories: '- name: dsh-derived-plugin\n  category: tool\n',
     })
-    const first = runPipeline(candidates, categorized, BUILT_AT)
-    const second = runPipeline(candidates, categorized, BUILT_AT)
+    const first = runPipeline(candidates, [], categorized, BUILT_AT)
+    const second = runPipeline(candidates, [], categorized, BUILT_AT)
     expect(second.pluginsJson).toBe(first.pluginsJson)
     const parsed = JSON.parse(first.pluginsJson) as {
       plugins: { name: string; metadata: string; catalog: { category: string } }[]
@@ -93,8 +93,8 @@ describe('runPipeline', () => {
   })
 
   it('produces identical data across build times', () => {
-    const first = runPipeline(candidates, config, BUILT_AT)
-    const second = runPipeline(candidates, config, '2030-01-01T00:00:00.000Z')
+    const first = runPipeline(candidates, [], config, BUILT_AT)
+    const second = runPipeline(candidates, [], config, '2030-01-01T00:00:00.000Z')
     expect(second.pluginsJson).toBe(first.pluginsJson)
     expect(second.pluginsFileName).toBe(first.pluginsFileName)
     expect(second.manifestLock).toBe(first.manifestLock)
@@ -104,10 +104,43 @@ describe('runPipeline', () => {
 
   it('produces byte-identical artifacts with a stars pointer across runs', () => {
     const stars = { url: 'stars.deadbeef.json', sha256: 'deadbeef' }
-    const first = runPipeline(candidates, config, BUILT_AT, [], stars)
-    const second = runPipeline(candidates, config, BUILT_AT, [], stars)
+    const first = runPipeline(candidates, [], config, BUILT_AT, [], stars)
+    const second = runPipeline(candidates, [], config, BUILT_AT, [], stars)
     expect(first.indexJson).toBe(second.indexJson)
     expect(first.pluginsJson).toBe(second.pluginsJson)
     expect(JSON.parse(first.indexJson).stars).toEqual(stars)
+  })
+})
+
+describe('runPipeline with repository candidates', () => {
+  const commit = 'c'.repeat(40)
+  const repoCandidate: import('../src/types.ts').RepoCandidate = {
+    name: 'dsh-repo-plugin',
+    repo: 'someone/dsh-repo-plugin',
+    commit,
+    version: commit,
+    publishedAt: '2026-08-01T12:00:00.000Z',
+    repository: 'https://github.com/someone/dsh-repo-plugin',
+    license: 'MIT',
+    hasBundle: true,
+    catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
+    description: 'A repo plugin.',
+  }
+
+  it('lists a repository entry with its source, repo, and pinned commit', () => {
+    const { pluginsJson } = runPipeline([], [repoCandidate], config, BUILT_AT)
+    const parsed = JSON.parse(pluginsJson) as { plugins: { name: string; source: string; repo: string; version: string }[] }
+    expect(parsed.plugins).toMatchObject([{ name: 'dsh-repo-plugin', source: 'github', repo: 'someone/dsh-repo-plugin', version: commit }])
+  })
+
+  it('shadows a repository whose bundle name already ships as an npm package, with a reason', () => {
+    const { report } = runPipeline(candidates, [{ ...repoCandidate, name: 'dsh-hello-plugin' }], config, BUILT_AT)
+    expect(report).toContain('| someone/dsh-repo-plugin | shadowed-by-npm |')
+    expect(report).toContain('already listed')
+  })
+
+  it('reports a repository rejection from the repo gate', () => {
+    const { report } = runPipeline([], [{ ...repoCandidate, hasBundle: false }], config, BUILT_AT)
+    expect(report).toContain('| someone/dsh-repo-plugin | no-bundle |')
   })
 })

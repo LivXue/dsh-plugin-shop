@@ -64,7 +64,7 @@ function defaultSleep(ms: number): Promise<void> {
  *   read-only token lifts the limit onto the token instead of the IP.
  * @returns the first non-429 response, or the final 429 after the retries.
  */
-async function fetchWithRetry(
+export async function fetchWithRetry(
   url: string,
   fetchImpl: typeof fetch,
   sleep: (ms: number) => Promise<void>,

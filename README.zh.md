@@ -129,7 +129,8 @@ dsh --profile <profile>
 ## 🏷️ 让你的插件上架
 
 在 `package.json` 里加上采集关键字（`dsh-plugin` 或 `deepseek-harness`）并发布到 npm，每日构建就会
-收录。`dsh.catalog` 段是可选的——声明它可以自己掌控分类、简介和 capabilities；不声明，目录会从你的
+收录。从不发布 npm 的插件则按 GitHub 仓库上架：把同样的关键字作为仓库 *topic*，在仓库根放一个带
+`name` 和 `dsh.bundle` 的 `package.json`——目录会把默认分支的 commit 钉为版本。`dsh.catalog` 段是可选的——声明它可以自己掌控分类、简介和 capabilities；不声明，目录会从你的
 npm `description` 推导一条 listing。
 
 ```json
