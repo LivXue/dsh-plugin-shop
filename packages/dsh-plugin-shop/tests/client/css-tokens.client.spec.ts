@@ -87,15 +87,15 @@ describe('category spine hues', () => {
     for (const hue of SIX_HUES) expect(hues).toContain(hue)
   })
 
-  it('spine, cover, and label draw from the per-category hue, never the brand token', () => {
+  it('spine and category badge draw from the per-category hue, never the brand token', () => {
     // The brand token resolved to near-black in the light theme, which made
     // the six-opacity spine read as six shades of gray ("只有黑白灰").
+    // The cover block is gone — the single-line card carries the category
+    // in the badge row instead — but the same hue contract holds.
     expect(rules.get('.cardSpine')).toMatch(/var\(--spine-hue/)
     expect(rules.get('.cardSpine')).not.toMatch(/brand-primary/)
-    expect(rules.get('.cardCover')).toMatch(/var\(--spine-hue/)
-    expect(rules.get('.cardCover')).not.toMatch(/brand-primary/)
-    expect(rules.get('.coverLabel')).toMatch(/var\(--spine-hue/)
-    expect(rules.get('.coverLabel')).not.toMatch(/brand-primary/)
+    expect(rules.get('.categoryBadge')).toMatch(/var\(--spine-hue/)
+    expect(rules.get('.categoryBadge')).not.toMatch(/brand-primary/)
   })
 })
 

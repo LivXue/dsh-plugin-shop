@@ -63,16 +63,20 @@ describe('ShopTab', () => {
     const { injected } = bench(snapshot())
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
-    expect(screen.getByText('Says hello.')).toBeTruthy()
-    expect(screen.getByText('打个招呼。')).toBeTruthy()
+    // The single-line card shows the badges in the row; the summary and
+    // capabilities live in the expanded body.
     expect(screen.getByText(en.unclaimed)).toBeTruthy()
     expect(screen.getByText(en.tierCommunity)).toBeTruthy()
+    expect(screen.queryByText('Says hello.')).toBeNull()
+    fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] button[aria-expanded]')!)
+    expect(screen.getByText('Says hello.')).toBeTruthy()
+    expect(screen.getByText('打个招呼。')).toBeTruthy()
     expect(screen.getByText(en.capabilitiesNote)).toBeTruthy()
     expect(screen.getByText('fs')).toBeTruthy()
     expect(screen.getByText('shell')).toBeTruthy()
-    // Summaries are plain text — no links inside the card. (The toolbar's
-    // GitHub link is the one legitimate anchor the tab renders.)
-    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] a')).toBeNull()
+    // Summaries are plain text — no anchors inside the summary element. (The
+    // expanded detail's repository link is the card's legitimate anchor.)
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [class*="_summary"] a')).toBeNull()
   })
 
   it('shows the entry version on every card without expanding it', async () => {
@@ -87,6 +91,8 @@ describe('ShopTab', () => {
       catalog: { category: 'tool', summary: { en: '<img src=x onerror=alert(1)>' }, capabilities: [] },
     }))
     const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] button[aria-expanded]')!)
     await waitFor(() => expect(screen.getByText('<img src=x onerror=alert(1)>')).toBeTruthy())
     expect(container.querySelector('img')).toBeNull()
   })
@@ -417,15 +423,14 @@ describe('ShopTab', () => {
     expect(screen.queryByRole('link', { name: 'not-a-url' })).toBeNull()
   })
 
-  it('clamps the summary when collapsed and lifts the clamp when expanded', async () => {
+  it('hides the summary in the single-line card and shows it on expansion', async () => {
     const { injected } = bench(snapshot())
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
-    // collapsed: the clamped class, not the expanded one
-    expect(container.querySelector('[class*="_summary"]')).not.toBeNull()
-    expect(container.querySelector('[class*="_summaryExpanded"]')).toBeNull()
+    // Collapsed: one line — no summary element at all.
+    expect(container.querySelector('[class*="_summary"]')).toBeNull()
     fireEvent.click(screen.getByText('dsh-hello-plugin'))
-    // expanded: the expanded class joins the base class
+    // Expanded: the summary renders full, without a clamp.
     expect(container.querySelector('[class*="_summaryExpanded"]')).not.toBeNull()
   })
 
@@ -441,11 +446,11 @@ describe('ShopTab', () => {
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-tool-a')).toBeTruthy())
 
-    fireEvent.click(screen.getByRole('button', { name: /Tool/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Tool \d+$/ }))
     expect(screen.getByText('dsh-tool-a')).toBeTruthy()
     expect(screen.queryByText('dsh-ui-a')).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: /All/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^All \d+$/ }))
     expect(screen.getByText('dsh-ui-a')).toBeTruthy()
   })
 
@@ -463,7 +468,7 @@ describe('ShopTab', () => {
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-tool-alpha')).toBeTruthy())
 
-    fireEvent.click(screen.getByRole('button', { name: /Tool/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Tool \d+$/ }))
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'alpha' } })
     expect(screen.getByText('dsh-tool-alpha')).toBeTruthy()
     expect(screen.queryByText('dsh-tool-beta')).toBeNull()
@@ -474,9 +479,9 @@ describe('ShopTab', () => {
     const { injected } = bench(snapshot())
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
-    const all = screen.getByRole('button', { name: /All/ })
+    const all = screen.getByRole('button', { name: /^All \d+$/ })
     expect(all.getAttribute('aria-pressed')).toBe('true')
-    const tool = screen.getByRole('button', { name: /Tool/ })
+    const tool = screen.getByRole('button', { name: /^Tool \d+$/ })
     expect(tool.getAttribute('aria-pressed')).toBe('false')
     fireEvent.click(tool)
     expect(tool.getAttribute('aria-pressed')).toBe('true')

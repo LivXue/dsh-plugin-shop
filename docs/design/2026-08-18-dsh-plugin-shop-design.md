@@ -318,6 +318,8 @@ Implementation decisions:
 
 **Amendment (2026-08-30): every shelf card shows its version.** The badge row leads with a quiet `v{x.y.z}` — the same fact as the expanded detail's version row, visible without expanding. The version is catalog data rendered as text, never as a spec.
 
+**Amendment (2026-08-30, follow-up): the shelf renders single-line rows.** Each card is one line: name (truncating) plus the badge row — category chip, version, tier, stars — with the install/update/uninstall actions right-aligned; the category moves into the badge row because the cover block is gone. The summary, capabilities, and detail render only when the row is expanded, breaking onto their own full-width line below; an active install or uninstall flow does the same, so gates and logs never squeeze the row.
+
 **Amendment (2026-08-27, follow-up): boot-time warm.** The client bundle warms `shop/catalog` (plus the small `installed` and `version` reads) when its apply runs at web boot, so the shop's first open consumes the boot-time fetch instead of waiting on it — the host's slow network fetch happens while nobody is looking at the shop. The tab's plain open consumes the stashed promise (the host's snapshot is the same one a fresh call would serve, so §10 freshness semantics are unchanged); a refresh always goes to the wire, and a failed warm falls back to a fresh call. Each boot starts its own warm fetch.
 
 ## 8. When changes take effect

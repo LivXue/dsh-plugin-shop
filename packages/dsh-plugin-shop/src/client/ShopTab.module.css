@@ -344,10 +344,11 @@
 }
 
 /* The shelf: a responsive grid of cards. */
+/* Single-line rows: one full-width column, one plugin per line. */
 .cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 12px;
+  grid-template-columns: 1fr;
+  gap: 8px;
   list-style: none;
   margin: 0;
   padding: 0;
@@ -366,7 +367,9 @@
 .card {
   position: relative;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: 10px;
   background: var(--dsw-alias-bg-layer-1);
@@ -375,7 +378,7 @@
   /* Off-screen cards skip layout and paint; the placeholder keeps scrollbar
    * estimation sane before the browser has measured the real height. */
   content-visibility: auto;
-  contain-intrinsic-size: auto 240px;
+  contain-intrinsic-size: auto 52px;
 }
 
 /* The sentinel that triggers the next shelf batch: zero visual footprint. */
@@ -422,28 +425,31 @@
 .card[data-category='integration'] { --spine-hue: #34D399; }
 .card[data-category='other'] { --spine-hue: #8B8E96; }
 
-.cardCover {
-  display: block;
-  padding: 5px 12px 5px 12px;
-  border-bottom: 1px solid var(--dsw-alias-border-l1);
-  background: color-mix(in srgb, var(--spine-hue, #8B8E96) 12%, transparent);
-}
-
-.coverLabel {
-  display: block;
+/* The category sits in the badge row as a quiet chip in the category's own
+ * hue — the border carries it where the light theme's white layers cannot
+ * (the same lesson as the check button). */
+.categoryBadge {
+  padding: 1px 7px;
+  border: 1px solid color-mix(in srgb, var(--spine-hue, #8B8E96) 45%, transparent);
+  border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--spine-hue, #8B8E96);
+  white-space: nowrap;
 }
 
 .entryHeader {
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 8px;
-  padding: 10px 12px 6px;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  /* Basis 0: the header takes only the space the action buttons leave,
+   * so long names truncate instead of wrapping the buttons off the row. */
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 8px 12px;
   border: none;
   background: transparent;
   color: inherit;
@@ -457,20 +463,45 @@
   outline-offset: -2px;
 }
 
-/* The name owns the full header width; badges sit on their own line below. */
+/* The name fills the row and truncates rather than wraps; the badges stay
+ * intact beside it. */
 .name {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 13px;
   font-weight: 600;
-  overflow-wrap: anywhere;
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--dsw-alias-label-primary);
 }
 
 .badges {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
+}
+
+/* The action area is virtual: its children lay out as direct card rows. */
+.cardActions {
+  display: contents;
+}
+
+/* The first action owns the right edge; the rest follow it. */
+.cardActions > :first-child {
+  margin-left: auto;
+}
+
+/* A flow that outgrows the row — install/uninstall gate, log, notices, the
+ * expanded body — breaks onto its own full-width line below it. Nested
+ * blocks inside those panels ignore the basis. */
+.card > .gate,
+.card > .installPanel,
+.card > .installedActions,
+.card > .body {
+  flex-basis: 100%;
 }
 
 /* The entry's version, always visible on the card (the expanded detail
@@ -513,6 +544,8 @@
   border: 1px dashed var(--dsw-alias-border-l2);
   font-size: 11px;
   line-height: 1.6;
+  /* A wrapping pill would stretch the single-line card to two lines. */
+  white-space: nowrap;
   color: var(--dsw-alias-label-secondary);
 }
 
@@ -536,7 +569,9 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 0 12px 12px;
+  margin-top: 2px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
 }
 
 .summary {
