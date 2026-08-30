@@ -75,6 +75,13 @@ describe('ShopTab', () => {
     expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] a')).toBeNull()
   })
 
+  it('shows the entry version on every card without expanding it', async () => {
+    const { injected } = bench(snapshot())
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-card-version]')?.textContent).toBe('v1.2.0')
+  })
+
   it('renders a hostile summary as text, never as markup', async () => {
     const { injected } = bench(snapshot({
       catalog: { category: 'tool', summary: { en: '<img src=x onerror=alert(1)>' }, capabilities: [] },

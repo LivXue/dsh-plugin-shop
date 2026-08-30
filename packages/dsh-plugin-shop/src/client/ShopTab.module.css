@@ -473,6 +473,15 @@
   gap: 6px;
 }
 
+/* The entry's version, always visible on the card (the expanded detail
+ * repeats it in the version row) — the same quiet mono as the toolbar. */
+.cardVersion {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--dsw-alias-label-secondary);
+}
+
 .tierBadge {
   padding: 1px 7px;
   border-radius: 999px;

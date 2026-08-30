@@ -101,6 +101,7 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, t, install,
       >
         <span className={css.name}>{entry.name}</span>
         <span className={css.badges}>
+          <span className={css.cardVersion} data-card-version>v{entry.version}</span>
           <span className={css.tierBadge} data-tier={entry.tier}>{t(tierKey(entry.tier))}</span>
           {isUnclaimed(entry) && <span className={css.unclaimedBadge}>{t('unclaimed')}</span>}
           {stars !== undefined && (
