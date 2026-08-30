@@ -6,6 +6,7 @@
 可用 git 审计的目录中发现、安装、启停和更新 dsh 插件。
 
 [![npm](https://img.shields.io/npm/v/dsh-plugin-shop?logo=npm&color=cb3837)](https://www.npmjs.com/package/dsh-plugin-shop)
+[![plugins](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2FLivXue.github.io%2Fdsh-plugin-shop%2Fv1%2Findex.json&query=count&label=plugins&color=blue)](https://LivXue.github.io/dsh-plugin-shop/v1/index.json)
 [![license](https://img.shields.io/npm/l/dsh-plugin-shop?color=blue)](LICENSE)
 [![plugin CI](https://github.com/LivXue/dsh-plugin-shop/actions/workflows/plugin.yml/badge.svg)](https://github.com/LivXue/dsh-plugin-shop/actions/workflows/plugin.yml)
 [![catalog](https://github.com/LivXue/dsh-plugin-shop/actions/workflows/daily.yml/badge.svg)](https://github.com/LivXue/dsh-plugin-shop/actions/workflows/daily.yml)
@@ -118,7 +119,7 @@ dsh --profile <profile>
 
 | 产物 | 用途 |
 |---|---|
-| [`/v1/index.json`](https://LivXue.github.io/dsh-plugin-shop/v1/index.json) | 指针——`schemaVersion`、`builtAt` 和内容哈希。足够小，适合轮询。 |
+| [`/v1/index.json`](https://LivXue.github.io/dsh-plugin-shop/v1/index.json) | 指针——`schemaVersion`、`builtAt`、收录数 `count`（上面的徽章实时读它）和内容哈希。足够小，适合轮询。 |
 | `/v1/plugins.<sha256>.json` | 数据——内容寻址，可无限期缓存。 |
 | `/v1/stars.<sha256>.json` | 按包名的 GitHub star 数（每日构建成功获取时） |
 
