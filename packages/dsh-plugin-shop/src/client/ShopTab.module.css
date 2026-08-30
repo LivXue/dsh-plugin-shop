@@ -548,17 +548,6 @@
   border: 1px solid var(--dsw-alias-border-l2);
 }
 
-.unclaimedBadge {
-  padding: 1px 7px;
-  border-radius: 999px;
-  border: 1px dashed var(--dsw-alias-border-l2);
-  font-size: 11px;
-  line-height: 1.6;
-  /* A wrapping pill would stretch the single-line card to two lines. */
-  white-space: nowrap;
-  color: var(--dsw-alias-label-secondary);
-}
-
 .starsBadge {
   font-size: 11px;
   color: var(--dsw-alias-label-secondary);

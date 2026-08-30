@@ -7,7 +7,7 @@
 import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
-import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Category, categoryKey, categoryLocaleKey, displayVersion, formatStars, isShopLike, isUnclaimed, nextVisibleCount, rejectionCodeKey, sortByStars, tierKey } from './present.ts'
+import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Category, categoryKey, categoryLocaleKey, displayVersion, formatStars, isShopLike, nextVisibleCount, rejectionCodeKey, sortByStars, tierKey } from './present.ts'
 import { useInstall } from './useInstall.ts'
 import { useUninstall } from './useUninstall.ts'
 import { useUpdateSelf } from './useUpdateSelf.ts'
@@ -67,7 +67,7 @@ function ChevronIcon({ open }: { open: boolean }): ReactNode {
 }
 
 /** One entry card: the category spine and cover band, the expandable header
- * (name, tier, category, unclaimed marker), the plain-text summary in both
+ * (name, tier, category), the plain-text summary in both
  * languages, the self-declared capabilities, the detail section, and the
  * install controls. An installed plugin's card carries its installed row:
  * current → the non-interactive installed label, behind → the update button;
@@ -110,7 +110,6 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, t, install,
           )}
           <span className={css.cardVersion} data-card-version>v{displayVersion(entry)}</span>
           <span className={css.tierBadge} data-tier={entry.tier}>{t(tierKey(entry.tier))}</span>
-          {isUnclaimed(entry) && <span className={css.unclaimedBadge}>{t('unclaimed')}</span>}
           {stars !== undefined && (
             // role="img" names the badge for assistive tech (ARIA refuses to
             // name a generic element); the name carries the RAW count — the

@@ -185,11 +185,9 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await dialog.getByRole('tab', { name: '插件商店' }).click() // panel renders lazily
       await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
 
-      // The fixture entry renders with the unclaimed marker and the community
-      // tier badge (derived metadata → 作者未认领, §6.1).
+      // The fixture entry renders with the community tier badge (§6.1).
       const card = dialog.locator('[data-shop-entry="dsh-e2e-fixture-plugin"]')
       await card.waitFor({ state: 'visible', timeout: 15_000 })
-      expect(await card.textContent()).toContain('作者未认领')
       expect(await card.textContent()).toContain('社区')
 
       // The starred fixture renders its badge through the real wire → host →

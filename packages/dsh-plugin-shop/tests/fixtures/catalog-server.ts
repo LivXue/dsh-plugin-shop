@@ -4,7 +4,7 @@
  * data file it names — with the sha256 computed at startup, the same binding
  * the real publishing pipeline makes between the two files.
  *
- * One community-tier, derived (unclaimed, §6.1) fixture entry:
+ * One community-tier, derived (§6.1) fixture entry:
  * `dsh-e2e-fixture-plugin@1.0.0`, a name that does not exist on npm. The
  * browser install therefore fails with REAL pnpm stderr — the failed view and
  * its recovery hint are part of what this e2e proves; a name that resolved
@@ -27,7 +27,7 @@ export interface CatalogServer {
 }
 
 /** The single fixture entry. No `catalog` section: derived metadata, so the
- * shop presents the entry as unclaimed (§6.1) — the badge the e2e asserts.
+ * shop presents the entry's derived summary (§6.1).
  * `publishedAt` stays fixed so the snapshot is deterministic per run. */
 const FIXTURE_ENTRY = {
   name: 'dsh-e2e-fixture-plugin',

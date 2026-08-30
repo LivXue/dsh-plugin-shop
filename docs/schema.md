@@ -47,7 +47,7 @@ Omit the section entirely and your package is still listed, from your npm `packa
 | `category` | your choice | `other` |
 | `capabilities` | your list | empty |
 
-A package with no `dsh.catalog` and no npm `description` is not listed at all — there is nothing to show. A derived listing carries `metadata: "derived"` in the published entry, which a consumer can present as unclaimed; adding a `dsh.catalog` section is how you claim it.
+A package with no `dsh.catalog` and no npm `description` is not listed at all — there is nothing to show. A derived listing carries `metadata: "derived"` in the published entry; adding a `dsh.catalog` section is how you claim it. The shop no longer badges derived entries visually.
 
 `metadata` is independent of trust tier: a derived listing can still be `verified`, because review reads the plugin's code, not its prose.
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, categoryKey, displayVersion, formatStars, isShopLike, isUnclaimed, nextVisibleCount, reduceInstall, sortByStars, tierKey,
+  ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, categoryKey, displayVersion, formatStars, isShopLike, nextVisibleCount, reduceInstall, sortByStars, tierKey,
 } from '../../src/client/present.ts'
 import type { CatalogEntry } from '../../src/host/index.ts'
 
@@ -14,13 +14,6 @@ describe('tierKey', () => {
     expect(tierKey('verified')).toBe('tierVerified')
     expect(tierKey('verified-stale')).toBe('tierVerifiedStale')
     expect(tierKey('community')).toBe('tierCommunity')
-  })
-})
-
-describe('isUnclaimed', () => {
-  it('marks a derived listing as unclaimed and a declared one as claimed', () => {
-    expect(isUnclaimed(entry)).toBe(true)
-    expect(isUnclaimed({ ...entry, metadata: 'declared', source: 'npm' })).toBe(false)
   })
 })
 

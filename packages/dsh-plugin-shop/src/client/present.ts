@@ -14,13 +14,6 @@ export function tierKey(tier: CatalogEntry['tier']): ShopLocaleKey {
   }
 }
 
-/** A derived listing has no author-declared catalog section; the shop
- * presents it as unclaimed, which is the signal that prompts an author to add
- * one (§6.1). Never present a derived entry as though the author wrote it. */
-export function isUnclaimed(entry: CatalogEntry): boolean {
-  return entry.metadata === 'derived'
-}
-
 /** Spec §9.3 verbatim — the community-tier acknowledgement. The zh dictionary
  * states the same facts in its own register; never soften this wording. */
 export const ACKNOWLEDGEMENT_EN =

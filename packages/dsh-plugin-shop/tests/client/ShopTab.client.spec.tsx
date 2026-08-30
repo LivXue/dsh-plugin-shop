@@ -59,13 +59,12 @@ function renderTab(injected: ShopTabInjected) {
 }
 
 describe('ShopTab', () => {
-  it('renders a derived entry as unclaimed with a tier badge and the plain-text summary', async () => {
+  it('renders a derived entry with a tier badge and the plain-text summary', async () => {
     const { injected } = bench(snapshot())
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     // The card shows the badges on its first line and the clamped summary
     // below; the capabilities live in the expanded detail.
-    expect(screen.getByText(en.unclaimed)).toBeTruthy()
     expect(screen.getByText(en.tierCommunity)).toBeTruthy()
     expect(screen.getByText('Says hello.')).toBeTruthy()
     expect(screen.getByText('打个招呼。')).toBeTruthy()
