@@ -63,14 +63,13 @@ describe('ShopTab', () => {
     const { injected } = bench(snapshot())
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
-    // The single-line card shows the badges in the row; the summary and
-    // capabilities live in the expanded body.
+    // The card shows the badges on its first line and the clamped summary
+    // below; the capabilities live in the expanded detail.
     expect(screen.getByText(en.unclaimed)).toBeTruthy()
     expect(screen.getByText(en.tierCommunity)).toBeTruthy()
-    expect(screen.queryByText('Says hello.')).toBeNull()
-    fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] button[aria-expanded]')!)
     expect(screen.getByText('Says hello.')).toBeTruthy()
     expect(screen.getByText('打个招呼。')).toBeTruthy()
+    fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] button[aria-expanded]')!)
     expect(screen.getByText(en.capabilitiesNote)).toBeTruthy()
     expect(screen.getByText('fs')).toBeTruthy()
     expect(screen.getByText('shell')).toBeTruthy()
@@ -91,8 +90,6 @@ describe('ShopTab', () => {
       catalog: { category: 'tool', summary: { en: '<img src=x onerror=alert(1)>' }, capabilities: [] },
     }))
     const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
-    fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] button[aria-expanded]')!)
     await waitFor(() => expect(screen.getByText('<img src=x onerror=alert(1)>')).toBeTruthy())
     expect(container.querySelector('img')).toBeNull()
   })
@@ -423,14 +420,15 @@ describe('ShopTab', () => {
     expect(screen.queryByRole('link', { name: 'not-a-url' })).toBeNull()
   })
 
-  it('hides the summary in the single-line card and shows it on expansion', async () => {
+  it('clamps the summary when collapsed and lifts the clamp when expanded', async () => {
     const { injected } = bench(snapshot())
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
-    // Collapsed: one line — no summary element at all.
-    expect(container.querySelector('[class*="_summary"]')).toBeNull()
+    // collapsed: the clamped class, not the expanded one
+    expect(container.querySelector('[class*="_summary"]')).not.toBeNull()
+    expect(container.querySelector('[class*="_summaryExpanded"]')).toBeNull()
     fireEvent.click(screen.getByText('dsh-hello-plugin'))
-    // Expanded: the summary renders full, without a clamp.
+    // expanded: the expanded class joins the base class
     expect(container.querySelector('[class*="_summaryExpanded"]')).not.toBeNull()
   })
 

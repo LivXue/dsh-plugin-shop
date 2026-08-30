@@ -45,7 +45,7 @@ const rules = rulesOf(css)
  * The loading skeleton shipped invisible in the light theme until this was
  * pinned; measured then: card rgb(255,255,255), bar rgb(255,255,255). */
 const FILL_IS_THE_ONLY_AFFORDANCE = [
-  '.skeletonCover',
+  '.skeletonActions',
   '.skeletonName',
   '.skeletonSummary',
   '.skeletonSummaryShort',
@@ -108,4 +108,14 @@ describe('borderless fills', () => {
       expect(body).toMatch(/--dsw-alias-label-primary/)
     })
   }
+})
+
+describe('skeleton shape', () => {
+  it('renders the loading ghost as the same single-column rows as the shelf', () => {
+    // The old skeleton was a two-per-row card grid; the shelf is one
+    // full-width card per row, and the ghost must match it.
+    expect(rules.get('.skeletonGrid')).toMatch(/grid-template-columns:\s*1fr/)
+    expect(rules.get('.skeletonCard')).toBeDefined()
+    expect(rules.get('.skeletonActions')).toBeDefined()
+  })
 })

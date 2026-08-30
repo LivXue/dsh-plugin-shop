@@ -23,6 +23,9 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
+  /* The shelf never scrolls sideways: a card too wide for its track wraps
+   * its badges rather than widening the panel. */
+  overflow-x: hidden;
 }
 
 .stateLine {
@@ -50,8 +53,8 @@
  * the swap to content is a same-shape handoff instead of a jump. */
 .skeletonGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 12px;
+  grid-template-columns: 1fr;
+  gap: 8px;
 }
 
 .skeletonCard {
@@ -85,16 +88,10 @@
   to { transform: translateX(100%); }
 }
 
-.skeletonCover {
-  display: block;
-  height: 26px;
-  background: color-mix(in srgb, var(--dsw-alias-label-primary) 10%, transparent);
-}
-
 .skeletonName {
   width: 55%;
   height: 14px;
-  margin: 12px 12px 0;
+  margin: 10px 12px 0;
   border-radius: 4px;
   background: color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent);
 }
@@ -110,8 +107,18 @@
 .skeletonSummaryShort {
   width: 68%;
   height: 12px;
-  margin: 6px 12px 14px;
+  margin: 6px 12px 10px;
   border-radius: 4px;
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent);
+}
+
+/* The ghost of the action line, right where the real buttons land. */
+.skeletonActions {
+  display: block;
+  width: 84px;
+  height: 24px;
+  margin: 0 12px 10px;
+  border-radius: 999px;
   background: color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent);
 }
 
@@ -348,6 +355,7 @@
 .cards {
   display: grid;
   grid-template-columns: 1fr;
+  max-width: 100%;
   gap: 8px;
   list-style: none;
   margin: 0;
@@ -367,9 +375,10 @@
 .card {
   position: relative;
   display: flex;
-  flex-direction: row;
-  align-items: center;
-  flex-wrap: wrap;
+  flex-direction: column;
+  /* A grid item's min-width is auto by default: its content would widen the
+   * 1fr track past the panel and overflow horizontally. */
+  min-width: 0;
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: 10px;
   background: var(--dsw-alias-bg-layer-1);
@@ -378,7 +387,7 @@
   /* Off-screen cards skip layout and paint; the placeholder keeps scrollbar
    * estimation sane before the browser has measured the real height. */
   content-visibility: auto;
-  contain-intrinsic-size: auto 52px;
+  contain-intrinsic-size: auto 140px;
 }
 
 /* The sentinel that triggers the next shelf batch: zero visual footprint. */
@@ -445,11 +454,8 @@
   flex-direction: row;
   align-items: center;
   gap: 12px;
-  /* Basis 0: the header takes only the space the action buttons leave,
-   * so long names truncate instead of wrapping the buttons off the row. */
-  flex: 1 1 0;
   min-width: 0;
-  padding: 8px 12px;
+  padding: 8px 12px 2px;
   border: none;
   background: transparent;
   color: inherit;
@@ -480,27 +486,24 @@
 .badges {
   display: flex;
   align-items: center;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
-/* The action area is virtual: its children lay out as direct card rows. */
+/* The action line: buttons side by side; an active install/uninstall flow
+ * (gate, log, notices) takes the full width below them. */
 .cardActions {
-  display: contents;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 10px;
 }
 
-/* The first action owns the right edge; the rest follow it. */
-.cardActions > :first-child {
-  margin-left: auto;
-}
-
-/* A flow that outgrows the row — install/uninstall gate, log, notices, the
- * expanded body — breaks onto its own full-width line below it. Nested
- * blocks inside those panels ignore the basis. */
-.card > .gate,
-.card > .installPanel,
-.card > .installedActions,
-.card > .body {
+.cardActions > .gate,
+.cardActions > .installPanel,
+.cardActions > .installedActions {
   flex-basis: 100%;
 }
 
@@ -576,9 +579,7 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin-top: 2px;
-  padding: 10px 12px 12px;
-  border-top: 1px solid var(--dsw-alias-border-l1);
+  padding: 0 12px;
 }
 
 .summary {

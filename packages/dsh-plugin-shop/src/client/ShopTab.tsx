@@ -120,42 +120,24 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, t, install,
           <ChevronIcon open={open} />
         </span>
       </button>
-      {/* The action area is virtual (`display: contents`): its buttons join
-       * the row, right-aligned; an active install/uninstall flow breaks onto
-       * its own full-width line below, where a log or gate has room. */}
-      <div className={css.cardActions}>
-        {installed === undefined ? (
-          <InstallPanel name={entry.name} version={entry.version} tier={entry.tier} t={t} install={install} installStatus={installStatus} restart={restart} />
-        ) : (
-          <>
-            {installed.outdated ? (
-              // The update button drives the same install flow for the
-              // catalog's latest version; the community gate still applies
-              // (§9.3).
-              <InstallPanel name={entry.name} version={entry.version} tier={entry.tier} variant="update" t={t} install={install} installStatus={installStatus} restart={restart} />
-            ) : (
-              <p className={css.installedLabel} data-shop-installed>{t('installed')}</p>
-            )}
-            <UninstallPanel name={entry.name} t={t} uninstall={uninstall} installStatus={installStatus} restart={restart} />
-          </>
+      <div className={css.body}>
+        {summary !== undefined && (
+          // Collapsed cards clamp the summary to two lines; expanding lifts
+          // the clamp so the author's full text shows.
+          <p className={open ? `${css.summary} ${css.summaryExpanded}` : css.summary}>{summary.en}</p>
         )}
-      </div>
-      {open && (
-        <div className={css.body}>
-          {summary !== undefined && (
-            <p className={`${css.summary} ${css.summaryExpanded}`}>{summary.en}</p>
-          )}
-          {summary?.zh !== undefined && (
-            <p className={`${css.summaryZh} ${css.summaryZhExpanded}`}>{summary.zh}</p>
-          )}
-          {entry.catalog !== undefined && entry.catalog.capabilities.length > 0 && (
-            <div className={css.capabilitiesBlock}>
-              <p className={css.capabilitiesNote}>{t('capabilitiesNote')}</p>
-              <ul className={css.capabilities}>
-                {entry.catalog.capabilities.map(capability => <li key={capability}>{capability}</li>)}
-              </ul>
-            </div>
-          )}
+        {summary?.zh !== undefined && (
+          <p className={open ? `${css.summaryZh} ${css.summaryZhExpanded}` : css.summaryZh}>{summary.zh}</p>
+        )}
+        {open && entry.catalog !== undefined && entry.catalog.capabilities.length > 0 && (
+          <div className={css.capabilitiesBlock}>
+            <p className={css.capabilitiesNote}>{t('capabilitiesNote')}</p>
+            <ul className={css.capabilities}>
+              {entry.catalog.capabilities.map(capability => <li key={capability}>{capability}</li>)}
+            </ul>
+          </div>
+        )}
+        {open && (
           <section id={detailId} className={css.detail}>
             <dl className={css.detailRows}>
               <div className={css.detailRow}>
@@ -191,8 +173,28 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, t, install,
               </p>
             )}
           </section>
-        </div>
-      )}
+        )}
+      </div>
+      {/* The action line: buttons sit on their own row under the summary; an
+       * active install/uninstall flow (gate, log, notices) takes the full
+       * width below them, where it has room. */}
+      <div className={css.cardActions}>
+        {installed === undefined ? (
+          <InstallPanel name={entry.name} version={entry.version} tier={entry.tier} t={t} install={install} installStatus={installStatus} restart={restart} />
+        ) : (
+          <>
+            {installed.outdated ? (
+              // The update button drives the same install flow for the
+              // catalog's latest version; the community gate still applies
+              // (§9.3).
+              <InstallPanel name={entry.name} version={entry.version} tier={entry.tier} variant="update" t={t} install={install} installStatus={installStatus} restart={restart} />
+            ) : (
+              <p className={css.installedLabel} data-shop-installed>{t('installed')}</p>
+            )}
+            <UninstallPanel name={entry.name} t={t} uninstall={uninstall} installStatus={installStatus} restart={restart} />
+          </>
+        )}
+      </div>
     </div>
   )
 })
@@ -808,10 +810,10 @@ export function ShopTab(props: ShopTabProps): ReactNode {
         <div className={css.skeletonGrid} data-shop-skeleton aria-hidden="true">
           {Array.from({ length: 8 }, (_, i) => (
             <div key={i} className={css.skeletonCard}>
-              <span className={css.skeletonCover} />
               <span className={css.skeletonName} />
               <span className={css.skeletonSummary} />
               <span className={css.skeletonSummaryShort} />
+              <span className={css.skeletonActions} />
             </div>
           ))}
         </div>
