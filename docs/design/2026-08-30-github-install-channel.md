@@ -91,6 +91,13 @@ author-readable rejection (codes reused from the npm gate where they apply):
 1. `no-manifest` — default-branch `package.json` missing or unparseable.
 2. `no-bundle` — the manifest declares no `dsh.bundle`. **This is the rule
    that eliminates the silent no-op install; it is non-negotiable.**
+2b. `requires-build` — the manifest declares a `prepare`/`prepack` script
+   (added 2026-08-30 after the install spot-check: 11/12 sampled entries
+   installed cleanly, and the one failure was a git repo whose prepare
+   script pnpm blocks by default). A git install requires running that
+   script, pnpm blocks it, and the shop never passes build-script flags, so
+   such a repo can never install through the shop. The rejection tells the
+   author the two exits: publish to npm, or drop the script.
 3. `no-license` / `no-repository` — same auditability rules as npm candidates
    (the repo URL is known, but the *declared* license must exist).
 4. `nothing-to-show` — no description from either the repo metadata or the

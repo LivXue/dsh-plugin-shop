@@ -45,6 +45,10 @@ export function gateRepo(
     return reject(candidate.repo, 'no-bundle',
       'Declares no dsh.bundle in its package.json, so dsh installs it as a plain dependency, not a plugin.')
   }
+  if (candidate.requiresBuild) {
+    return reject(candidate.repo, 'requires-build',
+      'Declares a prepare/prepack build script, which a git install requires and pnpm blocks by default; the shop never enables build scripts, so the repository could not install. Publish to npm, or drop the script, and it can be listed.')
+  }
   if (candidate.license === null || candidate.license === '') {
     return reject(candidate.repo, 'no-license', 'The repository declares no license.')
   }
@@ -74,15 +78,21 @@ export function gateRepo(
 
   // The typosquatting hold probes the slug (without the owner, whose prefix
   // would drown any distance) AND the bundle name: either can impersonate a
-  // verified package.
+  // verified package. Unlike the npm gate — where an exact name IS the same
+  // identity — an exact match here is a DIFFERENT identity claiming a
+  // verified name, the most dangerous lookalike there is, so edits === 0
+  // holds too. `allowed-similar.yml` is the human escape for a legitimate
+  // source (e.g. the verified package's own repository).
   const slug = candidate.repo.split('/')[1] ?? candidate.repo
   if (!config.allowedSimilar.has(candidate.repo) && !config.allowedSimilar.has(candidate.name)) {
     for (const verifiedName of config.verified.keys()) {
       for (const probe of [slug, candidate.name]) {
         const edits = distance(probe, verifiedName)
-        if (edits === 0 || edits > SIMILARITY_THRESHOLD) continue
+        if (edits > SIMILARITY_THRESHOLD) continue
         return reject(candidate.repo, 'name-too-similar',
-          `Within ${edits} edit(s) of the verified package ${verifiedName}; held for human adjudication.`)
+          edits === 0
+            ? `Exactly matches the verified package ${verifiedName}; only an explicitly allowed source may use that name; held for human adjudication.`
+            : `Within ${edits} edit(s) of the verified package ${verifiedName}; held for human adjudication.`)
       }
     }
   }

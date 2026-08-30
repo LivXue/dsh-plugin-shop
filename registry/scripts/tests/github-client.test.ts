@@ -89,6 +89,7 @@ describe('fetchRepoCandidate', () => {
       expect(result.candidate.commit).toBe(commit)
       expect(result.candidate.repository).toBe('https://github.com/someone/dsh-repo-plugin')
       expect(result.candidate.hasBundle).toBe(true)
+      expect(result.candidate.requiresBuild).toBe(false)
       expect(result.candidate.publishedAt).toBe('2026-08-01T12:00:00.000Z')
     }
   })
@@ -114,6 +115,18 @@ describe('fetchRepoCandidate', () => {
     }), sleep, 'token')
     expect(nameless.ok).toBe(false)
     if (!nameless.ok) expect(nameless.code).toBe('no-manifest')
+  })
+
+  it('marks a manifest declaring a prepare script as requiring a build', async () => {
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(JSON.stringify({
+        name: 'dsh-repo-plugin', scripts: { prepare: 'npm run build' }, dsh: { bundle: {} },
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': new Response(JSON.stringify({ sha: commit, commit: { author: { date: '2026-08-01T00:00:00.000Z' } } }), { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.candidate.requiresBuild).toBe(true)
   })
 
   it('reports fetch-failed when the head commit cannot be resolved', async () => {

@@ -55,6 +55,13 @@ export interface RepoCandidate {
   /** The repo's declared license (GitHub metadata `spdx_id`), null when none. */
   license: string | null
   hasBundle: boolean
+  /**
+   * Whether the manifest declares a `prepare`/`prepack` build script. A git
+   * install requires running it, pnpm blocks it by default, and the shop
+   * never enables build scripts — so such a repo can never install through
+   * the shop and is rejected at harvest.
+   */
+  requiresBuild: boolean
   /** The raw `dsh.catalog` value from the repo's manifest; unvalidated until the gate runs. */
   catalog: unknown
   /** The GitHub repo `description`, used to derive a listing when `catalog` is absent. */
@@ -76,6 +83,7 @@ export type RejectionCode =
   | 'fetch-failed'
   | 'no-manifest'
   | 'shadowed-by-npm'
+  | 'requires-build'
 
 /** One rejection, carrying an author-readable explanation. */
 export interface Rejection {

@@ -183,8 +183,11 @@ export async function fetchRepoCandidate(
   const m = manifest as {
     name?: unknown
     description?: unknown
+    scripts?: { prepare?: unknown; prepack?: unknown }
     dsh?: { bundle?: unknown; catalog?: unknown }
   }
+  const scripts = typeof m.scripts === 'object' && m.scripts !== null ? m.scripts : {}
+  const requiresBuild = typeof scripts.prepare === 'string' || typeof scripts.prepack === 'string'
   if (typeof m.name !== 'string' || m.name === '') {
     return { ok: false, code: 'no-manifest', detail: 'package.json declares no name, so dsh has nothing to register.' }
   }
@@ -205,6 +208,7 @@ export async function fetchRepoCandidate(
       repository: `https://github.com/${owner}/${slug}`,
       license: meta.license,
       hasBundle: m.dsh?.bundle !== undefined,
+      requiresBuild,
       catalog: m.dsh?.catalog ?? null,
       description: meta.description ?? (typeof m.description === 'string' ? m.description : null),
     },

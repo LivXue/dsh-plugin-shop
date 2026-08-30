@@ -123,6 +123,7 @@ describe('runPipeline with repository candidates', () => {
     repository: 'https://github.com/someone/dsh-repo-plugin',
     license: 'MIT',
     hasBundle: true,
+    requiresBuild: false,
     catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
     description: 'A repo plugin.',
   }
