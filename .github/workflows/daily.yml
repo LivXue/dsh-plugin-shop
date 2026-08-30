@@ -65,6 +65,10 @@ jobs:
           git commit -m "chore(registry): llm category update"
           git push
       - run: pnpm build:catalog -- --harvest-from dist/v1/harvest.json
+        env:
+          # Flipped in the 0.4.10 release: the client that reads schemaVersion 3
+          # (repo entries) ships, so the catalog may publish them.
+          SHOP_HARVEST_REPOS: '1'
       - name: Upload build report
         uses: actions/upload-artifact@v4
         with:
