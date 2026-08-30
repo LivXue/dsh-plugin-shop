@@ -26,9 +26,9 @@ describe('emit', () => {
     expect(a.pluginsFileName).toBe(b.pluginsFileName)
   })
 
-  it('puts builtAt in the index', () => {
-    const { indexJson } = emit([entry('dsh-a')], [], '2026-08-18T00:00:00.000Z')
-    expect(JSON.parse(indexJson)).toMatchObject({ builtAt: '2026-08-18T00:00:00.000Z', count: 1 })
+  it('puts builtAt, the entry count, and the rejection count in the index', () => {
+    const { indexJson } = emit([entry('dsh-a')], [{ name: 'dsh-no', code: 'no-bundle', detail: 'x' }], '2026-08-18T00:00:00.000Z')
+    expect(JSON.parse(indexJson)).toMatchObject({ builtAt: '2026-08-18T00:00:00.000Z', count: 1, rejected: 1 })
   })
 
   it('names the plugins file by the hash of its content', () => {

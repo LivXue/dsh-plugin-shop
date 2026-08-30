@@ -58,10 +58,13 @@ export function emit(entries: Entry[], rejections: Rejection[], builtAt: string,
   const sha256 = createHash('sha256').update(pluginsJson).digest('hex')
   const pluginsFileName = `plugins.${sha256}.json`
 
+  const sortedRejections = [...rejections].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+
   const indexJson = `${JSON.stringify({
     schemaVersion: SCHEMA_VERSION,
     builtAt,
     count: sorted.length,
+    rejected: sortedRejections.length,
     plugins: { url: pluginsFileName, sha256 },
     ...(stars == null ? {} : { stars }),
   }, null, 2)}\n`
@@ -71,8 +74,6 @@ export function emit(entries: Entry[], rejections: Rejection[], builtAt: string,
   const manifestLock = sorted
     .map(e => e.source === 'github' ? `${e.repo ?? e.name} ${e.name} ${e.version}` : `${e.name} ${e.version} ${e.integrity}`)
     .join('\n') + (sorted.length > 0 ? '\n' : '')
-
-  const sortedRejections = [...rejections].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
   const lines = [
     '# Catalog build report',
     '',

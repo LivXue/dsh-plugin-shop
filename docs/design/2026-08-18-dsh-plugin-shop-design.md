@@ -182,11 +182,12 @@ A consumer presents a derived entry as unclaimed, which is also the signal that 
   "schemaVersion": 2,
   "builtAt": "2026-08-18T00:00:00Z",
   "count": 137,
+  "rejected": 42,
   "plugins": { "url": "plugins.<sha256>.json", "sha256": "<sha256>" }
 }
 ```
 
-The pointer may carry an optional `stars` object naming a content-addressed sidecar of GitHub star counts keyed by package name; stars are live daily data and are quarantined there so the plugin data hash stays cache-stable. `schemaVersion` remains 2.
+The pointer carries `count` and `rejected` — the listed and the filtered totals, the two numbers the README badges read live. It may carry an optional `stars` object naming a content-addressed sidecar of GitHub star counts keyed by package name; stars are live daily data and are quarantined there so the plugin data hash stays cache-stable. `schemaVersion` is 3.
 
 `/v1/plugins.<sha256>.json`:
 

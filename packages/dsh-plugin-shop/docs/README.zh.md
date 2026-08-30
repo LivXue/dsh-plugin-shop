@@ -7,6 +7,7 @@
 
 [![npm](https://img.shields.io/npm/v/dsh-plugin-shop?logo=npm&color=cb3837)](https://www.npmjs.com/package/dsh-plugin-shop)
 [![plugins](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2FLivXue.github.io%2Fdsh-plugin-shop%2Fv1%2Findex.json&query=count&label=plugins&color=blue)](https://LivXue.github.io/dsh-plugin-shop/v1/index.json)
+[![filtered](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2FLivXue.github.io%2Fdsh-plugin-shop%2Fv1%2Findex.json&query=rejected&label=filtered&color=orange)](https://LivXue.github.io/dsh-plugin-shop/v1/index.json)
 [![license](https://img.shields.io/npm/l/dsh-plugin-shop?color=blue)](https://github.com/LivXue/dsh-plugin-shop/blob/main/LICENSE)
 [![plugin CI](https://github.com/LivXue/dsh-plugin-shop/actions/workflows/plugin.yml/badge.svg)](https://github.com/LivXue/dsh-plugin-shop/actions/workflows/plugin.yml)
 [![catalog](https://github.com/LivXue/dsh-plugin-shop/actions/workflows/daily.yml/badge.svg)](https://github.com/LivXue/dsh-plugin-shop/actions/workflows/daily.yml)
@@ -135,7 +136,7 @@ dsh plugin --profile <profile> list --depth 0
 
 每日从公共 npm registry 构建，以静态 JSON 发布：
 
-- [`/v1/index.json`](https://LivXue.github.io/dsh-plugin-shop/v1/index.json) —— 指针，携带 `schemaVersion`、`builtAt`、收录数 `count`（上面的徽章实时读它）和内容哈希
+- [`/v1/index.json`](https://LivXue.github.io/dsh-plugin-shop/v1/index.json) —— 指针，携带 `schemaVersion`、`builtAt`、收录数 `count` 与过滤数 `rejected`（上面的徽章实时读它们）和内容哈希
 - `/v1/plugins.<sha256>.json` —— 数据，内容寻址，可无限期缓存
 
 指针足够小，适合轮询。在信任数据文件的任何一个字节之前，商店会先用指针里的 sha256 校验它。

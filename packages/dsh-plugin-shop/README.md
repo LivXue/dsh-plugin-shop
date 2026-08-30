@@ -7,6 +7,7 @@ dsh plugins, install one with a single confirmation, and manage what you have, f
 
 [![npm](https://img.shields.io/npm/v/dsh-plugin-shop?logo=npm&color=cb3837)](https://www.npmjs.com/package/dsh-plugin-shop)
 [![plugins](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2FLivXue.github.io%2Fdsh-plugin-shop%2Fv1%2Findex.json&query=count&label=plugins&color=blue)](https://LivXue.github.io/dsh-plugin-shop/v1/index.json)
+[![filtered](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2FLivXue.github.io%2Fdsh-plugin-shop%2Fv1%2Findex.json&query=rejected&label=filtered&color=orange)](https://LivXue.github.io/dsh-plugin-shop/v1/index.json)
 [![license](https://img.shields.io/npm/l/dsh-plugin-shop?color=blue)](https://github.com/LivXue/dsh-plugin-shop/blob/main/LICENSE)
 [![plugin CI](https://github.com/LivXue/dsh-plugin-shop/actions/workflows/plugin.yml/badge.svg)](https://github.com/LivXue/dsh-plugin-shop/actions/workflows/plugin.yml)
 [![catalog](https://github.com/LivXue/dsh-plugin-shop/actions/workflows/daily.yml/badge.svg)](https://github.com/LivXue/dsh-plugin-shop/actions/workflows/daily.yml)
@@ -145,7 +146,7 @@ Compromising the browser half buys an attacker those nine calls and nothing more
 
 Built daily from the public npm registry and published as static JSON:
 
-- [`/v1/index.json`](https://LivXue.github.io/dsh-plugin-shop/v1/index.json) — the pointer, carrying `schemaVersion`, `builtAt`, the entry `count` (the badge above reads it live), and the content hash
+- [`/v1/index.json`](https://LivXue.github.io/dsh-plugin-shop/v1/index.json) — the pointer, carrying `schemaVersion`, `builtAt`, the entry `count` and `rejected` totals (the badges above read them live), and the content hash
 - `/v1/plugins.<sha256>.json` — the data, content-addressed and safe to cache indefinitely
 
 The pointer is small enough to poll. The shop verifies the data file's sha256 against
