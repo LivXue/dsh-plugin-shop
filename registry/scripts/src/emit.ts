@@ -86,7 +86,11 @@ export function emit(
   const sorted = [...entries].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
   const denied = rejections
     .filter(r => r.code === 'denied')
-    .map(r => ({ name: r.name, detail: r.detail }))
+    .map(r => ({
+      name: r.name,
+      detail: r.detail,
+      ...(r.replacement !== undefined ? { replacement: r.replacement } : {}),
+    }))
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
   const pluginsJson = `${JSON.stringify({ schemaVersion, plugins: sorted, denied }, null, 2)}\n`
   const sha256 = createHash('sha256').update(pluginsJson).digest('hex')

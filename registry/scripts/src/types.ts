@@ -105,6 +105,8 @@ export interface Rejection {
   name: string
   code: RejectionCode
   detail: string
+  /** The known replacement, when a human recorded one in denied.yml. */
+  replacement?: string
 }
 
 /** Trust level of a catalog entry. */

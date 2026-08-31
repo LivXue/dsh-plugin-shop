@@ -31,8 +31,19 @@ export interface Accepted {
 }
 
 /** Build one rejection. */
-function reject(name: string, code: Rejection['code'], detail: string): { ok: false; rejection: Rejection } {
-  return { ok: false, rejection: { name, code, detail } }
+function reject(
+  name: string,
+  code: Rejection['code'],
+  detail: string,
+  replacement?: string,
+): { ok: false; rejection: Rejection } {
+  return {
+    ok: false,
+    rejection: {
+      name, code, detail,
+      ...(replacement !== undefined ? { replacement } : {}),
+    },
+  }
 }
 
 /**
@@ -51,8 +62,11 @@ export function gate(
 ): { ok: true; accepted: Accepted } | { ok: false; rejection: Rejection } {
   const { name } = candidate
 
-  const deniedReason = config.denied.get(name)
-  if (deniedReason !== undefined) return reject(name, 'denied', `Denied by the registry: ${deniedReason}`)
+  const denial = config.denied.get(name)
+  if (denial !== undefined) {
+    const suffix = denial.replacement === undefined ? '' : ` Known replacement: ${denial.replacement}.`
+    return reject(name, 'denied', `Denied by the registry: ${denial.reason}${suffix}`, denial.replacement)
+  }
 
   if (!candidate.hasBundle) {
     return reject(name, 'no-bundle',

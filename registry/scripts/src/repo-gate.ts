@@ -13,8 +13,19 @@ export interface RepoAccepted {
 }
 
 /** Build one rejection. */
-function reject(name: string, code: Rejection['code'], detail: string): { ok: false; rejection: Rejection } {
-  return { ok: false, rejection: { name, code, detail } }
+function reject(
+  name: string,
+  code: Rejection['code'],
+  detail: string,
+  replacement?: string,
+): { ok: false; rejection: Rejection } {
+  return {
+    ok: false,
+    rejection: {
+      name, code, detail,
+      ...(replacement !== undefined ? { replacement } : {}),
+    },
+  }
 }
 
 /**
@@ -42,8 +53,11 @@ export function gateRepo(
   // Denied by repo or by bundle name. `owner/slug` strings cannot collide
   // with npm package names (unscoped names carry no slash), so one map holds
   // both keyspaces.
-  const deniedReason = config.denied.get(candidate.repo) ?? config.denied.get(candidate.name)
-  if (deniedReason !== undefined) return reject(unit, 'denied', `Denied by the registry: ${deniedReason}`)
+  const denial = config.denied.get(candidate.repo) ?? config.denied.get(candidate.name)
+  if (denial !== undefined) {
+    const suffix = denial.replacement === undefined ? '' : ` Known replacement: ${denial.replacement}.`
+    return reject(unit, 'denied', `Denied by the registry: ${denial.reason}${suffix}`, denial.replacement)
+  }
 
   if (!candidate.hasBundle) {
     return reject(unit, 'no-bundle',

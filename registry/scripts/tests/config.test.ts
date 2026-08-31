@@ -41,7 +41,22 @@ describe('parseRegistryConfig', () => {
   reason: Exfiltrates credentials.
 `,
     })
-    expect(config.denied.get('dsh-evil-plugin')).toBe('Exfiltrates credentials.')
+    expect(config.denied.get('dsh-evil-plugin')).toEqual({ reason: 'Exfiltrates credentials.' })
+  })
+
+  it('parses a denied entry with a known replacement', () => {
+    const config = parseRegistryConfig({
+      ...empty,
+      denied: `
+- name: dsh-evil-plugin
+  reason: Exfiltrates credentials.
+  replacement: dsh-good-plugin
+`,
+    })
+    expect(config.denied.get('dsh-evil-plugin')).toEqual({
+      reason: 'Exfiltrates credentials.',
+      replacement: 'dsh-good-plugin',
+    })
   })
 
   it('parses allowed-similar names', () => {
@@ -67,6 +82,13 @@ describe('parseRegistryConfig', () => {
   it('throws on a denied entry with no reason', () => {
     expect(() => parseRegistryConfig({ ...empty, denied: '- name: dsh-evil-plugin\n' }))
       .toThrow(/reason/)
+  })
+
+  it('throws on a denied entry whose replacement is not a string', () => {
+    expect(() => parseRegistryConfig({
+      ...empty,
+      denied: '- name: dsh-evil-plugin\n  reason: Bad.\n  replacement: 42\n',
+    })).toThrow(/replacement/)
   })
 
   it('throws when a file is not a list', () => {

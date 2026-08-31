@@ -128,6 +128,22 @@ describe('emit', () => {
     expect(data.denied).toEqual([{ name: 'dsh-blocked', detail: 'matched the denylist' }])
   })
 
+  it('carries the replacement pointer on a denied rejection when one is recorded, and omits it otherwise', () => {
+    const artifacts = emit(
+      [entry('dsh-listed')],
+      [
+        { name: 'dsh-blocked', code: 'denied', detail: 'matched the denylist', replacement: 'dsh-good' },
+        { name: 'dsh-blocked-2', code: 'denied', detail: 'no substitute' },
+      ],
+      '2026-08-25T00:00:00.000Z',
+    )
+    const data = JSON.parse(artifacts.pluginsJson)
+    expect(data.denied).toEqual([
+      { name: 'dsh-blocked', detail: 'matched the denylist', replacement: 'dsh-good' },
+      { name: 'dsh-blocked-2', detail: 'no substitute' },
+    ])
+  })
+
   it('emits a stars pointer when one is supplied and omits it when null', () => {
     const entries: Entry[] = []
     const withStars = emit(entries, [], '2026-08-26T00:00:00.000Z', { url: 'stars.abc.json', sha256: 'abc' })

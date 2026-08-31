@@ -18,6 +18,7 @@ const verifiedSchema = z.array(z.object({
 const deniedSchema = z.array(z.object({
   name: z.string().min(1),
   reason: z.string().min(1),
+  replacement: z.string().min(1).optional(),
 }).strict())
 
 const allowedSimilarSchema = z.array(z.string().min(1))
@@ -31,8 +32,9 @@ const categoriesSchema = z.array(z.object({
 export interface RegistryConfig {
   /** Package name to its pinned review. */
   verified: Map<string, Review>
-  /** Package name to the reason it is excluded. */
-  denied: Map<string, string>
+  /** Package name to the reason it is excluded, plus the known replacement
+   * when a human recorded one. */
+  denied: Map<string, { reason: string; replacement?: string }>
   /** Names cleared past the similarity hold. */
   allowedSimilar: Set<string>
   /** Package name to its LLM-assigned category (spec 2026-08-26-llm-categorization-design.md). */
@@ -86,9 +88,12 @@ export function parseRegistryConfig(
       notes: row.notes,
     })
   }
-  const denied = new Map<string, string>()
+  const denied = new Map<string, { reason: string; replacement?: string }>()
   for (const row of parseFile('denied.yml', input.denied, deniedSchema)) {
-    setUnique(denied, 'denied.yml', row.name, row.reason)
+    setUnique(denied, 'denied.yml', row.name, {
+      reason: row.reason,
+      ...(row.replacement !== undefined ? { replacement: row.replacement } : {}),
+    })
   }
   const allowedSimilar = new Set(parseFile('allowed-similar.yml', input.allowedSimilar, allowedSimilarSchema))
   const categories = new Map<string, Category>()

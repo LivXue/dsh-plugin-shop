@@ -83,10 +83,43 @@ describe('gateRepo', () => {
     })
     const byRepo = gateRepo(repo(), denied)
     expect(byRepo.ok).toBe(false)
-    if (!byRepo.ok) expect(byRepo.rejection.name).toBe('someone/dsh-repo-plugin')
+    if (!byRepo.ok) {
+      expect(byRepo.rejection.name).toBe('someone/dsh-repo-plugin')
+      expect(byRepo.rejection.detail).toBe('Denied by the registry: known bad actor')
+      expect(byRepo.rejection.replacement).toBeUndefined()
+    }
     const byName = gateRepo(repo({ repo: 'other/dsh-denied-name', name: 'dsh-denied-name' }), denied)
     expect(byName.ok).toBe(false)
-    if (!byName.ok) expect(byName.rejection.code).toBe('denied')
+    if (!byName.ok) {
+      expect(byName.rejection.code).toBe('denied')
+      expect(byName.rejection.detail).toBe('Denied by the registry: bundle name denied')
+      expect(byName.rejection.replacement).toBeUndefined()
+    }
+  })
+
+  it('names the recorded replacement in the detail of a denial by repo or by bundle name', () => {
+    const denied = parseRegistryConfig({
+      verified: '[]',
+      denied: '- name: someone/dsh-repo-plugin\n  reason: known bad actor.\n  replacement: dsh-good-plugin\n- name: dsh-denied-name\n  reason: bundle name denied.\n  replacement: dsh-good-plugin\n',
+      allowedSimilar: '[]',
+      categories: '[]',
+    })
+    const byRepo = gateRepo(repo(), denied)
+    expect(byRepo.ok).toBe(false)
+    if (!byRepo.ok) {
+      expect(byRepo.rejection.code).toBe('denied')
+      expect(byRepo.rejection.detail)
+        .toBe('Denied by the registry: known bad actor. Known replacement: dsh-good-plugin.')
+      expect(byRepo.rejection.replacement).toBe('dsh-good-plugin')
+    }
+    const byName = gateRepo(repo({ repo: 'other/dsh-denied-name', name: 'dsh-denied-name' }), denied)
+    expect(byName.ok).toBe(false)
+    if (!byName.ok) {
+      expect(byName.rejection.code).toBe('denied')
+      expect(byName.rejection.detail)
+        .toBe('Denied by the registry: bundle name denied. Known replacement: dsh-good-plugin.')
+      expect(byName.rejection.replacement).toBe('dsh-good-plugin')
+    }
   })
 
   it('holds a lookalike slug AND a lookalike bundle name for adjudication', () => {

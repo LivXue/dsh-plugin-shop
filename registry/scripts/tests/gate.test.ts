@@ -110,11 +110,27 @@ describe('gate', () => {
     expect(result.rejection.detail).toContain('category')
   })
 
-  it('rejects a denied package and quotes the reason', () => {
+  it('rejects a denied package and quotes the reason, carrying no replacement when none is recorded', () => {
     const result = gate(candidate({ name: 'dsh-evil-plugin' }), config)
     if (result.ok) throw new Error('expected rejection')
     expect(result.rejection.code).toBe('denied')
-    expect(result.rejection.detail).toContain('Exfiltrates credentials.')
+    expect(result.rejection.detail).toBe('Denied by the registry: Exfiltrates credentials.')
+    expect(result.rejection.replacement).toBeUndefined()
+  })
+
+  it('names the recorded replacement in the detail of a denied package', () => {
+    const denied = parseRegistryConfig({
+      verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: github:r\n  reviewCommit: abc\n',
+      denied: '- name: dsh-evil-plugin\n  reason: Exfiltrates credentials.\n  replacement: dsh-good-plugin\n',
+      allowedSimilar: '[]',
+      categories: '[]',
+    })
+    const result = gate(candidate({ name: 'dsh-evil-plugin' }), denied)
+    if (result.ok) throw new Error('expected rejection')
+    expect(result.rejection.code).toBe('denied')
+    expect(result.rejection.detail)
+      .toBe('Denied by the registry: Exfiltrates credentials. Known replacement: dsh-good-plugin.')
+    expect(result.rejection.replacement).toBe('dsh-good-plugin')
   })
 
   it('rejects a deprecated package', () => {
