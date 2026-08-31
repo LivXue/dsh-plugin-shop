@@ -149,6 +149,14 @@ describe('gate', () => {
     expect(result.rejection.code).toBe('harness-repository')
   })
 
+  it('rejects the harness repository regardless of letter case', () => {
+    // GitHub resolves repo URLs case-insensitively, so a casing variant of
+    // the same URL is still the host project, not the plugin's source.
+    const result = gate(candidate({ repository: 'https://github.com/DEEPSEEK-AI/DEEPSEEK-HARNESS' }), config)
+    if (result.ok) throw new Error('expected rejection')
+    expect(result.rejection.code).toBe('harness-repository')
+  })
+
   it('keeps a repository whose own name merely contains deepseek-harness', () => {
     const result = gate(candidate({ repository: 'https://github.com/syncended/deepseek-harness-automations' }), config)
     expect(result.ok).toBe(true)

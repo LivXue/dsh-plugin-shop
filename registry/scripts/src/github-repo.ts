@@ -30,9 +30,10 @@ export const HARNESS_REPO = 'deepseek-ai/deepseek-harness'
 /**
  * Whether a repository URL names the harness repository itself. A plugin
  * declaring the host project as its repository is a misdeclaration — the
- * declared URL holds none of the plugin's source.
+ * declared URL holds none of the plugin's source. GitHub resolves repo URLs
+ * case-insensitively, so the comparison folds case on both sides.
  */
 export function isHarnessRepo(repository: string | null): boolean {
   const parsed = githubOwnerName(repository)
-  return parsed !== null && `${parsed.owner}/${parsed.name}` === HARNESS_REPO
+  return parsed !== null && `${parsed.owner}/${parsed.name}`.toLowerCase() === HARNESS_REPO
 }
