@@ -164,6 +164,28 @@ describe('ShopTab', () => {
     expect(container.querySelector('[data-shop-restart]')).toBeTruthy()
   })
 
+  it('hides the restart offer and shows the disabled notice when the host reports restartSupported: false', async () => {
+    const { injected, version } = bench(snapshot({ tier: 'verified' }))
+    version.mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartSupported: false })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText(en.install))
+    await waitFor(() => expect(screen.getByText(en.restartDisabledNotice)).toBeTruthy(), { timeout: 3000 })
+    // The pending-change notice stays; only the restart offer is gone.
+    expect(screen.getByText(en.installedRestartNotice)).toBeTruthy()
+    expect(container.querySelector('[data-shop-restart]')).toBeNull()
+    expect(container.querySelector('[data-shop-restart-disabled]')?.textContent).toBe(en.restartDisabledNotice)
+  })
+
+  it('still offers the restart button when the host reports restartSupported: true', async () => {
+    const { injected } = bench(snapshot({ tier: 'verified' }))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText(en.install))
+    await waitFor(() => expect(container.querySelector('[data-shop-restart]')).toBeTruthy(), { timeout: 3000 })
+    expect(container.querySelector('[data-shop-restart-disabled]')).toBeNull()
+  })
+
   it('confirms the restart, calls the RPC, and shows the restarting line', async () => {
     const { injected, restart } = bench(snapshot({ tier: 'verified' }))
     const { container } = renderTab(injected)
@@ -223,6 +245,17 @@ describe('ShopTab', () => {
     fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-uninstall]')!)
     await waitFor(() => expect(screen.getByText(en.uninstalledRestartNotice)).toBeTruthy(), { timeout: 3000 })
     expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-restart]')).toBeTruthy()
+  })
+
+  it('hides the restart offer after an uninstall when restart is unsupported', async () => {
+    const { injected, version } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }])
+    version.mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartSupported: false })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-uninstall]')!)
+    await waitFor(() => expect(screen.getByText(en.restartDisabledNotice)).toBeTruthy(), { timeout: 3000 })
+    expect(screen.getByText(en.uninstalledRestartNotice)).toBeTruthy()
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-restart]')).toBeNull()
   })
 
   it('shows the shop version next to the search box, without an update button when current', async () => {
@@ -299,6 +332,17 @@ describe('ShopTab', () => {
     // The poll reports done; the panel carries the restart offer.
     await waitFor(() => expect(container.querySelector('[data-shop-self-update-done]')).toBeTruthy(), { timeout: 3000 })
     expect(container.querySelector('[data-shop-self-update-done] [data-shop-restart]')).toBeTruthy()
+  })
+
+  it('hides the restart offer in the self-update panel when restart is unsupported', async () => {
+    const { injected, version } = bench(snapshot())
+    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartSupported: false })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('v0.4.3')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-update-self]')!)
+    await waitFor(() => expect(container.querySelector('[data-shop-self-update-done] [data-shop-restart-disabled]')).toBeTruthy(), { timeout: 3000 })
+    expect(container.querySelector('[data-shop-self-update-done] [data-shop-restart]')).toBeNull()
+    expect(container.querySelector('[data-shop-self-update-done] [data-shop-restart-disabled]')?.textContent).toBe(en.restartDisabledNotice)
   })
 
   it('renders the host detail when the self-update is refused', async () => {
