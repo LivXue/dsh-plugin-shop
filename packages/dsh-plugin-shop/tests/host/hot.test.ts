@@ -140,6 +140,36 @@ describe('hotMount / hotUnmount', () => {
     expect(fs.files.get(join(HOT_DIR, 'hot-2.yml'))).not.toBeUndefined()
   })
 
+  it('disposes the previous handle before activating a re-mount of the same package', async () => {
+    const fs = memFs()
+    seedPackage(fs, '- id: hello\n  name: dsh-hello-plugin\n')
+    // Order of side effects across the two mounts: the first registration
+    // yields a handle whose dispose records, the second a handle whose
+    // activation records — so a both-dead "replace without dispose" bug would
+    // leave the sequence short of dispose-first.
+    const events: string[] = []
+    let calls = 0
+    const ctx = {
+      plugin: (plugin: unknown, config: unknown) => {
+        new (plugin as new (ctx: unknown, config: unknown) => unknown)({}, config)
+        calls++
+        return calls === 1
+          ? { await: async () => {}, dispose: async () => { events.push('dispose-first') } }
+          : { await: async () => { events.push('await-second') }, dispose: async () => {} }
+      },
+      logger: { info: () => {}, warn: () => {} },
+    }
+
+    await hotMount(ctx, PROFILE, 'dsh-hello-plugin', { hotTreeClass: FakeHotTree, fs, dir: HOT_DIR, timeoutMs: 1000 })
+    expect(events).toEqual([])
+
+    await hotMount(ctx, PROFILE, 'dsh-hello-plugin', { hotTreeClass: FakeHotTree, fs, dir: HOT_DIR, timeoutMs: 1000 })
+
+    // The first handle's dispose is awaited before the second activation is
+    // raced, not merely replaced in the map.
+    expect(events).toEqual(['dispose-first', 'await-second'])
+  })
+
   it('times out a never-settling activation, disposes the tree, and reports a bilingual restart reason', async () => {
     const fs = memFs()
     seedPackage(fs, '- id: hello\n  name: dsh-hello-plugin\n')
@@ -184,6 +214,22 @@ describe('hotMount / hotUnmount', () => {
     expect(result.reason).toContain('cannot hot-mount')
     expect(result.reason).toContain('重启后生效')
     expect(fs.files.has(join(HOT_DIR, 'hot-1.yml'))).toBe(false)
+  })
+
+  it('degrades to restart activation when the tree class is not a constructor', async () => {
+    const fs = memFs()
+    seedPackage(fs, '- id: hello\n  name: dsh-hello-plugin\n')
+
+    const result = await hotMount(
+      { plugin: () => { throw new Error('must not be called') }, logger: { info: () => {}, warn: () => {} } },
+      PROFILE, 'dsh-hello-plugin', { hotTreeClass: 42, fs, dir: HOT_DIR, timeoutMs: 1000 },
+    )
+
+    // Building the subclass over a non-constructor throws; the build sits
+    // inside the fallback, so the call degrades instead of throwing.
+    expect(result.ok).toBe(false)
+    expect(result.reason).toContain('热挂载失败')
+    expect(result.reason).toContain('restart required')
   })
 
   it('falls back with a bilingual reason when the package has no patch file', async () => {

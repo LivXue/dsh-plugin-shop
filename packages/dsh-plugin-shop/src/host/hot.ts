@@ -291,7 +291,10 @@ export async function hotMount(
   // A package re-mounted this session (update): stop the old tree before the
   // new one activates — two live copies of one plugin would violate the
   // update sequencing rule (cordis rejects the second provision anyway; this
-  // makes the ordering explicit).
+  // makes the ordering explicit). Registration precedes disposal on purpose:
+  // a dispose-first order would leave a both-dead window if the new mount
+  // then fails; this order accepts a brief both-registered window instead,
+  // the old handle awaited before the new activation is raced.
   const previous = hotHandles.get(packageName)
   if (previous !== undefined) {
     try {
