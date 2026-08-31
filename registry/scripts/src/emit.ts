@@ -44,6 +44,26 @@ function escapeCell(value: string): string {
 }
 
 /**
+ * Cross-field catalog invariants, checked before anything is emitted
+ * (design 2026-08-31 market-borrowings §2, the E11/E12 borrowings). The
+ * consumer cannot self-heal these: a duplicated install identity makes the
+ * install route ambiguous, and a count that does not match the data file
+ * breaks every consumer's summary. Throwing beats publishing either.
+ * @param entries - the accepted entries, pre-sort.
+ * @param builtAt - the build timestamp; its date part is the "now" reference.
+ */
+export function assertCatalogInvariants(entries: Entry[], builtAt: string): void {
+  const identities = new Set<string>()
+  for (const entry of entries) {
+    const key = entry.source === 'npm'
+      ? `npm:${entry.name}`
+      : `github:${entry.repo ?? entry.name}#${entry.subdir ?? ''}`
+    if (identities.has(key)) throw new Error(`catalog invariant: duplicate install identity ${key}`)
+    identities.add(key)
+  }
+}
+
+/**
  * Build every artifact of one catalog run.
  *
  * `builtAt` reaches the index and nothing else: putting it inside the hashed
@@ -62,6 +82,7 @@ export function emit(
   stars?: StarsPointer | null,
   schemaVersion: number = SCHEMA_VERSION,
 ): Artifacts {
+  assertCatalogInvariants(entries, builtAt)
   const sorted = [...entries].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
   const denied = rejections
     .filter(r => r.code === 'denied')
@@ -98,6 +119,11 @@ export function emit(
     ...sortedRejections.map(r => `| ${escapeCell(r.name)} | ${escapeCell(r.code)} | ${escapeCell(r.detail)} |`),
   ]
   const report = `${lines.join('\n')}\n`
+
+  // E12: the pointer's count must equal the data file's plugin array — the
+  // two artifacts are built separately and this keeps them honest.
+  const dataCount = (JSON.parse(pluginsJson) as { plugins: unknown[] }).plugins.length
+  if (dataCount !== sorted.length) throw new Error('catalog invariant: index count does not match the data file')
 
   return { pluginsFileName, pluginsJson, indexJson, manifestLock, report }
 }

@@ -12,6 +12,18 @@ function entry(name: string, version = '1.0.0'): Entry {
   }
 }
 
+function repoEntry(name: string, repo: string, subdir?: string): Entry {
+  return {
+    name, version: '1.0.0', integrity: `sha512-${name}`, publishedAt: '2026-08-01T12:00:00.000Z',
+    repository: `https://github.com/${repo}`, license: 'MIT', tier: 'community',
+    metadata: 'declared',
+    catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
+    source: 'github',
+    repo,
+    ...(subdir == null ? {} : { subdir }),
+  }
+}
+
 describe('emit', () => {
   it('sorts entries by package name', () => {
     const { pluginsJson } = emit([entry('dsh-b'), entry('dsh-a')], [], '2026-08-18T00:00:00.000Z')
@@ -127,5 +139,24 @@ describe('emit', () => {
 
     const omitted = emit(entries, [], '2026-08-26T00:00:00.000Z')
     expect('stars' in (JSON.parse(omitted.indexJson) as object)).toBe(false)
+  })
+})
+
+describe('assertCatalogInvariants', () => {
+  it('throws on two entries with the same npm identity', () => {
+    const npm = entry('dsh-a')
+    expect(() => emit([npm, { ...npm }], [], '2026-08-31T00:00:00Z')).toThrow(/duplicate install identity/)
+  })
+
+  it('throws on two github entries with the same repo and subdir', () => {
+    const repo = repoEntry('dsh-a', 'owner/slug', 'packages/a')
+    expect(() => emit([repo, { ...repo }], [], '2026-08-31T00:00:00Z')).toThrow(/duplicate install identity/)
+  })
+
+  it('allows the same bundle name from different repos', () => {
+    // the registry legitimately holds distinct plugins under one name
+    const a = repoEntry('dsh-a', 'owner-a/slug')
+    const b = repoEntry('dsh-a', 'owner-b/slug')
+    expect(() => emit([a, b], [], '2026-08-31T00:00:00Z')).not.toThrow()
   })
 })
