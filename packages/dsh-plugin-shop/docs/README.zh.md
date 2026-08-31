@@ -161,4 +161,4 @@ commit 钉为版本。每日构建就会找到你，不需要向本项目提交�
 
 ## 📄 许可
 
-[MIT](https://github.com/LivXue/dsh-plugin-shop/blob/main/LICENSE) © LivXue
+[Apache-2.0](https://github.com/LivXue/dsh-plugin-shop/blob/main/LICENSE) © LivXue

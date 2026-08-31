@@ -193,4 +193,4 @@ Specification: [docs/design/2026-08-18-dsh-plugin-shop-design.md](docs/design/20
 
 ## 📄 License
 
-[MIT](LICENSE) © LivXue
+[Apache-2.0](LICENSE) © LivXue

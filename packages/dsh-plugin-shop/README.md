@@ -175,4 +175,4 @@ Full reference: [docs/schema.md](https://github.com/LivXue/dsh-plugin-shop/blob/
 
 ## 📄 License
 
-[MIT](https://github.com/LivXue/dsh-plugin-shop/blob/main/LICENSE) © LivXue
+[Apache-2.0](https://github.com/LivXue/dsh-plugin-shop/blob/main/LICENSE) © LivXue

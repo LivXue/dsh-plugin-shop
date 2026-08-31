@@ -181,4 +181,4 @@ pnpm typecheck
 
 ## 📄 许可
 
-[MIT](LICENSE) © LivXue
+[Apache-2.0](LICENSE) © LivXue
