@@ -139,10 +139,6 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, t, install,
         {open && (
           <section id={detailId} className={css.detail}>
             <dl className={css.detailRows}>
-              <div className={css.detailRow}>
-                <dt>{t('version')}</dt>
-                <dd>{entry.version}</dd>
-              </div>
               {entry.repository !== null && (
                 <div className={css.detailRow}>
                   <dt>{t('repository')}</dt>

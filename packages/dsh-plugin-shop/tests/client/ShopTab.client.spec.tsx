@@ -390,9 +390,9 @@ describe('ShopTab', () => {
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     fireEvent.click(screen.getByText('dsh-hello-plugin'))
+    // The version row is gone from the detail: the card's badge line already
+    // carries it — the reviewed line is the only version text left there.
     expect(screen.getByText('reviewed v1.0.0 / current v1.2.0 unreviewed')).toBeTruthy()
-    expect(screen.getByText(en.version)).toBeTruthy()
-    expect(screen.getByText('1.2.0')).toBeTruthy()
     expect(screen.getByText(en.repository)).toBeTruthy()
     expect(screen.getByText('https://github.com/you/hello-plugin')).toBeTruthy()
     expect(screen.getByText(en.license)).toBeTruthy()
