@@ -44,6 +44,7 @@ const SYSTEM_PROMPT = [
   'ui — changes the interface: themes, widgets, panels',
   'workflow — orchestrates multi-step processes: pipelines, schedulers',
   'integration — bridges a specific third-party product (Slack, GitHub, Notion, and the like)',
+  'theme — changes the interface\'s appearance: skins, themes, visual styles',
   'other — none of the above fits',
   'Disambiguation: provider is a generic capability; integration is a named product.',
   'Genuinely unsure means other.',
