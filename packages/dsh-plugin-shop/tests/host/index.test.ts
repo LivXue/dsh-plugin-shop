@@ -524,6 +524,55 @@ describe('ShopGateway.restart', () => {
   })
 })
 
+describe('restart guard (systemd)', () => {
+  // The allows case commits a real handoff, so the options carry the same
+  // fakes as the ShopGateway.restart cases above: a fixture dsh and a pid
+  // beyond pid_max (guaranteed dead), so the helper runs the fixture at once
+  // and no real dsh web is ever spawned. The cacheDir is a scratch dir — the
+  // handoff opens restart.log inside it before committing.
+  function gatewayOptions() {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-restart-guard-'))
+    const bin = join(dir, 'dsh')
+    writeFileSync(bin, `#!/bin/sh\necho "$1 $2 $3" >> "${join(dir, 'calls.log')}"\nexit 0\n`)
+    chmodSync(bin, 0o755)
+    return {
+      catalogUrl: 'https://shop.test/v1/',
+      cacheDir: mkdtempSync(join(tmpdir(), 'dsh-restart-guard-cache-')),
+      profile: 'web',
+      exit: () => {}, restartExitDelayMs: 0,
+      dshBin: bin,
+      restartParentPid: 1_000_000_000,
+    }
+  }
+
+  it('refuses restart when systemd owns the process', async () => {
+    const gateway = new ShopGateway(stubCtx(), { ...gatewayOptions(), env: { INVOCATION_ID: 'abc' }, ppid: 1 })
+    const result = await gateway.restart()
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.detail).toContain('systemd')
+  })
+
+  it('allows restart when the row config overrides', async () => {
+    const gateway = new ShopGateway(stubCtx(), { ...gatewayOptions(), allowRestart: true, env: { INVOCATION_ID: 'abc' }, ppid: 1 })
+    // startRestart is spawned; the test injects exit and a dead parent pid so
+    // nothing really restarts. Assert the call was committed.
+    const result = await gateway.restart()
+    expect(result.ok).toBe(true)
+  })
+
+  it('reports restartSupported: false under systemd without the override', async () => {
+    const gateway = new ShopGateway(stubCtx(), { ...gatewayOptions(), env: { INVOCATION_ID: 'abc' }, ppid: 1, fetchLatestVersion: async () => '9.9.9' })
+    const version = await gateway.version()
+    expect(version.restartSupported).toBe(false)
+  })
+
+  it('reports restartSupported: true outside a supervisor', async () => {
+    const gateway = new ShopGateway(stubCtx(), { ...gatewayOptions(), env: {}, ppid: 4321, fetchLatestVersion: async () => null })
+    const version = await gateway.version()
+    expect(version.restartSupported).toBe(true)
+  })
+})
+
 describe('ShopGateway.version', () => {
   // The running version is read from the package.json next to src/host —
   // the repo's own version. Keep the expectations on properties the gateway

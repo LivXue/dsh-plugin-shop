@@ -39,7 +39,7 @@ function bench(catalogResult: ShopCatalogResult, installedEntries: ShopInstalled
   const installed = vi.fn<ShopTabInjected['installed']>().mockResolvedValue(installedEntries)
   const uninstall = vi.fn<ShopTabInjected['uninstall']>().mockResolvedValue({ ok: true, installId: 'u1' })
   const restart = vi.fn<ShopTabInjected['restart']>().mockResolvedValue({ ok: true })
-  const version = vi.fn<ShopTabInjected['version']>().mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false })
+  const version = vi.fn<ShopTabInjected['version']>().mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartSupported: true })
   const updateStart = vi.fn<ShopTabInjected['updateStart']>().mockResolvedValue({ ok: true, installId: 's1' })
   const injected: ShopTabInjected = { catalog, install, installStatus, setEnabled, installed, uninstall, restart, version, updateStart }
   return { catalog, install, installStatus, setEnabled, installed, uninstall, restart, version, updateStart, injected }
@@ -252,7 +252,7 @@ describe('ShopTab', () => {
 
   it('shows no update button when the version check has no answer', async () => {
     const { injected, version } = bench(snapshot())
-    version.mockResolvedValue({ installed: '0.4.4', latest: null, outdated: false })
+    version.mockResolvedValue({ installed: '0.4.4', latest: null, outdated: false, restartSupported: true })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('v0.4.4')).toBeTruthy())
     expect(container.querySelector('[data-shop-update-self]')).toBeNull()
@@ -261,8 +261,8 @@ describe('ShopTab', () => {
   it('re-checks the version on demand from the check button next to it', async () => {
     const { injected, version } = bench(snapshot())
     version
-      .mockResolvedValueOnce({ installed: '0.4.4', latest: '0.4.4', outdated: false })
-      .mockResolvedValue({ installed: '0.4.4', latest: '0.4.5', outdated: true })
+      .mockResolvedValueOnce({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartSupported: true })
+      .mockResolvedValue({ installed: '0.4.4', latest: '0.4.5', outdated: true, restartSupported: true })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('v0.4.4')).toBeTruthy())
     expect(container.querySelector('[data-shop-update-self]')).toBeNull()
@@ -274,7 +274,7 @@ describe('ShopTab', () => {
 
   it('reports up to date for a moment when the re-check finds nothing newer', async () => {
     const { injected, version } = bench(snapshot())
-    version.mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false })
+    version.mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartSupported: true })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('v0.4.4')).toBeTruthy())
     fireEvent.click(container.querySelector('[data-shop-check-update]')!)
@@ -289,7 +289,7 @@ describe('ShopTab', () => {
 
   it('shows the update button for a newer release and drives the self-update to the restart offer', async () => {
     const { injected, version, updateStart } = bench(snapshot())
-    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true })
+    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartSupported: true })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('v0.4.3')).toBeTruthy())
     const button = container.querySelector('[data-shop-update-self]')
@@ -303,7 +303,7 @@ describe('ShopTab', () => {
 
   it('renders the host detail when the self-update is refused', async () => {
     const { injected, version, updateStart } = bench(snapshot())
-    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true })
+    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartSupported: true })
     updateStart.mockResolvedValue({ ok: false, detail: 'dsh-plugin-shop: 0.4.4 is not a valid version' })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('v0.4.3')).toBeTruthy())

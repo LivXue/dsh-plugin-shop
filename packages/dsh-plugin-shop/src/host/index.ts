@@ -16,6 +16,7 @@ import { validateInstall, type InstallArgs, type InstallRejectionCode } from './
 import { startInstall, startUninstall, type InstallStatus } from './executor.ts'
 import { startRestart, type RestartOutcome } from './restart.ts'
 import { fetchLatestVersion } from './self-update.ts'
+import { detectSupervisor } from './supervisor.ts'
 import { readRepoPins, writeRepoPins, type RepoPinFs } from './repo-pins.ts'
 import { discoverProfile, setUserLayerRow } from './profile.ts'
 
@@ -68,6 +69,13 @@ export interface ShopGatewayOptions {
   hasGit?: () => boolean
   /** Test-only injection: the pins file's filesystem; production uses node:fs. */
   pinFs?: RepoPinFs
+  /** Test-only injection: the explicit `allowRestart` override; production
+   * reads the loader row's `config.allowRestart`. */
+  allowRestart?: boolean
+  /** The environment `detectSupervisor` reads; production uses process.env. */
+  env?: NodeJS.ProcessEnv
+  /** The pid `detectSupervisor` inspects; production uses process.pid. */
+  ppid?: number
 }
 
 /** `shop/installStart` result (§7.3): rejections are typed wire values with an
@@ -97,7 +105,15 @@ export type ShopRestartResult = RestartOutcome
  * package.json, not the manifest's range), the npm latest when the check
  * could answer (`null` = no answer — advisory, never an error), and the
  * comparison verdict. */
-export interface ShopVersionResult { installed: string; latest: string | null; outdated: boolean }
+export interface ShopVersionResult {
+  installed: string
+  latest: string | null
+  outdated: boolean
+  /** Whether `shop/restart` is usable: false when a supervisor owns this
+   * process and no `allowRestart` override is set. The client hides the
+   * restart offer on false but keeps the pending-change notice. */
+  restartSupported: boolean
+}
 
 /** `shop/updateStart` result (§7.3): the self-update spawn, or a typed
  * refusal (a version that is not plain semver). */
@@ -117,6 +133,7 @@ export interface ShopInstalledEntry { name: string; installed: string; latest: s
 interface ShopRowConfig {
   catalogUrl?: unknown
   cacheDir?: unknown
+  allowRestart?: unknown
 }
 
 /** `shop/catalog` result (§7.3), plus the denied list for the install gate's UI. */
@@ -153,6 +170,9 @@ export class ShopGateway extends TypertRemoteService {
   private readonly latestVersion: () => Promise<string | null>
   private readonly hasGit: () => boolean
   private readonly pinFs: RepoPinFs
+  private readonly allowRestart?: boolean
+  private readonly env: NodeJS.ProcessEnv
+  private readonly ppid: number
   /** The install gate runs against the last loaded snapshot, never a fresh
    * fetch per request (§7.2: the Host's cached snapshot is the truth). */
   /** Finished install records retained, so a poll sees the true terminal
@@ -192,6 +212,9 @@ export class ShopGateway extends TypertRemoteService {
         writeFileSync(path, data)
       },
     }
+    this.allowRestart = options.allowRestart
+    this.env = options.env ?? process.env
+    this.ppid = options.ppid ?? process.pid
   }
 
   /** The pins file lives in the shop's own cache, next to the catalog cache. */
@@ -268,6 +291,19 @@ export class ShopGateway extends TypertRemoteService {
       throw new Error('dsh-plugin-shop: the shop row is missing catalogUrl or cacheDir config')
     }
     return { catalogUrl, cacheDir }
+  }
+
+  /** The explicit restart override. Only the row's `config:` sub-object is
+   * passed to a plugin — a top-level `allowRestart:` beside `name:` would be
+   * silently ignored by the loader (dsh-market README, #227). */
+  private allowRestartConfigured(): boolean {
+    if (this.allowRestart !== undefined) return this.allowRestart
+    const loader = (this.ctx as unknown as {
+      loader?: { entries(): Array<{ options: { name?: string; config?: unknown } }> }
+    }).loader
+    const entry = loader?.entries().find(entry => entry.options.name === 'dsh-plugin-shop')
+    const config = entry?.options.config as ShopRowConfig | undefined
+    return config?.allowRestart === true
   }
 
   /** Browse the catalog (§7.3): cached snapshot, refreshed on demand. */
@@ -489,6 +525,16 @@ export class ShopGateway extends TypertRemoteService {
    * new server answers. Refusals are issued before anything is torn down. */
   @Remote('restart')
   async restart(): Promise<ShopRestartResult> {
+    // Under a systemd unit the two-phase handoff kills itself: the main
+    // process exiting also kills the unit's cgroup, taking the detached
+    // helper with it, and the service never comes back. Refuse before
+    // anything is torn down unless the user explicitly allowed it.
+    if (detectSupervisor(this.env, { ppid: this.ppid }) === 'systemd' && !this.allowRestartConfigured()) {
+      return {
+        ok: false,
+        detail: 'dsh-plugin-shop: restart is disabled because this process is a systemd service — a restart would kill the takeover helper along with the unit, and the service would not come back. Set allowRestart: true in the shop row config to override.',
+      }
+    }
     // Under --port 0 the OS hands the NEW process a fresh port the browser
     // cannot know; a restart would strand the client. Refuse before
     // anything is torn down.
@@ -529,6 +575,7 @@ export class ShopGateway extends TypertRemoteService {
       installed,
       latest,
       outdated: latest !== null && lt(installed, latest),
+      restartSupported: detectSupervisor(this.env, { ppid: this.ppid }) === null || this.allowRestartConfigured(),
     }
   }
 
