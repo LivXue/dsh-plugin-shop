@@ -1745,7 +1745,29 @@
   category: ui
 - name: "@ya8d/dsh-directive-compact"
   category: tool
+- name: "@yadsh/dsh-doc-impact"
+  category: tool
+- name: "@yadsh/dsh-draft-sessions"
+  category: tool
+- name: "@yadsh/dsh-kv-persist"
+  category: tool
+- name: "@yadsh/dsh-l10n-overrides"
+  category: ui
+- name: "@yadsh/dsh-prompt-firewall"
+  category: tool
+- name: "@yadsh/dsh-session-scope"
+  category: tool
+- name: "@yadsh/dsh-sleev"
+  category: integration
 - name: "@yangdongzhen590/dsh-design-skills"
+  category: ui
+- name: "@yangtianlong/dsh-sound"
+  category: ui
+- name: "@yangzhe1991/dsh-code-review"
+  category: ui
+- name: "@yangzhe1991/dsh-project-session-store"
+  category: tool
+- name: "@yangzhe1991/dsh-web-enhance"
   category: ui
 - name: "@yaoyaoyu/dsh-calendar"
   category: ui
@@ -2061,6 +2083,8 @@
   category: tool
 - name: "dsh-agent-bus"
   category: workflow
+- name: "dsh-agent-lang"
+  category: ui
 - name: "dsh-agent-message"
   category: tool
 - name: "dsh-agent-messaging"
@@ -3731,6 +3755,8 @@
   category: tool
 - name: "dsh-mattpocock-skills-deck"
   category: ui
+- name: "dsh-maxcompute"
+  category: integration
 - name: "dsh-maze"
   category: ui
 - name: "dsh-mcp-adapter"
@@ -4173,14 +4199,32 @@
   category: integration
 - name: "dsh-opencode-cli"
   category: provider
+- name: "dsh-opencode-go-meter"
+  category: integration
+- name: "dsh-opencode-go-usage"
+  category: integration
 - name: "dsh-opencode-provider"
   category: provider
 - name: "dsh-opencode-status"
   category: ui
+- name: "dsh-opencodex-usage"
+  category: integration
+- name: "dsh-opencontext"
+  category: integration
+- name: "dsh-openrouter-free"
+  category: integration
 - name: "dsh-openrouter-provider-advisor"
   category: provider
 - name: "dsh-openrouter-providers"
   category: provider
+- name: "dsh-openspec"
+  category: integration
+- name: "dsh-openwiki"
+  category: tool
+- name: "dsh-openwolf"
+  category: tool
+- name: "dsh-ops-console"
+  category: ui
 - name: "dsh-orchestrator"
   category: workflow
 - name: "dsh-origin-plugin"
@@ -4227,6 +4271,8 @@
   category: workflow
 - name: "dsh-peak-badge"
   category: ui
+- name: "dsh-peak-block"
+  category: tool
 - name: "dsh-peak-cost-mode"
   category: tool
 - name: "dsh-peak-gate"
@@ -4269,7 +4315,11 @@
   category: ui
 - name: "dsh-pgragh"
   category: ui
+- name: "dsh-phoenix"
+  category: tool
 - name: "dsh-phone-ui"
+  category: ui
+- name: "dsh-photo-pet"
   category: ui
 - name: "dsh-pi-host"
   category: tool
@@ -4399,8 +4449,14 @@
   category: tool
 - name: "dsh-plugin-cost-tracker"
   category: tool
+- name: "dsh-plugin-cron"
+  category: workflow
+- name: "dsh-plugin-custom-headers"
+  category: ui
 - name: "dsh-plugin-dashboard"
   category: ui
+- name: "dsh-plugin-deepeye"
+  category: tool
 - name: "dsh-plugin-deepseek-vision"
   category: provider
 - name: "dsh-plugin-deploy"
@@ -4415,8 +4471,14 @@
   category: provider
 - name: "dsh-plugin-doc-upload"
   category: ui
+- name: "dsh-plugin-dynamic-assembler"
+  category: tool
 - name: "dsh-plugin-education"
   category: tool
+- name: "dsh-plugin-feishu-bridge"
+  category: integration
+- name: "dsh-plugin-file-preview"
+  category: ui
 - name: "dsh-plugin-finance-data"
   category: tool
 - name: "dsh-plugin-focus"
@@ -4429,6 +4491,8 @@
   category: tool
 - name: "dsh-plugin-genui"
   category: ui
+- name: "dsh-plugin-git-bash"
+  category: tool
 - name: "dsh-plugin-git-workflow"
   category: tool
 - name: "dsh-plugin-github"
@@ -4580,6 +4644,8 @@
 - name: "dsh-plugin-shortcuts"
   category: ui
 - name: "dsh-plugin-side-chat"
+  category: ui
+- name: "dsh-plugin-skill-lens"
   category: ui
 - name: "dsh-plugin-skill-manager"
   category: tool
@@ -4739,6 +4805,8 @@
   category: tool
 - name: "dsh-project-organizer"
   category: tool
+- name: "dsh-project-portfolio"
+  category: tool
 - name: "dsh-project-prompt"
   category: tool
 - name: "dsh-projects"
@@ -4765,6 +4833,8 @@
   category: provider
 - name: "dsh-provider-info"
   category: ui
+- name: "dsh-provider-login"
+  category: tool
 - name: "dsh-provider-model-select"
   category: ui
 - name: "dsh-provider-usage"
@@ -4907,6 +4977,8 @@
   category: tool
 - name: "dsh-request-flight-recorder"
   category: tool
+- name: "dsh-request-log"
+  category: tool
 - name: "dsh-requirements-alignment"
   category: other
 - name: "dsh-research"
@@ -4979,6 +5051,8 @@
   category: workflow
 - name: "dsh-rss-monitor"
   category: workflow
+- name: "dsh-rtk-plugin"
+  category: tool
 - name: "dsh-rule-engine"
   category: tool
 - name: "dsh-rule-manager"
@@ -5591,6 +5665,8 @@
   category: tool
 - name: "dsh-tokenpilot"
   category: tool
+- name: "dsh-tokenrhythm-bill"
+  category: ui
 - name: "dsh-tongflow"
   category: integration
 - name: "dsh-tool-accurate-vision"
@@ -5757,6 +5833,10 @@
   category: integration
 - name: "dsh-universal-attachments"
   category: tool
+- name: "dsh-universe-api"
+  category: tool
+- name: "dsh-unreal-mcp"
+  category: integration
 - name: "dsh-unsloth-hands"
   category: integration
 - name: "dsh-update-center"
@@ -6327,8 +6407,14 @@
   category: integration
 - name: "relay-dsh-plugin-codex"
   category: integration
+- name: "relay-dsh-plugin-events"
+  category: other
 - name: "relay-dsh-plugin-manager"
   category: tool
+- name: "relay-dsh-plugin-monitors"
+  category: workflow
+- name: "relay-dsh-plugin-semantic-router"
+  category: workflow
 - name: "relay-dsh-plugin-session-import"
   category: tool
 - name: "rich-file-review"
