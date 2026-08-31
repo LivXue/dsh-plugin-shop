@@ -19,6 +19,20 @@
  * with the file:-installed hello fixture (the P1 pattern) — both bundles are
  * asserted below, and the failed fixture name is asserted absent.
  *
+ * The hot-mount scenarios (market borrowings §4, Task 18) ride the same
+ * composition: a local npm registry (tests/fixtures/local-registry.ts) serves
+ * the two live fixtures — `dsh-shop-e2e-live` (a plain `- id:` / `name:` patch,
+ * the only form the hot tree can mount) and `dsh-shop-e2e-config` (a
+ * config-row patch, valid for the bundle layer but not hot-mountable). The
+ * profile's .npmrc points at the registry once the profile exists (pnpm, unlike
+ * npm, never reads the registry from env vars), so gateway-spawned pnpm
+ * resolves those installs locally while the beforeAll `file:` installs keep
+ * the real registry. The live install must report done with
+ * `needsRestart === false` and the entry must appear in the loader inventory
+ * (the strict liveness read — a route-based probe is unavailable, see the
+ * fixture's index.js comment); the config install must report done with the
+ * bilingual restart reason and the §8 restart offer instead.
+ *
  * Skipped unless the machine has both the real `dsh` CLI on PATH and a
  * playwright chromium installed (CI installs both; see .github/workflows).
  *
@@ -36,10 +50,19 @@
  * - shop panel + entry: `[data-shop-tab]`, `[data-shop-entry=<name>]`
  * - install gate: `[data-shop-confirm]`; failure view: 安装失败 + the detail
  *   paragraph; state lines are plain text (no data attributes)
+ * - install done view: `[data-shop-restart-notice]` (the no-restart copy
+ *   when needsRestart is false, the host's bilingual reason otherwise) and
+ *   the §8 offer `[data-shop-restart]` (only when needsRestart && the host
+ *   can restart)
+ * - uninstall: `[data-shop-uninstall]`; done view `[data-shop-uninstall-done]`
+ * - loader inventory tab: `dialog.getByRole('tab', { name: '插件列表' })`;
+ *   each card `[data-plugin-entry=<entryId>]` with the enabled tag
+ *   `[data-enabled=true]` and the phase dot `[data-phase=active]`
+ * - settings modal close: `.VOzbGW_close` (visually-hidden label 关闭)
  */
 
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -47,6 +70,7 @@ import { chromium, type Browser, type Page } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { startInstall } from '../../src/host/executor.ts'
 import { startCatalogServer, type CatalogServer } from '../fixtures/catalog-server.ts'
+import { startLocalRegistry, type LocalRegistry } from '../fixtures/local-registry.ts'
 
 // The test needs the real dsh executable on PATH and a playwright chromium.
 // CI installs both (the dsh CLI in the workflow, chromium by the
@@ -65,6 +89,7 @@ const hasChromium = existsSync(chromium.executablePath())
 
 describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
   let catalogServer: CatalogServer | undefined
+  let localRegistry: LocalRegistry | undefined
   let tmpHome = ''
   let webUrl = ''
   let dshProcess: ChildProcess | undefined
@@ -75,9 +100,20 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
   const helloFixtureDir = fileURLToPath(
     new URL('../fixtures/hello-packages/dsh-plugin-shop', import.meta.url),
   )
+  const liveFixtureDir = fileURLToPath(
+    new URL('../fixtures/live-packages/dsh-shop-e2e-live', import.meta.url),
+  )
+  const configFixtureDir = fileURLToPath(
+    new URL('../fixtures/live-packages/dsh-shop-e2e-config', import.meta.url),
+  )
 
   beforeAll(async () => {
     catalogServer = await startCatalogServer()
+    // The hot-mount installs resolve through this registry — the profile's
+    // .npmrc points at it (written below, once the profile exists), so the
+    // gateway's `dsh plugin add <name>@<version>` finds the fixtures locally
+    // (and the failed-install name still 404s here, like it does on npm).
+    localRegistry = await startLocalRegistry([liveFixtureDir, configFixtureDir])
     tmpHome = mkdtempSync(join(tmpdir(), 'dsh-home-'))
 
     // The REAL install path: the same executor the gateway runs, spawning
@@ -97,6 +133,16 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // install itself failed so the failure is actionable.
       expect(status.state, status.log.join('\n')).toBe('done')
     }
+
+    // pnpm (unlike npm) does not read the registry from npm_config_* env
+    // vars — the project .npmrc is the lever. Point the profile's .npmrc at
+    // the local registry so the gateway's pnpm runs resolve the fixture
+    // installs locally; the file: installs above never needed a registry,
+    // and the user .npmrc's npmjs token stays scoped to npmjs hosts.
+    writeFileSync(
+      join(tmpHome, 'profiles', 'web', '.npmrc'),
+      `registry=${localRegistry.baseUrl}\n`,
+    )
 
     // Boot the real web profile against the fixture catalog. `--port 0` lets
     // the OS pick the port; dsh prints the BOUND port in `dsh web: <url>`
@@ -151,6 +197,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       }
     }
     await catalogServer?.close().catch(() => {})
+    await localRegistry?.close().catch(() => {})
     if (tmpHome !== '') rmSync(tmpHome, { recursive: true, force: true })
   }, 30_000)
 
@@ -204,9 +251,10 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       )
 
       // Confirm → the install runs (正在安装…) and the once-per-second poll
-      // reaches the terminal state: pnpm fails against the real registry
-      // (the name is not on npm), and the failed view renders the heading
-      // plus the §10 recovery hint with the last pnpm stderr line.
+      // reaches the terminal state: pnpm fails in the profile (the name is
+      // not on npm and the fixture registry 404s it too), and the failed view
+      // renders the heading plus the §10 recovery hint with the last pnpm
+      // stderr line.
       await card.locator('[data-shop-confirm]').click()
       await card.getByText('安装失败').waitFor({ timeout: 60_000 })
       await card
@@ -227,6 +275,132 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // the normalized file: spec (a file:///… URL is written as file:/…).
       expect(manifest.dependencies?.['dsh-plugin-shop']).toMatch(/^file:/)
       expect(manifest.dependencies?.['dsh-hello-fixture']).toMatch(/^file:/)
+    },
+    120_000,
+  )
+
+  it(
+    'hot-mounts a simple-patch fixture: install done without a restart, the loader inventory lists it live, uninstall stops it immediately',
+    async () => {
+      expect(page).toBeDefined()
+      const app = page!
+
+      // The settings dialog from the first spec is still open on the 插件商店
+      // tab; the live fixture card renders alongside the failed-install card.
+      const dialog = app.getByRole('dialog', { name: '设置' })
+      const card = dialog.locator('[data-shop-entry="dsh-shop-e2e-live"]')
+      await card.waitFor({ state: 'visible', timeout: 15_000 })
+
+      // Install through the real wire: the §9.3 gate, then the poll to done.
+      await card.locator('[data-shop-install]').click()
+      await card.locator('[data-shop-confirm]').waitFor({ state: 'visible', timeout: 10_000 })
+      await card.locator('[data-shop-confirm]').click()
+
+      // needsRestart === false: the done view renders the no-restart notice
+      // (never a restart reason) and offers no restart. A hot-mount failure
+      // would surface the host's bilingual reason here instead, failing this.
+      const notice = card.locator('[data-shop-restart-notice]')
+      await notice.waitFor({ state: 'visible', timeout: 60_000 })
+      expect(await notice.textContent()).toContain('已安装，但 profile 未变化')
+      expect(await card.locator('[data-shop-restart]').count()).toBe(0)
+
+      // Liveness through the loader inventory — the strict read of what is
+      // actually mounted. A route-based probe is unavailable: the harness
+      // bundles no plugin-side HTTP router for the fixture to register on
+      // (see the fixture's index.js comment). The hot entry carries the
+      // mkt- prefixed row id at the end of its inventory id chain — the shop
+      // registers the hot tree with its own ctx, a subtree of the gateway
+      // include, so the loader lists it as `include:typert-gateway:mkt-e2e-live`
+      // — plus the enabled tag and the active phase dot.
+      await dialog.getByRole('tab', { name: '插件列表' }).click()
+      const liveEntry = dialog.locator('[data-plugin-entry="include:typert-gateway:mkt-e2e-live"]')
+      await liveEntry.waitFor({ state: 'visible', timeout: 15_000 })
+      await liveEntry.locator('[data-enabled="true"]').waitFor({ state: 'visible' })
+      await liveEntry.locator('[data-phase="active"]').waitFor({ state: 'visible' })
+
+      // The installed actions need a fresh installed() read, so the settings
+      // modal is closed and reopened (the shop tab remounts and refetches;
+      // the 刷新 toolbar button only renders for a stale snapshot, and this
+      // fixture catalog is fresh).
+      await dialog.locator('.VOzbGW_close').click()
+      await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
+      const dialog2 = app.getByRole('dialog', { name: '设置' })
+      await dialog2.waitFor({ state: 'visible', timeout: 10_000 })
+      await dialog2.getByRole('button', { name: '插件', exact: true }).click()
+      await dialog2.getByRole('tab', { name: '插件商店' }).click()
+      await dialog2.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
+      const card2 = dialog2.locator('[data-shop-entry="dsh-shop-e2e-live"]')
+      await card2.waitFor({ state: 'visible', timeout: 15_000 })
+      await card2.locator('[data-shop-uninstall]').waitFor({ state: 'visible', timeout: 15_000 })
+
+      // Uninstall: no gate, the poll runs to done, and needsRestart === false
+      // — the live-uninstall notice, no restart offer.
+      await card2.locator('[data-shop-uninstall]').click()
+      const uninstallDone = card2.locator('[data-shop-uninstall-done]')
+      await uninstallDone.waitFor({ state: 'visible', timeout: 60_000 })
+      expect(await uninstallDone.textContent()).toContain('已卸载并立即停止')
+      expect(await card2.locator('[data-shop-restart]').count()).toBe(0)
+
+      // The hot fiber is gone: a fresh settings mount takes a fresh inventory
+      // snapshot (the tab's list() runs per mount), which no longer lists the
+      // entry. An anchor entry's phase dot proves the snapshot rendered.
+      await dialog2.locator('.VOzbGW_close').click()
+      await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
+      const dialog3 = app.getByRole('dialog', { name: '设置' })
+      await dialog3.waitFor({ state: 'visible', timeout: 10_000 })
+      await dialog3.getByRole('button', { name: '插件', exact: true }).click()
+      await dialog3.getByRole('tab', { name: '插件列表' }).click()
+      await dialog3.locator('[data-phase]').first().waitFor({ state: 'visible', timeout: 15_000 })
+      expect(await dialog3.locator('[data-plugin-entry="include:typert-gateway:mkt-e2e-live"]').count()).toBe(0)
+    },
+    120_000,
+  )
+
+  it(
+    'falls back to a restart for a fixture whose patch carries a config row: done with the bilingual reason and the restart offer, nothing live',
+    async () => {
+      expect(page).toBeDefined()
+      const app = page!
+
+      // Close the dialog left open by the previous spec, then reopen on the
+      // shop tab for the config fixture's card.
+      const dialog0 = app.getByRole('dialog', { name: '设置' })
+      await dialog0.locator('.VOzbGW_close').click()
+      await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
+      const dialog = app.getByRole('dialog', { name: '设置' })
+      await dialog.waitFor({ state: 'visible', timeout: 10_000 })
+      await dialog.getByRole('button', { name: '插件', exact: true }).click()
+      await dialog.getByRole('tab', { name: '插件商店' }).click()
+      await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
+      const card = dialog.locator('[data-shop-entry="dsh-shop-e2e-config"]')
+      await card.waitFor({ state: 'visible', timeout: 15_000 })
+
+      // Install: the same gate and poll. The config-row patch is a valid
+      // bundle-layer patch the hot tree cannot replicate, so the install
+      // reports done with needsRestart === true and the host's published
+      // bilingual reason (parseSimplePatch rejects the row; the reason
+      // renders verbatim on the notice).
+      await card.locator('[data-shop-install]').click()
+      await card.locator('[data-shop-confirm]').waitFor({ state: 'visible', timeout: 10_000 })
+      await card.locator('[data-shop-confirm]').click()
+      const notice = card.locator('[data-shop-restart-notice]')
+      await notice.waitFor({ state: 'visible', timeout: 60_000 })
+      expect(await notice.textContent()).toContain('该插件的补丁包含无法热挂载的配置,重启后生效')
+      // The §8 restart offer renders for a restart-required install on a
+      // restart-capable host (this composition: spawned by vitest, no
+      // systemd markers in the env).
+      await card.locator('[data-shop-restart]').waitFor({ state: 'visible', timeout: 10_000 })
+
+      // Nothing is live: a fresh settings mount takes a fresh inventory
+      // snapshot, and the config fixture has no hot entry in it.
+      await dialog.locator('.VOzbGW_close').click()
+      await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
+      const dialog2 = app.getByRole('dialog', { name: '设置' })
+      await dialog2.waitFor({ state: 'visible', timeout: 10_000 })
+      await dialog2.getByRole('button', { name: '插件', exact: true }).click()
+      await dialog2.getByRole('tab', { name: '插件列表' }).click()
+      await dialog2.locator('[data-phase]').first().waitFor({ state: 'visible', timeout: 15_000 })
+      expect(await dialog2.locator('[data-plugin-entry="include:typert-gateway:mkt-e2e-config"]').count()).toBe(0)
     },
     120_000,
   )

@@ -39,6 +39,9 @@ importers:
 
   packages/dsh-plugin-shop:
     dependencies:
+      '@deepseek-ai/cordis-plugin-include':
+        specifier: ^1.0.6
+        version: 1.0.6(@deepseek-ai/cordis-plugin-loader@1.0.2)(@deepseek-ai/cordis@4.0.1)
       '@deepseek-ai/dsh-typert-protocol':
         specifier: link:../dsh-typert-protocol
         version: link:../dsh-typert-protocol

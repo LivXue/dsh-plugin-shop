@@ -1,0 +1,4 @@
+- id: e2e-config
+  name: dsh-shop-e2e-config
+  config:
+    greeting: hi
