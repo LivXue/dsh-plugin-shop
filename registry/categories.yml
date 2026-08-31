@@ -199,6 +199,8 @@
   category: integration
 - name: "@bleed00/dsh-claude-mem"
   category: integration
+- name: "@bo_wu/dsh-reasoning"
+  category: tool
 - name: "@bobhuhu/dsh-llm-github-copilot-cli"
   category: provider
 - name: "@bocha-ai/dsh-web-search-bocha"
@@ -388,6 +390,8 @@
 - name: "@dougen/dsh-deepseek-usage"
   category: ui
 - name: "@drive9/drive9-dsh"
+  category: tool
+- name: "@dsh-agent-toolkit/token-usage"
   category: tool
 - name: "@dsh-bio/dsh-bio-genie"
   category: tool
@@ -655,6 +659,8 @@
   category: tool
 - name: "@goodandready/dsh-lanmode"
   category: other
+- name: "@goodandready/dsh-live-canvas"
+  category: ui
 - name: "@goodandready/dsh-messenger-gateway"
   category: integration
 - name: "@goodandready/dsh-model-sync"
@@ -793,6 +799,8 @@
   category: ui
 - name: "@iamroven/dsh-web-file-upload"
   category: ui
+- name: "@icedcola/dsh-provider-veark"
+  category: provider
 - name: "@ikonon/dsh-trade-chart"
   category: tool
 - name: "@infinitepersistence/dsh-serial-console"
@@ -999,6 +1007,12 @@
   category: ui
 - name: "@liuliuhuhushui/dsh-quota-float"
   category: ui
+- name: "@liushutan/dsh-archive-manager"
+  category: tool
+- name: "@liushutan/dsh-automation"
+  category: workflow
+- name: "@liushutan/dsh-skills-manager"
+  category: tool
 - name: "@liustack/modsearch"
   category: tool
 - name: "@liustack/pptwise"
@@ -1015,6 +1029,8 @@
   category: tool
 - name: "@longnb47/dsh-agent-gateway"
   category: integration
+- name: "@loommii/dsh-provider-usage"
+  category: ui
 - name: "@loongsuite/dsh-plugin"
   category: tool
 - name: "@lovstudio/dsh-account-balance"
@@ -1069,6 +1085,8 @@
   category: tool
 - name: "@machine-126/dsh-alert-sound"
   category: ui
+- name: "@mackwan84/dsh-ui-mockup-bundle"
+  category: tool
 - name: "@magma27/dsh-calendar"
   category: ui
 - name: "@mars-sea/dsh-commandcode-provider"
@@ -1385,6 +1403,8 @@
   category: tool
 - name: "@shuind/dsh-codex-harness"
   category: tool
+- name: "@shuji0o0/plugin-scaffold"
+  category: tool
 - name: "@sidleo3/agent-instructions-plus"
   category: other
 - name: "@silver-kiwi/deepseek-cheap-or-peak-tokens"
@@ -1470,6 +1490,8 @@
 - name: "@sumomok/dsh-quote-message"
   category: ui
 - name: "@sunjuntao/dsh-prompt-library"
+  category: tool
+- name: "@sunjuntao/dsh-session-monitor"
   category: tool
 - name: "@supercarlosluo/dsh-tool-example"
   category: tool
@@ -1633,6 +1655,16 @@
   category: tool
 - name: "@webwalkerhq/dsh-replay-lab"
   category: tool
+- name: "@weibaohui/dsh-continue"
+  category: workflow
+- name: "@weibaohui/dsh-sync"
+  category: tool
+- name: "@weibaohui/dsh-tasks"
+  category: workflow
+- name: "@weibaohui/hermes-loop"
+  category: workflow
+- name: "@weibaohui/skills-management"
+  category: tool
 - name: "@welsione/dsh-model-router"
   category: provider
 - name: "@wenaixi/cfbridge"
@@ -1659,10 +1691,18 @@
   category: ui
 - name: "@wilond/dsh-news"
   category: ui
+- name: "@wilond/dsh-peak-reminder"
+  category: ui
 - name: "@windy070916-tech/dsh-client-ui-pet"
   category: ui
 - name: "@windypro-rourou/dsh-code-studio"
   category: ui
+- name: "@wingsky-1/dsh-codegraph"
+  category: tool
+- name: "@wingsky-1/dsh-idle-archive"
+  category: ui
+- name: "@wingsky-1/dsh-lan-proxy"
+  category: tool
 - name: "@wingsky-1/dsh-subagent-model-inherit"
   category: tool
 - name: "@wingsky-1/dsh-web-file-preview"
@@ -3149,6 +3189,8 @@
   category: tool
 - name: "dsh-fate-spectrum"
   category: tool
+- name: "dsh-favorites"
+  category: ui
 - name: "dsh-feedback-bridge"
   category: integration
 - name: "dsh-feishu-bot"
@@ -3300,6 +3342,8 @@
 - name: "dsh-get-balance"
   category: tool
 - name: "dsh-gif-background"
+  category: ui
+- name: "dsh-git-badge"
   category: ui
 - name: "dsh-git-branch"
   category: ui
@@ -3553,6 +3597,8 @@
   category: tool
 - name: "dsh-karpathy-methodology"
   category: tool
+- name: "dsh-kernel-mesh"
+  category: provider
 - name: "dsh-keyboard-history"
   category: ui
 - name: "dsh-kill-restart"
