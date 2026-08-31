@@ -259,7 +259,7 @@ harvest -> fetch manifest -> classify -> gate -> tier -> emit -> commit snapshot
 
    > **verified pins a version. It never attaches to a name.**
 
-   `verified.yml` records `{ name, reviewedVersion, reviewer, reviewCommit, notes }`. If npm's latest exceeds `reviewedVersion`, the entry is **downgraded to `verified-stale`**, and the UI shows "reviewed v1.2.0 / current v1.3.0 unreviewed".
+   `verified.yml` records `{ name, reviewedVersion, reviewedSha256, reviewer, reviewCommit, notes }`. If npm's latest exceeds `reviewedVersion`, the entry is **downgraded to `verified-stale`**, and the UI shows "reviewed v1.2.0 / current v1.3.0 unreviewed".
 
    Most markets attach verification to a package name, which means an author who passes review can then publish a malicious version and inherit the trust automatically. That is the cheapest supply-chain attack available.
 
@@ -352,7 +352,7 @@ The earlier ruling prescribed an opt-in flag, default off, loopback only. The au
 
 **Amendment (2026-08-31, market borrowings C-1): restart under a supervisor is refused by default.** When a systemd unit owns this process and the shop row config sets no `allowRestart: true`, `shop/restart` issues a typed refusal and the two-phase handoff never starts — the main process exiting also kills the unit's cgroup, which takes the detached helper with it, and the service would never come back. `shop/version` reports `restartSupported: false` and the client hides the restart offer while keeping the pending-change notice (§7.3).
 
-**Amendment (2026-08-31, market borrowings §4, Phase D): the install/uninstall row gains the hot-mount exception.** The borrowings design decides that installs, uninstalls, and updates go live without a restart through a shop-owned ephemeral Include subtree — `hot-<n>.yml` inputs under `<profile>/.dsh-shop/`, wiped at boot, rows under `mkt-` ids (dsh-market's mechanism, ported in the borrowings plan's Phase D, pending at this amendment). The ruling above still holds: the ephemeral tree is never a `cordis.patch.yml` write, so the same rows cannot mount twice at next boot. The wire contract does not change — `shop/installStatus`'s `needsRestart` reports the outcome, false more often — and the shop's own self-update always keeps `needsRestart`, since a host half cannot swap itself live.
+**Amendment (2026-08-31, design: 2026-08-31-market-borrowings.md §4, Phase D): the install/uninstall row gains the hot-mount exception.** The borrowings design decides that installs, uninstalls, and updates go live without a restart through a shop-owned ephemeral Include subtree — `hot-<n>.yml` inputs under `<profile>/.dsh-shop/`, wiped at boot, rows under `mkt-` ids (dsh-market's mechanism, ported in the borrowings plan's Phase D, pending at this amendment). The ruling above still holds: the ephemeral tree is never a `cordis.patch.yml` write, so the same rows cannot mount twice at next boot. The wire contract does not change — `shop/installStatus`'s `needsRestart` reports the outcome, false more often — and the shop's own self-update always keeps `needsRestart`, since a host half cannot swap itself live.
 
 ## 9. Security model
 
