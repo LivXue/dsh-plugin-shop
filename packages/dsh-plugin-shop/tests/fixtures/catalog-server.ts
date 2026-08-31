@@ -38,6 +38,7 @@ const FIXTURE_ENTRY = {
   license: null,
   tier: 'community',
   metadata: 'derived',
+  added: '2026-08-25',
 } as const
 
 export async function startCatalogServer(): Promise<CatalogServer> {

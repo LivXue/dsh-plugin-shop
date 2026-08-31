@@ -22,7 +22,7 @@ function snapshot(overrides: Partial<ShopCatalogResult['plugins'][number]> = {})
     plugins: [{
       name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null,
       repository: 'https://github.com/you/hello-plugin', license: 'MIT',
-      tier: 'community', metadata: 'derived', source: 'npm',
+      tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25',
       catalog: { category: 'tool', summary: { en: 'Says hello.', zh: '打个招呼。' }, capabilities: ['fs', 'shell'] },
       ...overrides,
     }],
@@ -391,7 +391,7 @@ describe('ShopTab', () => {
     const two = snapshot()
     two.plugins.push({
       name: 'dsh-goodbye-plugin', version: '0.9.0', integrity: null, publishedAt: null,
-      repository: null, license: null, tier: 'verified', metadata: 'declared', source: 'npm',
+      repository: null, license: null, tier: 'verified', metadata: 'declared', source: 'npm', added: '2026-08-25',
       catalog: { category: 'tool', summary: { en: 'Waves goodbye.' }, capabilities: [] },
     })
     const { injected } = bench(two)
@@ -441,6 +441,38 @@ describe('ShopTab', () => {
     expect(screen.getByText('https://github.com/you/hello-plugin')).toBeTruthy()
     expect(screen.getByText(en.license)).toBeTruthy()
     expect(screen.getByText('MIT')).toBeTruthy()
+  })
+
+  it('details a release-rescued verified-stale entry with its reviewed hash pin line', async () => {
+    // Release-rescued entries review the release tarball sha256 (never the
+    // mutable tag), so the stale line must name the content-addressed pin,
+    // not "reviewed vundefined"; the current side is the tag, displayed like
+    // the card's own version.
+    const { injected } = bench(snapshot({
+      source: 'github',
+      repo: 'you/hello-plugin',
+      version: 'v1.2.0',
+      tier: 'verified-stale',
+      review: { reviewedSha256: 'a'.repeat(64), reviewer: 'someone', reviewCommit: 'abc123', notes: 'reviewed against the release tarball' },
+    }))
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText('dsh-hello-plugin'))
+    expect(screen.getByText('reviewed aaaaaaa / current v1.2.0 unreviewed')).toBeTruthy()
+  })
+
+  it('details a repo-entry verified-stale review by its commit pin', async () => {
+    const { injected } = bench(snapshot({
+      source: 'github',
+      repo: 'you/hello-plugin',
+      version: 'b'.repeat(40),
+      tier: 'verified-stale',
+      review: { reviewedCommit: 'c'.repeat(40), reviewer: 'someone', reviewCommit: 'abc123', notes: 'reviewed the commit' },
+    }))
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText('dsh-hello-plugin'))
+    expect(screen.getByText('reviewed ccccccc / current bbbbbbb unreviewed')).toBeTruthy()
   })
 
   it('renders a https repository as a link that opens safely in a new tab', async () => {
@@ -710,7 +742,7 @@ describe('ShopTab shop-like filtering', () => {
         snapshot().plugins[0]!,
         {
           name: 'dsh-plugin-shop-2', version: '2.0.0', integrity: null, publishedAt: null,
-          repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm',
+          repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25',
           catalog: { category: 'other', summary: { en: 'Another shop.' }, capabilities: [] },
         },
       ],
@@ -775,7 +807,7 @@ function manyPlugins(n: number): ShopCatalogResult {
   const plugins = Array.from({ length: n }, (_, i) => ({
     name: `dsh-pkg-${String(i).padStart(3, '0')}`,
     version: '1.0.0', integrity: null, publishedAt: null,
-    repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm',
+    repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25',
   })) as ShopCatalogResult['plugins']
   return { schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', stale: false, plugins, denied: [], stars: {} }
 }
@@ -828,8 +860,8 @@ describe('ShopTab incremental rendering', () => {
 
   it('resets to the first batch when the query changes', async () => {
     const plugins = [
-      ...Array.from({ length: 60 }, (_, i) => ({ name: `dsh-alpha-${String(i).padStart(2, '0')}`, version: '1.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm' })),
-      ...Array.from({ length: 60 }, (_, i) => ({ name: `dsh-beta-${String(i).padStart(2, '0')}`, version: '1.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm' })),
+      ...Array.from({ length: 60 }, (_, i) => ({ name: `dsh-alpha-${String(i).padStart(2, '0')}`, version: '1.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25' })),
+      ...Array.from({ length: 60 }, (_, i) => ({ name: `dsh-beta-${String(i).padStart(2, '0')}`, version: '1.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25' })),
     ] as ShopCatalogResult['plugins']
     const { injected } = bench({ schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', stale: false, plugins, denied: [], stars: {} })
     renderTab(injected)

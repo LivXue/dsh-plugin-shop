@@ -16,6 +16,13 @@ export const SCHEMA_VERSION = 3
 /** The version this build emits; see {@link SCHEMA_VERSION} for the 4-bump. */
 export const SUBPACKAGE_SCHEMA_VERSION = 4
 
+/** v5 (market borrowings): `added` on every entry, optional `tarball`
+ * (release rescue), `theme` category, `denied[].replacement`. Emitted only
+ * when SHOP_CATALOG_V5 is set — `theme` is a new enum value, and an old
+ * client's zod enum rejects a catalog containing it wholesale, so the client
+ * that parses v5 must ship first (release-order choreography, §3.5). */
+export const CATALOG_SCHEMA_VERSION = 5
+
 /** The stars sidecar pointer the index may carry (spec 2026-08-26-github-stars-design.md §4.1). */
 export interface StarsPointer { url: string; sha256: string }
 
@@ -96,7 +103,23 @@ export function emit(
   schemaVersion: number = SCHEMA_VERSION,
 ): Artifacts {
   assertCatalogInvariants(entries, builtAt)
-  const sorted = [...entries].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+  // Below v5 the catalog must not carry the `theme` category: `theme` is a
+  // new enum value, and an old client's zod enum rejects a catalog containing
+  // it wholesale (fail-loudly). The downgrade lives here, at the emission
+  // boundary — the classifier and the config keep `theme`, so flipping
+  // SHOP_CATALOG_V5 at release time restores it without re-reviewing anything
+  // (design §3.5). The additive fields (`added`, `tarball`, `replacement`)
+  // ride the lower versions: an old client's zod strips the unknown keys
+  // (consumer-side zod is non-strict by design).
+  let themeDowngraded = 0
+  const emitted = schemaVersion < CATALOG_SCHEMA_VERSION
+    ? entries.map(entry => {
+      if (entry.catalog.category !== 'theme') return entry
+      themeDowngraded += 1
+      return { ...entry, catalog: { ...entry.catalog, category: 'other' as const } }
+    })
+    : entries
+  const sorted = [...emitted].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
   const denied = rejections
     .filter(r => r.code === 'denied')
     .map(r => ({
@@ -130,6 +153,7 @@ export function emit(
     '',
     `Accepted: ${sorted.length}`,
     `Rejected: ${sortedRejections.length}`,
+    ...(themeDowngraded > 0 ? [`Theme entries emitted as other (schemaVersion < 5): ${themeDowngraded}`] : []),
     '',
     '| Package | Reason | Detail |',
     '|---|---|---|',

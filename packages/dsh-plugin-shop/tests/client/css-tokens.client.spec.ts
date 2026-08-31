@@ -68,23 +68,25 @@ describe('summary clamp', () => {
 })
 
 describe('category spine hues', () => {
-  const SIX_HUES = ['#4C8DFF', '#A78BFA', '#2DD4BF', '#F59E0B', '#34D399', '#8B8E96']
+  // One hue per category, in display order; theme joined in v5 (market
+  // borrowings §3.4) as the pink between integration and other.
+  const SEVEN_HUES = ['#4C8DFF', '#A78BFA', '#2DD4BF', '#F59E0B', '#34D399', '#F472B6', '#8B8E96']
 
   it('assigns each category a distinct hue', () => {
-    for (const cat of ['tool', 'provider', 'ui', 'workflow', 'integration', 'other']) {
+    for (const cat of ['tool', 'provider', 'ui', 'workflow', 'integration', 'theme', 'other']) {
       const rule = rules.get(`.card[data-category='${cat}']`)
       expect(rule, `no hue rule for ${cat}`).toBeDefined()
       expect(rule).toMatch(/--spine-hue:\s*(#[0-9A-Fa-f]{6})/)
     }
   })
 
-  it('uses six distinct hues, one per category', () => {
+  it('uses seven distinct hues, one per category', () => {
     const hues = [...rules.entries()]
       .filter(([sel]) => sel.startsWith('.card[data-category='))
       .map(([, body]) => body.match(/--spine-hue:\s*(#[0-9A-Fa-f]{6})/)?.[1])
     expect(hues.every(Boolean)).toBe(true)
-    expect(new Set(hues).size).toBe(6)
-    for (const hue of SIX_HUES) expect(hues).toContain(hue)
+    expect(new Set(hues).size).toBe(7)
+    for (const hue of SEVEN_HUES) expect(hues).toContain(hue)
   })
 
   it('spine and category badge draw from the per-category hue, never the brand token', () => {

@@ -7,7 +7,7 @@
 import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
-import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Category, categoryKey, categoryLocaleKey, displayVersion, formatStars, isCustomLicense, isShopLike, nextVisibleCount, rejectionCodeKey, sortByStars, tierKey } from './present.ts'
+import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Category, categoryKey, categoryLocaleKey, displayVersion, formatStars, isCustomLicense, isShopLike, nextVisibleCount, rejectionCodeKey, reviewHashPin, sortByStars, tierKey } from './present.ts'
 import { useInstall } from './useInstall.ts'
 import { useUninstall } from './useUninstall.ts'
 import { useUpdateSelf } from './useUpdateSelf.ts'
@@ -168,7 +168,9 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, t, install,
             </dl>
             {entry.tier === 'verified-stale' && entry.review !== undefined && (
               <p className={css.reviewedLine}>
-                {t('reviewedVersionLine', { reviewed: entry.review.reviewedVersion, current: entry.version })}
+                {entry.review.reviewedVersion !== undefined
+                  ? t('reviewedVersionLine', { reviewed: entry.review.reviewedVersion, current: entry.version })
+                  : t('reviewedPinLine', { pin: reviewHashPin(entry.review), current: displayVersion(entry) })}
               </p>
             )}
           </section>

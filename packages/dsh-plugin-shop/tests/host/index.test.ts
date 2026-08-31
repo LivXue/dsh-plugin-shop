@@ -16,7 +16,7 @@ import type { CatalogEntry } from '../../src/host/types.ts'
 const shopHome = mkdtempSync(join(tmpdir(), 'dsh-gateway-home-'))
 process.env.DSH_HOME = shopHome
 mkdirSync(join(shopHome, 'profiles', 'web'), { recursive: true })
-writeFileSync(join(shopHome, 'profiles', 'web', 'package.json'), JSON.stringify({ dsh: { profile: { bundles: ['dsh-hello-plugin', 'dsh-repo-plugin', 'sub-plugin', 'dsh-plugin-shop'] } } }))
+writeFileSync(join(shopHome, 'profiles', 'web', 'package.json'), JSON.stringify({ dsh: { profile: { bundles: ['dsh-hello-plugin', 'dsh-repo-plugin', 'sub-plugin', 'dsh-rescued', 'dsh-plugin-shop'] } } }))
 
 afterAll(() => {
   delete process.env.DSH_HOME
@@ -70,7 +70,7 @@ describe('ShopGateway.catalog', () => {
   const snapshot = {
     schemaVersion: 2,
     builtAt: '2026-08-25T00:00:00Z',
-    entries: [{ name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm' }],
+    entries: [{ name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25' }],
     denied: [{ name: 'dsh-blocked', detail: 'matched the denylist' }],
     stars: {},
   }
@@ -166,7 +166,7 @@ function gatewayWithSnapshot(snapshot: CatalogSnapshot): { gateway: ShopGateway;
 describe('ShopGateway.install — the four rejection paths, through the executor', () => {
   // Annotated so the literal's tier/metadata do not widen to `string`, which
   // would not be assignable to the CatalogEntry union members.
-  const listed: CatalogEntry = { name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm' }
+  const listed: CatalogEntry = { name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25' }
 
   it('rejects not-in-catalog without spawning', async () => {
     const { gateway, callsLog } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} })
@@ -360,8 +360,8 @@ describe('ShopGateway.setEnabled', () => {
 
 describe('ShopGateway.installed', () => {
   const entries = [
-    { name: 'dsh-one', version: '2.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm' },
-    { name: 'dsh-two', version: '1.5.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm' },
+    { name: 'dsh-one', version: '2.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25' },
+    { name: 'dsh-two', version: '1.5.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25' },
   ]
 
   function gatewayWithManifest(dependencies: Record<string, string>): ShopGateway {
@@ -430,8 +430,8 @@ describe('forwards-only outdated', () => {
   // here is strictly forwards-only: semver `lt` between the installed spec's
   // floor and the catalog version.
   const entries = [
-    { name: 'dsh-one', version: '2.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm' },
-    { name: 'dsh-two', version: '1.5.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm' },
+    { name: 'dsh-one', version: '2.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25' },
+    { name: 'dsh-two', version: '1.5.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25' },
   ]
 
   function gatewayWithManifest(dependencies: Record<string, string>): ShopGateway {
@@ -464,7 +464,7 @@ describe('forwards-only outdated', () => {
 
 describe('ShopGateway.uninstall', () => {
   const entries = [
-    { name: 'dsh-one', version: '2.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm' },
+    { name: 'dsh-one', version: '2.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25' },
   ]
 
   function gatewayWithManifest(dependencies: Record<string, string>): ShopGateway {
@@ -695,6 +695,7 @@ describe('ShopGateway github entries', () => {
     name: 'dsh-repo-plugin', version: commit, integrity: commit, publishedAt: null,
     repository: 'https://github.com/someone/dsh-repo-plugin', license: 'MIT',
     tier: 'community', metadata: 'declared', source: 'github', repo: 'someone/dsh-repo-plugin',
+    added: '2026-08-25',
   }
 
   function gatewayWithRepo(dir: string, hasGit = true): ShopGateway {
@@ -780,6 +781,7 @@ describe('subpackage install spec', () => {
     repository: 'https://github.com/someone/monorepo', license: 'MIT',
     tier: 'community', metadata: 'declared', source: 'github', repo: 'someone/monorepo',
     subdir: 'packages/sub-plugin',
+    added: '2026-08-25',
   }
 
   function gatewayWithSub(dir: string): ShopGateway {
@@ -814,5 +816,56 @@ describe('subpackage install spec', () => {
     expect(terminal.state).toBe('done')
     expect(readFileSync(join(dir, 'calls.log'), 'utf8')).toContain(`plugin --profile web add github:someone/monorepo#${commit}&path:packages/sub-plugin`)
     expect(JSON.parse(readFileSync(join(dir, 'cache/github-pins.json'), 'utf8'))).toEqual({ 'sub-plugin': commit })
+  })
+})
+
+describe('release-rescued tarball install', () => {
+  const tag = 'v1.0.0'
+  const tarballEntry: CatalogEntry = {
+    name: 'dsh-rescued', version: tag, integrity: 'a'.repeat(64), publishedAt: null,
+    repository: 'https://github.com/owner/slug', license: 'MIT',
+    tier: 'community', metadata: 'declared', source: 'github', repo: 'owner/slug',
+    added: '2026-08-01',
+    tarball: { url: 'https://github.com/owner/slug/releases/download/v1.0.0/plugin.tgz', sha256: 'a'.repeat(64) },
+  }
+
+  function gatewayWithTarball(dir: string): ShopGateway {
+    const bin = join(dir, 'fake-dsh')
+    writeFileSync(bin, [
+      '#!/bin/sh',
+      `echo "$1 $2 $3 $4 $5" >> "${join(dir, 'calls.log')}"`,
+      'exit 0',
+      '',
+    ].join('\n'))
+    chmodSync(bin, 0o755)
+    return new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web',
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 5, builtAt: '', entries: [tarballEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      dshBin: bin,
+      hasGit: () => false,
+    })
+  }
+
+  it('installs the validated tarball url without git and records the tag pin', async () => {
+    // The spec is the snapshot's tarball url (a https github.com release of
+    // this very repo, validated at parse), NOT a github: spec — and the git
+    // check is skipped, so hasGit: () => false must not stop the install.
+    // The pin write records the tag, which is the entry's version (the
+    // manifest records only `github:owner/slug`, so the pins file is how
+    // `installed()` reports outdated honestly).
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-tarball-install-'))
+    const gateway = gatewayWithTarball(dir)
+    const result = await gateway.install({ name: 'dsh-rescued', version: tag, acknowledged: true })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const deadline = Date.now() + 5000
+    let terminal = gateway.installStatus({ installId: result.installId })
+    while (terminal.state === 'running' && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+      terminal = gateway.installStatus({ installId: result.installId })
+    }
+    expect(terminal.state).toBe('done')
+    expect(readFileSync(join(dir, 'calls.log'), 'utf8')).toContain('plugin --profile web add https://github.com/owner/slug/releases/download/v1.0.0/plugin.tgz')
+    expect(JSON.parse(readFileSync(join(dir, 'cache/github-pins.json'), 'utf8'))).toEqual({ 'dsh-rescued': tag })
   })
 })

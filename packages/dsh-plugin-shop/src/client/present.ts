@@ -40,6 +40,15 @@ export function displayVersion(entry: { source: 'npm' | 'github'; version: strin
   return entry.source === 'github' ? entry.version.slice(0, 7) : entry.version
 }
 
+/** The hash pin a stale line names for a repo or release-rescued entry — the
+ * reviewed commit, or the reviewed release tarball sha256 (market borrowings
+ * §3.1). Shortened to 7 chars like the card's own version; '' only for a
+ * hand-built fixture carrying no pin. The npm form is a version and keeps the
+ * version line's `v` prefix instead. */
+export function reviewHashPin(review: NonNullable<CatalogEntry['review']>): string {
+  return (review.reviewedCommit ?? review.reviewedSha256 ?? '').slice(0, 7)
+}
+
 /**
  * Whether the license value is the npm idiom `SEE LICENSE IN <file>` — a
  * valid SPDX form meaning "custom license, text ships in that file". The
@@ -191,6 +200,7 @@ const CATEGORY_KEYS = {
   ui: 'categoryUi',
   workflow: 'categoryWorkflow',
   integration: 'categoryIntegration',
+  theme: 'categoryTheme',
   other: 'categoryOther',
 } as const
 
@@ -201,10 +211,10 @@ export function categoryKey(entry: CatalogEntry): ShopLocaleKey {
 }
 
 /** The category vocabulary as a type, derived from the map above so the
- * client never repeats the six literals. */
+ * client never repeats the seven literals. */
 export type Category = keyof typeof CATEGORY_KEYS
 
-/** The six categories in display order (map insertion order). */
+/** The seven categories in display order (map insertion order). */
 export const CATEGORY_ORDER = Object.keys(CATEGORY_KEYS) as Category[]
 
 /** The locale key for one bare category value (the filter buttons). */

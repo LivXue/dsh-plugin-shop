@@ -42,6 +42,7 @@ describe('loadCatalog', () => {
   const entry = {
     name: 'dsh-hello-plugin', version: '1.2.0', integrity: 'sha512-i', publishedAt: null,
     repository: null, license: 'MIT', tier: 'community', metadata: 'derived',
+    added: '2026-08-25',
   }
 
   it('fetches the pointer, verifies the data hash, and returns the entries', async () => {
@@ -124,7 +125,7 @@ describe('loadCatalog', () => {
 
   it('throws when the schemaVersion is newer than this build supports', async () => {
     const fetchImpl = (async () => new Response(
-      JSON.stringify({ schemaVersion: 5, builtAt: '', count: 0, plugins: { url: 'x.json', sha256: '0'.repeat(64) } }),
+      JSON.stringify({ schemaVersion: 6, builtAt: '', count: 0, plugins: { url: 'x.json', sha256: '0'.repeat(64) } }),
       { status: 200 },
     )) as unknown as typeof fetch
 
@@ -139,7 +140,7 @@ describe('loadCatalog', () => {
     fs.write('/cache/index.json', pointer)
     fs.write(`/cache/${url}`, data)
     const fetchImpl = (async () => new Response(
-      JSON.stringify({ schemaVersion: 5, builtAt: '', count: 0, plugins: { url: 'x.json', sha256: '0'.repeat(64) } }),
+      JSON.stringify({ schemaVersion: 6, builtAt: '', count: 0, plugins: { url: 'x.json', sha256: '0'.repeat(64) } }),
       { status: 200 },
     )) as unknown as typeof fetch
 
@@ -449,6 +450,7 @@ describe('v4 subdir entries', () => {
     tier: 'community', metadata: 'declared', source: 'github', repo: 'someone/monorepo',
     subdir: 'packages/sub-plugin',
     catalog: { category: 'tool', summary: { en: 'A subpackage plugin.', zh: '一个子包插件。' }, capabilities: [] },
+    added: '2026-08-01',
   }
 
   it('parses a v4 entry and keeps its subdir', async () => {
@@ -476,5 +478,122 @@ describe('v4 subdir entries', () => {
       fetchImpl: (async () => { throw new Error('unreachable') }) as unknown as typeof fetch,
       fsImpl: fs, now: () => new Date('2026-08-31T00:01:00Z'),
     })).rejects.toThrow()
+  })
+})
+
+describe('v5 (market borrowings) entries', () => {
+  const v5Entry = {
+    name: 'dsh-v5-plugin', version: '1.3.0', integrity: 'sha512-x', publishedAt: null,
+    repository: 'https://github.com/you/v5-plugin', license: 'MIT',
+    tier: 'verified', metadata: 'declared', source: 'npm',
+    added: '2026-08-01',
+    catalog: { category: 'theme', summary: { en: 'A theme.', zh: '一个主题。' }, capabilities: [] },
+  }
+  const rescued = {
+    name: 'dsh-rescued', version: 'v1.0.0', integrity: 'a'.repeat(64), publishedAt: null,
+    repository: 'https://github.com/owner/slug', license: 'MIT',
+    tier: 'community', metadata: 'declared', source: 'github', repo: 'owner/slug',
+    added: '2026-08-01',
+    tarball: { url: 'https://github.com/owner/slug/releases/download/v1.0.0/plugin.tgz', sha256: 'a'.repeat(64) },
+  }
+
+  function catalogFromCache(data: string, fs: ReturnType<typeof memFs>): Promise<import('../../src/host/catalog.ts').CatalogResult> {
+    const { pointer, url } = pointerFor(data, '2026-08-31T00:00:00Z')
+    fs.write('/cache/index.json', pointer)
+    fs.write(`/cache/${url}`, data)
+    return loadCatalog({
+      baseUrl: 'https://shop.test/v1/', cacheDir: '/cache',
+      fetchImpl: (async () => { throw new Error('must be served from cache') }) as unknown as typeof fetch,
+      fsImpl: fs, now: () => new Date('2026-08-31T00:01:00Z'),
+    })
+  }
+
+  it('parses a v5 catalog with added, a theme entry, and a denied replacement', async () => {
+    const data = JSON.stringify({
+      schemaVersion: 5,
+      plugins: [v5Entry, rescued],
+      denied: [{ name: 'dsh-blocked', detail: 'matched the denylist', replacement: 'dsh-good' }],
+    })
+    const catalog = await catalogFromCache(data, memFs())
+    expect(catalog.snapshot.entries[0]?.added).toBe('2026-08-01')
+    expect(catalog.snapshot.entries[0]?.catalog?.category).toBe('theme')
+    expect(catalog.snapshot.entries[1]?.tarball).toEqual({
+      url: 'https://github.com/owner/slug/releases/download/v1.0.0/plugin.tgz',
+      sha256: 'a'.repeat(64),
+    })
+    expect(catalog.snapshot.denied).toEqual([
+      { name: 'dsh-blocked', detail: 'matched the denylist', replacement: 'dsh-good' },
+    ])
+  })
+
+  it('matches the tarball owner against the repo case-insensitively', async () => {
+    const upper = {
+      ...rescued,
+      tarball: { url: 'https://github.com/Owner/Slug/releases/download/v1.0.0/plugin.tgz', sha256: 'a'.repeat(64) },
+    }
+    const data = JSON.stringify({ schemaVersion: 5, plugins: [upper], denied: [] })
+    const catalog = await catalogFromCache(data, memFs())
+    expect(catalog.snapshot.entries[0]?.tarball?.url).toContain('/Owner/Slug/')
+  })
+
+  it('refuses a tarball url that is not the entry\'s own repo release, from the wire', async () => {
+    const evil = {
+      ...rescued,
+      tarball: { url: 'https://github.com/other/repo/releases/download/v1.0.0/plugin.tgz', sha256: 'a'.repeat(64) },
+    }
+    const data = JSON.stringify({ schemaVersion: 5, plugins: [evil], denied: [] })
+    const { pointer } = pointerFor(data, '2026-08-31T00:00:00Z')
+    const fetchImpl = (async (input: string | URL) => new Response(
+      String(input).endsWith('/index.json') ? pointer : data, { status: 200 },
+    )) as unknown as typeof fetch
+    await expect(loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() }))
+      .rejects.toThrow(/not a release of owner\/slug/)
+  })
+
+  it('refuses a tarball url bound to another repo, from the cache, without touching the wire', async () => {
+    const evil = {
+      ...rescued,
+      tarball: { url: 'https://github.com/other/repo/releases/download/v1.0.0/plugin.tgz', sha256: 'a'.repeat(64) },
+    }
+    const data = JSON.stringify({ schemaVersion: 5, plugins: [evil], denied: [] })
+    const fs = memFs()
+    const { pointer, url } = pointerFor(data, '2026-08-31T00:00:00Z')
+    fs.write('/cache/index.json', pointer)
+    fs.write(`/cache/${url}`, data)
+    let calls = 0
+    const fetchImpl = (async () => { calls += 1; return new Response(pointer, { status: 200 }) }) as unknown as typeof fetch
+    await expect(loadCatalog({
+      baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs,
+      now: () => new Date('2026-08-31T00:01:00Z'),
+    })).rejects.toThrow(/not a release of owner\/slug/)
+    expect(calls).toBe(0)
+  })
+
+  it('refuses a tarball url on a non-github entry', async () => {
+    const npmTarball = {
+      ...v5Entry,
+      tarball: { url: 'https://github.com/you/v5-plugin/releases/download/v1.0.0/plugin.tgz', sha256: 'a'.repeat(64) },
+    }
+    const data = JSON.stringify({ schemaVersion: 5, plugins: [npmTarball], denied: [] })
+    const { pointer } = pointerFor(data, '2026-08-31T00:00:00Z')
+    const fetchImpl = (async (input: string | URL) => new Response(
+      String(input).endsWith('/index.json') ? pointer : data, { status: 200 },
+    )) as unknown as typeof fetch
+    await expect(loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() }))
+      .rejects.toThrow(/tarball requires a github entry with a repo/)
+  })
+
+  it('refuses a non-https tarball url', async () => {
+    const httpTarball = {
+      ...rescued,
+      tarball: { url: 'http://github.com/owner/slug/releases/download/v1.0.0/plugin.tgz', sha256: 'a'.repeat(64) },
+    }
+    const data = JSON.stringify({ schemaVersion: 5, plugins: [httpTarball], denied: [] })
+    const { pointer } = pointerFor(data, '2026-08-31T00:00:00Z')
+    const fetchImpl = (async (input: string | URL) => new Response(
+      String(input).endsWith('/index.json') ? pointer : data, { status: 200 },
+    )) as unknown as typeof fetch
+    await expect(loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() }))
+      .rejects.toThrow(/must be https on github\.com/)
   })
 })

@@ -8,8 +8,10 @@ import type { CatalogEntry, DeniedEntry } from './types.ts'
 
 /** Highest schemaVersion this build understands; a higher one is refused (§10).
  * 3 adds `source` and repo entries (github install channel); 4 adds `subdir`
- * for monorepo-subpackage entries (2026-08-31 hub-borrowings A). */
-export const SUPPORTED_SCHEMA_VERSION = 4
+ * for monorepo-subpackage entries (2026-08-31 hub-borrowings A); 5 adds
+ * `added`, `tarball` (release rescue), the `theme` category, and
+ * `denied[].replacement` (2026-08-31 market borrowings). */
+export const SUPPORTED_SCHEMA_VERSION = 5
 
 /** A cached catalog younger than this is served without touching the network. */
 const FRESH_MS = 5 * 60 * 1000
@@ -30,12 +32,18 @@ const entrySchema = z.object({
   review: z.object({
     reviewedVersion: z.string().optional(),
     reviewedCommit: z.string().optional(),
+    // The release-rescued pin: the reviewed tarball's content hash, never the
+    // tag (a tag is a mutable ref an author can re-point at different content).
+    reviewedSha256: z.string().optional(),
     reviewer: z.string(),
     reviewCommit: z.string(),
     notes: z.string(),
   }).optional(),
   catalog: z.object({
-    category: z.enum(['tool', 'provider', 'ui', 'workflow', 'integration', 'other']),
+    // v5: `theme` joins the enum. An old client's closed enum rejects a
+    // catalog containing it wholesale, which is why v5 is emitted only behind
+    // the release-time SHOP_CATALOG_V5 flag (design §3.5).
+    category: z.enum(['tool', 'provider', 'ui', 'workflow', 'integration', 'theme', 'other']),
     summary: z.object({ en: z.string(), zh: z.string().optional() }),
     capabilities: z.array(z.string()),
   }).optional(),
@@ -46,13 +54,50 @@ const entrySchema = z.object({
   // so the boundary keeps it to relative directory segments — and no
   // segment may be `.` or `..`, which would escape the repository root.
   subdir: z.string().regex(/^(?!.*(^|\/)\.\.?(\/|$))[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/).optional(),
+  // v5 (market borrowings): `added` on every entry, and the release-rescue
+  // `tarball` — whose URL the coherence check below binds to the entry's
+  // own repo. Required `added` means a cached pre-v5 catalog fails parse and
+  // is treated as absent (refetched) once this build ships — the same
+  // one-time cache invalidation every version bump makes.
+  added: z.string(),
+  tarball: z.object({ url: z.string(), sha256: z.string() }).optional(),
 })
 
 const dataSchema = z.object({
   schemaVersion: z.number(),
   plugins: z.array(entrySchema),
-  denied: z.array(z.object({ name: z.string(), detail: z.string() })).default([]),
+  // v5: `replacement` names the known substitute on a denial.
+  denied: z.array(z.object({ name: z.string(), detail: z.string(), replacement: z.string().optional() })).default([]),
 })
+
+/** The tarball URL must be the entry's own GitHub release — path segments
+ * `/<owner>/<repo>/releases/...` matching the entry's `repo` (case-
+ * insensitive). A catalog row that names a trusted repo but installs an
+ * archive from somewhere else is refused loudly, never installed
+ * (dsh-market's release-binding rule, their sources.ts:16-49). */
+function validateEntryCoherence(entries: CatalogEntry[]): void {
+  for (const entry of entries) {
+    if (entry.tarball === undefined) continue
+    if (entry.source !== 'github' || entry.repo === undefined) {
+      throw new Error(`catalog entry ${entry.name}: tarball requires a github entry with a repo`)
+    }
+    let parsed: URL
+    try {
+      parsed = new URL(entry.tarball.url)
+    } catch {
+      throw new Error(`catalog entry ${entry.name}: tarball url is unparseable`)
+    }
+    if (parsed.protocol !== 'https:' || parsed.hostname !== 'github.com') {
+      throw new Error(`catalog entry ${entry.name}: tarball url must be https on github.com`)
+    }
+    const segments = parsed.pathname.split('/').filter(s => s !== '')
+    const owner = segments[0] ?? ''
+    const slug = segments[1] ?? ''
+    if (`${owner}/${slug}`.toLowerCase() !== entry.repo.toLowerCase() || segments[2] !== 'releases') {
+      throw new Error(`catalog entry ${entry.name}: tarball url is not a release of ${entry.repo}`)
+    }
+  }
+}
 
 // Non-strict on purpose: a future index may carry keys this build does not
 // know, and stripping them is what keeps old installed hosts working against
@@ -168,8 +213,10 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
   }
 
   const readCached = (): CatalogSnapshot | null => {
+    let pointer: ReturnType<typeof pointerSchema.parse>
+    let data: ReturnType<typeof dataSchema.parse>
     try {
-      const pointer = pointerSchema.parse(JSON.parse(fsImpl.read(indexPath)))
+      pointer = pointerSchema.parse(JSON.parse(fsImpl.read(indexPath)))
       if (pointer.schemaVersion > SUPPORTED_SCHEMA_VERSION) throw new Error(
         `catalog schemaVersion ${pointer.schemaVersion} is newer than this build supports (${SUPPORTED_SCHEMA_VERSION})`,
       )
@@ -182,32 +229,37 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
       if (actual !== pointer.plugins.sha256) {
         throw new Error(`cached catalog data failed integrity check: expected ${pointer.plugins.sha256}, got ${actual}`)
       }
-      const data = dataSchema.parse(JSON.parse(dataText))
+      data = dataSchema.parse(JSON.parse(dataText))
       if (data.schemaVersion > SUPPORTED_SCHEMA_VERSION) throw new Error(
         `catalog schemaVersion ${data.schemaVersion} is newer than this build supports (${SUPPORTED_SCHEMA_VERSION})`,
       )
-      let stars: Record<string, number> = {}
-      if (pointer.stars !== undefined) {
-        try {
-          const starsText = fsImpl.read(join(cacheDir, basename(pointer.stars.url)))
-          const starsActual = createHash('sha256').update(starsText).digest('hex')
-          if (starsActual === pointer.stars.sha256) stars = parseStarsText(starsText)
-        } catch {
-          // A missing or tampered cached sidecar means no stars this boot; the
-          // catalog bytes are already verified above, so nothing else fails.
-        }
-      }
-      return {
-        schemaVersion: pointer.schemaVersion,
-        builtAt: pointer.builtAt,
-        entries: data.plugins,
-        denied: data.denied,
-        stars,
-      }
     } catch {
       // Cache unreadable or invalid — treat as absent rather than failing a
       // boot that could instead fetch a fresh catalog.
       return null
+    }
+    // The binding check sits OUTSIDE the swallow: a cached row that names a
+    // trusted repo but installs an archive from somewhere else is a poisoned
+    // cache, refused loudly like the wire version — never served stale and
+    // never silently refetched (§9.2 fail-loudly).
+    validateEntryCoherence(data.plugins)
+    let stars: Record<string, number> = {}
+    if (pointer.stars !== undefined) {
+      try {
+        const starsText = fsImpl.read(join(cacheDir, basename(pointer.stars.url)))
+        const starsActual = createHash('sha256').update(starsText).digest('hex')
+        if (starsActual === pointer.stars.sha256) stars = parseStarsText(starsText)
+      } catch {
+        // A missing or tampered cached sidecar means no stars this boot; the
+        // catalog bytes are already verified above, so nothing else fails.
+      }
+    }
+    return {
+      schemaVersion: pointer.schemaVersion,
+      builtAt: pointer.builtAt,
+      entries: data.plugins,
+      denied: data.denied,
+      stars,
     }
   }
 
@@ -269,6 +321,10 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
       `catalog schemaVersion ${data.schemaVersion} is newer than this build supports (${SUPPORTED_SCHEMA_VERSION})`,
     )
   }
+  // Same coherence gate as the cached path: a tarball URL bound to anything
+  // but the entry's own repo is refused loudly whether it came from the wire
+  // or the cache — before any install spec could be built from it.
+  validateEntryCoherence(data.plugins)
 
   let stars: Record<string, number> = {}
   if (pointer.stars !== undefined) {

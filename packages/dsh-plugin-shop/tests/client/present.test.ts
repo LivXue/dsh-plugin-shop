@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
-  ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, categoryKey, displayVersion, formatStars, isCustomLicense, isShopLike, nextVisibleCount, reduceInstall, sortByStars, tierKey,
+  ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, categoryKey, displayVersion, formatStars, isCustomLicense, isShopLike, nextVisibleCount, reduceInstall, reviewHashPin, sortByStars, tierKey,
 } from '../../src/client/present.ts'
 import type { CatalogEntry } from '../../src/host/index.ts'
 
 const entry: CatalogEntry = {
   name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null,
   repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm',
+  added: '2026-08-25',
 }
 
 describe('tierKey', () => {
@@ -165,7 +166,28 @@ describe('isShopLike', () => {
 describe('categoryKey', () => {
   it('maps a declared category and falls back to other for derived entries', () => {
     expect(categoryKey({ ...entry, catalog: { category: 'provider', summary: { en: 'x' }, capabilities: [] } })).toBe('categoryProvider')
+    expect(categoryKey({ ...entry, catalog: { category: 'theme', summary: { en: 'x' }, capabilities: [] } })).toBe('categoryTheme')
     expect(categoryKey(entry)).toBe('categoryOther')
+  })
+})
+
+describe('reviewHashPin', () => {
+  const review = { reviewer: 'someone', reviewCommit: 'abc123', notes: 'x' }
+
+  it('shortens the reviewed commit to the 7-char card form', () => {
+    expect(reviewHashPin({ ...review, reviewedCommit: 'b'.repeat(40) })).toBe('bbbbbbb')
+  })
+
+  it('names the reviewed release tarball sha256 for release-rescued entries', () => {
+    expect(reviewHashPin({ ...review, reviewedSha256: 'a'.repeat(64) })).toBe('aaaaaaa')
+  })
+
+  it('prefers the commit pin when both hashes are present', () => {
+    expect(reviewHashPin({ ...review, reviewedCommit: 'c'.repeat(40), reviewedSha256: 'a'.repeat(64) })).toBe('ccccccc')
+  })
+
+  it('returns an empty string when no hash pin exists', () => {
+    expect(reviewHashPin(review)).toBe('')
   })
 })
 

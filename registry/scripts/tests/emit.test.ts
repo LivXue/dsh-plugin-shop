@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { emit, SCHEMA_VERSION } from '../src/emit.ts'
+import { CATALOG_SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION, emit, SCHEMA_VERSION } from '../src/emit.ts'
 import type { Entry } from '../src/types.ts'
 
 function entry(name: string, version = '1.0.0'): Entry {
@@ -180,6 +180,62 @@ describe('emit', () => {
 
     const omitted = emit(entries, [], '2026-08-26T00:00:00.000Z')
     expect('stars' in (JSON.parse(omitted.indexJson) as object)).toBe(false)
+  })
+})
+
+describe('schemaVersion 5 (market borrowings)', () => {
+  const theme: Entry = {
+    ...entry('dsh-theme'),
+    catalog: { category: 'theme', summary: { en: 'x', zh: 'y' }, capabilities: [] },
+  }
+  const rescued: Entry = {
+    ...repoEntry('dsh-rescued', 'owner/slug'),
+    version: 'v1.0.0',
+    integrity: 'a'.repeat(64),
+    tarball: { url: 'https://github.com/owner/slug/releases/download/v1.0.0/plugin.tgz', sha256: 'a'.repeat(64) },
+  }
+
+  it('emits schemaVersion 5 with the new fields when asked', () => {
+    const artifacts = emit([theme, rescued], [
+      { name: 'dsh-blocked', code: 'denied', detail: 'matched the denylist', replacement: 'dsh-good' },
+    ], '2026-08-31T00:00:00.000Z', null, CATALOG_SCHEMA_VERSION)
+    const data = JSON.parse(artifacts.pluginsJson) as {
+      schemaVersion: number
+      plugins: Array<{ name: string; catalog: { category: string }; added: string; tarball?: { url: string; sha256: string } }>
+      denied: Array<{ name: string; detail: string; replacement?: string }>
+    }
+    expect(data.schemaVersion).toBe(5)
+    expect(JSON.parse(artifacts.indexJson)).toMatchObject({ schemaVersion: 5 })
+    const themeOut = data.plugins.find(p => p.name === 'dsh-theme')
+    expect(themeOut?.catalog.category).toBe('theme')
+    expect(themeOut?.added).toBe('2026-08-01')
+    const rescuedOut = data.plugins.find(p => p.name === 'dsh-rescued')
+    expect(rescuedOut?.tarball).toEqual({
+      url: 'https://github.com/owner/slug/releases/download/v1.0.0/plugin.tgz',
+      sha256: 'a'.repeat(64),
+    })
+    expect(data.denied).toEqual([{ name: 'dsh-blocked', detail: 'matched the denylist', replacement: 'dsh-good' }])
+  })
+
+  it('emits a theme entry as other below v5 and notes the downgrade count in the report', () => {
+    const v3 = emit([theme], [], '2026-08-31T00:00:00.000Z')
+    const v3Data = JSON.parse(v3.pluginsJson) as { plugins: Array<{ catalog: { category: string } }> }
+    expect(v3Data.plugins[0]?.catalog.category).toBe('other')
+    expect(v3.report).toContain('Theme entries emitted as other')
+    expect(v3.report).toContain('1')
+
+    const v4 = emit([theme], [], '2026-08-31T00:00:00.000Z', null, SUBPACKAGE_SCHEMA_VERSION)
+    const v4Data = JSON.parse(v4.pluginsJson) as { plugins: Array<{ catalog: { category: string } }> }
+    expect(v4Data.plugins[0]?.catalog.category).toBe('other')
+    expect(v4.report).toContain('Theme entries emitted as other')
+    expect(v4.report).toContain('1')
+  })
+
+  it('keeps a non-theme entry untouched below v5 and stays silent in the report', () => {
+    const v3 = emit([entry('dsh-tool')], [], '2026-08-31T00:00:00.000Z')
+    const data = JSON.parse(v3.pluginsJson) as { plugins: Array<{ catalog: { category: string } }> }
+    expect(data.plugins[0]?.catalog.category).toBe('tool')
+    expect(v3.report).not.toContain('Theme entries emitted as other')
   })
 })
 

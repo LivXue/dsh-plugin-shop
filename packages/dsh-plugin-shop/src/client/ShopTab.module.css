@@ -3,9 +3,9 @@
  * styles referenced that do not exist — bg-layer-3, interactive-bg-hover,
  * state-error, state-success — are corrected to bg-layer-2 and the
  * state-*-primary set). The signature is the category spine: one HUE per
- * category (six fixed hues, not the brand token — the brand resolves to
- * near-black in the light theme, so six brand opacities read as six shades
- * of gray), with the category name as the cover label in the same hue. Class names are mapped to content-derived names at bundle time
+ * category (seven fixed hues, not the brand token — the brand resolves to
+ * near-black in the light theme, so seven brand opacities read as seven
+ * shades of gray), with the category name as the cover label in the same hue. Class names are mapped to content-derived names at bundle time
  * (tsdown.client.config.ts) and stubbed in tests; only the keys are relied
  * on.
  *
@@ -432,6 +432,7 @@
 .card[data-category='ui'] { --spine-hue: #2DD4BF; }
 .card[data-category='workflow'] { --spine-hue: #F59E0B; }
 .card[data-category='integration'] { --spine-hue: #34D399; }
+.card[data-category='theme'] { --spine-hue: #F472B6; }
 .card[data-category='other'] { --spine-hue: #8B8E96; }
 
 /* The category sits in the badge row as a quiet chip in the category's own

@@ -9,6 +9,7 @@ function snapshot(overrides: Partial<CatalogSnapshot['entries'][number]> = {}): 
     entries: [{
       name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null,
       repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm',
+      added: '2026-08-25',
       ...overrides,
     }],
     denied: [{ name: 'dsh-blocked', detail: 'matched the denylist' }],

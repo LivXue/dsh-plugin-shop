@@ -352,7 +352,12 @@ export class ShopGateway extends TypertRemoteService {
     // `github:owner/slug#commit&path:<subdir>`) — all from fields the
     // snapshot validated, never from a client-supplied string (§7.2).
     let spec: string
-    if (entry.source === 'github') {
+    if (entry.source === 'github' && entry.tarball !== undefined) {
+      // Release-rescued entry: the spec is the prebuilt tarball URL the
+      // snapshot validated (https github.com releases of this very repo).
+      // No git, no commit pin — the recorded tag is the version.
+      spec = entry.tarball.url
+    } else if (entry.source === 'github') {
       if (entry.repo === undefined || !/^[0-9a-f]{40}$/.test(args.version)) {
         return { ok: false, code: 'version-mismatch', detail: `dsh-plugin-shop: ${args.name} has no installable commit` }
       }

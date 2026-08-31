@@ -22,7 +22,7 @@ import { parseRepoState, serializeRepoState } from './repo-state.ts'
 import { githubOwnerName } from './github-repo.ts'
 import { fetchCandidates, searchByKeywords } from './npm-client.ts'
 import { runPipeline } from './pipeline.ts'
-import { SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION } from './emit.ts'
+import { CATALOG_SCHEMA_VERSION, SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION } from './emit.ts'
 import { assembleStarsByKey } from './stars-assemble.ts'
 import type { Candidate, Rejection, RepoCandidate } from './types.ts'
 
@@ -215,7 +215,13 @@ for (const candidate of candidates) if (!firstSeen.has(candidate.name)) firstSee
 for (const repo of repoCandidates) if (!firstSeen.has(repo.name)) firstSeen.set(repo.name, today)
 const configWithFirstSeen = { ...config, firstSeen }
 
-const artifacts = runPipeline(candidates, repoCandidates, configWithFirstSeen, builtAt, rejections, starsInfo, probeSubpackages ? SUBPACKAGE_SCHEMA_VERSION : SCHEMA_VERSION)
+// v5 is a release-time flag (design §3.5): `theme` is a new enum value and an
+// old client's zod enum rejects a catalog containing it wholesale, so the flag
+// flips only in the release commit that ships the v5-parsing client — never
+// before (the v3→v4 precedent; recorded in the release plan, not executed here).
+const v5Flag = process.env.SHOP_CATALOG_V5 === '1'
+const schemaVersion = v5Flag ? CATALOG_SCHEMA_VERSION : (probeSubpackages ? SUBPACKAGE_SCHEMA_VERSION : SCHEMA_VERSION)
+const artifacts = runPipeline(candidates, repoCandidates, configWithFirstSeen, builtAt, rejections, starsInfo, schemaVersion)
 
 writeFileSync(join(OUT_DIR, artifacts.pluginsFileName), artifacts.pluginsJson)
 writeFileSync(join(OUT_DIR, 'index.json'), artifacts.indexJson)
