@@ -238,12 +238,19 @@ function InstallPanel({ name, version, tier, variant = 'install', t, install, in
     return (
       <div className={css.installedActions}>
         <p className={css.notice} data-shop-restart-notice>
-          {view.needsRestart ? t('installedRestartNotice') : t('installedNoRestartNotice')}
+          {/* The done notice: a hot-mount failure carries the host's
+              published restart reason — bilingual copy, plain text, rendered
+              verbatim — replacing the generic line; a restart without a
+              reason keeps the generic notice; the needsRestart=false notice
+              is the stale-catalog anomaly, where a restart would change
+              nothing. */}
+          {view.needsRestart
+            ? view.restartReason ?? t('installedRestartNotice')
+            : t('installedNoRestartNotice')}
         </p>
         {/* The §8 restart offer: only when the install actually needs one —
-            the needsRestart=false notice is the stale-catalog anomaly, where
-            a restart would change nothing — and the host can restart at all
-            (§C-1); otherwise the disabled notice says why. */}
+            and the host can restart at all (§C-1); otherwise the disabled
+            notice says why. */}
         {view.needsRestart && restartSupported && <RestartPanel t={t} restart={restart} />}
         {view.needsRestart && !restartSupported && (
           <p className={css.notice} data-shop-restart-disabled>{t('restartDisabledNotice')}</p>
@@ -351,12 +358,17 @@ function UninstallPanel({ name, t, uninstall, installStatus, restart, restartSup
   if (view.kind === 'done') {
     return (
       <div className={css.installedActions}>
-        <p className={css.notice} data-shop-uninstall-done>{t('uninstalledRestartNotice')}</p>
-        {/* The §8 restart offer, which activates the uninstall: rendered
-            only when the host can restart (§C-1); otherwise the disabled
-            notice says why. */}
-        {restartSupported && <RestartPanel t={t} restart={restart} />}
-        {!restartSupported && (
+        <p className={css.notice} data-shop-uninstall-done>
+          {view.needsRestart ? t('uninstalledRestartNotice') : t('uninstalledLiveNotice')}
+        </p>
+        {/* The §8 restart offer, which activates the uninstall: a live
+            uninstall (needsRestart=false) is already done — the plugin
+            stopped immediately, and the boot composition picks up the
+            removal at the next restart on its own — so the offer (or its
+            disabled notice, §C-1) renders only when the uninstall still
+            needs one. */}
+        {view.needsRestart && restartSupported && <RestartPanel t={t} restart={restart} />}
+        {view.needsRestart && !restartSupported && (
           <p className={css.notice} data-shop-restart-disabled>{t('restartDisabledNotice')}</p>
         )}
       </div>

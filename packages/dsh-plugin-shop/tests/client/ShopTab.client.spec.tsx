@@ -150,6 +150,45 @@ describe('ShopTab', () => {
     expect(installStatus).toHaveBeenCalledWith({ installId: 'i1' })
   })
 
+  it('shows the live-install notice and no restart offer when the install needs no restart', async () => {
+    const { injected, installStatus } = bench(snapshot({ tier: 'verified' }))
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], needsRestart: false })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText(en.install))
+    await waitFor(() => expect(screen.getByText(en.installedNoRestartNotice)).toBeTruthy(), { timeout: 3000 })
+    // A restart would change nothing: neither the offer nor the disabled
+    // notice appears.
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-restart]')).toBeNull()
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-restart-disabled]')).toBeNull()
+  })
+
+  it('renders the host restart reason as plain text when the hot mount failed', async () => {
+    // A hostile reason must render as TEXT — the restartReason is
+    // host-supplied copy, never markup — and it replaces the generic
+    // notice. The restart offer stays: the install still needs one.
+    const { injected, installStatus } = bench(snapshot({ tier: 'verified' }))
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], needsRestart: true, restartReason: '<img src=x onerror=alert(1)> hot-mount failed' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText(en.install))
+    await waitFor(() => expect(screen.getByText('<img src=x onerror=alert(1)> hot-mount failed')).toBeTruthy(), { timeout: 3000 })
+    expect(screen.queryByText(en.installedRestartNotice)).toBeNull()
+    expect(container.querySelector('img')).toBeNull()
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-restart]')).toBeTruthy()
+  })
+
+  it('shows the live-uninstall notice and no restart offer when the uninstall needs no restart', async () => {
+    const { injected, installStatus } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }])
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], needsRestart: false })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-uninstall]')!)
+    await waitFor(() => expect(screen.getByText(en.uninstalledLiveNotice)).toBeTruthy(), { timeout: 3000 })
+    expect(screen.queryByText(en.uninstalledRestartNotice)).toBeNull()
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-restart]')).toBeNull()
+  })
+
   it('offers the restart button after a successful install, gated by the cost notice', async () => {
     const { injected } = bench(snapshot({ tier: 'verified' }))
     const { container } = renderTab(injected)

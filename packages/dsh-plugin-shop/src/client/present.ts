@@ -66,6 +66,7 @@ export interface InstallStatusShape {
   state: 'running' | 'done' | 'failed'
   log: string[]
   needsRestart?: boolean
+  restartReason?: string
   detail?: string
 }
 
@@ -74,7 +75,7 @@ export type InstallView =
   | { kind: 'idle' }
   | { kind: 'rejected'; code: InstallRejectionCode; detail: string }
   | { kind: 'running'; installId: string; log: string[] }
-  | { kind: 'done'; needsRestart: boolean }
+  | { kind: 'done'; needsRestart: boolean; restartReason?: string }
   | { kind: 'failed'; detail: string; log: string[] }
 
 /** One event the install view reacts to. */
@@ -132,7 +133,14 @@ export function reduceInstall(state: InstallView, event: InstallEvent): InstallV
         return { kind: 'running', installId: state.installId, log: status.log }
       }
       if (status.state === 'done') {
-        return { kind: 'done', needsRestart: !!status.needsRestart }
+        // A hot-mount failure rides the done status as a bilingual restart
+        // reason (market borrowings §4.2); the view carries it only when the
+        // host sent one, so a plain restart keeps the old shape.
+        return {
+          kind: 'done',
+          needsRestart: !!status.needsRestart,
+          ...(status.restartReason !== undefined ? { restartReason: status.restartReason } : {}),
+        }
       }
       return { kind: 'failed', detail: status.detail ?? '', log: status.log }
     }

@@ -58,6 +58,23 @@ describe('reduceInstall', () => {
     const running = reduceInstall({ kind: 'idle' }, { type: 'started', installId: 'abc' })
     const next = reduceInstall(running, { type: 'status', status: { found: true, state: 'done', log: ['a'], needsRestart: true } })
     expect(next).toEqual({ kind: 'done', needsRestart: true })
+    // Without a host reason the done view keeps the old shape: no
+    // restartReason key at all (toEqual would ignore an undefined one).
+    expect('restartReason' in next).toBe(false)
+  })
+
+  it('reaches done carrying the host restart reason when the hot mount failed', () => {
+    const running = reduceInstall({ kind: 'idle' }, { type: 'started', installId: 'abc' })
+    const next = reduceInstall(running, { type: 'status', status: { found: true, state: 'done', log: ['a'], needsRestart: true, restartReason: 'hot-mount failed — restart required' } })
+    expect(next).toEqual({ kind: 'done', needsRestart: true, restartReason: 'hot-mount failed — restart required' })
+  })
+
+  it('reaches done with needsRestart false when the host reports the live outcome', () => {
+    // The live install/uninstall outcome: nothing to restart, so the done
+    // view says so and the panels branch on it.
+    const running = reduceInstall({ kind: 'idle' }, { type: 'started', installId: 'abc' })
+    const next = reduceInstall(running, { type: 'status', status: { found: true, state: 'done', log: ['a'], needsRestart: false } })
+    expect(next).toEqual({ kind: 'done', needsRestart: false })
   })
 
   it('reaches failed with the host detail and the log', () => {
