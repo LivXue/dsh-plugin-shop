@@ -118,13 +118,18 @@ export interface Rejection {
 export type Tier = 'verified' | 'verified-stale' | 'community'
 
 /**
- * A human review, pinned to the exact version (npm) or commit (github) it
- * covered. Exactly one of the two pins is present, matching the entry's
- * source: trust never inherits across unreviewed code on either source.
+ * A human review, pinned to the exact version (npm), commit (github), or
+ * release tarball sha256 (github release rescue) it covered. Exactly one of
+ * the three pins is present, matching the entry's source: trust never
+ * inherits across unreviewed code on any source.
  */
 export interface Review {
   reviewedVersion?: string
   reviewedCommit?: string
+  /** For release-rescued entries, the pin is the tarball sha256 — the
+   * content-addressed identity; the tag is display only, a mutable ref that
+   * must never carry the trust. */
+  reviewedSha256?: string
   reviewer: string
   reviewCommit: string
   notes: string

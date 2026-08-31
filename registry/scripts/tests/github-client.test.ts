@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import { fetchRepoCandidate, harvestRepos, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
+import { MAX_TARBALL_BYTES, fetchRepoCandidate, harvestRepos, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
 import type { RepoState } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
 
@@ -261,6 +261,70 @@ describe('release-tarball rescue probe', () => {
     }
   })
 
+  it('refuses a tarball whose content-length exceeds the cap — the probe degrades, never throws', async () => {
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(buildManifest, { status: 200 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': headResponse(),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/releases/latest': new Response(JSON.stringify({
+        tag_name: 'v1.0.0',
+        assets: [{ browser_download_url: assetUrl }],
+      }), { status: 200 }),
+      [assetUrl]: new Response('x', { status: 200, headers: { 'content-length': String(MAX_TARBALL_BYTES + 1) } }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.candidates[0]?.release).toBeUndefined()
+      // The unrescued candidate keeps its class: over the cap, still
+      // requires-build, still rejected by the gate.
+      expect(result.candidates[0]?.requiresBuild).toBe(true)
+    }
+  })
+
+  it('refuses a streamed tarball that exceeds the cap mid-download — the probe degrades, never throws', async () => {
+    // A chunked body (no content-length) larger than the cap: the read must
+    // stop at the cap and leave the probe null instead of buffering it all.
+    const chunkSize = 1024 * 1024
+    const overCapStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let i = 0; i <= MAX_TARBALL_BYTES / chunkSize; i += 1) controller.enqueue(new Uint8Array(chunkSize))
+        controller.close()
+      },
+    })
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(buildManifest, { status: 200 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': headResponse(),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/releases/latest': new Response(JSON.stringify({
+        tag_name: 'v1.0.0',
+        assets: [{ browser_download_url: assetUrl }],
+      }), { status: 200 }),
+      [assetUrl]: new Response(overCapStream, { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.candidates[0]?.release).toBeUndefined()
+      expect(result.candidates[0]?.requiresBuild).toBe(true)
+    }
+  })
+
+  it('still hashes an asset whose content-length is under the cap', async () => {
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(buildManifest, { status: 200 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': headResponse(),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/releases/latest': new Response(JSON.stringify({
+        tag_name: 'v1.0.0',
+        assets: [{ browser_download_url: assetUrl }],
+      }), { status: 200 }),
+      [assetUrl]: new Response(tarballBytes, { status: 200, headers: { 'content-length': String(tarballBytes.byteLength) } }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.candidates[0]?.release).toEqual({ tag: 'v1.0.0', url: assetUrl, sha256: expectedSha256 })
+    }
+  })
+
   it('degrades to no release when the tarball body cannot be read — the probe never throws', async () => {
     // The response's body read is where a connection drop mid-download lands
     // (the arrayBuffer is OUTSIDE fetchRobust's retry loop); it must leave
@@ -268,6 +332,7 @@ describe('release-tarball rescue probe', () => {
     const droppedMidDownload = {
       ok: true,
       status: 200,
+      headers: new Headers(),
       arrayBuffer: async () => { throw new Error('connection dropped mid-download') },
     } as unknown as Response
     const fetchImpl = stubFetch({

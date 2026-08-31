@@ -8,12 +8,14 @@ const verifiedSchema = z.array(z.object({
   name: z.string().min(1),
   reviewedVersion: z.string().min(1).optional(),
   reviewedCommit: z.string().min(1).optional(),
+  reviewedSha256: z.string().min(1).optional(),
   reviewer: z.string().min(1),
   reviewCommit: z.string().min(1),
   notes: z.string().default(''),
-}).strict().refine(row => row.reviewedVersion !== undefined || row.reviewedCommit !== undefined, {
-  message: 'declare reviewedVersion (npm) or reviewedCommit (github)',
-}))
+}).strict().refine(
+  row => row.reviewedVersion !== undefined || row.reviewedCommit !== undefined || row.reviewedSha256 !== undefined,
+  { message: 'declare reviewedVersion (npm), reviewedCommit (github), or reviewedSha256 (release tarball)' },
+))
 
 const deniedSchema = z.array(z.object({
   name: z.string().min(1),
@@ -96,6 +98,7 @@ export function parseRegistryConfig(
     setUnique(verified, 'verified.yml', row.name, {
       reviewedVersion: row.reviewedVersion,
       reviewedCommit: row.reviewedCommit,
+      reviewedSha256: row.reviewedSha256,
       reviewer: row.reviewer,
       reviewCommit: row.reviewCommit,
       notes: row.notes,

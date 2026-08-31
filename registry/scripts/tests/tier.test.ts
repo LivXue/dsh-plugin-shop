@@ -5,6 +5,7 @@ import type { Accepted } from '../src/gate.ts'
 import type { RepoAccepted } from '../src/repo-gate.ts'
 
 const commit = 'c'.repeat(40)
+const reviewedSha256 = 'a'.repeat(64)
 
 const config = parseRegistryConfig({
   verified: [
@@ -14,7 +15,12 @@ const config = parseRegistryConfig({
     '  reviewCommit: abc',
     '  notes: fine',
     '- name: dsh-tagged-plugin',
-    '  reviewedVersion: v1.0.0',
+    `  reviewedSha256: ${reviewedSha256}`,
+    '  reviewer: github:r',
+    '  reviewCommit: abc',
+    '  notes: fine',
+    '- name: dsh-version-pinned',
+    '  reviewedVersion: 1.2.0',
     '  reviewer: github:r',
     '  reviewCommit: abc',
     '  notes: fine',
@@ -40,6 +46,8 @@ const config = parseRegistryConfig({
     '  added: 2026-08-14',
     '- name: dsh-commit-pinned',
     '  added: 2026-08-15',
+    '- name: dsh-version-pinned',
+    '  added: 2026-08-16',
   ].join('\n') + '\n',
 })
 
@@ -165,38 +173,48 @@ describe('assignRepoTier', () => {
     const entry = assignRepoTier(repoAccepted('dsh-tagged-plugin', {
       tag: 'v1.0.0',
       url: 'https://github.com/someone/dsh-tagged-plugin/releases/download/v1.0.0/plugin.tgz',
-      sha256: 'd'.repeat(64),
+      sha256: reviewedSha256,
     }), config)
     expect(entry).toMatchObject({
       version: 'v1.0.0',
-      integrity: 'd'.repeat(64),
+      integrity: reviewedSha256,
       source: 'github',
       repo: 'someone/dsh-tagged-plugin',
       tarball: {
         url: 'https://github.com/someone/dsh-tagged-plugin/releases/download/v1.0.0/plugin.tgz',
-        sha256: 'd'.repeat(64),
+        sha256: reviewedSha256,
       },
     })
   })
 
-  it('marks a release-rescued entry verified when the review covers its tag', () => {
+  it('marks a release-rescued entry verified when the review covers its tarball sha256', () => {
     const entry = assignRepoTier(repoAccepted('dsh-tagged-plugin', {
       tag: 'v1.0.0',
       url: 'https://github.com/someone/dsh-tagged-plugin/releases/download/v1.0.0/plugin.tgz',
-      sha256: 'd'.repeat(64),
+      sha256: reviewedSha256,
     }), config)
     expect(entry.tier).toBe('verified')
-    expect(entry.review?.reviewedVersion).toBe('v1.0.0')
+    expect(entry.review?.reviewedSha256).toBe(reviewedSha256)
   })
 
-  it('downgrades a release-rescued entry whose tag moved past the review', () => {
+  it('downgrades a release-rescued entry whose tarball moved past the review', () => {
     const entry = assignRepoTier(repoAccepted('dsh-tagged-plugin', {
       tag: 'v1.1.0',
       url: 'https://github.com/someone/dsh-tagged-plugin/releases/download/v1.1.0/plugin.tgz',
       sha256: 'e'.repeat(64),
     }), config)
     expect(entry.tier).toBe('verified-stale')
-    expect(entry.review?.reviewedVersion).toBe('v1.0.0')
+    expect(entry.review?.reviewedSha256).toBe(reviewedSha256)
+  })
+
+  it('does not transfer a version-only review pin onto a release entry', () => {
+    const entry = assignRepoTier(repoAccepted('dsh-version-pinned', {
+      tag: 'v1.0.0',
+      url: 'https://github.com/someone/dsh-version-pinned/releases/download/v1.0.0/plugin.tgz',
+      sha256: 'd'.repeat(64),
+    }), config)
+    expect(entry.tier).toBe('community')
+    expect(entry.review).toBeUndefined()
   })
 
   it('does not transfer a commit-only review pin onto a release entry', () => {

@@ -156,8 +156,12 @@ that was decided against keeping the commit pin):
   incremental machinery); otherwise the recorded tarball stands. The
   probe result lives in `repo-state.json` so a repo with no release
   does not re-consume the fetch budget daily.
-- `verified` pins `reviewedVersion` = the release tag; the existing
-  stale logic applies unchanged.
+- `verified` pins `reviewedSha256` = the release tarball's content hash,
+  never the tag: a tag is a mutable ref an author can delete and re-create
+  on different content, so the trust pin must be content-addressed, the
+  same rule that keeps `verified` off package names. The existing stale
+  logic applies unchanged: any other tarball downgrades to
+  `verified-stale`.
 - Entry shape gains optional `tarball: { url, sha256 }`. Entries
   without it are unchanged.
 

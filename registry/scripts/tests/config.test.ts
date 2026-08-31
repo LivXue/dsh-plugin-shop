@@ -66,11 +66,11 @@ describe('parseRegistryConfig', () => {
     expect(config.allowedSimilar.has('dsh-fs-tools')).toBe(true)
   })
 
-  it('throws on a verified entry with neither a version nor a commit pin', () => {
+  it('throws on a verified entry with none of the three pins', () => {
     expect(() => parseRegistryConfig({
       ...empty,
       verified: '- name: dsh-hello-plugin\n  reviewer: github:someone\n  reviewCommit: abc\n',
-    })).toThrow(/reviewedVersion|reviewedCommit/)
+    })).toThrow(/reviewedVersion.*reviewedCommit.*reviewedSha256/)
   })
 
   it('accepts a verified entry pinned by commit for a repository', () => {
@@ -79,6 +79,14 @@ describe('parseRegistryConfig', () => {
       verified: '- name: dsh-hello-plugin\n  reviewedCommit: abc123def\n  reviewer: github:someone\n  reviewCommit: abc\n',
     })
     expect(config.verified.get('dsh-hello-plugin')?.reviewedCommit).toBe('abc123def')
+  })
+
+  it('accepts a verified entry pinned by tarball sha256 for a release-rescued entry', () => {
+    const config = parseRegistryConfig({
+      ...empty,
+      verified: `- name: dsh-hello-plugin\n  reviewedSha256: ${'a'.repeat(64)}\n  reviewer: github:someone\n  reviewCommit: abc\n`,
+    })
+    expect(config.verified.get('dsh-hello-plugin')?.reviewedSha256).toBe('a'.repeat(64))
   })
 
   it('throws on a denied entry with no reason', () => {

@@ -2,7 +2,11 @@
 # when npm's latest exceeds reviewedVersion the entry is downgraded to
 # verified-stale, so passing review once cannot bless every future version.
 # A repository entry (github channel) is pinned by reviewedCommit instead;
-# any other commit downgrades it the same way.
+# any other commit downgrades it the same way. A release-rescued entry
+# (github channel, installed from a release tarball) is pinned by
+# reviewedSha256 — the tarball's content hash, never the tag: a tag is a
+# mutable ref an author can re-create on different content, and verified
+# trust must name what the entry actually installs.
 #
 # - name: dsh-hello-plugin          # npm entry: reviewedVersion
 #   reviewedVersion: 1.2.0
@@ -11,6 +15,11 @@
 #   notes: Reads only the workspace; no network.
 # - name: dsh-repo-plugin           # github entry: reviewedCommit
 #   reviewedCommit: <40-hex commit>
+#   reviewer: github:someone
+#   reviewCommit: abc1234
+#   notes: Reads only the workspace; no network.
+# - name: dsh-repo-plugin           # github release-rescued entry: reviewedSha256
+#   reviewedSha256: <64-hex sha256 of the reviewed release tarball>
 #   reviewer: github:someone
 #   reviewCommit: abc1234
 #   notes: Reads only the workspace; no network.

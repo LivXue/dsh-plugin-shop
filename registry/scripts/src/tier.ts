@@ -56,9 +56,11 @@ export function assignTier(accepted: Accepted, config: RegistryConfig): Entry {
  * and any other commit downgrades the entry to `verified-stale` while keeping
  * the review. Attaching verification to a repo instead would let an author
  * push a malicious commit and inherit the trust automatically. A
- * release-rescued candidate (`release` present) is pinned to its tag instead:
- * the review then covers `reviewedVersion`, exactly like an npm version —
- * a commit-only pin does not transfer across identity kinds.
+ * release-rescued candidate (`release` present) is pinned to its tarball
+ * sha256 instead: the tag is a mutable ref an author can delete and re-create
+ * on different content, so the trust pin must be the content-addressed
+ * sha256 — pins never transfer across identity kinds (npm→version,
+ * repo→commit, release→sha256).
  * @param accepted - a repository that passed the repo gate.
  * @param config - the human-authored registry files.
  * @returns the published catalog entry.
@@ -82,12 +84,13 @@ export function assignRepoTier(accepted: RepoAccepted, config: RegistryConfig): 
     ...(release !== undefined ? { tarball: { url: release.url, sha256: release.sha256 } } : {}),
     added: firstSeenOf(config, repo.name),
   }
-  // A release-pinned entry is reviewed by its tag, like an npm version: tags
-  // are the author's version namespace, and a commit comparison would compare
-  // against a hash that is no longer the entry's identity.
+  // A release-pinned entry is reviewed by its tarball sha256: the tag is
+  // display only — a mutable ref an author can re-point at different content
+  // — so verified trust must name the content-addressed hash the entry
+  // installs, exactly as npm reviews name the version.
   if (release !== undefined) {
-    if (review === undefined || review.reviewedVersion === undefined) return { ...base, tier: 'community' }
-    return { ...base, tier: review.reviewedVersion === release.tag ? 'verified' : 'verified-stale', review }
+    if (review === undefined || review.reviewedSha256 === undefined) return { ...base, tier: 'community' }
+    return { ...base, tier: review.reviewedSha256 === release.sha256 ? 'verified' : 'verified-stale', review }
   }
   // A review whose only pin is a version belongs to an npm entry of the same
   // bundle name, not to this repo candidate.

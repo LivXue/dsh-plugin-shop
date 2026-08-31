@@ -33,6 +33,13 @@ export const MAX_SEARCH_PAGES = Math.ceil(GITHUB_SEARCH_CAP / SEARCH_PAGE_SIZE)
 export const HARVEST_TOPICS: readonly string[] = ['dsh-plugin', 'deepseek-harness']
 
 /**
+ * The largest release tarball the rescue probe will hold in memory. The
+ * probe is advisory — an over-cap tarball is un-rescuable, same as an
+ * absent one — so it must refuse the body rather than OOM the build.
+ */
+export const MAX_TARBALL_BYTES = 32 * 1024 * 1024
+
+/**
  * GitHub's API speaks HTTP/2 to undici, whose long-lived h2 connections can
  * die with a transient `UND_ERR_HEADERS_TIMEOUT` on the next request. A
  * bounded retry on network throws (4 attempts, doubling backoff 2/4/8s)
@@ -309,7 +316,8 @@ async function fetchHeadCommit(
  * audit story. The probe is advisory — its fallback, the unchanged
  * `requires-build` rejection, is complete — so it returns null on any
  * failure and never throws. Returns null when there is no release, no
- * tarball asset, or the probe could not be read.
+ * tarball asset, the probe could not be read, or the tarball exceeds
+ * {@link MAX_TARBALL_BYTES}.
  */
 async function fetchLatestReleaseTarball(
   owner: string,
@@ -341,19 +349,70 @@ async function fetchLatestReleaseTarball(
     if (asset === undefined) return null
     const assetResponse = await fetchRobust(asset, fetchImpl, sleep, token)
     if (!assetResponse.ok) return null
-    const bytes = new Uint8Array(await assetResponse.arrayBuffer())
+    const bytes = await readTarballBody(assetResponse)
+    if (bytes === null) return null
     const sha256 = createHash('sha256').update(bytes).digest('hex')
     return { tag: body.tag_name, url: asset, sha256 }
   } catch {
     // Swallows the transport failures every null-returning path above leaves
     // open: the releases call, and the asset download — the largest body read
-    // in this file — whose stream can drop after the headers arrived. The
-    // probe has nothing load-bearing; a permanent failure, say a CI egress
+    // in this file, capped at MAX_TARBALL_BYTES — whose stream can drop after
+    // the headers arrived. The probe has nothing load-bearing; a permanent
+    // failure, say a CI egress
     // allowlist that permits api.github.com but blocks the asset redirect
     // host, must leave the unchanged `requires-build` rejection standing
     // rather than take the whole daily catalog down.
     return null
   }
+}
+
+/**
+ * Read an asset body with a hard cap, returning null when it exceeds
+ * {@link MAX_TARBALL_BYTES}. The probe is advisory, so an over-cap tarball is
+ * un-rescuable, same as an absent one — it must refuse the body rather than
+ * hold a giant asset in memory. A `content-length` over the cap is refused
+ * before any byte is read; a streamed body (no content-length) is pulled
+ * through a reader and cancelled the moment the cap trips.
+ */
+async function readTarballBody(response: Response): Promise<Uint8Array | null> {
+  const length = Number(response.headers.get('content-length'))
+  if (Number.isFinite(length) && length > MAX_TARBALL_BYTES) return null
+  const body = response.body
+  if (body == null) {
+    // No readable stream (or a fixture that only fakes `arrayBuffer`): the
+    // content-length check above already bounded the body, so the one-shot
+    // read cannot OOM — any failure just degrades the probe to null.
+    try {
+      return new Uint8Array(await response.arrayBuffer())
+    } catch {
+      return null
+    }
+  }
+  const reader = body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value.byteLength
+      if (total > MAX_TARBALL_BYTES) {
+        // Stop pulling the rest of the body: over the cap, refuse.
+        await reader.cancel()
+        return null
+      }
+      chunks.push(value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  const bytes = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return bytes
 }
 
 /**
