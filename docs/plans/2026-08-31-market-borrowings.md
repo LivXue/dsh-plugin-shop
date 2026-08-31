@@ -27,7 +27,7 @@
 
 ## Phase C — Host hardening
 
-### Task C-1: `detectSupervisor` — pure systemd detection
+### Task 1: `detectSupervisor` — pure systemd detection
 
 **Files:**
 - Create: `packages/dsh-plugin-shop/src/host/supervisor.ts`
@@ -110,7 +110,7 @@ git add packages/dsh-plugin-shop/src/host/supervisor.ts packages/dsh-plugin-shop
 git commit -m "feat(host): pure systemd-supervisor detection for the restart guard"
 ```
 
-### Task C-2: restart guard, `allowRestart` escape, `restartSupported` in `shop/version`
+### Task 2: restart guard, `allowRestart` escape, `restartSupported` in `shop/version`
 
 **Files:**
 - Modify: `packages/dsh-plugin-shop/src/host/index.ts` (options, row config, `restart()`, `version()`)
@@ -279,7 +279,7 @@ git add packages/dsh-plugin-shop/src/host/index.ts packages/dsh-plugin-shop/test
 git commit -m "feat(host): refuse restart under systemd unless allowRestart; report restartSupported"
 ```
 
-### Task C-3: client hides the restart offer when unsupported
+### Task 3: client hides the restart offer when unsupported
 
 **Files:**
 - Modify: `packages/dsh-plugin-shop/src/client/index.ts` (fetch version, pass down)
@@ -338,7 +338,7 @@ git add packages/dsh-plugin-shop/src/client/
 git commit -m "feat(client): hide the restart offer when the host reports restartSupported: false"
 ```
 
-### Task C-4: pin forwards-only update semantics
+### Task 4: pin forwards-only update semantics
 
 **Files:**
 - Test: `packages/dsh-plugin-shop/tests/host/index.test.ts` (extend)
@@ -375,7 +375,7 @@ git add packages/dsh-plugin-shop/tests/host/index.test.ts
 git commit -m "test(host): pin forwards-only outdated verdicts (dsh-market downgrade incident)"
 ```
 
-### Task C-5: stale answers never silent — audit and pin
+### Task 5: stale answers never silent — audit and pin
 
 **Files:**
 - Test: `packages/dsh-plugin-shop/tests/host/catalog.test.ts` (extend)
@@ -414,7 +414,7 @@ git commit -m "test(host): pin that every degraded catalog answer carries its st
 
 ## Phase B — Publish-time self-check
 
-### Task B-1: `assertCatalogInvariants` — E11 unique identity, E12 count consistency
+### Task 6: `assertCatalogInvariants` — E11 unique identity, E12 count consistency
 
 **Files:**
 - Modify: `registry/scripts/src/emit.ts` (invariant function + call at the top of `emit`)
@@ -512,7 +512,7 @@ git commit -m "feat(registry): emit-time invariants — unique install identity,
 
 ## Phase A — Catalog data layer (v4 → v5)
 
-### Task A-1: `theme` in the category enum + schema regeneration
+### Task 7: `theme` in the category enum + schema regeneration
 
 **Files:**
 - Modify: `registry/scripts/src/types.ts` (CATEGORIES)
@@ -558,7 +558,7 @@ git add registry/scripts/src/types.ts registry/scripts/tests/categories.test.ts 
 git commit -m "feat(registry): add theme to the closed category enum (market borrowings A-4)"
 ```
 
-### Task A-2: `theme` in the LLM classifier
+### Task 8: `theme` in the LLM classifier
 
 **Files:**
 - Modify: `registry/scripts/src/llm-client.ts` (the system prompt's category list)
@@ -585,7 +585,7 @@ git add registry/scripts/src/llm-client.ts registry/scripts/tests/
 git commit -m "feat(registry): teach the classifier the theme category"
 ```
 
-### Task A-3: `replacement` pointers on denials
+### Task 9: `replacement` pointers on denials
 
 **Files:**
 - Modify: `registry/scripts/src/config.ts` (deniedSchema + RegistryConfig.denied value type)
@@ -693,7 +693,7 @@ git add registry/scripts/src/config.ts registry/scripts/src/types.ts registry/sc
 git commit -m "feat(registry): optional replacement pointer on denials (market borrowings A-3)"
 ```
 
-### Task A-4: `added` — first-seen dates
+### Task 10: `added` — first-seen dates
 
 **Files:**
 - Modify: `registry/scripts/src/config.ts` (firstSeen parse + serialize)
@@ -898,7 +898,7 @@ git add registry/scripts/src/config.ts registry/scripts/src/types.ts registry/sc
 git commit -m "feat(registry): added — first-seen dates with git-history backfill (market borrowings A-2)"
 ```
 
-### Task A-5: tarball rescue for `requires-build` repos
+### Task 11: tarball rescue for `requires-build` repos
 
 **Files:**
 - Modify: `registry/scripts/src/types.ts` (`RepoCandidate.release`)
@@ -1055,7 +1055,7 @@ git add registry/scripts/src/types.ts registry/scripts/src/github-client.ts regi
 git commit -m "feat(registry): release-tarball rescue for requires-build repos (market borrowings A-1)"
 ```
 
-### Task A-6: schemaVersion 5 — consumer side (host + client) and flag plumbing
+### Task 12: schemaVersion 5 — consumer side (host + client) and flag plumbing
 
 **Files:**
 - Modify: `registry/scripts/src/emit.ts` (v5 constant + subpackage precedent)
@@ -1184,7 +1184,7 @@ git add registry/scripts/src/emit.ts registry/scripts/src/build.ts registry/scri
 git commit -m "feat: catalog v5 consumer side — added/tarball/theme/replacement, tarball install path (market borrowings)"
 ```
 
-### Task A-7: docs and authority-spec amendments
+### Task 13: docs and authority-spec amendments
 
 **Files:**
 - Modify: `docs/schema.md` (bilingual author-facing reference)
@@ -1216,7 +1216,7 @@ git commit -m "docs: bilingual schema reference and authority-spec amendments fo
 
 ## Phase D — Hot-mount (install / uninstall / update)
 
-### Task D-1: `host/hot.ts` — the Include-tree mechanism
+### Task 14: `host/hot.ts` — the Include-tree mechanism
 
 **Files:**
 - Create: `packages/dsh-plugin-shop/src/host/hot.ts`
@@ -1339,7 +1339,7 @@ git add packages/dsh-plugin-shop/src/host/hot.ts packages/dsh-plugin-shop/tests/
 git commit -m "feat(host): Include-tree hot-mount module, ported from dsh-market (market borrowings D)"
 ```
 
-### Task D-2: executor `afterDone` seam — settle hot outcome before `done`
+### Task 15: executor `afterDone` seam — settle hot outcome before `done`
 
 **Files:**
 - Modify: `packages/dsh-plugin-shop/src/host/executor.ts`
@@ -1436,7 +1436,7 @@ git add packages/dsh-plugin-shop/src/host/executor.ts packages/dsh-plugin-shop/t
 git commit -m "feat(host): afterDone seam — hot outcome settles before install reports done"
 ```
 
-### Task D-3: gateway hot paths — install / uninstall / update
+### Task 16: gateway hot paths — install / uninstall / update
 
 **Files:**
 - Modify: `packages/dsh-plugin-shop/src/host/index.ts` (loaderFor, hot wiring, afterDone for all three flows)
@@ -1581,7 +1581,7 @@ git add packages/dsh-plugin-shop/src/host/index.ts packages/dsh-plugin-shop/test
 git commit -m "feat(host): hot install/uninstall/update paths through the afterDone seam (market borrowings D)"
 ```
 
-### Task D-4: client notices — live install, restart reasons
+### Task 17: client notices — live install, restart reasons
 
 **Files:**
 - Modify: `packages/dsh-plugin-shop/src/client/present.ts` (carry `restartReason`; uninstall view gains needsRestart)
@@ -1618,7 +1618,7 @@ git add packages/dsh-plugin-shop/src/client/
 git commit -m "feat(client): live-install notices and restart reasons (market borrowings D)"
 ```
 
-### Task D-5: optional peer dependency + real-composition e2e
+### Task 18: optional peer dependency + real-composition e2e
 
 **Files:**
 - Modify: `packages/dsh-plugin-shop/package.json` (peerDependencies + peerDependenciesMeta)
