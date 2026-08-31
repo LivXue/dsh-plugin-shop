@@ -77,6 +77,7 @@ export type RejectionCode =
   | 'deprecated'
   | 'no-license'
   | 'no-repository'
+  | 'harness-repository'
   | 'no-integrity'
   | 'no-publish-time'
   | 'name-too-similar'

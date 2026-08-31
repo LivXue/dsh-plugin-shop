@@ -65,4 +65,29 @@ describe('assembleStarsByKey', () => {
     expect(assembled.fromSearch).toBe(0)
     expect(assembled.fromGraphql).toBe(0)
   })
+
+  it('never attributes the harness own stars to an npm entry claiming it as its repository', () => {
+    const assembled = assembleStarsByKey(
+      [npm('pkg-mos', 'https://github.com/deepseek-ai/deepseek-harness')],
+      [],
+      new Map([['deepseek-ai/deepseek-harness', 205302]]),
+      new Map(),
+    )
+    expect(assembled.stars).toEqual({})
+    expect(assembled.fromSearch).toBe(0)
+    expect(assembled.fromGraphql).toBe(0)
+  })
+
+  it('keeps the count for a repo entry that is the harness itself', () => {
+    // The skip is for misdeclared npm repositories; a github entry keyed by
+    // the harness's own full name carries its own, factually correct count.
+    const assembled = assembleStarsByKey(
+      [],
+      [repo('deepseek-ai/deepseek-harness')],
+      new Map([['deepseek-ai/deepseek-harness', 205302]]),
+      new Map(),
+    )
+    expect(assembled.stars).toEqual({ 'deepseek-ai/deepseek-harness': 205302 })
+    expect(assembled.fromSearch).toBe(1)
+  })
 })

@@ -4,7 +4,7 @@
  * @module stars-assemble
  */
 
-import { githubOwnerName } from './github-repo.ts'
+import { githubOwnerName, isHarnessRepo } from './github-repo.ts'
 import type { Candidate, RepoCandidate } from './types.ts'
 
 /**
@@ -45,7 +45,12 @@ export function assembleStarsByKey(
     if (searchCount !== undefined) fromSearch += 1
     else fromGraphql += 1
   }
-  for (const candidate of candidates) assign(candidate.name, candidate.repository)
+  for (const candidate of candidates) {
+    // An npm entry declaring the harness as its repository is a
+    // misdeclaration; the harness's own count is not this plugin's stars.
+    if (isHarnessRepo(candidate.repository)) continue
+    assign(candidate.name, candidate.repository)
+  }
   for (const repo of repoCandidates) assign(repo.repo, repo.repository)
   return { stars, fromSearch, fromGraphql }
 }

@@ -23,3 +23,16 @@ export function githubOwnerName(repository: string | null): { owner: string; nam
   if (name === '') return null
   return { owner, name }
 }
+
+/** Full name of the DeepSeek Harness repository, the host project itself. */
+export const HARNESS_REPO = 'deepseek-ai/deepseek-harness'
+
+/**
+ * Whether a repository URL names the harness repository itself. A plugin
+ * declaring the host project as its repository is a misdeclaration — the
+ * declared URL holds none of the plugin's source.
+ */
+export function isHarnessRepo(repository: string | null): boolean {
+  const parsed = githubOwnerName(repository)
+  return parsed !== null && `${parsed.owner}/${parsed.name}` === HARNESS_REPO
+}

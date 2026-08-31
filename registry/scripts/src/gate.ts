@@ -1,4 +1,5 @@
 import { distance } from 'fastest-levenshtein'
+import { isHarnessRepo } from './github-repo.ts'
 import { parseCatalogSection } from './schema.ts'
 import type { RegistryConfig } from './config.ts'
 import type { Candidate, CatalogSection, Rejection } from './types.ts'
@@ -64,6 +65,10 @@ export function gate(
   if (candidate.repository === null || candidate.repository === '') {
     return reject(name, 'no-repository',
       'Declares no repository, so the published code cannot be audited.')
+  }
+  if (isHarnessRepo(candidate.repository)) {
+    return reject(name, 'harness-repository',
+      "Declares deepseek-ai/deepseek-harness as its repository, which is the host project rather than this plugin's source, so the published code cannot be audited there.")
   }
   if (candidate.integrity === null || candidate.integrity === '') {
     return reject(name, 'no-integrity',

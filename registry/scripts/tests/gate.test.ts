@@ -136,6 +136,24 @@ describe('gate', () => {
     expect(result.rejection.detail).toContain('audit')
   })
 
+  it('rejects a repository naming the harness itself, which holds none of the plugin source', () => {
+    const result = gate(candidate({ repository: 'https://github.com/deepseek-ai/deepseek-harness' }), config)
+    if (result.ok) throw new Error('expected rejection')
+    expect(result.rejection.code).toBe('harness-repository')
+    expect(result.rejection.detail).toContain('deepseek-harness')
+  })
+
+  it('rejects the harness repository even with a trailing slash', () => {
+    const result = gate(candidate({ repository: 'https://github.com/deepseek-ai/deepseek-harness/' }), config)
+    if (result.ok) throw new Error('expected rejection')
+    expect(result.rejection.code).toBe('harness-repository')
+  })
+
+  it('keeps a repository whose own name merely contains deepseek-harness', () => {
+    const result = gate(candidate({ repository: 'https://github.com/syncended/deepseek-harness-automations' }), config)
+    expect(result.ok).toBe(true)
+  })
+
   it('rejects a package with no integrity', () => {
     const result = gate(candidate({ integrity: null }), config)
     if (result.ok) throw new Error('expected rejection')
