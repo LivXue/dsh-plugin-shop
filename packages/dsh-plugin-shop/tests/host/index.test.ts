@@ -423,6 +423,45 @@ describe('ShopGateway.installed', () => {
   })
 })
 
+describe('forwards-only outdated', () => {
+  // dsh-market's update incident: a `latest` dist-tag pointing at an OLDER
+  // release made a plain `!==` comparison turn "update" into a downgrade
+  // that broke the profile's boot (their updates.ts:86-100). The npm verdict
+  // here is strictly forwards-only: semver `lt` between the installed spec's
+  // floor and the catalog version.
+  const entries = [
+    { name: 'dsh-one', version: '2.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm' },
+    { name: 'dsh-two', version: '1.5.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm' },
+  ]
+
+  function gatewayWithManifest(dependencies: Record<string, string>): ShopGateway {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-forwards-'))
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies }))
+    return new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [], stars: {} }, stale: false }) as CatalogResult,
+    })
+  }
+
+  it('reports an equal installed version as current', async () => {
+    const gateway = gatewayWithManifest({ 'dsh-two': '1.5.0' })
+    await gateway.catalog({})
+    expect(await gateway.installed()).toEqual([{ name: 'dsh-two', installed: '1.5.0', latest: '1.5.0', outdated: false, enabled: true }])
+  })
+
+  it('reports a backwards catalog version as current, never "outdated"', async () => {
+    const gateway = gatewayWithManifest({ 'dsh-two': '2.0.0' })
+    await gateway.catalog({})
+    expect(await gateway.installed()).toEqual([{ name: 'dsh-two', installed: '2.0.0', latest: '1.5.0', outdated: false, enabled: true }])
+  })
+
+  it('reports a behind installed version as outdated', async () => {
+    const gateway = gatewayWithManifest({ 'dsh-two': '^1.0.0' })
+    await gateway.catalog({})
+    expect(await gateway.installed()).toEqual([{ name: 'dsh-two', installed: '^1.0.0', latest: '1.5.0', outdated: true, enabled: true }])
+  })
+})
+
 describe('ShopGateway.uninstall', () => {
   const entries = [
     { name: 'dsh-one', version: '2.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm' },
