@@ -5,7 +5,9 @@
  * commit the produced file, then never run it again (the daily build appends).
  *
  * manifest.lock line shapes (emit.ts): npm entries are `name version integrity`,
- * repo entries are `owner/slug name version` — the slash disambiguates. */
+ * repo entries are `owner/slug name version`. Scoped npm names lead with `@`
+ * (and contain a slash); repo slugs are `owner/slug` with no leading `@` — so
+ * the leading `@`, not the slash, decides which field holds the name. */
 import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -19,7 +21,8 @@ function namesOf(lockText: string): Set<string> {
   for (const line of lockText.split('\n')) {
     if (line === '') continue
     const parts = line.split(' ')
-    const name = (parts[0] ?? '').includes('/') ? parts[1] : parts[0]
+    const first = parts[0] ?? ''
+    const name = first.startsWith('@') || !first.includes('/') ? parts[0] : parts[1]
     if (name !== undefined && name !== '') names.add(name)
   }
   return names
@@ -51,6 +54,15 @@ for (const { sha, date } of history) {
   for (const name of namesOf(lockText)) {
     if (current.has(name) && !firstSeen.has(name)) firstSeen.set(name, date)
   }
+}
+
+// Guard: every key must be a real name, never a version string. The 2026-08-31
+// backfill shipped with 187 version-string keys (scoped npm lines misparsed as
+// repo lines, e.g. `@scope/name 0.4.17 sha512-…` yielded "0.4.17"). The build
+// only appends, so that junk would be permanent — fail loudly instead.
+const versionish = [...firstSeen.keys()].filter(name => /^\d+(\.\d+)+/.test(name))
+if (versionish.length > 0) {
+  throw new Error(`backfill produced version-string keys: ${versionish.join(', ')}`)
 }
 
 writeFileSync(join(REGISTRY_DIR, 'first-seen.yml'), serializeFirstSeen(firstSeen))
