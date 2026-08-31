@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, writeFileSync, chmodSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -193,6 +193,39 @@ describe('startInstall post-install confirm (§7.2 step 6)', () => {
   })
 })
 
+describe('startInstall afterDone seam', () => {
+  it('withholds done until afterDone settles and takes its needsRestart', async () => {
+    const bin = fixtureDsh(0)
+    let settle: (v: { needsRestart: boolean }) => void
+    let afterDoneCalls = 0
+    const afterDone = () => {
+      afterDoneCalls += 1
+      return new Promise<{ needsRestart: boolean }>(resolve => { settle = resolve })
+    }
+    const running = startInstall({ profile: 'p', spec: 'fixture@1.0.0', dshBin: bin, afterDone })
+    // Wait for the child to exit and the close handler to invoke afterDone;
+    // under parallel-suite load no fixed sleep is safe, so poll instead.
+    await vi.waitFor(() => expect(afterDoneCalls).toBe(1))
+    // The child has exited and afterDone is pending — the terminal `done` is
+    // withheld until it settles.
+    expect(running.status().state).toBe('running')
+    settle!({ needsRestart: false })
+    const status = await running.finished
+    expect(status.state).toBe('done')
+    expect(status.needsRestart).toBe(false)
+  })
+
+  it('an afterDone failure still reports done, with needsRestart true and the fallback reason', async () => {
+    const bin = fixtureDsh(0)
+    const running = startInstall({ profile: 'p', spec: 'fixture@1.0.0', dshBin: bin,
+      afterDone: async () => { throw new Error('boom') } })
+    const status = await running.finished
+    expect(status.state).toBe('done')
+    expect(status.needsRestart).toBe(true)
+    expect(status.restartReason).toContain('restart required')
+  })
+})
+
 describe('startUninstall', () => {
   it('refuses a flag-like name instead of letting the CLI parse it as an option', () => {
     // A name beginning with `-` would be argv smuggling (e.g. `--profile` as
@@ -215,6 +248,24 @@ describe('startUninstall', () => {
     expect(status.log.join('\n')).toContain('installing...')
     const calls = readFileSync(join(dirname(bin), 'calls.log'), 'utf8')
     expect(calls).toContain('plugin --profile web remove dsh-hello-plugin')
+  })
+
+  it('passes afterDone through: withholds done and takes its needsRestart and restartReason', async () => {
+    const bin = fixtureDsh(0)
+    let settle: (v: { needsRestart: boolean; restartReason?: string }) => void
+    let afterDoneCalls = 0
+    const afterDone = () => {
+      afterDoneCalls += 1
+      return new Promise<{ needsRestart: boolean; restartReason?: string }>(resolve => { settle = resolve })
+    }
+    const running = startUninstall({ profile: 'web', name: 'dsh-hello-plugin', dshBin: bin, afterDone })
+    await vi.waitFor(() => expect(afterDoneCalls).toBe(1))
+    expect(running.status().state).toBe('running')
+    settle!({ needsRestart: false, restartReason: 'hot-mounted live' })
+    const status = await running.finished
+    expect(status.state).toBe('done')
+    expect(status.needsRestart).toBe(false)
+    expect(status.restartReason).toBe('hot-mounted live')
   })
 
   it('reports failed with the recovery hint when pnpm fails', async () => {

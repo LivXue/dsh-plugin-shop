@@ -14,6 +14,7 @@ export interface InstallStatus {
   state: InstallState
   log: string[]
   needsRestart?: boolean
+  restartReason?: string
   detail?: string
 }
 
@@ -80,16 +81,22 @@ function confirmBundleRemoval(profile: string, home: string | undefined, expecte
  * real-install test pins DSH_HOME to a temporary directory this way.
  * When `confirm` is given, a zero exit is checked against the profile
  * manifest before the command reports `done` (§7.2 step 6 and its uninstall
- * mirror). */
+ * mirror). When `afterDone` is given, a zero exit that passes `confirm`
+ * withholds the terminal `done` until the callback — typically the hot-mount
+ * attempt — settles; its result sets `needsRestart` (default `true`) and
+ * `restartReason`. The client stops polling at `done`, so the hot outcome
+ * must settle before it. A throwing callback never fails the install — the
+ * package IS installed; it reports `done` with the restart fallback. */
 function spawnPluginCli(options: {
   profile: string
   argv: string[]
   dshBin: string
   env?: NodeJS.ProcessEnv
   confirm?: (home: string | undefined) => string | null
+  afterDone?: (home: string | undefined) => Promise<{ needsRestart: boolean; restartReason?: string } | void>
   onStatus?: (status: InstallStatus) => void
 }): RunningInstall {
-  const { profile, argv, dshBin, env, confirm, onStatus } = options
+  const { profile, argv, dshBin, env, confirm, afterDone, onStatus } = options
   // Argv smuggling guard: an operand that begins with `-` would be parsed as
   // a flag by the CLI. A legitimate target — a catalog name for remove, a
   // `name@version` spec for add — never begins with `-`, so refusing here
@@ -103,12 +110,14 @@ function spawnPluginCli(options: {
   const log: string[] = []
   let logBytes = 0
   let state: InstallState = 'running'
+  let needsRestartOnDone = true
+  let restartReason: string | undefined
   let detail: string | undefined
 
   const status = (): InstallStatus => ({
     state,
     log: [...log],
-    ...(state === 'done' ? { needsRestart: true } : {}),
+    ...(state === 'done' ? { needsRestart: needsRestartOnDone, ...(restartReason !== undefined ? { restartReason } : {}) } : {}),
     ...(detail !== undefined ? { detail } : {}),
   })
 
@@ -147,16 +156,27 @@ function spawnPluginCli(options: {
       onStatus?.(status())
       resolve(status())
     })
-    child.on('close', (exitCode) => {
+    child.on('close', async (exitCode) => {
       if (state !== 'running') return
       if (exitCode === 0) {
-        state = 'done'
-        if (confirm !== undefined) {
-          const confirmDetail = confirm(env?.DSH_HOME)
-          if (confirmDetail !== null) {
-            state = 'failed'
-            detail = confirmDetail
+        const confirmDetail = confirm?.(env?.DSH_HOME)
+        if (confirmDetail != null) {
+          state = 'failed'
+          detail = confirmDetail
+        } else if (afterDone !== undefined) {
+          try {
+            const outcome = await afterDone(env?.DSH_HOME)
+            needsRestartOnDone = outcome?.needsRestart ?? true
+            restartReason = outcome?.restartReason
+          } catch {
+            // A failed hot path never fails the install — the package IS
+            // installed; it activates on restart instead.
+            needsRestartOnDone = true
+            restartReason = '热挂载失败,重启后生效 / hot-mount failed — restart required'
           }
+          state = 'done'
+        } else {
+          state = 'done'
         }
       } else {
         state = 'failed'
@@ -174,7 +194,8 @@ function spawnPluginCli(options: {
 /**
  * Run one `dsh plugin --profile <profile> add <spec>` and track it.
  * When `expectedName` is given, a zero exit is confirmed against the profile
- * manifest (§7.2 step 6) before the install reports `done`.
+ * manifest (§7.2 step 6) before the install reports `done`. When `afterDone`
+ * is given, the terminal `done` waits for it to settle (§D hot mount).
  */
 export function startInstall(options: {
   profile: string
@@ -182,15 +203,17 @@ export function startInstall(options: {
   dshBin?: string
   env?: NodeJS.ProcessEnv
   expectedName?: string
+  afterDone?: (home: string | undefined) => Promise<{ needsRestart: boolean; restartReason?: string } | void>
   onStatus?: (status: InstallStatus) => void
 }): RunningInstall {
-  const { profile, spec, dshBin = 'dsh', env, expectedName, onStatus } = options
+  const { profile, spec, dshBin = 'dsh', env, expectedName, afterDone, onStatus } = options
   return spawnPluginCli({
     profile,
     argv: ['add', spec],
     dshBin,
     env,
     confirm: expectedName !== undefined ? home => confirmBundleActivation(profile, home, expectedName) : undefined,
+    afterDone,
     onStatus,
   })
 }
@@ -199,7 +222,8 @@ export function startInstall(options: {
  * Run one `dsh plugin --profile <profile> remove <name>` and track it.
  * When `expectedName` is given, a zero exit is confirmed against the profile
  * manifest — the bundle must actually have LEFT `dsh.profile.bundles` — before
- * the uninstall reports `done`.
+ * the uninstall reports `done`. When `afterDone` is given, the terminal `done`
+ * waits for it to settle (§D hot mount).
  */
 export function startUninstall(options: {
   profile: string
@@ -207,15 +231,17 @@ export function startUninstall(options: {
   dshBin?: string
   env?: NodeJS.ProcessEnv
   expectedName?: string
+  afterDone?: (home: string | undefined) => Promise<{ needsRestart: boolean; restartReason?: string } | void>
   onStatus?: (status: InstallStatus) => void
 }): RunningInstall {
-  const { profile, name, dshBin = 'dsh', env, expectedName, onStatus } = options
+  const { profile, name, dshBin = 'dsh', env, expectedName, afterDone, onStatus } = options
   return spawnPluginCli({
     profile,
     argv: ['remove', name],
     dshBin,
     env,
     confirm: expectedName !== undefined ? home => confirmBundleRemoval(profile, home, expectedName) : undefined,
+    afterDone,
     onStatus,
   })
 }
