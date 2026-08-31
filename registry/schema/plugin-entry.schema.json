@@ -13,6 +13,7 @@
         "ui",
         "workflow",
         "integration",
+        "theme",
         "other"
       ]
     },

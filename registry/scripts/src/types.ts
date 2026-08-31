@@ -1,5 +1,5 @@
 /** Closed set of catalog categories. Adding one is a schema change. */
-export const CATEGORIES = ['tool', 'provider', 'ui', 'workflow', 'integration', 'other'] as const
+export const CATEGORIES = ['tool', 'provider', 'ui', 'workflow', 'integration', 'theme', 'other'] as const
 export type Category = typeof CATEGORIES[number]
 
 /**
