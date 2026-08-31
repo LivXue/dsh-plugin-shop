@@ -40,6 +40,16 @@ export function displayVersion(entry: { source: 'npm' | 'github'; version: strin
   return entry.source === 'github' ? entry.version.slice(0, 7) : entry.version
 }
 
+/**
+ * Whether the license value is the npm idiom `SEE LICENSE IN <file>` — a
+ * valid SPDX form meaning "custom license, text ships in that file". The
+ * catalog keeps the author's verbatim value; the shelf renders it as a
+ * localized "Custom license" label. Everything else renders verbatim.
+ */
+export function isCustomLicense(license: string | null): boolean {
+  return license !== null && /^SEE LICENSE IN /i.test(license)
+}
+
 /** One polled install status (§7.3 wire data), structural. */
 export interface InstallStatusShape {
   found: boolean

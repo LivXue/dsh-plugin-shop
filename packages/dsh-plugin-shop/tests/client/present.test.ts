@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, categoryKey, displayVersion, formatStars, isShopLike, nextVisibleCount, reduceInstall, sortByStars, tierKey,
+  ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, categoryKey, displayVersion, formatStars, isCustomLicense, isShopLike, nextVisibleCount, reduceInstall, sortByStars, tierKey,
 } from '../../src/client/present.ts'
 import type { CatalogEntry } from '../../src/host/index.ts'
 
@@ -207,5 +207,15 @@ describe('displayVersion', () => {
   it('shows npm versions in full and github commits short', () => {
     expect(displayVersion({ source: 'npm', version: '1.2.3' })).toBe('1.2.3')
     expect(displayVersion({ source: 'github', version: 'd'.repeat(40) })).toBe('ddddddd')
+  })
+})
+
+describe('isCustomLicense', () => {
+  it('matches the npm SEE LICENSE IN idiom and nothing else', () => {
+    expect(isCustomLicense('SEE LICENSE IN LICENSE')).toBe(true)
+    expect(isCustomLicense('SEE LICENSE IN LICENSE.md')).toBe(true)
+    expect(isCustomLicense('MIT')).toBe(false)
+    expect(isCustomLicense('NOASSERTION')).toBe(false)
+    expect(isCustomLicense(null)).toBe(false)
   })
 })

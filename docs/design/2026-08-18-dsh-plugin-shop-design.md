@@ -171,7 +171,7 @@ Three rules keep the fallback from eroding the format:
 - **A package with neither `dsh.catalog` nor an npm `description` is rejected** as `no-summary`. There is nothing to show a user, and an entry that displays only a package name is not a listing.
 - **Tiering stays orthogonal to metadata.** A derived entry can be `verified`, because a review reads the code, not the description. The two axes answer different questions: `tier` is "has a human read this?", `metadata` is "did the author describe it?".
 
-A consumer MAY present a derived entry as unclaimed — the signal that prompts an author to add the section. Amendment (2026-08-30): the shop no longer renders the unclaimed badge; almost no author claims a listing, so the badge was noise. The `metadata` field keeps the derived/declared distinction in the data; the shelf just does not mark it.
+A consumer MAY present a derived entry as unclaimed — the signal that prompts an author to add the section. Amendment (2026-08-30): the shop no longer renders the unclaimed badge; almost no author claims a listing, so the badge was noise. The `metadata` field keeps the derived/declared distinction in the data; the shelf just does not mark it. The license row normalizes the npm idiom `SEE LICENSE IN <file>` (a valid SPDX form meaning a custom license whose text ships in that file) to a localized "Custom license" label — the catalog data stays verbatim.
 
 ### 6.2 Published artifacts
 

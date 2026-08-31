@@ -410,6 +410,15 @@ describe('ShopTab', () => {
     expect(link.getAttribute('rel')).toBe('noopener noreferrer')
   })
 
+  it('renders the SEE LICENSE IN idiom as the localized custom-license label', async () => {
+    const { injected } = bench(snapshot({ license: 'SEE LICENSE IN LICENSE' }))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] button[aria-expanded]')!)
+    expect(screen.getByText(en.customLicense)).toBeTruthy()
+    expect(screen.queryByText('SEE LICENSE IN LICENSE')).toBeNull()
+  })
+
   it('renders a repository that is not an http(s) URL as plain text, never a link', async () => {
     const { injected } = bench(snapshot({ repository: 'not-a-url' }))
     renderTab(injected)
