@@ -35,22 +35,30 @@ export function gateRepo(
   candidate: RepoCandidate,
   config: RegistryConfig,
 ): { ok: true; accepted: RepoAccepted } | { ok: false; rejection: Rejection } {
+  // The unit an author acts on: the repo, or `repo#subdir` for a monorepo
+  // subpackage — rejection names must point at the thing to fix.
+  const unit = candidate.subdir === undefined ? candidate.repo : `${candidate.repo}#${candidate.subdir}`
+
   // Denied by repo or by bundle name. `owner/slug` strings cannot collide
   // with npm package names (unscoped names carry no slash), so one map holds
   // both keyspaces.
   const deniedReason = config.denied.get(candidate.repo) ?? config.denied.get(candidate.name)
-  if (deniedReason !== undefined) return reject(candidate.repo, 'denied', `Denied by the registry: ${deniedReason}`)
+  if (deniedReason !== undefined) return reject(unit, 'denied', `Denied by the registry: ${deniedReason}`)
 
   if (!candidate.hasBundle) {
-    return reject(candidate.repo, 'no-bundle',
+    return reject(unit, 'no-bundle',
       'Declares no dsh.bundle in its package.json, so dsh installs it as a plain dependency, not a plugin.')
   }
   if (candidate.requiresBuild) {
-    return reject(candidate.repo, 'requires-build',
+    return reject(unit, 'requires-build',
       'Declares a prepare/prepack build script, which a git install requires and pnpm blocks by default; the shop never enables build scripts, so the repository could not install. Publish to npm, or drop the script, and it can be listed.')
   }
+  if (candidate.hasWorkspaceDeps) {
+    return reject(unit, 'workspace-deps',
+      'Declares workspace:-protocol dependencies, which resolve only inside the repository\'s own workspace; a git install from outside it cannot succeed. Publish the package to npm, or drop the workspace: specifiers, and it can be listed.')
+  }
   if (candidate.license === null || candidate.license === '') {
-    return reject(candidate.repo, 'no-license', 'The repository declares no license.')
+    return reject(unit, 'no-license', 'The repository declares no license.')
   }
 
   let catalog: CatalogSection
@@ -60,7 +68,7 @@ export function gateRepo(
     // description, or reject when there is nothing to show.
     const description = candidate.description?.trim()
     if (description === undefined || description === '') {
-      return reject(candidate.repo, 'no-summary',
+      return reject(unit, 'no-summary',
         'Declares no dsh.catalog and the repository has no description, so there is nothing to list.')
     }
     catalog = {
@@ -71,7 +79,7 @@ export function gateRepo(
     metadata = 'derived'
   } else {
     const parsed = parseCatalogSection(candidate.catalog)
-    if (!parsed.ok) return reject(candidate.repo, 'invalid-catalog', parsed.error)
+    if (!parsed.ok) return reject(unit, 'invalid-catalog', parsed.error)
     catalog = parsed.value
     metadata = 'declared'
   }
@@ -89,7 +97,7 @@ export function gateRepo(
       for (const probe of [slug, candidate.name]) {
         const edits = distance(probe, verifiedName)
         if (edits > SIMILARITY_THRESHOLD) continue
-        return reject(candidate.repo, 'name-too-similar',
+        return reject(unit, 'name-too-similar',
           edits === 0
             ? `Exactly matches the verified package ${verifiedName}; only an explicitly allowed source may use that name; held for human adjudication.`
             : `Within ${edits} edit(s) of the verified package ${verifiedName}; held for human adjudication.`)

@@ -7,8 +7,9 @@ import { z } from 'zod'
 import type { CatalogEntry, DeniedEntry } from './types.ts'
 
 /** Highest schemaVersion this build understands; a higher one is refused (§10).
- * 3 adds `source` and repo entries (github install channel). */
-export const SUPPORTED_SCHEMA_VERSION = 3
+ * 3 adds `source` and repo entries (github install channel); 4 adds `subdir`
+ * for monorepo-subpackage entries (2026-08-31 hub-borrowings A). */
+export const SUPPORTED_SCHEMA_VERSION = 4
 
 /** A cached catalog younger than this is served without touching the network. */
 const FRESH_MS = 5 * 60 * 1000
@@ -41,6 +42,10 @@ const entrySchema = z.object({
   // v3 (github channel); defaulted so a cached v2 catalog still parses.
   source: z.enum(['npm', 'github']).default('npm'),
   repo: z.string().optional(),
+  // v4 (monorepo subpackages). The value reaches the install spec's argv,
+  // so the boundary keeps it to relative directory segments — and no
+  // segment may be `.` or `..`, which would escape the repository root.
+  subdir: z.string().regex(/^(?!.*(^|\/)\.\.?(\/|$))[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/).optional(),
 })
 
 const dataSchema = z.object({

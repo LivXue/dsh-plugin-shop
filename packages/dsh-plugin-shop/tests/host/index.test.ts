@@ -16,7 +16,7 @@ import type { CatalogEntry } from '../../src/host/types.ts'
 const shopHome = mkdtempSync(join(tmpdir(), 'dsh-gateway-home-'))
 process.env.DSH_HOME = shopHome
 mkdirSync(join(shopHome, 'profiles', 'web'), { recursive: true })
-writeFileSync(join(shopHome, 'profiles', 'web', 'package.json'), JSON.stringify({ dsh: { profile: { bundles: ['dsh-hello-plugin', 'dsh-repo-plugin', 'dsh-plugin-shop'] } } }))
+writeFileSync(join(shopHome, 'profiles', 'web', 'package.json'), JSON.stringify({ dsh: { profile: { bundles: ['dsh-hello-plugin', 'dsh-repo-plugin', 'sub-plugin', 'dsh-plugin-shop'] } } }))
 
 afterAll(() => {
   delete process.env.DSH_HOME
@@ -58,11 +58,11 @@ describe('ShopGateway', () => {
     // end to end — the observable proof of the discovery.
     const gateway = new ShopGateway(ctx)
     expect(gateway.name).toBe('shop')
-    const inventory = [{ entryId: 'shop-row', moduleName: 'dsh-plugin-shop', enabled: true }]
+    const inventory = [{ entryId: 'third-party-row', moduleName: 'dsh-third-party', enabled: true }]
     const withInventory = new ShopGateway(ctx, { inventory: { list: () => inventory } })
-    const result = withInventory.setEnabled({ name: 'dsh-plugin-shop', enabled: false })
+    const result = withInventory.setEnabled({ name: 'dsh-third-party', enabled: false })
     expect(result.ok).toBe(true)
-    expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toContain('shop-row')
+    expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toContain('third-party-row')
   })
 })
 
@@ -329,6 +329,24 @@ describe('ShopGateway.setEnabled', () => {
     expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).not.toContain('hello-row')
   })
 
+  it('refuses to toggle the shop itself or a framework bundle', async () => {
+    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-shop-'))
+    writeFileSync(join(profileDir, 'cordis.yml'), '[]\n')
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
+    const gateway = new ShopGateway(stubCtx(), {
+      profile: 'web', profileDir,
+      inventory: { list: () => [
+        { entryId: 'shop-row', moduleName: 'dsh-plugin-shop', enabled: true },
+        { entryId: 'frame-row', moduleName: '@deepseek-ai/dsh-app-boot', enabled: true },
+      ] },
+    })
+    const own = await gateway.setEnabled({ name: 'dsh-plugin-shop', enabled: false })
+    expect(own).toEqual({ ok: false, detail: 'dsh-plugin-shop: dsh-plugin-shop is part of the harness chain and cannot be toggled from the shop' })
+    const framework = await gateway.setEnabled({ name: '@deepseek-ai/dsh-app-boot', enabled: false })
+    expect(framework.ok).toBe(false)
+    expect(existsSync(join(profileDir, 'cordis.patch.yml'))).toBe(false)
+  })
+
   it('reports not installed for an unknown name without writing', async () => {
     const profileDir = mkdtempSync(join(tmpdir(), 'dsh-shop-'))
     writeFileSync(join(profileDir, 'cordis.yml'), '[]\n')
@@ -355,24 +373,36 @@ describe('ShopGateway.installed', () => {
     })
   }
 
+  it('carries the inventory enabled state onto the installed rows', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-installed-inv-'))
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: { 'dsh-one': '^1.0.0' } }))
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [], stars: {} }, stale: false }) as CatalogResult,
+      inventory: { list: () => [{ entryId: 'one-row', moduleName: 'dsh-one', enabled: false }] },
+    })
+    await gateway.catalog({})
+    expect(await gateway.installed()).toEqual([{ name: 'dsh-one', installed: '^1.0.0', latest: '2.0.0', outdated: true, enabled: false }])
+  })
+
   it('reports an installed plugin behind the catalog with outdated: true', async () => {
     const gateway = gatewayWithManifest({ 'dsh-one': '^1.0.0' })
     await gateway.catalog({}) // populates lastSnapshot
-    expect(await gateway.installed()).toEqual([{ name: 'dsh-one', installed: '^1.0.0', latest: '2.0.0', outdated: true }])
+    expect(await gateway.installed()).toEqual([{ name: 'dsh-one', installed: '^1.0.0', latest: '2.0.0', outdated: true, enabled: true }])
   })
 
   it('reports a current installed plugin with outdated: false', async () => {
     const gateway = gatewayWithManifest({ 'dsh-one': '^2.0.0' })
     await gateway.catalog({})
-    expect(await gateway.installed()).toEqual([{ name: 'dsh-one', installed: '^2.0.0', latest: '2.0.0', outdated: false }])
+    expect(await gateway.installed()).toEqual([{ name: 'dsh-one', installed: '^2.0.0', latest: '2.0.0', outdated: false, enabled: true }])
   })
 
   it('reads a non-semver installed spec as current instead of throwing', async () => {
     const gateway = gatewayWithManifest({ 'dsh-one': '^1.0.0', 'dsh-two': 'workspace:*' })
     await gateway.catalog({})
     expect(await gateway.installed()).toEqual([
-      { name: 'dsh-one', installed: '^1.0.0', latest: '2.0.0', outdated: true },
-      { name: 'dsh-two', installed: 'workspace:*', latest: '1.5.0', outdated: false },
+      { name: 'dsh-one', installed: '^1.0.0', latest: '2.0.0', outdated: true, enabled: true },
+      { name: 'dsh-two', installed: 'workspace:*', latest: '1.5.0', outdated: false, enabled: true },
     ])
   })
 
@@ -389,7 +419,7 @@ describe('ShopGateway.installed', () => {
     })
     const installed = await gateway.installed()
     expect(loadCalls).toBe(1)
-    expect(installed).toEqual([{ name: 'dsh-one', installed: '^1.0.0', latest: '2.0.0', outdated: true }])
+    expect(installed).toEqual([{ name: 'dsh-one', installed: '^1.0.0', latest: '2.0.0', outdated: true, enabled: true }])
   })
 })
 
@@ -634,7 +664,7 @@ describe('ShopGateway github entries', () => {
       loadCatalog: async () => ({ snapshot: { schemaVersion: 3, builtAt: '', entries: [repoEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
     })
     await gateway.catalog({})
-    expect(await gateway.installed()).toEqual([{ name: 'dsh-repo-plugin', installed: oldCommit, latest: commit, outdated: true }])
+    expect(await gateway.installed()).toEqual([{ name: 'dsh-repo-plugin', installed: oldCommit, latest: commit, outdated: true, enabled: true }])
   })
 
   it('forgets the pin on uninstall', async () => {
@@ -652,5 +682,49 @@ describe('ShopGateway github entries', () => {
     const result = await gateway.uninstall({ name: 'dsh-repo-plugin' })
     expect(result.ok).toBe(true)
     expect(JSON.parse(readFileSync(join(dir, 'cache/github-pins.json'), 'utf8'))).toEqual({})
+  })
+})
+
+describe('subpackage install spec', () => {
+  const commit = 'b'.repeat(40)
+  const subEntry: CatalogEntry = {
+    name: 'sub-plugin', version: commit, integrity: commit, publishedAt: null,
+    repository: 'https://github.com/someone/monorepo', license: 'MIT',
+    tier: 'community', metadata: 'declared', source: 'github', repo: 'someone/monorepo',
+    subdir: 'packages/sub-plugin',
+  }
+
+  function gatewayWithSub(dir: string): ShopGateway {
+    const bin = join(dir, 'fake-dsh')
+    writeFileSync(bin, [
+      '#!/bin/sh',
+      `echo "$1 $2 $3 $4 $5" >> "${join(dir, 'calls.log')}"`,
+      'exit 0',
+      '',
+    ].join('\n'))
+    chmodSync(bin, 0o755)
+    return new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web',
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 4, builtAt: '', entries: [subEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      dshBin: bin,
+      hasGit: () => true,
+    })
+  }
+
+  it('spawns github:owner/slug#commit&path:<subdir> and records the pin', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-sub-install-'))
+    const gateway = gatewayWithSub(dir)
+    const result = await gateway.install({ name: 'sub-plugin', version: commit, acknowledged: true })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const deadline = Date.now() + 5000
+    let terminal = gateway.installStatus({ installId: result.installId })
+    while (terminal.state === 'running' && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+      terminal = gateway.installStatus({ installId: result.installId })
+    }
+    expect(terminal.state).toBe('done')
+    expect(readFileSync(join(dir, 'calls.log'), 'utf8')).toContain(`plugin --profile web add github:someone/monorepo#${commit}&path:packages/sub-plugin`)
+    expect(JSON.parse(readFileSync(join(dir, 'cache/github-pins.json'), 'utf8'))).toEqual({ 'sub-plugin': commit })
   })
 })

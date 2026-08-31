@@ -62,6 +62,7 @@ export function assignRepoTier(accepted: RepoAccepted, config: RegistryConfig): 
     catalog: accepted.catalog,
     source: 'github' as const,
     repo: repo.repo,
+    ...(repo.subdir !== undefined ? { subdir: repo.subdir } : {}),
   }
   // A review whose only pin is a version belongs to an npm entry of the same
   // bundle name, not to this repo candidate.

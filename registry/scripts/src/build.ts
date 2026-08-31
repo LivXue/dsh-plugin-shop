@@ -22,6 +22,7 @@ import { parseRepoState, serializeRepoState } from './repo-state.ts'
 import { githubOwnerName } from './github-repo.ts'
 import { fetchCandidates, searchByKeywords } from './npm-client.ts'
 import { runPipeline } from './pipeline.ts'
+import { SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION } from './emit.ts'
 import { assembleStarsByKey } from './stars-assemble.ts'
 import type { Candidate, Rejection, RepoCandidate } from './types.ts'
 
@@ -42,6 +43,13 @@ const OUT_DIR = 'dist/v1'
 // requests carry it as a Bearer header and the quota lands on the token.
 const npmToken = process.env.NPM_TOKEN
 
+// The backup registry the fetch layer fails over to on unavailability only
+// (network throw, stalled connection, 5xx — never a 404). Read-only: the
+// install path still runs through the user's own pnpm and registry config.
+// Default-on per the 2026-08-31 hub-borrowings design (C); set
+// NPM_BACKUP_REGISTRY to an empty string to disable.
+const npmBackupRegistry = process.env.NPM_BACKUP_REGISTRY ?? 'https://registry.npmmirror.com'
+
 // The same token the stars sidecar uses; also the GitHub API's quota key.
 const ghToken = process.env.GITHUB_TOKEN ?? ''
 
@@ -49,9 +57,9 @@ const config = loadRegistryConfig(REGISTRY_DIR)
 let candidates: Candidate[]
 let rejections: Rejection[]
 if (harvestFrom === undefined) {
-  const names = await searchByKeywords(fetch, undefined, npmToken)
+  const names = await searchByKeywords(fetch, undefined, npmToken, npmBackupRegistry)
   process.stderr.write(`harvested ${names.length} npm candidate(s)\n`)
-  const harvested = await fetchCandidates(names, fetch, npmToken)
+  const harvested = await fetchCandidates(names, fetch, npmToken, npmBackupRegistry)
   candidates = harvested.candidates
   rejections = harvested.rejections
 } else {
@@ -75,6 +83,9 @@ let repoNote = ''
 // Star counts the search itself carried, keyed by repo full name. Empty
 // when the github harvest skipped — every repo then goes through GraphQL.
 let repoSearchStars = new Map<string, number>()
+// Subpackage probing rides the schemaVersion-4 flag (set inside the harvest
+// branch); the emit at the bottom reads it for the version decision.
+let probeSubpackages = false
 const repoFlag = process.env.SHOP_HARVEST_REPOS === '1'
 if (ghToken === '') {
   repoNote = 'github harvest skipped: GITHUB_TOKEN is not set'
@@ -92,9 +103,13 @@ if (ghToken === '') {
     ? parseRepoState(readFileSync(repoStatePath, 'utf8'))
     : {}
   const budget = Number(process.env.REPO_BACKFILL_BUDGET ?? '2000')
+  // Subpackage probing rides the schemaVersion-4 flag: probing off, the
+  // harvest behaves exactly as before and emits v3; the flag flips in the
+  // release commit that ships the v4-reading client.
+  probeSubpackages = process.env.SHOP_HARVEST_SUBPACKAGES === '1'
   let repos: Awaited<ReturnType<typeof harvestRepos>>
   try {
-    repos = await harvestRepos({ state: repoState, budget, fetchImpl: fetch, token: ghToken })
+    repos = await harvestRepos({ state: repoState, budget, fetchImpl: fetch, token: ghToken, probeSubpackages })
   } catch (error) {
     // One whole-harvest retry after a pause: the GitHub half runs through
     // shared egress whose throttles outlast the per-request backoffs. A
@@ -190,7 +205,7 @@ if (starsToken === '') {
   }
 }
 
-const artifacts = runPipeline(candidates, repoCandidates, config, new Date().toISOString(), rejections, starsInfo)
+const artifacts = runPipeline(candidates, repoCandidates, config, new Date().toISOString(), rejections, starsInfo, probeSubpackages ? SUBPACKAGE_SCHEMA_VERSION : SCHEMA_VERSION)
 
 writeFileSync(join(OUT_DIR, artifacts.pluginsFileName), artifacts.pluginsJson)
 writeFileSync(join(OUT_DIR, 'index.json'), artifacts.indexJson)

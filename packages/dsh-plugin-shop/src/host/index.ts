@@ -111,7 +111,7 @@ export type ShopUpdateResult =
  * installed, falling back to the `github:owner/slug` spec when the pin is
  * unknown; `outdated` is the Host's verdict that the installed version sits
  * behind the catalog's — the client never does version math. */
-export interface ShopInstalledEntry { name: string; installed: string; latest: string; outdated: boolean }
+export interface ShopInstalledEntry { name: string; installed: string; latest: string; outdated: boolean; enabled: boolean }
 
 /** One row of the row config the bundle patch (§cordis.patch.yml) supplies. */
 interface ShopRowConfig {
@@ -234,9 +234,14 @@ export class ShopGateway extends TypertRemoteService {
 
   /** Enable or disable one installed plugin, hot (§8): a disable writes the
    * row to the user layer, an enable drops it again so the bundle default
-   * rules — the CLI's watchUserPatches applies either through HMR. */
+   * rules — the CLI's watchUserPatches applies either through HMR. The shop's
+   * own row and the framework's bundles are never toggleable: disabling the
+   * host chain would break HMR itself. */
   @Remote('setEnabled')
   setEnabled(args: { name: string; enabled: boolean }): ShopSetEnabledResult {
+    if (args.name === 'dsh-plugin-shop' || args.name.startsWith('@deepseek-ai/')) {
+      return { ok: false, detail: `dsh-plugin-shop: ${args.name} is part of the harness chain and cannot be toggled from the shop` }
+    }
     const entry = this.listInventory().find(entry => entry.moduleName === args.name)
     if (entry === undefined) return { ok: false, detail: `dsh-plugin-shop: ${args.name} is not installed` }
     setUserLayerRow({ profileDir: this.profileDirResolved(), row: { id: entry.entryId, disabled: !args.enabled } })
@@ -307,7 +312,8 @@ export class ShopGateway extends TypertRemoteService {
     // honest without asserting a state the validator never produces.
     if (entry === undefined) return { ok: false, code: 'not-in-catalog', detail: `dsh-plugin-shop: ${args.name} is not in the catalog` }
     // The Host builds the spec itself: npm entries become `name@version`,
-    // github entries become `github:owner/slug#commit` — both from fields the
+    // github entries become `github:owner/slug#commit` (subpackage entries
+    // `github:owner/slug#commit&path:<subdir>`) — all from fields the
     // snapshot validated, never from a client-supplied string (§7.2).
     let spec: string
     if (entry.source === 'github') {
@@ -319,7 +325,7 @@ export class ShopGateway extends TypertRemoteService {
       if (!this.hasGit()) {
         return { ok: false, code: 'git-missing', detail: 'dsh-plugin-shop: git is not on PATH, which github installs require; install git and retry' }
       }
-      spec = `github:${entry.repo}#${args.version}`
+      spec = `github:${entry.repo}#${args.version}${entry.subdir !== undefined ? `&path:${entry.subdir}` : ''}`
     } else {
       spec = `${args.name}@${args.version}`
     }
@@ -381,6 +387,15 @@ export class ShopGateway extends TypertRemoteService {
     const manifest = readProfileManifest('dsh-plugin-shop', this.profileDirResolved())
     const dependencies = manifest.dependencies ?? {}
     const pins = readRepoPins(this.pinFs, this.pinsPath())
+    // The inventory knows the real enabled state. When the service is not
+    // mounted (an older harness), every entry reads as enabled — the same
+    // optimistic assumption the pre-inventory client made.
+    let byName = new Map<string, boolean>()
+    try {
+      byName = new Map(this.listInventory().map(entry => [entry.moduleName, entry.enabled]))
+    } catch {
+      // pluginInventory is not mounted; `enabled` stays the default below.
+    }
     const installed: ShopInstalledEntry[] = []
     for (const entry of this.lastSnapshot.entries) {
       const spec = dependencies[entry.name]
@@ -396,9 +411,16 @@ export class ShopGateway extends TypertRemoteService {
           installed: pin ?? spec,
           latest: entry.version,
           outdated: pin !== undefined && pin !== entry.version,
+          enabled: byName.get(entry.name) ?? true,
         })
       } else {
-        installed.push({ name: entry.name, installed: spec, latest: entry.version, outdated: this.isBehind(spec, entry.version) })
+        installed.push({
+          name: entry.name,
+          installed: spec,
+          latest: entry.version,
+          outdated: this.isBehind(spec, entry.version),
+          enabled: byName.get(entry.name) ?? true,
+        })
       }
     }
     return installed

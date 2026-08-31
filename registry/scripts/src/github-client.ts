@@ -16,6 +16,7 @@
 
 import { fetchWithRetry } from './npm-client.ts'
 import { diffRepoState, nextRepoState, type RepoSeen, type RepoState } from './repo-state.ts'
+import { hasWorkspaceDeps, monorepoSignal, selectSubpackagePaths } from './subpackage-select.ts'
 import type { RepoCandidate } from './types.ts'
 
 const GITHUB_API = 'https://api.github.com'
@@ -52,12 +53,13 @@ async function fetchRobust(
   }
 }
 
-/** One repository's fetch outcome: a gated-able candidate, or the reason none
+/** One repository's fetch outcome: gated-able candidates (one for a plugin
+ * root, several for a monorepo's plugin subpackages), or the reason none
  * could be produced. `no-manifest` means the repo exists but has no usable
  * `package.json` at the default branch — the repo is not an installable
  * plugin unit, an author-readable fact distinct from a transient failure. */
 export type RepoFetchResult =
-  | { ok: true; candidate: RepoCandidate }
+  | { ok: true; candidates: RepoCandidate[] }
   | { ok: false; code: RepoFetchFailure['code']; detail: string }
 
 /** One repository that could not become a candidate, with the reason. */
@@ -295,14 +297,104 @@ async function fetchHeadCommit(
 }
 
 /**
- * Fetch one repository's manifest and project it into a candidate.
- * @returns the candidate, or a code + author-readable reason.
+ * Project one manifest (root or subpackage) into a candidate, or null when
+ * it declares no usable name. `subdir` is present exactly for subpackages.
+ */
+function projectCandidate(
+  meta: RepoMeta,
+  manifest: unknown,
+  head: { sha: string; date: string },
+  subdir: string | undefined,
+): RepoCandidate | null {
+  const m = manifest as {
+    name?: unknown
+    description?: unknown
+    scripts?: { prepare?: unknown; prepack?: unknown }
+    dsh?: { bundle?: unknown; catalog?: unknown }
+  }
+  const scripts = typeof m.scripts === 'object' && m.scripts !== null ? m.scripts : {}
+  if (typeof m.name !== 'string' || m.name === '') return null
+  return {
+    name: m.name,
+    repo: meta.fullName,
+    commit: head.sha,
+    version: head.sha,
+    publishedAt: head.date === '' ? null : head.date,
+    repository: `https://github.com/${meta.fullName}`,
+    license: meta.license,
+    hasBundle: m.dsh?.bundle !== undefined,
+    requiresBuild: typeof scripts.prepare === 'string' || typeof scripts.prepack === 'string',
+    hasWorkspaceDeps: hasWorkspaceDeps(manifest),
+    catalog: m.dsh?.catalog ?? null,
+    description: meta.description ?? (typeof m.description === 'string' ? m.description : null),
+    ...(subdir !== undefined ? { subdir } : {}),
+  }
+}
+
+/**
+ * Probe a monorepo's subpackages: list the tree once, select the candidate
+ * directories (pure `selectSubpackagePaths`), and project the manifests
+ * that declare a bundle. Bundle-less subpackages are not plugin candidates —
+ * rejecting each one would drown the report in noise the author already
+ * knows; the repo-level `no-bundle` rejection covers the case where none
+ * qualify. Only the `hasBundle` filter is applied here; the gate remains
+ * the sole policy authority for every candidate it receives.
+ */
+async function probeSubpackageCandidates(
+  owner: string,
+  slug: string,
+  meta: RepoMeta,
+  rootManifest: unknown,
+  head: { sha: string; date: string },
+  fetchImpl: typeof fetch,
+  sleep: (ms: number) => Promise<void>,
+  token: string | undefined,
+): Promise<RepoCandidate[]> {
+  const treeUrl = `${GITHUB_API}/repos/${owner}/${slug}/git/trees/${meta.defaultBranch}?recursive=1`
+  const treeResponse = await fetchRobust(treeUrl, fetchImpl, sleep, token)
+  if (!treeResponse.ok) return []
+  let treeBody: { tree?: unknown } = {}
+  try {
+    const parsed = await treeResponse.json() as unknown
+    if (parsed !== null && typeof parsed === 'object') treeBody = parsed as typeof treeBody
+  } catch {
+    return []
+  }
+  // A truncated tree (>100k entries) may hide some subpackages; the repo is
+  // re-probed when it changes, and the loss costs only a later re-probe —
+  // unlike the search cap, this truncation is not pool-wide.
+  const paths = Array.isArray(treeBody.tree)
+    ? treeBody.tree.map(entry => (entry as { path?: unknown }).path).filter((p): p is string => typeof p === 'string')
+    : []
+  const dirs = selectSubpackagePaths(rootManifest, paths)
+  const candidates: RepoCandidate[] = []
+  for (const dir of dirs) {
+    const subUrl = `${RAW_GITHUB}/${owner}/${slug}/${meta.defaultBranch}/${dir}/package.json`
+    const subResponse = await fetchRobust(subUrl, fetchImpl, sleep, token)
+    if (!subResponse.ok) continue
+    let subManifest: unknown
+    try {
+      subManifest = await subResponse.json()
+    } catch {
+      continue
+    }
+    const sub = projectCandidate(meta, subManifest, head, dir)
+    if (sub !== null && sub.hasBundle) candidates.push(sub)
+  }
+  return candidates
+}
+
+/**
+ * Fetch one repository's manifest — and, for a monorepo root without a
+ * bundle, its subpackage manifests — and project them into candidates.
+ * @returns the candidates, or a code + author-readable reason.
  */
 export async function fetchRepoCandidate(
   meta: RepoMeta,
   fetchImpl: typeof fetch = fetch,
   sleep: (ms: number) => Promise<void> = async (ms: number) => { await new Promise(resolve => setTimeout(resolve, ms)) },
   token: string | undefined = undefined,
+  probeSubpackages = true,
 ): Promise<RepoFetchResult> {
   const [owner, slug] = meta.fullName.split('/')
   if (owner === undefined || slug === undefined) {
@@ -321,39 +413,26 @@ export async function fetchRepoCandidate(
     // Same rule as npm: an unreadable body is a rejection, not a crash.
     return { ok: false, code: 'no-manifest', detail: 'package.json was unreadable.' }
   }
-  const m = manifest as {
-    name?: unknown
-    description?: unknown
-    scripts?: { prepare?: unknown; prepack?: unknown }
-    dsh?: { bundle?: unknown; catalog?: unknown }
-  }
-  const scripts = typeof m.scripts === 'object' && m.scripts !== null ? m.scripts : {}
-  const requiresBuild = typeof scripts.prepare === 'string' || typeof scripts.prepack === 'string'
-  if (typeof m.name !== 'string' || m.name === '') {
-    return { ok: false, code: 'no-manifest', detail: 'package.json declares no name, so dsh has nothing to register.' }
-  }
 
   const head = await fetchHeadCommit(owner, slug, meta.defaultBranch, fetchImpl, sleep, token)
   if (head === null) {
     return { ok: false, code: 'fetch-failed', detail: `Could not resolve the head commit of ${meta.fullName}.` }
   }
 
-  return {
-    ok: true,
-    candidate: {
-      name: m.name,
-      repo: meta.fullName,
-      commit: head.sha,
-      version: head.sha,
-      publishedAt: head.date === '' ? null : head.date,
-      repository: `https://github.com/${owner}/${slug}`,
-      license: meta.license,
-      hasBundle: m.dsh?.bundle !== undefined,
-      requiresBuild,
-      catalog: m.dsh?.catalog ?? null,
-      description: meta.description ?? (typeof m.description === 'string' ? m.description : null),
-    },
+  const root = projectCandidate(meta, manifest, head, undefined)
+  if (root !== null && root.hasBundle) {
+    return { ok: true, candidates: [root] }
   }
+  if (probeSubpackages && monorepoSignal(manifest)) {
+    const subs = await probeSubpackageCandidates(owner, slug, meta, manifest, head, fetchImpl, sleep, token)
+    if (subs.length > 0) return { ok: true, candidates: subs }
+  }
+  if (root === null) {
+    return { ok: false, code: 'no-manifest', detail: 'package.json declares no name and no installable subpackage, so dsh has nothing to register.' }
+  }
+  // A root without a bundle: returned so the gate can reject it with the
+  // author-readable no-bundle reason.
+  return { ok: true, candidates: [root] }
 }
 
 /** Fewer parallel connections than the npm harvest: the GitHub CDN drops
@@ -369,6 +448,9 @@ export interface RepoHarvestOptions {
   fetchImpl?: typeof fetch
   sleep?: (ms: number) => Promise<void>
   token?: string
+  /** Whether bundle-less monorepo roots get a subpackage probe. Gated by the
+   * schemaVersion-4 flag so no v3 client ever meets a subdir entry. */
+  probeSubpackages?: boolean
 }
 
 export interface RepoHarvestResult {
@@ -407,6 +489,7 @@ export async function harvestRepos(options: RepoHarvestOptions): Promise<RepoHar
     fetchImpl = fetch,
     sleep = async (ms: number) => { await new Promise(resolve => setTimeout(resolve, ms)) },
     token = undefined,
+    probeSubpackages = true,
   } = options
   if (token === undefined) {
     return { candidates: [], failures: [], seen: [], gone: [], nextState: state, skipped: true, searchStars: new Map(), windowCount: 0, fetched: 0, carried: 0, deferred: 0 }
@@ -419,23 +502,42 @@ export async function harvestRepos(options: RepoHarvestOptions): Promise<RepoHar
   const { toFetch, gone } = diffRepoState(state, seen)
   // Budget slice: sorted order keeps the deferral deterministic.
   const queue = toFetch.sort((a, b) => (a.repo < b.repo ? -1 : a.repo > b.repo ? 1 : 0)).slice(0, budget)
-  const fresh = new Map<string, RepoCandidate>()
+  const fresh = new Map<string, { candidates: RepoCandidate[]; failure?: { code: 'no-manifest'; detail: string } }>()
   const failures: RepoFetchFailure[] = []
   for (let i = 0; i < queue.length; i += REPO_CONCURRENCY) {
     const batch = queue.slice(i, i + REPO_CONCURRENCY)
     const results = await Promise.all(batch.map(async entry => {
       const meta = metas.get(entry.repo)
       if (meta === undefined) return { entry, result: { ok: false, code: 'fetch-failed', detail: 'search result lost between the enumeration and the fetch' } as RepoFetchResult }
-      return { entry, result: await fetchRepoCandidate(meta, fetchImpl, sleep, token) }
+      return { entry, result: await fetchRepoCandidate(meta, fetchImpl, sleep, token, probeSubpackages) }
     }))
     for (const { entry, result } of results) {
-      if (result.ok) fresh.set(entry.repo, result.candidate)
-      else failures.push({ repo: entry.repo, code: result.code, detail: result.detail })
+      if (result.ok) {
+        fresh.set(entry.repo, { candidates: result.candidates })
+      } else {
+        failures.push({ repo: entry.repo, code: result.code, detail: result.detail })
+        // A deterministic failure on a repo with NO recorded entry is
+        // recorded so the next runs carry the reason instead of re-fetching
+        // the same dead end and re-consuming the budget. A repo WITH a
+        // recorded entry keeps its candidates: the old pushedAt mismatch
+        // schedules the retry next run (a `fetch-failed` stays transient
+        // either way).
+        if (result.code === 'no-manifest' && state[entry.repo] === undefined) {
+          fresh.set(entry.repo, { candidates: [], failure: { code: result.code, detail: result.detail } })
+        }
+      }
     }
   }
   const nextState = nextRepoState(state, seen, fresh)
-  const candidates = Object.values(nextState).map(entry => entry.candidate)
-  const carried = candidates.length - fresh.size
+  const candidates = Object.values(nextState).flatMap(entry => entry.candidates)
+  const carried = Object.keys(nextState).length - fresh.size
+  // Carried deterministic failures keep flowing into the report every run —
+  // the catalog accounts for every pool member, fetched or carried.
+  for (const [repo, entry] of Object.entries(nextState)) {
+    if (entry.failure !== undefined && !fresh.has(repo)) {
+      failures.push({ repo, code: entry.failure.code, detail: entry.failure.detail })
+    }
+  }
   return {
     candidates,
     failures,

@@ -13,6 +13,82 @@ const REGISTRY = 'https://registry.npmjs.org'
 const PAGE_SIZE = 250
 
 /**
+ * Per-attempt bound on a registry request. A stalled connection fails over
+ * to the backup registry instead of hanging the build — the hub's
+ * stall-detection borrowing, in its read-only form (the install path still
+ * runs through the user's own pnpm and registry config).
+ */
+const REQUEST_TIMEOUT_MS = 30_000
+
+/** A request that outlived {@link REQUEST_TIMEOUT_MS}; a failover trigger. */
+class FetchTimeoutError extends Error {}
+
+function registryUrl(registry: string, path: string): string {
+  return `${registry.replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}`
+}
+
+/** Wrap a fetch so no request can outlive `ms`: the timer aborts the
+ * request's own signal and rejects the returned promise, whichever a given
+ * implementation honors. */
+function withTimeout(fetchImpl: typeof fetch, ms: number): typeof fetch {
+  return async (input, init) => {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), ms)
+    try {
+      return await Promise.race([
+        fetchImpl(input, { ...init, signal: controller.signal }),
+        new Promise<never>((_, reject) => {
+          controller.signal.addEventListener('abort', () => {
+            reject(new FetchTimeoutError(`registry request exceeded ${ms}ms`))
+          }, { once: true })
+        }),
+      ])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+}
+
+/**
+ * Fetch a registry path with a backup registry absorbing ONLY
+ * unavailability: a network throw, a stalled connection (the per-attempt
+ * timeout), or a 5xx. A 4xx answer from the primary is authoritative and is
+ * returned as-is — a 404 is never re-litigated against a mirror, and an
+ * exhausted 429 reports the throttle rather than quietly switching source.
+ * When the backup also fails, the primary's failure is what propagates: a
+ * mirror's opinion must never masquerade as npm's.
+ */
+async function fetchWithFailover(
+  path: string,
+  fetchImpl: typeof fetch,
+  sleep: (ms: number) => Promise<void>,
+  token: string | undefined,
+  backupRegistry: string | undefined,
+  timeoutMs: number,
+): Promise<Response> {
+  const timed = withTimeout(fetchImpl, timeoutMs)
+  let primary: Response | null = null
+  let primaryError: unknown = undefined
+  try {
+    primary = await fetchWithRetry(registryUrl(REGISTRY, path), timed, sleep, token)
+    if (primary.ok || primary.status < 500) return primary
+    primaryError = new Error(`npm registry returned ${primary.status}`)
+  } catch (error) {
+    primaryError = error
+  }
+  if (backupRegistry === undefined) {
+    // No backup configured: behave exactly as before — the 5xx response
+    // returns to the caller (whose contextual error names the keyword), a
+    // network throw propagates.
+    if (primary !== null) return primary
+    throw primaryError
+  }
+  const backup = await fetchWithRetry(registryUrl(backupRegistry, path), timed, sleep, token)
+  if (!backup.ok) throw primaryError
+  return backup
+}
+
+/**
  * Upper bound on the number of search pages fetched per keyword by {@link searchByKeywords}.
  * Guards against an unbounded loop issuing endless requests against a public
  * API if the registry ever kept returning full pages: at `PAGE_SIZE` names
@@ -158,6 +234,8 @@ export async function searchByKeywords(
   fetchImpl: typeof fetch = fetch,
   sleep: (ms: number) => Promise<void> = defaultSleep,
   token: string | undefined = undefined,
+  backupRegistry: string | undefined = undefined,
+  timeoutMs: number = REQUEST_TIMEOUT_MS,
 ): Promise<string[]> {
   const seen = new Set<string>()
   for (const keyword of HARVEST_KEYWORDS) {
@@ -168,8 +246,8 @@ export async function searchByKeywords(
         )
       }
       const from = page * PAGE_SIZE
-      const url = `${REGISTRY}/-/v1/search?text=keywords:${keyword}&size=${PAGE_SIZE}&from=${from}`
-      const response = await fetchWithRetry(url, fetchImpl, sleep, token)
+      const path = `-/v1/search?text=keywords:${keyword}&size=${PAGE_SIZE}&from=${from}`
+      const response = await fetchWithFailover(path, fetchImpl, sleep, token, backupRegistry, timeoutMs)
       if (!response.ok) throw new Error(`npm search for keywords:${keyword} failed: ${response.status}`)
       const body = await response.json() as { objects?: { package?: { name?: unknown } }[] }
       const objects = body.objects ?? []
@@ -207,8 +285,10 @@ export async function fetchCandidate(
   fetchImpl: typeof fetch = fetch,
   sleep: (ms: number) => Promise<void> = defaultSleep,
   token: string | undefined = undefined,
+  backupRegistry: string | undefined = undefined,
+  timeoutMs: number = REQUEST_TIMEOUT_MS,
 ): Promise<CandidateResult> {
-  const response = await fetchWithRetry(`${REGISTRY}/${encodeURIComponent(name)}`, fetchImpl, sleep, token)
+  const response = await fetchWithFailover(encodeURIComponent(name), fetchImpl, sleep, token, backupRegistry, timeoutMs)
   if (!response.ok) return { ok: false, detail: `npm registry returned ${response.status} fetching ${name}` }
   let body: unknown
   try {
@@ -233,12 +313,13 @@ export async function fetchCandidates(
   names: string[],
   fetchImpl: typeof fetch = fetch,
   token: string | undefined = undefined,
+  backupRegistry: string | undefined = undefined,
 ): Promise<{ candidates: Candidate[]; rejections: Rejection[] }> {
   const candidates: Candidate[] = []
   const rejections: Rejection[] = []
   for (let i = 0; i < names.length; i += HARVEST_CONCURRENCY) {
     const batch = names.slice(i, i + HARVEST_CONCURRENCY)
-    const results = await Promise.all(batch.map(async name => ({ name, result: await fetchCandidate(name, fetchImpl, undefined, token) })))
+    const results = await Promise.all(batch.map(async name => ({ name, result: await fetchCandidate(name, fetchImpl, undefined, token, backupRegistry) })))
     for (const { name, result } of results) {
       if (result.ok) candidates.push(result.candidate)
       else rejections.push({ name, code: 'fetch-failed', detail: result.detail })

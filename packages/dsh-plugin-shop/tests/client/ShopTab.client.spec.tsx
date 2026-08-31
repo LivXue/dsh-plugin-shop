@@ -217,7 +217,7 @@ describe('ShopTab', () => {
   })
 
   it('offers the restart button after a successful uninstall', async () => {
-    const { injected } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false }])
+    const { injected } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }])
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-uninstall]')!)
@@ -500,7 +500,7 @@ describe('ShopTab', () => {
   })
 
   it('lists outdated installs with their installed and latest versions', async () => {
-    const { injected, installed } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true }])
+    const { injected, installed } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
     renderTab(injected)
     await waitFor(() => expect(screen.getByText(en.installedSection)).toBeTruthy())
     expect(screen.getByText('installed v1.0.0')).toBeTruthy()
@@ -509,17 +509,28 @@ describe('ShopTab', () => {
   })
 
   it('toggles an outdated install with setEnabled and shows the hot-apply note', async () => {
-    const { injected, setEnabled } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true }])
-    renderTab(injected)
+    const { injected, setEnabled } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
+    const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
-    const toggle = screen.getByRole('switch')
+    // Both the shelf card and the installed-section row carry a switch; this
+    // test drives the section's.
+    const toggle = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-toggle]')!
     fireEvent.click(toggle)
     await waitFor(() => expect(setEnabled).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', enabled: false }))
-    expect(screen.getByText(en.hotApplyNote)).toBeTruthy()
+    expect(container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-hot-apply]')).toBeTruthy()
+  })
+
+  it('renders a disabled installed plugin with its switch off', async () => {
+    const { injected } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.0.0', outdated: false, enabled: false }])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const cardSwitch = container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-toggle]') as HTMLButtonElement
+    expect(cardSwitch).not.toBeNull()
+    expect(cardSwitch.getAttribute('aria-checked')).toBe('false')
   })
 
   it('updates an outdated install to the latest version directly when verified', async () => {
-    const { injected, install } = bench(snapshot({ tier: 'verified' }), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true }])
+    const { injected, install } = bench(snapshot({ tier: 'verified' }), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
     // The card and the installed-section row both carry an update button; this
@@ -529,7 +540,7 @@ describe('ShopTab', () => {
   })
 
   it('gates a community-tier update behind the acknowledgement', async () => {
-    const { injected, install } = bench(snapshot({ tier: 'community' }), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true }])
+    const { injected, install } = bench(snapshot({ tier: 'community' }), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
     fireEvent.click(container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-update]')!)
@@ -540,7 +551,7 @@ describe('ShopTab', () => {
   })
 
   it('shows the installed label instead of an install button on the card of a current install', async () => {
-    const { injected } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false }])
+    const { injected } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }])
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     const card = container.querySelector('[data-shop-entry="dsh-hello-plugin"]')
@@ -554,7 +565,7 @@ describe('ShopTab', () => {
   })
 
   it('shows the update button instead of an install button on the card of an install behind the catalog', async () => {
-    const { injected, install } = bench(snapshot({ tier: 'verified' }), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true }])
+    const { injected, install } = bench(snapshot({ tier: 'verified' }), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
     const card = container.querySelector('[data-shop-entry="dsh-hello-plugin"]')
@@ -567,7 +578,7 @@ describe('ShopTab', () => {
   })
 
   it('uninstalls an installed plugin through the card button and shows the restart notice', async () => {
-    const { injected, uninstall } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false }])
+    const { injected, uninstall } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }])
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-uninstall]')!)
@@ -577,7 +588,7 @@ describe('ShopTab', () => {
   })
 
   it('renders the host detail when the uninstall is refused', async () => {
-    const { injected, uninstall } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false }])
+    const { injected, uninstall } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }])
     uninstall.mockResolvedValue({ ok: false, detail: 'dsh-plugin-shop: dsh-hello-plugin is not installed' })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
@@ -592,7 +603,7 @@ describe('ShopTab', () => {
       { ...result.plugins[0]!, name: 'dsh-installed' },
       { ...result.plugins[0]!, name: 'dsh-not-installed' },
     ]
-    const { injected } = bench(result, [{ name: 'dsh-installed', installed: '1.2.0', latest: '1.2.0', outdated: false }])
+    const { injected } = bench(result, [{ name: 'dsh-installed', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }])
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-not-installed')).toBeTruthy())
     const installedButton = screen.getByRole('button', { name: /^Installed 1$/ })
@@ -606,7 +617,7 @@ describe('ShopTab', () => {
   })
 
   it('gates the card update button behind the acknowledgement for a community install', async () => {
-    const { injected, install } = bench(snapshot({ tier: 'community' }), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true }])
+    const { injected, install } = bench(snapshot({ tier: 'community' }), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
     fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-update]')!)
@@ -671,7 +682,7 @@ describe('ShopTab shop-like filtering', () => {
   })
 
   it('keeps an installed shop-like plugin manageable in the installed section', async () => {
-    const { injected } = bench(twoPlugins(), [{ name: 'dsh-plugin-shop-2', installed: '^1.0.0', latest: '2.0.0', outdated: true }])
+    const { injected } = bench(twoPlugins(), [{ name: 'dsh-plugin-shop-2', installed: '^1.0.0', latest: '2.0.0', outdated: true, enabled: true }])
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     expect(screen.getByText('dsh-plugin-shop-2')).toBeTruthy()

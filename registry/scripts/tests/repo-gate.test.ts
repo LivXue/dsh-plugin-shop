@@ -23,6 +23,7 @@ function repo(overrides: Partial<RepoCandidate> = {}): RepoCandidate {
     license: 'MIT',
     hasBundle: true,
     requiresBuild: false,
+    hasWorkspaceDeps: false,
     catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
     description: 'A repo plugin.',
     ...overrides,
@@ -95,5 +96,25 @@ describe('gateRepo', () => {
     const byName = gateRepo(repo({ repo: 'someone/original', name: 'dsh-fs-too1' }), config)
     expect(byName.ok).toBe(false)
     if (!byName.ok) expect(byName.rejection.code).toBe('name-too-similar')
+  })
+})
+
+describe('workspace-deps and subpackage units', () => {
+  it('rejects a manifest with workspace:-protocol dependencies, naming the exit', () => {
+    const result = gateRepo(repo({ hasWorkspaceDeps: true }), config)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.rejection.code).toBe('workspace-deps')
+      expect(result.rejection.detail).toContain('Publish the package to npm')
+    }
+  })
+
+  it('names a subpackage rejection by repo#subdir — the unit an author fixes', () => {
+    const result = gateRepo(repo({ subdir: 'packages/plugin', license: null }), config)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.rejection.name).toBe('someone/dsh-repo-plugin#packages/plugin')
+      expect(result.rejection.code).toBe('no-license')
+    }
   })
 })

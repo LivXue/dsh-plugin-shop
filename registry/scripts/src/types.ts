@@ -62,6 +62,18 @@ export interface RepoCandidate {
    * the shop and is rejected at harvest.
    */
   requiresBuild: boolean
+  /**
+   * Whether the manifest declares a `workspace:`-protocol dependency. Those
+   * resolve only inside the repository's own workspace, so a git install
+   * from outside it cannot succeed (measured: pnpm fails with
+   * WORKSPACE_PKG_NOT_FOUND) — rejected at harvest.
+   */
+  hasWorkspaceDeps: boolean
+  /**
+   * The subpackage directory (e.g. `packages/foo`) when this candidate is a
+   * monorepo subpackage rather than the repo root; absent for root entries.
+   */
+  subdir?: string
   /** The raw `dsh.catalog` value from the repo's manifest; unvalidated until the gate runs. */
   catalog: unknown
   /** The GitHub repo `description`, used to derive a listing when `catalog` is absent. */
@@ -85,6 +97,7 @@ export type RejectionCode =
   | 'no-manifest'
   | 'shadowed-by-npm'
   | 'requires-build'
+  | 'workspace-deps'
   | 'repo-gone'
 
 /** One rejection, carrying an author-readable explanation. */
@@ -131,4 +144,7 @@ export interface Entry {
   source: 'npm' | 'github'
   /** `owner/slug` of the repository; present exactly when `source` is github. */
   repo?: string
+  /** The subpackage directory inside the repo; present exactly when the entry
+   * is a monorepo subpackage rather than the repo root. */
+  subdir?: string
 }

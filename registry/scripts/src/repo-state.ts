@@ -1,11 +1,14 @@
 /**
  * The committed memory of the GitHub half of the harvest: per repository,
- * the `pushed_at` the search last saw, the commit it resolved, and the
- * candidate it produced. The daily build re-runs the (cheap) partitioned
- * topic search, compares `pushed_at`, and re-fetches only the changed or
- * new repositories — the candidate of an untouched repo is carried over
- * verbatim, so a full manifest sweep of the ~20k-repo pool never has to fit
- * inside one run's quota.
+ * the `pushed_at` the search last saw, the commit it resolved, the
+ * candidates it produced, and — when the fetch ended deterministically —
+ * the failure that left it without candidates. The daily build re-runs the
+ * (cheap) partitioned topic search, compares `pushed_at`, and re-fetches
+ * only the changed or new repositories; the candidates of an untouched repo
+ * are carried over verbatim, and so is a recorded deterministic failure —
+ * a known `no-manifest`/`no-bundle` repo must not re-consume the per-run
+ * fetch budget every day (measured 2026-08-31: the failures re-fetched
+ * forever, and the subpackage probe multiplies their cost).
  *
  * The file is a deterministic build input like `verified.yml`: committed
  * daily, sorted, and a malformed one throws rather than silently dropping
@@ -14,14 +17,17 @@
 
 import type { RepoCandidate } from './types.ts'
 
-/** One repository's recorded state. */
+/** One repository's recorded state. Exactly one of the outcome fields is
+ * present: candidates for a usable fetch, or a failure reason. */
 export interface RepoStateEntry {
   /** The `pushed_at` the search API reported; changes mean "re-fetch". */
   pushedAt: string
   /** The pinned commit of the default branch, 40 hex chars. */
   commit: string
-  /** The last candidate produced; carried over while `pushedAt` is unchanged. */
-  candidate: RepoCandidate
+  /** The candidates produced; carried over while `pushedAt` is unchanged. */
+  candidates: RepoCandidate[]
+  /** The recorded deterministic failure; re-fetched only when `pushedAt` changes. */
+  failure?: { code: 'no-manifest' | 'fetch-failed'; detail: string }
 }
 
 /** Repo full name (`owner/slug`) to its recorded state. */
@@ -33,8 +39,13 @@ export interface RepoSeen {
   pushedAt: string
 }
 
-/** Parse the committed state file; a malformed file throws (it is a build
- * input, and silently dropping it would schedule a fresh full sweep). */
+/**
+ * Parse the committed state file; a malformed file throws (it is a build
+ * input, and silently dropping it would schedule a fresh full sweep). The
+ * pre-subpackage shape (`candidate`, singular) still parses — the committed
+ * file predates the candidates array — and serializes back in the new
+ * shape.
+ */
 export function parseRepoState(text: string): RepoState {
   const raw = JSON.parse(text) as unknown
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
@@ -42,15 +53,37 @@ export function parseRepoState(text: string): RepoState {
   }
   const state: RepoState = {}
   for (const [repo, value] of Object.entries(raw)) {
-    const entry = value as { pushedAt?: unknown; commit?: unknown; candidate?: unknown }
+    const entry = value as {
+      pushedAt?: unknown
+      commit?: unknown
+      candidate?: unknown
+      candidates?: unknown
+      failure?: unknown
+    }
     if (typeof entry !== 'object' || entry === null) {
       throw new Error(`repo-state.json: ${repo} is not an object`)
     }
-    if (typeof entry.pushedAt !== 'string' || typeof entry.commit !== 'string'
-      || typeof entry.candidate !== 'object' || entry.candidate === null) {
-      throw new Error(`repo-state.json: ${repo} is missing pushedAt/commit/candidate`)
+    if (typeof entry.pushedAt !== 'string' || typeof entry.commit !== 'string') {
+      throw new Error(`repo-state.json: ${repo} is missing pushedAt/commit`)
     }
-    state[repo] = entry as RepoStateEntry
+    let candidates: RepoCandidate[]
+    if (Array.isArray(entry.candidates)) {
+      candidates = entry.candidates as RepoCandidate[]
+    } else if (typeof entry.candidate === 'object' && entry.candidate !== null) {
+      candidates = [entry.candidate as RepoCandidate]
+    } else {
+      throw new Error(`repo-state.json: ${repo} has neither candidates nor a candidate`)
+    }
+    state[repo] = { pushedAt: entry.pushedAt, commit: entry.commit, candidates }
+    if (entry.failure !== undefined) {
+      const failure = entry.failure as { code?: unknown; detail?: unknown }
+      if (typeof failure !== 'object' || failure === null
+        || (failure.code !== 'no-manifest' && failure.code !== 'fetch-failed')
+        || typeof failure.detail !== 'string') {
+        throw new Error(`repo-state.json: ${repo} has a malformed failure record`)
+      }
+      state[repo]!.failure = { code: failure.code, detail: failure.detail }
+    }
   }
   return state
 }
@@ -82,28 +115,34 @@ export function diffRepoState(state: RepoState, seen: RepoSeen[]): { toFetch: Re
 
 /**
  * Merge one run's results into the next state: fetched repos record their
- * fresh candidate; carried repos keep the recorded one; gone repos drop.
+ * fresh outcome (candidates or a failure); carried repos keep the recorded
+ * one; gone repos drop.
  * @param state - the previous state.
  * @param seen - everything the search saw this run.
- * @param fetched - fresh candidates this run produced, keyed by repo.
+ * @param fetched - fresh outcomes this run produced, keyed by repo.
  */
 export function nextRepoState(
   state: RepoState,
   seen: RepoSeen[],
-  fetched: Map<string, RepoCandidate>,
+  fetched: Map<string, { candidates: RepoCandidate[]; failure?: { code: 'no-manifest' | 'fetch-failed'; detail: string } }>,
 ): RepoState {
   const next: RepoState = {}
   for (const entry of seen) {
     const fresh = fetched.get(entry.repo)
     const recorded = state[entry.repo]
     if (fresh !== undefined) {
-      next[entry.repo] = { pushedAt: entry.pushedAt, commit: fresh.commit, candidate: fresh }
+      next[entry.repo] = {
+        pushedAt: entry.pushedAt,
+        commit: fresh.candidates[0]?.commit ?? recorded?.commit ?? '',
+        candidates: fresh.candidates,
+        ...(fresh.failure !== undefined ? { failure: fresh.failure } : {}),
+      }
     } else if (recorded !== undefined) {
       next[entry.repo] = recorded
     }
-    // A seen repo with neither a fresh candidate nor a recorded one stays
-    // out of the state — its fetch was deferred past the budget and it has
-    // never been fetched; next run's toFetch picks it up again.
+    // A seen repo with neither a fresh outcome nor a recorded one stays out
+    // of the state — its fetch was deferred past the budget and it has never
+    // been fetched; next run's toFetch picks it up again.
   }
   return next
 }

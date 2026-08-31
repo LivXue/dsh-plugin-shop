@@ -5,9 +5,16 @@ import type { Entry, Rejection } from './types.ts'
  * Catalog format version. A consumer refuses a higher value. Bumped to 2 when
  * `Entry` gained `metadata` and `catalog.summary.zh` became optional (§6.2);
  * bumped to 3 when entries gained `source` and repo entries (`repo`, commit
- * pinning) joined the npm ones (2026-08-30 github-channel design).
+ * pinning) joined the npm ones (2026-08-30 github-channel design). 4 adds
+ * `subdir` for monorepo-subpackage entries (2026-08-31 hub-borrowings A) —
+ * emitted only when the build's flag says so, so a v3 client never meets an
+ * entry it would misinstall (v3 clients ignore `subdir` and would install
+ * the monorepo root, a silent no-op).
  */
 export const SCHEMA_VERSION = 3
+
+/** The version this build emits; see {@link SCHEMA_VERSION} for the 4-bump. */
+export const SUBPACKAGE_SCHEMA_VERSION = 4
 
 /** The stars sidecar pointer the index may carry (spec 2026-08-26-github-stars-design.md §4.1). */
 export interface StarsPointer { url: string; sha256: string }
@@ -48,20 +55,26 @@ function escapeCell(value: string): string {
  * @param stars - optional pointer to a published stars sidecar; omitted from the index when null.
  * @returns the artifacts to publish and commit.
  */
-export function emit(entries: Entry[], rejections: Rejection[], builtAt: string, stars?: StarsPointer | null): Artifacts {
+export function emit(
+  entries: Entry[],
+  rejections: Rejection[],
+  builtAt: string,
+  stars?: StarsPointer | null,
+  schemaVersion: number = SCHEMA_VERSION,
+): Artifacts {
   const sorted = [...entries].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
   const denied = rejections
     .filter(r => r.code === 'denied')
     .map(r => ({ name: r.name, detail: r.detail }))
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-  const pluginsJson = `${JSON.stringify({ schemaVersion: SCHEMA_VERSION, plugins: sorted, denied }, null, 2)}\n`
+  const pluginsJson = `${JSON.stringify({ schemaVersion, plugins: sorted, denied }, null, 2)}\n`
   const sha256 = createHash('sha256').update(pluginsJson).digest('hex')
   const pluginsFileName = `plugins.${sha256}.json`
 
   const sortedRejections = [...rejections].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
 
   const indexJson = `${JSON.stringify({
-    schemaVersion: SCHEMA_VERSION,
+    schemaVersion,
     builtAt,
     count: sorted.length,
     rejected: sortedRejections.length,

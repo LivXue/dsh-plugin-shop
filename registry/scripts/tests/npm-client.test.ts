@@ -353,3 +353,93 @@ describe('fetchCandidate', () => {
     expect(!result.ok && result.detail).toContain('unreadable')
   })
 })
+
+describe('registry failover', () => {
+  const noSleep = async (_ms: number) => {}
+  const packument = { name: 'dsh-failover', 'dist-tags': { latest: '1.0.0' }, versions: { '1.0.0': { dist: { integrity: 'sha512-x' }, license: 'MIT' } } }
+
+  it('falls back to the backup registry when the primary throws, and uses the backup answer', async () => {
+    const urls: string[] = []
+    const fetchImpl = (async (url: string | URL) => {
+      urls.push(String(url))
+      if (String(url).startsWith('https://registry.npmjs.org')) throw new Error('UND_ERR_HEADERS_TIMEOUT')
+      return new Response(JSON.stringify(packument), { status: 200 })
+    }) as unknown as typeof fetch
+    const result = await fetchCandidate('dsh-failover', fetchImpl, noSleep, undefined, 'https://registry.npmmirror.com')
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.candidate.name).toBe('dsh-failover')
+    expect(urls[0]).toContain('registry.npmjs.org')
+    expect(urls[1]).toContain('registry.npmmirror.com')
+  })
+
+  it('falls back on a primary 5xx', async () => {
+    let calls = 0
+    const fetchImpl = (async (url: string | URL) => {
+      calls += 1
+      if (String(url).startsWith('https://registry.npmjs.org')) return new Response('bad gateway', { status: 502 })
+      return new Response(JSON.stringify(packument), { status: 200 })
+    }) as unknown as typeof fetch
+    const result = await fetchCandidate('dsh-failover', fetchImpl, noSleep, undefined, 'https://registry.npmmirror.com')
+    expect(result.ok).toBe(true)
+    expect(calls).toBe(2)
+  })
+
+  it('falls back on a stalled primary — the timeout bounds the hang', async () => {
+    let backupCalled = false
+    const fetchImpl = (async (url: string | URL) => {
+      if (String(url).startsWith('https://registry.npmjs.org')) return new Promise<Response>(() => {})
+      backupCalled = true
+      return new Response(JSON.stringify(packument), { status: 200 })
+    }) as unknown as typeof fetch
+    const result = await fetchCandidate('dsh-failover', fetchImpl, noSleep, undefined, 'https://registry.npmmirror.com', 50)
+    expect(result.ok).toBe(true)
+    expect(backupCalled).toBe(true)
+  })
+
+  it('never falls back on a 404 — the primary answer is authoritative', async () => {
+    const fetchImpl = (async (url: string | URL) => {
+      if (String(url).startsWith('https://registry.npmjs.org')) return new Response('not found', { status: 404 })
+      throw new Error('backup must not be consulted for a 404')
+    }) as unknown as typeof fetch
+    const result = await fetchCandidate('dsh-missing', fetchImpl, noSleep, undefined, 'https://registry.npmmirror.com')
+    expect(result.ok).toBe(false)
+    expect(!result.ok && result.detail).toContain('404')
+  })
+
+  it('does not fall back on an exhausted 429', async () => {
+    let backupCalls = 0
+    const fetchImpl = (async (url: string | URL) => {
+      if (String(url).startsWith('https://registry.npmjs.org')) return new Response('throttled', { status: 429 })
+      backupCalls += 1
+      return new Response('unexpected', { status: 500 })
+    }) as unknown as typeof fetch
+    const result = await fetchCandidate('dsh-throttled', fetchImpl, noSleep, undefined, 'https://registry.npmmirror.com')
+    expect(result.ok).toBe(false)
+    expect(!result.ok && result.detail).toContain('429')
+    expect(backupCalls).toBe(0)
+  })
+
+  it('reports the primary failure when the backup also fails', async () => {
+    const fetchImpl = (async (url: string | URL) => {
+      if (String(url).startsWith('https://registry.npmjs.org')) throw new Error('primary down')
+      return new Response('not found', { status: 404 })
+    }) as unknown as typeof fetch
+    await expect(
+      fetchCandidate('dsh-failover', fetchImpl, noSleep, undefined, 'https://registry.npmmirror.com'),
+    ).rejects.toThrow('primary down')
+  })
+
+  it('propagates the throw when no backup registry is configured', async () => {
+    const fetchImpl = (async () => { throw new Error('primary down') }) as unknown as typeof fetch
+    await expect(fetchCandidate('dsh-failover', fetchImpl, noSleep)).rejects.toThrow('primary down')
+  })
+
+  it('searches through the failover too', async () => {
+    const fetchImpl = (async (url: string | URL) => {
+      if (String(url).startsWith('https://registry.npmjs.org')) throw new Error('primary down')
+      return new Response(JSON.stringify({ objects: [{ package: { name: 'dsh-from-backup' } }] }), { status: 200 })
+    }) as unknown as typeof fetch
+    const names = await searchByKeywords(fetchImpl, noSleep, undefined, 'https://registry.npmmirror.com')
+    expect(names).toContain('dsh-from-backup')
+  })
+})

@@ -124,6 +124,7 @@ describe('runPipeline with repository candidates', () => {
     license: 'MIT',
     hasBundle: true,
     requiresBuild: false,
+    hasWorkspaceDeps: false,
     catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
     description: 'A repo plugin.',
   }
@@ -143,5 +144,42 @@ describe('runPipeline with repository candidates', () => {
   it('reports a repository rejection from the repo gate', () => {
     const { report } = runPipeline([], [{ ...repoCandidate, hasBundle: false }], config, BUILT_AT)
     expect(report).toContain('| someone/dsh-repo-plugin | no-bundle |')
+  })
+})
+
+describe('subpackage entries and the schemaVersion bump', () => {
+  const commit = 'd'.repeat(40)
+  const subCandidate: import('../src/types.ts').RepoCandidate = {
+    name: 'sub-plugin',
+    repo: 'someone/monorepo',
+    commit,
+    version: commit,
+    publishedAt: '2026-08-01T12:00:00.000Z',
+    repository: 'https://github.com/someone/monorepo',
+    license: 'MIT',
+    hasBundle: true,
+    requiresBuild: false,
+    hasWorkspaceDeps: false,
+    subdir: 'packages/sub-plugin',
+    catalog: { category: 'tool', summary: { en: 'A subpackage plugin.', zh: '一个子包插件。' }, capabilities: [] },
+    description: 'A subpackage plugin.',
+  }
+
+  it('emits a subpackage entry with its subdir and the pinned commit', () => {
+    const { pluginsJson } = runPipeline([], [subCandidate], config, BUILT_AT)
+    const parsed = JSON.parse(pluginsJson) as { plugins: { name: string; repo: string; subdir?: string }[] }
+    expect(parsed.plugins).toMatchObject([{ name: 'sub-plugin', repo: 'someone/monorepo', subdir: 'packages/sub-plugin' }])
+  })
+
+  it('writes the requested schemaVersion into the data and the index', () => {
+    const artifacts = runPipeline([], [subCandidate], config, BUILT_AT, [], null, 4)
+    const parsed = JSON.parse(artifacts.pluginsJson) as { schemaVersion: number }
+    expect(parsed.schemaVersion).toBe(4)
+    expect(JSON.parse(artifacts.indexJson).schemaVersion).toBe(4)
+  })
+
+  it('defaults to schemaVersion 3 when the flag is off', () => {
+    const artifacts = runPipeline([], [subCandidate], config, BUILT_AT)
+    expect(JSON.parse(artifacts.indexJson).schemaVersion).toBe(3)
   })
 })

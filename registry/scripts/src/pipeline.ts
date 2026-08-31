@@ -1,7 +1,7 @@
 import { gate } from './gate.ts'
 import { gateRepo } from './repo-gate.ts'
 import { assignTier, assignRepoTier } from './tier.ts'
-import { emit, type Artifacts, type StarsPointer } from './emit.ts'
+import { emit, SCHEMA_VERSION, type Artifacts, type StarsPointer } from './emit.ts'
 import type { RegistryConfig } from './config.ts'
 import type { Candidate, Entry, Rejection, RepoCandidate } from './types.ts'
 
@@ -28,6 +28,7 @@ export function runPipeline(
   builtAt: string,
   preexistingRejections: Rejection[] = [],
   stars: StarsPointer | null = null,
+  schemaVersion: number = SCHEMA_VERSION,
 ): Artifacts {
   const entries: Entry[] = []
   const rejections: Rejection[] = [...preexistingRejections]
@@ -58,5 +59,5 @@ export function runPipeline(
     if (result.ok) entries.push(assignRepoTier(result.accepted, config))
     else rejections.push(result.rejection)
   }
-  return emit(entries, rejections, builtAt, stars)
+  return emit(entries, rejections, builtAt, stars, schemaVersion)
 }

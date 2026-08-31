@@ -26,6 +26,7 @@ const repo = (repo: string): RepoCandidate => ({
   license: 'MIT',
   hasBundle: true,
   requiresBuild: false,
+  hasWorkspaceDeps: false,
   catalog: null,
   description: 'x',
 })

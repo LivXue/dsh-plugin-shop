@@ -126,10 +126,10 @@ describe('fetchRepoCandidate', () => {
     const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
     expect(result.ok).toBe(true)
     if (result.ok) {
-      expect(result.candidate.name).toBe('dsh-repo-plugin')
-      expect(result.candidate.repo).toBe('someone/dsh-repo-plugin')
-      expect(result.candidate.commit).toBe(commit)
-      expect(result.candidate.requiresBuild).toBe(false)
+      expect(result.candidates[0]?.name).toBe('dsh-repo-plugin')
+      expect(result.candidates[0]?.repo).toBe('someone/dsh-repo-plugin')
+      expect(result.candidates[0]?.commit).toBe(commit)
+      expect(result.candidates[0]?.requiresBuild).toBe(false)
     }
   })
 
@@ -165,12 +165,13 @@ describe('harvestRepos', () => {
       license: 'MIT',
       hasBundle: true,
       requiresBuild: false,
+      hasWorkspaceDeps: false,
       catalog: null,
       description: 'x',
     }
   }
   function entryOf(repo: string): RepoState[string] {
-    return { pushedAt: '2026-08-01T00:00:00Z', commit, candidate: candidateOf(repo) }
+    return { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [candidateOf(repo)] }
   }
 
   it('skips loudly (report note) when no token is present', async () => {
@@ -218,7 +219,7 @@ describe('harvestRepos', () => {
     expect(result.deferred).toBe(1)
     expect(result.gone).toEqual(['c/gone'])
     expect(result.candidates.map(c => c.repo).sort()).toEqual(['a/unchanged', 'b/changed', 'd/new'])
-    expect(result.nextState['a/unchanged']?.candidate.repo).toBe('a/unchanged')
+    expect(result.nextState['a/unchanged']?.candidates[0]?.repo).toBe('a/unchanged')
     expect(Object.keys(result.nextState).sort()).toEqual(['a/unchanged', 'b/changed', 'd/new'])
   })
 
@@ -300,6 +301,102 @@ describe('split regression', () => {
     for (const w of windows) {
       const q = `topic:dsh-plugin${w.stars ? ` stars:${w.stars}` : ''}${w.created ? ` created:${w.created}` : ''}${w.size ? ` size:${w.size}` : ''}`
       expect(totals[q] ?? 0).toBeLessThanOrEqual(1000)
+    }
+  })
+})
+
+describe('subpackage probe', () => {
+  const meta = { fullName: 'someone/monorepo', defaultBranch: 'main', description: 'A monorepo.', license: 'MIT', pushedAt: '2026-08-01T00:00:00Z', stars: null as number | null }
+  const rootManifest = JSON.stringify({ private: true, workspaces: ['packages/*'] })
+
+  it('projects bundle-carrying subpackages when the bundle-less root signals a monorepo', async () => {
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/monorepo/main/package.json': new Response(rootManifest, { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/commits/main': new Response(JSON.stringify({
+        sha: commit,
+        commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/git/trees/main?recursive=1': new Response(JSON.stringify({
+        tree: [
+          { path: 'package.json' },
+          { path: 'packages/core/package.json' },
+          { path: 'packages/the-plugin/package.json' },
+        ],
+      }), { status: 200 }),
+      'https://raw.githubusercontent.com/someone/monorepo/main/packages/core/package.json': new Response(JSON.stringify({ name: 'core' }), { status: 200 }),
+      'https://raw.githubusercontent.com/someone/monorepo/main/packages/the-plugin/package.json': new Response(JSON.stringify({
+        name: 'the-plugin',
+        dsh: { bundle: {}, catalog: { category: 'tool', summary: { en: 'x' }, capabilities: [] } },
+      }), { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.candidates.map(c => c.name)).toEqual(['the-plugin'])
+      expect(result.candidates[0]?.subdir).toBe('packages/the-plugin')
+      expect(result.candidates[0]?.repo).toBe('someone/monorepo')
+    }
+  })
+
+  it('keeps the repo-level no-bundle path when no subpackage qualifies', async () => {
+    const namedRoot = JSON.stringify({ name: 'monorepo-root', private: true, workspaces: ['packages/*'] })
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/monorepo/main/package.json': new Response(namedRoot, { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/commits/main': new Response(JSON.stringify({
+        sha: commit,
+        commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/git/trees/main?recursive=1': new Response(JSON.stringify({
+        tree: [{ path: 'package.json' }, { path: 'packages/core/package.json' }],
+      }), { status: 200 }),
+      'https://raw.githubusercontent.com/someone/monorepo/main/packages/core/package.json': new Response(JSON.stringify({ name: 'core' }), { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    // The bundle-less root candidate survives for the gate's no-bundle rule;
+    // the bundle-less subpackage was never a plugin candidate.
+    if (result.ok) {
+      expect(result.candidates.map(c => c.name)).toEqual(['monorepo-root'])
+      expect(result.candidates[0]?.hasBundle).toBe(false)
+    }
+  })
+
+  it('a nameless private root still lists its subpackages', async () => {
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/monorepo/main/package.json': new Response(JSON.stringify({ private: true, workspaces: ['packages/*'] }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/commits/main': new Response(JSON.stringify({
+        sha: commit,
+        commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/git/trees/main?recursive=1': new Response(JSON.stringify({
+        tree: [{ path: 'package.json' }, { path: 'packages/the-plugin/package.json' }],
+      }), { status: 200 }),
+      'https://raw.githubusercontent.com/someone/monorepo/main/packages/the-plugin/package.json': new Response(JSON.stringify({
+        name: 'the-plugin',
+        dsh: { bundle: {} },
+      }), { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.candidates[0]?.subdir).toBe('packages/the-plugin')
+  })
+
+  it('skips the probe entirely when probing is disabled — the flag keeps v3 behavior', async () => {
+    const namedRoot = JSON.stringify({ name: 'monorepo-root', private: true, workspaces: ['packages/*'] })
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      if (text.includes('/git/trees/')) throw new Error('tree must not be fetched when probing is off')
+      if (text.includes('/commits/main')) {
+        return new Response(JSON.stringify({ sha: commit, commit: { author: { date: '2026-08-01T12:00:00.000Z' } } }), { status: 200 })
+      }
+      if (text.includes('/package.json')) return new Response(namedRoot, { status: 200 })
+      throw new Error(`unrouted: ${text}`)
+    }) as unknown as typeof fetch
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token', false)
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.candidates[0]?.subdir).toBeUndefined()
+      expect(result.candidates[0]?.name).toBe('monorepo-root')
     }
   })
 })

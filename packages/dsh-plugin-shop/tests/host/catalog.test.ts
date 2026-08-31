@@ -101,7 +101,7 @@ describe('loadCatalog', () => {
 
   it('throws when the schemaVersion is newer than this build supports', async () => {
     const fetchImpl = (async () => new Response(
-      JSON.stringify({ schemaVersion: 4, builtAt: '', count: 0, plugins: { url: 'x.json', sha256: '0'.repeat(64) } }),
+      JSON.stringify({ schemaVersion: 5, builtAt: '', count: 0, plugins: { url: 'x.json', sha256: '0'.repeat(64) } }),
       { status: 200 },
     )) as unknown as typeof fetch
 
@@ -116,7 +116,7 @@ describe('loadCatalog', () => {
     fs.write('/cache/index.json', pointer)
     fs.write(`/cache/${url}`, data)
     const fetchImpl = (async () => new Response(
-      JSON.stringify({ schemaVersion: 4, builtAt: '', count: 0, plugins: { url: 'x.json', sha256: '0'.repeat(64) } }),
+      JSON.stringify({ schemaVersion: 5, builtAt: '', count: 0, plugins: { url: 'x.json', sha256: '0'.repeat(64) } }),
       { status: 200 },
     )) as unknown as typeof fetch
 
@@ -416,5 +416,42 @@ describe('loadCatalog', () => {
     expect(result.snapshot.stars).toEqual({})
     expect(result.snapshot.entries[0]?.name).toBe('dsh-hello-plugin')
     expect(calls).toBe(0)
+  })
+})
+
+describe('v4 subdir entries', () => {
+  const subEntry = {
+    name: 'sub-plugin', version: 'd'.repeat(40), integrity: 'd'.repeat(40), publishedAt: null,
+    repository: 'https://github.com/someone/monorepo', license: 'MIT',
+    tier: 'community', metadata: 'declared', source: 'github', repo: 'someone/monorepo',
+    subdir: 'packages/sub-plugin',
+    catalog: { category: 'tool', summary: { en: 'A subpackage plugin.', zh: '一个子包插件。' }, capabilities: [] },
+  }
+
+  it('parses a v4 entry and keeps its subdir', async () => {
+    const data = JSON.stringify({ schemaVersion: 4, plugins: [subEntry], denied: [] })
+    const { pointer, url } = pointerFor(data, '2026-08-31T00:00:00Z')
+    const fs = memFs()
+    fs.write('/cache/index.json', pointer)
+    fs.write(`/cache/${url}`, data)
+    const catalog = await loadCatalog({
+      baseUrl: 'https://shop.test/v1/', cacheDir: '/cache',
+      fetchImpl: (async () => { throw new Error('must be served from cache') }) as unknown as typeof fetch,
+      fsImpl: fs, now: () => new Date('2026-08-31T00:01:00Z'),
+    })
+    expect(catalog.snapshot.entries[0]?.subdir).toBe('packages/sub-plugin')
+  })
+
+  it('refuses a subdir that is not relative directory segments', async () => {
+    const data = JSON.stringify({ schemaVersion: 4, plugins: [{ ...subEntry, subdir: '../escape' }], denied: [] })
+    const { pointer, url } = pointerFor(data, '2026-08-31T00:00:00Z')
+    const fs = memFs()
+    fs.write('/cache/index.json', pointer)
+    fs.write(`/cache/${url}`, data)
+    await expect(loadCatalog({
+      baseUrl: 'https://shop.test/v1/', cacheDir: '/cache',
+      fetchImpl: (async () => { throw new Error('unreachable') }) as unknown as typeof fetch,
+      fsImpl: fs, now: () => new Date('2026-08-31T00:01:00Z'),
+    })).rejects.toThrow()
   })
 })

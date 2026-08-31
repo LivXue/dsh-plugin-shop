@@ -29,6 +29,9 @@ export interface CatalogEntry {
   source: 'npm' | 'github'
   /** `owner/slug`; present exactly when `source` is github. */
   repo?: string
+  /** Subpackage directory inside the repo; present exactly when the entry is
+   * a monorepo subpackage rather than the repo root. */
+  subdir?: string
 }
 
 export interface DeniedEntry { name: string; detail: string }

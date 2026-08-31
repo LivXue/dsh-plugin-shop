@@ -72,7 +72,7 @@ function ChevronIcon({ open }: { open: boolean }): ReactNode {
  * install controls. An installed plugin's card carries its installed row:
  * current → the non-interactive installed label, behind → the update button;
  * uninstalled → the install button. */
-const EntryCard = memo(function EntryCard({ entry, stars, installed, t, install, installStatus, uninstall, restart }: {
+const EntryCard = memo(function EntryCard({ entry, stars, installed, t, install, installStatus, uninstall, restart, setEnabled }: {
   entry: CatalogEntry
   stars: number | undefined
   installed: ShopInstalledEntry | undefined
@@ -81,6 +81,7 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, t, install,
   installStatus: ShopTabInjected['installStatus']
   uninstall: ShopTabInjected['uninstall']
   restart: ShopTabInjected['restart']
+  setEnabled: ShopTabInjected['setEnabled']
 }): ReactNode {
   const [open, setOpen] = useState(false)
   const detailId = useId()
@@ -188,6 +189,9 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, t, install,
             ) : (
               <p className={css.installedLabel} data-shop-installed>{t('installed')}</p>
             )}
+            {/* The hot enable/disable switch (§8) sits on every installed
+             * row — current or outdated — and reads the inventory state. */}
+            <EnabledSwitch row={installed} t={t} setEnabled={setEnabled} />
             <UninstallPanel name={entry.name} t={t} uninstall={uninstall} installStatus={installStatus} restart={restart} />
           </>
         )}
@@ -468,25 +472,19 @@ function RestartPanel({ t, restart }: {
   )
 }
 
-/** One outdated install row (§7.3): the name, the installed and latest
- * versions, an optimistic enable/disable switch, and the update button (the
- * install flow for `name@latest`, reusing `InstallPanel`). The switch has no
- * installed-state RPC behind it — the tab assumes an installed plugin is on,
- * so the first toggle sends the inverted value. After a successful `setEnabled`
- * the §8 hot note renders. */
-function OutdatedRow({ row, tier, source, t, setEnabled, install, installStatus, restart }: {
+/**
+ * The hot enable/disable switch (§8). The initial state is the Host's
+ * inventory verdict carried on the installed row; the click is optimistic
+ * (the value flips on success) and a success renders the §8 hot note. A
+ * transport throw renders the localized failure line — its private detail
+ * (which can name hosts and ports) never reaches the UI.
+ */
+function EnabledSwitch({ row, t, setEnabled }: {
   row: ShopInstalledEntry
-  tier: CatalogEntry['tier']
-  source: CatalogEntry['source']
   t: ShopTabProps['t']
   setEnabled: ShopTabInjected['setEnabled']
-  install: ShopTabInjected['install']
-  installStatus: ShopTabInjected['installStatus']
-  restart: ShopTabInjected['restart']
 }): ReactNode {
-  // v0 has no enabled-state RPC (§7.3), so the switch optimistically reads
-  // "installed ⇒ enabled" and the first click disables.
-  const [enabled, setEnabledState] = useState(true)
+  const [enabled, setEnabledState] = useState(row.enabled)
   const [toggle, setToggle] = useState<{ kind: 'idle' } | { kind: 'saving' } | { kind: 'saved' } | { kind: 'error'; detail: string }>({ kind: 'idle' })
 
   const onToggle = async (): Promise<void> => {
@@ -507,13 +505,44 @@ function OutdatedRow({ row, tier, source, t, setEnabled, install, installStatus,
     } catch {
       // A thrown toggle is a TRANSPORT failure (index.ts's unwrap throws the
       // prefixed wire message); nothing else can reach this catch, because the
-      // business result is a resolved value, never a throw. The transport
-      // detail is private (it can name hosts and ports) and never rendered;
-      // the localized failure line is the readable face of it.
+      // business result is a resolved value, never a throw.
       setToggle({ kind: 'error', detail: t('toggleFailed') })
     }
   }
 
+  return (
+    <div className={css.switchWrap} data-shop-enabled-switch={row.name}>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={enabled}
+        aria-label={t('enabledSwitch')}
+        data-shop-toggle
+        className={`${css.switch} ${enabled ? css.switchOn : ''}`}
+        onClick={() => void onToggle()}
+        disabled={toggle.kind === 'saving'}
+      >
+        <span className={css.switchKnob} />
+      </button>
+      {toggle.kind === 'saved' && <p className={css.notice} data-shop-hot-apply>{t('hotApplyNote')}</p>}
+      {toggle.kind === 'error' && <p className={css.failedDetail} data-shop-toggle-error>{toggle.detail}</p>}
+    </div>
+  )
+}
+
+/** One outdated install row (§7.3): the name, the installed and latest
+ * versions, the hot enable/disable switch, and the update button (the
+ * install flow for `name@latest`, reusing `InstallPanel`). */
+function OutdatedRow({ row, tier, source, t, setEnabled, install, installStatus, restart }: {
+  row: ShopInstalledEntry
+  tier: CatalogEntry['tier']
+  source: CatalogEntry['source']
+  t: ShopTabProps['t']
+  setEnabled: ShopTabInjected['setEnabled']
+  install: ShopTabInjected['install']
+  installStatus: ShopTabInjected['installStatus']
+  restart: ShopTabInjected['restart']
+}): ReactNode {
   return (
     <div className={css.outdatedRow} data-shop-outdated-entry={row.name}>
       <div className={css.outdatedInfo}>
@@ -524,22 +553,9 @@ function OutdatedRow({ row, tier, source, t, setEnabled, install, installStatus,
         </span>
       </div>
       <div className={css.outdatedActions}>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={enabled}
-          aria-label={t('enabledSwitch')}
-          data-shop-toggle
-          className={`${css.switch} ${enabled ? css.switchOn : ''}`}
-          onClick={() => void onToggle()}
-          disabled={toggle.kind === 'saving'}
-        >
-          <span className={css.switchKnob} />
-        </button>
+        <EnabledSwitch row={row} t={t} setEnabled={setEnabled} />
         <InstallPanel name={row.name} version={row.latest} tier={tier} variant="update" t={t} install={install} installStatus={installStatus} restart={restart} />
       </div>
-      {toggle.kind === 'saved' && <p className={css.notice} data-shop-hot-apply>{t('hotApplyNote')}</p>}
-      {toggle.kind === 'error' && <p className={css.failedDetail} data-shop-toggle-error>{toggle.detail}</p>}
     </div>
   )
 }
@@ -969,7 +985,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
           <ul className={css.cards}>
             {visible.map(entry => (
               <li key={entry.name}>
-                <EntryCard entry={entry} stars={stars[entry.repo ?? entry.name]} installed={installedByName.get(entry.name)} t={t} install={install} installStatus={installStatus} uninstall={uninstall} restart={restart} />
+                <EntryCard entry={entry} stars={stars[entry.repo ?? entry.name]} installed={installedByName.get(entry.name)} t={t} install={install} installStatus={installStatus} uninstall={uninstall} restart={restart} setEnabled={setEnabled} />
               </li>
             ))}
             {incremental && visibleCount < filtered.length && (
