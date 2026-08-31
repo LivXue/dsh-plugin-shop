@@ -22,12 +22,12 @@ If you declare `dsh.catalog`, both languages are required — declaring the sect
 
 | Field | Required | Meaning |
 |---|---|---|
-| `category` | yes | One of `tool`, `provider`, `ui`, `workflow`, `integration`, `other` |
+| `category` | yes | One of `tool`, `provider`, `ui`, `workflow`, `integration`, `theme`, `other` |
 | `summary.en` | yes | One line, 1–200 characters. Not synthesized: a missing translation stays missing |
 | `summary.zh` | yes | The same, in Chinese |
 | `capabilities` | yes | Up to 20 free-form strings naming the dsh services the plugin uses |
 
-If you do not declare `category`, the shop may assign one by automated review; declare it to stay in control.
+If you do not declare `category`, the shop may assign one by automated review; declare it to stay in control. The `theme` category is for plugins that change the interface's appearance: skins, themes, visual styles (皮肤、主题、外观).
 
 If your repository is on GitHub, its star count is shown automatically — there is nothing to declare; repositories on other hosts show none.
 
@@ -54,3 +54,5 @@ A package with no `dsh.catalog` and no npm `description` is not listed at all �
 ## The published catalog data file
 
 Each build publishes the catalog as a content-addressed data file, `plugins.<sha256>.json`, named by the hash of its own contents. Besides the accepted `plugins` array, it carries a `denied` array: every denylisted package with the author-readable reason it was blocked. The Host consults `denied` when a `shop/installStart` request names a blocked package. Rejections that are not denials — a missing bundle, a `dsh.catalog` that failed validation, a name too similar to an existing plugin — appear only in the build report, never in the published data.
+
+Every entry carries `added`, the date it first appeared in the catalog (YYYY-MM-DD) — recorded per package name by the registry, never declared by the author. A GitHub entry rescued from a build script (`requires-build`) installs from a prebuilt release tarball instead of git: it carries an optional `tarball` object (`url` + `sha256`), its `version` is the release tag, and its `integrity` is the tarball's sha256. For such an entry, a `verified` review pins `reviewedSha256` — the reviewed tarball's content hash, never the tag: a tag is a mutable ref that can be re-created on different content, and verified trust must name what the entry actually installs. A `denied` row may carry `replacement`, the name of a legitimate substitute when a human recorded one.

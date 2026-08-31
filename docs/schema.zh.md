@@ -22,12 +22,12 @@
 
 | 字段 | 必填 | 含义 |
 |---|---|---|
-| `category` | 是 | `tool`、`provider`、`ui`、`workflow`、`integration`、`other` 之一 |
+| `category` | 是 | `tool`、`provider`、`ui`、`workflow`、`integration`、`theme`、`other` 之一 |
 | `summary.en` | 是 | 一行，1–200 字符。不会被合成：缺了就是缺了 |
 | `summary.zh` | 是 | 同上，中文 |
 | `capabilities` | 是 | 至多 20 个自由字符串，说明插件用到的 dsh 服务 |
 
-如果你不声明 `category`，商店可能通过自动评审为你分配一个分类；想自己掌控就声明它。
+如果你不声明 `category`，商店可能通过自动评审为你分配一个分类；想自己掌控就声明它。`theme` 分类用于改变界面外观的插件：皮肤、主题、视觉样式。
 
 如果你的仓库在 GitHub 上，star 数会自动显示——无需任何声明；其他托管平台的仓库不显示。
 
@@ -54,3 +54,5 @@
 ## 发布的数据文件
 
 每次构建都会把目录发布为一个内容寻址的数据文件 `plugins.<sha256>.json`，文件名由文件自身的哈希决定。除了已上架的 `plugins` 数组，它还带一个 `denied` 数组：每个被列入黑名单的包，以及作者可读的封禁原因。Host 在 `shop/installStart` 收到被列入黑名单的包的安装请求时，会查询这个 `denied` 列表来拦截。不属于封禁的拒绝——比如缺少 bundle、`dsh.catalog` 校验失败、包名与已有插件过于相似——只会出现在构建报告里，不会进入发布的数据文件。
+
+每条列表都带 `added`，即它第一次出现在目录中的日期（YYYY-MM-DD）——由 registry 按包名记录，作者无需声明。因构建脚本（`requires-build`）而无法从 git 安装的 GitHub 条目，改为安装预构建的 release tarball：条目带一个可选的 `tarball` 对象（`url` + `sha256`），`version` 是 release 标签，`integrity` 是 tarball 的 sha256。这类条目的 `verified` 审核钉在 `reviewedSha256` 上——被审核 tarball 的内容哈希，而不是标签：标签是可变的引用，可以被删除后以不同内容重建，可信度必须钉在条目实际安装的东西上。`denied` 行可以带 `replacement`，即人工记录的合法替代包名。

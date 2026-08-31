@@ -149,7 +149,7 @@ Two identifiers stay **ecosystem-neutral and deliberately unbranded**:
 - The keywords are `dsh-plugin` and `deepseek-harness`, never `dsh-plugin-shop`. An author declares "I am a dsh plugin" (or "I integrate with deepseek-harness"), not "I want to be on your shelf".
 - The field is `dsh.catalog`, not `dsh.shop`. The `dsh` section is DeepSeek's namespace — its JSDoc states that "other consumers own additional keys", so adding one is sanctioned — but adding a key named after this project would plant our sign in someone else's namespace. `catalog` names what the data is, so a second shop can reuse it directly. For a public community market that is the honest choice.
 
-`category` is a closed enum: `tool` | `provider` | `ui` | `workflow` | `integration` | `other`.
+`category` is a closed enum: `tool` | `provider` | `ui` | `workflow` | `integration` | `theme` | `other`. **Amendment (2026-08-31, market borrowings): `theme` joins the enum** — skins, themes, visual appearance. It is a consumer-visible change — an old client's closed enum rejects a catalog carrying an unknown value wholesale — so it rode the v5 bump behind `SHOP_CATALOG_V5`; see §6.2 for the choreography and the below-v5 downgrade at the emission boundary.
 
 `capabilities` is **self-declared and unenforced**. v0 has no sandbox, so it exists for display only. The UI must not let it read as an enforced permission list; a false sense of safety is worse than none.
 
@@ -231,6 +231,10 @@ A derived listing may carry an LLM-assigned `catalog.category` sourced from `reg
 
 `builtAt` appears **only in index.json and never inside the hashed content**. Otherwise the hash changes daily, every CDN cache is invalidated, and every git diff is noise.
 
+**Amendment (2026-08-31, market borrowings): `schemaVersion` is 5**, emitted behind the build's `SHOP_CATALOG_V5` flag, with the release-order choreography as before (the v3→v4 precedent): the v5-parsing client ships first, and the flag flips in the release commit, so an old client never meets the new enum value. The bump is gated because `theme` is a new enum value and an old client's closed enum rejects a catalog containing it wholesale; the purely additive fields ride lower versions, since consumer-side zod strips unknown keys. Below v5 the emission boundary downgrades `theme` entries to `other` — the classifier and `categories.yml` keep `theme`, the build report counts the downgrades, and the flag flip restores the category with no data change.
+
+**Amendment (2026-08-31, market borrowings): entries gain `added`, and optionally `tarball`; `denied[]` gains `replacement`.** `added` is the first-seen date (YYYY-MM-DD), recorded per name in `registry/first-seen.yml` — appended by the daily build, backfilled once from the `manifest.lock` git history — and a listed entry with no row, or a date later than the build date, throws (E9). A release-rescued entry — a `requires-build` repo whose latest GitHub release carries a prebuilt tarball — carries `tarball: { url, sha256 }`: `version` = the release tag, `integrity` = the tarball's sha256, and the entry installs from the URL (§7.2). `denied[]` gains optional `replacement` naming a known substitute, and the denial detail reads "Denied by the registry: \<reason\>. Known replacement: \<name\>."
+
 ## 7. Data flow
 
 ### 7.1 Catalog build (daily and on PR)
@@ -258,6 +262,8 @@ harvest -> fetch manifest -> classify -> gate -> tier -> emit -> commit snapshot
    `verified.yml` records `{ name, reviewedVersion, reviewer, reviewCommit, notes }`. If npm's latest exceeds `reviewedVersion`, the entry is **downgraded to `verified-stale`**, and the UI shows "reviewed v1.2.0 / current v1.3.0 unreviewed".
 
    Most markets attach verification to a package name, which means an author who passes review can then publish a malicious version and inherit the trust automatically. That is the cheapest supply-chain attack available.
+
+   **Amendment (2026-08-31, market borrowings): a release-rescued entry is pinned by `reviewedSha256`** — the reviewed tarball's content hash, never the tag: a GitHub tag is a mutable ref an author can delete and re-create on different content, and a tag-name pin would let verified trust inherit across unreviewed content. The tag stays the entry's displayed `version`; any other tarball sha256 downgrades the entry to `verified-stale`, keeping the review.
 6. **Stars** — GitHub GraphQL fetches star counts for github.com repositories into `dist/v1/stars.<sha>.json`; failures publish without stars and retry next build (`github-stars.ts`, shell). **Amendment (2026-08-31):** repo star counts ride the topic search — every enumerated item carries `stargazers_count`, and the daily run pages the entire pool regardless of the fetch budget, so repo entries (and any npm entry whose repo the search saw) take the search count and cost no GraphQL quota; GraphQL covers only the repos the search did not see, which keeps it inside the PAT's 5,000-point hourly quota. Search-derived counts still land in the daily sidecar, never in the committed harvest memory (`repo-state.json`), and they survive a GraphQL failure — partial stars beat none. An npm entry whose repository names the harness itself gets no count at all: the harness's own stars are never attributed to a plugin that merely copied the host project's repository boilerplate.
 7. **Emit** — sort by package name for determinism; produce `plugins.<sha256>.json` and `index.json`, with the build report as a CI artifact.
 8. **Commit the snapshot** — write `manifest.lock` (name -> version -> integrity) back into `registry/snapshots/`.
@@ -293,6 +299,7 @@ Implementation decisions:
 - **Serialize per profile.** pnpm locks itself, but its concurrent-access errors are unreadable to a user. One mutex per profile on the Host side.
 - **Never roll back automatically.** After a pnpm failure `dsh.profile.bundles` is still consistent, because reconcile runs only on exit 0, but `dependencies` may already have been rewritten. The response is to surface stderr verbatim and suggest `dsh plugin --profile <p> install`. **Automatically rolling back a package manager's intermediate state breaks environments more often than leaving it alone.**
 - **The shop never writes `allowBuilds`.** pnpm 10 and later block build scripts by default, which is a security property obtained for free. A plugin that needs a build script simply cannot be installed from the shop; the UI says so plainly and prints the CLI command.
+- **Amendment (2026-08-31, market borrowings): a release-rescued entry installs the prebuilt tarball URL.** For an entry carrying `tarball`, the spec is the snapshot's tarball URL — built from snapshot fields, never from the wire — instead of the `github:` form, and the git-on-PATH check does not apply. The Host validated the binding at catalog parse (a coherence check on both the cached and the fresh path): the URL must be an https release of the entry's own `repo`, so a row naming a trusted repo can never install an archive from elsewhere. The recorded tag is the displayed `version`; the sha256 is snapshot data, not re-checked at install time — GitHub release assets are immutable per URL.
 
 ### 7.3 RPC contract
 
@@ -304,7 +311,7 @@ Implementation decisions:
 | `shop/setEnabled` | `{ name, enabled }` | `{ ok }` |
 | `shop/uninstallStart` | `{ name }` | `{ installId }` |
 | `shop/restart` | none | `{ ok }` |
-| `shop/version` | none | `{ installed, latest, outdated }` |
+| `shop/version` | none | `{ installed, latest, outdated, restartSupported }` |
 | `shop/updateStart` | `{ version }` | `{ installId }` |
 | `shop/installed` | none | `{ name, installed, latest, outdated }[]` |
 
@@ -326,6 +333,8 @@ Implementation decisions:
 
 **Amendment (2026-08-31, follow-up): the hub borrowings** (design: 2026-08-31-hub-borrowings.md — A/B/C adopted, D dropped). (A) **Monorepo subpackage expansion**: a repo whose root manifest declares no bundle but signals a monorepo (`private: true` or a `workspaces` declaration) is probed once — tree listing, then up to eight subpackage manifests — and bundle-carrying subpackages become entries with a `subdir` field; the install spec becomes `github:owner/slug#commit&path:<subdir>` (pnpm-verified; dsh passes specs verbatim), and a subpackage with `workspace:`-protocol dependencies is rejected with `workspace-deps` (measured: it cannot resolve outside its own workspace). Rejections for subpackages name `owner/slug#subdir` — the unit an author fixes. `schemaVersion` bumps 3→4 behind `SHOP_HARVEST_SUBPACKAGES`, flipped in the release commit that ships the v4 client, so a v3 client (which would misinstall the monorepo root) never meets a `subdir` entry. The harvest memory's shape moves from a singular `candidate` to a `candidates` array plus an optional recorded `failure` for deterministic `no-manifest` outcomes — known dead ends stop re-consuming the per-run fetch budget (measured: they re-fetched forever, and the probe would have multiplied the cost); the old shape still parses. (B) **Installed-plugin toggle**: `shop/setEnabled` writes the user patch layer through the framework's own parser (whole-row-list rewrite via `loadOptionalPatches` + dump); `shop/installed` carries the inventory's `enabled` per row (absent service ⇒ enabled); the switch renders on every installed row, initialized from the real state; the shop's own row and `@deepseek-ai/*` bundles are never toggleable. (C) **Registry failover**: the harvest's npm fetches fall back to a backup registry (default `registry.npmmirror.com`, `NPM_BACKUP_REGISTRY` to override) on network throw, per-attempt timeout (AbortSignal), and 5xx — never on a 404 (authoritative) or an exhausted 429; when the backup also fails, the primary's failure is what propagates. Fetch-only: installs keep running through the user's own pnpm and registry config, and the integrity pinning makes a mirror answer interchangeable.
 
+**Amendment (2026-08-31, market borrowings C-1): `shop/version` gains `restartSupported`, and `shop/restart` gains a supervisor refusal.** `restartSupported` is false when a systemd unit owns this process — detection requires both signals: `INVOCATION_ID` or `JOURNAL_STREAM` present, and ppid 1, since the markers alone are inherited by every descendant of a unit, an ordinary terminal included — and the shop row config sets no `allowRestart: true` override. The client hides the restart offer on false and keeps the pending-change notice, naming the manual restart. `shop/restart` refuses in the same typed `{ ok: false, detail }` shape as the `--port 0` refusal, before anything is torn down: under a systemd unit the two-phase handoff kills itself — the main process exiting also kills the unit's cgroup, taking the detached helper with it, and the service never comes back.
+
 **Amendment (2026-08-27, follow-up): boot-time warm.** The client bundle warms `shop/catalog` (plus the small `installed` and `version` reads) when its apply runs at web boot, so the shop's first open consumes the boot-time fetch instead of waiting on it — the host's slow network fetch happens while nobody is looking at the shop. The tab's plain open consumes the stashed promise (the host's snapshot is the same one a fresh call would serve, so §10 freshness semantics are unchanged); a refresh always goes to the wire, and a failed warm falls back to a fresh call. Each boot starts its own warm fetch.
 
 ## 8. When changes take effect
@@ -333,13 +342,17 @@ Implementation decisions:
 | Operation | Restart required | Evidence |
 |---|---|---|
 | Enable / disable | **No — hot** | `watchUserPatches` watches a profile's `cordis.patch.yml` and reapplies it through HMR via `entry.update({config:{patches}})` |
-| Install / uninstall | **Yes** | Bundle layers come from the profile `package.json`'s `dsh.profile.bundles`, read at boot; the watcher does not cover it |
+| Install / uninstall | **Yes** — hot-mount exception (2026-08-31 amendment) | Bundle layers come from the profile `package.json`'s `dsh.profile.bundles`, read at boot; the watcher does not cover it |
 
 One clever-looking approach is ruled out: inserting the newly installed plugin's rows directly into the user layer to avoid a restart. **It does not work.** At the next boot `dsh.profile.bundles` already contains the package, because `dsh plugin` reconciles by installed state, so the same rows would mount twice.
 
 **Amendment (2026-08-27): the shop now ships a restart endpoint, replacing the v0 ruling.** `shop/restart` commits a **two-phase handoff**: the Host spawns a detached helper that waits for the Host's own pid to disappear, then `exec`s the same `dsh` command line (`process.argv` verbatim — same profile, same port); the Host resolves `{ ok }` and exits once the response is out. The browser, still alive, polls the origin after a grace period and refreshes when the new server answers; if it never does, the UI names the manual command (`dsh web`) and points at the boot log (`restart.log` in the shop cache directory). The old process cannot wait for the new one — the new one must bind the port the old one still holds, and two live processes cannot bind it at once: the first implementation spawned the child and waited for its URL, and the child crashed in boot with `EADDRINUSE` on every attempt. Refusals (`--port 0`, a spawn or log failure) are typed and issued **before** anything is torn down; once `{ ok }` is returned, the old process WILL exit and the client-side monitor is the failure reporter.
 
 The earlier ruling prescribed an opt-in flag, default off, loopback only. The author overrode it on 2026-08-27 in favor of always-on convenience. The residual risk, accepted: any browser context that can reach the shop UI can restart the server process (a nuisance-availability attack on the same host, not a privilege escalation — the restart re-runs the user's own launch command). The confirmation gate does not constrain a malicious context; it exists to inform a user.
+
+**Amendment (2026-08-31, market borrowings C-1): restart under a supervisor is refused by default.** When a systemd unit owns this process and the shop row config sets no `allowRestart: true`, `shop/restart` issues a typed refusal and the two-phase handoff never starts — the main process exiting also kills the unit's cgroup, which takes the detached helper with it, and the service would never come back. `shop/version` reports `restartSupported: false` and the client hides the restart offer while keeping the pending-change notice (§7.3).
+
+**Amendment (2026-08-31, market borrowings §4, Phase D): the install/uninstall row gains the hot-mount exception.** The borrowings design decides that installs, uninstalls, and updates go live without a restart through a shop-owned ephemeral Include subtree — `hot-<n>.yml` inputs under `<profile>/.dsh-shop/`, wiped at boot, rows under `mkt-` ids (dsh-market's mechanism, ported in the borrowings plan's Phase D, pending at this amendment). The ruling above still holds: the ephemeral tree is never a `cordis.patch.yml` write, so the same rows cannot mount twice at next boot. The wire contract does not change — `shop/installStatus`'s `needsRestart` reports the outcome, false more often — and the shop's own self-update always keeps `needsRestart`, since a host half cannot swap itself live.
 
 ## 9. Security model
 
@@ -389,6 +402,7 @@ Wording such as "this plugin comes from the community, please install with care"
 | Install succeeded but `bundles` unchanged | The package was a library, not a plugin, which the gate should have caught | Report a stale catalog and force a refresh |
 | Profile does not exist | `dsh plugin` initializes it | Nothing to handle |
 | Concurrent installs into one profile | The later caller waits | Per-profile mutex |
+| Restart under a supervisor | `shop/version` reports `restartSupported: false` and the client hides the restart offer, naming the manual restart; `shop/restart` returns the typed refusal | Refuse before anything is torn down; `allowRestart: true` in the shop row config overrides |
 
 ## 11. Testing and acceptance
 
