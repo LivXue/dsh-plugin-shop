@@ -69,6 +69,10 @@ jobs:
           # Flipped in the 0.4.10 release: the client that reads schemaVersion 3
           # (repo entries) ships, so the catalog may publish them.
           SHOP_HARVEST_REPOS: '1'
+          # A dedicated read-only PAT lifts the stars GraphQL quota past the
+          # catalog's repo count; without it the GITHUB_TOKEN's ~1k points
+          # cover only a third of the shelf per run.
+          STARS_TOKEN: ${{ secrets.STARS_TOKEN }}
       - name: Upload build report
         uses: actions/upload-artifact@v4
         with:

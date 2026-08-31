@@ -112,9 +112,13 @@ mkdirSync(join(REGISTRY_DIR, 'snapshots'), { recursive: true })
 // token, rate limit, down API — publishes without stars and retries next
 // build. The step never throws. Repo entries are keyed by their repo full
 // name, npm entries by package name.
+// The Actions GITHUB_TOKEN's GraphQL quota (~1,000 points/hour) is below the
+// catalog's repo count, so a dedicated read-only PAT (STARS_TOKEN) is
+// preferred when the workflow provides one.
+const starsToken = process.env.STARS_TOKEN ?? ghToken
 let starsInfo: { url: string; sha256: string } | null = null
 let starsNote = ''
-if (ghToken === '') {
+if (starsToken === '') {
   starsNote = 'no GITHUB_TOKEN'
   process.stderr.write(`stars: ${starsNote}\n`)
 } else {
@@ -127,7 +131,7 @@ if (ghToken === '') {
     starsNote = 'no github.com repositories in the catalog'
   } else {
     try {
-      const { stars: repoStars, skipped } = await fetchStarCounts([...repos.values()], { token: ghToken })
+      const { stars: repoStars, skipped } = await fetchStarCounts([...repos.values()], { token: starsToken })
       const starsByKey: Record<string, number> = {}
       for (const candidate of candidates) {
         const parsed = githubOwnerName(candidate.repository)

@@ -71,9 +71,21 @@ export async function fetchStarCounts(
         for (const r of batch) skipped.push(`${r.owner}/${r.name}: unreadable body`)
         continue
       }
+      // GraphQL returns PARTIAL responses: a failing alias (renamed, deleted,
+      // private) yields `errors` alongside `data` with that alias nulled. The
+      // batch must not be discarded — the healthy aliases still carry counts.
+      // Errors are matched back to their alias by `path[0]` so the skipped
+      // entry carries the real reason instead of a generic line.
+      const errorByAlias = new Map<string, string>()
       if (body.errors !== undefined) {
-        for (const r of batch) skipped.push(`${r.owner}/${r.name}: graphql errors`)
-        continue
+        for (const error of body.errors) {
+          const path = (error as { path?: unknown } | null)?.path
+          const alias = Array.isArray(path) && typeof path[0] === 'string' ? path[0] : undefined
+          const message = typeof (error as { message?: unknown } | null)?.message === 'string'
+            ? (error as { message: string }).message.slice(0, 80)
+            : 'graphql error'
+          if (alias !== undefined) errorByAlias.set(alias, message)
+        }
       }
       for (let i = 0; i < batch.length; i++) {
         const r = batch[i]
@@ -81,7 +93,7 @@ export async function fetchStarCounts(
         const count = body.data?.[`a${i}`]?.stargazerCount
         const key = `${r.owner}/${r.name}`
         if (typeof count === 'number') stars.set(key, count)
-        else skipped.push(`${key}: no count`)
+        else skipped.push(errorByAlias.get(`a${i}`) !== undefined ? `${key}: ${errorByAlias.get(`a${i}`)}` : `${key}: no count`)
       }
     } catch (error) {
       // A transport failure (connection refused, DNS, TLS) or any other throw

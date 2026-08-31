@@ -87,3 +87,36 @@ describe('fetchStarCounts', () => {
     ])
   })
 })
+
+describe('partial GraphQL responses', () => {
+  const batch = [
+    { owner: 'good', name: 'one' },
+    { owner: 'good', name: 'two' },
+    { owner: 'gone', name: 'renamed' },
+    { owner: 'good', name: 'three' },
+  ]
+
+  it('keeps the healthy aliases when one alias errors, with the real reason on the skip', async () => {
+    const fetchImpl = (async () => new Response(JSON.stringify({
+      data: { a0: { stargazerCount: 10 }, a1: { stargazerCount: 20 }, a2: null, a3: { stargazerCount: 30 } },
+      errors: [{ message: 'Could not resolve to a Repository', path: ['a2'] }],
+    }), { status: 200 })) as unknown as typeof fetch
+    const { stars, skipped } = await fetchStarCounts(batch, { token: 't', fetchImpl, sleep: async () => {} })
+    expect(stars.get('good/one')).toBe(10)
+    expect(stars.get('good/two')).toBe(20)
+    expect(stars.get('good/three')).toBe(30)
+    expect(stars.size).toBe(3)
+    expect(skipped).toEqual(['gone/renamed: Could not resolve to a Repository'])
+  })
+
+  it('skips per alias with the generic reason when errors carry no path', async () => {
+    const fetchImpl = (async () => new Response(JSON.stringify({
+      data: { a0: { stargazerCount: 5 }, a1: null, a2: null, a3: null },
+      errors: [{ message: 'something else' }],
+    }), { status: 200 })) as unknown as typeof fetch
+    const { stars, skipped } = await fetchStarCounts(batch, { token: 't', fetchImpl, sleep: async () => {} })
+    expect(stars.get('good/one')).toBe(5)
+    expect(skipped).toHaveLength(3)
+    expect(skipped.every(s => s.endsWith(': no count'))).toBe(true)
+  })
+})
