@@ -15,7 +15,7 @@
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { loadRegistryConfig } from './config.ts'
+import { loadRegistryConfig, serializeFirstSeen } from './config.ts'
 import { fetchStarCounts } from './github-stars.ts'
 import { harvestRepos } from './github-client.ts'
 import { parseRepoState, serializeRepoState } from './repo-state.ts'
@@ -205,11 +205,22 @@ if (starsToken === '') {
   }
 }
 
-const artifacts = runPipeline(candidates, repoCandidates, config, new Date().toISOString(), rejections, starsInfo, probeSubpackages ? SUBPACKAGE_SCHEMA_VERSION : SCHEMA_VERSION)
+// First-seen bookkeeping: any name this run harvested for the first time gets
+// today. The appended file is written back after the pipeline, so the daily
+// commit carries both the new dates and the manifest lock together.
+const builtAt = new Date().toISOString()
+const today = builtAt.slice(0, 10)
+const firstSeen = new Map(config.firstSeen)
+for (const candidate of candidates) if (!firstSeen.has(candidate.name)) firstSeen.set(candidate.name, today)
+for (const repo of repoCandidates) if (!firstSeen.has(repo.name)) firstSeen.set(repo.name, today)
+const configWithFirstSeen = { ...config, firstSeen }
+
+const artifacts = runPipeline(candidates, repoCandidates, configWithFirstSeen, builtAt, rejections, starsInfo, probeSubpackages ? SUBPACKAGE_SCHEMA_VERSION : SCHEMA_VERSION)
 
 writeFileSync(join(OUT_DIR, artifacts.pluginsFileName), artifacts.pluginsJson)
 writeFileSync(join(OUT_DIR, 'index.json'), artifacts.indexJson)
 writeFileSync(join(REGISTRY_DIR, 'snapshots/manifest.lock'), artifacts.manifestLock)
+writeFileSync(join(REGISTRY_DIR, 'first-seen.yml'), serializeFirstSeen(firstSeen))
 const repoLine = repoNote === '' ? '' : `\nGitHub: ${repoNote}\n`
 writeFileSync(join(OUT_DIR, 'report.md'), `${artifacts.report}\nStars: ${starsNote}\n${repoLine}`)
 

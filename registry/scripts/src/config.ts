@@ -28,6 +28,11 @@ const categoriesSchema = z.array(z.object({
   category: z.enum(CATEGORIES),
 }).strict())
 
+const firstSeenSchema = z.array(z.object({
+  name: z.string().min(1),
+  added: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+}).strict())
+
 /** The human-authored inputs to one catalog build. */
 export interface RegistryConfig {
   /** Package name to its pinned review. */
@@ -39,6 +44,8 @@ export interface RegistryConfig {
   allowedSimilar: Set<string>
   /** Package name to its LLM-assigned category (spec 2026-08-26-llm-categorization-design.md). */
   categories: Map<string, Category>
+  /** Package name to the date it first entered the catalog (YYYY-MM-DD). */
+  firstSeen: Map<string, string>
 }
 
 /**
@@ -69,14 +76,20 @@ function setUnique<V>(map: Map<string, V>, label: string, name: string, value: V
 }
 
 /**
- * Parse the four registry files from their text.
+ * Parse the five registry files from their text.
  * @param input - the raw text of each file.
  * @returns the parsed configuration.
- * @throws when any file is malformed, or when `verified.yml`, `denied.yml`, or
- *   `categories.yml` lists the same package name twice.
+ * @throws when any file is malformed, or when `verified.yml`, `denied.yml`,
+ *   `categories.yml`, or `first-seen.yml` lists the same package name twice.
  */
 export function parseRegistryConfig(
-  input: { verified: string; denied: string; allowedSimilar: string; categories: string },
+  input: {
+    verified: string
+    denied: string
+    allowedSimilar: string
+    categories: string
+    firstSeen: string
+  },
 ): RegistryConfig {
   const verified = new Map<string, Review>()
   for (const row of parseFile('verified.yml', input.verified, verifiedSchema)) {
@@ -100,7 +113,11 @@ export function parseRegistryConfig(
   for (const row of parseFile('categories.yml', input.categories, categoriesSchema)) {
     setUnique(categories, 'categories.yml', row.name, row.category)
   }
-  return { verified, denied, allowedSimilar, categories }
+  const firstSeen = new Map<string, string>()
+  for (const row of parseFile('first-seen.yml', input.firstSeen, firstSeenSchema)) {
+    setUnique(firstSeen, 'first-seen.yml', row.name, row.added)
+  }
+  return { verified, denied, allowedSimilar, categories, firstSeen }
 }
 
 /**
@@ -114,10 +131,28 @@ export function loadRegistryConfig(dir: string): RegistryConfig {
     denied: readFileSync(join(dir, 'denied.yml'), 'utf8'),
     allowedSimilar: readFileSync(join(dir, 'allowed-similar.yml'), 'utf8'),
     categories: readOptional(dir, 'categories.yml'),
+    firstSeen: readOptional(dir, 'first-seen.yml'),
   })
 }
 
 function readOptional(dir: string, file: string): string {
   const path = join(dir, file)
   return existsSync(path) ? readFileSync(path, 'utf8') : '[]'
+}
+
+/**
+ * Serialize the first-seen file: header, sorted rows, trailing newline.
+ * Names are always double-quoted because scoped names start with `@`, which
+ * YAML would otherwise read as a tag.
+ */
+export function serializeFirstSeen(rows: ReadonlyMap<string, string>): string {
+  const rowsText = [...rows]
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    .map(([name, added]) => `- name: "${name}"\n  added: ${added}`)
+  const body = rowsText.length === 0 ? ['[]'] : rowsText
+  const header = [
+    '# First catalog appearance per package name (YYYY-MM-DD). Appended by the daily build;',
+    '# a name absent here is simply "first seen today".',
+  ].join('\n')
+  return `${header}\n${body.join('\n')}\n`
 }

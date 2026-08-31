@@ -2,9 +2,11 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { loadRegistryConfig, parseRegistryConfig } from '../src/config.ts'
+import { loadRegistryConfig, parseRegistryConfig, serializeFirstSeen } from '../src/config.ts'
 
-const empty = { verified: '[]', denied: '[]', allowedSimilar: '[]', categories: '[]' }
+const empty = {
+  verified: '[]', denied: '[]', allowedSimilar: '[]', categories: '[]', firstSeen: '[]',
+}
 
 describe('parseRegistryConfig', () => {
   it('parses empty files', () => {
@@ -146,6 +148,33 @@ describe('parseRegistryConfig categories', () => {
     })).toThrow(/categories\.yml/)
   })
 
+  it('parses first-seen rows, including quoted scoped names', () => {
+    const config = parseRegistryConfig({
+      ...empty,
+      firstSeen: '- name: dsh-hello-plugin\n  added: 2026-08-10\n- name: "@scope/dsh-a"\n  added: 2026-08-12\n',
+    })
+    expect(config.firstSeen.get('dsh-hello-plugin')).toBe('2026-08-10')
+    expect(config.firstSeen.get('@scope/dsh-a')).toBe('2026-08-12')
+  })
+
+  it('throws on a duplicate name in first-seen.yml instead of silently keeping the last row', () => {
+    expect(() => parseRegistryConfig({
+      ...empty,
+      firstSeen: '- name: dsh-hello-plugin\n  added: 2026-08-10\n- name: dsh-hello-plugin\n  added: 2026-08-11\n',
+    })).toThrow(/first-seen\.yml.*duplicate entry for dsh-hello-plugin/s)
+  })
+
+  it('throws on a malformed added date', () => {
+    expect(() => parseRegistryConfig({
+      ...empty,
+      firstSeen: '- name: dsh-hello-plugin\n  added: not-a-date\n',
+    })).toThrow(/first-seen\.yml/)
+  })
+
+  it('throws when the file is not a list', () => {
+    expect(() => parseRegistryConfig({ ...empty, firstSeen: 'name: x\n' })).toThrow(/list/)
+  })
+
   it('throws on a duplicate name', () => {
     expect(() => parseRegistryConfig({
       ...empty,
@@ -158,6 +187,39 @@ describe('parseRegistryConfig categories', () => {
   })
 })
 
+describe('serializeFirstSeen', () => {
+  it('quotes every name — scoped names would break unquoted — and sorts rows by name', () => {
+    const text = serializeFirstSeen(new Map([
+      ['dsh-b', '2026-08-01'],
+      ['@scope/dsh-a', '2026-08-02'],
+    ]))
+    expect(text).toBe([
+      '# First catalog appearance per package name (YYYY-MM-DD). Appended by the daily build;',
+      '# a name absent here is simply "first seen today".',
+      '- name: "@scope/dsh-a"',
+      '  added: 2026-08-02',
+      '- name: "dsh-b"',
+      '  added: 2026-08-01',
+      '',
+    ].join('\n'))
+  })
+
+  it('serializes an empty map as an empty list under the header', () => {
+    expect(serializeFirstSeen(new Map())).toBe([
+      '# First catalog appearance per package name (YYYY-MM-DD). Appended by the daily build;',
+      '# a name absent here is simply "first seen today".',
+      '[]',
+      '',
+    ].join('\n'))
+  })
+
+  it('round-trips through parseRegistryConfig', () => {
+    const rows = new Map([['@scope/dsh-a', '2026-08-02'], ['dsh-b', '2026-08-01']])
+    const config = parseRegistryConfig({ ...empty, firstSeen: serializeFirstSeen(rows) })
+    expect([...config.firstSeen]).toEqual([['@scope/dsh-a', '2026-08-02'], ['dsh-b', '2026-08-01']])
+  })
+})
+
 describe('loadRegistryConfig', () => {
   it('treats a missing categories.yml as empty', () => {
     const dir = mkdtempSync(join(tmpdir(), 'categories-config-'))
@@ -165,6 +227,17 @@ describe('loadRegistryConfig', () => {
       for (const f of ['verified.yml', 'denied.yml', 'allowed-similar.yml']) writeFileSync(join(dir, f), '[]\n')
       const config = loadRegistryConfig(dir)
       expect(config.categories.size).toBe(0)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('treats a missing first-seen.yml as empty', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'first-seen-config-'))
+    try {
+      for (const f of ['verified.yml', 'denied.yml', 'allowed-similar.yml']) writeFileSync(join(dir, f), '[]\n')
+      const config = loadRegistryConfig(dir)
+      expect(config.firstSeen.size).toBe(0)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

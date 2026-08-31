@@ -5,6 +5,17 @@ import type { RegistryConfig } from './config.ts'
 import type { Entry } from './types.ts'
 
 /**
+ * The first-seen date for one listed name, failing loudly when the file has
+ * no row for it. A listed entry without a date would silently omit a field
+ * every consumer of `added` expects.
+ */
+function firstSeenOf(config: RegistryConfig, name: string): string {
+  const added = config.firstSeen.get(name)
+  if (added === undefined) throw new Error(`first-seen.yml: ${name} has no first-seen row`)
+  return added
+}
+
+/**
  * Assign a trust tier to one accepted candidate.
  *
  * A review is pinned to the version it covered: when the published version is
@@ -29,6 +40,7 @@ export function assignTier(accepted: Accepted, config: RegistryConfig): Entry {
     metadata: accepted.metadata,
     catalog: accepted.catalog,
     source: 'npm' as const,
+    added: firstSeenOf(config, candidate.name),
   }
   // A review whose only pin is a commit belongs to a repo entry of the same
   // bundle name, not to this npm candidate.
@@ -63,6 +75,7 @@ export function assignRepoTier(accepted: RepoAccepted, config: RegistryConfig): 
     source: 'github' as const,
     repo: repo.repo,
     ...(repo.subdir !== undefined ? { subdir: repo.subdir } : {}),
+    added: firstSeenOf(config, repo.name),
   }
   // A review whose only pin is a version belongs to an npm entry of the same
   // bundle name, not to this repo candidate.

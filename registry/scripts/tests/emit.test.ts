@@ -9,6 +9,9 @@ function entry(name: string, version = '1.0.0'): Entry {
     metadata: 'declared',
     catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
     source: 'npm',
+    // Before every builtAt used in this suite, so the E9 future-date check
+    // never trips on a fixture.
+    added: '2026-08-01',
   }
 }
 
@@ -21,6 +24,7 @@ function repoEntry(name: string, repo: string, subdir?: string): Entry {
     source: 'github',
     repo,
     ...(subdir == null ? {} : { subdir }),
+    added: '2026-08-01',
   }
 }
 
@@ -174,5 +178,17 @@ describe('assertCatalogInvariants', () => {
     const a = repoEntry('dsh-a', 'owner-a/slug')
     const b = repoEntry('dsh-a', 'owner-b/slug')
     expect(() => emit([a, b], [], '2026-08-31T00:00:00Z')).not.toThrow()
+  })
+
+  it('throws when an entry carries an added date later than the build date', () => {
+    const future = { ...entry('dsh-a'), added: '2026-08-26' }
+    expect(() => emit([future], [], '2026-08-25T00:00:00.000Z'))
+      .toThrow(/added 2026-08-26 is later than the build date 2026-08-25/)
+  })
+
+  it('throws when an entry carries an unparseable added date', () => {
+    const broken = { ...entry('dsh-a'), added: 'yesterday' }
+    expect(() => emit([broken], [], '2026-08-25T00:00:00.000Z'))
+      .toThrow(/unparseable added date yesterday/)
   })
 })

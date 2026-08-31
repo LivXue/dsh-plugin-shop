@@ -149,4 +149,6 @@ export interface Entry {
   /** The subpackage directory inside the repo; present exactly when the entry
    * is a monorepo subpackage rather than the repo root. */
   subdir?: string
+  /** The date this entry first appeared in the catalog (YYYY-MM-DD). */
+  added: string
 }

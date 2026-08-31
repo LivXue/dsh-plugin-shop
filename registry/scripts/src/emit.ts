@@ -53,6 +53,19 @@ function escapeCell(value: string): string {
  * @param builtAt - the build timestamp; its date part is the "now" reference.
  */
 export function assertCatalogInvariants(entries: Entry[], builtAt: string): void {
+  // E9: `added` is present and never in the future relative to the build date.
+  // A date the build has not reached yet is a contradiction in the source
+  // data — either the file was hand-edited ahead of reality or the clock is
+  // wrong, and publishing either would let consumers trust a fiction.
+  const today = builtAt.slice(0, 10)
+  for (const entry of entries) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(entry.added)) {
+      throw new Error(`catalog invariant: ${entry.name} has an unparseable added date ${entry.added}`)
+    }
+    if (entry.added > today) {
+      throw new Error(`catalog invariant: ${entry.name} added ${entry.added} is later than the build date ${today}`)
+    }
+  }
   const identities = new Set<string>()
   for (const entry of entries) {
     const key = entry.source === 'npm'

@@ -8,6 +8,7 @@ const config = parseRegistryConfig({
   denied: '- name: dsh-evil-plugin\n  reason: Exfiltrates credentials.\n',
   allowedSimilar: '- dsh-fs-tools\n',
   categories: '[]',
+  firstSeen: '[]',
 })
 
 function candidate(overrides: Partial<Candidate> = {}): Candidate {
@@ -33,6 +34,7 @@ const withCategories = (rows: Record<string, string>): ReturnType<typeof parseRe
     denied: '- name: dsh-evil-plugin\n  reason: Exfiltrates credentials.\n',
     allowedSimilar: '- dsh-fs-tools\n',
     categories: Object.keys(rows).length === 0 ? '[]' : Object.entries(rows).map(([name, category]) => `- name: ${name}\n  category: ${category}\n`).join(''),
+    firstSeen: '[]',
   })
 
 describe('gate', () => {
@@ -124,6 +126,7 @@ describe('gate', () => {
       denied: '- name: dsh-evil-plugin\n  reason: Exfiltrates credentials.\n  replacement: dsh-good-plugin\n',
       allowedSimilar: '[]',
       categories: '[]',
+      firstSeen: '[]',
     })
     const result = gate(candidate({ name: 'dsh-evil-plugin' }), denied)
     if (result.ok) throw new Error('expected rejection')
@@ -221,6 +224,7 @@ describe('gate', () => {
       denied: '- name: dsh-fs-too1\n  reason: Typosquat.\n',
       allowedSimilar: '[]',
       categories: '[]',
+      firstSeen: '[]',
     })
     const result = gate(candidate({ name: 'dsh-fs-too1' }), denied)
     if (result.ok) throw new Error('expected rejection')

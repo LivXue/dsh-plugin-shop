@@ -1,13 +1,24 @@
 import { describe, expect, it } from 'vitest'
-import { assignTier } from '../src/tier.ts'
+import { assignRepoTier, assignTier } from '../src/tier.ts'
 import { parseRegistryConfig } from '../src/config.ts'
 import type { Accepted } from '../src/gate.ts'
+import type { RepoAccepted } from '../src/repo-gate.ts'
 
 const config = parseRegistryConfig({
   verified: '- name: dsh-hello-plugin\n  reviewedVersion: 1.2.0\n  reviewer: github:r\n  reviewCommit: abc\n  notes: fine\n',
   denied: '[]',
   allowedSimilar: '[]',
   categories: '[]',
+  firstSeen: [
+    '- name: dsh-hello-plugin',
+    '  added: 2026-08-10',
+    '- name: dsh-other-plugin',
+    '  added: 2026-08-11',
+    '- name: dsh-derived-plugin',
+    '  added: 2026-08-12',
+    '- name: dsh-repo-plugin',
+    '  added: 2026-08-13',
+  ].join('\n') + '\n',
 })
 
 function accepted(name: string, version: string, metadata: Accepted['metadata'] = 'declared'): Accepted {
@@ -79,5 +90,49 @@ describe('assignTier', () => {
     const entry = assignTier(accepted('dsh-hello-plugin', '1.2.0', 'derived'), config)
     expect(entry.tier).toBe('verified')
     expect(entry.metadata).toBe('derived')
+  })
+
+  it('attaches the first-seen date as added', () => {
+    const entry = assignTier(accepted('dsh-other-plugin', '1.0.0'), config)
+    expect(entry.added).toBe('2026-08-11')
+  })
+
+  it('throws when a listed name has no first-seen row', () => {
+    expect(() => assignTier(accepted('dsh-unseen', '1.0.0'), config))
+      .toThrow('first-seen.yml: dsh-unseen has no first-seen row')
+  })
+})
+
+describe('assignRepoTier', () => {
+  const commit = 'c'.repeat(40)
+
+  function repoAccepted(name: string): RepoAccepted {
+    return {
+      repo: {
+        name,
+        repo: `someone/${name}`,
+        commit,
+        version: commit,
+        publishedAt: '2026-08-01T12:00:00.000Z',
+        repository: `https://github.com/someone/${name}`,
+        license: 'MIT',
+        hasBundle: true,
+        requiresBuild: false,
+        hasWorkspaceDeps: false,
+        catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
+        description: 'x',
+      },
+      catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
+      metadata: 'declared',
+    }
+  }
+
+  it('attaches the first-seen date as added', () => {
+    expect(assignRepoTier(repoAccepted('dsh-repo-plugin'), config).added).toBe('2026-08-13')
+  })
+
+  it('throws when a repo name has no first-seen row', () => {
+    expect(() => assignRepoTier(repoAccepted('dsh-unseen'), config))
+      .toThrow('first-seen.yml: dsh-unseen has no first-seen row')
   })
 })

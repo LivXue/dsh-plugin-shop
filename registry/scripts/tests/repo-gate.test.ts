@@ -8,6 +8,7 @@ const config = parseRegistryConfig({
   denied: '[]',
   allowedSimilar: '[]',
   categories: '[]',
+  firstSeen: '[]',
 })
 
 const commit = 'a'.repeat(40)
@@ -80,6 +81,7 @@ describe('gateRepo', () => {
       denied: '- name: someone/dsh-repo-plugin\n  reason: known bad actor\n- name: dsh-denied-name\n  reason: bundle name denied\n',
       allowedSimilar: '[]',
       categories: '[]',
+      firstSeen: '[]',
     })
     const byRepo = gateRepo(repo(), denied)
     expect(byRepo.ok).toBe(false)
@@ -103,6 +105,7 @@ describe('gateRepo', () => {
       denied: '- name: someone/dsh-repo-plugin\n  reason: known bad actor.\n  replacement: dsh-good-plugin\n- name: dsh-denied-name\n  reason: bundle name denied.\n  replacement: dsh-good-plugin\n',
       allowedSimilar: '[]',
       categories: '[]',
+      firstSeen: '[]',
     })
     const byRepo = gateRepo(repo(), denied)
     expect(byRepo.ok).toBe(false)

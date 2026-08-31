@@ -13,6 +13,18 @@ const config = parseRegistryConfig({
   denied: '[]',
   allowedSimilar: '[]',
   categories: '[]',
+  firstSeen: [
+    '- name: dsh-fs-tool',
+    '  added: 2026-08-10',
+    '- name: dsh-hello-plugin',
+    '  added: 2026-08-11',
+    '- name: dsh-derived-plugin',
+    '  added: 2026-08-12',
+    '- name: dsh-repo-plugin',
+    '  added: 2026-08-13',
+    '- name: sub-plugin',
+    '  added: 2026-08-14',
+  ].join('\n') + '\n',
 })
 
 const BUILT_AT = '2026-08-18T00:00:00.000Z'
@@ -81,6 +93,14 @@ describe('runPipeline', () => {
       denied: '[]',
       allowedSimilar: '[]',
       categories: '- name: dsh-derived-plugin\n  category: tool\n',
+      firstSeen: [
+        '- name: dsh-fs-tool',
+        '  added: 2026-08-10',
+        '- name: dsh-hello-plugin',
+        '  added: 2026-08-11',
+        '- name: dsh-derived-plugin',
+        '  added: 2026-08-12',
+      ].join('\n') + '\n',
     })
     const first = runPipeline(candidates, [], categorized, BUILT_AT)
     const second = runPipeline(candidates, [], categorized, BUILT_AT)
@@ -90,6 +110,25 @@ describe('runPipeline', () => {
     }
     const derived = parsed.plugins.find(p => p.name === 'dsh-derived-plugin')
     expect(derived?.catalog.category).toBe('tool')
+  })
+
+  it('emits the first-seen date as added', () => {
+    const { pluginsJson } = runPipeline(candidates, [], config, BUILT_AT)
+    const parsed = JSON.parse(pluginsJson) as { plugins: { name: string; added: string }[] }
+    expect(parsed.plugins.find(p => p.name === 'dsh-fs-tool')?.added).toBe('2026-08-10')
+    expect(parsed.plugins.find(p => p.name === 'dsh-hello-plugin')?.added).toBe('2026-08-11')
+  })
+
+  it('throws with the file name when a listed name has no first-seen row', () => {
+    const withoutRow = parseRegistryConfig({
+      verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: github:r\n  reviewCommit: abc\n  notes: fine\n',
+      denied: '[]',
+      allowedSimilar: '[]',
+      categories: '[]',
+      firstSeen: '- name: dsh-hello-plugin\n  added: 2026-08-11\n- name: dsh-derived-plugin\n  added: 2026-08-12\n',
+    })
+    expect(() => runPipeline(candidates, [], withoutRow, BUILT_AT))
+      .toThrow('first-seen.yml: dsh-fs-tool has no first-seen row')
   })
 
   it('produces identical data across build times', () => {
@@ -129,10 +168,24 @@ describe('runPipeline with repository candidates', () => {
     description: 'A repo plugin.',
   }
 
-  it('lists a repository entry with its source, repo, and pinned commit', () => {
+  it('lists a repository entry with its source, repo, pinned commit, and added date', () => {
     const { pluginsJson } = runPipeline([], [repoCandidate], config, BUILT_AT)
-    const parsed = JSON.parse(pluginsJson) as { plugins: { name: string; source: string; repo: string; version: string }[] }
-    expect(parsed.plugins).toMatchObject([{ name: 'dsh-repo-plugin', source: 'github', repo: 'someone/dsh-repo-plugin', version: commit }])
+    const parsed = JSON.parse(pluginsJson) as { plugins: { name: string; source: string; repo: string; version: string; added: string }[] }
+    expect(parsed.plugins).toMatchObject([{
+      name: 'dsh-repo-plugin', source: 'github', repo: 'someone/dsh-repo-plugin', version: commit, added: '2026-08-13',
+    }])
+  })
+
+  it('throws when a repository entry has no first-seen row', () => {
+    const withoutRow = parseRegistryConfig({
+      verified: '[]',
+      denied: '[]',
+      allowedSimilar: '[]',
+      categories: '[]',
+      firstSeen: '[]',
+    })
+    expect(() => runPipeline([], [repoCandidate], withoutRow, BUILT_AT))
+      .toThrow('first-seen.yml: dsh-repo-plugin has no first-seen row')
   })
 
   it('shadows a repository whose bundle name already ships as an npm package, with a reason', () => {
