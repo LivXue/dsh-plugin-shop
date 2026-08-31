@@ -3861,9 +3861,13 @@
   category: tool
 - name: "dsh-minimal-ptc"
   category: other
+- name: "dsh-minimax-usage"
+  category: ui
 - name: "dsh-miopiik"
   category: workflow
 - name: "dsh-miopiik-capabilities"
+  category: tool
+- name: "dsh-miopiik-checkpoint"
   category: tool
 - name: "dsh-miopiik-executor"
   category: tool
@@ -3873,13 +3877,19 @@
   category: tool
 - name: "dsh-miopiik-model-auth"
   category: tool
+- name: "dsh-miopiik-recall"
+  category: tool
 - name: "dsh-miopiik-run-stats"
   category: tool
 - name: "dsh-miopiik-tool-recovery"
   category: tool
 - name: "dsh-mmx"
   category: provider
+- name: "dsh-mmx-bridge"
+  category: provider
 - name: "dsh-mnemon"
+  category: tool
+- name: "dsh-mnemos"
   category: tool
 - name: "dsh-mobile"
   category: tool
@@ -3887,7 +3897,11 @@
   category: ui
 - name: "dsh-mobile-remote"
   category: integration
+- name: "dsh-mobile-theme"
+  category: ui
 - name: "dsh-mobile-webui"
+  category: ui
+- name: "dsh-mobile-xc"
   category: ui
 - name: "dsh-model-accordion"
   category: ui
@@ -3907,13 +3921,29 @@
   category: tool
 - name: "dsh-model-gate"
   category: tool
+- name: "dsh-model-manager"
+  category: tool
 - name: "dsh-model-memory"
   category: tool
 - name: "dsh-model-meta-autofill"
   category: tool
+- name: "dsh-model-override"
+  category: tool
+- name: "dsh-model-pin"
+  category: tool
 - name: "dsh-model-preset"
   category: ui
+- name: "dsh-model-pro"
+  category: tool
+- name: "dsh-model-reasoning"
+  category: ui
+- name: "dsh-model-reasoning-defaults"
+  category: tool
+- name: "dsh-model-search"
+  category: ui
 - name: "dsh-model-search-select"
+  category: ui
+- name: "dsh-model-select-plus"
   category: ui
 - name: "dsh-model-selector"
   category: ui
@@ -3928,6 +3958,8 @@
 - name: "dsh-modellix"
   category: provider
 - name: "dsh-models-import"
+  category: tool
+- name: "dsh-mojibake-interceptor"
   category: tool
 - name: "dsh-more"
   category: ui
@@ -4097,6 +4129,8 @@
   category: ui
 - name: "dsh-office-plugin"
   category: ui
+- name: "dsh-office-suite"
+  category: ui
 - name: "dsh-office-tools"
   category: tool
 - name: "dsh-official-homepage-theme"
@@ -4107,6 +4141,8 @@
   category: tool
 - name: "dsh-okf-knowledge"
   category: tool
+- name: "dsh-ollama-usage"
+  category: ui
 - name: "dsh-omc-tui"
   category: ui
 - name: "dsh-ontology"
@@ -4123,6 +4159,8 @@
   category: provider
 - name: "dsh-open-file"
   category: tool
+- name: "dsh-open-in"
+  category: tool
 - name: "dsh-open-with"
   category: tool
 - name: "dsh-openai-accounts"
@@ -4133,6 +4171,8 @@
   category: provider
 - name: "dsh-openclaw-enterprise-team"
   category: integration
+- name: "dsh-opencode-cli"
+  category: provider
 - name: "dsh-opencode-provider"
   category: provider
 - name: "dsh-opencode-status"
@@ -5211,6 +5251,8 @@
   category: ui
 - name: "dsh-skill-creator"
   category: tool
+- name: "dsh-skill-editor"
+  category: tool
 - name: "dsh-skill-fuzzy"
   category: ui
 - name: "dsh-skill-hub"
@@ -5316,6 +5358,8 @@
 - name: "dsh-ssh-bridge"
   category: tool
 - name: "dsh-ssh-ops"
+  category: tool
+- name: "dsh-ssh-terminal"
   category: tool
 - name: "dsh-ssh-tui"
   category: ui
@@ -5553,11 +5597,15 @@
   category: tool
 - name: "dsh-tool-bridge"
   category: tool
+- name: "dsh-tool-call-guard"
+  category: tool
 - name: "dsh-tool-computer"
   category: tool
 - name: "dsh-tool-docx"
   category: tool
 - name: "dsh-tool-draw"
+  category: tool
+- name: "dsh-tool-explorer"
   category: tool
 - name: "dsh-tool-generate-image"
   category: tool
@@ -5634,6 +5682,8 @@
 - name: "dsh-turn-delete"
   category: tool
 - name: "dsh-turn-diff"
+  category: tool
+- name: "dsh-turn-doctor"
   category: tool
 - name: "dsh-turn-fold"
   category: ui
@@ -5853,6 +5903,8 @@
   category: ui
 - name: "dsh-vscode-shell"
   category: ui
+- name: "dsh-waaagh-ork"
+  category: ui
 - name: "dsh-wallpaper"
   category: integration
 - name: "dsh-wallpaper-rotation"
@@ -5891,6 +5943,8 @@
   category: tool
 - name: "dsh-web-mermaid"
   category: ui
+- name: "dsh-web-mobile"
+  category: ui
 - name: "dsh-web-mobile-fix"
   category: ui
 - name: "dsh-web-network-optimizer"
@@ -5915,7 +5969,11 @@
   category: provider
 - name: "dsh-web-search-codex"
   category: provider
+- name: "dsh-web-search-doubao"
+  category: provider
 - name: "dsh-web-search-glm"
+  category: provider
+- name: "dsh-web-search-litellm"
   category: provider
 - name: "dsh-web-search-metaso"
   category: provider
@@ -5943,6 +6001,8 @@
   category: provider
 - name: "dsh-web-terminal"
   category: tool
+- name: "dsh-web-theme"
+  category: ui
 - name: "dsh-web-ui-notify"
   category: ui
 - name: "dsh-web-voice-input"
@@ -5965,6 +6025,8 @@
   category: integration
 - name: "dsh-wechat-mp"
   category: tool
+- name: "dsh-wechat-mp-search"
+  category: integration
 - name: "dsh-wecom"
   category: integration
 - name: "dsh-weixin"
@@ -6017,7 +6079,11 @@
   category: tool
 - name: "dsh-win-notify"
   category: tool
+- name: "dsh-win-toolkit"
+  category: tool
 - name: "dsh-win32"
+  category: tool
+- name: "dsh-windows-ocr"
   category: tool
 - name: "dsh-windows-shell-policy"
   category: tool
@@ -6043,9 +6109,13 @@
   category: tool
 - name: "dsh-workspace-enhancement"
   category: tool
+- name: "dsh-workspace-explorer-picker"
+  category: ui
 - name: "dsh-workspace-files"
   category: ui
 - name: "dsh-workspace-hub"
+  category: ui
+- name: "dsh-workspace-jump"
   category: ui
 - name: "dsh-workspace-prompts"
   category: tool
@@ -6055,11 +6125,19 @@
   category: workflow
 - name: "dsh-worktime-board"
   category: ui
+- name: "dsh-worktrees"
+  category: tool
+- name: "dsh-wps-plugin"
+  category: integration
 - name: "dsh-write-gate"
   category: tool
 - name: "dsh-writing-desk"
   category: ui
+- name: "dsh-writing-remote"
+  category: integration
 - name: "dsh-wsl-expose"
+  category: tool
+- name: "dsh-wsl-workspace"
   category: tool
 - name: "dsh-wsl-workspace-picker"
   category: ui
@@ -6177,12 +6255,22 @@
   category: workflow
 - name: "lynkr-dsh-plugin"
   category: provider
+- name: "mattpocock-skills-dsh"
+  category: workflow
 - name: "mattpocock-skills-dsh-zh"
+  category: tool
+- name: "mc-hud"
+  category: ui
+- name: "memory-eternal"
   category: tool
 - name: "meow-memory"
   category: tool
 - name: "meow-smooth"
   category: ui
+- name: "mermaid2aichat-dsh"
+  category: ui
+- name: "metavibe-dsh"
+  category: tool
 - name: "mimo-vision"
   category: tool
 - name: "mtm-codebase-memory"
@@ -6211,6 +6299,8 @@
   category: integration
 - name: "opencode-usage-badge"
   category: ui
+- name: "openeuler-skillhub"
+  category: integration
 - name: "paper-review"
   category: ui
 - name: "pet-whale"
