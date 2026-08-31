@@ -8,3 +8,5 @@ dist/
 .env
 .DS_Store
 .playwright-mcp/
+.claude/settings.local.json
+.claude/worktrees/
