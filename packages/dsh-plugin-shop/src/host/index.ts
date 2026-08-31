@@ -15,6 +15,7 @@ import type { CatalogSnapshot } from './catalog.ts'
 import type { CatalogEntry, DeniedEntry } from './types.ts'
 import { validateInstall, type InstallArgs, type InstallRejectionCode } from './install.ts'
 import { startInstall, startUninstall, type InstallStatus } from './executor.ts'
+import { hotMount, hotUnmount } from './hot.ts'
 import { startRestart, type RestartOutcome } from './restart.ts'
 import { fetchLatestVersion } from './self-update.ts'
 import { detectSupervisor } from './supervisor.ts'
@@ -36,6 +37,15 @@ export interface InventoryEntry {
   enabled: boolean
 }
 
+/** One boot-layer Loader entry, structurally — the surface `liveDisable`
+ * consumes. `fiber` is the entry's live activation (present while the plugin
+ * is up); `update` flips its options. */
+export interface LoaderEntryLike {
+  options: { name?: string }
+  fiber?: unknown
+  update(options: { disabled: boolean | null }, create?: boolean, force?: boolean): Promise<void>
+}
+
 /** Test-only injection points; production callers pass nothing. */
 export interface ShopGatewayOptions {
   catalogUrl?: string
@@ -48,6 +58,12 @@ export interface ShopGatewayOptions {
   profileDir?: string
   /** The Loader plugin inventory; read from `ctx` when omitted. */
   inventory?: { list(): InventoryEntry[] }
+  /** Test-only injection: the hot-mount functions; production uses the real
+   * hotMount/hotUnmount. */
+  hot?: { mount: typeof hotMount; unmount: typeof hotUnmount }
+  /** Test-only injection: the Loader's boot-layer entries; production reads
+   * them from `ctx.loader`. */
+  loaderEntries?: () => Array<LoaderEntryLike>
   dshBin?: string
   /** The dsh argv this process was launched with, for `shop/restart`;
    * defaults to the real `process.argv` minus node and the script path. */
@@ -223,6 +239,8 @@ export class ShopGateway extends TypertRemoteService {
   private readonly profile: string
   private readonly profileDir?: string
   private readonly inventory?: ShopGatewayOptions['inventory']
+  private readonly hot?: ShopGatewayOptions['hot']
+  private readonly loaderEntriesInjected?: ShopGatewayOptions['loaderEntries']
   private readonly dshBin: string
   /** The argv `shop/restart` re-spawns: the real process argv minus node and
    * the CLI script path, or a test-provided substitute. */
@@ -265,6 +283,8 @@ export class ShopGateway extends TypertRemoteService {
     this.profile = options.profile ?? discoverProfile(fileURLToPath(import.meta.url), this.bootBaseDir()).name
     this.profileDir = options.profileDir
     this.inventory = options.inventory
+    this.hot = options.hot
+    this.loaderEntriesInjected = options.loaderEntries
     this.dshBin = options.dshBin ?? 'dsh'
     this.restartArgv = options.restartArgv ?? process.argv.slice(2)
     this.exit = options.exit ?? ((code?: number) => process.exit(code))
@@ -322,6 +342,38 @@ export class ShopGateway extends TypertRemoteService {
       | undefined
     if (inventory === undefined) throw new Error('dsh-plugin-shop: pluginInventory service is not mounted')
     return inventory.list()
+  }
+
+  /** The Loader's boot-layer entries; a harness without the loader answers
+   * with an empty list (there is then nothing to live-disable). */
+  private loaderEntries(): Array<LoaderEntryLike> {
+    if (this.loaderEntriesInjected !== undefined) return this.loaderEntriesInjected()
+    const loader = (this.ctx as unknown as { loader?: { entries(): Iterable<LoaderEntryLike> } }).loader
+    return loader === undefined ? [] : [...loader.entries()]
+  }
+
+  /** Live-disable one boot-layer entry, retrying until its fiber is actually
+   * down. A disable can land while the entry's init is still in flight: the
+   * options flip but the finishing init brings the fiber up anyway, and a
+   * plain re-update no-ops on the empty diff (dsh-market themes.ts:74-93).
+   * For an update swap this sequencing is mandatory, not defensive: two live
+   * instances of a service-providing plugin would collide at provision. */
+  private async liveDisable(name: string): Promise<boolean> {
+    let found = false
+    for (const entry of this.loaderEntries()) {
+      if (entry.options.name !== name) continue
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          await entry.update({ disabled: true }, false, true)
+          found = true
+        } catch {
+          break
+        }
+        if (entry.fiber === undefined) break
+        await new Promise(resolve => setTimeout(resolve, 200))
+      }
+    }
+    return found
   }
 
   /** Enable or disable one installed plugin, hot (§8): a disable writes the
@@ -454,6 +506,12 @@ export class ShopGateway extends TypertRemoteService {
     } else {
       spec = `${args.name}@${args.version}`
     }
+    // An update must bring the old instance down before the new one mounts:
+    // two live instances of a service-providing plugin would collide at
+    // provision (see liveDisable). The profile manifest's dependencies are
+    // the install's own record — the shop's managed bundle list.
+    const manifest = readProfileManifest('dsh-plugin-shop', this.profileDirResolved())
+    const isUpdate = (manifest.dependencies ?? {})[args.name] !== undefined
     const running = startInstall({
       profile: this.profile,
       spec,
@@ -461,6 +519,25 @@ export class ShopGateway extends TypertRemoteService {
       // §7.2 step 6: exit 0 must be confirmed against the profile manifest —
       // a bundle that did not land is a stale catalog, not a done install.
       expectedName: args.name,
+      // After the bundle lands, bring it up hot — unless this is an update,
+      // whose old instance must be down first (see liveDisable). A failed
+      // mount falls back to restart activation, never to a silent half-state.
+      afterDone: async () => {
+        const hot = this.hot ?? { mount: hotMount, unmount: hotUnmount }
+        if (isUpdate) {
+          // Sequencing: the old instance must be down before the new one
+          // mounts (see liveDisable). A failure here falls back to restart.
+          await this.liveDisable(args.name)
+        }
+        const result = await hot.mount(
+          { plugin: (plugin, config) => (this.ctx as unknown as { plugin(plugin: unknown, config: unknown): { await(): Promise<unknown>; dispose(): Promise<unknown> | void } }).plugin(plugin, config) },
+          this.profileDirResolved(),
+          args.name,
+        )
+        return result.ok
+          ? { needsRestart: false }
+          : { needsRestart: true, restartReason: result.reason ?? undefined }
+      },
     })
     if (entry.source === 'github') {
       // Remember the pinned commit: the manifest records only
@@ -593,6 +670,19 @@ export class ShopGateway extends TypertRemoteService {
       name: args.name,
       dshBin: this.dshBin,
       expectedName: args.name,
+      // Bring the plugin down the moment the bundle is gone: a session hot
+      // mount first, else the live boot entry. The package is removed from
+      // the profile manifest either way — nothing can come back — so the
+      // result never demands a restart, even when neither arm found anything
+      // (the plugin simply never loaded this session).
+      afterDone: async () => {
+        const hot = this.hot ?? { mount: hotMount, unmount: hotUnmount }
+        const hotRemoved = await hot.unmount(args.name)
+        const disabled = hotRemoved || await this.liveDisable(args.name)
+        // Privilege is revoked the moment the fiber is gone; the boot
+        // composition drops the entry row at next boot.
+        return { needsRestart: false }
+      },
     })
     // Forget the commit pin alongside the dependency; a stale pin would
     // otherwise outlive the uninstall in the shop's cache.

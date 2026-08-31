@@ -1,10 +1,11 @@
-import { afterAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import ShopGateway, { verifyTarballSha256 } from '../../src/host/index.ts'
+import type { LoaderEntryLike, ShopGatewayOptions, ShopInstallStatusResult } from '../../src/host/index.ts'
 import type { CatalogResult, CatalogSnapshot } from '../../src/host/catalog.ts'
 import type { CatalogEntry } from '../../src/host/types.ts'
 
@@ -154,10 +155,15 @@ function gatewayWithSnapshot(snapshot: CatalogSnapshot): { gateway: ShopGateway;
     '',
   ].join('\n'))
   chmodSync(bin, 0o755)
+  // The install flow reads the running profile manifest before spawning (to
+  // tell an update from a fresh install); the fixture supplies one.
+  const profileDir = mkdtempSync(join(tmpdir(), 'dsh-gateway-profile-'))
+  writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
   const gateway = new ShopGateway(stubCtx(), {
     catalogUrl: 'https://shop.test/v1/',
     cacheDir: '/cache',
     profile: 'web',
+    profileDir,
     loadCatalog: async () => ({ snapshot, stale: false }) as CatalogResult,
     dshBin: bin,
   })
@@ -564,27 +570,28 @@ describe('ShopGateway.restart', () => {
   })
 })
 
-describe('restart guard (systemd)', () => {
-  // The allows case commits a real handoff, so the options carry the same
-  // fakes as the ShopGateway.restart cases above: a fixture dsh and a pid
-  // beyond pid_max (guaranteed dead), so the helper runs the fixture at once
-  // and no real dsh web is ever spawned. The cacheDir is a scratch dir — the
-  // handoff opens restart.log inside it before committing.
-  function gatewayOptions() {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-restart-guard-'))
-    const bin = join(dir, 'dsh')
-    writeFileSync(bin, `#!/bin/sh\necho "$1 $2 $3" >> "${join(dir, 'calls.log')}"\nexit 0\n`)
-    chmodSync(bin, 0o755)
-    return {
-      catalogUrl: 'https://shop.test/v1/',
-      cacheDir: mkdtempSync(join(tmpdir(), 'dsh-restart-guard-cache-')),
-      profile: 'web',
-      exit: () => {}, restartExitDelayMs: 0,
-      dshBin: bin,
-      restartParentPid: 1_000_000_000,
-    }
+// File-scope fixture options shared by the restart-guard describe and the hot
+// paths (C-2): a fixture dsh and a pid beyond pid_max (guaranteed dead), so
+// the takeover helper runs the fixture at once and no real dsh web is ever
+// spawned. The cacheDir is a scratch dir — the handoff opens restart.log
+// inside it before committing. Hot-path cases spread these and add the
+// profile manifest, catalog fixture, and the hot/loader injections.
+function gatewayOptions() {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-restart-guard-'))
+  const bin = join(dir, 'dsh')
+  writeFileSync(bin, `#!/bin/sh\necho "$1 $2 $3" >> "${join(dir, 'calls.log')}"\nexit 0\n`)
+  chmodSync(bin, 0o755)
+  return {
+    catalogUrl: 'https://shop.test/v1/',
+    cacheDir: mkdtempSync(join(tmpdir(), 'dsh-restart-guard-cache-')),
+    profile: 'web',
+    exit: () => {}, restartExitDelayMs: 0,
+    dshBin: bin,
+    restartParentPid: 1_000_000_000,
   }
+}
 
+describe('restart guard (systemd)', () => {
   it('refuses restart when systemd owns the process', async () => {
     const gateway = new ShopGateway(stubCtx(), { ...gatewayOptions(), env: { INVOCATION_ID: 'abc' }, ppid: 1 })
     const result = await gateway.restart()
@@ -708,8 +715,11 @@ describe('ShopGateway github entries', () => {
       '',
     ].join('\n'))
     chmodSync(bin, 0o755)
+    // The install flow reads the running profile manifest before spawning.
+    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-repo-profile-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
     return new ShopGateway(stubCtx(), {
-      catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web',
+      catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
       loadCatalog: async () => ({ snapshot: { schemaVersion: 3, builtAt: '', entries: [repoEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
       dshBin: bin,
       hasGit: () => hasGit,
@@ -794,8 +804,11 @@ describe('subpackage install spec', () => {
       '',
     ].join('\n'))
     chmodSync(bin, 0o755)
+    // The install flow reads the running profile manifest before spawning.
+    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-sub-profile-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
     return new ShopGateway(stubCtx(), {
-      catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web',
+      catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
       loadCatalog: async () => ({ snapshot: { schemaVersion: 4, builtAt: '', entries: [subEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
       dshBin: bin,
       hasGit: () => true,
@@ -845,8 +858,11 @@ describe('release-rescued tarball install', () => {
       '',
     ].join('\n'))
     chmodSync(bin, 0o755)
+    // The install flow reads the running profile manifest before spawning.
+    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-tarball-profile-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
     return new ShopGateway(stubCtx(), {
-      catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web',
+      catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
       loadCatalog: async () => ({ snapshot: { schemaVersion: 5, builtAt: '', entries: [tarballEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
       dshBin: bin,
       hasGit: () => false,
@@ -918,8 +934,10 @@ describe('release-rescued tarball install', () => {
     const npmBin = join(npmDir, 'fake-dsh')
     writeFileSync(npmBin, ['#!/bin/sh', `echo "$1 $2 $3 $4 $5" >> "${join(npmDir, 'calls.log')}"`, 'exit 0', ''].join('\n'))
     chmodSync(npmBin, 0o755)
+    const npmProfileDir = mkdtempSync(join(tmpdir(), 'dsh-npm-notarball-profile-'))
+    writeFileSync(join(npmProfileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
     const npmGateway = new ShopGateway(stubCtx(), {
-      catalogUrl: 'https://shop.test/v1/', cacheDir: join(npmDir, 'cache'), profile: 'web',
+      catalogUrl: 'https://shop.test/v1/', cacheDir: join(npmDir, 'cache'), profile: 'web', profileDir: npmProfileDir,
       loadCatalog: async () => ({ snapshot: { schemaVersion: 5, builtAt: '', entries: [npmEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
       dshBin: npmBin,
       fetchTarball,
@@ -939,8 +957,10 @@ describe('release-rescued tarball install', () => {
     const repoBin = join(repoDir, 'fake-dsh')
     writeFileSync(repoBin, ['#!/bin/sh', `echo "$1 $2 $3 $4 $5" >> "${join(repoDir, 'calls.log')}"`, 'exit 0', ''].join('\n'))
     chmodSync(repoBin, 0o755)
+    const repoProfileDir = mkdtempSync(join(tmpdir(), 'dsh-github-notarball-profile-'))
+    writeFileSync(join(repoProfileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
     const repoGateway = new ShopGateway(stubCtx(), {
-      catalogUrl: 'https://shop.test/v1/', cacheDir: join(repoDir, 'cache'), profile: 'web',
+      catalogUrl: 'https://shop.test/v1/', cacheDir: join(repoDir, 'cache'), profile: 'web', profileDir: repoProfileDir,
       loadCatalog: async () => ({ snapshot: { schemaVersion: 5, builtAt: '', entries: [repoEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
       dshBin: repoBin,
       hasGit: () => true,
@@ -979,5 +999,181 @@ describe('verifyTarballSha256', () => {
   it('names the HTTP status when the fetch answers non-2xx', async () => {
     const detail = await verifyTarballSha256(async () => new Response('nope', { status: 404 }), url, sha256)
     expect(detail).toBe('dsh-plugin-shop: the release tarball could not be fetched (HTTP 404); refusing to install')
+  })
+})
+
+describe('hot paths — install / uninstall / update through the afterDone seam', () => {
+  // The fixtures below drive the flows through the public RPC methods; the
+  // hot functions and the loader entry list are injected exactly like the
+  // other test-only seams (inventory, loadCatalog, ...).
+  const hotMount = vi.fn(async (): Promise<{ ok: boolean; reason: string | null }> => ({ ok: true, reason: null }))
+  const hotUnmount = vi.fn(async () => false)
+
+  beforeEach(() => {
+    hotMount.mockClear()
+    hotUnmount.mockClear()
+  })
+
+  const snapshot: CatalogSnapshot = {
+    schemaVersion: 6,
+    builtAt: '',
+    entries: [
+      { name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25' },
+      { name: 'dsh-goodbye-plugin', version: '1.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25' },
+    ],
+    denied: [],
+    stars: {},
+  }
+
+  function hotGateway(options: {
+    dependencies?: Record<string, string>
+    hot?: ShopGatewayOptions['hot']
+    loaderEntries?: ShopGatewayOptions['loaderEntries']
+  }): { gateway: ShopGateway; profileDir: string } {
+    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-hot-profile-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
+      name: 'dsh-profile-web',
+      dsh: { profile: { bundles: [] } },
+      ...(options.dependencies !== undefined ? { dependencies: options.dependencies } : {}),
+    }))
+    const gateway = new ShopGateway(stubCtx(), {
+      ...gatewayOptions(),
+      profileDir,
+      loadCatalog: async () => ({ snapshot, stale: false }) as CatalogResult,
+      hot: options.hot,
+      loaderEntries: options.loaderEntries,
+    })
+    return { gateway, profileDir }
+  }
+
+  async function pollTerminal(gateway: ShopGateway, installId: string): Promise<ShopInstallStatusResult> {
+    const deadline = Date.now() + 5000
+    let status = gateway.installStatus({ installId })
+    while (status.state === 'running' && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+      status = gateway.installStatus({ installId })
+    }
+    return status
+  }
+
+  it('install reports done with needsRestart false after a hot mount (fresh install)', async () => {
+    const { gateway, profileDir } = hotGateway({
+      hot: { mount: hotMount, unmount: hotUnmount },
+      loaderEntries: () => [],
+    })
+    const started = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
+    expect(started.ok).toBe(true)
+    if (!started.ok) return
+    const status = await pollTerminal(gateway, started.installId)
+    expect(status.state).toBe('done')
+    expect(status.needsRestart).toBe(false)
+    expect(hotMount).toHaveBeenCalledTimes(1)
+    expect(hotMount).toHaveBeenCalledWith(expect.anything(), profileDir, 'dsh-hello-plugin')
+  })
+
+  it('an update disables the live boot entry before the new instance mounts, retrying until the fiber is down', async () => {
+    const order: string[] = []
+    const entry: LoaderEntryLike = {
+      options: { name: 'dsh-hello-plugin' },
+      fiber: {},
+      update: vi.fn(async () => {
+        order.push('disable')
+        // The first two updates leave the fiber up (a finishing init still
+        // in flight); the third clears it, so liveDisable stops retrying.
+        if (order.filter(call => call === 'disable').length >= 3) entry.fiber = undefined
+      }),
+    }
+    const mount = vi.fn(async () => {
+      order.push('mount')
+      return { ok: true, reason: null }
+    })
+    const { gateway } = hotGateway({
+      dependencies: { 'dsh-hello-plugin': '1.2.0' },
+      hot: { mount, unmount: hotUnmount },
+      loaderEntries: () => [entry],
+    })
+    const started = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
+    expect(started.ok).toBe(true)
+    if (!started.ok) return
+    const status = await pollTerminal(gateway, started.installId)
+    expect(status.state).toBe('done')
+    expect(status.needsRestart).toBe(false)
+    expect(entry.update).toHaveBeenCalledTimes(3)
+    expect(entry.update).toHaveBeenCalledWith({ disabled: true }, false, true)
+    expect(order).toEqual(['disable', 'disable', 'disable', 'mount'])
+  })
+
+  it('a failed hot mount reports done with needsRestart true and the restart reason', async () => {
+    hotMount.mockResolvedValueOnce({ ok: false, reason: 'r' })
+    const { gateway } = hotGateway({ hot: { mount: hotMount, unmount: hotUnmount }, loaderEntries: () => [] })
+    const started = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
+    expect(started.ok).toBe(true)
+    if (!started.ok) return
+    const status = await pollTerminal(gateway, started.installId)
+    expect(status.state).toBe('done')
+    expect(status.needsRestart).toBe(true)
+    expect(status.restartReason).toBe('r')
+  })
+
+  it('uninstall of a hot-mounted plugin unmounts it without touching the loader', async () => {
+    const unmount = vi.fn(async () => true)
+    const update = vi.fn(async () => {})
+    const { gateway } = hotGateway({
+      dependencies: { 'dsh-goodbye-plugin': '1.0.0' },
+      hot: { mount: hotMount, unmount },
+      loaderEntries: () => [{ options: { name: 'dsh-goodbye-plugin' }, update }],
+    })
+    const result = await gateway.uninstall({ name: 'dsh-goodbye-plugin' })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const status = await pollTerminal(gateway, result.installId)
+    expect(status.state).toBe('done')
+    expect(status.needsRestart).toBe(false)
+    expect(unmount).toHaveBeenCalledWith('dsh-goodbye-plugin')
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it('uninstall without a hot mount live-disables the boot entry and still reports done without restart', async () => {
+    const update = vi.fn(async () => {})
+    const { gateway } = hotGateway({
+      dependencies: { 'dsh-goodbye-plugin': '1.0.0' },
+      hot: { mount: hotMount, unmount: hotUnmount },
+      loaderEntries: () => [{ options: { name: 'dsh-goodbye-plugin' }, update }],
+    })
+    const result = await gateway.uninstall({ name: 'dsh-goodbye-plugin' })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const status = await pollTerminal(gateway, result.installId)
+    expect(status.state).toBe('done')
+    expect(status.needsRestart).toBe(false)
+    expect(hotUnmount).toHaveBeenCalledWith('dsh-goodbye-plugin')
+    expect(update).toHaveBeenCalledTimes(1)
+    expect(update).toHaveBeenCalledWith({ disabled: true }, false, true)
+  })
+
+  it('uninstall of a plugin that never loaded still reports done without restart', async () => {
+    const { gateway } = hotGateway({
+      dependencies: { 'dsh-goodbye-plugin': '1.0.0' },
+      hot: { mount: hotMount, unmount: hotUnmount },
+      loaderEntries: () => [],
+    })
+    const result = await gateway.uninstall({ name: 'dsh-goodbye-plugin' })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const status = await pollTerminal(gateway, result.installId)
+    expect(status.state).toBe('done')
+    expect(status.needsRestart).toBe(false)
+  })
+
+  it('self-update still reports needsRestart true — no hot path is wired', async () => {
+    const { gateway } = hotGateway({ hot: { mount: hotMount, unmount: hotUnmount } })
+    const started = await gateway.updateStart({ version: '9.9.9' })
+    expect(started.ok).toBe(true)
+    if (!started.ok) return
+    const status = await pollTerminal(gateway, started.installId)
+    expect(status.state).toBe('done')
+    expect(status.needsRestart).toBe(true)
+    expect(hotMount).not.toHaveBeenCalled()
+    expect(hotUnmount).not.toHaveBeenCalled()
   })
 })
