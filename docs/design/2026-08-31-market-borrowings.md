@@ -230,7 +230,12 @@ shape does not. No new RPC methods; the §5.3 boundaries stand.
   in try/catch. The package becomes an **optional peerDependency**
   (`^1.0.6`, `peerDependenciesMeta.optional: true`): an older harness
   installs fine and the import fails to a null class — every path then
-  falls back to restart activation. The subclass suppresses `write()`
+  falls back to restart activation. (Note: with pnpm's
+  `autoInstallPeers: false` the include package does NOT hoist into the
+  profile — it resolves through the harness's own bare-name machinery,
+  as a direct dep of the dsh package; the optional peer declaration
+  stays as intent documentation, and the e2e proves the import works.)
+  The subclass suppresses `write()`
   (the loader otherwise persists tree changes back to the file it
   read) and shims client-only packages with a no-op `apply` (their
   `client-modules` requires a live loader entry to serve the client

@@ -15,7 +15,7 @@ import type { CatalogSnapshot } from './catalog.ts'
 import type { CatalogEntry, DeniedEntry } from './types.ts'
 import { validateInstall, type InstallArgs, type InstallRejectionCode } from './install.ts'
 import { startInstall, startUninstall, type InstallStatus } from './executor.ts'
-import { hotMount, hotUnmount } from './hot.ts'
+import { cleanHotDir, hotMount, hotUnmount } from './hot.ts'
 import { startRestart, type RestartOutcome } from './restart.ts'
 import { fetchLatestVersion } from './self-update.ts'
 import { detectSupervisor } from './supervisor.ts'
@@ -91,7 +91,8 @@ export interface ShopGatewayOptions {
   allowRestart?: boolean
   /** The environment `detectSupervisor` reads; production uses process.env. */
   env?: NodeJS.ProcessEnv
-  /** The pid `detectSupervisor` inspects; production uses process.pid. */
+  /** The pid `detectSupervisor` inspects; production uses process.ppid —
+   * the PARENT pid (a systemd unit's main process has ppid 1). */
   ppid?: number
   /** Test-only injection: how the release-tarball integrity check fetches
    * the release asset; production uses global fetch. */
@@ -255,6 +256,8 @@ export class ShopGateway extends TypertRemoteService {
   private readonly pinFs: RepoPinFs
   private readonly allowRestart?: boolean
   private readonly env: NodeJS.ProcessEnv
+  /** The parent pid `detectSupervisor` inspects; production defaults to
+   * process.ppid (a systemd unit's main process has ppid 1). */
   private readonly ppid: number
   /** The release-tarball fetch for the install-time integrity check; global
    * fetch in production, a fixture response in tests. */
@@ -302,8 +305,19 @@ export class ShopGateway extends TypertRemoteService {
     }
     this.allowRestart = options.allowRestart
     this.env = options.env ?? process.env
-    this.ppid = options.ppid ?? process.pid
+    this.ppid = options.ppid ?? process.ppid
     this.fetchTarball = options.fetchTarball ?? ((url: string) => fetch(url))
+    try {
+      // The ephemeral `hot-<n>.yml` inputs from a previous session must
+      // never survive a boot: a crashed session's stale inputs would mount
+      // against this session's composition.
+      cleanHotDir(this.profileDirResolved())
+    } catch {
+      // Swallows the profile-dir discovery failure: a profile dir that does
+      // not resolve yet (the stub-ctx test constructions) has nothing to
+      // wipe, and failing a boot over a missing wipe dir would be the worse
+      // failure.
+    }
   }
 
   /** The pins file lives in the shop's own cache, next to the catalog cache. */
@@ -367,6 +381,7 @@ export class ShopGateway extends TypertRemoteService {
           await entry.update({ disabled: true }, false, true)
           found = true
         } catch {
+          // A failing update leaves the entry running — best-effort live-disable; the hot path falls back to restart.
           break
         }
         if (entry.fiber === undefined) break
