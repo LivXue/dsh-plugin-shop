@@ -1,9 +1,10 @@
 import { afterAll, describe, expect, it, vi } from 'vitest'
+import { createHash } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import ShopGateway from '../../src/host/index.ts'
+import ShopGateway, { verifyTarballSha256 } from '../../src/host/index.ts'
 import type { CatalogResult, CatalogSnapshot } from '../../src/host/catalog.ts'
 import type { CatalogEntry } from '../../src/host/types.ts'
 
@@ -821,15 +822,21 @@ describe('subpackage install spec', () => {
 
 describe('release-rescued tarball install', () => {
   const tag = 'v1.0.0'
+  const TARBALL_URL = 'https://github.com/owner/slug/releases/download/v1.0.0/plugin.tgz'
+  // The fixture tarball bytes the injected fetch serves, and the sha256 the
+  // entry records for them — computed here, never hand-typed, so the fixture
+  // arithmetic is true by construction.
+  const tarballBytes = new TextEncoder().encode('fixture release tarball bytes')
+  const tarballSha256 = createHash('sha256').update(tarballBytes).digest('hex')
   const tarballEntry: CatalogEntry = {
     name: 'dsh-rescued', version: tag, integrity: 'a'.repeat(64), publishedAt: null,
     repository: 'https://github.com/owner/slug', license: 'MIT',
     tier: 'community', metadata: 'declared', source: 'github', repo: 'owner/slug',
     added: '2026-08-01',
-    tarball: { url: 'https://github.com/owner/slug/releases/download/v1.0.0/plugin.tgz', sha256: 'a'.repeat(64) },
+    tarball: { url: TARBALL_URL, sha256: tarballSha256 },
   }
 
-  function gatewayWithTarball(dir: string): ShopGateway {
+  function gatewayWithTarball(dir: string, fetchTarball: (url: string) => Promise<Response>): ShopGateway {
     const bin = join(dir, 'fake-dsh')
     writeFileSync(bin, [
       '#!/bin/sh',
@@ -843,21 +850,24 @@ describe('release-rescued tarball install', () => {
       loadCatalog: async () => ({ snapshot: { schemaVersion: 5, builtAt: '', entries: [tarballEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
       dshBin: bin,
       hasGit: () => false,
+      fetchTarball,
     })
   }
 
-  it('installs the validated tarball url without git and records the tag pin', async () => {
+  it('verifies the sha256, then installs the validated tarball url without git and records the tag pin', async () => {
     // The spec is the snapshot's tarball url (a https github.com release of
     // this very repo, validated at parse), NOT a github: spec — and the git
     // check is skipped, so hasGit: () => false must not stop the install.
     // The pin write records the tag, which is the entry's version (the
     // manifest records only `github:owner/slug`, so the pins file is how
     // `installed()` reports outdated honestly).
+    const fetchTarball = vi.fn(async () => new Response(tarballBytes))
     const dir = mkdtempSync(join(tmpdir(), 'dsh-tarball-install-'))
-    const gateway = gatewayWithTarball(dir)
+    const gateway = gatewayWithTarball(dir, fetchTarball)
     const result = await gateway.install({ name: 'dsh-rescued', version: tag, acknowledged: true })
     expect(result.ok).toBe(true)
     if (!result.ok) return
+    expect(fetchTarball).toHaveBeenCalledWith(TARBALL_URL)
     const deadline = Date.now() + 5000
     let terminal = gateway.installStatus({ installId: result.installId })
     while (terminal.state === 'running' && Date.now() < deadline) {
@@ -865,7 +875,109 @@ describe('release-rescued tarball install', () => {
       terminal = gateway.installStatus({ installId: result.installId })
     }
     expect(terminal.state).toBe('done')
-    expect(readFileSync(join(dir, 'calls.log'), 'utf8')).toContain('plugin --profile web add https://github.com/owner/slug/releases/download/v1.0.0/plugin.tgz')
+    expect(readFileSync(join(dir, 'calls.log'), 'utf8')).toContain(`plugin --profile web add ${TARBALL_URL}`)
     expect(JSON.parse(readFileSync(join(dir, 'cache/github-pins.json'), 'utf8'))).toEqual({ 'dsh-rescued': tag })
+  })
+
+  it('rejects tarball-integrity without spawning when the bytes do not match the recorded sha256', async () => {
+    const fetchTarball = vi.fn(async () => new Response(new TextEncoder().encode('tampered bytes')))
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-tarball-mismatch-'))
+    const gateway = gatewayWithTarball(dir, fetchTarball)
+    const result = await gateway.install({ name: 'dsh-rescued', version: tag, acknowledged: true })
+    expect(result).toEqual({
+      ok: false,
+      code: 'tarball-integrity',
+      detail: 'dsh-plugin-shop: the release tarball failed sha256 verification against the catalog record; refusing to install',
+    })
+    expect(fetchTarball).toHaveBeenCalledWith(TARBALL_URL)
+    // A spawned fixture would have created the calls log within this settle window.
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(existsSync(join(dir, 'calls.log'))).toBe(false)
+  })
+
+  it('rejects tarball-integrity with a network-failure detail when the fetch throws', async () => {
+    const fetchTarball = vi.fn(async () => { throw new Error('ECONNREFUSED') })
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-tarball-fetchfail-'))
+    const gateway = gatewayWithTarball(dir, fetchTarball)
+    const result = await gateway.install({ name: 'dsh-rescued', version: tag, acknowledged: true })
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.code).toBe('tarball-integrity')
+      expect(result.detail).toContain('network failure: ECONNREFUSED')
+    }
+    // Same no-spawn property as the mismatch: the check failed, nothing ran.
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(existsSync(join(dir, 'calls.log'))).toBe(false)
+  })
+
+  it('never calls fetchTarball for npm or github-commit installs', async () => {
+    const fetchTarball = vi.fn(async () => new Response(tarballBytes))
+    // The npm path: the spec is `name@version`, no release asset involved.
+    const npmEntry: CatalogEntry = { name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25' }
+    const npmDir = mkdtempSync(join(tmpdir(), 'dsh-npm-notarball-'))
+    const npmBin = join(npmDir, 'fake-dsh')
+    writeFileSync(npmBin, ['#!/bin/sh', `echo "$1 $2 $3 $4 $5" >> "${join(npmDir, 'calls.log')}"`, 'exit 0', ''].join('\n'))
+    chmodSync(npmBin, 0o755)
+    const npmGateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: join(npmDir, 'cache'), profile: 'web',
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 5, builtAt: '', entries: [npmEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      dshBin: npmBin,
+      fetchTarball,
+    })
+    const npmResult = await npmGateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
+    expect(npmResult.ok).toBe(true)
+    // The github-commit path: the sibling of the tarball arm, spec
+    // `github:owner/slug#commit` — still no release asset.
+    const commit = 'c'.repeat(40)
+    const repoEntry: CatalogEntry = {
+      name: 'dsh-repo-plugin', version: commit, integrity: commit, publishedAt: null,
+      repository: 'https://github.com/someone/dsh-repo-plugin', license: 'MIT',
+      tier: 'community', metadata: 'declared', source: 'github', repo: 'someone/dsh-repo-plugin',
+      added: '2026-08-25',
+    }
+    const repoDir = mkdtempSync(join(tmpdir(), 'dsh-github-notarball-'))
+    const repoBin = join(repoDir, 'fake-dsh')
+    writeFileSync(repoBin, ['#!/bin/sh', `echo "$1 $2 $3 $4 $5" >> "${join(repoDir, 'calls.log')}"`, 'exit 0', ''].join('\n'))
+    chmodSync(repoBin, 0o755)
+    const repoGateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: join(repoDir, 'cache'), profile: 'web',
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 5, builtAt: '', entries: [repoEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      dshBin: repoBin,
+      hasGit: () => true,
+      fetchTarball,
+    })
+    const repoResult = await repoGateway.install({ name: 'dsh-repo-plugin', version: commit, acknowledged: true })
+    expect(repoResult.ok).toBe(true)
+    expect(fetchTarball).not.toHaveBeenCalled()
+  })
+})
+
+describe('verifyTarballSha256', () => {
+  const url = 'https://github.com/owner/slug/releases/download/v1.0.0/plugin.tgz'
+  const bytes = new TextEncoder().encode('fixture release tarball bytes')
+  const sha256 = createHash('sha256').update(bytes).digest('hex')
+
+  it('returns null for matching bytes', async () => {
+    await expect(verifyTarballSha256(async () => new Response(bytes), url, sha256)).resolves.toBeNull()
+  })
+
+  it('reports the mismatch in the detail', async () => {
+    const detail = await verifyTarballSha256(
+      async () => new Response(new TextEncoder().encode('different bytes')),
+      url,
+      sha256,
+    )
+    expect(detail).toBe('dsh-plugin-shop: the release tarball failed sha256 verification against the catalog record; refusing to install')
+  })
+
+  it('refuses a body over the byte cap with a size-cap detail', async () => {
+    const detail = await verifyTarballSha256(async () => new Response(bytes), url, sha256, 8)
+    expect(detail).toContain('exceeds the size cap')
+    expect(detail).toContain('refusing to install')
+  })
+
+  it('names the HTTP status when the fetch answers non-2xx', async () => {
+    const detail = await verifyTarballSha256(async () => new Response('nope', { status: 404 }), url, sha256)
+    expect(detail).toBe('dsh-plugin-shop: the release tarball could not be fetched (HTTP 404); refusing to install')
   })
 })

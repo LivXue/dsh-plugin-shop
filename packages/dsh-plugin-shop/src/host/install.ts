@@ -1,8 +1,17 @@
-/** Install gate: the four rejection paths of §7.2, as a pure function. */
+/** Install gate: the gate rejection paths of §7.2, as a pure function. */
 
 import type { CatalogSnapshot } from './catalog.ts'
 
-export type InstallRejectionCode = 'not-in-catalog' | 'denied' | 'version-mismatch' | 'needs-acknowledgement' | 'git-missing'
+export type InstallRejectionCode =
+  | 'not-in-catalog'
+  | 'denied'
+  | 'version-mismatch'
+  | 'needs-acknowledgement'
+  | 'git-missing'
+  // A release-rescued entry's tarball failed verification against the
+  // recorded sha256, or could not be fetched within the byte cap (the Host
+  // checks before anything spawns; §3.1 of 2026-08-31-market-borrowings).
+  | 'tarball-integrity'
 
 export interface InstallArgs { name: string; version: string; acknowledged?: boolean }
 

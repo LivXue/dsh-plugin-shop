@@ -4,6 +4,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { readProfileManifest } from '@deepseek-ai/dsh-app-boot'
 import { lt, minVersion, valid } from 'semver'
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -76,6 +77,9 @@ export interface ShopGatewayOptions {
   env?: NodeJS.ProcessEnv
   /** The pid `detectSupervisor` inspects; production uses process.pid. */
   ppid?: number
+  /** Test-only injection: how the release-tarball integrity check fetches
+   * the release asset; production uses global fetch. */
+  fetchTarball?: (url: string) => Promise<Response>
 }
 
 /** `shop/installStart` result (§7.3): rejections are typed wire values with an
@@ -136,6 +140,67 @@ interface ShopRowConfig {
   allowRestart?: unknown
 }
 
+/** How many bytes a release tarball may be at the integrity check. The
+ * registry already refuses to publish a tarball over 32 MiB, so 64 MiB is
+ * headroom, not a gate of its own. */
+export const MAX_TARBALL_BYTES = 64 * 1024 * 1024
+
+/**
+ * Fetch a release tarball and verify its sha256 against the catalog record
+ * (market borrowings §3.1). Returns a rejection detail, or null when the
+ * bytes match. The read streams through the byte cap, so an oversized or
+ * hostile body is refused without ever being buffered. Every failure — fetch
+ * throw, non-2xx, unreadable body, over-cap, hash mismatch — carries the same
+ * `tarball-integrity` code with a detail naming what happened, so the plugin
+ * author can read the cause.
+ */
+export async function verifyTarballSha256(
+  fetchTarball: (url: string) => Promise<Response>,
+  url: string,
+  recordedSha256: string,
+  maxBytes: number = MAX_TARBALL_BYTES,
+): Promise<string | null> {
+  let response: Response
+  try {
+    response = await fetchTarball(url)
+  } catch (error) {
+    return `dsh-plugin-shop: the release tarball could not be fetched (network failure: ${(error as Error).message}); refusing to install`
+  }
+  if (!response.ok) {
+    return `dsh-plugin-shop: the release tarball could not be fetched (HTTP ${response.status}); refusing to install`
+  }
+  if (response.body === null) {
+    return 'dsh-plugin-shop: the release tarball has no readable body; refusing to install'
+  }
+  const hash = createHash('sha256')
+  let bytes = 0
+  const reader = response.body.getReader()
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      bytes += value.byteLength
+      if (bytes > maxBytes) {
+        try {
+          // Close the connection the cap was protecting; the bytes beyond
+          // the cap are never read.
+          await reader.cancel()
+        } catch {
+          // The stream already closed or errored; the cap verdict stands.
+        }
+        return `dsh-plugin-shop: the release tarball exceeds the size cap (${maxBytes} bytes); refusing to install`
+      }
+      hash.update(value)
+    }
+  } catch (error) {
+    return `dsh-plugin-shop: the release tarball download failed (${(error as Error).message}); refusing to install`
+  }
+  if (hash.digest('hex') !== recordedSha256) {
+    return 'dsh-plugin-shop: the release tarball failed sha256 verification against the catalog record; refusing to install'
+  }
+  return null
+}
+
 /** `shop/catalog` result (§7.3), plus the denied list for the install gate's UI. */
 export interface ShopCatalogResult {
   schemaVersion: number
@@ -173,6 +238,9 @@ export class ShopGateway extends TypertRemoteService {
   private readonly allowRestart?: boolean
   private readonly env: NodeJS.ProcessEnv
   private readonly ppid: number
+  /** The release-tarball fetch for the install-time integrity check; global
+   * fetch in production, a fixture response in tests. */
+  private readonly fetchTarball: (url: string) => Promise<Response>
   /** The install gate runs against the last loaded snapshot, never a fresh
    * fetch per request (§7.2: the Host's cached snapshot is the truth). */
   /** Finished install records retained, so a poll sees the true terminal
@@ -215,6 +283,7 @@ export class ShopGateway extends TypertRemoteService {
     this.allowRestart = options.allowRestart
     this.env = options.env ?? process.env
     this.ppid = options.ppid ?? process.pid
+    this.fetchTarball = options.fetchTarball ?? ((url: string) => fetch(url))
   }
 
   /** The pins file lives in the shop's own cache, next to the catalog cache. */
@@ -324,7 +393,7 @@ export class ShopGateway extends TypertRemoteService {
   }
 
   /**
-   * Install one cataloged version into the profile (§7.2). The four rejection
+   * Install one cataloged version into the profile (§7.2). The rejection
    * paths run against this Host's snapshot before anything is spawned; only a
    * passing request reaches the executor.
    */
@@ -356,6 +425,21 @@ export class ShopGateway extends TypertRemoteService {
       // Release-rescued entry: the spec is the prebuilt tarball URL the
       // snapshot validated (https github.com releases of this very repo).
       // No git, no commit pin — the recorded tag is the version.
+      // The recorded sha256 is enforced before anything spawns: fetch the
+      // tarball now and verify its bytes. The install itself re-fetches
+      // through pnpm, so an asset swapped between this check and pnpm's
+      // fetch is a TOCTOU window — this check catches passive MITM and
+      // asset tampering at the check instant, and the catalog chain
+      // (pointer sha256 + validateEntryCoherence) already pins the URL
+      // itself.
+      const integrity = await verifyTarballSha256(
+        this.fetchTarball,
+        entry.tarball.url,
+        entry.tarball.sha256,
+      )
+      if (integrity !== null) {
+        return { ok: false, code: 'tarball-integrity', detail: integrity }
+      }
       spec = entry.tarball.url
     } else if (entry.source === 'github') {
       if (entry.repo === undefined || !/^[0-9a-f]{40}$/.test(args.version)) {

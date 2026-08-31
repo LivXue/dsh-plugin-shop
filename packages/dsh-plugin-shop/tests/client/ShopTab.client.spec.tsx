@@ -130,6 +130,7 @@ describe('ShopTab', () => {
     ['not-in-catalog', 'dsh-plugin-shop: dsh-ghost is not in the catalog snapshot'],
     ['version-mismatch', 'dsh-plugin-shop: catalog version 1.2.0, requested 9.9.9'],
     ['needs-acknowledgement', 'dsh-plugin-shop: dsh-risky is community-tier; installation requires acknowledgement'],
+    ['tarball-integrity', 'dsh-plugin-shop: the release tarball failed sha256 verification against the catalog record; refusing to install'],
   ] as const)('renders the %s rejection detail verbatim', async (code, detail) => {
     const { injected, install } = bench(snapshot({ tier: 'verified' }))
     install.mockResolvedValue({ ok: false, code, detail })

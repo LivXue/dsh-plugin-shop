@@ -149,8 +149,15 @@ that was decided against keeping the commit pin):
 - The harvest downloads the tarball once and records its sha256 in the
   snapshot, beside the URL. GitHub release assets are immutable per
   URL (re-upload = new asset = new URL), so URL pinning plus the
-  recorded hash is the audit story; the hash is not re-checked at
-  install time.
+  recorded hash is the audit story. The Host enforces it at install:
+  the tarball is fetched and verified against the recorded sha256
+  before anything spawns, and a mismatch or an unverifiable download
+  is a typed `tarball-integrity` rejection. The check cannot close
+  the whole window — the install itself re-fetches through pnpm, so
+  an asset swapped between the check and pnpm's fetch is a TOCTOU
+  residue — but it catches passive MITM and asset tampering at the
+  check instant, and the catalog chain (pointer sha256 +
+  validateEntryCoherence) already pins the URL itself.
 - `outdated` = the harvest re-probes and finds a newer release tag.
   Re-probing happens when the repo's `pushedAt` advances (existing
   incremental machinery); otherwise the recorded tarball stands. The
