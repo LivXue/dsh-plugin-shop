@@ -96,7 +96,13 @@ impure-shell split:
   `package.json`), with npm entries winning.
 - **Determinism:** same rules as npm — sort by name before emit, no
   clock-dependent fields in the hashed content. Star counts for repos flow
-  through the existing `stars` sidecar, keyed by the repo full name.
+  through the existing `stars` sidecar, keyed by the repo full name. Repo
+  stars ride the search itself: every enumerated item carries
+  `stargazers_count`, the daily run pages the entire pool regardless of the
+  fetch budget, so the count is a free byproduct (2026-08-31); GraphQL
+  stays for npm repos the search did not see. Search-derived counts never
+  enter the committed harvest memory — daily data stays in the sidecar
+  alone.
 
 ## 4. Gate — the anti-80%
 

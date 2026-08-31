@@ -109,7 +109,7 @@ describe('searchReposByTopic', () => {
 })
 
 describe('fetchRepoCandidate', () => {
-  const meta = { fullName: 'someone/dsh-repo-plugin', defaultBranch: 'main', description: 'A repo plugin.', license: 'MIT', pushedAt: '2026-08-01T00:00:00Z' }
+  const meta = { fullName: 'someone/dsh-repo-plugin', defaultBranch: 'main', description: 'A repo plugin.', license: 'MIT', pushedAt: '2026-08-01T00:00:00Z', stars: null as number | null }
 
   it('projects a repository into a candidate with the pinned commit', async () => {
     const fetchImpl = stubFetch({
@@ -220,6 +220,27 @@ describe('harvestRepos', () => {
     expect(result.candidates.map(c => c.repo).sort()).toEqual(['a/unchanged', 'b/changed', 'd/new'])
     expect(result.nextState['a/unchanged']?.candidate.repo).toBe('a/unchanged')
     expect(Object.keys(result.nextState).sort()).toEqual(['a/unchanged', 'b/changed', 'd/new'])
+  })
+
+  it('exposes the star counts the search items carry as a free byproduct', async () => {
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      if (new URL(text).searchParams.get('per_page') === '1') return new Response(JSON.stringify({ total_count: 0 }), { status: 200 })
+      if (text.includes('/search/repositories')) {
+        return new Response(JSON.stringify({
+          items: [
+            { full_name: 's/with-stars', default_branch: 'main', description: null, license: null, pushed_at: '2026-08-02T00:00:00Z', stargazers_count: 42 },
+            { full_name: 's/no-stars', default_branch: 'main', description: null, license: null, pushed_at: '2026-08-02T00:00:00Z' },
+          ],
+        }), { status: 200 })
+      }
+      throw new Error(`unrouted: ${text}`)
+    }) as unknown as typeof fetch
+    // budget 0: the search still runs and its star counts still surface;
+    // the item without `stargazers_count` falls back to the GraphQL fetch.
+    const result = await harvestRepos({ state: {}, budget: 0, fetchImpl, sleep, token: 't' })
+    expect(result.searchStars.get('s/with-stars')).toBe(42)
+    expect(result.searchStars.has('s/no-stars')).toBe(false)
   })
 
   it('keeps a failure as a reason and carries the recorded candidate for that repo', async () => {

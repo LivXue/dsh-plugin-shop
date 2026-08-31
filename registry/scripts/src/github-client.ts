@@ -74,6 +74,14 @@ interface RepoMeta {
   description: string | null
   license: string | null
   pushedAt: string
+  /**
+   * `stargazers_count` from the search item. The daily enumeration pages
+   * the whole pool regardless of the fetch budget, so every listed repo's
+   * count is a free byproduct of it. Null when the item lacks a usable
+   * count — the repo then falls back to the GraphQL stars fetch. Never
+   * persisted: stars are live daily data and belong in the sidecar alone.
+   */
+  stars: number | null
 }
 
 function parseRepoMeta(item: unknown): RepoMeta | null {
@@ -83,6 +91,7 @@ function parseRepoMeta(item: unknown): RepoMeta | null {
     description?: unknown
     license?: { spdx_id?: unknown } | null
     pushed_at?: unknown
+    stargazers_count?: unknown
   }
   if (typeof o.full_name !== 'string' || typeof o.default_branch !== 'string') return null
   return {
@@ -91,6 +100,7 @@ function parseRepoMeta(item: unknown): RepoMeta | null {
     description: typeof o.description === 'string' && o.description !== '' ? o.description : null,
     license: o.license != null && typeof o.license.spdx_id === 'string' ? o.license.spdx_id : null,
     pushedAt: typeof o.pushed_at === 'string' ? o.pushed_at : '',
+    stars: typeof o.stargazers_count === 'number' && o.stargazers_count >= 0 ? o.stargazers_count : null,
   }
 }
 
@@ -373,6 +383,13 @@ export interface RepoHarvestResult {
   nextState: RepoState
   /** Whether the harvest was skipped (no token). */
   skipped: boolean
+  /**
+   * Star counts the search itself carried (`stargazers_count` on every
+   * item), keyed by repo full name. Repos absent here fall back to the
+   * GraphQL stars fetch. Not part of {@link nextState}: daily-changing
+   * data must never enter the committed harvest memory.
+   */
+  searchStars: Map<string, number>
   windowCount: number
   fetched: number
   carried: number
@@ -392,9 +409,13 @@ export async function harvestRepos(options: RepoHarvestOptions): Promise<RepoHar
     token = undefined,
   } = options
   if (token === undefined) {
-    return { candidates: [], failures: [], seen: [], gone: [], nextState: state, skipped: true, windowCount: 0, fetched: 0, carried: 0, deferred: 0 }
+    return { candidates: [], failures: [], seen: [], gone: [], nextState: state, skipped: true, searchStars: new Map(), windowCount: 0, fetched: 0, carried: 0, deferred: 0 }
   }
   const { seen, metas, windowCount } = await searchReposByTopic(fetchImpl, sleep, token)
+  const searchStars = new Map<string, number>()
+  for (const [repo, meta] of metas) {
+    if (meta.stars !== null) searchStars.set(repo, meta.stars)
+  }
   const { toFetch, gone } = diffRepoState(state, seen)
   // Budget slice: sorted order keeps the deferral deterministic.
   const queue = toFetch.sort((a, b) => (a.repo < b.repo ? -1 : a.repo > b.repo ? 1 : 0)).slice(0, budget)
@@ -422,6 +443,7 @@ export async function harvestRepos(options: RepoHarvestOptions): Promise<RepoHar
     gone,
     nextState,
     skipped: false,
+    searchStars,
     windowCount,
     fetched: queue.length,
     carried,

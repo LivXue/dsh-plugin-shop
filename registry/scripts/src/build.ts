@@ -22,6 +22,7 @@ import { parseRepoState, serializeRepoState } from './repo-state.ts'
 import { githubOwnerName } from './github-repo.ts'
 import { fetchCandidates, searchByKeywords } from './npm-client.ts'
 import { runPipeline } from './pipeline.ts'
+import { assembleStarsByKey } from './stars-assemble.ts'
 import type { Candidate, Rejection, RepoCandidate } from './types.ts'
 
 // `classify.ts` writes the harvest it already paid for; the workflow passes it
@@ -71,6 +72,9 @@ if (harvestFrom === undefined) {
 // missing piece, and the npm half still publishes.
 let repoCandidates: RepoCandidate[] = []
 let repoNote = ''
+// Star counts the search itself carried, keyed by repo full name. Empty
+// when the github harvest skipped — every repo then goes through GraphQL.
+let repoSearchStars = new Map<string, number>()
 const repoFlag = process.env.SHOP_HARVEST_REPOS === '1'
 if (ghToken === '') {
   repoNote = 'github harvest skipped: GITHUB_TOKEN is not set'
@@ -101,6 +105,7 @@ if (ghToken === '') {
     repos = await harvestRepos({ state: repoState, budget, fetchImpl: fetch, token: ghToken })
   }
   repoCandidates = repos.candidates
+  repoSearchStars = repos.searchStars
   for (const failure of repos.failures) {
     rejections.push({ name: failure.repo, code: failure.code, detail: failure.detail })
   }
@@ -129,9 +134,12 @@ mkdirSync(join(REGISTRY_DIR, 'snapshots'), { recursive: true })
 // token, rate limit, down API — publishes without stars and retries next
 // build. The step never throws. Repo entries are keyed by their repo full
 // name, npm entries by package name.
-// The Actions GITHUB_TOKEN's GraphQL quota (~1,000 points/hour) is below the
-// catalog's repo count, so a dedicated read-only PAT (STARS_TOKEN) is
-// preferred when the workflow provides one.
+// Two sources feed the sidecar: the topic search itself (every enumerated
+// item carries `stargazers_count`, so repo entries and any npm repo the
+// search saw cost nothing) and GraphQL for the repos the search did not
+// see. GraphQL therefore covers only the npm pool (~4k points), which a
+// dedicated read-only PAT (STARS_TOKEN, 5k points/hour) absorbs; the
+// Actions GITHUB_TOKEN's ~1k quota would not.
 const starsToken = process.env.STARS_TOKEN ?? ghToken
 let starsInfo: { url: string; sha256: string } | null = null
 let starsNote = ''
@@ -139,37 +147,44 @@ if (starsToken === '') {
   starsNote = 'no GITHUB_TOKEN'
   process.stderr.write(`stars: ${starsNote}\n`)
 } else {
-  const repos = new Map<string, { owner: string; name: string }>()
+  // Repos the search already covered: ask GraphQL only for the rest.
+  const graphqlRepos = new Map<string, { owner: string; name: string }>()
   for (const candidate of [...candidates, ...repoCandidates]) {
     const parsed = githubOwnerName(candidate.repository)
-    if (parsed !== null) repos.set(`${parsed.owner}/${parsed.name}`, parsed)
+    if (parsed === null) continue
+    const fullName = `${parsed.owner}/${parsed.name}`
+    if (!repoSearchStars.has(fullName)) graphqlRepos.set(fullName, parsed)
   }
-  if (repos.size === 0) {
+  if (graphqlRepos.size === 0 && repoSearchStars.size === 0) {
     starsNote = 'no github.com repositories in the catalog'
   } else {
-    try {
-      const { stars: repoStars, skipped } = await fetchStarCounts([...repos.values()], { token: starsToken })
-      const starsByKey: Record<string, number> = {}
-      for (const candidate of candidates) {
-        const parsed = githubOwnerName(candidate.repository)
-        if (parsed === null) continue
-        const count = repoStars.get(`${parsed.owner}/${parsed.name}`)
-        if (count !== undefined) starsByKey[candidate.name] = count
+    let graphqlStars = new Map<string, number>()
+    let skipped: string[] = []
+    let graphqlNote = ''
+    if (graphqlRepos.size > 0) {
+      try {
+        const fetched = await fetchStarCounts([...graphqlRepos.values()], { token: starsToken })
+        graphqlStars = fetched.stars
+        skipped = fetched.skipped
+      } catch (error) {
+        // GraphQL unreachable as a whole: the search-derived counts are
+        // already in hand and still publish (partial stars beat none).
+        graphqlNote = `graphql failed: ${error instanceof Error ? error.message : String(error)}`
       }
-      for (const repo of repoCandidates) {
-        const parsed = githubOwnerName(repo.repository)
-        if (parsed === null) continue
-        const count = repoStars.get(`${parsed.owner}/${parsed.name}`)
-        if (count !== undefined) starsByKey[repo.repo] = count
-      }
-      const starsJson = `${JSON.stringify({ stars: Object.fromEntries(Object.entries(starsByKey).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) }, null, 2)}\n`
+    }
+    const assembled = assembleStarsByKey(candidates, repoCandidates, repoSearchStars, graphqlStars)
+    if (Object.keys(assembled.stars).length === 0) {
+      starsNote = graphqlNote === '' ? 'no star counts' : `no star counts (${graphqlNote})`
+      process.stderr.write(`stars: ${starsNote}\n`)
+    } else {
+      const starsJson = `${JSON.stringify({ stars: Object.fromEntries(Object.entries(assembled.stars).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) }, null, 2)}\n`
       const starsSha = createHash('sha256').update(starsJson).digest('hex')
       writeFileSync(join(OUT_DIR, `stars.${starsSha}.json`), starsJson)
       starsInfo = { url: `stars.${starsSha}.json`, sha256: starsSha }
-      starsNote = skipped.length === 0 ? `${Object.keys(starsByKey).length} starred` : `${Object.keys(starsByKey).length} starred, ${skipped.length} skipped`
-      process.stderr.write(`stars: ${starsNote}\n`)
-    } catch (error) {
-      starsNote = `skipped: ${error instanceof Error ? error.message : String(error)}`
+      const parts = [`${Object.keys(assembled.stars).length} starred (${assembled.fromSearch} from the search, ${assembled.fromGraphql} from GraphQL)`]
+      if (skipped.length > 0) parts.push(`${skipped.length} skipped`)
+      if (graphqlNote !== '') parts.push(graphqlNote)
+      starsNote = parts.join(', ')
       process.stderr.write(`stars: ${starsNote}\n`)
     }
   }

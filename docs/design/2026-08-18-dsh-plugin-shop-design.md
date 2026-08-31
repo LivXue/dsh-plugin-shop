@@ -187,7 +187,7 @@ A consumer MAY present a derived entry as unclaimed — the signal that prompts 
 }
 ```
 
-The pointer carries `count` and `rejected` — the listed and the filtered totals, the two numbers the README badges read live. It may carry an optional `stars` object naming a content-addressed sidecar of GitHub star counts keyed by package name; stars are live daily data and are quarantined there so the plugin data hash stays cache-stable. `schemaVersion` is 3.
+The pointer carries `count` and `rejected` — the listed and the filtered totals, the two numbers the README badges read live. It may carry an optional `stars` object naming a content-addressed sidecar of GitHub star counts, keyed by package name for npm entries and by repo full name for github entries; stars are live daily data and are quarantined there so the plugin data hash stays cache-stable. `schemaVersion` is 3.
 
 `/v1/plugins.<sha256>.json`:
 
@@ -257,7 +257,7 @@ harvest -> fetch manifest -> classify -> gate -> tier -> emit -> commit snapshot
    `verified.yml` records `{ name, reviewedVersion, reviewer, reviewCommit, notes }`. If npm's latest exceeds `reviewedVersion`, the entry is **downgraded to `verified-stale`**, and the UI shows "reviewed v1.2.0 / current v1.3.0 unreviewed".
 
    Most markets attach verification to a package name, which means an author who passes review can then publish a malicious version and inherit the trust automatically. That is the cheapest supply-chain attack available.
-6. **Stars** — GitHub GraphQL fetches star counts for github.com repositories into `dist/v1/stars.<sha>.json`; failures publish without stars and retry next build (`github-stars.ts`, shell).
+6. **Stars** — GitHub GraphQL fetches star counts for github.com repositories into `dist/v1/stars.<sha>.json`; failures publish without stars and retry next build (`github-stars.ts`, shell). **Amendment (2026-08-31):** repo star counts ride the topic search — every enumerated item carries `stargazers_count`, and the daily run pages the entire pool regardless of the fetch budget, so repo entries (and any npm entry whose repo the search saw) take the search count and cost no GraphQL quota; GraphQL covers only the repos the search did not see, which keeps it inside the PAT's 5,000-point hourly quota. Search-derived counts still land in the daily sidecar, never in the committed harvest memory (`repo-state.json`), and they survive a GraphQL failure — partial stars beat none.
 7. **Emit** — sort by package name for determinism; produce `plugins.<sha256>.json` and `index.json`, with the build report as a CI artifact.
 8. **Commit the snapshot** — write `manifest.lock` (name -> version -> integrity) back into `registry/snapshots/`.
 
