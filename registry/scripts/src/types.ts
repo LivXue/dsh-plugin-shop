@@ -74,6 +74,11 @@ export interface RepoCandidate {
    * monorepo subpackage rather than the repo root; absent for root entries.
    */
   subdir?: string
+  /** A prebuilt GitHub Release tarball, when the fetch layer probed one for a
+   * `requiresBuild` repo. Its presence turns the entry into a
+   * release-pinned entry: `version` = the tag, `integrity` = the tarball
+   * sha256. */
+  release?: { tag: string; url: string; sha256: string }
   /** The raw `dsh.catalog` value from the repo's manifest; unvalidated until the gate runs. */
   catalog: unknown
   /** The GitHub repo `description`, used to derive a listing when `catalog` is absent. */
@@ -149,6 +154,10 @@ export interface Entry {
   /** The subpackage directory inside the repo; present exactly when the entry
    * is a monorepo subpackage rather than the repo root. */
   subdir?: string
+  /** The prebuilt GitHub Release tarball, present exactly when the entry was
+   * rescued from `requires-build`. The Host installs this URL instead of the
+   * git form. */
+  tarball?: { url: string; sha256: string }
   /** The date this entry first appeared in the catalog (YYYY-MM-DD). */
   added: string
 }

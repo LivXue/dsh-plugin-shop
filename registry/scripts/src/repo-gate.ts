@@ -63,7 +63,7 @@ export function gateRepo(
     return reject(unit, 'no-bundle',
       'Declares no dsh.bundle in its package.json, so dsh installs it as a plain dependency, not a plugin.')
   }
-  if (candidate.requiresBuild) {
+  if (candidate.requiresBuild && candidate.release === undefined) {
     return reject(unit, 'requires-build',
       'Declares a prepare/prepack build script, which a git install requires and pnpm blocks by default; the shop never enables build scripts, so the repository could not install. Publish to npm, or drop the script, and it can be listed.')
   }

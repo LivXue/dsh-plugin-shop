@@ -198,6 +198,34 @@ describe('runPipeline with repository candidates', () => {
     const { report } = runPipeline([], [{ ...repoCandidate, hasBundle: false }], config, BUILT_AT)
     expect(report).toContain('| someone/dsh-repo-plugin | no-bundle |')
   })
+
+  it('lists a release-rescued repo entry pinned to its tag and tarball', () => {
+    const rescued = {
+      ...repoCandidate,
+      requiresBuild: true,
+      release: {
+        tag: 'v1.0.0',
+        url: 'https://github.com/someone/dsh-repo-plugin/releases/download/v1.0.0/plugin.tgz',
+        sha256: 'f'.repeat(64),
+      },
+    }
+    const { pluginsJson, manifestLock } = runPipeline([], [rescued], config, BUILT_AT)
+    const parsed = JSON.parse(pluginsJson) as {
+      plugins: { name: string; version: string; integrity: string; source: string; tarball?: { url: string; sha256: string } }[]
+    }
+    expect(parsed.plugins[0]).toMatchObject({
+      name: 'dsh-repo-plugin',
+      version: 'v1.0.0',
+      integrity: 'f'.repeat(64),
+      source: 'github',
+      tarball: {
+        url: 'https://github.com/someone/dsh-repo-plugin/releases/download/v1.0.0/plugin.tgz',
+        sha256: 'f'.repeat(64),
+      },
+    })
+    // the lock line shows the tag, which is what the daily diff compares
+    expect(manifestLock).toBe('someone/dsh-repo-plugin dsh-repo-plugin v1.0.0\n')
+  })
 })
 
 describe('subpackage entries and the schemaVersion bump', () => {

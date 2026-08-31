@@ -14,6 +14,7 @@
  * repos whose `pushed_at` changed since the last recorded state.
  */
 
+import { createHash } from 'node:crypto'
 import { fetchWithRetry } from './npm-client.ts'
 import { diffRepoState, nextRepoState, type RepoSeen, type RepoState } from './repo-state.ts'
 import { hasWorkspaceDeps, monorepoSignal, selectSubpackagePaths } from './subpackage-select.ts'
@@ -297,6 +298,45 @@ async function fetchHeadCommit(
 }
 
 /**
+ * Probe a repository's latest GitHub Release for a prebuilt tarball — the
+ * rescue channel for repos whose build script makes a git install impossible
+ * through the shop (design 2026-08-31 market-borrowings §3.1). Only the
+ * `requires-build` class triggers this probe, so its API cost is bounded by
+ * the class it rescues. The result rides `repo-state.json` through the
+ * candidate, so it re-probes only when the repo's `pushedAt` advances.
+ * The tarball is downloaded once here and hashed: GitHub release assets are
+ * immutable per URL (re-upload = new asset = new URL), so URL + sha256 is the
+ * audit story. Returns null when there is no release or no tarball asset.
+ */
+async function fetchLatestReleaseTarball(
+  owner: string,
+  slug: string,
+  fetchImpl: typeof fetch,
+  sleep: (ms: number) => Promise<void>,
+  token: string | undefined,
+): Promise<{ tag: string; url: string; sha256: string } | null> {
+  const url = `${GITHUB_API}/repos/${owner}/${slug}/releases/latest`
+  const response = await fetchRobust(url, fetchImpl, sleep, token)
+  if (!response.ok) return null
+  let body: { tag_name?: unknown; assets?: unknown }
+  try {
+    body = await response.json() as typeof body
+  } catch {
+    return null
+  }
+  if (typeof body.tag_name !== 'string' || !Array.isArray(body.assets)) return null
+  const asset = body.assets
+    .map(a => (a as { browser_download_url?: unknown }).browser_download_url)
+    .find((u): u is string => typeof u === 'string' && /\.(?:tgz|tar\.gz)$/.test(u))
+  if (asset === undefined) return null
+  const assetResponse = await fetchRobust(asset, fetchImpl, sleep, token)
+  if (!assetResponse.ok) return null
+  const bytes = new Uint8Array(await assetResponse.arrayBuffer())
+  const sha256 = createHash('sha256').update(bytes).digest('hex')
+  return { tag: body.tag_name, url: asset, sha256 }
+}
+
+/**
  * Project one manifest (root or subpackage) into a candidate, or null when
  * it declares no usable name. `subdir` is present exactly for subpackages.
  */
@@ -420,6 +460,13 @@ export async function fetchRepoCandidate(
   }
 
   const root = projectCandidate(meta, manifest, head, undefined)
+  // The rescue probe: only a `requires-build` root can be rescued, so only it
+  // is probed. The release rides the candidate through the state file, so a
+  // repo with no release does not re-consume this budget daily.
+  if (root !== null && root.requiresBuild) {
+    const release = await fetchLatestReleaseTarball(owner, slug, fetchImpl, sleep, token)
+    if (release !== null) root.release = release
+  }
   if (root !== null && root.hasBundle) {
     return { ok: true, candidates: [root] }
   }

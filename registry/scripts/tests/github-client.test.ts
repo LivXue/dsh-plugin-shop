@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { fetchRepoCandidate, harvestRepos, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
 import type { RepoState } from '../src/repo-state.ts'
@@ -150,6 +151,86 @@ describe('fetchRepoCandidate', () => {
     const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.code).toBe('fetch-failed')
+  })
+})
+
+describe('release-tarball rescue probe', () => {
+  const meta = { fullName: 'someone/dsh-repo-plugin', defaultBranch: 'main', description: 'A repo plugin.', license: 'MIT', pushedAt: '2026-08-01T00:00:00Z', stars: null as number | null }
+  const assetUrl = 'https://github.com/someone/dsh-repo-plugin/releases/download/v1.0.0/dsh-repo-plugin.tgz'
+  const tarballBytes = new TextEncoder().encode('fake tarball bytes')
+  const expectedSha256 = createHash('sha256').update(tarballBytes).digest('hex')
+  const buildManifest = JSON.stringify({
+    name: 'dsh-repo-plugin',
+    scripts: { prepare: 'npm run build' },
+    dsh: { bundle: {}, catalog: { category: 'tool', summary: { en: 'x' }, capabilities: [] } },
+  })
+  // A factory: a Response body is readable once, and every test needs its own.
+  const headResponse = () => new Response(JSON.stringify({
+    sha: commit,
+    commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+  }), { status: 200 })
+
+  it('rescues a requires-build repo by attaching its release tarball', async () => {
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(buildManifest, { status: 200 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': headResponse(),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/releases/latest': new Response(JSON.stringify({
+        tag_name: 'v1.0.0',
+        assets: [{ browser_download_url: assetUrl }],
+      }), { status: 200 }),
+      [assetUrl]: new Response(tarballBytes, { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      const candidate = result.candidates[0]
+      expect(candidate?.requiresBuild).toBe(true)
+      expect(candidate?.release).toEqual({ tag: 'v1.0.0', url: assetUrl, sha256: expectedSha256 })
+      expect(expectedSha256).toMatch(/^[0-9a-f]{64}$/)
+    }
+  })
+
+  it('leaves no release when the repository has none', async () => {
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(buildManifest, { status: 200 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': headResponse(),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/releases/latest': new Response('no releases', { status: 404 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.candidates[0]?.release).toBeUndefined()
+  })
+
+  it('leaves no release when the latest release has no tarball asset', async () => {
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(buildManifest, { status: 200 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': headResponse(),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/releases/latest': new Response(JSON.stringify({
+        tag_name: 'v1.0.0',
+        assets: [{ browser_download_url: 'https://github.com/someone/dsh-repo-plugin/releases/download/v1.0.0/plugin.zip' }],
+      }), { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.candidates[0]?.release).toBeUndefined()
+  })
+
+  it('does not probe releases for a repo without a build script', async () => {
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      if (text.includes('/releases/latest')) throw new Error('the release endpoint must not be called')
+      if (text.includes('/package.json')) {
+        return new Response(JSON.stringify({ name: 'dsh-repo-plugin', dsh: { bundle: {} } }), { status: 200 })
+      }
+      if (text.includes('/commits/main')) return headResponse()
+      throw new Error(`unrouted: ${text}`)
+    }) as unknown as typeof fetch
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.candidates[0]?.requiresBuild).toBe(false)
+      expect(result.candidates[0]?.release).toBeUndefined()
+    }
   })
 })
 

@@ -54,6 +54,32 @@ describe('gateRepo', () => {
     if (!result.ok) expect(result.rejection.code).toBe('no-license')
   })
 
+  it('rejects a requires-build repository that has no release tarball, with the old detail', () => {
+    const result = gateRepo(repo({ requiresBuild: true }), config)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.rejection.code).toBe('requires-build')
+      expect(result.rejection.detail).toContain('prepare/prepack build script')
+      expect(result.rejection.detail).toContain('Publish to npm, or drop the script')
+    }
+  })
+
+  it('accepts a requires-build repository rescued by a release tarball', () => {
+    const result = gateRepo(repo({
+      requiresBuild: true,
+      release: {
+        tag: 'v1.0.0',
+        url: 'https://github.com/someone/dsh-repo-plugin/releases/download/v1.0.0/plugin.tgz',
+        sha256: 'a'.repeat(64),
+      },
+    }), config)
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.accepted.repo.release?.tag).toBe('v1.0.0')
+      expect(result.accepted.metadata).toBe('declared')
+    }
+  })
+
   it('derives a listing from the repo description when no dsh.catalog is declared', () => {
     const result = gateRepo(repo({ catalog: null, description: 'Derives from the description.' }), config)
     expect(result.ok).toBe(true)

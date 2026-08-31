@@ -84,6 +84,27 @@ describe('emit', () => {
     expect(manifestLock).toBe('dsh-a 1.0.0 sha512-dsh-a\ndsh-b 1.0.0 sha512-dsh-b\n')
   })
 
+  it('serializes the tarball of a release-rescued repo entry, absent for other entries', () => {
+    const rescued: Entry = {
+      ...repoEntry('dsh-rescued', 'owner/slug'),
+      version: 'v1.0.0',
+      integrity: 'a'.repeat(64),
+      tarball: { url: 'https://github.com/owner/slug/releases/download/v1.0.0/plugin.tgz', sha256: 'a'.repeat(64) },
+    }
+    const plain = repoEntry('dsh-plain', 'owner/plain')
+    const { pluginsJson, manifestLock } = emit([rescued, plain], [], '2026-08-18T00:00:00.000Z')
+    const parsed = JSON.parse(pluginsJson) as { plugins: { name: string; tarball?: { url: string; sha256: string } }[] }
+    const rescuedOut = parsed.plugins.find(p => p.name === 'dsh-rescued')
+    const plainOut = parsed.plugins.find(p => p.name === 'dsh-plain')
+    expect(rescuedOut?.tarball).toEqual({
+      url: 'https://github.com/owner/slug/releases/download/v1.0.0/plugin.tgz',
+      sha256: 'a'.repeat(64),
+    })
+    expect(plainOut?.tarball).toBeUndefined()
+    // the lock line shows the tag — the version — which is what the daily diff compares
+    expect(manifestLock).toBe('owner/plain dsh-plain 1.0.0\nowner/slug dsh-rescued v1.0.0\n')
+  })
+
   it('lists every rejection with its code and reason in the report', () => {
     const { report } = emit([], [
       { name: 'dsh-x', code: 'no-bundle', detail: 'Declares no dsh.bundle.' },
