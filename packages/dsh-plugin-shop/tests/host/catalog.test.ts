@@ -57,7 +57,7 @@ describe('loadCatalog', () => {
     expect(result.snapshot.entries[0]?.name).toBe('dsh-hello-plugin')
   })
 
-  it('serves the cache with stale: true when the network fails', async () => {
+  it('serves the cache with stale: true and the snapshot builtAt when the network fails', async () => {
     const data = dataJson([entry])
     const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
     const fs = memFs()
@@ -67,6 +67,29 @@ describe('loadCatalog', () => {
 
     const result = await loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs, now: () => new Date('2026-08-25T10:00:00Z') })
     expect(result.stale).toBe(true)
+    // builtAt is the consumer's only freshness signal: pin the value, not just
+    // the stale flag, so a fallback that drops it cannot pass silently.
+    expect(result.snapshot.builtAt).toBe('2026-08-25T00:00:00Z')
+    expect(result.snapshot.entries[0]?.name).toBe('dsh-hello-plugin')
+  })
+
+  it('serves the cache with stale: true and the snapshot builtAt when only the data fetch fails', async () => {
+    const data = dataJson([entry])
+    const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
+    const fs = memFs()
+    fs.write('/cache/index.json', pointer)
+    fs.write(`/cache/${url}`, data)
+    // The pointer fetch succeeds; the data fetch is the transport failure. The
+    // second fallback site (catalog.ts data-fetch catch) must carry the same
+    // stale signal as the pointer-fetch one.
+    const fetchImpl = (async (input: string | URL) => {
+      if (String(input).endsWith('/index.json')) return new Response(pointer, { status: 200 })
+      throw new Error('data offline')
+    }) as unknown as typeof fetch
+
+    const result = await loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs, now: () => new Date('2026-08-25T10:00:00Z') })
+    expect(result.stale).toBe(true)
+    expect(result.snapshot.builtAt).toBe('2026-08-25T00:00:00Z')
     expect(result.snapshot.entries[0]?.name).toBe('dsh-hello-plugin')
   })
 
