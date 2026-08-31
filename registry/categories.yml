@@ -3789,6 +3789,8 @@
   category: tool
 - name: "dsh-mcp-view"
   category: ui
+- name: "dsh-mcp-workspace-scope"
+  category: tool
 - name: "dsh-md-overlay"
   category: tool
 - name: "dsh-md-viewer"
@@ -4189,6 +4191,8 @@
   category: tool
 - name: "dsh-open-with"
   category: tool
+- name: "dsh-openai-account-connector"
+  category: provider
 - name: "dsh-openai-accounts"
   category: tool
 - name: "dsh-openai-codex-auth"
@@ -4229,6 +4233,8 @@
   category: workflow
 - name: "dsh-origin-plugin"
   category: integration
+- name: "dsh-output-style"
+  category: ui
 - name: "dsh-output-styles"
   category: ui
 - name: "dsh-overleaf"
@@ -4291,6 +4297,8 @@
   category: ui
 - name: "dsh-pentester"
   category: tool
+- name: "dsh-performance-guard"
+  category: workflow
 - name: "dsh-perfscope"
   category: tool
 - name: "dsh-period-report"
@@ -5967,6 +5975,8 @@
   category: tool
 - name: "dsh-voice-chat"
   category: tool
+- name: "dsh-voice-control"
+  category: ui
 - name: "dsh-voice-kit"
   category: tool
 - name: "dsh-voice-local"
@@ -6314,6 +6324,8 @@
 - name: "internal-skill-workshop"
   category: tool
 - name: "iterate-plugin"
+  category: workflow
+- name: "jacky-creator"
   category: workflow
 - name: "knotline-dsh"
   category: tool
