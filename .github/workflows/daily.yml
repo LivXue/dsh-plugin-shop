@@ -86,12 +86,14 @@ jobs:
         with:
           path: dist
       - name: Commit the snapshot
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        # push included: the repo-state.json backfill memory must persist
+        # across push-triggered runs, or every run restarts from empty.
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
         continue-on-error: true
         run: |
           git config user.name 'dsh-plugin-shop bot'
           git config user.email 'bot@users.noreply.github.com'
-          git add registry/snapshots/manifest.lock
+          git add registry/snapshots/manifest.lock registry/repo-state.json
           git diff --cached --quiet && exit 0
           git commit -m "chore(registry): daily catalog snapshot"
           git push

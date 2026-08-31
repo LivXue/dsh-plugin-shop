@@ -13,11 +13,12 @@
  */
 
 import { createHash } from 'node:crypto'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { loadRegistryConfig } from './config.ts'
 import { fetchStarCounts } from './github-stars.ts'
 import { harvestRepos } from './github-client.ts'
+import { parseRepoState, serializeRepoState } from './repo-state.ts'
 import { githubOwnerName } from './github-repo.ts'
 import { fetchCandidates, searchByKeywords } from './npm-client.ts'
 import { runPipeline } from './pipeline.ts'
@@ -78,9 +79,18 @@ if (ghToken === '') {
   repoNote = 'github harvest skipped: SHOP_HARVEST_REPOS is not 1 (flipped in the release that ships the v3 client)'
   process.stderr.write(`github: ${repoNote}\n`)
 } else {
+  // The harvest memory: what the last run saw and fetched. Committed like
+  // the other registry inputs; a missing file is the first run of the
+  // backfill, an unreadable one fails loudly rather than scheduling a fresh
+  // full sweep by accident.
+  const repoStatePath = join(REGISTRY_DIR, 'repo-state.json')
+  const repoState = existsSync(repoStatePath)
+    ? parseRepoState(readFileSync(repoStatePath, 'utf8'))
+    : {}
+  const budget = Number(process.env.REPO_BACKFILL_BUDGET ?? '2000')
   let repos: Awaited<ReturnType<typeof harvestRepos>>
   try {
-    repos = await harvestRepos(fetch, undefined, ghToken)
+    repos = await harvestRepos({ state: repoState, budget, fetchImpl: fetch, token: ghToken })
   } catch (error) {
     // One whole-harvest retry after a pause: the GitHub half runs through
     // shared egress whose throttles outlast the per-request backoffs. A
@@ -88,14 +98,21 @@ if (ghToken === '') {
     // worse than a red one, and the daily workflow retries next run.
     process.stderr.write(`github: first attempt failed (${error instanceof Error ? error.message : String(error)}); retrying once after 30s\n`)
     await new Promise(resolve => setTimeout(resolve, 30_000))
-    repos = await harvestRepos(fetch, undefined, ghToken)
+    repos = await harvestRepos({ state: repoState, budget, fetchImpl: fetch, token: ghToken })
   }
   repoCandidates = repos.candidates
   for (const failure of repos.failures) {
     rejections.push({ name: failure.repo, code: failure.code, detail: failure.detail })
   }
-  const capNote = repos.capped ? ' (GitHub caps topic search at 1000 results)' : ''
-  repoNote = `${repoCandidates.length} repo candidate(s)${capNote}`
+  for (const repo of repos.gone) {
+    rejections.push({
+      name: repo,
+      code: 'repo-gone',
+      detail: 'The topic search no longer returns this repository (deleted, renamed, or private).',
+    })
+  }
+  writeFileSync(repoStatePath, serializeRepoState(repos.nextState))
+  repoNote = `${repos.windowCount} windows, ${repos.seen.length} repos seen, ${repos.fetched} fetched, ${repos.carried} carried, ${repos.deferred} deferred`
   process.stderr.write(`github: ${repoNote}\n`)
 }
 

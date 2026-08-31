@@ -70,11 +70,26 @@ A second, parallel harvest in the daily build, behind the same pure-core /
 impure-shell split:
 
 - **Shell** (`github-client.ts`): GitHub search API for
-  `topic:dsh-plugin` and `topic:deepseek-harness`, paged (100/page, bounded
-  like `MAX_SEARCH_PAGES` — hitting the bound throws, never truncates). For
-  each repo: fetch the default-branch `package.json` via
-  `raw.githubusercontent.com`, plus the repo metadata the search response
-  already carries (description, license, pushed_at, full name).
+  `topic:dsh-plugin` and `topic:deepseek-harness`, enumerated through
+  MUTUALLY EXCLUSIVE windows — stars bucket × created-date range (day
+  floor) × size bucket — because GitHub caps every query at 1,000 results
+  and the pool exceeds it (a single day alone does). Each window's
+  `total_count` is probed once; the cascade splits until every window fits
+  the cap, and a window that still exceeds it after every dimension throws
+  rather than truncating. Search requests pace at ~2s (30/minute metering)
+  and retry a secondary-rate-limit 403 once. For each repo: fetch the
+  default-branch `package.json` via `raw.githubusercontent.com`, plus the
+  repo metadata the search response already carries (description, license,
+  pushed_at, full name).
+- **Harvest memory** (`repo-state.ts`, committed as `registry/repo-state.json`):
+  per repo, the last-seen `pushed_at`, the pinned commit, and the last
+  candidate. The daily run re-enumerates the pool, compares `pushed_at`,
+  and re-fetches only new or changed repos — up to a per-run budget
+  (`REPO_BACKFILL_BUDGET`, default 2,000; the REST quota is ~5,000/hour and
+  a full 20k-repo sweep cannot fit one run, so the backfill fills over the
+  first ~10 runs). Untouched candidates carry over verbatim; repos the
+  search no longer returns drop from the catalog with a `repo-gone`
+  rejection naming the likely cause.
 - **Pure** (`repo-gate.ts`): the gate below.
 - **Union:** repo names (owner/slug) and npm names are disjoint keyspaces, but
   entries are deduplicated by *bundle name* (the `name` field of the repo's

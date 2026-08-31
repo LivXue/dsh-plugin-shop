@@ -1,22 +1,40 @@
 /**
- * The impure shell for the GitHub half of the harvest: topic search and
- * per-repository manifest fetches. Everything npm-shaped lives in
+ * The impure shell for the GitHub half of the harvest: partitioned topic
+ * search and per-repository manifest fetches. Everything npm-shaped lives in
  * `npm-client.ts`; the policy decisions these feeds enable live in the pure
- * `repo-gate.ts` / `pipeline.ts` on the other side of this boundary.
+ * `repo-gate.ts` / `pipeline.ts` on the other side of this boundary, and the
+ * harvest memory (what to re-fetch) lives in `repo-state.ts`.
+ *
+ * GitHub's search API caps every query at 1,000 results, and the topic pool
+ * is ~13k repos with a single day alone exceeding the cap — so the pool is
+ * enumerated through MUTUALLY EXCLUSIVE windows (stars bucket × created-date
+ * range × size bucket) whose totals each fit under the cap. Window totality
+ * is cheap (one `per_page=1` probe per window reads `total_count`); the
+ * expensive part — per-repo manifest and commit fetches — runs only for the
+ * repos whose `pushed_at` changed since the last recorded state.
  */
 
 import { fetchWithRetry } from './npm-client.ts'
+import { diffRepoState, nextRepoState, type RepoSeen, type RepoState } from './repo-state.ts'
 import type { RepoCandidate } from './types.ts'
 
 const GITHUB_API = 'https://api.github.com'
 const RAW_GITHUB = 'https://raw.githubusercontent.com'
 
+const SEARCH_PAGE_SIZE = 100
+/** GitHub's hard ceiling: 1,000 results per query, no page 11. */
+export const GITHUB_SEARCH_CAP = 1000
+/** Pages of the cap; windows are partitioned so each fits. */
+export const MAX_SEARCH_PAGES = Math.ceil(GITHUB_SEARCH_CAP / SEARCH_PAGE_SIZE)
+
+/** The GitHub topics the harvest searches, mirroring the npm keywords. */
+export const HARVEST_TOPICS: readonly string[] = ['dsh-plugin', 'deepseek-harness']
+
 /**
- * GitHub's endpoints are flaky from shared egress: undici's h2 connections
- * die with `UND_ERR_HEADERS_TIMEOUT`, and bursts of parallel connections can
- * draw connect timeouts from the CDN. Four attempts with a doubling backoff
- * (2/4/8s, ~14s worst case per request) ride most of it out; 429s still go
- * through fetchWithRetry's own budget.
+ * GitHub's API speaks HTTP/2 to undici, whose long-lived h2 connections can
+ * die with a transient `UND_ERR_HEADERS_TIMEOUT` on the next request. A
+ * bounded retry on network throws (4 attempts, doubling backoff 2/4/8s)
+ * rides those out; 429s still go through fetchWithRetry's own budget.
  */
 async function fetchRobust(
   url: string,
@@ -34,25 +52,10 @@ async function fetchRobust(
   }
 }
 
-/** Fewer parallel connections than the npm harvest: the GitHub CDN drops
- * bursts, and the API's per-token rate budget is modest. */
-const REPO_CONCURRENCY = 4
-
-/** GitHub's hard ceiling on search results: 1,000 per query, no page 11. */
-export const GITHUB_SEARCH_CAP = 1000
-const SEARCH_PAGE_SIZE = 100
-/** Pages of the cap; hitting it is the platform limit, not a harvest bug. */
-export const MAX_SEARCH_PAGES = Math.ceil(GITHUB_SEARCH_CAP / SEARCH_PAGE_SIZE)
-
-/** The GitHub topics the harvest searches, mirroring the npm keywords. */
-export const HARVEST_TOPICS: readonly string[] = ['dsh-plugin', 'deepseek-harness']
-
-/**
- * One repository's fetch outcome: a gated-able candidate, or the reason none
+/** One repository's fetch outcome: a gated-able candidate, or the reason none
  * could be produced. `no-manifest` means the repo exists but has no usable
  * `package.json` at the default branch — the repo is not an installable
- * plugin unit, an author-readable fact distinct from a transient failure.
- */
+ * plugin unit, an author-readable fact distinct from a transient failure. */
 export type RepoFetchResult =
   | { ok: true; candidate: RepoCandidate }
   | { ok: false; code: RepoFetchFailure['code']; detail: string }
@@ -70,6 +73,7 @@ interface RepoMeta {
   defaultBranch: string
   description: string | null
   license: string | null
+  pushedAt: string
 }
 
 function parseRepoMeta(item: unknown): RepoMeta | null {
@@ -78,6 +82,7 @@ function parseRepoMeta(item: unknown): RepoMeta | null {
     default_branch?: unknown
     description?: unknown
     license?: { spdx_id?: unknown } | null
+    pushed_at?: unknown
   }
   if (typeof o.full_name !== 'string' || typeof o.default_branch !== 'string') return null
   return {
@@ -85,54 +90,180 @@ function parseRepoMeta(item: unknown): RepoMeta | null {
     defaultBranch: o.default_branch,
     description: typeof o.description === 'string' && o.description !== '' ? o.description : null,
     license: o.license != null && typeof o.license.spdx_id === 'string' ? o.license.spdx_id : null,
+    pushedAt: typeof o.pushed_at === 'string' ? o.pushed_at : '',
   }
 }
 
-/** Fetch one page of GitHub's topic search. */
+/**
+ * The search API meters at 30 requests/minute (PAT) and 403s bursts; pace
+ * every search request by a 2s gap and retry a secondary-rate-limit 403 once
+ * after a 30s pause. 429s keep fetchWithRetry's own budget.
+ */
+async function searchRequest(
+  url: string,
+  fetchImpl: typeof fetch,
+  sleep: (ms: number) => Promise<void>,
+  token: string | undefined,
+): Promise<Response> {
+  await sleep(2000)
+  let response = await fetchRobust(url, fetchImpl, sleep, token)
+  if (response.status === 403) {
+    await sleep(30_000)
+    response = await fetchRobust(url, fetchImpl, sleep, token)
+  }
+  return response
+}
+
+/** Probe one query's `total_count` with a minimal page. */
+export async function probeTotal(
+  query: string,
+  fetchImpl: typeof fetch,
+  sleep: (ms: number) => Promise<void>,
+  token: string | undefined,
+): Promise<number> {
+  const url = `${GITHUB_API}/search/repositories?q=${encodeURIComponent(query)}&per_page=1`
+  const response = await searchRequest(url, fetchImpl, sleep, token)
+  if (!response.ok) throw new Error(`github search probe for ${query} failed: ${response.status}`)
+  const body = await response.json() as { total_count?: unknown }
+  return typeof body.total_count === 'number' ? body.total_count : 0
+}
+
+/** Fetch one page of a windowed search. */
 async function searchPage(
-  topic: string,
+  query: string,
   page: number,
   fetchImpl: typeof fetch,
   sleep: (ms: number) => Promise<void>,
   token: string | undefined,
-): Promise<{ items: unknown[]; capped: boolean }> {
-  const url = `${GITHUB_API}/search/repositories?q=topic:${topic}&per_page=${SEARCH_PAGE_SIZE}&page=${page}`
-  const response = await fetchRobust(url, fetchImpl, sleep, token)
-  if (!response.ok) throw new Error(`github search for topic:${topic} failed: ${response.status}`)
+): Promise<RepoMeta[]> {
+  const url = `${GITHUB_API}/search/repositories?q=${encodeURIComponent(query)}&per_page=${SEARCH_PAGE_SIZE}&page=${page}`
+  const response = await searchRequest(url, fetchImpl, sleep, token)
+  if (!response.ok) throw new Error(`github search for ${query} failed: ${response.status}`)
   const body = await response.json() as { items?: unknown }
   const items = Array.isArray(body.items) ? body.items : []
-  return { items, capped: items.length >= SEARCH_PAGE_SIZE && (page + 1) * SEARCH_PAGE_SIZE >= GITHUB_SEARCH_CAP }
+  const metas: RepoMeta[] = []
+  for (const item of items) {
+    const meta = parseRepoMeta(item)
+    if (meta !== null) metas.push(meta)
+  }
+  return metas
+}
+
+/** One partition window: extra qualifiers appended to `topic:<topic>`. */
+interface Window {
+  created?: string
+  stars?: '0' | '>=1'
+  size?: '<100' | '100..999' | '>=1000'
+}
+
+function windowQuery(topic: string, window: Window): string {
+  const parts = [`topic:${topic}`]
+  if (window.stars !== undefined) parts.push(`stars:${window.stars}`)
+  if (window.created !== undefined) parts.push(`created:${window.created}`)
+  if (window.size !== undefined) parts.push(`size:${window.size}`)
+  return parts.join(' ')
+}
+
+/** The day after a `YYYY-MM-DD` day. */
+function nextDay(day: string): string {
+  return new Date(Date.parse(`${day}T00:00:00Z`) + 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
 }
 
 /**
- * List every repository carrying one of the harvest topics, deduplicated and
- * sorted. GitHub search caps at {@link GITHUB_SEARCH_CAP} results per topic;
- * the caller is told when the cap was hit so the report can say so.
- * @returns the repo metadata, and whether any topic hit the platform cap.
+ * Split a created range at its midpoint day. Returns the boundary day; the
+ * caller builds `start..boundary` and `nextDay(boundary)..end`. Null when the
+ * range cannot shrink (a single day). */
+function splitRange(start: string, end: string): string | null {
+  const startMs = Date.parse(`${start}T00:00:00Z`)
+  const endMs = Date.parse(`${end}T00:00:00Z`)
+  if (!(endMs > startMs)) return null
+  const midMs = Math.floor((startMs + endMs) / 2)
+  const boundary = new Date(midMs).toISOString().slice(0, 10)
+  // `boundary === start` is VALID for a two-day range: the split becomes
+  // start..start and nextDay(start)..end — two single days.
+  if (boundary < start || boundary >= end) return null
+  return boundary
+}
+
+/**
+ * Partition one topic into mutually exclusive windows whose totals each fit
+ * under {@link GITHUB_SEARCH_CAP}, so paging them enumerates the WHOLE pool.
+ * Cascade: stars bucket → created-date bisection (day floor) → size bucket.
+ * The probe counts every window once; the pool is ~13k repos concentrated in
+ * recent days, and the stars split alone brings the worst day under the cap.
+ */
+export async function partitionTopic(
+  topic: string,
+  probe: (query: string) => Promise<number>,
+): Promise<Window[]> {
+  const windows: Window[] = []
+  const expand = async (window: Window): Promise<void> => {
+    const total = await probe(windowQuery(topic, window))
+    if (total <= GITHUB_SEARCH_CAP) {
+      windows.push(window)
+      return
+    }
+    if (window.stars === undefined) {
+      await expand({ ...window, stars: '0' })
+      await expand({ ...window, stars: '>=1' })
+      return
+    }
+    if (window.created === undefined) {
+      await expand({ ...window, created: '2008-01-01..2099-01-01' })
+      return
+    }
+    const [start, end] = window.created.split('..') as [string, string | undefined]
+    const endDay = end ?? start
+    const split = splitRange(start, endDay)
+    if (split !== null) {
+      await expand({ ...window, created: `${start}..${split}` })
+      await expand({ ...window, created: `${nextDay(split)}..${endDay}` })
+      return
+    }
+    if (window.size === undefined) {
+      await expand({ ...window, size: '<100' })
+      await expand({ ...window, size: '100..999' })
+      await expand({ ...window, size: '>=1000' })
+      return
+    }
+    // Every split dimension is exhausted and the window still exceeds the
+    // cap: the pool changed shape under us. Failing loudly beats truncating.
+    throw new Error(`github search window ${windowQuery(topic, window)} still exceeds ${GITHUB_SEARCH_CAP} results after stars/date/size splits`)
+  }
+  await expand({})
+  return windows
+}
+
+/**
+ * List every repository carrying one of the harvest topics, through the
+ * partitioned windows. Deduplicated and sorted.
+ * @returns the repos the search saw (with `pushedAt`), and the window count.
  */
 export async function searchReposByTopic(
   fetchImpl: typeof fetch = fetch,
   sleep: (ms: number) => Promise<void> = async (ms: number) => { await new Promise(resolve => setTimeout(resolve, ms)) },
   token: string | undefined = undefined,
-): Promise<{ repos: RepoMeta[]; capped: boolean }> {
-  const seen = new Set<string>()
-  const repos: RepoMeta[] = []
-  let capped = false
+): Promise<{ seen: RepoSeen[]; metas: Map<string, RepoMeta>; windowCount: number }> {
+  const byName = new Map<string, RepoMeta>()
+  let windowCount = 0
   for (const topic of HARVEST_TOPICS) {
-    for (let page = 1; page <= MAX_SEARCH_PAGES; page += 1) {
-      const pageResult = await searchPage(topic, page, fetchImpl, sleep, token)
-      for (const item of pageResult.items) {
-        const meta = parseRepoMeta(item)
-        if (meta === null || seen.has(meta.fullName)) continue
-        seen.add(meta.fullName)
-        repos.push(meta)
+    const windows = await partitionTopic(topic, query => probeTotal(query, fetchImpl, sleep, token))
+    windowCount += windows.length
+    for (const window of windows) {
+      const query = windowQuery(topic, window)
+      for (let page = 1; page <= MAX_SEARCH_PAGES; page += 1) {
+        const metas = await searchPage(query, page, fetchImpl, sleep, token)
+        for (const meta of metas) {
+          if (!byName.has(meta.fullName)) byName.set(meta.fullName, meta)
+        }
+        if (metas.length < SEARCH_PAGE_SIZE) break
       }
-      capped = capped || pageResult.capped
-      if (pageResult.items.length < SEARCH_PAGE_SIZE) break
     }
   }
-  repos.sort((a, b) => (a.fullName < b.fullName ? -1 : a.fullName > b.fullName ? 1 : 0))
-  return { repos, capped }
+  const seen = [...byName.entries()]
+    .map(([repo, meta]) => ({ repo, pushedAt: meta.pushedAt }))
+    .sort((a, b) => (a.repo < b.repo ? -1 : a.repo > b.repo ? 1 : 0))
+  return { seen, metas: byName, windowCount }
 }
 
 /** Fetch the default-branch head commit and its date for one repository. */
@@ -215,29 +346,85 @@ export async function fetchRepoCandidate(
   }
 }
 
+/** Fewer parallel connections than the npm harvest: the GitHub CDN drops
+ * bursts, and the API's per-token rate budget is modest. */
+const REPO_CONCURRENCY = 4
+
+export interface RepoHarvestOptions {
+  /** The previous committed state; the run carries untouched repos over. */
+  state: RepoState
+  /** Maximum repos to fetch this run — the backfill pacing knob; the rest
+   * defer to later runs rather than bursting the REST quota. */
+  budget: number
+  fetchImpl?: typeof fetch
+  sleep?: (ms: number) => Promise<void>
+  token?: string
+}
+
+export interface RepoHarvestResult {
+  /** Every candidate this run produced — fresh and carried alike. */
+  candidates: RepoCandidate[]
+  failures: RepoFetchFailure[]
+  /** Everything the partitioned search saw. */
+  seen: RepoSeen[]
+  /** Recorded repos the search no longer returns. */
+  gone: string[]
+  /** The state to commit for the next run. */
+  nextState: RepoState
+  /** Whether the harvest was skipped (no token). */
+  skipped: boolean
+  windowCount: number
+  fetched: number
+  carried: number
+  deferred: number
+}
+
 /**
- * Harvest every repository candidate for the topics, with bounded
- * concurrency, mirroring the npm harvest's shape.
- * @returns usable candidates, and per-repo failures with author-readable reasons.
+ * Harvest every repository candidate for the topics: partition the search,
+ * diff against the recorded state, re-fetch only new or changed repos (up to
+ * the budget), and carry the untouched candidates over.
  */
-export async function harvestRepos(
-  fetchImpl: typeof fetch = fetch,
-  sleep: (ms: number) => Promise<void> = async (ms: number) => { await new Promise(resolve => setTimeout(resolve, ms)) },
-  token: string | undefined = undefined,
-): Promise<{ candidates: RepoCandidate[]; failures: RepoFetchFailure[]; capped: boolean; skipped: boolean }> {
+export async function harvestRepos(options: RepoHarvestOptions): Promise<RepoHarvestResult> {
+  const {
+    state, budget,
+    fetchImpl = fetch,
+    sleep = async (ms: number) => { await new Promise(resolve => setTimeout(resolve, ms)) },
+    token = undefined,
+  } = options
   if (token === undefined) {
-    return { candidates: [], failures: [], capped: false, skipped: true }
+    return { candidates: [], failures: [], seen: [], gone: [], nextState: state, skipped: true, windowCount: 0, fetched: 0, carried: 0, deferred: 0 }
   }
-  const { repos, capped } = await searchReposByTopic(fetchImpl, sleep, token)
-  const candidates: RepoCandidate[] = []
+  const { seen, metas, windowCount } = await searchReposByTopic(fetchImpl, sleep, token)
+  const { toFetch, gone } = diffRepoState(state, seen)
+  // Budget slice: sorted order keeps the deferral deterministic.
+  const queue = toFetch.sort((a, b) => (a.repo < b.repo ? -1 : a.repo > b.repo ? 1 : 0)).slice(0, budget)
+  const fresh = new Map<string, RepoCandidate>()
   const failures: RepoFetchFailure[] = []
-  for (let i = 0; i < repos.length; i += REPO_CONCURRENCY) {
-    const batch = repos.slice(i, i + REPO_CONCURRENCY)
-    const results = await Promise.all(batch.map(async meta => ({ meta, result: await fetchRepoCandidate(meta, fetchImpl, sleep, token) })))
-    for (const { meta, result } of results) {
-      if (result.ok) candidates.push(result.candidate)
-      else failures.push({ repo: meta.fullName, code: result.code, detail: result.detail })
+  for (let i = 0; i < queue.length; i += REPO_CONCURRENCY) {
+    const batch = queue.slice(i, i + REPO_CONCURRENCY)
+    const results = await Promise.all(batch.map(async entry => {
+      const meta = metas.get(entry.repo)
+      if (meta === undefined) return { entry, result: { ok: false, code: 'fetch-failed', detail: 'search result lost between the enumeration and the fetch' } as RepoFetchResult }
+      return { entry, result: await fetchRepoCandidate(meta, fetchImpl, sleep, token) }
+    }))
+    for (const { entry, result } of results) {
+      if (result.ok) fresh.set(entry.repo, result.candidate)
+      else failures.push({ repo: entry.repo, code: result.code, detail: result.detail })
     }
   }
-  return { candidates, failures, capped, skipped: false }
+  const nextState = nextRepoState(state, seen, fresh)
+  const candidates = Object.values(nextState).map(entry => entry.candidate)
+  const carried = candidates.length - fresh.size
+  return {
+    candidates,
+    failures,
+    seen,
+    gone,
+    nextState,
+    skipped: false,
+    windowCount,
+    fetched: queue.length,
+    carried,
+    deferred: toFetch.length - queue.length,
+  }
 }

@@ -84,6 +84,7 @@ export type RejectionCode =
   | 'no-manifest'
   | 'shadowed-by-npm'
   | 'requires-build'
+  | 'repo-gone'
 
 /** One rejection, carrying an author-readable explanation. */
 export interface Rejection {
