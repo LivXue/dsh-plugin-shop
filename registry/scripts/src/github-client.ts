@@ -306,7 +306,10 @@ async function fetchHeadCommit(
  * candidate, so it re-probes only when the repo's `pushedAt` advances.
  * The tarball is downloaded once here and hashed: GitHub release assets are
  * immutable per URL (re-upload = new asset = new URL), so URL + sha256 is the
- * audit story. Returns null when there is no release or no tarball asset.
+ * audit story. The probe is advisory — its fallback, the unchanged
+ * `requires-build` rejection, is complete — so it returns null on any
+ * failure and never throws. Returns null when there is no release, no
+ * tarball asset, or the probe could not be read.
  */
 async function fetchLatestReleaseTarball(
   owner: string,
@@ -315,25 +318,42 @@ async function fetchLatestReleaseTarball(
   sleep: (ms: number) => Promise<void>,
   token: string | undefined,
 ): Promise<{ tag: string; url: string; sha256: string } | null> {
-  const url = `${GITHUB_API}/repos/${owner}/${slug}/releases/latest`
-  const response = await fetchRobust(url, fetchImpl, sleep, token)
-  if (!response.ok) return null
-  let body: { tag_name?: unknown; assets?: unknown }
+  // The whole probe is advisory, so no failure inside it may crash the
+  // harvest: every transport or read failure degrades to null, the
+  // stars-sidecar rule ("any failure publishes without stars; the step
+  // never throws").
   try {
-    body = await response.json() as typeof body
+    const url = `${GITHUB_API}/repos/${owner}/${slug}/releases/latest`
+    const response = await fetchRobust(url, fetchImpl, sleep, token)
+    if (!response.ok) return null
+    let body: { tag_name?: unknown; assets?: unknown }
+    try {
+      body = await response.json() as typeof body
+    } catch {
+      // Swallows an unreadable release body: a release we cannot read is a
+      // release we cannot rescue — the same as an absent one.
+      return null
+    }
+    if (typeof body.tag_name !== 'string' || !Array.isArray(body.assets)) return null
+    const asset = body.assets
+      .map(a => (a as { browser_download_url?: unknown }).browser_download_url)
+      .find((u): u is string => typeof u === 'string' && /\.(?:tgz|tar\.gz)$/i.test(u))
+    if (asset === undefined) return null
+    const assetResponse = await fetchRobust(asset, fetchImpl, sleep, token)
+    if (!assetResponse.ok) return null
+    const bytes = new Uint8Array(await assetResponse.arrayBuffer())
+    const sha256 = createHash('sha256').update(bytes).digest('hex')
+    return { tag: body.tag_name, url: asset, sha256 }
   } catch {
+    // Swallows the transport failures every null-returning path above leaves
+    // open: the releases call, and the asset download — the largest body read
+    // in this file — whose stream can drop after the headers arrived. The
+    // probe has nothing load-bearing; a permanent failure, say a CI egress
+    // allowlist that permits api.github.com but blocks the asset redirect
+    // host, must leave the unchanged `requires-build` rejection standing
+    // rather than take the whole daily catalog down.
     return null
   }
-  if (typeof body.tag_name !== 'string' || !Array.isArray(body.assets)) return null
-  const asset = body.assets
-    .map(a => (a as { browser_download_url?: unknown }).browser_download_url)
-    .find((u): u is string => typeof u === 'string' && /\.(?:tgz|tar\.gz)$/.test(u))
-  if (asset === undefined) return null
-  const assetResponse = await fetchRobust(asset, fetchImpl, sleep, token)
-  if (!assetResponse.ok) return null
-  const bytes = new Uint8Array(await assetResponse.arrayBuffer())
-  const sha256 = createHash('sha256').update(bytes).digest('hex')
-  return { tag: body.tag_name, url: asset, sha256 }
 }
 
 /**

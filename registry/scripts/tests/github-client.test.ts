@@ -198,7 +198,12 @@ describe('release-tarball rescue probe', () => {
     })
     const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
     expect(result.ok).toBe(true)
-    if (result.ok) expect(result.candidates[0]?.release).toBeUndefined()
+    if (result.ok) {
+      expect(result.candidates[0]?.release).toBeUndefined()
+      // The unrescued candidate keeps its class: no release, still
+      // requires-build, still rejected by the gate.
+      expect(result.candidates[0]?.requiresBuild).toBe(true)
+    }
   })
 
   it('leaves no release when the latest release has no tarball asset', async () => {
@@ -212,7 +217,12 @@ describe('release-tarball rescue probe', () => {
     })
     const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
     expect(result.ok).toBe(true)
-    if (result.ok) expect(result.candidates[0]?.release).toBeUndefined()
+    if (result.ok) {
+      expect(result.candidates[0]?.release).toBeUndefined()
+      // The unrescued candidate keeps its class: no release, still
+      // requires-build, still rejected by the gate.
+      expect(result.candidates[0]?.requiresBuild).toBe(true)
+    }
   })
 
   it('does not probe releases for a repo without a build script', async () => {
@@ -229,6 +239,68 @@ describe('release-tarball rescue probe', () => {
     expect(result.ok).toBe(true)
     if (result.ok) {
       expect(result.candidates[0]?.requiresBuild).toBe(false)
+      expect(result.candidates[0]?.release).toBeUndefined()
+    }
+  })
+
+  it('rescues a .TGZ asset — the asset-name match is case-insensitive', async () => {
+    const upperAssetUrl = 'https://github.com/someone/dsh-repo-plugin/releases/download/v1.0.0/dsh-repo-plugin.TGZ'
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(buildManifest, { status: 200 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': headResponse(),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/releases/latest': new Response(JSON.stringify({
+        tag_name: 'v1.0.0',
+        assets: [{ browser_download_url: upperAssetUrl }],
+      }), { status: 200 }),
+      [upperAssetUrl]: new Response(tarballBytes, { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.candidates[0]?.release).toEqual({ tag: 'v1.0.0', url: upperAssetUrl, sha256: expectedSha256 })
+    }
+  })
+
+  it('degrades to no release when the tarball body cannot be read — the probe never throws', async () => {
+    // The response's body read is where a connection drop mid-download lands
+    // (the arrayBuffer is OUTSIDE fetchRobust's retry loop); it must leave
+    // the probe null, not crash the harvest.
+    const droppedMidDownload = {
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => { throw new Error('connection dropped mid-download') },
+    } as unknown as Response
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(buildManifest, { status: 200 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': headResponse(),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/releases/latest': new Response(JSON.stringify({
+        tag_name: 'v1.0.0',
+        assets: [{ browser_download_url: assetUrl }],
+      }), { status: 200 }),
+      [assetUrl]: droppedMidDownload,
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.candidates[0]?.requiresBuild).toBe(true)
+      expect(result.candidates[0]?.release).toBeUndefined()
+    }
+  })
+
+  it('degrades to no release when the releases call dies on transport — the probe never throws', async () => {
+    // The releases/latest request itself can throw on transport failure
+    // (fetchRobust's budget runs out, then the outer catch swallows).
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      if (text.includes('/releases/latest')) throw new Error('UND_ERR_HEADERS_TIMEOUT')
+      if (text.includes('/package.json')) return new Response(buildManifest, { status: 200 })
+      if (text.includes('/commits/main')) return headResponse()
+      throw new Error(`unrouted: ${text}`)
+    }) as unknown as typeof fetch
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.candidates[0]?.requiresBuild).toBe(true)
       expect(result.candidates[0]?.release).toBeUndefined()
     }
   })
