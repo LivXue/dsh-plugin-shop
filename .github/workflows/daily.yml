@@ -69,6 +69,10 @@ jobs:
           # Flipped in the 0.4.10 release: the client that reads schemaVersion 3
           # (repo entries) ships, so the catalog may publish them.
           SHOP_HARVEST_REPOS: '1'
+          # Subpackage probing rides the v4 client: the flag flips in the
+          # release commit that ships it, so no v3 client ever meets a
+          # subdir entry (schemaVersion 4).
+          SHOP_HARVEST_SUBPACKAGES: '1'
           # A dedicated read-only PAT lifts the stars GraphQL quota past the
           # catalog's repo count; without it the GITHUB_TOKEN's ~1k points
           # cover only a third of the shelf per run.
