@@ -23,6 +23,12 @@ export const SUBPACKAGE_SCHEMA_VERSION = 4
  * that parses v5 must ship first (release-order choreography, §3.5). */
 export const CATALOG_SCHEMA_VERSION = 5
 
+/** v6 adds `peers` — the package's declared peer dependency names, which the
+ * Host resolves against the running installation (design
+ * 2026-09-01-harness-compatibility). Gated because it is 410 KB on a 3.63 MB
+ * file: no reason to serve it before a client can read it. */
+export const PEERS_SCHEMA_VERSION = 6
+
 /** The stars sidecar pointer the index may carry (spec 2026-08-26-github-stars-design.md §4.1). */
 export interface StarsPointer { url: string; sha256: string }
 
@@ -110,15 +116,22 @@ export function emit(
   // SHOP_CATALOG_V5 at release time restores it without re-reviewing anything
   // (design §3.5). The additive fields (`added`, `tarball`, `replacement`)
   // ride the lower versions: an old client's zod strips the unknown keys
-  // (consumer-side zod is non-strict by design).
+  // (consumer-side zod is non-strict by design). `peers` cannot ride the same
+  // way: it is additive too, but it is 410 KB on a 3.63 MB file, so below v6
+  // it is stripped rather than served to a client that cannot use it yet.
   let themeDowngraded = 0
-  const emitted = schemaVersion < CATALOG_SCHEMA_VERSION
-    ? entries.map(entry => {
-      if (entry.catalog.category !== 'theme') return entry
+  const emitted = entries.map(entry => {
+    let next = entry
+    if (schemaVersion < CATALOG_SCHEMA_VERSION && next.catalog.category === 'theme') {
       themeDowngraded += 1
-      return { ...entry, catalog: { ...entry.catalog, category: 'other' as const } }
-    })
-    : entries
+      next = { ...next, catalog: { ...next.catalog, category: 'other' as const } }
+    }
+    if (schemaVersion < PEERS_SCHEMA_VERSION && next.peers !== undefined) {
+      const { peers: _peers, ...rest } = next
+      next = rest
+    }
+    return next
+  })
   const sorted = [...emitted].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
   const denied = rejections
     .filter(r => r.code === 'denied')
