@@ -290,6 +290,16 @@ export class ShopGateway extends TypertRemoteService {
   /** The install gate runs against the last loaded snapshot, never a fresh
    * fetch per request (§7.2: the Host's cached snapshot is the truth). */
   private lastSnapshot: CatalogSnapshot | null = null
+  /** The incompatibility map already computed for `lastSnapshot`, keyed by
+   * that snapshot's own object identity. Design §3 asks for the verdict
+   * once per loaded snapshot, not once per RPC call: `loadCatalog` serves
+   * the same snapshot from its on-disk cache for minutes at a time, so
+   * without this, reopening the tab within that window would re-walk
+   * `node_modules` for every distinct peer name again — and Node only
+   * caches a SUCCESSFUL resolution, so a genuinely missing peer pays a full
+   * failed walk on every single call. Recomputed only when `catalog()`
+   * loads a snapshot that is not this exact object. */
+  private incompatibleCache: { snapshot: CatalogSnapshot; map: Record<string, string[]> } | null = null
   /** Install records, running and finished; a poll finds one here or reports not found. */
   private readonly installs = new Map<string, ReturnType<typeof startInstall>>()
   /** Every install id in insertion order, oldest first; finished-record eviction walks this from the front. */
@@ -532,22 +542,27 @@ export class ShopGateway extends TypertRemoteService {
     const { snapshot, stale } = await load({ baseUrl: catalogUrl, cacheDir, refresh: args?.refresh ?? false })
     this.lastSnapshot = snapshot
     let incompatible: Record<string, string[]>
-    try {
-      const resolve = this.options.resolvePeer ?? nodeResolver(pathToFileURL(join(this.profileDirResolved(), 'cordis.yml')).href)
-      incompatible = incompatibilityMap(snapshot.entries, resolve)
-    } catch {
-      // No profile anchor could be discovered (e.g. a bare test construction
-      // that supplies neither `profileDir` nor a resolvable module location,
-      // or the constructor's own stub-ctx case above) — no peer verdict is
-      // formable for anything in this snapshot. A plugin we cannot judge is
-      // never accused, so the whole map degrades straight to empty here
-      // rather than routing through a resolver that throws on first use:
-      // incompatibilityMap memoises per distinct peer NAME, not per call, so
-      // a throwing stand-in would be invoked and caught fresh for every
-      // distinct peer in the snapshot — hundreds, per the design doc's own
-      // measurement — on every single catalog() call for as long as the
-      // profile anchor stays unavailable.
-      incompatible = {}
+    if (this.incompatibleCache !== null && this.incompatibleCache.snapshot === snapshot) {
+      incompatible = this.incompatibleCache.map
+    } else {
+      try {
+        const resolve = this.options.resolvePeer ?? nodeResolver(pathToFileURL(join(this.profileDirResolved(), 'cordis.yml')).href)
+        incompatible = incompatibilityMap(snapshot.entries, resolve)
+      } catch {
+        // No profile anchor could be discovered (e.g. a bare test construction
+        // that supplies neither `profileDir` nor a resolvable module location,
+        // or the constructor's own stub-ctx case above) — no peer verdict is
+        // formable for anything in this snapshot. A plugin we cannot judge is
+        // never accused, so the whole map degrades straight to empty here
+        // rather than routing through a resolver that throws on first use:
+        // incompatibilityMap memoises per distinct peer NAME, not per call, so
+        // a throwing stand-in would be invoked and caught fresh for every
+        // distinct peer in the snapshot — hundreds, per the design doc's own
+        // measurement — on every single catalog() call for as long as the
+        // profile anchor stays unavailable.
+        incompatible = {}
+      }
+      this.incompatibleCache = { snapshot, map: incompatible }
     }
     return {
       schemaVersion: snapshot.schemaVersion,

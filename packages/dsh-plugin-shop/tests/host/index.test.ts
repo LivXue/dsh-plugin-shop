@@ -1420,4 +1420,27 @@ describe('ShopGateway.catalog incompatibility', () => {
     const result = await gateway.catalog({})
     expect(result.incompatible).toEqual({})
   })
+
+  it('caches the incompatibility map for a snapshot instead of recomputing on a repeat call', async () => {
+    // gatewayWithSnapshot's loadCatalog stub closes over one fixed snapshot
+    // object, so both calls below load the exact same object — the scenario
+    // design §3 calls "once per loaded snapshot", and the real loadCatalog's
+    // five-minute on-disk freshness window means a real reopened tab hits
+    // this same path far more often than a fresh snapshot.
+    const resolvePeer = vi.fn((spec: string) => spec !== '@deepseek-ai/dsh-client-store')
+    const { gateway } = gatewayWithSnapshot(
+      { schemaVersion: 6, builtAt: '', entries: [peered], denied: [], stars: {} },
+      { resolvePeer },
+    )
+
+    const first = await gateway.catalog({})
+    expect(first.incompatible).toEqual({ 'dsh-timeline': ['@deepseek-ai/dsh-client-store'] })
+    expect(resolvePeer).toHaveBeenCalledTimes(2) // the two distinct peer names on `peered`
+
+    const second = await gateway.catalog({})
+    expect(second.incompatible).toEqual({ 'dsh-timeline': ['@deepseek-ai/dsh-client-store'] })
+    // Unchanged: the second call must reuse the cached map, never ask the
+    // resolver again for a snapshot it has already judged.
+    expect(resolvePeer).toHaveBeenCalledTimes(2)
+  })
 })
