@@ -56,10 +56,11 @@ const entrySchema = z.object({
   subdir: z.string().regex(/^(?!.*(^|\/)\.\.?(\/|$))[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/).optional(),
   // v5 (market borrowings): `added` on every entry, and the release-rescue
   // `tarball` — whose URL the coherence check below binds to the entry's
-  // own repo. Required `added` means a cached pre-v5 catalog fails parse and
-  // is treated as absent (refetched) once this build ships — the same
-  // one-time cache invalidation every version bump makes.
-  added: z.string(),
+  // own repo. `added` is OPTIONAL on the consumer: the live v4 catalog (and
+  // any cached pre-v5 data file) carries no such field, and requiring it
+  // made 0.5.0 refuse the still-published v4 catalog outright. Our own
+  // builds always carry it (registry E9); the client never renders it.
+  added: z.string().optional(),
   tarball: z.object({ url: z.string(), sha256: z.string() }).optional(),
 })
 

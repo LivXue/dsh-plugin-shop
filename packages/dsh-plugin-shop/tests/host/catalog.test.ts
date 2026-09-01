@@ -2,16 +2,16 @@ import { describe, expect, it } from 'vitest'
 import { createHash } from 'node:crypto'
 import { loadCatalog, type CatalogFs } from '../../src/host/catalog.ts'
 
-function dataJson(plugins: unknown[] = [], denied: unknown[] = []): string {
-  return JSON.stringify({ schemaVersion: 2, plugins, denied })
+function dataJson(plugins: unknown[] = [], denied: unknown[] = [], schemaVersion = 2): string {
+  return JSON.stringify({ schemaVersion, plugins, denied })
 }
 
-function pointerFor(data: string, builtAt: string, stars?: { url: string; sha256: string }): { pointer: string; url: string; sha: string } {
+function pointerFor(data: string, builtAt: string, stars?: { url: string; sha256: string }, schemaVersion = 2): { pointer: string; url: string; sha: string } {
   const sha = createHash('sha256').update(data).digest('hex')
   const url = `plugins.${sha}.json`
   return {
     pointer: JSON.stringify({
-      schemaVersion: 2, builtAt, count: 0,
+      schemaVersion, builtAt, count: 0,
       plugins: { url, sha256: sha },
       ...(stars === undefined ? {} : { stars }),
     }),
@@ -56,6 +56,28 @@ describe('loadCatalog', () => {
     expect(result.stale).toBe(false)
     expect(result.snapshot.entries).toHaveLength(1)
     expect(result.snapshot.entries[0]?.name).toBe('dsh-hello-plugin')
+  })
+
+  it('parses a v4 catalog whose entries carry no added field (the live pre-v5 shape)', async () => {
+    // 0.5.0 shipped with `added` REQUIRED in the consumer schema, which
+    // refused the still-live v4 catalog (no `added` on any entry) and the
+    // shop showed its generic error state. The field is optional on the
+    // consumer: our own builds always carry it (E9), foreign/cached v4 data
+    // does not, and the client never renders it.
+    const v4entry = {
+      name: 'dsh-hello-plugin', version: '1.2.0', integrity: 'sha512-i', publishedAt: null,
+      repository: null, license: 'MIT', tier: 'community', metadata: 'derived',
+    }
+    const data = dataJson([v4entry], [], 4)
+    const { pointer, url, sha } = pointerFor(data, '2026-08-25T00:00:00Z', undefined, 4)
+    const fetchImpl = (async (input: string | URL) => new Response(
+      String(input).endsWith('/index.json') ? pointer : data, { status: 200 },
+    )) as unknown as typeof fetch
+
+    const result = await loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() })
+    expect(result.stale).toBe(false)
+    expect(result.snapshot.entries).toHaveLength(1)
+    expect(result.snapshot.entries[0]?.added).toBeUndefined()
   })
 
   it('serves the cache with stale: true and the snapshot builtAt when the network fails', async () => {

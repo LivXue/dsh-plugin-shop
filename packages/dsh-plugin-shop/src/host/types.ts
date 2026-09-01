@@ -41,7 +41,7 @@ export interface CatalogEntry {
    * git form (market borrowings §3.1). */
   tarball?: { url: string; sha256: string }
   /** The date this entry first appeared in the catalog (YYYY-MM-DD). */
-  added: string
+  added?: string
 }
 
 export interface DeniedEntry { name: string; detail: string; replacement?: string }
