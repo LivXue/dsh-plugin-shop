@@ -51,12 +51,18 @@ const config = parseRegistryConfig({
   ].join('\n') + '\n',
 })
 
-function accepted(name: string, version: string, metadata: Accepted['metadata'] = 'declared'): Accepted {
+function accepted(
+  name: string,
+  version: string,
+  metadata: Accepted['metadata'] = 'declared',
+  publisher?: string,
+): Accepted {
   return {
     candidate: {
       name, version, integrity: 'sha512-abc', publishedAt: '2026-08-01T12:00:00.000Z',
       repository: 'https://github.com/you/x', license: 'MIT', deprecated: false,
       hasBundle: true, catalog: {}, description: 'x', keywords: [],
+      ...(publisher !== undefined ? { publisher } : {}),
     },
     catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
     integrity: 'sha512-abc',
@@ -68,6 +74,19 @@ function accepted(name: string, version: string, metadata: Accepted['metadata'] 
 }
 
 describe('assignTier', () => {
+  it('carries the publishing npm account onto the entry', () => {
+    // The shop shows this beside the npm page link so a person can see who
+    // published the thing they are about to install — two packages with the
+    // same text and different publishers are the case it answers.
+    expect(assignTier(accepted('dsh-other-plugin', '1.0.0', 'declared', 'realauthor'), config).publisher)
+      .toBe('realauthor')
+  })
+
+  it('omits the publisher when the candidate has none', () => {
+    expect(assignTier(accepted('dsh-other-plugin', '1.0.0'), config).publisher).toBeUndefined()
+    expect('publisher' in assignTier(accepted('dsh-other-plugin', '1.0.0'), config)).toBe(false)
+  })
+
   it('marks an unlisted package community and attaches no review', () => {
     const entry = assignTier(accepted('dsh-other-plugin', '1.0.0'), config)
     expect(entry.tier).toBe('community')

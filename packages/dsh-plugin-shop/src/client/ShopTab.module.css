@@ -681,6 +681,18 @@
   outline-offset: 1px;
 }
 
+/* The publishing account, beside the npm link. Secondary label colour and a
+ * middot separator carry the distinction — never a background fill, which is
+ * invisible in the light theme where every bg-layer token is the same white. */
+.publisher {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.publisher::before {
+  content: ' · ';
+  color: var(--dsw-alias-label-secondary);
+}
+
 .reviewedLine {
   margin: 8px 0 0;
   padding: 6px 8px;

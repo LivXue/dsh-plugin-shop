@@ -31,6 +31,19 @@ export interface Candidate {
   description: string | null
   /** npm manifest `keywords`, strings only, `[]` when absent. Classify input. */
   keywords: string[]
+  /**
+   * The npm account behind this package: `_npmUser.name` when that account is
+   * one of the maintainers, else the first maintainer (see `publisherOf`).
+   * Absent when npm names no maintainer at all.
+   *
+   * Not `author`: that field is free text the publisher writes, and a clone
+   * inherits it verbatim — `dsh-agent-squad`, published by `shenzhsjtu`,
+   * carries the name and email of the author of the package it copied. Not
+   * `maintainers` either: it is a list, and one listed package has 49 of
+   * them. `_npmUser` is exactly one name and the registry, not the package,
+   * is what says it. The email npm carries beside it is dropped.
+   */
+  publisher?: string
 }
 
 /**
@@ -165,4 +178,8 @@ export interface Entry {
   tarball?: { url: string; sha256: string }
   /** The date this entry first appeared in the catalog (YYYY-MM-DD). */
   added: string
+  /** The npm account that published this version; present only for npm
+   * entries whose packument named one. A github entry has no npm publisher.
+   * See {@link Candidate.publisher} for why this and not `author`. */
+  publisher?: string
 }

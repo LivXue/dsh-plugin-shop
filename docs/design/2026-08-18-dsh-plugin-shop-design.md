@@ -201,6 +201,7 @@ The pointer carries `count` and `rejected` — the listed and the filtered total
       "integrity": "sha512-...",
       "publishedAt": "2026-08-01T12:00:00Z",
       "repository": "https://github.com/you/hello-plugin",
+      "publisher": "someone",
       "license": "MIT",
       "tier": "verified",
       "metadata": "declared",
@@ -222,6 +223,54 @@ The pointer carries `count` and `rejected` — the listed and the filtered total
   ]
 }
 ```
+
+`publisher` is the npm account behind the package — npm entries only, absent
+when npm names no maintainer. The shop renders it beside a link to the
+package's npm page and draws no conclusion from it: the person decides. The
+email npm carries beside every account name is dropped; our artifact has no
+use for republishing it.
+
+Resolution: the account npm recorded for this version (`_npmUser.name`) when
+that account is one of the package's `maintainers`, otherwise the first
+maintainer. Neither field alone works. `_npmUser` alone is not an identity —
+measured on 250 live catalog entries, 30 report it as the literal string
+"GitHub Actions", the trusted-publisher path the better-run projects use, and
+naming that reads BACKWARDS for the case this row exists to serve: the original
+`@nanmicoder/dsh-agent-teams` publishes from CI while the clone
+`dsh-agent-squad` was pushed by hand, so the clone would be the side showing a
+human account. `maintainers` alone loses the useful distinction of who
+actually pushed the version, and it is a list — though a thin one: 246 of those
+250 have exactly one, so the first is nearly always the only. Requiring
+`_npmUser` to be corroborated by the maintainer list gets an owned account on
+both paths (verified against live packuments: `relakkes` for the CI-published
+original, `shenzhsjtu` for the hand-pushed clone).
+
+`author` is rejected outright, not used as any fallback. It is free text the
+publisher writes and a clone inherits it verbatim: `dsh-agent-squad` carries
+the name and email of the author of the package it copied, so presenting
+`author` would print the original author's name on the clone.
+
+The field is additive and optional, and `schemaVersion` does NOT move for it.
+A consumer refuses a catalog whose version exceeds the one it was built for
+(§10), so a bump would make every installed shop reject the catalog outright;
+an unknown key, by contrast, is stripped by the consumer's non-strict zod,
+which is what lets old and new hosts read one catalog. This is the same
+treatment `added` and `tarball` received. A bump remains necessary only for a
+change an old consumer would REJECT rather than ignore — v5's category enum
+being the precedent.
+
+Why the shop shows this rather than deciding for the person: a measurement of
+the live catalog found 56 clusters of listings whose summaries are byte
+identical, 22 of them spanning publishers with no npm account in common. Which
+member of such a cluster is the original is not decidable automatically —
+publication date says the wrong thing (the official `@openviking/dsh-memory-
+plugin` was published three days AFTER the fork that copied it), npm account
+names do not match GitHub owners (`relakkes` publishes `@nanmicoder/*`), and
+star counts are inherited from the shared repository, so both sides show the
+same number. Provenance attestations cover only 30% of the population and a
+fork can carry a perfectly valid one for its own fork. A registry that guessed
+would delist real authors; publishing the two facts a person needs — which npm
+package this is, and who published it — costs nothing and cannot be wrong.
 
 `denied` carries every denylisted package with its author-readable reason; the Host consults it for the `shop/installStart` gate (§7.2). Rejections that are not denials stay in the build report.
 

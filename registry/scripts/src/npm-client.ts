@@ -175,10 +175,35 @@ function normalizeRepository(value: unknown): string | null {
  * @param packument - the parsed registry document for one package.
  * @returns the candidate, or null when the document names no usable latest version.
  */
+/**
+ * The npm account behind one package: the account npm recorded for this
+ * version when it is one of the package's maintainers, otherwise the first
+ * maintainer.
+ *
+ * `_npmUser` alone is not an identity. Measured on 250 live catalog entries,
+ * 30 report it as the literal string "GitHub Actions" — the trusted-publisher
+ * path, which the better-run projects use. Naming that would tell a reader
+ * nothing, and it would read backwards: the original `@nanmicoder/dsh-agent-
+ * teams` publishes from CI while the clone `dsh-agent-squad` was pushed by
+ * hand, so the clone would be the side showing a human. Requiring the value
+ * to be a maintainer keeps it an account someone owns, and the fallback keeps
+ * an answer for the CI case. 246 of those 250 have exactly one maintainer.
+ */
+function publisherOf(maintainers: unknown, npmUser: unknown): string | undefined {
+  const names = Array.isArray(maintainers)
+    ? maintainers
+      .map(m => (m !== null && typeof m === 'object' ? (m as { name?: unknown }).name : m))
+      .filter((n): n is string => typeof n === 'string')
+    : []
+  if (typeof npmUser === 'string' && names.includes(npmUser)) return npmUser
+  return names[0]
+}
+
 export function toCandidate(packument: unknown): Candidate | null {
   const doc = packument as {
     name?: unknown
     'dist-tags'?: { latest?: unknown }
+    maintainers?: unknown
     time?: Record<string, unknown>
     versions?: Record<string, {
       dist?: { integrity?: unknown }
@@ -187,6 +212,7 @@ export function toCandidate(packument: unknown): Candidate | null {
       deprecated?: unknown
       description?: unknown
       keywords?: unknown
+      _npmUser?: { name?: unknown }
       dsh?: { bundle?: unknown; catalog?: unknown }
     }>
   }
@@ -210,6 +236,13 @@ export function toCandidate(packument: unknown): Candidate | null {
     keywords: Array.isArray(manifest.keywords)
       ? manifest.keywords.filter((k): k is string => typeof k === 'string')
       : [],
+    // The account name only: npm carries an address beside it and our
+    // artifact has no use for republishing that (see Candidate.publisher for
+    // why an account and not `author`).
+    ...(() => {
+      const publisher = publisherOf(doc.maintainers, manifest._npmUser?.name)
+      return publisher === undefined ? {} : { publisher }
+    })(),
   }
 }
 

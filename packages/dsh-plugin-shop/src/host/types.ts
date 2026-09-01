@@ -31,6 +31,13 @@ export interface CatalogEntry {
   catalog?: CatalogSection
   /** Where the entry installs from. */
   source: 'npm' | 'github'
+  /** The npm account behind this package — the account npm recorded for
+   * this version when it is one of the maintainers, else the first
+   * maintainer; npm entries only. Shown beside the npm page link so a person
+   * can see WHO stands behind what they are about to install — the shop draws
+   * no conclusion from it. Optional on the consumer: the live catalog carries
+   * none until the next daily build. */
+  publisher?: string
   /** `owner/slug`; present exactly when `source` is github. */
   repo?: string
   /** Subpackage directory inside the repo; present exactly when the entry is

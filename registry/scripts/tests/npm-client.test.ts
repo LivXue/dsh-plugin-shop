@@ -26,6 +26,88 @@ describe('toCandidate', () => {
     },
   }
 
+  it('never takes the publisher from the unverified author field', () => {
+    // `author` is free text the publisher writes, and a clone inherits it
+    // verbatim: `dsh-agent-squad`, published by the account `shenzhsjtu`,
+    // carries the name and email of the author of the package it copied.
+    // Presenting that as the publisher would print the original author's name
+    // on the clone — the exact opposite of what the row is for.
+    const withAuthor = {
+      ...packument,
+      maintainers: [{ name: 'realauthor' }],
+      versions: {
+        '1.2.0': {
+          ...packument.versions['1.2.0'],
+          _npmUser: { name: 'realauthor', email: 'real@example.com' },
+          author: { name: 'Someone Else', email: 'someone@else.test' },
+        },
+      },
+    }
+    expect(toCandidate(withAuthor)?.publisher).toBe('realauthor')
+  })
+
+  it('carries no publisher when there is no maintainer account to name', () => {
+    // With no maintainers there is nothing corroborating `_npmUser`, and an
+    // uncorroborated value can be the CI robot. No answer beats a wrong one.
+    const orphan = {
+      ...packument,
+      versions: { '1.2.0': { ...packument.versions['1.2.0'], _npmUser: { name: 'GitHub Actions' } } },
+    }
+    expect(toCandidate(orphan)?.publisher).toBeUndefined()
+  })
+
+  it('falls back to the owning account when the publish came from CI', () => {
+    // Measured on 250 live npm entries: 30 of them report `_npmUser` as the
+    // literal robot identity "GitHub Actions" — the trusted-publisher path a
+    // well-run project uses. Showing that would name no one, and it would
+    // read WORSE for the original than for a clone: `@nanmicoder/dsh-agent-
+    // teams` publishes from CI while the clone `dsh-agent-squad` was pushed
+    // by hand, so the clone would be the one showing a human account. A
+    // `_npmUser` that is not among the maintainers is not an identity.
+    const ci = {
+      ...packument,
+      maintainers: [{ name: 'realauthor' }, { name: 'second' }],
+      versions: {
+        '1.2.0': { ...packument.versions['1.2.0'], _npmUser: { name: 'GitHub Actions' } },
+      },
+    }
+    expect(toCandidate(ci)?.publisher).toBe('realauthor')
+  })
+
+  it('prefers the publishing account when it IS one of the maintainers', () => {
+    // 220 of those 250 publish under their own account; that account is both
+    // the owner and the one npm recorded for this version, so it is the
+    // strongest single answer even when the package has several maintainers.
+    const own = {
+      ...packument,
+      maintainers: [{ name: 'first' }, { name: 'realauthor' }],
+      versions: {
+        '1.2.0': { ...packument.versions['1.2.0'], _npmUser: { name: 'realauthor' } },
+      },
+    }
+    expect(toCandidate(own)?.publisher).toBe('realauthor')
+  })
+
+  it('carries no publisher when npm records no account at all', () => {
+    // Older packages predate `_npmUser`; the field stays absent rather than
+    // falling back to the unverified `author`.
+    expect(toCandidate(packument)?.publisher).toBeUndefined()
+  })
+
+  it('never carries the publisher email into the candidate', () => {
+    const withUser = {
+      ...packument,
+      maintainers: [{ name: 'realauthor', email: 'real@example.com' }],
+      versions: {
+        '1.2.0': { ...packument.versions['1.2.0'], _npmUser: { name: 'realauthor', email: 'real@example.com' } },
+      },
+    }
+    // npm publishes the address; our artifact has no use for it and must not
+    // republish it. The publisher IS resolved here, so the assertion bites.
+    expect(toCandidate(withUser)?.publisher).toBe('realauthor')
+    expect(JSON.stringify(toCandidate(withUser))).not.toContain('real@example.com')
+  })
+
   it('reads the latest version', () => {
     expect(toCandidate(packument)?.version).toBe('1.2.0')
   })

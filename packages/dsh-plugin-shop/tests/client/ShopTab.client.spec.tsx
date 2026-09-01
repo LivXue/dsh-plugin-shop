@@ -77,6 +77,42 @@ describe('ShopTab', () => {
     expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [class*="_summary"] a')).toBeNull()
   })
 
+  it('shows the npm page and the publishing account in the expanded detail', async () => {
+    // The shop makes no judgement about who is genuine; it shows the two raw
+    // facts that let a person decide — the package's own npm page, and the
+    // account that published the version being offered.
+    const { injected } = bench(snapshot({ publisher: 'realauthor' }))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] button[aria-expanded]')!)
+    const link = container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-npm] a')
+    expect(link?.getAttribute('href')).toBe('https://www.npmjs.com/package/dsh-hello-plugin')
+    expect(link?.getAttribute('rel')).toBe('noopener noreferrer')
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-publisher]')?.textContent)
+      .toContain('realauthor')
+  })
+
+  it('shows the npm page alone when the catalog names no publisher', async () => {
+    // The live catalog carries no publisher until the next daily build, and a
+    // packument may name none at all; the row must not invent one.
+    const { injected } = bench(snapshot())
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] button[aria-expanded]')!)
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-npm] a')).toBeTruthy()
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-publisher]')).toBeNull()
+  })
+
+  it('gives a github entry no npm row', async () => {
+    const { injected } = bench(snapshot({
+      name: 'dsh-repo-plugin', source: 'github', repo: 'you/dsh-repo-plugin', publisher: undefined,
+    }))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-repo-plugin')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-entry="dsh-repo-plugin"] button[aria-expanded]')!)
+    expect(container.querySelector('[data-shop-entry="dsh-repo-plugin"] [data-shop-npm]')).toBeNull()
+  })
+
   it('shows the entry version on every card without expanding it', async () => {
     const { injected } = bench(snapshot())
     const { container } = renderTab(injected)

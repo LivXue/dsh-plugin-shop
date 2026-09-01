@@ -246,6 +246,32 @@ export function categoryLocaleKey(category: Category): ShopLocaleKey {
 }
 
 /**
+ * The npm package page for one entry, or null when there is none to link.
+ *
+ * The name is untrusted catalog input and this CONSTRUCTS a URL from it, so
+ * only a name inside the npm grammar gets a link — one optional `@scope/`
+ * segment, then a name, both limited to npm's own character set. Every
+ * character that survives that check is already safe in a URL path, so the
+ * value is used verbatim: percent-encoding it would only mangle the `@` and
+ * the scope separator that npm's own URLs carry literally. Anything else —
+ * a traversal, a query, a whole URL smuggled in as a name — answers null and
+ * the row renders as plain text, the same rule the repository row applies.
+ *
+ * A github entry answers null: it is installed from a repo and has no npm
+ * package page.
+ */
+export function npmPageUrl(entry: CatalogEntry): string | null {
+  if (entry.source !== 'npm') return null
+  const name = entry.name
+  // 214 is npm's own limit; the segment checks reject `.`/`..` so the path
+  // cannot climb out of /package/.
+  if (name.length === 0 || name.length > 214) return null
+  if (!/^(@[A-Za-z0-9._-]+\/)?[A-Za-z0-9._-]+$/.test(name)) return null
+  if (name.split('/').some(segment => segment === '.' || segment === '..' || segment === '@')) return null
+  return `https://www.npmjs.com/package/${name}`
+}
+
+/**
  * One entry's star count from the sidecar, or undefined when it has none.
  *
  * The sidecar keys a github entry by its repo full name and an npm entry by

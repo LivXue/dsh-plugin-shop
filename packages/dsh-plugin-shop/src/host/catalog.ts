@@ -62,6 +62,13 @@ const entrySchema = z.object({
   // builds always carry it (registry E9); the client never renders it.
   added: z.string().optional(),
   tarball: z.object({ url: z.string(), sha256: z.string() }).optional(),
+  // The npm publishing account, additive and optional — deliberately NOT a
+  // schemaVersion bump. A version higher than SUPPORTED_SCHEMA_VERSION is
+  // refused outright above, so bumping to 6 would make every installed 0.5.x
+  // shop reject the catalog; an unknown key, by contrast, is stripped by this
+  // non-strict schema, which is what lets old and new hosts share one
+  // catalog. Same reasoning as `added`.
+  publisher: z.string().optional(),
 })
 
 const dataSchema = z.object({

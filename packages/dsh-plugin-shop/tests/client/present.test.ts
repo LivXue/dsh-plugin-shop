@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, categoryKey, displayVersion, formatStars, isCustomLicense, isShopLike, nextVisibleCount, reduceInstall, reviewHashPin, sortByStars, starsOf, tierKey,
+  ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, categoryKey, displayVersion, formatStars, isCustomLicense, isShopLike, nextVisibleCount, reduceInstall, reviewHashPin, npmPageUrl, sortByStars, starsOf, tierKey,
 } from '../../src/client/present.ts'
 import type { CatalogEntry } from '../../src/host/index.ts'
 
@@ -205,6 +205,37 @@ describe('reviewHashPin', () => {
 
   it('returns an empty string when no hash pin exists', () => {
     expect(reviewHashPin(review)).toBe('')
+  })
+})
+
+describe('npmPageUrl', () => {
+  const npm = (name: string): CatalogEntry => ({ ...entry, name })
+
+  it('builds the npm package page for an unscoped and a scoped name', () => {
+    expect(npmPageUrl(npm('dsh-hello-plugin'))).toBe('https://www.npmjs.com/package/dsh-hello-plugin')
+    expect(npmPageUrl(npm('@scope/dsh-hello'))).toBe('https://www.npmjs.com/package/@scope/dsh-hello')
+  })
+
+  it('answers null for a github entry, which has no npm page', () => {
+    expect(npmPageUrl({ ...entry, name: 'dsh-repo-plugin', source: 'github', repo: 'you/dsh-repo-plugin' })).toBeNull()
+  })
+
+  it('refuses a name that is not a legal npm package name', () => {
+    // The name is untrusted catalog input and this function CONSTRUCTS a URL
+    // from it, so anything outside the npm grammar gets no link at all —
+    // the same rule the repository row applies to its own value.
+    for (const bad of [
+      '../../evil',
+      'dsh-hello?x=1',
+      'dsh hello',
+      'dsh#hello',
+      '@scope/sub/dsh-hello',
+      '@/dsh-hello',
+      'https://evil.test/x',
+      '',
+    ]) {
+      expect(npmPageUrl(npm(bad)), bad).toBeNull()
+    }
   })
 })
 

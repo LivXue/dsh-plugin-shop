@@ -28,6 +28,30 @@ function repoEntry(name: string, repo: string, subdir?: string): Entry {
   }
 }
 
+describe('emit publisher', () => {
+  it('carries the publisher into plugins.json at every emitted schema version', () => {
+    // An additive optional field rides the LOWER versions too: an old client's
+    // zod is non-strict and strips keys it does not know, which is exactly
+    // what keeps installed hosts working against a newer catalog. Bumping
+    // schemaVersion instead would make every installed 0.5.x shop refuse the
+    // catalog outright — a higher version than the client supports is a hard
+    // refusal (host/catalog.ts SUPPORTED_SCHEMA_VERSION), which is why v5's
+    // category-enum change needed a release-time flag and this field does not.
+    const withPublisher = { ...entry('dsh-a'), publisher: 'realauthor' }
+    for (const version of [SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION, CATALOG_SCHEMA_VERSION]) {
+      const { pluginsJson } = emit([withPublisher], [], '2026-08-26T00:00:00.000Z', null, version)
+      const parsed = JSON.parse(pluginsJson) as { schemaVersion: number; plugins: { publisher?: string }[] }
+      expect(parsed.schemaVersion).toBe(version)
+      expect(parsed.plugins[0]?.publisher).toBe('realauthor')
+    }
+  })
+
+  it('emits no publisher key for an entry without one', () => {
+    const { pluginsJson } = emit([entry('dsh-a'), repoEntry('dsh-b', 'you/dsh-b')], [], '2026-08-26T00:00:00.000Z')
+    expect(pluginsJson).not.toContain('publisher')
+  })
+})
+
 describe('emit', () => {
   it('sorts entries by package name', () => {
     const { pluginsJson } = emit([entry('dsh-b'), entry('dsh-a')], [], '2026-08-18T00:00:00.000Z')
