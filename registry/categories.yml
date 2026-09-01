@@ -2161,6 +2161,8 @@
   category: tool
 - name: "dsh-ai-question-chime"
   category: ui
+- name: "dsh-ai-soul"
+  category: other
 - name: "dsh-ai-team"
   category: workflow
 - name: "dsh-ai-wallet"
@@ -2179,6 +2181,8 @@
   category: other
 - name: "dsh-alive"
   category: ui
+- name: "dsh-all-enhance"
+  category: tool
 - name: "dsh-all-search"
   category: provider
 - name: "dsh-all-usage"
@@ -2423,6 +2427,8 @@
   category: ui
 - name: "dsh-brainagent"
   category: workflow
+- name: "dsh-branchmark"
+  category: tool
 - name: "dsh-bridge-gateway"
   category: tool
 - name: "dsh-bridges"
@@ -2459,6 +2465,8 @@
   category: tool
 - name: "dsh-cache-miss"
   category: ui
+- name: "dsh-cad"
+  category: tool
 - name: "dsh-calendar"
   category: tool
 - name: "dsh-camel"
@@ -2561,6 +2569,8 @@
   category: integration
 - name: "dsh-chrome-app-launcher"
   category: tool
+- name: "dsh-ciel"
+  category: other
 - name: "dsh-cinematic-workflow"
   category: workflow
 - name: "dsh-cite"
@@ -2607,6 +2617,8 @@
   category: ui
 - name: "dsh-client-ui-obsidian-memory"
   category: integration
+- name: "dsh-client-ui-quickfill"
+  category: ui
 - name: "dsh-client-ui-second-brain"
   category: integration
 - name: "dsh-client-ui-settings-discovery"
@@ -2627,6 +2639,8 @@
   category: tool
 - name: "dsh-clock"
   category: ui
+- name: "dsh-cloud-workspaces"
+  category: tool
 - name: "dsh-cloudflare-access"
   category: integration
 - name: "dsh-cloudflare-browser-run"
@@ -2926,6 +2940,8 @@
 - name: "dsh-daruma"
   category: tool
 - name: "dsh-dashboard"
+  category: tool
+- name: "dsh-data-cleaning-agent"
   category: tool
 - name: "dsh-db-browser"
   category: ui
@@ -3556,6 +3572,8 @@
 - name: "dsh-inherit"
   category: tool
 - name: "dsh-inhibition"
+  category: tool
+- name: "dsh-init"
   category: tool
 - name: "dsh-inline-diff"
   category: ui
@@ -4701,6 +4719,8 @@
   category: tool
 - name: "dsh-plugin-rollout-scout"
   category: tool
+- name: "dsh-plugin-runcat-inventory"
+  category: ui
 - name: "dsh-plugin-sandbox-escalation-fix"
   category: tool
 - name: "dsh-plugin-save-token"
