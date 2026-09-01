@@ -1,6 +1,6 @@
 # Harness compatibility signalling — design
 
-Status: **decided (2026-09-01), implementation pending.** The catalog
+Status: **implemented (2026-09-01), merged in 36ecdc2.** The catalog
 gains a per-entry record of a plugin's `peerDependencies` names; the host
 resolves them against the running installation; the client annotates
 incompatible entries in three places and warns — never blocks — before
