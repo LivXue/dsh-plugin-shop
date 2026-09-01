@@ -1394,4 +1394,30 @@ describe('ShopGateway.catalog incompatibility', () => {
     )
     expect((await gateway.catalog({})).incompatible).toEqual({})
   })
+
+  it('reports nothing, rather than throwing, when no profile anchor exists for a peer-bearing entry', async () => {
+    // Pairs the two conditions the catch in `catalog()` exists for: no
+    // `profileDir` (so `profileDirResolved()` throws and no resolver can be
+    // built) together with an entry that DOES declare peers (so there is
+    // something for a resolver to be asked about, if one existed). Neither
+    // condition alone exercises the catch's real job: the "no profileDir"
+    // tests in `describe('ShopGateway.catalog', ...)` above use an entry
+    // with no `peers` at all, so incompatibilityMap skips it before ever
+    // touching a resolver; every other test in this block injects
+    // `resolvePeer` directly, so the catch is never reached. Only this
+    // pairing proves a plugin we cannot judge is never accused — do not
+    // "simplify" this fixture back to either half.
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/',
+      cacheDir: '/cache',
+      profile: 'web',
+      loadCatalog: async () => ({
+        snapshot: { schemaVersion: 6, builtAt: '', entries: [peered], denied: [], stars: {} },
+        stale: false,
+      }) as CatalogResult,
+    })
+
+    const result = await gateway.catalog({})
+    expect(result.incompatible).toEqual({})
+  })
 })

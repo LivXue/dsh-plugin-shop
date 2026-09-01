@@ -531,19 +531,23 @@ export class ShopGateway extends TypertRemoteService {
     const load = this.options.loadCatalog ?? loadCatalog
     const { snapshot, stale } = await load({ baseUrl: catalogUrl, cacheDir, refresh: args?.refresh ?? false })
     this.lastSnapshot = snapshot
-    let resolve: PeerResolver
+    let incompatible: Record<string, string[]>
     try {
-      resolve = this.options.resolvePeer ?? nodeResolver(pathToFileURL(join(this.profileDirResolved(), 'cordis.yml')).href)
+      const resolve = this.options.resolvePeer ?? nodeResolver(pathToFileURL(join(this.profileDirResolved(), 'cordis.yml')).href)
+      incompatible = incompatibilityMap(snapshot.entries, resolve)
     } catch {
       // No profile anchor could be discovered (e.g. a bare test construction
       // that supplies neither `profileDir` nor a resolvable module location,
       // or the constructor's own stub-ctx case above) — no peer verdict is
-      // formable. incompatibilityMap already turns a throwing resolver into
-      // "no verdict" for every entry, so the failure is deferred into the
-      // resolver itself rather than re-derived here; failing the whole
-      // catalog browse over a derived compatibility signal would be the
-      // worse failure.
-      resolve = () => { throw new Error('dsh-plugin-shop: no profile anchor for peer resolution') }
+      // formable for anything in this snapshot. A plugin we cannot judge is
+      // never accused, so the whole map degrades straight to empty here
+      // rather than routing through a resolver that throws on first use:
+      // incompatibilityMap memoises per distinct peer NAME, not per call, so
+      // a throwing stand-in would be invoked and caught fresh for every
+      // distinct peer in the snapshot — hundreds, per the design doc's own
+      // measurement — on every single catalog() call for as long as the
+      // profile anchor stays unavailable.
+      incompatible = {}
     }
     return {
       schemaVersion: snapshot.schemaVersion,
@@ -552,7 +556,7 @@ export class ShopGateway extends TypertRemoteService {
       plugins: snapshot.entries,
       denied: snapshot.denied,
       stars: snapshot.stars,
-      incompatible: incompatibilityMap(snapshot.entries, resolve),
+      incompatible,
     }
   }
 
