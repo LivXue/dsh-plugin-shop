@@ -108,24 +108,26 @@ describe('toCandidate', () => {
   it('keeps the names of the peer dependencies, dropping the ranges', () => {
     // Shape copied from dsh-timeline@0.1.4, the package whose peer on
     // @deepseek-ai/dsh-client-store broke a user's harness: every range there
-    // is "*", which is why ranges are not recorded.
+    // is "*", which is why ranges are not recorded. Declared out of
+    // alphabetical order (react first) so this assertion cannot pass against
+    // an implementation that sorts peers instead of preserving manifest order.
     const withPeers = {
       ...packument,
       versions: {
         '1.2.0': {
           ...packument.versions['1.2.0'],
           peerDependencies: {
+            react: '^18.2.0',
             '@deepseek-ai/cordis': '*',
             '@deepseek-ai/dsh-client-store': '*',
-            react: '^18.2.0',
           },
         },
       },
     }
     expect(toCandidate(withPeers)?.peers).toEqual([
+      'react',
       '@deepseek-ai/cordis',
       '@deepseek-ai/dsh-client-store',
-      'react',
     ])
   })
 
@@ -152,6 +154,19 @@ describe('toCandidate', () => {
       versions: { '1.2.0': { ...packument.versions['1.2.0'], peerDependencies: ['react', 'vue'] } },
     }
     expect(toCandidate(hostileArray)?.peers).toEqual([])
+  })
+
+  it('reads no peers when peerDependencies is null', () => {
+    // typeof null === 'object' in JS, which is exactly why the guard checks
+    // `!== null` before checking `typeof === 'object'`. Without that clause,
+    // Object.keys(null) throws TypeError, uncaught by fetchCandidate or the
+    // batch in fetchCandidates — one package publishing this legal JSON would
+    // take down the whole harvest instead of becoming one fetch-failed entry.
+    const hostileNull = {
+      ...packument,
+      versions: { '1.2.0': { ...packument.versions['1.2.0'], peerDependencies: null } },
+    }
+    expect(toCandidate(hostileNull)?.peers).toEqual([])
   })
 })
 
