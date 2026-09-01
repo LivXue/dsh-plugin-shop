@@ -1,3 +1,7 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { incompatibilityMap, nodeResolver } from '../../src/host/peers.ts'
 
@@ -85,5 +89,46 @@ describe('nodeResolver', () => {
     const resolveHere = nodeResolver(import.meta.url)
     expect(resolveHere('vitest')).toBe(true)
     expect(resolveHere('@deepseek-ai/dsh-client-store-that-does-not-exist')).toBe(false)
+  })
+
+  it('throws when a package restricts ./package.json in its exports map', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'noderesolver-'))
+    try {
+      // Create a package with exports that do not list "./package.json"
+      const pkgDir = join(dir, 'node_modules', 'restricted-pkg')
+      mkdirSync(pkgDir, { recursive: true })
+      writeFileSync(
+        join(pkgDir, 'package.json'),
+        JSON.stringify({
+          name: 'restricted-pkg',
+          version: '1.0.0',
+          main: 'index.js',
+          exports: { '.': './index.js' },
+        }),
+      )
+      writeFileSync(join(pkgDir, 'index.js'), '')
+
+      const resolveHere = nodeResolver(pathToFileURL(join(dir, 'anchor.js')).href)
+
+      // Must throw because ./package.json is not in exports, not silently
+      // return false. The error code is ERR_PACKAGE_PATH_NOT_EXPORTED, which
+      // incompatibilityMap's catch will turn into no-verdict.
+      expect(() => resolveHere('restricted-pkg')).toThrow()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('still returns false for genuinely missing packages in the same directory', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'noderesolver-'))
+    try {
+      const resolveHere = nodeResolver(pathToFileURL(join(dir, 'anchor.js')).href)
+
+      // Must return false because package does not exist at all — only
+      // MODULE_NOT_FOUND is silently converted to false; other errors throw.
+      expect(resolveHere('genuinely-missing-pkg')).toBe(false)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
