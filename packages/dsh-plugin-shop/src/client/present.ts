@@ -245,11 +245,31 @@ export function categoryLocaleKey(category: Category): ShopLocaleKey {
   return CATEGORY_KEYS[category]
 }
 
+/**
+ * One entry's star count from the sidecar, or undefined when it has none.
+ *
+ * The sidecar keys a github entry by its repo full name and an npm entry by
+ * its package name — two disjoint keyspaces (registry `stars-assemble.ts`).
+ * Every reader must go through this one function: the card read the repo key
+ * and the shelf sort read the name, so for 2202 of the live catalog's 2210
+ * github listings the number deciding a row's position was not the number
+ * printed on it. 1590 of them sorted as unstarred — a 4014-star plugin at the
+ * bottom of the shelf — and where an unrelated npm package happened to share
+ * a listed entry's name, its stars ranked that entry instead: a 1-star
+ * plugin held the first page on 13960 stars belonging to another project's
+ * repo, one the catalog never even listed.
+ */
+export function starsOf(entry: CatalogEntry, stars: Record<string, number>): number | undefined {
+  return stars[entry.repo ?? entry.name]
+}
+
 /** Sort the shelf: stars descending, un-starred entries last, name ascending
  * (case-insensitive) on ties (spec 2026-08-26-github-stars-design.md D1).
  * Display-time only — the catalog's own name sort is untouched. */
 export function sortByStars(entries: CatalogEntry[], stars: Record<string, number>): CatalogEntry[] {
-  const count = (e: CatalogEntry): number => stars[e.name] ?? -1
+  // -1, never 0: a repo with a real count of zero still sorts above an entry
+  // the sidecar has no count for at all.
+  const count = (e: CatalogEntry): number => starsOf(e, stars) ?? -1
   return [...entries].sort((a, b) => {
     const byStars = count(b) - count(a)
     if (byStars !== 0) return byStars

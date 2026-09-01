@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, categoryKey, displayVersion, formatStars, isCustomLicense, isShopLike, nextVisibleCount, reduceInstall, reviewHashPin, sortByStars, tierKey,
+  ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, categoryKey, displayVersion, formatStars, isCustomLicense, isShopLike, nextVisibleCount, reduceInstall, reviewHashPin, sortByStars, starsOf, tierKey,
 } from '../../src/client/present.ts'
 import type { CatalogEntry } from '../../src/host/index.ts'
 
@@ -228,6 +228,45 @@ describe('sortByStars', () => {
   it('keeps pure name order when stars is empty', () => {
     const entries = [make('dsh-zebra'), make('dsh-alpha')]
     expect(sortByStars(entries, {}).map(e => e.name)).toEqual(['dsh-alpha', 'dsh-zebra'])
+  })
+
+  it('reads a github entry\'s count under its repo, the key the sidecar uses', () => {
+    // The sidecar keys npm entries by package name and github entries by repo
+    // full name — two disjoint keyspaces (registry stars-assemble.ts). The
+    // sort read the name for every entry, so 1590 of the 2210 github listings
+    // in the live catalog sorted as unstarred, a 4014-star plugin among them,
+    // while their own cards displayed the real count.
+    const gh = { ...entry, name: 'dsh-popular', source: 'github' as const, repo: 'someone/dsh-popular' }
+    const npm = make('dsh-modest')
+    const stars = { 'someone/dsh-popular': 500, 'dsh-modest': 5 }
+    expect(sortByStars([npm, gh], stars).map(e => e.name)).toEqual(['dsh-popular', 'dsh-modest'])
+  })
+
+  it('does not rank a github entry by a same-named npm package\'s stars', () => {
+    // The live shelf put a 1-star plugin on the first page: an unrelated npm
+    // package named `dsh-plugin-catalog` declared awesome-dsh-plugin as its
+    // repository, so the sidecar carried 13960 under that NAME while the
+    // listed github entry (LuniteGlaze/dsh-plugin-catalog) had 1 star. The
+    // npm candidate was never even published to the catalog — its key was.
+    const gh = { ...entry, name: 'dsh-plugin-catalog', source: 'github' as const, repo: 'LuniteGlaze/dsh-plugin-catalog' }
+    const other = make('dsh-real-favourite')
+    const stars = { 'dsh-plugin-catalog': 13960, 'LuniteGlaze/dsh-plugin-catalog': 1, 'dsh-real-favourite': 40 }
+    expect(sortByStars([gh, other], stars).map(e => e.name)).toEqual(['dsh-real-favourite', 'dsh-plugin-catalog'])
+  })
+})
+
+describe('starsOf', () => {
+  it('keys a github entry by its repo and an npm entry by its name', () => {
+    const gh = { ...entry, name: 'dsh-popular', source: 'github' as const, repo: 'someone/dsh-popular' }
+    expect(starsOf(gh, { 'someone/dsh-popular': 7, 'dsh-popular': 999 })).toBe(7)
+    expect(starsOf(entry, { [entry.name]: 3 })).toBe(3)
+  })
+
+  it('answers undefined when the sidecar has no count for the entry', () => {
+    // Distinct from zero: a repo with no stars is a real count of 0, and the
+    // shelf sorts it above an entry the sidecar never covered.
+    expect(starsOf(entry, {})).toBeUndefined()
+    expect(starsOf(entry, { [entry.name]: 0 })).toBe(0)
   })
 })
 

@@ -7,7 +7,7 @@
 import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
-import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Category, categoryKey, categoryLocaleKey, displayVersion, formatStars, isCustomLicense, isShopLike, nextVisibleCount, rejectionCodeKey, restartReasonKey, reviewHashPin, sortByStars, tierKey } from './present.ts'
+import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Category, categoryKey, categoryLocaleKey, displayVersion, formatStars, isCustomLicense, isShopLike, nextVisibleCount, rejectionCodeKey, restartReasonKey, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
 import { useInstall } from './useInstall.ts'
 import { useUninstall } from './useUninstall.ts'
 import { useUpdateSelf } from './useUpdateSelf.ts'
@@ -1025,7 +1025,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
           <ul className={css.cards}>
             {visible.map(entry => (
               <li key={entry.name}>
-                <EntryCard entry={entry} stars={stars[entry.repo ?? entry.name]} installed={installedByName.get(entry.name)} t={t} install={install} installStatus={installStatus} uninstall={uninstall} restart={restart} restartSupported={restartSupported} setEnabled={setEnabled} />
+                <EntryCard entry={entry} stars={starsOf(entry, stars)} installed={installedByName.get(entry.name)} t={t} install={install} installStatus={installStatus} uninstall={uninstall} restart={restart} restartSupported={restartSupported} setEnabled={setEnabled} />
               </li>
             ))}
             {incremental && visibleCount < filtered.length && (
