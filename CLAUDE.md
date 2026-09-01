@@ -83,6 +83,24 @@ Everything from npm is hostile: package names, descriptions, `dsh.catalog` conte
 - Catalog summaries carry the author's `en` and `zh`. The build never synthesizes a translation; a missing one stays missing.
 - An empty `catch` names what it swallows and why nothing else can reach it.
 
+## Release channels
+
+npm carries two dist-tags. `latest` is what `dsh plugin add dsh-plugin-shop` installs; `beta` is where a release goes to be proven first.
+
+```sh
+pnpm -C packages/dsh-plugin-shop test       # includes the live-harness e2e
+pnpm -C packages/dsh-plugin-shop typecheck
+npm publish --tag beta                      # X.Y.Z-beta.N — latest untouched
+# install that build on a real profile and use the thing that changed, then:
+npm publish                                 # X.Y.Z — moves latest
+```
+
+A prerelease version (`X.Y.Z-beta.N`) is mandatory for the beta tag: it keeps `latest` resolution away from the build even if the tag is ever mistyped, and semver orders a prerelease BELOW its own release, so the self-update check tells a beta tester to move to the stable build the moment it ships and never the other way. The shop reads `dist-tags.latest` alone, so a stable user never sees a beta.
+
+**A version that changes what the host reads — the catalog schema, an RPC shape, a harness service — goes through `beta` first.** 0.5.0 through 0.5.2 each shipped straight to `latest` and each was broken for every user within minutes: a required field the live catalog did not have, then a service shape we had guessed, then an ownership key the loader does not use. Not one of them would have survived installing the build once, by hand, before promoting it — and no test suite caught them, because a fixture written from the same wrong assumption agrees with it.
+
+The beta commit bumps `package.json` only. **README install pins track `latest`**, so they move in the promotion commit, never in the beta — a pinned prerelease in the README hands every reader the untested build.
+
 ## Testing
 
 - Tests describe behavior. If a change makes a test obsolete, change it and say why — do not quietly edit an assertion to make a run green.
