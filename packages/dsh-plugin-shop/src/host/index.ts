@@ -20,12 +20,13 @@ import { startRestart, type RestartOutcome } from './restart.ts'
 import { fetchLatestVersion } from './self-update.ts'
 import { detectSupervisor } from './supervisor.ts'
 import { readRepoPins, writeRepoPins, type RepoPinFs } from './repo-pins.ts'
-import { discoverProfile, setUserLayerRow } from './profile.ts'
+import { discoverProfile, ownedEntryIds, ownsEntryId, setUserLayerRow, setUserLayerRows } from './profile.ts'
 
 // Re-exported so the boundary type is reachable from the package's public
 // ./types subpath; the typert generator refuses remote parameter types it
 // cannot import from there.
 export type { InstallArgs, InstallRejectionCode } from './install.ts'
+export type { HotRestartReason } from './hot.ts'
 // The catalog entry shape reaches the client half through this same boundary.
 export type { CatalogEntry } from './types.ts'
 
@@ -37,10 +38,11 @@ export interface InventoryEntry {
   enabled: boolean
 }
 
-/** One boot-layer Loader entry, structurally — the surface `liveDisable`
+/** One boot-layer Loader entry, structurally — the surface `liveDisableIds`
  * consumes. `fiber` is the entry's live activation (present while the plugin
  * is up); `update` flips its options. */
 export interface LoaderEntryLike {
+  id?: string
   options: { name?: string }
   fiber?: unknown
   update(options: { disabled: boolean | null }, create?: boolean, force?: boolean): Promise<void>
@@ -393,10 +395,29 @@ export class ShopGateway extends TypertRemoteService {
    * plain re-update no-ops on the empty diff (dsh-market themes.ts:74-93).
    * For an update swap this sequencing is mandatory, not defensive: two live
    * instances of a service-providing plugin would collide at provision. */
-  private async liveDisable(name: string): Promise<boolean> {
+  /** The package's owned entry ids, or none when its bundle patch cannot be
+   * read. For the paths where a live disable is an optimization and the
+   * operation must succeed regardless; `setEnabled` reports the failure
+   * instead, because there the patch IS the answer being asked for. */
+  private ownedEntryIdsOrNone(packageName: string): string[] {
+    try {
+      return ownedEntryIds({ profileDir: this.profileDirResolved(), packageName })
+    } catch {
+      // Unreadable patch: nothing to disable live, so the hot path falls back
+      // to restart activation exactly as it does for a package with no rows.
+      return []
+    }
+  }
+
+  private async liveDisableIds(ids: readonly string[]): Promise<boolean> {
+    if (ids.length === 0) return false
+    const owned = new Set(ids)
     let found = false
     for (const entry of this.loaderEntries()) {
-      if (entry.options.name !== name) continue
+      // Matched on the entry id, never the module name: a package's entry
+      // may mount another package's module entirely (see ownedEntryIds), and
+      // the name match silently found nothing for every such package.
+      if (entry.id === undefined || !ownsEntryId(owned, entry.id)) continue
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
           await entry.update({ disabled: true }, false, true)
@@ -422,9 +443,41 @@ export class ShopGateway extends TypertRemoteService {
     if (args.name === 'dsh-plugin-shop' || args.name.startsWith('@deepseek-ai/')) {
       return { ok: false, detail: `dsh-plugin-shop: ${args.name} is part of the harness chain and cannot be toggled from the shop` }
     }
-    const entry = (await this.listInventory()).find(entry => entry.moduleName === args.name)
-    if (entry === undefined) return { ok: false, detail: `dsh-plugin-shop: ${args.name} is not installed` }
-    setUserLayerRow({ profileDir: this.profileDirResolved(), row: { id: entry.entryId, disabled: !args.enabled } })
+    const profileDir = this.profileDirResolved()
+    // Installed-ness is the profile manifest's dependencies — the same truth
+    // `installed()` renders the row from. Reading it from a different source
+    // than the list the user clicked is what let the shop show a toggle and
+    // then deny the package existed.
+    const manifest = readProfileManifest('dsh-plugin-shop', profileDir)
+    if ((manifest.dependencies ?? {})[args.name] === undefined) {
+      return { ok: false, detail: `dsh-plugin-shop: ${args.name} is not installed` }
+    }
+    // A malformed or unreadable bundle patch must reach the person as a
+    // reason, not as a throw: an escaped exception crosses the RPC as a bare
+    // transport failure, and the client can only render "please retry" for it
+    // — the one rejection on this path with no author-readable detail.
+    let owned: string[]
+    try {
+      owned = ownedEntryIds({ profileDir, packageName: args.name })
+    } catch (error) {
+      return { ok: false, detail: `dsh-plugin-shop: ${args.name} has a bundle patch that could not be read: ${String(error)}` }
+    }
+    if (owned.length === 0) {
+      return { ok: false, detail: `dsh-plugin-shop: ${args.name} contributes no plugin entries, so there is nothing to enable or disable` }
+    }
+    const ownedSet = new Set(owned)
+    // Write the LIVE entry's own id: a plugin installed this session sits in
+    // the shop's hot subtree under a namespaced `mkt-` spelling, and the row
+    // has to name the entry the loader actually has.
+    const rows = (await this.listInventory())
+      .filter(entry => ownsEntryId(ownedSet, entry.entryId))
+      .map(entry => entry.entryId)
+    if (rows.length === 0) {
+      return { ok: false, detail: `dsh-plugin-shop: ${args.name} is installed but its entries are not in the running plugin tree; restart dsh to compose them` }
+    }
+    // Every entry the package owns toggles together: a package that inserts a
+    // host row and a client row is one plugin to the person clicking.
+    setUserLayerRows({ profileDir, rows: rows.map(id => ({ id, disabled: !args.enabled })) })
     return { ok: true }
   }
 
@@ -544,10 +597,16 @@ export class ShopGateway extends TypertRemoteService {
     }
     // An update must bring the old instance down before the new one mounts:
     // two live instances of a service-providing plugin would collide at
-    // provision (see liveDisable). The profile manifest's dependencies are
+    // provision (see liveDisableIds). The profile manifest's dependencies are
     // the install's own record — the shop's managed bundle list.
     const manifest = readProfileManifest('dsh-plugin-shop', this.profileDirResolved())
     const isUpdate = (manifest.dependencies ?? {})[args.name] !== undefined
+    // Resolve the OLD version's entry ids now: `afterDone` runs once the new
+    // tarball has already overwritten the package's bundle patch on disk.
+    // Best-effort: the update must not fail because the version being
+    // REPLACED has an unreadable patch — no ids just means no live disable,
+    // and the hot path already falls back to restart activation.
+    const priorEntryIds = isUpdate ? this.ownedEntryIdsOrNone(args.name) : []
     const running = startInstall({
       profile: this.profile,
       spec,
@@ -556,14 +615,14 @@ export class ShopGateway extends TypertRemoteService {
       // a bundle that did not land is a stale catalog, not a done install.
       expectedName: args.name,
       // After the bundle lands, bring it up hot — unless this is an update,
-      // whose old instance must be down first (see liveDisable). A failed
+      // whose old instance must be down first (see liveDisableIds). A failed
       // mount falls back to restart activation, never to a silent half-state.
       afterDone: async () => {
         const hot = this.hot ?? { mount: hotMount, unmount: hotUnmount }
         if (isUpdate) {
           // Sequencing: the old instance must be down before the new one
-          // mounts (see liveDisable). A failure here falls back to restart.
-          await this.liveDisable(args.name)
+          // mounts (see liveDisableIds). A failure here falls back to restart.
+          await this.liveDisableIds(priorEntryIds)
         }
         const result = await hot.mount(
           { plugin: (plugin, config) => (this.ctx as unknown as { plugin(plugin: unknown, config: unknown): { await(): Promise<unknown>; dispose(): Promise<unknown> | void } }).plugin(plugin, config) },
@@ -628,11 +687,32 @@ export class ShopGateway extends TypertRemoteService {
     // The inventory knows the real enabled state. When the service is not
     // mounted (an older harness), every entry reads as enabled — the same
     // optimistic assumption the pre-inventory client made.
-    let byName = new Map<string, boolean>()
+    const live = new Map<string, boolean>()
+    let haveInventory = false
     try {
-      byName = new Map((await this.listInventory()).map(entry => [entry.moduleName, entry.enabled]))
+      for (const entry of await this.listInventory()) live.set(entry.entryId, entry.enabled)
+      haveInventory = true
     } catch {
       // pluginInventory is not mounted; `enabled` stays the default below.
+    }
+    /** A package is enabled when every entry it owns and that is live is
+     * enabled. Keyed by entry id, never by module name — the entry a package
+     * inserts may mount a different package's module (see ownedEntryIds). */
+    const enabledOf = (name: string): boolean => {
+      if (!haveInventory) return true
+      let owned: string[]
+      try {
+        owned = ownedEntryIds({ profileDir: this.profileDirResolved(), packageName: name })
+      } catch {
+        // A malformed bundle patch in ONE installed package must not take the
+        // whole installed list down with it; the row reads as enabled, and
+        // acting on it returns the read failure as a rejection detail (see
+        // setEnabled) rather than a wrong state.
+        return true
+      }
+      const ownedSet = new Set(owned)
+      const present = [...live].filter(([entryId]) => ownsEntryId(ownedSet, entryId))
+      return present.length === 0 || present.every(([, enabled]) => enabled)
     }
     const installed: ShopInstalledEntry[] = []
     for (const entry of this.lastSnapshot.entries) {
@@ -649,7 +729,7 @@ export class ShopGateway extends TypertRemoteService {
           installed: pin ?? spec,
           latest: entry.version,
           outdated: pin !== undefined && pin !== entry.version,
-          enabled: byName.get(entry.name) ?? true,
+          enabled: enabledOf(entry.name),
         })
       } else {
         installed.push({
@@ -657,7 +737,7 @@ export class ShopGateway extends TypertRemoteService {
           installed: spec,
           latest: entry.version,
           outdated: this.isBehind(spec, entry.version),
-          enabled: byName.get(entry.name) ?? true,
+          enabled: enabledOf(entry.name),
         })
       }
     }
@@ -701,6 +781,11 @@ export class ShopGateway extends TypertRemoteService {
     if (dependencies[args.name] === undefined) {
       return { ok: false, detail: `dsh-plugin-shop: ${args.name} is not installed` }
     }
+    // Resolve the entry ids while the package is still on disk: `afterDone`
+    // runs after the uninstall removed it, and its bundle patch with it.
+    // Best-effort for the same reason as the update path: a package with an
+    // unreadable patch must still be removable.
+    const priorEntryIds = this.ownedEntryIdsOrNone(args.name)
     const running = startUninstall({
       profile: this.profile,
       name: args.name,
@@ -714,7 +799,7 @@ export class ShopGateway extends TypertRemoteService {
       afterDone: async () => {
         const hot = this.hot ?? { mount: hotMount, unmount: hotUnmount }
         const hotRemoved = await hot.unmount(args.name)
-        const disabled = hotRemoved || await this.liveDisable(args.name)
+        const disabled = hotRemoved || await this.liveDisableIds(priorEntryIds)
         // Privilege is revoked the moment the fiber is gone; the boot
         // composition drops the entry row at next boot.
         return { needsRestart: false }

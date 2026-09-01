@@ -1,2 +1,6 @@
-- id: e2e-live
-  name: dsh-shop-e2e-live
+# The shape every published dsh plugin uses: an `insert` list. A bare
+# `- id:` / `name:` row targets an entry the bundle layer already composed and
+# creates nothing, so it could never make this fixture load.
+- insert:
+    - id: e2e-live
+      name: dsh-shop-e2e-live

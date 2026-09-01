@@ -16,17 +16,32 @@
  * tree changes back to the file it read (dsh-market hot.ts; the in-tree
  * precedent is dsh's agent-presets PresetTree).
  *
+ * Reasons are CODES, never copy: the host has no idea which language the
+ * person reading it set in dsh, so it names what happened and the client
+ * renders it through dsh's own locale service.
+ *
  * Deliberate non-port: dsh-market's client-only shim (`mountClientOnlyDeps`
  * and `shimNames`, which hot-mounted a package with no server-side entry by
  * inserting a shim loader entry) is omitted. Our catalog never lists a
  * package without `dsh.bundle`, so the shim branch is unreachable here
  * (YAGNI). `hotMount` still distinguishes "no patch file / not
- * hot-mountable" from "restart will fix it" through the bilingual `reason`.
+ * hot-mountable" from "restart will fix it" through the `reason` code.
  */
 
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { JSON_SCHEMA, Type, load } from 'js-yaml'
+
+/** The loader's YAML dialect: `!!js` scalars round-trip as expression nodes
+ * rather than throwing, so a patch carrying one is refused for its SHAPE
+ * (below) instead of being indistinguishable from malformed YAML. Nothing is
+ * evaluated here — the loader evaluates at entry activation. */
+const PATCH_SCHEMA = JSON_SCHEMA.extend(new Type('tag:yaml.org,2002:js', {
+  kind: 'scalar',
+  resolve: () => true,
+  construct: (data: string) => ({ __jsExpr: data }),
+}))
 
 /** One hot-mountable insert row: a plain `- id:` / `name:` pair. */
 export interface HotRow { id: string; name: string }
@@ -45,12 +60,18 @@ export interface PluginHandle {
   dispose(): Promise<unknown> | void
 }
 
+/**
+ * Why a hot mount could not activate — a stable code the client turns into
+ * copy in the reader's own dsh language. It distinguishes "restart will fix
+ * it" (`timeout`, `mount-failed`) from "this package can never hot-mount"
+ * (`no-patch`, `not-simple`) and "this harness cannot" (`host-unsupported`).
+ */
+export type HotRestartReason = 'no-patch' | 'not-simple' | 'host-unsupported' | 'timeout' | 'mount-failed'
+
 export interface HotMountResult {
   ok: boolean
-  /** Bilingual, distinguishing "restart will fix it" (a transient mount
-   * failure) from "this package can never hot-mount" (no patch file, or a
-   * patch the hot tree cannot replicate). null exactly when ok. */
-  reason: string | null
+  /** null exactly when ok. */
+  reason: HotRestartReason | null
 }
 
 /** Test injection for the host shell (filesystem + ctx + clock). Production
@@ -95,56 +116,49 @@ const HOT_DIR = '.dsh-shop'
  * files `hotMount` writes. */
 const HOT_FILE_RE = /^hot-(\d+)\.yml$/
 
-/** Reasons, bilingual, distinguishing the P0-2 categories: a transient mount
- * failure ("restart will fix it") versus a package that structurally cannot
- * hot-mount. All tell the user to restart; the head names which category. */
-const NO_PATCH_REASON = '该插件没有可热挂载的补丁文件,重启后生效 / the plugin has no patch file to hot-mount — restart required'
-const NOT_SIMPLE_REASON = '该插件的补丁包含无法热挂载的配置,重启后生效 / the plugin\'s patch has config rows that cannot be hot-mounted — restart required'
-const HOST_CANNOT_HOT_MOUNT_REASON = '当前环境不支持热挂载,重启后生效 / this harness cannot hot-mount — restart required'
-const TIMEOUT_REASON = '热挂载超时,重启后生效 / hot-mount timed out — restart required'
-const MOUNT_FAILED_REASON = '热挂载失败,重启后生效 / hot-mount failed — restart required'
-
-const ID_LINE_RE = /^- id: (.+)$/
-const NAME_LINE_RE = /^  name: (.+)$/
 
 /**
  * Parse a bundle patch into the plain insert rows a hot tree can replicate.
- * Only `- id:` / `name:` pairs parse — a row with config, an expression
- * name, or a dangling id returns null, and the caller falls back to restart
- * activation. CRLF-aware: a patch authored with Windows line endings must
- * not read as "contains config rows" (the Windows-patch regression their
- * hot.ts documents). Pure: string in, rows out.
+ *
+ * Only an `insert` list of plain `id`/`name` entries parses. A bare id-keyed
+ * row is a TARGETING patch — the loader looks the id up in the already
+ * composed tree and skips it when absent (applyEntryPatches), so it creates
+ * nothing and there is nothing to replicate. A row carrying config, a group,
+ * or an `!!js` expression name returns null too, and every null sends the
+ * caller to restart activation. Parsed as YAML in the loader's own dialect,
+ * so line endings and comments are the parser's problem, not ours, and
+ * nothing in the patch is evaluated. Pure: string in, rows out.
  */
 export function parseSimplePatch(patchText: string): HotRow[] | null {
-  const lines = patchText.split(/\r?\n/)
+  let parsed: unknown
+  try {
+    parsed = load(patchText, { schema: PATCH_SCHEMA })
+  } catch {
+    // Unparseable YAML is not hot-mountable; the caller falls back to restart.
+    return null
+  }
+  if (!Array.isArray(parsed)) return null
   const rows: HotRow[] = []
-  for (let i = 0; i < lines.length; i++) {
-    const raw = lines[i] ?? ''
-    if (raw.trim() === '' || raw.trim().startsWith('#')) continue
-    const idMatch = ID_LINE_RE.exec(raw)
-    if (idMatch === null) return null
-    const id = idMatch[1]
-    if (id === undefined) return null
-    // The id line must be followed by exactly one name line (blank lines and
-    // comments may sit between); anything else — a config row, another id,
-    // the end of the text — is not a simple insert.
-    let name: string | undefined
-    while (i + 1 < lines.length) {
-      i++
-      const next = lines[i] ?? ''
-      if (next === '' || next.trim().startsWith('#')) continue
-      const nameMatch = NAME_LINE_RE.exec(next)
-      if (nameMatch === null) return null
-      const value = nameMatch[1]
-      if (value === undefined) return null
-      // An expression name (`!!js/expression ...`) is evaluated by the
-      // loader at activation — not a plain row the hot tree can replicate.
-      if (value.includes('!!js/expression')) return null
-      name = value
-      break
+  for (const patch of parsed) {
+    if (patch === null || typeof patch !== 'object' || Array.isArray(patch)) return null
+    const keys = Object.keys(patch as object)
+    // Only `insert` CREATES entries. A bare id-keyed row targets an entry the
+    // bundle layer already composed (loader applyEntryPatches), and an
+    // `insert` carrying an `id` inserts into a group this subtree does not
+    // have — neither is a row the hot tree can replicate.
+    if (keys.length !== 1 || keys[0] !== 'insert') return null
+    const inserted = (patch as { insert?: unknown }).insert
+    if (!Array.isArray(inserted)) return null
+    for (const item of inserted) {
+      if (item === null || typeof item !== 'object' || Array.isArray(item)) return null
+      const { id, name } = item as { id?: unknown; name?: unknown }
+      // Anything beyond a plain id/name pair — config, a group, an `!!js`
+      // expression name the loader evaluates at activation — is outside what
+      // the hot tree replicates faithfully, so the caller restarts instead.
+      if (typeof id !== 'string' || typeof name !== 'string') return null
+      if (Object.keys(item as object).some(key => key !== 'id' && key !== 'name')) return null
+      rows.push({ id, name })
     }
-    if (name === undefined) return null
-    rows.push({ id, name })
   }
   return rows.length > 0 ? rows : null
 }
@@ -230,7 +244,7 @@ function suppressWrite(treeClass: unknown): unknown {
  * Include subtree: read its bundle patch, replicate the simple rows under
  * `mkt-` ids into `<profile>/.dsh-shop/hot-<n>.yml`, register the tree, and
  * race its activation against `timeoutMs`. Success returns `ok: true` with
- * no reason; any fallback returns `ok: false` with a bilingual reason
+ * no reason; any fallback returns `ok: false` with a reason code
  * distinguishing "restart will fix it" (timeout, activation failure,
  * unavailable include) from "this package can never hot-mount" (no patch
  * file, or rows the hot tree cannot replicate). The plugin is installed in
@@ -258,19 +272,19 @@ export async function hotMount(
     patchText = fs.read(join(packageDir, dsh?.patch ?? 'cordis.patch.yml'))
   } catch {
     ctx.logger?.warn(`hot-mount ${packageName}: no patch file to mount — restart will activate it`)
-    return { ok: false, reason: NO_PATCH_REASON }
+    return { ok: false, reason: 'no-patch' }
   }
   const rows = parseSimplePatch(patchText)
   if (rows === null) {
     ctx.logger?.warn(`hot-mount ${packageName}: patch has rows that cannot be hot-mounted — restart will activate it`)
-    return { ok: false, reason: NOT_SIMPLE_REASON }
+    return { ok: false, reason: 'not-simple' }
   }
 
   let treeClass = deps.hotTreeClass
   if (treeClass === undefined) treeClass = await loadHotTreeClass()
   if (treeClass === null) {
     ctx.logger?.warn(`hot-mount ${packageName}: the include plugin is unavailable in this harness — restart will activate it`)
-    return { ok: false, reason: HOST_CANNOT_HOT_MOUNT_REASON }
+    return { ok: false, reason: 'host-unsupported' }
   }
 
   const file = join(dir, `hot-${nextHotNumber(fs, dir)}.yml`)
@@ -285,7 +299,7 @@ export async function hotMount(
     handle = ctx.plugin(HotTree, { path: pathToFileURL(file).href })
   } catch (error) {
     ctx.logger?.warn(`hot-mount ${packageName}: mounting the include tree failed — restart will activate it (${String(error)})`)
-    return { ok: false, reason: MOUNT_FAILED_REASON }
+    return { ok: false, reason: 'mount-failed' }
   }
 
   // A package re-mounted this session (update): stop the old tree before the
@@ -324,7 +338,7 @@ export async function hotMount(
     // cleans up whatever is left running.
     ctx.logger?.warn(`hot-mount ${packageName}: dispose after a failed mount also failed — a restart cleans up (${String(error)})`)
   }
-  return { ok: false, reason: outcome === 'timeout' ? TIMEOUT_REASON : MOUNT_FAILED_REASON }
+  return { ok: false, reason: outcome === 'timeout' ? 'timeout' : 'mount-failed' }
 }
 
 type MountOutcome = 'settled' | 'failed' | 'timeout'

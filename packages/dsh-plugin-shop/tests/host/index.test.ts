@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import ShopGateway, { verifyTarballSha256 } from '../../src/host/index.ts'
-import type { LoaderEntryLike, ShopGatewayOptions, ShopInstallStatusResult } from '../../src/host/index.ts'
+import type { InventoryEntry, LoaderEntryLike, ShopGatewayOptions, ShopInstallStatusResult } from '../../src/host/index.ts'
+import type { HotMountResult } from '../../src/host/hot.ts'
 import type { CatalogResult, CatalogSnapshot } from '../../src/host/catalog.ts'
 import type { CatalogEntry } from '../../src/host/types.ts'
 
@@ -29,6 +30,29 @@ function stubCtx(): never {
   return { get: () => undefined, reflect: { provide: () => {} } } as never
 }
 
+/** Materialize an installed package with the bundle patch it declares, the
+ * shape the loader actually composes: the shop resolves a package's rows
+ * through its patch's inserted ids, never through the entry's module name. */
+function fixturePackage(profileDir: string, name: string, patch: string | null): void {
+  const dir = join(profileDir, 'node_modules', ...name.split('/'))
+  mkdirSync(dir, { recursive: true })
+  const dsh = patch === null ? {} : { bundle: { patch: './cordis.patch.yml' } }
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, dsh }))
+  if (patch !== null) writeFileSync(join(dir, 'cordis.patch.yml'), patch)
+  // An install writes the dependency too, and installed-ness is read from it.
+  const manifestPath = join(profileDir, 'package.json')
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { dependencies?: Record<string, string> }
+  manifest.dependencies = { ...manifest.dependencies, [name]: '1.0.0' }
+  writeFileSync(manifestPath, JSON.stringify(manifest))
+}
+
+function toggleProfile(): string {
+  const profileDir = mkdtempSync(join(tmpdir(), 'dsh-shop-'))
+  writeFileSync(join(profileDir, 'cordis.yml'), '[]\n')
+  writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
+  return profileDir
+}
+
 describe('ShopGateway', () => {
   it('registers the shop namespace as a Typert remote service', () => {
     // The constructor discovers the production profile from the module's own
@@ -50,6 +74,7 @@ describe('ShopGateway', () => {
     mkdirSync(profileDir, { recursive: true })
     writeFileSync(join(profileDir, 'cordis.yml'), '[]\n')
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: ['dsh-plugin-shop'] } } }))
+    fixturePackage(profileDir, 'dsh-third-party', "- insert:\n    - id: third-party-row\n      name: 'dsh-third-party'\n")
     const ctx = {
       get: () => undefined,
       reflect: { provide: () => {} },
@@ -72,6 +97,8 @@ describe('ShopGateway', () => {
     // array — hub-borrowings B assumed the array, and the toggle crashed on
     // the real wire shape (0.5.1 regression fix). Pin the real shape here.
     const profileDir = mkdtempSync(join(tmpdir(), 'dsh-toggle-snapshot-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
+    fixturePackage(profileDir, 'dsh-hello-fixture', "- insert:\n    - id: snapshot-row\n      name: 'dsh-hello-fixture'\n")
     const gateway = new ShopGateway(stubCtx(), {
       profile: 'web', profileDir,
       inventory: { list: async () => ({ entries: [{ entryId: 'snapshot-row', moduleName: 'dsh-hello-fixture', enabled: true }] }) },
@@ -83,9 +110,13 @@ describe('ShopGateway', () => {
 
   it('drops malformed inventory rows instead of crashing', async () => {
     const profileDir = mkdtempSync(join(tmpdir(), 'dsh-toggle-malformed-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
+    fixturePackage(profileDir, 'dsh-hello-fixture', "- insert:\n    - id: good-row\n      name: 'dsh-hello-fixture'\n")
     const gateway = new ShopGateway(stubCtx(), {
       profile: 'web', profileDir,
-      inventory: { list: async () => ({ entries: [{ entryId: 'good-row', moduleName: 'dsh-hello-fixture', enabled: true }, { nope: true }] }) },
+      // The malformed row is deliberately off-shape: the cast is the point of
+      // the test, which is that listInventory drops it instead of crashing.
+      inventory: { list: async () => ({ entries: [{ entryId: 'good-row', moduleName: 'dsh-hello-fixture', enabled: true }, { nope: true } as unknown as InventoryEntry] }) },
     })
     const result = await gateway.setEnabled({ name: 'dsh-hello-fixture', enabled: false })
     expect(result.ok).toBe(true)
@@ -341,9 +372,8 @@ describe('ShopGateway.install — the four rejection paths, through the executor
 
 describe('ShopGateway.setEnabled', () => {
   it('setEnabled writes a disable row for an installed plugin', async () => {
-    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-shop-'))
-    writeFileSync(join(profileDir, 'cordis.yml'), '[]\n')
-    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
+    const profileDir = toggleProfile()
+    fixturePackage(profileDir, 'dsh-hello-fixture', "- insert:\n    - id: hello-row\n      name: 'dsh-hello-fixture'\n")
     const gateway = new ShopGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: async () => ({ entries: [{ entryId: 'hello-row', moduleName: 'dsh-hello-fixture', enabled: true }] }) } })
     const result = await gateway.setEnabled({ name: 'dsh-hello-fixture', enabled: false })
     expect(result.ok).toBe(true)
@@ -351,9 +381,8 @@ describe('ShopGateway.setEnabled', () => {
   })
 
   it('setEnabled on an enabled plugin removes the disable row', async () => {
-    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-shop-'))
-    writeFileSync(join(profileDir, 'cordis.yml'), '[]\n')
-    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
+    const profileDir = toggleProfile()
+    fixturePackage(profileDir, 'dsh-hello-fixture', "- insert:\n    - id: hello-row\n      name: 'dsh-hello-fixture'\n")
     writeFileSync(join(profileDir, 'cordis.patch.yml'), '- id: hello-row\n  disabled: true\n')
     const gateway = new ShopGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: async () => ({ entries: [{ entryId: 'hello-row', moduleName: 'dsh-hello-fixture', enabled: false }] }) } })
     const result = await gateway.setEnabled({ name: 'dsh-hello-fixture', enabled: true })
@@ -362,9 +391,7 @@ describe('ShopGateway.setEnabled', () => {
   })
 
   it('refuses to toggle the shop itself or a framework bundle', async () => {
-    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-shop-'))
-    writeFileSync(join(profileDir, 'cordis.yml'), '[]\n')
-    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
+    const profileDir = toggleProfile()
     const gateway = new ShopGateway(stubCtx(), {
       profile: 'web', profileDir,
       inventory: { list: async () => ({ entries: [
@@ -380,9 +407,7 @@ describe('ShopGateway.setEnabled', () => {
   })
 
   it('reports not installed for an unknown name without writing', async () => {
-    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-shop-'))
-    writeFileSync(join(profileDir, 'cordis.yml'), '[]\n')
-    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
+    const profileDir = toggleProfile()
     const gateway = new ShopGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: async () => ({ entries: [] }) } })
     const result = await gateway.setEnabled({ name: 'dsh-not-here', enabled: false })
     expect(result).toEqual({ ok: false, detail: 'dsh-plugin-shop: dsh-not-here is not installed' })
@@ -408,10 +433,16 @@ describe('ShopGateway.installed', () => {
   it('carries the inventory enabled state onto the installed rows', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'dsh-installed-inv-'))
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: { 'dsh-one': '^1.0.0' } }))
+    // The disabled state is read through the ids dsh-one's own bundle patch
+    // inserts — the entry's module name is deliberately NOT the package name,
+    // the shape that made the module-name lookup report every such package as
+    // enabled no matter what the inventory said.
+    fixturePackage(dir, 'dsh-one', "- insert:\n    - id: one-row\n      name: 'dsh-one/host'\n")
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: { 'dsh-one': '^1.0.0' } }))
     const gateway = new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
       loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [], stars: {} }, stale: false }) as CatalogResult,
-      inventory: { list: async () => ({ entries: [{ entryId: 'one-row', moduleName: 'dsh-one', enabled: false }] }) },
+      inventory: { list: async () => ({ entries: [{ entryId: 'one-row', moduleName: 'dsh-one/host', enabled: false }] }) },
     })
     await gateway.catalog({})
     expect(await gateway.installed()).toEqual([{ name: 'dsh-one', installed: '^1.0.0', latest: '2.0.0', outdated: true, enabled: false }])
@@ -1031,7 +1062,7 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
   // The fixtures below drive the flows through the public RPC methods; the
   // hot functions and the loader entry list are injected exactly like the
   // other test-only seams (inventory, loadCatalog, ...).
-  const hotMount = vi.fn(async (): Promise<{ ok: boolean; reason: string | null }> => ({ ok: true, reason: null }))
+  const hotMount = vi.fn(async (): Promise<HotMountResult> => ({ ok: true, reason: null }))
   const hotUnmount = vi.fn(async () => false)
 
   beforeEach(() => {
@@ -1061,6 +1092,9 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
       dsh: { profile: { bundles: [] } },
       ...(options.dependencies !== undefined ? { dependencies: options.dependencies } : {}),
     }))
+    for (const name of Object.keys(options.dependencies ?? {})) {
+      fixturePackage(profileDir, name, `- insert:\n    - id: ${name}-row\n      name: '${name}/host'\n`)
+    }
     const gateway = new ShopGateway(stubCtx(), {
       ...gatewayOptions(),
       profileDir,
@@ -1099,7 +1133,8 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
   it('an update disables the live boot entry before the new instance mounts, retrying until the fiber is down', async () => {
     const order: string[] = []
     const entry: LoaderEntryLike = {
-      options: { name: 'dsh-hello-plugin' },
+      id: 'dsh-hello-plugin-row',
+      options: { name: 'dsh-hello-plugin/host' },
       fiber: {},
       update: vi.fn(async () => {
         order.push('disable')
@@ -1129,7 +1164,7 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
   })
 
   it('a failed hot mount reports done with needsRestart true and the restart reason', async () => {
-    hotMount.mockResolvedValueOnce({ ok: false, reason: 'r' })
+    hotMount.mockResolvedValueOnce({ ok: false, reason: 'not-simple' })
     const { gateway } = hotGateway({ hot: { mount: hotMount, unmount: hotUnmount }, loaderEntries: () => [] })
     const started = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
     expect(started.ok).toBe(true)
@@ -1137,7 +1172,7 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     const status = await pollTerminal(gateway, started.installId)
     expect(status.state).toBe('done')
     expect(status.needsRestart).toBe(true)
-    expect(status.restartReason).toBe('r')
+    expect(status.restartReason).toBe('not-simple')
   })
 
   it('uninstall of a hot-mounted plugin unmounts it without touching the loader', async () => {
@@ -1163,7 +1198,7 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     const { gateway } = hotGateway({
       dependencies: { 'dsh-goodbye-plugin': '1.0.0' },
       hot: { mount: hotMount, unmount: hotUnmount },
-      loaderEntries: () => [{ options: { name: 'dsh-goodbye-plugin' }, update }],
+      loaderEntries: () => [{ id: 'dsh-goodbye-plugin-row', options: { name: 'dsh-goodbye-plugin/host' }, update }],
     })
     const result = await gateway.uninstall({ name: 'dsh-goodbye-plugin' })
     expect(result.ok).toBe(true)
@@ -1174,6 +1209,22 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     expect(hotUnmount).toHaveBeenCalledWith('dsh-goodbye-plugin')
     expect(update).toHaveBeenCalledTimes(1)
     expect(update).toHaveBeenCalledWith({ disabled: true }, false, true)
+  })
+
+  it('uninstall still completes for a package whose bundle patch cannot be read', async () => {
+    // Resolving the live entry ids is an optimization on this path; a package
+    // with an unreadable patch must still be removable.
+    const { gateway, profileDir } = hotGateway({
+      dependencies: { 'dsh-goodbye-plugin': '1.0.0' },
+      hot: { mount: hotMount, unmount: hotUnmount },
+      loaderEntries: () => [],
+    })
+    writeFileSync(join(profileDir, 'node_modules', 'dsh-goodbye-plugin', 'cordis.patch.yml'), 'this: is not: a patch list\n')
+    const result = await gateway.uninstall({ name: 'dsh-goodbye-plugin' })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const status = await pollTerminal(gateway, result.installId)
+    expect(status.state).toBe('done')
   })
 
   it('uninstall of a plugin that never loaded still reports done without restart', async () => {
@@ -1200,5 +1251,108 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     expect(status.needsRestart).toBe(true)
     expect(hotMount).not.toHaveBeenCalled()
     expect(hotUnmount).not.toHaveBeenCalled()
+  })
+})
+
+describe('ShopGateway.setEnabled entry ownership', () => {
+  // @tt-a1i/archify-dsh's real published shape: it registers no module of its
+  // own, it inserts a configured instance of a harness module. Every fixture
+  // in this file used to give the entry the package's own name, so the
+  // module-name lookup passed for a coincidence and the toggle reported this
+  // package — and every package like it — as not installed.
+  const archifyPatch = "- insert:\n    - id: archify-skill-filesystem\n      name: '@deepseek-ai/dsh-skill-filesystem'\n"
+
+  it('toggles a package whose entry mounts another package\'s module', async () => {
+    const profileDir = toggleProfile()
+    fixturePackage(profileDir, '@tt-a1i/archify-dsh', archifyPatch)
+    const gateway = new ShopGateway(stubCtx(), {
+      profile: 'web', profileDir,
+      inventory: { list: async () => ({ entries: [
+        { entryId: 'archify-skill-filesystem', moduleName: '@deepseek-ai/dsh-skill-filesystem', enabled: true },
+      ] }) },
+    })
+    const result = await gateway.setEnabled({ name: '@tt-a1i/archify-dsh', enabled: false })
+    expect(result).toEqual({ ok: true })
+    expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toContain('archify-skill-filesystem')
+  })
+
+  it('re-enabling drops the row again', async () => {
+    const profileDir = toggleProfile()
+    fixturePackage(profileDir, '@tt-a1i/archify-dsh', archifyPatch)
+    writeFileSync(join(profileDir, 'cordis.patch.yml'), '- id: archify-skill-filesystem\n  disabled: true\n')
+    const gateway = new ShopGateway(stubCtx(), {
+      profile: 'web', profileDir,
+      inventory: { list: async () => ({ entries: [
+        { entryId: 'archify-skill-filesystem', moduleName: '@deepseek-ai/dsh-skill-filesystem', enabled: false },
+      ] }) },
+    })
+    expect(await gateway.setEnabled({ name: '@tt-a1i/archify-dsh', enabled: true })).toEqual({ ok: true })
+    expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).not.toContain('archify-skill-filesystem')
+  })
+
+  it('toggles every entry of a package that inserts several', async () => {
+    const profileDir = toggleProfile()
+    fixturePackage(profileDir, 'dsh-many', '- insert:\n    - id: many-host\n      name: dsh-many/host\n    - id: many-web\n      name: dsh-many/web\n')
+    const gateway = new ShopGateway(stubCtx(), {
+      profile: 'web', profileDir,
+      inventory: { list: async () => ({ entries: [
+        { entryId: 'many-host', moduleName: 'dsh-many/host', enabled: true },
+        { entryId: 'many-web', moduleName: 'dsh-many/web', enabled: true },
+      ] }) },
+    })
+    expect(await gateway.setEnabled({ name: 'dsh-many', enabled: false })).toEqual({ ok: true })
+    const written = readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')
+    expect(written).toContain('many-host')
+    expect(written).toContain('many-web')
+  })
+
+  it('says a package contributes no entries rather than calling it uninstalled', async () => {
+    const profileDir = toggleProfile()
+    fixturePackage(profileDir, 'dsh-libonly', null)
+    const gateway = new ShopGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: async () => ({ entries: [] }) } })
+    const result = await gateway.setEnabled({ name: 'dsh-libonly', enabled: false })
+    expect(result.ok).toBe(false)
+    expect(result.ok === false && result.detail).toContain('contributes no plugin entries')
+    expect(existsSync(join(profileDir, 'cordis.patch.yml'))).toBe(false)
+  })
+
+  it('reports an unreadable bundle patch as a reason instead of throwing past the RPC', async () => {
+    // A throw here crosses the wire as a bare transport failure, and the
+    // client can only say "please retry" — the one rejection on this path
+    // with no author-readable detail. Malformed patch content is ordinary
+    // hostile npm input, so it must arrive as a reason.
+    const profileDir = toggleProfile()
+    fixturePackage(profileDir, 'dsh-broken', 'this: is not: a patch list\n')
+    const gateway = new ShopGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: async () => ({ entries: [] }) } })
+    const result = await gateway.setEnabled({ name: 'dsh-broken', enabled: false })
+    expect(result.ok).toBe(false)
+    expect(result.ok === false && result.detail).toContain('dsh-broken')
+    expect(result.ok === false && result.detail).toContain('bundle patch that could not be read')
+    expect(existsSync(join(profileDir, 'cordis.patch.yml'))).toBe(false)
+  })
+
+  it('reports a patch path that escapes the package directory the same way', async () => {
+    const profileDir = toggleProfile()
+    const dir = join(profileDir, 'node_modules', 'dsh-escapee')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-escapee', dsh: { bundle: { patch: '../../../evil.yml' } } }))
+    const manifestPath = join(profileDir, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { dependencies?: Record<string, string> }
+    manifest.dependencies = { 'dsh-escapee': '1.0.0' }
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    const gateway = new ShopGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: async () => ({ entries: [] }) } })
+    const result = await gateway.setEnabled({ name: 'dsh-escapee', enabled: false })
+    expect(result.ok).toBe(false)
+    expect(result.ok === false && result.detail).toContain('outside its own directory')
+  })
+
+  it('says the entries are not in the running tree when none is live', async () => {
+    const profileDir = toggleProfile()
+    fixturePackage(profileDir, '@tt-a1i/archify-dsh', archifyPatch)
+    const gateway = new ShopGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: async () => ({ entries: [] }) } })
+    const result = await gateway.setEnabled({ name: '@tt-a1i/archify-dsh', enabled: false })
+    expect(result.ok).toBe(false)
+    expect(result.ok === false && result.detail).toContain('not in the running plugin tree')
+    expect(existsSync(join(profileDir, 'cordis.patch.yml'))).toBe(false)
   })
 })
