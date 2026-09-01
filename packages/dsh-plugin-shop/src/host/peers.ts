@@ -19,10 +19,16 @@ export function nodeResolver(baseUrl: string): PeerResolver {
     try {
       require.resolve(`${spec}/package.json`)
       return true
-    } catch {
-      // Unresolvable is the answer, not an error: the peer is absent, which is
-      // precisely the fact being reported.
-      return false
+    } catch (error) {
+      // Only genuine module-not-found means the peer is absent. Anything else
+      // (e.g., ERR_PACKAGE_PATH_NOT_EXPORTED when the module restricts
+      // exports) is a resolution error that the harness itself handles by
+      // returning no client module — rethrow so incompatibilityMap's catch
+      // turns it into no-verdict.
+      if ((error as NodeJS.ErrnoException).code === 'MODULE_NOT_FOUND') {
+        return false
+      }
+      throw error
     }
   }
 }
@@ -40,7 +46,7 @@ export function incompatibilityMap(
   entries: readonly { name: string; peers?: string[] }[],
   resolve: PeerResolver,
 ): Record<string, string[]> {
-  const known = new Map<string, boolean>()
+  const known = new Map<string, boolean | null>() // null marks "threw"
   const out: Record<string, string[]> = {}
   for (const entry of entries) {
     if (entry.peers === undefined || entry.peers.length === 0) continue
@@ -51,12 +57,18 @@ export function incompatibilityMap(
       if (present === undefined) {
         try {
           present = resolve(spec)
+          known.set(spec, present)
         } catch {
-          // No verdict for this entry; see the doc comment above.
+          // Resolution threw; mark so we don't retry, and discard this entry's
+          // partial list. See the doc comment above.
+          known.set(spec, null)
           usable = false
           break
         }
-        known.set(spec, present)
+      } else if (present === null) {
+        // This name threw before; discard this entry's partial list.
+        usable = false
+        break
       }
       if (!present) missing.push(spec)
     }

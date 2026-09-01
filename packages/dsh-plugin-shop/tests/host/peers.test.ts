@@ -50,6 +50,34 @@ describe('incompatibilityMap', () => {
     const throwing = (): boolean => { throw new Error('anchor unavailable') }
     expect(incompatibilityMap([{ name: 'x', peers: ['whatever'] }], throwing)).toEqual({})
   })
+
+  it('discards a partial missing list when a later peer throws', () => {
+    const flaky = (spec: string): boolean => {
+      if (spec === 'react') return false
+      throw new Error('anchor unavailable')
+    }
+    expect(incompatibilityMap([{ name: 'x', peers: ['react', 'whatever'] }], flaky)).toEqual({})
+  })
+
+  it('when a shared peer throws, both entries get no verdict and it is resolved once', () => {
+    let calls = 0
+    const mockResolve = (spec: string): boolean => {
+      calls++
+      if (spec === 'react') return true
+      throw new Error('resolution failed')
+    }
+
+    const map = incompatibilityMap(
+      [
+        { name: 'a', peers: ['react', 'throwing-peer'] },
+        { name: 'b', peers: ['throwing-peer', 'react'] },
+      ],
+      mockResolve,
+    )
+
+    expect(map).toEqual({}) // both entries get no verdict
+    expect(calls).toBe(2) // 'react' once, 'throwing-peer' once
+  })
 })
 
 describe('nodeResolver', () => {
