@@ -14,14 +14,15 @@
  * @module classify
  */
 
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { mergeCategoryRows, serializeCategoryRows } from './categories.ts'
-import { gate } from './gate.ts'
+import { selectPending } from './classify-select.ts'
 import { loadRegistryConfig } from './config.ts'
-import { classifyPackages, type ClassifyItem } from './llm-client.ts'
+import { classifyPackages } from './llm-client.ts'
 import { fetchCandidates, searchByKeywords } from './npm-client.ts'
-import type { Category } from './types.ts'
+import { parseRepoState } from './repo-state.ts'
+import type { Category, RepoCandidate } from './types.ts'
 
 const REGISTRY_DIR = 'registry'
 const OUT_DIR = 'dist/v1'
@@ -40,18 +41,25 @@ const names = await searchByKeywords(fetch, undefined, npmToken)
 process.stderr.write(`classify: harvested ${names.length} candidate(s)\n`)
 const { candidates, rejections } = await fetchCandidates(names, fetch, npmToken)
 
-// pending = derived listings the gate accepts, minus what the file already has
-const pending: ClassifyItem[] = []
-const liveNames = new Set<string>()
-for (const candidate of candidates) {
-  const result = gate(candidate, config)
-  if (!result.ok) continue
-  if (result.accepted.metadata !== 'derived') continue
-  liveNames.add(candidate.name)
-  if (config.categories.has(candidate.name)) continue
-  pending.push({ name: candidate.name, description: candidate.description, keywords: candidate.keywords })
+// The GitHub half, read from the committed harvest memory rather than
+// re-harvested: `repo-state.json` records the very candidates `build.ts`
+// composes the catalog from, so reading it costs no GitHub call, needs no
+// token, and leaves `build.ts` the only writer of that state. The price is a
+// day of lag for a brand-new repository — it is classified by the next run,
+// which is the "unclassified, retried on the next build" state D4 defines.
+// A missing file is the npm-only case; a malformed one throws, exactly as it
+// does in the build (it is a committed build input).
+const repoStatePath = join(REGISTRY_DIR, 'repo-state.json')
+const repoCandidates: RepoCandidate[] = []
+if (existsSync(repoStatePath)) {
+  for (const entry of Object.values(parseRepoState(readFileSync(repoStatePath, 'utf8')))) {
+    repoCandidates.push(...entry.candidates)
+  }
 }
-process.stderr.write(`classify: ${pending.length} pending name(s)\n`)
+process.stderr.write(`classify: ${repoCandidates.length} recorded repo candidate(s)\n`)
+
+const { pending, liveNames } = selectPending(candidates, repoCandidates, config)
+process.stderr.write(`classify: ${pending.length} pending name(s), ${liveNames.size} live\n`)
 
 let discarded: { name: string; reason: string }[] = []
 let fresh = new Map<string, Category>()

@@ -18,6 +18,7 @@ file, and the catalog publishes them.
 | D2 | **One-time backfill** of every existing derived listing, then daily increments. The backfill is not a separate script — the first build run after this lands IS the backfill (§4). |
 | D3 | The LLM is an internal OpenAI-compatible gateway: base URL `http://8.141.31.123:3000/v1`, model `deepseek-v4-flash`, key in a GitHub Actions secret. (Probed live: the model classifies correctly and is a reasoning model — 171 of 174 completion tokens were reasoning, so classification is batched to amortize it.) |
 | D4 | Classification failures are **retried forever**: a failed entry is simply absent from the file, and the build re-attempts every derived listing not in it. No failure counters, no giving up, no "permanently other" state. |
+| D5 | *(amended 2026-09-01)* The classifier's input is **both halves of the harvest**, npm and GitHub. The GitHub half is read from the committed `repo-state.json`, never re-harvested. Reason: the github channel (spec 2026-08-30) landed after this design, and the classifier never saw it — all 2826 repo entries in the live catalog read `other`, and a hand-written row for one of them was deleted by the very next run (§4, `liveNames`). |
 
 ## 2. The categories file
 
@@ -60,16 +61,26 @@ it.
 
 ## 3. What the LLM sees
 
-Input per package: `name`, npm `description` (the derived summary source), and
+Input per package: `name`, `description` (the derived summary source), and
 `keywords` when present. The harvest's `fetchCandidate` already downloads the
 full packument for every candidate, so extracting `keywords` there is a small
-shell-only addition to the candidate shape — no extra network requests. The
-classifier never receives anything but public npm metadata, so sending it to
-the gateway crosses no data boundary.
+shell-only addition to the candidate shape — no extra network requests.
+
+*(amended 2026-09-01, D5)* A GitHub-sourced listing contributes its manifest
+`name` and the **repository** description, with `keywords: []`. A
+`RepoCandidate` carries no keywords: the GitHub harvest never reads manifest
+keywords, and adding them means a new field in `repo-state.json` plus a
+re-fetch of every recorded repository, since a carried-over entry has none.
+Name plus description is what that half has.
+
+The classifier never receives anything but public npm and public GitHub
+metadata, so sending it to the gateway crosses no data boundary.
 
 Vocabulary is **fixed**: `tool | provider | ui | workflow | integration |
-other` — the six the schema and UI already know. The model may not invent
-categories; an invented one is an invalid row.
+theme | other` — the seven the schema and UI already know (`theme` joined
+`CATEGORIES` with the schemaVersion-5 enum change; this line said six until
+2026-09-01). The model may not invent categories; an invented one is an
+invalid row.
 
 Prompt contract (system message):
 
@@ -98,6 +109,24 @@ harvest → classify(pending derived names) → append categories.yml
 - **Pending** = every derived listing (no declared category) whose name is not
   in `categories.yml`. On the first run after this lands, that is the entire
   catalog — the backfill is this step, not a separate script (D2).
+- **`liveNames`** = every derived listing the catalog will carry, classified or
+  not. It is what `mergeCategoryRows` prunes against, so a name missing from it
+  loses its committed row on the next run. Both sets are decided by one pure
+  function, `classify-select.ts`'s `selectPending` — the prune is a policy
+  decision and belongs where a fixture can pin it.
+- *(amended 2026-09-01, D5)* The **GitHub half** of the input comes from the
+  committed `repo-state.json`: `RepoStateEntry.candidates` records the very
+  `RepoCandidate` values `build.ts` composes the catalog from, so reading them
+  costs no GitHub call, needs no token, and leaves `build.ts` the only writer
+  of that state. The price is one day of lag — classify runs before build, so a
+  repository discovered by today's build is classified by tomorrow's run. That
+  is the "unclassified, retried on the next build" state D4 already defines.
+- **npm shadows GitHub**, exactly as `pipeline.ts` composes the catalog: a repo
+  candidate whose name is an ACCEPTED npm name is skipped, because that name's
+  row describes the npm package. Accepted, not merely present — a repo whose
+  npm namesake the gate rejected is listed on its own and gets classified.
+- One question per **name**, not per candidate: 83 of the 2704 GitHub bundle
+  names are claimed by a fork as well as an original (measured 2026-09-01).
 - The categories commit happens **before** the pipeline runs, so a later
   failure does not lose classification progress; re-runs only classify what is
   still absent.
@@ -157,6 +186,12 @@ does not churn, and the sort-before-emit invariant extends to the file itself.
 - `llm-client`: mocked fetch — Bearer header present, batch splitting (25 names
   → two calls of 20 and 5), 429 backoff honors Retry-After and gives up loudly.
 - Loader: duplicate name throws; unknown category throws; missing file is empty.
+- *(added 2026-09-01, D5)* `selectPending`: an unclassified npm listing carries
+  its keywords and a repo listing carries none; an already-classified repo name
+  stays in `liveNames` so its row survives the prune; a repo shadowed by an
+  accepted npm package is skipped while one whose npm namesake was rejected is
+  not; a declared catalog is in neither set; two repositories claiming one
+  bundle name are asked about once; questions are sorted by name.
 - Determinism: same catalog + same categories input → identical artifacts
   (extended from the existing determinism test's assertion surface).
 - The daily workflow path: categories commit lands before the pipeline commit
@@ -165,7 +200,8 @@ does not churn, and the sort-before-emit invariant extends to the file itself.
 ## 9. Non-goals
 
 - No failure counters, no retry backoff per entry, no giving up on a name (D4).
-- No new categories beyond the six; the model cannot extend the vocabulary.
+- No new categories beyond the seven in `CATEGORIES`; the model cannot extend
+  the vocabulary.
 - No human approval gate per assignment (D1); humans correct after the fact by
   editing the file.
 - No reclassification of entries that already have a declared category.
