@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, categoryKey, displayVersion, formatStars,
-  isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, reduceInstall,
+  authorOf, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, reduceInstall,
   reviewHashPin, sortByStars, starsOf, tierKey,
 } from '../../src/client/present.ts'
 import type { CatalogEntry } from '../../src/host/index.ts'
@@ -339,5 +339,44 @@ describe('missingPeersOf', () => {
 
   it('returns none for a name the host said nothing about', () => {
     expect(missingPeersOf({ 'dsh-timeline': ['x'] }, 'dsh-other')).toEqual([])
+  })
+})
+
+describe('authorOf', () => {
+  it('is the npm publishing account for an npm entry', () => {
+    expect(authorOf({ ...entry, publisher: 'realauthor' })).toBe('realauthor')
+  })
+
+  it('is null for an npm entry whose packument named no account', () => {
+    // The live catalog carries no publisher until the next daily build, and a
+    // packument may name none at all. Nothing is invented for it.
+    expect(authorOf(entry)).toBeNull()
+  })
+
+  it('is the repository owner for a github entry', () => {
+    // A github entry's identity IS `owner/slug`, so the owner is already on
+    // the entry — no catalog field and no schema bump needed for it.
+    expect(authorOf({ ...entry, source: 'github', repo: 'octocat/dsh-repo-plugin' })).toBe('octocat')
+  })
+
+  it('is null for a github entry whose repo is not owner/slug', () => {
+    // `repo` reaches the client as an unvalidated string (the consumer schema
+    // types it `z.string()`), so a value that is not the documented shape
+    // yields nothing rather than a misleading fragment — the same discipline
+    // npmPageUrl applies to a package name.
+    expect(authorOf({ ...entry, source: 'github', repo: 'noslash' })).toBeNull()
+    expect(authorOf({ ...entry, source: 'github', repo: '/leading' })).toBeNull()
+    expect(authorOf({ ...entry, source: 'github', repo: 'bad owner/slug' })).toBeNull()
+    expect(authorOf({ ...entry, source: 'github', repo: `${'x'.repeat(40)}/slug` })).toBeNull()
+  })
+
+  it('is null for a github entry carrying no repo at all', () => {
+    expect(authorOf({ ...entry, source: 'github' })).toBeNull()
+  })
+
+  it('ignores a publisher that rode in on a github entry', () => {
+    // The registry never sets `publisher` on a repo entry (assignRepoTier does
+    // not touch it); if one ever appeared, the owner is still the answer.
+    expect(authorOf({ ...entry, source: 'github', repo: 'octocat/x', publisher: 'someone-else' })).toBe('octocat')
   })
 })

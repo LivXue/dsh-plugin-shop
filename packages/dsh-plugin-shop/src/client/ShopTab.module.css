@@ -700,13 +700,14 @@
 /* The publishing account, beside the npm link. Secondary label colour and a
  * middot separator carry the distinction — never a background fill, which is
  * invisible in the light theme where every bg-layer token is the same white. */
-.publisher {
+/* Who published the entry, at the right edge of the action row. `margin-left:
+ * auto` is what pushes it there; the row is a wrapping flex, so an active
+ * install flow (which claims the full width) drops this to the next line
+ * rather than squeezing it. */
+.author {
+  margin-left: auto;
   color: var(--dsw-alias-label-secondary);
-}
-
-.publisher::before {
-  content: ' · ';
-  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
 }
 
 .reviewedLine {

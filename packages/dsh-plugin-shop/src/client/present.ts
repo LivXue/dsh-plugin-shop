@@ -267,6 +267,32 @@ export function categoryLocaleKey(category: Category): ShopLocaleKey {
  * A github entry answers null: it is installed from a repo and has no npm
  * package page.
  */
+/**
+ * Who put this entry where it is — the fact a reader wants when two listings
+ * carry the same text from different hands.
+ *
+ * The two sources answer it differently and neither is npm's `author` field:
+ * that one is free text the publisher writes, and a clone inherits it
+ * verbatim. An npm entry answers with the account npm recorded for the
+ * version (`publisher`); a github entry answers with its repository owner,
+ * which is already half of the `owner/slug` that IS its identity — so nothing
+ * new has to be harvested or emitted for it.
+ *
+ * `repo` reaches the client as an unvalidated string, so the owner is taken
+ * only from a value that really is `owner/slug` with an owner GitHub would
+ * accept (1-39 chars of alphanumerics and hyphens). Anything else yields
+ * null: a misleading fragment is worse than saying nothing, the same rule
+ * npmPageUrl applies to a package name.
+ */
+export function authorOf(entry: CatalogEntry): string | null {
+  if (entry.source === 'github') {
+    if (entry.repo === undefined) return null
+    const match = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))\/[^/]+$/.exec(entry.repo)
+    return match?.[1] ?? null
+  }
+  return entry.publisher ?? null
+}
+
 export function npmPageUrl(entry: CatalogEntry): string | null {
   if (entry.source !== 'npm') return null
   const name = entry.name

@@ -78,10 +78,10 @@ describe('ShopTab', () => {
     expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [class*="_summary"] a')).toBeNull()
   })
 
-  it('shows the npm page and the publishing account in the expanded detail', async () => {
-    // The shop makes no judgement about who is genuine; it shows the two raw
-    // facts that let a person decide — the package's own npm page, and the
-    // account that published the version being offered.
+  it('shows the npm page in the expanded detail', async () => {
+    // The shop makes no judgement about who is genuine; it shows the raw fact
+    // that lets a person decide — the package's own npm page. The account
+    // behind it now sits on the action row instead (see below).
     const { injected } = bench(snapshot({ publisher: 'realauthor' }))
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
@@ -89,19 +89,44 @@ describe('ShopTab', () => {
     const link = container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-npm] a')
     expect(link?.getAttribute('href')).toBe('https://www.npmjs.com/package/dsh-hello-plugin')
     expect(link?.getAttribute('rel')).toBe('noopener noreferrer')
-    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-publisher]')?.textContent)
-      .toContain('realauthor')
   })
 
-  it('shows the npm page alone when the catalog names no publisher', async () => {
+  it('shows the npm entry author on the action row, without expanding the card', async () => {
+    // The author is a collapsed-card fact now: a reader comparing two
+    // same-looking listings should not have to open each one to see who
+    // published it.
+    const { injected } = bench(snapshot({ publisher: 'realauthor' }))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const author = container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-author]')
+    expect(author?.textContent).toContain('realauthor')
+    expect(author?.textContent).toContain('Author')
+    // On the action row, beside the install button — not in the detail.
+    expect(author?.closest('[data-shop-actions]')).toBeTruthy()
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-npm] [data-shop-author]')).toBeNull()
+  })
+
+  it('shows the repository owner as the author of a github entry', async () => {
+    // A github entry has no npm publisher; its identity is `owner/slug`, so
+    // the owner is the answer. Both sources must name someone.
+    const { injected } = bench(snapshot({
+      name: 'dsh-repo-plugin', source: 'github', repo: 'octocat/dsh-repo-plugin', publisher: undefined,
+    }))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-repo-plugin')).toBeTruthy())
+    expect(container.querySelector('[data-shop-entry="dsh-repo-plugin"] [data-shop-author]')?.textContent)
+      .toContain('octocat')
+  })
+
+  it('names nobody when the catalog names no author', async () => {
     // The live catalog carries no publisher until the next daily build, and a
-    // packument may name none at all; the row must not invent one.
+    // packument may name none at all; the card must not invent one.
     const { injected } = bench(snapshot())
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-author]')).toBeNull()
     fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] button[aria-expanded]')!)
     expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-npm] a')).toBeTruthy()
-    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-publisher]')).toBeNull()
   })
 
   it('gives a github entry no npm row', async () => {

@@ -7,7 +7,7 @@
 import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
-import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Category, categoryKey, categoryLocaleKey, displayVersion, formatStars, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, rejectionCodeKey, restartReasonKey, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
+import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Category, authorOf, categoryKey, categoryLocaleKey, displayVersion, formatStars, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, rejectionCodeKey, restartReasonKey, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
 import { useInstall } from './useInstall.ts'
 import { useUninstall } from './useUninstall.ts'
 import { useUpdateSelf } from './useUpdateSelf.ts'
@@ -90,6 +90,7 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, t,
   const summary = entry.catalog?.summary
   // Null for a github entry, and for any name outside npm's own grammar.
   const npmUrl = npmPageUrl(entry)
+  const author = authorOf(entry)
   const category = entry.catalog?.category ?? 'other'
   return (
     <div className={css.card} data-shop-entry={entry.name} data-category={category}>
@@ -155,9 +156,8 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, t,
               {/* The npm page comes first: it is the home of the exact thing
                * being installed, while `repository` is only where the package
                * SAYS its source lives — and those two disagreeing is the
-               * whole reason a person might want to look. The publishing
-               * account sits beside it. Both are raw facts; the shop draws no
-               * conclusion from either. */}
+               * whole reason a person might want to look. Who published it
+               * sits on the action row, where it shows without expanding. */}
               {npmUrl !== null && (
                 <div className={css.detailRow} data-shop-npm>
                   <dt>{t('npmPage')}</dt>
@@ -165,11 +165,6 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, t,
                     <a href={npmUrl} target="_blank" rel="noopener noreferrer">
                       {npmUrl}
                     </a>
-                    {entry.publisher !== undefined && (
-                      <span className={css.publisher} data-shop-publisher>
-                        {t('publishedBy', { publisher: entry.publisher })}
-                      </span>
-                    )}
                   </dd>
                 </div>
               )}
@@ -211,7 +206,7 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, t,
       {/* The action line: buttons sit on their own row under the summary; an
        * active install/uninstall flow (gate, log, notices) takes the full
        * width below them, where it has room. */}
-      <div className={css.cardActions}>
+      <div className={css.cardActions} data-shop-actions>
         {installed === undefined ? (
           <InstallPanel name={entry.name} version={entry.version} tier={entry.tier} missing={missing} t={t} install={install} installStatus={installStatus} restart={restart} restartSupported={restartSupported} />
         ) : (
@@ -229,6 +224,13 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, t,
             <EnabledSwitch row={installed} t={t} setEnabled={setEnabled} />
             <UninstallPanel name={entry.name} t={t} uninstall={uninstall} installStatus={installStatus} restart={restart} restartSupported={restartSupported} />
           </>
+        )}
+        {/* Who put this here, pushed to the right edge of the action row. A
+         * collapsed-card fact on purpose: comparing two same-looking listings
+         * should not require opening each one. An active install flow takes
+         * the full row width, so this drops below it until the flow settles. */}
+        {author !== null && (
+          <span className={css.author} data-shop-author>{t('authorLine', { author })}</span>
         )}
       </div>
     </div>

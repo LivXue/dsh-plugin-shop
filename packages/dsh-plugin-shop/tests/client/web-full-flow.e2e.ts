@@ -249,16 +249,36 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await card.waitFor({ state: 'visible', timeout: 15_000 })
       expect(await card.textContent()).toContain('社区')
 
-      // The expanded detail's npm row, in a real browser: the link to the
-      // package's own npm page, and beside it the account the catalog names.
-      // The shop asserts nothing about who is genuine — these are the two
-      // facts a person compares when two listings look alike.
+      // The author, in a real browser, on the COLLAPSED card's action row —
+      // the shop asserts nothing about who is genuine, but a person comparing
+      // two listings that look alike should not have to open each one to see
+      // who published it.
+      const author = card.locator('[data-shop-author]')
+      await author.waitFor({ state: 'visible', timeout: 10_000 })
+      expect(await author.textContent()).toContain('octocat')
+      // "Same row as the install button, right-aligned" is the requirement, and
+      // the action row is a WRAPPING flex — so assert the geometry a real
+      // browser produced, not just that both elements exist. Vertical centres
+      // within a few pixels means one row; a left edge past the button's right
+      // edge means it is the row's right-hand end.
+      const authorBox = await author.boundingBox()
+      const installBox = await card.locator('[data-shop-install]').boundingBox()
+      expect(authorBox).not.toBeNull()
+      expect(installBox).not.toBeNull()
+      if (authorBox !== null && installBox !== null) {
+        const authorMid = authorBox.y + authorBox.height / 2
+        const installMid = installBox.y + installBox.height / 2
+        expect(Math.abs(authorMid - installMid)).toBeLessThan(6)
+        expect(authorBox.x).toBeGreaterThan(installBox.x + installBox.width)
+      }
+
+      // The expanded detail's npm row: the link to the package's own npm page,
+      // the other half of that same comparison.
       await card.locator('button[aria-expanded]').click()
       const npmRow = card.locator('[data-shop-npm]')
       await npmRow.waitFor({ state: 'visible', timeout: 10_000 })
       expect(await npmRow.locator('a').getAttribute('href'))
         .toBe('https://www.npmjs.com/package/dsh-e2e-fixture-plugin')
-      expect(await npmRow.locator('[data-shop-publisher]').textContent()).toContain('octocat')
       // Collapse again so the install flow below starts from the same state
       // the rest of this walk-through assumes.
       await card.locator('button[aria-expanded]').click()
