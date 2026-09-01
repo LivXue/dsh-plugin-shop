@@ -44,6 +44,15 @@ export interface Candidate {
    * is what says it. The email npm carries beside it is dropped.
    */
   publisher?: string
+  /**
+   * The names of the package's `peerDependencies`, without ranges. A peer is
+   * what the environment must already provide, so an unresolvable one means
+   * the plugin cannot run on this harness — the failure that broke a user on
+   * 2026-09-01. Ranges are deliberately dropped: nearly every dsh plugin
+   * declares `"*"`, and the harness's own prerelease versions do not satisfy
+   * ordinary ranges, so checking them would accuse working plugins.
+   */
+  peers: string[]
 }
 
 /**
@@ -182,4 +191,12 @@ export interface Entry {
    * entries whose packument named one. A github entry has no npm publisher.
    * See {@link Candidate.publisher} for why this and not `author`. */
   publisher?: string
+  /**
+   * The package's declared peer dependency names, present exactly when it
+   * declares any. The Host resolves them against the running installation to
+   * tell the reader whether the plugin can run there; the catalog records the
+   * requirement, never a verdict, because compatibility depends on who is
+   * reading. Emitted only at schemaVersion 6 and above.
+   */
+  peers?: string[]
 }

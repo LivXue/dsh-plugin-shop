@@ -44,6 +44,7 @@ export function assignTier(accepted: Accepted, config: RegistryConfig): Entry {
     // Absent stays absent: a packument that named no account must not gain
     // an empty one in the catalog.
     ...(candidate.publisher !== undefined ? { publisher: candidate.publisher } : {}),
+    ...(candidate.peers.length > 0 ? { peers: candidate.peers } : {}),
   }
   // A review whose only pin is a commit belongs to a repo entry of the same
   // bundle name, not to this npm candidate.

@@ -147,7 +147,7 @@ describe('loadCatalog', () => {
 
   it('throws when the schemaVersion is newer than this build supports', async () => {
     const fetchImpl = (async () => new Response(
-      JSON.stringify({ schemaVersion: 6, builtAt: '', count: 0, plugins: { url: 'x.json', sha256: '0'.repeat(64) } }),
+      JSON.stringify({ schemaVersion: 7, builtAt: '', count: 0, plugins: { url: 'x.json', sha256: '0'.repeat(64) } }),
       { status: 200 },
     )) as unknown as typeof fetch
 
@@ -162,7 +162,7 @@ describe('loadCatalog', () => {
     fs.write('/cache/index.json', pointer)
     fs.write(`/cache/${url}`, data)
     const fetchImpl = (async () => new Response(
-      JSON.stringify({ schemaVersion: 6, builtAt: '', count: 0, plugins: { url: 'x.json', sha256: '0'.repeat(64) } }),
+      JSON.stringify({ schemaVersion: 7, builtAt: '', count: 0, plugins: { url: 'x.json', sha256: '0'.repeat(64) } }),
       { status: 200 },
     )) as unknown as typeof fetch
 
@@ -617,5 +617,46 @@ describe('v5 (market borrowings) entries', () => {
     )) as unknown as typeof fetch
     await expect(loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() }))
       .rejects.toThrow(/must be https on github\.com/)
+  })
+})
+
+describe('peers (schemaVersion 6)', () => {
+  // The file has no shared cross-describe fixture (each block above defines
+  // its own minimal entry — `entry`, `subEntry`, `v5Entry`); this one follows
+  // that same pattern rather than inventing a helper.
+  const baseEntry = {
+    name: 'dsh-timeline', version: '0.1.4', integrity: 'sha512-x', publishedAt: null,
+    repository: null, license: 'MIT', tier: 'community', metadata: 'derived',
+  }
+
+  it('parses a v6 entry carrying peers', async () => {
+    // Names copied from dsh-timeline@0.1.4's real manifest.
+    const data = dataJson(
+      [{ ...baseEntry, peers: ['@deepseek-ai/cordis', '@deepseek-ai/dsh-client-store', 'react'] }],
+      [], 6,
+    )
+    const { pointer } = pointerFor(data, '2026-09-01T00:00:00Z', undefined, 6)
+    const fetchImpl = (async (input: string | URL) => new Response(
+      String(input).endsWith('/index.json') ? pointer : data, { status: 200 },
+    )) as unknown as typeof fetch
+
+    const result = await loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() })
+    expect(result.snapshot.entries[0]?.peers).toEqual([
+      '@deepseek-ai/cordis', '@deepseek-ai/dsh-client-store', 'react',
+    ])
+  })
+
+  it('parses the live v5 shape, which has no peers field at all', async () => {
+    // The 0.5.0 regression, in the shape that caused it: a required new field
+    // made the client refuse the still-published older catalog outright.
+    const data = dataJson([baseEntry], [], 5)
+    const { pointer } = pointerFor(data, '2026-09-01T00:00:00Z', undefined, 5)
+    const fetchImpl = (async (input: string | URL) => new Response(
+      String(input).endsWith('/index.json') ? pointer : data, { status: 200 },
+    )) as unknown as typeof fetch
+
+    const result = await loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() })
+    expect(result.snapshot.entries[0]?.peers).toBeUndefined()
+    expect(result.snapshot.entries).toHaveLength(1)
   })
 })

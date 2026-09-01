@@ -49,6 +49,8 @@ export interface CatalogEntry {
   tarball?: { url: string; sha256: string }
   /** The date this entry first appeared in the catalog (YYYY-MM-DD). */
   added?: string
+  /** The package's declared peer dependency names (schemaVersion 6). */
+  peers?: string[]
 }
 
 export interface DeniedEntry { name: string; detail: string; replacement?: string }

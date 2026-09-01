@@ -4,16 +4,19 @@
  * data file it names — with the sha256 computed at startup, the same binding
  * the real publishing pipeline makes between the two files.
  *
- * Three community-tier, derived (§6.1) fixture entries. The first,
+ * Four community-tier, derived (§6.1) fixture entries. The first,
  * `dsh-e2e-fixture-plugin@1.0.0`, is a name that does not exist on npm (and
  * that the hot-mount local registry does not serve) — the browser install of
  * it fails with REAL pnpm stderr, the failed view and its recovery hint being
  * part of what this e2e proves; a name that resolved would make the install
- * succeed and sidestep that surface entirely. The other two,
- * `dsh-shop-e2e-live` and `dsh-shop-e2e-config`, ARE served by the local
- * registry (tests/fixtures/local-registry.ts) and drive the hot-mount
- * scenarios: the simple-patch fixture mounts without a restart, the
- * config-row fixture falls back to a restart.
+ * succeed and sidestep that surface entirely. The other three,
+ * `dsh-shop-e2e-live`, `dsh-shop-e2e-config`, and `dsh-shop-e2e-peer`, ARE
+ * served by the local registry (tests/fixtures/local-registry.ts): the
+ * simple-patch fixture mounts without a restart, the config-row fixture
+ * falls back to a restart, and the peer fixture declares `peers:
+ * ["@deepseek-ai/dsh-client-store"]` — a module this test's profile never
+ * installs — so the harness-compatibility badge and install-gate warning
+ * have a genuinely-missing peer to report against a real host resolver.
  *
  * Port 0 → the OS assigns an ephemeral port; the caller reads `baseUrl` and
  * closes the server in teardown. The fixtures live here, not in the test, so
@@ -31,7 +34,7 @@ export interface CatalogServer {
   close: () => Promise<void>
 }
 
-/** The three fixture entries. No `catalog` section: derived metadata, so the
+/** The four fixture entries. No `catalog` section: derived metadata, so the
  * shop presents each entry's derived summary (§6.1).
  * `publishedAt` stays fixed so the snapshot is deterministic per run. */
 const FIXTURE_ENTRIES = [
@@ -72,10 +75,22 @@ const FIXTURE_ENTRIES = [
     metadata: 'derived',
     added: '2026-08-31',
   },
+  {
+    name: 'dsh-shop-e2e-peer',
+    version: '1.0.0',
+    integrity: null,
+    publishedAt: '2026-08-25T00:00:00.000Z',
+    repository: 'https://github.com/octocat/dsh-shop-e2e-peer',
+    license: null,
+    tier: 'community',
+    metadata: 'derived',
+    added: '2026-08-31',
+    peers: ['@deepseek-ai/dsh-client-store'],
+  },
 ] as const
 
 export async function startCatalogServer(): Promise<CatalogServer> {
-  const data = JSON.stringify({ schemaVersion: 2, plugins: FIXTURE_ENTRIES, denied: [] })
+  const data = JSON.stringify({ schemaVersion: 6, plugins: FIXTURE_ENTRIES, denied: [] })
   const sha256 = createHash('sha256').update(data).digest('hex')
   const dataName = `plugins.${sha256}.json`
   const stars = JSON.stringify({
@@ -88,7 +103,7 @@ export async function startCatalogServer(): Promise<CatalogServer> {
   const starsSha = createHash('sha256').update(stars).digest('hex')
   const starsName = `stars.${starsSha}.json`
   const pointer = JSON.stringify({
-    schemaVersion: 2,
+    schemaVersion: 6,
     builtAt: new Date().toISOString(),
     count: FIXTURE_ENTRIES.length,
     plugins: { url: dataName, sha256 },

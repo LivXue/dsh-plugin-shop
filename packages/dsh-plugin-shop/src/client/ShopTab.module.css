@@ -549,6 +549,15 @@
   border: 1px solid var(--dsw-alias-border-l2);
 }
 
+.incompatibleBadge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--dsw-alias-state-warn-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-state-warn-primary) 40%, transparent);
+}
+
 .starsBadge {
   font-size: 11px;
   color: var(--dsw-alias-label-secondary);
@@ -604,6 +613,13 @@
 .summaryZhExpanded {
   -webkit-line-clamp: unset;
   display: block;
+}
+
+.incompatibleDetail {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-state-warn-primary);
 }
 
 .capabilitiesBlock {
@@ -843,6 +859,13 @@
   font-size: 12px;
   line-height: 1.6;
   color: var(--dsw-alias-label-primary);
+}
+
+.gateWarning {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--dsw-alias-state-warn-primary);
 }
 
 .gateActions {

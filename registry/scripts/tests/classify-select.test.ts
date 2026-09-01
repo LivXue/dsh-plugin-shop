@@ -32,6 +32,7 @@ function npm(overrides: Partial<Candidate> = {}): Candidate {
     catalog: undefined,
     description: 'An npm plugin.',
     keywords: ['dsh', 'tool'],
+    peers: [],
     ...overrides,
   }
 }

@@ -28,6 +28,7 @@ function snapshot(overrides: Partial<ShopCatalogResult['plugins'][number]> = {})
     }],
     denied: [],
     stars: {},
+    incompatible: {},
   }
 }
 
@@ -819,6 +820,67 @@ describe('ShopTab', () => {
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     expect(screen.queryByLabelText(/stars/)).toBeNull()
   })
+
+  it('badges a catalog entry whose peer the harness does not provide', async () => {
+    const { injected } = bench({
+      ...snapshot({ tier: 'community' }),
+      incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] },
+    })
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(screen.getByText(en.incompatibleBadge)).toBeTruthy()
+    expect(screen.getByText(/@deepseek-ai\/dsh-client-store/)).toBeTruthy()
+  })
+
+  it('warns inside the install gate but still lets the install proceed', async () => {
+    const { injected, install } = bench({
+      ...snapshot({ tier: 'community' }),
+      incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] },
+    })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText(en.install))
+    expect(container.querySelector('[data-shop-incompatible-warning]')).toBeTruthy()
+    // Warn, never block: the confirm button stays live and the install runs.
+    fireEvent.click(container.querySelector('[data-shop-confirm]') as HTMLElement)
+    await waitFor(() => expect(install).toHaveBeenCalled())
+  })
+
+  it('shows no badge when the host reported no incompatibility', async () => {
+    const { injected } = bench({ ...snapshot({ tier: 'community' }), incompatible: {} })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(container.querySelector('[data-shop-incompatible]')).toBeNull()
+  })
+
+  it('badges the installed-list row for an outdated install whose peer the harness does not provide', async () => {
+    const { injected } = bench(
+      { ...snapshot({ tier: 'community' }), incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] } },
+      [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }],
+    )
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText(en.installedSection)).toBeTruthy())
+    expect(container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-incompatible]')).toBeTruthy()
+  })
+
+  it('titles the outdated row badge with the update wording, not the installed-version wording', async () => {
+    // `missingByName` is keyed by the CATALOG (latest) entry, but this row's
+    // installed version is the one that actually works — it is the update
+    // that needs the peer. The badge's title must say so, not accuse the
+    // working installed version of a problem that is really the update's.
+    const { injected } = bench(
+      { ...snapshot({ tier: 'community' }), incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] } },
+      [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }],
+    )
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText(en.installedSection)).toBeTruthy())
+    const badge = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-incompatible]')
+    const updateTitle = en.incompatibleUpdateDetail.replace('{modules}', '@deepseek-ai/dsh-client-store')
+    const installedVersionTitle = en.incompatibleDetail.replace('{modules}', '@deepseek-ai/dsh-client-store')
+    expect(badge?.getAttribute('title')).toBe(updateTitle)
+    // Fails if the key is ever swapped back to incompatibleDetail.
+    expect(badge?.getAttribute('title')).not.toBe(installedVersionTitle)
+  })
 })
 
 describe('ShopTab shop-like filtering', () => {
@@ -837,6 +899,7 @@ describe('ShopTab shop-like filtering', () => {
         },
       ],
       denied: [],
+      incompatible: {},
     }
   }
 
@@ -899,7 +962,7 @@ function manyPlugins(n: number): ShopCatalogResult {
     version: '1.0.0', integrity: null, publishedAt: null,
     repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25',
   })) as ShopCatalogResult['plugins']
-  return { schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', stale: false, plugins, denied: [], stars: {} }
+  return { schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', stale: false, plugins, denied: [], stars: {}, incompatible: {} }
 }
 
 const showingText = (shown: number, total: number): string =>
@@ -953,7 +1016,7 @@ describe('ShopTab incremental rendering', () => {
       ...Array.from({ length: 60 }, (_, i) => ({ name: `dsh-alpha-${String(i).padStart(2, '0')}`, version: '1.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25' })),
       ...Array.from({ length: 60 }, (_, i) => ({ name: `dsh-beta-${String(i).padStart(2, '0')}`, version: '1.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25' })),
     ] as ShopCatalogResult['plugins']
-    const { injected } = bench({ schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', stale: false, plugins, denied: [], stars: {} })
+    const { injected } = bench({ schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', stale: false, plugins, denied: [], stars: {}, incompatible: {} })
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-alpha-00')).toBeTruthy())
 

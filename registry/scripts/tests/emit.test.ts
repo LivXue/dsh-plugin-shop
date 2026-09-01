@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CATALOG_SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION, emit, SCHEMA_VERSION } from '../src/emit.ts'
+import { CATALOG_SCHEMA_VERSION, PEERS_SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION, emit, SCHEMA_VERSION } from '../src/emit.ts'
 import type { Entry } from '../src/types.ts'
 
 function entry(name: string, version = '1.0.0'): Entry {
@@ -291,5 +291,30 @@ describe('assertCatalogInvariants', () => {
     const broken = { ...entry('dsh-a'), added: 'yesterday' }
     expect(() => emit([broken], [], '2026-08-25T00:00:00.000Z'))
       .toThrow(/unparseable added date yesterday/)
+  })
+})
+
+describe('peers and schemaVersion 6', () => {
+  const withPeers: Entry = {
+    ...entry('dsh-peered'),
+    peers: ['@deepseek-ai/dsh-client-store'],
+  }
+
+  it('emits the peers at schemaVersion 6', () => {
+    const artifacts = emit([withPeers], [], '2026-09-01T00:00:00.000Z', null, PEERS_SCHEMA_VERSION)
+    const data = JSON.parse(artifacts.pluginsJson) as { schemaVersion: number; plugins: { peers?: string[] }[] }
+    expect(data.schemaVersion).toBe(6)
+    expect(data.plugins[0]?.peers).toEqual(['@deepseek-ai/dsh-client-store'])
+  })
+
+  it('strips the peers below schemaVersion 6', () => {
+    const artifacts = emit([withPeers], [], '2026-09-01T00:00:00.000Z', null, CATALOG_SCHEMA_VERSION)
+    const data = JSON.parse(artifacts.pluginsJson) as { schemaVersion: number; plugins: Record<string, unknown>[] }
+    expect(data.schemaVersion).toBe(5)
+    // Guards against a DROPPED entry masquerading as a stripped field: an
+    // empty `plugins` array would also make the `'peers' in ...` check below
+    // vacuously false, silently emptying the live v5 catalog for every user.
+    expect(data.plugins).toHaveLength(1)
+    expect(data.plugins[0] !== undefined && 'peers' in data.plugins[0]).toBe(false)
   })
 })

@@ -21,17 +21,21 @@
  *
  * The hot-mount scenarios (market borrowings §4, Task 18) ride the same
  * composition: a local npm registry (tests/fixtures/local-registry.ts) serves
- * the two live fixtures — `dsh-shop-e2e-live` (a plain `- id:` / `name:` patch,
- * the only form the hot tree can mount) and `dsh-shop-e2e-config` (a
- * config-row patch, valid for the bundle layer but not hot-mountable). The
- * profile's .npmrc points at the registry once the profile exists (pnpm, unlike
- * npm, never reads the registry from env vars), so gateway-spawned pnpm
- * resolves those installs locally while the beforeAll `file:` installs keep
- * the real registry. The live install must report done with
- * `needsRestart === false` and the entry must appear in the loader inventory
- * (the strict liveness read — a route-based probe is unavailable, see the
- * fixture's index.js comment); the config install must report done with the
- * localized restart reason and the §8 restart offer instead.
+ * three live fixtures — `dsh-shop-e2e-live` (a plain `- id:` / `name:` patch,
+ * the only form the hot tree can mount), `dsh-shop-e2e-config` (a config-row
+ * patch, valid for the bundle layer but not hot-mountable), and
+ * `dsh-shop-e2e-peer` (the same hot-mountable patch as the live fixture, plus
+ * a `peerDependencies` entry this profile never installs). The profile's
+ * .npmrc points at the registry once the profile exists (pnpm, unlike npm,
+ * never reads the registry from env vars), so gateway-spawned pnpm resolves
+ * those installs locally while the beforeAll `file:` installs keep the real
+ * registry. The live install must report done with `needsRestart === false`
+ * and the entry must appear in the loader inventory (the strict liveness
+ * read — a route-based probe is unavailable, see the fixture's index.js
+ * comment); the config install must report done with the localized restart
+ * reason and the §8 restart offer instead; the peer install proves the
+ * harness-compatibility badge and gate warning render for a genuinely
+ * unresolvable declared peer, and — warn, never block — still reaches done.
  *
  * Skipped unless the machine has both the real `dsh` CLI on PATH and a
  * playwright chromium installed (CI installs both; see .github/workflows).
@@ -50,6 +54,11 @@
  * - shop panel + entry: `[data-shop-tab]`, `[data-shop-entry=<name>]`
  * - install gate: `[data-shop-confirm]`; failure view: 安装失败 + the detail
  *   paragraph; state lines are plain text (no data attributes)
+ * - harness compatibility: `[data-shop-incompatible]` (badge, on both the
+ *   catalog card and the installed row) and `[data-shop-incompatible-warning]`
+ *   (gate warning line) — both render only when the entry has a declared
+ *   peer this host cannot resolve; there is no `[data-shop-install-done]` —
+ *   the done view below is the only terminal signal
  * - install done view: `[data-shop-restart-notice]` (the no-restart copy
  *   when needsRestart is false, the host's reason code localized otherwise) and
  *   the §8 offer `[data-shop-restart]` (only when needsRestart && the host
@@ -106,6 +115,9 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
   const configFixtureDir = fileURLToPath(
     new URL('../fixtures/live-packages/dsh-shop-e2e-config', import.meta.url),
   )
+  const peerFixtureDir = fileURLToPath(
+    new URL('../fixtures/live-packages/dsh-shop-e2e-peer', import.meta.url),
+  )
 
   beforeAll(async () => {
     catalogServer = await startCatalogServer()
@@ -113,7 +125,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
     // .npmrc points at it (written below, once the profile exists), so the
     // gateway's `dsh plugin add <name>@<version>` finds the fixtures locally
     // (and the failed-install name still 404s here, like it does on npm).
-    localRegistry = await startLocalRegistry([liveFixtureDir, configFixtureDir])
+    localRegistry = await startLocalRegistry([liveFixtureDir, configFixtureDir, peerFixtureDir])
     tmpHome = mkdtempSync(join(tmpdir(), 'dsh-home-'))
 
     // The REAL install path: the same executor the gateway runs, spawning
@@ -449,6 +461,52 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await dialog2.getByRole('tab', { name: '插件列表' }).click()
       await dialog2.locator('[data-phase]').first().waitFor({ state: 'visible', timeout: 15_000 })
       expect(await dialog2.locator('[data-plugin-entry="include:typert-gateway:mkt-e2e-config"]').count()).toBe(0)
+    },
+    120_000,
+  )
+
+  it(
+    'badges a plugin whose declared peer this harness does not provide, and still installs on confirm',
+    async () => {
+      expect(page).toBeDefined()
+      const app = page!
+
+      // Close the dialog left open by the previous spec, then reopen on the
+      // shop tab for the peer fixture's card (same reopen sequence as the
+      // previous spec's start: the settings modal was left on 插件列表).
+      const dialog0 = app.getByRole('dialog', { name: '设置' })
+      await dialog0.locator('.VOzbGW_close').click()
+      await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
+      const dialog = app.getByRole('dialog', { name: '设置' })
+      await dialog.waitFor({ state: 'visible', timeout: 10_000 })
+      await dialog.getByRole('button', { name: '插件', exact: true }).click()
+      await dialog.getByRole('tab', { name: '插件商店' }).click()
+      await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
+      const card = dialog.locator('[data-shop-entry="dsh-shop-e2e-peer"]')
+      await card.waitFor({ state: 'visible', timeout: 15_000 })
+
+      // The catalog entry declares peers: ["@deepseek-ai/dsh-client-store"]
+      // (the real module whose absence broke a real user's harness on the
+      // 0.1.1-rc.2 line); this profile never installs it, so the host's
+      // nodeResolver (src/host/peers.ts), anchored at the profile root, finds
+      // it unresolvable and the badge renders — its raw name lands in the
+      // card's visible text via the always-rendered incompatibleDetail line,
+      // not just the badge's title attribute.
+      await card.locator('[data-shop-incompatible]').waitFor({ state: 'visible', timeout: 15_000 })
+      expect(await card.textContent()).toContain('@deepseek-ai/dsh-client-store')
+
+      // Install → the community-tier gate opens and shows the
+      // incompatibility warning alongside the §9.3 acknowledgement.
+      await card.locator('[data-shop-install]').click()
+      await card.locator('[data-shop-confirm]').waitFor({ state: 'visible', timeout: 10_000 })
+      await card.locator('[data-shop-incompatible-warning]').waitFor({ state: 'visible', timeout: 10_000 })
+
+      // Confirm → warn, never block: the real pnpm install only warns on the
+      // unresolvable peer (the profile's autoInstallPeers: false, same as
+      // every real dsh profile) and still reaches its terminal done state —
+      // never the failed or rejected view.
+      await card.locator('[data-shop-confirm]').click()
+      await card.locator('[data-shop-restart-notice]').waitFor({ state: 'visible', timeout: 60_000 })
     },
     120_000,
   )

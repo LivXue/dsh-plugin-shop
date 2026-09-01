@@ -24,6 +24,7 @@ function candidate(overrides: Partial<Candidate> = {}): Candidate {
     catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
     description: 'A friendly hello-world plugin.',
     keywords: [],
+    peers: [],
     ...overrides,
   }
 }

@@ -28,6 +28,13 @@ export function tierKey(tier: CatalogEntry['tier']): ShopLocaleKey {
   }
 }
 
+/** The peers the Host said this installation does not provide, or none when it
+ * said nothing — a plugin that runs here and one the Host could not judge are
+ * both rendered as no warning at all. */
+export function missingPeersOf(incompatible: Record<string, string[]>, name: string): string[] {
+  return incompatible[name] ?? []
+}
+
 /** Spec §9.3 verbatim — the community-tier acknowledgement. The zh dictionary
  * states the same facts in its own register; never soften this wording. */
 export const ACKNOWLEDGEMENT_EN =
