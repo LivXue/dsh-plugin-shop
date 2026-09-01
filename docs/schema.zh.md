@@ -56,3 +56,5 @@
 每次构建都会把目录发布为一个内容寻址的数据文件 `plugins.<sha256>.json`，文件名由文件自身的哈希决定。除了已上架的 `plugins` 数组，它还带一个 `denied` 数组：每个被列入黑名单的包，以及作者可读的封禁原因。Host 在 `shop/installStart` 收到被列入黑名单的包的安装请求时，会查询这个 `denied` 列表来拦截。不属于封禁的拒绝——比如缺少 bundle、`dsh.catalog` 校验失败、包名与已有插件过于相似——只会出现在构建报告里，不会进入发布的数据文件。
 
 每条列表都带 `added`，即它第一次出现在目录中的日期（YYYY-MM-DD）——由 registry 按包名记录，作者无需声明。因构建脚本（`requires-build`）而无法从 git 安装的 GitHub 条目，改为安装预构建的 release tarball：条目带一个可选的 `tarball` 对象（`url` + `sha256`），`version` 是 release 标签，`integrity` 是 tarball 的 sha256。这类条目的 `verified` 审核钉在 `reviewedSha256` 上——被审核 tarball 的内容哈希，而不是标签：标签是可变的引用，可以被删除后以不同内容重建，可信度必须钉在条目实际安装的东西上。`denied` 行可以带 `replacement`，即人工记录的合法替代包名。
+
+npm 条目还带一个 `peers` 字段——插件在 `peerDependencies` 里声明的模块名，从不包含版本范围。读者自己的 dsh 会拿这些名字逐一匹配本机的安装，把解析不到的报告回来，商店据此在有人安装一个自己 harness 跑不起来的插件之前，先打上标记。
