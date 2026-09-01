@@ -784,6 +784,48 @@ describe('ShopTab', () => {
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     expect(screen.queryByLabelText(/stars/)).toBeNull()
   })
+
+  it('badges a catalog entry whose peer the harness does not provide', async () => {
+    const { injected } = bench({
+      ...snapshot({ tier: 'community' }),
+      incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] },
+    })
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(screen.getByText(en.incompatibleBadge)).toBeTruthy()
+    expect(screen.getByText(/@deepseek-ai\/dsh-client-store/)).toBeTruthy()
+  })
+
+  it('warns inside the install gate but still lets the install proceed', async () => {
+    const { injected, install } = bench({
+      ...snapshot({ tier: 'community' }),
+      incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] },
+    })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText(en.install))
+    expect(container.querySelector('[data-shop-incompatible-warning]')).toBeTruthy()
+    // Warn, never block: the confirm button stays live and the install runs.
+    fireEvent.click(container.querySelector('[data-shop-confirm]') as HTMLElement)
+    await waitFor(() => expect(install).toHaveBeenCalled())
+  })
+
+  it('shows no badge when the host reported no incompatibility', async () => {
+    const { injected } = bench({ ...snapshot({ tier: 'community' }), incompatible: {} })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(container.querySelector('[data-shop-incompatible]')).toBeNull()
+  })
+
+  it('badges the installed-list row for an outdated install whose peer the harness does not provide', async () => {
+    const { injected } = bench(
+      { ...snapshot({ tier: 'community' }), incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] } },
+      [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }],
+    )
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText(en.installedSection)).toBeTruthy())
+    expect(container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-incompatible]')).toBeTruthy()
+  })
 })
 
 describe('ShopTab shop-like filtering', () => {

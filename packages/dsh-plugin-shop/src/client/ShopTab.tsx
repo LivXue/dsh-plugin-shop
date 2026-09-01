@@ -7,7 +7,7 @@
 import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
-import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Category, categoryKey, categoryLocaleKey, displayVersion, formatStars, isCustomLicense, isShopLike, nextVisibleCount, rejectionCodeKey, restartReasonKey, reviewHashPin, sortByStars, tierKey } from './present.ts'
+import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Category, categoryKey, categoryLocaleKey, displayVersion, formatStars, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, rejectionCodeKey, restartReasonKey, reviewHashPin, sortByStars, tierKey } from './present.ts'
 import { useInstall } from './useInstall.ts'
 import { useUninstall } from './useUninstall.ts'
 import { useUpdateSelf } from './useUpdateSelf.ts'
@@ -72,10 +72,11 @@ function ChevronIcon({ open }: { open: boolean }): ReactNode {
  * install controls. An installed plugin's card carries its installed row:
  * current → the non-interactive installed label, behind → the update button;
  * uninstalled → the install button. */
-const EntryCard = memo(function EntryCard({ entry, stars, installed, t, install, installStatus, uninstall, restart, restartSupported, setEnabled }: {
+const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, t, install, installStatus, uninstall, restart, restartSupported, setEnabled }: {
   entry: CatalogEntry
   stars: number | undefined
   installed: ShopInstalledEntry | undefined
+  missing: string[]
   t: ShopTabProps['t']
   install: ShopTabInjected['install']
   installStatus: ShopTabInjected['installStatus']
@@ -112,6 +113,11 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, t, install,
           )}
           <span className={css.cardVersion} data-card-version>v{displayVersion(entry)}</span>
           <span className={css.tierBadge} data-tier={entry.tier}>{t(tierKey(entry.tier))}</span>
+          {missing.length > 0 && (
+            <span className={css.incompatibleBadge} data-shop-incompatible title={t('incompatibleDetail', { modules: missing.join(', ') })}>
+              {t('incompatibleBadge')}
+            </span>
+          )}
           {stars !== undefined && (
             // role="img" names the badge for assistive tech (ARIA refuses to
             // name a generic element); the name carries the RAW count — the
@@ -129,6 +135,9 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, t, install,
         )}
         {summary?.zh !== undefined && (
           <p className={open ? `${css.summaryZh} ${css.summaryZhExpanded}` : css.summaryZh}>{summary.zh}</p>
+        )}
+        {missing.length > 0 && (
+          <p className={css.incompatibleDetail}>{t('incompatibleDetail', { modules: missing.join(', ') })}</p>
         )}
         {open && entry.catalog !== undefined && entry.catalog.capabilities.length > 0 && (
           <div className={css.capabilitiesBlock}>
@@ -181,14 +190,14 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, t, install,
        * width below them, where it has room. */}
       <div className={css.cardActions}>
         {installed === undefined ? (
-          <InstallPanel name={entry.name} version={entry.version} tier={entry.tier} t={t} install={install} installStatus={installStatus} restart={restart} restartSupported={restartSupported} />
+          <InstallPanel name={entry.name} version={entry.version} tier={entry.tier} missing={missing} t={t} install={install} installStatus={installStatus} restart={restart} restartSupported={restartSupported} />
         ) : (
           <>
             {installed.outdated ? (
               // The update button drives the same install flow for the
               // catalog's latest version; the community gate still applies
               // (§9.3).
-              <InstallPanel name={entry.name} version={entry.version} tier={entry.tier} variant="update" t={t} install={install} installStatus={installStatus} restart={restart} restartSupported={restartSupported} />
+              <InstallPanel name={entry.name} version={entry.version} tier={entry.tier} variant="update" missing={missing} t={t} install={install} installStatus={installStatus} restart={restart} restartSupported={restartSupported} />
             ) : (
               <p className={css.installedLabel} data-shop-installed>{t('installed')}</p>
             )}
@@ -208,10 +217,11 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, t, install,
  * failure detail, rejection detail — driven by `useInstall`. Shared by the
  * catalog cards (`variant: 'install'`) and the outdated rows' update button
  * (`variant: 'update'`, which drives the same install flow for `name@latest`). */
-function InstallPanel({ name, version, tier, variant = 'install', t, install, installStatus, restart, restartSupported }: {
+function InstallPanel({ name, version, tier, missing, variant = 'install', t, install, installStatus, restart, restartSupported }: {
   name: string
   version: string
   tier: CatalogEntry['tier']
+  missing: string[]
   variant?: 'install' | 'update'
   t: ShopTabProps['t']
   install: ShopTabInjected['install']
@@ -287,6 +297,11 @@ function InstallPanel({ name, version, tier, variant = 'install', t, install, in
       <div className={css.gate}>
         <p className={css.gateTitle}>{t('acknowledgementTitle')}</p>
         <p className={css.gateBody}>{t('acknowledgementBody')}</p>
+        {missing.length > 0 && (
+          <p className={css.gateWarning} data-shop-incompatible-warning>
+            {t('incompatibleInstallWarning', { modules: missing.join(', ') })}
+          </p>
+        )}
         <div className={css.gateActions}>
           <button
             type="button"
@@ -559,10 +574,11 @@ function EnabledSwitch({ row, t, setEnabled }: {
 /** One outdated install row (§7.3): the name, the installed and latest
  * versions, the hot enable/disable switch, and the update button (the
  * install flow for `name@latest`, reusing `InstallPanel`). */
-function OutdatedRow({ row, tier, source, t, setEnabled, install, installStatus, restart, restartSupported }: {
+function OutdatedRow({ row, tier, source, missing, t, setEnabled, install, installStatus, restart, restartSupported }: {
   row: ShopInstalledEntry
   tier: CatalogEntry['tier']
   source: CatalogEntry['source']
+  missing: string[]
   t: ShopTabProps['t']
   setEnabled: ShopTabInjected['setEnabled']
   install: ShopTabInjected['install']
@@ -573,7 +589,14 @@ function OutdatedRow({ row, tier, source, t, setEnabled, install, installStatus,
   return (
     <div className={css.outdatedRow} data-shop-outdated-entry={row.name}>
       <div className={css.outdatedInfo}>
-        <span className={css.name}>{row.name}</span>
+        <span className={css.badges}>
+          <span className={css.name}>{row.name}</span>
+          {missing.length > 0 && (
+            <span className={css.incompatibleBadge} data-shop-incompatible title={t('incompatibleDetail', { modules: missing.join(', ') })}>
+              {t('incompatibleBadge')}
+            </span>
+          )}
+        </span>
         <span className={css.outdatedVersions}>
           <span className={css.outdatedVersion}>{t('installedVersion', { version: source === 'github' ? row.installed.slice(0, 7) : row.installed })}</span>
           <span className={css.outdatedVersion}>{t('latestVersion', { version: row.latest })}</span>
@@ -581,7 +604,7 @@ function OutdatedRow({ row, tier, source, t, setEnabled, install, installStatus,
       </div>
       <div className={css.outdatedActions}>
         <EnabledSwitch row={row} t={t} setEnabled={setEnabled} />
-        <InstallPanel name={row.name} version={row.latest} tier={tier} variant="update" t={t} install={install} installStatus={installStatus} restart={restart} restartSupported={restartSupported} />
+        <InstallPanel name={row.name} version={row.latest} tier={tier} variant="update" missing={missing} t={t} install={install} installStatus={installStatus} restart={restart} restartSupported={restartSupported} />
       </div>
     </div>
   )
@@ -594,10 +617,11 @@ function OutdatedRow({ row, tier, source, t, setEnabled, install, installStatus,
  * tier for the update gate is looked up from the catalog by name (community →
  * acknowledgement); an entry absent from the catalog defaults to the
  * community gate (the safer read). */
-function OutdatedSection({ state, tiers, sources, t, setEnabled, install, installStatus, restart, restartSupported }: {
+function OutdatedSection({ state, tiers, sources, missingByName, t, setEnabled, install, installStatus, restart, restartSupported }: {
   state: InstalledState
   tiers: ReadonlyMap<string, CatalogEntry['tier']>
   sources: ReadonlyMap<string, CatalogEntry['source']>
+  missingByName: ReadonlyMap<string, string[]>
   t: ShopTabProps['t']
   setEnabled: ShopTabInjected['setEnabled']
   install: ShopTabInjected['install']
@@ -621,6 +645,7 @@ function OutdatedSection({ state, tiers, sources, t, setEnabled, install, instal
               row={row}
               tier={tiers.get(row.name) ?? 'community'}
               source={sources.get(row.name) ?? 'npm'}
+              missing={missingByName.get(row.name) ?? []}
               t={t}
               setEnabled={setEnabled}
               install={install}
@@ -850,6 +875,21 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     }
     return map
   }, [catalogState])
+  // Each card's incompatibility badge, looked up once per catalog load
+  // instead of computed inline in the render: missingPeersOf hands back a
+  // fresh `[]` for every package the host did not flag, and doing that in
+  // the JSX below would hand EntryCard's memo a new array on every
+  // unrelated re-render (a keystroke, a poll tick), forcing every visible
+  // card to re-render regardless of whether anything about it changed.
+  const missingByName = useMemo(() => {
+    const map = new Map<string, string[]>()
+    if (catalogState.kind === 'ready') {
+      for (const entry of catalogState.result.plugins) {
+        map.set(entry.name, missingPeersOf(catalogState.result.incompatible, entry.name))
+      }
+    }
+    return map
+  }, [catalogState])
 
   if (catalogState.kind === 'loading') {
     return (
@@ -1025,7 +1065,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
           <ul className={css.cards}>
             {visible.map(entry => (
               <li key={entry.name}>
-                <EntryCard entry={entry} stars={stars[entry.repo ?? entry.name]} installed={installedByName.get(entry.name)} t={t} install={install} installStatus={installStatus} uninstall={uninstall} restart={restart} restartSupported={restartSupported} setEnabled={setEnabled} />
+                <EntryCard entry={entry} stars={stars[entry.repo ?? entry.name]} installed={installedByName.get(entry.name)} missing={missingByName.get(entry.name) ?? []} t={t} install={install} installStatus={installStatus} uninstall={uninstall} restart={restart} restartSupported={restartSupported} setEnabled={setEnabled} />
               </li>
             ))}
             {incremental && visibleCount < filtered.length && (
@@ -1043,6 +1083,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
         state={installedState}
         tiers={tiers}
         sources={sources}
+        missingByName={missingByName}
         t={t}
         setEnabled={setEnabled}
         install={install}
