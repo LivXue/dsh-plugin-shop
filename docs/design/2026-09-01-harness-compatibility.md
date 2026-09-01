@@ -116,11 +116,15 @@ costs more than the misses.
 
 ### schemaVersion 6
 
-`peers` is additive, so the bump follows the established choreography:
-`CATALOG_SCHEMA_VERSION = 6`, emitted only behind `SHOP_CATALOG_V6`, and
+`peers` is additive, so the bump follows the established choreography: a
+new `PEERS_SCHEMA_VERSION = 6`, emitted only behind `SHOP_CATALOG_V6`, and
 that flag flips in the same release commit that ships the client which
 reads it (as `SHOP_HARVEST_REPOS`, `SHOP_HARVEST_SUBPACKAGES` and
-`SHOP_CATALOG_V5` did before it).
+`SHOP_CATALOG_V5` did before it). This is a new constant, not a raise of
+`CATALOG_SCHEMA_VERSION`: `SHOP_CATALOG_V5` already selects
+`CATALOG_SCHEMA_VERSION` in the live daily build, so raising it to 6 would
+publish schemaVersion 6 immediately, to clients that refuse it outright.
+`CATALOG_SCHEMA_VERSION` stays 5.
 
 ## 3. How the verdict is formed
 
