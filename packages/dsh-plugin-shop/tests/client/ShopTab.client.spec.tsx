@@ -826,6 +826,25 @@ describe('ShopTab', () => {
     await waitFor(() => expect(screen.getByText(en.installedSection)).toBeTruthy())
     expect(container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-incompatible]')).toBeTruthy()
   })
+
+  it('titles the outdated row badge with the update wording, not the installed-version wording', async () => {
+    // `missingByName` is keyed by the CATALOG (latest) entry, but this row's
+    // installed version is the one that actually works — it is the update
+    // that needs the peer. The badge's title must say so, not accuse the
+    // working installed version of a problem that is really the update's.
+    const { injected } = bench(
+      { ...snapshot({ tier: 'community' }), incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] } },
+      [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }],
+    )
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText(en.installedSection)).toBeTruthy())
+    const badge = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-incompatible]')
+    const updateTitle = en.incompatibleUpdateDetail.replace('{modules}', '@deepseek-ai/dsh-client-store')
+    const installedVersionTitle = en.incompatibleDetail.replace('{modules}', '@deepseek-ai/dsh-client-store')
+    expect(badge?.getAttribute('title')).toBe(updateTitle)
+    // Fails if the key is ever swapped back to incompatibleDetail.
+    expect(badge?.getAttribute('title')).not.toBe(installedVersionTitle)
+  })
 })
 
 describe('ShopTab shop-like filtering', () => {

@@ -592,7 +592,7 @@ function OutdatedRow({ row, tier, source, missing, t, setEnabled, install, insta
         <span className={css.badges}>
           <span className={css.name}>{row.name}</span>
           {missing.length > 0 && (
-            <span className={css.incompatibleBadge} data-shop-incompatible title={t('incompatibleDetail', { modules: missing.join(', ') })}>
+            <span className={css.incompatibleBadge} data-shop-incompatible title={t('incompatibleUpdateDetail', { modules: missing.join(', ') })}>
               {t('incompatibleBadge')}
             </span>
           )}
