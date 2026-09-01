@@ -10,8 +10,10 @@ import type { CatalogEntry, DeniedEntry } from './types.ts'
  * 3 adds `source` and repo entries (github install channel); 4 adds `subdir`
  * for monorepo-subpackage entries (2026-08-31 hub-borrowings A); 5 adds
  * `added`, `tarball` (release rescue), the `theme` category, and
- * `denied[].replacement` (2026-08-31 market borrowings). */
-export const SUPPORTED_SCHEMA_VERSION = 5
+ * `denied[].replacement` (2026-08-31 market borrowings);
+ * 6 adds `peers`, the package's declared peer dependency names
+ * (2026-09-01 harness compatibility). */
+export const SUPPORTED_SCHEMA_VERSION = 6
 
 /** A cached catalog younger than this is served without touching the network. */
 const FRESH_MS = 5 * 60 * 1000
@@ -62,6 +64,11 @@ const entrySchema = z.object({
   // builds always carry it (registry E9); the client never renders it.
   added: z.string().optional(),
   tarball: z.object({ url: z.string(), sha256: z.string() }).optional(),
+  // v6: the package's declared peer dependency names. OPTIONAL on the
+  // consumer, and this is not a style preference: the live catalog is v5 and
+  // carries no such field, and making `added` required is exactly what made
+  // 0.5.0 refuse the published catalog for every user.
+  peers: z.array(z.string()).optional(),
 })
 
 const dataSchema = z.object({
