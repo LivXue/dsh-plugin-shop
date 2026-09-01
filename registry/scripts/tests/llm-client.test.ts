@@ -21,7 +21,7 @@ describe('classifyPackages', () => {
     const body = JSON.parse(String(calls[0]?.init.body))
     expect(body.model).toBe('deepseek-v4-flash')
     expect(body.temperature).toBe(0)
-    expect(body.max_tokens).toBe(4096)
+    expect(body.max_tokens).toBe(16384)
     expect(result.classified.get('dsh-pkg-0')).toBe('tool')
   })
 
@@ -51,11 +51,72 @@ describe('classifyPackages', () => {
     expect(result.classified.get('dsh-pkg-0')).toBe('tool')
   })
 
-  it('discards with a reason when the whole response is unparseable', async () => {
-    const fetchImpl = (async () => new Response(JSON.stringify({ choices: [{ message: { content: 'no json here' } }] }), { status: 200 })) as unknown as typeof fetch
+  it('names what made a 200 unusable: truncation, with the token budget it hit', async () => {
+    // The 2026-09-01 backfill discarded 1049 names as a bare "unparseable
+    // batch" — one constant string covering truncation, an empty body, and a
+    // fenced array, so the report could not say which. The gateway returns
+    // finish_reason and usage; the discard carries them.
+    const truncated = '[{"name":"dsh-pkg-0","category":"to'
+    const fetchImpl = (async () => new Response(JSON.stringify({
+      choices: [{ message: { content: truncated }, finish_reason: 'length' }],
+      usage: { completion_tokens: 16384 },
+    }), { status: 200 })) as unknown as typeof fetch
     const result = await classifyPackages([item(0)], { ...options, fetchImpl })
     expect(result.classified.size).toBe(0)
-    expect(result.discarded).toContainEqual({ name: 'dsh-pkg-0', reason: 'unparseable batch' })
+    const reason = result.discarded.find(d => d.name === 'dsh-pkg-0')?.reason ?? ''
+    expect(reason).toContain('unparseable batch')
+    expect(reason).toContain('finish_reason=length')
+    expect(reason).toContain('16384 completion tokens')
+    expect(reason).toContain(`content ${truncated.length} chars`)
+    // The head of the content is echoed verbatim, which is how an operator
+    // sees that the JSON simply stops mid-token.
+    expect(reason).toContain('"name":"dsh-pkg-0"')
+  })
+
+  it('distinguishes an empty completion from a garbled one', async () => {
+    // A reasoning model that spends its whole budget reasoning returns no
+    // content at all: the count alone tells the operator which case it is.
+    const fetchImpl = (async () => new Response(JSON.stringify({
+      choices: [{ message: { content: '' }, finish_reason: 'length' }],
+    }), { status: 200 })) as unknown as typeof fetch
+    const result = await classifyPackages([item(0)], { ...options, fetchImpl })
+    const reason = result.discarded.find(d => d.name === 'dsh-pkg-0')?.reason ?? ''
+    expect(reason).toContain('content 0 chars')
+    expect(reason).not.toContain('completion tokens')  // no usage reported
+    expect(reason).not.toMatch(/: "/)                  // nothing to quote
+  })
+
+  it('says finish_reason=? when the gateway reports none', async () => {
+    const fetchImpl = (async () => new Response(JSON.stringify({ choices: [{ message: { content: 'no json here' } }] }), { status: 200 })) as unknown as typeof fetch
+    const result = await classifyPackages([item(0)], { ...options, fetchImpl })
+    const reason = result.discarded.find(d => d.name === 'dsh-pkg-0')?.reason ?? ''
+    expect(reason).toContain('finish_reason=?')
+    expect(reason).toContain('"no json here"')
+  })
+
+  it('keeps the echoed content from disturbing the report table', async () => {
+    // The content quotes package descriptions, which are untrusted npm and
+    // GitHub input, and the reason is rendered into a markdown table.
+    const hostile = 'a | b\nc\r\nd\u0000e'
+    const fetchImpl = (async () => new Response(JSON.stringify({
+      choices: [{ message: { content: hostile }, finish_reason: 'stop' }],
+    }), { status: 200 })) as unknown as typeof fetch
+    const result = await classifyPackages([item(0)], { ...options, fetchImpl })
+    const reason = result.discarded.find(d => d.name === 'dsh-pkg-0')?.reason ?? ''
+    expect(reason).not.toContain('|')
+    expect(reason).not.toMatch(/[\r\n\u0000]/)
+    // Replaced, then collapsed: the echo is one clean line, not the original
+    // spacing with holes punched in it.
+    expect(reason).toContain('a b c d e')
+  })
+
+  it('adopts a fenced array instead of discarding the batch', async () => {
+    const fetchImpl = (async () => new Response(JSON.stringify({
+      choices: [{ message: { content: '```json\n[{"name":"dsh-pkg-0","category":"ui"}]\n```' }, finish_reason: 'stop' }],
+    }), { status: 200 })) as unknown as typeof fetch
+    const result = await classifyPackages([item(0)], { ...options, fetchImpl })
+    expect(result.classified.get('dsh-pkg-0')).toBe('ui')
+    expect(result.discarded).toEqual([])
   })
 
   it('gives up after bounded retries with the last status', async () => {

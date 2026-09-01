@@ -91,9 +91,25 @@ Prompt contract (system message):
 - output as a **strict JSON array** `[{"name": "...", "category": "..."}]`
   with names echoed back verbatim, nothing outside the JSON
 
-Parameters: `temperature 0`, `max_tokens 4096`, **20 packages per call**.
+Parameters: `temperature 0`, `max_tokens 16384`, **20 packages per call**.
 Batching is load-bearing: the model spends ~171 tokens on reasoning regardless
 of batch size, so 20 per call divides that cost by 20 (probe evidence, D3).
+
+*(amended 2026-09-01)* The budget was 4096 and that lost whole batches. The
+2026-09-01 backfill asked about 2724 names and discarded **1049** — every one
+of them as `unparseable batch`, with the gateway answering 200 every time and
+not a single 429, 5xx, or transport failure. The discards fall in contiguous
+blocks of exactly `CLASSIFY_BATCH_SIZE`, and description length and CJK share
+are identical between the batches that survived and the ones that did not
+(mean 114 vs 115 chars, 42% vs 42% with any CJK) — so the cause is not input
+size and not hard data. On a reasoning model the budget covers reasoning as
+well as output (D3) and reasoning length does not follow input length, so a
+batch truncates or comes back empty at random. `max_tokens` is now 16384.
+
+The parser also **unwraps one surrounding markdown code fence** before
+`JSON.parse`. The prompt asks for bare JSON, but `JSON.parse` is all-or-nothing
+— a fence discards 20 otherwise-good rows, and a fence is not the model
+disagreeing about the answer.
 
 ## 4. Where it runs
 
@@ -162,6 +178,17 @@ that manual edit is the correction path, mirroring `verified.yml`/`denied.yml`.
 Every discarded classification is recorded in the classification report (`dist/v1/classification-report.md`, uploaded as an artifact alongside the build report) with a reason —
 nothing disappears without one, per the standing rule.
 
+*(amended 2026-09-01)* A reason must **separate the cases it covers**. `unparseable
+batch` was one constant string standing for a truncated array, an empty
+completion, and a body that was not the OpenAI shape at all, so 1049 discards
+in one run said nothing about any of them and the cause had to be inferred
+from the geometry of which names were lost. The reason now carries the
+gateway's `finish_reason`, `usage.completion_tokens` when reported, the
+content length, and a capped echo of its head. That echo quotes package
+descriptions — untrusted npm and GitHub input — into a markdown table, so
+control characters and `|` are replaced and the echo is capped at 80
+characters.
+
 ## 6. Determinism
 
 The categories file is a **build input**, not a build-time random step. The LLM
@@ -185,6 +212,11 @@ does not churn, and the sort-before-emit invariant extends to the file itself.
   category; unexpected name; non-JSON; empty output — all fixtures, no network.
 - `llm-client`: mocked fetch — Bearer header present, batch splitting (25 names
   → two calls of 20 and 5), 429 backoff honors Retry-After and gives up loudly.
+- *(added 2026-09-01)* The unusable-200 reason: truncation reports
+  `finish_reason` and the token count it hit; an empty completion is
+  distinguishable from a garbled one; a gateway reporting no `finish_reason`
+  reads `?`; content carrying `|`, newlines, or NUL cannot disturb the report
+  table; a fenced array is adopted rather than discarded.
 - Loader: duplicate name throws; unknown category throws; missing file is empty.
 - *(added 2026-09-01, D5)* `selectPending`: an unclassified npm listing carries
   its keywords and a repo listing carries none; an already-classified repo name
