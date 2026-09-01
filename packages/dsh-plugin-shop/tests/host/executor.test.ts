@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync, chmodSync, readFileSync } from '
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { startInstall, startUninstall, type InstallStatus } from '../../src/host/executor.ts'
+import type { HotRestartReason } from '../../src/host/hot.ts'
 
 // A fixture `dsh` that records its full argv in a marker file and exits with
 // the requested code, proving the executor passes --profile and the pinned
@@ -222,7 +223,7 @@ describe('startInstall afterDone seam', () => {
     const status = await running.finished
     expect(status.state).toBe('done')
     expect(status.needsRestart).toBe(true)
-    expect(status.restartReason).toContain('restart required')
+    expect(status.restartReason).toBe('mount-failed')
   })
 })
 
@@ -252,20 +253,20 @@ describe('startUninstall', () => {
 
   it('passes afterDone through: withholds done and takes its needsRestart and restartReason', async () => {
     const bin = fixtureDsh(0)
-    let settle: (v: { needsRestart: boolean; restartReason?: string }) => void
+    let settle: (v: { needsRestart: boolean; restartReason?: HotRestartReason }) => void
     let afterDoneCalls = 0
     const afterDone = () => {
       afterDoneCalls += 1
-      return new Promise<{ needsRestart: boolean; restartReason?: string }>(resolve => { settle = resolve })
+      return new Promise<{ needsRestart: boolean; restartReason?: HotRestartReason }>(resolve => { settle = resolve })
     }
     const running = startUninstall({ profile: 'web', name: 'dsh-hello-plugin', dshBin: bin, afterDone })
     await vi.waitFor(() => expect(afterDoneCalls).toBe(1))
     expect(running.status().state).toBe('running')
-    settle!({ needsRestart: false, restartReason: 'hot-mounted live' })
+    settle!({ needsRestart: false, restartReason: 'mount-failed' })
     const status = await running.finished
     expect(status.state).toBe('done')
     expect(status.needsRestart).toBe(false)
-    expect(status.restartReason).toBe('hot-mounted live')
+    expect(status.restartReason).toBe('mount-failed')
   })
 
   it('reports failed with the recovery hint when pnpm fails', async () => {
