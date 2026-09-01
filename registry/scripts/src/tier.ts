@@ -41,6 +41,7 @@ export function assignTier(accepted: Accepted, config: RegistryConfig): Entry {
     catalog: accepted.catalog,
     source: 'npm' as const,
     added: firstSeenOf(config, candidate.name),
+    ...(candidate.peers.length > 0 ? { peers: candidate.peers } : {}),
   }
   // A review whose only pin is a commit belongs to a repo entry of the same
   // bundle name, not to this npm candidate.

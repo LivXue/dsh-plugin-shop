@@ -131,6 +131,19 @@ describe('assignTier', () => {
     expect(() => assignTier(accepted('dsh-unseen', '1.0.0'), config))
       .toThrow('first-seen.yml: dsh-unseen has no first-seen row')
   })
+
+  it('carries the candidate peer names onto the entry', () => {
+    const input = accepted('dsh-other-plugin', '1.0.0')
+    input.candidate.peers = ['@deepseek-ai/cordis', '@deepseek-ai/dsh-client-store']
+    expect(assignTier(input, config).peers).toEqual(['@deepseek-ai/cordis', '@deepseek-ai/dsh-client-store'])
+  })
+
+  it('omits the field entirely when the package declares no peers', () => {
+    const entry = assignTier(accepted('dsh-other-plugin', '1.0.0'), config)
+    // Absent, not []: an empty array on every peerless entry is bytes that
+    // carry no fact, on a file served to every reader.
+    expect('peers' in entry).toBe(false)
+  })
 })
 
 describe('assignRepoTier', () => {

@@ -10,7 +10,8 @@
     "hasBundle": true,
     "catalog": { "category": "tool", "summary": { "en": "Says hello", "zh": "打招呼" }, "capabilities": [] },
     "description": "A hello-world dsh plugin.",
-    "keywords": []
+    "keywords": [],
+    "peers": []
   },
   {
     "name": "dsh-fs-tool",
@@ -23,7 +24,8 @@
     "hasBundle": true,
     "catalog": { "category": "tool", "summary": { "en": "Files", "zh": "文件" }, "capabilities": ["fs"] },
     "description": "Filesystem tools.",
-    "keywords": []
+    "keywords": [],
+    "peers": []
   },
   {
     "name": "dsh-lib-only",
@@ -36,7 +38,8 @@
     "hasBundle": false,
     "catalog": null,
     "description": "A plain library, not a plugin.",
-    "keywords": []
+    "keywords": [],
+    "peers": []
   },
   {
     "name": "dsh-no-license",
@@ -49,7 +52,8 @@
     "hasBundle": true,
     "catalog": { "category": "tool", "summary": { "en": "x", "zh": "y" }, "capabilities": [] },
     "description": "x",
-    "keywords": []
+    "keywords": [],
+    "peers": []
   },
   {
     "name": "dsh-fs-too1",
@@ -62,7 +66,8 @@
     "hasBundle": true,
     "catalog": { "category": "tool", "summary": { "en": "Files", "zh": "文件" }, "capabilities": ["fs"] },
     "description": "Files.",
-    "keywords": []
+    "keywords": [],
+    "peers": []
   },
   {
     "name": "dsh-derived-plugin",
@@ -75,7 +80,8 @@
     "hasBundle": true,
     "catalog": null,
     "description": "A plugin listed from npm metadata, with no dsh.catalog section.",
-    "keywords": []
+    "keywords": [],
+    "peers": []
   },
   {
     "name": "dsh-no-summary",
@@ -88,6 +94,7 @@
     "hasBundle": true,
     "catalog": null,
     "description": null,
-    "keywords": []
+    "keywords": [],
+    "peers": []
   }
 ]

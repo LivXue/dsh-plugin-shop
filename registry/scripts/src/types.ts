@@ -174,4 +174,12 @@ export interface Entry {
   tarball?: { url: string; sha256: string }
   /** The date this entry first appeared in the catalog (YYYY-MM-DD). */
   added: string
+  /**
+   * The package's declared peer dependency names, present exactly when it
+   * declares any. The Host resolves them against the running installation to
+   * tell the reader whether the plugin can run there; the catalog records the
+   * requirement, never a verdict, because compatibility depends on who is
+   * reading. Emitted only at schemaVersion 6 and above.
+   */
+  peers?: string[]
 }
