@@ -60,7 +60,11 @@ const FILL_IS_THE_ONLY_AFFORDANCE = [
 function definedClasses(text: string): Set<string> {
   const out = new Set<string>()
   for (const [, prelude] of text.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{/g)) {
-    for (const [, name] of (prelude ?? '').matchAll(/\.([A-Za-z_][\w-]*)/g)) out.add(name)
+    for (const [, name] of (prelude ?? '').matchAll(/\.([A-Za-z_][\w-]*)/g)) {
+      // noUncheckedIndexedAccess: a capture group is string | undefined, and
+      // the guard keeps it honest rather than asserting the group away.
+      if (name !== undefined) out.add(name)
+    }
   }
   return out
 }
