@@ -237,6 +237,20 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await card.waitFor({ state: 'visible', timeout: 15_000 })
       expect(await card.textContent()).toContain('社区')
 
+      // The expanded detail's npm row, in a real browser: the link to the
+      // package's own npm page, and beside it the account the catalog names.
+      // The shop asserts nothing about who is genuine — these are the two
+      // facts a person compares when two listings look alike.
+      await card.locator('button[aria-expanded]').click()
+      const npmRow = card.locator('[data-shop-npm]')
+      await npmRow.waitFor({ state: 'visible', timeout: 10_000 })
+      expect(await npmRow.locator('a').getAttribute('href'))
+        .toBe('https://www.npmjs.com/package/dsh-e2e-fixture-plugin')
+      expect(await npmRow.locator('[data-shop-publisher]').textContent()).toContain('octocat')
+      // Collapse again so the install flow below starts from the same state
+      // the rest of this walk-through assumes.
+      await card.locator('button[aria-expanded]').click()
+
       // The starred fixture renders its badge through the real wire → host →
       // client path.
       await dialog.getByText('★ 4.3k').waitFor({ state: 'visible', timeout: 15_000 })

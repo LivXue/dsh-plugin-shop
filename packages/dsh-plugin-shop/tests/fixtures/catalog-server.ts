@@ -45,6 +45,10 @@ const FIXTURE_ENTRIES = [
     tier: 'community',
     metadata: 'derived',
     added: '2026-08-25',
+    // The npm publishing account, so the expanded detail's npm row is proven
+    // in a real browser and not only in jsdom. The other two entries carry
+    // none, which is also the live catalog's state until the next daily build.
+    publisher: 'octocat',
   },
   {
     name: 'dsh-shop-e2e-live',
