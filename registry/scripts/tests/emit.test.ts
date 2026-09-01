@@ -287,6 +287,10 @@ describe('peers and schemaVersion 6', () => {
     const artifacts = emit([withPeers], [], '2026-09-01T00:00:00.000Z', null, CATALOG_SCHEMA_VERSION)
     const data = JSON.parse(artifacts.pluginsJson) as { schemaVersion: number; plugins: Record<string, unknown>[] }
     expect(data.schemaVersion).toBe(5)
+    // Guards against a DROPPED entry masquerading as a stripped field: an
+    // empty `plugins` array would also make the `'peers' in ...` check below
+    // vacuously false, silently emptying the live v5 catalog for every user.
+    expect(data.plugins).toHaveLength(1)
     expect(data.plugins[0] !== undefined && 'peers' in data.plugins[0]).toBe(false)
   })
 })
