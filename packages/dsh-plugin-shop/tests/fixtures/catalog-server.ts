@@ -86,7 +86,7 @@ const FIXTURE_ENTRIES = [
 ] as const
 
 export async function startCatalogServer(): Promise<CatalogServer> {
-  const data = JSON.stringify({ schemaVersion: 2, plugins: FIXTURE_ENTRIES, denied: [] })
+  const data = JSON.stringify({ schemaVersion: 6, plugins: FIXTURE_ENTRIES, denied: [] })
   const sha256 = createHash('sha256').update(data).digest('hex')
   const dataName = `plugins.${sha256}.json`
   const stars = JSON.stringify({
@@ -99,7 +99,7 @@ export async function startCatalogServer(): Promise<CatalogServer> {
   const starsSha = createHash('sha256').update(stars).digest('hex')
   const starsName = `stars.${starsSha}.json`
   const pointer = JSON.stringify({
-    schemaVersion: 2,
+    schemaVersion: 6,
     builtAt: new Date().toISOString(),
     count: FIXTURE_ENTRIES.length,
     plugins: { url: dataName, sha256 },
