@@ -2177,6 +2177,10 @@
   category: workflow
 - name: "dsh-agent-sticky-note"
   category: ui
+- name: "dsh-agent-toolkit"
+  category: tool
+- name: "dsh-agent-voice"
+  category: tool
 - name: "dsh-agentdebugx"
   category: tool
 - name: "dsh-agentmail"
@@ -2995,6 +2999,8 @@
   category: ui
 - name: "dsh-deep-sleep"
   category: ui
+- name: "dsh-deepcanary"
+  category: tool
 - name: "dsh-deeppilot"
   category: integration
 - name: "dsh-deepread"
@@ -4060,6 +4066,8 @@
 - name: "dsh-model-capability"
   category: ui
 - name: "dsh-model-collapse"
+  category: ui
+- name: "dsh-model-context-catalog"
   category: ui
 - name: "dsh-model-controller"
   category: tool
@@ -5187,6 +5195,8 @@
   category: tool
 - name: "dsh-ros2-safety"
   category: tool
+- name: "dsh-ros2-state"
+  category: tool
 - name: "dsh-ros2-vision"
   category: tool
 - name: "dsh-round-inject"
@@ -5559,6 +5569,8 @@
   category: tool
 - name: "dsh-sop-agent-teams"
   category: workflow
+- name: "dsh-soul"
+  category: ui
 - name: "dsh-soul-md"
   category: tool
 - name: "dsh-sound-lab"
