@@ -333,6 +333,30 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await card2.waitFor({ state: 'visible', timeout: 15_000 })
       await card2.locator('[data-shop-uninstall]').waitFor({ state: 'visible', timeout: 15_000 })
 
+      // Toggle: the REAL pluginInventory returns a snapshot object, not a
+      // bare array — a click that fails here means the host misread the
+      // service shape again (the 0.5.2 regression pin).
+      const toggle = card2.locator('[data-shop-toggle]')
+      await toggle.waitFor({ state: 'visible', timeout: 15_000 })
+      const ariaBefore = await toggle.getAttribute('aria-checked')
+      await toggle.click()
+      let ariaAfter: string | null = ariaBefore
+      for (let i = 0; i < 40 && ariaAfter === ariaBefore; i++) {
+        await app.waitForTimeout(250)
+        ariaAfter = await toggle.getAttribute('aria-checked')
+      }
+      expect(ariaAfter).not.toBe(ariaBefore)
+      expect(readFileSync(join(tmpHome, 'profiles', 'web', 'cordis.patch.yml'), 'utf8')).toContain('mkt-e2e-live')
+      // Re-enable so the uninstall below starts from the enabled state.
+      await toggle.click()
+      let ariaRestored: string | null = null
+      for (let i = 0; i < 40; i++) {
+        ariaRestored = await toggle.getAttribute('aria-checked')
+        if (ariaRestored === ariaBefore) break
+        await app.waitForTimeout(250)
+      }
+      expect(ariaRestored).toBe(ariaBefore)
+
       // Uninstall: no gate, the poll runs to done, and needsRestart === false
       // — the live-uninstall notice, no restart offer.
       await card2.locator('[data-shop-uninstall]').click()

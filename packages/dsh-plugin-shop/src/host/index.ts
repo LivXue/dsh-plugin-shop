@@ -56,8 +56,13 @@ export interface ShopGatewayOptions {
   profile?: string
   /** The profile directory the user layer lives in; discovered when omitted. */
   profileDir?: string
-  /** The Loader plugin inventory; read from `ctx` when omitted. */
-  inventory?: { list(): InventoryEntry[] }
+  /** The Loader plugin inventory; read from `ctx` when omitted. The REAL
+   * host-side service returns the bare snapshot OBJECT `{ entries: [...] }`,
+   * not a bare array and not a wire envelope (hub-borrowings B assumed the
+   * array and the toggle crashed on the real shape — 0.5.2 fix; the envelope
+   * exists only on the remote's client side). Both shapes normalize in
+   * `listInventory()`. */
+  inventory?: { list(): Promise<{ entries: InventoryEntry[] } | InventoryEntry[]> }
   /** Test-only injection: the hot-mount functions; production uses the real
    * hotMount/hotUnmount. */
   hot?: { mount: typeof hotMount; unmount: typeof hotUnmount }
@@ -349,13 +354,29 @@ export class ShopGateway extends TypertRemoteService {
     return discoverProfile(fileURLToPath(import.meta.url), this.bootBaseDir()).dir
   }
 
-  private listInventory(): InventoryEntry[] {
-    if (this.inventory !== undefined) return this.inventory.list()
-    const inventory = (this.ctx as { get?: (name: string) => unknown }).get?.('pluginInventory') as
-      | { list(): InventoryEntry[] }
+  /** The inventory, through the wire remote: an envelope `{ ok, value }` or
+   * `{ ok: false, error }`. Each row is re-validated before trust (same
+   * discipline as the rowConfig cast). */
+  private async listInventory(): Promise<InventoryEntry[]> {
+    const remote = this.inventory ?? (this.ctx as { get?: (name: string) => unknown }).get?.('pluginInventory') as
+      | { list(): Promise<unknown> }
       | undefined
-    if (inventory === undefined) throw new Error('dsh-plugin-shop: pluginInventory service is not mounted')
-    return inventory.list()
+    if (remote === undefined) throw new Error('dsh-plugin-shop: pluginInventory service is not mounted')
+    const result = await remote.list()
+    // The host-side service returns the BARE snapshot `{ entries: [...] }` —
+    // no wire envelope (that exists only on the remote's client side).
+    const list = Array.isArray(result) ? result : (result as { entries?: unknown }).entries
+    if (!Array.isArray(list)) return []
+    const entries: InventoryEntry[] = []
+    for (const item of list) {
+      if (item !== null && typeof item === 'object'
+        && typeof (item as { entryId?: unknown }).entryId === 'string'
+        && typeof (item as { moduleName?: unknown }).moduleName === 'string'
+        && typeof (item as { enabled?: unknown }).enabled === 'boolean') {
+        entries.push(item as InventoryEntry)
+      }
+    }
+    return entries
   }
 
   /** The Loader's boot-layer entries; a harness without the loader answers
@@ -397,11 +418,11 @@ export class ShopGateway extends TypertRemoteService {
    * own row and the framework's bundles are never toggleable: disabling the
    * host chain would break HMR itself. */
   @Remote('setEnabled')
-  setEnabled(args: { name: string; enabled: boolean }): ShopSetEnabledResult {
+  async setEnabled(args: { name: string; enabled: boolean }): Promise<ShopSetEnabledResult> {
     if (args.name === 'dsh-plugin-shop' || args.name.startsWith('@deepseek-ai/')) {
       return { ok: false, detail: `dsh-plugin-shop: ${args.name} is part of the harness chain and cannot be toggled from the shop` }
     }
-    const entry = this.listInventory().find(entry => entry.moduleName === args.name)
+    const entry = (await this.listInventory()).find(entry => entry.moduleName === args.name)
     if (entry === undefined) return { ok: false, detail: `dsh-plugin-shop: ${args.name} is not installed` }
     setUserLayerRow({ profileDir: this.profileDirResolved(), row: { id: entry.entryId, disabled: !args.enabled } })
     return { ok: true }
@@ -609,7 +630,7 @@ export class ShopGateway extends TypertRemoteService {
     // optimistic assumption the pre-inventory client made.
     let byName = new Map<string, boolean>()
     try {
-      byName = new Map(this.listInventory().map(entry => [entry.moduleName, entry.enabled]))
+      byName = new Map((await this.listInventory()).map(entry => [entry.moduleName, entry.enabled]))
     } catch {
       // pluginInventory is not mounted; `enabled` stays the default below.
     }

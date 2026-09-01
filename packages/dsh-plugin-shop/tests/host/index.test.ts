@@ -40,7 +40,7 @@ describe('ShopGateway', () => {
     expect(gateway.typertRemote.namespace).toBe('shop')
   })
 
-  it('discovers the profile from the boot baseUrl when the module is not under a profile', () => {
+  it('discovers the profile from the boot baseUrl when the module is not under a profile', async () => {
     // Regression for `link:` installs: pnpm keeps the package at its source,
     // so the walk-up from import.meta.url finds the repo, not a profile. The
     // boot's ctx.baseUrl — the profile's cordis.yml directory — is the
@@ -61,11 +61,36 @@ describe('ShopGateway', () => {
     const gateway = new ShopGateway(ctx)
     expect(gateway.name).toBe('shop')
     const inventory = [{ entryId: 'third-party-row', moduleName: 'dsh-third-party', enabled: true }]
-    const withInventory = new ShopGateway(ctx, { inventory: { list: () => inventory } })
-    const result = withInventory.setEnabled({ name: 'dsh-third-party', enabled: false })
+    const withInventory = new ShopGateway(ctx, { inventory: { list: async () => ({ entries: inventory }) } })
+    const result = await withInventory.setEnabled({ name: 'dsh-third-party', enabled: false })
     expect(result.ok).toBe(true)
     expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toContain('third-party-row')
   })
+
+  it('toggles with the REAL snapshot-shaped inventory ({ entries: [...] })', async () => {
+    // The real pluginInventory service returns a snapshot object, not a bare
+    // array — hub-borrowings B assumed the array, and the toggle crashed on
+    // the real wire shape (0.5.1 regression fix). Pin the real shape here.
+    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-toggle-snapshot-'))
+    const gateway = new ShopGateway(stubCtx(), {
+      profile: 'web', profileDir,
+      inventory: { list: async () => ({ entries: [{ entryId: 'snapshot-row', moduleName: 'dsh-hello-fixture', enabled: true }] }) },
+    })
+    const result = await gateway.setEnabled({ name: 'dsh-hello-fixture', enabled: false })
+    expect(result.ok).toBe(true)
+    expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toContain('snapshot-row')
+  })
+
+  it('drops malformed inventory rows instead of crashing', async () => {
+    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-toggle-malformed-'))
+    const gateway = new ShopGateway(stubCtx(), {
+      profile: 'web', profileDir,
+      inventory: { list: async () => ({ entries: [{ entryId: 'good-row', moduleName: 'dsh-hello-fixture', enabled: true }, { nope: true }] }) },
+    })
+    const result = await gateway.setEnabled({ name: 'dsh-hello-fixture', enabled: false })
+    expect(result.ok).toBe(true)
+  })
+
 })
 
 describe('ShopGateway.catalog', () => {
@@ -319,7 +344,7 @@ describe('ShopGateway.setEnabled', () => {
     const profileDir = mkdtempSync(join(tmpdir(), 'dsh-shop-'))
     writeFileSync(join(profileDir, 'cordis.yml'), '[]\n')
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
-    const gateway = new ShopGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: () => [{ entryId: 'hello-row', moduleName: 'dsh-hello-fixture', enabled: true }] } })
+    const gateway = new ShopGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: async () => ({ entries: [{ entryId: 'hello-row', moduleName: 'dsh-hello-fixture', enabled: true }] }) } })
     const result = await gateway.setEnabled({ name: 'dsh-hello-fixture', enabled: false })
     expect(result.ok).toBe(true)
     expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toContain('hello-row')
@@ -330,7 +355,7 @@ describe('ShopGateway.setEnabled', () => {
     writeFileSync(join(profileDir, 'cordis.yml'), '[]\n')
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
     writeFileSync(join(profileDir, 'cordis.patch.yml'), '- id: hello-row\n  disabled: true\n')
-    const gateway = new ShopGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: () => [{ entryId: 'hello-row', moduleName: 'dsh-hello-fixture', enabled: false }] } })
+    const gateway = new ShopGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: async () => ({ entries: [{ entryId: 'hello-row', moduleName: 'dsh-hello-fixture', enabled: false }] }) } })
     const result = await gateway.setEnabled({ name: 'dsh-hello-fixture', enabled: true })
     expect(result.ok).toBe(true)
     expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).not.toContain('hello-row')
@@ -342,10 +367,10 @@ describe('ShopGateway.setEnabled', () => {
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
     const gateway = new ShopGateway(stubCtx(), {
       profile: 'web', profileDir,
-      inventory: { list: () => [
+      inventory: { list: async () => ({ entries: [
         { entryId: 'shop-row', moduleName: 'dsh-plugin-shop', enabled: true },
         { entryId: 'frame-row', moduleName: '@deepseek-ai/dsh-app-boot', enabled: true },
-      ] },
+      ] }) },
     })
     const own = await gateway.setEnabled({ name: 'dsh-plugin-shop', enabled: false })
     expect(own).toEqual({ ok: false, detail: 'dsh-plugin-shop: dsh-plugin-shop is part of the harness chain and cannot be toggled from the shop' })
@@ -358,7 +383,7 @@ describe('ShopGateway.setEnabled', () => {
     const profileDir = mkdtempSync(join(tmpdir(), 'dsh-shop-'))
     writeFileSync(join(profileDir, 'cordis.yml'), '[]\n')
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
-    const gateway = new ShopGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: () => [] } })
+    const gateway = new ShopGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: async () => ({ entries: [] }) } })
     const result = await gateway.setEnabled({ name: 'dsh-not-here', enabled: false })
     expect(result).toEqual({ ok: false, detail: 'dsh-plugin-shop: dsh-not-here is not installed' })
     expect(existsSync(join(profileDir, 'cordis.patch.yml'))).toBe(false)
@@ -386,7 +411,7 @@ describe('ShopGateway.installed', () => {
     const gateway = new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
       loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [], stars: {} }, stale: false }) as CatalogResult,
-      inventory: { list: () => [{ entryId: 'one-row', moduleName: 'dsh-one', enabled: false }] },
+      inventory: { list: async () => ({ entries: [{ entryId: 'one-row', moduleName: 'dsh-one', enabled: false }] }) },
     })
     await gateway.catalog({})
     expect(await gateway.installed()).toEqual([{ name: 'dsh-one', installed: '^1.0.0', latest: '2.0.0', outdated: true, enabled: false }])
