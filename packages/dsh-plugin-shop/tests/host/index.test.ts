@@ -689,7 +689,10 @@ describe('ShopGateway.version', () => {
   it('reports the running version, the latest, and the outdated verdict', async () => {
     const gateway = versionGateway('9.9.9')
     const result = await gateway.version()
-    expect(result.installed).toMatch(/^\d+\.\d+\.\d+$/)
+    // The prerelease suffix is part of the shape now: a beta build reports
+    // its own `X.Y.Z-beta.N`, and semver orders that below the release it
+    // precedes, which is what makes the beta channel's update prompt correct.
+    expect(result.installed).toMatch(/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/)
     expect(result.latest).toBe('9.9.9')
     expect(result.outdated).toBe(true)
   })
