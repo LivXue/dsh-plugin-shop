@@ -187,6 +187,7 @@ export function toCandidate(packument: unknown): Candidate | null {
       deprecated?: unknown
       description?: unknown
       keywords?: unknown
+      peerDependencies?: unknown
       dsh?: { bundle?: unknown; catalog?: unknown }
     }>
   }
@@ -209,6 +210,9 @@ export function toCandidate(packument: unknown): Candidate | null {
     description: typeof manifest.description === 'string' ? manifest.description : null,
     keywords: Array.isArray(manifest.keywords)
       ? manifest.keywords.filter((k): k is string => typeof k === 'string')
+      : [],
+    peers: manifest.peerDependencies !== null && typeof manifest.peerDependencies === 'object'
+      ? Object.keys(manifest.peerDependencies)
       : [],
   }
 }

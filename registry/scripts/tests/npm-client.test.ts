@@ -104,6 +104,42 @@ describe('toCandidate', () => {
     const candidate = toCandidate(doc)
     expect(candidate?.keywords).toEqual(['ok', 'also-ok'])
   })
+
+  it('keeps the names of the peer dependencies, dropping the ranges', () => {
+    // Shape copied from dsh-timeline@0.1.4, the package whose peer on
+    // @deepseek-ai/dsh-client-store broke a user's harness: every range there
+    // is "*", which is why ranges are not recorded.
+    const withPeers = {
+      ...packument,
+      versions: {
+        '1.2.0': {
+          ...packument.versions['1.2.0'],
+          peerDependencies: {
+            '@deepseek-ai/cordis': '*',
+            '@deepseek-ai/dsh-client-store': '*',
+            react: '^18.2.0',
+          },
+        },
+      },
+    }
+    expect(toCandidate(withPeers)?.peers).toEqual([
+      '@deepseek-ai/cordis',
+      '@deepseek-ai/dsh-client-store',
+      'react',
+    ])
+  })
+
+  it('reads no peers when the manifest declares none', () => {
+    expect(toCandidate(packument)?.peers).toEqual([])
+  })
+
+  it('reads no peers when peerDependencies is not an object', () => {
+    const hostile = {
+      ...packument,
+      versions: { '1.2.0': { ...packument.versions['1.2.0'], peerDependencies: 'everything' } },
+    }
+    expect(toCandidate(hostile)?.peers).toEqual([])
+  })
 })
 
 describe('searchByKeywords', () => {

@@ -14,6 +14,7 @@ const npm = (name: string, repository: string | null): Candidate => ({
   catalog: null,
   description: null,
   keywords: [],
+  peers: [],
 })
 
 const repo = (repo: string): RepoCandidate => ({

@@ -31,6 +31,15 @@ export interface Candidate {
   description: string | null
   /** npm manifest `keywords`, strings only, `[]` when absent. Classify input. */
   keywords: string[]
+  /**
+   * The names of the package's `peerDependencies`, without ranges. A peer is
+   * what the environment must already provide, so an unresolvable one means
+   * the plugin cannot run on this harness — the failure that broke a user on
+   * 2026-09-01. Ranges are deliberately dropped: nearly every dsh plugin
+   * declares `"*"`, and the harness's own prerelease versions do not satisfy
+   * ordinary ranges, so checking them would accuse working plugins.
+   */
+  peers: string[]
 }
 
 /**
