@@ -140,6 +140,19 @@ describe('toCandidate', () => {
     }
     expect(toCandidate(hostile)?.peers).toEqual([])
   })
+
+  it('reads no peers when peerDependencies is an array, not a plain object', () => {
+    // Object.keys on an array yields index strings ('0', '1', ...) rather than
+    // throwing, so without this guard those indices would be recorded as peer
+    // names and later reported to a user as peers the harness does not provide
+    // — a false accusation manufactured from hostile input. An array is refused
+    // outright rather than read.
+    const hostileArray = {
+      ...packument,
+      versions: { '1.2.0': { ...packument.versions['1.2.0'], peerDependencies: ['react', 'vue'] } },
+    }
+    expect(toCandidate(hostileArray)?.peers).toEqual([])
+  })
 })
 
 describe('searchByKeywords', () => {

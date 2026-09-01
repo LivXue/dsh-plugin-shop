@@ -211,7 +211,7 @@ export function toCandidate(packument: unknown): Candidate | null {
     keywords: Array.isArray(manifest.keywords)
       ? manifest.keywords.filter((k): k is string => typeof k === 'string')
       : [],
-    peers: manifest.peerDependencies !== null && typeof manifest.peerDependencies === 'object'
+    peers: manifest.peerDependencies !== null && typeof manifest.peerDependencies === 'object' && !Array.isArray(manifest.peerDependencies)
       ? Object.keys(manifest.peerDependencies)
       : [],
   }
