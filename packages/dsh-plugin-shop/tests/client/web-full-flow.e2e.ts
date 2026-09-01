@@ -346,7 +346,17 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         ariaAfter = await toggle.getAttribute('aria-checked')
       }
       expect(ariaAfter).not.toBe(ariaBefore)
-      expect(readFileSync(join(tmpHome, 'profiles', 'web', 'cordis.patch.yml'), 'utf8')).toContain('mkt-e2e-live')
+      // The row names the CONFIG id the fixture's bundle patch inserts, never
+      // the live id the entry was found by. This test used to assert
+      // `mkt-e2e-live`, the ephemeral hot spelling — and agreed with the host
+      // that wrote it, which is why both stayed green while no toggle in a
+      // real profile did anything. The harness applies this file with
+      // applyEntryPatches, which looks each row's id up among the ids the
+      // bundle patches declared: `mkt-e2e-live` exists in no such list, and
+      // the restart that would compose this plugin brings it up as `e2e-live`.
+      const userLayer = readFileSync(join(tmpHome, 'profiles', 'web', 'cordis.patch.yml'), 'utf8')
+      expect(userLayer).toContain('e2e-live')
+      expect(userLayer).not.toContain('mkt-')
       // Re-enable so the uninstall below starts from the enabled state.
       await toggle.click()
       let ariaRestored: string | null = null

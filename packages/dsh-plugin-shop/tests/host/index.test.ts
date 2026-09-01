@@ -448,6 +448,24 @@ describe('ShopGateway.installed', () => {
     expect(await gateway.installed()).toEqual([{ name: 'dsh-one', installed: '^1.0.0', latest: '2.0.0', outdated: true, enabled: false }])
   })
 
+  it('reads the enabled state through the live ids a REAL boot produces', async () => {
+    // Same root include as setEnabled's: the inventory reports
+    // `include:one-row`, so matching only the bare id found no live entry and
+    // `enabledOf` fell through to its "nothing live, assume enabled" default
+    // — a plugin the person had disabled kept rendering with its switch on.
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-installed-inc-'))
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: { 'dsh-one': '^1.0.0' } }))
+    fixturePackage(dir, 'dsh-one', "- insert:\n    - id: one-row\n      name: 'dsh-one/host'\n")
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: { 'dsh-one': '^1.0.0' } }))
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [], stars: {} }, stale: false }) as CatalogResult,
+      inventory: { list: async () => ({ entries: [{ entryId: 'include:one-row', moduleName: 'dsh-one/host', enabled: false }] }) },
+    })
+    await gateway.catalog({})
+    expect(await gateway.installed()).toEqual([{ name: 'dsh-one', installed: '^1.0.0', latest: '2.0.0', outdated: true, enabled: false }])
+  })
+
   it('reports an installed plugin behind the catalog with outdated: true', async () => {
     const gateway = gatewayWithManifest({ 'dsh-one': '^1.0.0' })
     await gateway.catalog({}) // populates lastSnapshot
@@ -1277,6 +1295,51 @@ describe('ShopGateway.setEnabled entry ownership', () => {
     const result = await gateway.setEnabled({ name: '@tt-a1i/archify-dsh', enabled: false })
     expect(result).toEqual({ ok: true })
     expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toContain('archify-skill-filesystem')
+  })
+
+  it('toggles a package the REAL harness composed — the live ids carry the root include prefix', async () => {
+    // dsh's app-boot mounts the whole profile as one root Include, so the
+    // inventory reports `include:<id>` for every entry a bundle patch
+    // inserted. The shop matched only the bare id, so no row was ever found
+    // and every plugin's switch answered "not in the running plugin tree".
+    const profileDir = toggleProfile()
+    fixturePackage(profileDir, '@tt-a1i/archify-dsh', archifyPatch)
+    const gateway = new ShopGateway(stubCtx(), {
+      profile: 'web', profileDir,
+      inventory: { list: async () => ({ entries: [
+        { entryId: 'include:archify-skill-filesystem', moduleName: '@deepseek-ai/dsh-skill-filesystem', enabled: true },
+      ] }) },
+    })
+    expect(await gateway.setEnabled({ name: '@tt-a1i/archify-dsh', enabled: false })).toEqual({ ok: true })
+    const written = readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')
+    // The user layer is applied in the CONFIG id space: the harness's
+    // applyEntryPatches looks each row's id up among the ids the bundle
+    // patches declared, so a row naming the live `include:` spelling matches
+    // nothing and the disable is a silent no-op (verified against dsh
+    // 0.1.1-rc.2: the prefixed row left the plugin running, the bare one
+    // brought its fiber down).
+    expect(written).toContain('archify-skill-filesystem')
+    expect(written).not.toContain('include:')
+  })
+
+  it('writes the config id for a plugin still mounted in the shop\'s hot subtree', async () => {
+    // A plugin installed this session runs from the hot tree as
+    // `include:<tree>:mkt-<id>`. That spelling exists only in this process:
+    // the user layer never composes it, and after the restart the entry
+    // returns under its bare id — so a row naming the hot id would be lost
+    // forever. The row names what the next boot will compose.
+    const profileDir = toggleProfile()
+    fixturePackage(profileDir, 'dsh-fresh', '- insert:\n    - id: fresh-entry\n      name: dsh-fresh\n')
+    const gateway = new ShopGateway(stubCtx(), {
+      profile: 'web', profileDir,
+      inventory: { list: async () => ({ entries: [
+        { entryId: 'include:typert-gateway:mkt-fresh-entry', moduleName: 'dsh-fresh', enabled: true },
+      ] }) },
+    })
+    expect(await gateway.setEnabled({ name: 'dsh-fresh', enabled: false })).toEqual({ ok: true })
+    const written = readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')
+    expect(written).toContain('fresh-entry')
+    expect(written).not.toContain('mkt-')
   })
 
   it('re-enabling drops the row again', async () => {

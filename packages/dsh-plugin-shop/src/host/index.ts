@@ -466,18 +466,22 @@ export class ShopGateway extends TypertRemoteService {
       return { ok: false, detail: `dsh-plugin-shop: ${args.name} contributes no plugin entries, so there is nothing to enable or disable` }
     }
     const ownedSet = new Set(owned)
-    // Write the LIVE entry's own id: a plugin installed this session sits in
-    // the shop's hot subtree under a namespaced `mkt-` spelling, and the row
-    // has to name the entry the loader actually has.
-    const rows = (await this.listInventory())
-      .filter(entry => ownsEntryId(ownedSet, entry.entryId))
-      .map(entry => entry.entryId)
-    if (rows.length === 0) {
+    // Liveness is read from the LIVE ids, which carry the namespace of every
+    // tree composed above the entry (see ownsEntryId).
+    const live = (await this.listInventory()).filter(entry => ownsEntryId(ownedSet, entry.entryId))
+    if (live.length === 0) {
       return { ok: false, detail: `dsh-plugin-shop: ${args.name} is installed but its entries are not in the running plugin tree; restart dsh to compose them` }
     }
+    // The row names the CONFIG id — the id the package's own patch inserted —
+    // never the live id it was found by. The user layer is applied by the
+    // harness's applyEntryPatches, which looks each row's id up among the ids
+    // the bundle patches declared: a row spelled `include:foo` matches nothing
+    // there and disables nothing, and a hot `mkt-foo` row would be lost for
+    // good, because the restart composes that plugin under its bare id.
+    //
     // Every entry the package owns toggles together: a package that inserts a
     // host row and a client row is one plugin to the person clicking.
-    setUserLayerRows({ profileDir, rows: rows.map(id => ({ id, disabled: !args.enabled })) })
+    setUserLayerRows({ profileDir, rows: owned.map(id => ({ id, disabled: !args.enabled })) })
     return { ok: true }
   }
 

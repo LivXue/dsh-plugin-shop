@@ -180,6 +180,26 @@ describe('ownsEntryId', () => {
     expect(ownsEntryId(owned, 'include:typert-gateway:mkt-someone-elses-row')).toBe(false)
   })
 
+  it('matches the spelling a REAL boot composes: every profile entry lives inside the root include', () => {
+    // dsh's app-boot mounts the whole profile as one root Include entry
+    // (`id: include`), so a bundle patch's `- id: foo` reaches the loader as
+    // `include:foo` and the inventory reports that id verbatim. Matching only
+    // the bare spelling found nothing for EVERY installed package, and the
+    // toggle answered "not in the running plugin tree" for all of them.
+    expect(ownsEntryId(owned, 'include:foo')).toBe(true)
+    expect(ownsEntryId(owned, 'include:archify-skill-filesystem')).toBe(true)
+  })
+
+  it('matches an entry nested deeper than one tree', () => {
+    // An include may hold an include; the package's row is still the last
+    // segment however many trees compose above it.
+    expect(ownsEntryId(owned, 'include:sub:foo')).toBe(true)
+  })
+
+  it('does not claim another package\'s row that merely sits in the same tree', () => {
+    expect(ownsEntryId(owned, 'include:someone-elses-row')).toBe(false)
+  })
+
   it('does not read a BARE id that merely starts with mkt- as the hot form', () => {
     // The hot spelling only ever exists inside an Include tree, so it always
     // carries the tree namespace. Without requiring that colon, a boot-layer

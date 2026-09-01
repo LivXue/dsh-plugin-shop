@@ -163,10 +163,24 @@ function collectEntryIds(entries: readonly unknown[], into: string[]): void {
 /**
  * Does a live loader entry id belong to the package that owns `owned`?
  *
- * A boot-layer entry carries the bare id its bundle patch inserted. The
- * shop's own hot subtree mounts that same row as `mkt-<id>` inside an Include
- * tree, which the loader spells `include:<tree>:mkt-<id>` — the same plugin,
- * one restart earlier. Both spellings are the package's own row.
+ * `owned` holds CONFIG ids — the ids a bundle patch's `insert` declares. A
+ * LIVE id is that id under the namespace of every tree composed above it,
+ * colon-joined, so the last segment is the declared id and the segments
+ * before it name the trees:
+ *
+ * - `foo` — no tree above the entry at all (a harness that composes the
+ *   entry list directly).
+ * - `include:foo` — what a REAL dsh boot produces: app-boot mounts the whole
+ *   profile as one root Include entry (`id: include`), so EVERY entry any
+ *   bundle patch inserted is namespaced by it. Matching only the bare
+ *   spelling found no row for any installed package, and the toggle answered
+ *   "not in the running plugin tree" for all of them.
+ * - `include:<tree>:mkt-foo` — the shop's own hot subtree, which prefixes its
+ *   rows `mkt-` so a plugin installed this session cannot collide with a
+ *   boot-layer id. The same plugin, one restart earlier.
+ *
+ * The last segment is therefore the answer, with `mkt-` stripped when a tree
+ * namespace is present.
  */
 export function ownsEntryId(owned: ReadonlySet<string>, entryId: string): boolean {
   if (owned.has(entryId)) return true
@@ -177,5 +191,6 @@ export function ownsEntryId(owned: ReadonlySet<string>, entryId: string): boolea
   const colon = entryId.lastIndexOf(':')
   if (colon === -1) return false
   const tail = entryId.slice(colon + 1)
+  if (owned.has(tail)) return true
   return tail.startsWith('mkt-') && owned.has(tail.slice('mkt-'.length))
 }
