@@ -63,10 +63,10 @@ describe('reduceInstall', () => {
     expect('restartReason' in next).toBe(false)
   })
 
-  it('reaches done carrying the host restart reason when the hot mount failed', () => {
+  it('reaches done carrying the host restart reason code when the hot mount failed', () => {
     const running = reduceInstall({ kind: 'idle' }, { type: 'started', installId: 'abc' })
-    const next = reduceInstall(running, { type: 'status', status: { found: true, state: 'done', log: ['a'], needsRestart: true, restartReason: 'hot-mount failed — restart required' } })
-    expect(next).toEqual({ kind: 'done', needsRestart: true, restartReason: 'hot-mount failed — restart required' })
+    const next = reduceInstall(running, { type: 'status', status: { found: true, state: 'done', log: ['a'], needsRestart: true, restartReason: 'mount-failed' } })
+    expect(next).toEqual({ kind: 'done', needsRestart: true, restartReason: 'mount-failed' })
   })
 
   it('reaches done with needsRestart false when the host reports the live outcome', () => {

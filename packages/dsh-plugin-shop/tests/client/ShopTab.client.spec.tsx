@@ -163,19 +163,33 @@ describe('ShopTab', () => {
     expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-restart-disabled]')).toBeNull()
   })
 
-  it('renders the host restart reason as plain text when the hot mount failed', async () => {
-    // A hostile reason must render as TEXT — the restartReason is
-    // host-supplied copy, never markup — and it replaces the generic
-    // notice. The restart offer stays: the install still needs one.
+  it('renders the hot-mount reason in the reader\'s own language, from the code alone', async () => {
+    // The host publishes a CODE, and the client renders the dictionary entry
+    // for it — so the notice follows the dsh language setting instead of the
+    // bilingual string the host used to bake in. It replaces the generic
+    // notice, and the restart offer stays: the install still needs one.
     const { injected, installStatus } = bench(snapshot({ tier: 'verified' }))
-    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], needsRestart: true, restartReason: '<img src=x onerror=alert(1)> hot-mount failed' })
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], needsRestart: true, restartReason: 'not-simple' })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     fireEvent.click(screen.getByText(en.install))
-    await waitFor(() => expect(screen.getByText('<img src=x onerror=alert(1)> hot-mount failed')).toBeTruthy(), { timeout: 3000 })
+    await waitFor(() => expect(screen.getByText(en.hotNotSimpleNotice)).toBeTruthy(), { timeout: 3000 })
     expect(screen.queryByText(en.installedRestartNotice)).toBeNull()
-    expect(container.querySelector('img')).toBeNull()
     expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-restart]')).toBeTruthy()
+  })
+
+  it('falls back to the generic notice for a reason code it does not know', async () => {
+    // The closed union is a compile-time guarantee, not a runtime one: a host
+    // one version ahead can send a code this client has no copy for. It shows
+    // the generic restart line — never a bare identifier, and never
+    // host-supplied text, which is what the old free-text reason risked.
+    const { injected, installStatus } = bench(snapshot({ tier: 'verified' }))
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], needsRestart: true, restartReason: '<img src=x onerror=alert(1)>' as never })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText(en.install))
+    await waitFor(() => expect(screen.getByText(en.installedRestartNotice)).toBeTruthy(), { timeout: 3000 })
+    expect(container.querySelector('img')).toBeNull()
   })
 
   it('shows the live-uninstall notice and no restart offer when the uninstall needs no restart', async () => {

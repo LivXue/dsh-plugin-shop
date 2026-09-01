@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { readProfileManifest, resolveProfileDir } from '@deepseek-ai/dsh-app-boot'
+import type { HotRestartReason } from './hot.ts'
 
 export type InstallState = 'running' | 'done' | 'failed'
 
@@ -14,7 +15,7 @@ export interface InstallStatus {
   state: InstallState
   log: string[]
   needsRestart?: boolean
-  restartReason?: string
+  restartReason?: HotRestartReason
   detail?: string
 }
 
@@ -93,7 +94,7 @@ function spawnPluginCli(options: {
   dshBin: string
   env?: NodeJS.ProcessEnv
   confirm?: (home: string | undefined) => string | null
-  afterDone?: (home: string | undefined) => Promise<{ needsRestart: boolean; restartReason?: string } | void>
+  afterDone?: (home: string | undefined) => Promise<{ needsRestart: boolean; restartReason?: HotRestartReason } | void>
   onStatus?: (status: InstallStatus) => void
 }): RunningInstall {
   const { profile, argv, dshBin, env, confirm, afterDone, onStatus } = options
@@ -111,7 +112,7 @@ function spawnPluginCli(options: {
   let logBytes = 0
   let state: InstallState = 'running'
   let needsRestartOnDone = true
-  let restartReason: string | undefined
+  let restartReason: HotRestartReason | undefined
   let detail: string | undefined
 
   const status = (): InstallStatus => ({
@@ -172,7 +173,7 @@ function spawnPluginCli(options: {
             // A failed hot path never fails the install — the package IS
             // installed; it activates on restart instead.
             needsRestartOnDone = true
-            restartReason = '热挂载失败,重启后生效 / hot-mount failed — restart required'
+            restartReason = 'mount-failed'
           }
           state = 'done'
         } else {
@@ -203,7 +204,7 @@ export function startInstall(options: {
   dshBin?: string
   env?: NodeJS.ProcessEnv
   expectedName?: string
-  afterDone?: (home: string | undefined) => Promise<{ needsRestart: boolean; restartReason?: string } | void>
+  afterDone?: (home: string | undefined) => Promise<{ needsRestart: boolean; restartReason?: HotRestartReason } | void>
   onStatus?: (status: InstallStatus) => void
 }): RunningInstall {
   const { profile, spec, dshBin = 'dsh', env, expectedName, afterDone, onStatus } = options
@@ -231,7 +232,7 @@ export function startUninstall(options: {
   dshBin?: string
   env?: NodeJS.ProcessEnv
   expectedName?: string
-  afterDone?: (home: string | undefined) => Promise<{ needsRestart: boolean; restartReason?: string } | void>
+  afterDone?: (home: string | undefined) => Promise<{ needsRestart: boolean; restartReason?: HotRestartReason } | void>
   onStatus?: (status: InstallStatus) => void
 }): RunningInstall {
   const { profile, name, dshBin = 'dsh', env, expectedName, afterDone, onStatus } = options

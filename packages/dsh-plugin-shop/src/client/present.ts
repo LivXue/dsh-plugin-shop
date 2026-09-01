@@ -3,7 +3,21 @@
  * drive all of it. */
 
 import type { ShopLocaleKey } from './locales.ts'
-import type { CatalogEntry, InstallRejectionCode } from '../host/index.ts'
+import type { CatalogEntry, HotRestartReason, InstallRejectionCode } from '../host/index.ts'
+
+/** Hot-mount reason code → locale key, so the notice reads in the language
+ * the person set in dsh. An absent (or unrecognized) reason keeps the generic
+ * restart line rather than showing a bare code. */
+export function restartReasonKey(reason: HotRestartReason | undefined): ShopLocaleKey {
+  switch (reason) {
+    case 'no-patch': return 'hotNoPatchNotice'
+    case 'not-simple': return 'hotNotSimpleNotice'
+    case 'host-unsupported': return 'hotHostUnsupportedNotice'
+    case 'timeout': return 'hotTimeoutNotice'
+    case 'mount-failed': return 'hotMountFailedNotice'
+    default: return 'installedRestartNotice'
+  }
+}
 
 /** Tier → locale key, for the entry-card tier badge (§6.2). */
 export function tierKey(tier: CatalogEntry['tier']): ShopLocaleKey {
@@ -66,7 +80,7 @@ export interface InstallStatusShape {
   state: 'running' | 'done' | 'failed'
   log: string[]
   needsRestart?: boolean
-  restartReason?: string
+  restartReason?: HotRestartReason
   detail?: string
 }
 
@@ -75,7 +89,7 @@ export type InstallView =
   | { kind: 'idle' }
   | { kind: 'rejected'; code: InstallRejectionCode; detail: string }
   | { kind: 'running'; installId: string; log: string[] }
-  | { kind: 'done'; needsRestart: boolean; restartReason?: string }
+  | { kind: 'done'; needsRestart: boolean; restartReason?: HotRestartReason }
   | { kind: 'failed'; detail: string; log: string[] }
 
 /** One event the install view reacts to. */

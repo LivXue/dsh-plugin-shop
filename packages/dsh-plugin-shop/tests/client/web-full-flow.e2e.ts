@@ -31,7 +31,7 @@
  * `needsRestart === false` and the entry must appear in the loader inventory
  * (the strict liveness read — a route-based probe is unavailable, see the
  * fixture's index.js comment); the config install must report done with the
- * bilingual restart reason and the §8 restart offer instead.
+ * localized restart reason and the §8 restart offer instead.
  *
  * Skipped unless the machine has both the real `dsh` CLI on PATH and a
  * playwright chromium installed (CI installs both; see .github/workflows).
@@ -51,7 +51,7 @@
  * - install gate: `[data-shop-confirm]`; failure view: 安装失败 + the detail
  *   paragraph; state lines are plain text (no data attributes)
  * - install done view: `[data-shop-restart-notice]` (the no-restart copy
- *   when needsRestart is false, the host's bilingual reason otherwise) and
+ *   when needsRestart is false, the host's reason code localized otherwise) and
  *   the §8 offer `[data-shop-restart]` (only when needsRestart && the host
  *   can restart)
  * - uninstall: `[data-shop-uninstall]`; done view `[data-shop-uninstall-done]`
@@ -298,7 +298,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
 
       // needsRestart === false: the done view renders the no-restart notice
       // (never a restart reason) and offers no restart. A hot-mount failure
-      // would surface the host's bilingual reason here instead, failing this.
+      // would surface the host's localized reason here instead, failing this.
       const notice = card.locator('[data-shop-restart-notice]')
       await notice.waitFor({ state: 'visible', timeout: 60_000 })
       expect(await notice.textContent()).toContain('已安装，但 profile 未变化')
@@ -381,7 +381,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
   )
 
   it(
-    'falls back to a restart for a fixture whose patch carries a config row: done with the bilingual reason and the restart offer, nothing live',
+    'falls back to a restart for a fixture whose patch carries a config row: the localized reason and the restart offer, nothing live',
     async () => {
       expect(page).toBeDefined()
       const app = page!
@@ -402,14 +402,14 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // Install: the same gate and poll. The config-row patch is a valid
       // bundle-layer patch the hot tree cannot replicate, so the install
       // reports done with needsRestart === true and the host's published
-      // bilingual reason (parseSimplePatch rejects the row; the reason
+      // localized reason (parseSimplePatch rejects the row; the reason
       // renders verbatim on the notice).
       await card.locator('[data-shop-install]').click()
       await card.locator('[data-shop-confirm]').waitFor({ state: 'visible', timeout: 10_000 })
       await card.locator('[data-shop-confirm]').click()
       const notice = card.locator('[data-shop-restart-notice]')
       await notice.waitFor({ state: 'visible', timeout: 60_000 })
-      expect(await notice.textContent()).toContain('该插件的补丁包含无法热挂载的配置,重启后生效')
+      expect(await notice.textContent()).toContain('该插件的补丁包含无法热挂载的配置；重启 dsh 后生效')
       // The §8 restart offer renders for a restart-required install on a
       // restart-capable host (this composition: spawned by vitest, no
       // systemd markers in the env).

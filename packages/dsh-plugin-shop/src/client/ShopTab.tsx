@@ -7,7 +7,7 @@
 import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
-import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Category, categoryKey, categoryLocaleKey, displayVersion, formatStars, isCustomLicense, isShopLike, nextVisibleCount, rejectionCodeKey, reviewHashPin, sortByStars, tierKey } from './present.ts'
+import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Category, categoryKey, categoryLocaleKey, displayVersion, formatStars, isCustomLicense, isShopLike, nextVisibleCount, rejectionCodeKey, restartReasonKey, reviewHashPin, sortByStars, tierKey } from './present.ts'
 import { useInstall } from './useInstall.ts'
 import { useUninstall } from './useUninstall.ts'
 import { useUpdateSelf } from './useUpdateSelf.ts'
@@ -238,14 +238,13 @@ function InstallPanel({ name, version, tier, variant = 'install', t, install, in
     return (
       <div className={css.installedActions}>
         <p className={css.notice} data-shop-restart-notice>
-          {/* The done notice: a hot-mount failure carries the host's
-              published restart reason — bilingual copy, plain text, rendered
-              verbatim — replacing the generic line; a restart without a
-              reason keeps the generic notice; the needsRestart=false notice
-              is the stale-catalog anomaly, where a restart would change
-              nothing. */}
+          {/* The done notice: a hot-mount failure names WHY through a reason
+              code, localized here so it reads in the dsh language the person
+              set — the host bakes no copy. A restart without a reason keeps
+              the generic notice; the needsRestart=false notice is the
+              stale-catalog anomaly, where a restart would change nothing. */}
           {view.needsRestart
-            ? view.restartReason ?? t('installedRestartNotice')
+            ? t(restartReasonKey(view.restartReason))
             : t('installedNoRestartNotice')}
         </p>
         {/* The §8 restart offer: only when the install actually needs one —
