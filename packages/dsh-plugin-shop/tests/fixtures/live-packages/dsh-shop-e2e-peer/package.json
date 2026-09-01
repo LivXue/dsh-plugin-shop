@@ -1,0 +1,8 @@
+{
+  "name": "dsh-shop-e2e-peer",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "peerDependencies": { "@deepseek-ai/dsh-client-store": "*" },
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+}
