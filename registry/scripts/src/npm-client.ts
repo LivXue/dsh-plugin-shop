@@ -171,6 +171,18 @@ function normalizeRepository(value: unknown): string | null {
 }
 
 /**
+ * Maximum number of peer names recorded from one package's manifest.
+ * `peerDependencies` keys are the one new field on this branch that flows
+ * from hostile npm input straight to a published artifact, and the object
+ * carries no size limit of its own: a manifest declaring thousands of them
+ * would bloat every published `plugins.json` and force each reader's host
+ * to attempt that many peer resolutions on every catalog load. The excess
+ * is dropped, never rejected — an author's oversized manifest costs them
+ * the tail of the list, not the listing.
+ */
+export const PEERS_MAX_COUNT = 200
+
+/**
  * Project one npm packument into a candidate.
  * @param packument - the parsed registry document for one package.
  * @returns the candidate, or null when the document names no usable latest version.
@@ -212,7 +224,7 @@ export function toCandidate(packument: unknown): Candidate | null {
       ? manifest.keywords.filter((k): k is string => typeof k === 'string')
       : [],
     peers: manifest.peerDependencies !== null && typeof manifest.peerDependencies === 'object' && !Array.isArray(manifest.peerDependencies)
-      ? Object.keys(manifest.peerDependencies)
+      ? Object.keys(manifest.peerDependencies).slice(0, PEERS_MAX_COUNT)
       : [],
   }
 }

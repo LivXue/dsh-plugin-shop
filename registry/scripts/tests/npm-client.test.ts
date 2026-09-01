@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fetchCandidate, HARVEST_KEYWORDS, searchByKeywords, toCandidate } from '../src/npm-client.ts'
+import { fetchCandidate, HARVEST_KEYWORDS, PEERS_MAX_COUNT, searchByKeywords, toCandidate } from '../src/npm-client.ts'
 
 describe('HARVEST_KEYWORDS', () => {
   it('leads with the ecosystem keyword and adds the harness keyword, neither branded', () => {
@@ -167,6 +167,23 @@ describe('toCandidate', () => {
       versions: { '1.2.0': { ...packument.versions['1.2.0'], peerDependencies: null } },
     }
     expect(toCandidate(hostileNull)?.peers).toEqual([])
+  })
+
+  it('caps the number of recorded peers, dropping the rest rather than rejecting the package', () => {
+    // peerDependencies keys are hostile npm input with no size limit of
+    // their own; a manifest declaring far more than any real dependency
+    // list needs must not inflate the published catalog or hand every
+    // reader's host that many resolutions to attempt on each catalog load.
+    const many = Object.fromEntries(
+      Array.from({ length: PEERS_MAX_COUNT + 50 }, (_, i) => [`peer-${i}`, '*']),
+    )
+    const hostile = {
+      ...packument,
+      versions: { '1.2.0': { ...packument.versions['1.2.0'], peerDependencies: many } },
+    }
+    const candidate = toCandidate(hostile)
+    expect(candidate?.peers).toHaveLength(PEERS_MAX_COUNT)
+    expect(candidate?.peers).toEqual(Object.keys(many).slice(0, PEERS_MAX_COUNT))
   })
 })
 
