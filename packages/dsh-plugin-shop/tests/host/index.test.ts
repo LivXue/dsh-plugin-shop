@@ -201,7 +201,7 @@ describe('ShopGateway.catalog', () => {
 
 // A fixture `dsh` that records its argv and exits 0; the calls log path lets
 // a rejection's no-spawn property be proven by the file's absence.
-function gatewayWithSnapshot(snapshot: CatalogSnapshot): { gateway: ShopGateway; callsLog: string } {
+function gatewayWithSnapshot(snapshot: CatalogSnapshot, options: Partial<ShopGatewayOptions> = {}): { gateway: ShopGateway; callsLog: string } {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-gateway-fixture-'))
   const bin = join(dir, 'dsh')
   writeFileSync(bin, [
@@ -222,6 +222,7 @@ function gatewayWithSnapshot(snapshot: CatalogSnapshot): { gateway: ShopGateway;
     profileDir,
     loadCatalog: async () => ({ snapshot, stale: false }) as CatalogResult,
     dshBin: bin,
+    ...options,
   })
   return { gateway, callsLog: join(dir, 'calls.log') }
 }
@@ -1357,5 +1358,40 @@ describe('ShopGateway.setEnabled entry ownership', () => {
     expect(result.ok).toBe(false)
     expect(result.ok === false && result.detail).toContain('not in the running plugin tree')
     expect(existsSync(join(profileDir, 'cordis.patch.yml'))).toBe(false)
+  })
+})
+
+describe('ShopGateway.catalog incompatibility', () => {
+  // Annotated so the literal's tier/metadata/source do not widen to `string`
+  // (the same reason `listed` above is annotated `CatalogEntry`).
+  const peered: CatalogEntry = {
+    name: 'dsh-timeline', version: '0.1.4', integrity: null, publishedAt: null, repository: null,
+    license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25',
+    peers: ['@deepseek-ai/cordis', '@deepseek-ai/dsh-client-store'],
+  }
+
+  it('names the missing peer on the catalog result', async () => {
+    const { gateway } = gatewayWithSnapshot(
+      { schemaVersion: 6, builtAt: '', entries: [peered], denied: [], stars: {} },
+      { resolvePeer: (spec: string) => spec !== '@deepseek-ai/dsh-client-store' },
+    )
+    const result = await gateway.catalog({})
+    expect(result.incompatible).toEqual({ 'dsh-timeline': ['@deepseek-ai/dsh-client-store'] })
+  })
+
+  it('reports nothing when every peer resolves', async () => {
+    const { gateway } = gatewayWithSnapshot(
+      { schemaVersion: 6, builtAt: '', entries: [peered], denied: [], stars: {} },
+      { resolvePeer: () => true },
+    )
+    expect((await gateway.catalog({})).incompatible).toEqual({})
+  })
+
+  it('reports nothing for a v5 catalog, whose entries carry no peers', async () => {
+    const { gateway } = gatewayWithSnapshot(
+      { schemaVersion: 5, builtAt: '', entries: [{ ...peered, peers: undefined }], denied: [], stars: {} },
+      { resolvePeer: () => false },
+    )
+    expect((await gateway.catalog({})).incompatible).toEqual({})
   })
 })

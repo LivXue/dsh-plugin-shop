@@ -7,7 +7,7 @@ import { lt, minVersion, valid } from 'semver'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 import { ownVersion } from '../own-version.ts'
 import { loadCatalog, type LoadCatalogOptions } from './catalog.ts'
@@ -21,6 +21,7 @@ import { fetchLatestVersion } from './self-update.ts'
 import { detectSupervisor } from './supervisor.ts'
 import { readRepoPins, writeRepoPins, type RepoPinFs } from './repo-pins.ts'
 import { discoverProfile, ownedEntryIds, ownsEntryId, setUserLayerRow, setUserLayerRows } from './profile.ts'
+import { incompatibilityMap, nodeResolver, type PeerResolver } from './peers.ts'
 
 // Re-exported so the boundary type is reachable from the package's public
 // ./types subpath; the typert generator refuses remote parameter types it
@@ -104,6 +105,9 @@ export interface ShopGatewayOptions {
   /** Test-only injection: how the release-tarball integrity check fetches
    * the release asset; production uses global fetch. */
   fetchTarball?: (url: string) => Promise<Response>
+  /** Test-only injection: answers whether a peer resolves. Production builds
+   * one from the profile anchor. */
+  resolvePeer?: PeerResolver
 }
 
 /** `shop/installStart` result (§7.3): rejections are typed wire values with an
@@ -235,6 +239,10 @@ export interface ShopCatalogResult {
   /** GitHub star counts by package name; {} when the pointer names no sidecar
    * or the sidecar could not be fetched/verified (§5). */
   stars: Record<string, number>
+  /** Package name → the declared peers this installation does not provide
+   * (design 2026-09-01). A name is absent when the plugin runs here or when
+   * no verdict could be formed; the client renders nothing for both. */
+  incompatible: Record<string, string[]>
 }
 
 /** Remote-only service exposing the shop Remote methods of §7.3.
@@ -523,6 +531,20 @@ export class ShopGateway extends TypertRemoteService {
     const load = this.options.loadCatalog ?? loadCatalog
     const { snapshot, stale } = await load({ baseUrl: catalogUrl, cacheDir, refresh: args?.refresh ?? false })
     this.lastSnapshot = snapshot
+    let resolve: PeerResolver
+    try {
+      resolve = this.options.resolvePeer ?? nodeResolver(pathToFileURL(join(this.profileDirResolved(), 'cordis.yml')).href)
+    } catch {
+      // No profile anchor could be discovered (e.g. a bare test construction
+      // that supplies neither `profileDir` nor a resolvable module location,
+      // or the constructor's own stub-ctx case above) — no peer verdict is
+      // formable. incompatibilityMap already turns a throwing resolver into
+      // "no verdict" for every entry, so the failure is deferred into the
+      // resolver itself rather than re-derived here; failing the whole
+      // catalog browse over a derived compatibility signal would be the
+      // worse failure.
+      resolve = () => { throw new Error('dsh-plugin-shop: no profile anchor for peer resolution') }
+    }
     return {
       schemaVersion: snapshot.schemaVersion,
       builtAt: snapshot.builtAt,
@@ -530,6 +552,7 @@ export class ShopGateway extends TypertRemoteService {
       plugins: snapshot.entries,
       denied: snapshot.denied,
       stars: snapshot.stars,
+      incompatible: incompatibilityMap(snapshot.entries, resolve),
     }
   }
 
