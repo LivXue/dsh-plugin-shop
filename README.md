@@ -67,9 +67,9 @@ install them once with `npm install -g @deepseek-ai/dsh pnpm` and verify with
 # recent releases, so a bare `add dsh-plugin-shop` can hand you an older
 # version for a while. This is the current release — refresh it with
 # `npm view dsh-plugin-shop version`.
-dsh plugin --profile web add dsh-plugin-shop@0.4.14
+dsh plugin --profile web add dsh-plugin-shop@0.5.0
 # or straight through npx, nothing installed:
-npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.4.14
+npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.5.0
 ```
 
 Replace `web` with your profile if you use another one. Restart `dsh` once — a newly
@@ -88,7 +88,7 @@ ls -1 "${DSH_HOME:-$HOME/.dsh}/profiles" | grep -v '^node_modules$'
 
 # 2. install — pin the version: it bypasses pnpm's release cooldown and
 #    deterministic installs are the point of the agent path
-dsh plugin --profile <profile> add dsh-plugin-shop@0.4.14
+dsh plugin --profile <profile> add dsh-plugin-shop@0.5.0
 
 # 3. verify — a zero exit above only means pnpm resolved the package
 dsh plugin --profile <profile> list --depth 0   # dsh-plugin-shop must appear

@@ -73,6 +73,10 @@ jobs:
           # release commit that ships it, so no v3 client ever meets a
           # subdir entry (schemaVersion 4).
           SHOP_HARVEST_SUBPACKAGES: '1'
+          # The v5 catalog (added/tarball/theme/replacement) rides the v5
+          # client: the flag flips in the release commit that ships it, so no
+          # older client ever meets a theme category or v5 entry shape.
+          SHOP_CATALOG_V5: '1'
           # A dedicated read-only PAT lifts the stars GraphQL quota past the
           # catalog's repo count; without it the GITHUB_TOKEN's ~1k points
           # cover only a third of the shelf per run.
