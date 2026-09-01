@@ -955,6 +955,14 @@
 }
 
 .outdatedVersions {
+  /* Two inline labels with nothing between them in the markup ran together as
+   * `installed v1.0.0latest v2.0.0`: JSX drops the whitespace-only line, and
+   * the per-label class the markup asked for was never defined (singular
+   * against this rule's plural). The container owns the gap, the same idiom
+   * as .badges — the labels need no class of their own. */
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-size: 12px;
   color: var(--dsw-alias-label-secondary);
 }

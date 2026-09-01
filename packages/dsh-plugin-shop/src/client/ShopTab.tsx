@@ -598,8 +598,8 @@ function OutdatedRow({ row, tier, source, t, setEnabled, install, installStatus,
       <div className={css.outdatedInfo}>
         <span className={css.name}>{row.name}</span>
         <span className={css.outdatedVersions}>
-          <span className={css.outdatedVersion}>{t('installedVersion', { version: source === 'github' ? row.installed.slice(0, 7) : row.installed })}</span>
-          <span className={css.outdatedVersion}>{t('latestVersion', { version: row.latest })}</span>
+          <span>{t('installedVersion', { version: source === 'github' ? row.installed.slice(0, 7) : row.installed })}</span>
+          <span>{t('latestVersion', { version: row.latest })}</span>
         </span>
       </div>
       <div className={css.outdatedActions}>

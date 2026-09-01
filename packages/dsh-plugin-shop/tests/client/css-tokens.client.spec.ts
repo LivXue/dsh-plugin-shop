@@ -53,6 +53,43 @@ const FILL_IS_THE_ONLY_AFFORDANCE = [
   '.capabilities li',
 ]
 
+/** Every class name appearing in a selector, at any nesting depth. The text
+ * before each `{` is either a selector or an at-rule prelude; a prelude
+ * carries no `.class` token (`47.5em` cannot match — the character after the
+ * dot must be a letter), so one pass over those is the whole answer. */
+function definedClasses(text: string): Set<string> {
+  const out = new Set<string>()
+  for (const [, prelude] of text.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{/g)) {
+    for (const [, name] of (prelude ?? '').matchAll(/\.([A-Za-z_][\w-]*)/g)) out.add(name)
+  }
+  return out
+}
+
+describe('class references', () => {
+  it('every css.X the component reads has a rule in the stylesheet', () => {
+    // The component tests stub the CSS module, so `css.missing` yields
+    // undefined there and renders as className="undefined" — invisible to
+    // every other lane. This caught `.outdatedVersion`: the markup asked for
+    // the singular while the stylesheet defined only the plural
+    // `.outdatedVersions`, so the two version labels on an outdated row
+    // rendered with no class and therefore no separation between them.
+    const tsx = readFileSync(new URL('../../src/client/ShopTab.tsx', import.meta.url), 'utf8')
+    const used = new Set([...tsx.matchAll(/\bcss\.([A-Za-z_][\w]*)/g)].map(m => m[1]))
+    const defined = definedClasses(css)
+    expect([...used].filter(name => name !== undefined && !defined.has(name))).toEqual([])
+  })
+
+  it('separates the two version labels on an outdated row', () => {
+    // The separation is the user-visible half of that fix, and it lives only
+    // in the stylesheet: jsdom applies no layout and the component tests stub
+    // the CSS module, so a container that lays its children out in a line
+    // with no gap passes every other lane.
+    const rule = rulesOf(css).get('.outdatedVersions') ?? ''
+    expect(rule).toMatch(/display:\s*(inline-)?flex/)
+    expect(rule).toMatch(/gap:\s*\d+px/)
+  })
+})
+
 describe('summary clamp', () => {
   it('lifts the line clamp in the expanded state and only there', () => {
     const collapsed = rules.get('.summary')
