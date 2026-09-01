@@ -19,6 +19,8 @@
   category: tool
 - name: "@a9i5k4/dsh-anchored-monitor"
   category: tool
+- name: "@a9i5k4/dsh-ark9canvas"
+  category: tool
 - name: "@a9i5k4/dsh-auto-memory"
   category: tool
 - name: "@a9i5k4/dsh-literature"
@@ -45,6 +47,8 @@
   category: ui
 - name: "@achasoft/dsh-worktree"
   category: tool
+- name: "@addozhang/dsh-discord"
+  category: integration
 - name: "@adverts13/dsh-auto-model-router"
   category: tool
 - name: "@aetheri-ai/dsh-show-image"
@@ -95,6 +99,10 @@
   category: integration
 - name: "@aiwayds/dsh-llm-net-retry"
   category: tool
+- name: "@aiwayds/dsh-llm-stats"
+  category: tool
+- name: "@aiwayds/dsh-llmwiki-memory"
+  category: tool
 - name: "@aiwayds/dsh-mcp-adapter"
   category: tool
 - name: "@aiwayds/dsh-model-sync"
@@ -103,6 +111,8 @@
   category: tool
 - name: "@aiwayds/dsh-tui-pi"
   category: ui
+- name: "@aiwayds/dsh-vault"
+  category: tool
 - name: "@aiwayds/dsh-web-search-anysearch"
   category: provider
 - name: "@aiwayds/dsh-web-search-tavily"
@@ -117,6 +127,8 @@
   category: integration
 - name: "@alib8b8/dsh-plugin-aflare"
   category: workflow
+- name: "@all3cn/dsh-better-sidebar-n23"
+  category: ui
 - name: "@allmodels/dsh-speech"
   category: provider
 - name: "@alpacachen/dsh-automation"
@@ -188,6 +200,8 @@
 - name: "@beihaizb/dsh-notebook"
   category: tool
 - name: "@benz-ai-x/dsh-client-ui-session-graph"
+  category: ui
+- name: "@benz-ai-x/dsh-md-preview"
   category: ui
 - name: "@biggerboy123/dsh-conversation-anchors"
   category: ui
@@ -405,12 +419,16 @@
   category: tool
 - name: "@dsh-enhanced/assistant-evolution"
   category: tool
+- name: "@dsh-enhanced/assistant-growth-experiments"
+  category: workflow
 - name: "@dsh-enhanced/assistant-health"
   category: tool
 - name: "@dsh-enhanced/assistant-heartbeat"
   category: tool
 - name: "@dsh-enhanced/assistant-policy"
   category: tool
+- name: "@dsh-enhanced/assistant-recovery"
+  category: workflow
 - name: "@dsh-enhanced/coding-subscription-provider"
   category: provider
 - name: "@dsh-enhanced/credentials-keychain"
@@ -527,6 +545,16 @@
   category: provider
 - name: "@dushayulll/dsh-model-catalog-refresh"
   category: tool
+- name: "@easytz/dsh-git"
+  category: ui
+- name: "@easytz/dsh-market"
+  category: ui
+- name: "@easytz/dsh-reveal-explorer"
+  category: tool
+- name: "@easytz/dsh-terminal-panel"
+  category: ui
+- name: "@easytz/dsh-ui-balance"
+  category: ui
 - name: "@eave_bounty/dsh-graph-usage"
   category: ui
 - name: "@eave_bounty/dsh-programmer-chatroom"
@@ -651,10 +679,16 @@
   category: workflow
 - name: "@godd6366/dsh-sub2api"
   category: provider
+- name: "@goodandready/dsh-context-lens"
+  category: tool
+- name: "@goodandready/dsh-gitea"
+  category: integration
 - name: "@goodandready/dsh-grok-xsearch"
   category: tool
 - name: "@goodandready/dsh-image-gen"
   category: tool
+- name: "@goodandready/dsh-kanban"
+  category: ui
 - name: "@goodandready/dsh-key-rotation"
   category: tool
 - name: "@goodandready/dsh-lanmode"
@@ -667,8 +701,12 @@
   category: tool
 - name: "@goodandready/dsh-russian-lang"
   category: ui
+- name: "@goodandready/dsh-shadow-auditor"
+  category: tool
 - name: "@goodandready/dsh-subscriptions"
   category: provider
+- name: "@goodandready/dsh-time-machine"
+  category: tool
 - name: "@goodandready/dsh-tts"
   category: tool
 - name: "@goodandready/dsh-usage-guard"
@@ -1005,6 +1043,8 @@
   category: ui
 - name: "@liuch0812/info-sidebar"
   category: ui
+- name: "@liuguanghs/dsh-ecc"
+  category: tool
 - name: "@liuliuhuhushui/dsh-quota-float"
   category: ui
 - name: "@liushutan/dsh-archive-manager"
@@ -2145,6 +2185,8 @@
   category: ui
 - name: "dsh-agentnoodle"
   category: tool
+- name: "dsh-agents-rules"
+  category: tool
 - name: "dsh-agnes"
   category: tool
 - name: "dsh-agora"
@@ -2247,8 +2289,6 @@
   category: tool
 - name: "dsh-archived-chats"
   category: tool
-- name: "dsh-archived-conversation"
-  category: ui
 - name: "dsh-archived-tasks"
   category: ui
 - name: "dsh-aris"
@@ -2366,6 +2406,8 @@
 - name: "dsh-balance-tracker"
   category: tool
 - name: "dsh-balance-widget"
+  category: ui
+- name: "dsh-ballast"
   category: ui
 - name: "dsh-bash-on-windows"
   category: tool
@@ -3189,8 +3231,6 @@
   category: tool
 - name: "dsh-experience-memory"
   category: tool
-- name: "dsh-experience-plugin"
-  category: tool
 - name: "dsh-explorer-editor"
   category: ui
 - name: "dsh-extension-hub"
@@ -3387,6 +3427,8 @@
   category: tool
 - name: "dsh-gitflow"
   category: tool
+- name: "dsh-github-publisher"
+  category: integration
 - name: "dsh-github-router"
   category: integration
 - name: "dsh-github-sidebar"
@@ -3701,6 +3743,8 @@
   category: tool
 - name: "dsh-library"
   category: tool
+- name: "dsh-lifeline"
+  category: ui
 - name: "dsh-light-memory"
   category: tool
 - name: "dsh-lines"
@@ -4825,6 +4869,8 @@
   category: tool
 - name: "dsh-plugin-web-search-tavily"
   category: provider
+- name: "dsh-plugin-websearch"
+  category: provider
 - name: "dsh-plugin-wechat"
   category: integration
 - name: "dsh-plugin-wiki-skills"
@@ -5223,6 +5269,8 @@
   category: provider
 - name: "dsh-search-model"
   category: ui
+- name: "dsh-search-switcher"
+  category: ui
 - name: "dsh-searxng"
   category: provider
 - name: "dsh-searxng-web"
@@ -5369,6 +5417,8 @@
   category: tool
 - name: "dsh-shadow-mind"
   category: tool
+- name: "dsh-shadow-rewind"
+  category: tool
 - name: "dsh-share"
   category: tool
 - name: "dsh-share-page"
@@ -5405,6 +5455,8 @@
   category: ui
 - name: "dsh-sidebar-onlyoffice"
   category: integration
+- name: "dsh-sidebar-superdoc-docx"
+  category: ui
 - name: "dsh-sidebar-vscode"
   category: ui
 - name: "dsh-sidecar-conversation"
@@ -5699,6 +5751,8 @@
   category: ui
 - name: "dsh-theme-machine"
   category: ui
+- name: "dsh-theme-manager"
+  category: theme
 - name: "dsh-theme-pack"
   category: ui
 - name: "dsh-theme-plugin"
@@ -6035,6 +6089,8 @@
   category: ui
 - name: "dsh-video-understand"
   category: tool
+- name: "dsh-view-manager"
+  category: ui
 - name: "dsh-vim"
   category: ui
 - name: "dsh-virtuoso"
