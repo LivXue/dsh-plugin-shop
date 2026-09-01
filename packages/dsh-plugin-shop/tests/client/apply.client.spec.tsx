@@ -126,7 +126,7 @@ describe('shop client apply', () => {
 describe('shop client apply warm', () => {
   const fakeCatalog = {
     schemaVersion: 2, builtAt: '2026-08-27T00:00:00Z', stale: false,
-    plugins: [], denied: [], stars: {},
+    plugins: [], denied: [], stars: {}, incompatible: {},
   }
 
   it('warms the catalog at boot and serves the tab from the warm fetch', async () => {
