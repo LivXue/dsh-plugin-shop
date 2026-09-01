@@ -247,7 +247,15 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // The fixture entry renders with the community tier badge (§6.1).
       const card = dialog.locator('[data-shop-entry="dsh-e2e-fixture-plugin"]')
       await card.waitFor({ state: 'visible', timeout: 15_000 })
-      expect(await card.textContent()).toContain('社区')
+      // The community tier is NOT badged: every entry in the live catalog
+      // carries it, so the label was on every card and said nothing. This
+      // fixture is community tier, so its absence is the assertion.
+      expect(await card.textContent()).not.toContain('社区')
+      // Both source marks, in a real browser: this fixture installs from npm
+      // and its repository is on GitHub — the ordinary shape, 4892 of the
+      // live catalog's 4915 entries.
+      await card.locator('[data-shop-source-npm]').waitFor({ state: 'visible', timeout: 10_000 })
+      await card.locator('[data-shop-source-github]').waitFor({ state: 'visible', timeout: 10_000 })
 
       // The author, in a real browser, on the COLLAPSED card's action row —
       // the shop asserts nothing about who is genuine, but a person comparing

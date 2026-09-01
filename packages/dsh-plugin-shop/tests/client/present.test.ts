@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, categoryKey, displayVersion, formatStars,
-  authorOf, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, reduceInstall,
+  authorOf, hasGithubHome, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl,
+  reduceInstall,
   reviewHashPin, sortByStars, starsOf, tierKey,
 } from '../../src/client/present.ts'
 import type { CatalogEntry } from '../../src/host/index.ts'
@@ -378,5 +379,40 @@ describe('authorOf', () => {
     // The registry never sets `publisher` on a repo entry (assignRepoTier does
     // not touch it); if one ever appeared, the owner is still the answer.
     expect(authorOf({ ...entry, source: 'github', repo: 'octocat/x', publisher: 'someone-else' })).toBe('octocat')
+  })
+})
+
+describe('hasGithubHome', () => {
+  it('is true for an npm entry whose repository is on github', () => {
+    // 4892 of the live catalog's 4915 entries are here; the icon pair is the
+    // ordinary case, and its ABSENCE is what carries the signal.
+    expect(hasGithubHome({ ...entry, repository: 'https://github.com/you/x' })).toBe(true)
+    expect(hasGithubHome({ ...entry, repository: 'https://www.github.com/you/x' })).toBe(true)
+  })
+
+  it('is true for a github-source entry, which is a repository by definition', () => {
+    expect(hasGithubHome({ ...entry, source: 'github', repo: 'you/x', repository: 'https://github.com/you/x' })).toBe(true)
+  })
+
+  it('is false for an npm entry hosted somewhere else', () => {
+    // The live catalog has gitee, gitcode, codeberg, gitlab and cnb.cool
+    // entries. None of them is a GitHub home and none may claim the mark.
+    for (const host of ['gitee.com', 'gitcode.com', 'codeberg.org', 'gitlab.com', 'cnb.cool']) {
+      expect(hasGithubHome({ ...entry, repository: `https://${host}/you/x` })).toBe(false)
+    }
+  })
+
+  it('is false when the repository is absent or unparseable', () => {
+    // Two live entries carry a repository string with no hostname at all;
+    // `repository` is untrusted input, so it is parsed, not pattern-matched.
+    expect(hasGithubHome({ ...entry, repository: null })).toBe(false)
+    expect(hasGithubHome({ ...entry, repository: 'not a url' })).toBe(false)
+    expect(hasGithubHome({ ...entry, repository: '' })).toBe(false)
+  })
+
+  it('is false for a lookalike host that merely ends in github.com', () => {
+    // Substring matching would accept this; parsing the host does not.
+    expect(hasGithubHome({ ...entry, repository: 'https://evil-github.com/you/x' })).toBe(false)
+    expect(hasGithubHome({ ...entry, repository: 'https://github.com.evil.test/you/x' })).toBe(false)
   })
 })

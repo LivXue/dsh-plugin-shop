@@ -7,7 +7,7 @@
 import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
-import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Category, authorOf, categoryKey, categoryLocaleKey, displayVersion, formatStars, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, rejectionCodeKey, restartReasonKey, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
+import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Category, authorOf, categoryKey, categoryLocaleKey, displayVersion, formatStars, hasGithubHome, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, rejectionCodeKey, restartReasonKey, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
 import { useInstall } from './useInstall.ts'
 import { useUninstall } from './useUninstall.ts'
 import { useUpdateSelf } from './useUpdateSelf.ts'
@@ -105,17 +105,38 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, t,
         <span className={css.name}>{entry.name}</span>
         <span className={css.badges}>
           <span className={css.categoryBadge}>{t(categoryKey(entry))}</span>
-          {entry.source === 'github' && (
-            // The octocat marks an install-from-source entry; the aria-label
-            // names it for assistive tech.
-            <span className={css.sourceBadge} role="img" aria-label={t('githubSource')}>
+          {entry.source === 'npm' && (
+            // Where the thing installs from. npm comes first because that is
+            // the answer to "what am I getting"; the octocat below answers
+            // "where can I read it". Both are marks, not links: this whole
+            // header is a <button>, and an <a> inside one is invalid HTML —
+            // the npm page link lives in the expanded detail.
+            <span className={css.sourceBadge} data-shop-source-npm role="img" aria-label={t('npmSource')}>
+              <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="currentColor">
+                <path fillRule="evenodd" d="M0 0v16h16V0H0zm13 13h-2V6H8v7H3V3h10v10z" />
+              </svg>
+            </span>
+          )}
+          {hasGithubHome(entry) && (
+            // The octocat marks a GitHub home the reader can go and inspect —
+            // a github-source entry, or an npm one whose repository is there
+            // (4892 of the live catalog's 4915). Its ABSENCE is the signal:
+            // a listed package with no public source to read.
+            <span className={css.sourceBadge} data-shop-source-github role="img" aria-label={t('githubSource')}>
               <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="currentColor">
                 <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
               </svg>
             </span>
           )}
           <span className={css.cardVersion} data-card-version>v{displayVersion(entry)}</span>
-          <span className={css.tierBadge} data-tier={entry.tier}>{t(tierKey(entry.tier))}</span>
+          {/* Only a tier that says something is badged. Every one of the live
+            * catalog's 4915 entries is `community`, so that label was on
+            * every card and carried no information. `verified` and
+            * `verified-stale` mean a human read the code at a pinned version
+            * — the most load-bearing signal here — and still show. */}
+          {entry.tier !== 'community' && (
+            <span className={css.tierBadge} data-tier={entry.tier}>{t(tierKey(entry.tier))}</span>
+          )}
           {missing.length > 0 && (
             <span className={css.incompatibleBadge} data-shop-incompatible title={t('incompatibleDetail', { modules: missing.join(', ') })}>
               {t('incompatibleBadge')}

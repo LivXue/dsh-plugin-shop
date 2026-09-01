@@ -268,6 +268,31 @@ export function categoryLocaleKey(category: Category): ShopLocaleKey {
  * package page.
  */
 /**
+ * Whether this entry has a GitHub home the reader could go and inspect.
+ *
+ * True for a github-source entry — a repository IS its identity — and for an
+ * npm entry whose `repository` points at github.com, which is 4892 of the
+ * live catalog's 4915 entries. The mark is therefore ordinary and its
+ * ABSENCE is the signal: a listed package with no public source to read.
+ *
+ * `repository` is untrusted catalog input, so the host is PARSED rather than
+ * pattern-matched — `evil-github.com` and `github.com.evil.test` both end in
+ * the string and neither is GitHub. An unparseable or empty value (two live
+ * entries carry one) is simply not a GitHub home.
+ */
+export function hasGithubHome(entry: CatalogEntry): boolean {
+  if (entry.source === 'github') return true
+  if (entry.repository === null) return false
+  try {
+    const host = new URL(entry.repository).hostname.toLowerCase()
+    return host === 'github.com' || host === 'www.github.com'
+  } catch {
+    // Not a URL at all: no home to point at, and nothing to claim.
+    return false
+  }
+}
+
+/**
  * Who put this entry where it is — the fact a reader wants when two listings
  * carry the same text from different hands.
  *

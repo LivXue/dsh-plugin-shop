@@ -66,7 +66,10 @@ describe('ShopTab', () => {
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     // The card shows the badges on its first line and the clamped summary
     // below; the capabilities live in the expanded detail.
-    expect(screen.getByText(en.tierCommunity)).toBeTruthy()
+    // The community tier is not badged: every one of the live catalog's 4915
+    // entries carries it, so the label said nothing. verified and
+    // verified-stale still are — see below.
+    expect(screen.queryByText(en.tierCommunity)).toBeNull()
     expect(screen.getByText('Says hello.')).toBeTruthy()
     expect(screen.getByText('打个招呼。')).toBeTruthy()
     fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] button[aria-expanded]')!)
@@ -1085,5 +1088,56 @@ describe('ShopTab github entries', () => {
     await waitFor(() => expect(screen.getByText(en.acknowledgementBody)).toBeTruthy())
     fireEvent.click(screen.getByText(en.confirm))
     await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: commit, acknowledged: true }))
+  })
+})
+
+describe('ShopTab source marks and the tier badge', () => {
+  it('marks an npm entry with a GitHub repository with both icons', async () => {
+    const { injected } = bench({ ...snapshot({ repository: 'https://github.com/you/hello-plugin' }), incompatible: {} })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const card = container.querySelector('[data-shop-entry="dsh-hello-plugin"]')
+    expect(card?.querySelector('[data-shop-source-npm]')).toBeTruthy()
+    expect(card?.querySelector('[data-shop-source-github]')).toBeTruthy()
+  })
+
+  it('marks an npm entry hosted elsewhere with the npm icon alone', async () => {
+    // 23 live entries are like this, and the missing octocat is the point:
+    // there is no public source to go and read.
+    const { injected } = bench({ ...snapshot({ repository: 'https://gitee.com/you/hello-plugin' }), incompatible: {} })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const card = container.querySelector('[data-shop-entry="dsh-hello-plugin"]')
+    expect(card?.querySelector('[data-shop-source-npm]')).toBeTruthy()
+    expect(card?.querySelector('[data-shop-source-github]')).toBeNull()
+  })
+
+  it('marks a github-source entry with the octocat alone — it is not on npm', async () => {
+    const { injected } = bench({ ...snapshot({
+      name: 'dsh-repo-plugin', source: 'github', repo: 'octocat/dsh-repo-plugin',
+      repository: 'https://github.com/octocat/dsh-repo-plugin',
+    }), incompatible: {} })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-repo-plugin')).toBeTruthy())
+    const card = container.querySelector('[data-shop-entry="dsh-repo-plugin"]')
+    expect(card?.querySelector('[data-shop-source-github]')).toBeTruthy()
+    expect(card?.querySelector('[data-shop-source-npm]')).toBeNull()
+  })
+
+  it('still badges a verified entry — removing the community label must not bury this', async () => {
+    // `verified` means a human read the code at a pinned version, and it is
+    // the most load-bearing signal the shop carries. The live catalog has
+    // none today, which is exactly why its rendering needs a test.
+    const { injected } = bench({ ...snapshot({ tier: 'verified' }), incompatible: {} })
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(screen.getByText(en.tierVerified)).toBeTruthy()
+  })
+
+  it('still badges a verified-stale entry', async () => {
+    const { injected } = bench({ ...snapshot({ tier: 'verified-stale' }), incompatible: {} })
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(screen.getByText(en.tierVerifiedStale)).toBeTruthy()
   })
 })
