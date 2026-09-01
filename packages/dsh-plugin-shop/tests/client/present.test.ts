@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, categoryKey, displayVersion, formatStars, isCustomLicense, isShopLike, nextVisibleCount, reduceInstall, reviewHashPin, sortByStars, tierKey,
+  ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, categoryKey, displayVersion, formatStars, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, reduceInstall, reviewHashPin, sortByStars, tierKey,
 } from '../../src/client/present.ts'
 import type { CatalogEntry } from '../../src/host/index.ts'
 
@@ -256,5 +256,16 @@ describe('isCustomLicense', () => {
     expect(isCustomLicense('MIT')).toBe(false)
     expect(isCustomLicense('NOASSERTION')).toBe(false)
     expect(isCustomLicense(null)).toBe(false)
+  })
+})
+
+describe('missingPeersOf', () => {
+  it('returns the named missing peers', () => {
+    expect(missingPeersOf({ 'dsh-timeline': ['@deepseek-ai/dsh-client-store'] }, 'dsh-timeline'))
+      .toEqual(['@deepseek-ai/dsh-client-store'])
+  })
+
+  it('returns none for a name the host said nothing about', () => {
+    expect(missingPeersOf({ 'dsh-timeline': ['x'] }, 'dsh-other')).toEqual([])
   })
 })
