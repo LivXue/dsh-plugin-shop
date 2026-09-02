@@ -3,10 +3,13 @@
  * `dsh plugin remove` (uninstall); the only differences are the verb and the
  * post-exit manifest confirmation. */
 
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcessByStdio } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import type { Readable } from 'node:stream'
 import { readProfileManifest, resolveProfileDir } from '@deepseek-ai/dsh-app-boot'
+import { dshCommand, resolveDshScript, DSH_PACKAGE, type DshCliFs } from './dsh-cli.ts'
 import type { HotRestartReason } from './hot.ts'
 
 export type InstallState = 'running' | 'done' | 'failed'
@@ -128,21 +131,15 @@ export function installFailureDetail(profile: string, log: readonly string[]): s
 /**
  * Why a spawn of the dsh CLI never started.
  *
- * On Windows this is the shop's own gap, not the user's setup, and saying
- * otherwise sends them to reinstall something that already works. npm
- * installs a CLI there as `dsh.cmd` and `dsh.ps1` shims with no `.exe`
- * alongside them, while `spawn` without a shell goes to CreateProcess, which
- * resolves a bare name against `.exe` only — and node has refused to spawn a
- * `.cmd` without a shell since the 2024 batfile argument-injection fix, so a
- * resolved absolute path to the shim fails too (EINVAL rather than ENOENT).
- * There is no configuration that gets past this: `dshBin` can name the shim
- * and the spawn still cannot run it. Reported from Windows 2026-09-02 as
- * "Update failed / dsh not found on PATH" on a working install.
- *
- * `restart.ts` has the same gap one step further on — it runs a POSIX one
- * liner through `sh` with `kill -0` and `sleep` — so a fixed spawn would
- * reach a second Unix-only path. Neither is fixed here; this function only
- * stops the report being wrong about the cause.
+ * On Windows a bare name and a shim path fail differently and neither means
+ * what the POSIX advice says. npm installs the CLI as `dsh`, `dsh.cmd` and
+ * `dsh.ps1` with no `.exe`; libuv resolves a bare name against `.com` and
+ * `.exe` only (ENOENT), and node has refused to spawn a `.cmd` without a
+ * shell since the 2024 batfile argument-injection fix (EINVAL). `dsh-cli.ts`
+ * gets past that by running the CLI's own JS entry through node, so reaching
+ * here on Windows means that entry could not be located — telling the user to
+ * install a dsh they already have would still be wrong. Reported from Windows
+ * 2026-09-02 as "Update failed / dsh not found on PATH" on a working install.
  */
 export function spawnFailureDetail(
   code: string | undefined,
@@ -151,13 +148,32 @@ export function spawnFailureDetail(
   platform: NodeJS.Platform,
 ): string {
   if (platform === 'win32' && (code === 'ENOENT' || code === 'EINVAL')) {
-    return `the shop cannot start the dsh CLI on Windows yet (${dshBin}): npm installs it`
-      + ' as a .cmd shim, which node cannot spawn without a shell. Not a problem with your'
-      + ' install — run the update from `dsh plugin --profile <name> add dsh-plugin-shop@<version>`'
-      + ' in a terminal until the shop can do it for you.'
+    return `the shop could not locate the dsh CLI to run (${dshBin}): on Windows npm installs it`
+      + ' as a .cmd shim, which cannot be spawned directly, so the shop runs the'
+      + ` ${DSH_PACKAGE} package's own entry through node instead — and that entry was not found.`
+      + ' Check that `dsh --version` works in a terminal, then reinstall the CLI if it does not.'
   }
   if (code === 'ENOENT') return 'dsh not found on PATH — install the dsh CLI to manage profile plugins'
   return `dsh spawn failed: ${message}`
+}
+
+/** Read-only filesystem seam for the CLI lookup; the same shape as `pinFs`. */
+const nodeFs: DshCliFs = {
+  exists: path => existsSync(path),
+  read: path => readFileSync(path, 'utf8'),
+}
+
+let cachedScript: string | null | undefined
+
+/** The dsh CLI's JS entry, resolved once per process and only where it is
+ * needed. On POSIX `spawn('dsh')` works and the lookup is skipped entirely,
+ * so no platform but Windows pays for it. */
+function dshScript(): string | null {
+  if (process.platform !== 'win32') return null
+  if (cachedScript === undefined) {
+    cachedScript = resolveDshScript(nodeFs, { argv1: process.argv[1], path: process.env.PATH })
+  }
+  return cachedScript
 }
 
 /** Run one `dsh plugin --profile <profile> <verb> <target>` and track it.
@@ -223,11 +239,36 @@ function spawnPluginCli(options: {
     onStatus?.(status())
   }
 
+  const failToStart = (error: NodeJS.ErrnoException): InstallStatus => {
+    state = 'failed'
+    detail = spawnFailureDetail(error.code, error.message, dshBin, process.platform)
+    onStatus?.(status())
+    return status()
+  }
+
   const finished = chain(profile, () => new Promise<InstallStatus>((resolve) => {
-    const child = spawn(dshBin, ['plugin', '--profile', profile, ...argv], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: env ?? process.env,
+    const { command, args } = dshCommand({
+      dshBin,
+      args: ['plugin', '--profile', profile, ...argv],
+      platform: process.platform,
+      execPath: process.execPath,
+      script: dshScript(),
     })
+    // Not every start failure arrives as an `error` event: spawning a Windows
+    // `.cmd` without a shell throws EINVAL synchronously out of `spawn()`
+    // (measured 2026-09-02). Left to propagate it would reject `finished`,
+    // which nothing awaits, and the install would poll as `running` forever
+    // instead of reporting why it never started.
+    let child: ChildProcessByStdio<null, Readable, Readable>
+    try {
+      child = spawn(command, args, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: env ?? process.env,
+      })
+    } catch (error) {
+      resolve(failToStart(error as NodeJS.ErrnoException))
+      return
+    }
     child.stdout.on('data', (chunk: Buffer) => {
       for (const line of chunk.toString().split('\n')) if (line !== '') append(line)
     })
@@ -235,12 +276,7 @@ function spawnPluginCli(options: {
       for (const line of chunk.toString().split('\n')) if (line !== '') append(line)
     })
     child.on('error', (error) => {
-      state = 'failed'
-      detail = spawnFailureDetail(
-        (error as NodeJS.ErrnoException).code, error.message, dshBin, process.platform,
-      )
-      onStatus?.(status())
-      resolve(status())
+      resolve(failToStart(error as NodeJS.ErrnoException))
     })
     child.on('close', async (exitCode) => {
       if (state !== 'running') return

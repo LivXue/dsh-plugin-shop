@@ -603,6 +603,9 @@ describe('ShopGateway.restart', () => {
       restartArgv: options.restartArgv ?? ['web'],
       exit: options.exit,
       restartExitDelayMs: 5,
+      // The handoff helper is POSIX-only; these cases are about the RPC and
+      // the exit, so the platform is pinned rather than inherited.
+      platform: 'linux',
       // The vitest worker is alive for the whole file; a pid beyond the
       // kernel's pid_max is guaranteed dead, so the helper runs the fixture
       // at once and never lingers past the test run.
@@ -637,6 +640,9 @@ describe('ShopGateway.restart', () => {
       restartArgv: ['web'],
       exit,
       restartExitDelayMs: 5,
+      // This case is about the missing row config, which is platform-
+      // independent; pinned so the earlier Windows gate does not answer first.
+      platform: 'linux',
     })
     const result = await gateway.restart()
     expect(result.ok).toBe(false)
@@ -663,6 +669,10 @@ function gatewayOptions() {
     exit: () => {}, restartExitDelayMs: 0,
     dshBin: bin,
     restartParentPid: 1_000_000_000,
+    // Pinned: these cases assert the systemd and --port 0 policies, which
+    // must not change meaning with the host OS now that the platform is also
+    // a restart gate. The Windows cases override it explicitly.
+    platform: 'linux' as NodeJS.Platform,
   }
 }
 
@@ -692,6 +702,36 @@ describe('restart guard (systemd)', () => {
     const gateway = new ShopGateway(stubCtx(), { ...gatewayOptions(), env: {}, ppid: 4321, fetchLatestVersion: async () => null })
     const version = await gateway.version()
     expect(version.restartSupported).toBe(true)
+  })
+})
+
+describe('restart guard (Windows)', () => {
+  // The handoff helper is a POSIX shell one-liner — `sh -c 'while kill -0
+  // "$1"; do sleep 0.2; done; shift; exec "$@"'` — and there is no `sh` on
+  // Windows. That failure is ASYNCHRONOUS, so `startRestart` returns
+  // normally, the RPC answers `ok: true`, and the gateway then exits: dsh
+  // dies and nothing brings it back. Measured on Windows 2026-09-02, where
+  // the restart.test.ts cases fail with `spawn sh ENOENT`. Refusing before
+  // anything is torn down is the only safe answer until the handoff has a
+  // Windows implementation.
+  it('refuses restart on Windows rather than exiting into nothing', async () => {
+    const exit = vi.fn<() => void>()
+    const gateway = new ShopGateway(stubCtx(), { ...gatewayOptions(), platform: 'win32', exit, restartExitDelayMs: 5 })
+    const result = await gateway.restart()
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.detail).toMatch(/Windows/)
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(exit).not.toHaveBeenCalled()
+  })
+
+  it('reports restartSupported: false on Windows so the client hides the offer', async () => {
+    // The client already has this path: it drops the restart button but keeps
+    // the pending-change notice (the systemd case), so no client change is
+    // needed for the offer to disappear.
+    const gateway = new ShopGateway(stubCtx(), {
+      ...gatewayOptions(), platform: 'win32', env: {}, ppid: 4321, fetchLatestVersion: async () => null,
+    })
+    expect((await gateway.version()).restartSupported).toBe(false)
   })
 })
 

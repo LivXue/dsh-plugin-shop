@@ -42,7 +42,12 @@ describe('startInstall', () => {
     expect(status.detail).toContain('dsh plugin --profile web install')
   })
 
-  it('reports failed with the CLI hint when dsh is not on PATH', async () => {
+  // POSIX-only: the detail is platform-dependent by design, and on Windows a
+  // missing binary reports the entry-lookup failure instead (see
+  // `spawnFailureDetail`). Every other case in this file already depends on
+  // `#!/bin/sh` fixtures, so the file as a whole does not run on Windows; the
+  // Windows path is covered by dsh-cli.test.ts and real-install.test.ts.
+  it.skipIf(process.platform === 'win32')('reports failed with the CLI hint when dsh is not on PATH', async () => {
     const install = startInstall({ profile: 'web', spec: 'dsh-hello-plugin@1.2.0', dshBin: join(tmpdir(), 'no-such-dsh-bin') })
     const status = await install.finished
     expect(status.state).toBe('failed')
@@ -407,6 +412,12 @@ describe('spawnFailureDetail', () => {
   // `dsh.cmd` / `dsh.ps1` shims with no `.exe`, and CreateProcess (which
   // node's spawn uses without a shell) resolves a bare name against `.exe`
   // only — so it can never find `dsh`, however correctly it is installed.
+  //
+  // `dsh-cli.ts` now runs the CLI's own JS entry through node, so this
+  // function no longer describes an unconditional Windows gap: reaching it
+  // means the entry could not be LOCATED. The two cases below kept their
+  // assertions (the POSIX advice is still wrong here, and the mechanism is
+  // still worth naming) and gained the third, which pins the new claim.
   const ENOENT = 'spawn dsh ENOENT'
 
   it('does not tell a Windows user to install the dsh they already have', () => {
@@ -416,6 +427,17 @@ describe('spawnFailureDetail', () => {
     // Names the actual mechanism, so the report is actionable rather than
     // mysterious: this is the shop's own gap, not the user's setup.
     expect(detail).toMatch(/\.cmd/)
+  })
+
+  it('says the CLI entry could not be located, and which package carries it', () => {
+    // The recovery step a user can actually take. The old text told them to
+    // run the update by hand "until the shop can do it for you", which is now
+    // false — the shop does do it, so a failure here is a lookup that came up
+    // empty and `dsh --version` is the thing to check.
+    const detail = spawnFailureDetail('ENOENT', ENOENT, 'dsh', 'win32')
+    expect(detail).toMatch(/@deepseek-ai\/dsh/)
+    expect(detail).toMatch(/dsh --version/)
+    expect(detail).not.toMatch(/until the shop can do it for you/)
   })
 
   it('keeps the honest advice where a missing binary really is the cause', () => {

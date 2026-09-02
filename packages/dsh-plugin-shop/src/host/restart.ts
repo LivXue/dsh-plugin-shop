@@ -30,7 +30,13 @@ export type RestartOutcome =
  *
  * The pid-poll has the usual tiny reuse race — if the parent's pid is
  * recycled within the 0.2s polling gap the helper waits for the unrelated
- * process too. Harmless: it only delays the boot. */
+ * process too. Harmless: it only delays the boot.
+ *
+ * POSIX only: `sh`, `kill -0` and `sleep` are all Unix, and `exec "$@"` has
+ * no Windows equivalent. The spawn would fail ASYNCHRONOUSLY, after this
+ * function has already returned and the caller has committed — so the gateway
+ * refuses on Windows before reaching here rather than exiting into nothing
+ * (index.ts `restartPlatformSupported`). */
 export function startRestart(options: {
   dshBin: string
   argv: string[]

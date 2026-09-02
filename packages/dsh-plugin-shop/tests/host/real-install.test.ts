@@ -8,20 +8,40 @@
 
 import { afterAll, describe, expect, it } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { startInstall } from '../../src/host/executor.ts'
+import { dshCommand, resolveDshScript } from '../../src/host/dsh-cli.ts'
 
-// The test needs the real dsh executable on PATH. CI installs it in
+// The test needs the real dsh CLI installed. CI installs it in
 // .github/workflows/plugin.yml; the skip fires only on machines that never
 // set the CLI up, so the P1 exit criterion still gates the CI run.
+//
+// The probe goes through the SAME resolution the executor uses rather than
+// `spawnSync('dsh', …)` directly. That earlier form was itself a casualty of
+// the Windows shim defect this resolution fixes: `spawn('dsh')` is always
+// ENOENT there, so `hasDsh` was false on every Windows machine and the P1
+// exit criterion silently skipped — the one test that would have caught the
+// defect was disabled by it.
 const hasDsh = (() => {
+  const { command, args } = dshCommand({
+    dshBin: 'dsh',
+    args: ['--version'],
+    platform: process.platform,
+    execPath: process.execPath,
+    script: resolveDshScript(
+      { exists: path => existsSync(path), read: path => readFileSync(path, 'utf8') },
+      { argv1: process.argv[1], path: process.env.PATH },
+    ),
+  })
   try {
-    const probe = spawnSync('dsh', ['--version'], { stdio: 'ignore' })
-    return probe.status === 0
+    return spawnSync(command, args, { stdio: 'ignore' }).status === 0
   } catch {
+    // spawnSync throws rather than reporting when the binary cannot be
+    // started at all (a Windows .cmd shim throws EINVAL); either way the CLI
+    // is unusable from here and the case skips.
     return false
   }
 })()

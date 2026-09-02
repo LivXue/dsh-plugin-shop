@@ -98,6 +98,8 @@ export interface ShopGatewayOptions {
   allowRestart?: boolean
   /** The environment `detectSupervisor` reads; production uses process.env. */
   env?: NodeJS.ProcessEnv
+  /** The platform the restart gate reads; production uses process.platform. */
+  platform?: NodeJS.Platform
   /** The pid `detectSupervisor` inspects; production uses process.ppid —
    * the PARENT pid (a systemd unit's main process has ppid 1). */
   ppid?: number
@@ -269,6 +271,9 @@ export class ShopGateway extends TypertRemoteService {
   private readonly pinFs: RepoPinFs
   private readonly allowRestart?: boolean
   private readonly env: NodeJS.ProcessEnv
+  /** The platform the restart gate reads; production defaults to
+   * process.platform. The two-phase handoff is POSIX-only (restart.ts). */
+  private readonly platform: NodeJS.Platform
   /** The parent pid `detectSupervisor` inspects; production defaults to
    * process.ppid (a systemd unit's main process has ppid 1). */
   private readonly ppid: number
@@ -330,6 +335,7 @@ export class ShopGateway extends TypertRemoteService {
     }
     this.allowRestart = options.allowRestart
     this.env = options.env ?? process.env
+    this.platform = options.platform ?? process.platform
     this.ppid = options.ppid ?? process.ppid
     this.fetchTarball = options.fetchTarball ?? ((url: string) => fetch(url))
     try {
@@ -547,6 +553,12 @@ export class ShopGateway extends TypertRemoteService {
   /** The explicit restart override. Only the row's `config:` sub-object is
    * passed to a plugin — a top-level `allowRestart:` beside `name:` would be
    * silently ignored by the loader (dsh-market README, #227). */
+  /** Whether the two-phase handoff can run at all here. `restart.ts` drives
+   * it through `sh`, `kill -0` and `sleep`, none of which Windows has. */
+  private restartPlatformSupported(): boolean {
+    return this.platform !== 'win32'
+  }
+
   private allowRestartConfigured(): boolean {
     if (this.allowRestart !== undefined) return this.allowRestart
     const loader = (this.ctx as unknown as {
@@ -895,6 +907,13 @@ export class ShopGateway extends TypertRemoteService {
    * new server answers. Refusals are issued before anything is torn down. */
   @Remote('restart')
   async restart(): Promise<ShopRestartResult> {
+    // The handoff helper is a POSIX shell one-liner (restart.ts) and there is
+    // no `sh` on Windows. That spawn fails ASYNCHRONOUSLY, so committing here
+    // would answer `ok: true`, exit this process, and leave nothing to take
+    // the port — dsh would simply be gone. Refuse instead.
+    if (!this.restartPlatformSupported()) {
+      return { ok: false, detail: 'dsh-plugin-shop: restart is not supported on Windows yet; restart dsh manually to apply the change' }
+    }
     // Under a systemd unit the two-phase handoff kills itself: the main
     // process exiting also kills the unit's cgroup, taking the detached
     // helper with it, and the service never comes back. Refuse before
@@ -945,7 +964,8 @@ export class ShopGateway extends TypertRemoteService {
       installed,
       latest,
       outdated: latest !== null && lt(installed, latest),
-      restartSupported: detectSupervisor(this.env, { ppid: this.ppid }) === null || this.allowRestartConfigured(),
+      restartSupported: this.restartPlatformSupported()
+        && (detectSupervisor(this.env, { ppid: this.ppid }) === null || this.allowRestartConfigured()),
     }
   }
 
