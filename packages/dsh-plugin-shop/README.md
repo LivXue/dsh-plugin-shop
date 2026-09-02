@@ -138,9 +138,16 @@ Compromising the browser half buys an attacker those nine calls and nothing more
 
 ## ⚙️ Configuration
 
+The shop reads its catalog from whichever source answers first: the npm
+package `dsh-plugin-shop-catalog` (via your configured registry, npmmirror,
+or npmjs) or `https://LivXue.github.io/dsh-plugin-shop/v1/`. All of them
+carry the same bytes; the race exists because the link to one of them can be
+far slower than the link to another. Setting `DSH_SHOP_CATALOG_URL` opts out
+of the race and uses only what you name.
+
 | Variable | Effect |
 |---|---|
-| `DSH_SHOP_CATALOG_URL` | Point the shop at your own catalog mirror instead of the public one |
+| `DSH_SHOP_CATALOG_URL` | Read the catalog only from this base, instead of racing the default sources |
 
 ## 📚 The catalog
 

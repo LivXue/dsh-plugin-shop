@@ -128,9 +128,11 @@ dsh plugin --profile <profile> list --depth 0
 
 ## ⚙️ 配置
 
+插件目录会从几个来源里挑最先响应的那个读：npm 包 `dsh-plugin-shop-catalog`（走你配置的 registry、npmmirror 或 npmjs），或者 `https://LivXue.github.io/dsh-plugin-shop/v1/`。几个来源的内容完全一致，之所以要赛跑，是因为不同网络到它们的快慢可以差出几百倍。设了 `DSH_SHOP_CATALOG_URL` 就不再赛跑，只读你指定的那个。
+
 | 变量 | 作用 |
 |---|---|
-| `DSH_SHOP_CATALOG_URL` | 把目录源指向你自己的镜像，替代公共源 |
+| `DSH_SHOP_CATALOG_URL` | 只从这个地址读目录，不再在默认来源之间赛跑 |
 
 ## 📚 目录
 

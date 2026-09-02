@@ -95,6 +95,15 @@ explicitly in the filter (2026-08-27: `dsh-plugin`, the npm package of
 
 Artifacts publish to a CDN as `/v1/index.json` (a pointer) and `/v1/plugins.<sha256>.json` (the data). Separating pointer from data lets a client cache the data file indefinitely while polling only a few hundred bytes.
 
+**Amendment (2026-09-01): the CDN becomes a set of raced origins.** The same
+`v1/` tree also publishes as the npm package `dsh-plugin-shop-catalog`, and
+the Host races a cheap pointer request across npm registries and Pages,
+taking the bulk transfer from whichever answers first. The pointer/data split
+is unchanged and does all the same work; what changes is that there is more
+than one place to ask. Driven by measurement: the Pages origin serves a
+China-side reader at 0.03 MB/s against an npm mirror's 12.53 MB/s. See
+`2026-09-01-catalog-mirrors.md`.
+
 **S — `packages/dsh-plugin-shop/` (the npm package `dsh-plugin-shop`, two halves)**
 
 - **Host half**, `ShopGateway`: registers the `shop/*` Remote. It is the only place that touches the network or the profile directory.
@@ -428,7 +437,7 @@ The earlier ruling prescribed an opt-in flag, default off, loopback only. The au
 | Malicious author | Tiering; mandatory acknowledgement for community entries | The community tier carries real risk; only honest disclosure mitigates it |
 | Typosquatting | Build-time edit-distance check, held for human adjudication | Novel impersonation techniques |
 | Stolen account / malicious new version | verified pins a version; `manifest.lock` records integrity, so version and hash changes are visible in a git diff | Detection lags publication |
-| Catalog man-in-the-middle | `index.json` points at content-addressed data; the Host verifies the fetched sha256 against the pointer; this repository's git history is the second source of truth | `index.json` itself being replaced, mitigated only by HTTPS |
+| Catalog man-in-the-middle | `index.json` points at content-addressed data; the Host verifies the fetched sha256 against the pointer; this repository's git history is the second source of truth | `index.json` itself being replaced, mitigated by HTTPS and — over the npm transport — by npm's `dist.integrity`, computed at publish time and carried in a signed packument |
 | Catalog text injection | Client holds no privilege; `summary` and `description` render as **plain text only** — no Markdown, no links |  |
 | Code execution at install time | pnpm 10+ blocks build scripts by default and the shop never writes `allowBuilds` | Entries a user enabled manually beforehand |
 

@@ -210,13 +210,16 @@ point.
 
 ### Tar
 
-A read-only parser, ~40 lines: 512-byte headers, collect the entries
-under `package/v1/`, reject any name escaping `package/`. It cannot know
-all three filenames up front — two carry a content hash — so it returns
-the map and the caller selects by the pointer it finds inside. It is a pure function
-(bytes to a file map) and belongs in the pure core; the network half
-lives in `npm-origin.ts` in the shell. No fourth runtime dependency —
-the shop has three (`js-yaml`, `semver`, `zod`) and `zlib` is built in.
+A read-only parser, ~40 lines: 512-byte headers, collect every entry,
+refusing any path with a `..` segment or a leading `/` — the generic
+escape check, not a `package/` prefix requirement, because the property
+that matters is that nothing can be written outside the tree. It cannot
+know all three filenames up front — two carry a content hash — so
+it returns the map and the caller selects by the pointer it finds
+inside. It is a pure function (bytes to a file map) and belongs in the
+pure core; the network half lives in `npm-origin.ts` in the shell. No
+fourth runtime dependency — the shop has three (`js-yaml`, `semver`,
+`zod`) and `zlib` is built in.
 
 ## 5. Deliberately not built
 
