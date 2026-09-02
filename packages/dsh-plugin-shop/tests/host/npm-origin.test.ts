@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createHash } from 'node:crypto'
+import { gzipSync } from 'node:zlib'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { TransportError } from '../../src/host/origin.ts'
@@ -156,6 +157,101 @@ describe('npmOrigin', () => {
     const failure = await handle.pointer().catch((e: unknown) => e)
     expect(failure).toBeInstanceOf(TransportError)
     expect(String(failure)).toMatch(/unsupported dist\.integrity algorithm/)
+  })
+
+  it('raises TransportError when the registry url cannot even be resolved against', async () => {
+    // Defence in depth behind npmrc.ts's validation (item A, 2026-09
+    // review). `new URL('c/latest', 'localhost:4873/')` throws a raw
+    // TypeError, and catalog.ts's race loop rethrows anything that is not a
+    // TransportError — so an unvalidated registry from ANY future caller
+    // would fail the whole load with every other origin healthy. A registry
+    // we cannot address is this origin disqualifying itself.
+    const unused = (async () => { throw new Error('should not reach the network') }) as unknown as typeof fetch
+    const failure = await npmOrigin('localhost:4873/', 'c', unused).probe(signal()).catch((e: unknown) => e)
+    expect(failure).toBeInstanceOf(TransportError)
+    expect(String(failure)).toMatch(/is not a usable registry url/)
+  })
+
+  it('raises TransportError when the tarball body is not gzip at all', async () => {
+    // A mirror that answers 200 with a login page where the tarball should
+    // be — with a dist.integrity it computed over that same page, which is
+    // what makes this reachable past verifyIntegrity. gunzipSync throws a
+    // plain Error (Z_DATA_ERROR) that escapes the race loop (item B,
+    // 2026-09 review). An unparsable tarball is the same statement about
+    // the same mirror as an unparsable manifest: it does not speak the
+    // protocol.
+    const notGzip = Buffer.from('<html><body>login required</body></html>')
+    const integrity = `sha512-${createHash('sha512').update(notGzip).digest('base64')}`
+    const handle = await npmOrigin('https://reg.test/', 'c',
+      registry({ tarball: notGzip, integrity })).probe(signal())
+    const failure = await handle.pointer().catch((e: unknown) => e)
+    expect(failure).toBeInstanceOf(TransportError)
+    expect(String(failure)).toMatch(/unparsable tarball/)
+    // Attributed, so a four-origin race names the mirror at fault (item D).
+    expect(String(failure)).toMatch(/reg\.test/)
+  })
+
+  it('raises TransportError when the gzip unpacks to bytes that are not a tar', async () => {
+    // Valid gzip, garbage inside: readTar throws a plain Error from tar.ts
+    // on the unparseable size field. tar.ts's "refuses everything else
+    // loudly" was written when the tarball came from one trusted publisher;
+    // it now arrives from a raced mirror, so loud must mean "disqualify this
+    // mirror", not "fail the load".
+    const header = Buffer.alloc(512)
+    header.write('package/v1/index.json', 0, 'ascii')
+    header.write('zzzzzzzzzzz\0', 124, 'ascii') // size field: not octal at all
+    header[156] = '0'.charCodeAt(0) // typeflag: regular file
+    const corrupt = gzipSync(header)
+    const integrity = `sha512-${createHash('sha512').update(corrupt).digest('base64')}`
+    const handle = await npmOrigin('https://reg.test/', 'c',
+      registry({ tarball: corrupt, integrity })).probe(signal())
+    const failure = await handle.pointer().catch((e: unknown) => e)
+    expect(failure).toBeInstanceOf(TransportError)
+    expect(String(failure)).toMatch(/unparsable tarball/)
+  })
+
+  it('raises TransportError when the tarball body dies mid-download', async () => {
+    // fetch resolves its Response as soon as the headers arrive, so a
+    // truncated or reset stream rejects at the BODY read, not at the fetch
+    // call — which was wrapped while the body read next to it was not (item
+    // C, 2026-09 review). The purest transport failure of the set.
+    const truncating = (async (input: string | URL) => {
+      const url = String(input)
+      if (url.endsWith('/latest')) {
+        return new Response(JSON.stringify({
+          version: '2026.901.0',
+          dist: { tarball: 'https://reg.test/c/-/c-1.tgz', integrity: INTEGRITY },
+        }), { status: 200 })
+      }
+      return {
+        ok: true,
+        status: 200,
+        arrayBuffer: () => Promise.reject(new TypeError('fetch failed')),
+      } as unknown as Response
+    }) as unknown as typeof fetch
+    const handle = await npmOrigin('https://reg.test/', 'c', truncating).probe(signal())
+    const failure = await handle.pointer().catch((e: unknown) => e)
+    expect(failure).toBeInstanceOf(TransportError)
+    expect(String(failure)).toMatch(/tarball body read failed/)
+  })
+
+  it('names the origin on a non-2xx tarball response', async () => {
+    // An unattributed message tells an operator nothing in a four-origin
+    // race (item D, 2026-09 review).
+    const notFound = (async (input: string | URL) => {
+      const url = String(input)
+      if (url.endsWith('/latest')) {
+        return new Response(JSON.stringify({
+          version: '2026.901.0',
+          dist: { tarball: 'https://reg.test/c/-/c-1.tgz', integrity: INTEGRITY },
+        }), { status: 200 })
+      }
+      return new Response('', { status: 404 })
+    }) as unknown as typeof fetch
+    const handle = await npmOrigin('https://reg.test/', 'c', notFound).probe(signal())
+    const failure = await handle.pointer().catch((e: unknown) => e)
+    expect(failure).toBeInstanceOf(TransportError)
+    expect(String(failure)).toMatch(/npm origin https:\/\/reg\.test\/ tarball returned 404/)
   })
 
   it("keeps a registry url's path when resolving the probe request, even with no trailing slash", async () => {

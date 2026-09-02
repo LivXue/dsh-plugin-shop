@@ -24,7 +24,7 @@ const PACKAGE_ROOT = 'package/v1/'
 /** Verify tarball bytes against npm's own Subresource-Integrity string.
  * `dist.integrity` may carry several space-separated digests; npm publishes
  * one, and the first is the one we check. */
-function verifyIntegrity(bytes: Buffer, integrity: string): void {
+function verifyIntegrity(bytes: Buffer, integrity: string, registryUrl: string): void {
   const first = integrity.trim().split(/\s+/)[0] ?? ''
   const dash = first.indexOf('-')
   const algorithm = dash === -1 ? '' : first.slice(0, dash)
@@ -35,11 +35,13 @@ function verifyIntegrity(bytes: Buffer, integrity: string): void {
     // verified yet, so there is nothing to be loud about. Contrast the
     // mismatch below: those bytes exist and provably fail their own claimed
     // digest, which must stay a loud, non-retried throw.
-    throw new TransportError(`npm origin: unsupported dist.integrity algorithm ${JSON.stringify(algorithm)}`)
+    throw new TransportError(
+      `npm origin ${registryUrl}: unsupported dist.integrity algorithm ${JSON.stringify(algorithm)}`,
+    )
   }
   const actual = createHash(algorithm).update(bytes).digest('base64')
   if (actual !== expected) {
-    throw new Error(`npm origin: tarball failed dist.integrity check (${algorithm})`)
+    throw new Error(`npm origin ${registryUrl}: tarball failed dist.integrity check (${algorithm})`)
   }
 }
 
@@ -68,7 +70,22 @@ export function npmOrigin(rawRegistryUrl: string, packageName: string, fetchImpl
   return {
     id,
     async probe(signal): Promise<OriginHandle> {
-      const url = new URL(`${encodeURIComponent(packageName)}/latest`, registryUrl).href
+      // Defence in depth behind `npmrc.ts`'s validation, which is where a
+      // user's own `registry=` line is now rejected if it is not an absolute
+      // http(s) URL. Unguarded, `new URL` throws a raw TypeError for a bare
+      // host, a relative path, or npm's unexpanded `${VAR}` syntax — and
+      // catalog.ts's race loop rethrows anything that is not a
+      // TransportError, so one unusable registry from any future caller
+      // would fail the whole load with every other origin healthy. A
+      // registry this origin cannot even address is this origin
+      // disqualifying itself, exactly like an unparsable manifest below.
+      let url: string
+      try {
+        url = new URL(`${encodeURIComponent(packageName)}/latest`, registryUrl).href
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error)
+        throw new TransportError(`npm origin ${registryUrl} is not a usable registry url: ${detail}`, { cause: error })
+      }
       let response: Response
       try {
         response = await fetchImpl(url, { signal })
@@ -133,11 +150,43 @@ export function npmOrigin(rawRegistryUrl: string, packageName: string, fetchImpl
           throw new TransportError(`npm origin ${registryUrl} tarball fetch failed: ${detail}`, { cause: error })
         }
         if (!tarballResponse.ok) {
-          throw new TransportError(`npm origin tarball returned ${tarballResponse.status}`)
+          throw new TransportError(`npm origin ${registryUrl} tarball returned ${tarballResponse.status}`)
         }
-        const bytes = Buffer.from(await tarballResponse.arrayBuffer())
-        verifyIntegrity(bytes, manifest.dist.integrity)
-        files = readTar(gunzipSync(bytes))
+        // The fetch CALL above is wrapped and the body read was not, but
+        // `fetch` resolves its Response as soon as the headers arrive: a
+        // stream that truncates or resets mid-download rejects here, with a
+        // raw `TypeError: fetch failed` that escapes the race loop. The
+        // purest transport failure of the set.
+        let bytes: Buffer
+        try {
+          bytes = Buffer.from(await tarballResponse.arrayBuffer())
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error)
+          throw new TransportError(`npm origin ${registryUrl} tarball body read failed: ${detail}`, { cause: error })
+        }
+        // Deliberately OUTSIDE the try below. A sha MISMATCH says "these
+        // bytes are not what they claim" — a claim about content — and stays
+        // a loud, non-retried plain Error (§4). What follows is a different
+        // statement about a different subject.
+        verifyIntegrity(bytes, manifest.dist.integrity, registryUrl)
+        // An unparsable TARBALL is the same statement about the same mirror
+        // as an unparsable manifest above: it does not speak the protocol.
+        // `gunzipSync` throws a plain Error (Z_DATA_ERROR) on non-gzip
+        // bytes, and `readTar` throws plain Errors on an unparseable size
+        // field or a path escaping the archive root — all of which escape
+        // catalog.ts's race loop as written. tar.ts's "refuses everything
+        // else loudly" was decided when the tarball came from one trusted
+        // publisher; it now arrives from a raced mirror, so loud has to mean
+        // "disqualify this mirror", not "fail the load with three healthy
+        // origins standing".
+        let parsed: Map<string, Buffer>
+        try {
+          parsed = readTar(gunzipSync(bytes))
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error)
+          throw new TransportError(`npm origin ${registryUrl} served an unparsable tarball: ${detail}`, { cause: error })
+        }
+        files = parsed
         return files
       }
 
@@ -150,7 +199,9 @@ export function npmOrigin(rawRegistryUrl: string, packageName: string, fetchImpl
         // another origin when this is the pointer read, or degrades to the
         // cache when it is a data file read, the same posture httpOrigin
         // already takes on a 404.
-        if (entry === undefined) throw new TransportError(`npm origin: ${name} is not in the catalog package`)
+        if (entry === undefined) {
+          throw new TransportError(`npm origin ${registryUrl}: ${name} is not in the catalog package`)
+        }
         return entry.toString('utf8')
       }
 
@@ -163,7 +214,7 @@ export function npmOrigin(rawRegistryUrl: string, packageName: string, fetchImpl
         // cross-origin guard.
         file: async (url) => {
           if (url.includes('/') || url.startsWith('.')) {
-            throw new Error(`npm origin: ${JSON.stringify(url)} must be a plain file name`)
+            throw new Error(`npm origin ${registryUrl}: ${JSON.stringify(url)} must be a plain file name`)
           }
           return read(url)
         },

@@ -78,13 +78,20 @@ for (const name of ['index.json', pointer.plugins.url, ...(pointer.stars === und
 
 if (dryRun) {
   console.log(`would publish ${PACKAGE_NAME}@${version} from ${PKG_DIR}`)
-  // Actually invoke npm, with --dry-run appended: what ships is decided by
-  // npm's own packlist (the `files` field in package.json plus its built-in
-  // ignore rules), not by the copyFileSync calls above, and the ~/.npmrc
-  // auth path, provenance minting, and npm's acceptance of the directory
-  // are otherwise never exercised. A wrong packlist is not a re-runnable
-  // inconvenience once this is a real publish — npm refuses to republish a
-  // version (item 2(a), 2026-09 review).
+  // Actually invoke npm, with --dry-run appended, for exactly one reason:
+  // what ships is decided by npm's own packlist (the `files` field in
+  // package.json plus its built-in ignore rules), not by the copyFileSync
+  // calls above, and nothing else here checks it. A wrong packlist is not a
+  // re-runnable inconvenience once this is a real publish — npm refuses to
+  // republish a version (item 2(a), 2026-09 review).
+  //
+  // That is ALL it proves. `--dry-run` performs no registry interaction, so
+  // it exercises neither the ~/.npmrc auth path nor provenance minting nor
+  // the registry's acceptance of the package: it exits 0 with an
+  // unroutable registry, an unexpanded `_authToken`, and no token in the
+  // environment at all (measured, item E of the 2026-09 review). Only the
+  // real publish below proves those, and NPM_CONFIG_PROVENANCE is set on
+  // that step alone.
   execFileSync('npm', ['publish', '--dry-run', '--access', 'public'], { cwd: PKG_DIR, stdio: 'inherit' })
   process.exit(0)
 }

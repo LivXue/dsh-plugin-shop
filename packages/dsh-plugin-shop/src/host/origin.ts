@@ -81,7 +81,7 @@ export function httpOrigin(baseUrl: string, fetchImpl: typeof fetch): CatalogOri
             const detail = error instanceof Error ? error.message : String(error)
             throw new TransportError(`catalog data fetch failed for ${id}: ${detail}`, { cause: error })
           }
-          if (!dataResponse.ok) throw new TransportError(`catalog data returned ${dataResponse.status}`)
+          if (!dataResponse.ok) throw new TransportError(`catalog data returned ${dataResponse.status} for ${id}`)
           return dataResponse.text()
         },
       }

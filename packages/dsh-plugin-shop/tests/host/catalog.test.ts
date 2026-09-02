@@ -2,8 +2,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
 import { DEFAULT_CATALOG_URL, catalogOrigins, loadCatalog, type CatalogFs } from '../../src/host/catalog.ts'
-import { TransportError, type CatalogOrigin } from '../../src/host/origin.ts'
+import { TransportError, type CatalogOrigin, type OriginHandle } from '../../src/host/origin.ts'
 import { npmOrigin } from '../../src/host/npm-origin.ts'
+import { npmrcRegistry } from '../../src/host/npmrc.ts'
 
 function dataJson(plugins: unknown[] = [], denied: unknown[] = [], schemaVersion = 2): string {
   return JSON.stringify({ schemaVersion, plugins, denied })
@@ -911,6 +912,41 @@ describe('a broken npm origin does not mask a healthy one', () => {
     return gzipSync(entries)
   }
 
+  /** Wraps an origin so the test can see the order the race loop actually
+   * settled and consumed them in.
+   *
+   * Both fall-through tests below only test anything if the broken origin
+   * leads, and neither of them controls that: the ordering comes from the
+   * argument order `loadCatalog` starts the probes in, reinforced by a
+   * microtask head start in the healthy fake. Measured — deleting that head
+   * start does not flip it; adding a longer one to the broken fake does.
+   * Either way it is incidental to the code under test, so it is asserted
+   * rather than assumed. Without these assertions a flip lets the healthy
+   * origin win the race outright and BOTH tests still pass on entry count
+   * and staleness, proving nothing about the fall-through they exist for
+   * (item F, 2026-09 review; verified by flipping the order and watching
+   * only these assertions fail). */
+  function recording(label: string, origin: CatalogOrigin, log: string[]): CatalogOrigin {
+    return {
+      id: origin.id,
+      probe: async (signal) => {
+        let handle: OriginHandle
+        try {
+          handle = await origin.probe(signal)
+        } catch (error) {
+          log.push(`${label}:probe-failed`)
+          throw error
+        }
+        log.push(`${label}:probe-ok`)
+        return {
+          id: handle.id,
+          pointer: async () => { log.push(`${label}:pointer`); return handle.pointer() },
+          file: async (url) => handle.file(url),
+        }
+      },
+    }
+  }
+
   it('serves the healthy origin\'s catalog even though a broken mirror answers 200 with junk, first', async () => {
     const entry = {
       name: 'dsh-hello-plugin', version: '1.2.0', integrity: 'sha512-i', publishedAt: null,
@@ -929,9 +965,11 @@ describe('a broken npm origin does not mask a healthy one', () => {
     }) as unknown as typeof fetch
 
     const healthyRegistry = (async (input: string | URL) => {
-      // A few microtask turns so the broken mirror is guaranteed to settle —
+      // A few microtask turns, reinforcing the lead the broken mirror
+      // already has from argument order, so it is guaranteed to settle —
       // and be processed by the race loop — first. That ordering is exactly
-      // what this test exists to rule out as a way to fail the whole load.
+      // what this test exists to rule out as a way to fail the whole load,
+      // and `recording` above asserts it actually held.
       for (let i = 0; i < 4; i += 1) await Promise.resolve()
       const reqUrl = String(input)
       if (reqUrl.endsWith('/latest')) {
@@ -943,13 +981,18 @@ describe('a broken npm origin does not mask a healthy one', () => {
       return new Response(new Uint8Array(tarball), { status: 200 })
     }) as unknown as typeof fetch
 
+    const log: string[] = []
     const result = await loadCatalog({
       cacheDir: '/cache', fsImpl: memFs(),
       origins: [
-        npmOrigin('https://broken.test/', 'dsh-plugin-shop-catalog', brokenRegistry),
-        npmOrigin('https://healthy.test/', 'dsh-plugin-shop-catalog', healthyRegistry),
+        recording('broken', npmOrigin('https://broken.test/', 'dsh-plugin-shop-catalog', brokenRegistry), log),
+        recording('healthy', npmOrigin('https://healthy.test/', 'dsh-plugin-shop-catalog', healthyRegistry), log),
       ],
     })
+    // Asserted, not assumed: the broken origin's probe must have settled —
+    // and been consumed by the race loop — before the healthy one served
+    // anything. `recording` above says why this cannot be left implicit.
+    expect(log).toEqual(['broken:probe-failed', 'healthy:probe-ok', 'healthy:pointer'])
     // Only the healthy origin can produce a validated snapshot at all — the
     // broken one fails inside probe() before it ever returns a handle.
     expect(result.snapshot.entries).toHaveLength(1)
@@ -986,10 +1029,11 @@ describe('a broken npm origin does not mask a healthy one', () => {
     }) as unknown as typeof fetch
 
     const healthyRegistry = (async (input: string | URL) => {
-      // A few microtask turns so the redirecting origin is guaranteed to
-      // settle its probe — and be processed by the race loop — first. That
-      // ordering is exactly what this test exists to rule out as a way to
-      // fail the whole load.
+      // A few microtask turns, reinforcing the lead the redirecting origin
+      // already has from argument order, so it is guaranteed to settle its
+      // probe — and be processed by the race loop — first. That ordering is
+      // exactly what this test exists to rule out as a way to fail the
+      // whole load, and `recording` above asserts it actually held.
       for (let i = 0; i < 4; i += 1) await Promise.resolve()
       const reqUrl = String(input)
       if (reqUrl.endsWith('/latest')) {
@@ -1001,13 +1045,23 @@ describe('a broken npm origin does not mask a healthy one', () => {
       return new Response(new Uint8Array(tarball), { status: 200 })
     }) as unknown as typeof fetch
 
+    const log: string[] = []
     const result = await loadCatalog({
       cacheDir: '/cache', fsImpl: memFs(),
       origins: [
-        npmOrigin('https://registry.npm.taobao.org/', 'dsh-plugin-shop-catalog', redirectingRegistry),
-        npmOrigin('https://healthy.test/', 'dsh-plugin-shop-catalog', healthyRegistry),
+        recording('taobao', npmOrigin('https://registry.npm.taobao.org/', 'dsh-plugin-shop-catalog', redirectingRegistry), log),
+        recording('healthy', npmOrigin('https://healthy.test/', 'dsh-plugin-shop-catalog', healthyRegistry), log),
       ],
     })
+    // Asserted, not assumed. `pointer()` calls are strictly sequential — the
+    // loop awaits each one before moving to the next finisher — so this pins
+    // exactly the claim the test rests on: the redirecting origin was
+    // committed to FIRST, and the load fell through to the healthy one only
+    // after it refused. If the ordering ever flips the log becomes
+    // ['healthy:pointer'] alone and this fails, instead of the test quietly
+    // passing on the wrong path.
+    expect(log.filter(line => line.endsWith(':pointer'))).toEqual(['taobao:pointer', 'healthy:pointer'])
+    expect(log[0]).toBe('taobao:probe-ok')
     // Only the healthy origin can produce a validated snapshot at all — the
     // redirecting one fails inside pointer(), after probe() already
     // returned it a handle, which is exactly why this is a DIFFERENT
@@ -1058,5 +1112,50 @@ describe('catalogOrigins', () => {
     // its last path segment on every request (item 10, 2026-09 review).
     const ids = catalogOrigins(DEFAULT_CATALOG_URL, fetchImpl, 'https://artifactory.corp/api/npm/npm-repo').map(o => o.id)
     expect(ids).toContain('npm:https://artifactory.corp/api/npm/npm-repo/')
+  })
+
+  it("still loads the catalog when the user's ~/.npmrc names a registry that is not a url", async () => {
+    // The whole chain, because no half of it proves the property alone:
+    // npmrcRegistry must reject the value, catalogOrigins must therefore
+    // race only the built-in defaults, and loadCatalog must still serve a
+    // snapshot from a surviving origin.
+    //
+    // `registry=${NPM_REGISTRY}/` is npm's own documented env expansion —
+    // it works perfectly for npm, and a reader that does not expand it
+    // captures the literal. Unvalidated, that literal reached npmOrigin's
+    // `new URL(pkg + '/latest', registryUrl)` and threw a raw TypeError;
+    // catalog.ts's race loop rethrows anything that is not a
+    // TransportError, so the load died with npmmirror, npmjs and Pages all
+    // healthy and no cache fallback — falsifying the design's own claim
+    // that a wrongly guessed registry "loses a 400-byte request and nothing
+    // else" (design §3, item A of the 2026-09 review).
+    const entry = {
+      name: 'dsh-hello-plugin', version: '1.2.0', integrity: 'sha512-i', publishedAt: null,
+      repository: null, license: 'MIT', tier: 'community', metadata: 'derived',
+      added: '2026-08-25',
+    }
+    const data = dataJson([entry])
+    const { pointer } = pointerFor(data, '2026-08-25T00:00:00Z')
+    // Every npm origin is down, so only Pages can serve — the interesting
+    // shape: one unusable preference must not be able to take the load down
+    // while a healthy origin is standing.
+    const serving = (async (input: string | URL) => {
+      const url = String(input)
+      if (url.endsWith('/latest')) return new Response('', { status: 503 })
+      return new Response(url.endsWith('/index.json') ? pointer : data, { status: 200 })
+    }) as unknown as typeof fetch
+
+    const registry = npmrcRegistry(() => 'registry=${NPM_REGISTRY}/\n', '/home/u')
+    const origins = catalogOrigins(DEFAULT_CATALOG_URL, serving, registry)
+    const result = await loadCatalog({ cacheDir: '/cache', fsImpl: memFs(), origins })
+    expect(result.snapshot.entries).toHaveLength(1)
+    expect(result.stale).toBe(false)
+    // And the unusable value is dropped rather than raced: nothing gains a
+    // fourth origin whose every request is guaranteed to fail.
+    expect(origins.map(o => o.id)).toEqual([
+      'npm:https://registry.npmmirror.com/',
+      'npm:https://registry.npmjs.org/',
+      `http:${DEFAULT_CATALOG_URL}`,
+    ])
   })
 })
