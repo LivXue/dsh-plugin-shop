@@ -9,21 +9,48 @@ export type Settled<T> = { index: number; value: T } | { index: number; reason: 
 /**
  * Yield each promise's outcome as it settles, tagged with its argument index.
  *
- * Every promise is given its handlers immediately, so a rejection that is
- * yielded late is still handled early — the sequence never produces an
- * unhandled rejection warning.
+ * Deliberately NOT an `async function*`. Two properties depend on that:
+ *
+ * 1. **Handlers attach synchronously, at call time.** An async generator's
+ *    body does not run until its first `next()`, so wiring the handlers
+ *    inside one would leave a rejection unhandled for as long as the caller
+ *    waits before iterating — which crashes the process under Node's default
+ *    unhandled-rejection policy.
+ * 2. **Order is recorded when each promise settles**, not when a consumer
+ *    asks. Re-racing the survivors on every turn tie-breaks on argument
+ *    order instead: `Promise.race` over promises that are ALREADY settled
+ *    resolves with the first in iteration order, not the first to have
+ *    settled — and a consumer doing any work between yields, which is
+ *    exactly this module's use case, is what lets two settle inside one turn.
  */
-export async function* inCompletionOrder<T>(promises: readonly Promise<T>[]): AsyncGenerator<Settled<T>> {
-  const pending = new Map<number, Promise<Settled<T>>>()
-  promises.forEach((promise, index) => {
-    pending.set(index, promise.then(
-      (value): Settled<T> => ({ index, value }),
-      (reason: unknown): Settled<T> => ({ index, reason }),
-    ))
-  })
-  while (pending.size > 0) {
-    const settled = await Promise.race(pending.values())
-    pending.delete(settled.index)
-    yield settled
+export function inCompletionOrder<T>(promises: readonly Promise<T>[]): AsyncGenerator<Settled<T>> {
+  const settled: Settled<T>[] = []
+  let wake: (() => void) | null = null
+  const record = (outcome: Settled<T>): void => {
+    settled.push(outcome)
+    const resume = wake
+    wake = null
+    resume?.()
   }
+  for (const [index, promise] of promises.entries()) {
+    void promise.then(
+      value => { record({ index, value }) },
+      (reason: unknown) => { record({ index, reason }) },
+    )
+  }
+
+  return (async function* () {
+    for (let delivered = 0; delivered < promises.length; delivered += 1) {
+      if (settled.length === delivered) {
+        await new Promise<void>(resolve => { wake = resolve })
+      }
+      const outcome = settled[delivered]
+      // Unreachable: the loop only waits when nothing new has arrived, and
+      // `record` is the sole waker and always pushes before waking. Guarded
+      // rather than asserted because `noUncheckedIndexedAccess` is on and a
+      // silent `undefined` here would be a yielded hole.
+      if (outcome === undefined) throw new Error('inCompletionOrder: woke with nothing settled')
+      yield outcome
+    }
+  })()
 }

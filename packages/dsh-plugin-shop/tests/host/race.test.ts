@@ -30,6 +30,64 @@ describe('inCompletionOrder', () => {
     expect(seen).toEqual(['third-arg', 'first-arg', 'second-arg'])
   })
 
+  // The case above settles its tail in ascending argument order, which is
+  // also what an argument-order tie-break would produce — so on its own it
+  // cannot tell the two apart. This one can: the consumer does real work
+  // between yields (a macrotask, as the origin race's bulk fetch does),
+  // letting two promises settle inside one turn, and the true settle order
+  // runs DOWN the argument list.
+  it('preserves settle order when the consumer works between yields', async () => {
+    const order: string[] = []
+    const make = (label: string) => {
+      const d = deferred<string>()
+      return { promise: d.promise, fire: () => { order.push(label); d.resolve(label) } }
+    }
+    const a = make('arg0')
+    const b = make('arg1')
+    const c = make('arg2')
+    const seen: string[] = []
+    const drain = (async () => {
+      for await (const settled of inCompletionOrder([a.promise, b.promise, c.promise])) {
+        if ('value' in settled) seen.push(settled.value)
+        await new Promise(resolve => setTimeout(resolve, 5))
+      }
+    })()
+    c.fire()
+    await new Promise(resolve => setTimeout(resolve, 1))
+    b.fire()
+    a.fire()
+    await drain
+    expect(seen).toEqual(order)
+    expect(seen).toEqual(['arg2', 'arg1', 'arg0'])
+  })
+
+  // Handlers must be attached at call time, not at first iteration: an
+  // `async function*` body is lazy, and a rejection left unhandled while the
+  // caller does something else first crashes the process by default.
+  it('handles a rejection even when construction and iteration are separated', async () => {
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown): void => { unhandled.push(reason) }
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      const sequence = inCompletionOrder([Promise.reject(new Error('boom'))])
+      await new Promise(resolve => setTimeout(resolve, 20))
+      const seen: string[] = []
+      for await (const settled of sequence) seen.push('value' in settled ? 'ok' : 'err')
+      expect(seen).toEqual(['err'])
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
+    expect(unhandled).toEqual([])
+  })
+
+  it('delivers every outcome when all promises settled before the first read', async () => {
+    const sequence = inCompletionOrder([Promise.resolve('a'), Promise.resolve('b'), Promise.resolve('c')])
+    await new Promise(resolve => setTimeout(resolve, 10))
+    const seen: string[] = []
+    for await (const settled of sequence) if ('value' in settled) seen.push(settled.value)
+    expect(seen).toEqual(['a', 'b', 'c'])
+  })
+
   it('yields rejections in place rather than aborting the sequence', async () => {
     const bad = Promise.reject(new Error('boom'))
     const good = Promise.resolve('ok')
