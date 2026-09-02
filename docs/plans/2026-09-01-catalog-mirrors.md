@@ -10,6 +10,20 @@
 
 **Spec:** `docs/design/2026-09-01-catalog-mirrors.md` (committed `ba0ea17`)
 
+## Running tests
+
+Two suites, two configs — the root `vitest.config.ts` includes only
+`registry/scripts/tests/**`, so a root `npx vitest run packages/...` matches
+nothing and exits 1. Use:
+
+| What | Command |
+|---|---|
+| One package test | `pnpm -C packages/dsh-plugin-shop exec vitest run tests/host/<file>.test.ts` |
+| Whole package suite (incl. the live e2e) | `pnpm -C packages/dsh-plugin-shop test` |
+| One registry test | `npx vitest run registry/scripts/tests/<file>.test.ts` |
+| Whole registry suite | `pnpm test` |
+| Typechecks | `pnpm typecheck` and `pnpm -C packages/dsh-plugin-shop typecheck` |
+
 ## Global Constraints
 
 - **No fourth runtime dependency in `packages/dsh-plugin-shop`.** It has exactly three (`js-yaml`, `semver`, `zod`). `node:zlib` and `node:crypto` are built in; the tar reader is hand-written.
@@ -142,7 +156,7 @@ describe('readTar', () => {
 
 ```bash
 cd /Evermind/sh_evermind/xuedizhan/dsh-plugin-store
-npx vitest run packages/dsh-plugin-shop/tests/host/tar.test.ts
+pnpm -C packages/dsh-plugin-shop exec vitest run tests/host/tar.test.ts
 ```
 
 Expected: FAIL — cannot resolve `../../src/host/tar.ts`.
@@ -220,7 +234,7 @@ export function readTar(buffer: Buffer): Map<string, Buffer> {
 - [ ] **Step 5: Run the test and watch it pass**
 
 ```bash
-npx vitest run packages/dsh-plugin-shop/tests/host/tar.test.ts
+pnpm -C packages/dsh-plugin-shop exec vitest run tests/host/tar.test.ts
 ```
 
 Expected: 4 passed. If the path-escape test fails because `assertContained` is never reached, check that the fabricated header's typeflag byte is at offset 156 and reads `'0'`.
@@ -291,6 +305,64 @@ describe('inCompletionOrder', () => {
     expect(seen).toEqual(['third-arg', 'first-arg', 'second-arg'])
   })
 
+  // The case above settles its tail in ascending argument order, which is
+  // also what an argument-order tie-break would produce — so on its own it
+  // cannot tell the two apart. This one can: the consumer does real work
+  // between yields (a macrotask, as the origin race's bulk fetch does),
+  // letting two promises settle inside one turn, and the true settle order
+  // runs DOWN the argument list.
+  it('preserves settle order when the consumer works between yields', async () => {
+    const order: string[] = []
+    const make = (label: string) => {
+      const d = deferred<string>()
+      return { promise: d.promise, fire: () => { order.push(label); d.resolve(label) } }
+    }
+    const a = make('arg0')
+    const b = make('arg1')
+    const c = make('arg2')
+    const seen: string[] = []
+    const drain = (async () => {
+      for await (const settled of inCompletionOrder([a.promise, b.promise, c.promise])) {
+        if ('value' in settled) seen.push(settled.value)
+        await new Promise(resolve => setTimeout(resolve, 5))
+      }
+    })()
+    c.fire()
+    await new Promise(resolve => setTimeout(resolve, 1))
+    b.fire()
+    a.fire()
+    await drain
+    expect(seen).toEqual(order)
+    expect(seen).toEqual(['arg2', 'arg1', 'arg0'])
+  })
+
+  // Handlers must be attached at call time, not at first iteration: an
+  // `async function*` body is lazy, and a rejection left unhandled while the
+  // caller does something else first crashes the process by default.
+  it('handles a rejection even when construction and iteration are separated', async () => {
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown): void => { unhandled.push(reason) }
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      const sequence = inCompletionOrder([Promise.reject(new Error('boom'))])
+      await new Promise(resolve => setTimeout(resolve, 20))
+      const seen: string[] = []
+      for await (const settled of sequence) seen.push('value' in settled ? 'ok' : 'err')
+      expect(seen).toEqual(['err'])
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
+    expect(unhandled).toEqual([])
+  })
+
+  it('delivers every outcome when all promises settled before the first read', async () => {
+    const sequence = inCompletionOrder([Promise.resolve('a'), Promise.resolve('b'), Promise.resolve('c')])
+    await new Promise(resolve => setTimeout(resolve, 10))
+    const seen: string[] = []
+    for await (const settled of sequence) if ('value' in settled) seen.push(settled.value)
+    expect(seen).toEqual(['a', 'b', 'c'])
+  })
+
   it('yields rejections in place rather than aborting the sequence', async () => {
     const bad = Promise.reject(new Error('boom'))
     const good = Promise.resolve('ok')
@@ -321,7 +393,7 @@ describe('inCompletionOrder', () => {
 - [ ] **Step 2: Run the test and watch it fail**
 
 ```bash
-npx vitest run packages/dsh-plugin-shop/tests/host/race.test.ts
+pnpm -C packages/dsh-plugin-shop exec vitest run tests/host/race.test.ts
 ```
 
 Expected: FAIL — cannot resolve `../../src/host/race.ts`.
@@ -342,33 +414,60 @@ export type Settled<T> = { index: number; value: T } | { index: number; reason: 
 /**
  * Yield each promise's outcome as it settles, tagged with its argument index.
  *
- * Every promise is given its handlers immediately, so a rejection that is
- * yielded late is still handled early — the sequence never produces an
- * unhandled rejection warning.
+ * Deliberately NOT an `async function*`. Two properties depend on that:
+ *
+ * 1. **Handlers attach synchronously, at call time.** An async generator's
+ *    body does not run until its first `next()`, so wiring the handlers
+ *    inside one would leave a rejection unhandled for as long as the caller
+ *    waits before iterating — which crashes the process under Node's default
+ *    unhandled-rejection policy.
+ * 2. **Order is recorded when each promise settles**, not when a consumer
+ *    asks. Re-racing the survivors on every turn tie-breaks on argument
+ *    order instead: `Promise.race` over promises that are ALREADY settled
+ *    resolves with the first in iteration order, not the first to have
+ *    settled — and a consumer doing any work between yields, which is
+ *    exactly this module's use case, is what lets two settle inside one turn.
  */
-export async function* inCompletionOrder<T>(promises: readonly Promise<T>[]): AsyncGenerator<Settled<T>> {
-  const pending = new Map<number, Promise<Settled<T>>>()
-  promises.forEach((promise, index) => {
-    pending.set(index, promise.then(
-      (value): Settled<T> => ({ index, value }),
-      (reason: unknown): Settled<T> => ({ index, reason }),
-    ))
-  })
-  while (pending.size > 0) {
-    const settled = await Promise.race(pending.values())
-    pending.delete(settled.index)
-    yield settled
+export function inCompletionOrder<T>(promises: readonly Promise<T>[]): AsyncGenerator<Settled<T>> {
+  const settled: Settled<T>[] = []
+  let wake: (() => void) | null = null
+  const record = (outcome: Settled<T>): void => {
+    settled.push(outcome)
+    const resume = wake
+    wake = null
+    resume?.()
   }
+  for (const [index, promise] of promises.entries()) {
+    void promise.then(
+      value => { record({ index, value }) },
+      (reason: unknown) => { record({ index, reason }) },
+    )
+  }
+
+  return (async function* () {
+    for (let delivered = 0; delivered < promises.length; delivered += 1) {
+      if (settled.length === delivered) {
+        await new Promise<void>(resolve => { wake = resolve })
+      }
+      const outcome = settled[delivered]
+      // Unreachable: the loop only waits when nothing new has arrived, and
+      // `record` is the sole waker and always pushes before waking. Guarded
+      // rather than asserted because `noUncheckedIndexedAccess` is on and a
+      // silent `undefined` here would be a yielded hole.
+      if (outcome === undefined) throw new Error('inCompletionOrder: woke with nothing settled')
+      yield outcome
+    }
+  })()
 }
 ```
 
 - [ ] **Step 4: Run the test and watch it pass**
 
 ```bash
-npx vitest run packages/dsh-plugin-shop/tests/host/race.test.ts
+pnpm -C packages/dsh-plugin-shop exec vitest run tests/host/race.test.ts
 ```
 
-Expected: 4 passed.
+Expected: 7 passed.
 
 - [ ] **Step 5: Commit**
 
@@ -465,7 +564,7 @@ describe('httpOrigin', () => {
 - [ ] **Step 2: Run the test and watch it fail**
 
 ```bash
-npx vitest run packages/dsh-plugin-shop/tests/host/origin.test.ts
+pnpm -C packages/dsh-plugin-shop exec vitest run tests/host/origin.test.ts
 ```
 
 Expected: FAIL — cannot resolve `../../src/host/origin.ts`.
@@ -533,7 +632,11 @@ export function httpOrigin(baseUrl: string, fetchImpl: typeof fetch): CatalogOri
       try {
         response = await fetchImpl(new URL('index.json', baseUrl).href, { signal })
       } catch (error) {
-        throw new TransportError(`catalog pointer fetch failed for ${id}`, { cause: error })
+        // The cause is attached for a debugger, but callers here (and the
+        // pre-existing catalog tests) match on `.message` alone — folding the
+        // underlying reason in is what keeps "offline" visible after the wrap.
+        const detail = error instanceof Error ? error.message : String(error)
+        throw new TransportError(`catalog pointer fetch failed for ${id}: ${detail}`, { cause: error })
       }
       if (!response.ok) throw new TransportError(`catalog pointer returned ${response.status}`)
       const pointerText = await response.text()
@@ -549,7 +652,8 @@ export function httpOrigin(baseUrl: string, fetchImpl: typeof fetch): CatalogOri
           try {
             dataResponse = await fetchImpl(resolved)
           } catch (error) {
-            throw new TransportError(`catalog data fetch failed for ${id}`, { cause: error })
+            const detail = error instanceof Error ? error.message : String(error)
+            throw new TransportError(`catalog data fetch failed for ${id}: ${detail}`, { cause: error })
           }
           if (!dataResponse.ok) throw new TransportError(`catalog data returned ${dataResponse.status}`)
           return dataResponse.text()
@@ -563,7 +667,7 @@ export function httpOrigin(baseUrl: string, fetchImpl: typeof fetch): CatalogOri
 - [ ] **Step 4: Run the origin test and watch it pass**
 
 ```bash
-npx vitest run packages/dsh-plugin-shop/tests/host/origin.test.ts
+pnpm -C packages/dsh-plugin-shop exec vitest run tests/host/origin.test.ts
 ```
 
 Expected: 7 passed.
@@ -683,7 +787,7 @@ The surrounding `try { ... } catch { }` and its comment stay exactly as they are
 - [ ] **Step 6: Run the whole existing catalog suite unchanged**
 
 ```bash
-npx vitest run packages/dsh-plugin-shop/tests/host/catalog.test.ts
+pnpm -C packages/dsh-plugin-shop exec vitest run tests/host/catalog.test.ts
 ```
 
 Expected: every pre-existing case passes with **no edits to the test file**. If a case needed editing, the refactor changed behaviour — find out which and why before proceeding. In particular the cases covering an absolute data url and a cross-origin stars url are the ones step 5.5 and 5.6 are protecting.
@@ -691,7 +795,7 @@ Expected: every pre-existing case passes with **no edits to the test file**. If 
 - [ ] **Step 7: Full package suite and typecheck**
 
 ```bash
-npx vitest run packages/dsh-plugin-shop
+pnpm -C packages/dsh-plugin-shop test
 pnpm -C packages/dsh-plugin-shop typecheck
 ```
 
@@ -839,7 +943,7 @@ Note `gzipSync` is imported for symmetry with the fixture's own compression; if 
 - [ ] **Step 2: Run the test and watch it fail**
 
 ```bash
-npx vitest run packages/dsh-plugin-shop/tests/host/npm-origin.test.ts
+pnpm -C packages/dsh-plugin-shop exec vitest run tests/host/npm-origin.test.ts
 ```
 
 Expected: FAIL — cannot resolve `../../src/host/npm-origin.ts`.
@@ -906,7 +1010,11 @@ export function npmOrigin(registryUrl: string, packageName: string, fetchImpl: t
       try {
         response = await fetchImpl(url, { signal })
       } catch (error) {
-        throw new TransportError(`npm origin ${registryUrl} probe failed`, { cause: error })
+        // Fold the cause's message into the text, as httpOrigin does: the
+        // cause is for a debugger, but a person reading why their shop will
+        // not open sees `.message` and nothing else.
+        const detail = error instanceof Error ? error.message : String(error)
+        throw new TransportError(`npm origin ${registryUrl} probe failed: ${detail}`, { cause: error })
       }
       if (!response.ok) throw new TransportError(`npm origin ${registryUrl} returned ${response.status}`)
       const manifest = latestSchema.parse(await response.json())
@@ -926,7 +1034,8 @@ export function npmOrigin(registryUrl: string, packageName: string, fetchImpl: t
         try {
           tarballResponse = await fetchImpl(tarballUrl.href)
         } catch (error) {
-          throw new TransportError(`npm origin ${registryUrl} tarball fetch failed`, { cause: error })
+          const detail = error instanceof Error ? error.message : String(error)
+          throw new TransportError(`npm origin ${registryUrl} tarball fetch failed: ${detail}`, { cause: error })
         }
         if (!tarballResponse.ok) {
           throw new TransportError(`npm origin tarball returned ${tarballResponse.status}`)
@@ -965,7 +1074,7 @@ export function npmOrigin(registryUrl: string, packageName: string, fetchImpl: t
 - [ ] **Step 4: Run the test and watch it pass**
 
 ```bash
-npx vitest run packages/dsh-plugin-shop/tests/host/npm-origin.test.ts
+pnpm -C packages/dsh-plugin-shop exec vitest run tests/host/npm-origin.test.ts
 ```
 
 Expected: 9 passed.
@@ -1043,7 +1152,7 @@ describe('npmrcRegistry', () => {
 - [ ] **Step 2: Run it and watch it fail**
 
 ```bash
-npx vitest run packages/dsh-plugin-shop/tests/host/npmrc.test.ts
+pnpm -C packages/dsh-plugin-shop exec vitest run tests/host/npmrc.test.ts
 ```
 
 Expected: FAIL — cannot resolve `../../src/host/npmrc.ts`.
@@ -1081,7 +1190,7 @@ export function npmrcRegistry(readFile: (path: string) => string | null, home: s
 - [ ] **Step 4: Run it and watch it pass**
 
 ```bash
-npx vitest run packages/dsh-plugin-shop/tests/host/npmrc.test.ts
+pnpm -C packages/dsh-plugin-shop exec vitest run tests/host/npmrc.test.ts
 ```
 
 Expected: 6 passed.
@@ -1263,10 +1372,24 @@ describe('catalogOrigins', () => {
 - [ ] **Step 6: Run and watch the new cases fail**
 
 ```bash
-npx vitest run packages/dsh-plugin-shop/tests/host/catalog.test.ts
+pnpm -C packages/dsh-plugin-shop exec vitest run tests/host/catalog.test.ts
 ```
 
 Expected: the pre-existing cases pass; the new ones fail (`catalogOrigins` is not exported; `origins` without `baseUrl` currently only probes `originList[0]`).
+
+- [ ] **Step 6b: Drop the now-unused `resolveDataUrl` import from `catalog.ts`**
+
+Task 3's brief had `catalog.ts` keep importing `resolveDataUrl` on the
+reasoning that it "documents that the guard did not move semantically". Its
+review was right that this does not hold: after the refactor all three fetch
+sites go through `handle.file`, which resolves internally, so the import has
+no call site. An unused import is not documentation — it is something the
+next lint pass silently deletes. Remove it from the import list, leaving the
+other named imports intact:
+
+```ts
+import { type CatalogOrigin, TransportError, httpOrigin } from './origin.ts'
+```
 
 - [ ] **Step 7: Replace the single probe with the race in `catalog.ts`**
 
@@ -1370,7 +1493,7 @@ export function catalogOrigins(
 - [ ] **Step 9: Run and watch the new cases pass**
 
 ```bash
-npx vitest run packages/dsh-plugin-shop/tests/host/catalog.test.ts
+pnpm -C packages/dsh-plugin-shop exec vitest run tests/host/catalog.test.ts
 ```
 
 Expected: all pass, pre-existing cases still unedited.
@@ -1439,7 +1562,7 @@ grep -n "baseUrl: catalogUrl" packages/dsh-plugin-shop/src/host/index.ts
 - [ ] **Step 11: Full suite and typecheck**
 
 ```bash
-npx vitest run packages/dsh-plugin-shop
+pnpm -C packages/dsh-plugin-shop test
 pnpm -C packages/dsh-plugin-shop typecheck
 pnpm typecheck
 ```
@@ -1499,22 +1622,36 @@ describe('nextCatalogVersion', () => {
     expect(nextCatalogVersion(new Date('2026-10-15T03:17:00Z'), null)).toBe('2026.1015.0')
   })
 
-  // These orderings are the whole point of the scheme; each is checked as
-  // semver, not as a string.
+  // These orderings are the whole point of the scheme. Every version here is
+  // PRODUCED by nextCatalogVersion, never written as a literal: a literal
+  // version compared against a local helper tests only the helper, and would
+  // pass against an implementation that returned a constant.
   it('orders monotonically across month and year boundaries', () => {
-    const asTuple = (v: string): number[] => v.split('.').map(Number)
+    const at = (iso: string, latest: string | null = null): string =>
+      nextCatalogVersion(new Date(iso), latest)
+    const sep = at('2026-09-01T03:17:00Z')
+    const oct = at('2026-10-15T03:17:00Z')
+    const dec = at('2026-12-31T03:17:00Z')
+    const jan = at('2027-01-01T03:17:00Z')
+    const sepAgain = at('2026-09-01T11:00:00Z', sep)
+
+    // Every field is a bare integer, so a numeric tuple compare IS the semver
+    // compare for this scheme — asserted below rather than assumed.
+    for (const version of [sep, oct, dec, jan, sepAgain]) {
+      expect(version.split('.').every(part => /^(0|[1-9]\d*)$/.test(part))).toBe(true)
+    }
     const gt = (a: string, b: string): boolean => {
-      const [x, y] = [asTuple(a), asTuple(b)]
+      const [x, y] = [a.split('.').map(Number), b.split('.').map(Number)]
       for (let i = 0; i < 3; i += 1) {
         const l = x[i] ?? 0, r = y[i] ?? 0
         if (l !== r) return l > r
       }
       return false
     }
-    expect(gt('2026.1015.0', '2026.901.0')).toBe(true)
-    expect(gt('2027.101.0', '2026.1231.0')).toBe(true)
-    expect(gt('2026.901.1', '2026.901.0')).toBe(true)
-    expect(gt('2026.1231.0', '2026.1015.0')).toBe(true)
+    expect(gt(oct, sep)).toBe(true)
+    expect(gt(jan, dec)).toBe(true)
+    expect(gt(sepAgain, sep)).toBe(true)
+    expect(gt(dec, oct)).toBe(true)
   })
 
   it('uses UTC, so a late-evening local build does not skip a day', () => {
@@ -1950,6 +2087,13 @@ In `.github/workflows/daily.yml`, in the `build` job, immediately after `- name:
         # token publishes without an OTP (design §7.2). Moving this to the
         # schedule is its own commit, made after the first manual run.
         if: github.event_name == 'workflow_dispatch'
+        # Bounded because the mirror-warm poll at the end of publish:catalog has
+        # no timeout of its own (Task 7 review, Minor): it makes up to 21
+        # requests to npmmirror, and a connection that is accepted but never
+        # answered falls back on undici's 300 s defaults. Publishing plus a
+        # successful warm takes well under a minute, so ten is generous and
+        # still fails fast instead of burning runner time.
+        timeout-minutes: 10
         run: pnpm publish:catalog
         env:
           # Distinct from NPM_TOKEN, which is read-only and only lifts the
@@ -2209,7 +2353,7 @@ describe('transport parity', () => {
 - [ ] **Step 3: Run it**
 
 ```bash
-npx vitest run packages/dsh-plugin-shop/tests/host/transport-parity.test.ts
+pnpm -C packages/dsh-plugin-shop exec vitest run tests/host/transport-parity.test.ts
 ```
 
 Expected: 3 passed. If `npm pack` is slow in your environment the 60 s `beforeAll` budget covers it; if it exceeds that, raise the budget rather than dropping the real `npm pack`.
@@ -2217,7 +2361,8 @@ Expected: 3 passed. If `npm pack` is slow in your environment the 60 s `beforeAl
 - [ ] **Step 4: Full suite, both typechecks**
 
 ```bash
-npx vitest run
+pnpm -C packages/dsh-plugin-shop test
+pnpm test
 pnpm typecheck
 pnpm -C packages/dsh-plugin-shop typecheck
 ```
@@ -2242,6 +2387,24 @@ git commit -m "test(host): prove the npm and HTTP transports load one snapshot"
 **Interfaces:**
 - Consumes: nothing
 - Produces: nothing
+
+- [ ] **Step 0: Correct §4's tar prose in this feature's own spec**
+
+The Task 1 review found `docs/design/2026-09-01-catalog-mirrors.md` §4 saying
+the parser will "reject any name escaping `package/`", while the shipped
+parser refuses any path with a `..` segment or a leading `/` — a generic
+root-escape check, which is the actual security property and stronger than a
+prefix requirement. CLAUDE.md: when spec and code disagree, the spec wins or
+the spec is amended in the same change. The code is right here, so amend §4:
+
+Replace `collect the entries
+under `package/v1/`, reject any name escaping `package/`.` with:
+
+```markdown
+collect every entry, refusing any path with a `..` segment or a leading `/`
+— the generic escape check, not a `package/` prefix requirement, because the
+property that matters is that nothing can be written outside the tree.
+```
 
 - [ ] **Step 1: Amend the authority spec**
 
