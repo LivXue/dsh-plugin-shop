@@ -1,0 +1,11 @@
+# LF in the repository and in every working tree. Git for Windows sets
+# core.autocrlf=true by default, which rewrites text files to CRLF on
+# checkout; this project has already paid for that once — hot.ts carries a
+# CRLF fix because a bundle patch authored with Windows line endings would
+# not parse (docs/design/2026-08-31-market-borrowings.md).
+* text=auto eol=lf
+
+# Byte-for-byte fixtures: a tarball or image that got eol-converted would
+# fail in a way that does not name line endings.
+*.png binary
+*.tgz binary
