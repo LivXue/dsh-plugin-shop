@@ -95,12 +95,26 @@ jobs:
         # legitimately disagree with what Pages just got below, publishing
         # mismatched content between the two transports.
         if: github.event_name == 'workflow_dispatch'
+        # Never fatal to this job. Steps run in sequence and any failure ends
+        # the job, so a bad minute from the artifact service would otherwise
+        # skip `Publish to Pages` below AND `Commit the snapshot`, costing this
+        # run its catalog and resetting the harvest's backfill memory — for a
+        # step that only feeds the publish job. It still fails loudly where it
+        # matters: the publish job's download step has nothing to fetch and
+        # stops there. Same reasoning as the two `Commit the ...` steps.
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: catalog-dist-v1
           path: dist/v1
       - name: Publish to Pages
-        if: github.event_name != 'pull_request'
+        # `workflow_dispatch` fires on ANY ref, so the event check alone would
+        # let a feature branch's catalog reach every reader. The github-pages
+        # environment already restricts deployment to `main`, but that lives in
+        # repository settings where one admin click widens it; the branch this
+        # publishes from belongs in the workflow. 0.5.0 is what a wrong catalog
+        # reaching everyone costs.
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@v3
         with:
           path: dist
@@ -167,7 +181,9 @@ jobs:
 
   deploy:
     needs: build
-    if: github.event_name != 'pull_request'
+    # Same reasoning as the upload step above: the github-pages environment
+    # restricts this to `main` today, and this makes the workflow say so too.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       pages: write
