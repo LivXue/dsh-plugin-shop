@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { z } from 'zod'
+import { type CatalogOrigin, type OriginHandle, TransportError, httpOrigin, resolveDataUrl } from './origin.ts'
 import type { CatalogEntry, DeniedEntry } from './types.ts'
 
 /** Highest schemaVersion this build understands; a higher one is refused (§10).
@@ -17,6 +18,11 @@ export const SUPPORTED_SCHEMA_VERSION = 6
 
 /** A cached catalog younger than this is served without touching the network. */
 const FRESH_MS = 5 * 60 * 1000
+
+/** How long a probe may take before the race gives up on that origin. Long
+ * enough for a slow but working link, short enough that a black-holed origin
+ * does not hold the shelf closed. */
+const PROBE_TIMEOUT_MS = 10_000
 
 /** Records when the loader itself wrote the cache; the pointer's `builtAt` is
  * the catalog's build time, not the cache's fetch time. */
@@ -153,28 +159,17 @@ const nodeFs: CatalogFs = {
 }
 
 export interface LoadCatalogOptions {
-  baseUrl: string
+  /** A single HTTP origin — the explicit-override spelling. Mutually
+   * exclusive with `origins`; exactly one must be given. */
+  baseUrl?: string
+  /** Origins to race (design §3). */
+  origins?: CatalogOrigin[]
   cacheDir: string
   refresh?: boolean
   fetchImpl?: typeof fetch
   now?: () => Date
   fsImpl?: CatalogFs
   sleep?: (ms: number) => Promise<void>
-}
-
-/** Resolve the pointer's data URL against the catalog base. An absolute URL —
- * any scheme, or a protocol-relative `//host/...` — would hand the pointer a
- * fetch primitive to arbitrary hosts, so it is refused loudly before any
- * fetch (§9.2). The guard is the resolved origin, not the raw string: WHATWG
- * normalization strips leading whitespace and accepts backslash spellings
- * before the string could be inspected, so only comparing the resolved URL's
- * origin to the base's closes every spelling class. */
-function resolveDataUrl(baseUrl: string, url: string): string {
-  const resolved = new URL(url, baseUrl)
-  if (resolved.origin !== new URL(baseUrl).origin) {
-    throw new Error('catalog data url must be relative to the catalog base')
-  }
-  return resolved.href
 }
 
 /** Read and verify a cached/fetched stars sidecar; ANY irregularity degrades
@@ -205,9 +200,18 @@ function parseStarsText(text: string): Record<string, number> {
  */
 export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogResult> {
   const {
-    baseUrl, cacheDir, refresh = false,
+    cacheDir, refresh = false,
     fetchImpl = fetch, now = () => new Date(), fsImpl = nodeFs,
   } = options
+  // Exactly one spelling of "where to fetch from": the explicit-override
+  // single origin, or the list Task 5's race consumes. tsc cannot see the
+  // XOR through to a narrowed `options.baseUrl`, hence the one assertion
+  // below — safe only because this guard runs first.
+  if ((options.baseUrl === undefined) === (options.origins === undefined)) {
+    throw new Error('loadCatalog: exactly one of baseUrl or origins is required')
+  }
+  const originList = options.origins
+    ?? [httpOrigin(options.baseUrl as string, fetchImpl)]
   const indexPath = join(cacheDir, 'index.json')
   const metaPath = join(cacheDir, META_FILE)
 
@@ -292,11 +296,13 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
   // the cached snapshot with `stale: true`. Everything that interprets the
   // fetched bytes — pointer parse, schemaVersion checks, sha256 comparison,
   // data parse — throws on any irregularity, cache or no cache (§9.2, §10).
+  const only = originList[0]
+  if (only === undefined) throw new Error('loadCatalog: no origins')
+  let handle: OriginHandle
   let pointerText: string
   try {
-    const response = await fetchImpl(new URL('index.json', baseUrl).href)
-    if (!response.ok) throw new Error(`catalog pointer returned ${response.status}`)
-    pointerText = await response.text()
+    handle = await only.probe(AbortSignal.timeout(PROBE_TIMEOUT_MS))
+    pointerText = await handle.pointer()
   } catch (error) {
     const cached = readCached()
     if (cached !== null) return { snapshot: cached, stale: true }
@@ -310,16 +316,15 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
     )
   }
 
-  // Resolve (and refuse absolute URLs) before any fetch; a refused URL is a
-  // loud error like the other pointer-interpretation failures, never a stale
-  // fallback.
-  const dataUrl = resolveDataUrl(baseUrl, pointer.plugins.url)
+  // handle.file resolves (and refuses absolute/cross-origin) URLs internally
+  // now, so a refused URL surfaces as a plain Error, never a TransportError —
+  // the instanceof guard below is what keeps that refusal a loud throw like
+  // the other pointer-interpretation failures, instead of a stale fallback.
   let dataText: string
   try {
-    const dataResponse = await fetchImpl(dataUrl)
-    if (!dataResponse.ok) throw new Error(`catalog data returned ${dataResponse.status}`)
-    dataText = await dataResponse.text()
+    dataText = await handle.file(pointer.plugins.url)
   } catch (error) {
+    if (!(error instanceof TransportError)) throw error
     const cached = readCached()
     if (cached !== null) return { snapshot: cached, stale: true }
     throw error
@@ -348,15 +353,11 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
       // cross-origin) stars url must degrade to no stars like any other
       // sidecar failure — it still prevents the fetch, but never throws the
       // loader out of a catalog whose data fetched fine (spec §5, §9.2).
-      const starsUrl = resolveDataUrl(baseUrl, pointer.stars.url)
-      const starsResponse = await fetchImpl(starsUrl)
-      if (starsResponse.ok) {
-        const starsText = await starsResponse.text()
-        const starsActual = createHash('sha256').update(starsText).digest('hex')
-        if (starsActual === pointer.stars.sha256) {
-          stars = parseStarsText(starsText)
-          fsImpl.write(join(cacheDir, basename(pointer.stars.url)), starsText)
-        }
+      const starsText = await handle.file(pointer.stars.url)
+      const starsActual = createHash('sha256').update(starsText).digest('hex')
+      if (starsActual === pointer.stars.sha256) {
+        stars = parseStarsText(starsText)
+        fsImpl.write(join(cacheDir, basename(pointer.stars.url)), starsText)
       }
     } catch {
       // Advisory: an unreachable or refused sidecar means no stars this run
