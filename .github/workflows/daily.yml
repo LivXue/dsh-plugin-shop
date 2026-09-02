@@ -88,6 +88,29 @@ jobs:
           path: |
             dist/v1/report.md
             dist/v1/classification-report.md
+      - name: Authenticate to npm
+        if: github.event_name == 'workflow_dispatch'
+        run: echo "//registry.npmjs.org/:_authToken=\${NODE_AUTH_TOKEN}" > ~/.npmrc
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH_TOKEN }}
+      - name: Publish the catalog to npm
+        # workflow_dispatch only until a real publish proves the granular
+        # token publishes without an OTP (design §7.2). Moving this to the
+        # schedule is its own commit, made after the first manual run.
+        if: github.event_name == 'workflow_dispatch'
+        # Bounded because the mirror-warm poll at the end of publish:catalog has
+        # no timeout of its own (Task 7 review, Minor): it makes up to 21
+        # requests to npmmirror, and a connection that is accepted but never
+        # answered falls back on undici's 300 s defaults. Publishing plus a
+        # successful warm takes well under a minute, so ten is generous and
+        # still fails fast instead of burning runner time.
+        timeout-minutes: 10
+        run: pnpm publish:catalog
+        env:
+          # Distinct from NPM_TOKEN, which is read-only and only lifts the
+          # search API's rate limit.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH_TOKEN }}
+          NPM_CONFIG_PROVENANCE: 'true'
       - name: Publish to Pages
         if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
