@@ -6,6 +6,7 @@
   "packageManager": "pnpm@11.7.0",
   "scripts": {
     "build:catalog": "node --experimental-strip-types registry/scripts/src/build.ts",
+    "publish:catalog": "node --experimental-strip-types registry/scripts/src/publish-catalog.ts",
     "emit:schema": "node --experimental-strip-types registry/scripts/src/emit-schema.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
