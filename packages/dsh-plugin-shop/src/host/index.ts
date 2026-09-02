@@ -9,9 +9,12 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
+import { homedir } from 'node:os'
 import { ownVersion } from '../own-version.ts'
-import { loadCatalog, type LoadCatalogOptions } from './catalog.ts'
+import { catalogOrigins, loadCatalog, type LoadCatalogOptions } from './catalog.ts'
 import type { CatalogSnapshot } from './catalog.ts'
+import type { CatalogOrigin } from './origin.ts'
+import { npmrcRegistry } from './npmrc.ts'
 import type { CatalogEntry, DeniedEntry } from './types.ts'
 import { validateInstall, type InstallArgs, type InstallRejectionCode } from './install.ts'
 import { startInstall, startUninstall, type InstallStatus } from './executor.ts'
@@ -290,6 +293,9 @@ export class ShopGateway extends TypertRemoteService {
   /** The install gate runs against the last loaded snapshot, never a fresh
    * fetch per request (§7.2: the Host's cached snapshot is the truth). */
   private lastSnapshot: CatalogSnapshot | null = null
+  /** The origin list built for the last-seen `catalogUrl`, memoised so the
+   * user's npmrc is read at most once per gateway (see `originsFor`). */
+  private originCache: { catalogUrl: string; origins: CatalogOrigin[] } | null = null
   /** The incompatibility map already computed for `lastSnapshot`, keyed by
    * that snapshot's own object identity. Design §3 asks for the verdict
    * once per loaded snapshot, not once per RPC call: `loadCatalog` serves
@@ -525,6 +531,25 @@ export class ShopGateway extends TypertRemoteService {
     return { catalogUrl, cacheDir }
   }
 
+  /** The origins to race for this row's catalog. Read once per gateway: the
+   * user's npmrc does not change under a running dsh, and re-reading it on
+   * every catalog call would put a filesystem read on the hot path. */
+  private originsFor(catalogUrl: string): CatalogOrigin[] {
+    if (this.originCache?.catalogUrl === catalogUrl) return this.originCache.origins
+    const registry = npmrcRegistry(path => {
+      try {
+        return readFileSync(path, 'utf8')
+      } catch {
+        // No user npmrc, or unreadable: the defaults are raced instead. This
+        // is a preference, never a requirement.
+        return null
+      }
+    }, homedir())
+    const origins = catalogOrigins(catalogUrl, fetch, registry)
+    this.originCache = { catalogUrl, origins }
+    return origins
+  }
+
   /** The explicit restart override. Only the row's `config:` sub-object is
    * passed to a plugin — a top-level `allowRestart:` beside `name:` would be
    * silently ignored by the loader (dsh-market README, #227). */
@@ -543,7 +568,7 @@ export class ShopGateway extends TypertRemoteService {
   async catalog(args?: { refresh?: boolean }): Promise<ShopCatalogResult> {
     const { catalogUrl, cacheDir } = this.rowConfig()
     const load = this.options.loadCatalog ?? loadCatalog
-    const { snapshot, stale } = await load({ baseUrl: catalogUrl, cacheDir, refresh: args?.refresh ?? false })
+    const { snapshot, stale } = await load({ origins: this.originsFor(catalogUrl), cacheDir, refresh: args?.refresh ?? false })
     this.lastSnapshot = snapshot
     let incompatible: Record<string, string[]>
     if (this.incompatibleCache !== null && this.incompatibleCache.snapshot === snapshot) {
@@ -594,7 +619,7 @@ export class ShopGateway extends TypertRemoteService {
     if (this.lastSnapshot === null) {
       const { catalogUrl, cacheDir } = this.rowConfig()
       const load = this.options.loadCatalog ?? loadCatalog
-      const { snapshot } = await load({ baseUrl: catalogUrl, cacheDir })
+      const { snapshot } = await load({ origins: this.originsFor(catalogUrl), cacheDir })
       this.lastSnapshot = snapshot
     }
     const verdict = validateInstall(this.lastSnapshot, args)
@@ -724,7 +749,7 @@ export class ShopGateway extends TypertRemoteService {
     if (this.lastSnapshot === null) {
       const { catalogUrl, cacheDir } = this.rowConfig()
       const load = this.options.loadCatalog ?? loadCatalog
-      const { snapshot } = await load({ baseUrl: catalogUrl, cacheDir })
+      const { snapshot } = await load({ origins: this.originsFor(catalogUrl), cacheDir })
       this.lastSnapshot = snapshot
     }
     const manifest = readProfileManifest('dsh-plugin-shop', this.profileDirResolved())
@@ -816,7 +841,7 @@ export class ShopGateway extends TypertRemoteService {
     if (this.lastSnapshot === null) {
       const { catalogUrl, cacheDir } = this.rowConfig()
       const load = this.options.loadCatalog ?? loadCatalog
-      const { snapshot } = await load({ baseUrl: catalogUrl, cacheDir })
+      const { snapshot } = await load({ origins: this.originsFor(catalogUrl), cacheDir })
       this.lastSnapshot = snapshot
     }
     if (!this.lastSnapshot.entries.some(entry => entry.name === args.name)) {

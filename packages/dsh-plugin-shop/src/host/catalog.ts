@@ -4,7 +4,9 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { z } from 'zod'
-import { type CatalogOrigin, type OriginHandle, TransportError, httpOrigin, resolveDataUrl } from './origin.ts'
+import { type CatalogOrigin, type OriginHandle, TransportError, httpOrigin } from './origin.ts'
+import { npmOrigin } from './npm-origin.ts'
+import { inCompletionOrder } from './race.ts'
 import type { CatalogEntry, DeniedEntry } from './types.ts'
 
 /** Highest schemaVersion this build understands; a higher one is refused (§10).
@@ -296,18 +298,37 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
   // the cached snapshot with `stale: true`. Everything that interprets the
   // fetched bytes — pointer parse, schemaVersion checks, sha256 comparison,
   // data parse — throws on any irregularity, cache or no cache (§9.2, §10).
-  const only = originList[0]
-  if (only === undefined) throw new Error('loadCatalog: no origins')
-  let handle: OriginHandle
-  let pointerText: string
-  try {
-    handle = await only.probe(AbortSignal.timeout(PROBE_TIMEOUT_MS))
-    pointerText = await handle.pointer()
-  } catch (error) {
+  const cachedOrThrow = (error: unknown): CatalogResult => {
     const cached = readCached()
     if (cached !== null) return { snapshot: cached, stale: true }
     throw error
   }
+
+  // Race every origin's cheap probe and commit to the first that answers
+  // (design §3). A transport failure — here or on the bulk fetch — moves to
+  // the next finisher; anything else throws, so a corrupt origin is never
+  // hidden behind a healthy one.
+  let handle: OriginHandle | null = null
+  let pointerText = ''
+  let lastTransportError: unknown = new TransportError('no catalog origin was reachable')
+  for await (const settled of inCompletionOrder(
+    originList.map(origin => origin.probe(AbortSignal.timeout(PROBE_TIMEOUT_MS))),
+  )) {
+    if (!('value' in settled)) {
+      if (!(settled.reason instanceof TransportError)) throw settled.reason
+      lastTransportError = settled.reason
+      continue
+    }
+    try {
+      pointerText = await settled.value.pointer()
+      handle = settled.value
+      break
+    } catch (error) {
+      if (!(error instanceof TransportError)) throw error
+      lastTransportError = error
+    }
+  }
+  if (handle === null) return cachedOrThrow(lastTransportError)
 
   const pointer = pointerSchema.parse(JSON.parse(pointerText))
   if (pointer.schemaVersion > SUPPORTED_SCHEMA_VERSION) {
@@ -325,9 +346,7 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
     dataText = await handle.file(pointer.plugins.url)
   } catch (error) {
     if (!(error instanceof TransportError)) throw error
-    const cached = readCached()
-    if (cached !== null) return { snapshot: cached, stale: true }
-    throw error
+    return cachedOrThrow(error)
   }
 
   const actual = createHash('sha256').update(dataText).digest('hex')
@@ -376,4 +395,39 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
   fsImpl.write(join(cacheDir, basename(pointer.plugins.url)), dataText)
   fsImpl.write(metaPath, JSON.stringify({ fetchedAt: now().toISOString() }))
   return { snapshot, stale: false }
+}
+
+/** The catalog base the shipped `cordis.patch.yml` names. A row carrying
+ * exactly this value expresses no preference, so the loader races its
+ * defaults; anything else is a deliberate override and is used alone. */
+export const DEFAULT_CATALOG_URL = 'https://LivXue.github.io/dsh-plugin-shop/v1/'
+
+/** The npm package carrying the same `v1/` tree (design §2). */
+export const CATALOG_PACKAGE = 'dsh-plugin-shop-catalog'
+
+/** Registries raced by default: the domestic mirror first for legibility —
+ * the race, not the order, decides the winner. */
+const DEFAULT_REGISTRIES = ['https://registry.npmmirror.com/', 'https://registry.npmjs.org/']
+
+/**
+ * The origins to race for this installation (design §3).
+ *
+ * @param catalogUrl - the row's configured base.
+ * @param npmRegistry - the user's own registry from `~/.npmrc`, or null.
+ */
+export function catalogOrigins(
+  catalogUrl: string,
+  fetchImpl: typeof fetch,
+  npmRegistry: string | null,
+): CatalogOrigin[] {
+  // An explicit override must not be raced: racing would make the e2e
+  // fixture nondeterministic and would silently defeat "point the shop at my
+  // own mirror", which the README documents.
+  if (catalogUrl !== DEFAULT_CATALOG_URL) return [httpOrigin(catalogUrl, fetchImpl)]
+  const registries = [...DEFAULT_REGISTRIES]
+  if (npmRegistry !== null && !registries.includes(npmRegistry)) registries.unshift(npmRegistry)
+  return [
+    ...registries.map(registry => npmOrigin(registry, CATALOG_PACKAGE, fetchImpl)),
+    httpOrigin(catalogUrl, fetchImpl),
+  ]
 }

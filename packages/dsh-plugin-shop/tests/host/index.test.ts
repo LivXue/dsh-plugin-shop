@@ -143,7 +143,7 @@ describe('ShopGateway.catalog', () => {
     })
 
     const result = await gateway.catalog({ refresh: true })
-    expect(calls).toEqual([expect.objectContaining({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', refresh: true })])
+    expect(calls).toEqual([expect.objectContaining({ origins: [expect.objectContaining({ id: 'http:https://shop.test/v1/' })], cacheDir: '/cache', refresh: true })])
     expect(result).toEqual(expect.objectContaining({ schemaVersion: 2, stale: false }))
     expect(result.plugins[0]?.name).toBe('dsh-hello-plugin')
     expect(result.denied[0]?.detail).toBe('matched the denylist')
@@ -195,7 +195,7 @@ describe('ShopGateway.catalog', () => {
     )
 
     await gateway.catalog({})
-    expect(calls).toEqual([expect.objectContaining({ baseUrl: 'https://row.test/v1/', cacheDir: '/row-cache' })])
+    expect(calls).toEqual([expect.objectContaining({ origins: [expect.objectContaining({ id: 'http:https://row.test/v1/' })], cacheDir: '/row-cache' })])
   })
 })
 

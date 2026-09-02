@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createHash } from 'node:crypto'
-import { loadCatalog, type CatalogFs } from '../../src/host/catalog.ts'
+import { DEFAULT_CATALOG_URL, catalogOrigins, loadCatalog, type CatalogFs } from '../../src/host/catalog.ts'
+import { TransportError, type CatalogOrigin } from '../../src/host/origin.ts'
 
 function dataJson(plugins: unknown[] = [], denied: unknown[] = [], schemaVersion = 2): string {
   return JSON.stringify({ schemaVersion, plugins, denied })
@@ -658,5 +659,168 @@ describe('peers (schemaVersion 6)', () => {
     const result = await loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() })
     expect(result.snapshot.entries[0]?.peers).toBeUndefined()
     expect(result.snapshot.entries).toHaveLength(1)
+  })
+})
+
+describe('origin racing', () => {
+  const entry = {
+    name: 'dsh-hello-plugin', version: '1.2.0', integrity: 'sha512-i', publishedAt: null,
+    repository: null, license: 'MIT', tier: 'community', metadata: 'derived',
+    added: '2026-08-25',
+  }
+
+  /** An origin that resolves its probe after `delay` microtask turns. */
+  function fakeOrigin(id: string, opts: {
+    delay?: number
+    probeFails?: 'transport' | 'loud'
+    /** Fails when the loader asks for the pointer — still inside the race,
+     * so the loader may still fall through to another origin. */
+    pointerFails?: 'transport' | 'loud'
+    /** Fails on the bulk fetch, after the winner is committed to. */
+    dataFails?: 'transport' | 'loud'
+    data?: string
+    pointer?: string
+  }): CatalogOrigin {
+    return {
+      id,
+      async probe() {
+        for (let i = 0; i < (opts.delay ?? 0); i += 1) await Promise.resolve()
+        if (opts.probeFails === 'transport') throw new TransportError(`${id} down`)
+        if (opts.probeFails === 'loud') throw new Error(`${id} corrupt`)
+        return {
+          id,
+          pointer: async () => {
+            if (opts.pointerFails === 'transport') throw new TransportError(`${id} pointer down`)
+            if (opts.pointerFails === 'loud') throw new Error(`${id} pointer corrupt`)
+            return opts.pointer ?? ''
+          },
+          file: async () => {
+            if (opts.dataFails === 'transport') throw new TransportError(`${id} data down`)
+            if (opts.dataFails === 'loud') throw new Error(`${id} data corrupt`)
+            return opts.data ?? ''
+          },
+        }
+      },
+    }
+  }
+
+  it('takes the first origin to answer, not the first listed', async () => {
+    const data = dataJson([entry])
+    const { pointer } = pointerFor(data, '2026-08-25T00:00:00Z')
+    const result = await loadCatalog({
+      cacheDir: '/cache', fsImpl: memFs(),
+      origins: [
+        fakeOrigin('slow', { delay: 8, pointer, data }),
+        fakeOrigin('fast', { delay: 0, pointer, data }),
+      ],
+    })
+    expect(result.snapshot.entries).toHaveLength(1)
+  })
+
+  it('falls through to the next origin when the winner is a transport failure', async () => {
+    const data = dataJson([entry])
+    const { pointer } = pointerFor(data, '2026-08-25T00:00:00Z')
+    const result = await loadCatalog({
+      cacheDir: '/cache', fsImpl: memFs(),
+      origins: [
+        fakeOrigin('broken', { delay: 0, probeFails: 'transport' }),
+        fakeOrigin('working', { delay: 4, pointer, data }),
+      ],
+    })
+    expect(result.snapshot.entries).toHaveLength(1)
+    expect(result.stale).toBe(false)
+  })
+
+  it('falls through when the winner answers its probe but cannot serve the pointer', async () => {
+    const data = dataJson([entry])
+    const { pointer } = pointerFor(data, '2026-08-25T00:00:00Z')
+    const result = await loadCatalog({
+      cacheDir: '/cache', fsImpl: memFs(),
+      origins: [
+        fakeOrigin('half-up', { delay: 0, pointerFails: 'transport' }),
+        fakeOrigin('working', { delay: 4, pointer, data }),
+      ],
+    })
+    expect(result.snapshot.entries).toHaveLength(1)
+  })
+
+  it('falls back to the cache — not to another origin — when the committed winner fails its bulk fetch', async () => {
+    const data = dataJson([entry])
+    const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
+    const fs = memFs()
+    fs.files.set('/cache/index.json', pointer)
+    fs.files.set(`/cache/${url}`, data)
+    const result = await loadCatalog({
+      cacheDir: '/cache', fsImpl: fs,
+      now: () => new Date('2026-09-01T00:00:00Z'),
+      origins: [
+        fakeOrigin('half-up', { delay: 0, pointer, dataFails: 'transport' }),
+        fakeOrigin('working', { delay: 4, pointer, data }),
+      ],
+    })
+    expect(result.stale).toBe(true)
+  })
+
+  it('does NOT fall through on a loud failure — a corrupt origin is reported, not papered over', async () => {
+    const data = dataJson([entry])
+    const { pointer } = pointerFor(data, '2026-08-25T00:00:00Z')
+    await expect(loadCatalog({
+      cacheDir: '/cache', fsImpl: memFs(),
+      origins: [
+        fakeOrigin('corrupt', { delay: 0, pointer, dataFails: 'loud' }),
+        fakeOrigin('working', { delay: 4, pointer, data }),
+      ],
+    })).rejects.toThrow(/data corrupt/)
+  })
+
+  it('throws when every origin is a transport failure and there is no cache', async () => {
+    await expect(loadCatalog({
+      cacheDir: '/cache', fsImpl: memFs(),
+      origins: [
+        fakeOrigin('a', { probeFails: 'transport' }),
+        fakeOrigin('b', { probeFails: 'transport' }),
+      ],
+    })).rejects.toThrow()
+  })
+
+  it('serves the stale cache when every origin is a transport failure', async () => {
+    const data = dataJson([entry])
+    const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
+    const fs = memFs()
+    fs.files.set('/cache/index.json', pointer)
+    fs.files.set(`/cache/${url}`, data)
+    const result = await loadCatalog({
+      cacheDir: '/cache', fsImpl: fs,
+      now: () => new Date('2026-09-01T00:00:00Z'),
+      origins: [fakeOrigin('a', { probeFails: 'transport' })],
+    })
+    expect(result.stale).toBe(true)
+    expect(result.snapshot.entries).toHaveLength(1)
+  })
+})
+
+describe('catalogOrigins', () => {
+  const fetchImpl = (async () => new Response('', { status: 200 })) as unknown as typeof fetch
+
+  it('races npm and Pages when the row carries the built-in default', () => {
+    const ids = catalogOrigins(DEFAULT_CATALOG_URL, fetchImpl, null).map(o => o.id)
+    expect(ids).toContain('npm:https://registry.npmmirror.com/')
+    expect(ids).toContain('npm:https://registry.npmjs.org/')
+    expect(ids).toContain(`http:${DEFAULT_CATALOG_URL}`)
+  })
+
+  it('uses an explicit override alone, with no race', () => {
+    const origins = catalogOrigins('http://127.0.0.1:9/v1/', fetchImpl, null)
+    expect(origins.map(o => o.id)).toEqual(['http:http://127.0.0.1:9/v1/'])
+  })
+
+  it('adds the user configured registry as a candidate', () => {
+    const ids = catalogOrigins(DEFAULT_CATALOG_URL, fetchImpl, 'https://corp.test/npm/').map(o => o.id)
+    expect(ids).toContain('npm:https://corp.test/npm/')
+  })
+
+  it('does not list the configured registry twice when it is already a default', () => {
+    const ids = catalogOrigins(DEFAULT_CATALOG_URL, fetchImpl, 'https://registry.npmmirror.com/').map(o => o.id)
+    expect(ids.filter(id => id === 'npm:https://registry.npmmirror.com/')).toHaveLength(1)
   })
 })
