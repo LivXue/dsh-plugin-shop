@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, writeFileSync, chmodSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { installFailureDetail, startInstall, startUninstall, type InstallStatus } from '../../src/host/executor.ts'
+import { installFailureDetail, spawnFailureDetail, startInstall, startUninstall, type InstallStatus } from '../../src/host/executor.ts'
 import type { HotRestartReason } from '../../src/host/hot.ts'
 
 // A fixture `dsh` that records its full argv in a marker file and exits with
@@ -396,5 +396,44 @@ describe('installFailureDetail', () => {
     expect(detail).toMatch(/something unhelpful happened/)
     // An empty log must not produce a dangling separator.
     expect(installFailureDetail('web', [])).toMatch(/Run: dsh plugin --profile web install/)
+  })
+})
+
+describe('spawnFailureDetail', () => {
+  // Reported from Windows (2026-09-02): updating the shop showed "Update
+  // failed / dsh not found on PATH — install the dsh CLI to manage profile
+  // plugins" on a machine where dsh WAS installed and working. The advice was
+  // not just unhelpful, it was wrong: npm installs a CLI on Windows as
+  // `dsh.cmd` / `dsh.ps1` shims with no `.exe`, and CreateProcess (which
+  // node's spawn uses without a shell) resolves a bare name against `.exe`
+  // only — so it can never find `dsh`, however correctly it is installed.
+  const ENOENT = 'spawn dsh ENOENT'
+
+  it('does not tell a Windows user to install the dsh they already have', () => {
+    const detail = spawnFailureDetail('ENOENT', ENOENT, 'dsh', 'win32')
+    expect(detail).not.toMatch(/install the dsh CLI/)
+    expect(detail).toMatch(/Windows/)
+    // Names the actual mechanism, so the report is actionable rather than
+    // mysterious: this is the shop's own gap, not the user's setup.
+    expect(detail).toMatch(/\.cmd/)
+  })
+
+  it('keeps the honest advice where a missing binary really is the cause', () => {
+    expect(spawnFailureDetail('ENOENT', ENOENT, 'dsh', 'linux')).toMatch(/install the dsh CLI/)
+    expect(spawnFailureDetail('ENOENT', ENOENT, 'dsh', 'darwin')).toMatch(/install the dsh CLI/)
+  })
+
+  it('treats EINVAL on Windows as the same shim problem', () => {
+    // Node refuses to spawn a .cmd without a shell since the 2024 batfile
+    // argument-injection fix, and surfaces EINVAL rather than ENOENT when the
+    // path resolves. Both arrive here as the same underlying gap.
+    const detail = spawnFailureDetail('EINVAL', 'spawn EINVAL', 'C:\\npm\\dsh.cmd', 'win32')
+    expect(detail).toMatch(/Windows/)
+    expect(detail).not.toMatch(/install the dsh CLI/)
+  })
+
+  it('reports any other spawn failure verbatim', () => {
+    expect(spawnFailureDetail('EACCES', 'spawn dsh EACCES', 'dsh', 'linux'))
+      .toBe('dsh spawn failed: spawn dsh EACCES')
   })
 })

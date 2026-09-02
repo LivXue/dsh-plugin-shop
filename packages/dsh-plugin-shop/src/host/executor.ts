@@ -125,6 +125,41 @@ export function installFailureDetail(profile: string, log: readonly string[]): s
   return `${hint} — ${pick}${approve}`
 }
 
+/**
+ * Why a spawn of the dsh CLI never started.
+ *
+ * On Windows this is the shop's own gap, not the user's setup, and saying
+ * otherwise sends them to reinstall something that already works. npm
+ * installs a CLI there as `dsh.cmd` and `dsh.ps1` shims with no `.exe`
+ * alongside them, while `spawn` without a shell goes to CreateProcess, which
+ * resolves a bare name against `.exe` only — and node has refused to spawn a
+ * `.cmd` without a shell since the 2024 batfile argument-injection fix, so a
+ * resolved absolute path to the shim fails too (EINVAL rather than ENOENT).
+ * There is no configuration that gets past this: `dshBin` can name the shim
+ * and the spawn still cannot run it. Reported from Windows 2026-09-02 as
+ * "Update failed / dsh not found on PATH" on a working install.
+ *
+ * `restart.ts` has the same gap one step further on — it runs a POSIX one
+ * liner through `sh` with `kill -0` and `sleep` — so a fixed spawn would
+ * reach a second Unix-only path. Neither is fixed here; this function only
+ * stops the report being wrong about the cause.
+ */
+export function spawnFailureDetail(
+  code: string | undefined,
+  message: string,
+  dshBin: string,
+  platform: NodeJS.Platform,
+): string {
+  if (platform === 'win32' && (code === 'ENOENT' || code === 'EINVAL')) {
+    return `the shop cannot start the dsh CLI on Windows yet (${dshBin}): npm installs it`
+      + ' as a .cmd shim, which node cannot spawn without a shell. Not a problem with your'
+      + ' install — run the update from `dsh plugin --profile <name> add dsh-plugin-shop@<version>`'
+      + ' in a terminal until the shop can do it for you.'
+  }
+  if (code === 'ENOENT') return 'dsh not found on PATH — install the dsh CLI to manage profile plugins'
+  return `dsh spawn failed: ${message}`
+}
+
 /** Run one `dsh plugin --profile <profile> <verb> <target>` and track it.
  * Never rolls back; a failure surfaces stderr verbatim plus the recovery hint
  * (§10). The shop never passes build-script flags: `allowBuilds` stays the
@@ -200,11 +235,10 @@ function spawnPluginCli(options: {
       for (const line of chunk.toString().split('\n')) if (line !== '') append(line)
     })
     child.on('error', (error) => {
-      const code = (error as NodeJS.ErrnoException).code
       state = 'failed'
-      detail = code === 'ENOENT'
-        ? 'dsh not found on PATH — install the dsh CLI to manage profile plugins'
-        : `dsh spawn failed: ${error.message}`
+      detail = spawnFailureDetail(
+        (error as NodeJS.ErrnoException).code, error.message, dshBin, process.platform,
+      )
       onStatus?.(status())
       resolve(status())
     })
