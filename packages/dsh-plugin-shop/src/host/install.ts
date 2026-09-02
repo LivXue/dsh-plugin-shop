@@ -7,7 +7,6 @@ export type InstallRejectionCode =
   | 'denied'
   | 'version-mismatch'
   | 'needs-acknowledgement'
-  | 'git-missing'
   // A release-rescued entry's tarball failed verification against the
   // recorded sha256, or could not be fetched within the byte cap (the Host
   // checks before anything spawns; §3.1 of 2026-08-31-market-borrowings).

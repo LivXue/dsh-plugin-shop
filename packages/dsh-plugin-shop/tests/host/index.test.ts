@@ -784,7 +784,7 @@ describe('ShopGateway github entries', () => {
     added: '2026-08-25',
   }
 
-  function gatewayWithRepo(dir: string, hasGit = true): ShopGateway {
+  function gatewayWithRepo(dir: string): ShopGateway {
     const bin = join(dir, 'fake-dsh')
     writeFileSync(bin, [
       '#!/bin/sh',
@@ -800,7 +800,6 @@ describe('ShopGateway github entries', () => {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
       loadCatalog: async () => ({ snapshot: { schemaVersion: 3, builtAt: '', entries: [repoEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
       dshBin: bin,
-      hasGit: () => hasGit,
     })
   }
 
@@ -819,15 +818,6 @@ describe('ShopGateway github entries', () => {
     expect(terminal.state).toBe('done')
     expect(readFileSync(join(dir, 'calls.log'), 'utf8')).toContain(`plugin --profile web add github:someone/dsh-repo-plugin#${commit}`)
     expect(JSON.parse(readFileSync(join(dir, 'cache/github-pins.json'), 'utf8'))).toEqual({ 'dsh-repo-plugin': commit })
-  })
-
-  it('rejects git-missing before spawning when git is not on PATH', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-github-nogit-'))
-    const gateway = gatewayWithRepo(dir, false)
-    const result = await gateway.install({ name: 'dsh-repo-plugin', version: commit, acknowledged: true })
-    expect(result).toMatchObject({ ok: false, code: 'git-missing' })
-    await new Promise(resolve => setTimeout(resolve, 50))
-    expect(existsSync(join(dir, 'calls.log'))).toBe(false)
   })
 
   it('reports a github install by its pin, outdated when the catalog commit moved', async () => {
@@ -889,7 +879,6 @@ describe('subpackage install spec', () => {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
       loadCatalog: async () => ({ snapshot: { schemaVersion: 4, builtAt: '', entries: [subEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
       dshBin: bin,
-      hasGit: () => true,
     })
   }
 
@@ -943,15 +932,13 @@ describe('release-rescued tarball install', () => {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
       loadCatalog: async () => ({ snapshot: { schemaVersion: 5, builtAt: '', entries: [tarballEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
       dshBin: bin,
-      hasGit: () => false,
       fetchTarball,
     })
   }
 
-  it('verifies the sha256, then installs the validated tarball url without git and records the tag pin', async () => {
+  it('verifies the sha256, then installs the validated tarball url and records the tag pin', async () => {
     // The spec is the snapshot's tarball url (a https github.com release of
-    // this very repo, validated at parse), NOT a github: spec — and the git
-    // check is skipped, so hasGit: () => false must not stop the install.
+    // this very repo, validated at parse), NOT a github: spec.
     // The pin write records the tag, which is the entry's version (the
     // manifest records only `github:owner/slug`, so the pins file is how
     // `installed()` reports outdated honestly).
@@ -1041,7 +1028,6 @@ describe('release-rescued tarball install', () => {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(repoDir, 'cache'), profile: 'web', profileDir: repoProfileDir,
       loadCatalog: async () => ({ snapshot: { schemaVersion: 5, builtAt: '', entries: [repoEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
       dshBin: repoBin,
-      hasGit: () => true,
       fetchTarball,
     })
     const repoResult = await repoGateway.install({ name: 'dsh-repo-plugin', version: commit, acknowledged: true })

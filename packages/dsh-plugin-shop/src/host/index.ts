@@ -6,7 +6,6 @@ import { readProfileManifest } from '@deepseek-ai/dsh-app-boot'
 import { lt, minVersion, valid } from 'semver'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { spawnSync } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
@@ -92,9 +91,6 @@ export interface ShopGatewayOptions {
   /** How long the gateway waits after a successful restart response before
    * exiting the old process; test-only shortening, production uses 2s. */
   restartExitDelayMs?: number
-  /** Whether `git` is on PATH — a github entry cannot install without it;
-   * test-only injection, production probes the real binary. */
-  hasGit?: () => boolean
   /** Test-only injection: the pins file's filesystem; production uses node:fs. */
   pinFs?: RepoPinFs
   /** Test-only injection: the explicit `allowRestart` override; production
@@ -270,7 +266,6 @@ export class ShopGateway extends TypertRemoteService {
   private readonly restartExitDelayMs: number
   private readonly restartParentPid: number
   private readonly latestVersion: () => Promise<string | null>
-  private readonly hasGit: () => boolean
   private readonly pinFs: RepoPinFs
   private readonly allowRestart?: boolean
   private readonly env: NodeJS.ProcessEnv
@@ -325,7 +320,6 @@ export class ShopGateway extends TypertRemoteService {
     this.restartExitDelayMs = options.restartExitDelayMs ?? ShopGateway.RESTART_EXIT_DELAY_MS
     this.restartParentPid = options.restartParentPid ?? process.pid
     this.latestVersion = options.fetchLatestVersion ?? (() => fetchLatestVersion())
-    this.hasGit = options.hasGit ?? (() => spawnSync('git', ['--version'], { stdio: 'ignore' }).status === 0)
     this.pinFs = options.pinFs ?? {
       exists: path => existsSync(path),
       read: path => readFileSync(path, 'utf8'),
@@ -657,11 +651,16 @@ export class ShopGateway extends TypertRemoteService {
       if (entry.repo === undefined || !/^[0-9a-f]{40}$/.test(args.version)) {
         return { ok: false, code: 'version-mismatch', detail: `dsh-plugin-shop: ${args.name} has no installable commit` }
       }
-      // pnpm git installs need git on PATH; failing before the spawn turns a
-      // cryptic pnpm error into an author-readable rejection.
-      if (!this.hasGit()) {
-        return { ok: false, code: 'git-missing', detail: 'dsh-plugin-shop: git is not on PATH, which github installs require; install git and retry' }
-      }
+      // No git check here, deliberately. pnpm resolves a `github:` spec
+      // through GitHub's tarball endpoint, not `git clone`, so git is not a
+      // precondition: measured with git stubbed to exit 127 on pnpm 9.15.9,
+      // 10.15.0 and 11.13.0, for this form and the `&path:` one, then end to
+      // end through the binary actually spawned below — `dsh plugin add`
+      // exited 0 on dsh 0.1.1-rc.2 and the package landed in the profile
+      // manifest. The preflight that stood here rejected EVERY github entry
+      // on a machine without git, which is 61% of the catalog, for a
+      // dependency the install does not have. A real failure still reports
+      // pnpm's stderr verbatim plus the recovery hint (executor.ts).
       spec = `github:${entry.repo}#${args.version}${entry.subdir !== undefined ? `&path:${entry.subdir}` : ''}`
     } else {
       spec = `${args.name}@${args.version}`

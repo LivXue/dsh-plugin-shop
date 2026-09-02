@@ -165,9 +165,21 @@ a commit, never a raw spec":
   `github:owner/slug#commit` itself. No string the client sends is ever
   appended to a command line; the argv-smuggling guard keeps applying to the
   whole form.
-- **Pre-flight:** before spawning, the Host checks `git --version` (a missing
-  git is a pnpm git-install failure) and rejects with `git-missing` detail —
-  cheap, and the failure is honest before the click costs anything.
+- **Pre-flight:** none for git. **Amended 2026-09-02: this bullet used to
+  specify a `git --version` check rejecting with `git-missing` before the
+  spawn, on the premise that "a missing git is a pnpm git-install failure".
+  That premise is false.** pnpm resolves a `github:` spec through GitHub's
+  tarball endpoint, not `git clone`. Measured with git stubbed to exit 127:
+  pnpm 9.15.9, 10.15.0 and 11.13.0 each installed
+  `github:owner/repo#commit`, and the `&path:subdir` form too; then end to
+  end through the binary the Host actually spawns — `dsh plugin --profile p
+  add github:...` exited 0 on dsh 0.1.1-rc.2 with the package in the profile
+  manifest. So the check rejected EVERY github entry on a machine without
+  git — 61% of the catalog, 5,683 of 9,291 live entries — for a dependency
+  the install does not have, and the user saw only "git missing". The
+  `git-missing` code is removed rather than left unreachable. A real install
+  failure still reports pnpm's stderr verbatim plus the recovery hint, which
+  is the author-readable path this pre-flight was reaching for.
 - **Post-flight:** the existing bundle-activation confirmation (`dsh plugin
   list` after zero exit) stays. If the repo changed its manifest between
   snapshot and install (rare), the no-bundle warning becomes the existing

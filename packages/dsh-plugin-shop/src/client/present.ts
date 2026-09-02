@@ -52,7 +52,6 @@ export function rejectionCodeKey(code: InstallRejectionCode): ShopLocaleKey {
     case 'not-in-catalog': return 'notInCatalogCode'
     case 'version-mismatch': return 'versionMismatchCode'
     case 'needs-acknowledgement': return 'needsAcknowledgementCode'
-    case 'git-missing': return 'gitMissingCode'
     case 'tarball-integrity': return 'tarballIntegrityCode'
   }
 }
