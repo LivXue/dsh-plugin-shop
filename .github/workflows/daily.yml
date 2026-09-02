@@ -94,7 +94,7 @@ jobs:
         # rebuild would spend another ~1390 npm requests and could
         # legitimately disagree with what Pages just got below, publishing
         # mismatched content between the two transports.
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         # Never fatal to this job. Steps run in sequence and any failure ends
         # the job, so a bad minute from the artifact service would otherwise
         # skip `Publish to Pages` below AND `Commit the snapshot`, costing this
@@ -133,14 +133,13 @@ jobs:
 
   publish:
     needs: build
-    # workflow_dispatch only until a real publish proves the granular token
-    # publishes without an OTP (design §7.2); moving this to the schedule is
-    # its own commit, made after the first manual run. The branch guard
+    # Runs on the schedule now: the first manual dispatch proved the granular
+    # token publishes without an OTP prompt (design §7.2). The branch guard
     # matters because workflow_dispatch can be fired from any ref: without
     # it, a dispatch from a feature branch would publish that branch's
     # catalog to `latest` on npm — a name claim and a version burn a rerun
     # cannot take back.
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
