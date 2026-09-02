@@ -26,20 +26,29 @@
   /* The shelf never scrolls sideways: a card too wide for its track wraps
    * its badges rather than widening the panel.
    *
-   * `clip` rather than `hidden`, with a margin, because `.searchInput` sits
-   * at exactly (0, 0) of this box — it is the first child of `.toolbar`,
-   * itself the first child here, and this rule carries no padding — so its
-   * focus ring paints ENTIRELY outside the panel. `hidden` clipped it at the
-   * padding edge, and because the spec forbids one axis being `hidden` while
-   * the other is `visible`, it silently promoted overflow-y to `auto` and
-   * clipped the ring top and bottom as well; all that survived was a stray
-   * arc on the right, where the 280px input stops short of the panel. `clip`
-   * does not coerce the other axis, so overflow-y stays `visible`, and
-   * `overflow-clip-margin` buys back the 3px the ring reaches sideways.
-   * `hidden` stays as the first declaration, the fallback for engines
-   * without `clip`; there the ring is clipped as before, never worse. */
+   * Clipped on BOTH axes, with a margin, because `.searchInput` sits at
+   * exactly (0, 0) of this box — it is the first child of `.toolbar`, itself
+   * the first child here, and this rule carries no padding — so its focus
+   * ring paints ENTIRELY outside the panel.
+   *
+   * Both axes is the load-bearing part: `overflow-clip-margin` is inert
+   * unless the element clips on both. Clipping x alone left the margin doing
+   * nothing — measured against the live app on 0.7.1, the ring reached 0 of
+   * its 3px on the left at every device pixel ratio (1, 1.25, 1.5, 2), while
+   * keeping the full 3px on the right, where the 280px input stops short of
+   * the panel and never meets the clip edge. Raising the margin to 6px
+   * changed nothing; clipping both axes with the SAME 3px restored the whole
+   * ring. A test that reads declarations cannot see that difference, which is
+   * why the first attempt at this shipped broken.
+   *
+   * `clip` is not a scroll container, so this does not bring back the
+   * accidental scrolling `hidden` caused by coercing the other axis to
+   * `auto`. Nothing is lost vertically: the panel's scrollHeight equals its
+   * height and no descendant paints outside the clip rect (measured).
+   * `overflow-x: hidden` stays as the fallback for engines without `clip`,
+   * where the ring is clipped as it was before, never worse. */
   overflow-x: hidden;
-  overflow-x: clip;
+  overflow: clip;
   overflow-clip-margin: 3px;
 }
 
