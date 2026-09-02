@@ -303,12 +303,6 @@
   outline-offset: 1px;
 }
 
-.staleBlock {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 .staleBadge {
   padding: 2px 8px;
   border-radius: 999px;
@@ -360,12 +354,53 @@
   color: var(--dsw-alias-label-primary);
 }
 
-.catalogStats {
+.catalogStatsRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   margin: 6px 0 0;
+}
+
+.catalogStats {
+  margin: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
   letter-spacing: 0.02em;
   color: var(--dsw-alias-label-secondary);
+}
+
+/* Sits beside the 12px stats caption, so it is quieter than `.actionButton`:
+ * this is an affordance, not a call to action — the catalog reloads on its
+ * own at mount and the shelf is already usable without it. */
+.reloadButton {
+  padding: 1px 9px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 17px;
+  cursor: pointer;
+}
+
+.reloadButton:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, var(--dsw-alias-border-l2));
+  color: var(--dsw-alias-brand-primary);
+}
+
+.reloadButton:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.reloadButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+
+.reloadFailed {
+  font-size: 11px;
+  color: var(--dsw-alias-state-warn-primary);
 }
 
 .emptyLine {

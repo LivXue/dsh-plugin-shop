@@ -724,6 +724,10 @@ export function ShopTab(props: ShopTabProps): ReactNode {
   const restartSupported = selfVersion?.restartSupported ?? true
   const selfUpdate = useUpdateSelf(updateStart, installStatus)
   const [request, setRequest] = useState<LoadRequest>({ kind: 'initial' })
+  // A refresh deliberately leaves the current shelf on screen (§10), so the
+  // reload control carries the only sign that the click did anything.
+  const [reloading, setReloading] = useState(false)
+  const [reloadFailed, setReloadFailed] = useState(false)
   const [query, setQuery] = useState('')
   // `installed` is a filter mode alongside the six catalog categories, not a
   // seventh category: it selects by installed state, not by `catalog.category`.
@@ -753,7 +757,20 @@ export function ShopTab(props: ShopTabProps): ReactNode {
         // The transport detail is private (it can name hosts and ports) and
         // never rendered; the error state is the author- and user-readable
         // face of a failed load.
-        if (!cancelled) setCatalogState({ kind: 'error' })
+        //
+        // A failed RELOAD keeps whatever is already on screen: the error view
+        // exists for having nothing to show, and discarding a catalog the
+        // user is reading because a re-fetch failed would be a worse outcome
+        // than the stale data. The note beside the control says so, since a
+        // reload that silently changed nothing is indistinguishable from one
+        // that found no newer build.
+        if (cancelled) return
+        setCatalogState(current => (current.kind === 'ready' ? current : { kind: 'error' }))
+        setReloadFailed(true)
+      } finally {
+        // Released on both outcomes: a reload that failed must hand the
+        // button back rather than leave it disabled with nothing to retry.
+        if (!cancelled) setReloading(false)
       }
     }
     void load()
@@ -980,13 +997,11 @@ export function ShopTab(props: ShopTabProps): ReactNode {
           }}
         />
         <div className={css.toolbarRight}>
+          {/* Status only. The reload ACTION lives once, beside the build
+            * date — two identical Refresh buttons on one screen made the
+            * shelf ambiguous about which one did what. */}
           {result.stale && (
-            <div className={css.staleBlock}>
-              <span className={css.staleBadge}>{t('staleLabel', { date: result.builtAt.slice(0, 10) })}</span>
-              <button type="button" className={css.actionButton} onClick={() => setRequest({ kind: 'refresh' })}>
-                {t('refresh')}
-              </button>
-            </div>
+            <span className={css.staleBadge}>{t('staleLabel', { date: result.builtAt.slice(0, 10) })}</span>
           )}
           {selfVersion !== null && (
             <div className={css.versionBlock}>
@@ -1101,7 +1116,19 @@ export function ShopTab(props: ShopTabProps): ReactNode {
           {t('installed')} {installedCount}
         </button>
       </div>
-      <p className={css.catalogStats}>{t('catalogStats', { count: String(result.plugins.length), date: result.builtAt.slice(0, 10) })}</p>
+      <div className={css.catalogStatsRow}>
+        <p className={css.catalogStats}>{t('catalogStats', { count: String(result.plugins.length), date: result.builtAt.slice(0, 10) })}</p>
+        <button
+          type="button"
+          className={css.reloadButton}
+          data-shop-reload
+          disabled={reloading}
+          onClick={() => { setReloading(true); setReloadFailed(false); setRequest({ kind: 'refresh' }) }}
+        >
+          {reloading ? t('refreshing') : t('refresh')}
+        </button>
+        {reloadFailed && <span className={css.reloadFailed} data-shop-reload-failed>{t('refreshFailed')}</span>}
+      </div>
       {result.plugins.length === 0 ? (
         <p className={css.emptyLine}>{t('empty')}</p>
       ) : filtered.length === 0 ? (

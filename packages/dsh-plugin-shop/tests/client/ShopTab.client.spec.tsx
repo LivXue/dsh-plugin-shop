@@ -497,11 +497,17 @@ describe('ShopTab', () => {
     expect(screen.queryByText('boom')).toBeNull()
   })
 
-  it('labels a stale catalog with its builtAt and offers a refresh', async () => {
+  it('labels a stale catalog with its builtAt, and the one reload control refreshes it', async () => {
     const { injected, catalog } = bench({ ...snapshot(), stale: true })
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('showing 2026-08-25')).toBeTruthy())
-    fireEvent.click(screen.getByText(en.refresh))
+    // The badge is status; the action is the single reload control beside the
+    // build date. There must be exactly one — the stale block used to carry
+    // its own identical Refresh button, which left two on screen doing the
+    // same thing.
+    const reload = screen.getAllByRole('button', { name: en.refresh })
+    expect(reload).toHaveLength(1)
+    fireEvent.click(reload[0]!)
     await waitFor(() => expect(catalog).toHaveBeenCalledTimes(2))
     expect(catalog).toHaveBeenLastCalledWith({ refresh: true })
   })
@@ -1202,5 +1208,90 @@ describe('ShopTab duplicate catalog names', () => {
     // Only the hello plugin is installed, so Installed shows exactly its card.
     fireEvent.click(categoryButton(container, en.installed))
     await waitFor(() => expect(cardNames(container)).toEqual(['dsh-hello-plugin']))
+  })
+})
+
+describe('ShopTab catalog reload', () => {
+  it('reloads past the cache from the control beside the build date', async () => {
+    const { catalog, injected } = bench(snapshot())
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    // The mount load takes whatever the cache holds; only the explicit
+    // control asks for a re-fetch.
+    expect(catalog).toHaveBeenCalledTimes(1)
+    expect(catalog).toHaveBeenLastCalledWith(undefined)
+
+    fireEvent.click(screen.getByRole('button', { name: en.refresh }))
+    // `refresh: true` is the whole point: without it the reload re-serves the
+    // cached snapshot it was pressed to replace, and the build date never
+    // moves however often the user clicks.
+    await waitFor(() => expect(catalog).toHaveBeenLastCalledWith({ refresh: true }))
+  })
+
+  it('reports the reload on the button, which is the only signal it gives', async () => {
+    // §10 keeps the current snapshot on screen during a refresh — deliberately,
+    // so the shelf does not blank out. That leaves the button as the only
+    // feedback that the click did anything, across a network round trip.
+    const { catalog, injected } = bench(snapshot())
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+
+    let release!: (result: ShopCatalogResult) => void
+    catalog.mockImplementationOnce(() => new Promise<ShopCatalogResult>(resolve => { release = resolve }))
+    fireEvent.click(screen.getByRole('button', { name: en.refresh }))
+
+    const busy = await waitFor(() => screen.getByRole('button', { name: en.refreshing }))
+    // Disabled while in flight: a second click would start a second fetch and
+    // race it against the first.
+    expect(busy.hasAttribute('disabled')).toBe(true)
+    // The shelf is still there, not replaced by the loading skeleton.
+    expect(screen.getByText('dsh-hello-plugin')).toBeTruthy()
+
+    await act(async () => { release(snapshot()) })
+    await waitFor(() => expect(screen.getByRole('button', { name: en.refresh })).toBeTruthy())
+  })
+
+  it('keeps the shelf and says so when a reload fails', async () => {
+    const { catalog, injected } = bench(snapshot())
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+
+    catalog.mockRejectedValueOnce(new Error('offline'))
+    fireEvent.click(screen.getByRole('button', { name: en.refresh }))
+
+    await waitFor(() => expect(screen.getByText(en.refreshFailed)).toBeTruthy())
+    // The catalog the user was reading survives. A refresh used to be
+    // reachable only from the stale badge; putting a button on the shelf
+    // invites the click, and dropping a usable catalog to the error view
+    // because one re-fetch failed is a worse outcome than stale data.
+    expect(screen.getByText('dsh-hello-plugin')).toBeTruthy()
+    // The button comes back — leaving it disabled would strand the user with
+    // nothing to retry.
+    expect(screen.getByRole('button', { name: en.refresh })).toBeTruthy()
+  })
+
+  it('clears a previous failure when the next reload starts', async () => {
+    const { catalog, injected } = bench(snapshot())
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+
+    catalog.mockRejectedValueOnce(new Error('offline'))
+    fireEvent.click(screen.getByRole('button', { name: en.refresh }))
+    await waitFor(() => expect(screen.getByText(en.refreshFailed)).toBeTruthy())
+
+    fireEvent.click(screen.getByRole('button', { name: en.refresh }))
+    // A stale failure note sitting beside a reload that succeeded would
+    // misreport the thing the user just did.
+    await waitFor(() => expect(screen.queryByText(en.refreshFailed)).toBeNull())
+  })
+
+  it('still drops to the error view when the FIRST load fails', async () => {
+    // The note only protects a catalog already on screen; with nothing to
+    // show, the error view and its retry remain right.
+    const { catalog, injected } = bench(snapshot())
+    catalog.mockRejectedValueOnce(new Error('offline'))
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText(en.error)).toBeTruthy())
+    expect(screen.queryByText(en.refreshFailed)).toBeNull()
   })
 })
