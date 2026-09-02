@@ -29,6 +29,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # Provenance attestation on the catalog publish is minted from GitHub's
+      # OIDC endpoint. Job permissions are exhaustive, so this must be named
+      # here even though the deploy job already has it.
+      id-token: write
     env:
       # Optional read-only npm token; lifts the search API's per-IP rate
       # limit onto the token. Empty (e.g. on fork PRs) = unauthenticated.
