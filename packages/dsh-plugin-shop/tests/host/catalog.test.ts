@@ -1,7 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
+import { gzipSync } from 'node:zlib'
 import { DEFAULT_CATALOG_URL, catalogOrigins, loadCatalog, type CatalogFs } from '../../src/host/catalog.ts'
 import { TransportError, type CatalogOrigin } from '../../src/host/origin.ts'
+import { npmOrigin } from '../../src/host/npm-origin.ts'
 
 function dataJson(plugins: unknown[] = [], denied: unknown[] = [], schemaVersion = 2): string {
   return JSON.stringify({ schemaVersion, plugins, denied })
@@ -676,6 +678,10 @@ describe('origin racing', () => {
     /** Fails when the loader asks for the pointer — still inside the race,
      * so the loader may still fall through to another origin. */
     pointerFails?: 'transport' | 'loud'
+    /** Never settles — simulates a stalled bulk transfer (npmOrigin
+     * downloading its tarball on `pointer()`) so the commit-transfer timeout
+     * can be exercised without a real 30-second stall. */
+    pointerHangs?: boolean
     /** Fails on the bulk fetch, after the winner is committed to. */
     dataFails?: 'transport' | 'loud'
     data?: string
@@ -690,6 +696,7 @@ describe('origin racing', () => {
         return {
           id,
           pointer: async () => {
+            if (opts.pointerHangs === true) return new Promise<string>(() => {})
             if (opts.pointerFails === 'transport') throw new TransportError(`${id} pointer down`)
             if (opts.pointerFails === 'loud') throw new Error(`${id} pointer corrupt`)
             return opts.pointer ?? ''
@@ -705,16 +712,19 @@ describe('origin racing', () => {
   }
 
   it('takes the first origin to answer, not the first listed', async () => {
-    const data = dataJson([entry])
-    const { pointer } = pointerFor(data, '2026-08-25T00:00:00Z')
+    const slowData = dataJson([entry])
+    const fastData = dataJson([entry, { ...entry, name: 'dsh-second-plugin' }])
+    const slow = pointerFor(slowData, '2026-08-25T00:00:00Z')
+    const fast = pointerFor(fastData, '2026-08-25T00:00:00Z')
     const result = await loadCatalog({
       cacheDir: '/cache', fsImpl: memFs(),
       origins: [
-        fakeOrigin('slow', { delay: 8, pointer, data }),
-        fakeOrigin('fast', { delay: 0, pointer, data }),
+        fakeOrigin('slow', { delay: 8, pointer: slow.pointer, data: slowData }),
+        fakeOrigin('fast', { delay: 0, pointer: fast.pointer, data: fastData }),
       ],
     })
-    expect(result.snapshot.entries).toHaveLength(1)
+    // Two entries can only have come from `fast`, which is listed SECOND.
+    expect(result.snapshot.entries).toHaveLength(2)
   })
 
   it('falls through to the next origin when the winner is a transport failure', async () => {
@@ -744,6 +754,28 @@ describe('origin racing', () => {
     expect(result.snapshot.entries).toHaveLength(1)
   })
 
+  it('falls through to a healthy origin when the committed winner stalls past the commit budget', async () => {
+    vi.useFakeTimers()
+    try {
+      const data = dataJson([entry])
+      const { pointer } = pointerFor(data, '2026-08-25T00:00:00Z')
+      const pending = loadCatalog({
+        cacheDir: '/cache', fsImpl: memFs(),
+        origins: [
+          fakeOrigin('hangs', { delay: 0, pointerHangs: true }),
+          fakeOrigin('working', { delay: 4, pointer, data }),
+        ],
+      })
+      // `hangs`' pointer() never settles on its own; only the commit-transfer
+      // budget moves the race past it and on to `working`.
+      await vi.advanceTimersByTimeAsync(30_000)
+      const result = await pending
+      expect(result.snapshot.entries).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('falls back to the cache — not to another origin — when the committed winner fails its bulk fetch', async () => {
     const data = dataJson([entry])
     const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
@@ -763,14 +795,45 @@ describe('origin racing', () => {
 
   it('does NOT fall through on a loud failure — a corrupt origin is reported, not papered over', async () => {
     const data = dataJson([entry])
-    const { pointer } = pointerFor(data, '2026-08-25T00:00:00Z')
+    const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
+    // Seed a cache a broken guard could serve instead of throwing: the point
+    // of this test is that correct code throws even though a stale answer is
+    // sitting right there, not merely that it throws when nothing else exists.
+    const fs = memFs()
+    fs.files.set('/cache/index.json', pointer)
+    fs.files.set(`/cache/${url}`, data)
     await expect(loadCatalog({
-      cacheDir: '/cache', fsImpl: memFs(),
+      cacheDir: '/cache', fsImpl: fs,
+      now: () => new Date('2026-09-01T00:00:00Z'),
       origins: [
         fakeOrigin('corrupt', { delay: 0, pointer, dataFails: 'loud' }),
         fakeOrigin('working', { delay: 4, pointer, data }),
       ],
     })).rejects.toThrow(/data corrupt/)
+  })
+
+  it('reports a loud probe failure rather than masking it with a healthy origin', async () => {
+    const data = dataJson([entry])
+    const { pointer } = pointerFor(data, '2026-08-25T00:00:00Z')
+    await expect(loadCatalog({
+      cacheDir: '/cache', fsImpl: memFs(),
+      origins: [
+        fakeOrigin('corrupt', { delay: 0, probeFails: 'loud' }),
+        fakeOrigin('healthy', { delay: 4, pointer, data }),
+      ],
+    })).rejects.toThrow(/corrupt corrupt/)
+  })
+
+  it('reports a loud pointer failure rather than masking it with a healthy origin', async () => {
+    const data = dataJson([entry])
+    const { pointer } = pointerFor(data, '2026-08-25T00:00:00Z')
+    await expect(loadCatalog({
+      cacheDir: '/cache', fsImpl: memFs(),
+      origins: [
+        fakeOrigin('corrupt', { delay: 0, pointerFails: 'loud' }),
+        fakeOrigin('healthy', { delay: 4, pointer, data }),
+      ],
+    })).rejects.toThrow(/pointer corrupt/)
   })
 
   it('throws when every origin is a transport failure and there is no cache', async () => {
@@ -796,6 +859,94 @@ describe('origin racing', () => {
     })
     expect(result.stale).toBe(true)
     expect(result.snapshot.entries).toHaveLength(1)
+  })
+
+  it('throws rather than silently serving a stale cache when origins is empty', async () => {
+    const data = dataJson([entry])
+    const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
+    const fs = memFs()
+    fs.files.set('/cache/index.json', pointer)
+    fs.files.set(`/cache/${url}`, data)
+    await expect(loadCatalog({
+      cacheDir: '/cache', fsImpl: fs,
+      now: () => new Date('2026-09-01T00:00:00Z'),
+      origins: [],
+    })).rejects.toThrow('loadCatalog: no origins')
+  })
+})
+
+describe('a malformed npm manifest does not mask a healthy origin', () => {
+  /** A single ustar file entry. Our own tar.ts reader ignores the checksum
+   * field entirely, so it is left blank rather than computed. */
+  function tarEntry(path: string, content: Buffer): Buffer {
+    const header = Buffer.alloc(512)
+    header.write(path, 0, 'ascii')
+    header.write('0000644\0', 100, 'ascii')
+    header.write('0000000\0', 108, 'ascii')
+    header.write('0000000\0', 116, 'ascii')
+    header.write(`${content.length.toString(8).padStart(11, '0')}\0`, 124, 'ascii')
+    header.write('00000000000\0', 136, 'ascii')
+    header[156] = '0'.charCodeAt(0) // typeflag: regular file
+    const pad = Buffer.alloc((512 - (content.length % 512)) % 512)
+    return Buffer.concat([header, content, pad])
+  }
+
+  /** A minimal, self-consistent gzipped tarball: real ustar bytes readTar
+   * can parse, holding exactly the pointer + data pair the caller gives it —
+   * so the pointer's plugins.sha256 always matches the packaged data,
+   * unlike a fixture built for a narrower purpose. */
+  function buildCatalogTarball(pointer: string, dataUrl: string, data: string): Buffer {
+    const entries = Buffer.concat([
+      tarEntry('package/v1/index.json', Buffer.from(pointer, 'utf8')),
+      tarEntry(`package/v1/${dataUrl}`, Buffer.from(data, 'utf8')),
+      Buffer.alloc(1024), // two zero blocks: end of archive
+    ])
+    return gzipSync(entries)
+  }
+
+  it('serves the healthy origin\'s catalog even though a broken mirror answers 200 with junk, first', async () => {
+    const entry = {
+      name: 'dsh-hello-plugin', version: '1.2.0', integrity: 'sha512-i', publishedAt: null,
+      repository: null, license: 'MIT', tier: 'community', metadata: 'derived',
+      added: '2026-08-25',
+    }
+    const data = dataJson([entry])
+    const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
+    const tarball = buildCatalogTarball(pointer, url, data)
+    const integrity = `sha512-${createHash('sha512').update(tarball).digest('base64')}`
+
+    const brokenRegistry = (async (input: string | URL) => {
+      const reqUrl = String(input)
+      if (reqUrl.endsWith('/latest')) return new Response(JSON.stringify({ error: 'not found' }), { status: 200 })
+      throw new Error('should not reach the tarball fetch — the manifest never resolved')
+    }) as unknown as typeof fetch
+
+    const healthyRegistry = (async (input: string | URL) => {
+      // A few microtask turns so the broken mirror is guaranteed to settle —
+      // and be processed by the race loop — first. That ordering is exactly
+      // what this test exists to rule out as a way to fail the whole load.
+      for (let i = 0; i < 4; i += 1) await Promise.resolve()
+      const reqUrl = String(input)
+      if (reqUrl.endsWith('/latest')) {
+        return new Response(JSON.stringify({
+          name: 'dsh-plugin-shop-catalog', version: '2026.901.0',
+          dist: { tarball: 'https://healthy.test/x.tgz', integrity },
+        }), { status: 200 })
+      }
+      return new Response(new Uint8Array(tarball), { status: 200 })
+    }) as unknown as typeof fetch
+
+    const result = await loadCatalog({
+      cacheDir: '/cache', fsImpl: memFs(),
+      origins: [
+        npmOrigin('https://broken.test/', 'dsh-plugin-shop-catalog', brokenRegistry),
+        npmOrigin('https://healthy.test/', 'dsh-plugin-shop-catalog', healthyRegistry),
+      ],
+    })
+    // Only the healthy origin can produce a validated snapshot at all — the
+    // broken one fails inside probe() before it ever returns a handle.
+    expect(result.snapshot.entries).toHaveLength(1)
+    expect(result.stale).toBe(false)
   })
 })
 

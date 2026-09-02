@@ -108,4 +108,18 @@ describe('npmOrigin', () => {
     const handle = await npmOrigin('https://reg.test/', 'c', registry({})).probe(signal())
     await expect(handle.file('stars.nope.json')).rejects.toThrow(/stars\.nope\.json/)
   })
+
+  it('raises TransportError when a 200 response is not a valid abbreviated manifest', async () => {
+    // A broken mirror, or a corporate proxy answering a registry URL from the
+    // user's own .npmrc with an HTML login page instead of JSON — either way
+    // this is "not npm", not corrupt catalog content, so it must fall
+    // through rather than fail the whole load.
+    const brokenMirror = (async (input: string | URL) => {
+      const url = String(input)
+      if (url.endsWith('/latest')) return new Response(JSON.stringify({ error: 'not found' }), { status: 200 })
+      throw new Error('should not reach the tarball fetch')
+    }) as unknown as typeof fetch
+    await expect(npmOrigin('https://reg.test/', 'c', brokenMirror).probe(signal()))
+      .rejects.toBeInstanceOf(TransportError)
+  })
 })

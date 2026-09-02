@@ -64,7 +64,22 @@ export function npmOrigin(registryUrl: string, packageName: string, fetchImpl: t
         throw new TransportError(`npm origin ${registryUrl} probe failed: ${detail}`, { cause: error })
       }
       if (!response.ok) throw new TransportError(`npm origin ${registryUrl} returned ${response.status}`)
-      const manifest = latestSchema.parse(await response.json())
+      // npm itself generates the abbreviated manifest; the only way a 2xx
+      // body fails to parse as one is that whatever answered is not actually
+      // npm — a broken mirror, or a corporate proxy's login page on a
+      // registry URL a user's own .npmrc pointed us at. That is a
+      // transport-layer disqualification ("this does not speak the
+      // protocol"), not corrupt catalog content, so it falls through to the
+      // next origin instead of failing the whole load. Contrast
+      // verifyIntegrity below: a sha mismatch says these ARE npm's bytes and
+      // they do not match, which must stay a loud, non-retried throw.
+      let manifest: z.infer<typeof latestSchema>
+      try {
+        manifest = latestSchema.parse(await response.json())
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error)
+        throw new TransportError(`npm origin ${registryUrl} returned an unparsable manifest: ${detail}`, { cause: error })
+      }
 
       let files: Map<string, Buffer> | null = null
       const load = async (): Promise<Map<string, Buffer>> => {

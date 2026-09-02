@@ -26,6 +26,37 @@ const FRESH_MS = 5 * 60 * 1000
  * does not hold the shelf closed. */
 const PROBE_TIMEOUT_MS = 10_000
 
+/** How long the committed origin has to produce its pointer. `httpOrigin`
+ * answers instantly — its probe already fetched the bytes — but `npmOrigin`
+ * downloads its tarball here, so this is a bulk-transfer budget, not a probe
+ * one. Without it a winner that stalls mid-body parks the race forever while
+ * healthy origins sit settled and unread, which is the exact failure the race
+ * exists to prevent. Generous against every measured npm origin (12.53 MB/s
+ * mirror -> 0.12 s for 1.5 MB; npmjs direct 1.99 MB/s -> 0.75 s). */
+const COMMIT_TIMEOUT_MS = 30_000
+
+/** Reject with a TransportError if `work` outlives `COMMIT_TIMEOUT_MS`. The
+ * underlying fetch is left to finish or fail on its own and its result is
+ * discarded: aborting it would need a signal threaded through OriginHandle,
+ * and a stalled origin we have already abandoned costs nothing but its own
+ * socket. */
+async function withCommitTimeout<T>(work: Promise<T>, id: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new TransportError(`${id} did not produce a pointer within ${COMMIT_TIMEOUT_MS} ms`)),
+          COMMIT_TIMEOUT_MS,
+        )
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 /** Records when the loader itself wrote the cache; the pointer's `builtAt` is
  * the catalog's build time, not the cache's fetch time. */
 const META_FILE = 'index.meta.json'
@@ -214,6 +245,7 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
   }
   const originList = options.origins
     ?? [httpOrigin(options.baseUrl as string, fetchImpl)]
+  if (originList.length === 0) throw new Error('loadCatalog: no origins')
   const indexPath = join(cacheDir, 'index.json')
   const metaPath = join(cacheDir, META_FILE)
 
@@ -320,7 +352,7 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
       continue
     }
     try {
-      pointerText = await settled.value.pointer()
+      pointerText = await withCommitTimeout(settled.value.pointer(), settled.value.id)
       handle = settled.value
       break
     } catch (error) {
