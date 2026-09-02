@@ -19,22 +19,36 @@ describe('nextCatalogVersion', () => {
     expect(nextCatalogVersion(new Date('2026-10-15T03:17:00Z'), null)).toBe('2026.1015.0')
   })
 
-  // These orderings are the whole point of the scheme; each is checked as
-  // semver, not as a string.
+  // These orderings are the whole point of the scheme. Every version here is
+  // PRODUCED by nextCatalogVersion, never written as a literal: a literal
+  // version compared against a local helper tests only the helper, and would
+  // pass against an implementation that returned a constant.
   it('orders monotonically across month and year boundaries', () => {
-    const asTuple = (v: string): number[] => v.split('.').map(Number)
+    const at = (iso: string, latest: string | null = null): string =>
+      nextCatalogVersion(new Date(iso), latest)
+    const sep = at('2026-09-01T03:17:00Z')
+    const oct = at('2026-10-15T03:17:00Z')
+    const dec = at('2026-12-31T03:17:00Z')
+    const jan = at('2027-01-01T03:17:00Z')
+    const sepAgain = at('2026-09-01T11:00:00Z', sep)
+
+    // Every field is a bare integer, so a numeric tuple compare IS the semver
+    // compare for this scheme — asserted below rather than assumed.
+    for (const version of [sep, oct, dec, jan, sepAgain]) {
+      expect(version.split('.').every(part => /^(0|[1-9]\d*)$/.test(part))).toBe(true)
+    }
     const gt = (a: string, b: string): boolean => {
-      const [x, y] = [asTuple(a), asTuple(b)]
+      const [x, y] = [a.split('.').map(Number), b.split('.').map(Number)]
       for (let i = 0; i < 3; i += 1) {
         const l = x[i] ?? 0, r = y[i] ?? 0
         if (l !== r) return l > r
       }
       return false
     }
-    expect(gt('2026.1015.0', '2026.901.0')).toBe(true)
-    expect(gt('2027.101.0', '2026.1231.0')).toBe(true)
-    expect(gt('2026.901.1', '2026.901.0')).toBe(true)
-    expect(gt('2026.1231.0', '2026.1015.0')).toBe(true)
+    expect(gt(oct, sep)).toBe(true)
+    expect(gt(jan, dec)).toBe(true)
+    expect(gt(sepAgain, sep)).toBe(true)
+    expect(gt(dec, oct)).toBe(true)
   })
 
   it('uses UTC, so a late-evening local build does not skip a day', () => {
