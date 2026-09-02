@@ -875,7 +875,14 @@ describe('origin racing', () => {
   })
 })
 
-describe('a malformed npm manifest does not mask a healthy origin', () => {
+describe('a broken npm origin does not mask a healthy one', () => {
+  // Two distinct TransportError sources, both exercised through the real
+  // npmOrigin (never fakeOrigin — a hand stub that already claims to throw
+  // TransportError proves nothing about npm-origin.ts's own throw sites):
+  // a probe()-level unparsable manifest, and a pointer()-level cross-host
+  // tarball guard (item 1, 2026-09 review). Both must fall through to a
+  // healthy second origin rather than fail the whole load.
+
   /** A single ustar file entry. Our own tar.ts reader ignores the checksum
    * field entirely, so it is left blank rather than computed. */
   function tarEntry(path: string, content: Buffer): Buffer {
@@ -948,6 +955,66 @@ describe('a malformed npm manifest does not mask a healthy origin', () => {
     expect(result.snapshot.entries).toHaveLength(1)
     expect(result.stale).toBe(false)
   })
+
+  it('serves the healthy origin\'s catalog even though a broken mirror\'s tarball names a foreign host, first', async () => {
+    // registry.npm.taobao.org is still named in countless ~/.npmrc files; it
+    // redirects to registry.npmmirror.com and hands back a manifest whose
+    // dist.tarball points at npmmirror's own host — an origin that can win
+    // this race on measured speed (design §2) and must not then kill the
+    // load (item 1, 2026-09 review).
+    const entry = {
+      name: 'dsh-hello-plugin', version: '1.2.0', integrity: 'sha512-i', publishedAt: null,
+      repository: null, license: 'MIT', tier: 'community', metadata: 'derived',
+      added: '2026-08-25',
+    }
+    const data = dataJson([entry])
+    const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
+    const tarball = buildCatalogTarball(pointer, url, data)
+    const integrity = `sha512-${createHash('sha512').update(tarball).digest('base64')}`
+
+    const redirectingRegistry = (async (input: string | URL) => {
+      const reqUrl = String(input)
+      if (reqUrl.endsWith('/latest')) {
+        return new Response(JSON.stringify({
+          name: 'dsh-plugin-shop-catalog', version: '2026.901.0',
+          // A foreign host relative to this origin's OWN registryUrl below —
+          // exactly what the taobao-to-npmmirror redirect produces.
+          dist: { tarball: 'https://registry.npmmirror.com/dsh-plugin-shop-catalog/-/x.tgz', integrity },
+        }), { status: 200 })
+      }
+      throw new Error('should not reach the tarball fetch — the host guard must refuse first')
+    }) as unknown as typeof fetch
+
+    const healthyRegistry = (async (input: string | URL) => {
+      // A few microtask turns so the redirecting origin is guaranteed to
+      // settle its probe — and be processed by the race loop — first. That
+      // ordering is exactly what this test exists to rule out as a way to
+      // fail the whole load.
+      for (let i = 0; i < 4; i += 1) await Promise.resolve()
+      const reqUrl = String(input)
+      if (reqUrl.endsWith('/latest')) {
+        return new Response(JSON.stringify({
+          name: 'dsh-plugin-shop-catalog', version: '2026.901.0',
+          dist: { tarball: 'https://healthy.test/x.tgz', integrity },
+        }), { status: 200 })
+      }
+      return new Response(new Uint8Array(tarball), { status: 200 })
+    }) as unknown as typeof fetch
+
+    const result = await loadCatalog({
+      cacheDir: '/cache', fsImpl: memFs(),
+      origins: [
+        npmOrigin('https://registry.npm.taobao.org/', 'dsh-plugin-shop-catalog', redirectingRegistry),
+        npmOrigin('https://healthy.test/', 'dsh-plugin-shop-catalog', healthyRegistry),
+      ],
+    })
+    // Only the healthy origin can produce a validated snapshot at all — the
+    // redirecting one fails inside pointer(), after probe() already
+    // returned it a handle, which is exactly why this is a DIFFERENT
+    // discrimination than the probe()-level test above.
+    expect(result.snapshot.entries).toHaveLength(1)
+    expect(result.stale).toBe(false)
+  })
 })
 
 describe('catalogOrigins', () => {
@@ -973,5 +1040,23 @@ describe('catalogOrigins', () => {
   it('does not list the configured registry twice when it is already a default', () => {
     const ids = catalogOrigins(DEFAULT_CATALOG_URL, fetchImpl, 'https://registry.npmmirror.com/').map(o => o.id)
     expect(ids.filter(id => id === 'npm:https://registry.npmmirror.com/')).toHaveLength(1)
+  })
+
+  it('does not list the configured registry twice when it matches a default but lacks a trailing slash', () => {
+    // `npm config get registry` prints exactly this shape, with no trailing
+    // slash — byte-different from the default above, and would otherwise
+    // race npmmirror twice under two different origin ids (item 10, 2026-09
+    // review).
+    const ids = catalogOrigins(DEFAULT_CATALOG_URL, fetchImpl, 'https://registry.npmmirror.com').map(o => o.id)
+    expect(ids.filter(id => id === 'npm:https://registry.npmmirror.com/')).toHaveLength(1)
+  })
+
+  it('normalises a path-carrying registry to a trailing slash before racing it', () => {
+    // A corporate registry with no trailing slash — e.g.
+    // `https://artifactory.corp/api/npm/npm-repo` — must reach the race
+    // normalised, or relative URL resolution inside npmOrigin would drop
+    // its last path segment on every request (item 10, 2026-09 review).
+    const ids = catalogOrigins(DEFAULT_CATALOG_URL, fetchImpl, 'https://artifactory.corp/api/npm/npm-repo').map(o => o.id)
+    expect(ids).toContain('npm:https://artifactory.corp/api/npm/npm-repo/')
   })
 })

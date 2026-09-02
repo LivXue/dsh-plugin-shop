@@ -15,7 +15,7 @@ describe('nextCatalogVersion', () => {
     expect(nextCatalogVersion(new Date('2026-09-02T03:17:00Z'), '2026.901.4')).toBe('2026.902.0')
   })
 
-  it('pads nothing: October is 1015, not 1015 zero-padded', () => {
+  it('does not zero-pad: October 15 is 1015', () => {
     expect(nextCatalogVersion(new Date('2026-10-15T03:17:00Z'), null)).toBe('2026.1015.0')
   })
 
@@ -77,6 +77,17 @@ describe('catalogPackageFiles', () => {
     expect(manifest.files).toEqual(['v1', 'index.js'])
     expect(manifest.main).toBe('index.js')
     expect(manifest.license).toBe('MIT')
+  })
+
+  it('carries the repository field npm provenance requires, matching the building repo', () => {
+    const manifest = JSON.parse(catalogPackageFiles(input).packageJson) as Record<string, unknown>
+    // npm provenance (NPM_CONFIG_PROVENANCE=true in daily.yml) mints an
+    // attestation binding the publish to the repository this field names,
+    // and rejects the publish outright (EUSAGE) when it does not match the
+    // building repo — precisely the "first human-watched publish fails for
+    // an unrelated reason" class this branch has already been bitten by
+    // (item 11, 2026-09 review).
+    expect(manifest.repository).toEqual({ type: 'git', url: 'git+https://github.com/LivXue/dsh-plugin-shop.git' })
   })
 
   it('records the content hashes so the next build can decide to skip', () => {

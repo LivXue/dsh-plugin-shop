@@ -30,12 +30,27 @@ function verifyIntegrity(bytes: Buffer, integrity: string): void {
   const algorithm = dash === -1 ? '' : first.slice(0, dash)
   const expected = dash === -1 ? '' : first.slice(dash + 1)
   if (algorithm !== 'sha512' && algorithm !== 'sha256') {
-    throw new Error(`npm origin: unsupported dist.integrity algorithm ${JSON.stringify(algorithm)}`)
+    // An algorithm this build does not implement is a transport-layer
+    // disqualification, not a claim about content — nothing has been
+    // verified yet, so there is nothing to be loud about. Contrast the
+    // mismatch below: those bytes exist and provably fail their own claimed
+    // digest, which must stay a loud, non-retried throw.
+    throw new TransportError(`npm origin: unsupported dist.integrity algorithm ${JSON.stringify(algorithm)}`)
   }
   const actual = createHash(algorithm).update(bytes).digest('base64')
   if (actual !== expected) {
     throw new Error(`npm origin: tarball failed dist.integrity check (${algorithm})`)
   }
+}
+
+/** Normalise to a trailing slash so relative `URL` resolution against a
+ * registry that carries a path — every corporate registry, e.g.
+ * `https://artifactory.corp/api/npm/npm-repo` — keeps that path instead of
+ * eating its last segment; a host-root registry's trailing slash is already
+ * a no-op either way. Exported so `catalog.ts`'s dedupe compares against the
+ * same normalised form `npmOrigin` races on. */
+export function normalizeRegistryUrl(url: string): string {
+  return url.endsWith('/') ? url : `${url}/`
 }
 
 /**
@@ -47,7 +62,8 @@ function verifyIntegrity(bytes: Buffer, integrity: string): void {
  * tarball is fetched lazily on the first `pointer()` or `file()` and kept on
  * the handle, so one origin download serves the whole load.
  */
-export function npmOrigin(registryUrl: string, packageName: string, fetchImpl: typeof fetch): CatalogOrigin {
+export function npmOrigin(rawRegistryUrl: string, packageName: string, fetchImpl: typeof fetch): CatalogOrigin {
+  const registryUrl = normalizeRegistryUrl(rawRegistryUrl)
   const id = `npm:${registryUrl}`
   return {
     id,
@@ -86,11 +102,28 @@ export function npmOrigin(registryUrl: string, packageName: string, fetchImpl: t
         if (files !== null) return files
         // A registry that serves its tarballs from somewhere else is refused
         // rather than followed. npmmirror rewrites dist.tarball to its own
-        // host, so the mirrors this design targets pass; an origin that does
-        // not simply loses the race, which costs the reader nothing.
-        const tarballUrl = new URL(manifest.dist.tarball)
+        // host, so the mirrors this design targets pass. Declining to follow
+        // a foreign tarball host is a property of the ORIGIN, not of our
+        // content — nothing has been fetched yet to be suspicious of — so
+        // this is a transport-layer disqualification, exactly like an
+        // unparsable manifest, and must fall through to the next origin
+        // rather than fail the whole load. Not hypothetical:
+        // registry.npm.taobao.org, still named in countless ~/.npmrc files,
+        // redirects to registry.npmmirror.com and answers with npmmirror's
+        // own tarball host — an origin that wins races on measured speed and
+        // must not then kill the load.
+        let tarballUrl: URL
+        try {
+          tarballUrl = new URL(manifest.dist.tarball)
+        } catch (error) {
+          // latestSchema admits any string for dist.tarball, so a mirror
+          // answering 200 with junk-but-schema-valid JSON reaches here with
+          // something that is not a URL at all.
+          const detail = error instanceof Error ? error.message : String(error)
+          throw new TransportError(`npm origin ${registryUrl}: dist.tarball is not a valid url: ${detail}`, { cause: error })
+        }
         if (tarballUrl.origin !== new URL(registryUrl).origin) {
-          throw new Error(`npm origin: dist.tarball host ${tarballUrl.origin} is not the registry's`)
+          throw new TransportError(`npm origin ${registryUrl}: dist.tarball host ${tarballUrl.origin} is not the registry's`)
         }
         let tarballResponse: Response
         try {
@@ -110,7 +143,14 @@ export function npmOrigin(registryUrl: string, packageName: string, fetchImpl: t
 
       const read = async (name: string): Promise<string> => {
         const entry = (await load()).get(`${PACKAGE_ROOT}${name}`)
-        if (entry === undefined) throw new Error(`npm origin: ${name} is not in the catalog package`)
+        // A file the pointer or the package itself should carry, but does
+        // not — a tarball published without v1/, a version skew between the
+        // pointer and the package — is this mirror failing to speak the
+        // protocol, not corrupt catalog content. It falls through to
+        // another origin when this is the pointer read, or degrades to the
+        // cache when it is a data file read, the same posture httpOrigin
+        // already takes on a 404.
+        if (entry === undefined) throw new TransportError(`npm origin: ${name} is not in the catalog package`)
         return entry.toString('utf8')
       }
 

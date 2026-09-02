@@ -29,10 +29,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      # Provenance attestation on the catalog publish is minted from GitHub's
-      # OIDC endpoint. Job permissions are exhaustive, so this must be named
-      # here even though the deploy job already has it.
-      id-token: write
     env:
       # Optional read-only npm token; lifts the search API's per-IP rate
       # limit onto the token. Empty (e.g. on fork PRs) = unauthenticated.
@@ -92,29 +88,17 @@ jobs:
           path: |
             dist/v1/report.md
             dist/v1/classification-report.md
-      - name: Authenticate to npm
+      - name: Upload catalog dist for the publish job
+        # dist/ is git-ignored and does not survive between jobs. The publish
+        # job needs the exact bytes this run built, never a rebuild — a
+        # rebuild would spend another ~1390 npm requests and could
+        # legitimately disagree with what Pages just got below, publishing
+        # mismatched content between the two transports.
         if: github.event_name == 'workflow_dispatch'
-        run: echo "//registry.npmjs.org/:_authToken=\${NODE_AUTH_TOKEN}" > ~/.npmrc
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH_TOKEN }}
-      - name: Publish the catalog to npm
-        # workflow_dispatch only until a real publish proves the granular
-        # token publishes without an OTP (design §7.2). Moving this to the
-        # schedule is its own commit, made after the first manual run.
-        if: github.event_name == 'workflow_dispatch'
-        # Bounded because the mirror-warm poll at the end of publish:catalog has
-        # no timeout of its own (Task 7 review, Minor): it makes up to 21
-        # requests to npmmirror, and a connection that is accepted but never
-        # answered falls back on undici's 300 s defaults. Publishing plus a
-        # successful warm takes well under a minute, so ten is generous and
-        # still fails fast instead of burning runner time.
-        timeout-minutes: 10
-        run: pnpm publish:catalog
-        env:
-          # Distinct from NPM_TOKEN, which is read-only and only lifts the
-          # search API's rate limit.
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH_TOKEN }}
-          NPM_CONFIG_PROVENANCE: 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: catalog-dist-v1
+          path: dist/v1
       - name: Publish to Pages
         if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
@@ -132,6 +116,54 @@ jobs:
           git diff --cached --quiet && exit 0
           git commit -m "chore(registry): daily catalog snapshot"
           git push
+
+  publish:
+    needs: build
+    # workflow_dispatch only until a real publish proves the granular token
+    # publishes without an OTP (design §7.2); moving this to the schedule is
+    # its own commit, made after the first manual run. The branch guard
+    # matters because workflow_dispatch can be fired from any ref: without
+    # it, a dispatch from a feature branch would publish that branch's
+    # catalog to `latest` on npm — a name claim and a version burn a rerun
+    # cannot take back.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Provenance attestation on the catalog publish is minted from
+      # GitHub's OIDC endpoint. Confined to this job rather than `build`, so
+      # the ~1390-request harvest and the LLM classification step never run
+      # with an OIDC token in scope.
+      id-token: write
+    # Bounded because the mirror-warm poll at the end of publish:catalog has
+    # no timeout of its own (Task 7 review, Minor): it makes up to 21
+    # requests to npmmirror, and a connection that is accepted but never
+    # answered falls back on undici's 300 s defaults. Checkout, install, and
+    # a publish plus successful warm take well under a minute combined, so
+    # ten is generous and still fails fast instead of burning runner time.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - name: Download catalog dist from the build job
+        uses: actions/download-artifact@v4
+        with:
+          name: catalog-dist-v1
+          path: dist/v1
+      - name: Authenticate to npm
+        run: echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" >> ~/.npmrc
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH_TOKEN }}
+      - name: Publish the catalog to npm
+        run: pnpm publish:catalog
+        env:
+          # Distinct from NPM_TOKEN, which is read-only and only lifts the
+          # search API's rate limit.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH_TOKEN }}
+          NPM_CONFIG_PROVENANCE: 'true'
 
   deploy:
     needs: build

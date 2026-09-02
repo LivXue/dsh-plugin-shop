@@ -156,9 +156,18 @@ cannot tell the two apart and do not change.
         npm  @ registry.npmmirror.com
         npm  @ registry.npmjs.org         probe all in parallel
         npm  @ registry from ~/.npmrc     -> first to answer wins
-        HTTP @ LivXue.github.io/v1/       -> bulk fetch from the winner
-                                          -> on failure, next by finish order
+        HTTP @ LivXue.github.io/v1/
 ```
+
+**The bulk fetch's fall-through is not uniform across the two
+transports.** An npm probe's bulk fetch is inside `pointer()` —
+resolving `latest`, downloading `dist.tarball`, and extracting it is
+what makes that probe succeed at all — so a failure there falls through
+to the next-finishing probe like any other probe failure. HTTP's bulk
+fetch is a separate step, made only once a winner is already chosen;
+there is no next probe left to fall through to by then, so a failure
+there falls back to the disk cache instead (`catalog.ts`'s
+`cachedOrThrow`), never to another origin.
 
 **Every load races; no winner is cached.** Caching the winner needs a
 state file, a staleness policy, and a re-probe trigger — three things
@@ -197,16 +206,31 @@ through the identical validation path the HTTP transport uses, which is
 what lets the cache layer stay untouched — the same content from any
 origin lands on the same `plugins.<sha>.json` filename.
 
-**It improves the residual risk the authority spec names.** That spec's
-threat table accepts "`index.json` itself being replaced, mitigated only
-by HTTPS". The npm transport adds a second anchor: `dist.integrity` is
-computed by the registry at publish time and carried in a signed
-packument.
+**It narrows the residual risk the authority spec names; it does not
+close it.** That spec's threat table accepted "`index.json` itself
+being replaced, mitigated only by HTTPS". The npm transport adds a
+second anchor: `dist.integrity` (sha512) over the tarball. But that
+value is computed by whoever publishes the tarball and arrives in the
+same packument the Host fetches it from — a self-consistency check, not
+an independent signature verified against anything the origin does not
+also control. It catches corruption between the registry and the
+client (a bit flip, a stale CDN edge, a truncated download). It does
+not catch an origin that is itself malicious or compromised: that party
+can recompute a matching `dist.integrity` for whatever tarball it
+serves.
 
-**A mirror can serve a stale-but-valid catalog.** It cannot forge one.
-This is the same registry the user installs every plugin from, so it is
-not a new trust surface — but it is a real one, and naming it is the
-point.
+**A mirror can serve a stale catalog, and — if it is malicious or
+compromised — a forged one.** Nothing here stops a bad origin from
+presenting an arbitrary package as `verified`; naming that plainly
+matters more than counting trust surfaces. `registry.npmjs.org` and a
+user's own configured registry are not new exposure — the client
+already trusts them for every plugin install. `registry.npmmirror.com`
+is different: §3's race list includes it unconditionally, for every
+user, not only the ones who already point their own `~/.npmrc` at it.
+For that user it is the same registry they install every plugin from;
+for everyone else it is a trust surface this design adds, accepted here
+without a mitigation beyond it being the operator most of mainland
+China's tooling already depends on.
 
 ### Tar
 
@@ -247,7 +271,7 @@ fourth runtime dependency — the shop has three (`js-yaml`, `semver`,
 |---|---|
 | Pure | tar parsing from real tarball bytes; path-escape rejection; race selection through injected probes; pointer normalisation |
 | Registry | the pack step's contents; version derivation; the publish-skip decision |
-| Host | origin selection through an injected fetch; sha512 mismatch is refused; a winner that fails the bulk fetch falls through to the next |
+| Host | origin selection through an injected fetch; sha512 mismatch is refused; npm's bulk fetch (inside `pointer()`) falls through to another origin on failure; HTTP's (after a winner is chosen) falls back to the disk cache instead |
 | E2E | the existing `catalog-server.ts` HTTP fixture, plus an npm-origin fixture serving a real packument and a real tarball |
 
 **The load-bearing assertion:** for one build, the npm transport and the

@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { z } from 'zod'
 import { type CatalogOrigin, type OriginHandle, TransportError, httpOrigin } from './origin.ts'
-import { npmOrigin } from './npm-origin.ts'
+import { normalizeRegistryUrl, npmOrigin } from './npm-origin.ts'
 import { inCompletionOrder } from './race.ts'
 import type { CatalogEntry, DeniedEntry } from './types.ts'
 
@@ -337,9 +337,13 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
   }
 
   // Race every origin's cheap probe and commit to the first that answers
-  // (design §3). A transport failure — here or on the bulk fetch — moves to
-  // the next finisher; anything else throws, so a corrupt origin is never
-  // hidden behind a healthy one.
+  // (design §3). A transport failure — in the probe, or in the `pointer()`
+  // call below, which is where npmOrigin does its bulk tarball download —
+  // moves to the next finisher; anything else throws, so a corrupt origin is
+  // never hidden behind a healthy one. "Or on the bulk fetch" would be too
+  // broad: the OTHER bulk fetch in this function, `handle.file()` for the
+  // data file, happens after the loop has committed and falls back to the
+  // disk cache instead, never to another origin (see below, and race.ts).
   let handle: OriginHandle | null = null
   let pointerText = ''
   let lastTransportError: unknown = new TransportError('no catalog origin was reachable')
@@ -457,7 +461,12 @@ export function catalogOrigins(
   // own mirror", which the README documents.
   if (catalogUrl !== DEFAULT_CATALOG_URL) return [httpOrigin(catalogUrl, fetchImpl)]
   const registries = [...DEFAULT_REGISTRIES]
-  if (npmRegistry !== null && !registries.includes(npmRegistry)) registries.unshift(npmRegistry)
+  // Normalised before the membership check: `npm config set` writes
+  // `registry=https://registry.npmmirror.com` with no trailing slash, which
+  // is byte-different from the default above and would otherwise race
+  // npmmirror twice under two different origin ids.
+  const normalizedNpmRegistry = npmRegistry === null ? null : normalizeRegistryUrl(npmRegistry)
+  if (normalizedNpmRegistry !== null && !registries.includes(normalizedNpmRegistry)) registries.unshift(normalizedNpmRegistry)
   return [
     ...registries.map(registry => npmOrigin(registry, CATALOG_PACKAGE, fetchImpl)),
     httpOrigin(catalogUrl, fetchImpl),

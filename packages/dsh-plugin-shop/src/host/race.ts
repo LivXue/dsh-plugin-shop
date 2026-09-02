@@ -2,7 +2,18 @@
  *
  * Pure and timer-free. `Promise.any` would give only the first success and
  * discard the rest; the origin race needs the losers too, in order, so a
- * winner that fails its bulk fetch can fall through to the runner-up. */
+ * probe that "won" but then fails to produce a pointer can fall through to
+ * the next-finishing probe instead of failing the whole load — this is how
+ * an npm origin's bulk tarball download, which happens inside `pointer()`,
+ * gets a fall-through on failure.
+ *
+ * That is deliberately narrower than "any bulk fetch falls through to
+ * another origin." This module only ever wraps `probe()` promises; once
+ * `catalog.ts` has committed to a handle and calls `file()` for the data
+ * file, that call happens outside this generator entirely, and a
+ * TransportError there falls back to the disk cache instead (see
+ * `catalog.ts`'s `cachedOrThrow`), never back into a race. Do not "fix"
+ * that path to match this comment — the split is intentional. */
 
 export type Settled<T> = { index: number; value: T } | { index: number; reason: unknown }
 

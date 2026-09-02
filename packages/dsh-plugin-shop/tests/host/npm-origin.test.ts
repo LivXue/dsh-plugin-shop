@@ -85,7 +85,12 @@ describe('npmOrigin', () => {
       registry({ tarballUrl: 'https://evil.test/c-1.tgz' })).probe(signal())
     const failure = await handle.pointer().catch((e: unknown) => e)
     expect(failure).toBeInstanceOf(Error)
-    expect(failure).not.toBeInstanceOf(TransportError)
+    // A registry answering with a foreign tarball host is the origin failing
+    // to speak the protocol, not corrupt catalog content (item 1, 2026-09
+    // review): registry.npm.taobao.org still redirects countless ~/.npmrc
+    // files to registry.npmmirror.com's own tarball host today, and that
+    // origin must fall through to a healthy one rather than fail the load.
+    expect(failure).toBeInstanceOf(TransportError)
   })
 
   it('refuses a pointer-named file that is a path rather than a name', async () => {
@@ -104,9 +109,15 @@ describe('npmOrigin', () => {
       .rejects.toBeInstanceOf(TransportError)
   })
 
-  it('reports a missing file inside the tarball by name', async () => {
+  it('reports a missing file inside the tarball by name, as a transport failure', async () => {
     const handle = await npmOrigin('https://reg.test/', 'c', registry({})).probe(signal())
-    await expect(handle.file('stars.nope.json')).rejects.toThrow(/stars\.nope\.json/)
+    const failure = await handle.file('stars.nope.json').catch((e: unknown) => e)
+    // A tarball published without a file the pointer or the package itself
+    // should carry is a version-skewed or malformed PACKAGE, not corrupt
+    // catalog content (item 2(a), 2026-09 review) — it must fall through to
+    // another origin, not fail the whole load.
+    expect(failure).toBeInstanceOf(TransportError)
+    expect(String(failure)).toMatch(/stars\.nope\.json/)
   })
 
   it('raises TransportError when a 200 response is not a valid abbreviated manifest', async () => {
@@ -121,5 +132,47 @@ describe('npmOrigin', () => {
     }) as unknown as typeof fetch
     await expect(npmOrigin('https://reg.test/', 'c', brokenMirror).probe(signal()))
       .rejects.toBeInstanceOf(TransportError)
+  })
+
+  it('raises TransportError when dist.tarball is not a valid url', async () => {
+    // latestSchema only requires a string, so a mirror answering 200 with
+    // junk-but-schema-valid JSON reaches the unguarded `new URL(...)` call
+    // with something that cannot parse at all (item 2(b), 2026-09 review).
+    const handle = await npmOrigin('https://reg.test/', 'c', registry({ tarballUrl: '' })).probe(signal())
+    const failure = await handle.pointer().catch((e: unknown) => e)
+    expect(failure).toBeInstanceOf(TransportError)
+    expect(String(failure)).toMatch(/dist\.tarball is not a valid url/)
+  })
+
+  it('raises TransportError when dist.integrity names an algorithm this build does not implement', async () => {
+    // Nothing has been verified yet at this point, so an algorithm outside
+    // the sha512/sha256 this build checks is a transport-layer
+    // disqualification, not a claim about content (item 2(c), 2026-09
+    // review) — contrast the mismatch test above, which stays a loud,
+    // non-retried Error because those bytes provably fail their own claimed
+    // digest.
+    const md5 = `md5-${createHash('md5').update(TARBALL).digest('base64')}`
+    const handle = await npmOrigin('https://reg.test/', 'c', registry({ integrity: md5 })).probe(signal())
+    const failure = await handle.pointer().catch((e: unknown) => e)
+    expect(failure).toBeInstanceOf(TransportError)
+    expect(String(failure)).toMatch(/unsupported dist\.integrity algorithm/)
+  })
+
+  it("keeps a registry url's path when resolving the probe request, even with no trailing slash", async () => {
+    let requestedUrl = ''
+    const pathedRegistry = (async (input: string | URL) => {
+      requestedUrl = String(input)
+      return new Response(JSON.stringify({
+        version: '1.0.0',
+        dist: { tarball: 'https://artifactory.corp/api/npm/npm-repo/c/-/c-1.0.0.tgz', integrity: INTEGRITY },
+      }), { status: 200 })
+    }) as unknown as typeof fetch
+    // No trailing slash: this is exactly how `npm config get registry` prints
+    // a path-carrying registry (item 10, 2026-09 review). Without
+    // normalizing it first, WHATWG relative-URL resolution treats the
+    // registry's last path segment as a filename and replaces it instead of
+    // appending, dropping `npm-repo` from the request entirely.
+    await npmOrigin('https://artifactory.corp/api/npm/npm-repo', 'c', pathedRegistry).probe(signal())
+    expect(requestedUrl).toBe('https://artifactory.corp/api/npm/npm-repo/c/latest')
   })
 })
