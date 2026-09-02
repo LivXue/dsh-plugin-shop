@@ -2077,6 +2077,37 @@ git commit -m "feat(registry): publish the catalog to npm and warm the mirror"
 
 **Per the spec §7.2, this step is `workflow_dispatch`-only in this commit.** The granular token's ability to publish non-interactively is inference until a real publish proves it, and this account has blocked non-interactive publishes before. Moving it to the daily schedule is a separate, deliberate commit after the first manual run succeeds.
 
+- [ ] **Step 0: Give the `build` job the OIDC permission provenance needs**
+
+`NPM_CONFIG_PROVENANCE: 'true'` (step 1) makes `npm publish` request a Sigstore
+attestation, which it mints from GitHub's OIDC endpoint *before* uploading. That
+needs `id-token: write` on the job — and job-level `permissions:` is
+**exhaustive, not additive**, so the `build` job's `contents: write` leaves
+`id-token` at `none`. The `deploy` job's own `id-token: write` does not reach
+`build`. Without this the publish hard-fails:
+
+```
+npm error code EUSAGE
+npm error Provenance generation in GitHub Actions requires "write" access to the "id-token" permission
+```
+
+which would kill the first human-watched `workflow_dispatch` run on an error
+that has nothing to do with the token being tested. Provenance is worth keeping
+rather than dropping: the repository is public and the script already passes
+`--access public`, which are the other two conditions npm requires, and it lets
+anyone verify the catalog came from this repo's CI with `npm audit signatures`.
+
+In the `build` job's `permissions:` block:
+
+```yaml
+    permissions:
+      contents: write
+      # Provenance attestation on the catalog publish is minted from GitHub's
+      # OIDC endpoint. Job permissions are exhaustive, so this must be named
+      # here even though the deploy job already has it.
+      id-token: write
+```
+
 - [ ] **Step 1: Add the step**
 
 In `.github/workflows/daily.yml`, in the `build` job, immediately after `- name: Upload build report` and before `- name: Publish to Pages`:
