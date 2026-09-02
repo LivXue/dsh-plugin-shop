@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url'
 import ShopGateway, { verifyTarballSha256 } from '../../src/host/index.ts'
 import type { InventoryEntry, LoaderEntryLike, ShopGatewayOptions, ShopInstallStatusResult } from '../../src/host/index.ts'
 import type { HotMountResult } from '../../src/host/hot.ts'
-import type { CatalogResult, CatalogSnapshot } from '../../src/host/catalog.ts'
+import type { CatalogResult, CatalogSnapshot, LoadCatalogOptions } from '../../src/host/catalog.ts'
 import type { CatalogEntry } from '../../src/host/types.ts'
 
 // The install tests drive the full §7.2 path including the post-install
@@ -174,7 +174,7 @@ describe('ShopGateway.catalog', () => {
   })
 
   it('reads the row config through the Loader when no options are given', async () => {
-    const calls: Array<{ baseUrl: string; cacheDir: string; refresh?: boolean }> = []
+    const calls: LoadCatalogOptions[] = []
     const gateway = new ShopGateway(
       {
         get: () => undefined,
