@@ -29,19 +29,28 @@ function verifyIntegrity(bytes: Buffer, integrity: string, registryUrl: string):
   const dash = first.indexOf('-')
   const algorithm = dash === -1 ? '' : first.slice(0, dash)
   const expected = dash === -1 ? '' : first.slice(dash + 1)
+  // Both failures below disqualify the mirror rather than fail the load, for
+  // the same reason: `dist.integrity` is the digest the REGISTRY computed over
+  // the REGISTRY's own tarball, published in its own manifest. It is not an
+  // independent signature the Host holds, so neither branch can speak to
+  // whether the catalog is genuine — a mirror set on serving a forgery would
+  // publish a digest over the forgery and sail past both.
   if (algorithm !== 'sha512' && algorithm !== 'sha256') {
-    // An algorithm this build does not implement is a transport-layer
-    // disqualification, not a claim about content — nothing has been
-    // verified yet, so there is nothing to be loud about. Contrast the
-    // mismatch below: those bytes exist and provably fail their own claimed
-    // digest, which must stay a loud, non-retried throw.
     throw new TransportError(
       `npm origin ${registryUrl}: unsupported dist.integrity algorithm ${JSON.stringify(algorithm)}`,
     )
   }
   const actual = createHash(algorithm).update(bytes).digest('base64')
   if (actual !== expected) {
-    throw new Error(`npm origin ${registryUrl}: tarball failed dist.integrity check (${algorithm})`)
+    // The mirror's manifest and the mirror's tarball disagree with each other.
+    // That is a statement about this mirror, not about the content: the same
+    // statement as an unparsable manifest or a tarball that is not gzip.
+    // Loud here cost more than it bought — running before the gunzip, it was
+    // the FIRST thing tripped by a mirror serving anything unexpected, so one
+    // broken mirror closed a shop two healthy origins could have opened.
+    throw new TransportError(
+      `npm origin ${registryUrl}: tarball failed dist.integrity check (${algorithm})`,
+    )
   }
 }
 

@@ -219,6 +219,26 @@ not catch an origin that is itself malicious or compromised: that party
 can recompute a matching `dist.integrity` for whatever tarball it
 serves.
 
+**A mismatch therefore disqualifies the mirror; it does not fail the
+load.** The digest and the tarball both come from the same origin, so a
+mismatch says those two disagree with each other — this mirror is broken
+— and says nothing about whether the catalog is genuine. An origin intent
+on serving a forgery recomputes the digest over the forgery and passes
+the check; a mismatch is precisely the case where no such intent is
+present. It is the same statement about the same mirror as an unparsable
+manifest or a body that is not gzip, and it raises the same
+`TransportError`, so the race moves to the next finisher.
+
+This reverses the posture the implementation shipped with. Loud was a
+misreading of what the check proves, and it was the most expensive place
+to hold it: the check runs *before* the gunzip, so it is the first thing
+tripped by a mirror answering with anything unexpected — a login page, an
+error document, a truncated body — and a loud throw there closed a shop
+that two healthy origins could have opened. The rule the rest of this
+design follows is unchanged and now reaches here too: only a claim about
+*content we published* is loud, and `dist.integrity` is not one.
+Amended 2026-09-02.
+
 **A mirror can serve a stale catalog, and — if it is malicious or
 compromised — a forged one.** Nothing here stops a bad origin from
 presenting an arbitrary package as `verified`; naming that plainly

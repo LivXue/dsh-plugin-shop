@@ -70,15 +70,27 @@ describe('npmOrigin', () => {
     expect(tarballFetches).toBe(1)
   })
 
-  it('refuses a tarball whose bytes do not match dist.integrity', async () => {
+  it('disqualifies a mirror whose tarball bytes do not match dist.integrity', async () => {
     const wrong = `sha512-${createHash('sha512').update('not the tarball').digest('base64')}`
     const handle = await npmOrigin('https://reg.test/', 'c', registry({ integrity: wrong })).probe(signal())
     const failure = await handle.pointer().catch((e: unknown) => e)
     expect(failure).toBeInstanceOf(Error)
     expect(String(failure)).toMatch(/integrity/)
-    // An integrity mismatch is corruption, not a flaky link: it must NOT be
-    // retried on another origin.
-    expect(failure).not.toBeInstanceOf(TransportError)
+    // `dist.integrity` is the digest the MIRROR computed over the MIRROR's own
+    // tarball, not an independent signature we hold. A mismatch therefore says
+    // only that this mirror's manifest and its own tarball disagree with each
+    // other — the mirror is broken — and says nothing about whether the catalog
+    // is genuine. A mirror that wanted to forge content would simply publish a
+    // digest over the forgery and pass, which is the case the two
+    // unparsable-tarball tests below cover.
+    //
+    // So it disqualifies the mirror and the race moves on. Being loud here let
+    // one broken mirror close a shop that another origin could have opened —
+    // and it ran BEFORE the gunzip, so it was the first thing a mirror serving
+    // anything unexpected would trip.
+    expect(failure).toBeInstanceOf(TransportError)
+    // Attributed, so a four-origin race names the mirror at fault.
+    expect(String(failure)).toMatch(/reg\.test/)
   })
 
   it('refuses a tarball url on a different host than the registry', async () => {
