@@ -74,6 +74,57 @@ function confirmBundleRemoval(profile: string, home: string | undefined, expecte
   }
 }
 
+/** Lines a failed install's log tends to END on, none of which tell the user
+ * anything they can act on: dsh's own wrapper around the pnpm exit, node's
+ * version footer, pnpm's progress and update banner, and the frames and
+ * carets of a stack trace. */
+const FAILURE_LOG_NOISE: readonly RegExp[] = [
+  /^dsh: pnpm failed in profile directory/,
+  /^Node\.js v/,
+  /^(?:Progress|Packages):/,
+  /^\++$/,
+  /^[╭│╰]/,
+  /^\^+$/,
+  /^\s*$/,
+  /^\s+at /,
+  /^<anonymous(?:_script)?>/,
+]
+
+/**
+ * The one log line worth putting in front of the user, plus the recovery hint.
+ *
+ * The last line is the wrong choice, which is what this replaces. Measured on
+ * two real failures against the live catalog (dsh 0.1.1-rc.2, 2026-09-02),
+ * the last line was `dsh: pnpm failed in profile directory <a path the user
+ * did not choose>` and `Node.js v26.6.0` — while the line that explained the
+ * failure sat a few lines above, in the log the client already receives. A
+ * user seeing either of those cannot tell a blocked build script from a
+ * crash, which is exactly the report this fixes.
+ *
+ * Scanning from the end: a pnpm error code first, then any thrown error, then
+ * the last line that is not noise.
+ */
+export function installFailureDetail(profile: string, log: readonly string[]): string {
+  const hint = `pnpm failed in the profile. Run: dsh plugin --profile ${profile} install`
+  const usable = log.filter(line => !FAILURE_LOG_NOISE.some(rx => rx.test(line)))
+  const reversed = [...usable].reverse()
+  const pick = reversed.find(line => /ERR_[A-Z][A-Z_]*/.test(line))
+    ?? reversed.find(line => /(?:^|\s)\w*Error:/.test(line))
+    ?? usable[usable.length - 1]
+  if (pick === undefined) return `${hint}.`
+  // pnpm blocks build scripts by default and the shop never passes
+  // `allowBuilds` — that stays the user's explicit decision in the CLI
+  // (§7.2). So the detail names the approval step rather than a flag we
+  // could have passed for them. The registry's `requires-build` gate reads
+  // only a repo's OWN manifest, so a TRANSITIVE build script reaches the
+  // install; the 2026-08-30 design's spot-check saw this and left it open.
+  const approve = /ERR_PNPM_IGNORED_BUILDS/.test(pick)
+    ? ' A dependency wants to run a build script, which pnpm blocks by default:'
+      + ' run `pnpm approve-builds` in the profile directory to allow it, then retry.'
+    : ''
+  return `${hint} — ${pick}${approve}`
+}
+
 /** Run one `dsh plugin --profile <profile> <verb> <target>` and track it.
  * Never rolls back; a failure surfaces stderr verbatim plus the recovery hint
  * (§10). The shop never passes build-script flags: `allowBuilds` stays the
@@ -181,8 +232,7 @@ function spawnPluginCli(options: {
         }
       } else {
         state = 'failed'
-        const lastLogLine = log[log.length - 1] ?? ''
-        detail = `pnpm failed in the profile. Run: dsh plugin --profile ${profile} install — ${lastLogLine}`
+        detail = installFailureDetail(profile, log)
       }
       onStatus?.(status())
       resolve(status())

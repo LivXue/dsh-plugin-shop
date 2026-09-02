@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, writeFileSync, chmodSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { startInstall, startUninstall, type InstallStatus } from '../../src/host/executor.ts'
+import { installFailureDetail, startInstall, startUninstall, type InstallStatus } from '../../src/host/executor.ts'
 import type { HotRestartReason } from '../../src/host/hot.ts'
 
 // A fixture `dsh` that records its full argv in a marker file and exits with
@@ -331,5 +331,70 @@ describe('startUninstall post-remove confirm', () => {
     expect(status.detail).toBe(
       `removed but the profile manifest could not be read (${join(home, 'profiles', 'web', 'package.json')}) — re-run the uninstall`,
     )
+  })
+})
+
+describe('installFailureDetail', () => {
+  // Both fixtures are verbatim logs from real failed installs run against the
+  // live catalog on dsh 0.1.1-rc.2 (2026-09-02), in a throwaway DSH_HOME.
+  // Sampling 40 random npm entries end to end, 2 failed — and in BOTH the
+  // useful line was in the log while `log[log.length - 1]` was noise, so the
+  // shop reported "Install failed" over a detail that said nothing.
+
+  it('surfaces the pnpm error code rather than dsh\'s own trailing wrapper', () => {
+    // dsh-agent-toolkit@0.2.2 and dsh-imessage: a TRANSITIVE dependency
+    // carries a build script, which pnpm blocks by default and exits non-zero
+    // for. The registry's `requires-build` gate only reads a repo's OWN
+    // manifest, so this class reaches the install — the 2026-08-30 design's
+    // own spot-check noted it ("the fifth a transitive postinstall script")
+    // and left it open.
+    const log = [
+      '+ dsh-agent-toolkit 0.2.2',
+      'Added 1 entry to minimumReleaseAgeExclude in pnpm-workspace.yaml',
+      '  dsh-agent-toolkit@0.2.2',
+      '[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: protobufjs@7.6.6',
+      'Run "pnpm approve-builds" to pick which dependencies should be allowed to run scripts.',
+      'dsh: pnpm failed in profile directory /root/probe/profiles/f5',
+    ]
+    const detail = installFailureDetail('web', log)
+    expect(detail).toMatch(/ERR_PNPM_IGNORED_BUILDS/)
+    expect(detail).toMatch(/protobufjs@7\.6\.6/)
+    // The build-script block is the user's decision to make, not ours to
+    // bypass: the shop never passes allowBuilds (§7.2), so the detail has to
+    // name the approval step instead.
+    expect(detail).toMatch(/approve-builds/)
+    // The line that used to be reported said only that pnpm failed, in a
+    // directory the user did not choose and cannot act on.
+    expect(detail).not.toMatch(/pnpm failed in profile directory/)
+  })
+
+  it('surfaces a thrown error rather than the node version footer', () => {
+    // dsh-plan-adversarial@0.1.0: pnpm SUCCEEDED ("Done in 581ms"), then
+    // dsh's own readProfileManifest threw on a UTF-8 BOM in the package.json.
+    // That is an upstream dsh defect, not a shop one — but the shop reported
+    // it as `Node.js v26.6.0`, the literal last line, which is why a user
+    // cannot tell an install failure from a crash.
+    const log = [
+      'Done in 581ms using pnpm v11.13.0',
+      '<anonymous_script>:1',
+      '﻿{',
+      '^',
+      'SyntaxError: Unexpected token \'﻿\', "﻿{ "name"... is not valid JSON',
+      '    at JSON.parse (<anonymous>)',
+      '    at readProfileManifest (file:///…/dsh-app-boot/lib/index.js:453:22)',
+      'Node.js v26.6.0',
+    ]
+    const detail = installFailureDetail('web', log)
+    expect(detail).toMatch(/SyntaxError/)
+    expect(detail).toMatch(/not valid JSON/)
+    expect(detail).not.toMatch(/Node\.js v26/)
+  })
+
+  it('keeps the recovery hint and falls back to the last line when nothing looks diagnostic', () => {
+    const detail = installFailureDetail('web', ['something unhelpful happened'])
+    expect(detail).toMatch(/Run: dsh plugin --profile web install/)
+    expect(detail).toMatch(/something unhelpful happened/)
+    // An empty log must not produce a dangling separator.
+    expect(installFailureDetail('web', [])).toMatch(/Run: dsh plugin --profile web install/)
   })
 })
