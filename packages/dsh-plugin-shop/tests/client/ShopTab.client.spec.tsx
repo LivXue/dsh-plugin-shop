@@ -1141,3 +1141,66 @@ describe('ShopTab source marks and the tier badge', () => {
     expect(screen.getByText(en.tierVerifiedStale)).toBeTruthy()
   })
 })
+
+describe('ShopTab duplicate catalog names', () => {
+  /**
+   * A catalog holding what the live one holds: several GitHub repositories
+   * publishing the same `package.json` name. The catalog's uniqueness
+   * invariant is the INSTALL IDENTITY, not the name (registry `emit.ts`
+   * assertCatalogInvariants), so these are legitimate distinct entries —
+   * five live repos are cookiecutter templates that all name themselves
+   * `{{PKG_NAME}}`, and 151 live names cover 243 entries between them.
+   */
+  function duplicateNames(): ShopCatalogResult {
+    const template = (owner: string): ShopCatalogResult['plugins'][number] => ({
+      name: '{{PKG_NAME}}', version: 'a'.repeat(40), integrity: null, publishedAt: null,
+      repository: `https://github.com/${owner}/dsh-plugin-template`, license: 'MIT',
+      tier: 'community', metadata: 'derived', source: 'github', added: '2026-08-25',
+      repo: `${owner}/dsh-plugin-template`,
+    })
+    return {
+      schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', stale: false, stars: {},
+      plugins: [template('one'), template('two'), template('three'), snapshot().plugins[0]!],
+      denied: [], incompatible: {},
+    }
+  }
+
+  const cardNames = (container: HTMLElement): (string | null)[] =>
+    [...container.querySelectorAll('[data-shop-entry]')].map(card => card.getAttribute('data-shop-entry'))
+
+  const categoryButton = (container: HTMLElement, label: string): HTMLButtonElement => {
+    const button = [...container.querySelectorAll('[role="group"] button')]
+      .find(candidate => candidate.textContent?.startsWith(label))
+    if (button === undefined) throw new Error(`no category button labelled ${label}`)
+    return button as HTMLButtonElement
+  }
+
+  it('renders one card per entry when several share a name', async () => {
+    const { injected } = bench(duplicateNames())
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    // Three template repos and the hello plugin: four cards, three of which
+    // print the same name. A name-keyed list renders fewer.
+    expect(cardNames(container)).toHaveLength(4)
+  })
+
+  it('leaves no card of the old filter behind when the category changes', async () => {
+    // The reported failure: browse Other, then Installed, and the shelf still
+    // shows the Other cards — React could not match a duplicate key to its
+    // DOM node, so every duplicate stayed orphaned on the page under the new
+    // filter, and kept accumulating with each switch until the tab froze.
+    const { injected } = bench(duplicateNames(), [
+      { name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true },
+    ])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+
+    // The three template repos are derived listings, so they browse as Other.
+    fireEvent.click(categoryButton(container, en.categoryOther))
+    await waitFor(() => expect(cardNames(container)).toEqual(['{{PKG_NAME}}', '{{PKG_NAME}}', '{{PKG_NAME}}']))
+
+    // Only the hello plugin is installed, so Installed shows exactly its card.
+    fireEvent.click(categoryButton(container, en.installed))
+    await waitFor(() => expect(cardNames(container)).toEqual(['dsh-hello-plugin']))
+  })
+})

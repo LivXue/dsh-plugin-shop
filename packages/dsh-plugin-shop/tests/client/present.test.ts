@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, categoryKey, displayVersion, formatStars,
+  ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, categoryKey, displayVersion, entryKey, formatStars,
   authorOf, hasGithubHome, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl,
   reduceInstall,
   reviewHashPin, sortByStars, starsOf, tierKey,
@@ -12,6 +12,40 @@ const entry: CatalogEntry = {
   repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm',
   added: '2026-08-25',
 }
+
+describe('entryKey', () => {
+  it('answers the npm identity for an npm entry', () => {
+    expect(entryKey(entry)).toBe('npm:dsh-hello-plugin')
+  })
+
+  it('answers the repo identity for a github entry, so its name never decides', () => {
+    // The catalog's uniqueness invariant is the install identity, and for a
+    // repo entry that is the repository — never the package.json name.
+    expect(entryKey({ ...entry, source: 'github', repo: 'octocat/template' })).toBe('github:octocat/template#')
+    expect(entryKey({ ...entry, source: 'github', repo: 'octocat/mono', subdir: 'packages/a' }))
+      .toBe('github:octocat/mono#packages/a')
+  })
+
+  it('separates repositories that publish the same package name', () => {
+    // Five live repos are cookiecutter templates that all name themselves
+    // `{{PKG_NAME}}`; 151 live names cover 243 entries between them. Keying a
+    // list by name collapses each such group into one identity.
+    const a = { ...entry, name: '{{PKG_NAME}}', source: 'github' as const, repo: 'one/template' }
+    const b = { ...entry, name: '{{PKG_NAME}}', source: 'github' as const, repo: 'two/template' }
+    expect(entryKey(a)).not.toBe(entryKey(b))
+  })
+
+  it('separates two subpackages of one repository', () => {
+    const root = { ...entry, source: 'github' as const, repo: 'octocat/mono' }
+    const sub = { ...entry, source: 'github' as const, repo: 'octocat/mono', subdir: 'packages/a' }
+    expect(entryKey(root)).not.toBe(entryKey(sub))
+  })
+
+  it('falls back to the name for a github entry carrying no repo', () => {
+    // Same shape as the registry invariant, which reads `entry.repo ?? entry.name`.
+    expect(entryKey({ ...entry, source: 'github' })).toBe('github:dsh-hello-plugin#')
+  })
+})
 
 describe('tierKey', () => {
   it('maps each tier to its locale key', () => {
