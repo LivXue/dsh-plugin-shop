@@ -330,6 +330,30 @@ export function npmPageUrl(entry: CatalogEntry): string | null {
 }
 
 /**
+ * One entry's install identity — the value the catalog guarantees unique, and
+ * therefore the only safe React key for a shelf card.
+ *
+ * `name` is NOT unique. The catalog's uniqueness invariant is the install
+ * identity (registry `emit.ts` assertCatalogInvariants): `npm:<name>` for an
+ * npm entry, `github:<repo>#<subdir>` for a repo one — so two GitHub
+ * repositories publishing the same `package.json` name are two legitimate
+ * entries under one name, as are two subpackages of one monorepo. The live
+ * catalog holds 151 such names over 243 entries, five of them cookiecutter
+ * templates that all name themselves `{{PKG_NAME}}`.
+ *
+ * Keying the shelf by name handed React duplicate keys, and React could then
+ * no longer match a card to its DOM node: changing the filter left every
+ * duplicate orphaned on the page — hundreds of stale cards from the previous
+ * category, accumulating with each switch until the tab stopped responding.
+ * This mirrors the registry's identity verbatim; the two must not drift.
+ */
+export function entryKey(entry: CatalogEntry): string {
+  return entry.source === 'npm'
+    ? `npm:${entry.name}`
+    : `github:${entry.repo ?? entry.name}#${entry.subdir ?? ''}`
+}
+
+/**
  * One entry's star count from the sidecar, or undefined when it has none.
  *
  * The sidecar keys a github entry by its repo full name and an npm entry by
