@@ -24,8 +24,23 @@
   flex-direction: column;
   gap: 14px;
   /* The shelf never scrolls sideways: a card too wide for its track wraps
-   * its badges rather than widening the panel. */
+   * its badges rather than widening the panel.
+   *
+   * `clip` rather than `hidden`, with a margin, because `.searchInput` sits
+   * at exactly (0, 0) of this box — it is the first child of `.toolbar`,
+   * itself the first child here, and this rule carries no padding — so its
+   * focus ring paints ENTIRELY outside the panel. `hidden` clipped it at the
+   * padding edge, and because the spec forbids one axis being `hidden` while
+   * the other is `visible`, it silently promoted overflow-y to `auto` and
+   * clipped the ring top and bottom as well; all that survived was a stray
+   * arc on the right, where the 280px input stops short of the panel. `clip`
+   * does not coerce the other axis, so overflow-y stays `visible`, and
+   * `overflow-clip-margin` buys back the 3px the ring reaches sideways.
+   * `hidden` stays as the first declaration, the fallback for engines
+   * without `clip`; there the ring is clipped as before, never worse. */
   overflow-x: hidden;
+  overflow-x: clip;
+  overflow-clip-margin: 3px;
 }
 
 .stateLine {

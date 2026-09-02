@@ -162,3 +162,49 @@ describe('skeleton shape', () => {
     expect(rules.get('.skeletonActions')).toBeDefined()
   })
 })
+
+describe('focus rings are not clipped by their container', () => {
+  /** How far a `:focus-visible` ring paints OUTSIDE its element's border box:
+   * the outline width plus a positive offset. A negative offset draws the ring
+   * inward and reaches nothing. */
+  function outwardReach(selector: string): number {
+    const rule = rules.get(`${selector}:focus-visible`) ?? ''
+    const width = /outline:\s*(\d+)px/.exec(rule)?.[1]
+    const offset = /outline-offset:\s*(-?\d+)px/.exec(rule)?.[1]
+    expect(width, `no outline width on ${selector}:focus-visible`).toBeDefined()
+    expect(offset, `no outline-offset on ${selector}:focus-visible`).toBeDefined()
+    return Math.max(0, Number(width) + Number(offset))
+  }
+
+  it('gives the search ring room to paint outside .panel', () => {
+    // `.searchInput` is the first child of `.toolbar`, itself the first child
+    // of `.panel`, and `.panel` carries no padding — so the input sits at
+    // exactly (0, 0) of the panel's content box and its ring paints entirely
+    // outside it. Measured in Chrome on the shipped rules: the input's rect
+    // was flush with the panel's on both axes, and the ring lost its left,
+    // top and bottom edges, leaving only a stray arc on the right where the
+    // 280px input stops short of the panel.
+    //
+    // Two things had to be true for that, and this pins both. `overflow-x:
+    // hidden` clips at the padding edge with no margin, AND the CSS spec
+    // forbids the two axes disagreeing that way, so it silently promoted
+    // `overflow-y: visible` to `auto` — making the panel an accidental scroll
+    // container that clipped the ring vertically too. `clip` does not coerce
+    // the other axis (measured: overflow-y stays `visible`), and
+    // `overflow-clip-margin` buys back exactly the horizontal room the ring
+    // needs.
+    const panel = rules.get('.panel') ?? ''
+    expect(panel, 'no .panel rule').not.toBe('')
+    const reach = outwardReach('.searchInput')
+    expect(reach).toBeGreaterThan(0)
+
+    // `hidden` may remain only as a pre-`clip` fallback, never as the last
+    // word: the cascade takes the final declaration.
+    const lastOverflowX = [...panel.matchAll(/overflow-x:\s*([\w-]+)/g)].at(-1)?.[1]
+    expect(lastOverflowX, '.panel must not end on overflow-x: hidden').toBe('clip')
+
+    const margin = /overflow-clip-margin:\s*(\d+)px/.exec(panel)?.[1]
+    expect(margin, '.panel clips without granting the ring a margin').toBeDefined()
+    expect(Number(margin)).toBeGreaterThanOrEqual(reach)
+  })
+})
