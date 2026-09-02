@@ -154,7 +154,7 @@ jobs:
           name: catalog-dist-v1
           path: dist/v1
       - name: Authenticate to npm
-        run: echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" >> ~/.npmrc
+        run: echo "//registry.npmjs.org/:_authToken=\${NODE_AUTH_TOKEN}" >> ~/.npmrc
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH_TOKEN }}
       - name: Publish the catalog to npm
