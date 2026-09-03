@@ -109,7 +109,14 @@ const FAILURE_LOG_NOISE: readonly RegExp[] = [
  */
 export function installFailureDetail(profile: string, log: readonly string[]): string {
   const hint = `pnpm failed in the profile. Run: dsh plugin --profile ${profile} install`
-  const usable = log.filter(line => !FAILURE_LOG_NOISE.some(rx => rx.test(line)))
+  // Strip a trailing carriage return before filtering. The capture loop
+  // normalizes now, so this is belt and braces — but every pattern in
+  // FAILURE_LOG_NOISE anchors with `$`, which without /m matches only at end
+  // of string, so a single `\r` silently disables the filter each was
+  // written for and publishes punctuation as the reason an install failed.
+  const usable = log
+    .map(line => line.replace(/\r+$/, ''))
+    .filter(line => !FAILURE_LOG_NOISE.some(rx => rx.test(line)))
   const reversed = [...usable].reverse()
   const pick = reversed.find(line => /ERR_[A-Z][A-Z_]*/.test(line))
     ?? reversed.find(line => /(?:^|\s)\w*Error:/.test(line))
@@ -269,11 +276,16 @@ function spawnPluginCli(options: {
       resolve(failToStart(error as NodeJS.ErrnoException))
       return
     }
+    // Split on CRLF as well as LF. Every console producer on Windows —
+    // pnpm, node, dsh's own wrapper — terminates with `\r\n`, and splitting
+    // on '\n' alone left a literal `\r` on the end of every captured line.
+    // The client renders this log, and `installFailureDetail` filters it with
+    // `$`-anchored patterns that one trailing control character defeats.
     child.stdout.on('data', (chunk: Buffer) => {
-      for (const line of chunk.toString().split('\n')) if (line !== '') append(line)
+      for (const line of chunk.toString().split(/\r?\n/)) if (line !== '') append(line)
     })
     child.stderr.on('data', (chunk: Buffer) => {
-      for (const line of chunk.toString().split('\n')) if (line !== '') append(line)
+      for (const line of chunk.toString().split(/\r?\n/)) if (line !== '') append(line)
     })
     child.on('error', (error) => {
       resolve(failToStart(error as NodeJS.ErrnoException))

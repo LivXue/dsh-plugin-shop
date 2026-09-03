@@ -22,6 +22,24 @@ function fixtureDsh(exitCode: number): string {
   return bin
 }
 
+// A fixture `dsh` that emits CRLF line endings, as every Windows console
+// producer does — pnpm, node and dsh's own wrapper all write `\r\n` there. The
+// bytes come from the script, not the host, so this reproduces the Windows
+// stream shape while running on Linux or macOS.
+function fixtureDshCrlf(exitCode: number, lines: readonly string[]): string {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-fixture-crlf-'))
+  const bin = join(dir, 'dsh')
+  const payload = lines.map(line => `${line}\\r\\n`).join('')
+  writeFileSync(bin, [
+    '#!/bin/sh',
+    `printf '%b' '${payload}'`,
+    `exit ${exitCode}`,
+    '',
+  ].join('\n'))
+  chmodSync(bin, 0o755)
+  return bin
+}
+
 describe('startInstall', () => {
   it('spawns dsh plugin with the pinned spec and reports done with needsRestart', async () => {
     const bin = fixtureDsh(0)
@@ -131,6 +149,40 @@ describe('startInstall', () => {
     expect(status.log).toContain('boom two')
     expect(status.detail).toContain('dsh plugin --profile web install')
   })
+  it('strips the carriage return from CRLF output so a Windows log reads like a POSIX one', () => {
+    // Windows-only defect class: every line the executor captured there kept a
+    // literal `\r`, because the capture loop split on '\n' alone. The client
+    // renders this log verbatim.
+    const bin = fixtureDshCrlf(1, ['installing...', 'Done.'])
+    const install = startInstall({ profile: 'web', spec: 'dsh-hello-plugin@1.2.0', dshBin: bin })
+    return install.finished.then(status => {
+      expect(status.state).toBe('failed')
+      for (const line of status.log) expect(line).not.toMatch(/\r/)
+      expect(status.log).toContain('installing...')
+    })
+  })
+
+  it('reports the explanatory line, not pnpm punctuation, when the log arrives as CRLF', () => {
+    // The picker falls back to the last line that survived the noise filter.
+    // With `\r` still attached, `/^\++$/` no longer matched `+++`, so a row of
+    // plus signs survived and became the reported reason the install failed —
+    // precisely the defect 8851898 fixed for POSIX, reintroduced by line
+    // endings alone. No ERR_/Error line here on purpose: those are picked
+    // ahead of the fallback and would hide this.
+    const bin = fixtureDshCrlf(1, [
+      'Progress: resolved 41, reused 41, downloaded 0',
+      'the bundle did not appear in dsh.profile.bundles',
+      '+++',
+    ])
+    const install = startInstall({ profile: 'web', spec: 'dsh-hello-plugin@1.2.0', dshBin: bin })
+    return install.finished.then(status => {
+      expect(status.state).toBe('failed')
+      expect(status.detail).toMatch(/did not appear/)
+      expect(status.detail).not.toMatch(/\+\+\+/)
+      expect(status.detail).not.toMatch(/\r/)
+    })
+  })
+
 })
 
 describe('startInstall post-install confirm (§7.2 step 6)', () => {
@@ -402,6 +454,22 @@ describe('installFailureDetail', () => {
     // An empty log must not produce a dangling separator.
     expect(installFailureDetail('web', [])).toMatch(/Run: dsh plugin --profile web install/)
   })
+  it('tolerates carriage returns already attached to the lines', () => {
+    // Defence in depth. The capture loop normalizes now, but these patterns
+    // are the fragile part: every one of them anchors with `$`, and `$` without
+    // /m matches only at end of string — so one trailing control character
+    // silently disables the filter that line was written for.
+    const log = [
+      'Progress: resolved 41, reused 41, downloaded 0\r',
+      'the bundle did not appear in dsh.profile.bundles\r',
+      '+++\r',
+    ]
+    const detail = installFailureDetail('web', log)
+    expect(detail).toMatch(/did not appear/)
+    expect(detail).not.toMatch(/\+\+\+/)
+    expect(detail).not.toMatch(/\r/)
+  })
+
 })
 
 describe('spawnFailureDetail', () => {
