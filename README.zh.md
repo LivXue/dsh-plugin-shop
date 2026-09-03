@@ -10,7 +10,7 @@
 [![filtered](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2FLivXue.github.io%2Fdsh-plugin-shop%2Fv1%2Findex.json&query=rejected&label=filtered&color=orange)](https://LivXue.github.io/dsh-plugin-shop/v1/index.json)
 [![license](https://img.shields.io/npm/l/dsh-plugin-shop?color=blue)](LICENSE)
 [![plugin CI](https://github.com/LivXue/dsh-plugin-shop/actions/workflows/plugin.yml/badge.svg)](https://github.com/LivXue/dsh-plugin-shop/actions/workflows/plugin.yml)
-[![catalog](https://github.com/LivXue/dsh-plugin-shop/actions/workflows/daily.yml/badge.svg)](https://github.com/LivXue/dsh-plugin-shop/actions/workflows/daily.yml)
+[![catalog](https://img.shields.io/endpoint?url=https%3A%2F%2FLivXue.github.io%2Fdsh-plugin-shop%2Fv1%2Fbadge.json)](https://github.com/LivXue/dsh-plugin-shop/actions/workflows/daily.yml)
 
 [English](README.md) | 中文
 
