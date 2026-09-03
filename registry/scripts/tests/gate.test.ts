@@ -100,13 +100,19 @@ describe('gate', () => {
   })
 
   it('never splits a surrogate pair when capping a derived summary', () => {
-    // A plain slice(0, 200) cuts BETWEEN the two code units of an astral
-    // character, leaving a lone high surrogate in summary.en. Unlike the
-    // schema.ts error string, this one reaches plugins.json — the file every
-    // reader downloads. Measured end to end: the emitted JSON stays valid
-    // (JSON.stringify escapes the lone surrogate as \ud83d, so the file is
-    // ASCII and the content hash is stable), but a consumer that parses it and
-    // re-encodes UTF-8 fails — Python raises "surrogates not allowed".
+    // Scope, precisely: this pins that the CUT does not create an orphan, so
+    // the astral character is dropped whole rather than halved. It is not what
+    // keeps plugins.json free of unpaired surrogates — toWellFormedCatalog is,
+    // at the projection boundary, and the three-route test below covers the
+    // orphans that arrive by other means. Both exist because they do different
+    // things: dropping a half-character reads better than publishing a
+    // replacement character in the middle of a word.
+    //
+    // Why any of it matters, measured end to end: a lone surrogate leaves the
+    // emitted JSON valid (JSON.stringify escapes it as \ud83d, so the file is
+    // ASCII and the content hash is stable — which is why nothing here would
+    // notice), but a consumer that parses that file and re-encodes UTF-8 fails
+    // on it; Python raises "surrogates not allowed".
     // 199 filler + a 2-unit emoji puts the split exactly at the bound.
     const description = `${'a'.repeat(199)}\u{1F600}tail`
     const result = gate(candidate({ catalog: null, description }), config)
@@ -147,6 +153,53 @@ describe('gate', () => {
       expect(en, label).toMatch(/^a{199}$/)
       expect(LONE_SURROGATE.test(en), label).toBe(false)
     }
+  })
+
+  it('publishes no unpaired surrogate by any of the three routes truncation does not cover', () => {
+    // truncateWholeCharacters closes only the orphan the CUT itself creates.
+    // Three routes reach plugins.json around it, all measured against this
+    // gate before the fix:
+    //   A: a description shorter than the bound — returns early, never cut.
+    //   B: a cut landing on a lone LOW surrogate already in the text, which
+    //      the trailing-high-surrogate check reads as a completed pair.
+    //   C: an author-declared summary, which zod's .max(200) accepts
+    //      unexamined; capabilities and summary.zh are the same free text.
+    // Each produced a lone surrogate in a published field, and a consumer that
+    // parses plugins.json and re-encodes UTF-8 fails on it.
+    const declared = {
+      category: 'tool' as const,
+      summary: { en: 'declared \uD83D here', zh: 'zh \uDE00 here' },
+      capabilities: ['cap \uD83D one'],
+    }
+    const cases: [string, Candidate][] = [
+      ['A short description, never truncated', candidate({ catalog: null, description: 'short \uD83D tail' })],
+      ['B cut landing on a lone low surrogate', candidate({ catalog: null, description: `${'a'.repeat(199)}\uDE00rest` })],
+      ['C author-declared catalog', candidate({ catalog: declared })],
+    ]
+    for (const [label, input] of cases) {
+      const result = gate(input, config)
+      expect(result.ok, label).toBe(true)
+      if (!result.ok) continue
+      const { summary, capabilities } = result.accepted.catalog
+      expect(LONE_SURROGATE.test(summary.en), `${label}: summary.en`).toBe(false)
+      expect(LONE_SURROGATE.test(summary.zh ?? ''), `${label}: summary.zh`).toBe(false)
+      for (const capability of capabilities) {
+        expect(LONE_SURROGATE.test(capability), `${label}: capability`).toBe(false)
+      }
+    }
+  })
+
+  it('leaves a well-formed catalog byte-identical', () => {
+    // toWellFormed() is identity on well-formed text, and the ordinary case
+    // must not acquire a replacement character or any other edit.
+    const declared = {
+      category: 'tool' as const,
+      summary: { en: 'Plain ASCII, an emoji \u{1F600}, and 中文.', zh: '中文说明 \u{1F600}' },
+      capabilities: ['fs', 'shell \u{1F600}'],
+    }
+    const result = gate(candidate({ catalog: declared }), config)
+    if (!result.ok) throw new Error('expected acceptance')
+    expect(result.accepted.catalog).toEqual(declared)
   })
 
   it('rejects a package with neither dsh.catalog nor an npm description as no-summary', () => {

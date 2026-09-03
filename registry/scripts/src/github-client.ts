@@ -111,7 +111,7 @@ async function fetchRobust(
  * usable candidates, or none at all. */
 export type RepoFetchResult =
   | { ok: true; candidates: RepoCandidate[]; subpackageFailures?: RepoFetchFailure[] }
-  | { ok: false; code: RepoFetchFailure['code']; detail: string }
+  | { ok: false; code: RepoFetchFailure['code']; detail: string; subpackageFailures?: RepoFetchFailure[] }
 
 /** One repository — or one `owner/slug#subdir` subpackage unit — that could
  * not become a candidate, with the reason. */
@@ -119,6 +119,17 @@ export interface RepoFetchFailure {
   repo: string
   code: 'no-manifest' | 'fetch-failed'
   detail: string
+}
+
+/**
+ * A subpackage failure plus whether that subpackage CLAIMED to be a plugin by
+ * declaring `dsh.bundle`. A claim is a more specific fact than the repository
+ * root's own problem and is reported instead of it — the pre-existing design.
+ * A body we declined to read for size made no claim, so it must not suppress a
+ * root reason we actually know. `claimed` is internal and never published.
+ */
+interface TaggedSubpackageFailure extends RepoFetchFailure {
+  claimed: boolean
 }
 
 /** The search-item fields the harvest trusts, validated at the boundary. */
@@ -516,6 +527,22 @@ function describeBadName(rawName: unknown): string {
 }
 
 /**
+ * The outcome of reading one manifest body.
+ *
+ * The failure carries a `reason`, and that discriminant is the whole point:
+ * `too-large` is a choice WE made about a body we never parsed, which may hold
+ * a perfectly good plugin, while `unreadable` means the bytes are not a
+ * manifest at all. A subpackage call site has to tell them apart — one is
+ * worth publishing a row for, the other is the `{{ handlebars }}` template
+ * this module's own noise policy declines to report per directory. A flat
+ * `{ ok: false; detail }` cannot express that distinction, so a comment
+ * claiming to make it would be describing something the code does not do.
+ */
+type ManifestRead =
+  | { ok: true; manifest: unknown }
+  | { ok: false; reason: 'too-large' | 'unreadable'; detail: string }
+
+/**
  * Read one manifest response body, refusing anything past
  * {@link MAX_MANIFEST_BYTES}.
  *
@@ -535,33 +562,33 @@ function describeBadName(rawName: unknown): string {
  */
 async function readManifest(
   response: Response,
-): Promise<{ ok: true; manifest: unknown } | { ok: false; detail: string }> {
+): Promise<ManifestRead> {
   const declaredLength = Number(response.headers.get('content-length'))
   if (Number.isFinite(declaredLength) && declaredLength > MAX_MANIFEST_BYTES) {
     // Refused before a byte is read. An over-cap manifest is not an
     // installable plugin unit, and its raw `catalog` value would otherwise be
     // committed to repo-state.json whether or not the gate accepts it.
-    return { ok: false, detail: `package.json is larger than ${MAX_MANIFEST_BYTES} bytes, so it is not read.` }
+    return { ok: false, reason: 'too-large', detail: `package.json is larger than ${MAX_MANIFEST_BYTES} bytes, so it is not read.` }
   }
   let text: string
   try {
     text = await response.text()
   } catch {
     // Same rule as npm: an unreadable body is a rejection, not a crash.
-    return { ok: false, detail: 'package.json was unreadable.' }
+    return { ok: false, reason: 'unreadable', detail: 'package.json was unreadable.' }
   }
   if (text.length > MAX_MANIFEST_BYTES) {
     // No content-length (a chunked response): the cap is applied to what
     // arrived rather than trusted from a header a third party wrote. The body
     // did reach us on this path, so the reason says discarded, not unread.
-    return { ok: false, detail: `package.json is larger than ${MAX_MANIFEST_BYTES} bytes, so it was discarded without being parsed.` }
+    return { ok: false, reason: 'too-large', detail: `package.json is larger than ${MAX_MANIFEST_BYTES} bytes, so it was discarded without being parsed.` }
   }
   try {
     return { ok: true, manifest: JSON.parse(text) }
   } catch {
     // A body that arrived but is not JSON is the same rejection as one that
     // could not be read: nothing else reaches here, and neither is a crash.
-    return { ok: false, detail: 'package.json was unreadable.' }
+    return { ok: false, reason: 'unreadable', detail: 'package.json was unreadable.' }
   }
 }
 
@@ -588,7 +615,7 @@ async function probeSubpackageCandidates(
   fetchImpl: typeof fetch,
   sleep: (ms: number) => Promise<void>,
   token: string | undefined,
-): Promise<{ candidates: RepoCandidate[]; failures: RepoFetchFailure[] }> {
+): Promise<{ candidates: RepoCandidate[]; failures: TaggedSubpackageFailure[] }> {
   const treeUrl = `${GITHUB_API}/repos/${owner}/${slug}/git/trees/${meta.defaultBranch}?recursive=1`
   const treeResponse = await fetchRobust(treeUrl, fetchImpl, sleep, token)
   if (!treeResponse.ok) return { candidates: [], failures: [] }
@@ -607,21 +634,24 @@ async function probeSubpackageCandidates(
     : []
   const dirs = selectSubpackagePaths(rootManifest, paths)
   const candidates: RepoCandidate[] = []
-  const failures: RepoFetchFailure[] = []
+  const failures: TaggedSubpackageFailure[] = []
   for (const dir of dirs) {
     const subUrl = `${RAW_GITHUB}/${owner}/${slug}/${meta.defaultBranch}/${dir}/package.json`
     const subResponse = await fetchRobust(subUrl, fetchImpl, sleep, token)
     if (!subResponse.ok) continue
     const subRead = await readManifest(subResponse)
     if (!subRead.ok) {
-      // Reported, not silently skipped. A failure here is keyed by PATH, not
-      // by the name inside the manifest, and the path is known right here — so
-      // "there is no name to attach a reason to" was never true of this
-      // branch. It matters most for the size refusal: an unparseable body is
-      // genuinely not a manifest, but an over-cap body may be a perfectly good
-      // one we chose not to read, and without this the repository could be
-      // published as "no installable subpackage" when it plainly has one.
-      failures.push({ repo: `${owner}/${slug}#${dir}`, code: 'no-manifest', detail: subRead.detail })
+      // Only the size refusal is reported. A failure here is keyed by PATH,
+      // and the path is known right here, so it CAN carry a reason — but an
+      // `unreadable` body is not a manifest and never claimed to be a plugin,
+      // and reporting one row per directory for a template repo is the noise
+      // this function's own policy declines to publish. An over-cap body is
+      // the opposite: we declined to read something that may well be a plugin,
+      // and staying silent would let the repository be published as having no
+      // installable subpackage when it plainly has one.
+      if (subRead.reason === 'too-large') {
+        failures.push({ repo: `${owner}/${slug}#${dir}`, code: 'no-manifest', detail: subRead.detail, claimed: false })
+      }
       continue
     }
     const subManifest = subRead.manifest
@@ -636,7 +666,7 @@ async function probeSubpackageCandidates(
     const declaresBundle = (subManifest as { dsh?: { bundle?: unknown } } | null)?.dsh?.bundle !== undefined
     if (sub === null && declaresBundle) {
       const rawName = (subManifest as { name?: unknown } | null)?.name
-      failures.push({ repo: `${owner}/${slug}#${dir}`, code: 'no-manifest', detail: describeBadName(rawName) })
+      failures.push({ repo: `${owner}/${slug}#${dir}`, code: 'no-manifest', detail: describeBadName(rawName), claimed: true })
     }
   }
   return { candidates, failures }
@@ -699,11 +729,37 @@ export async function fetchRepoCandidate(
       return { ok: true, candidates: subs, ...(subFailures.length > 0 ? { subpackageFailures: subFailures } : {}) }
     }
     if (subFailures.length > 0) {
+      const published: RepoFetchFailure[] = subFailures.map(
+        ({ repo, code, detail }) => ({ repo, code, detail }))
       // A subpackage that claimed to be a plugin and failed its name grammar
       // is a more specific, more useful fact than the root's own name
       // problem (or its absence) — report that instead of the rejection
-      // below, same as when subpackages had produced usable candidates.
-      return { ok: true, candidates: root === null ? [] : [root], subpackageFailures: subFailures }
+      // below, same as when subpackages had produced usable candidates. And
+      // when there IS a root candidate the rejection below never runs anyway.
+      if (root !== null || subFailures.some(failure => failure.claimed)) {
+        return { ok: true, candidates: root === null ? [] : [root], subpackageFailures: published }
+      }
+      // Nothing claimed anything: every failure here is a body we declined to
+      // read for size, and there is no root candidate either. What gets
+      // published now turns on whether the root's own reason is TRUE.
+      //
+      // A root that declared an unusable name has a specific, wholly accurate
+      // fact against it, and a size refusal — a choice we made about bytes we
+      // never read — must not suppress it. Published alongside the rows.
+      if (rootNameInvalid) {
+        return {
+          ok: false,
+          code: 'no-manifest',
+          detail: describeBadName(rawRootName),
+          subpackageFailures: published,
+        }
+      }
+      // A root that declared NO name has only the reason below available, and
+      // half of it — "no installable subpackage" — is false exactly here: the
+      // subpackage may be a fine plugin we declined to read. Publishing it
+      // would re-create the misattribution the size row exists to prevent, so
+      // the rows are published on their own and nothing false is said.
+      return { ok: true, candidates: [], subpackageFailures: published }
     }
   }
   if (root === null) {
@@ -782,7 +838,11 @@ export async function harvestRepos(options: RepoHarvestOptions): Promise<RepoHar
   const { toFetch, gone } = diffRepoState(state, seen)
   // Budget slice: sorted order keeps the deferral deterministic.
   const queue = toFetch.sort((a, b) => (a.repo < b.repo ? -1 : a.repo > b.repo ? 1 : 0)).slice(0, budget)
-  const fresh = new Map<string, { candidates: RepoCandidate[]; failure?: { code: 'no-manifest'; detail: string } }>()
+  const fresh = new Map<string, {
+    candidates: RepoCandidate[]
+    failure?: { code: 'no-manifest'; detail: string }
+    subpackageFailures?: RepoFetchFailure[]
+  }>()
   const failures: RepoFetchFailure[] = []
   for (let i = 0; i < queue.length; i += REPO_CONCURRENCY) {
     const batch = queue.slice(i, i + REPO_CONCURRENCY)
@@ -793,18 +853,22 @@ export async function harvestRepos(options: RepoHarvestOptions): Promise<RepoHar
     }))
     for (const { entry, result } of results) {
       if (result.ok) {
-        fresh.set(entry.repo, { candidates: result.candidates })
-        // A subpackage that claimed dsh.bundle and failed the name grammar
-        // rides the ok branch (it does not make the whole repo a failure) —
-        // drain it into this run's report the same as any other failure.
-        // Deliberately not persisted into RepoStateEntry.failure: unlike a
-        // root-level no-manifest/fetch-failed, this is reported only on the
-        // run that actually (re-)fetches the repo; it does not carry
-        // forward across an unchanged pushedAt the way repo-level failures
-        // recorded below do.
+        // Subpackage failures ride the ok branch (they do not make the whole
+        // repo a failure) — drained into this run's report, AND persisted, so
+        // they carry across runs that do not re-fetch the repo exactly like a
+        // repo-level failure. They were once deliberately not persisted; see
+        // RepoStateEntry.subpackageFailures for why that stopped being safe.
+        fresh.set(entry.repo, {
+          candidates: result.candidates,
+          ...(result.subpackageFailures !== undefined ? { subpackageFailures: result.subpackageFailures } : {}),
+        })
         if (result.subpackageFailures !== undefined) failures.push(...result.subpackageFailures)
       } else {
         failures.push({ repo: entry.repo, code: result.code, detail: result.detail })
+        // A repo-level rejection can now carry subpackage rows alongside it
+        // (a root with an unusable name whose subpackage was refused for
+        // size); they are reported and persisted the same as on the ok branch.
+        if (result.subpackageFailures !== undefined) failures.push(...result.subpackageFailures)
         // A deterministic failure on a repo with NO recorded entry is
         // recorded so the next runs carry the reason instead of re-fetching
         // the same dead end and re-consuming the budget. A repo WITH a
@@ -812,7 +876,11 @@ export async function harvestRepos(options: RepoHarvestOptions): Promise<RepoHar
         // schedules the retry next run (a `fetch-failed` stays transient
         // either way).
         if (result.code === 'no-manifest' && state[entry.repo] === undefined) {
-          fresh.set(entry.repo, { candidates: [], failure: { code: result.code, detail: result.detail } })
+          fresh.set(entry.repo, {
+            candidates: [],
+            failure: { code: result.code, detail: result.detail },
+            ...(result.subpackageFailures !== undefined ? { subpackageFailures: result.subpackageFailures } : {}),
+          })
         }
       }
     }
@@ -823,9 +891,11 @@ export async function harvestRepos(options: RepoHarvestOptions): Promise<RepoHar
   // Carried deterministic failures keep flowing into the report every run —
   // the catalog accounts for every pool member, fetched or carried.
   for (const [repo, entry] of Object.entries(nextState)) {
-    if (entry.failure !== undefined && !fresh.has(repo)) {
+    if (fresh.has(repo)) continue
+    if (entry.failure !== undefined) {
       failures.push({ repo, code: entry.failure.code, detail: entry.failure.detail })
     }
+    if (entry.subpackageFailures !== undefined) failures.push(...entry.subpackageFailures)
   }
   return {
     candidates,

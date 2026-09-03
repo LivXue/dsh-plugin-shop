@@ -28,6 +28,21 @@ export interface RepoStateEntry {
   candidates: RepoCandidate[]
   /** The recorded deterministic failure; re-fetched only when `pushedAt` changes. */
   failure?: { code: 'no-manifest' | 'fetch-failed'; detail: string }
+  /**
+   * Subpackage-level failures, keyed `owner/slug#subdir`, carried across runs
+   * exactly like {@link RepoStateEntry.failure}.
+   *
+   * These were deliberately NOT persisted while the only one was a name-grammar
+   * failure on a repo that still produced candidates. A size refusal broke that
+   * assumption: it rides the `ok` branch with no candidates at all, so without
+   * a record here the reason is published on the run that fetched the repo and
+   * never again — `diffRepoState` re-fetches only on a changed `pushedAt`, and
+   * an entry with `candidates: []` and no failure looks like a repo with
+   * nothing to say. Reported once, then silent forever, is worse against
+   * "nothing disappears without a reason attached to its name" than the wrong
+   * reason it replaced.
+   */
+  subpackageFailures?: { repo: string; code: 'no-manifest' | 'fetch-failed'; detail: string }[]
 }
 
 /** Repo full name (`owner/slug`) to its recorded state. */
@@ -59,6 +74,7 @@ export function parseRepoState(text: string): RepoState {
       candidate?: unknown
       candidates?: unknown
       failure?: unknown
+      subpackageFailures?: unknown
     }
     if (typeof entry !== 'object' || entry === null) {
       throw new Error(`repo-state.json: ${repo} is not an object`)
@@ -83,6 +99,26 @@ export function parseRepoState(text: string): RepoState {
         throw new Error(`repo-state.json: ${repo} has a malformed failure record`)
       }
       state[repo]!.failure = { code: failure.code, detail: failure.detail }
+    }
+    if (entry.subpackageFailures !== undefined) {
+      if (!Array.isArray(entry.subpackageFailures)) {
+        throw new Error(`repo-state.json: ${repo} has a malformed subpackageFailures record`)
+      }
+      const rows = entry.subpackageFailures.map((value): NonNullable<RepoStateEntry['subpackageFailures']>[number] => {
+        const row = value as { repo?: unknown; code?: unknown; detail?: unknown }
+        if (typeof row !== 'object' || row === null
+          || typeof row.repo !== 'string' || typeof row.detail !== 'string') {
+          throw new Error(`repo-state.json: ${repo} has a malformed subpackageFailures record`)
+        }
+        // Bound to a const so the narrowing survives into the return; the
+        // compound guard above cannot narrow a property through `||`.
+        const code = row.code
+        if (code !== 'no-manifest' && code !== 'fetch-failed') {
+          throw new Error(`repo-state.json: ${repo} has a malformed subpackageFailures record`)
+        }
+        return { repo: row.repo, code, detail: row.detail }
+      })
+      state[repo]!.subpackageFailures = rows
     }
   }
   return state
@@ -124,7 +160,11 @@ export function diffRepoState(state: RepoState, seen: RepoSeen[]): { toFetch: Re
 export function nextRepoState(
   state: RepoState,
   seen: RepoSeen[],
-  fetched: Map<string, { candidates: RepoCandidate[]; failure?: { code: 'no-manifest' | 'fetch-failed'; detail: string } }>,
+  fetched: Map<string, {
+    candidates: RepoCandidate[]
+    failure?: { code: 'no-manifest' | 'fetch-failed'; detail: string }
+    subpackageFailures?: { repo: string; code: 'no-manifest' | 'fetch-failed'; detail: string }[]
+  }>,
 ): RepoState {
   const next: RepoState = {}
   for (const entry of seen) {
@@ -136,6 +176,9 @@ export function nextRepoState(
         commit: fresh.candidates[0]?.commit ?? recorded?.commit ?? '',
         candidates: fresh.candidates,
         ...(fresh.failure !== undefined ? { failure: fresh.failure } : {}),
+        ...(fresh.subpackageFailures !== undefined && fresh.subpackageFailures.length > 0
+          ? { subpackageFailures: fresh.subpackageFailures }
+          : {}),
       }
     } else if (recorded !== undefined) {
       next[entry.repo] = recorded

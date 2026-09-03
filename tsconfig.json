@@ -1,6 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2023",
+    // The runtime is Node >=22.19 (see package.json engines), which provides
+    // the ES2024 built-ins; String.prototype.toWellFormed landed in Node 20.
+    // Declared explicitly rather than raising target, so only the available
+    // library surface changes and the emit target stays put.
+    "lib": ["ES2024"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "allowImportingTsExtensions": true,

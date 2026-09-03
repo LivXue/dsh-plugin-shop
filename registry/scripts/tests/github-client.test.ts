@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { MAX_TARBALL_BYTES, fetchRepoCandidate, harvestRepos, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
+import { parseRepoState, serializeRepoState } from '../src/repo-state.ts'
 import type { RepoState } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
 
@@ -646,6 +647,66 @@ describe('harvestRepos', () => {
     }])
     expect(result.candidates).toEqual([])
   })
+
+  it('carries a subpackage failure across runs instead of reporting it once and going quiet', async () => {
+    // Moving the size refusal onto the ok branch moved it out of the branch
+    // that persists a failure, and subpackageFailures were explicitly not
+    // stored — so the corrected reason was published on the run that fetched
+    // the repo and never again: the next run sees an unchanged pushedAt, does
+    // not re-fetch, and the entry carries candidates: [] with no failure.
+    // Against "nothing disappears without a reason attached to its name",
+    // silence is worse than the wrong reason it replaced: the author has
+    // nothing at all to act on.
+    const seen = [{ repo: 'someone/monorepo', pushedAt: '2026-08-02T00:00:00Z' }]
+    const huge = JSON.stringify({ name: 'the-plugin', dsh: { bundle: {}, catalog: { note: 'z'.repeat(2 * 1024 * 1024) } } })
+    const namedRoot = JSON.stringify({ name: 'monorepo-root', private: true, workspaces: ['packages/*'] })
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      if (new URL(text).searchParams.get('per_page') === '1') return new Response(JSON.stringify({ total_count: 0 }), { status: 200 })
+      if (text.includes('/search/repositories')) {
+        return new Response(JSON.stringify({ items: seen.map(sr => ({ full_name: sr.repo, default_branch: 'main', description: null, license: { spdx_id: 'MIT' }, pushed_at: sr.pushedAt })) }), { status: 200 })
+      }
+      if (text === 'https://raw.githubusercontent.com/someone/monorepo/main/package.json') return new Response(namedRoot, { status: 200 })
+      if (text === 'https://api.github.com/repos/someone/monorepo/commits/main') {
+        return new Response(JSON.stringify({ sha: commit, commit: { author: { date: '2026-08-02T00:00:00.000Z' } } }), { status: 200 })
+      }
+      if (text === 'https://api.github.com/repos/someone/monorepo/git/trees/main?recursive=1') {
+        return new Response(JSON.stringify({ tree: [{ path: 'package.json' }, { path: 'packages/the-plugin/package.json' }] }), { status: 200 })
+      }
+      if (text === 'https://raw.githubusercontent.com/someone/monorepo/main/packages/the-plugin/package.json') {
+        return new Response(huge, { status: 200 })
+      }
+      throw new Error(`unrouted: ${text}`)
+    }) as unknown as typeof fetch
+
+    const first = await harvestRepos({ state: {}, budget: 5, fetchImpl, sleep, token: 't' })
+    expect(first.failures.map(f => f.repo)).toEqual(['someone/monorepo#packages/the-plugin'])
+    // Persisted, so the reason survives a run that does not re-fetch.
+    expect(first.nextState['someone/monorepo']?.subpackageFailures?.[0]?.repo)
+      .toBe('someone/monorepo#packages/the-plugin')
+
+    const second = await harvestRepos({ state: first.nextState, budget: 5, fetchImpl, sleep, token: 't' })
+    expect(second.fetched).toBe(0)
+    expect(second.carried).toBe(1)
+    expect(second.failures).toEqual(first.failures)
+    // And it keeps carrying, rather than surviving exactly one extra run.
+    const third = await harvestRepos({ state: second.nextState, budget: 5, fetchImpl, sleep, token: 't' })
+    expect(third.failures).toEqual(first.failures)
+  })
+
+  it('round-trips a persisted subpackage failure through repo-state.json', () => {
+    // It only carries if it survives serialize -> parse, which is how the
+    // state actually reaches the next run: through a committed file.
+    const state: RepoState = {
+      'someone/monorepo': {
+        pushedAt: '2026-08-02T00:00:00Z',
+        commit,
+        candidates: [],
+        subpackageFailures: [{ repo: 'someone/monorepo#packages/p', code: 'no-manifest', detail: 'too big' }],
+      },
+    }
+    expect(parseRepoState(serializeRepoState(state))).toEqual(state)
+  })
 })
 
 describe('fetch robustness', () => {
@@ -771,6 +832,102 @@ describe('subpackage probe', () => {
         // no content-length, so the reason says discarded rather than unread.
         detail: 'package.json is larger than 1048576 bytes, so it was discarded without being parsed.',
       }])
+    }
+  })
+
+  it('stays silent about a subpackage whose body is not JSON at all', async () => {
+    // The noise policy this module already states: "rejecting each one would
+    // drown the report in noise the author already knows". A template repo
+    // matched by `packages/*` whose package.json holds {{ handlebars }}
+    // placeholders is not making a claim to be a plugin -- it is not a
+    // manifest -- and it would otherwise publish one no-manifest row per
+    // subdirectory, every run. An over-cap body is the opposite case: it may
+    // be a perfectly good manifest we chose not to read, which is why the two
+    // are now distinguished at the read rather than lumped together.
+    const template = '{ "name": "{{PKG_NAME}}", "version": {{VERSION}} }'
+    const namedRoot = JSON.stringify({ name: 'monorepo-root', private: true, workspaces: ['packages/*'] })
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/monorepo/main/package.json': new Response(namedRoot, { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/commits/main': new Response(JSON.stringify({
+        sha: commit,
+        commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/git/trees/main?recursive=1': new Response(JSON.stringify({
+        tree: [{ path: 'package.json' }, { path: 'packages/tpl/package.json' }],
+      }), { status: 200 }),
+      'https://raw.githubusercontent.com/someone/monorepo/main/packages/tpl/package.json':
+        new Response(template, { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.candidates.map(c => c.name)).toEqual(['monorepo-root'])
+      expect(result.subpackageFailures).toBeUndefined()
+    }
+  })
+
+  it('keeps the root\'s own rejection when a subpackage was only refused for size', async () => {
+    // A size refusal is a choice we made about a body we never read, not a
+    // claim by the subpackage -- so it must not suppress a fact we do know and
+    // can state. Here the root declares an unusable name, and describeBadName
+    // is the precise reason; before this fix the size row replaced it and the
+    // bad name was never mentioned. A subpackage that DOES claim to be a
+    // plugin (declares dsh.bundle, fails the grammar) still takes precedence,
+    // which is the pre-existing design and the test below it.
+    const huge = JSON.stringify({
+      name: 'the-plugin',
+      dsh: { bundle: {}, catalog: { note: 'z'.repeat(2 * 1024 * 1024) } },
+    })
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/monorepo/main/package.json':
+        new Response(JSON.stringify({ name: 'Bad Name!!', private: true, workspaces: ['packages/*'] }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/commits/main': new Response(JSON.stringify({
+        sha: commit,
+        commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/git/trees/main?recursive=1': new Response(JSON.stringify({
+        tree: [{ path: 'package.json' }, { path: 'packages/the-plugin/package.json' }],
+      }), { status: 200 }),
+      'https://raw.githubusercontent.com/someone/monorepo/main/packages/the-plugin/package.json':
+        new Response(huge, { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.detail).toContain('is not a usable package name')
+      expect(result.detail).toContain('Bad Name!!')
+      // And the subpackage row rides alongside rather than replacing it.
+      expect(result.subpackageFailures?.[0]?.repo).toBe('someone/monorepo#packages/the-plugin')
+      expect(result.subpackageFailures?.[0]?.detail).toContain('larger than 1048576 bytes')
+    }
+  })
+
+  it('still prefers a claiming subpackage over the root\'s bad name, as it did before', async () => {
+    // The complement of the case above, and the pre-existing design this
+    // change must not disturb: a subpackage that DECLARED dsh.bundle and then
+    // failed the name grammar made a claim, and that claim is the more
+    // specific fact — it is reported instead of the root's own name problem.
+    // Same root as the size case above, so the only difference is the kind of
+    // subpackage failure, which is precisely what `claimed` distinguishes.
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/monorepo/main/package.json':
+        new Response(JSON.stringify({ name: 'Bad Name!!', private: true, workspaces: ['packages/*'] }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/commits/main': new Response(JSON.stringify({
+        sha: commit,
+        commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/git/trees/main?recursive=1': new Response(JSON.stringify({
+        tree: [{ path: 'package.json' }, { path: 'packages/bad-name/package.json' }],
+      }), { status: 200 }),
+      'https://raw.githubusercontent.com/someone/monorepo/main/packages/bad-name/package.json':
+        new Response(JSON.stringify({ name: '{{PKG_NAME}}', dsh: { bundle: {} } }), { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.candidates).toEqual([])
+      expect(result.subpackageFailures?.[0]?.repo).toBe('someone/monorepo#packages/bad-name')
+      expect(result.subpackageFailures?.[0]?.detail).toContain('is not a usable package name')
     }
   })
 

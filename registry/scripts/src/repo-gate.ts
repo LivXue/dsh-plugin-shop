@@ -1,7 +1,7 @@
 import { distance } from 'fastest-levenshtein'
 import { isOwnRepo } from './own.ts'
 import { parseCatalogSection } from './schema.ts'
-import { DERIVED_SUMMARY_MAX_LENGTH, SIMILARITY_THRESHOLD, truncateWholeCharacters } from './gate.ts'
+import { DERIVED_SUMMARY_MAX_LENGTH, SIMILARITY_THRESHOLD, toWellFormedCatalog, truncateWholeCharacters } from './gate.ts'
 import type { RegistryConfig } from './config.ts'
 import type { CatalogSection, Rejection, RepoCandidate } from './types.ts'
 
@@ -125,5 +125,6 @@ export function gateRepo(
     }
   }
 
-  return { ok: true, accepted: { repo: candidate, catalog, metadata } }
+  // The one place every accepted catalog passes, declared or derived.
+  return { ok: true, accepted: { repo: candidate, catalog: toWellFormedCatalog(catalog), metadata } }
 }

@@ -112,6 +112,26 @@ describe('gateRepo', () => {
     expect(LONE_SURROGATE.test(en)).toBe(false)
   })
 
+  it('publishes no unpaired surrogate from a short description or a declared catalog', () => {
+    // The twin call site; see gate.test.ts for the three routes and the
+    // end-to-end measurement.
+    const shortOne = gateRepo(repo({ catalog: null, description: 'short \uD83D tail' }), config)
+    expect(shortOne.ok).toBe(true)
+    if (shortOne.ok) expect(LONE_SURROGATE.test(shortOne.accepted.catalog.summary.en)).toBe(false)
+
+    const declared = gateRepo(repo({
+      catalog: { category: 'tool', summary: { en: 'declared \uD83D here', zh: 'zh \uDE00' }, capabilities: ['cap \uD83D'] },
+    }), config)
+    expect(declared.ok).toBe(true)
+    if (declared.ok) {
+      expect(LONE_SURROGATE.test(declared.accepted.catalog.summary.en)).toBe(false)
+      expect(LONE_SURROGATE.test(declared.accepted.catalog.summary.zh ?? '')).toBe(false)
+      for (const capability of declared.accepted.catalog.capabilities) {
+        expect(LONE_SURROGATE.test(capability)).toBe(false)
+      }
+    }
+  })
+
   it('rejects a repository with neither a catalog nor a description', () => {
     const result = gateRepo(repo({ catalog: null, description: null }), config)
     expect(result.ok).toBe(false)
