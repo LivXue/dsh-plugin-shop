@@ -2456,11 +2456,22 @@ prose lands in the docs commit of this same PR."
 ### Task 8: D-5 — a deadline on the other three network clients, and one on the build job
 
 **Files:**
-- Modify: `registry/scripts/src/npm-client.ts:23-50` (export `withTimeout`, name the subject in the message)
-- Modify: `registry/scripts/src/github-client.ts:42-62` (`fetchRobust`)
-- Modify: `registry/scripts/src/llm-client.ts:115-156` (`runBatches`)
-- Modify: `registry/scripts/src/github-stars.ts:28-49` (`fetchStarCounts`)
-- Modify: `.github/workflows/daily.yml:28-31` (the build job)
+- Modify: `registry/scripts/src/npm-client.ts:204` (export `withTimeout`, name the subject in the message)
+- Modify: `registry/scripts/src/github-client.ts:118` (`fetchRobust`)
+- Modify: `registry/scripts/src/llm-client.ts:115` (`runBatches`)
+- Modify: `registry/scripts/src/github-stars.ts:28` (`fetchStarCounts`)
+- Modify: `.github/workflows/daily.yml:28` (the `build` job)
+
+> **Anchors re-measured 2026-09-03, before dispatch.** Two of the five were stale: `withTimeout` was
+> cited at `:23-50` and is at `:204`; `fetchRobust` was cited at `:42-62` and is at `:118` — Task 4 and
+> Task 7's five fix rounds moved `github-client.ts` by hundreds of lines. The other three were checked
+> and are correct. Verify any anchor before trusting it.
+>
+> **Also measured: `timeout-minutes` already exists once, on `publish` (`:225`, ten minutes).** Neither
+> `build` nor `deploy` has one, so both inherit GitHub's six-hour default — on the job that runs a
+> ~50-minute harvest, a hung fetch burns six hours of runner time every morning. `publish`'s existing
+> comment is the model for the one this task adds: it states what the job actually costs and why the
+> number is generous rather than tight.
 - Test: `registry/scripts/tests/github-client.test.ts`, `registry/scripts/tests/llm-client.test.ts`, `registry/scripts/tests/github-stars.test.ts`, `registry/scripts/tests/workflow.test.ts`
 
 **Interfaces:**
