@@ -345,10 +345,7 @@ function InstallPanel({ name, version, tier, missing, variant = 'install', t, in
         <p className={css.gateBody}>{t('acknowledgementBody')}</p>
         {missing.length > 0 && (
           <p className={css.gateWarning} data-shop-incompatible-warning>
-            {/* The update variant must not accuse the INSTALLED version: it
-                runs fine here, and it is the update that wants the missing
-                module. Same distinction the outdated row's badge makes. */}
-            {t(variant === 'update' ? 'incompatibleUpdateDetail' : 'incompatibleDetail', { modules: missing.join(', ') })}
+            {t('incompatibleDetail', { modules: missing.join(', ') })}
           </p>
         )}
         <div className={css.gateActions}>
@@ -654,9 +651,14 @@ function OutdatedRow({ row, tier, source, missing, t, setEnabled, install, insta
       <div className={css.outdatedInfo}>
         <span className={css.badges}>
           <span className={css.name}>{row.name}</span>
+          {/* One wording everywhere, including here. `missingByName` is keyed
+              by the CATALOG (latest) entry, so on this row the version that
+              actually runs is the INSTALLED one and it is the update that
+              wants the missing module — the copy's "may be" carries that
+              imprecision deliberately rather than splitting the string. */}
           {missing.length > 0 && (
-            <span className={css.incompatibleBadge} data-shop-incompatible title={t('incompatibleUpdateDetail', { modules: missing.join(', ') })}>
-              {t('incompatibleUpdateBadge')}
+            <span className={css.incompatibleBadge} data-shop-incompatible title={t('incompatibleDetail', { modules: missing.join(', ') })}>
+              {t('incompatibleBadge')}
             </span>
           )}
         </span>

@@ -1016,11 +1016,18 @@ describe('ShopTab', () => {
     expect(container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-incompatible]')).toBeTruthy()
   })
 
-  it('titles the outdated row badge with the update wording, not the installed-version wording', async () => {
-    // `missingByName` is keyed by the CATALOG (latest) entry, but this row's
-    // installed version is the one that actually works — it is the update
-    // that needs the peer. The badge's title must say so, not accuse the
-    // working installed version of a problem that is really the update's.
+  it('gives the outdated row the same incompatibility wording as a catalog card', async () => {
+    // RETIRED, deliberately: this used to assert the OPPOSITE — that the row
+    // carried a separate `incompatibleUpdateDetail`. The fact behind that
+    // split still holds, and is worth keeping: `missingByName` is keyed by the
+    // CATALOG (latest) entry, so on this row the version that actually runs is
+    // the INSTALLED one, and it is the update that wants the missing module.
+    // What changed is the verdict, not the fact. The old copy asserted a
+    // defect of the installed version ("This plugin NEEDS {modules}, which
+    // your dsh does not provide"); the copy now hedges ("MAY BE designed for
+    // another DSH version") and names the modules, which is true of both
+    // versions on this row. One string is what a translator maintains, so the
+    // remaining imprecision is the deliberate price.
     const { injected } = bench(
       { ...snapshot({ tier: 'community' }), incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] } },
       [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }],
@@ -1028,27 +1035,11 @@ describe('ShopTab', () => {
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText(en.installedSection)).toBeTruthy())
     const badge = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-incompatible]')
-    const updateTitle = en.incompatibleUpdateDetail.replace('{modules}', '@deepseek-ai/dsh-client-store')
-    const installedVersionTitle = en.incompatibleDetail.replace('{modules}', '@deepseek-ai/dsh-client-store')
-    expect(badge?.getAttribute('title')).toBe(updateTitle)
-    // Fails if the key is ever swapped back to incompatibleDetail.
-    expect(badge?.getAttribute('title')).not.toBe(installedVersionTitle)
+    const detail = en.incompatibleDetail.replace('{modules}', '@deepseek-ai/dsh-client-store')
+    expect(badge?.getAttribute('title')).toBe(detail)
+    expect(badge?.textContent).toBe(en.incompatibleBadge)
   })
 
-  it('labels the outdated row badge Update Incompatible, not the plain badge', async () => {
-    // The distinction the title has always carried is now on the face of the
-    // badge, where it is readable without hovering: the installed version runs
-    // here, so only the UPDATE is incompatible.
-    const { injected } = bench(
-      { ...snapshot({ tier: 'community' }), incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] } },
-      [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }],
-    )
-    const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText(en.installedSection)).toBeTruthy())
-    const badge = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-incompatible]')
-    expect(badge?.textContent).toBe(en.incompatibleUpdateBadge)
-    expect(badge?.textContent).not.toBe(en.incompatibleBadge)
-  })
 
   it('names the missing modules and the version caveat on two lines', async () => {
     // The copy carries its own newline; `white-space: pre-line` renders it.
@@ -1068,9 +1059,8 @@ describe('ShopTab', () => {
     expect(detail).toBeTruthy()
   })
 
-  it('warns with the update wording when the gate opens for an update', async () => {
-    // The gate serves both variants. Opening it for an update must not accuse
-    // the installed version, exactly as the outdated row's badge does not.
+  it('warns with the same wording when the gate opens for an update', async () => {
+    // The gate serves both variants and now says one thing in both.
     const { injected } = bench(
       { ...snapshot({ tier: 'community' }), incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] } },
       [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }],
@@ -1080,7 +1070,7 @@ describe('ShopTab', () => {
     const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]') as HTMLElement
     fireEvent.click(row.querySelector('[data-shop-update]') as HTMLElement)
     const warning = row.querySelector('[data-shop-incompatible-warning]')
-    expect(warning?.textContent).toBe(en.incompatibleUpdateDetail.replace('{modules}', '@deepseek-ai/dsh-client-store'))
+    expect(warning?.textContent).toBe(en.incompatibleDetail.replace('{modules}', '@deepseek-ai/dsh-client-store'))
   })
 })
 
