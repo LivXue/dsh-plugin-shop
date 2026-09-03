@@ -417,6 +417,28 @@ if (pushSteps.length !== 2) {
   )
 }
 
+/** The `if:` expression both pushing steps must carry, byte for byte.
+ *
+ * Pinned as a literal rather than matched against a shape. The property that
+ * matters is that `github.ref` is a TOP-LEVEL conjunct — that it gates every
+ * trigger rather than only the last one — and deciding that means parsing the
+ * expression, which no regex can do. The predecessor here,
+ * `/^\(.+\) && github\.ref == 'refs\/heads\/main'$/`, told the paren-less
+ * variant apart and nothing else: `.+` swallows `) || (`, so
+ *
+ *   (…'schedule' || …'workflow_dispatch') || (…'push') && github.ref == …
+ *
+ * matched it while parsing as `A || B || (C && D)`, leaving `workflow_dispatch`
+ * outside the guard — exactly the dispatch-from-any-branch failure the guard
+ * exists to prevent, green at 21/21.
+ *
+ * An exact string also means that adding a fourth trigger event has to edit
+ * this constant deliberately, which is the moment to re-read the guard instead
+ * of inheriting it. */
+const PUSH_STEP_IF =
+  "(github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'"
+  + " || github.event_name == 'push') && github.ref == 'refs/heads/main'"
+
 /** `push_with_rebase`'s definition exactly as the YAML writes it: from its
  * opening line to the first following line that is a lone `}` at the same
  * indent. `parse()` has already stripped the block scalar's common indent, so
@@ -437,11 +459,12 @@ describe('the daily workflow pushes safely', () => {
     GIT_AUTHOR_NAME: 'test', GIT_AUTHOR_EMAIL: 'test@example.invalid',
     GIT_COMMITTER_NAME: 'test', GIT_COMMITTER_EMAIL: 'test@example.invalid',
     // Whoever runs these tests has git configuration of their own, and three
-    // ordinary settings each broke six cases here with nothing more useful
-    // than `Command failed: git commit --quiet -m base`: `commit.gpgsign`
-    // (no signing key, and none wanted for a throwaway commit), a
-    // `core.hooksPath` whose pre-commit hook fails outside its own repo, and
-    // `protocol.file.allow=never` (the sandbox clones over `file://`).
+    // ordinary settings each broke all seven cases that build a sandbox, with
+    // nothing more useful to show than `Command failed: git commit`
+    // (`commit.gpgsign`, with no signing key and none wanted for a throwaway
+    // commit; and a `core.hooksPath` whose pre-commit hook fails outside its
+    // own repo) or `Command failed: git clone` (`protocol.file.allow=never`,
+    // and the sandbox clones over `file://`). Measured, one setting at a time.
     // Reading neither config file leaves the sandbox depending on nothing but
     // the git binary.
     GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
@@ -578,22 +601,22 @@ describe('the daily workflow pushes safely', () => {
     const label = step.name ?? '(unnamed step)'
 
     it(`runs "${label}" only on refs/heads/main`, () => {
-      // `workflow_dispatch` fires on ANY ref — the reason `Publish to Pages`
-      // and the two upload steps already guard on it. It did not matter while
-      // this step ended in a bare `git push`, which went to the dispatched
-      // branch's own upstream. `push_with_rebase` rebases onto `origin/main`
-      // and pushes `HEAD:main`, so without this guard a dispatch from any
-      // additive branch replays that branch onto main and pushes it: exit 0,
-      // no annotation, unreviewed content on main. On a branch that conflicts
-      // with main the other outcome is two ::warning:: and an ::error:: on
-      // every dispatch, corroding the annotation this task relies on.
+      // `workflow_dispatch` fires on ANY ref — the reason the four other
+      // side-effecting steps and jobs in this file guard on it too. It did not
+      // matter while this step ended in a bare `git push`, which went to the
+      // dispatched branch's own upstream. `push_with_rebase` rebases onto
+      // `origin/main` and pushes `HEAD:main`, so without this guard a dispatch
+      // from any additive branch replays that branch onto main and pushes it:
+      // exit 0, no annotation, unreviewed content on main. On a branch that
+      // conflicts with main the other outcome is two ::warning:: and an
+      // ::error:: on every dispatch, corroding the annotation this task relies
+      // on.
       //
-      // Matched whole rather than with `toContain`, because `&&` binds tighter
-      // than `||` in a GitHub expression: `a || b || c && d` parses as
-      // `a || b || (c && d)` and guards only the last disjunct. That reads as
-      // a guard and is not one, and only an anchored match tells them apart —
-      // which is why the parentheses below are load-bearing, not style.
-      expect(step.if ?? '').toMatch(/^\(.+\) && github\.ref == 'refs\/heads\/main'$/)
+      // Compared against the whole pinned expression. `&&` binds tighter than
+      // `||`, so WHERE the guard sits decides which triggers it covers, and
+      // that is a question about how the expression parses — see PUSH_STEP_IF
+      // for why no pattern over the text can answer it.
+      expect(step.if).toBe(PUSH_STEP_IF)
     })
 
     it(`routes every push in "${label}" through push_with_rebase`, () => {
@@ -622,8 +645,26 @@ describe('the daily workflow pushes safely', () => {
         git(seed, 'fetch', '--quiet', 'origin', 'main')
         const log = git(seed, 'log', '--format=%s', 'FETCH_HEAD').split('\n').filter(Boolean)
         expect(log.slice(0, 3)).toEqual(['bot', 'human edits human', 'base'])
-        // And the history the bot commit was replayed onto is still whole —
-        // the deepening fetch did not truncate what it landed on.
+        // Origin ends holding exactly what it should: the seeded commits
+        // plus the human's and the bot's, nothing dropped and nothing
+        // replayed twice.
+        //
+        // Nothing deepens along the way, despite how the fetch reads.
+        // Measured across origin advancing 5 -> 6 commits: the graft boundary
+        // is byte-identical before and after `git fetch origin main`, and it
+        // IS merge-base(HEAD, origin/main). That holds by construction rather
+        // than by luck — origin/main only ever moves forward from the tip the
+        // runner checked out — so only a history rewrite on origin could
+        // defeat the rebase, and that surfaces as ::error::.
+        //
+        // What this count does NOT catch, since the obvious guess is wrong: a
+        // push out of a shallow clone cannot truncate origin, whose own copy
+        // of the graft commit has ordinary parents it still holds. Adding
+        // `--force` to push_with_rebase leaves this length correct and is
+        // caught by the order assertion above instead, losing the human's
+        // commit — measured with the rebase intact (passes) and without it
+        // (the order fires, the count never gets a say). Kept as a
+        // reinforcing check on the final shape, not as the load-bearing one.
         expect(log).toHaveLength(ORIGIN_COMMITS + 2)
       } finally {
         rmSync(dir, { recursive: true, force: true })
