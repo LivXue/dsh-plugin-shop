@@ -556,6 +556,16 @@ cell on the answered total instead of on a short page."
 
 ### Task 2: D-2 / A-5 with H-2 — one unreachable packument becomes a `fetch-failed` row, and the classify harvest gets its backup registry
 
+> **Amendment (2026-09-03, before Task 2 was dispatched).** Do NOT hand `npmBackupRegistry` to
+> `searchByKeywords`. Measured against both registries: `registry.npmmirror.com/-/v1/search` answers
+> `{"objects":[],"total":0}` for both harvest keywords while answering `total=10000` for `text=react`,
+> so it does not implement the `keywords:` qualifier. Task 1's guards do not catch that, because
+> `total: 0` is a number: `searchTotal` does not throw, the keyword reports unpartitioned, the first
+> page is empty so the loop breaks, and the coverage floor is `min(0, 0) = 0`, which passes. A stalled
+> or 5xx npmjs search would therefore fail over to the mirror and publish a ZERO-name harvest with a
+> green build. The backup registry belongs to the packument path (`fetchCandidates`) only — which is
+> also what D-6 in Task 3 requires, so the two agree.
+
 **Files:**
 - Modify: `registry/scripts/src/npm-client.ts:332-378` (`fetchCandidate`, `fetchCandidates`)
 - Modify: `registry/scripts/src/classify.ts:40-45`
