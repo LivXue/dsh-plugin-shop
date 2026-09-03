@@ -61,13 +61,29 @@ jobs:
         # and a market verdict that is not committed is not a memory: the name
         # would be re-asked every run, which is the flip-flop the file exists to
         # prevent — and one bad roll would then be recorded forever.
+        #
+        # The push fetches and rebases first, with one retry. Without it both
+        # pushes were rejected `(fetch first)` on 2026-09-02 and 2026-09-03
+        # while the run reported success, discarding each day's verdicts. The
+        # step stays continue-on-error (a failed commit must not skip the Pages
+        # deploy below), so the rejection is surfaced as ::error:: instead.
         run: |
           git config user.name 'dsh-plugin-shop bot'
           git config user.email 'bot@users.noreply.github.com'
+          push_with_rebase() {
+            for attempt in 1 2; do
+              git fetch origin main || true
+              git rebase origin/main || { git rebase --abort || true; }
+              if git push origin HEAD:main; then return 0; fi
+              echo "::warning::push attempt $attempt was rejected; refetching"
+            done
+            echo "::error::could not push $1 after two attempts; this run's changes were not recorded"
+            return 1
+          }
           git add registry/categories.yml registry/markets.yml
           git diff --cached --quiet && exit 0
           git commit -m "chore(registry): llm classifier update"
-          git push
+          push_with_rebase "the classifier's output"
       - run: pnpm build:catalog -- --harvest-from dist/v1/harvest.json
         env:
           # Flipped in the 0.4.10 release: the client that reads schemaVersion 3
@@ -138,10 +154,20 @@ jobs:
         run: |
           git config user.name 'dsh-plugin-shop bot'
           git config user.email 'bot@users.noreply.github.com'
+          push_with_rebase() {
+            for attempt in 1 2; do
+              git fetch origin main || true
+              git rebase origin/main || { git rebase --abort || true; }
+              if git push origin HEAD:main; then return 0; fi
+              echo "::warning::push attempt $attempt was rejected; refetching"
+            done
+            echo "::error::could not push $1 after two attempts; this run's changes were not recorded"
+            return 1
+          }
           git add registry/snapshots/manifest.lock registry/repo-state.json registry/first-seen.yml
           git diff --cached --quiet && exit 0
           git commit -m "chore(registry): daily catalog snapshot"
-          git push
+          push_with_rebase "the daily snapshot"
 
   publish:
     needs: build

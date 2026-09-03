@@ -25,7 +25,9 @@
  * property would wave it through again.
  */
 
-import { readFileSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -360,4 +362,223 @@ describe('the daily workflow stages every registry file the build writes', () =>
       ).toBe(true)
     }
   })
+})
+
+// ---------------------------------------------------------------------------
+// The two bot pushes, exercised rather than pattern-matched.
+//
+// Both ran with no fetch and no rebase under `continue-on-error: true`. Run
+// 33731280504 (schedule, 2026-09-03, conclusion `success`) logged
+// `! [rejected] main -> main (fetch first)` at 08:24 for the classifier commit
+// and at 08:53 for the snapshot; run 33623131511 (2026-09-02, `success`) the
+// same twice. Each occurrence silently discarded that day's LLM verdicts and
+// the repo-state backfill memory, and the run reported that it had succeeded.
+//
+// These tests run the function AS WRITTEN IN daily.yml against throwaway local
+// repositories. Asserting that the YAML contains the words "git fetch" would
+// pass on a comment; only running it can show that a rejected push is retried.
+// ---------------------------------------------------------------------------
+
+/** Every step whose `run:` pushes, found structurally. A third pushing step
+ * under a name this file does not know must FAIL here: Task 5's step lookup is
+ * by name and is blind to a new one by construction, and this is the assertion
+ * that closes that hole for pushes.
+ *
+ * Deliberately NOT anchored to the start of a line. The push this task
+ * introduces lives inside `if git push origin HEAD:main; then …`, and
+ * `then git push`, `git push || …` and `exec git push` are each one edit away.
+ * A false positive (the words inside a `run:` block's own `#` comment — there
+ * are none today, checked) fails loudly and gets looked at. A false negative
+ * silently deletes every behavioural case below. */
+const pushSteps = buildSteps.filter(step => /\bgit push\b/.test(step.run ?? ''))
+
+// Not an `it(...)`: a `for (const step of pushSteps)` loop that generates
+// nothing is invisible to vitest — the eight behavioural cases below would
+// simply not exist and the file would report green. `findStep` throws on 0 or
+// >1 matches for exactly this reason. Nor is this hypothetical: this task's
+// first draft matched `git push` only at the start of a line, which its own
+// Step 3 then moved behind `if `, emptying the list and taking the whole
+// behavioural core with it while one assertion noticed.
+if (pushSteps.length !== 2) {
+  throw new Error(
+    `daily.yml: expected exactly 2 steps whose run pushes, found ${pushSteps.length}`
+    + ` (${pushSteps.map(step => step.name ?? '(unnamed)').join(', ') || 'none'})`,
+  )
+}
+
+/** `push_with_rebase`'s definition exactly as the YAML writes it: from its
+ * opening line to the first following line that is a lone `}` at the same
+ * indent. `parse()` has already stripped the block scalar's common indent, so
+ * that closing line is `}` at column 0. */
+function pushFunction(step: WorkflowStep): string {
+  const label = step.name ?? '(unnamed step)'
+  const lines = (step.run ?? '').split('\n')
+  const open = lines.findIndex(line => line.trimEnd().endsWith('push_with_rebase() {'))
+  if (open === -1) throw new Error(`daily.yml: the "${label}" step defines no push_with_rebase()`)
+  const indent = /^[ \t]*/.exec(lines[open] ?? '')?.[0] ?? ''
+  const close = lines.findIndex((line, i) => i > open && line === `${indent}}`)
+  if (close === -1) throw new Error(`daily.yml: "${label}"'s push_with_rebase() is never closed by "}" at its own indent`)
+  return lines.slice(open, close + 1).join('\n')
+}
+
+describe('the daily workflow pushes safely', () => {
+  const IDENT = {
+    GIT_AUTHOR_NAME: 'test', GIT_AUTHOR_EMAIL: 'test@example.invalid',
+    GIT_COMMITTER_NAME: 'test', GIT_COMMITTER_EMAIL: 'test@example.invalid',
+  }
+  const git = (cwd: string, ...args: string[]): string =>
+    execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...IDENT } })
+
+  /** A bare origin plus a depth-1 clone of it — the shape `actions/checkout@v4`
+   * leaves on the runner, since daily.yml:48 sets no `fetch-depth`. */
+  function sandbox(): { dir: string; origin: string; seed: string; runner: string } {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-push-'))
+    const origin = join(dir, 'origin.git')
+    git(dir, 'init', '--quiet', '--bare', origin)
+    const seed = join(dir, 'seed')
+    git(dir, 'clone', '--quiet', origin, seed)
+    writeFileSync(join(seed, 'f'), 'base\n')
+    git(seed, 'add', 'f')
+    git(seed, 'commit', '--quiet', '-m', 'base')
+    git(seed, 'push', '--quiet', 'origin', 'HEAD:main')
+    const runner = join(dir, 'runner')
+    git(dir, 'clone', '--quiet', '--depth', '1', '--branch', 'main', `file://${origin}`, runner)
+    // A global core.hooksPath would silently disable the pre-push hook the
+    // retry case installs, turning a real failure into a confusing one.
+    git(runner, 'config', 'core.hooksPath', '.git/hooks')
+    return { dir, origin, seed, runner }
+  }
+
+  /** Someone pushes to main while the ~50-minute run is in flight. */
+  function humanPush(seed: string, file: string, content: string): void {
+    git(seed, 'fetch', '--quiet', 'origin', 'main')
+    git(seed, 'checkout', '--quiet', '-B', 'main', 'origin/main')
+    writeFileSync(join(seed, file), content)
+    git(seed, 'add', file)
+    git(seed, 'commit', '--quiet', '-m', `human edits ${file}`)
+    git(seed, 'push', '--quiet', 'origin', 'main')
+  }
+
+  /** Run the YAML's own function in the runner clone. `bash -e` matches the
+   * shell GitHub gives a `run:` block (`bash -e {0}`), so `set -e` semantics
+   * are the production ones and not a friendlier local approximation. */
+  function runPush(dir: string, runner: string, fn: string): { status: number; out: string } {
+    const script = join(dir, 'under-test.sh')
+    writeFileSync(script, `${fn}\npush_with_rebase "under test"\n`)
+    const result = spawnSync('bash', ['-e', script], {
+      cwd: runner, encoding: 'utf8', env: { ...process.env, ...IDENT },
+    })
+    return { status: result.status ?? -1, out: `${result.stdout ?? ''}${result.stderr ?? ''}` }
+  }
+
+  /** A pre-push hook that, on its FIRST invocation only, lands another commit
+   * on origin so our push loses the race and is rejected for real. It must
+   * fire once: left armed, attempt 2 would race too and the loop could never
+   * converge. GIT_DIR and friends are exported into hooks and would point the
+   * seed's commands at the runner's repository, so they are unset first. */
+  function armRace(dir: string, runner: string, seed: string): void {
+    const hook = join(runner, '.git', 'hooks', 'pre-push')
+    writeFileSync(hook, [
+      '#!/bin/sh',
+      `if [ -f "${dir}/raced" ]; then exit 0; fi`,
+      `touch "${dir}/raced"`,
+      'unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX',
+      `cd "${seed}" || exit 1`,
+      'git fetch --quiet origin main && git checkout --quiet -B main origin/main',
+      'echo raced > raced && git add raced && git commit --quiet -m race',
+      'git push --quiet origin main',
+      'exit 0',
+      '',
+    ].join('\n'), { mode: 0o755 })
+  }
+
+  it('has exactly the two committing steps that push, and no third', () => {
+    expect(pushSteps.map(step => step.name)).toEqual([
+      "Commit the classifier's output",
+      'Commit the snapshot',
+    ])
+  })
+
+  it('keeps the two copies of push_with_rebase byte-identical', () => {
+    // Each `run:` block is its own shell, so the function is necessarily
+    // duplicated. Nothing else would notice one copy drifting.
+    const [first, second] = pushSteps.map(pushFunction)
+    expect(first).toBe(second)
+  })
+
+  for (const step of pushSteps) {
+    const label = step.name ?? '(unnamed step)'
+
+    it(`routes every push in "${label}" through push_with_rebase`, () => {
+      const run = step.run ?? ''
+      const outsideTheFunction = run.replace(pushFunction(step), '')
+      // A bare `git push` re-added beside the function would still push
+      // unsafely while every "contains push_with_rebase" assertion passed.
+      // Unanchored for the same reason as `pushSteps`: `if git push …` outside
+      // the function is a push, and the anchored form cannot see it.
+      expect(outsideTheFunction).not.toMatch(/\bgit push\b/)
+      expect(run).toMatch(/(^|\n)[ \t]*push_with_rebase ["'][^\n]*["']/)
+    })
+
+    it(`"${label}" pushes cleanly when origin moved under it`, () => {
+      const { dir, seed, runner } = sandbox()
+      try {
+        humanPush(seed, 'human', 'human\n')
+        writeFileSync(join(runner, 'bot'), 'bot\n')
+        git(runner, 'add', 'bot')
+        git(runner, 'commit', '--quiet', '-m', 'bot')
+        const { status, out } = runPush(dir, runner, pushFunction(step))
+        expect({ status, out }).toEqual({ status: 0, out: expect.any(String) })
+        expect(out).not.toContain('::error::')
+        // Both commits are on origin: the rebase preserved the human's work
+        // rather than the push clobbering it.
+        git(seed, 'fetch', '--quiet', 'origin', 'main')
+        expect(git(seed, 'log', '--format=%s', 'FETCH_HEAD').split('\n').filter(Boolean))
+          .toEqual(['bot', 'human edits human', 'base'])
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+
+    it(`"${label}" retries once when the push is rejected, and says so`, () => {
+      const { dir, seed, runner } = sandbox()
+      try {
+        writeFileSync(join(runner, 'bot'), 'bot\n')
+        git(runner, 'add', 'bot')
+        git(runner, 'commit', '--quiet', '-m', 'bot')
+        armRace(dir, runner, seed)
+        const { status, out } = runPush(dir, runner, pushFunction(step))
+        expect(status).toBe(0)
+        expect(out.match(/::warning::/g) ?? []).toHaveLength(1)
+        expect(out).not.toContain('::error::')
+        git(seed, 'fetch', '--quiet', 'origin', 'main')
+        expect(git(seed, 'log', '--format=%s', 'FETCH_HEAD').split('\n').filter(Boolean))
+          .toEqual(['bot', 'race', 'base'])
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+
+    it(`"${label}" fails loudly when the rebase cannot be completed`, () => {
+      const { dir, seed, runner } = sandbox()
+      try {
+        // Both sides edit the same line of the same file: the rebase conflicts,
+        // aborts, and the un-rebased push is rejected on both attempts. Landing
+        // nothing is correct here; landing it with `-X ours` would silently
+        // discard whatever the other side committed.
+        humanPush(seed, 'f', 'theirs\n')
+        writeFileSync(join(runner, 'f'), 'ours\n')
+        git(runner, 'add', 'f')
+        git(runner, 'commit', '--quiet', '-m', 'bot edits f')
+        const { status, out } = runPush(dir, runner, pushFunction(step))
+        expect(status).toBe(1)
+        expect(out.match(/::warning::/g) ?? []).toHaveLength(2)
+        expect(out).toContain('::error::')
+        // The runner is left on a usable branch, not mid-rebase.
+        expect(git(runner, 'status', '--porcelain=v1', '--branch')).toContain('## main')
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+  }
 })
