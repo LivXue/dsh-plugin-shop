@@ -134,8 +134,9 @@ them are the reason the shelf is worth reading:
    submitted; there is no queue.
 2. **Gate every candidate.** The last build examined 20,891 of them and **rejected
    11,514** — 55%. A package with no `dsh.bundle` is a library, not a plugin. No
-   license or no repository means nothing can be audited. A build script or a
-   `workspace:` dependency means the install would fail on your machine. A name a hair
+   license or no repository means nothing can be audited. Deprecated on npm is out; a
+   repository listing additionally needs no build scripts and no `workspace:`
+   dependencies, either of which would fail the install on your machine. A name a hair
    away from a popular one is held until someone clears it. Seventeen recorded
    reasons, all mechanical, and every rejection carries a line its author can read.
 3. **Classify and record.** Seven categories, and the peer modules each plugin

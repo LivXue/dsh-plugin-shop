@@ -47,51 +47,63 @@ English | [中文](README.zh.md)
 
 ## 🗺️ How it fits together
 
+**In this repository — the daily build.** Everything here is `registry/`.
+
 ```mermaid
 flowchart TB
   subgraph HARVEST["1 · Harvest — the whole public registry, every day"]
     direction LR
-    NPM(["npm packages<br/>keyword: dsh-plugin · deepseek-harness"])
-    GH(["GitHub repositories<br/>the same keywords, as topics"])
+    NPM(["npm packages<br/>keyword dsh-plugin<br/>keyword deepseek-harness"])
+    GH(["GitHub repositories<br/>the same keywords,<br/>used as topics"])
   end
 
-  subgraph GATE["2 · Gate — every candidate, every build"]
-    direction TB
-    G1["Is it a plugin at all?<br/>a dsh.bundle the loader can mount"]
-    G2["Can it be audited?<br/>a license · a repository · still reachable"]
-    G3["Can it be installed?<br/>no build scripts · no workspace deps · not deprecated"]
-    G4["Is it what it claims?<br/>tarball integrity · publish time · not a near-miss of another name"]
-    G5["Is there anything to show?<br/>a valid dsh.catalog, or an npm description"]
-    G1 --> G2 --> G3 --> G4 --> G5
+  subgraph GATE["2 · Gate — every candidate must clear all five, on every build"]
+    direction LR
+    G1["a plugin at all?<br/><br/>a dsh.bundle the<br/>loader can mount"]
+    G2["auditable?<br/><br/>a license,<br/>a live repository"]
+    G3["installable?<br/><br/>not deprecated on npm ·<br/>repo listings also need<br/>no build scripts and<br/>no workspace: deps"]
+    G4["what it claims?<br/><br/>tarball integrity, publish time,<br/>not a near-miss of another name"]
+    G5["anything to show?<br/><br/>a valid dsh.catalog,<br/>or an npm description"]
   end
 
-  subgraph SHELVE["3 · Shelve"]
-    direction TB
-    CAT["Classify into 7 categories"]
-    PEER["Record declared peerDependencies<br/>names only, never version ranges"]
+  subgraph SHELVE["3 · Shelve — what the catalog records"]
+    direction LR
+    CAT["one of 7 categories"]
+    PEER["the declared peer NAMES,<br/>never their version ranges"]
   end
 
-  HARVEST --> GATE
-  GATE -->|"rejected"| REJ[["rejection report<br/>one author-readable reason per name"]]
-  GATE -->|"accepted"| SHELVE
-  SHELVE --> PUB[["4 · index.json + plugins.sha256.json<br/>committed, then GitHub Pages and npm"]]
-  PUB --> HOST["5 · Host half<br/>races every origin, verifies sha256, caches"]
-  HOST --> DEP{"6 · Dependency check<br/>resolve each recorded peer<br/>against YOUR profile"}
-  DEP -->|"one or more absent"| BAD["Incompatible<br/>the card names what is missing"]
-  DEP -->|"all resolve"| GOOD["installable"]
-  BAD --> CLIENT["Client half — the Settings tab<br/>nine shop/* methods, no network, no filesystem"]
-  GOOD --> CLIENT
-  CLIENT -->|"dsh plugin add"| PROF[("your dsh profile")]
+  NPM --> G1
+  GH --> G1
+  G1 -.-> REJ
+  G2 -.-> REJ
+  G3 -.-> REJ
+  G4 -.-> REJ
+  G5 -.-> REJ
+  REJ[["rejected — one author-readable reason per name"]]
+  G5 ==>|"all five clear"| CAT
+  PEER ==> PUB[["4 · Publish — content-addressed JSON, committed to git, then GitHub Pages and npm"]]
 ```
 
-Steps 1–4 are this repository's `registry/`. Steps 5–6 are the npm package in
-`packages/dsh-plugin-shop/`. They share no code — only the schema.
+**On your machine — the npm package.** Everything here is `packages/dsh-plugin-shop/`.
+The two halves share no code, only the schema.
 
-Two parts of that diagram are worth naming, because they are the ones people expect
-to work differently:
+```mermaid
+flowchart LR
+  CAT[["the catalog<br/>index.json + plugins.sha256.json"]]
+  CAT ==> HOST["5 · Host half<br/>races every origin<br/>verifies sha256 · caches"]
+  HOST ==> DEP{"6 · Dependency check<br/>resolve each recorded peer<br/>against YOUR profile"}
+  DEP -->|"one or more absent"| BAD["Incompatible<br/>the card names<br/>what is missing"]
+  DEP -->|"all resolve"| GOOD["installable"]
+  BAD --> CLIENT["Client half — the Settings tab<br/>nine shop/* methods<br/>no network · no filesystem"]
+  GOOD --> CLIENT
+  CLIENT ==>|"dsh plugin add"| PROF[("your dsh profile")]
+```
 
-- **The gate rejects; it never silently drops.** A candidate that fails becomes a
-  named rejection with a reason, attached to the build. Nothing vanishes quietly.
+Two parts are worth naming, because they are the ones people expect to work
+differently:
+
+- **The gate rejects; it never silently drops.** Every candidate that fails becomes a
+  named rejection with a reason, attached to the build.
 - **The dependency check is not a catalog fact.** The build records only the peer
   *names* — never their version ranges, because nearly every dsh plugin declares
   `"*"` and the harness's own prereleases do not satisfy ordinary ranges, so checking

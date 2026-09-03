@@ -47,50 +47,61 @@
 
 ## 🗺️ 整体是怎么串起来的
 
+**在本仓库里 —— 每日构建。** 这部分全属于 `registry/`。
+
 ```mermaid
 flowchart TB
-  subgraph HARVEST["1 · 采集 —— 每天扫一遍公共 registry"]
+  subgraph HARVEST["1 · 采集 —— 每天扫一遍整个公共 registry"]
     direction LR
-    NPM(["npm 包<br/>关键字：dsh-plugin · deepseek-harness"])
-    GH(["GitHub 仓库<br/>同样的关键字，作为 topic"])
+    NPM(["npm 包<br/>关键字 dsh-plugin<br/>关键字 deepseek-harness"])
+    GH(["GitHub 仓库<br/>同样的关键字，<br/>用作 topic"])
   end
 
-  subgraph GATE["2 · 闸门 —— 每个候选，每次构建"]
-    direction TB
-    G1["它到底是插件吗？<br/>有 loader 能挂载的 dsh.bundle"]
-    G2["它能被审查吗？<br/>有许可证 · 有仓库 · 仓库还在"]
-    G3["它装得上吗？<br/>无构建脚本 · 无 workspace 依赖 · 未废弃"]
-    G4["它是它声称的东西吗？<br/>包体完整性 · 发布时间 · 不是别人名字的差一字版本"]
-    G5["有东西可展示吗？<br/>合法的 dsh.catalog，或一句 npm description"]
-    G1 --> G2 --> G3 --> G4 --> G5
+  subgraph GATE["2 · 闸门 —— 每个候选每次构建都要全部过关"]
+    direction LR
+    G1["到底是插件吗？<br/><br/>有 loader 能挂载的<br/>dsh.bundle"]
+    G2["能被审查吗？<br/><br/>有许可证，<br/>仓库还在"]
+    G3["装得上吗？<br/><br/>npm 上未废弃 ·<br/>仓库来源还要求<br/>无构建脚本、<br/>无 workspace: 依赖"]
+    G4["是它声称的东西吗？<br/><br/>包体完整性、发布时间、<br/>不是别人名字的差一字版本"]
+    G5["有东西可展示吗？<br/><br/>合法的 dsh.catalog，<br/>或一句 npm description"]
   end
 
-  subgraph SHELVE["3 · 上架"]
-    direction TB
-    CAT["归入 7 个分类"]
-    PEER["记录声明的 peerDependencies<br/>只留名字，从不留版本范围"]
+  subgraph SHELVE["3 · 上架 —— 目录记下什么"]
+    direction LR
+    CAT["七个分类中的一个"]
+    PEER["声明的 peer 名字，<br/>从不记版本范围"]
   end
 
-  HARVEST --> GATE
-  GATE -->|"拒收"| REJ[["拒收报告<br/>每个名字一条作者能读懂的理由"]]
-  GATE -->|"通过"| SHELVE
-  SHELVE --> PUB[["4 · index.json + plugins.sha256.json<br/>先提交进仓库，再发到 GitHub Pages 与 npm"]]
-  PUB --> HOST["5 · Host 半边<br/>竞速所有来源、校验 sha256、缓存"]
-  HOST --> DEP{"6 · 依赖检查<br/>把记录下的每个 peer<br/>拿到你自己的 profile 里解析"}
-  DEP -->|"有一个解析不到"| BAD["不兼容<br/>卡片直接列出缺了什么"]
-  DEP -->|"全部解析得到"| GOOD["可安装"]
-  BAD --> CLIENT["Client 半边 —— 设置页标签<br/>只有九个 shop/* 方法，无网络、无文件系统"]
-  GOOD --> CLIENT
-  CLIENT -->|"dsh plugin add"| PROF[("你的 dsh profile")]
+  NPM --> G1
+  GH --> G1
+  G1 -.-> REJ
+  G2 -.-> REJ
+  G3 -.-> REJ
+  G4 -.-> REJ
+  G5 -.-> REJ
+  REJ[["拒收 —— 每个名字一条作者能读懂的理由"]]
+  G5 ==>|"五项全过"| CAT
+  PEER ==> PUB[["4 · 发布 —— 内容寻址的 JSON，先提交进 git，再发到 GitHub Pages 与 npm"]]
 ```
 
-第 1–4 步属于本仓库的 `registry/`，第 5–6 步属于 `packages/dsh-plugin-shop/` 里的 npm 包。
-两者不共享代码，只共享 schema。
+**在你的机器上 —— npm 包。** 这部分全属于 `packages/dsh-plugin-shop/`。
+两半不共享代码，只共享 schema。
 
-图里有两处值得单独点出来，因为它们跟一般人的预期不同：
+```mermaid
+flowchart LR
+  CAT[["目录<br/>index.json + plugins.sha256.json"]]
+  CAT ==> HOST["5 · Host 半边<br/>竞速所有来源<br/>校验 sha256 · 缓存"]
+  HOST ==> DEP{"6 · 依赖检查<br/>把记录的每个 peer<br/>拿到你的 profile 里解析"}
+  DEP -->|"有解析不到的"| BAD["不兼容<br/>卡片列出<br/>缺了什么"]
+  DEP -->|"全部解析得到"| GOOD["可安装"]
+  BAD --> CLIENT["Client 半边 —— 设置页标签<br/>九个 shop/* 方法<br/>无网络 · 无文件系统"]
+  GOOD --> CLIENT
+  CLIENT ==>|"dsh plugin add"| PROF[("你的 dsh profile")]
+```
 
-- **闸门是"拒收"，不是"悄悄丢掉"。** 没过的候选会变成一条带理由的具名拒收，附在那次构建上。
-  没有东西会不声不响地消失。
+有两处值得单独点出来，因为它们跟一般人的预期不同：
+
+- **闸门是"拒收"，不是"悄悄丢掉"。** 每个没过的候选都会变成一条带理由的具名拒收，附在那次构建上。
 - **依赖检查不是目录里的事实。** 构建只记 peer 的**名字**，从不记版本范围——因为几乎每个 dsh
   插件都声明 `"*"`，而 harness 自己发的预发布版本又不满足普通范围，真按范围校验，第一批被打成
   不兼容的就是那些实际能跑的插件。名字解析得到与否，由你的安装、对着你的 profile 决定。
