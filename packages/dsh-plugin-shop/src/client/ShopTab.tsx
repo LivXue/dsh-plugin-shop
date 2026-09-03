@@ -473,11 +473,22 @@ function UninstallPanel({ name, t, uninstall, installStatus, restart, restartSup
  * once the NEW server answers. A refused restart renders the host's
  * published detail; a server that never comes back names the manual
  * command. */
-function RestartPanel({ t, restart }: {
+function RestartPanel({ t, restart, gate }: {
   t: ShopTabProps['t']
   restart: ShopTabInjected['restart']
+  /** When given, the TRIGGER lives elsewhere — the version row — and this
+   * panel renders only the confirmation and the outcome. Restarting drops
+   * every live conversation, so moving the button must not move it past the
+   * gate: both entry points open this same one, and only its confirm calls
+   * the RPC. */
+  gate?: { open: boolean; close: () => void }
 }): ReactNode {
-  const [gateOpen, setGateOpen] = useState(false)
+  const [ownGateOpen, setOwnGateOpen] = useState(false)
+  const gateOpen = gate === undefined ? ownGateOpen : gate.open
+  const setGateOpen = (open: boolean): void => {
+    if (gate === undefined) setOwnGateOpen(open)
+    else if (!open) gate.close()
+  }
   const [state, setState] = useState<{ kind: 'idle' } | { kind: 'restarting' } | { kind: 'failed'; detail: string }>({ kind: 'idle' })
 
   const onConfirm = async (): Promise<void> => {
@@ -547,6 +558,9 @@ function RestartPanel({ t, restart }: {
       </div>
     )
   }
+  // An external trigger owns the button; this panel is then only the gate and
+  // the outcome, and renders nothing while idle.
+  if (gate !== undefined) return null
   return (
     <button
       type="button"
@@ -722,6 +736,10 @@ export function ShopTab(props: ShopTabProps): ReactNode {
   // deployment then gets the host's published refusal detail, and a failed
   // check never passes the systemd claim off as fact.
   const restartSupported = selfVersion?.restartSupported ?? true
+  // Lifted so the version row's Restart button and the confirmation below are
+  // the same gate rather than two. Only the self-update path needs this; the
+  // per-plugin panels keep RestartPanel's own state.
+  const [selfRestartGate, setSelfRestartGate] = useState(false)
   const selfUpdate = useUpdateSelf(updateStart, installStatus)
   const [request, setRequest] = useState<LoadRequest>({ kind: 'initial' })
   // A refresh deliberately leaves the current shelf on screen (§10), so the
@@ -1018,14 +1036,26 @@ export function ShopTab(props: ShopTabProps): ReactNode {
           {selfVersion !== null && (
             <div className={css.versionBlock}>
               <span className={css.versionText} data-shop-version>v{selfVersion.installed}</span>
-              {/* One control, one job: Update TAKES THE PLACE of Check rather
-                * than joining it. While both rendered, the row asked the user
-                * to pick between them when only one was ever the thing to do,
-                * and it did so on the row that already wraps at ordinary
-                * widths. Once an update is running the offer is gone and Check
-                * returns, which is what it did before too — the progress panel
-                * below is the affordance for that state. */}
-              {selfVersion.outdated && selfVersion.latest !== null && selfUpdate.view.kind === 'idle' ? (
+              {/* One control, one job, three states in sequence: Check ->
+                * Update -> Restart. Each replaces the last rather than joining
+                * it — while Check and Update both rendered, the row asked the
+                * user to pick between two buttons when only one was ever the
+                * thing to do, on a row that already wraps at ordinary widths.
+                * The shop cannot swap itself live, so a landed self-update
+                * always ends in a restart; the button carries it, and the gate
+                * for it still renders in the panel below. While the update
+                * runs, Check returns and the progress panel is the
+                * affordance. */}
+              {selfUpdate.view.kind === 'done' && restartSupported ? (
+                <button
+                  type="button"
+                  className={css.restartSelfButton}
+                  data-shop-restart
+                  onClick={() => setSelfRestartGate(true)}
+                >
+                  {t('restart')}
+                </button>
+              ) : selfVersion.outdated && selfVersion.latest !== null && selfUpdate.view.kind === 'idle' ? (
                 <button
                   type="button"
                   className={css.updateSelfButton}
@@ -1095,7 +1125,13 @@ export function ShopTab(props: ShopTabProps): ReactNode {
             <p className={css.notice}>{t('installedRestartNotice')}</p>
             {/* The shop cannot swap itself live; the restart offer carries
                 the same §C-1 gate as the install and uninstall flows. */}
-            {restartSupported && <RestartPanel t={t} restart={restart} />}
+            {restartSupported && (
+              <RestartPanel
+                t={t}
+                restart={restart}
+                gate={{ open: selfRestartGate, close: () => setSelfRestartGate(false) }}
+              />
+            )}
             {!restartSupported && (
               <p className={css.notice} data-shop-restart-disabled>{t('restartDisabledNotice')}</p>
             )}

@@ -531,9 +531,45 @@ describe('ShopTab', () => {
     expect(button).not.toBeNull()
     fireEvent.click(button!)
     await waitFor(() => expect(updateStart).toHaveBeenCalledWith({ version: '0.4.4' }))
-    // The poll reports done; the panel carries the restart offer.
+    // The poll reports done. The restart offer is the version row's third
+    // state now, not a button inside the panel — the panel keeps the notice
+    // and, once the row's button is pressed, the confirmation.
     await waitFor(() => expect(container.querySelector('[data-shop-self-update-done]')).toBeTruthy(), { timeout: 3000 })
-    expect(container.querySelector('[data-shop-self-update-done] [data-shop-restart]')).toBeTruthy()
+    expect(container.querySelector('[data-shop-version]')?.parentElement?.querySelector('[data-shop-restart]')).toBeTruthy()
+  })
+
+  it('turns the version row into Restart once the self-update lands', async () => {
+    // The row is one evolving control: Check -> Update -> Restart. Each state
+    // has exactly one thing to do, and the row already wraps at ordinary
+    // panel widths, so it must never carry two of them at once.
+    const { injected, version, updateStart } = bench(snapshot())
+    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartSupported: true })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('v0.4.3')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-update-self]')!)
+    await waitFor(() => expect(updateStart).toHaveBeenCalledWith({ version: '0.4.4' }))
+    await waitFor(() => expect(container.querySelector('[data-shop-self-update-done]')).toBeTruthy(), { timeout: 3000 })
+    const row = container.querySelector('[data-shop-version]')?.parentElement
+    expect(row?.querySelector('[data-shop-restart]')).toBeTruthy()
+    expect(row?.querySelector('[data-shop-check-update]')).toBeNull()
+    expect(row?.querySelector('[data-shop-update-self]')).toBeNull()
+  })
+
+  it('still gates the restart behind its confirmation when driven from the row', async () => {
+    // Restarting interrupts every live conversation, so moving the trigger
+    // must not move it past the gate: the row opens the same confirm, and
+    // only that confirm calls the RPC.
+    const { injected, version, restart } = bench(snapshot())
+    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartSupported: true })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('v0.4.3')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-update-self]')!)
+    await waitFor(() => expect(container.querySelector('[data-shop-self-update-done]')).toBeTruthy(), { timeout: 3000 })
+    fireEvent.click(container.querySelector('[data-shop-restart]')!)
+    await waitFor(() => expect(container.querySelector('[data-shop-restart-confirm]')).toBeTruthy())
+    expect(restart).not.toHaveBeenCalled()
+    fireEvent.click(container.querySelector('[data-shop-restart-confirm]')!)
+    await waitFor(() => expect(restart).toHaveBeenCalled())
   })
 
   it('hides the restart offer in the self-update panel when restart is unsupported', async () => {
