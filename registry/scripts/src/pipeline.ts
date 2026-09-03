@@ -59,5 +59,5 @@ export function runPipeline(
     if (result.ok) entries.push(assignRepoTier(result.accepted, config))
     else rejections.push(result.rejection)
   }
-  return emit(entries, rejections, builtAt, stars, schemaVersion)
+  return emit(entries, rejections, builtAt, stars, schemaVersion, config.notAShop)
 }

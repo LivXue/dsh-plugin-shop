@@ -30,6 +30,16 @@ const categoriesSchema = z.array(z.object({
   category: z.enum(CATEGORIES),
 }).strict())
 
+/** `not-a-shop.yml`: names the client's shop-like NAME filter catches that are
+ * not competing plugin markets. `by` records human or llm, so a wrong LLM
+ * verdict is visible and correctable; `reason` says what the plugin actually
+ * is, because the name already misled once. */
+const notAShopSchema = z.array(z.object({
+  name: z.string().min(1),
+  by: z.enum(['human', 'llm']),
+  reason: z.string().min(1),
+}).strict())
+
 const firstSeenSchema = z.array(z.object({
   name: z.string().min(1),
   added: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -44,6 +54,9 @@ export interface RegistryConfig {
   denied: Map<string, { reason: string; replacement?: string }>
   /** Names cleared past the similarity hold. */
   allowedSimilar: Set<string>
+  /** Names cleared past the client's shop-like name filter: entries whose name
+   * reads like a plugin market but which are not one. */
+  notAShop: Set<string>
   /** Package name to its LLM-assigned category (spec 2026-08-26-llm-categorization-design.md). */
   categories: Map<string, Category>
   /** Package name to the date it first entered the catalog (YYYY-MM-DD). */
@@ -78,17 +91,21 @@ function setUnique<V>(map: Map<string, V>, label: string, name: string, value: V
 }
 
 /**
- * Parse the five registry files from their text.
+ * Parse the six registry files from their text.
  * @param input - the raw text of each file.
  * @returns the parsed configuration.
  * @throws when any file is malformed, or when `verified.yml`, `denied.yml`,
- *   `categories.yml`, or `first-seen.yml` lists the same package name twice.
+ *   `not-a-shop.yml`, `categories.yml`, or `first-seen.yml` lists the same
+ *   package name twice.
  */
 export function parseRegistryConfig(
   input: {
     verified: string
     denied: string
     allowedSimilar: string
+    /** Optional so the five callers that predate this file stay valid; the
+     * loader always passes it. */
+    notAShop?: string
     categories: string
     firstSeen: string
   },
@@ -112,6 +129,11 @@ export function parseRegistryConfig(
     })
   }
   const allowedSimilar = new Set(parseFile('allowed-similar.yml', input.allowedSimilar, allowedSimilarSchema))
+  const notAShopRows = new Map<string, string>()
+  for (const row of parseFile('not-a-shop.yml', input.notAShop ?? '[]', notAShopSchema)) {
+    setUnique(notAShopRows, 'not-a-shop.yml', row.name, row.reason)
+  }
+  const notAShop = new Set(notAShopRows.keys())
   const categories = new Map<string, Category>()
   for (const row of parseFile('categories.yml', input.categories, categoriesSchema)) {
     setUnique(categories, 'categories.yml', row.name, row.category)
@@ -120,7 +142,7 @@ export function parseRegistryConfig(
   for (const row of parseFile('first-seen.yml', input.firstSeen, firstSeenSchema)) {
     setUnique(firstSeen, 'first-seen.yml', row.name, row.added)
   }
-  return { verified, denied, allowedSimilar, categories, firstSeen }
+  return { verified, denied, allowedSimilar, notAShop, categories, firstSeen }
 }
 
 /**
@@ -133,6 +155,7 @@ export function loadRegistryConfig(dir: string): RegistryConfig {
     verified: readFileSync(join(dir, 'verified.yml'), 'utf8'),
     denied: readFileSync(join(dir, 'denied.yml'), 'utf8'),
     allowedSimilar: readFileSync(join(dir, 'allowed-similar.yml'), 'utf8'),
+    notAShop: readOptional(dir, 'not-a-shop.yml'),
     categories: readOptional(dir, 'categories.yml'),
     firstSeen: readOptional(dir, 'first-seen.yml'),
   })

@@ -439,6 +439,31 @@ describe('ShopTab', () => {
     expect(button.disabled).toBe(false)
   })
 
+  it('shelves a shop-like name the catalog cleared in not-a-shop.yml', async () => {
+    // The name filter reads NAMES, and a name cannot say whether a plugin
+    // stores tea or sells plugins. Audited against the live catalog on
+    // 2026-09-02: of the 73 names it caught, 20 were not competing markets —
+    // 存茶指南, 腌菜保存, an A-share quant plugin whose "market" is the stock
+    // market, a session-log plugin whose "store" is a verb.
+    //
+    // Asserted through the SHELF, not the field: the entry has to come back
+    // and be counted, which is what the exemption is for.
+    const result = snapshot()
+    const first = result.plugins[0]
+    if (first === undefined) throw new Error('fixture has no entry')
+    result.plugins.push({ ...first, name: 'dsh-tea-store' })
+    const hidden = renderTab(bench(result).injected)
+    await waitFor(() => expect(hidden.container.querySelector('[data-shop-category-all]')).toBeTruthy())
+    expect(hidden.container.querySelector('[data-shop-category-all]')?.textContent).toContain('1')
+    hidden.unmount()
+
+    result.notAShop = ['dsh-tea-store']
+    const { container } = renderTab(bench(result).injected)
+    await waitFor(() => expect(container.querySelector('[data-shop-category-all]')).toBeTruthy())
+    expect(container.querySelector('[data-shop-category-all]')?.textContent).toContain('2')
+    await waitFor(() => expect(screen.getByText('dsh-tea-store')).toBeTruthy())
+  })
+
   it('counts the same packages in the catalog line as on the All tab', async () => {
     // These two numbers came from different places and drifted. The line read
     // `plugins.length` — every entry — while the All tab summed the category

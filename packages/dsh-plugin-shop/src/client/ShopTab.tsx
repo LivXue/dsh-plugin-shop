@@ -858,8 +858,14 @@ export function ShopTab(props: ShopTabProps): ReactNode {
   // check for github entries.
   const browsable = useMemo(() => {
     if (catalogState.kind !== 'ready') return []
+    // `notAShop` is the catalog's own exemption list (registry/not-a-shop.yml):
+    // the name filter reads names, and a name cannot say whether a plugin
+    // stores tea or sells plugins. It travels with the data, so a correction
+    // lands on the next daily build instead of the client's next release.
+    const cleared = new Set(catalogState.result.notAShop ?? [])
     return catalogState.result.plugins.filter(entry =>
-      !isShopLike(entry.name) && (entry.repo === undefined || !isShopLike(entry.repo)))
+      cleared.has(entry.name)
+      || (!isShopLike(entry.name) && (entry.repo === undefined || !isShopLike(entry.repo))))
   }, [catalogState])
 
   const filtered = useMemo(() => {

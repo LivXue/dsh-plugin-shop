@@ -99,6 +99,7 @@ export function assertCatalogInvariants(entries: Entry[], builtAt: string): void
  * @param rejections - every rejected candidate with its reason.
  * @param builtAt - ISO 8601 build timestamp, supplied by the caller.
  * @param stars - optional pointer to a published stars sidecar; omitted from the index when null.
+ * @param notAShop - names cleared past the client's shop-like NAME filter.
  * @returns the artifacts to publish and commit.
  */
 export function emit(
@@ -107,6 +108,7 @@ export function emit(
   builtAt: string,
   stars?: StarsPointer | null,
   schemaVersion: number = SCHEMA_VERSION,
+  notAShop: ReadonlySet<string> = new Set(),
 ): Artifacts {
   assertCatalogInvariants(entries, builtAt)
   // Below v5 the catalog must not carry the `theme` category: `theme` is a
@@ -141,7 +143,18 @@ export function emit(
       ...(r.replacement !== undefined ? { replacement: r.replacement } : {}),
     }))
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-  const pluginsJson = `${JSON.stringify({ schemaVersion, plugins: sorted, denied }, null, 2)}\n`
+  // The client hides entries whose NAME reads like a competing plugin market.
+  // That heuristic cannot tell a plugin storing tea from one selling plugins,
+  // so `not-a-shop.yml` clears the ones a human or the classifier judged
+  // innocent, and the verdict rides with the data rather than the client —
+  // a client-side list would only take effect on its next release, while this
+  // lands on the next daily build. Restricted to names actually listed, and
+  // sorted, so the content hash follows the catalog and not the file's order.
+  const notAShopListed = sorted
+    .map(entry => entry.name)
+    .filter(name => notAShop.has(name))
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  const pluginsJson = `${JSON.stringify({ schemaVersion, plugins: sorted, denied, notAShop: notAShopListed }, null, 2)}\n`
   const sha256 = createHash('sha256').update(pluginsJson).digest('hex')
   const pluginsFileName = `plugins.${sha256}.json`
 

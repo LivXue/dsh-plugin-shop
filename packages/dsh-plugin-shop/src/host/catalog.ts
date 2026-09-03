@@ -122,6 +122,12 @@ const dataSchema = z.object({
   plugins: z.array(entrySchema),
   // v5: `replacement` names the known substitute on a denial.
   denied: z.array(z.object({ name: z.string(), detail: z.string(), replacement: z.string().optional() })).default([]),
+  /** Names the client's shop-like NAME filter must NOT hide: entries whose
+   * name reads like a competing plugin market but which are not one
+   * (registry/not-a-shop.yml). Defaulted, so a catalog built before this key
+   * existed still parses — the data file is non-strict for the same reason
+   * the pointer is. */
+  notAShop: z.array(z.string()).default([]),
 })
 
 /** The tarball URL must be the entry's own GitHub release — path segments
@@ -169,6 +175,11 @@ export interface CatalogSnapshot {
   builtAt: string
   entries: CatalogEntry[]
   denied: DeniedEntry[]
+  /** Names the shop-like NAME filter must not hide (registry/not-a-shop.yml).
+   * Absent for a catalog built before the key existed, which is why it is
+   * optional rather than defaulted here: the parse defaults it, a snapshot
+   * assembled by hand need not carry it. */
+  notAShop?: string[]
   /** GitHub star counts by package name; {} when the pointer names no
    * sidecar or the sidecar could not be fetched/verified (spec §5). */
   stars: Record<string, number>
@@ -312,6 +323,7 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
       builtAt: pointer.builtAt,
       entries: data.plugins,
       denied: data.denied,
+      notAShop: data.notAShop,
       stars,
     }
   }
@@ -425,6 +437,7 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
     builtAt: pointer.builtAt,
     entries: data.plugins,
     denied: data.denied,
+    notAShop: data.notAShop,
     stars,
   }
   fsImpl.write(indexPath, JSON.stringify(pointer))

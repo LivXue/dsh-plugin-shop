@@ -237,6 +237,9 @@ export interface ShopCatalogResult {
   stale: boolean
   plugins: CatalogEntry[]
   denied: DeniedEntry[]
+  /** Names whose shop-like NAME must not hide them from the shelf
+   * (registry/not-a-shop.yml). Absent for a catalog built before the key. */
+  notAShop?: string[]
   /** GitHub star counts by package name; {} when the pointer names no sidecar
    * or the sidecar could not be fetched/verified (§5). */
   stars: Record<string, number>
@@ -605,6 +608,7 @@ export class ShopGateway extends TypertRemoteService {
       stale,
       plugins: snapshot.entries,
       denied: snapshot.denied,
+      notAShop: snapshot.notAShop ?? [],
       stars: snapshot.stars,
       incompatible,
     }
