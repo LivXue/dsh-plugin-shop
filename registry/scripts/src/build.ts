@@ -26,6 +26,19 @@ import { CATALOG_SCHEMA_VERSION, SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION } fro
 import { assembleStarsByKey } from './stars-assemble.ts'
 import type { Candidate, Rejection, RepoCandidate } from './types.ts'
 
+// Real work — network fetches, and filesystem writes that overwrite
+// registry/snapshots/manifest.lock and registry/first-seen.yml — belongs to
+// the entry point alone, never to an import.
+// registry/scripts/tests/strip-types.test.ts dynamically imports every entry
+// point under --experimental-strip-types to prove the syntax is supported;
+// emit-schema.ts already draws this same line so schema.test.ts can import
+// renderJsonSchema without writing the schema file. `node -e` leaves
+// process.argv[1] undefined, so a bare import never matches this and the
+// module exits before any of the real work below runs.
+if (process.argv[1]?.endsWith('build.ts') !== true) {
+  process.exit(0)
+}
+
 // `classify.ts` writes the harvest it already paid for; the workflow passes it
 // here so the daily run does not fetch the ecosystem twice.
 const harvestFromIndex = process.argv.indexOf('--harvest-from')
@@ -48,8 +61,15 @@ const npmToken = process.env.NPM_TOKEN
 // install path still runs through the user's own pnpm and registry config, and
 // NPM_TOKEN never travels here — it is an npmjs.org credential and this URL is
 // operator-supplied. Default-on per the 2026-08-31 hub-borrowings design (C);
-// an empty string disables it, which fetchWithFailover now honors.
-const npmBackupRegistry = process.env.NPM_BACKUP_REGISTRY ?? 'https://registry.npmmirror.com'
+// an empty string (or an all-whitespace value) disables it, which
+// fetchWithFailover honors (D-6, Task 3). A non-empty value that is not a URL
+// is a typo, not a disable, so it is rejected below rather than silently
+// reaching fetchWithFailover as "no backup".
+const rawBackupRegistry = process.env.NPM_BACKUP_REGISTRY
+if (rawBackupRegistry !== undefined && rawBackupRegistry.trim() !== '' && !URL.canParse(rawBackupRegistry)) {
+  throw new Error('NPM_BACKUP_REGISTRY is not a URL; use an empty string to disable')
+}
+const npmBackupRegistry = rawBackupRegistry ?? 'https://registry.npmmirror.com'
 
 // The same token the stars sidecar uses; also the GitHub API's quota key.
 const ghToken = process.env.GITHUB_TOKEN ?? ''
@@ -61,8 +81,9 @@ if (harvestFrom === undefined) {
   // registry.npmmirror.com does not implement the `keywords:` qualifier this
   // search depends on — measured 2026-09-03, it answers
   // `{"objects":[],"total":0}` for both harvest keywords. A numeric zero
-  // total slips past Task 1's coverage guards (min(0, 0) = 0 passes), so a
-  // stalled or 5xx npmjs search would publish a zero-name harvest with a
+  // total slips past the coverage guards from Task 1 (D-1,
+  // docs/plans/2026-09-03-audit-fix-a-urgent.md) — min(0, 0) = 0 passes — so
+  // a stalled or 5xx npmjs search would publish a zero-name harvest with a
   // green build rather than failing loud. The search below therefore takes
   // no backup argument; classify.ts's harvest call carries the same fix.
   const names = await searchByKeywords(fetch, undefined, npmToken)

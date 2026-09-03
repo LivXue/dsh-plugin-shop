@@ -187,8 +187,10 @@ class FetchTimeoutError extends Error {}
  * wrapping it as a generic, invented-sounding transport failure.
  */
 class PrimaryStatusError extends Error {
-  constructor(public readonly status: number) {
+  readonly status: number
+  constructor(status: number) {
     super(`npm registry returned ${status}`)
+    this.status = status
   }
 }
 

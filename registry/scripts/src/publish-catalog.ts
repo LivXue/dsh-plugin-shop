@@ -17,6 +17,18 @@ import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'no
 import { join } from 'node:path'
 import { catalogPackageFiles, nextCatalogVersion } from './npm-package.ts'
 
+// Real work — resolving the published packument over the network and, past
+// that, an actual `npm publish` — belongs to the entry point alone, never to
+// an import. registry/scripts/tests/strip-types.test.ts dynamically imports
+// every entry point under --experimental-strip-types to prove the syntax is
+// supported; emit-schema.ts already draws this same line so schema.test.ts
+// can import renderJsonSchema without writing the schema file. `node -e`
+// leaves process.argv[1] undefined, so a bare import never matches this and
+// the module exits before any of the real work below runs.
+if (process.argv[1]?.endsWith('publish-catalog.ts') !== true) {
+  process.exit(0)
+}
+
 const OUT_DIR = 'dist/v1'
 const PKG_DIR = 'dist/npm'
 const PACKAGE_NAME = 'dsh-plugin-shop-catalog'

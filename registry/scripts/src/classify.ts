@@ -27,6 +27,19 @@ import { fetchCandidates, searchByKeywords } from './npm-client.ts'
 import { parseRepoState } from './repo-state.ts'
 import type { Category, RepoCandidate } from './types.ts'
 
+// Real work — a live npm harvest, an LLM call, and filesystem writes that
+// overwrite registry/categories.yml and registry/markets.yml — belongs to
+// the entry point alone, never to an import.
+// registry/scripts/tests/strip-types.test.ts dynamically imports every entry
+// point under --experimental-strip-types to prove the syntax is supported;
+// emit-schema.ts already draws this same line so schema.test.ts can import
+// renderJsonSchema without writing the schema file. `node -e` leaves
+// process.argv[1] undefined, so a bare import never matches this and the
+// module exits before any of the real work below runs.
+if (process.argv[1]?.endsWith('classify.ts') !== true) {
+  process.exit(0)
+}
+
 const REGISTRY_DIR = 'registry'
 const OUT_DIR = 'dist/v1'
 
@@ -43,18 +56,25 @@ const npmToken = process.env.NPM_TOKEN
 // `--harvest-from dist/v1/harvest.json` so the ecosystem is fetched once. That
 // made the mirror failover from the 2026-08-31 hub-borrowings design (C) dead
 // code in production — build.ts had it and this path did not. Same default as
-// build.ts. An empty string disables the backup exactly like leaving it
-// unset: `fetchWithFailover` treats `''` (and any all-whitespace value)
-// identically to `undefined` (D-6, Task 3).
+// build.ts. An empty string (or an all-whitespace value) disables the backup
+// exactly like leaving it unset: `fetchWithFailover` treats `''` identically
+// to `undefined` (D-6, Task 3). A non-empty value that is not a URL is a
+// typo, not a disable, so it is rejected below rather than silently reaching
+// fetchWithFailover as "no backup".
 //
 // This is the packument path ONLY. registry.npmmirror.com does not implement
 // the `keywords:` qualifier `searchByKeywords` depends on — measured
 // 2026-09-03, it answers `{"objects":[],"total":0}` for both harvest
-// keywords — and Task 1's coverage guards do not catch a numeric zero total.
-// Handing it to the search would let a stalled or 5xx npmjs search publish a
-// zero-name harvest with a green build, so `searchByKeywords` below takes no
-// backup argument.
-const npmBackupRegistry = process.env.NPM_BACKUP_REGISTRY ?? 'https://registry.npmmirror.com'
+// keywords — and the coverage guards from Task 1 (D-1,
+// docs/plans/2026-09-03-audit-fix-a-urgent.md) do not catch a numeric zero
+// total. Handing it to the search would let a stalled or 5xx npmjs search
+// publish a zero-name harvest with a green build, so `searchByKeywords`
+// below takes no backup argument.
+const rawBackupRegistry = process.env.NPM_BACKUP_REGISTRY
+if (rawBackupRegistry !== undefined && rawBackupRegistry.trim() !== '' && !URL.canParse(rawBackupRegistry)) {
+  throw new Error('NPM_BACKUP_REGISTRY is not a URL; use an empty string to disable')
+}
+const npmBackupRegistry = rawBackupRegistry ?? 'https://registry.npmmirror.com'
 
 const config = loadRegistryConfig(REGISTRY_DIR)
 const names = await searchByKeywords(fetch, undefined, npmToken)

@@ -918,6 +918,22 @@ describe('registry failover', () => {
     expect(!result.ok && result.detail).toBe('dsh-failover: could not reach the npm registry (primary down)')
     expect(urls).toEqual(['https://registry.npmjs.org/dsh-failover'])
   })
+
+  it('treats a whitespace-only backup registry as disabled too', async () => {
+    // Same guard, the other shape an operator might actually type: a stray
+    // space left behind by NPM_BACKUP_REGISTRY='' under a shell that quotes
+    // it loosely. `backupRegistry.trim() === ''` catches '   ' exactly like
+    // the empty string above — neither builds a backup URL.
+    const urls: string[] = []
+    const fetchImpl = (async (url: string | URL) => {
+      urls.push(String(url))
+      throw new Error('primary down')
+    }) as unknown as typeof fetch
+    const result = await fetchCandidate('dsh-failover', fetchImpl, noSleep, undefined, '   ')
+    expect(result.ok).toBe(false)
+    expect(!result.ok && result.detail).toBe('dsh-failover: could not reach the npm registry (primary down)')
+    expect(urls).toEqual(['https://registry.npmjs.org/dsh-failover'])
+  })
 })
 
 describe('fetchCandidates', () => {

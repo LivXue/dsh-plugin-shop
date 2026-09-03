@@ -13,6 +13,18 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { serializeFirstSeen } from './config.ts'
 
+// Real work — shelling out to `git log`/`git show` and overwriting
+// registry/first-seen.yml — belongs to the entry point alone, never to an
+// import. registry/scripts/tests/strip-types.test.ts dynamically imports
+// every entry point under --experimental-strip-types to prove the syntax is
+// supported; emit-schema.ts already draws this same line so schema.test.ts
+// can import renderJsonSchema without writing the schema file. `node -e`
+// leaves process.argv[1] undefined, so a bare import never matches this and
+// the module exits before any of the real work below runs.
+if (process.argv[1]?.endsWith('backfill-first-seen.ts') !== true) {
+  process.exit(0)
+}
+
 const REGISTRY_DIR = 'registry'
 const LOCK = 'snapshots/manifest.lock'
 
