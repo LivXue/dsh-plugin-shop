@@ -609,9 +609,11 @@
 }
 
 .incompatibleBadge {
-  padding: 1px 7px;
+  flex-shrink: 0;
+  padding: 3px 9px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 12px;
+  white-space: nowrap;
   color: var(--dsw-alias-state-error-primary);
   background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 14%, transparent);
   border: 1px solid color-mix(in srgb, var(--dsw-alias-state-error-primary) 40%, transparent);

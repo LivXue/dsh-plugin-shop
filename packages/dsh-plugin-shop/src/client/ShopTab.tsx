@@ -137,11 +137,6 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, t,
           {entry.tier !== 'community' && (
             <span className={css.tierBadge} data-tier={entry.tier}>{t(tierKey(entry.tier))}</span>
           )}
-          {missing.length > 0 && (
-            <span className={css.incompatibleBadge} data-shop-incompatible title={t('incompatibleDetail', { modules: missing.join(', ') })}>
-              {t('incompatibleBadge')}
-            </span>
-          )}
           {stars !== undefined && (
             // role="img" names the badge for assistive tech (ARIA refuses to
             // name a generic element); the name carries the RAW count — the
@@ -224,7 +219,8 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, t,
           </section>
         )}
       </div>
-      {/* The action line: buttons sit on their own row under the summary; an
+      {/* The action line: buttons sit on their own row under the summary,
+       * each followed by the incompatibility badge that qualifies it; an
        * active install/uninstall flow (gate, log, notices) takes the full
        * width below them, where it has room. */}
       <div className={css.cardActions} data-shop-actions>
@@ -238,7 +234,13 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, t,
               // (§9.3).
               <InstallPanel name={entry.name} version={entry.version} tier={entry.tier} variant="update" missing={missing} missingStated t={t} install={install} installStatus={installStatus} restart={restart} restartSupported={restartSupported} />
             ) : (
-              <p className={css.installedLabel} data-shop-installed>{t('installed')}</p>
+              // No button on this branch, so the badge follows the label that
+              // takes its place: an installed plugin whose modules are absent
+              // is exactly the case that most needs to say so.
+              <>
+                <p className={css.installedLabel} data-shop-installed>{t('installed')}</p>
+                <IncompatibleBadge missing={missing} t={t} />
+              </>
             )}
             {/* The hot enable/disable switch (§8) sits on every installed
              * row — current or outdated — and reads the inventory state. */}
@@ -257,6 +259,24 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, t,
     </div>
   )
 })
+
+/** The harness-compatibility verdict, rendered beside the control it
+ * qualifies. It answers "what happens if I press this", not "what is this",
+ * so it belongs to the action row and not among the identity badges in the
+ * header — where it also sat inside a <button>, competing with that button's
+ * own hit area for the tooltip. Renders nothing when the harness provides
+ * everything. */
+function IncompatibleBadge({ missing, t }: {
+  missing: string[]
+  t: ShopTabProps['t']
+}): ReactNode {
+  if (missing.length === 0) return null
+  return (
+    <span className={css.incompatibleBadge} data-shop-incompatible title={t('incompatibleDetail', { modules: missing.join(', ') })}>
+      {t('incompatibleBadge')}
+    </span>
+  )
+}
 
 /** One entry's install flow: the button, the §9.3 acknowledgement gate for
  * community-tier entries, and the live view — running log, restart notice,
@@ -375,21 +395,29 @@ function InstallPanel({ name, version, tier, missing, missingStated = false, var
   }
   const update = variant === 'update'
   return (
-    <button
-      type="button"
-      className={css.installButton}
-      {...(update ? { 'data-shop-update': true } : { 'data-shop-install': true })}
-      onClick={() => {
-        if (tier === 'verified') {
-          // Reviewed: install directly; there is nothing to acknowledge (§9.3).
-          void start({ name, version, acknowledged: undefined })
-        } else {
-          setGateOpen(true)
-        }
-      }}
-    >
-      {t(update ? 'update' : 'install')}
-    </button>
+    <>
+      <button
+        type="button"
+        className={css.installButton}
+        {...(update ? { 'data-shop-update': true } : { 'data-shop-install': true })}
+        onClick={() => {
+          if (tier === 'verified') {
+            // Reviewed: install directly; there is nothing to acknowledge (§9.3).
+            void start({ name, version, acknowledged: undefined })
+          } else {
+            setGateOpen(true)
+          }
+        }}
+      >
+        {t(update ? 'update' : 'install')}
+      </button>
+      {/* One wording everywhere, including the outdated row. `missingByName`
+          is keyed by the CATALOG (latest) entry, so on that row the version
+          that actually runs is the INSTALLED one and it is the update that
+          wants the missing module — the copy's "may be" carries that
+          imprecision deliberately rather than splitting the string. */}
+      <IncompatibleBadge missing={missing} t={t} />
+    </>
   )
 }
 
@@ -655,19 +683,7 @@ function OutdatedRow({ row, tier, source, missing, t, setEnabled, install, insta
   return (
     <div className={css.outdatedRow} data-shop-outdated-entry={row.name}>
       <div className={css.outdatedInfo}>
-        <span className={css.badges}>
-          <span className={css.name}>{row.name}</span>
-          {/* One wording everywhere, including here. `missingByName` is keyed
-              by the CATALOG (latest) entry, so on this row the version that
-              actually runs is the INSTALLED one and it is the update that
-              wants the missing module — the copy's "may be" carries that
-              imprecision deliberately rather than splitting the string. */}
-          {missing.length > 0 && (
-            <span className={css.incompatibleBadge} data-shop-incompatible title={t('incompatibleDetail', { modules: missing.join(', ') })}>
-              {t('incompatibleBadge')}
-            </span>
-          )}
-        </span>
+        <span className={css.name}>{row.name}</span>
         <span className={css.outdatedVersions}>
           <span>{t('installedVersion', { version: source === 'github' ? row.installed.slice(0, 7) : row.installed })}</span>
           <span>{t('latestVersion', { version: row.latest })}</span>

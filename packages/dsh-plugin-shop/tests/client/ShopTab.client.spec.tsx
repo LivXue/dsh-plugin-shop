@@ -1045,6 +1045,35 @@ describe('ShopTab', () => {
   })
 
 
+  it('sits the badge to the right of the Install button, not among the header badges', async () => {
+    // The badge is about the action, not the identity: it answers "what
+    // happens if I press this", so it sits beside the button it qualifies.
+    const { injected } = bench({
+      ...snapshot({ tier: 'community' }),
+      incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] },
+    })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const card = container.querySelector('[data-shop-entry="dsh-hello-plugin"]') as HTMLElement
+    expect(card.querySelector('button[aria-expanded] [data-shop-incompatible]'), 'no longer in the header').toBeNull()
+    const button = card.querySelector('[data-shop-install]') as HTMLElement
+    expect(button.nextElementSibling?.hasAttribute('data-shop-incompatible'), 'immediately right of Install').toBe(true)
+    expect(card.querySelectorAll('[data-shop-incompatible]').length, 'exactly one badge per card').toBe(1)
+  })
+
+  it('sits the badge to the right of the Update button on the installed-list row', async () => {
+    const { injected } = bench(
+      { ...snapshot({ tier: 'community' }), incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] } },
+      [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }],
+    )
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText(en.installedSection)).toBeTruthy())
+    const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]') as HTMLElement
+    const button = row.querySelector('[data-shop-update]') as HTMLElement
+    expect(button.nextElementSibling?.hasAttribute('data-shop-incompatible'), 'immediately right of Update').toBe(true)
+    expect(row.querySelectorAll('[data-shop-incompatible]').length).toBe(1)
+  })
+
   it('names the missing modules and the version caveat on two lines', async () => {
     // The copy carries its own newline; `white-space: pre-line` renders it.
     // Asserted on the text so a dictionary edit that drops the second line
