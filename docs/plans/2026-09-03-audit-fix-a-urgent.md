@@ -63,8 +63,13 @@ Co-keyword totals against `keywords:deepseek-harness` (2026-09-03), which is wha
 >    FIRST page, so a page carrying no numeric `total` ends the cell silently — where the
 >    `MAX_SEARCH_PAGES` guard this task deletes was loud on exactly that input. The registry really
 >    does serve 200s with `<!doctype html>` bodies. A missing `total` must THROW:
->    `if (typeof body.total !== 'number') throw new Error(...)`. The coverage check must also run for
->    unpartitioned keywords, which additionally catches a mid-stream empty page.
+>    `if (typeof body.total !== 'number') throw new Error(...)`, and so must `searchTotal`'s own probe,
+>    whose `: 0` default otherwise makes the coverage floor `min(0, 0) = 0` and disables the check.
+>    The coverage check must also run for unpartitioned keywords, which additionally catches a
+>    mid-stream empty page — and it must RE-PROBE for them, exactly as the partitioned branch does.
+>    Reusing the pre-paging `total` there looks free but gives zero tolerance for a package
+>    unpublished mid-run, which throws a false "harvest would be silently short" on an ordinary
+>    daily build. Two extra `size=1` requests out of ~5,600 is the correct price.
 > 2. `PARTITION_KEYWORDS` as listed below covers 5,059 of `keywords:deepseek-harness`'s 5,103 names —
 >    a 44-name shortfall, so the partition throws its coverage error on the day the keyword crosses the
 >    window. Add `cordis` (20), `codex` (10), `claude-code` (10) and `desktop-pet` (7), measured
