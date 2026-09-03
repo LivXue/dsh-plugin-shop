@@ -18,6 +18,54 @@
 
 ---
 
+## 📦 安装商店
+
+两条路做的是同一件事，按读者是谁挑一条。
+
+### 🧑 给人看
+
+**前置条件：** Node.js。运行 harness 本身无需安装——上游文档的形式是
+`npx -y @deepseek-ai/dsh web`。插件管理经由 `dsh plugin`，它会分别 spawn
+`dsh` 命令和 `pnpm`——用一条命令装好两者：`npm install -g @deepseek-ai/dsh
+pnpm`，并用 `dsh --version` 和 `pnpm --version` 验证。
+
+```sh
+# dsh 在 PATH 上（全局安装）。必须钉版本号：pnpm 11 会拦下刚发布的新版本，
+# 不写版本号的裸安装可能给你旧版。下面是当前版本——用
+# `npm view dsh-plugin-shop version` 查最新值。
+dsh plugin --profile web add dsh-plugin-shop@0.7.2
+# 或全程走 npx，什么都不装：
+npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.7.2
+```
+
+用的不是 `web` 就换成你自己的 profile。重启一次 `dsh`——新加的 bundle 不会作用于已在运行的
+进程——然后打开
+
+> **设置 → 插件 → 插件商店**
+
+### 🤖 给 agent 看
+
+全程非交互。`--profile` 是**必填**的；不给它，`dsh plugin` 会以
+`error: required option '--profile <name>' not specified` 退出。
+
+```sh
+# 1. 确定 profile 名（$DSH_HOME 默认 ~/.dsh；node_modules 不是 profile）
+ls -1 "${DSH_HOME:-$HOME/.dsh}/profiles" | grep -v '^node_modules$'
+
+# 2. 安装——钉版本号：绕过 pnpm 的发布冷却期，确定性安装也是 agent 路径的要点
+dsh plugin --profile <profile> add dsh-plugin-shop@0.7.2
+
+# 3. 验证——上一步返回 0 只说明 pnpm 解析到了这个包
+dsh plugin --profile <profile> list --depth 0   # dsh-plugin-shop 必须出现
+
+# 4. 重启该 profile；新 bundle 不是热生效的
+dsh --profile <profile>
+```
+
+第 3 步的同一事实也存在于 `$DSH_HOME/profiles/<profile>/package.json` 的
+`dsh.profile.bundles`——如果你更愿意读清单而不是解析 CLI 输出。逐条的失败诊断见
+[包内 README](packages/dsh-plugin-shop/docs/README.zh.md#失败模式)。
+
 ## 🖼️ 界面预览
 
 <div align="center">
@@ -108,54 +156,6 @@ flowchart LR
 - **依赖检查不是目录里的事实。** 构建只记 peer 的**名字**，从不记版本范围——因为几乎每个 dsh
   插件都声明 `"*"`，而 harness 自己发的预发布版本又不满足普通范围，真按范围校验，第一批被打成
   不兼容的就是那些实际能跑的插件。名字解析得到与否，由你的安装、对着你的 profile 决定。
-
-## 📦 安装商店
-
-两条路做的是同一件事，按读者是谁挑一条。
-
-### 🧑 给人看
-
-**前置条件：** Node.js。运行 harness 本身无需安装——上游文档的形式是
-`npx -y @deepseek-ai/dsh web`。插件管理经由 `dsh plugin`，它会分别 spawn
-`dsh` 命令和 `pnpm`——用一条命令装好两者：`npm install -g @deepseek-ai/dsh
-pnpm`，并用 `dsh --version` 和 `pnpm --version` 验证。
-
-```sh
-# dsh 在 PATH 上（全局安装）。必须钉版本号：pnpm 11 会拦下刚发布的新版本，
-# 不写版本号的裸安装可能给你旧版。下面是当前版本——用
-# `npm view dsh-plugin-shop version` 查最新值。
-dsh plugin --profile web add dsh-plugin-shop@0.7.2
-# 或全程走 npx，什么都不装：
-npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.7.2
-```
-
-用的不是 `web` 就换成你自己的 profile。重启一次 `dsh`——新加的 bundle 不会作用于已在运行的
-进程——然后打开
-
-> **设置 → 插件 → 插件商店**
-
-### 🤖 给 agent 看
-
-全程非交互。`--profile` 是**必填**的；不给它，`dsh plugin` 会以
-`error: required option '--profile <name>' not specified` 退出。
-
-```sh
-# 1. 确定 profile 名（$DSH_HOME 默认 ~/.dsh；node_modules 不是 profile）
-ls -1 "${DSH_HOME:-$HOME/.dsh}/profiles" | grep -v '^node_modules$'
-
-# 2. 安装——钉版本号：绕过 pnpm 的发布冷却期，确定性安装也是 agent 路径的要点
-dsh plugin --profile <profile> add dsh-plugin-shop@0.7.2
-
-# 3. 验证——上一步返回 0 只说明 pnpm 解析到了这个包
-dsh plugin --profile <profile> list --depth 0   # dsh-plugin-shop 必须出现
-
-# 4. 重启该 profile；新 bundle 不是热生效的
-dsh --profile <profile>
-```
-
-第 3 步的同一事实也存在于 `$DSH_HOME/profiles/<profile>/package.json` 的
-`dsh.profile.bundles`——如果你更愿意读清单而不是解析 CLI 输出。逐条的失败诊断见
-[包内 README](packages/dsh-plugin-shop/docs/README.zh.md#失败模式)。
 
 ## ✅ 它是什么
 

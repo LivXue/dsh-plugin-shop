@@ -18,6 +18,58 @@ English | [中文](README.zh.md)
 
 ---
 
+## 📦 Install the shop
+
+Two tracks. They do the same thing; pick the one that matches who is reading.
+
+### 🧑 For people
+
+**Prerequisites:** Node.js. Running the harness itself needs no install — the
+upstream-documented form is `npx -y @deepseek-ai/dsh web`. Plugin management
+goes through `dsh plugin`, which spawns both the `dsh` command and `pnpm` —
+install them once with `npm install -g @deepseek-ai/dsh pnpm` and verify with
+`dsh --version` and `pnpm --version`.
+
+```sh
+# dsh on PATH (global install). Pin the version: pnpm 11 holds back very
+# recent releases, so a bare `add dsh-plugin-shop` can hand you an older
+# version for a while. This is the current release — refresh it with
+# `npm view dsh-plugin-shop version`.
+dsh plugin --profile web add dsh-plugin-shop@0.7.2
+# or straight through npx, nothing installed:
+npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.7.2
+```
+
+Replace `web` with your profile if you use another one. Restart `dsh` once — a newly
+added bundle is not applied to a running process — then open
+
+> **Settings → Plugins → Plugin shop**
+
+### 🤖 For agents
+
+Non-interactive. `--profile` is **mandatory**; without it `dsh plugin` exits with
+`error: required option '--profile <name>' not specified`.
+
+```sh
+# 1. resolve a profile name ($DSH_HOME defaults to ~/.dsh; node_modules is not a profile)
+ls -1 "${DSH_HOME:-$HOME/.dsh}/profiles" | grep -v '^node_modules$'
+
+# 2. install — pin the version: it bypasses pnpm's release cooldown and
+#    deterministic installs are the point of the agent path
+dsh plugin --profile <profile> add dsh-plugin-shop@0.7.2
+
+# 3. verify — a zero exit above only means pnpm resolved the package
+dsh plugin --profile <profile> list --depth 0   # dsh-plugin-shop must appear
+
+# 4. restart the profile; a new bundle is not hot-applied
+dsh --profile <profile>
+```
+
+The same fact as step 3 lives in `$DSH_HOME/profiles/<profile>/package.json` under
+`dsh.profile.bundles`, if you would rather read the manifest than parse CLI output.
+Per-failure diagnostics are in the
+[package README](packages/dsh-plugin-shop/README.md#failure-modes).
+
 ## 🖼️ Screenshots
 
 <div align="center">
@@ -117,58 +169,6 @@ differently:
   `"*"` and the harness's own prereleases do not satisfy ordinary ranges, so checking
   them would accuse plugins that work. Whether a name resolves is decided by your
   installation, against your profile.
-
-## 📦 Install the shop
-
-Two tracks. They do the same thing; pick the one that matches who is reading.
-
-### 🧑 For people
-
-**Prerequisites:** Node.js. Running the harness itself needs no install — the
-upstream-documented form is `npx -y @deepseek-ai/dsh web`. Plugin management
-goes through `dsh plugin`, which spawns both the `dsh` command and `pnpm` —
-install them once with `npm install -g @deepseek-ai/dsh pnpm` and verify with
-`dsh --version` and `pnpm --version`.
-
-```sh
-# dsh on PATH (global install). Pin the version: pnpm 11 holds back very
-# recent releases, so a bare `add dsh-plugin-shop` can hand you an older
-# version for a while. This is the current release — refresh it with
-# `npm view dsh-plugin-shop version`.
-dsh plugin --profile web add dsh-plugin-shop@0.7.2
-# or straight through npx, nothing installed:
-npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.7.2
-```
-
-Replace `web` with your profile if you use another one. Restart `dsh` once — a newly
-added bundle is not applied to a running process — then open
-
-> **Settings → Plugins → Plugin shop**
-
-### 🤖 For agents
-
-Non-interactive. `--profile` is **mandatory**; without it `dsh plugin` exits with
-`error: required option '--profile <name>' not specified`.
-
-```sh
-# 1. resolve a profile name ($DSH_HOME defaults to ~/.dsh; node_modules is not a profile)
-ls -1 "${DSH_HOME:-$HOME/.dsh}/profiles" | grep -v '^node_modules$'
-
-# 2. install — pin the version: it bypasses pnpm's release cooldown and
-#    deterministic installs are the point of the agent path
-dsh plugin --profile <profile> add dsh-plugin-shop@0.7.2
-
-# 3. verify — a zero exit above only means pnpm resolved the package
-dsh plugin --profile <profile> list --depth 0   # dsh-plugin-shop must appear
-
-# 4. restart the profile; a new bundle is not hot-applied
-dsh --profile <profile>
-```
-
-The same fact as step 3 lives in `$DSH_HOME/profiles/<profile>/package.json` under
-`dsh.profile.bundles`, if you would rather read the manifest than parse CLI output.
-Per-failure diagnostics are in the
-[package README](packages/dsh-plugin-shop/README.md#failure-modes).
 
 ## ✅ What it is
 
