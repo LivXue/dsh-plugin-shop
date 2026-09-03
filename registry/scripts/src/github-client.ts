@@ -94,12 +94,18 @@ async function fetchRobust(
  * root, several for a monorepo's plugin subpackages), or the reason none
  * could be produced. `no-manifest` means the repo exists but has no usable
  * `package.json` at the default branch — the repo is not an installable
- * plugin unit, an author-readable fact distinct from a transient failure. */
+ * plugin unit, an author-readable fact distinct from a transient failure.
+ * `subpackageFailures` rides alongside a successful outcome: a subpackage
+ * that declared `dsh.bundle` but failed the name grammar is not silently
+ * dropped like a bundle-less one — it claimed to be a plugin, so it gets
+ * its own `owner/slug#subdir` rejection even when the repo also produced
+ * usable candidates, or none at all. */
 export type RepoFetchResult =
-  | { ok: true; candidates: RepoCandidate[] }
+  | { ok: true; candidates: RepoCandidate[]; subpackageFailures?: RepoFetchFailure[] }
   | { ok: false; code: RepoFetchFailure['code']; detail: string }
 
-/** One repository that could not become a candidate, with the reason. */
+/** One repository — or one `owner/slug#subdir` subpackage unit — that could
+ * not become a candidate, with the reason. */
 export interface RepoFetchFailure {
   repo: string
   code: 'no-manifest' | 'fetch-failed'
@@ -463,9 +469,12 @@ function projectCandidate(
   const scripts = typeof m.scripts === 'object' && m.scripts !== null ? m.scripts : {}
   // The shape check is HERE, at the projection boundary, so no candidate with
   // an unusable name ever exists — not in the gate, not in repo-state.json,
-  // not in the two bot-written YAML files. A subpackage with a bad name is
-  // dropped silently, the same way a bundle-less subpackage is; the ROOT gets
-  // an author-readable rejection in fetchRepoCandidate below.
+  // not in the two bot-written YAML files. A bundle-less subpackage with a
+  // bad name is dropped silently, same as a bundle-less one with a good
+  // name — neither claimed to be a plugin. A subpackage that DOES declare
+  // dsh.bundle is a different fact: probeSubpackageCandidates below gives it
+  // its own author-readable rejection instead of letting it vanish. The
+  // ROOT's own bad name is handled in fetchRepoCandidate below.
   if (!isBundleName(m.name)) return null
   return {
     name: m.name,
@@ -485,6 +494,19 @@ function projectCandidate(
 }
 
 /**
+ * Format the reason a manifest `name` fails the bundle-name grammar. Shared
+ * between the repo root (fetchRepoCandidate) and a subpackage
+ * (probeSubpackageCandidates) so the wording never drifts between the two
+ * call sites.
+ */
+function describeBadName(rawName: unknown): string {
+  const shown = typeof rawName === 'string'
+    ? JSON.stringify(rawName.slice(0, 80))
+    : `a ${typeof rawName}`
+  return `package.json declares ${shown}, which is not a usable package name (an optional @scope/, then letters, digits, ".", "-" or "_", at most ${BUNDLE_NAME_MAX_LENGTH} characters), so dsh cannot register it.`
+}
+
+/**
  * Probe a monorepo's subpackages: list the tree once, select the candidate
  * directories (pure `selectSubpackagePaths`), and project the manifests
  * that declare a bundle. Bundle-less subpackages are not plugin candidates —
@@ -492,6 +514,11 @@ function projectCandidate(
  * knows; the repo-level `no-bundle` rejection covers the case where none
  * qualify. Only the `hasBundle` filter is applied here; the gate remains
  * the sole policy authority for every candidate it receives.
+ *
+ * A subpackage that DOES declare `dsh.bundle` but fails the name grammar is
+ * different: it claimed to be a plugin, so CLAUDE.md's "nothing disappears
+ * without a reason attached to its name" applies, same as the repo root. It
+ * gets its own `owner/slug#subdir` failure instead of vanishing.
  */
 async function probeSubpackageCandidates(
   owner: string,
@@ -502,16 +529,16 @@ async function probeSubpackageCandidates(
   fetchImpl: typeof fetch,
   sleep: (ms: number) => Promise<void>,
   token: string | undefined,
-): Promise<RepoCandidate[]> {
+): Promise<{ candidates: RepoCandidate[]; failures: RepoFetchFailure[] }> {
   const treeUrl = `${GITHUB_API}/repos/${owner}/${slug}/git/trees/${meta.defaultBranch}?recursive=1`
   const treeResponse = await fetchRobust(treeUrl, fetchImpl, sleep, token)
-  if (!treeResponse.ok) return []
+  if (!treeResponse.ok) return { candidates: [], failures: [] }
   let treeBody: { tree?: unknown } = {}
   try {
     const parsed = await treeResponse.json() as unknown
     if (parsed !== null && typeof parsed === 'object') treeBody = parsed as typeof treeBody
   } catch {
-    return []
+    return { candidates: [], failures: [] }
   }
   // A truncated tree (>100k entries) may hide some subpackages; the repo is
   // re-probed when it changes, and the loss costs only a later re-probe —
@@ -521,6 +548,7 @@ async function probeSubpackageCandidates(
     : []
   const dirs = selectSubpackagePaths(rootManifest, paths)
   const candidates: RepoCandidate[] = []
+  const failures: RepoFetchFailure[] = []
   for (const dir of dirs) {
     const subUrl = `${RAW_GITHUB}/${owner}/${slug}/${meta.defaultBranch}/${dir}/package.json`
     const subResponse = await fetchRobust(subUrl, fetchImpl, sleep, token)
@@ -532,9 +560,20 @@ async function probeSubpackageCandidates(
       continue
     }
     const sub = projectCandidate(meta, subManifest, head, dir)
-    if (sub !== null && sub.hasBundle) candidates.push(sub)
+    if (sub !== null && sub.hasBundle) {
+      candidates.push(sub)
+      continue
+    }
+    // sub === null means the name failed the grammar (projectCandidate's
+    // only rejection reason); a good name with no bundle just falls through
+    // silently, same as before — it never claimed to be a plugin.
+    const declaresBundle = (subManifest as { dsh?: { bundle?: unknown } } | null)?.dsh?.bundle !== undefined
+    if (sub === null && declaresBundle) {
+      const rawName = (subManifest as { name?: unknown } | null)?.name
+      failures.push({ repo: `${owner}/${slug}#${dir}`, code: 'no-manifest', detail: describeBadName(rawName) })
+    }
   }
-  return candidates
+  return { candidates, failures }
 }
 
 /**
@@ -572,21 +611,15 @@ export async function fetchRepoCandidate(
     return { ok: false, code: 'fetch-failed', detail: `Could not resolve the head commit of ${meta.fullName}.` }
   }
 
-  // A root name outside the grammar gets its OWN detail: "declares no name" is
-  // a different and misattributed fact, and a wrong published reason is a
-  // defect. The check runs before the release probe so a bad name costs no
-  // extra request.
+  // A root name outside the grammar is a different, more specific fact than
+  // "declares no name" — but reporting it must never cost a monorepo its
+  // subpackages: a container with an unusable name can still hold valid
+  // plugins underneath it (this cost jiweiyeah/Skills-Manager every one of
+  // its subpackages before this fix). So the grammar is checked here, but
+  // the rejection itself is only returned below, from the terminal
+  // `root === null` branch, after the subpackage probe has had its chance.
   const rawRootName = (manifest as { name?: unknown } | null)?.name
-  if (rawRootName !== undefined && rawRootName !== null && !isBundleName(rawRootName)) {
-    const shown = typeof rawRootName === 'string'
-      ? JSON.stringify(rawRootName.slice(0, 80))
-      : `a ${typeof rawRootName}`
-    return {
-      ok: false,
-      code: 'no-manifest',
-      detail: `package.json declares ${shown}, which is not a usable package name (an optional @scope/, then letters, digits, ".", "-" or "_", at most ${BUNDLE_NAME_MAX_LENGTH} characters), so dsh cannot register it.`,
-    }
-  }
+  const rootNameInvalid = rawRootName !== undefined && rawRootName !== null && !isBundleName(rawRootName)
   const root = projectCandidate(meta, manifest, head, undefined)
   // The rescue probe: only a `requires-build` root can be rescued, so only it
   // is probed. The release rides the candidate through the state file, so a
@@ -599,10 +632,20 @@ export async function fetchRepoCandidate(
     return { ok: true, candidates: [root] }
   }
   if (probeSubpackages && monorepoSignal(manifest)) {
-    const subs = await probeSubpackageCandidates(owner, slug, meta, manifest, head, fetchImpl, sleep, token)
-    if (subs.length > 0) return { ok: true, candidates: subs }
+    const { candidates: subs, failures: subFailures } = await probeSubpackageCandidates(owner, slug, meta, manifest, head, fetchImpl, sleep, token)
+    if (subs.length > 0) {
+      return { ok: true, candidates: subs, ...(subFailures.length > 0 ? { subpackageFailures: subFailures } : {}) }
+    }
+    if (subFailures.length > 0) {
+      // A subpackage that claimed to be a plugin and failed its name grammar
+      // is a more specific, more useful fact than the root's own name
+      // problem (or its absence) — report that instead of the rejection
+      // below, same as when subpackages had produced usable candidates.
+      return { ok: true, candidates: root === null ? [] : [root], subpackageFailures: subFailures }
+    }
   }
   if (root === null) {
+    if (rootNameInvalid) return { ok: false, code: 'no-manifest', detail: describeBadName(rawRootName) }
     return { ok: false, code: 'no-manifest', detail: 'package.json declares no name and no installable subpackage, so dsh has nothing to register.' }
   }
   // A root without a bundle: returned so the gate can reject it with the
@@ -689,6 +732,15 @@ export async function harvestRepos(options: RepoHarvestOptions): Promise<RepoHar
     for (const { entry, result } of results) {
       if (result.ok) {
         fresh.set(entry.repo, { candidates: result.candidates })
+        // A subpackage that claimed dsh.bundle and failed the name grammar
+        // rides the ok branch (it does not make the whole repo a failure) —
+        // drain it into this run's report the same as any other failure.
+        // Deliberately not persisted into RepoStateEntry.failure: unlike a
+        // root-level no-manifest/fetch-failed, this is reported only on the
+        // run that actually (re-)fetches the repo; it does not carry
+        // forward across an unchanged pushedAt the way repo-level failures
+        // recorded below do.
+        if (result.subpackageFailures !== undefined) failures.push(...result.subpackageFailures)
       } else {
         failures.push({ repo: entry.repo, code: result.code, detail: result.detail })
         // A deterministic failure on a repo with NO recorded entry is

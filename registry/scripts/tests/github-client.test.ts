@@ -524,6 +524,40 @@ describe('harvestRepos', () => {
     expect(result.candidates.map(c => c.repo)).toEqual(['x/broken'])
     expect(result.nextState['x/broken']?.pushedAt).toBe('2026-07-01T00:00:00Z')
   })
+
+  it('threads a subpackage name failure into the report as its own repo#subdir rejection', async () => {
+    // A monorepo whose only qualifying subpackage declares dsh.bundle but
+    // fails the name grammar must not vanish: fetchRepoCandidate's
+    // subpackageFailures rides the ok branch, and harvestRepos must drain
+    // it into the same `failures` array build.ts turns into rejections.
+    const seen = [{ repo: 'someone/monorepo', pushedAt: '2026-08-02T00:00:00Z' }]
+    const rootManifest = JSON.stringify({ private: true, workspaces: ['packages/*'] })
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      if (new URL(text).searchParams.get('per_page') === '1') return new Response(JSON.stringify({ total_count: 0 }), { status: 200 })
+      if (text.includes('/search/repositories')) {
+        return new Response(JSON.stringify({ items: seen.map(s => ({ full_name: s.repo, default_branch: 'main', description: null, license: { spdx_id: 'MIT' }, pushed_at: s.pushedAt })) }), { status: 200 })
+      }
+      if (text === 'https://raw.githubusercontent.com/someone/monorepo/main/package.json') return new Response(rootManifest, { status: 200 })
+      if (text === 'https://api.github.com/repos/someone/monorepo/commits/main') {
+        return new Response(JSON.stringify({ sha: commit, commit: { author: { date: '2026-08-02T00:00:00.000Z' } } }), { status: 200 })
+      }
+      if (text === 'https://api.github.com/repos/someone/monorepo/git/trees/main?recursive=1') {
+        return new Response(JSON.stringify({ tree: [{ path: 'package.json' }, { path: 'packages/bad-name/package.json' }] }), { status: 200 })
+      }
+      if (text === 'https://raw.githubusercontent.com/someone/monorepo/main/packages/bad-name/package.json') {
+        return new Response(JSON.stringify({ name: '{{PKG_NAME}}', dsh: { bundle: {} } }), { status: 200 })
+      }
+      throw new Error(`unrouted: ${text}`)
+    }) as unknown as typeof fetch
+    const result = await harvestRepos({ state: {}, budget: 5, fetchImpl, sleep, token: 't' })
+    expect(result.failures).toEqual([{
+      repo: 'someone/monorepo#packages/bad-name',
+      code: 'no-manifest',
+      detail: expect.stringContaining('is not a usable package name'),
+    }])
+    expect(result.candidates).toEqual([])
+  })
 })
 
 describe('fetch robustness', () => {
@@ -659,6 +693,67 @@ describe('subpackage probe', () => {
     if (result.ok) {
       expect(result.candidates[0]?.subdir).toBeUndefined()
       expect(result.candidates[0]?.name).toBe('monorepo-root')
+    }
+  })
+
+  it('a bad root name does not swallow a valid subpackage', async () => {
+    // Regression: the root-name check used to return before the subpackage
+    // probe ever ran, so a monorepo whose container had an unusable name
+    // lost every valid plugin inside it — exactly the shape of the
+    // committed jiweiyeah/Skills-Manager entry (repo-state.json).
+    const badRoot = JSON.stringify({ name: 'Skills Manager', private: true, workspaces: ['packages/*'] })
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/monorepo/main/package.json': new Response(badRoot, { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/commits/main': new Response(JSON.stringify({
+        sha: commit,
+        commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/git/trees/main?recursive=1': new Response(JSON.stringify({
+        tree: [{ path: 'package.json' }, { path: 'packages/dsh-good/package.json' }],
+      }), { status: 200 }),
+      'https://raw.githubusercontent.com/someone/monorepo/main/packages/dsh-good/package.json': new Response(JSON.stringify({
+        name: 'dsh-good',
+        dsh: { bundle: {}, catalog: { category: 'tool', summary: { en: 'x' }, capabilities: [] } },
+      }), { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.candidates.map(c => c.name)).toEqual(['dsh-good'])
+      expect(result.candidates[0]?.subdir).toBe('packages/dsh-good')
+    }
+  })
+
+  it('a subpackage that declares dsh.bundle but fails the name grammar gets its own repo#subdir failure', async () => {
+    // Regression: projectCandidate returning null for a bad-name subpackage
+    // discarded the fact that it had declared dsh.bundle — the repo still
+    // returned ok:true with zero relevant candidates, so no rejection row,
+    // no denied entry, nothing named it. This is the live shape behind the
+    // five `{{PKG_NAME}}` rows carried in manifest.lock for
+    // whyihaveyou/dsh-suite.
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/monorepo/main/package.json': new Response(rootManifest, { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/commits/main': new Response(JSON.stringify({
+        sha: commit,
+        commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/git/trees/main?recursive=1': new Response(JSON.stringify({
+        tree: [{ path: 'package.json' }, { path: 'packages/bad-name/package.json' }],
+      }), { status: 200 }),
+      'https://raw.githubusercontent.com/someone/monorepo/main/packages/bad-name/package.json': new Response(JSON.stringify({
+        name: '{{PKG_NAME}}',
+        dsh: { bundle: {} },
+      }), { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.candidates).toEqual([])
+      expect(result.subpackageFailures).toEqual([{
+        repo: 'someone/monorepo#packages/bad-name',
+        code: 'no-manifest',
+        detail: expect.stringContaining('is not a usable package name'),
+      }])
     }
   })
 })
