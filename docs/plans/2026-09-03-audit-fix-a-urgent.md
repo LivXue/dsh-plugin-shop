@@ -2169,14 +2169,14 @@ describe('field length bounds', () => {
 Run: `npx vitest run registry/scripts/tests/schema.test.ts registry/scripts/tests/gate.test.ts registry/scripts/tests/pipeline.test.ts`
 Expected: FAIL — the schema test fails as `expected false to be false` inverted (`result.ok` is `true`); the gate tests fail with `expected true to be false`; the pipeline test fails on its FIRST assertion, not the size one:
 `AssertionError: expected [ 'dsh-derived-plugin', …(3) ] to not include 'dsh-hostile-plugin'`.
-The size assertion is belt-and-braces and never gets a say. This draft predicted `expected 2098176 to be less than 65536`, which was wrong twice over — the wrong assertion, and a figure ~100x low that contradicted this same document's 203 MB elsewhere. Measured with the bounds removed: **212,865,688 bytes**.
+The size assertion is belt-and-braces and never gets a say. This draft predicted `expected 2098176 to be less than 65536`, which was wrong twice over — the wrong assertion, and a figure ~100x low that contradicted this same document's 203 MB elsewhere. Measured with the bounds removed: **212,865,688 UTF-16 code units** (`String.length`), 212,865,698 UTF-8 bytes.
 
 - [ ] **Step 3: Write the implementation**
 
 > **Superseded by what shipped — read before copying anything below.** This is the shape Task 7 was
-> *dispatched* with; review found blocking defects in it across two fix rounds (`6da6912`, `1d2375e`). The
+> *dispatched* with; review found blocking defects in it across three fix rounds (`6da6912`, `1d2375e`, `dcb1b61`). The
 > blocks below are deliberately **not** re-transcribed — a second copy is what drifts, and it already
-> drifted once in Task 6. Take the shipped files as the authority — `b9a48c6`, then `6da6912`, then `1d2375e`, and check `git log` rather than trusting this list, which has gone stale once already.
+> drifted once in Task 6. Take the shipped files as the authority — `b9a48c6`, then `6da6912`, `1d2375e`, `dcb1b61`, and check `git log` rather than trusting this list, which has gone stale once already.
 > Relative to them, Step 3d below is actively **wrong**: it prescribes the two size checks inline
 > inside `fetchRepoCandidate`, which caps only the root manifest. The harvest has **two** manifest
 > reads — `probeSubpackageCandidates` is the second — and the uncapped one writes raw attacker
