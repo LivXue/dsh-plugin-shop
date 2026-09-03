@@ -270,7 +270,7 @@ describe('toCandidate', () => {
 })
 
 describe('searchByKeywords', () => {
-  it('pages every harvest keyword until the registry returns fewer objects than requested', async () => {
+  it('pages every harvest keyword until the answered total is reached', async () => {
     // Every keyword now costs a leading total-probe request whose `objects`
     // are ignored (only `total` is read) — so the probe gets its own,
     // content-free slot and the two real pages follow it.
@@ -294,24 +294,28 @@ describe('searchByKeywords', () => {
     expect(names).toContain('dsh-last') // the union is sorted, so it cannot anchor the tail
     expect(call).toBe(5) // probe + two pages for dsh-plugin, then deepseek-harness's probe + empty page
     // `keywords:` is percent-encoded ahead of the name now (partition cells
-    // need to carry a comma safely), so match past the colon.
-    expect(urls.some(url => url.includes('dsh-plugin'))).toBe(true)
-    expect(urls.some(url => url.includes('deepseek-harness'))).toBe(true)
+    // need to carry a comma safely); decode before matching so this proves a
+    // KEYWORD query, not just a substring anywhere in the URL — a bare,
+    // unfiltered `text=dsh-plugin` would satisfy a loose `.includes`.
+    expect(urls.some(url => decodeURIComponent(url).includes('keywords:dsh-plugin'))).toBe(true)
+    expect(urls.some(url => decodeURIComponent(url).includes('keywords:deepseek-harness'))).toBe(true)
   })
 
   it('unions the keywords, deduplicates, and sorts', async () => {
     // Matches past the colon: `text=keywords:dsh-plugin` is now sent
     // percent-encoded (`keywords%3Adsh-plugin`), so the literal `keywords:`
-    // prefix no longer appears in the URL. Both the probe and the page fetch
-    // land on the same branch, which is harmless here since neither keyword
-    // answers a `total`, so each cell still ends on its first (only) page.
+    // prefix no longer appears in the URL — route on the decoded query so a
+    // loose substring match cannot also route an unfiltered text search.
+    // Both the probe and the page fetch land on the same branch, which is
+    // harmless here: each response carries the total that matches its own
+    // object count, so every cell still ends on its first (only) page.
     const fetchImpl = (async (url: string | URL) => {
-      const text = String(url)
-      if (text.includes('dsh-plugin')) {
-        return new Response(JSON.stringify({ objects: [{ package: { name: 'b' } }, { package: { name: 'a' } }] }), { status: 200 })
+      const text = decodeURIComponent(String(url))
+      if (text.includes('keywords:dsh-plugin')) {
+        return new Response(JSON.stringify({ total: 2, objects: [{ package: { name: 'b' } }, { package: { name: 'a' } }] }), { status: 200 })
       }
-      if (text.includes('deepseek-harness')) {
-        return new Response(JSON.stringify({ objects: [{ package: { name: 'b' } }, { package: { name: 'c' } }] }), { status: 200 })
+      if (text.includes('keywords:deepseek-harness')) {
+        return new Response(JSON.stringify({ total: 2, objects: [{ package: { name: 'b' } }, { package: { name: 'c' } }] }), { status: 200 })
       }
       throw new Error(`unexpected url: ${text}`)
     }) as unknown as typeof fetch
@@ -327,8 +331,8 @@ describe('searchByKeywords', () => {
   it('aborts when a later keyword search fails, rather than harvesting a subset', async () => {
     // Matches past the colon — see the comment in the union test above.
     const fetchImpl = (async (url: string | URL) => {
-      if (String(url).includes('deepseek-harness')) return new Response('nope', { status: 503 })
-      return new Response(JSON.stringify({ objects: [{ package: { name: 'fine' } }] }), { status: 200 })
+      if (decodeURIComponent(String(url)).includes('keywords:deepseek-harness')) return new Response('nope', { status: 503 })
+      return new Response(JSON.stringify({ total: 1, objects: [{ package: { name: 'fine' } }] }), { status: 200 })
     }) as unknown as typeof fetch
 
     await expect(searchByKeywords(fetchImpl)).rejects.toThrow(/keywords:deepseek-harness.*503/)
@@ -340,7 +344,7 @@ describe('searchByKeywords', () => {
     const fetchImpl = (async () => {
       call += 1
       if (call === 1) return new Response('rate limited', { status: 429 })
-      return new Response(JSON.stringify({ objects: [] }), { status: 200 })
+      return new Response(JSON.stringify({ total: 0, objects: [] }), { status: 200 })
     }) as unknown as typeof fetch
 
     const names = await searchByKeywords(fetchImpl, sleep)
@@ -369,7 +373,7 @@ describe('searchByKeywords', () => {
     const fetchImpl = (async () => {
       call += 1
       if (call === 1) return new Response('rate limited', { status: 429, headers: { 'Retry-After': '3' } })
-      return new Response(JSON.stringify({ objects: [] }), { status: 200 })
+      return new Response(JSON.stringify({ total: 0, objects: [] }), { status: 200 })
     }) as unknown as typeof fetch
 
     await searchByKeywords(fetchImpl, sleep)
@@ -383,7 +387,7 @@ describe('searchByKeywords', () => {
     const fetchImpl = (async () => {
       call += 1
       if (call < 6) return new Response('rate limited', { status: 429 })
-      return new Response(JSON.stringify({ objects: [] }), { status: 200 })
+      return new Response(JSON.stringify({ total: 0, objects: [] }), { status: 200 })
     }) as unknown as typeof fetch
 
     await searchByKeywords(fetchImpl, sleep)
@@ -409,7 +413,7 @@ describe('searchByKeywords', () => {
     const fetchImpl = (async () => {
       call += 1
       if (call === 1) return new Response('rate limited', { status: 429, headers: { 'Retry-After': '3600' } })
-      return new Response(JSON.stringify({ objects: [] }), { status: 200 })
+      return new Response(JSON.stringify({ total: 0, objects: [] }), { status: 200 })
     }) as unknown as typeof fetch
 
     await searchByKeywords(fetchImpl, sleep)
@@ -421,7 +425,7 @@ describe('searchByKeywords', () => {
     const headersSeen: Array<Record<string, string> | undefined> = []
     const fetchImpl = (async (_url: string | URL, init?: RequestInit) => {
       headersSeen.push(init?.headers as Record<string, string> | undefined)
-      return new Response(JSON.stringify({ objects: [] }), { status: 200 })
+      return new Response(JSON.stringify({ total: 0, objects: [] }), { status: 200 })
     }) as unknown as typeof fetch
 
     await searchByKeywords(fetchImpl, sleep, 'npm_readonly_token')
@@ -434,7 +438,7 @@ describe('searchByKeywords', () => {
     const headersSeen: Array<Record<string, string> | undefined> = []
     const fetchImpl = (async (_url: string | URL, init?: RequestInit) => {
       headersSeen.push(init?.headers as Record<string, string> | undefined)
-      return new Response(JSON.stringify({ objects: [] }), { status: 200 })
+      return new Response(JSON.stringify({ total: 0, objects: [] }), { status: 200 })
     }) as unknown as typeof fetch
 
     await searchByKeywords(fetchImpl, sleep)
@@ -446,17 +450,22 @@ describe('searchByKeywords', () => {
   // total probe, anything else is a page fetch; both answer `total` the way
   // the live registry does, so the loop under test reads it.
   function stubSearch(
-    totals: Record<string, number>,
+    totals: Record<string, number> | ((query: string) => number),
     pages: (query: string, from: number) => string[],
     pagedTotals: Record<string, number> = {},
   ): { fetchImpl: typeof fetch; urls: string[] } {
     const urls: string[] = []
+    // A function lets a fixture answer a different total on a later call —
+    // static totals can never move, so `before === after` in every prior
+    // fixture, which left the coverage check's churn tolerance untested.
+    const readTotal = (query: string): number =>
+      typeof totals === 'function' ? totals(query) : (totals[query] ?? 0)
     const fetchImpl = (async (url: string | URL) => {
       const text = String(url)
       urls.push(text)
       const params = new URL(text).searchParams
       const query = params.get('text') ?? ''
-      const total = totals[query] ?? 0
+      const total = readTotal(query)
       if (params.get('size') === '1') {
         return new Response(JSON.stringify({ total, objects: [] }), { status: 200 })
       }
@@ -543,6 +552,38 @@ describe('searchByKeywords', () => {
     )
   })
 
+  it('tolerates a partition total that shrinks between the pre- and post-paging probe', async () => {
+    // Ordinary publish/unpublish churn during a run must not fail a harvest
+    // that is otherwise complete: `min(before, after)` is the tolerance. Every
+    // fixture above uses a static `totals` map, so `before === after` always
+    // held — swapping `Math.min` for `Math.max`, or deleting the second probe
+    // entirely, left every one of them green.
+    let dshPluginProbes = 0
+    const totals = (query: string): number => {
+      if (query === 'keywords:dsh-plugin') {
+        dshPluginProbes += 1
+        // Before paging: 5,300 (over the window, so it partitions). After
+        // paging: 5,297 — three names unpublished mid-run.
+        return dshPluginProbes === 1 ? 5300 : 5297
+      }
+      if (query === 'keywords:dsh-plugin,dsh') return 5000
+      if (query === 'keywords:dsh-plugin,deepseek-harness') return 297
+      return 0 // deepseek-harness itself, and every other refinement cell
+    }
+    const { fetchImpl } = stubSearch(totals, (query, from) => {
+      if (query !== 'keywords:dsh-plugin,dsh' && query !== 'keywords:dsh-plugin,deepseek-harness') return []
+      const total = query === 'keywords:dsh-plugin,dsh' ? 5000 : 297
+      const prefix = query === 'keywords:dsh-plugin,dsh' ? 'd' : 'h'
+      return Array.from(
+        { length: Math.max(0, Math.min(250, total - from)) },
+        (_, i) => `${prefix}${from + i}`,
+      )
+    })
+    const names = await searchByKeywords(fetchImpl)
+    expect(names).toHaveLength(5297)
+    expect(dshPluginProbes).toBe(2) // the pre-partition probe, then the post-paging recheck
+  })
+
   it('refuses to ask for a from past the window instead of paging into the wrap', async () => {
     // The probe says the keyword fits, the pages say it does not. `from=5250`
     // would silently return page 0 (measured live), so the loop must throw.
@@ -557,11 +598,14 @@ describe('searchByKeywords', () => {
     expect(urls).toHaveLength(22) // one size=1 probe plus from=0..5000
   })
 
-  it('ends a cell rather than paging forever when the registry answers no total', async () => {
-    // The old MAX_SEARCH_PAGES bound is gone: a response carrying no `total`
-    // reads as 0, which is `from + objects.length >= 0` on the first page, so
-    // the loop cannot run away. Paging past the window is the case that
-    // throws, and it is pinned by "refuses to ask for a from past the window".
+  it('throws when a page answers no total, rather than ending the cell silently', async () => {
+    // A response carrying no `total` cannot be told apart from a truncated
+    // page: defaulting it to 0 made `from + objects.length >= 0` true on the
+    // very first page, so a full 250-object page silently ended the cell and
+    // the harvest returned a quarter of a keyword's actual names without
+    // complaint. Live shape: the registry has served a 200 with
+    // `<!doctype html>` and a 429 with a 7 KB HTML body on ordinary search
+    // pages, so a missing total is not hypothetical.
     let call = 0
     const fetchImpl = (async () => {
       call += 1
@@ -569,9 +613,10 @@ describe('searchByKeywords', () => {
       return new Response(JSON.stringify(body), { status: 200 })
     }) as unknown as typeof fetch
 
-    const names = await searchByKeywords(fetchImpl)
-    expect(names).toHaveLength(250)
-    expect(call).toBe(4) // one probe plus one page, per keyword
+    await expect(searchByKeywords(fetchImpl)).rejects.toThrow(
+      /npm search for keywords:dsh-plugin at from=0 answered no total; a truncated page cannot be told from a complete one/,
+    )
+    expect(call).toBe(2) // the probe, then the one page that trips the throw
   })
 })
 
@@ -735,7 +780,7 @@ describe('registry failover', () => {
   it('searches through the failover too', async () => {
     const fetchImpl = (async (url: string | URL) => {
       if (String(url).startsWith('https://registry.npmjs.org')) throw new Error('primary down')
-      return new Response(JSON.stringify({ objects: [{ package: { name: 'dsh-from-backup' } }] }), { status: 200 })
+      return new Response(JSON.stringify({ total: 1, objects: [{ package: { name: 'dsh-from-backup' } }] }), { status: 200 })
     }) as unknown as typeof fetch
     const names = await searchByKeywords(fetchImpl, noSleep, undefined, 'https://registry.npmmirror.com')
     expect(names).toContain('dsh-from-backup')

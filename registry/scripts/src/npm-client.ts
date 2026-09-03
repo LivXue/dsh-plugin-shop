@@ -36,24 +36,36 @@ export const SEARCH_WINDOW = MAX_SEARCH_FROM + PAGE_SIZE
  *
  * `keywords:a,b` is an INTERSECTION on `/-/v1/search`, and it is the ONLY
  * filtering qualifier the API honors. Probed 2026-09-03 against
- * `keywords:deepseek-harness` (total 5,095): `scope:`, `author:`,
- * `maintainer:`, `not:unstable`, `is:unstable`, a bare text term, and the
+ * `keywords:deepseek-harness` (total 5,103): `scope:`, `author:`,
+ * `maintainer:`, `not:unstable`, `is:unstable`, and the
  * `quality`/`popularity`/`maintenance` weights each left both the total and
  * the first page unchanged — none of them can split or re-slice the window.
- * The intersections do: `dsh` 4,255, `dsh-plugin` 3,178, `plugin` 1,604,
- * `deepseek` 949, `agent` 498, `mcp` 213, `cli` 72, `harness` 41,
- * `claude` 35, `tool` 29.
+ * A bare text term (`keywords:deepseek-harness memory`) leaves the total
+ * unchanged too, but re-ranks the page: only 138 of 250 names match at rank
+ * 2,500 against the untermed query. It still cannot widen the reachable
+ * window — the *tail* is score-stable (`from=5000` returns identical names
+ * under three different terms), so a text term re-ranks the head but never
+ * moves a name into the reachable window. The intersections do split it:
+ * `dsh` 4,255, `dsh-plugin` 3,178, `plugin` 1,604, `deepseek` 949, `agent`
+ * 498, `mcp` 213, `cli` 72, `harness` 41, `claude` 35, `tool` 29, `cordis`
+ * 20, `codex` 10, `claude-code` 10, `desktop-pet` 7.
  *
  * There is no negation qualifier (`keywords:a,-b` returns total 0), so a
  * cell's complement cannot be expressed and this partition is NOT covering by
  * construction. {@link searchByKeywords} therefore MEASURES its coverage
  * against the keyword's own total and throws on a shortfall: safe by check,
- * not by construction. Adding a keyword here is the documented response to
- * that throw.
+ * not by construction. `cordis`, `codex`, `claude-code`, and `desktop-pet`
+ * were added 2026-09-03 to close a measured 44-name gap (the other ten cells
+ * alone reached 5,059 of 5,103, paged live the same day). Adding a keyword
+ * here is the documented response to that throw; a cell is always
+ * `keywords:<harvest-keyword>,<refinement>`, so a refinement can only narrow
+ * the net a listing sees, never widen it — an addition is a coverage
+ * decision, not a policy one.
  */
 export const PARTITION_KEYWORDS: readonly string[] = [
   'dsh', 'dsh-plugin', 'deepseek-harness', 'plugin', 'deepseek',
   'agent', 'mcp', 'cli', 'claude', 'tool',
+  'cordis', 'codex', 'claude-code', 'desktop-pet',
 ]
 
 /** One query's `text` value: the keyword, plus any refinements ANDed on. */
@@ -400,10 +412,11 @@ export function toCandidate(packument: unknown): Candidate | null {
  * @param token - an optional read-only npm token; see {@link fetchWithRetry}.
  * @returns every matching package name, sorted and deduplicated.
  * @throws when the registry answers with a non-OK status after the 429
- *   retries are exhausted; when a keyword's total is past {@link
- *   SEARCH_WINDOW} and no refinement keyword splits it; when a cell would
- *   need a `from` past {@link MAX_SEARCH_FROM}; or when a partition's cells
- *   enumerate fewer names than the keyword's own total.
+ *   retries are exhausted; when a search page answers with no numeric
+ *   total; when a keyword's total is past {@link SEARCH_WINDOW} and no
+ *   refinement keyword splits it; when a cell would need a `from` past
+ *   {@link MAX_SEARCH_FROM}; or when a keyword's cells enumerate fewer
+ *   names than its own total says to expect.
  */
 export async function searchByKeywords(
   fetchImpl: typeof fetch = fetch,
@@ -439,23 +452,34 @@ export async function searchByKeywords(
         }
         // Stop on the total the registry answered, NEVER on a short page: npm
         // has served a 249-object page of a 600-name result set, and breaking
-        // there dropped every later page of that keyword in silence.
-        const cellTotal = typeof body.total === 'number' ? body.total : 0
+        // there dropped every later page of that keyword in silence. A
+        // missing total cannot be told apart from a truncated page, so it
+        // throws rather than defaulting to 0 and ending the cell on whatever
+        // page happened to arrive first — live shape: the registry has
+        // served a 200 with `<!doctype html>` and a 429 with a 7 KB HTML
+        // body on ordinary search pages.
+        if (typeof body.total !== 'number') {
+          throw new Error(`npm search for ${query} at from=${from} answered no total; a truncated page cannot be told from a complete one`)
+        }
+        const cellTotal = body.total
         if (objects.length === 0 || from + objects.length >= cellTotal) break
       }
     }
-    if (partitioned) {
-      // The API has no complement operator, so a partition's coverage is
-      // measured rather than assumed. `min` of the totals before and after
-      // absorbs a package published or unpublished during the run; a genuine
-      // partition gap is hundreds of names and still throws.
-      const after = await probe([keyword])
-      const required = Math.min(total, after)
-      if (forKeyword.size < required) {
-        throw new Error(
-          `npm search for ${keywordQuery([keyword])} enumerated ${forKeyword.size} of ${required} names across ${cells.length} partition cell(s); the refinement keywords do not cover the keyword, so the harvest would be silently short`,
-        )
-      }
+    // The API has no complement operator, so a partition's coverage is
+    // measured rather than assumed: `min` of the totals before and after
+    // absorbs a package published or unpublished during the run, and a
+    // genuine partition gap is hundreds of names and still throws. An
+    // unpartitioned keyword gets the same floor — `total` is already in
+    // hand from the probe above, so checking it here costs nothing extra,
+    // and it also catches a mid-stream empty page: the `||` in the break
+    // above ends a cell on ANY empty page, even one arriving before the
+    // cell's own total says the cell is exhausted.
+    const after = partitioned ? await probe([keyword]) : total
+    const required = Math.min(total, after)
+    if (forKeyword.size < required) {
+      throw new Error(partitioned
+        ? `npm search for ${keywordQuery([keyword])} enumerated ${forKeyword.size} of ${required} names across ${cells.length} partition cell(s); the refinement keywords do not cover the keyword, so the harvest would be silently short`
+        : `npm search for ${keywordQuery([keyword])} enumerated ${forKeyword.size} of ${required} names; the search ended before reaching the answered total, so the harvest would be silently short`)
     }
   }
   return [...seen].sort()
