@@ -271,15 +271,20 @@ describe('toCandidate', () => {
 
 describe('searchByKeywords', () => {
   it('pages every harvest keyword until the registry returns fewer objects than requested', async () => {
+    // Every keyword now costs a leading total-probe request whose `objects`
+    // are ignored (only `total` is read) — so the probe gets its own,
+    // content-free slot and the two real pages follow it.
     const pages = [
-      { objects: Array.from({ length: 250 }, (_, i) => ({ package: { name: `dsh-p${i}` } })) },
-      { objects: [{ package: { name: 'dsh-last' } }] },
+      { total: 251, objects: [] }, // probe: dsh-plugin
+      { total: 251, objects: Array.from({ length: 250 }, (_, i) => ({ package: { name: `dsh-p${i}` } })) },
+      { total: 251, objects: [{ package: { name: 'dsh-last' } }] },
+      { total: 0, objects: [] }, // probe: deepseek-harness
     ]
     const urls: string[] = []
     let call = 0
     const fetchImpl = (async (url: string | URL) => {
       urls.push(String(url))
-      const body = pages[call] ?? { objects: [] }
+      const body = pages[call] ?? { total: 0, objects: [] }
       call += 1
       return new Response(JSON.stringify(body), { status: 200 })
     }) as unknown as typeof fetch
@@ -287,18 +292,25 @@ describe('searchByKeywords', () => {
     const names = await searchByKeywords(fetchImpl)
     expect(names).toHaveLength(251)
     expect(names).toContain('dsh-last') // the union is sorted, so it cannot anchor the tail
-    expect(call).toBe(3) // two pages for the primary keyword, one empty for the second
-    expect(urls.some(url => url.includes('keywords:dsh-plugin'))).toBe(true)
-    expect(urls.some(url => url.includes('keywords:deepseek-harness'))).toBe(true)
+    expect(call).toBe(5) // probe + two pages for dsh-plugin, then deepseek-harness's probe + empty page
+    // `keywords:` is percent-encoded ahead of the name now (partition cells
+    // need to carry a comma safely), so match past the colon.
+    expect(urls.some(url => url.includes('dsh-plugin'))).toBe(true)
+    expect(urls.some(url => url.includes('deepseek-harness'))).toBe(true)
   })
 
   it('unions the keywords, deduplicates, and sorts', async () => {
+    // Matches past the colon: `text=keywords:dsh-plugin` is now sent
+    // percent-encoded (`keywords%3Adsh-plugin`), so the literal `keywords:`
+    // prefix no longer appears in the URL. Both the probe and the page fetch
+    // land on the same branch, which is harmless here since neither keyword
+    // answers a `total`, so each cell still ends on its first (only) page.
     const fetchImpl = (async (url: string | URL) => {
       const text = String(url)
-      if (text.includes('keywords:dsh-plugin')) {
+      if (text.includes('dsh-plugin')) {
         return new Response(JSON.stringify({ objects: [{ package: { name: 'b' } }, { package: { name: 'a' } }] }), { status: 200 })
       }
-      if (text.includes('keywords:deepseek-harness')) {
+      if (text.includes('deepseek-harness')) {
         return new Response(JSON.stringify({ objects: [{ package: { name: 'b' } }, { package: { name: 'c' } }] }), { status: 200 })
       }
       throw new Error(`unexpected url: ${text}`)
@@ -313,8 +325,9 @@ describe('searchByKeywords', () => {
   })
 
   it('aborts when a later keyword search fails, rather than harvesting a subset', async () => {
+    // Matches past the colon — see the comment in the union test above.
     const fetchImpl = (async (url: string | URL) => {
-      if (String(url).includes('keywords:deepseek-harness')) return new Response('nope', { status: 503 })
+      if (String(url).includes('deepseek-harness')) return new Response('nope', { status: 503 })
       return new Response(JSON.stringify({ objects: [{ package: { name: 'fine' } }] }), { status: 200 })
     }) as unknown as typeof fetch
 
@@ -332,7 +345,9 @@ describe('searchByKeywords', () => {
 
     const names = await searchByKeywords(fetchImpl, sleep)
     expect(names).toHaveLength(0)
-    expect(call).toBe(3) // the 429, its retry, then the second keyword's clean page
+    // dsh-plugin's total-probe: the 429, then its retry (2); dsh-plugin's one
+    // empty page (3); deepseek-harness's probe (4) and one empty page (5).
+    expect(call).toBe(5)
   })
 
   it('gives up after bounded retries and throws the final 429', async () => {
@@ -410,7 +425,7 @@ describe('searchByKeywords', () => {
     }) as unknown as typeof fetch
 
     await searchByKeywords(fetchImpl, sleep, 'npm_readonly_token')
-    expect(headersSeen).toHaveLength(2) // one search per keyword
+    expect(headersSeen).toHaveLength(4) // a total-probe plus one page, per keyword
     expect(headersSeen.every(headers => headers?.Authorization === 'Bearer npm_readonly_token')).toBe(true)
   })
 
@@ -423,11 +438,130 @@ describe('searchByKeywords', () => {
     }) as unknown as typeof fetch
 
     await searchByKeywords(fetchImpl, sleep)
-    expect(headersSeen).toHaveLength(2) // one search per keyword
+    expect(headersSeen).toHaveLength(4) // a total-probe plus one page, per keyword
     expect(headersSeen.every(headers => headers === undefined)).toBe(true)
   })
 
-  it('throws instead of paging forever when every page comes back full', async () => {
+  // A search stub built from per-query totals and pages. `size=1` is the
+  // total probe, anything else is a page fetch; both answer `total` the way
+  // the live registry does, so the loop under test reads it.
+  function stubSearch(
+    totals: Record<string, number>,
+    pages: (query: string, from: number) => string[],
+    pagedTotals: Record<string, number> = {},
+  ): { fetchImpl: typeof fetch; urls: string[] } {
+    const urls: string[] = []
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      urls.push(text)
+      const params = new URL(text).searchParams
+      const query = params.get('text') ?? ''
+      const total = totals[query] ?? 0
+      if (params.get('size') === '1') {
+        return new Response(JSON.stringify({ total, objects: [] }), { status: 200 })
+      }
+      const from = Number(params.get('from') ?? '0')
+      const names = pages(query, from)
+      return new Response(JSON.stringify({
+        total: pagedTotals[query] ?? total,
+        objects: names.map(name => ({ package: { name } })),
+      }), { status: 200 })
+    }) as unknown as typeof fetch
+    return { fetchImpl, urls }
+  }
+
+  it('does not end a keyword on a short non-final page — it reads the total', async () => {
+    // Live shape: npm served a 249-object page of a 600-name result set. The
+    // old `objects.length < PAGE_SIZE` break dropped pages 1 and 2 in silence.
+    const totals = { 'keywords:dsh-plugin': 600, 'keywords:deepseek-harness': 0 }
+    const { fetchImpl } = stubSearch(totals, (query, from) => {
+      if (query !== 'keywords:dsh-plugin') return []
+      if (from === 0) return Array.from({ length: 249 }, (_, i) => `a${i}`)
+      if (from === 250) return Array.from({ length: 250 }, (_, i) => `b${i}`)
+      if (from === 500) return Array.from({ length: 101 }, (_, i) => `c${i}`)
+      return []
+    })
+    const names = await searchByKeywords(fetchImpl)
+    expect(names).toHaveLength(600)
+    expect(names).toContain('c100')
+  })
+
+  it('throws, naming the reachable window, when a keyword is past it and nothing splits it', async () => {
+    // Every query — the keyword and every refinement cell — reports 6000, so
+    // no cell fits. The message must name the window and the cap, not blame
+    // "100 pages" the way the old bound did.
+    const everythingOversized = new Proxy({} as Record<string, number>, { get: () => 6000 })
+    const { fetchImpl, urls } = stubSearch(everythingOversized, () => [])
+    await expect(searchByKeywords(fetchImpl)).rejects.toThrow(
+      /npm search for keywords:dsh-plugin,\S+ reports more than the 5250 names one query can reach \(from is capped at 5000\) and no refinement keyword splits it/,
+    )
+    // Every request is a size=1 probe: not one wasted page fetch.
+    expect(urls.every(url => new URL(url).searchParams.get('size') === '1')).toBe(true)
+  })
+
+  it('partitions an over-window keyword into refinement cells and unions them', async () => {
+    // A self-consistent fixture: the keyword is 5,300 names, two refinement
+    // cells hold 5,000 and 300, and the pages actually serve them — so the
+    // coverage check below passes on the same arithmetic the cells report.
+    const totals: Record<string, number> = {
+      'keywords:dsh-plugin': 5300,
+      'keywords:dsh-plugin,dsh': 5000,
+      'keywords:dsh-plugin,deepseek-harness': 300,
+      'keywords:deepseek-harness': 0,
+    }
+    const { fetchImpl } = stubSearch(totals, (query, from) => {
+      const total = totals[query] ?? 0
+      const prefix = query === 'keywords:dsh-plugin,dsh' ? 'd' : 'h'
+      if (query !== 'keywords:dsh-plugin,dsh' && query !== 'keywords:dsh-plugin,deepseek-harness') return []
+      return Array.from(
+        { length: Math.max(0, Math.min(250, total - from)) },
+        (_, i) => `${prefix}${from + i}`,
+      )
+    })
+    const names = await searchByKeywords(fetchImpl)
+    expect(names).toHaveLength(5300)
+    expect(names).toContain('d0')
+    expect(names).toContain('d4999')
+    expect(names).toContain('h299')
+  })
+
+  it('throws when the refinement cells do not cover the keyword', async () => {
+    // No negation qualifier exists, so a partition is never covering by
+    // construction — the shortfall must be measured and refused, never
+    // published as a short harvest.
+    const totals: Record<string, number> = {
+      'keywords:dsh-plugin': 5300,
+      'keywords:dsh-plugin,dsh': 10,
+      'keywords:deepseek-harness': 0,
+    }
+    const { fetchImpl } = stubSearch(totals, (query, from) =>
+      query === 'keywords:dsh-plugin,dsh' && from === 0
+        ? Array.from({ length: 10 }, (_, i) => `n${i}`)
+        : [])
+    await expect(searchByKeywords(fetchImpl)).rejects.toThrow(
+      /npm search for keywords:dsh-plugin enumerated 10 of 5300 names across 1 partition cell\(s\); the refinement keywords do not cover the keyword/,
+    )
+  })
+
+  it('refuses to ask for a from past the window instead of paging into the wrap', async () => {
+    // The probe says the keyword fits, the pages say it does not. `from=5250`
+    // would silently return page 0 (measured live), so the loop must throw.
+    const { fetchImpl, urls } = stubSearch(
+      { 'keywords:dsh-plugin': 5250, 'keywords:deepseek-harness': 0 },
+      () => Array.from({ length: 250 }, (_, i) => `p${i}`),
+      { 'keywords:dsh-plugin': 9999 },
+    )
+    await expect(searchByKeywords(fetchImpl)).rejects.toThrow(
+      /npm search for keywords:dsh-plugin needs from=5250, past the 5000 the registry honors \(a larger from silently returns page 0\)/,
+    )
+    expect(urls).toHaveLength(22) // one size=1 probe plus from=0..5000
+  })
+
+  it('ends a cell rather than paging forever when the registry answers no total', async () => {
+    // The old MAX_SEARCH_PAGES bound is gone: a response carrying no `total`
+    // reads as 0, which is `from + objects.length >= 0` on the first page, so
+    // the loop cannot run away. Paging past the window is the case that
+    // throws, and it is pinned by "refuses to ask for a from past the window".
     let call = 0
     const fetchImpl = (async () => {
       call += 1
@@ -435,8 +569,9 @@ describe('searchByKeywords', () => {
       return new Response(JSON.stringify(body), { status: 200 })
     }) as unknown as typeof fetch
 
-    await expect(searchByKeywords(fetchImpl)).rejects.toThrow(/keywords:dsh-plugin.*100 pages/)
-    expect(call).toBe(100) // the bound is per keyword; the primary one trips it
+    const names = await searchByKeywords(fetchImpl)
+    expect(names).toHaveLength(250)
+    expect(call).toBe(4) // one probe plus one page, per keyword
   })
 })
 

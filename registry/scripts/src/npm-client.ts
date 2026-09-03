@@ -13,6 +13,140 @@ const REGISTRY = 'https://registry.npmjs.org'
 const PAGE_SIZE = 250
 
 /**
+ * The largest `from` the npm search API honors. A `from` past it silently
+ * returns page 0 rather than an error — measured 2026-09-03:
+ * `keywords:deepseek-harness&size=250&from=5000` returned the 95-name tail of
+ * a 5,095-name result set, and `from=5001` returned the same 250 objects as
+ * `from=0`. `size` is capped at 250 (a `size=1000` request returned 250), so
+ * the window cannot be widened from the caller's side either.
+ */
+export const MAX_SEARCH_FROM = 5000
+
+/**
+ * How many names ONE search query can enumerate: the last reachable page plus
+ * its size. Past it the registry has no way to serve the tail, so the harvest
+ * must partition the query rather than page into the wrap. Harvesting a subset
+ * would be indistinguishable from an ecosystem that shrank.
+ */
+export const SEARCH_WINDOW = MAX_SEARCH_FROM + PAGE_SIZE
+
+/**
+ * Refinement keywords the harvest ANDs onto an over-window keyword to split it
+ * into reachable cells, most-covering first.
+ *
+ * `keywords:a,b` is an INTERSECTION on `/-/v1/search`, and it is the ONLY
+ * filtering qualifier the API honors. Probed 2026-09-03 against
+ * `keywords:deepseek-harness` (total 5,095): `scope:`, `author:`,
+ * `maintainer:`, `not:unstable`, `is:unstable`, a bare text term, and the
+ * `quality`/`popularity`/`maintenance` weights each left both the total and
+ * the first page unchanged — none of them can split or re-slice the window.
+ * The intersections do: `dsh` 4,255, `dsh-plugin` 3,178, `plugin` 1,604,
+ * `deepseek` 949, `agent` 498, `mcp` 213, `cli` 72, `harness` 41,
+ * `claude` 35, `tool` 29.
+ *
+ * There is no negation qualifier (`keywords:a,-b` returns total 0), so a
+ * cell's complement cannot be expressed and this partition is NOT covering by
+ * construction. {@link searchByKeywords} therefore MEASURES its coverage
+ * against the keyword's own total and throws on a shortfall: safe by check,
+ * not by construction. Adding a keyword here is the documented response to
+ * that throw.
+ */
+export const PARTITION_KEYWORDS: readonly string[] = [
+  'dsh', 'dsh-plugin', 'deepseek-harness', 'plugin', 'deepseek',
+  'agent', 'mcp', 'cli', 'claude', 'tool',
+]
+
+/** One query's `text` value: the keyword, plus any refinements ANDed on. */
+export function keywordQuery(keywords: readonly string[]): string {
+  return `keywords:${keywords.join(',')}`
+}
+
+/**
+ * Split one harvest keyword into queries whose totals each fit
+ * {@link SEARCH_WINDOW}.
+ * @param keyword - the harvest keyword.
+ * @param probe - reads one query's `total`; injected so tests need no network.
+ * @returns the cells to page, the keyword's own total, and whether a split
+ *   happened (an unsplit keyword needs no coverage check: paging to its
+ *   answered total already enumerates all of it).
+ * @throws when a cell is past the window and no refinement keyword splits it.
+ */
+export async function partitionKeyword(
+  keyword: string,
+  probe: (keywords: readonly string[]) => Promise<number>,
+): Promise<{ cells: string[][]; total: number; partitioned: boolean }> {
+  const total = await probe([keyword])
+  if (total <= SEARCH_WINDOW) return { cells: [[keyword]], total, partitioned: false }
+  const cells: string[][] = []
+  const oversized: string[][] = []
+  for (const refinement of PARTITION_KEYWORDS) {
+    if (refinement === keyword) continue
+    const cell = [keyword, refinement]
+    const cellTotal = await probe(cell)
+    if (cellTotal === 0) continue
+    if (cellTotal <= SEARCH_WINDOW) cells.push(cell)
+    else oversized.push(cell)
+  }
+  for (const cell of oversized) {
+    let split = false
+    for (const refinement of PARTITION_KEYWORDS) {
+      if (cell.includes(refinement)) continue
+      const deeperTotal = await probe([...cell, refinement])
+      if (deeperTotal === 0 || deeperTotal > SEARCH_WINDOW) continue
+      cells.push([...cell, refinement])
+      split = true
+    }
+    if (!split) {
+      throw new Error(
+        `npm search for ${keywordQuery(cell)} reports more than the ${SEARCH_WINDOW} names one query can reach (from is capped at ${MAX_SEARCH_FROM}) and no refinement keyword splits it; add one to PARTITION_KEYWORDS`,
+      )
+    }
+  }
+  if (cells.length === 0) {
+    throw new Error(
+      `npm search for ${keywordQuery([keyword])} reports more than the ${SEARCH_WINDOW} names one query can reach (from is capped at ${MAX_SEARCH_FROM}) and no refinement keyword splits it; add one to PARTITION_KEYWORDS`,
+    )
+  }
+  return { cells, total, partitioned: true }
+}
+
+/** The two fields the harvest reads off a search response. */
+interface SearchBody {
+  objects?: { package?: { name?: unknown } }[]
+  total?: unknown
+}
+
+/**
+ * Parse one search response, naming the query on a body that is not JSON.
+ * Observed live: page 13 of `keywords:dsh-plugin` answered 200 with
+ * `<!doctype html>`, and the bare `SyntaxError` named no keyword.
+ */
+async function readSearchBody(response: Response, query: string, from: number): Promise<SearchBody> {
+  try {
+    return await response.json() as SearchBody
+  } catch {
+    throw new Error(`npm search for ${query} at from=${from} answered 200 with a body that is not JSON`)
+  }
+}
+
+/** Read one query's `total` with a single-object request. */
+async function searchTotal(
+  keywords: readonly string[],
+  fetchImpl: typeof fetch,
+  sleep: (ms: number) => Promise<void>,
+  token: string | undefined,
+  backupRegistry: string | undefined,
+  timeoutMs: number,
+): Promise<number> {
+  const query = keywordQuery(keywords)
+  const path = `-/v1/search?text=${encodeURIComponent(query)}&size=1&from=0`
+  const response = await fetchWithFailover(path, fetchImpl, sleep, token, backupRegistry, timeoutMs)
+  if (!response.ok) throw new Error(`npm search for ${query} failed: ${response.status}`)
+  const body = await readSearchBody(response, query, 0)
+  return typeof body.total === 'number' ? body.total : 0
+}
+
+/**
  * Per-attempt bound on a registry request. A stalled connection fails over
  * to the backup registry instead of hanging the build — the hub's
  * stall-detection borrowing, in its read-only form (the install path still
@@ -87,16 +221,6 @@ async function fetchWithFailover(
   if (!backup.ok) throw primaryError
   return backup
 }
-
-/**
- * Upper bound on the number of search pages fetched per keyword by {@link searchByKeywords}.
- * Guards against an unbounded loop issuing endless requests against a public
- * API if the registry ever kept returning full pages: at `PAGE_SIZE` names
- * per page this bound covers catalog sizes far beyond the ecosystem's current
- * scale, so hitting it means the harvest is broken, not that the ecosystem
- * grew.
- */
-const MAX_SEARCH_PAGES = 100
 
 /**
  * Bound on HTTP 429 retries per request. npm rate-limits aggressively by IP,
@@ -276,8 +400,10 @@ export function toCandidate(packument: unknown): Candidate | null {
  * @param token - an optional read-only npm token; see {@link fetchWithRetry}.
  * @returns every matching package name, sorted and deduplicated.
  * @throws when the registry answers with a non-OK status after the 429
- *   retries are exhausted, or when more than {@link MAX_SEARCH_PAGES} pages
- *   are fetched for one keyword without its search completing.
+ *   retries are exhausted; when a keyword's total is past {@link
+ *   SEARCH_WINDOW} and no refinement keyword splits it; when a cell would
+ *   need a `from` past {@link MAX_SEARCH_FROM}; or when a partition's cells
+ *   enumerate fewer names than the keyword's own total.
  */
 export async function searchByKeywords(
   fetchImpl: typeof fetch = fetch,
@@ -287,23 +413,49 @@ export async function searchByKeywords(
   timeoutMs: number = REQUEST_TIMEOUT_MS,
 ): Promise<string[]> {
   const seen = new Set<string>()
+  const probe = (keywords: readonly string[]): Promise<number> =>
+    searchTotal(keywords, fetchImpl, sleep, token, backupRegistry, timeoutMs)
   for (const keyword of HARVEST_KEYWORDS) {
-    for (let page = 0; ; page += 1) {
-      if (page >= MAX_SEARCH_PAGES) {
+    const { cells, total, partitioned } = await partitionKeyword(keyword, probe)
+    const forKeyword = new Set<string>()
+    for (const cell of cells) {
+      const query = keywordQuery(cell)
+      for (let from = 0; ; from += PAGE_SIZE) {
+        if (from > MAX_SEARCH_FROM) {
+          throw new Error(
+            `npm search for ${query} needs from=${from}, past the ${MAX_SEARCH_FROM} the registry honors (a larger from silently returns page 0); the partition is wrong`,
+          )
+        }
+        const path = `-/v1/search?text=${encodeURIComponent(query)}&size=${PAGE_SIZE}&from=${from}`
+        const response = await fetchWithFailover(path, fetchImpl, sleep, token, backupRegistry, timeoutMs)
+        if (!response.ok) throw new Error(`npm search for ${query} failed: ${response.status}`)
+        const body = await readSearchBody(response, query, from)
+        const objects = body.objects ?? []
+        for (const object of objects) {
+          if (typeof object.package?.name === 'string') {
+            seen.add(object.package.name)
+            forKeyword.add(object.package.name)
+          }
+        }
+        // Stop on the total the registry answered, NEVER on a short page: npm
+        // has served a 249-object page of a 600-name result set, and breaking
+        // there dropped every later page of that keyword in silence.
+        const cellTotal = typeof body.total === 'number' ? body.total : 0
+        if (objects.length === 0 || from + objects.length >= cellTotal) break
+      }
+    }
+    if (partitioned) {
+      // The API has no complement operator, so a partition's coverage is
+      // measured rather than assumed. `min` of the totals before and after
+      // absorbs a package published or unpublished during the run; a genuine
+      // partition gap is hundreds of names and still throws.
+      const after = await probe([keyword])
+      const required = Math.min(total, after)
+      if (forKeyword.size < required) {
         throw new Error(
-          `npm search for keywords:${keyword} exceeded ${MAX_SEARCH_PAGES} pages (${MAX_SEARCH_PAGES * PAGE_SIZE} names) without completing; harvest is incomplete`,
+          `npm search for ${keywordQuery([keyword])} enumerated ${forKeyword.size} of ${required} names across ${cells.length} partition cell(s); the refinement keywords do not cover the keyword, so the harvest would be silently short`,
         )
       }
-      const from = page * PAGE_SIZE
-      const path = `-/v1/search?text=keywords:${keyword}&size=${PAGE_SIZE}&from=${from}`
-      const response = await fetchWithFailover(path, fetchImpl, sleep, token, backupRegistry, timeoutMs)
-      if (!response.ok) throw new Error(`npm search for keywords:${keyword} failed: ${response.status}`)
-      const body = await response.json() as { objects?: { package?: { name?: unknown } }[] }
-      const objects = body.objects ?? []
-      for (const object of objects) {
-        if (typeof object.package?.name === 'string') seen.add(object.package.name)
-      }
-      if (objects.length < PAGE_SIZE) break
     }
   }
   return [...seen].sort()
