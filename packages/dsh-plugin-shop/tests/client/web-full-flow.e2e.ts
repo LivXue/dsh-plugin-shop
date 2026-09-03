@@ -78,6 +78,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { chromium, type Browser, type Page } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { startInstall } from '../../src/host/executor.ts'
+import { zh } from '../../src/client/locales.ts'
 import { startCatalogServer, type CatalogServer } from '../fixtures/catalog-server.ts'
 import { startLocalRegistry, type LocalRegistry } from '../fixtures/local-registry.ts'
 
@@ -522,6 +523,20 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // not just the badge's title attribute.
       await card.locator('[data-shop-incompatible]').waitFor({ state: 'visible', timeout: 15_000 })
       expect(await card.textContent()).toContain('@deepseek-ai/dsh-client-store')
+      expect(await card.locator('[data-shop-incompatible]').textContent()).toBe(zh.incompatibleBadge)
+
+      // The copy is two sentences separated by a `\n` it carries itself, and
+      // NOTHING else in this suite can prove that renders. The component tests
+      // stub `t` with a hand-rolled dictionary lookup, so they establish only
+      // that the dictionary holds a newline — whether the harness's own i18n
+      // passes it through untouched, and whether the bundled stylesheet still
+      // says pre-line by the time a browser reads it, are answerable only
+      // here, against the real dsh and a real chromium.
+      const detail = card.locator('[data-shop-incompatible-detail]')
+      await detail.waitFor({ state: 'visible', timeout: 15_000 })
+      const shape = await detail.evaluate(el => ({ text: el.textContent ?? '', whiteSpace: getComputedStyle(el).whiteSpace }))
+      expect(shape.text, 'the harness i18n dropped the newline the copy carries').toContain('\n')
+      expect(shape.whiteSpace, 'pre-line did not survive into the bundled stylesheet').toBe('pre-line')
 
       // Install → the community-tier gate opens and shows the
       // incompatibility warning alongside the §9.3 acknowledgement.

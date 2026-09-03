@@ -612,9 +612,9 @@
   padding: 1px 7px;
   border-radius: 999px;
   font-size: 11px;
-  color: var(--dsw-alias-state-warn-primary);
-  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 14%, transparent);
-  border: 1px solid color-mix(in srgb, var(--dsw-alias-state-warn-primary) 40%, transparent);
+  color: var(--dsw-alias-state-error-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-state-error-primary) 40%, transparent);
 }
 
 .starsBadge {
@@ -674,11 +674,16 @@
   display: block;
 }
 
+/* `white-space: pre-line` so the newline in the copy is the copy's own: the
+   dictionary decides where the line breaks, and a translator changes it
+   without touching the component. Collapses runs of spaces like `normal`, so
+   only the explicit \n survives. */
 .incompatibleDetail {
   margin: 0;
   font-size: 12px;
   line-height: 1.5;
-  color: var(--dsw-alias-state-warn-primary);
+  white-space: pre-line;
+  color: var(--dsw-alias-state-error-primary);
 }
 
 .capabilitiesBlock {
@@ -946,7 +951,8 @@
   margin: 0;
   font-size: 12px;
   line-height: 1.6;
-  color: var(--dsw-alias-state-warn-primary);
+  white-space: pre-line;
+  color: var(--dsw-alias-state-error-primary);
 }
 
 .gateActions {

@@ -217,3 +217,35 @@ describe('focus rings are not clipped by their container', () => {
     expect(Number(margin)).toBeGreaterThanOrEqual(reach)
   })
 })
+
+describe('incompatibility reads as an error, not a warning', () => {
+  // The shop already spends the warn token on things a user can live with: a
+  // stale catalog, an unreviewed tier, the §9.3 acknowledgement. A plugin whose
+  // modules are absent will not load at all, so it must not sit in the same
+  // colour as "we have not reviewed this". jsdom composites no colours, so the
+  // token CHOICE is the only layer where this is visible to a test.
+  for (const selector of ['.incompatibleBadge', '.incompatibleDetail', '.gateWarning']) {
+    it(`${selector} draws from the error token, not the warn token`, () => {
+      const body = rules.get(selector)
+      expect(body, `no rule for ${selector}`).toBeDefined()
+      expect(body).toMatch(/--dsw-alias-state-error-primary/)
+      expect(body).not.toMatch(/--dsw-alias-state-warn-primary/)
+    })
+  }
+
+  // The copy carries its own `\n` so the dictionary decides where the line
+  // breaks. Without pre-line the browser collapses it and both sentences run
+  // together — invisible to every test that reads textContent, which keeps the
+  // newline whether or not it renders. The e2e is what proves the effect.
+  for (const selector of ['.incompatibleDetail', '.gateWarning']) {
+    it(`${selector} renders the newline the copy carries`, () => {
+      expect(rules.get(selector)).toMatch(/white-space:\s*pre-line/)
+    })
+  }
+
+  it('leaves the acknowledgement gate itself on the warn token', () => {
+    // .gateWarning turning red inside an amber .gate is the contrast that
+    // separates "not reviewed" from "will not load".
+    expect(rules.get('.gate')).toMatch(/--dsw-alias-state-warn-primary/)
+  })
+})

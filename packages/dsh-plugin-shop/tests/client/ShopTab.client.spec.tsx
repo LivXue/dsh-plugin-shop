@@ -1034,6 +1034,54 @@ describe('ShopTab', () => {
     // Fails if the key is ever swapped back to incompatibleDetail.
     expect(badge?.getAttribute('title')).not.toBe(installedVersionTitle)
   })
+
+  it('labels the outdated row badge Update Incompatible, not the plain badge', async () => {
+    // The distinction the title has always carried is now on the face of the
+    // badge, where it is readable without hovering: the installed version runs
+    // here, so only the UPDATE is incompatible.
+    const { injected } = bench(
+      { ...snapshot({ tier: 'community' }), incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] } },
+      [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }],
+    )
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText(en.installedSection)).toBeTruthy())
+    const badge = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-incompatible]')
+    expect(badge?.textContent).toBe(en.incompatibleUpdateBadge)
+    expect(badge?.textContent).not.toBe(en.incompatibleBadge)
+  })
+
+  it('names the missing modules and the version caveat on two lines', async () => {
+    // The copy carries its own newline; `white-space: pre-line` renders it.
+    // Asserted on the text so a dictionary edit that drops the second line
+    // fails here rather than shipping a one-line warning.
+    const { injected } = bench({
+      ...snapshot({ tier: 'community' }),
+      incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] },
+    })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const detail = container.querySelector('[data-shop-entry="dsh-hello-plugin"] p')
+    const expected = en.incompatibleDetail.replace('{modules}', '@deepseek-ai/dsh-client-store')
+    expect(expected.split('\n')).toHaveLength(2)
+    expect(container.textContent).toContain(expected.split('\n')[0])
+    expect(container.textContent).toContain(expected.split('\n')[1])
+    expect(detail).toBeTruthy()
+  })
+
+  it('warns with the update wording when the gate opens for an update', async () => {
+    // The gate serves both variants. Opening it for an update must not accuse
+    // the installed version, exactly as the outdated row's badge does not.
+    const { injected } = bench(
+      { ...snapshot({ tier: 'community' }), incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] } },
+      [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }],
+    )
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText(en.installedSection)).toBeTruthy())
+    const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]') as HTMLElement
+    fireEvent.click(row.querySelector('[data-shop-update]') as HTMLElement)
+    const warning = row.querySelector('[data-shop-incompatible-warning]')
+    expect(warning?.textContent).toBe(en.incompatibleUpdateDetail.replace('{modules}', '@deepseek-ai/dsh-client-store'))
+  })
 })
 
 describe('ShopTab shop-like filtering', () => {

@@ -161,7 +161,7 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, t,
           <p className={open ? `${css.summaryZh} ${css.summaryZhExpanded}` : css.summaryZh}>{summary.zh}</p>
         )}
         {missing.length > 0 && (
-          <p className={css.incompatibleDetail}>{t('incompatibleDetail', { modules: missing.join(', ') })}</p>
+          <p className={css.incompatibleDetail} data-shop-incompatible-detail>{t('incompatibleDetail', { modules: missing.join(', ') })}</p>
         )}
         {open && entry.catalog !== undefined && entry.catalog.capabilities.length > 0 && (
           <div className={css.capabilitiesBlock}>
@@ -345,7 +345,10 @@ function InstallPanel({ name, version, tier, missing, variant = 'install', t, in
         <p className={css.gateBody}>{t('acknowledgementBody')}</p>
         {missing.length > 0 && (
           <p className={css.gateWarning} data-shop-incompatible-warning>
-            {t('incompatibleInstallWarning', { modules: missing.join(', ') })}
+            {/* The update variant must not accuse the INSTALLED version: it
+                runs fine here, and it is the update that wants the missing
+                module. Same distinction the outdated row's badge makes. */}
+            {t(variant === 'update' ? 'incompatibleUpdateDetail' : 'incompatibleDetail', { modules: missing.join(', ') })}
           </p>
         )}
         <div className={css.gateActions}>
@@ -653,7 +656,7 @@ function OutdatedRow({ row, tier, source, missing, t, setEnabled, install, insta
           <span className={css.name}>{row.name}</span>
           {missing.length > 0 && (
             <span className={css.incompatibleBadge} data-shop-incompatible title={t('incompatibleUpdateDetail', { modules: missing.join(', ') })}>
-              {t('incompatibleBadge')}
+              {t('incompatibleUpdateBadge')}
             </span>
           )}
         </span>
