@@ -39,11 +39,11 @@ English | [中文](README.zh.md)
 
 | | |
 |---|---|
-| **🌐 Harvested from the whole registry** | Nothing is submitted here and there is no queue to join. Every npm package carrying the `dsh-plugin` or `deepseek-harness` keyword is examined on every build, plus every GitHub repository that uses the same keywords as topics. Today's build looked at **20,891 candidates**. |
-| **🧹 Filtered, hard** | **11,514 of them did not reach the shelf** — 55% of everything examined. A package with no `dsh.bundle` is a library, not a plugin. No license or no repository means nothing can be audited. A build script or a `workspace:` dependency means the install would fail on your machine. A name a hair away from a popular one is held back until someone clears it. Seventeen recorded reasons, all mechanical, all applied on every build — and every rejection carries a line its author can read. |
-| **🔌 Dependency-checked where you are** | The catalog records the peer modules each plugin declares; **2,513 of the 9,377 listings carry them**. Your own installation resolves those names against your own profile — the same question dsh's loader asks at mount time — and a card whose modules are absent reads **Incompatible** and names them. The verdict is computed on your machine, not baked in by the build, because the answer depends on the harness you are actually running. |
-| **🗓️ Rebuilt every day** | The pipeline runs at 03:17 UTC and commits what it found, so every change to the catalog is a reviewable diff rather than a row in someone's database. New plugins appear the next morning; a repository that disappears drops out the same way. |
-| **🗂️ Classified** | Seven categories, so nine thousand entries stay browsable: **tool** 4,584 · **ui** 2,356 · **integration** 777 · **other** 565 · **provider** 463 · **workflow** 401 · **theme** 231. An author who declares `dsh.catalog` picks their own; the rest are classified for them. |
+| **🌐 Whole-registry harvest** | **20,891 candidates** examined every build — every npm package keyed `dsh-plugin` or `deepseek-harness`, plus every GitHub repo using them as topics. No submissions, no queue. |
+| **🧹 Hard filtering** | **11,514 rejected — 55% of everything seen.** Seventeen mechanical checks, listed in the diagram below, and every rejection names a reason its author can read. |
+| **🔌 Dependency check on your machine** | **2,513** listings declare peer modules. Your install resolves them against your own profile — the question dsh's loader asks at mount — so a card reads **Incompatible** only when the modules are really missing *here*. |
+| **🗓️ Daily rebuild** | 03:17 UTC, committed to git. A new plugin lands next morning; a repository that disappears drops out the same way. |
+| **🗂️ Seven categories** | **tool** 4,584 · **ui** 2,356 · **integration** 777 · **other** 565 · **provider** 463 · **workflow** 401 · **theme** 231. Authors who declare `dsh.catalog` pick their own. |
 
 ## 🗺️ How it fits together
 
