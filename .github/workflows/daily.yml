@@ -125,12 +125,20 @@ jobs:
       - name: Commit the snapshot
         # push included: the repo-state.json backfill memory must persist
         # across push-triggered runs, or every run restarts from empty.
+        #
+        # first-seen.yml is staged too. It is written every build and was never
+        # added, so every name absent from the committed file was re-stamped
+        # `added: <today>` the next day: 4,842 of 9,422 live entries carried
+        # `added: "2026-09-03"`, 3,197 entries differed from the previous build
+        # in `added` alone, the "stable" content hash churned daily, and
+        # publish-catalog's unchanged-skip path could never fire. Adding a new
+        # registry write without adding it here now fails workflow.test.ts.
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
         continue-on-error: true
         run: |
           git config user.name 'dsh-plugin-shop bot'
           git config user.email 'bot@users.noreply.github.com'
-          git add registry/snapshots/manifest.lock registry/repo-state.json
+          git add registry/snapshots/manifest.lock registry/repo-state.json registry/first-seen.yml
           git diff --cached --quiet && exit 0
           git commit -m "chore(registry): daily catalog snapshot"
           git push
