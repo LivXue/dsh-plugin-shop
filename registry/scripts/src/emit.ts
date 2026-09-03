@@ -51,6 +51,15 @@ export interface Artifacts {
   pluginsFileName: string
   pluginsJson: string
   indexJson: string
+  /** The shields.io endpoint payload behind the README's `catalog` badge:
+   * `{ schemaVersion, label, message, color, cacheSeconds }`. It names the
+   * build date, because GitHub's own workflow badge can say only passing or
+   * failing and reports the last COMPLETED run — so it says nothing at all
+   * while a build is in flight, and a red one does not distinguish our tests
+   * breaking from npm throttling the search endpoint. A failed build deploys
+   * nothing, so this date stops advancing, which tells a reader the catalog
+   * is stale and by how much. */
+  badgeJson: string
   manifestLock: string
   report: string
 }
@@ -178,6 +187,18 @@ export function emit(
     ...(stars == null ? {} : { stars }),
   }, null, 2)}\n`
 
+  // The date alone, not the timestamp: a badge has room for ten characters,
+  // and the hour a build finished is not something a reader acts on. Sliced
+  // rather than reformatted so it cannot drift from `builtAt` — the same
+  // string, shortened. Like `builtAt`, this never enters the hashed content.
+  const badgeJson = `${JSON.stringify({
+    schemaVersion: 1,
+    label: 'catalog',
+    message: `built ${builtAt.slice(0, 10)}`,
+    color: 'blue',
+    cacheSeconds: 3600,
+  }, null, 2)}\n`
+
   // Repo entries carry their install target (`owner/slug`) so the daily diff
   // keeps both identities visible; the commit is both `version` and `integrity`.
   const manifestLock = sorted
@@ -201,5 +222,5 @@ export function emit(
   const dataCount = (JSON.parse(pluginsJson) as { plugins: unknown[] }).plugins.length
   if (dataCount !== sorted.length) throw new Error('catalog invariant: index count does not match the data file')
 
-  return { pluginsFileName, pluginsJson, indexJson, manifestLock, report }
+  return { pluginsFileName, pluginsJson, indexJson, badgeJson, manifestLock, report }
 }

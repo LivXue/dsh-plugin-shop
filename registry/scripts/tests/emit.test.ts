@@ -331,3 +331,42 @@ describe('peers', () => {
     }
   })
 })
+
+describe('the shields endpoint badge', () => {
+  // GitHub's own workflow badge can say only passing / failing, and it reports
+  // the last COMPLETED run — so it never says anything while a build is
+  // running, and a red one conflates our tests breaking with npm throttling
+  // the search endpoint. This publishes what the reader actually wants to
+  // know: the date of the catalog they would download right now. A build that
+  // fails deploys nothing, so the date simply stops advancing, which says
+  // "stale, and by how much" rather than "something, somewhere, failed".
+
+  it('renders the build date in the shields endpoint schema', () => {
+    const { badgeJson } = emit([entry('dsh-a')], [], '2026-08-18T00:00:00.000Z')
+    expect(JSON.parse(badgeJson)).toMatchObject({
+      schemaVersion: 1,
+      label: 'catalog',
+      message: 'built 2026-08-18',
+    })
+  })
+
+  it('carries a colour and a cache window shields will honour', () => {
+    const badge = JSON.parse(emit([entry('dsh-a')], [], '2026-08-18T00:00:00.000Z').badgeJson) as
+      { color: string; cacheSeconds: number }
+    expect(badge.color).toBeTruthy()
+    // Long enough not to hammer Pages from every README view, short enough
+    // that the date is never a day behind what /v1/index.json already says.
+    expect(badge.cacheSeconds).toBeGreaterThanOrEqual(300)
+    expect(badge.cacheSeconds).toBeLessThanOrEqual(21600)
+  })
+
+  it('takes the date from builtAt and nothing else', () => {
+    const a = emit([entry('dsh-a')], [], '2026-08-18T23:59:59.999Z')
+    const b = emit([entry('dsh-a')], [], '2027-01-01T00:00:00.000Z')
+    expect(JSON.parse(a.badgeJson).message).toBe('built 2026-08-18')
+    expect(JSON.parse(b.badgeJson).message).toBe('built 2027-01-01')
+    // And it stays out of the hashed content, like builtAt itself.
+    expect(a.pluginsJson).toBe(b.pluginsJson)
+    expect(a.pluginsFileName).toBe(b.pluginsFileName)
+  })
+})

@@ -230,6 +230,7 @@ const artifacts = runPipeline(candidates, repoCandidates, configWithFirstSeen, b
 
 writeFileSync(join(OUT_DIR, artifacts.pluginsFileName), artifacts.pluginsJson)
 writeFileSync(join(OUT_DIR, 'index.json'), artifacts.indexJson)
+writeFileSync(join(OUT_DIR, 'badge.json'), artifacts.badgeJson)
 writeFileSync(join(REGISTRY_DIR, 'snapshots/manifest.lock'), artifacts.manifestLock)
 writeFileSync(join(REGISTRY_DIR, 'first-seen.yml'), serializeFirstSeen(firstSeen))
 const repoLine = repoNote === '' ? '' : `\nGitHub: ${repoNote}\n`
