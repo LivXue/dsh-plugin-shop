@@ -36,6 +36,11 @@
   by: human
   reason: "dsh 插件市场：搜索 GitHub dsh-plugin 话题下的插件仓库，一键安装到本地 dsh profile（agent 工具 + 设置页插件市场 tab）"
 
+- name: "@ace-xu/dsh-plugin-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: Model-facing plugin marketplace for DeepSeek Harness: discover, vet, report, and install community plugins (plugin_search / plugin_vet / plugin_report / plugin_install)"
+
 - name: "@ace-zone/dsh-market"
   market: true
   by: human
@@ -56,10 +61,20 @@
   by: human
   reason: "DSH 插件市场：管理 HTTPS 插件仓库、校验下载并管理静态插件插拔。"
 
+- name: "@dsh-external/dsh-plugin-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: DSH 插件市场：GitHub 插件浏览/搜索/详情/一键安装，带 GitHub 登录、代理与配额显示。Plugin Marketplace for DeepSeek Harness."
+
 - name: "@dsh-market/plugin"
   market: true
   by: human
   reason: "DeepSeek Harness 插件市场 · 持续收录 1500+ DSH 插件：中文搜索 + 实用五维评分 + 一键安装。Web 版与 DSH 侧边栏插件双形态。Plugin marketplace for DeepSeek Harness: 1500+ plugins, Chinese sea"
+
+- name: "@dshindex/dsh-plugin-marketplace"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: 帮助寻找DSH插件，引导安装，并持续在DeepSeek Harness内收集插件评分、FAQ、踩坑记录并分享到社区"
 
 - name: "@easytz/dsh-market"
   market: true
@@ -86,6 +101,11 @@
   by: human
   reason: "DSH 插件治理平台：平台层安装器 + suite:doctor + 市场服务 + 进程级启动包装器 + 超时护栏 + MCP/Skills/Koishi 生态桥 + COMPAT 兼容层 + 自进化闭环。插件错误绝不影响服务拉起。"
 
+- name: "@laobos/dsh-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: 劳博士专属 DSH 插件市场：在 Web GUI 与对话工具中查询（支持正则筛选）、下载安装、上传发布 GitHub dsh-plugin 生态插件。"
+
 - name: "@lovstudio/dsh-plugin-marketplace"
   market: true
   by: human
@@ -111,10 +131,20 @@
   by: human
   reason: "First-party plugins for the sai Android coding agent — a bundle whose name says market. Repo Very12345/sai-dsh-plugins."
 
+- name: "@sandbaseai/dsh-plugin-store"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: Native plugin marketplace for DeepSeek Harness: discover, filter, install, and manage 4,000+ community plugin packages."
+
 - name: "@sanqi-normal/dsh-webui-market-plugin"
   market: true
   by: human
   reason: "dsh Web GUI 社区插件市场：浏览 awesome-dsh-plugin.com 插件目录，一键安装/卸载到 profile。Community plugin market for the DeepSeek Harness (dsh) web GUI: browse, install and"
+
+- name: "@springbrand/dsh-plugin-marketplace"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: Plugin marketplace for DeepSeek Harness Web settings: install, update and remove plugins across any local profile."
 
 - name: "@starpivot/dsh-plugin-marketplace"
   market: true
@@ -196,6 +226,11 @@
   by: human
   reason: "DSH 插件市场增强版：dsh-market 基座 + dsh-store 的 npm 权威源/质量验证/GitHub 热度/代理注入/回退安装（MIT，融合 dsh-market 与 dsh-store）"
 
+- name: "dsh-marketplace"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: Plugin marketplace for DeepSeek Harness Web: browse, search, install and remove DSH plugins right from the Plugins settings section."
+
 - name: "dsh-mcp-market"
   market: false
   by: human
@@ -221,6 +256,11 @@
   by: human
   reason: "A community plugin marketplace for DeepSeek Harness, built to the official plugin spec — browse, search and install 4000+ human-curated community plug"
 
+- name: "dsh-plugin-github-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: DSH web client plugin: browse GitHub dsh-plugin topic repositories - plugin market tab, category tags, three-part filters, growth ranking, fuzzy search, favorites, install-command copy"
+
 - name: "dsh-plugin-hub"
   market: true
   by: human
@@ -231,10 +271,20 @@
   by: human
   reason: "7 repos publish this name; all are plugin markets. A loud GitHub plugin radar for DeepSeek Harness."
 
+- name: "dsh-plugin-market-monorepo"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: A dsh plugin marketplace CLI: browse, install, and uninstall community plugins from the dsh-plugin GitHub topic"
+
 - name: "dsh-plugin-marketplace"
   market: true
   by: human
   reason: "DeepSeek Harness Web UI 内置插件市场：在设置页直接浏览 github.com/topics/dsh-plugin，支持搜索、按 Star 排序、查看安装方式。"
+
+- name: "dsh-plugin-shop"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: The most comprehensive DeepSeek Harness plugin market — refreshed daily, sourced across the Internet, reviewed before publishing."
 
 - name: "dsh-plugin-store"
   market: true
@@ -336,10 +386,30 @@
   by: human
   reason: "Visual plugin market inside DeepSeek Harness — browse, search, and one-click install community plugins. · DSH 可视化插件市场：逛一逛，点一下，装好。"
 
+- name: "dshmarketplace"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: Bilingual directory of DeepSeek Harness (DSH) plugins — 3,400+ listings, sandbox-verified install commands, written detail pages, public API. Next.js on Cloudflare Workers."
+
+- name: "dshmarketplace-cli"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: Find and install DeepSeek Harness (DSH) plugins from the CLI or from a coding agent. Machine-readable --json output."
+
 - name: "dshmarketplace-plugin"
   market: true
   by: human
   reason: "Browse and install DeepSeek Harness plugins from inside DSH, in English or Chinese."
+
+- name: "dsw-workshop-plugin"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: github-dsh插件市场：双源聚合 2830+ 插件浏览、官方一键安装、自动翻译、git 订阅管理"
+
+- name: "harness-plugin-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: DeepSeek Harness 插件市场"
 
 - name: "kidai-plugin-market-hub"
   market: true
