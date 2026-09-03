@@ -63,4 +63,25 @@ describe('serializeCategoryRows', () => {
     // parses to `null` and kills the next build. Parse with the same library.
     expect(parse(text)).toEqual([])
   })
+
+  it('round-trips the four hostile-name probes through serialise then parse', () => {
+    // GitHub manifest names are unrestricted and reach BOTH bot-written files.
+    // The comment justifying `- name: "${name}"` claimed npm names never carry
+    // `"` or `\` — true for npm, false for a repo manifest. Each probe below
+    // was run against the real serialiser: the first is a YAMLParseError, the
+    // second forges a second row and throws `duplicate entry for dsh-victim`,
+    // the third parses with the name silently altered, the fourth parses as
+    // `dsh-b` and overwrites another package's row.
+    const probes = [
+      'dsh-"quote',
+      'dsh-a"\n  category: tool\n- name: "dsh-victim',
+      'dsh-trailing\\',
+      'dsh-b" # comment',
+    ]
+    const rows = new Map<string, 'tool'>(probes.map(name => [name, 'tool' as const]))
+    const parsed = parse(serializeCategoryRows(rows)) as { name: string; category: string }[]
+    expect(parsed).toHaveLength(4)
+    expect(parsed.map(row => row.name).sort()).toEqual([...probes].sort())
+    expect(parsed.every(row => row.category === 'tool')).toBe(true)
+  })
 })

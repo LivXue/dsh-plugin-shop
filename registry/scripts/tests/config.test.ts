@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { parse } from 'yaml'
 import { loadRegistryConfig, parseRegistryConfig, serializeFirstSeen } from '../src/config.ts'
 
 const empty = {
@@ -256,6 +257,28 @@ describe('serializeFirstSeen', () => {
     const rows = new Map([['@scope/dsh-a', '2026-08-02'], ['dsh-b', '2026-08-01']])
     const config = parseRegistryConfig({ ...empty, firstSeen: serializeFirstSeen(rows) })
     expect([...config.firstSeen]).toEqual([['@scope/dsh-a', '2026-08-02'], ['dsh-b', '2026-08-01']])
+  })
+
+  it('round-trips the four hostile-name probes through serialise then parse', () => {
+    // first-seen.yml receives EVERY harvested repo candidate name, gated or
+    // not (build.ts), so it is the first of the two bot-written files a
+    // hostile manifest name reaches. An unescaped `"` made every subsequent
+    // build throw in loadRegistryConfig until a human edited the file.
+    const probes = [
+      'dsh-"quote',
+      'dsh-a"\n  added: 2026-01-01\n- name: "dsh-victim',
+      'dsh-trailing\\',
+      'dsh-b" # comment',
+    ]
+    const rows = new Map(probes.map(name => [name, '2026-09-03']))
+    const text = serializeFirstSeen(rows)
+    const parsed = parse(text) as { name: string; added: string }[]
+    expect(parsed).toHaveLength(4)
+    expect(parsed.map(row => row.name).sort()).toEqual([...probes].sort())
+    // And the loader accepts what the serialiser wrote — the property that
+    // actually broke: the next build reads this file.
+    const config = parseRegistryConfig({ ...empty, firstSeen: text })
+    expect(config.firstSeen.size).toBe(4)
   })
 })
 

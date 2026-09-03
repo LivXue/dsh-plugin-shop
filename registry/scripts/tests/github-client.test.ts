@@ -152,6 +152,50 @@ describe('fetchRepoCandidate', () => {
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.code).toBe('fetch-failed')
   })
+
+  it('rejects a manifest name outside the package-name grammar, with its own detail', async () => {
+    // `projectCandidate` accepted any non-empty string and `gateRepo` never
+    // checked the shape, so `Skills Manager` and `{{PKG_NAME}}` are already in
+    // the committed repo-state. A name carrying a quote, a newline, a space or
+    // a backslash is what breaks the two bot-written YAML files.
+    for (const name of ['dsh-"quote', 'dsh-a"\n  category: tool', 'dsh-trailing\\', 'dsh-b" # comment', 'Skills Manager', '{{PKG_NAME}}']) {
+      const fetchImpl = stubFetch({
+        'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(JSON.stringify({
+          name,
+          dsh: { bundle: { patch: './cordis.patch.yml' } },
+        }), { status: 200 }),
+        'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': new Response(JSON.stringify({
+          sha: commit,
+          commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+        }), { status: 200 }),
+      })
+      const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.code).toBe('no-manifest')
+        expect(result.detail).toContain('is not a usable package name')
+      }
+    }
+  })
+
+  it('still accepts an uppercase manifest name — a bundle name is not an npm publication', async () => {
+    // npm forbids uppercase in a NEW publication; a GitHub bundle name is not
+    // one, and rejecting DSH-FS-TOOL would drop a repository that installs
+    // fine. Case folding on the repo channel is B-8's job, not this gate's.
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(JSON.stringify({
+        name: 'DSH-FS-TOOL',
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': new Response(JSON.stringify({
+        sha: commit,
+        commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.candidates[0]?.name).toBe('DSH-FS-TOOL')
+  })
 })
 
 describe('release-tarball rescue probe', () => {

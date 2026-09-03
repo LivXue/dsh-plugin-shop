@@ -40,6 +40,35 @@ export const HARVEST_TOPICS: readonly string[] = ['dsh-plugin', 'deepseek-harnes
 export const MAX_TARBALL_BYTES = 32 * 1024 * 1024
 
 /**
+ * The longest bundle name accepted from a repository manifest, npm's own
+ * limit. A name reaches `first-seen.yml`, `categories.yml`, `markets.yml`,
+ * `manifest.lock`, the published entry and the build report, so an unbounded
+ * one is a bloat vector in six places at once.
+ */
+export const BUNDLE_NAME_MAX_LENGTH = 214
+
+/**
+ * The package-name grammar a repository's manifest `name` must satisfy: an
+ * optional `@scope/`, then url-safe characters, never leading with a dot or an
+ * underscore. This is npm's grammar minus its lowercase-only rule for a NEW
+ * publication — a GitHub bundle name is not an npm publication, and rejecting
+ * `DSH-FS-TOOL` would drop a repository that installs fine (case folding on
+ * this channel is repo-gate's job; see B-8). Everything the grammar excludes
+ * is what broke the bot-written YAML: whitespace, quotes, backslashes,
+ * newlines, `#`, and braces. `Skills Manager` and `{{PKG_NAME}}` are both
+ * already in the committed repo-state.
+ */
+export const BUNDLE_NAME_RE = /^(?:@[A-Za-z0-9][A-Za-z0-9._-]*\/)?[A-Za-z0-9][A-Za-z0-9._-]*$/
+
+/** Whether an untrusted manifest `name` is a usable bundle name. */
+export function isBundleName(value: unknown): value is string {
+  return typeof value === 'string'
+    && value.length > 0
+    && value.length <= BUNDLE_NAME_MAX_LENGTH
+    && BUNDLE_NAME_RE.test(value)
+}
+
+/**
  * GitHub's API speaks HTTP/2 to undici, whose long-lived h2 connections can
  * die with a transient `UND_ERR_HEADERS_TIMEOUT` on the next request. A
  * bounded retry on network throws (4 attempts, doubling backoff 2/4/8s)
@@ -432,7 +461,12 @@ function projectCandidate(
     dsh?: { bundle?: unknown; catalog?: unknown }
   }
   const scripts = typeof m.scripts === 'object' && m.scripts !== null ? m.scripts : {}
-  if (typeof m.name !== 'string' || m.name === '') return null
+  // The shape check is HERE, at the projection boundary, so no candidate with
+  // an unusable name ever exists — not in the gate, not in repo-state.json,
+  // not in the two bot-written YAML files. A subpackage with a bad name is
+  // dropped silently, the same way a bundle-less subpackage is; the ROOT gets
+  // an author-readable rejection in fetchRepoCandidate below.
+  if (!isBundleName(m.name)) return null
   return {
     name: m.name,
     repo: meta.fullName,
@@ -538,6 +572,21 @@ export async function fetchRepoCandidate(
     return { ok: false, code: 'fetch-failed', detail: `Could not resolve the head commit of ${meta.fullName}.` }
   }
 
+  // A root name outside the grammar gets its OWN detail: "declares no name" is
+  // a different and misattributed fact, and a wrong published reason is a
+  // defect. The check runs before the release probe so a bad name costs no
+  // extra request.
+  const rawRootName = (manifest as { name?: unknown } | null)?.name
+  if (rawRootName !== undefined && rawRootName !== null && !isBundleName(rawRootName)) {
+    const shown = typeof rawRootName === 'string'
+      ? JSON.stringify(rawRootName.slice(0, 80))
+      : `a ${typeof rawRootName}`
+    return {
+      ok: false,
+      code: 'no-manifest',
+      detail: `package.json declares ${shown}, which is not a usable package name (an optional @scope/, then letters, digits, ".", "-" or "_", at most ${BUNDLE_NAME_MAX_LENGTH} characters), so dsh cannot register it.`,
+    }
+  }
   const root = projectCandidate(meta, manifest, head, undefined)
   // The rescue probe: only a `requires-build` root can be rescued, so only it
   // is probed. The release rides the candidate through the state file, so a
