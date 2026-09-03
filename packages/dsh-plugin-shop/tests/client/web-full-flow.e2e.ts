@@ -55,7 +55,7 @@
  * - install gate: `[data-shop-confirm]`; failure view: 安装失败 + the detail
  *   paragraph; state lines are plain text (no data attributes)
  * - harness compatibility: `[data-shop-incompatible]` (badge, on both the
- *   catalog card and the installed row) and `[data-shop-incompatible-warning]`
+ *   catalog card and the installed row) and `[data-shop-incompatible-detail]`
  *   (gate warning line) — both render only when the entry has a declared
  *   peer this host cannot resolve; there is no `[data-shop-install-done]` —
  *   the done view below is the only terminal signal
@@ -542,7 +542,12 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // incompatibility warning alongside the §9.3 acknowledgement.
       await card.locator('[data-shop-install]').click()
       await card.locator('[data-shop-confirm]').waitFor({ state: 'visible', timeout: 10_000 })
-      await card.locator('[data-shop-incompatible-warning]').waitFor({ state: 'visible', timeout: 10_000 })
+      // The gate does NOT restate what is missing: the card above it already
+      // does, and both rendering the same two lines printed them twice. The
+      // outdated row is the one surface that still needs the gate to say it,
+      // and it has no card detail to duplicate.
+      expect(await card.locator('[data-shop-incompatible-warning]').count()).toBe(0)
+      expect(await card.locator('[data-shop-incompatible-detail]').count()).toBe(1)
 
       // Confirm → warn, never block: the real pnpm install only warns on the
       // unresolvable peer (the profile's autoInstallPeers: false, same as

@@ -985,7 +985,11 @@ describe('ShopTab', () => {
     expect(screen.getByText(/@deepseek-ai\/dsh-client-store/)).toBeTruthy()
   })
 
-  it('warns inside the install gate but still lets the install proceed', async () => {
+  it('warns on the card but still lets the install proceed', async () => {
+    // This used to assert the warning was inside the GATE. It is not any more:
+    // the card states it, and repeating it in the gate that opens within that
+    // same card printed the two lines twice. The property being protected is
+    // unchanged and is the second half — warn, never block.
     const { injected, install } = bench({
       ...snapshot({ tier: 'community' }),
       incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] },
@@ -993,7 +997,7 @@ describe('ShopTab', () => {
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     fireEvent.click(screen.getByText(en.install))
-    expect(container.querySelector('[data-shop-incompatible-warning]')).toBeTruthy()
+    expect(container.querySelector('[data-shop-incompatible-detail]')).toBeTruthy()
     // Warn, never block: the confirm button stays live and the install runs.
     fireEvent.click(container.querySelector('[data-shop-confirm]') as HTMLElement)
     await waitFor(() => expect(install).toHaveBeenCalled())
@@ -1057,6 +1061,29 @@ describe('ShopTab', () => {
     expect(container.textContent).toContain(expected.split('\n')[0])
     expect(container.textContent).toContain(expected.split('\n')[1])
     expect(detail).toBeTruthy()
+  })
+
+  it('states the missing modules once on a card, not again inside its gate', async () => {
+    // The card renders the detail whenever anything is missing, and the gate
+    // opens inside that same card. Both rendering it printed the two lines
+    // twice, verbatim — invisible while the two surfaces used different copy,
+    // obvious the moment they were unified.
+    const { injected } = bench({
+      ...snapshot({ tier: 'community' }),
+      incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] },
+    })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const card = container.querySelector('[data-shop-entry="dsh-hello-plugin"]') as HTMLElement
+    fireEvent.click(card.querySelector('[data-shop-install]') as HTMLElement)
+    expect(card.querySelector('[data-shop-confirm]'), 'the gate should be open').toBeTruthy()
+    const line = en.incompatibleDetail.replace('{modules}', '@deepseek-ai/dsh-client-store').split('\n')[0] ?? ''
+    const text = card.textContent ?? ''
+    expect(line, 'the copy must carry a newline for this to mean anything').not.toBe('')
+    expect(text.split(line).length - 1, 'the detail must appear exactly once').toBe(1)
+    // Still stated, just once: it is a fact about the entry, so it belongs to
+    // the card, while the gate speaks only about the acknowledgement.
+    expect(card.querySelector('[data-shop-incompatible-detail]')).toBeTruthy()
   })
 
   it('warns with the same wording when the gate opens for an update', async () => {

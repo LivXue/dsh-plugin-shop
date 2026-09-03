@@ -229,14 +229,14 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, t,
        * width below them, where it has room. */}
       <div className={css.cardActions} data-shop-actions>
         {installed === undefined ? (
-          <InstallPanel name={entry.name} version={entry.version} tier={entry.tier} missing={missing} t={t} install={install} installStatus={installStatus} restart={restart} restartSupported={restartSupported} />
+          <InstallPanel name={entry.name} version={entry.version} tier={entry.tier} missing={missing} missingStated t={t} install={install} installStatus={installStatus} restart={restart} restartSupported={restartSupported} />
         ) : (
           <>
             {installed.outdated ? (
               // The update button drives the same install flow for the
               // catalog's latest version; the community gate still applies
               // (§9.3).
-              <InstallPanel name={entry.name} version={entry.version} tier={entry.tier} variant="update" missing={missing} t={t} install={install} installStatus={installStatus} restart={restart} restartSupported={restartSupported} />
+              <InstallPanel name={entry.name} version={entry.version} tier={entry.tier} variant="update" missing={missing} missingStated t={t} install={install} installStatus={installStatus} restart={restart} restartSupported={restartSupported} />
             ) : (
               <p className={css.installedLabel} data-shop-installed>{t('installed')}</p>
             )}
@@ -263,11 +263,17 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, t,
  * failure detail, rejection detail — driven by `useInstall`. Shared by the
  * catalog cards (`variant: 'install'`) and the outdated rows' update button
  * (`variant: 'update'`, which drives the same install flow for `name@latest`). */
-function InstallPanel({ name, version, tier, missing, variant = 'install', t, install, installStatus, restart, restartSupported }: {
+function InstallPanel({ name, version, tier, missing, missingStated = false, variant = 'install', t, install, installStatus, restart, restartSupported }: {
   name: string
   version: string
   tier: CatalogEntry['tier']
   missing: string[]
+  /** The surface around this panel already states what is missing, so the
+   * gate must not repeat it. True on a catalog card, which renders the detail
+   * whenever anything is missing; false on an outdated row, which carries the
+   * badge and its title and nothing else — there the gate is the only place
+   * the modules are named in plain sight. */
+  missingStated?: boolean
   variant?: 'install' | 'update'
   t: ShopTabProps['t']
   install: ShopTabInjected['install']
@@ -343,7 +349,7 @@ function InstallPanel({ name, version, tier, missing, variant = 'install', t, in
       <div className={css.gate}>
         <p className={css.gateTitle}>{t('acknowledgementTitle')}</p>
         <p className={css.gateBody}>{t('acknowledgementBody')}</p>
-        {missing.length > 0 && (
+        {missing.length > 0 && !missingStated && (
           <p className={css.gateWarning} data-shop-incompatible-warning>
             {t('incompatibleDetail', { modules: missing.join(', ') })}
           </p>
