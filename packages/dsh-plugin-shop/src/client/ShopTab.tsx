@@ -1018,24 +1018,14 @@ export function ShopTab(props: ShopTabProps): ReactNode {
           {selfVersion !== null && (
             <div className={css.versionBlock}>
               <span className={css.versionText} data-shop-version>v{selfVersion.installed}</span>
-              <button
-                type="button"
-                className={css.checkUpdateButton}
-                data-shop-check-update
-                /* `title`, not `aria-label`: an aria-label REPLACES the
-                 * accessible name, so it would keep announcing "Check for
-                 * updates" while the button reads "Up to date" and hide the
-                 * state change. As a description it rides alongside instead.
-                 * The visible word is short because this row wraps: measured
-                 * against the built stylesheet, the row needs 776px to stay on
-                 * one line with "Check for updates" and 712px with "Check". */
-                title={t('checkUpdateTitle')}
-                disabled={checkState !== 'idle'}
-                onClick={() => void checkVersion()}
-              >
-                {checkState === 'up-to-date' ? t('upToDate') : t('checkUpdate')}
-              </button>
-              {selfVersion.outdated && selfVersion.latest !== null && selfUpdate.view.kind === 'idle' && (
+              {/* One control, one job: Update TAKES THE PLACE of Check rather
+                * than joining it. While both rendered, the row asked the user
+                * to pick between them when only one was ever the thing to do,
+                * and it did so on the row that already wraps at ordinary
+                * widths. Once an update is running the offer is gone and Check
+                * returns, which is what it did before too — the progress panel
+                * below is the affordance for that state. */}
+              {selfVersion.outdated && selfVersion.latest !== null && selfUpdate.view.kind === 'idle' ? (
                 <button
                   type="button"
                   className={css.updateSelfButton}
@@ -1048,6 +1038,25 @@ export function ShopTab(props: ShopTabProps): ReactNode {
                   }}
                 >
                   {t('update')}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className={css.checkUpdateButton}
+                  data-shop-check-update
+                  /* `title`, not `aria-label`: an aria-label REPLACES the
+                   * accessible name, so it would keep announcing "Check for
+                   * updates" while the button reads "Up to date" and hide the
+                   * state change. As a description it rides alongside instead.
+                   * The visible word is short because this row wraps: measured
+                   * against the built stylesheet, the row needs 776px to stay
+                   * on one line with "Check for updates" and 712px with
+                   * "Check". */
+                  title={t('checkUpdateTitle')}
+                  disabled={checkState !== 'idle'}
+                  onClick={() => void checkVersion()}
+                >
+                  {checkState === 'up-to-date' ? t('upToDate') : t('checkUpdate')}
                 </button>
               )}
             </div>

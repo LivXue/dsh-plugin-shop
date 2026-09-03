@@ -420,7 +420,7 @@ describe('ShopTab', () => {
     expect(container.querySelector('[data-shop-update-self]')).toBeNull()
     fireEvent.click(container.querySelector('[data-shop-check-update]')!)
     await waitFor(() => expect(version).toHaveBeenCalledTimes(2))
-    // The re-check found 0.4.5: the update button appears next to the row.
+    // The re-check found 0.4.5: the update button takes the check button's place.
     await waitFor(() => expect(container.querySelector('[data-shop-update-self]')).toBeTruthy())
   })
 
@@ -509,6 +509,17 @@ describe('ShopTab', () => {
     expect(button.getAttribute('aria-label')).toBeNull()
     // The description says more than the label, or it is not doing its job.
     expect(en.checkUpdateTitle.length).toBeGreaterThan(en.checkUpdate.length)
+  })
+
+  it('replaces the check button with update rather than showing both', async () => {
+    // One control, one job. While both rendered, the row asked the user to
+    // choose between "Check" and "Update" when only one of them was the thing
+    // to do — and it was the row that already wraps at ordinary widths.
+    const { injected, version } = bench(snapshot())
+    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartSupported: true })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(container.querySelector('[data-shop-update-self]')).toBeTruthy())
+    expect(container.querySelector('[data-shop-check-update]')).toBeNull()
   })
 
   it('shows the update button for a newer release and drives the self-update to the restart offer', async () => {
