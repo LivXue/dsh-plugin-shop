@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CATALOG_SCHEMA_VERSION, PEERS_SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION, emit, SCHEMA_VERSION } from '../src/emit.ts'
+import { CATALOG_SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION, emit, SCHEMA_VERSION } from '../src/emit.ts'
 import type { Entry } from '../src/types.ts'
 
 function entry(name: string, version = '1.0.0'): Entry {
@@ -294,27 +294,40 @@ describe('assertCatalogInvariants', () => {
   })
 })
 
-describe('peers and schemaVersion 6', () => {
+describe('peers', () => {
   const withPeers: Entry = {
     ...entry('dsh-peered'),
     peers: ['@deepseek-ai/dsh-client-store'],
   }
 
-  it('emits the peers at schemaVersion 6', () => {
-    const artifacts = emit([withPeers], [], '2026-09-01T00:00:00.000Z', null, PEERS_SCHEMA_VERSION)
+  it('carries the peers at the version the catalog actually publishes', () => {
+    // `peers` used to be gated behind schemaVersion 6 and the gate was never
+    // opened, so the compatibility badges never shipped. The gate was never a
+    // compatibility one: `peers` is an additive optional field and a client
+    // that predates it strips it (consumer zod is non-strict by design). What
+    // the version bump WOULD have done is throw on every client capping at 5 —
+    // a hard break, bought for a field those clients ignore anyway.
+    //
+    // So it rides v5. The cost is bytes to clients that cannot read it; the
+    // alternative was a bet on an installed base npm's download counts cannot
+    // measure (36 versions, median 164, max 218 — mirror traffic enumerating
+    // every version, with the current latest at zero).
+    const artifacts = emit([withPeers], [], '2026-09-01T00:00:00.000Z', null, CATALOG_SCHEMA_VERSION)
     const data = JSON.parse(artifacts.pluginsJson) as { schemaVersion: number; plugins: { peers?: string[] }[] }
-    expect(data.schemaVersion).toBe(6)
+    expect(data.schemaVersion).toBe(5)
+    // Guards against a DROPPED entry masquerading as a carried field: an empty
+    // `plugins` array would make a `'peers' in ...` check vacuously true or
+    // false either way, silently emptying the live catalog for every user.
+    expect(data.plugins).toHaveLength(1)
     expect(data.plugins[0]?.peers).toEqual(['@deepseek-ai/dsh-client-store'])
   })
 
-  it('strips the peers below schemaVersion 6', () => {
-    const artifacts = emit([withPeers], [], '2026-09-01T00:00:00.000Z', null, CATALOG_SCHEMA_VERSION)
-    const data = JSON.parse(artifacts.pluginsJson) as { schemaVersion: number; plugins: Record<string, unknown>[] }
-    expect(data.schemaVersion).toBe(5)
-    // Guards against a DROPPED entry masquerading as a stripped field: an
-    // empty `plugins` array would also make the `'peers' in ...` check below
-    // vacuously false, silently emptying the live v5 catalog for every user.
-    expect(data.plugins).toHaveLength(1)
-    expect(data.plugins[0] !== undefined && 'peers' in data.plugins[0]).toBe(false)
+  it('carries them at the older versions too, so no gate can strand them again', () => {
+    for (const version of [SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION, CATALOG_SCHEMA_VERSION]) {
+      const artifacts = emit([withPeers], [], '2026-09-01T00:00:00.000Z', null, version)
+      const data = JSON.parse(artifacts.pluginsJson) as { plugins: { peers?: string[] }[] }
+      expect(data.plugins[0]?.peers, `stripped at schemaVersion ${version}`)
+        .toEqual(['@deepseek-ai/dsh-client-store'])
+    }
   })
 })

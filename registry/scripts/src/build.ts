@@ -22,7 +22,7 @@ import { parseRepoState, serializeRepoState } from './repo-state.ts'
 import { githubOwnerName } from './github-repo.ts'
 import { fetchCandidates, searchByKeywords } from './npm-client.ts'
 import { runPipeline } from './pipeline.ts'
-import { CATALOG_SCHEMA_VERSION, PEERS_SCHEMA_VERSION, SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION } from './emit.ts'
+import { CATALOG_SCHEMA_VERSION, SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION } from './emit.ts'
 import { assembleStarsByKey } from './stars-assemble.ts'
 import type { Candidate, Rejection, RepoCandidate } from './types.ts'
 
@@ -220,12 +220,12 @@ const configWithFirstSeen = { ...config, firstSeen }
 // flips only in the release commit that ships the v5-parsing client — never
 // before (the v3→v4 precedent; recorded in the release plan, not executed here).
 const v5Flag = process.env.SHOP_CATALOG_V5 === '1'
-// The v6 catalog (peers) rides the v6 client, like every schema bump before
-// it: the flag flips in the release commit that ships the reader.
-const v6Flag = process.env.SHOP_CATALOG_V6 === '1'
-const schemaVersion = v6Flag
-  ? PEERS_SCHEMA_VERSION
-  : v5Flag ? CATALOG_SCHEMA_VERSION : (probeSubpackages ? SUBPACKAGE_SCHEMA_VERSION : SCHEMA_VERSION)
+// SHOP_CATALOG_V6 went with the peers gate (2026-09-03). `peers` rides v5, so
+// the only thing bumping to 6 would still do is throw on every client that
+// caps at 5 — a break with nothing left to buy.
+const schemaVersion = v5Flag
+  ? CATALOG_SCHEMA_VERSION
+  : (probeSubpackages ? SUBPACKAGE_SCHEMA_VERSION : SCHEMA_VERSION)
 const artifacts = runPipeline(candidates, repoCandidates, configWithFirstSeen, builtAt, rejections, starsInfo, schemaVersion)
 
 writeFileSync(join(OUT_DIR, artifacts.pluginsFileName), artifacts.pluginsJson)

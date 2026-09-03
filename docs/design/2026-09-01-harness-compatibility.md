@@ -116,14 +116,34 @@ costs more than the misses.
 
 ### schemaVersion 6
 
-`peers` is additive, so the bump follows the established choreography: a
-new `PEERS_SCHEMA_VERSION = 6`, emitted only behind `SHOP_CATALOG_V6`, and
-that flag flips in the same release commit that ships the client which
-reads it (as `SHOP_HARVEST_REPOS`, `SHOP_HARVEST_SUBPACKAGES` and
-`SHOP_CATALOG_V5` did before it). This is a new constant, not a raise of
-`CATALOG_SCHEMA_VERSION`: `SHOP_CATALOG_V5` already selects
-`CATALOG_SCHEMA_VERSION` in the live daily build, so raising it to 6 would
-publish schemaVersion 6 immediately, to clients that refuse it outright.
+**Amended 2026-09-03: there is no version bump. `peers` rides
+schemaVersion 5, and `PEERS_SCHEMA_VERSION` / `SHOP_CATALOG_V6` are
+gone.** What follows records why the original choreography was the wrong
+instrument, because the reasoning applies to the next additive field too.
+
+`peers` is additive, and this section read that as a reason to bump —
+following `SHOP_HARVEST_REPOS`, `SHOP_HARVEST_SUBPACKAGES` and
+`SHOP_CATALOG_V5` before it. But those precedents are not alike.
+`SHOP_CATALOG_V5` gates a new ENUM VALUE (`theme`), which an older
+client's closed zod enum rejects wholesale — a real compatibility gate.
+`peers` is an optional FIELD, and consumer-side zod is non-strict by
+design, so a client that predates it strips the key and carries on. It
+never needed a gate for safety.
+
+The gate it got was a SIZE gate wearing a version number: 410 KB on a
+3.63 MB file, withheld from clients that could not read it. That cost is
+real, but a schemaVersion bump does not buy it — it buys a hard break.
+Emitting `schemaVersion: 6` throws in every client capping at 5, on the
+version NUMBER, before any field is looked at; the shop does not open at
+all. So the flag could only ever be flipped by betting that few enough
+installations were old, and that bet is unsettleable: npm's per-version
+download counts for this package are flat across 36 versions (median
+164, max 218, the current `latest` at zero), which is mirror traffic
+enumerating releases rather than installs. There is no telemetry.
+
+Weighing an unmeasurable break against 410 KB, the bytes win. The field
+ships to everyone, older clients ignore it, and the compatibility badges
+stop waiting on a flag nobody could responsibly flip.
 `CATALOG_SCHEMA_VERSION` stays 5.
 
 ## 3. How the verdict is formed
@@ -213,8 +233,11 @@ assumption as the code agreed with it.
    v5 and carries no such field; a client that requires it refuses the
    published catalog outright. This is exactly how 0.5.0 broke every
    user, and the parse must be proven against a v5 fixture.
-2. `SHOP_CATALOG_V6` flips in the release commit that ships the reading
-   client, never before.
+2. ~~`SHOP_CATALOG_V6` flips in the release commit that ships the reading
+   client, never before.~~ **Withdrawn 2026-09-03**: the flag is removed
+   and `peers` ships at schemaVersion 5. Point 1 above still stands and
+   is the reason — the field must parse as optional, which is exactly
+   what lets it ride the older version instead of needing a new one.
 3. The release goes through the `beta` dist-tag first. A version that
    changes what the host reads is precisely the class the channel exists
    for.

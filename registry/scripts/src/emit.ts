@@ -23,11 +23,24 @@ export const SUBPACKAGE_SCHEMA_VERSION = 4
  * that parses v5 must ship first (release-order choreography, §3.5). */
 export const CATALOG_SCHEMA_VERSION = 5
 
-/** v6 adds `peers` — the package's declared peer dependency names, which the
- * Host resolves against the running installation (design
- * 2026-09-01-harness-compatibility). Gated because it is 410 KB on a 3.63 MB
- * file: no reason to serve it before a client can read it. */
-export const PEERS_SCHEMA_VERSION = 6
+/* `peers` — the package's declared peer dependency names, which the Host
+ * resolves against the running installation (design
+ * 2026-09-01-harness-compatibility) — used to sit behind PEERS_SCHEMA_VERSION
+ * = 6, on the reasoning that there was no point serving 410 KB of a 3.63 MB
+ * file to clients that could not read it.
+ *
+ * The gate came off on 2026-09-03 without ever being opened, because opening
+ * it was the wrong shape of change. It was never a COMPATIBILITY gate: `peers`
+ * is additive and optional, and a client that predates it strips the key
+ * (consumer zod is non-strict by design). Emitting `schemaVersion: 6` is what
+ * would have broken things — every client capping at 5 throws on the version
+ * NUMBER and the shop does not open at all — and the installed base that would
+ * have hit is unmeasurable: npm's per-version counts are flat across 36
+ * versions (median 164, max 218, the current latest at zero), which is mirror
+ * traffic enumerating releases, not installs.
+ *
+ * So the field rides every version and the bytes go to everyone. That is the
+ * cost that was chosen over a bet nothing could settle. */
 
 /** The stars sidecar pointer the index may carry (spec 2026-08-26-github-stars-design.md §4.1). */
 export interface StarsPointer { url: string; sha256: string }
@@ -116,21 +129,17 @@ export function emit(
   // it wholesale (fail-loudly). The downgrade lives here, at the emission
   // boundary — the classifier and the config keep `theme`, so flipping
   // SHOP_CATALOG_V5 at release time restores it without re-reviewing anything
-  // (design §3.5). The additive fields (`added`, `tarball`, `replacement`)
-  // ride the lower versions: an old client's zod strips the unknown keys
-  // (consumer-side zod is non-strict by design). `peers` cannot ride the same
-  // way: it is additive too, but it is 410 KB on a 3.63 MB file, so below v6
-  // it is stripped rather than served to a client that cannot use it yet.
+  // (design §3.5). The additive fields (`added`, `tarball`, `replacement`,
+  // `peers`) ride EVERY version: an old client's zod strips a key it does not
+  // know (consumer-side zod is non-strict by design), so none of them needs a
+  // gate. `peers` had one anyway, on size rather than safety; see the note on
+  // it above for why it came off instead of being opened.
   let themeDowngraded = 0
   const emitted = entries.map(entry => {
     let next = entry
     if (schemaVersion < CATALOG_SCHEMA_VERSION && next.catalog.category === 'theme') {
       themeDowngraded += 1
       next = { ...next, catalog: { ...next.catalog, category: 'other' as const } }
-    }
-    if (schemaVersion < PEERS_SCHEMA_VERSION && next.peers !== undefined) {
-      const { peers: _peers, ...rest } = next
-      next = rest
     }
     return next
   })
