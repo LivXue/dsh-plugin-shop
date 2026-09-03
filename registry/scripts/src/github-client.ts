@@ -613,11 +613,17 @@ async function probeSubpackageCandidates(
     const subResponse = await fetchRobust(subUrl, fetchImpl, sleep, token)
     if (!subResponse.ok) continue
     const subRead = await readManifest(subResponse)
-    // Skipped, not recorded as a failure: a body we declined to read or could
-    // not parse never got to claim it was a plugin, so there is no name to
-    // attach a reason to. This is the pre-existing behaviour for an unreadable
-    // subpackage manifest, and an over-cap one now joins it.
-    if (!subRead.ok) continue
+    if (!subRead.ok) {
+      // Reported, not silently skipped. A failure here is keyed by PATH, not
+      // by the name inside the manifest, and the path is known right here — so
+      // "there is no name to attach a reason to" was never true of this
+      // branch. It matters most for the size refusal: an unparseable body is
+      // genuinely not a manifest, but an over-cap body may be a perfectly good
+      // one we chose not to read, and without this the repository could be
+      // published as "no installable subpackage" when it plainly has one.
+      failures.push({ repo: `${owner}/${slug}#${dir}`, code: 'no-manifest', detail: subRead.detail })
+      continue
+    }
     const subManifest = subRead.manifest
     const sub = projectCandidate(meta, subManifest, head, dir)
     if (sub !== null && sub.hasBundle) {

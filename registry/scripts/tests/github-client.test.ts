@@ -382,6 +382,13 @@ describe('release-tarball rescue probe', () => {
     }
   })
 
+  it('caps tarballs at 32 MB — the value the fixtures below are written against', () => {
+    // The fixtures use literals so they cannot drift with the constant; this
+    // is what makes the constant itself a tested fact rather than an
+    // assumption both sides of the test happen to share.
+    expect(MAX_TARBALL_BYTES).toBe(32 * 1024 * 1024)
+  })
+
   it('refuses a tarball whose content-length exceeds the cap — the probe degrades, never throws', async () => {
     const fetchImpl = stubFetch({
       'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(buildManifest, { status: 200 }),
@@ -390,7 +397,11 @@ describe('release-tarball rescue probe', () => {
         tag_name: 'v1.0.0',
         assets: [{ browser_download_url: assetUrl }],
       }), { status: 200 }),
-      [assetUrl]: new Response('x', { status: 200, headers: { 'content-length': String(MAX_TARBALL_BYTES + 1) } }),
+      // A literal, not MAX_TARBALL_BYTES + 1: a fixture derived from the
+      // constant moves with it, so raising the cap to 64 MB stayed invisible
+      // to every test in this file — and raising it is the dangerous
+      // direction. The constant is pinned by its own assertion below.
+      [assetUrl]: new Response('x', { status: 200, headers: { 'content-length': String(32 * 1024 * 1024 + 1) } }),
     })
     const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
     expect(result.ok).toBe(true)
@@ -408,7 +419,7 @@ describe('release-tarball rescue probe', () => {
     const chunkSize = 1024 * 1024
     const overCapStream = new ReadableStream<Uint8Array>({
       start(controller) {
-        for (let i = 0; i <= MAX_TARBALL_BYTES / chunkSize; i += 1) controller.enqueue(new Uint8Array(chunkSize))
+        for (let i = 0; i <= 32; i += 1) controller.enqueue(new Uint8Array(chunkSize))
         controller.close()
       },
     })
@@ -741,13 +752,68 @@ describe('subpackage probe', () => {
         new Response(huge, { status: 200 }),
     })
     const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
-    // Skipped exactly the way an unreadable subpackage body is skipped: a
-    // manifest we decline to read never got to claim it was a plugin, so it is
-    // not recorded as a failure either. The bundle-less root is what remains.
+    // The subpackage is not listed — and it is REPORTED, keyed by its path.
+    // The previous revision of this test asserted `subpackageFailures` stayed
+    // undefined, on the reasoning that a body we declined to read never gave
+    // us a name to attach a reason to. That reasoning was wrong: failures here
+    // are keyed by `owner/slug#dir`, and the dir is known at the refusal. An
+    // unparseable body genuinely is not a manifest; an over-cap body may be a
+    // perfectly good one we chose not to read, and the author has to be told
+    // which, or "nothing disappears without a reason attached to its name"
+    // fails on this path.
     expect(result.ok).toBe(true)
     if (result.ok) {
       expect(result.candidates.map(c => c.name)).toEqual(['monorepo-root'])
-      expect(result.subpackageFailures).toBeUndefined()
+      expect(result.subpackageFailures).toEqual([{
+        repo: 'someone/monorepo#packages/the-plugin',
+        code: 'no-manifest',
+        // The body-length branch, not the declared-length one: this stub sends
+        // no content-length, so the reason says discarded rather than unread.
+        detail: 'package.json is larger than 1048576 bytes, so it was discarded without being parsed.',
+      }])
+    }
+  })
+
+  it('never tells a nameless root it has no installable subpackage when one was refused for size', async () => {
+    // The control below proves the statement false: the SAME repository with a
+    // readable subpackage yields a candidate. Before this fix the over-cap
+    // variant published `no-manifest` / "package.json declares no name and no
+    // installable subpackage, so dsh has nothing to register." There is an
+    // installable subpackage; we declined to read it for size, and a
+    // misattributed published reason is a defect, not a wording nit.
+    const huge = JSON.stringify({
+      name: 'the-plugin',
+      dsh: { bundle: {}, catalog: { note: 'z'.repeat(2 * 1024 * 1024) } },
+    })
+    const namelessRoot = JSON.stringify({ private: true, workspaces: ['packages/*'] })
+    const routes = (sub: string) => ({
+      'https://raw.githubusercontent.com/someone/monorepo/main/package.json': new Response(namelessRoot, { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/commits/main': new Response(JSON.stringify({
+        sha: commit,
+        commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/git/trees/main?recursive=1': new Response(JSON.stringify({
+        tree: [{ path: 'package.json' }, { path: 'packages/the-plugin/package.json' }],
+      }), { status: 200 }),
+      'https://raw.githubusercontent.com/someone/monorepo/main/packages/the-plugin/package.json':
+        new Response(sub, { status: 200 }),
+    })
+
+    const control = await fetchRepoCandidate(meta, stubFetch(routes(JSON.stringify({
+      name: 'the-plugin',
+      dsh: { bundle: {}, catalog: { category: 'tool', summary: { en: 'x' }, capabilities: [] } },
+    }))), sleep, 'token')
+    expect(control.ok).toBe(true)
+    if (control.ok) expect(control.candidates.map(c => c.name)).toEqual(['the-plugin'])
+
+    const refused = await fetchRepoCandidate(meta, stubFetch(routes(huge)), sleep, 'token')
+    expect(refused.ok).toBe(true)
+    if (refused.ok) {
+      expect(refused.candidates).toEqual([])
+      expect(refused.subpackageFailures?.[0]?.repo).toBe('someone/monorepo#packages/the-plugin')
+      expect(refused.subpackageFailures?.[0]?.detail).toContain('larger than 1048576 bytes')
+      // Specifically NOT the claim the control just disproved.
+      expect(JSON.stringify(refused)).not.toContain('no installable subpackage')
     }
   })
 
@@ -928,41 +994,87 @@ const EXCUSED_BODY_READS: readonly ExcusedBodyRead[] = [
   },
 ]
 
-/** Every `await <receiver>.json()` / `.text()` in the module, with the
- * top-level function it sits in. */
-function findBodyReads(source: string): { line: string; lineNumber: number; enclosing: string }[] {
-  const found: { line: string; lineNumber: number; enclosing: string }[] = []
-  let enclosing = '(module scope)'
-  const lines = source.split('\n')
-  for (const [index, line] of lines.entries()) {
-    const declaration = /^(?:export )?(?:async )?function (\w+)/.exec(line)
-    if (declaration?.[1] !== undefined) enclosing = declaration[1]
-    if (/await\s+\w+\.(?:json|text)\(\)/.test(line)) {
-      found.push({ line: line.trim(), lineNumber: index + 1, enclosing })
+/**
+ * One logical line: a source line with any method-chain continuations folded
+ * into it, so `await res\n  .json()` is one region to scan and to excuse
+ * rather than two lines that each look harmless. Whitespace is collapsed so a
+ * snippet written on one line still matches a wrapped occurrence.
+ */
+interface LogicalLine {
+  readonly text: string
+  readonly lineNumber: number
+}
+
+function logicalLines(source: string): LogicalLine[] {
+  const raw = source.split('\n')
+  const out: LogicalLine[] = []
+  for (const [index, line] of raw.entries()) {
+    if (out.length > 0 && line.trimStart().startsWith('.')) {
+      const previous = out[out.length - 1]
+      if (previous !== undefined) {
+        out[out.length - 1] = { text: `${previous.text} ${line.trim()}`, lineNumber: previous.lineNumber }
+        continue
+      }
     }
+    out.push({ text: line.trim(), lineNumber: index + 1 })
   }
-  return found
+  return out.map(l => ({ text: l.text.replace(/\s+/g, ' '), lineNumber: l.lineNumber }))
+}
+
+/**
+ * The line range a top-level function occupies, by its LEXICAL extent.
+ *
+ * The first version of this scanner tracked the enclosing function with a
+ * sticky variable that only changed at the next `function` line, so everything
+ * between `readManifest` and the next declaration inherited its name and was
+ * waved through — an arrow-const `const readSidecar = async (r) => r.json()`
+ * placed just below it left all 41 tests green with an uncapped reader in the
+ * file. Matching `const <name> =` as well would have fixed that one spelling;
+ * bounding the region fixes the class, whatever the next twin is spelled like.
+ */
+function functionRegion(source: string, name: string): { first: number; last: number } {
+  const lines = source.split('\n')
+  const declaration = lines.findIndex(line =>
+    new RegExp(`^(?:export )?(?:async )?function ${name}\\b`).test(line))
+  if (declaration === -1) return { first: -1, last: -1 }
+  // Every top-level function in this module closes on a lone `}` at column 0.
+  const close = lines.findIndex((line, index) => index > declaration && line === '}')
+  return { first: declaration + 1, last: close === -1 ? lines.length : close + 1 }
+}
+
+/** Every response-body read in the module. Deliberately matches the call and
+ * not its receiver: `(await x).json()` and a wrapped `.json()` are reads too,
+ * and a receiver pattern would miss both. */
+function findBodyReads(source: string): LogicalLine[] {
+  return logicalLines(source).filter(line => /\.\s*(?:json|text)\s*\(\s*\)/.test(line.text))
 }
 
 describe('every response body read in github-client.ts is capped or excused', () => {
+  const region = functionRegion(githubClientSource, 'readManifest')
+
+  it('locates readManifest, so the region check cannot pass by excusing everything', () => {
+    expect(region.first).toBeGreaterThan(0)
+    expect(region.last).toBeGreaterThan(region.first)
+  })
+
   it('finds the reads at all, so the scan cannot pass by matching nothing', () => {
     // Without this, a regex that stops matching turns the exhaustiveness check
     // below into a loop over an empty list — green, and guarding nothing.
     const reads = findBodyReads(githubClientSource)
     expect(reads.length).toBeGreaterThanOrEqual(EXCUSED_BODY_READS.length + 1)
-    expect(reads.some(r => r.enclosing === 'readManifest')).toBe(true)
+    expect(reads.some(r => r.lineNumber >= region.first && r.lineNumber <= region.last)).toBe(true)
   })
 
-  it('is readManifest, or an excused non-manifest read, for every one of them', () => {
+  it('is inside readManifest, or an excused non-manifest read, for every one of them', () => {
     for (const read of findBodyReads(githubClientSource)) {
-      if (read.enclosing === 'readManifest') continue
-      const excused = EXCUSED_BODY_READS.some(e => read.line.includes(e.snippet))
+      if (read.lineNumber >= region.first && read.lineNumber <= region.last) continue
+      const excused = EXCUSED_BODY_READS.some(e => read.text.includes(e.snippet.replace(/\s+/g, ' ')))
       expect(
         excused,
-        `github-client.ts:${read.lineNumber} (in ${read.enclosing}) reads a response body outside `
-          + 'readManifest. A manifest body must go through readManifest, which is where '
-          + 'MAX_MANIFEST_BYTES is enforced; anything else needs a reasoned entry in '
-          + `EXCUSED_BODY_READS saying why it is not a manifest. Line: ${read.line}`,
+        `github-client.ts:${read.lineNumber} reads a response body outside readManifest `
+          + `(lines ${region.first}-${region.last}). A manifest body must go through readManifest, `
+          + 'which is where MAX_MANIFEST_BYTES is enforced; anything else needs a reasoned entry in '
+          + `EXCUSED_BODY_READS saying why it is not a manifest. Line: ${read.text}`,
       ).toBe(true)
     }
   })
@@ -974,7 +1086,7 @@ describe('every response body read in github-client.ts is capped or excused', ()
     for (const excused of EXCUSED_BODY_READS) {
       expect(
         githubClientSource.includes(excused.snippet),
-        `EXCUSED_BODY_READS carries a snippet that is no longer in github-client.ts, so its reason `
+        'EXCUSED_BODY_READS carries a snippet that is no longer in github-client.ts, so its reason '
           + `("${excused.reason}") no longer applies to anything: ${excused.snippet}`,
       ).toBe(true)
     }

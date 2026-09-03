@@ -1,7 +1,7 @@
 import { distance } from 'fastest-levenshtein'
 import { isOwnRepo } from './own.ts'
 import { parseCatalogSection } from './schema.ts'
-import { DERIVED_SUMMARY_MAX_LENGTH, SIMILARITY_THRESHOLD } from './gate.ts'
+import { DERIVED_SUMMARY_MAX_LENGTH, SIMILARITY_THRESHOLD, truncateWholeCharacters } from './gate.ts'
 import type { RegistryConfig } from './config.ts'
 import type { CatalogSection, Rejection, RepoCandidate } from './types.ts'
 
@@ -93,7 +93,7 @@ export function gateRepo(
     }
     catalog = {
       category: config.categories.get(candidate.name) ?? 'other',
-      summary: { en: description.slice(0, DERIVED_SUMMARY_MAX_LENGTH) },
+      summary: { en: truncateWholeCharacters(description, DERIVED_SUMMARY_MAX_LENGTH) },
       capabilities: [],
     }
     metadata = 'derived'

@@ -13,6 +13,9 @@ const config = parseRegistryConfig({
 
 const commit = 'a'.repeat(40)
 
+/** An unpaired UTF-16 surrogate; see gate.test.ts for the hazard it marks. */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+
 function repo(overrides: Partial<RepoCandidate> = {}): RepoCandidate {
   return {
     name: 'dsh-repo-plugin',
@@ -87,6 +90,26 @@ describe('gateRepo', () => {
       expect(result.accepted.metadata).toBe('derived')
       expect(result.accepted.catalog.summary.en).toBe('Derives from the description.')
     }
+  })
+
+  it('never splits a surrogate pair when capping a derived summary', () => {
+    // The same defect as gate.ts's, in the twin call site. A repo description
+    // is GitHub-supplied free text and lands in the same published
+    // plugins.json; see the gate.test.ts case for the end-to-end measurement.
+    const result = gateRepo(repo({ catalog: null, description: `${'a'.repeat(199)}\u{1F600}tail` }), config)
+    if (!result.ok) throw new Error('expected acceptance')
+    const en = result.accepted.catalog.summary.en
+    expect(en).toMatch(/^a{199}$/)
+    expect(LONE_SURROGATE.test(en)).toBe(false)
+  })
+
+  it('keeps an astral character that ends exactly at the cap', () => {
+    const result = gateRepo(repo({ catalog: null, description: `${'a'.repeat(198)}\u{1F600}tail` }), config)
+    if (!result.ok) throw new Error('expected acceptance')
+    const en = result.accepted.catalog.summary.en
+    expect(en.length).toBe(200)
+    expect(en.endsWith('\u{1F600}')).toBe(true)
+    expect(LONE_SURROGATE.test(en)).toBe(false)
   })
 
   it('rejects a repository with neither a catalog nor a description', () => {

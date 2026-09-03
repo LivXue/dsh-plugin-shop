@@ -20,6 +20,37 @@ export const SIMILARITY_THRESHOLD = 2
 export const DERIVED_SUMMARY_MAX_LENGTH = 200
 
 /**
+ * Truncate to `maxLength` UTF-16 code units without splitting a surrogate pair.
+ *
+ * `String.prototype.slice` counts code units, so cutting at a fixed length can
+ * land BETWEEN the two halves of an astral character (an emoji, most CJK
+ * extension characters) and leave a lone surrogate in the result. That value
+ * reaches `plugins.json`, the file every reader downloads: `JSON.stringify`
+ * escapes the orphan as `\ud83d`, so the artifact stays valid JSON and its
+ * content hash stays stable — which is exactly why nothing here would notice —
+ * but any consumer that parses it and re-encodes UTF-8 fails on it (Python
+ * raises `UnicodeEncodeError: surrogates not allowed`). Dropping the orphan
+ * costs the author one character of a summary that was being cut anyway.
+ *
+ * Shared by both derived-summary sites — `gate.ts` and `repo-gate.ts` — rather
+ * than written out twice; a bound that exists in two copies is a bound that
+ * gets fixed in one.
+ * @param value - the text to truncate.
+ * @param maxLength - the maximum number of UTF-16 code units to keep.
+ * @returns `value`, or its first `maxLength` code units with a trailing
+ *   unpaired high surrogate removed.
+ */
+export function truncateWholeCharacters(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value
+  const cut = value.slice(0, maxLength)
+  const last = cut.charCodeAt(cut.length - 1)
+  // A HIGH surrogate in final position is the first half of a pair whose
+  // second half the cut just removed. A low surrogate there is a complete
+  // pair that happens to end at the bound, and must survive.
+  return last >= 0xD800 && last <= 0xDBFF ? cut.slice(0, -1) : cut
+}
+
+/**
  * Maximum length of a `license` string. npm takes the field verbatim and it
  * reaches every published entry; a value past this is not an SPDX identifier
  * (the longest expression in use, `Apache-2.0 WITH LLVM-exception`, is 30
@@ -137,7 +168,7 @@ export function gate(
       // LLM-assigned when the classifier has a row for this name (spec
       // 2026-08-26-llm-categorization-design.md); `other` until it does.
       category: config.categories.get(name) ?? 'other',
-      summary: { en: description.slice(0, DERIVED_SUMMARY_MAX_LENGTH) },
+      summary: { en: truncateWholeCharacters(description, DERIVED_SUMMARY_MAX_LENGTH) },
       capabilities: [],
     }
     metadata = 'derived'

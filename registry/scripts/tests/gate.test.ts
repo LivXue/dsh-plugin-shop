@@ -11,6 +11,11 @@ const config = parseRegistryConfig({
   firstSeen: '[]',
 })
 
+/** An unpaired UTF-16 surrogate: what a naive slice through an astral
+ * character leaves behind. `test` is called on fresh strings only, so the
+ * regex carries no /g state between assertions. */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+
 function candidate(overrides: Partial<Candidate> = {}): Candidate {
   return {
     name: 'dsh-hello-plugin',
@@ -92,6 +97,56 @@ describe('gate', () => {
     const result = gate(candidate({ catalog: null, description }), config)
     if (!result.ok) throw new Error('expected acceptance')
     expect(result.accepted.catalog.summary.en).toBe('a'.repeat(200))
+  })
+
+  it('never splits a surrogate pair when capping a derived summary', () => {
+    // A plain slice(0, 200) cuts BETWEEN the two code units of an astral
+    // character, leaving a lone high surrogate in summary.en. Unlike the
+    // schema.ts error string, this one reaches plugins.json — the file every
+    // reader downloads. Measured end to end: the emitted JSON stays valid
+    // (JSON.stringify escapes the lone surrogate as \ud83d, so the file is
+    // ASCII and the content hash is stable), but a consumer that parses it and
+    // re-encodes UTF-8 fails — Python raises "surrogates not allowed".
+    // 199 filler + a 2-unit emoji puts the split exactly at the bound.
+    const description = `${'a'.repeat(199)}\u{1F600}tail`
+    const result = gate(candidate({ catalog: null, description }), config)
+    if (!result.ok) throw new Error('expected acceptance')
+    const en = result.accepted.catalog.summary.en
+    expect(en).toMatch(/^a{199}$/)
+    expect(LONE_SURROGATE.test(en)).toBe(false)
+  })
+
+  it('keeps an astral character that ends exactly at the cap', () => {
+    // The complement, and the reason the fix drops a code unit rather than
+    // always trimming one: 198 filler + a 2-unit emoji is exactly 200, a whole
+    // pair, and it must survive intact.
+    const description = `${'a'.repeat(198)}\u{1F600}tail`
+    const result = gate(candidate({ catalog: null, description }), config)
+    if (!result.ok) throw new Error('expected acceptance')
+    const en = result.accepted.catalog.summary.en
+    expect(en.length).toBe(200)
+    expect(en.endsWith('\u{1F600}')).toBe(true)
+    expect(LONE_SURROGATE.test(en)).toBe(false)
+  })
+
+  it('never splits a pair at either end of the surrogate range', () => {
+    // The emoji above has the high surrogate 0xD83D, comfortably inside the
+    // range, so it cannot tell 0xDBFF from 0xDBFE — verified by mutation, that
+    // narrowing survived. These three pin both ends: U+10000 is the first
+    // astral character (high 0xD800) and U+10FFFF the last (high 0xDBFF).
+    for (const [label, codePoint] of [
+      ['U+10000, high surrogate 0xD800', 0x10000],
+      ['U+1F600, high surrogate 0xD83D', 0x1F600],
+      ['U+10FFFF, high surrogate 0xDBFF', 0x10FFFF],
+    ] as [string, number][]) {
+      const description = `${'a'.repeat(199)}${String.fromCodePoint(codePoint)}tail`
+      const result = gate(candidate({ catalog: null, description }), config)
+      expect(result.ok, label).toBe(true)
+      if (!result.ok) continue
+      const en = result.accepted.catalog.summary.en
+      expect(en, label).toMatch(/^a{199}$/)
+      expect(LONE_SURROGATE.test(en), label).toBe(false)
+    }
   })
 
   it('rejects a package with neither dsh.catalog nor an npm description as no-summary', () => {
