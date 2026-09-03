@@ -37,13 +37,21 @@ English | [中文](README.zh.md)
 
 ## ✨ Highlights
 
-| | |
-|---|---|
-| **🌐 Whole-registry harvest** | **20,891 candidates** examined every build — every npm package keyed `dsh-plugin` or `deepseek-harness`, plus every GitHub repo using them as topics. No submissions, no queue. |
-| **🧹 Hard filtering** | **11,514 rejected — 55% of everything seen.** Seventeen mechanical checks, listed in the diagram below, and every rejection names a reason its author can read. |
-| **🔌 Dependency check on your machine** | **2,513** listings declare peer modules. Your install resolves them against your own profile — the question dsh's loader asks at mount — so a card reads **Incompatible** only when the modules are really missing *here*. |
-| **🗓️ Daily rebuild** | 03:17 UTC, committed to git. A new plugin lands next morning; a repository that disappears drops out the same way. |
-| **🗂️ Seven categories** | **tool** 4,584 · **ui** 2,356 · **integration** 777 · **other** 565 · **provider** 463 · **workflow** 401 · **theme** 231. Authors who declare `dsh.catalog` pick their own. |
+- **🌐 Whole-registry harvest** — every npm package keyed `dsh-plugin` or
+  `deepseek-harness`, plus every GitHub repository using them as topics. Nothing is
+  submitted here; there is no queue to join.
+- **🧹 Hard filtering** — every candidate is gated mechanically on every build, and
+  one that fails becomes a named rejection carrying one of seventeen recorded reasons,
+  in words its author can read. The `plugins` and `filtered` badges above count both
+  sides, live.
+- **🔌 Dependency check on your machine** — your installation resolves each recorded
+  peer name against your own profile, the question dsh's loader asks at mount, so a
+  card reads **Incompatible** only when the modules are really missing *here*.
+- **🗓️ Daily rebuild** — committed to git, so every change is a reviewable diff. A
+  new plugin lands the next morning; a repository that disappears drops out the same
+  way.
+- **🗂️ Seven categories** — an author who declares `dsh.catalog` picks their own; the
+  rest are classified for them.
 
 ## 🗺️ How it fits together
 

@@ -117,7 +117,7 @@ bundle is not.
 
 | | |
 |---|---|
-| **Browse & search** | **9,377 plugins** harvested from the whole public npm registry by the `dsh-plugin` and `deepseek-harness` keywords — and from GitHub repositories using them as topics — shown with the author's own summary when they declared one, and sorted into seven categories |
+| **Browse & search** | Thousands of plugins, harvested from the whole public npm registry by the `dsh-plugin` and `deepseek-harness` keywords and from GitHub repositories using them as topics — shown with the author's own summary when they declared one, and sorted into seven categories |
 | **Install** | One confirmation. An unreviewed plugin requires an explicit acknowledgement first — an installed plugin holds the same privileges as a built-in one |
 | **Enable / disable** | Applies to an installed plugin without a restart |
 | **Installed state** | An installed plugin shows an Installed label on its card — or an Update button when the catalog has a newer version — plus an Uninstall button; the Installed filter in the category bar shows only installed plugins |
@@ -132,8 +132,10 @@ them are the reason the shelf is worth reading:
 1. **Harvest the whole registry.** Every npm package carrying `dsh-plugin` or
    `deepseek-harness`, plus every GitHub repository using them as topics. Nothing is
    submitted; there is no queue.
-2. **Gate every candidate.** The last build examined 20,891 of them and **rejected
-   11,514** — 55%. A package with no `dsh.bundle` is a library, not a plugin. No
+2. **Gate every candidate.** Most of what is harvested never reaches the shelf; the
+   live badges on the
+   [repository README](https://github.com/LivXue/dsh-plugin-shop) count both sides.
+   A package with no `dsh.bundle` is a library, not a plugin. No
    license or no repository means nothing can be audited. Deprecated on npm is out; a
    repository listing additionally needs no build scripts and no `workspace:`
    dependencies, either of which would fail the install on your machine. A name a hair
