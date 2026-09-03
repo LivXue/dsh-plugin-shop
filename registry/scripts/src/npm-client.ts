@@ -141,7 +141,13 @@ async function readSearchBody(response: Response, query: string, from: number): 
   }
 }
 
-/** Read one query's `total` with a single-object request. */
+/**
+ * Read one query's `total` with a single-object request.
+ * @throws when the request fails, or the response answers no numeric total —
+ *   a malformed probe must not read as an empty keyword: {@link
+ *   partitionKeyword} and the coverage check in {@link searchByKeywords} both
+ *   trust this number, and a silent 0 disables both.
+ */
 async function searchTotal(
   keywords: readonly string[],
   fetchImpl: typeof fetch,
@@ -155,7 +161,10 @@ async function searchTotal(
   const response = await fetchWithFailover(path, fetchImpl, sleep, token, backupRegistry, timeoutMs)
   if (!response.ok) throw new Error(`npm search for ${query} failed: ${response.status}`)
   const body = await readSearchBody(response, query, 0)
-  return typeof body.total === 'number' ? body.total : 0
+  if (typeof body.total !== 'number') {
+    throw new Error(`npm search for ${query} at from=0 answered no total; a keyword's size cannot be measured without it`)
+  }
+  return body.total
 }
 
 /**
@@ -412,10 +421,10 @@ export function toCandidate(packument: unknown): Candidate | null {
  * @param token - an optional read-only npm token; see {@link fetchWithRetry}.
  * @returns every matching package name, sorted and deduplicated.
  * @throws when the registry answers with a non-OK status after the 429
- *   retries are exhausted; when a search page answers with no numeric
- *   total; when a keyword's total is past {@link SEARCH_WINDOW} and no
- *   refinement keyword splits it; when a cell would need a `from` past
- *   {@link MAX_SEARCH_FROM}; or when a keyword's cells enumerate fewer
+ *   retries are exhausted; when a search page or a total probe answers with
+ *   no numeric total; when a keyword's total is past {@link SEARCH_WINDOW}
+ *   and no refinement keyword splits it; when a cell would need a `from`
+ *   past {@link MAX_SEARCH_FROM}; or when a keyword's cells enumerate fewer
  *   names than its own total says to expect.
  */
 export async function searchByKeywords(
@@ -469,12 +478,15 @@ export async function searchByKeywords(
     // measured rather than assumed: `min` of the totals before and after
     // absorbs a package published or unpublished during the run, and a
     // genuine partition gap is hundreds of names and still throws. An
-    // unpartitioned keyword gets the same floor — `total` is already in
-    // hand from the probe above, so checking it here costs nothing extra,
-    // and it also catches a mid-stream empty page: the `||` in the break
-    // above ends a cell on ANY empty page, even one arriving before the
-    // cell's own total says the cell is exhausted.
-    const after = partitioned ? await probe([keyword]) : total
+    // unpartitioned keyword gets the same floor AND the same re-probe: a
+    // stale `total` reused as `after` gives `required = total` exactly, so
+    // it could absorb no churn at all — an ordinary unpublish between the
+    // probe and the page landing then looked identical to a truncated
+    // harvest. The re-probe costs one extra size=1 request per top-level
+    // keyword; it also catches a mid-stream empty page: the `||` in the
+    // break above ends a cell on ANY empty page, even one arriving before
+    // the cell's own total says the cell is exhausted.
+    const after = await probe([keyword])
     const required = Math.min(total, after)
     if (forKeyword.size < required) {
       throw new Error(partitioned

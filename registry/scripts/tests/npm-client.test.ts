@@ -271,14 +271,19 @@ describe('toCandidate', () => {
 
 describe('searchByKeywords', () => {
   it('pages every harvest keyword until the answered total is reached', async () => {
-    // Every keyword now costs a leading total-probe request whose `objects`
-    // are ignored (only `total` is read) — so the probe gets its own,
-    // content-free slot and the two real pages follow it.
+    // Every keyword costs a leading total-probe, the pages themselves, and a
+    // trailing re-probe (round 2: the unpartitioned branch re-probes too, so
+    // churn is tolerated symmetrically with the partitioned branch) — so
+    // dsh-plugin costs 4 requests (probe, two pages, re-probe) and
+    // deepseek-harness costs 3 (probe, one already-empty page, re-probe).
     const pages = [
-      { total: 251, objects: [] }, // probe: dsh-plugin
+      { total: 251, objects: [] }, // dsh-plugin: pre-paging probe
       { total: 251, objects: Array.from({ length: 250 }, (_, i) => ({ package: { name: `dsh-p${i}` } })) },
       { total: 251, objects: [{ package: { name: 'dsh-last' } }] },
-      { total: 0, objects: [] }, // probe: deepseek-harness
+      { total: 251, objects: [] }, // dsh-plugin: post-paging re-probe
+      { total: 0, objects: [] }, // deepseek-harness: pre-paging probe
+      { total: 0, objects: [] }, // deepseek-harness: one page, already empty
+      { total: 0, objects: [] }, // deepseek-harness: post-paging re-probe
     ]
     const urls: string[] = []
     let call = 0
@@ -292,7 +297,7 @@ describe('searchByKeywords', () => {
     const names = await searchByKeywords(fetchImpl)
     expect(names).toHaveLength(251)
     expect(names).toContain('dsh-last') // the union is sorted, so it cannot anchor the tail
-    expect(call).toBe(5) // probe + two pages for dsh-plugin, then deepseek-harness's probe + empty page
+    expect(call).toBe(7)
     // `keywords:` is percent-encoded ahead of the name now (partition cells
     // need to carry a comma safely); decode before matching so this proves a
     // KEYWORD query, not just a substring anywhere in the URL — a bare,
@@ -350,8 +355,9 @@ describe('searchByKeywords', () => {
     const names = await searchByKeywords(fetchImpl, sleep)
     expect(names).toHaveLength(0)
     // dsh-plugin's total-probe: the 429, then its retry (2); dsh-plugin's one
-    // empty page (3); deepseek-harness's probe (4) and one empty page (5).
-    expect(call).toBe(5)
+    // empty page (3); dsh-plugin's post-paging re-probe (4); deepseek-harness's
+    // probe (5), one empty page (6), and its own post-paging re-probe (7).
+    expect(call).toBe(7)
   })
 
   it('gives up after bounded retries and throws the final 429', async () => {
@@ -429,7 +435,7 @@ describe('searchByKeywords', () => {
     }) as unknown as typeof fetch
 
     await searchByKeywords(fetchImpl, sleep, 'npm_readonly_token')
-    expect(headersSeen).toHaveLength(4) // a total-probe plus one page, per keyword
+    expect(headersSeen).toHaveLength(6) // a pre-paging probe, one page, and a post-paging re-probe, per keyword
     expect(headersSeen.every(headers => headers?.Authorization === 'Bearer npm_readonly_token')).toBe(true)
   })
 
@@ -442,7 +448,7 @@ describe('searchByKeywords', () => {
     }) as unknown as typeof fetch
 
     await searchByKeywords(fetchImpl, sleep)
-    expect(headersSeen).toHaveLength(4) // a total-probe plus one page, per keyword
+    expect(headersSeen).toHaveLength(6) // a pre-paging probe, one page, and a post-paging re-probe, per keyword
     expect(headersSeen.every(headers => headers === undefined)).toBe(true)
   })
 
@@ -584,6 +590,31 @@ describe('searchByKeywords', () => {
     expect(dshPluginProbes).toBe(2) // the pre-partition probe, then the post-paging recheck
   })
 
+  it('tolerates churn on the unpartitioned branch too', async () => {
+    // Round 1 reused the stale pre-paging `total` as `after` for an
+    // unpartitioned keyword, so `required = min(total, total) = total` — zero
+    // tolerance for any churn at all: an ordinary unpublish between the probe
+    // and the page landing looked identical to a truncated harvest. The churn
+    // test above never caught this — dsh-plugin there is always over the
+    // window, so it only exercises the partitioned branch, which already
+    // re-probed under round 1.
+    let calls = 0
+    const totals = (query: string): number => {
+      if (query !== 'keywords:dsh-plugin') return 0 // deepseek-harness stays empty
+      calls += 1
+      // Touch 1: the pre-paging probe, answering 10. Touch 2: the page
+      // itself, self-consistent at 8 objects of 8. Touch 3: the post-paging
+      // re-probe, confirming 8 — two names unpublished between touch 1 and 3.
+      return calls === 1 ? 10 : 8
+    }
+    const { fetchImpl } = stubSearch(totals, (query) =>
+      query === 'keywords:dsh-plugin' ? Array.from({ length: 8 }, (_, i) => `p${i}`) : [])
+
+    const names = await searchByKeywords(fetchImpl)
+    expect(names).toHaveLength(8)
+    expect(calls).toBe(3) // pre-paging probe, the one page, and the post-paging re-probe
+  })
+
   it('refuses to ask for a from past the window instead of paging into the wrap', async () => {
     // The probe says the keyword fits, the pages say it does not. `from=5250`
     // would silently return page 0 (measured live), so the loop must throw.
@@ -605,10 +636,16 @@ describe('searchByKeywords', () => {
     // the harvest returned a quarter of a keyword's actual names without
     // complaint. Live shape: the registry has served a 200 with
     // `<!doctype html>` and a 429 with a 7 KB HTML body on ordinary search
-    // pages, so a missing total is not hypothetical.
+    // pages, so a missing total is not hypothetical. The probe answers a
+    // real total here — searchTotal's own missing-total throw is pinned
+    // separately below — so this isolates the page loop's own check.
     let call = 0
-    const fetchImpl = (async () => {
+    const fetchImpl = (async (url: string | URL) => {
       call += 1
+      const params = new URL(String(url)).searchParams
+      if (params.get('size') === '1') {
+        return new Response(JSON.stringify({ total: 300, objects: [] }), { status: 200 })
+      }
       const body = { objects: Array.from({ length: 250 }, (_, i) => ({ package: { name: `dsh-forever-${i}` } })) }
       return new Response(JSON.stringify(body), { status: 200 })
     }) as unknown as typeof fetch
@@ -617,6 +654,25 @@ describe('searchByKeywords', () => {
       /npm search for keywords:dsh-plugin at from=0 answered no total; a truncated page cannot be told from a complete one/,
     )
     expect(call).toBe(2) // the probe, then the one page that trips the throw
+  })
+
+  it('throws when the total probe itself answers no total', async () => {
+    // searchTotal's own soft `?? 0` default made a malformed probe body read
+    // as an empty keyword: partitionKeyword would return `{ total: 0,
+    // partitioned: false }`, and the coverage floor above becomes
+    // `min(0, 0) = 0` — silently disabled, never tripping regardless of what
+    // the harvest actually finds. A missing total on the probe now throws
+    // immediately, before any page is ever fetched.
+    let call = 0
+    const fetchImpl = (async () => {
+      call += 1
+      return new Response(JSON.stringify({ objects: [] }), { status: 200 })
+    }) as unknown as typeof fetch
+
+    await expect(searchByKeywords(fetchImpl)).rejects.toThrow(
+      /npm search for keywords:dsh-plugin at from=0 answered no total; a keyword's size cannot be measured without it/,
+    )
+    expect(call).toBe(1) // the probe itself trips the throw; no page is ever fetched
   })
 })
 
