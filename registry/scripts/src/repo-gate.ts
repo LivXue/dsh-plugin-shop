@@ -1,4 +1,5 @@
 import { distance } from 'fastest-levenshtein'
+import { isOwnRepo } from './own.ts'
 import { parseCatalogSection } from './schema.ts'
 import { DERIVED_SUMMARY_MAX_LENGTH, SIMILARITY_THRESHOLD } from './gate.ts'
 import type { RegistryConfig } from './config.ts'
@@ -58,6 +59,11 @@ export function gateRepo(
     const suffix = denial.replacement === undefined ? '' : ` Known replacement: ${denial.replacement}.`
     return reject(unit, 'denied', `Denied by the registry: ${denial.reason}${suffix}`, denial.replacement)
   }
+  if (isOwnRepo(candidate.repo)) {
+    return reject(unit, 'self',
+      'This is the shop\'s own repository, so it is not listed on its own shelf; install it with dsh plugin add.')
+  }
+
 
   if (!candidate.hasBundle) {
     return reject(unit, 'no-bundle',

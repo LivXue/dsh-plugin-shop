@@ -1,5 +1,6 @@
 import { distance } from 'fastest-levenshtein'
 import { isHarnessRepo } from './github-repo.ts'
+import { isOwnPackage } from './own.ts'
 import { parseCatalogSection } from './schema.ts'
 import type { RegistryConfig } from './config.ts'
 import type { Candidate, CatalogSection, Rejection } from './types.ts'
@@ -61,6 +62,11 @@ export function gate(
   config: RegistryConfig,
 ): { ok: true; accepted: Accepted } | { ok: false; rejection: Rejection } {
   const { name } = candidate
+
+  if (isOwnPackage(name)) {
+    return reject(name, 'self',
+      'This is the shop itself, so it is not listed on its own shelf; install it with dsh plugin add.')
+  }
 
   const denial = config.denied.get(name)
   if (denial !== undefined) {

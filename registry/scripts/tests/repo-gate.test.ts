@@ -180,3 +180,34 @@ describe('workspace-deps and subpackage units', () => {
     }
   })
 })
+
+describe('the shop excludes its own repository', () => {
+  // Today this repository is caught by `workspace-deps` — the shop's own
+  // package.json carries workspace: specifiers — but that is an accident of
+  // how the monorepo is wired, not a decision. Drop the workspace dep and the
+  // shop would list itself. And once the npm gate excludes the published
+  // package by name, pipeline.ts no longer records it in `npmNames`, so the
+  // repository stops being shadowed and reaches this gate on its own.
+
+  it('rejects its own repository whatever else the manifest says', () => {
+    const result = gateRepo(repo({
+      name: 'dsh-plugin-shop',
+      repo: 'LivXue/dsh-plugin-shop',
+      repository: 'https://github.com/LivXue/dsh-plugin-shop',
+      hasWorkspaceDeps: false,
+      requiresBuild: false,
+    }), config)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.rejection.code).toBe('self')
+  })
+
+  it('matches the owner too, so a same-named repository elsewhere is judged normally', () => {
+    const result = gateRepo(repo({
+      name: 'dsh-plugin-shop',
+      repo: 'someone-else/dsh-plugin-shop',
+      repository: 'https://github.com/someone-else/dsh-plugin-shop',
+    }), config)
+    expect(result.ok, 'another owner is not us').toBe(true)
+  })
+})

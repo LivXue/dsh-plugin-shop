@@ -232,3 +232,39 @@ describe('gate', () => {
     expect(result.rejection.code).toBe('denied')
   })
 })
+
+describe('the shop excludes itself', () => {
+  // The shop is a dsh plugin and its package.json now carries both harvest
+  // keywords, exactly as it asks plugin authors to. That makes it a candidate
+  // in its own catalog: `gate.ts` has no build-script or workspace-deps check
+  // (those live in repo-gate.ts), so nothing else here would stop it. Only the
+  // client's shop-like NAME filter would, and that hides it from the shelf
+  // while still counting it in the data — the discrepancy that filter's own
+  // history is a record of. Excluded at the gate instead, with a reason.
+
+  it('rejects its own npm package rather than listing itself', () => {
+    const result = gate(candidate({ name: 'dsh-plugin-shop' }), config)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.rejection.code).toBe('self')
+    expect(result.rejection.detail).toMatch(/the shop itself/i)
+    expect(result.rejection.detail).toMatch(/dsh plugin add/)
+  })
+
+  it('rejects the catalog package it publishes alongside itself', () => {
+    const result = gate(candidate({ name: 'dsh-plugin-shop-catalog' }), config)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.rejection.code).toBe('self')
+  })
+
+  it('does not reject someone else whose name merely contains ours', () => {
+    // Exact names only. A fork, a scoped republish or a near-miss is somebody
+    // else's package: it gets judged on its merits, and the shop-like name
+    // filter is what keeps a competing market off the shelf.
+    for (const name of ['dsh-plugin-shop-fork', '@someone/dsh-plugin-shop', 'my-dsh-plugin-shop']) {
+      const result = gate(candidate({ name }), config)
+      expect(result.ok, `${name} must not be excluded as self`).toBe(true)
+    }
+  })
+})

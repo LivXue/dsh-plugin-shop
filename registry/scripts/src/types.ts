@@ -126,6 +126,7 @@ export type RejectionCode =
   | 'requires-build'
   | 'workspace-deps'
   | 'repo-gone'
+  | 'self'
 
 /** One rejection, carrying an author-readable explanation. */
 export interface Rejection {
