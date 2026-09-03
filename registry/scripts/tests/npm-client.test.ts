@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fetchCandidate, fetchCandidates, HARVEST_KEYWORDS, PEERS_MAX_COUNT, searchByKeywords, toCandidate } from '../src/npm-client.ts'
+import { fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, PEERS_MAX_COUNT, searchByKeywords, toCandidate } from '../src/npm-client.ts'
 
 describe('HARVEST_KEYWORDS', () => {
   it('leads with the ecosystem keyword and adds the harness keyword, neither branded', () => {
@@ -832,6 +832,38 @@ describe('registry failover', () => {
     expect(!result.ok && result.detail).toBe('dsh-failover: could not reach the npm registry (primary down)')
   })
 
+  it('reports the primary cause, not the backup\'s own error, when the backup also throws', async () => {
+    // The backup call inside fetchWithFailover used to be unwrapped: a
+    // throwing backup escaped in place of primaryError, so a caller heard
+    // the mirror's own failure instead of npm's — exactly what the function's
+    // own doc comment forbids ("a mirror's opinion must never masquerade as
+    // npm's"). A primary throw plus a throwing (or stalled) backup used to
+    // surface the backup's own message; it must still surface the primary's.
+    const fetchImpl = (async (url: string | URL) => {
+      if (String(url).startsWith('https://registry.npmjs.org')) throw new Error('primary down')
+      throw new Error('mirror down')
+    }) as unknown as typeof fetch
+    const result = await fetchCandidate('dsh-failover', fetchImpl, noSleep, undefined, 'https://registry.npmmirror.com')
+    expect(result.ok).toBe(false)
+    expect(!result.ok && result.detail).toBe('dsh-failover: could not reach the npm registry (primary down)')
+  })
+
+  it('reports the primary status, not a wrapped message, when a primary 5xx survives a failed backup', async () => {
+    // The same 500 produced two different, self-contradicting details
+    // depending on whether a backup was configured and also failed: no
+    // backup (or a healthy backup) reports "npm registry returned 500
+    // fetching x"; a backup that ALSO failed used to wrap that same fact as
+    // "could not reach the npm registry (npm registry returned 500)" — a
+    // second, invented-sounding cause for the identical failure.
+    const fetchImpl = (async (url: string | URL) => {
+      if (String(url).startsWith('https://registry.npmjs.org')) return new Response('bad gateway', { status: 500 })
+      return new Response('also down', { status: 500 })
+    }) as unknown as typeof fetch
+    const result = await fetchCandidate('dsh-failover', fetchImpl, noSleep, undefined, 'https://registry.npmmirror.com')
+    expect(result.ok).toBe(false)
+    expect(!result.ok && result.detail).toBe('npm registry returned 500 fetching dsh-failover')
+  })
+
   it('reports the throw as a rejection when no backup registry is configured', async () => {
     // Same change of shape, same reason: a rejection with a truthful cause,
     // not an abort. searchByKeywords still THROWS on a failed search — a
@@ -861,15 +893,22 @@ describe('fetchCandidates', () => {
     versions: { '1.0.0': { dist: { integrity: 'sha512-x' }, license: 'MIT' } },
   }
 
-  it('records a 500 as a fetch-failed row and still returns the other candidate', async () => {
+  it('records a 500 as a fetch-failed row and still returns the other candidates', async () => {
     // H-2: no test ever called fetchCandidates, so mislabelling the code and
-    // dropping the rejection entirely both survived the suite.
+    // dropping the rejection entirely both survived the suite. Eight good
+    // names plus one bad one cross HARVEST_CONCURRENCY's batch boundary: a
+    // mutation that drops the batch's upper bound (`names.slice(i)` with no
+    // end) fetches everything in one pass, then loops a second time over the
+    // tail and double-processes 'bad' — invisible on a 2-name fixture, where
+    // the single batch already covers the whole array either way.
+    const goodNames = Array.from({ length: HARVEST_CONCURRENCY }, (_, i) => `good-${i}`)
     const fetchImpl = (async (url: string | URL) => {
       if (String(url).endsWith('/bad')) return new Response('server error', { status: 500 })
-      return new Response(JSON.stringify(packument), { status: 200 })
+      const name = decodeURIComponent(String(url).split('/').pop() ?? '')
+      return new Response(JSON.stringify({ ...packument, name }), { status: 200 })
     }) as unknown as typeof fetch
-    const { candidates, rejections } = await fetchCandidates(['good', 'bad'], fetchImpl, undefined, undefined, noSleep)
-    expect(candidates.map(c => c.name)).toEqual(['good'])
+    const { candidates, rejections } = await fetchCandidates([...goodNames, 'bad'], fetchImpl, undefined, undefined, noSleep)
+    expect(candidates.map(c => c.name).sort()).toEqual(goodNames)
     expect(rejections).toEqual([
       { name: 'bad', code: 'fetch-failed', detail: 'npm registry returned 500 fetching bad' },
     ])
@@ -896,6 +935,7 @@ describe('fetchCandidates', () => {
     }) as unknown as typeof fetch
     const { candidates, rejections } = await fetchCandidates(['good', 'bad'], fetchImpl, undefined, undefined, noSleep, 50)
     expect(candidates.map(c => c.name)).toEqual(['good'])
+    expect(rejections).toHaveLength(1)
     expect(rejections[0]?.detail).toBe('bad: the npm registry did not answer within 50ms')
   })
 

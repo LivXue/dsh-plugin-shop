@@ -178,6 +178,20 @@ const REQUEST_TIMEOUT_MS = 30_000
 /** A request that outlived {@link REQUEST_TIMEOUT_MS}; a failover trigger. */
 class FetchTimeoutError extends Error {}
 
+/**
+ * The primary registry answered with a 5xx. Carries the status so that once
+ * a configured backup has ALSO failed and this becomes the thrown
+ * `primaryError`, the catch in {@link fetchCandidate} can report the same
+ * "npm registry returned NNN fetching x" phrasing a caller with no backup
+ * (or a healthy one) would have seen for the identical status, instead of
+ * wrapping it as a generic, invented-sounding transport failure.
+ */
+class PrimaryStatusError extends Error {
+  constructor(public readonly status: number) {
+    super(`npm registry returned ${status}`)
+  }
+}
+
 function registryUrl(registry: string, path: string): string {
   return `${registry.replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}`
 }
@@ -227,7 +241,7 @@ async function fetchWithFailover(
   try {
     primary = await fetchWithRetry(registryUrl(REGISTRY, path), timed, sleep, token)
     if (primary.ok || primary.status < 500) return primary
-    primaryError = new Error(`npm registry returned ${primary.status}`)
+    primaryError = new PrimaryStatusError(primary.status)
   } catch (error) {
     primaryError = error
   }
@@ -238,7 +252,16 @@ async function fetchWithFailover(
     if (primary !== null) return primary
     throw primaryError
   }
-  const backup = await fetchWithRetry(registryUrl(backupRegistry, path), timed, sleep, token)
+  let backup: Response
+  try {
+    backup = await fetchWithRetry(registryUrl(backupRegistry, path), timed, sleep, token)
+  } catch {
+    // The backup itself is unreachable or stalled past its own timeout.
+    // Whatever it threw is not what the caller hears: the doc comment above
+    // promises the primary's failure is what propagates, so primaryError —
+    // never the backup's own error — is what gets thrown.
+    throw primaryError
+  }
   if (!backup.ok) throw primaryError
   return backup
 }
@@ -538,9 +561,17 @@ export async function fetchCandidate(
     // failures: one ECONNRESET or one 30s stall rejected the whole harvest.
     // The detail names the TRUE cause, because an author reads it to find out
     // why their package is missing.
+    //
+    // A PrimaryStatusError means the primary DID answer — with a 5xx — and a
+    // configured backup then also failed. That is the same fact a caller
+    // with no backup (or a healthy one) sees as a non-OK `response` below, so
+    // it gets identical phrasing here instead of being wrapped as a second,
+    // invented-sounding transport failure.
     const detail = error instanceof FetchTimeoutError
       ? `${name}: the npm registry did not answer within ${timeoutMs}ms`
-      : `${name}: could not reach the npm registry (${error instanceof Error ? error.message : String(error)})`
+      : error instanceof PrimaryStatusError
+        ? `npm registry returned ${error.status} fetching ${name}`
+        : `${name}: could not reach the npm registry (${error instanceof Error ? error.message : String(error)})`
     return { ok: false, detail }
   }
   if (!response.ok) return { ok: false, detail: `npm registry returned ${response.status} fetching ${name}` }

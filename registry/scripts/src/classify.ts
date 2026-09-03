@@ -42,8 +42,12 @@ const npmToken = process.env.NPM_TOKEN
 // The daily harvest runs HERE, not in build.ts: the workflow passes
 // `--harvest-from dist/v1/harvest.json` so the ecosystem is fetched once. That
 // made the mirror failover from the 2026-08-31 hub-borrowings design (C) dead
-// code in production — build.ts had it and this path did not. Same default and
-// same disable value as build.ts; an empty string means no backup.
+// code in production — build.ts had it and this path did not. Same default as
+// build.ts. An empty string is MEANT to disable the backup, but
+// `fetchWithFailover` does not honour that yet — it only treats `undefined`
+// as disabled, so `''` builds a relative URL and crashes on the first primary
+// failure (D-6, owned by Task 3). Leave `NPM_BACKUP_REGISTRY` unset rather
+// than empty until that lands.
 //
 // This is the packument path ONLY. registry.npmmirror.com does not implement
 // the `keywords:` qualifier `searchByKeywords` depends on — measured
