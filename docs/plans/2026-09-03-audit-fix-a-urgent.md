@@ -2167,9 +2167,31 @@ describe('field length bounds', () => {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run registry/scripts/tests/schema.test.ts registry/scripts/tests/gate.test.ts registry/scripts/tests/pipeline.test.ts`
-Expected: FAIL — the schema test fails as `expected false to be false` inverted (`result.ok` is `true`); the gate tests fail with `expected true to be false`; the pipeline test fails with `AssertionError: expected 2098176 to be less than 65536`.
+Expected: FAIL — the schema test fails as `expected false to be false` inverted (`result.ok` is `true`); the gate tests fail with `expected true to be false`; the pipeline test fails on its FIRST assertion, not the size one:
+`AssertionError: expected [ 'dsh-derived-plugin', …(3) ] to not include 'dsh-hostile-plugin'`.
+The size assertion is belt-and-braces and never gets a say. This draft predicted `expected 2098176 to be less than 65536`, which was wrong twice over — the wrong assertion, and a figure ~100x low that contradicted this same document's 203 MB elsewhere. Measured with the bounds removed: **212,865,688 bytes**.
 
 - [ ] **Step 3: Write the implementation**
+
+> **Superseded by what shipped — read before copying anything below.** This is the shape Task 7 was
+> *dispatched* with; review found two blocking defects in it and they were fixed in `6da6912`. The
+> blocks below are deliberately **not** re-transcribed — a second copy is what drifts, and it already
+> drifted once in Task 6. Take the shipped files as the authority (`b9a48c6`, then `6da6912`).
+> Relative to them, Step 3d below is actively **wrong**: it prescribes the two size checks inline
+> inside `fetchRepoCandidate`, which caps only the root manifest. The harvest has **two** manifest
+> reads — `probeSubpackageCandidates` is the second — and the uncapped one writes raw attacker
+> `catalog` values into `registry/repo-state.json`, which is tracked and pushed. Anyone re-executing
+> from Step 3d reproduces that defect exactly. What shipped instead: one `readManifest(response)`
+> helper called from both sites, plus a structural test asserting no fetch-response body read exists
+> outside it. Step 3d also still carries the detail wording `so it is not read.` for the body-length
+> branch, which fires *after* the body has been read; the shipped string is
+> `so it was discarded without being parsed.`
+>
+> A second bound is missing from this plan altogether: the rejection `detail` is itself an unbounded
+> field reaching a published artifact — zod's `unrecognized_keys` message echoes the raw key, so a
+> 200,000-character key produced a 200,040-character detail in the Pages-published `dist/v1/report.md`.
+> `6da6912` bounds it at `CATALOG_ERROR_MAX_LENGTH = 200` with a visible truncation marker.
+
 
 **3a.** `registry/scripts/src/schema.ts`. Before (`:1-18`):
 
