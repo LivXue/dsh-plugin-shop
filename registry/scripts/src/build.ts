@@ -45,9 +45,10 @@ const npmToken = process.env.NPM_TOKEN
 
 // The backup registry the fetch layer fails over to on unavailability only
 // (network throw, stalled connection, 5xx — never a 404). Read-only: the
-// install path still runs through the user's own pnpm and registry config.
-// Default-on per the 2026-08-31 hub-borrowings design (C); set
-// NPM_BACKUP_REGISTRY to an empty string to disable.
+// install path still runs through the user's own pnpm and registry config, and
+// NPM_TOKEN never travels here — it is an npmjs.org credential and this URL is
+// operator-supplied. Default-on per the 2026-08-31 hub-borrowings design (C);
+// an empty string disables it, which fetchWithFailover now honors.
 const npmBackupRegistry = process.env.NPM_BACKUP_REGISTRY ?? 'https://registry.npmmirror.com'
 
 // The same token the stars sidecar uses; also the GitHub API's quota key.
@@ -57,7 +58,14 @@ const config = loadRegistryConfig(REGISTRY_DIR)
 let candidates: Candidate[]
 let rejections: Rejection[]
 if (harvestFrom === undefined) {
-  const names = await searchByKeywords(fetch, undefined, npmToken, npmBackupRegistry)
+  // registry.npmmirror.com does not implement the `keywords:` qualifier this
+  // search depends on — measured 2026-09-03, it answers
+  // `{"objects":[],"total":0}` for both harvest keywords. A numeric zero
+  // total slips past Task 1's coverage guards (min(0, 0) = 0 passes), so a
+  // stalled or 5xx npmjs search would publish a zero-name harvest with a
+  // green build rather than failing loud. The search below therefore takes
+  // no backup argument; classify.ts's harvest call carries the same fix.
+  const names = await searchByKeywords(fetch, undefined, npmToken)
   process.stderr.write(`harvested ${names.length} npm candidate(s)\n`)
   const harvested = await fetchCandidates(names, fetch, npmToken, npmBackupRegistry)
   candidates = harvested.candidates

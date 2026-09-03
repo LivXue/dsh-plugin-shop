@@ -226,6 +226,16 @@ function withTimeout(fetchImpl: typeof fetch, ms: number): typeof fetch {
  * exhausted 429 reports the throttle rather than quietly switching source.
  * When the backup also fails, the primary's failure is what propagates: a
  * mirror's opinion must never masquerade as npm's.
+ *
+ * The token reaches {@link REGISTRY} and nowhere else. It is an npmjs.org
+ * credential; `NPM_BACKUP_REGISTRY` may be any URL, so forwarding it would
+ * hand a third party a Bearer token it was never issued. The backup is a
+ * read-only public mirror and needs none.
+ *
+ * An EMPTY backup registry is disabled, not a registry at the filesystem
+ * root: `registryUrl('', 'x')` is `/x`, and the documented disable value (an
+ * empty string, build.ts) used to die with `Failed to parse URL` on the first
+ * primary failure instead of reporting that failure.
  */
 async function fetchWithFailover(
   path: string,
@@ -236,6 +246,7 @@ async function fetchWithFailover(
   timeoutMs: number,
 ): Promise<Response> {
   const timed = withTimeout(fetchImpl, timeoutMs)
+  const backup = backupRegistry === undefined || backupRegistry.trim() === '' ? undefined : backupRegistry
   let primary: Response | null = null
   let primaryError: unknown = undefined
   try {
@@ -245,16 +256,16 @@ async function fetchWithFailover(
   } catch (error) {
     primaryError = error
   }
-  if (backupRegistry === undefined) {
+  if (backup === undefined) {
     // No backup configured: behave exactly as before — the 5xx response
     // returns to the caller (whose contextual error names the keyword), a
     // network throw propagates.
     if (primary !== null) return primary
     throw primaryError
   }
-  let backup: Response
+  let backupResponse: Response
   try {
-    backup = await fetchWithRetry(registryUrl(backupRegistry, path), timed, sleep, token)
+    backupResponse = await fetchWithRetry(registryUrl(backup, path), timed, sleep, undefined)
   } catch {
     // The backup itself is unreachable or stalled past its own timeout.
     // Whatever it threw is not what the caller hears: the doc comment above
@@ -262,8 +273,8 @@ async function fetchWithFailover(
     // never the backup's own error — is what gets thrown.
     throw primaryError
   }
-  if (!backup.ok) throw primaryError
-  return backup
+  if (!backupResponse.ok) throw primaryError
+  return backupResponse
 }
 
 /**

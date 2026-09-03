@@ -882,6 +882,42 @@ describe('registry failover', () => {
     const names = await searchByKeywords(fetchImpl, noSleep, undefined, 'https://registry.npmmirror.com')
     expect(names).toContain('dsh-from-backup')
   })
+
+  it('never sends the npm token to the backup registry', async () => {
+    // The token is an npmjs.org credential. Forwarding it to a third-party
+    // mirror hands that mirror a Bearer token it was never issued; the fixture
+    // recorded `registry.npmmirror.com auth=Bearer npm_...` going out.
+    const seen: { url: string; auth: string | null }[] = []
+    const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers)
+      seen.push({ url: String(url), auth: headers.get('authorization') })
+      if (String(url).startsWith('https://registry.npmjs.org')) throw new Error('primary down')
+      return new Response(JSON.stringify(packument), { status: 200 })
+    }) as unknown as typeof fetch
+    const result = await fetchCandidate(
+      'dsh-failover', fetchImpl, noSleep, 'npm_readonly_token', 'https://registry.npmmirror.com',
+    )
+    expect(result.ok).toBe(true)
+    expect(seen[0]?.auth).toBe('Bearer npm_readonly_token') // the primary gets it
+    expect(seen[1]?.url).toContain('registry.npmmirror.com')
+    expect(seen[1]?.auth).toBe(null) // the backup does not
+  })
+
+  it('treats an empty backup registry as disabled rather than building /name', async () => {
+    // The documented disable value is an empty string, but the guard tested
+    // for `undefined`: registryUrl('', 'x') is '/x', and the first primary
+    // failure died with `Failed to parse URL` instead of reporting the
+    // primary's own failure.
+    const urls: string[] = []
+    const fetchImpl = (async (url: string | URL) => {
+      urls.push(String(url))
+      throw new Error('primary down')
+    }) as unknown as typeof fetch
+    const result = await fetchCandidate('dsh-failover', fetchImpl, noSleep, undefined, '')
+    expect(result.ok).toBe(false)
+    expect(!result.ok && result.detail).toBe('dsh-failover: could not reach the npm registry (primary down)')
+    expect(urls).toEqual(['https://registry.npmjs.org/dsh-failover'])
+  })
 })
 
 describe('fetchCandidates', () => {
