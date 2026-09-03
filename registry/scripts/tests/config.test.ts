@@ -9,6 +9,37 @@ const empty = {
 }
 
 describe('parseRegistryConfig', () => {
+  it('derives the shop-like exemption from market:false rows only', () => {
+    // markets.yml records BOTH verdicts so the classifier has a memory and
+    // never re-asks. Only the false ones clear the client's name filter — a
+    // reading a `Set(rows.keys())` would get wrong, silently shelving all 45
+    // genuine markets.
+    const config = parseRegistryConfig({
+      ...empty,
+      markets: [
+        '- name: dsh-plugin-market\n  market: true\n  by: human\n  reason: a market\n',
+        '- name: dsh-tea-store\n  market: false\n  by: human\n  reason: stores tea\n',
+        '- name: dsh-skin-market\n  market: false\n  by: llm\n  reason: sells skins\n',
+      ].join(''),
+    })
+    expect([...config.notAShop].sort()).toEqual(['dsh-skin-market', 'dsh-tea-store'])
+    // Judged covers both verdicts: the classifier asks only about names absent
+    // from it, so a name judged a market must be in here or it is re-asked
+    // every day and can flip on a bad roll.
+    expect([...config.marketsJudged].sort()).toEqual(['dsh-plugin-market', 'dsh-skin-market', 'dsh-tea-store'])
+  })
+
+  it('throws on a duplicate name in markets.yml', () => {
+    // Caught a real property of the data when this file was seeded: seven
+    // separate repos publish `dsh-plugin-market`, so the audit had to fold
+    // 73 caught entries onto 65 distinct names before it could be written.
+    expect(() => parseRegistryConfig({
+      ...empty,
+      markets: '- name: dsh-plugin-market\n  market: true\n  by: human\n  reason: a\n'
+        + '- name: dsh-plugin-market\n  market: true\n  by: human\n  reason: b\n',
+    })).toThrow(/markets\.yml: duplicate entry for dsh-plugin-market/)
+  })
+
   it('parses empty files', () => {
     const config = parseRegistryConfig(empty)
     expect(config.verified.size).toBe(0)

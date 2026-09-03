@@ -30,12 +30,16 @@ const categoriesSchema = z.array(z.object({
   category: z.enum(CATEGORIES),
 }).strict())
 
-/** `not-a-shop.yml`: names the client's shop-like NAME filter catches that are
- * not competing plugin markets. `by` records human or llm, so a wrong LLM
- * verdict is visible and correctable; `reason` says what the plugin actually
- * is, because the name already misled once. */
-const notAShopSchema = z.array(z.object({
+/** `markets.yml`: every name the client's shop-like NAME filter catches, and
+ * whether it IS a competing plugin market. Both verdicts are recorded, not
+ * just the exemptions — that memory is what stops the daily classifier
+ * re-asking about a name, and stops an LLM flip-flopping one in and out of
+ * the shelf and churning the content hash with it. `by` keeps a wrong LLM
+ * verdict visible and correctable; `reason` says what the plugin actually is,
+ * because the name already misled once. */
+const marketsSchema = z.array(z.object({
   name: z.string().min(1),
+  market: z.boolean(),
   by: z.enum(['human', 'llm']),
   reason: z.string().min(1),
 }).strict())
@@ -54,9 +58,12 @@ export interface RegistryConfig {
   denied: Map<string, { reason: string; replacement?: string }>
   /** Names cleared past the similarity hold. */
   allowedSimilar: Set<string>
-  /** Names cleared past the client's shop-like name filter: entries whose name
-   * reads like a plugin market but which are not one. */
+  /** Names cleared past the client's shop-like name filter: judged NOT to be
+   * competing plugin markets, so the shelf shows them. */
   notAShop: Set<string>
+  /** Every name `markets.yml` has a verdict for, either way. The classifier
+   * asks only about names absent from this set. */
+  marketsJudged: Set<string>
   /** Package name to its LLM-assigned category (spec 2026-08-26-llm-categorization-design.md). */
   categories: Map<string, Category>
   /** Package name to the date it first entered the catalog (YYYY-MM-DD). */
@@ -95,7 +102,7 @@ function setUnique<V>(map: Map<string, V>, label: string, name: string, value: V
  * @param input - the raw text of each file.
  * @returns the parsed configuration.
  * @throws when any file is malformed, or when `verified.yml`, `denied.yml`,
- *   `not-a-shop.yml`, `categories.yml`, or `first-seen.yml` lists the same
+ *   `markets.yml`, `categories.yml`, or `first-seen.yml` lists the same
  *   package name twice.
  */
 export function parseRegistryConfig(
@@ -105,7 +112,7 @@ export function parseRegistryConfig(
     allowedSimilar: string
     /** Optional so the five callers that predate this file stay valid; the
      * loader always passes it. */
-    notAShop?: string
+    markets?: string
     categories: string
     firstSeen: string
   },
@@ -129,11 +136,12 @@ export function parseRegistryConfig(
     })
   }
   const allowedSimilar = new Set(parseFile('allowed-similar.yml', input.allowedSimilar, allowedSimilarSchema))
-  const notAShopRows = new Map<string, string>()
-  for (const row of parseFile('not-a-shop.yml', input.notAShop ?? '[]', notAShopSchema)) {
-    setUnique(notAShopRows, 'not-a-shop.yml', row.name, row.reason)
+  const marketRows = new Map<string, boolean>()
+  for (const row of parseFile('markets.yml', input.markets ?? '[]', marketsSchema)) {
+    setUnique(marketRows, 'markets.yml', row.name, row.market)
   }
-  const notAShop = new Set(notAShopRows.keys())
+  const marketsJudged = new Set(marketRows.keys())
+  const notAShop = new Set([...marketRows].filter(([, isMarket]) => !isMarket).map(([name]) => name))
   const categories = new Map<string, Category>()
   for (const row of parseFile('categories.yml', input.categories, categoriesSchema)) {
     setUnique(categories, 'categories.yml', row.name, row.category)
@@ -142,7 +150,7 @@ export function parseRegistryConfig(
   for (const row of parseFile('first-seen.yml', input.firstSeen, firstSeenSchema)) {
     setUnique(firstSeen, 'first-seen.yml', row.name, row.added)
   }
-  return { verified, denied, allowedSimilar, notAShop, categories, firstSeen }
+  return { verified, denied, allowedSimilar, notAShop, marketsJudged, categories, firstSeen }
 }
 
 /**
@@ -155,7 +163,7 @@ export function loadRegistryConfig(dir: string): RegistryConfig {
     verified: readFileSync(join(dir, 'verified.yml'), 'utf8'),
     denied: readFileSync(join(dir, 'denied.yml'), 'utf8'),
     allowedSimilar: readFileSync(join(dir, 'allowed-similar.yml'), 'utf8'),
-    notAShop: readOptional(dir, 'not-a-shop.yml'),
+    markets: readOptional(dir, 'markets.yml'),
     categories: readOptional(dir, 'categories.yml'),
     firstSeen: readOptional(dir, 'first-seen.yml'),
   })

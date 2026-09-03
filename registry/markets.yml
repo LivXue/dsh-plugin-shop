@@ -1,0 +1,356 @@
+# Every name the shop-like NAME filter catches, and whether it is actually a
+# competing dsh plugin market.
+#
+# The filter reads names. A name cannot say whether a plugin stores TEA or
+# sells plugins, so on its own it hid 20 legitimate entries out of 73 — and
+# hid them silently: catalogued, gated, tiered, never rendered.
+#
+#   market: true   a competing dsh plugin market. Stays off the shelf.
+#   market: false  not one. Shelved like any other entry; this clears the name
+#                  filter and NOTHING else — no trust tier, no skipped gate.
+#
+# BOTH verdicts are recorded, not just the exemptions. That memory is what lets
+# the daily classifier skip a name it has already judged, and it is what stops
+# an LLM flip-flopping a name on and off the shelf and churning the catalog's
+# content hash with it.
+#
+#   by: human   adjudicated in review.
+#   by: llm     judged by the daily classifier. Advisory like every other LLM
+#               verdict here — correct a wrong row by editing it, and it will
+#               not be re-asked.
+#
+# Keyed by NAME, which is the unit the client filters on, and not by the
+# catalog's install identity. Those differ: 73 caught entries carry 65 distinct
+# names, because `dsh-plugin-market` is published by seven separate repos and
+# `dsh-plugin-store` by three. A verdict therefore covers every entry sharing
+# that name.
+#
+# Seeded 2026-09-02 from an audit of all 73, each checked against its GitHub
+# description or npm metadata rather than the catalog summary alone. `reason`
+# on a market:true row quotes what the plugin says it is; that self-description
+# is the evidence.
+
+- name: "@1e0zj/dsh-plugin-mall"
+  market: true
+  by: human
+  reason: "dsh 插件市场：搜索 GitHub dsh-plugin 话题下的插件仓库，一键安装到本地 dsh profile（agent 工具 + 设置页插件市场 tab）"
+
+- name: "@ace-zone/dsh-market"
+  market: true
+  by: human
+  reason: "DSH 社区插件市场：设置内「插件市场」入口 + 卡片弹窗 + 一键安装/卸载/管理（bundle 走 dsh plugin add，pack 走 zip 落盘）"
+
+- name: "@becomeopc/dshx-plugin-marketplace"
+  market: true
+  by: human
+  reason: "A self-hosted Framework Hub marketplace for DSH profiles."
+
+- name: "@cyber-moshen/dsh-plugin-market"
+  market: true
+  by: human
+  reason: "DSH插件市场，自动更新，热重载插件，多种排序方案，快速管理和安装插件"
+
+- name: "@deepseek-ai/dsh-host-plugin-market"
+  market: true
+  by: human
+  reason: "DSH 插件市场：管理 HTTPS 插件仓库、校验下载并管理静态插件插拔。"
+
+- name: "@dsh-market/plugin"
+  market: true
+  by: human
+  reason: "DeepSeek Harness 插件市场 · 持续收录 1500+ DSH 插件：中文搜索 + 实用五维评分 + 一键安装。Web 版与 DSH 侧边栏插件双形态。Plugin marketplace for DeepSeek Harness: 1500+ plugins, Chinese sea"
+
+- name: "@easytz/dsh-market"
+  market: true
+  by: human
+  reason: "Plugin market for DeepSeek Harness: browse npm, inspect details, install into the current profile"
+
+- name: "@hhxg/dsh-hhxg-market"
+  market: false
+  by: human
+  reason: "恢恢量化 A-share quant data plugin over an MCP bridge. \"market\" is the STOCK market."
+
+- name: "@hydrogenoxide18/dsh-plugin-market"
+  market: true
+  by: human
+  reason: "Persistent plugin marketplace for DeepSeek Harness: discover GitHub plugins and hand installation to a new DSH agent session."
+
+- name: "@jasper/dsh-plugin-petdex-market"
+  market: false
+  by: human
+  reason: "A petdex.dev companion-pet plugin with a macOS desktop pet renderer."
+
+- name: "@lanbaolu/dsh-plugin-hub"
+  market: true
+  by: human
+  reason: "DSH 插件治理平台：平台层安装器 + suite:doctor + 市场服务 + 进程级启动包装器 + 超时护栏 + MCP/Skills/Koishi 生态桥 + COMPAT 兼容层 + 自进化闭环。插件错误绝不影响服务拉起。"
+
+- name: "@lovstudio/dsh-plugin-marketplace"
+  market: true
+  by: human
+  reason: "Local-first DeepSeek Harness plugin marketplace with GitHub and dshfind providers"
+
+- name: "@mutocenew/dsh-plugin-catalog"
+  market: true
+  by: human
+  reason: "DSH 插件目录速查 (dsh-plugin catalog): periodically fetches repositories tagged topic:dsh-plugin from GitHub, categorizes them, stores Chinese descriptions "
+
+- name: "@nanmicoder/dsh-plugin-market"
+  market: true
+  by: human
+  reason: "Verified plugin marketplace for DeepSeek Harness: discover, inspect, install, and remove DSH plugins from the Web UI"
+
+- name: "@ruihuahe/dsh-plugin-marketplace"
+  market: true
+  by: human
+  reason: "Generated-catalog plugin discovery and npm installation marketplace for DeepSeek Harness"
+
+- name: "@sai/dsh-market"
+  market: false
+  by: human
+  reason: "First-party plugins for the sai Android coding agent — a bundle whose name says market. Repo Very12345/sai-dsh-plugins."
+
+- name: "@sanqi-normal/dsh-webui-market-plugin"
+  market: true
+  by: human
+  reason: "dsh Web GUI 社区插件市场：浏览 awesome-dsh-plugin.com 插件目录，一键安装/卸载到 profile。Community plugin market for the DeepSeek Harness (dsh) web GUI: browse, install and"
+
+- name: "@starpivot/dsh-plugin-marketplace"
+  market: true
+  by: human
+  reason: "可安装的 DeepSeek Harness 插件市场，替换设置里的插件页"
+
+- name: "@tobewin/dsh-plugin-market"
+  market: true
+  by: human
+  reason: "Local-only installed plugin manager for DeepSeek Harness profiles"
+
+- name: "@w2112515/dsh-plugin-marketplace"
+  market: true
+  by: human
+  reason: "Out-of-tree installable plugin marketplace bundle for DeepSeek Harness"
+
+- name: "@xiamu-ssr/dsh-wind-aifin"
+  market: false
+  by: human
+  reason: "Wind AIFin MCP and Alice integration. The package name is innocent — caught on its repo slug, Xiamu-ssr/snowmountain-market."
+
+- name: "@yangzhe1991/dsh-project-session-store"
+  market: false
+  by: human
+  reason: "Stores each project’s session logs under its own directory. \"store\" is the verb; npm keywords are session, project-local."
+
+- name: "deepseek-plugin-store"
+  market: true
+  by: human
+  reason: "DeepSeek Harness 独立社区插件商店：发现、安装并提交经过验证的插件、工具与扩展。 | Independent community plugin directory."
+
+- name: "dsh-agency-market"
+  market: false
+  by: human
+  reason: "Installs 273 specialist AGENTS from agency-agents."
+
+- name: "dsh-agent-plugin-market"
+  market: true
+  by: human
+  reason: "DSH（DeepSeek Harness）插件：以 git 仓库为 agent 插件市场，安装并原地加载 Codex/Claude 格式的技能"
+
+- name: "dsh-agent-plugins-market"
+  market: false
+  by: human
+  reason: "Installs the plugin marketplaces of OTHER agents (Claude Code, Codex, Cursor, Kimi). A bridge to other ecosystems, not a dsh shelf."
+
+- name: "dsh-claude-marketplace"
+  market: false
+  by: human
+  reason: "A Claude Code compatibility layer that loads .claude skills, commands and agents — it reads another ecosystem’s format rather than selling plugins."
+
+- name: "dsh-cli-store"
+  market: false
+  by: human
+  reason: "A registry and installer for external CLI TOOLS exposed through dsh."
+
+- name: "dsh-client-plugin-store"
+  market: true
+  by: human
+  reason: "Community plugin store panel for the DeepSeek Harness Web UI (browse/search dshplugin.org index, copyable pinned install commands)"
+
+- name: "dsh-desktop-market"
+  market: true
+  by: human
+  reason: "开箱即用的DeepSeek Harness, 本地优先、跨平台桌面客户端，内置插件市场"
+
+- name: "dsh-desktop-safe-market"
+  market: true
+  by: human
+  reason: "A safety-first plugin marketplace for the DeepSeek Harness web GUI: a curated community shortlist, and an install that starts with a security review"
+
+- name: "dsh-mall"
+  market: true
+  by: human
+  reason: "全网最强 DeepSeek Harness 插件商场：全量收录 GitHub #dsh-plugin 生态插件，五维实用评分雷达图，智能搜索（AI 理解需求）、智能安装/更新/卸载（AI 装前审查+装后诊断）、一键批量更新、编辑精选与个性化推荐，自带 Skills 工具与 dsh-mall 技能，中"
+
+- name: "dsh-market-plus"
+  market: true
+  by: human
+  reason: "DSH 插件市场增强版：dsh-market 基座 + dsh-store 的 npm 权威源/质量验证/GitHub 热度/代理注入/回退安装（MIT，融合 dsh-market 与 dsh-store）"
+
+- name: "dsh-mcp-market"
+  market: false
+  by: human
+  reason: "A curated catalog of MCP SERVERS."
+
+- name: "dsh-mini-store"
+  market: false
+  by: human
+  reason: "极简收纳规则 — minimalist tidying rules. \"store\" is the verb."
+
+- name: "dsh-new-year-shop"
+  market: false
+  by: human
+  reason: "年货采购 — new year grocery shopping. A novelty plugin."
+
+- name: "dsh-pickle-store"
+  market: false
+  by: human
+  reason: "腌菜保存 — pickle preservation. \"store\" is the verb."
+
+- name: "dsh-plugin"
+  market: true
+  by: human
+  reason: "A community plugin marketplace for DeepSeek Harness, built to the official plugin spec — browse, search and install 4000+ human-curated community plug"
+
+- name: "dsh-plugin-hub"
+  market: true
+  by: human
+  reason: "Plugin Hub for DeepSeek Harness (DSH): a graphical app-store inside the Harness Web UI — browse, search, and one-click install GitHub dsh-plugins, wit"
+
+- name: "dsh-plugin-market"
+  market: true
+  by: human
+  reason: "7 repos publish this name; all are plugin markets. A loud GitHub plugin radar for DeepSeek Harness."
+
+- name: "dsh-plugin-marketplace"
+  market: true
+  by: human
+  reason: "DeepSeek Harness Web UI 内置插件市场：在设置页直接浏览 github.com/topics/dsh-plugin，支持搜索、按 Star 排序、查看安装方式。"
+
+- name: "dsh-plugin-store"
+  market: true
+  by: human
+  reason: "3 repos publish this name; all are plugin markets. DeepSeek Harness 插件商店：浏览、搜索、筛选并一键安装 dsh-plugin 生态插件"
+
+- name: "dsh-plugin-store-optimized"
+  market: true
+  by: human
+  reason: "Harness Plugin Store Optimized: a customized fork of dsh-plugin-hub — configurable plugin download directory, bundle-layer conflict detection, automat"
+
+- name: "dsh-plugins-market"
+  market: true
+  by: human
+  reason: "DeepSeek Harness 插件创意市场：嗅探官方 dsh-plugin topic，噪音过滤、信任徽章、排序搜索与一键安装面板"
+
+- name: "dsh-plugins-store"
+  market: true
+  by: human
+  reason: "Native DSH browser integration for the DSH Plugin Store"
+
+- name: "dsh-safe-plugin-manager"
+  market: true
+  by: human
+  reason: "DSH STORE — third-party plugin marketplace and guarded lifecycle manager for DeepSeek Harness."
+
+- name: "dsh-skill-market"
+  market: false
+  by: human
+  reason: "Installs SKILLS from GitHub into ~/.dsh/skills, not plugins."
+
+- name: "dsh-skill-store"
+  market: false
+  by: human
+  reason: "A community SKILL marketplace, not a plugin marketplace."
+
+- name: "dsh-skills-market"
+  market: false
+  by: human
+  reason: "Manages local SKILLS plus a SkillHub storefront."
+
+- name: "dsh-skills-marketplace"
+  market: false
+  by: human
+  reason: "A SKILLS marketplace in the CodeX style."
+
+- name: "dsh-skin-market"
+  market: false
+  by: human
+  reason: "Search and install community SKINS."
+
+- name: "dsh-spirit-store"
+  market: false
+  by: human
+  reason: "烈酒存储 — spirits storage. \"store\" is the verb."
+
+- name: "dsh-store"
+  market: true
+  by: human
+  reason: "DeepSeek Harness 插件商店：npm 权威源 + awesome 精选 + 自动雷达（550+ 插件、11 分类、运行级验证），官方 dsh plugin add/remove 一键安装卸载，dsh 原生 UI"
+
+- name: "dsh-tea-store"
+  market: false
+  by: human
+  reason: "存茶指南 — a guide to storing tea. \"store\" is the verb."
+
+- name: "dsh-tui-market"
+  market: true
+  by: human
+  reason: "In-TUI plugin market for dsh-TUI: browse, search, install and remove dsh plugins via the /market command."
+
+- name: "dsh-unified-market"
+  market: true
+  by: human
+  reason: "统一插件市场（Unified Plugin Market for DeepSeek Harness）：聚合精选目录（awesome-dsh-plugin.com）+ GitHub dsh-plugin 生态 + npm registry 三源；对 DSH Desktop（EAC）特化（web-des"
+
+- name: "dsh-webui-market-plugin-plus"
+  market: true
+  by: human
+  reason: "Fork of @Sanqi-normal/dsh-webui-market-plugin — in-harness DSH plugin market with global install progress, terminate button, restart banner, and enabl"
+
+- name: "dsh-whale-market"
+  market: true
+  by: human
+  reason: "鲸鱼插件市场 / Whale Market — browse, search, one-click install & update DSH plugins from the GitHub dsh-plugin topic (Web settings UI + Agent tools)"
+
+- name: "dsh-whale-picks-store"
+  market: true
+  by: human
+  reason: "鲸选商店插件：DSH 设置中「Agent 预设」下方的鲸选入口——套件与插件货架、btop 风格九轴米表（CSS 渲染、nord 配色，任意显示器与缩放观感一致）、创始人评分、一键复制安装命令"
+
+- name: "dshhub-market"
+  market: true
+  by: human
+  reason: "DeepSeek Harness 口令插件市场客户端：输码解锁插件，连接创作者与买家（DSHHub.co 驱动，fork of dsh-market）。"
+
+- name: "dshmarket"
+  market: true
+  by: human
+  reason: "Visual plugin market inside DeepSeek Harness — browse, search, and one-click install community plugins. · DSH 可视化插件市场：逛一逛，点一下，装好。"
+
+- name: "dshmarketplace-plugin"
+  market: true
+  by: human
+  reason: "Browse and install DeepSeek Harness plugins from inside DSH, in English or Chinese."
+
+- name: "kidai-plugin-market-hub"
+  market: true
+  by: human
+  reason: "KPM'H 纪代插件市场（Hub）：侧边栏一键启动的独立全屏市场页，支持多源目录（GitHub/npm/awesome）、一键安装、已装管理与卸载、孤儿插件扫描、通用安全防线（审计/入口校验/运行时兼容/自动修补）。"
+
+- name: "smart-dsh-market"
+  market: true
+  by: human
+  reason: "Verified DSH plugin marketplace (fork of YELEBAI/dsh-plugin-marketplace) with project-stage-aware recommendations: detect your project stage, explain "
+
+- name: "untr-dsh-marketplace"
+  market: true
+  by: human
+  reason: "Registry-backed plugin marketplace and profile plugin manager for DeepSeek Harness"
