@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fetchCandidate, HARVEST_KEYWORDS, PEERS_MAX_COUNT, searchByKeywords, toCandidate } from '../src/npm-client.ts'
+import { fetchCandidate, fetchCandidates, HARVEST_KEYWORDS, PEERS_MAX_COUNT, searchByKeywords, toCandidate } from '../src/npm-client.ts'
 
 describe('HARVEST_KEYWORDS', () => {
   it('leads with the ecosystem keyword and adds the harness keyword, neither branded', () => {
@@ -818,19 +818,28 @@ describe('registry failover', () => {
     expect(backupCalls).toBe(0)
   })
 
-  it('reports the primary failure when the backup also fails', async () => {
+  it('reports the primary failure in the detail when the backup also fails', async () => {
+    // Changed with D-2: this asserted a THROW, which is what took the whole
+    // harvest down on one dead packument. The primary's failure is still what
+    // is reported — a mirror's opinion must never masquerade as npm's — but it
+    // now arrives as the row CLAUDE.md requires instead of as an abort.
     const fetchImpl = (async (url: string | URL) => {
       if (String(url).startsWith('https://registry.npmjs.org')) throw new Error('primary down')
       return new Response('not found', { status: 404 })
     }) as unknown as typeof fetch
-    await expect(
-      fetchCandidate('dsh-failover', fetchImpl, noSleep, undefined, 'https://registry.npmmirror.com'),
-    ).rejects.toThrow('primary down')
+    const result = await fetchCandidate('dsh-failover', fetchImpl, noSleep, undefined, 'https://registry.npmmirror.com')
+    expect(result.ok).toBe(false)
+    expect(!result.ok && result.detail).toBe('dsh-failover: could not reach the npm registry (primary down)')
   })
 
-  it('propagates the throw when no backup registry is configured', async () => {
+  it('reports the throw as a rejection when no backup registry is configured', async () => {
+    // Same change of shape, same reason: a rejection with a truthful cause,
+    // not an abort. searchByKeywords still THROWS on a failed search — a
+    // partial keyword list is indistinguishable from a shrunken ecosystem.
     const fetchImpl = (async () => { throw new Error('primary down') }) as unknown as typeof fetch
-    await expect(fetchCandidate('dsh-failover', fetchImpl, noSleep)).rejects.toThrow('primary down')
+    const result = await fetchCandidate('dsh-failover', fetchImpl, noSleep)
+    expect(result.ok).toBe(false)
+    expect(!result.ok && result.detail).toBe('dsh-failover: could not reach the npm registry (primary down)')
   })
 
   it('searches through the failover too', async () => {
@@ -840,5 +849,68 @@ describe('registry failover', () => {
     }) as unknown as typeof fetch
     const names = await searchByKeywords(fetchImpl, noSleep, undefined, 'https://registry.npmmirror.com')
     expect(names).toContain('dsh-from-backup')
+  })
+})
+
+describe('fetchCandidates', () => {
+  const noSleep = async (_ms: number) => {}
+  const packument = {
+    name: 'good',
+    'dist-tags': { latest: '1.0.0' },
+    time: { '1.0.0': '2026-08-01T12:00:00.000Z' },
+    versions: { '1.0.0': { dist: { integrity: 'sha512-x' }, license: 'MIT' } },
+  }
+
+  it('records a 500 as a fetch-failed row and still returns the other candidate', async () => {
+    // H-2: no test ever called fetchCandidates, so mislabelling the code and
+    // dropping the rejection entirely both survived the suite.
+    const fetchImpl = (async (url: string | URL) => {
+      if (String(url).endsWith('/bad')) return new Response('server error', { status: 500 })
+      return new Response(JSON.stringify(packument), { status: 200 })
+    }) as unknown as typeof fetch
+    const { candidates, rejections } = await fetchCandidates(['good', 'bad'], fetchImpl, undefined, undefined, noSleep)
+    expect(candidates.map(c => c.name)).toEqual(['good'])
+    expect(rejections).toEqual([
+      { name: 'bad', code: 'fetch-failed', detail: 'npm registry returned 500 fetching bad' },
+    ])
+  })
+
+  it('records a network throw as a fetch-failed row naming the cause', async () => {
+    // D-2: Promise.all over a throwing fetchCandidate rejected the whole
+    // harvest of ~5,600 packuments on one ECONNRESET.
+    const fetchImpl = (async (url: string | URL) => {
+      if (String(url).endsWith('/bad')) throw new Error('read ECONNRESET')
+      return new Response(JSON.stringify(packument), { status: 200 })
+    }) as unknown as typeof fetch
+    const { candidates, rejections } = await fetchCandidates(['good', 'bad'], fetchImpl, undefined, undefined, noSleep)
+    expect(candidates.map(c => c.name)).toEqual(['good'])
+    expect(rejections).toHaveLength(1)
+    expect(rejections[0]?.code).toBe('fetch-failed')
+    expect(rejections[0]?.detail).toBe('bad: could not reach the npm registry (read ECONNRESET)')
+  })
+
+  it('records a stalled connection as a fetch-failed row naming the timeout', async () => {
+    const fetchImpl = (async (url: string | URL) => {
+      if (String(url).endsWith('/bad')) return new Promise<Response>(() => {})
+      return new Response(JSON.stringify(packument), { status: 200 })
+    }) as unknown as typeof fetch
+    const { candidates, rejections } = await fetchCandidates(['good', 'bad'], fetchImpl, undefined, undefined, noSleep, 50)
+    expect(candidates.map(c => c.name)).toEqual(['good'])
+    expect(rejections[0]?.detail).toBe('bad: the npm registry did not answer within 50ms')
+  })
+
+  it('fetches through the backup registry when one is configured', async () => {
+    const urls: string[] = []
+    const fetchImpl = (async (url: string | URL) => {
+      urls.push(String(url))
+      if (String(url).startsWith('https://registry.npmjs.org')) throw new Error('primary down')
+      return new Response(JSON.stringify(packument), { status: 200 })
+    }) as unknown as typeof fetch
+    const { candidates, rejections } = await fetchCandidates(
+      ['good'], fetchImpl, undefined, 'https://registry.npmmirror.com', noSleep,
+    )
+    expect(candidates.map(c => c.name)).toEqual(['good'])
+    expect(rejections).toEqual([])
+    expect(urls[1]).toContain('registry.npmmirror.com')
   })
 })

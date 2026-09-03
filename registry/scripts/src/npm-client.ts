@@ -513,9 +513,11 @@ export type CandidateResult =
  * @param fetchImpl - the fetch implementation, injected for testing.
  * @param sleep - the delay implementation, injected so tests do not wait.
  * @param token - an optional read-only npm token; see {@link fetchWithRetry}.
- * @returns the candidate, or the reason none could be produced. A 429 is
- *   retried a bounded number of times before it becomes a rejection, so a
- *   rate-limited runner does not reject the whole ecosystem at once.
+ * @returns the candidate, or the reason none could be produced. NEVER throws:
+ *   a 429 is retried a bounded number of times, and a transport failure
+ *   (network error, stall, or an exhausted failover) becomes a rejection whose
+ *   detail names that cause — one dead packument out of thousands must not
+ *   take the daily catalog down with it.
  */
 export async function fetchCandidate(
   name: string,
@@ -525,7 +527,22 @@ export async function fetchCandidate(
   backupRegistry: string | undefined = undefined,
   timeoutMs: number = REQUEST_TIMEOUT_MS,
 ): Promise<CandidateResult> {
-  const response = await fetchWithFailover(encodeURIComponent(name), fetchImpl, sleep, token, backupRegistry, timeoutMs)
+  let response: Response
+  try {
+    response = await fetchWithFailover(encodeURIComponent(name), fetchImpl, sleep, token, backupRegistry, timeoutMs)
+  } catch (error) {
+    // One unreachable packument must never abort a harvest of thousands.
+    // CLAUDE.md: "a package that cannot be fetched becomes a fetch-failed
+    // rejection in the build report. Nothing disappears without a reason
+    // attached to its name." Before this catch that held only for HTTP-status
+    // failures: one ECONNRESET or one 30s stall rejected the whole harvest.
+    // The detail names the TRUE cause, because an author reads it to find out
+    // why their package is missing.
+    const detail = error instanceof FetchTimeoutError
+      ? `${name}: the npm registry did not answer within ${timeoutMs}ms`
+      : `${name}: could not reach the npm registry (${error instanceof Error ? error.message : String(error)})`
+    return { ok: false, detail }
+  }
   if (!response.ok) return { ok: false, detail: `npm registry returned ${response.status} fetching ${name}` }
   let body: unknown
   try {
@@ -551,12 +568,19 @@ export async function fetchCandidates(
   fetchImpl: typeof fetch = fetch,
   token: string | undefined = undefined,
   backupRegistry: string | undefined = undefined,
+  sleep: (ms: number) => Promise<void> = defaultSleep,
+  timeoutMs: number = REQUEST_TIMEOUT_MS,
 ): Promise<{ candidates: Candidate[]; rejections: Rejection[] }> {
   const candidates: Candidate[] = []
   const rejections: Rejection[] = []
   for (let i = 0; i < names.length; i += HARVEST_CONCURRENCY) {
     const batch = names.slice(i, i + HARVEST_CONCURRENCY)
-    const results = await Promise.all(batch.map(async name => ({ name, result: await fetchCandidate(name, fetchImpl, undefined, token, backupRegistry) })))
+    // `fetchCandidate` never throws, so `Promise.all` can no longer reject:
+    // every name lands as a candidate or as a rejection carrying its reason.
+    const results = await Promise.all(batch.map(async name => ({
+      name,
+      result: await fetchCandidate(name, fetchImpl, sleep, token, backupRegistry, timeoutMs),
+    })))
     for (const { name, result } of results) {
       if (result.ok) candidates.push(result.candidate)
       else rejections.push({ name, code: 'fetch-failed', detail: result.detail })

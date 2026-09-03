@@ -39,10 +39,25 @@ const model = process.env.LLM_MODEL ?? 'deepseek-v4-flash'
 const apiKey = process.env.LLM_API_KEY ?? ''
 const npmToken = process.env.NPM_TOKEN
 
+// The daily harvest runs HERE, not in build.ts: the workflow passes
+// `--harvest-from dist/v1/harvest.json` so the ecosystem is fetched once. That
+// made the mirror failover from the 2026-08-31 hub-borrowings design (C) dead
+// code in production — build.ts had it and this path did not. Same default and
+// same disable value as build.ts; an empty string means no backup.
+//
+// This is the packument path ONLY. registry.npmmirror.com does not implement
+// the `keywords:` qualifier `searchByKeywords` depends on — measured
+// 2026-09-03, it answers `{"objects":[],"total":0}` for both harvest
+// keywords — and Task 1's coverage guards do not catch a numeric zero total.
+// Handing it to the search would let a stalled or 5xx npmjs search publish a
+// zero-name harvest with a green build, so `searchByKeywords` below takes no
+// backup argument.
+const npmBackupRegistry = process.env.NPM_BACKUP_REGISTRY ?? 'https://registry.npmmirror.com'
+
 const config = loadRegistryConfig(REGISTRY_DIR)
 const names = await searchByKeywords(fetch, undefined, npmToken)
 process.stderr.write(`classify: harvested ${names.length} candidate(s)\n`)
-const { candidates, rejections } = await fetchCandidates(names, fetch, npmToken)
+const { candidates, rejections } = await fetchCandidates(names, fetch, npmToken, npmBackupRegistry)
 
 // The GitHub half, read from the committed harvest memory rather than
 // re-harvested: `repo-state.json` records the very candidates `build.ts`
