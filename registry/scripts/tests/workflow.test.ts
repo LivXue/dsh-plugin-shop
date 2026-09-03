@@ -224,6 +224,10 @@ function lineNumberOf(source: string, index: number): number {
 interface WorkflowStep {
   readonly name: string | undefined
   readonly run: string | undefined
+  /** The step's `if:` expression, verbatim. Carried because a push step's
+   * guard is part of what makes the push safe, and only the whole expression
+   * can show that. */
+  readonly if: string | undefined
 }
 
 function parseBuildSteps(source: string): WorkflowStep[] {
@@ -236,10 +240,11 @@ function parseBuildSteps(source: string): WorkflowStep[] {
     if (typeof step !== 'object' || step === null) {
       throw new Error(`daily.yml: jobs.build.steps[${index}] is not an object`)
     }
-    const { name, run } = step as Record<string, unknown>
+    const { name, run, if: ifExpr } = step as Record<string, unknown>
     return {
       name: typeof name === 'string' ? name : undefined,
       run: typeof run === 'string' ? run : undefined,
+      if: typeof ifExpr === 'string' ? ifExpr : undefined,
     }
   })
 }
@@ -379,10 +384,16 @@ describe('the daily workflow stages every registry file the build writes', () =>
 // pass on a comment; only running it can show that a rejected push is retried.
 // ---------------------------------------------------------------------------
 
-/** Every step whose `run:` pushes, found structurally. A third pushing step
- * under a name this file does not know must FAIL here: Task 5's step lookup is
- * by name and is blind to a new one by construction, and this is the assertion
- * that closes that hole for pushes.
+/** Every step of `jobs.build.steps` whose `run:` pushes, found structurally.
+ * A third pushing step added to THAT job under a name this file does not know
+ * must fail the guard below: Task 5's step lookup is by name and is blind to a
+ * new one by construction, and this is what closes that hole — for the build
+ * job, and only for it. `parseBuildSteps` reads `jobs.build.steps` and nothing
+ * else, so a `git push` added to the `publish` or `deploy` job passes every
+ * check in this file. That gap is left open rather than overlooked: widening
+ * the parser would pull both other jobs into a guard written for the two bot
+ * commits, and neither pushes today — `deploy` has no `run:` step at all, and
+ * `publish`'s three install, write an ~/.npmrc line, and publish to npm.
  *
  * Deliberately NOT anchored to the start of a line. The push this task
  * introduces lives inside `if git push origin HEAD:main; then …`, and
@@ -425,28 +436,64 @@ describe('the daily workflow pushes safely', () => {
   const IDENT = {
     GIT_AUTHOR_NAME: 'test', GIT_AUTHOR_EMAIL: 'test@example.invalid',
     GIT_COMMITTER_NAME: 'test', GIT_COMMITTER_EMAIL: 'test@example.invalid',
+    // Whoever runs these tests has git configuration of their own, and three
+    // ordinary settings each broke six cases here with nothing more useful
+    // than `Command failed: git commit --quiet -m base`: `commit.gpgsign`
+    // (no signing key, and none wanted for a throwaway commit), a
+    // `core.hooksPath` whose pre-commit hook fails outside its own repo, and
+    // `protocol.file.allow=never` (the sandbox clones over `file://`).
+    // Reading neither config file leaves the sandbox depending on nothing but
+    // the git binary.
+    GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
   }
+  /** `stdio: 'pipe'` because git writes to stderr on success and vitest shows
+   * it: the empty-clone warning alone was six lines a run. `execFileSync`
+   * still folds stderr into the thrown error's message, so a failing git
+   * command says exactly as much as it did before. */
   const git = (cwd: string, ...args: string[]): string =>
-    execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...IDENT } })
+    execFileSync('git', args, { cwd, encoding: 'utf8', stdio: 'pipe', env: { ...process.env, ...IDENT } })
 
-  /** A bare origin plus a depth-1 clone of it — the shape `actions/checkout@v4`
-   * leaves on the runner, since daily.yml:48 sets no `fetch-depth`. */
+  /** Commits on origin before the runner clones it. Seeded with ONE, the
+   * depth-1 boundary was the root commit, the clone held the entire history,
+   * and every case below passed identically against a full clone — the
+   * shallow checkout they are named for was never exercised. Several commits
+   * make the boundary a real graft. */
+  const ORIGIN_COMMITS = 40
+
+  /** A bare origin with a real history behind its tip, plus a depth-1 clone.
+   *
+   * An approximation of what `actions/checkout@v4` leaves on the runner, since
+   * daily.yml:48 sets no `fetch-depth` — not a replica of it. `clone --depth 1
+   * --branch main` leaves a single-branch refspec; the action does `init` +
+   * `remote add` + a depth-1 `fetch` and leaves the wildcard refspec. What
+   * `push_with_rebase` meets in either is a grafted boundary one commit deep,
+   * which is the property these cases turn on. */
   function sandbox(): { dir: string; origin: string; seed: string; runner: string } {
     const dir = mkdtempSync(join(tmpdir(), 'dsh-push-'))
-    const origin = join(dir, 'origin.git')
-    git(dir, 'init', '--quiet', '--bare', origin)
-    const seed = join(dir, 'seed')
-    git(dir, 'clone', '--quiet', origin, seed)
-    writeFileSync(join(seed, 'f'), 'base\n')
-    git(seed, 'add', 'f')
-    git(seed, 'commit', '--quiet', '-m', 'base')
-    git(seed, 'push', '--quiet', 'origin', 'HEAD:main')
-    const runner = join(dir, 'runner')
-    git(dir, 'clone', '--quiet', '--depth', '1', '--branch', 'main', `file://${origin}`, runner)
-    // A global core.hooksPath would silently disable the pre-push hook the
-    // retry case installs, turning a real failure into a confusing one.
-    git(runner, 'config', 'core.hooksPath', '.git/hooks')
-    return { dir, origin, seed, runner }
+    try {
+      const origin = join(dir, 'origin.git')
+      git(dir, 'init', '--quiet', '--bare', origin)
+      const seed = join(dir, 'seed')
+      git(dir, 'clone', '--quiet', origin, seed)
+      for (let n = 1; n <= ORIGIN_COMMITS; n++) {
+        const last = n === ORIGIN_COMMITS
+        // The tip stays `base`/`base\n` so the conflict case still collides on
+        // this file's one line, and the log assertions still name it.
+        writeFileSync(join(seed, 'f'), last ? 'base\n' : `history ${n}\n`)
+        git(seed, 'add', 'f')
+        git(seed, 'commit', '--quiet', '-m', last ? 'base' : `history ${n}`)
+      }
+      git(seed, 'push', '--quiet', 'origin', 'HEAD:main')
+      const runner = join(dir, 'runner')
+      git(dir, 'clone', '--quiet', '--depth', '1', '--branch', 'main', `file://${origin}`, runner)
+      return { dir, origin, seed, runner }
+    } catch (error) {
+      // mkdtempSync runs before the first git call and each caller's
+      // try/finally only opens once this has returned, so a throw in here
+      // would otherwise leave the directory behind in the OS temp dir.
+      rmSync(dir, { recursive: true, force: true })
+      throw error
+    }
   }
 
   /** Someone pushes to main while the ~50-minute run is in flight. */
@@ -506,8 +553,48 @@ describe('the daily workflow pushes safely', () => {
     expect(first).toBe(second)
   })
 
+  it('clones the runner shallowly, so the cases below meet a real graft', () => {
+    // The setup asserting its own premise, the same reflex as "finds the
+    // writers, so the extraction itself is not silently empty" above. This
+    // sandbox silently stopped being shallow once already: with a single
+    // seeded commit the depth-1 boundary was the root commit and the clone
+    // held everything, so the case named for the shallow checkout proved
+    // nothing about it. daily.yml:48 sets no `fetch-depth`, so depth 1 is what
+    // push_with_rebase runs in for real, and a rebase that could not cross a
+    // graft would annotate ::error:: every morning instead of landing.
+    const { dir, origin, runner } = sandbox()
+    try {
+      expect(git(runner, 'rev-parse', '--is-shallow-repository').trim()).toBe('true')
+      const count = (cwd: string, ref: string): number => Number(git(cwd, 'rev-list', '--count', ref).trim())
+      expect(count(origin, 'main')).toBe(ORIGIN_COMMITS)
+      expect(count(runner, 'HEAD')).toBe(1)
+      expect(count(runner, 'HEAD')).toBeLessThan(count(origin, 'main'))
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   for (const step of pushSteps) {
     const label = step.name ?? '(unnamed step)'
+
+    it(`runs "${label}" only on refs/heads/main`, () => {
+      // `workflow_dispatch` fires on ANY ref — the reason `Publish to Pages`
+      // and the two upload steps already guard on it. It did not matter while
+      // this step ended in a bare `git push`, which went to the dispatched
+      // branch's own upstream. `push_with_rebase` rebases onto `origin/main`
+      // and pushes `HEAD:main`, so without this guard a dispatch from any
+      // additive branch replays that branch onto main and pushes it: exit 0,
+      // no annotation, unreviewed content on main. On a branch that conflicts
+      // with main the other outcome is two ::warning:: and an ::error:: on
+      // every dispatch, corroding the annotation this task relies on.
+      //
+      // Matched whole rather than with `toContain`, because `&&` binds tighter
+      // than `||` in a GitHub expression: `a || b || c && d` parses as
+      // `a || b || (c && d)` and guards only the last disjunct. That reads as
+      // a guard and is not one, and only an anchored match tells them apart —
+      // which is why the parentheses below are load-bearing, not style.
+      expect(step.if ?? '').toMatch(/^\(.+\) && github\.ref == 'refs\/heads\/main'$/)
+    })
 
     it(`routes every push in "${label}" through push_with_rebase`, () => {
       const run = step.run ?? ''
@@ -533,8 +620,11 @@ describe('the daily workflow pushes safely', () => {
         // Both commits are on origin: the rebase preserved the human's work
         // rather than the push clobbering it.
         git(seed, 'fetch', '--quiet', 'origin', 'main')
-        expect(git(seed, 'log', '--format=%s', 'FETCH_HEAD').split('\n').filter(Boolean))
-          .toEqual(['bot', 'human edits human', 'base'])
+        const log = git(seed, 'log', '--format=%s', 'FETCH_HEAD').split('\n').filter(Boolean)
+        expect(log.slice(0, 3)).toEqual(['bot', 'human edits human', 'base'])
+        // And the history the bot commit was replayed onto is still whole —
+        // the deepening fetch did not truncate what it landed on.
+        expect(log).toHaveLength(ORIGIN_COMMITS + 2)
       } finally {
         rmSync(dir, { recursive: true, force: true })
       }
@@ -552,8 +642,9 @@ describe('the daily workflow pushes safely', () => {
         expect(out.match(/::warning::/g) ?? []).toHaveLength(1)
         expect(out).not.toContain('::error::')
         git(seed, 'fetch', '--quiet', 'origin', 'main')
-        expect(git(seed, 'log', '--format=%s', 'FETCH_HEAD').split('\n').filter(Boolean))
-          .toEqual(['bot', 'race', 'base'])
+        const log = git(seed, 'log', '--format=%s', 'FETCH_HEAD').split('\n').filter(Boolean)
+        expect(log.slice(0, 3)).toEqual(['bot', 'race', 'base'])
+        expect(log).toHaveLength(ORIGIN_COMMITS + 2)
       } finally {
         rmSync(dir, { recursive: true, force: true })
       }
