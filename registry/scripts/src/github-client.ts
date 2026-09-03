@@ -49,6 +49,38 @@ export const MAX_TARBALL_BYTES = 32 * 1024 * 1024
 export const MAX_MANIFEST_BYTES = 1024 * 1024
 
 /**
+ * The share of one run's fetch attempts that may throw before the harvest is
+ * treated as broken rather than the repositories.
+ *
+ * Isolating a per-repo throw keeps one bad repository from ending the run —
+ * but unbounded it also turns a TOTAL failure into a green publish: every
+ * repository throwing for one shared reason (a CI egress allowlist, a revoked
+ * token, an API shape change) returns normally and the build ships zero GitHub
+ * entries, or yesterday's plus hundreds of rejections naming innocent repos,
+ * every day, because `fetch-failed` is not persisted and the same repositories
+ * retry into the same failure. `build.ts` describes exactly this hole on the
+ * npm half; the GitHub half must not reopen it.
+ *
+ * The two rates are far apart, so the threshold does not need to be delicate.
+ * A run's queue is up to REPO_BACKFILL_BUDGET (2000) of the 14,740 repositories
+ * in `repo-state.json`; the observed isolated rate is at most one or two per
+ * run — the harvest that produced 13,120 candidates threw zero times until one
+ * repository published a `null` manifest, and that input is now guarded. A
+ * systematic cause produces ~100%. Ten percent is an order of magnitude above
+ * the isolated rate and an order of magnitude below a systematic one.
+ */
+export const MAX_THROWN_FRACTION = 0.1
+
+/**
+ * Throws below this count never trip {@link MAX_THROWN_FRACTION}, whatever the
+ * fraction works out to. A quiet day's queue can be a handful of repositories,
+ * and three of three throwing is not evidence of anything systematic — it is
+ * three repositories. The floor is what keeps a small run, and every test that
+ * harvests a few fixtures, from tripping a bound meant for a pool-wide fault.
+ */
+export const MIN_THROWN_TO_BOUND = 20
+
+/**
  * The longest bundle name accepted from a repository manifest, npm's own
  * limit. A name reaches `first-seen.yml`, `categories.yml`, `markets.yml`,
  * `manifest.lock`, the published entry and the build report, so an unbounded
@@ -139,6 +171,11 @@ interface RepoMeta {
 }
 
 function parseRepoMeta(item: unknown): RepoMeta | null {
+  // Total for `unknown`, the same contract subpackage-select.ts states: an
+  // item this cannot read is skipped, exactly as one missing `full_name` is.
+  // Only `null` ever threw — and it threw on the SEARCH path, outside the
+  // per-repo try, so it ended the harvest rather than becoming a row.
+  if (typeof item !== 'object' || item === null) return null
   const o = item as {
     full_name?: unknown
     default_branch?: unknown
@@ -188,8 +225,44 @@ export async function probeTotal(
   const url = `${GITHUB_API}/search/repositories?q=${encodeURIComponent(query)}&per_page=1`
   const response = await searchRequest(url, fetchImpl, sleep, token)
   if (!response.ok) throw new Error(`github search probe for ${query} failed: ${response.status}`)
-  const body = await response.json() as { total_count?: unknown }
+  const body = await readSearchBody(response, `github search probe for ${query}`)
   return typeof body.total_count === 'number' ? body.total_count : 0
+}
+
+/**
+ * Read a search response body as an object.
+ *
+ * A 200 carrying `<!doctype html>` (a proxy's error page) makes `.json()`
+ * throw, and a 200 carrying the four bytes `null` parses to a value every
+ * property read below then throws on. Both escaped as a raw TypeError or
+ * SyntaxError from a property access, out of harvestRepos, into build.ts's one
+ * whole-harvest retry, and killed the build with a message naming neither the
+ * query nor what arrived.
+ *
+ * It still throws — a search that cannot complete MUST abort the harvest,
+ * because harvesting only the pages that answered silently shrinks the pool
+ * and is indistinguishable from an empty ecosystem. The change is that the
+ * error says which query and what came back.
+ * @param response - an `ok` search response.
+ * @param what - the operation, for the message.
+ * @returns the parsed body as an object.
+ */
+async function readSearchBody(
+  response: Response,
+  what: string,
+): Promise<{ total_count?: unknown; items?: unknown }> {
+  let parsed: unknown
+  try {
+    parsed = await response.json()
+  } catch {
+    // Same rule as npm's search: a 200 that is not JSON is a loud failure,
+    // not a zero-result page.
+    throw new Error(`${what} answered 200 with a body that is not JSON`)
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`${what} answered 200 with a body that is not JSON: ${JSON.stringify(parsed)?.slice(0, 60) ?? typeof parsed}`)
+  }
+  return parsed as { total_count?: unknown; items?: unknown }
 }
 
 /** Fetch one page of a windowed search. */
@@ -203,7 +276,7 @@ async function searchPage(
   const url = `${GITHUB_API}/search/repositories?q=${encodeURIComponent(query)}&per_page=${SEARCH_PAGE_SIZE}&page=${page}`
   const response = await searchRequest(url, fetchImpl, sleep, token)
   if (!response.ok) throw new Error(`github search for ${query} failed: ${response.status}`)
-  const body = await response.json() as { items?: unknown }
+  const body = await readSearchBody(response, `github search for ${query}`)
   const items = Array.isArray(body.items) ? body.items : []
   const metas: RepoMeta[] = []
   for (const item of items) {
@@ -475,6 +548,10 @@ function projectCandidate(
   // projects to no candidate, the same as a manifest whose name fails the
   // grammar. Checked before the cast rather than after it: the cast is a
   // claim about shape that `null` satisfies structurally and not in fact.
+  // The Array clause is belt-and-braces: an array reaches isBundleName with an
+  // undefined name and is rejected there anyway, so it changes no behaviour —
+  // it is here so the guard reads as "not an object shape" rather than as a
+  // null check that happens to suffice today.
   if (typeof manifest !== 'object' || manifest === null || Array.isArray(manifest)) return null
   const m = manifest as {
     name?: unknown
@@ -813,7 +890,15 @@ export interface RepoHarvestResult {
    */
   searchStars: Map<string, number>
   windowCount: number
+  /** Repositories this run ATTEMPTED to fetch — the queue length, not a
+   * success count. See {@link RepoHarvestResult.thrown} for why the build note
+   * reports both: a run where every attempt threw once read "300 fetched". */
   fetched: number
+  /** How many of those attempts ended in an unexpected throw, isolated into a
+   * `fetch-failed` row. Bounded per run by {@link MAX_THROWN_FRACTION}; the
+   * count is surfaced so the one line a human reads cannot say a harvest went
+   * fine when none of it did. */
+  thrown: number
   carried: number
   deferred: number
 }
@@ -832,7 +917,7 @@ export async function harvestRepos(options: RepoHarvestOptions): Promise<RepoHar
     probeSubpackages = true,
   } = options
   if (token === undefined) {
-    return { candidates: [], failures: [], seen: [], gone: [], nextState: state, skipped: true, searchStars: new Map(), windowCount: 0, fetched: 0, carried: 0, deferred: 0 }
+    return { candidates: [], failures: [], thrown: 0, seen: [], gone: [], nextState: state, skipped: true, searchStars: new Map(), windowCount: 0, fetched: 0, carried: 0, deferred: 0 }
   }
   const { seen, metas, windowCount } = await searchReposByTopic(fetchImpl, sleep, token)
   const searchStars = new Map<string, number>()
@@ -848,6 +933,11 @@ export async function harvestRepos(options: RepoHarvestOptions): Promise<RepoHar
     subpackageFailures?: RepoFetchFailure[]
   }>()
   const failures: RepoFetchFailure[] = []
+  // Counted separately from every other fetch-failed: a deleted or renamed
+  // repository is a legitimate isolated failure and must stay a row, so only
+  // THROW-derived failures feed the systematic-failure bound below.
+  let thrown = 0
+  const thrownMessages: string[] = []
   for (let i = 0; i < queue.length; i += REPO_CONCURRENCY) {
     const batch = queue.slice(i, i + REPO_CONCURRENCY)
     const results = await Promise.all(batch.map(async entry => {
@@ -861,18 +951,29 @@ export async function harvestRepos(options: RepoHarvestOptions): Promise<RepoHar
         // unguarded throw anywhere in the projection escaped Promise.all, left
         // harvestRepos, and met build.ts's single whole-harvest retry — which
         // replays the same deterministic input and rethrows. A public repo
-        // containing the four bytes `null` did exactly that.
+        // containing the four bytes `null` did exactly that. The bound after
+        // the loop is what keeps this from turning a pool-wide fault into a
+        // green publish.
         //
         // fetch-failed, not no-manifest: a throw is more likely our own defect
         // than a verdict on the repository, and fetch-failed is the code this
         // module does not persist as a dead end, so the repo is re-fetched
         // next run rather than written off.
+        const message = error instanceof Error ? error.message : String(error)
+        thrown += 1
+        thrownMessages.push(`${entry.repo}: ${message}`)
+        // The raw message is a diagnostic, not a verdict. It goes to stderr,
+        // where whoever is reading the build can act on it — never into the
+        // row, which is published to Pages under the repository's name and
+        // would otherwise blame an author for what the comment above calls
+        // our own defect.
+        process.stderr.write(`github: harvesting ${entry.repo} threw: ${message}\n`)
         return {
           entry,
           result: {
             ok: false,
             code: 'fetch-failed',
-            detail: `harvesting ${entry.repo} threw: ${error instanceof Error ? error.message : String(error)}`,
+            detail: 'The harvest could not process this repository. This is a fault on our side, not a judgement on the repository; it is retried on the next run.',
           } as RepoFetchResult,
         }
       }
@@ -911,6 +1012,17 @@ export async function harvestRepos(options: RepoHarvestOptions): Promise<RepoHar
       }
     }
   }
+  // Safe by CHECK, not by construction — the same shape searchByKeywords uses
+  // for its coverage guards. Isolating one throwing repository is right;
+  // isolating every one of them and publishing the result is how a total
+  // failure becomes a green build with a catalog full of innocent names.
+  if (thrown >= MIN_THROWN_TO_BOUND && thrown > queue.length * MAX_THROWN_FRACTION) {
+    throw new Error(
+      `github harvest: ${thrown} of ${queue.length} repositories threw, over the ${MIN_THROWN_TO_BOUND}-failure floor `
+      + `and ${MAX_THROWN_FRACTION * 100}% share that separate a bad repository from a broken harvest. `
+      + `Publishing this run would list none of them and blame each by name. First: ${thrownMessages[0] ?? '(none)'}`,
+    )
+  }
   const nextState = nextRepoState(state, seen, fresh)
   const candidates = Object.values(nextState).flatMap(entry => entry.candidates)
   const carried = Object.keys(nextState).length - fresh.size
@@ -926,6 +1038,7 @@ export async function harvestRepos(options: RepoHarvestOptions): Promise<RepoHar
   return {
     candidates,
     failures,
+    thrown,
     seen,
     gone,
     nextState,

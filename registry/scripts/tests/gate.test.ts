@@ -101,12 +101,12 @@ describe('gate', () => {
 
   it('never splits a surrogate pair when capping a derived summary', () => {
     // Scope, precisely: this pins that the CUT does not create an orphan, so
-    // the astral character is dropped whole rather than halved. It is not what
-    // keeps plugins.json free of unpaired surrogates — toWellFormedCatalog is,
-    // at the projection boundary, and the three-route test below covers the
-    // orphans that arrive by other means. Both exist because they do different
-    // things: dropping a half-character reads better than publishing a
-    // replacement character in the middle of a word.
+    // the astral character is dropped whole rather than halved. It is NOT what
+    // keeps plugins.json free of unpaired surrogates — the well-formedness
+    // pass in emit.ts is, over every string of every Entry, and pipeline.test
+    // asserts that. Both exist because they do different things: dropping a
+    // half-character reads better than publishing a replacement character in
+    // the middle of a word.
     //
     // Why any of it matters, measured end to end: a lone surrogate leaves the
     // emitted JSON valid (JSON.stringify escapes it as \ud83d, so the file is

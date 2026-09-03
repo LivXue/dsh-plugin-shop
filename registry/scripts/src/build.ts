@@ -161,7 +161,11 @@ if (ghToken === '') {
     })
   }
   writeFileSync(repoStatePath, serializeRepoState(repos.nextState))
-  repoNote = `${repos.windowCount} windows, ${repos.seen.length} repos seen, ${repos.fetched} fetched, ${repos.carried} carried, ${repos.deferred} deferred`
+  // `fetched` is the queue length — attempts, not successes — so the throw
+  // count rides beside it. A run where every attempt threw once read
+  // "300 fetched, 300 carried": the one line a human scans for an outage said
+  // everything was fine.
+  repoNote = `${repos.windowCount} windows, ${repos.seen.length} repos seen, ${repos.fetched} fetched (${repos.thrown} threw), ${repos.carried} carried, ${repos.deferred} deferred`
   process.stderr.write(`github: ${repoNote}\n`)
 }
 

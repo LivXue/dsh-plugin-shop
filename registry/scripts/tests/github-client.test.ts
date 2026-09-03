@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { MAX_TARBALL_BYTES, fetchRepoCandidate, harvestRepos, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
+import { MAX_TARBALL_BYTES, MAX_THROWN_FRACTION, MIN_THROWN_TO_BOUND, fetchRepoCandidate, harvestRepos, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
 import { parseRepoState, serializeRepoState } from '../src/repo-state.ts'
 import type { RepoState } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
@@ -671,6 +671,16 @@ describe('harvestRepos', () => {
   })
 
   it('turns an unexpected throw on one repo into a row, not a dead harvest', async () => {
+    const stderr: string[] = []
+    const write = process.stderr.write.bind(process.stderr)
+    process.stderr.write = ((chunk: string | Uint8Array) => { stderr.push(String(chunk)); return true }) as typeof process.stderr.write
+    try {
+      await runIt()
+    } finally {
+      process.stderr.write = write
+    }
+
+    async function runIt() {
     // The design intent everywhere else in this file is that one bad package
     // becomes a row. The per-repo fetch had no try, so any unguarded throw --
     // the `null` manifest above was one, and it will not be the last -- took
@@ -699,7 +709,133 @@ describe('harvestRepos', () => {
     expect(result.candidates.map(c => c.repo)).toEqual(['b/fine'])
     const boom = result.failures.find(f => f.repo === 'a/boom')
     expect(boom?.code).toBe('fetch-failed')
-    expect(boom?.detail).toContain('scripts')
+    // The PUBLISHED reason is ours to write. This assertion used to require
+    // the raw exception text in the row, which put
+    // "Cannot read properties of null (reading 'scripts')" on Pages under the
+    // repository's name — blaming an author for what the code beside it calls
+    // our own defect. The diagnostic moved to stderr, asserted below.
+    expect(boom?.detail).not.toContain('scripts')
+    expect(boom?.detail).toContain('not a judgement on the repository')
+    expect(stderr.join('')).toContain("Cannot read properties of null (reading 'scripts')")
+    expect(stderr.join('')).toContain('a/boom')
+    }
+  })
+
+  it('stops the build when the throws are systematic rather than isolated', async () => {
+    // The per-repo isolation, unbounded, turns a total failure into a green
+    // publish: every repo throwing for ONE shared reason -- a CI egress
+    // allowlist, a revoked token, an API shape change -- returns normally, and
+    // the build ships zero GitHub entries (empty state) or yesterday's plus
+    // hundreds of rejections naming innocent repos (populated state), every
+    // day, since fetch-failed is never persisted and the same repos retry.
+    // This is the hole build.ts:82-88 describes on the npm half in its own
+    // words; the GitHub half must not reopen it. Safe by CHECK, the way
+    // searchByKeywords is, not by construction.
+    const seen = Array.from({ length: 40 }, (_, i) => ({ repo: `owner/repo-${i}`, pushedAt: '2026-08-02T00:00:00Z' }))
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      if (new URL(text).searchParams.get('per_page') === '1') return new Response(JSON.stringify({ total_count: 0 }), { status: 200 })
+      if (text.includes('/search/repositories')) {
+        return new Response(JSON.stringify({ items: seen.map(sr => ({ full_name: sr.repo, default_branch: 'main', description: null, license: { spdx_id: 'MIT' }, pushed_at: sr.pushedAt })) }), { status: 200 })
+      }
+      throw new TypeError('fetch failed: egress blocked')
+    }) as unknown as typeof fetch
+    await expect(harvestRepos({ state: {}, budget: 100, fetchImpl, sleep, token: 't' }))
+      .rejects.toThrow(/threw/)
+  })
+
+  it('still degrades an isolated throw to a row, well under the bound', async () => {
+    // The other side: the bound must not undo the isolation it guards. One
+    // bad repo in a healthy run is a row, and the run publishes.
+    const seen = Array.from({ length: 40 }, (_, i) => ({ repo: `owner/repo-${i}`, pushedAt: '2026-08-02T00:00:00Z' }))
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      if (new URL(text).searchParams.get('per_page') === '1') return new Response(JSON.stringify({ total_count: 0 }), { status: 200 })
+      if (text.includes('/search/repositories')) {
+        return new Response(JSON.stringify({ items: seen.map(sr => ({ full_name: sr.repo, default_branch: 'main', description: null, license: { spdx_id: 'MIT' }, pushed_at: sr.pushedAt })) }), { status: 200 })
+      }
+      if (text.startsWith('https://raw.githubusercontent.com/owner/repo-7/')) throw new TypeError('only this one')
+      if (text.endsWith('/main/package.json')) {
+        const name = new URL(text).pathname.split('/')[2] ?? 'x'
+        return new Response(JSON.stringify({ name, dsh: { bundle: {} } }), { status: 200 })
+      }
+      if (text.includes('/commits/main')) {
+        return new Response(JSON.stringify({ sha: commit, commit: { author: { date: '2026-08-02T00:00:00.000Z' } } }), { status: 200 })
+      }
+      throw new Error(`unrouted: ${text}`)
+    }) as unknown as typeof fetch
+    const result = await harvestRepos({ state: {}, budget: 100, fetchImpl, sleep, token: 't' })
+    expect(result.candidates).toHaveLength(39)
+    const row = result.failures.find(f => f.repo === 'owner/repo-7')
+    expect(row?.code).toBe('fetch-failed')
+    // F-4: the published reason is ours to write, not the exception's. The
+    // raw message goes to stderr; a report.md row on Pages must not blame a
+    // repository for what the comment beside it calls our own defect.
+    expect(row?.detail).not.toContain('only this one')
+    expect(row?.detail).toMatch(/retried/i)
+    expect(result.thrown).toBe(1)
+  })
+
+  it('trips at exactly the floor, not one throw later', async () => {
+    // The floor's VALUE, and the `>=`. Twenty throws in a forty-repo queue is
+    // the boundary from both directions: exactly MIN_THROWN_TO_BOUND, and 50%,
+    // well over the share. Raising the floor to 26 leaves every other test in
+    // this file green -- verified by mutation -- because none of them lands
+    // between 20 and 25. Literals, so the fixture cannot drift with the
+    // constant it is meant to pin.
+    const seen = Array.from({ length: 40 }, (_, i) => ({ repo: `owner/repo-${i}`, pushedAt: '2026-08-02T00:00:00Z' }))
+    const throwing = new Set(Array.from({ length: 20 }, (_, i) => `owner/repo-${i}`))
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      if (new URL(text).searchParams.get('per_page') === '1') return new Response(JSON.stringify({ total_count: 0 }), { status: 200 })
+      if (text.includes('/search/repositories')) {
+        return new Response(JSON.stringify({ items: seen.map(sr => ({ full_name: sr.repo, default_branch: 'main', description: null, license: { spdx_id: 'MIT' }, pushed_at: sr.pushedAt })) }), { status: 200 })
+      }
+      const parts = new URL(text).pathname.split('/').filter(Boolean)
+      const repo = text.startsWith('https://raw.') ? `${parts[0]}/${parts[1]}` : `${parts[1]}/${parts[2]}`
+      if (throwing.has(repo)) throw new TypeError('this one only')
+      if (text.endsWith('/main/package.json')) return new Response(JSON.stringify({ name: (parts[1] ?? 'x'), dsh: { bundle: {} } }), { status: 200 })
+      if (text.includes('/commits/main')) {
+        return new Response(JSON.stringify({ sha: commit, commit: { author: { date: '2026-08-02T00:00:00.000Z' } } }), { status: 200 })
+      }
+      throw new Error(`unrouted: ${text}`)
+    }) as unknown as typeof fetch
+    expect(MIN_THROWN_TO_BOUND).toBe(20)
+    expect(MAX_THROWN_FRACTION).toBe(0.1)
+    await expect(harvestRepos({ state: {}, budget: 400, fetchImpl, sleep, token: 't' }))
+      .rejects.toThrow(/20 of 40 repositories threw/)
+  })
+
+  it('publishes a big run whose throws clear the floor but stay under the share', async () => {
+    // Both halves of the bound are load-bearing, and each needs a case the
+    // other cannot cover. The floor is pinned by the two-repo run above, where
+    // one throw is 50%. This is the fraction's: 25 throws in a 300-repo queue
+    // clears the 20-failure floor and is still 8.3% -- a partial fault, not a
+    // pool-wide one, and the 275 repositories that answered must still ship.
+    // With the floor alone this run would fail the build.
+    const seen = Array.from({ length: 300 }, (_, i) => ({ repo: `owner/repo-${i}`, pushedAt: '2026-08-02T00:00:00Z' }))
+    const throwing = new Set(Array.from({ length: 25 }, (_, i) => `owner/repo-${i}`))
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      if (new URL(text).searchParams.get('per_page') === '1') return new Response(JSON.stringify({ total_count: 0 }), { status: 200 })
+      if (text.includes('/search/repositories')) {
+        return new Response(JSON.stringify({ items: seen.map(sr => ({ full_name: sr.repo, default_branch: 'main', description: null, license: { spdx_id: 'MIT' }, pushed_at: sr.pushedAt })) }), { status: 200 })
+      }
+      const owner = new URL(text).pathname.split('/').filter(Boolean)
+      const repo = text.startsWith('https://raw.') ? `${owner[0]}/${owner[1]}` : `${owner[1]}/${owner[2]}`
+      if (throwing.has(repo)) throw new TypeError('this one only')
+      if (text.endsWith('/main/package.json')) {
+        return new Response(JSON.stringify({ name: (owner[1] ?? 'x'), dsh: { bundle: {} } }), { status: 200 })
+      }
+      if (text.includes('/commits/main')) {
+        return new Response(JSON.stringify({ sha: commit, commit: { author: { date: '2026-08-02T00:00:00.000Z' } } }), { status: 200 })
+      }
+      throw new Error(`unrouted: ${text}`)
+    }) as unknown as typeof fetch
+    const result = await harvestRepos({ state: {}, budget: 400, fetchImpl, sleep, token: 't' })
+    expect(result.thrown).toBe(25)
+    expect(result.fetched).toBe(300)
+    expect(result.candidates).toHaveLength(275)
   })
 
   it('carries a subpackage failure across runs instead of reporting it once and going quiet', async () => {
@@ -760,6 +896,66 @@ describe('harvestRepos', () => {
       },
     }
     expect(parseRepoState(serializeRepoState(state))).toEqual(state)
+  })
+})
+
+describe('the search path survives a body it did not expect', () => {
+  // The `null`-manifest guard closed the class on the FETCH path, which sits
+  // inside the per-repo try. These three are on the SEARCH path, outside it,
+  // so each still ends harvestRepos -> build.ts's one retry -> a dead build.
+  // parseRepoMeta in particular has exactly the contract stated in
+  // subpackage-select.ts ("a function taking `unknown` must be total for
+  // `unknown`") and did not meet it.
+  //
+  // A failed SEARCH still fails loudly, and deliberately: harvesting only the
+  // pages that answered would silently shrink the pool, which is
+  // indistinguishable from an empty ecosystem. What changes is that the error
+  // names the query and what arrived, instead of surfacing a raw TypeError
+  // from a property read.
+  const seen = [{ repo: 'a/b', pushedAt: '2026-08-02T00:00:00Z' }]
+
+  function searchStub(pageBody: string, probeBody = JSON.stringify({ total_count: 1 })): typeof fetch {
+    return (async (url: string | URL) => {
+      const text = String(url)
+      if (new URL(text).searchParams.get('per_page') === '1') return new Response(probeBody, { status: 200 })
+      if (text.includes('/search/repositories')) return new Response(pageBody, { status: 200 })
+      throw new Error(`unrouted: ${text}`)
+    }) as unknown as typeof fetch
+  }
+
+  it('names the query when a search page answers 200 with HTML', async () => {
+    await expect(harvestRepos({ state: {}, budget: 5, fetchImpl: searchStub('<!doctype html><h1>502</h1>'), sleep, token: 't' }))
+      .rejects.toThrow(/not JSON/)
+  })
+
+  it('names the query when a search probe answers 200 with HTML', async () => {
+    await expect(harvestRepos({ state: {}, budget: 5, fetchImpl: searchStub(JSON.stringify({ items: [] }), '<!doctype html>'), sleep, token: 't' }))
+      .rejects.toThrow(/not JSON/)
+  })
+
+  it('treats a search body of `null` as a body that is not JSON', async () => {
+    // `null` parses, so .json() succeeds and every property read below it
+    // throws — the same four bytes as the manifest case, on the other path.
+    await expect(harvestRepos({ state: {}, budget: 5, fetchImpl: searchStub('null'), sleep, token: 't' }))
+      .rejects.toThrow(/not JSON/)
+    await expect(harvestRepos({ state: {}, budget: 5, fetchImpl: searchStub(JSON.stringify({ items: [] }), 'null'), sleep, token: 't' }))
+      .rejects.toThrow(/not JSON/)
+  })
+
+  it('skips an unusable search item instead of throwing on it', async () => {
+    // parseRepoMeta's own contract: an item it cannot read is skipped, the
+    // same as one missing full_name. Only `null` ever threw.
+    const items = [null, 'a string', 42, { full_name: 'a/b', default_branch: 'main', description: null, license: { spdx_id: 'MIT' }, pushed_at: seen[0]?.pushedAt }]
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      if (new URL(text).searchParams.get('per_page') === '1') return new Response(JSON.stringify({ total_count: 1 }), { status: 200 })
+      if (text.includes('/search/repositories')) return new Response(JSON.stringify({ items }), { status: 200 })
+      if (text === 'https://raw.githubusercontent.com/a/b/main/package.json') return new Response(JSON.stringify({ name: 'a-b', dsh: { bundle: {} } }), { status: 200 })
+      if (text === 'https://api.github.com/repos/a/b/commits/main') return new Response(JSON.stringify({ sha: commit, commit: { author: { date: '2026-08-02T00:00:00.000Z' } } }), { status: 200 })
+      throw new Error(`unrouted: ${text}`)
+    }) as unknown as typeof fetch
+    const result = await harvestRepos({ state: {}, budget: 5, fetchImpl, sleep, token: 't' })
+    expect(result.seen.map(sr => sr.repo)).toEqual(['a/b'])
   })
 })
 
@@ -1239,12 +1435,10 @@ interface ExcusedBodyRead {
 
 const EXCUSED_BODY_READS: readonly ExcusedBodyRead[] = [
   {
-    snippet: 'const body = await response.json() as { total_count?: unknown }',
-    reason: "api.github.com search: reads GitHub's own total_count number, not repository-authored text",
-  },
-  {
-    snippet: 'const body = await response.json() as { items?: unknown }',
-    reason: 'api.github.com search: a page of repo metadata GitHub composes, bounded by SEARCH_PAGE_SIZE',
+    snippet: 'parsed = await response.json()',
+    reason: 'readSearchBody: the single reader for api.github.com search bodies (the total_count probe and '
+      + "the result pages) — GitHub's own JSON, bounded by SEARCH_PAGE_SIZE, and shape-checked there so a "
+      + 'proxy error page or a bare `null` becomes a named error instead of a raw property-access throw',
   },
   {
     snippet: 'const body = await response.json() as { sha?: unknown; commit?: { author?: { date?: unknown } } }',
@@ -1277,6 +1471,12 @@ function logicalLines(source: string): LogicalLine[] {
   const raw = source.split('\n')
   const out: LogicalLine[] = []
   for (const [index, line] of raw.entries()) {
+    // A comment is not a call site. `.json()` appears in the prose that
+    // explains these reads, and treating that as one would force an excuse
+    // for a sentence. Only a line that OPENS with a comment marker is skipped,
+    // so a real read with a trailing comment is still scanned.
+    const opener = line.trim()
+    if (opener.startsWith('*') || opener.startsWith('//') || opener.startsWith('/*')) continue
     if (out.length > 0 && line.trimStart().startsWith('.')) {
       const previous = out[out.length - 1]
       if (previous !== undefined) {

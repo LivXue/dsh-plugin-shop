@@ -344,7 +344,12 @@ describe('nothing unpaired leaves for plugins.json', () => {
     peers: ['peer-a\uD800', 'peer-b'],
   }
 
-  it('emits no unpaired surrogate anywhere in the artifact', () => {
+  it('emits no unpaired surrogate in any entry it publishes', () => {
+    // "in any entry", not "anywhere in the file": the pass covers Entry, which
+    // is what `plugins` holds. The sibling `denied[]` array is built from
+    // rejection details and does not pass through it — not a live gap (those
+    // strings are human-authored denial reasons from denied.yml), but the
+    // claim is scoped to what is actually enforced.
     const { pluginsJson } = runPipeline([hostile], [], hostileConfig, BUILT_AT)
     // JSON.stringify escapes an orphan as \udXXX, so the file stays ASCII and
     // the content hash stays stable — which is precisely why no existing test
@@ -364,6 +369,30 @@ describe('nothing unpaired leaves for plugins.json', () => {
     for (const peer of (entry?.peers as string[] | undefined) ?? []) {
       expect(lone.test(peer), 'peers').toBe(false)
     }
+  })
+
+  it('preserves every entry\'s key order through the well-formedness pass', () => {
+    // The pass rebuilds each object (Object.fromEntries over Object.entries),
+    // so key order is a property it can silently change — and a reorder
+    // rewrites every entry in plugins.json, moves the content hash and
+    // invalidates every CDN cache, which is the harm the builtAt invariant
+    // exists to prevent. Mutating the recursion to sort keys left 441/441
+    // green before this assertion existed.
+    const { pluginsJson } = runPipeline(candidates, [], config, BUILT_AT)
+    const parsed = JSON.parse(pluginsJson) as { plugins: Record<string, unknown>[] }
+    const entry = parsed.plugins.find(p => p.name === 'dsh-fs-tool')
+    const keys = Object.keys(entry ?? {})
+    expect(keys).toEqual([
+      'name', 'version', 'integrity', 'publishedAt', 'repository', 'license',
+      'metadata', 'catalog', 'source', 'added', 'tier', 'review',
+    ])
+    // Stated twice on purpose: the list above pins the exact order, and this
+    // pins that the order is not merely SOME deterministic order — sorting is
+    // the specific reordering a rebuild is most likely to introduce.
+    expect(keys).not.toEqual([...keys].sort())
+    // The nested objects are rebuilt too, so they need the same statement.
+    const catalog = entry?.catalog as Record<string, unknown> | undefined
+    expect(Object.keys(catalog ?? {})).toEqual(['category', 'summary', 'capabilities'])
   })
 
   it('leaves a well-formed catalog byte-identical', () => {
