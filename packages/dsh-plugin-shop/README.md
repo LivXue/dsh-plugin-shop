@@ -18,23 +18,6 @@ English | [中文](https://github.com/LivXue/dsh-plugin-shop/blob/main/packages/
 
 ---
 
-## 🖼️ Screenshots
-
-<div align="center">
-<img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/shelf-light.png" alt="The plugin shop shelf inside dsh Settings" width="860">
-</div>
-
-<table>
-<tr>
-<td width="50%"><img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/gate-light.png" alt="Installing an unreviewed plugin requires an explicit acknowledgement"></td>
-<td width="50%"><img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/shelf-dark.png" alt="The same shelf in the dark theme"></td>
-</tr>
-<tr>
-<td align="center"><sub>Installing an unreviewed plugin requires an explicit acknowledgement</sub></td>
-<td align="center"><sub>The same shelf in the dark theme</sub></td>
-</tr>
-</table>
-
 ## 📦 Install
 
 Two tracks below. They do the same thing; pick the one that matches who is reading.
@@ -112,6 +95,23 @@ bundle is not.
 | `dsh: pnpm not found on PATH — install pnpm to manage profile plugins` | `dsh plugin` forwards to pnpm, and pnpm is missing | `npm install -g pnpm` |
 | `no profile directory found above <path>` | the plugin could not locate its profile | Please report it — this is resolved from `ctx.baseUrl` and should not fail |
 | The tab is missing after a restart | the bundle is not in the profile's `bundles` | Re-run step 3; if it is absent, step 2 did not complete |
+
+## 🖼️ Screenshots
+
+<div align="center">
+<img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/shelf-light.png" alt="The plugin shop shelf inside dsh Settings" width="860">
+</div>
+
+<table>
+<tr>
+<td width="50%"><img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/gate-light.png" alt="Installing an unreviewed plugin requires an explicit acknowledgement"></td>
+<td width="50%"><img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/shelf-dark.png" alt="The same shelf in the dark theme"></td>
+</tr>
+<tr>
+<td align="center"><sub>Installing an unreviewed plugin requires an explicit acknowledgement</sub></td>
+<td align="center"><sub>The same shelf in the dark theme</sub></td>
+</tr>
+</table>
 
 ## ✨ What it does
 

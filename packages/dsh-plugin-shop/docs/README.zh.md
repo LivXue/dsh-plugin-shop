@@ -18,23 +18,6 @@
 
 ---
 
-## 🖼️ 界面预览
-
-<div align="center">
-<img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/shelf-light.zh.png" alt="dsh 设置页里的插件商店货架" width="860">
-</div>
-
-<table>
-<tr>
-<td width="50%"><img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/gate-light.zh.png" alt="安装未评审插件需要显式确认"></td>
-<td width="50%"><img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/shelf-dark.zh.png" alt="深色主题下的同一片货架"></td>
-</tr>
-<tr>
-<td align="center"><sub>安装未评审插件需要显式确认</sub></td>
-<td align="center"><sub>深色主题下的同一片货架</sub></td>
-</tr>
-</table>
-
 ## 📦 安装
 
 下面两条路做的是同一件事，按读者是谁挑一条。
@@ -103,6 +86,23 @@ dsh plugin --profile <profile> list --depth 0
 | `dsh: pnpm not found on PATH — install pnpm to manage profile plugins` | `dsh plugin` 转发给 pnpm，而 pnpm 缺失 | `npm install -g pnpm` |
 | `no profile directory found above <path>` | 插件定位不到自己的 profile | 请报告——这是由 `ctx.baseUrl` 解析的，不该失败 |
 | 重启后标签没出现 | bundle 不在 profile 的 `bundles` 里 | 重跑第 3 步；若确实不在，说明第 2 步没走完 |
+
+## 🖼️ 界面预览
+
+<div align="center">
+<img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/shelf-light.zh.png" alt="dsh 设置页里的插件商店货架" width="860">
+</div>
+
+<table>
+<tr>
+<td width="50%"><img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/gate-light.zh.png" alt="安装未评审插件需要显式确认"></td>
+<td width="50%"><img src="https://raw.githubusercontent.com/LivXue/dsh-plugin-shop/main/docs/images/shelf-dark.zh.png" alt="深色主题下的同一片货架"></td>
+</tr>
+<tr>
+<td align="center"><sub>安装未评审插件需要显式确认</sub></td>
+<td align="center"><sub>深色主题下的同一片货架</sub></td>
+</tr>
+</table>
 
 ## ✨ 能做什么
 
