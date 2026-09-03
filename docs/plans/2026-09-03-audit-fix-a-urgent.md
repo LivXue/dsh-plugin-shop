@@ -2174,9 +2174,9 @@ The size assertion is belt-and-braces and never gets a say. This draft predicted
 - [ ] **Step 3: Write the implementation**
 
 > **Superseded by what shipped — read before copying anything below.** This is the shape Task 7 was
-> *dispatched* with; review found blocking defects in it across three fix rounds (`6da6912`, `1d2375e`, `dcb1b61`). The
+> *dispatched* with; review found blocking defects in it across several fix rounds. The
 > blocks below are deliberately **not** re-transcribed — a second copy is what drifts, and it already
-> drifted once in Task 6. Take the shipped files as the authority — `b9a48c6`, then `6da6912`, `1d2375e`, `dcb1b61`, and check `git log` rather than trusting this list, which has gone stale once already.
+> drifted once in Task 6. Take the shipped files as the authority — `b9a48c6` and every `fix(registry):` commit after it — **read `git log --oneline b9a48c6..HEAD -- registry/` rather than any list written here**. An enumerated list has now gone stale three times, twice in the very commit that was fixing it, so this block no longer keeps one.
 > Relative to them, Step 3d below is actively **wrong**: it prescribes the two size checks inline
 > inside `fetchRepoCandidate`, which caps only the root manifest. The harvest has **two** manifest
 > reads — `probeSubpackageCandidates` is the second — and the uncapped one writes raw attacker
