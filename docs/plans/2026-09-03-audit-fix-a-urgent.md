@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Close the eight WP0 findings that are live or days away in the registry pipeline — the search window that is 155 names from breaking every daily build, the single transport failure that aborts a 5,600-packument harvest, the token forwarded to a third-party mirror, the uncommitted `first-seen.yml` that re-stamps half the shelf daily, the unescaped names that will make the bot write YAML nobody can read back, the pushes that are rejected and reported as success, the unbounded strings that put a 222 MB `plugins.json` in front of every reader, and the three network clients with no deadline.
+**Goal:** Close the eight WP0 findings that are live or days away in the registry pipeline — the search window that is 155 names from breaking every daily build, the single transport failure that aborts a 5,600-packument harvest, the token forwarded to a third-party mirror, the uncommitted `first-seen.yml` that re-stamps half the shelf daily, the unescaped names that will make the bot write YAML nobody can read back, the pushes that are rejected and reported as success, the unbounded strings that put a 203 MB `plugins.json` in front of every reader, and the three network clients with no deadline.
 
 **Architecture:** Every fix stays on the side of the boundary it belongs to. Policy decisions — length bounds with author-readable details, the coverage rule for a partitioned search, the name grammar — go in the pure core (`gate.ts`, `schema.ts`) or in a pure exported function driven by an injected probe (`partitionKeyword`); transport concerns — timeouts, failover, the token, capped body reads — stay in the impure shell (`npm-client.ts`, `github-client.ts`, `llm-client.ts`, `github-stars.ts`). Two of the fixes are workflow-shaped and get a vitest guard that reads `.github/workflows/daily.yml` as data, so the next forgotten `git add` or missing rebase fails the suite instead of the publish.
 
@@ -2050,7 +2050,7 @@ is what makes it visible. workflow.test.ts pins both properties."
     // `capabilities` capped the COUNT at 20 and not the item length, so one
     // package with 20 one-megabyte strings is 20 MB of a file every reader
     // downloads. Through the real toCandidate -> gate -> emit path, 1 MB
-    // strings produced a 222 MB plugins.json.
+    // strings produced a 203 MB plugins.json.
     const result = parseCatalogSection({ ...valid, capabilities: ['x'.repeat(65)] })
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error).toContain('capabilities')
@@ -2140,7 +2140,7 @@ describe('field length bounds', () => {
 ```ts
   it('keeps plugins.json bounded when a candidate carries megabyte strings', () => {
     // The real toCandidate -> gate -> assignTier -> emit path produced a
-    // 222 MB plugins.json from ONE package with 1 MB strings. Every reader
+    // 203 MB plugins.json from ONE package with 1 MB strings. Every reader
     // downloads that file.
     const hostile: Candidate = {
       name: 'dsh-hostile-plugin',
@@ -2208,7 +2208,7 @@ export const categorySchema = z.enum(CATEGORIES)
  * the item length was not, so a manifest declaring 20 one-megabyte strings
  * put 20 MB into a file every reader downloads — measured through the real
  * `toCandidate → gate → assignTier → emit` path, one package with 1 MB
- * strings produced a 222 MB `plugins.json`. A capability names a dsh service;
+ * strings produced a 203 MB `plugins.json`. A capability names a dsh service;
  * the longest real one is under twenty characters.
  */
 export const CAPABILITY_MAX_LENGTH = 64
@@ -2413,7 +2413,7 @@ capabilities capped the COUNT at 20 and never the item length; license,
 repository and each of the 200 peer names were taken verbatim with no bound;
 the GitHub manifest body was read with no cap at all, unlike the tarball
 reader's 32 MB one. Through the real toCandidate -> gate -> assignTier ->
-emit path, ONE package with 1 MB strings produced a 222 MB plugins.json --
+emit path, ONE package with 1 MB strings produced a 203 MB plugins.json --
 the file every reader downloads.
 
 capabilities items cap at 64 in the pure schema, so an over-long value is an
