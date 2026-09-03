@@ -147,6 +147,28 @@ describe('fetchRepoCandidate', () => {
     if (!result.ok) expect(result.code).toBe('no-manifest')
   })
 
+  it('rejects a package.json of exactly `null` instead of taking the build down', async () => {
+    // Four bytes -- `null` -- is legal JSON, so readManifest returns it as a
+    // parsed manifest, and projectCandidate's `manifest as {...}` cast then
+    // read `.scripts` off it and threw. harvestRepos has no per-repo try, and
+    // build.ts retries the whole harvest once and rethrows, so any public repo
+    // the keyword search finds could stop the entire daily catalog. Every
+    // other odd body -- 123, "a string", true, [] -- was already handled; only
+    // null threw, because only null survives `typeof x === 'object'`.
+    for (const body of ['null', '123', '"a string"', 'true', '[]']) {
+      const fetchImpl = stubFetch({
+        'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(body, { status: 200 }),
+        'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': new Response(JSON.stringify({
+          sha: commit,
+          commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+        }), { status: 200 }),
+      })
+      const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+      expect(result.ok, `body ${body}`).toBe(false)
+      if (!result.ok) expect(result.code, `body ${body}`).toBe('no-manifest')
+    }
+  })
+
   it('reports fetch-failed when the head commit cannot be resolved', async () => {
     const fetchImpl = stubFetch({
       'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(JSON.stringify({ name: 'dsh-repo-plugin', dsh: { bundle: {} } }), { status: 200 }),
@@ -648,6 +670,38 @@ describe('harvestRepos', () => {
     expect(result.candidates).toEqual([])
   })
 
+  it('turns an unexpected throw on one repo into a row, not a dead harvest', async () => {
+    // The design intent everywhere else in this file is that one bad package
+    // becomes a row. The per-repo fetch had no try, so any unguarded throw --
+    // the `null` manifest above was one, and it will not be the last -- took
+    // the whole build with it, through build.ts's one retry into the same
+    // deterministic throw. fetch-failed rather than no-manifest on purpose: it
+    // is not persisted as a dead end, so the repo is retried next run instead
+    // of being written off over what may be our own bug.
+    const seen = [{ repo: 'a/boom', pushedAt: '2026-08-02T00:00:00Z' }, { repo: 'b/fine', pushedAt: '2026-08-02T00:00:00Z' }]
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      if (new URL(text).searchParams.get('per_page') === '1') return new Response(JSON.stringify({ total_count: 0 }), { status: 200 })
+      if (text.includes('/search/repositories')) {
+        return new Response(JSON.stringify({ items: seen.map(sr => ({ full_name: sr.repo, default_branch: 'main', description: null, license: { spdx_id: 'MIT' }, pushed_at: sr.pushedAt })) }), { status: 200 })
+      }
+      if (text.startsWith('https://raw.githubusercontent.com/a/boom/')) throw new TypeError('Cannot read properties of null (reading \'scripts\')')
+      if (text === 'https://raw.githubusercontent.com/b/fine/main/package.json') {
+        return new Response(JSON.stringify({ name: 'b-fine', dsh: { bundle: {} } }), { status: 200 })
+      }
+      if (text === 'https://api.github.com/repos/b/fine/commits/main') {
+        return new Response(JSON.stringify({ sha: commit, commit: { author: { date: '2026-08-02T00:00:00.000Z' } } }), { status: 200 })
+      }
+      throw new Error(`unrouted: ${text}`)
+    }) as unknown as typeof fetch
+    const result = await harvestRepos({ state: {}, budget: 5, fetchImpl, sleep, token: 't' })
+    // The good repo still lands, and the bad one is accounted for by name.
+    expect(result.candidates.map(c => c.repo)).toEqual(['b/fine'])
+    const boom = result.failures.find(f => f.repo === 'a/boom')
+    expect(boom?.code).toBe('fetch-failed')
+    expect(boom?.detail).toContain('scripts')
+  })
+
   it('carries a subpackage failure across runs instead of reporting it once and going quiet', async () => {
     // Moving the size refusal onto the ok branch moved it out of the branch
     // that persists a failure, and subpackageFailures were explicitly not
@@ -900,6 +954,63 @@ describe('subpackage probe', () => {
       expect(result.subpackageFailures?.[0]?.repo).toBe('someone/monorepo#packages/the-plugin')
       expect(result.subpackageFailures?.[0]?.detail).toContain('larger than 1048576 bytes')
     }
+  })
+
+  it('publishes a bare failure row beside usable candidates, with no internal field on it', async () => {
+    // The path with BOTH candidates and a failure row had no test, which is
+    // how the `claimed` tag reached the published shape from this return while
+    // the two returns below it were field-picked. TypeScript allows it: the
+    // tagged type extends RepoFetchFailure and it is a variable, so no
+    // excess-property check fires. The consequence is not cosmetic --
+    // harvestRepos persists these rows into the COMMITTED repo-state.json,
+    // and parseRepoState rebuilds {repo, code, detail} on the way back in, so
+    // an extra key makes the round-trip non-idempotent and the file churns
+    // every day with no input change: the builtAt invariant through a side
+    // door.
+    const namelessRoot = JSON.stringify({ private: true, workspaces: ['packages/*'] })
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/monorepo/main/package.json': new Response(namelessRoot, { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/commits/main': new Response(JSON.stringify({
+        sha: commit,
+        commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/git/trees/main?recursive=1': new Response(JSON.stringify({
+        tree: [
+          { path: 'package.json' },
+          { path: 'packages/good/package.json' },
+          { path: 'packages/claiming/package.json' },
+          { path: 'packages/huge/package.json' },
+        ],
+      }), { status: 200 }),
+      'https://raw.githubusercontent.com/someone/monorepo/main/packages/good/package.json': new Response(JSON.stringify({
+        name: 'the-plugin',
+        dsh: { bundle: {}, catalog: { category: 'tool', summary: { en: 'x' }, capabilities: [] } },
+      }), { status: 200 }),
+      'https://raw.githubusercontent.com/someone/monorepo/main/packages/claiming/package.json':
+        new Response(JSON.stringify({ name: '{{PKG_NAME}}', dsh: { bundle: {} } }), { status: 200 }),
+      'https://raw.githubusercontent.com/someone/monorepo/main/packages/huge/package.json':
+        new Response(JSON.stringify({ name: 'the-plugin', dsh: { bundle: {}, catalog: { note: 'z'.repeat(2 * 1024 * 1024) } } }), { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.candidates.map(c => c.name)).toEqual(['the-plugin'])
+    expect(result.subpackageFailures).toHaveLength(2)
+    for (const row of result.subpackageFailures ?? []) {
+      expect(Object.keys(row).sort()).toEqual(['code', 'detail', 'repo'])
+    }
+  })
+
+  it('round-trips its published failure rows through repo-state unchanged', () => {
+    // The idempotence the churn above breaks, stated directly: whatever shape
+    // a row has when published must survive serialize -> parse identically, or
+    // the committed file differs from itself on the next run.
+    const row = { repo: 'someone/monorepo#packages/huge', code: 'no-manifest' as const, detail: 'too big' }
+    const state: RepoState = {
+      'someone/monorepo': { pushedAt: '2026-08-02T00:00:00Z', commit, candidates: [], subpackageFailures: [row] },
+    }
+    const once = serializeRepoState(state)
+    expect(serializeRepoState(parseRepoState(once))).toBe(once)
   })
 
   it('still prefers a claiming subpackage over the root\'s bad name, as it did before', async () => {

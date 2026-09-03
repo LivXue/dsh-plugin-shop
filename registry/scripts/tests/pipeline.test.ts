@@ -309,3 +309,69 @@ describe('subpackage entries and the schemaVersion bump', () => {
     expect(JSON.parse(artifacts.indexJson).schemaVersion).toBe(3)
   })
 })
+
+describe('nothing unpaired leaves for plugins.json', () => {
+  // The claim three rounds tried to make and kept scoping too narrowly.
+  // toWellFormedCatalog covered the CATALOG SECTION; plugins.json is not the
+  // catalog section. Entry.license, Entry.repository, Entry.publisher and
+  // Entry.peers[] are npm-manifest strings taken verbatim and bounded on
+  // LENGTH only, so `"license": "MIT\ud800"` put a lone surrogate straight
+  // into the artifact — the same UnicodeEncodeError the catalog fix cites as
+  // the reason it matters.
+  //
+  // So the guarantee is stated where it can stay true: every string in every
+  // emitted Entry, at the emit boundary, whatever fields an Entry grows next.
+  const LONE_SURROGATE_ESCAPE = /\\ud[89ab][0-9a-f]{2}/i
+
+  const hostileConfig = parseRegistryConfig({
+    verified: '[]', denied: '[]', allowedSimilar: '[]', categories: '[]',
+    firstSeen: '- name: dsh-hostile-plugin\n  added: 2026-08-11\n',
+  })
+
+  const hostile: Candidate = {
+    name: 'dsh-hostile-plugin',
+    version: '1.0.0\uD800',
+    integrity: 'sha512-x\uDC00',
+    publishedAt: '2026-08-01T12:00:00.000Z',
+    repository: 'https://github.com/you/p\uD800',
+    license: 'MIT\uD800',
+    deprecated: false,
+    hasBundle: true,
+    catalog: { category: 'tool', summary: { en: 'en \uD800', zh: 'zh \uDC00' }, capabilities: ['cap \uD800'] },
+    description: 'A plugin.',
+    keywords: [],
+    publisher: 'someone\uD800',
+    peers: ['peer-a\uD800', 'peer-b'],
+  }
+
+  it('emits no unpaired surrogate anywhere in the artifact', () => {
+    const { pluginsJson } = runPipeline([hostile], [], hostileConfig, BUILT_AT)
+    // JSON.stringify escapes an orphan as \udXXX, so the file stays ASCII and
+    // the content hash stays stable — which is precisely why no existing test
+    // noticed. The escape is what has to be absent.
+    expect(LONE_SURROGATE_ESCAPE.test(pluginsJson)).toBe(false)
+  })
+
+  it('covers the fields outside the catalog section, one at a time', () => {
+    // Named individually so a regression points at the field that regressed
+    // rather than at "something somewhere in the entry".
+    const { pluginsJson } = runPipeline([hostile], [], hostileConfig, BUILT_AT)
+    const entry = (JSON.parse(pluginsJson) as { plugins: Record<string, unknown>[] }).plugins[0]
+    const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+    for (const field of ['version', 'integrity', 'repository', 'license', 'publisher']) {
+      expect(lone.test(String(entry?.[field] ?? '')), field).toBe(false)
+    }
+    for (const peer of (entry?.peers as string[] | undefined) ?? []) {
+      expect(lone.test(peer), 'peers').toBe(false)
+    }
+  })
+
+  it('leaves a well-formed catalog byte-identical', () => {
+    // toWellFormed is the identity on well-formed text, and the ordinary build
+    // must not acquire a replacement character or a reordered key. The
+    // fixtures' artifact is the strongest available statement of that.
+    const before = runPipeline(candidates, [], config, BUILT_AT)
+    expect(before.pluginsJson).toContain('dsh-hello-plugin')
+    expect(LONE_SURROGATE_ESCAPE.test(before.pluginsJson)).toBe(false)
+  })
+})

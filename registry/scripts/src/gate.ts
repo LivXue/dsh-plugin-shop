@@ -49,39 +49,11 @@ export function truncateWholeCharacters(value: string, maxLength: number): strin
   // it mid-word. A LOW surrogate there is usually a complete pair ending at
   // the bound and is kept — but it can also be an orphan that was already in
   // the text, which this function deliberately does NOT try to judge. Every
-  // orphan the input carried in is handled once, for all fields and all
-  // lengths, by {@link toWellFormedCatalog}; this function's only job is not
-  // to CREATE one.
+  // orphan the input carried in is handled once, for every field of every
+  // entry, at the emit boundary (see `emit.ts`); this function's only job is
+  // not to CREATE one, because dropping a half-character reads better than
+  // publishing a replacement character in the middle of a word.
   return last >= 0xD800 && last <= 0xDBFF ? cut.slice(0, -1) : cut
-}
-
-/**
- * Replace every unpaired surrogate in a catalog section with U+FFFD.
- *
- * Truncation is not the only way an orphan reaches `plugins.json`, and fixing
- * only truncation left three routes open: a description SHORTER than the bound
- * is never cut at all; a cut landing on a lone low surrogate already present
- * in the text looks exactly like a completed pair; and an author-declared
- * `dsh.catalog` is accepted by zod's `.max(200)` without its contents being
- * examined. `capabilities` and `summary.zh` are the same author free text as
- * `summary.en` and reach the same file.
- *
- * So the orphan is removed HERE, at the boundary every accepted catalog passes
- * through, rather than at each of the ways one can arrive. `toWellFormed` is
- * the identity on well-formed text, so an ordinary catalog is untouched.
- * @param section - the catalog section about to be published.
- * @returns the same section with every string well-formed UTF-16.
- */
-export function toWellFormedCatalog(section: CatalogSection): CatalogSection {
-  return {
-    ...section,
-    summary: {
-      ...section.summary,
-      en: section.summary.en.toWellFormed(),
-      ...(section.summary.zh === undefined ? {} : { zh: section.summary.zh.toWellFormed() }),
-    },
-    capabilities: section.capabilities.map(capability => capability.toWellFormed()),
-  }
 }
 
 /**
@@ -229,8 +201,7 @@ export function gate(
     ok: true,
     accepted: {
       candidate,
-      // The one place every accepted catalog passes, declared or derived.
-      catalog: toWellFormedCatalog(catalog),
+      catalog,
       integrity: candidate.integrity,
       publishedAt: candidate.publishedAt,
       repository: candidate.repository,

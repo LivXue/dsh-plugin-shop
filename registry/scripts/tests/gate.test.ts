@@ -155,53 +155,6 @@ describe('gate', () => {
     }
   })
 
-  it('publishes no unpaired surrogate by any of the three routes truncation does not cover', () => {
-    // truncateWholeCharacters closes only the orphan the CUT itself creates.
-    // Three routes reach plugins.json around it, all measured against this
-    // gate before the fix:
-    //   A: a description shorter than the bound — returns early, never cut.
-    //   B: a cut landing on a lone LOW surrogate already in the text, which
-    //      the trailing-high-surrogate check reads as a completed pair.
-    //   C: an author-declared summary, which zod's .max(200) accepts
-    //      unexamined; capabilities and summary.zh are the same free text.
-    // Each produced a lone surrogate in a published field, and a consumer that
-    // parses plugins.json and re-encodes UTF-8 fails on it.
-    const declared = {
-      category: 'tool' as const,
-      summary: { en: 'declared \uD83D here', zh: 'zh \uDE00 here' },
-      capabilities: ['cap \uD83D one'],
-    }
-    const cases: [string, Candidate][] = [
-      ['A short description, never truncated', candidate({ catalog: null, description: 'short \uD83D tail' })],
-      ['B cut landing on a lone low surrogate', candidate({ catalog: null, description: `${'a'.repeat(199)}\uDE00rest` })],
-      ['C author-declared catalog', candidate({ catalog: declared })],
-    ]
-    for (const [label, input] of cases) {
-      const result = gate(input, config)
-      expect(result.ok, label).toBe(true)
-      if (!result.ok) continue
-      const { summary, capabilities } = result.accepted.catalog
-      expect(LONE_SURROGATE.test(summary.en), `${label}: summary.en`).toBe(false)
-      expect(LONE_SURROGATE.test(summary.zh ?? ''), `${label}: summary.zh`).toBe(false)
-      for (const capability of capabilities) {
-        expect(LONE_SURROGATE.test(capability), `${label}: capability`).toBe(false)
-      }
-    }
-  })
-
-  it('leaves a well-formed catalog byte-identical', () => {
-    // toWellFormed() is identity on well-formed text, and the ordinary case
-    // must not acquire a replacement character or any other edit.
-    const declared = {
-      category: 'tool' as const,
-      summary: { en: 'Plain ASCII, an emoji \u{1F600}, and 中文.', zh: '中文说明 \u{1F600}' },
-      capabilities: ['fs', 'shell \u{1F600}'],
-    }
-    const result = gate(candidate({ catalog: declared }), config)
-    if (!result.ok) throw new Error('expected acceptance')
-    expect(result.accepted.catalog).toEqual(declared)
-  })
-
   it('rejects a package with neither dsh.catalog nor an npm description as no-summary', () => {
     const result = gate(candidate({ catalog: undefined, description: null }), config)
     if (result.ok) throw new Error('expected rejection')

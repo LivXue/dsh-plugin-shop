@@ -121,17 +121,6 @@ export interface RepoFetchFailure {
   detail: string
 }
 
-/**
- * A subpackage failure plus whether that subpackage CLAIMED to be a plugin by
- * declaring `dsh.bundle`. A claim is a more specific fact than the repository
- * root's own problem and is reported instead of it — the pre-existing design.
- * A body we declined to read for size made no claim, so it must not suppress a
- * root reason we actually know. `claimed` is internal and never published.
- */
-interface TaggedSubpackageFailure extends RepoFetchFailure {
-  claimed: boolean
-}
-
 /** The search-item fields the harvest trusts, validated at the boundary. */
 interface RepoMeta {
   fullName: string
@@ -480,6 +469,13 @@ function projectCandidate(
   head: { sha: string; date: string },
   subdir: string | undefined,
 ): RepoCandidate | null {
+  // `null` is legal JSON, so a package.json of exactly those four bytes
+  // reaches here as a parsed manifest — and every property read below would
+  // throw on it. Anything that is not an object cannot carry a name, so it
+  // projects to no candidate, the same as a manifest whose name fails the
+  // grammar. Checked before the cast rather than after it: the cast is a
+  // claim about shape that `null` satisfies structurally and not in fact.
+  if (typeof manifest !== 'object' || manifest === null || Array.isArray(manifest)) return null
   const m = manifest as {
     name?: unknown
     description?: unknown
@@ -615,16 +611,16 @@ async function probeSubpackageCandidates(
   fetchImpl: typeof fetch,
   sleep: (ms: number) => Promise<void>,
   token: string | undefined,
-): Promise<{ candidates: RepoCandidate[]; failures: TaggedSubpackageFailure[] }> {
+): Promise<{ candidates: RepoCandidate[]; failures: RepoFetchFailure[]; anyClaimed: boolean }> {
   const treeUrl = `${GITHUB_API}/repos/${owner}/${slug}/git/trees/${meta.defaultBranch}?recursive=1`
   const treeResponse = await fetchRobust(treeUrl, fetchImpl, sleep, token)
-  if (!treeResponse.ok) return { candidates: [], failures: [] }
+  if (!treeResponse.ok) return { candidates: [], failures: [], anyClaimed: false }
   let treeBody: { tree?: unknown } = {}
   try {
     const parsed = await treeResponse.json() as unknown
     if (parsed !== null && typeof parsed === 'object') treeBody = parsed as typeof treeBody
   } catch {
-    return { candidates: [], failures: [] }
+    return { candidates: [], failures: [], anyClaimed: false }
   }
   // A truncated tree (>100k entries) may hide some subpackages; the repo is
   // re-probed when it changes, and the loss costs only a later re-probe —
@@ -634,7 +630,16 @@ async function probeSubpackageCandidates(
     : []
   const dirs = selectSubpackagePaths(rootManifest, paths)
   const candidates: RepoCandidate[] = []
-  const failures: TaggedSubpackageFailure[] = []
+  const failures: RepoFetchFailure[] = []
+  // Whether ANY subpackage claimed to be a plugin (declared dsh.bundle and
+  // then failed the name grammar). Returned as an aggregate rather than a flag
+  // on each row, deliberately: the rows are published verbatim and persisted
+  // into the committed repo-state.json, so a per-row internal field has to be
+  // stripped at every return that carries them — and one of three returns did
+  // not, making the state file's round-trip non-idempotent. A boolean beside
+  // the array is a shape that cannot leak, which beats a rule that has to be
+  // remembered at each new return site.
+  let anyClaimed = false
   for (const dir of dirs) {
     const subUrl = `${RAW_GITHUB}/${owner}/${slug}/${meta.defaultBranch}/${dir}/package.json`
     const subResponse = await fetchRobust(subUrl, fetchImpl, sleep, token)
@@ -650,7 +655,7 @@ async function probeSubpackageCandidates(
       // and staying silent would let the repository be published as having no
       // installable subpackage when it plainly has one.
       if (subRead.reason === 'too-large') {
-        failures.push({ repo: `${owner}/${slug}#${dir}`, code: 'no-manifest', detail: subRead.detail, claimed: false })
+        failures.push({ repo: `${owner}/${slug}#${dir}`, code: 'no-manifest', detail: subRead.detail })
       }
       continue
     }
@@ -666,10 +671,11 @@ async function probeSubpackageCandidates(
     const declaresBundle = (subManifest as { dsh?: { bundle?: unknown } } | null)?.dsh?.bundle !== undefined
     if (sub === null && declaresBundle) {
       const rawName = (subManifest as { name?: unknown } | null)?.name
-      failures.push({ repo: `${owner}/${slug}#${dir}`, code: 'no-manifest', detail: describeBadName(rawName), claimed: true })
+      anyClaimed = true
+      failures.push({ repo: `${owner}/${slug}#${dir}`, code: 'no-manifest', detail: describeBadName(rawName) })
     }
   }
-  return { candidates, failures }
+  return { candidates, failures, anyClaimed }
 }
 
 /**
@@ -724,20 +730,18 @@ export async function fetchRepoCandidate(
     return { ok: true, candidates: [root] }
   }
   if (probeSubpackages && monorepoSignal(manifest)) {
-    const { candidates: subs, failures: subFailures } = await probeSubpackageCandidates(owner, slug, meta, manifest, head, fetchImpl, sleep, token)
+    const { candidates: subs, failures: subFailures, anyClaimed } = await probeSubpackageCandidates(owner, slug, meta, manifest, head, fetchImpl, sleep, token)
     if (subs.length > 0) {
       return { ok: true, candidates: subs, ...(subFailures.length > 0 ? { subpackageFailures: subFailures } : {}) }
     }
     if (subFailures.length > 0) {
-      const published: RepoFetchFailure[] = subFailures.map(
-        ({ repo, code, detail }) => ({ repo, code, detail }))
       // A subpackage that claimed to be a plugin and failed its name grammar
       // is a more specific, more useful fact than the root's own name
       // problem (or its absence) — report that instead of the rejection
       // below, same as when subpackages had produced usable candidates. And
       // when there IS a root candidate the rejection below never runs anyway.
-      if (root !== null || subFailures.some(failure => failure.claimed)) {
-        return { ok: true, candidates: root === null ? [] : [root], subpackageFailures: published }
+      if (root !== null || anyClaimed) {
+        return { ok: true, candidates: root === null ? [] : [root], subpackageFailures: subFailures }
       }
       // Nothing claimed anything: every failure here is a body we declined to
       // read for size, and there is no root candidate either. What gets
@@ -751,7 +755,7 @@ export async function fetchRepoCandidate(
           ok: false,
           code: 'no-manifest',
           detail: describeBadName(rawRootName),
-          subpackageFailures: published,
+          subpackageFailures: subFailures,
         }
       }
       // A root that declared NO name has only the reason below available, and
@@ -759,7 +763,7 @@ export async function fetchRepoCandidate(
       // subpackage may be a fine plugin we declined to read. Publishing it
       // would re-create the misattribution the size row exists to prevent, so
       // the rows are published on their own and nothing false is said.
-      return { ok: true, candidates: [], subpackageFailures: published }
+      return { ok: true, candidates: [], subpackageFailures: subFailures }
     }
   }
   if (root === null) {
@@ -849,7 +853,29 @@ export async function harvestRepos(options: RepoHarvestOptions): Promise<RepoHar
     const results = await Promise.all(batch.map(async entry => {
       const meta = metas.get(entry.repo)
       if (meta === undefined) return { entry, result: { ok: false, code: 'fetch-failed', detail: 'search result lost between the enumeration and the fetch' } as RepoFetchResult }
-      return { entry, result: await fetchRepoCandidate(meta, fetchImpl, sleep, token, probeSubpackages) }
+      try {
+        return { entry, result: await fetchRepoCandidate(meta, fetchImpl, sleep, token, probeSubpackages) }
+      } catch (error) {
+        // One repository must not be able to end the harvest. Everything in
+        // this file already turns a bad package into a row; without this, an
+        // unguarded throw anywhere in the projection escaped Promise.all, left
+        // harvestRepos, and met build.ts's single whole-harvest retry — which
+        // replays the same deterministic input and rethrows. A public repo
+        // containing the four bytes `null` did exactly that.
+        //
+        // fetch-failed, not no-manifest: a throw is more likely our own defect
+        // than a verdict on the repository, and fetch-failed is the code this
+        // module does not persist as a dead end, so the repo is re-fetched
+        // next run rather than written off.
+        return {
+          entry,
+          result: {
+            ok: false,
+            code: 'fetch-failed',
+            detail: `harvesting ${entry.repo} threw: ${error instanceof Error ? error.message : String(error)}`,
+          } as RepoFetchResult,
+        }
+      }
     }))
     for (const { entry, result } of results) {
       if (result.ok) {

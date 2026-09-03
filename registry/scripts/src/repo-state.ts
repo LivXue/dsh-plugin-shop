@@ -101,7 +101,12 @@ export function parseRepoState(text: string): RepoState {
       state[repo]!.failure = { code: failure.code, detail: failure.detail }
     }
     if (entry.subpackageFailures !== undefined) {
-      if (!Array.isArray(entry.subpackageFailures)) {
+      // An EMPTY array is rejected, not tolerated: nextRepoState only writes
+      // the key when there is at least one row, so `subpackageFailures: []` in
+      // a committed file was never written by this build. Accepting it would
+      // let a shape the writer cannot produce round-trip silently, and a
+      // malformed registry file throws here rather than being normalized.
+      if (!Array.isArray(entry.subpackageFailures) || entry.subpackageFailures.length === 0) {
         throw new Error(`repo-state.json: ${repo} has a malformed subpackageFailures record`)
       }
       const rows = entry.subpackageFailures.map((value): NonNullable<RepoStateEntry['subpackageFailures']>[number] => {
@@ -110,13 +115,10 @@ export function parseRepoState(text: string): RepoState {
           || typeof row.repo !== 'string' || typeof row.detail !== 'string') {
           throw new Error(`repo-state.json: ${repo} has a malformed subpackageFailures record`)
         }
-        // Bound to a const so the narrowing survives into the return; the
-        // compound guard above cannot narrow a property through `||`.
-        const code = row.code
-        if (code !== 'no-manifest' && code !== 'fetch-failed') {
+        if (row.code !== 'no-manifest' && row.code !== 'fetch-failed') {
           throw new Error(`repo-state.json: ${repo} has a malformed subpackageFailures record`)
         }
-        return { repo: row.repo, code, detail: row.detail }
+        return { repo: row.repo, code: row.code, detail: row.detail }
       })
       state[repo]!.subpackageFailures = rows
     }

@@ -19,6 +19,11 @@ export const MAX_SUBPACKAGES = 8
  * only burn quota.
  */
 export function monorepoSignal(manifest: unknown): boolean {
+  // `null` is legal JSON and reaches here as a parsed manifest, and every
+  // property read below throws on it. A function taking `unknown` has to be
+  // total for `unknown`; see subpackage-select.test.ts for the outage this
+  // otherwise allows any public repository to cause.
+  if (typeof manifest !== 'object' || manifest === null) return false
   const m = manifest as { private?: unknown; workspaces?: unknown }
   return m.private === true || m.workspaces !== undefined
 }
@@ -35,6 +40,8 @@ const DEP_SECTIONS = ['dependencies', 'devDependencies', 'optionalDependencies',
  * WORKSPACE_PKG_NOT_FOUND).
  */
 export function hasWorkspaceDeps(manifest: unknown): boolean {
+  // Same rule as monorepoSignal above: total for `unknown`, never throwing.
+  if (typeof manifest !== 'object' || manifest === null) return false
   const m = manifest as Record<string, unknown>
   for (const section of DEP_SECTIONS) {
     const deps = m[section]
@@ -74,7 +81,12 @@ const EXCLUDED_DIRS = /(^|\/)(node_modules|examples?|docs?|demo|test|tests|scrip
  * @param treePaths - every `package.json` path in the tree listing.
  */
 export function selectSubpackagePaths(rootManifest: unknown, treePaths: string[]): string[] {
-  const m = rootManifest as { workspaces?: unknown }
+  // Same rule again. A root that is not an object declares no `workspaces`,
+  // which is exactly the case the convention glob below already covers, so
+  // the guard normalizes it rather than short-circuiting the selection.
+  const m = (typeof rootManifest === 'object' && rootManifest !== null
+    ? rootManifest
+    : {}) as { workspaces?: unknown }
   let globs: string[]
   if (Array.isArray(m.workspaces)) {
     globs = m.workspaces.filter((entry): entry is string => typeof entry === 'string' && entry.includes('*'))

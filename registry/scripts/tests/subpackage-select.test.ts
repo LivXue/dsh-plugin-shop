@@ -60,3 +60,30 @@ describe('selectSubpackagePaths', () => {
     expect(paths[0]).toBe('packages/pkg-00')
   })
 })
+
+describe('a manifest that is not an object', () => {
+  // All three of these take `unknown` and promise a boolean or an array, so
+  // each has to be total for its declared input. Each did `manifest as {...}`
+  // and then read a property, which throws on `null` — and `null` is legal
+  // JSON, so a package.json of exactly those four bytes reaches them. Nothing
+  // in the harvest caught it: one public repo could end the daily build.
+  for (const manifest of [null, undefined, 123, 'a string', true] as unknown[]) {
+    const label = JSON.stringify(manifest) ?? 'undefined'
+
+    it(`monorepoSignal is false for ${label}`, () => {
+      expect(monorepoSignal(manifest)).toBe(false)
+    })
+
+    it(`hasWorkspaceDeps is false for ${label}`, () => {
+      expect(hasWorkspaceDeps(manifest)).toBe(false)
+    })
+
+    it(`selectSubpackagePaths returns nothing for ${label}`, () => {
+      // An array root has no `workspaces`, so the convention glob applies and
+      // a matching tree path would still be selected; a non-object root
+      // declares no workspaces at all and selects by convention too. What
+      // matters here is that it answers instead of throwing.
+      expect(() => selectSubpackagePaths(manifest, ['packages/a/package.json'])).not.toThrow()
+    })
+  }
+})

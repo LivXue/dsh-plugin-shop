@@ -112,6 +112,40 @@ export function assertCatalogInvariants(entries: Entry[], builtAt: string): void
 }
 
 /**
+ * Replace every unpaired surrogate in an entry with U+FFFD, at any depth.
+ *
+ * A lone surrogate survives `JSON.stringify` as a `\udXXX` escape, so the
+ * emitted file stays ASCII, stays valid JSON and keeps a stable content hash —
+ * there is no symptom on this side at all. It appears on the reader's: parsing
+ * that file and re-encoding UTF-8 fails, which for Python is
+ * `UnicodeEncodeError: surrogates not allowed`.
+ *
+ * Deliberately structural rather than field-by-field. A list of fields is a
+ * list of the routes someone thought of, and this project has now written that
+ * list wrong three times; recursing over the value covers the field added next
+ * year by someone who never read this comment. `toWellFormed` is the identity
+ * on well-formed text, so an ordinary entry is returned unchanged, key order
+ * included.
+ * @param entry - one accepted, tiered entry about to be serialized.
+ * @returns the same entry with every string well-formed UTF-16.
+ */
+function toWellFormedEntry(entry: Entry): Entry {
+  // The cast is unavoidable and sound: `wellFormed` preserves the shape of
+  // whatever it is handed exactly — same keys, same order, same array lengths
+  // — and only ever replaces a string with another string.
+  return wellFormed(entry) as Entry
+}
+
+function wellFormed(value: unknown): unknown {
+  if (typeof value === 'string') return value.toWellFormed()
+  if (Array.isArray(value)) return value.map(wellFormed)
+  if (typeof value === 'object' && value !== null) {
+    return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, wellFormed(inner)]))
+  }
+  return value
+}
+
+/**
  * Build every artifact of one catalog run.
  *
  * `builtAt` reaches the index and nothing else: putting it inside the hashed
@@ -145,7 +179,15 @@ export function emit(
   // it above for why it came off instead of being opened.
   let themeDowngraded = 0
   const emitted = entries.map(entry => {
-    let next = entry
+    // Well-formed FIRST, and over the whole entry, because plugins.json is not
+    // the catalog section: `license`, `repository`, `publisher` and each
+    // `peers` name are npm-manifest strings taken verbatim and bounded on
+    // length alone, so `"license": "MIT\ud800"` put a lone surrogate straight
+    // into the artifact. Every earlier attempt at this guarantee named the
+    // routes it knew about and was overtaken by one it did not, so it is
+    // stated here instead — at the boundary every published string crosses,
+    // covering whatever fields an Entry grows next.
+    let next = toWellFormedEntry(entry)
     if (schemaVersion < CATALOG_SCHEMA_VERSION && next.catalog.category === 'theme') {
       themeDowngraded += 1
       next = { ...next, catalog: { ...next.catalog, category: 'other' as const } }

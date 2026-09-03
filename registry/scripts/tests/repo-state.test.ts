@@ -107,3 +107,36 @@ describe('state shape evolution', () => {
     expect(next['x/dead']?.candidates).toEqual([])
   })
 })
+
+describe('persisted subpackage failures', () => {
+  const base = { pushedAt: '2026-08-02T00:00:00Z', commit: 'a'.repeat(40), candidates: [] }
+
+  it('rejects an empty array, a shape nextRepoState never writes', () => {
+    // nextRepoState only sets the key when there is at least one row, so
+    // `subpackageFailures: []` in a committed file did not come from this
+    // build. A malformed registry file throws rather than being normalized.
+    const text = JSON.stringify({ 'a/b': { ...base, subpackageFailures: [] } })
+    expect(() => parseRepoState(text)).toThrow('malformed subpackageFailures')
+  })
+
+  it('rejects a row with an unknown code or a missing field', () => {
+    for (const row of [
+      { repo: 'a/b#p', code: 'exploded', detail: 'x' },
+      { repo: 'a/b#p', code: 'no-manifest' },
+      { repo: 'a/b#p', detail: 'x' },
+      { code: 'no-manifest', detail: 'x' },
+      null,
+      'a string',
+    ]) {
+      const text = JSON.stringify({ 'a/b': { ...base, subpackageFailures: [row] } })
+      expect(() => parseRepoState(text), JSON.stringify(row)).toThrow('malformed subpackageFailures')
+    }
+  })
+
+  it('omits the key entirely when there are no rows', () => {
+    // The writer's side of the same rule, so the two cannot drift apart.
+    const next = nextRepoState({}, [{ repo: 'a/b', pushedAt: base.pushedAt }],
+      new Map([['a/b', { candidates: [], subpackageFailures: [] }]]))
+    expect(Object.keys(next['a/b'] ?? {})).not.toContain('subpackageFailures')
+  })
+})
