@@ -439,6 +439,33 @@ describe('ShopTab', () => {
     expect(button.disabled).toBe(false)
   })
 
+  it('counts the same packages in the catalog line as on the All tab', async () => {
+    // These two numbers came from different places and drifted. The line read
+    // `plugins.length` — every entry — while the All tab summed the category
+    // counts, which exclude shop-like entries exactly as `filtered` does.
+    // Against the live catalog on 2026-09-02 that was 9300 against 9227: the
+    // line advertised 73 competing plugin markets the shelf will never render.
+    //
+    // Asserted as an equality between the two rendered numbers rather than
+    // against a literal, so it still holds when the fixture changes and it
+    // fails if either side starts counting something the other does not.
+    const result = snapshot()
+    const first = result.plugins[0]
+    if (first === undefined) throw new Error('fixture has no entry')
+    result.plugins.push({ ...first, name: 'dsh-plugin-market' })
+    const { injected } = bench(result)
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(container.querySelector('[data-shop-catalog-stats]')).toBeTruthy())
+    const digits = (el: Element | null): string => (el?.textContent ?? '').replace(/\D+/g, ' ').trim()
+    const onAll = digits(container.querySelector('[data-shop-category-all]'))
+    const line = container.querySelector('[data-shop-catalog-stats]')?.textContent ?? ''
+    expect(onAll).toBe('1')
+    // The line carries a date too, so match the count where the phrase puts it
+    // rather than stripping every digit out of it.
+    expect(line).toMatch(/(^|\D)1(\D|$)/)
+    expect(line).not.toMatch(/(^|\D)2(\D|$)/)
+  })
+
   it('carries the full phrase as a description, so the short label loses no meaning', async () => {
     // The visible word is deliberately short: this row wraps, and measured
     // against the built stylesheet it needs 776px to stay on one line with

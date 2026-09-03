@@ -848,14 +848,23 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     return map
   }, [installedState])
 
-  const filtered = useMemo(() => {
+  // Entries the shelf will advertise: what the catalog carries, less the
+  // competing markets. The exclusion lives here ONCE — `filtered`, the
+  // category counts and the catalog line all read it — because while each
+  // spelled it out for itself they drifted apart: the line counted every
+  // entry and said "9300 packages" above a shelf that would never render 73
+  // of them. An INSTALLED shop-like plugin stays manageable in the installed
+  // section below; not advertised is not hidden. The repo slug gets the same
+  // check for github entries.
+  const browsable = useMemo(() => {
     if (catalogState.kind !== 'ready') return []
+    return catalogState.result.plugins.filter(entry =>
+      !isShopLike(entry.name) && (entry.repo === undefined || !isShopLike(entry.repo)))
+  }, [catalogState])
+
+  const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    return catalogState.result.plugins.filter(entry => {
-      // Shop-like plugins (competing markets) are not advertised; an
-      // INSTALLED one stays manageable in the installed section below. The
-      // repo slug gets the same check for github entries.
-      if (isShopLike(entry.name) || (entry.repo !== undefined && isShopLike(entry.repo))) return false
+    return browsable.filter(entry => {
       if (category === 'installed') {
         if (!installedByName.has(entry.name)) return false
       } else if (category !== null && categoryKey(entry) !== categoryLocaleKey(category)) {
@@ -868,7 +877,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
         || summaryEn.toLowerCase().includes(q)
         || summaryZh.toLowerCase().includes(q)
     })
-  }, [catalogState, query, category, installedByName])
+  }, [browsable, query, category, installedByName])
   filteredLenRef.current = filtered.length
 
   // The shelf sorts by GitHub stars: the most-starred entries fill the first
@@ -901,16 +910,13 @@ export function ShopTab(props: ShopTabProps): ReactNode {
   // (shop-like-excluded) entries carry that category.
   const categoryCounts = useMemo(() => {
     const counts = new Map<Category, number>()
-    if (catalogState.kind === 'ready') {
-      for (const entry of catalogState.result.plugins) {
-        if (isShopLike(entry.name) || (entry.repo !== undefined && isShopLike(entry.repo))) continue
-        const key = categoryKey(entry)
-        const bare = CATEGORY_ORDER.find(c => categoryLocaleKey(c) === key)
-        if (bare !== undefined) counts.set(bare, (counts.get(bare) ?? 0) + 1)
-      }
+    for (const entry of browsable) {
+      const key = categoryKey(entry)
+      const bare = CATEGORY_ORDER.find(c => categoryLocaleKey(c) === key)
+      if (bare !== undefined) counts.set(bare, (counts.get(bare) ?? 0) + 1)
     }
     return counts
-  }, [catalogState])
+  }, [browsable])
 
   // The Installed button's count: installed entries the shelf would actually
   // show (shop-like installed plugins stay in the installed section below).
@@ -1101,8 +1107,12 @@ export function ShopTab(props: ShopTabProps): ReactNode {
           className={category === null ? `${css.categoryButton} ${css.categoryButtonOn}` : css.categoryButton}
           aria-pressed={category === null}
           onClick={() => { setCategory(null); setVisibleCount(SHOP_VISIBLE_BATCH) }}
+          data-shop-category-all
         >
-          {t('all')} {[...categoryCounts.values()].reduce((a, b) => a + b, 0)}
+          {/* browsable.length, not the sum of the per-category counts: an
+            * entry whose category is outside CATEGORY_ORDER lands in no
+            * bucket and the sum would quietly lose it. */}
+          {t('all')} {browsable.length}
         </button>
         {CATEGORY_ORDER.map(key => (
           <button
@@ -1125,7 +1135,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
         </button>
       </div>
       <div className={css.catalogStatsRow}>
-        <p className={css.catalogStats}>{t('catalogStats', { count: String(result.plugins.length), date: result.builtAt.slice(0, 10) })}</p>
+        <p className={css.catalogStats} data-shop-catalog-stats>{t('catalogStats', { count: String(browsable.length), date: result.builtAt.slice(0, 10) })}</p>
         <button
           type="button"
           className={css.reloadButton}
