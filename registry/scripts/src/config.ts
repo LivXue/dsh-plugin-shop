@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parse } from 'yaml'
 import { z } from 'zod'
+import type { MarketRow } from './markets.ts'
 import { CATEGORIES, type Category, type Review } from './types.ts'
 
 const verifiedSchema = z.array(z.object({
@@ -64,6 +65,9 @@ export interface RegistryConfig {
   /** Every name `markets.yml` has a verdict for, either way. The classifier
    * asks only about names absent from this set. */
   marketsJudged: Set<string>
+  /** The rows as written, so the classify step can merge into them and write
+   * the file back without re-reading it. */
+  marketRows: MarketRow[]
   /** Package name to its LLM-assigned category (spec 2026-08-26-llm-categorization-design.md). */
   categories: Map<string, Category>
   /** Package name to the date it first entered the catalog (YYYY-MM-DD). */
@@ -136,12 +140,14 @@ export function parseRegistryConfig(
     })
   }
   const allowedSimilar = new Set(parseFile('allowed-similar.yml', input.allowedSimilar, allowedSimilarSchema))
-  const marketRows = new Map<string, boolean>()
+  const marketVerdicts = new Map<string, boolean>()
+  const marketRows: MarketRow[] = []
   for (const row of parseFile('markets.yml', input.markets ?? '[]', marketsSchema)) {
-    setUnique(marketRows, 'markets.yml', row.name, row.market)
+    setUnique(marketVerdicts, 'markets.yml', row.name, row.market)
+    marketRows.push(row)
   }
-  const marketsJudged = new Set(marketRows.keys())
-  const notAShop = new Set([...marketRows].filter(([, isMarket]) => !isMarket).map(([name]) => name))
+  const marketsJudged = new Set(marketVerdicts.keys())
+  const notAShop = new Set([...marketVerdicts].filter(([, isMarket]) => !isMarket).map(([name]) => name))
   const categories = new Map<string, Category>()
   for (const row of parseFile('categories.yml', input.categories, categoriesSchema)) {
     setUnique(categories, 'categories.yml', row.name, row.category)
@@ -150,7 +156,7 @@ export function parseRegistryConfig(
   for (const row of parseFile('first-seen.yml', input.firstSeen, firstSeenSchema)) {
     setUnique(firstSeen, 'first-seen.yml', row.name, row.added)
   }
-  return { verified, denied, allowedSimilar, notAShop, marketsJudged, categories, firstSeen }
+  return { verified, denied, allowedSimilar, notAShop, marketsJudged, marketRows, categories, firstSeen }
 }
 
 /**

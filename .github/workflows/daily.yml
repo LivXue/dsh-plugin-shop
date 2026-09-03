@@ -54,15 +54,19 @@ jobs:
       - run: pnpm typecheck
       - name: Classify new listings
         run: node --experimental-strip-types registry/scripts/src/classify.ts
-      - name: Commit the category list
+      - name: Commit the classifier's output
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
         continue-on-error: true
+        # markets.yml as well as categories.yml. The classify step writes both,
+        # and a market verdict that is not committed is not a memory: the name
+        # would be re-asked every run, which is the flip-flop the file exists to
+        # prevent — and one bad roll would then be recorded forever.
         run: |
           git config user.name 'dsh-plugin-shop bot'
           git config user.email 'bot@users.noreply.github.com'
-          git add registry/categories.yml
+          git add registry/categories.yml registry/markets.yml
           git diff --cached --quiet && exit 0
-          git commit -m "chore(registry): llm category update"
+          git commit -m "chore(registry): llm classifier update"
           git push
       - run: pnpm build:catalog -- --harvest-from dist/v1/harvest.json
         env:

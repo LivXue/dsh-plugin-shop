@@ -97,12 +97,35 @@ function unusableReason(text: string, finishReason: unknown, completionTokens: u
   return `unparseable batch (finish_reason=${finish}${tokens}, content ${text.length} chars${echo})`
 }
 
-export async function classifyPackages(items: ClassifyItem[], options: Options): Promise<ClassifyBatchResult> {
+/**
+ * One batched question to the gateway, for any prompt.
+ *
+ * The transport half — batching, the concurrency window, the retry ladder, the
+ * token budget and the three discard shapes — is the part that was measured
+ * and tuned (D3, and the 2026-09-01 backfill that lost 1049 names). A second
+ * question must not carry a second copy of it, so it is parameterised on the
+ * three things that actually differ: the prompt, how a batch becomes a user
+ * message, and how one answer is read.
+ *
+ * @param items - what to ask about; each must expose a `name` to echo.
+ * @param ask - the prompt, the serialiser, and the parser for one batch.
+ * @param options - gateway, model, credentials, and test seams.
+ * @returns the adopted answers by name, and one discard line per name without one.
+ */
+async function runBatches<Item extends { name: string }, Answer>(
+  items: Item[],
+  ask: {
+    systemPrompt: string
+    toUser: (batch: Item[]) => string
+    parse: (text: string, expected: Set<string>) => Map<string, Answer>
+  },
+  options: Options,
+): Promise<{ adopted: Map<string, Answer>; discarded: { name: string; reason: string }[] }> {
   const fetchImpl = options.fetchImpl ?? fetch
   const sleep = options.sleep ?? defaultSleep
-  const classified = new Map<string, Category>()
-  const discarded: ClassifyBatchResult['discarded'] = []
-  const batches: ClassifyItem[][] = []
+  const classified = new Map<string, Answer>()
+  const discarded: { name: string; reason: string }[] = []
+  const batches: Item[][] = []
   for (let i = 0; i < items.length; i += CLASSIFY_BATCH_SIZE) batches.push(items.slice(i, i + CLASSIFY_BATCH_SIZE))
 
   for (let i = 0; i < batches.length; i += CONCURRENCY) {
@@ -118,7 +141,7 @@ export async function classifyPackages(items: ClassifyItem[], options: Options):
           model: options.model,
           temperature: 0,
           max_tokens: MAX_TOKENS,
-          messages: [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: USER_TEMPLATE(batch) }],
+          messages: [{ role: 'system', content: ask.systemPrompt }, { role: 'user', content: ask.toUser(batch) }],
         }),
       }
       try {
@@ -150,11 +173,11 @@ export async function classifyPackages(items: ClassifyItem[], options: Options):
           // A 200 whose body is not JSON or not the OpenAI shape: the batch degrades to unparseable discards below.
           text = ''
         }
-        const adopted = parseClassificationResponse(text, expected)
+        const adopted = ask.parse(text, expected)
         const reason = unusableReason(text, finishReason, completionTokens)
         for (const b of batch) {
-          const category = adopted.get(b.name)
-          if (category !== undefined) classified.set(b.name, category)
+          const answer = adopted.get(b.name)
+          if (answer !== undefined) classified.set(b.name, answer)
           else discarded.push({ name: b.name, reason })
         }
       } catch (error) {
@@ -165,5 +188,22 @@ export async function classifyPackages(items: ClassifyItem[], options: Options):
       }
     }))
   }
-  return { classified, discarded }
+  return { adopted: classified, discarded }
 }
+
+/**
+ * Classify packages into the fixed category vocabulary.
+ * @param items - the packages to classify.
+ * @param options - gateway, model, credentials, and test seams.
+ * @returns the adopted categories and the discards.
+ */
+export async function classifyPackages(items: ClassifyItem[], options: Options): Promise<ClassifyBatchResult> {
+  const { adopted, discarded } = await runBatches<ClassifyItem, Category>(
+    items,
+    { systemPrompt: SYSTEM_PROMPT, toUser: USER_TEMPLATE, parse: parseClassificationResponse },
+    options,
+  )
+  return { classified: adopted, discarded }
+}
+
+export { runBatches, type Options as LlmOptions }

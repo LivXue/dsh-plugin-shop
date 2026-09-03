@@ -20,6 +20,9 @@ import { mergeCategoryRows, serializeCategoryRows } from './categories.ts'
 import { selectPending } from './classify-select.ts'
 import { loadRegistryConfig } from './config.ts'
 import { classifyPackages } from './llm-client.ts'
+import { judgeMarkets, type MarketItem } from './market-judge.ts'
+import { selectMarketPending } from './market-select.ts'
+import { mergeMarketRows, serializeMarketRows } from './markets.ts'
 import { fetchCandidates, searchByKeywords } from './npm-client.ts'
 import { parseRepoState } from './repo-state.ts'
 import type { Category, RepoCandidate } from './types.ts'
@@ -70,6 +73,47 @@ if (apiKey === '') {
   fresh = result.classified
   discarded = result.discarded
 }
+
+// The market question, asked of the same harvest. Separate from the category
+// question on purpose: it has its own vocabulary, its own failure cost, and a
+// name it cannot decide must go UNANSWERED rather than be guessed — an omitted
+// name keeps the heuristic's answer and is asked again tomorrow, a recorded one
+// is not. Names already in markets.yml are never re-asked, whichever way they
+// were judged.
+const marketCandidates = [
+  ...candidates.map(c => ({ name: c.name, description: c.description, keywords: c.keywords })),
+  ...repoCandidates.map(c => ({ name: c.name, repo: c.repo, description: c.description, keywords: [] })),
+]
+const marketPending = selectMarketPending(marketCandidates, config.marketsJudged)
+process.stderr.write(`classify: ${marketPending.length} name(s) awaiting a market verdict\n`)
+const marketByName = new Map<string, MarketItem>()
+for (const candidate of marketCandidates) {
+  if (!marketByName.has(candidate.name)) marketByName.set(candidate.name, candidate)
+}
+const marketItems = marketPending
+  .map(name => marketByName.get(name))
+  .filter((item): item is MarketItem => item !== undefined)
+let marketVerdicts = new Map<string, boolean>()
+let marketDiscards: { name: string; reason: string }[] = []
+if (apiKey === '') {
+  marketDiscards = marketItems.map(i => ({ name: i.name, reason: 'no LLM_API_KEY (skipped)' }))
+} else if (marketItems.length > 0) {
+  const judged = await judgeMarkets(marketItems, { baseUrl, model, apiKey })
+  marketVerdicts = judged.verdicts
+  marketDiscards = judged.discarded
+}
+const marketReasons = new Map(
+  [...marketVerdicts].map(([name, isMarket]) => [
+    name,
+    isMarket
+      ? `Judged a dsh plugin market from: ${marketByName.get(name)?.description ?? '(no description)'}`
+      : `Judged NOT a dsh plugin market from: ${marketByName.get(name)?.description ?? '(no description)'}`,
+  ]),
+)
+writeFileSync(
+  join(REGISTRY_DIR, 'markets.yml'),
+  serializeMarketRows(mergeMarketRows(config.marketRows, marketVerdicts, marketReasons)),
+)
 
 const merged = mergeCategoryRows(config.categories, fresh, liveNames)
 mkdirSync(OUT_DIR, { recursive: true })

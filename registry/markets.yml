@@ -12,17 +12,18 @@
 # BOTH verdicts are recorded, not just the exemptions. That memory is what lets
 # the daily classifier skip a name it has already judged, and it is what stops
 # an LLM flip-flopping a name on and off the shelf and churning the catalog's
-# content hash with it.
+# content hash with it. Rows are never pruned for the same reason: a name that
+# drops out of the catalog for a day must not come back unjudged.
 #
-#   by: human   adjudicated in review.
+#   by: human   adjudicated in review. Never overwritten by the classifier.
 #   by: llm     judged by the daily classifier. Advisory like every other LLM
 #               verdict here — correct a wrong row by editing it, and it will
 #               not be re-asked.
 #
 # Keyed by NAME, which is the unit the client filters on, and not by the
-# catalog's install identity. Those differ: 73 caught entries carry 65 distinct
-# names, because `dsh-plugin-market` is published by seven separate repos and
-# `dsh-plugin-store` by three. A verdict therefore covers every entry sharing
+# catalog's install identity. Those differ: the 73 caught entries carry 65
+# distinct names, because `dsh-plugin-market` is published by seven separate
+# repos and `dsh-plugin-store` by three. A verdict covers every entry sharing
 # that name.
 #
 # Seeded 2026-09-02 from an audit of all 73, each checked against its GitHub
@@ -93,7 +94,7 @@
 - name: "@mutocenew/dsh-plugin-catalog"
   market: true
   by: human
-  reason: "DSH 插件目录速查 (dsh-plugin catalog): periodically fetches repositories tagged topic:dsh-plugin from GitHub, categorizes them, stores Chinese descriptions "
+  reason: "DSH 插件目录速查 (dsh-plugin catalog): periodically fetches repositories tagged topic:dsh-plugin from GitHub, categorizes them, stores Chinese descriptions"
 
 - name: "@nanmicoder/dsh-plugin-market"
   market: true
@@ -348,7 +349,7 @@
 - name: "smart-dsh-market"
   market: true
   by: human
-  reason: "Verified DSH plugin marketplace (fork of YELEBAI/dsh-plugin-marketplace) with project-stage-aware recommendations: detect your project stage, explain "
+  reason: "Verified DSH plugin marketplace (fork of YELEBAI/dsh-plugin-marketplace) with project-stage-aware recommendations: detect your project stage, explain"
 
 - name: "untr-dsh-marketplace"
   market: true
