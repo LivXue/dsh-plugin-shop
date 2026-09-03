@@ -516,6 +516,56 @@ function describeBadName(rawName: unknown): string {
 }
 
 /**
+ * Read one manifest response body, refusing anything past
+ * {@link MAX_MANIFEST_BYTES}.
+ *
+ * EVERY manifest the harvest reads goes through here — the repository root's
+ * and each subpackage's — and that is the point of the function existing
+ * rather than the two checks being written out at each site. Both bodies land
+ * in the same place: `projectCandidate` stores `dsh.catalog` raw,
+ * `mergeRepoState` puts the candidate in `candidates`, and `build.ts` writes
+ * `registry/repo-state.json`, which the daily workflow stages and pushes. An
+ * unbounded manifest there is not a file a later build can shrink; it is a
+ * commit. The root read was capped first and the subpackage read stayed
+ * uncapped for exactly as long as the cap was a pair of inline `if`s —
+ * `github-client.test.ts` now asserts structurally that no second reader
+ * appears.
+ * @param response - a manifest response, already known to be `ok`.
+ * @returns the parsed manifest, or an author-readable reason it was refused.
+ */
+async function readManifest(
+  response: Response,
+): Promise<{ ok: true; manifest: unknown } | { ok: false; detail: string }> {
+  const declaredLength = Number(response.headers.get('content-length'))
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_MANIFEST_BYTES) {
+    // Refused before a byte is read. An over-cap manifest is not an
+    // installable plugin unit, and its raw `catalog` value would otherwise be
+    // committed to repo-state.json whether or not the gate accepts it.
+    return { ok: false, detail: `package.json is larger than ${MAX_MANIFEST_BYTES} bytes, so it is not read.` }
+  }
+  let text: string
+  try {
+    text = await response.text()
+  } catch {
+    // Same rule as npm: an unreadable body is a rejection, not a crash.
+    return { ok: false, detail: 'package.json was unreadable.' }
+  }
+  if (text.length > MAX_MANIFEST_BYTES) {
+    // No content-length (a chunked response): the cap is applied to what
+    // arrived rather than trusted from a header a third party wrote. The body
+    // did reach us on this path, so the reason says discarded, not unread.
+    return { ok: false, detail: `package.json is larger than ${MAX_MANIFEST_BYTES} bytes, so it was discarded without being parsed.` }
+  }
+  try {
+    return { ok: true, manifest: JSON.parse(text) }
+  } catch {
+    // A body that arrived but is not JSON is the same rejection as one that
+    // could not be read: nothing else reaches here, and neither is a crash.
+    return { ok: false, detail: 'package.json was unreadable.' }
+  }
+}
+
+/**
  * Probe a monorepo's subpackages: list the tree once, select the candidate
  * directories (pure `selectSubpackagePaths`), and project the manifests
  * that declare a bundle. Bundle-less subpackages are not plugin candidates —
@@ -562,12 +612,13 @@ async function probeSubpackageCandidates(
     const subUrl = `${RAW_GITHUB}/${owner}/${slug}/${meta.defaultBranch}/${dir}/package.json`
     const subResponse = await fetchRobust(subUrl, fetchImpl, sleep, token)
     if (!subResponse.ok) continue
-    let subManifest: unknown
-    try {
-      subManifest = await subResponse.json()
-    } catch {
-      continue
-    }
+    const subRead = await readManifest(subResponse)
+    // Skipped, not recorded as a failure: a body we declined to read or could
+    // not parse never got to claim it was a plugin, so there is no name to
+    // attach a reason to. This is the pre-existing behaviour for an unreadable
+    // subpackage manifest, and an over-cap one now joins it.
+    if (!subRead.ok) continue
+    const subManifest = subRead.manifest
     const sub = projectCandidate(meta, subManifest, head, dir)
     if (sub !== null && sub.hasBundle) {
       candidates.push(sub)
@@ -607,41 +658,9 @@ export async function fetchRepoCandidate(
   if (!manifestResponse.ok) {
     return { ok: false, code: 'no-manifest', detail: 'No package.json at the repository root, so there is nothing for dsh to install.' }
   }
-  const declaredLength = Number(manifestResponse.headers.get('content-length'))
-  if (Number.isFinite(declaredLength) && declaredLength > MAX_MANIFEST_BYTES) {
-    // Refused before a byte is read. An over-cap manifest is not an
-    // installable plugin unit, and its raw `catalog` value would otherwise be
-    // committed to repo-state.json whether or not the gate accepts it.
-    return {
-      ok: false,
-      code: 'no-manifest',
-      detail: `package.json is larger than ${MAX_MANIFEST_BYTES} bytes, so it is not read.`,
-    }
-  }
-  let manifestText: string
-  try {
-    manifestText = await manifestResponse.text()
-  } catch {
-    // Same rule as npm: an unreadable body is a rejection, not a crash.
-    return { ok: false, code: 'no-manifest', detail: 'package.json was unreadable.' }
-  }
-  if (manifestText.length > MAX_MANIFEST_BYTES) {
-    // No content-length (a chunked response): the cap is applied to what
-    // arrived rather than trusted from a header a third party wrote.
-    return {
-      ok: false,
-      code: 'no-manifest',
-      detail: `package.json is larger than ${MAX_MANIFEST_BYTES} bytes, so it is not read.`,
-    }
-  }
-  let manifest: unknown
-  try {
-    manifest = JSON.parse(manifestText)
-  } catch {
-    // A body that arrived but is not JSON is the same rejection as one that
-    // could not be read: nothing else reaches here, and neither is a crash.
-    return { ok: false, code: 'no-manifest', detail: 'package.json was unreadable.' }
-  }
+  const rootRead = await readManifest(manifestResponse)
+  if (!rootRead.ok) return { ok: false, code: 'no-manifest', detail: rootRead.detail }
+  const manifest = rootRead.manifest
 
   const head = await fetchHeadCommit(owner, slug, meta.defaultBranch, fetchImpl, sleep, token)
   if (head === null) {

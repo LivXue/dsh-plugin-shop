@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { MAX_TARBALL_BYTES, fetchRepoCandidate, harvestRepos, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
 import type { RepoState } from '../src/repo-state.ts'
@@ -241,6 +244,9 @@ describe('fetchRepoCandidate', () => {
     if (!result.ok) {
       expect(result.code).toBe('no-manifest')
       expect(result.detail).toContain('larger than 1048576 bytes')
+      // This branch runs AFTER the body has been read, so the reason must
+      // not claim it went unread — the author is told what actually happened.
+      expect(result.detail).toContain('discarded without being parsed')
     }
   })
 
@@ -263,6 +269,8 @@ describe('fetchRepoCandidate', () => {
     if (!result.ok) {
       expect(result.code).toBe('no-manifest')
       expect(result.detail).toContain('larger than 1048576 bytes')
+      // Nothing was read on this path, and the reason says so.
+      expect(result.detail).toContain('so it is not read')
     }
   })
 })
@@ -703,6 +711,46 @@ describe('subpackage probe', () => {
     }
   })
 
+  it('refuses an over-cap subpackage manifest, the same as the root one', async () => {
+    // The subpackage read is the SECOND manifest read in this file, and it was
+    // uncapped while the root read had both checks. It is the worse of the two
+    // to leave open: projectCandidate stores `dsh.catalog` raw, mergeRepoState
+    // puts it in `candidates`, and build.ts writes registry/repo-state.json —
+    // which the workflow git-adds and pushes. 597 of the 13,120 candidates in
+    // that tracked 10.5 MB file arrived through this path, so an unbounded
+    // manifest here lands in git history permanently, where no rebuild can
+    // remove it.
+    const huge = JSON.stringify({
+      name: 'the-plugin',
+      dsh: { bundle: {}, catalog: { note: 'z'.repeat(2 * 1024 * 1024) } },
+    })
+    // A NAMED root, as in the sibling test above: it survives as the
+    // bundle-less candidate, so a refused subpackage is visible as one missing
+    // name rather than as the whole repository failing.
+    const namedRoot = JSON.stringify({ name: 'monorepo-root', private: true, workspaces: ['packages/*'] })
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/monorepo/main/package.json': new Response(namedRoot, { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/commits/main': new Response(JSON.stringify({
+        sha: commit,
+        commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/git/trees/main?recursive=1': new Response(JSON.stringify({
+        tree: [{ path: 'package.json' }, { path: 'packages/the-plugin/package.json' }],
+      }), { status: 200 }),
+      'https://raw.githubusercontent.com/someone/monorepo/main/packages/the-plugin/package.json':
+        new Response(huge, { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    // Skipped exactly the way an unreadable subpackage body is skipped: a
+    // manifest we decline to read never got to claim it was a plugin, so it is
+    // not recorded as a failure either. The bundle-less root is what remains.
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.candidates.map(c => c.name)).toEqual(['monorepo-root'])
+      expect(result.subpackageFailures).toBeUndefined()
+    }
+  })
+
   it('keeps the repo-level no-bundle path when no subpackage qualifies', async () => {
     const namedRoot = JSON.stringify({ name: 'monorepo-root', private: true, workspaces: ['packages/*'] })
     const fetchImpl = stubFetch({
@@ -823,6 +871,112 @@ describe('subpackage probe', () => {
         code: 'no-manifest',
         detail: expect.stringContaining('is not a usable package name'),
       }])
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The structural guard.
+//
+// This branch has now been bitten three times by the same shape: a second
+// pushing step, a second committing step, and a second manifest read. Each
+// time the fix was written for the site someone happened to be looking at,
+// and each time an identical uncapped/unguarded twin survived a few lines
+// away. A test that names ONE site cannot catch the fourth; this one reads
+// the module's own source and requires every response-body read in it to be
+// either `readManifest` — the single place the cap lives — or an entry in a
+// table that says, in words, why that read is not a manifest.
+//
+// Excuses are keyed by SNIPPET, not line number, following the idiom in
+// workflow.test.ts: if a future edit rewrites the line an excuse was written
+// for, the excuse stops matching and this test fails until a human re-confirms
+// it, rather than quietly covering a line it was never reasoned about.
+// ---------------------------------------------------------------------------
+
+const githubClientSource = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'github-client.ts'),
+  'utf8',
+)
+
+interface ExcusedBodyRead {
+  readonly snippet: string
+  readonly reason: string
+}
+
+const EXCUSED_BODY_READS: readonly ExcusedBodyRead[] = [
+  {
+    snippet: 'const body = await response.json() as { total_count?: unknown }',
+    reason: "api.github.com search: reads GitHub's own total_count number, not repository-authored text",
+  },
+  {
+    snippet: 'const body = await response.json() as { items?: unknown }',
+    reason: 'api.github.com search: a page of repo metadata GitHub composes, bounded by SEARCH_PAGE_SIZE',
+  },
+  {
+    snippet: 'const body = await response.json() as { sha?: unknown; commit?: { author?: { date?: unknown } } }',
+    reason: 'api.github.com commits: a sha and a date, both shape-checked before use',
+  },
+  {
+    snippet: 'body = await response.json() as typeof body',
+    reason: 'api.github.com releases: a tag name and an asset list GitHub composes; the tarball it points at '
+      + 'is separately capped at MAX_TARBALL_BYTES',
+  },
+  {
+    snippet: 'const parsed = await treeResponse.json() as unknown',
+    reason: 'api.github.com git/trees: GitHub caps this at 100k entries and truncates, and only the `path` '
+      + 'strings are read out of it — no repository-authored value is carried forward from this body',
+  },
+]
+
+/** Every `await <receiver>.json()` / `.text()` in the module, with the
+ * top-level function it sits in. */
+function findBodyReads(source: string): { line: string; lineNumber: number; enclosing: string }[] {
+  const found: { line: string; lineNumber: number; enclosing: string }[] = []
+  let enclosing = '(module scope)'
+  const lines = source.split('\n')
+  for (const [index, line] of lines.entries()) {
+    const declaration = /^(?:export )?(?:async )?function (\w+)/.exec(line)
+    if (declaration?.[1] !== undefined) enclosing = declaration[1]
+    if (/await\s+\w+\.(?:json|text)\(\)/.test(line)) {
+      found.push({ line: line.trim(), lineNumber: index + 1, enclosing })
+    }
+  }
+  return found
+}
+
+describe('every response body read in github-client.ts is capped or excused', () => {
+  it('finds the reads at all, so the scan cannot pass by matching nothing', () => {
+    // Without this, a regex that stops matching turns the exhaustiveness check
+    // below into a loop over an empty list — green, and guarding nothing.
+    const reads = findBodyReads(githubClientSource)
+    expect(reads.length).toBeGreaterThanOrEqual(EXCUSED_BODY_READS.length + 1)
+    expect(reads.some(r => r.enclosing === 'readManifest')).toBe(true)
+  })
+
+  it('is readManifest, or an excused non-manifest read, for every one of them', () => {
+    for (const read of findBodyReads(githubClientSource)) {
+      if (read.enclosing === 'readManifest') continue
+      const excused = EXCUSED_BODY_READS.some(e => read.line.includes(e.snippet))
+      expect(
+        excused,
+        `github-client.ts:${read.lineNumber} (in ${read.enclosing}) reads a response body outside `
+          + 'readManifest. A manifest body must go through readManifest, which is where '
+          + 'MAX_MANIFEST_BYTES is enforced; anything else needs a reasoned entry in '
+          + `EXCUSED_BODY_READS saying why it is not a manifest. Line: ${read.line}`,
+      ).toBe(true)
+    }
+  })
+
+  it('excuses nothing that is no longer there, so a stale reason cannot linger', () => {
+    // The other direction: an excuse whose snippet has been edited away is a
+    // reason nobody is reading any more, and it would silently cover whatever
+    // line happened to contain that text next.
+    for (const excused of EXCUSED_BODY_READS) {
+      expect(
+        githubClientSource.includes(excused.snippet),
+        `EXCUSED_BODY_READS carries a snippet that is no longer in github-client.ts, so its reason `
+          + `("${excused.reason}") no longer applies to anything: ${excused.snippet}`,
+      ).toBe(true)
     }
   })
 })

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, PEERS_MAX_COUNT, searchByKeywords, toCandidate } from '../src/npm-client.ts'
+import { fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, searchByKeywords, toCandidate } from '../src/npm-client.ts'
 
 describe('HARVEST_KEYWORDS', () => {
   it('leads with the ecosystem keyword and adds the harness keyword, neither branded', () => {
@@ -283,6 +283,27 @@ describe('toCandidate', () => {
       },
     })
     expect(result?.peers).toEqual(['ok'])
+  })
+
+  it('keeps a peer name of exactly 214 characters, npm\'s own maximum', () => {
+    // 214 is the entire reason the constant has the value it has: a name of
+    // exactly that length is legal on npm, publishable, and must survive the
+    // filter. Two off-by-one mutations drop it silently -- `<=` to `<`, and
+    // 214 to 213 -- and no other test in this file notices either. The literal
+    // is written out rather than derived from PEER_NAME_MAX_LENGTH, or the
+    // fixture would move with the constant and pin nothing.
+    const name = 'p'.repeat(214)
+    const result = toCandidate({
+      ...packument,
+      versions: {
+        '1.2.0': {
+          ...packument.versions['1.2.0'],
+          peerDependencies: { [name]: '*' },
+        },
+      },
+    })
+    expect(PEER_NAME_MAX_LENGTH).toBe(214)
+    expect(result?.peers).toEqual([name])
   })
 
   it('drops an empty peer name, which is no package at all', () => {

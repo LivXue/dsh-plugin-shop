@@ -152,7 +152,7 @@ describe('runPipeline', () => {
 
   it('keeps plugins.json bounded when a candidate carries megabyte strings', () => {
     // The real toCandidate -> gate -> assignTier -> emit path produced a
-    // 222 MB plugins.json from ONE package with 1 MB strings. Every reader
+    // 203 MB plugins.json from ONE package with 1 MB strings. Every reader
     // downloads that file.
     const hostile: Candidate = {
       name: 'dsh-hostile-plugin',
