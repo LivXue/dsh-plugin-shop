@@ -55,6 +55,25 @@ Co-keyword totals against `keywords:deepseek-harness` (2026-09-03), which is wha
 
 ### Task 1: D-1 — read `total`, throw correctly at the window, partition the query, and stop ending a keyword on a short page
 
+> **Amendment (2026-09-03, after Task 1's review).** Three defects in this task's text, all found by
+> reviewing what it produced:
+>
+> 1. `const cellTotal = typeof body.total === 'number' ? body.total : 0` (this task's step 3c, and
+>    `npm-client.ts:443` as shipped) makes `from + objects.length >= cellTotal` true on the
+>    FIRST page, so a page carrying no numeric `total` ends the cell silently — where the
+>    `MAX_SEARCH_PAGES` guard this task deletes was loud on exactly that input. The registry really
+>    does serve 200s with `<!doctype html>` bodies. A missing `total` must THROW:
+>    `if (typeof body.total !== 'number') throw new Error(...)`. The coverage check must also run for
+>    unpartitioned keywords, which additionally catches a mid-stream empty page.
+> 2. `PARTITION_KEYWORDS` as listed below covers 5,059 of `keywords:deepseek-harness`'s 5,103 names —
+>    a 44-name shortfall, so the partition throws its coverage error on the day the keyword crosses the
+>    window. Add `cordis` (20), `codex` (10), `claude-code` (10) and `desktop-pet` (7), measured
+>    2026-09-03. A cell is always `keywords:<harvest-keyword>,<refinement>`, so a refinement can only
+>    narrow the net.
+> 3. The doc comment's claim that a bare text term "left both the total and the first page unchanged"
+>    is false — it re-ranks the head completely. The conclusion holds for a different reason: the TAIL
+>    is score-stable, so no text term moves a name into the reachable window.
+
 **Files:**
 - Modify: `registry/scripts/src/npm-client.ts:91-99` (delete `MAX_SEARCH_PAGES`), `:265-310` (rewrite `searchByKeywords`), and insert the new constants and helpers after `:13`
 - Test: `registry/scripts/tests/npm-client.test.ts` (rewrite the obsolete test at `:430-440`, add five)
