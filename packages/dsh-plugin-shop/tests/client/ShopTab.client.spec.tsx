@@ -439,6 +439,26 @@ describe('ShopTab', () => {
     expect(button.disabled).toBe(false)
   })
 
+  it('carries the full phrase as a description, so the short label loses no meaning', async () => {
+    // The visible word is deliberately short: this row wraps, and measured
+    // against the built stylesheet it needs 776px to stay on one line with
+    // "Check for updates" against 712px with "Check". The meaning moves to
+    // `title` rather than being dropped.
+    //
+    // `title` and NOT `aria-label`, which is the part worth pinning: an
+    // aria-label replaces the accessible NAME, so it would go on announcing
+    // "Check for updates" while the button reads "Up to date" — hiding the
+    // one state change this control has. As a description it rides alongside.
+    const { injected } = bench(snapshot())
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(container.querySelector('[data-shop-check-update]')).toBeTruthy())
+    const button = container.querySelector('[data-shop-check-update]') as HTMLButtonElement
+    expect(button.getAttribute('title')).toBe(en.checkUpdateTitle)
+    expect(button.getAttribute('aria-label')).toBeNull()
+    // The description says more than the label, or it is not doing its job.
+    expect(en.checkUpdateTitle.length).toBeGreaterThan(en.checkUpdate.length)
+  })
+
   it('shows the update button for a newer release and drives the self-update to the restart offer', async () => {
     const { injected, version, updateStart } = bench(snapshot())
     version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartSupported: true })

@@ -1010,6 +1010,14 @@ export function ShopTab(props: ShopTabProps): ReactNode {
                 type="button"
                 className={css.checkUpdateButton}
                 data-shop-check-update
+                /* `title`, not `aria-label`: an aria-label REPLACES the
+                 * accessible name, so it would keep announcing "Check for
+                 * updates" while the button reads "Up to date" and hide the
+                 * state change. As a description it rides alongside instead.
+                 * The visible word is short because this row wraps: measured
+                 * against the built stylesheet, the row needs 776px to stay on
+                 * one line with "Check for updates" and 712px with "Check". */
+                title={t('checkUpdateTitle')}
                 disabled={checkState !== 'idle'}
                 onClick={() => void checkVersion()}
               >
