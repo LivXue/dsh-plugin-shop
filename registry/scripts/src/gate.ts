@@ -19,6 +19,23 @@ export const SIMILARITY_THRESHOLD = 2
  */
 export const DERIVED_SUMMARY_MAX_LENGTH = 200
 
+/**
+ * Maximum length of a `license` string. npm takes the field verbatim and it
+ * reaches every published entry; a value past this is not an SPDX identifier
+ * (the longest expression in use, `Apache-2.0 WITH LLVM-exception`, is 30
+ * characters). Bounded HERE and not in `toCandidate`, so the rejection can say
+ * what is actually wrong: nulling the field in the shell would publish
+ * "Declares no license." for a package that declared a one-megabyte one.
+ */
+export const LICENSE_MAX_LENGTH = 128
+
+/**
+ * Maximum length of a `repository` URL. A GitHub URL is under 100 characters;
+ * the headroom covers a self-hosted path. Same reasoning as
+ * {@link LICENSE_MAX_LENGTH} for why the bound is a gate rule.
+ */
+export const REPOSITORY_MAX_LENGTH = 512
+
 /** A candidate that passed every gate rule, with its optional fields resolved. */
 export interface Accepted {
   candidate: Candidate
@@ -82,9 +99,17 @@ export function gate(
   if (candidate.license === null || candidate.license === '') {
     return reject(name, 'no-license', 'Declares no license.')
   }
+  if (candidate.license.length > LICENSE_MAX_LENGTH) {
+    return reject(name, 'no-license',
+      `Declares a license string longer than ${LICENSE_MAX_LENGTH} characters, so it is not an SPDX identifier.`)
+  }
   if (candidate.repository === null || candidate.repository === '') {
     return reject(name, 'no-repository',
       'Declares no repository, so the published code cannot be audited.')
+  }
+  if (candidate.repository.length > REPOSITORY_MAX_LENGTH) {
+    return reject(name, 'no-repository',
+      `Declares a repository URL longer than ${REPOSITORY_MAX_LENGTH} characters, so it cannot be audited as a source location.`)
   }
   if (isHarnessRepo(candidate.repository)) {
     return reject(name, 'harness-repository',

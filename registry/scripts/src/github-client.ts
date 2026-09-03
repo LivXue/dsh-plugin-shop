@@ -40,6 +40,15 @@ export const HARVEST_TOPICS: readonly string[] = ['dsh-plugin', 'deepseek-harnes
 export const MAX_TARBALL_BYTES = 32 * 1024 * 1024
 
 /**
+ * The largest `package.json` the harvest will read. The manifest body had no
+ * cap at all, unlike the tarball reader's 32 MB one, and both the raw manifest
+ * `name` and the raw, unvalidated `dsh.catalog` value are stored verbatim in
+ * the COMMITTED `repo-state.json` even when the gate later rejects the
+ * candidate. The largest real dsh manifest observed is about 100 KB.
+ */
+export const MAX_MANIFEST_BYTES = 1024 * 1024
+
+/**
  * The longest bundle name accepted from a repository manifest, npm's own
  * limit. A name reaches `first-seen.yml`, `categories.yml`, `markets.yml`,
  * `manifest.lock`, the published entry and the build report, so an unbounded
@@ -598,11 +607,39 @@ export async function fetchRepoCandidate(
   if (!manifestResponse.ok) {
     return { ok: false, code: 'no-manifest', detail: 'No package.json at the repository root, so there is nothing for dsh to install.' }
   }
-  let manifest: unknown
+  const declaredLength = Number(manifestResponse.headers.get('content-length'))
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_MANIFEST_BYTES) {
+    // Refused before a byte is read. An over-cap manifest is not an
+    // installable plugin unit, and its raw `catalog` value would otherwise be
+    // committed to repo-state.json whether or not the gate accepts it.
+    return {
+      ok: false,
+      code: 'no-manifest',
+      detail: `package.json is larger than ${MAX_MANIFEST_BYTES} bytes, so it is not read.`,
+    }
+  }
+  let manifestText: string
   try {
-    manifest = await manifestResponse.json()
+    manifestText = await manifestResponse.text()
   } catch {
     // Same rule as npm: an unreadable body is a rejection, not a crash.
+    return { ok: false, code: 'no-manifest', detail: 'package.json was unreadable.' }
+  }
+  if (manifestText.length > MAX_MANIFEST_BYTES) {
+    // No content-length (a chunked response): the cap is applied to what
+    // arrived rather than trusted from a header a third party wrote.
+    return {
+      ok: false,
+      code: 'no-manifest',
+      detail: `package.json is larger than ${MAX_MANIFEST_BYTES} bytes, so it is not read.`,
+    }
+  }
+  let manifest: unknown
+  try {
+    manifest = JSON.parse(manifestText)
+  } catch {
+    // A body that arrived but is not JSON is the same rejection as one that
+    // could not be read: nothing else reaches here, and neither is a crash.
     return { ok: false, code: 'no-manifest', detail: 'package.json was unreadable.' }
   }
 

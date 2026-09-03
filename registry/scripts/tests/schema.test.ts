@@ -35,6 +35,20 @@ describe('parseCatalogSection', () => {
     if (result.ok) throw new Error('expected failure')
     expect(result.error).toContain('category')
   })
+
+  it('rejects a capability item past the published bound', () => {
+    // `capabilities` capped the COUNT at 20 and not the item length, so one
+    // package with 20 one-megabyte strings is 20 MB of a file every reader
+    // downloads. Through the real toCandidate -> gate -> emit path, 1 MB
+    // strings produced a 222 MB plugins.json.
+    const result = parseCatalogSection({ ...valid, capabilities: ['x'.repeat(65)] })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error).toContain('capabilities')
+  })
+
+  it('accepts a capability item at the bound', () => {
+    expect(parseCatalogSection({ ...valid, capabilities: ['x'.repeat(64)] }).ok).toBe(true)
+  })
 })
 
 describe('published JSON Schema', () => {

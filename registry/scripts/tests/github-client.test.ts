@@ -196,6 +196,75 @@ describe('fetchRepoCandidate', () => {
     expect(result.ok).toBe(true)
     if (result.ok) expect(result.candidates[0]?.name).toBe('DSH-FS-TOOL')
   })
+
+  it('refuses a manifest body past the cap instead of holding it in memory', async () => {
+    // The raw manifest name and the raw, unvalidated dsh.catalog value are
+    // stored verbatim in the committed repo-state.json even when the gate
+    // later rejects them, and the body was read with no cap at all — unlike
+    // the tarball reader's 32 MB one.
+    const huge = JSON.stringify({ name: 'dsh-repo-plugin', dsh: { bundle: {}, catalog: { note: 'z'.repeat(2 * 1024 * 1024) } } })
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json':
+        new Response(huge, { status: 200, headers: { 'content-length': String(huge.length) } }),
+      // Routed so the refusal is what this test observes: without the cap the
+      // body parses, the head commit resolves, and the candidate comes back ok
+      // — a clean assertion failure rather than an unrouted-url throw.
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': new Response(JSON.stringify({
+        sha: commit,
+        commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.code).toBe('no-manifest')
+      expect(result.detail).toContain('larger than 1048576 bytes')
+    }
+  })
+
+  it('refuses an over-cap body that arrived with no length to read it from', async () => {
+    // A chunked response carries no content-length, so the declared-length
+    // refusal above never fires and the cap has to be applied to what actually
+    // arrived. Without this case neither branch is pinned: each catches what
+    // the other would, so removing either one leaves every test green.
+    const huge = JSON.stringify({ name: 'dsh-repo-plugin', dsh: { bundle: {}, catalog: { note: 'z'.repeat(2 * 1024 * 1024) } } })
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json':
+        new Response(huge, { status: 200 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': new Response(JSON.stringify({
+        sha: commit,
+        commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.code).toBe('no-manifest')
+      expect(result.detail).toContain('larger than 1048576 bytes')
+    }
+  })
+
+  it('refuses on the declared length alone, before the body is read', async () => {
+    // The counterpart: a small body behind a content-length past the cap. The
+    // refusal is by design not a measurement of what arrived — an over-cap
+    // manifest must cost nothing to decline — so this pins the branch that
+    // the body-length check would otherwise silently cover for.
+    const small = JSON.stringify({ name: 'dsh-repo-plugin', dsh: { bundle: { patch: './cordis.patch.yml' } } })
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json':
+        new Response(small, { status: 200, headers: { 'content-length': String(2 * 1024 * 1024) } }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': new Response(JSON.stringify({
+        sha: commit,
+        commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.code).toBe('no-manifest')
+      expect(result.detail).toContain('larger than 1048576 bytes')
+    }
+  })
 })
 
 describe('release-tarball rescue probe', () => {

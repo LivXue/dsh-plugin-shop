@@ -268,3 +268,30 @@ describe('the shop excludes itself', () => {
     }
   })
 })
+
+describe('field length bounds', () => {
+  it('rejects an over-long license with a reason that is about its length', () => {
+    // Not "Declares no license." — the author declared one and it is 1 MB. A
+    // wrong published reason is a defect, not a wording nit.
+    const result = gate(candidate({ license: 'M'.repeat(129) }), config)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.rejection.code).toBe('no-license')
+      expect(result.rejection.detail).toBe('Declares a license string longer than 128 characters, so it is not an SPDX identifier.')
+    }
+  })
+
+  it('rejects an over-long repository with a reason that is about its length', () => {
+    const result = gate(candidate({ repository: `https://github.com/you/${'x'.repeat(512)}` }), config)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.rejection.code).toBe('no-repository')
+      expect(result.rejection.detail).toBe('Declares a repository URL longer than 512 characters, so it cannot be audited as a source location.')
+    }
+  })
+
+  it('accepts a license and a repository at the bounds', () => {
+    expect(gate(candidate({ license: 'M'.repeat(128) }), config).ok).toBe(true)
+    expect(gate(candidate({ repository: `https://h/${'x'.repeat(502)}` }), config).ok).toBe(true)
+  })
+})

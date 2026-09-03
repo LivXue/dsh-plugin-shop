@@ -149,6 +149,51 @@ describe('runPipeline', () => {
     expect(first.pluginsJson).toBe(second.pluginsJson)
     expect(JSON.parse(first.indexJson).stars).toEqual(stars)
   })
+
+  it('keeps plugins.json bounded when a candidate carries megabyte strings', () => {
+    // The real toCandidate -> gate -> assignTier -> emit path produced a
+    // 222 MB plugins.json from ONE package with 1 MB strings. Every reader
+    // downloads that file.
+    const hostile: Candidate = {
+      name: 'dsh-hostile-plugin',
+      version: '1.0.0',
+      integrity: 'sha512-x',
+      publishedAt: '2026-08-01T12:00:00.000Z',
+      repository: `https://github.com/you/${'x'.repeat(1024 * 1024)}`,
+      license: 'M'.repeat(1024 * 1024),
+      deprecated: false,
+      hasBundle: true,
+      catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: ['c'.repeat(1024 * 1024)] },
+      description: 'A hostile plugin.',
+      keywords: [],
+      peers: Array.from({ length: 200 }, () => 'p'.repeat(1024 * 1024)),
+    }
+    // A first-seen row so the size assertion below is what fails when the
+    // bounds are gone: without one, assignTier throws on the listed hostile
+    // entry and the test would never reach a byte of plugins.json. Once the
+    // bounds hold, the gate rejects the candidate and the row is never read.
+    const withHostileRow = parseRegistryConfig({
+      verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: github:r\n  reviewCommit: abc\n  notes: fine\n',
+      denied: '[]',
+      allowedSimilar: '[]',
+      categories: '[]',
+      firstSeen: [
+        '- name: dsh-fs-tool',
+        '  added: 2026-08-10',
+        '- name: dsh-hello-plugin',
+        '  added: 2026-08-11',
+        '- name: dsh-derived-plugin',
+        '  added: 2026-08-12',
+        '- name: dsh-hostile-plugin',
+        '  added: 2026-08-15',
+      ].join('\n') + '\n',
+    })
+    const { pluginsJson, report } = runPipeline([...candidates, hostile], [], withHostileRow, BUILT_AT)
+    const parsed = JSON.parse(pluginsJson) as { plugins: { name: string }[] }
+    expect(parsed.plugins.map(p => p.name)).not.toContain('dsh-hostile-plugin')
+    expect(report).toContain('| dsh-hostile-plugin | no-license |')
+    expect(pluginsJson.length).toBeLessThan(64 * 1024)
+  })
 })
 
 describe('runPipeline with repository candidates', () => {

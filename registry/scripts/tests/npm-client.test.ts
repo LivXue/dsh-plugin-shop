@@ -267,6 +267,38 @@ describe('toCandidate', () => {
     expect(candidate?.peers).toHaveLength(PEERS_MAX_COUNT)
     expect(candidate?.peers).toEqual(Object.keys(many).slice(0, PEERS_MAX_COUNT))
   })
+
+  it('drops a peer name past the length bound, the way it drops the count tail', () => {
+    // 200 peer names are recorded and each reaches every reader's plugins.json
+    // verbatim with no bound of its own. The documented policy for this field
+    // is "the excess is dropped, never rejected" — an oversized manifest costs
+    // the author the tail, not the listing.
+    const result = toCandidate({
+      ...packument,
+      versions: {
+        '1.2.0': {
+          ...packument.versions['1.2.0'],
+          peerDependencies: { ok: '*', ['x'.repeat(215)]: '*' },
+        },
+      },
+    })
+    expect(result?.peers).toEqual(['ok'])
+  })
+
+  it('drops an empty peer name, which is no package at all', () => {
+    // JSON permits "" as a key. It is not a resolvable package, and recording
+    // it hands every reader's host a blank requirement to render and resolve.
+    const result = toCandidate({
+      ...packument,
+      versions: {
+        '1.2.0': {
+          ...packument.versions['1.2.0'],
+          peerDependencies: { '': '*', ok: '*' },
+        },
+      },
+    })
+    expect(result?.peers).toEqual(['ok'])
+  })
 })
 
 describe('searchByKeywords', () => {

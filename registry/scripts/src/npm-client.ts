@@ -364,6 +364,15 @@ function normalizeRepository(value: unknown): string | null {
 export const PEERS_MAX_COUNT = 200
 
 /**
+ * Maximum length of one recorded peer name — npm's own name limit. Each of the
+ * {@link PEERS_MAX_COUNT} names reaches every reader's `plugins.json`
+ * verbatim, and `peerDependencies` keys carry no bound of their own. Dropped
+ * rather than rejected, the same policy the count cap already states: an
+ * oversized manifest costs the author the tail of the list, not the listing.
+ */
+export const PEER_NAME_MAX_LENGTH = 214
+
+/**
  * Project one npm packument into a candidate.
  * @param packument - the parsed registry document for one package.
  * @returns the candidate, or null when the document names no usable latest version.
@@ -438,7 +447,9 @@ export function toCandidate(packument: unknown): Candidate | null {
       return publisher === undefined ? {} : { publisher }
     })(),
     peers: manifest.peerDependencies !== null && typeof manifest.peerDependencies === 'object' && !Array.isArray(manifest.peerDependencies)
-      ? Object.keys(manifest.peerDependencies).slice(0, PEERS_MAX_COUNT)
+      ? Object.keys(manifest.peerDependencies)
+        .filter(peer => peer.length > 0 && peer.length <= PEER_NAME_MAX_LENGTH)
+        .slice(0, PEERS_MAX_COUNT)
       : [],
   }
 }
