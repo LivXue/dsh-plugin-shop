@@ -35,19 +35,65 @@
 </tr>
 </table>
 
+## ✨ 亮点
+
+| | |
+|---|---|
+| **🌐 全网爬取** | 不需要向本项目提交任何东西，也没有排队审批。每次构建都会把 npm 上带 `dsh-plugin` 或 `deepseek-harness` 关键字的包全部过一遍，外加所有把同样关键字用作 topic 的 GitHub 仓库。今天这一轮看了 **20,891 个候选**。 |
+| **🧹 严格筛查** | **其中 11,514 个没能上架**，占检视总量的 55%。没有 `dsh.bundle` 的是库，不是插件；没有许可证或仓库的无从审查；带构建脚本或 `workspace:` 依赖的，装到你机器上就会失败；名字跟热门包只差一两个字符的会被扣住，等人核过才放。十七种记录在案的理由，全是机械判定，每次构建全量执行——而且每一条拒收都附一句作者能读懂的话。 |
+| **🔌 依赖检测，在你这边算** | 目录记下每个插件声明的 peer 模块名，**9,377 条收录里有 2,513 条带**。真正的解析发生在你自己的安装里，拿这些名字去你自己的 profile 解析——跟 dsh 的 loader 挂载时问的是同一个问题——解析不到的卡片显示**不兼容**并列出缺了什么。这个结论不由构建预先烤进目录，因为答案取决于你实际跑的是哪个 harness。 |
+| **🗓️ 每日更新** | 流水线每天 03:17 UTC 跑一次，并把结果提交进仓库，所以目录的每次变化都是一份可评审的 diff，而不是某个数据库里的一行。新插件第二天早上出现；仓库消失的，也以同样方式下架。 |
+| **🗂️ 自动分类** | 七个分类，让九千多条仍然翻得动：**工具** 4,584 · **界面** 2,356 · **集成** 777 · **其他** 565 · **模型服务** 463 · **工作流** 401 · **主题** 231。作者自己声明 `dsh.catalog` 就用他选的分类，其余由构建代为归类。 |
+
 ## 🗺️ 整体是怎么串起来的
 
 ```mermaid
-flowchart LR
-  npm(["npm registry<br/>关键字：dsh-plugin · deepseek-harness"]) -->|每日采集| build["registry/ 流水线<br/>准入 · 分层 · 产出"]
-  build -->|提交快照 + 静态 JSON| pages[["GitHub Pages<br/>/v1/index.json"]]
-  pages -->|拉取、校验 sha256、缓存| host["Host 半边<br/>dsh-plugin-shop"]
-  host -->|九个 shop/* 方法| client["Client 半边<br/>设置页标签"]
-  host -->|dsh plugin add| profile[("你的 dsh profile")]
+flowchart TB
+  subgraph HARVEST["1 · 采集 —— 每天扫一遍公共 registry"]
+    direction LR
+    NPM(["npm 包<br/>关键字：dsh-plugin · deepseek-harness"])
+    GH(["GitHub 仓库<br/>同样的关键字，作为 topic"])
+  end
+
+  subgraph GATE["2 · 闸门 —— 每个候选，每次构建"]
+    direction TB
+    G1["它到底是插件吗？<br/>有 loader 能挂载的 dsh.bundle"]
+    G2["它能被审查吗？<br/>有许可证 · 有仓库 · 仓库还在"]
+    G3["它装得上吗？<br/>无构建脚本 · 无 workspace 依赖 · 未废弃"]
+    G4["它是它声称的东西吗？<br/>包体完整性 · 发布时间 · 不是别人名字的差一字版本"]
+    G5["有东西可展示吗？<br/>合法的 dsh.catalog，或一句 npm description"]
+    G1 --> G2 --> G3 --> G4 --> G5
+  end
+
+  subgraph SHELVE["3 · 上架"]
+    direction TB
+    CAT["归入 7 个分类"]
+    PEER["记录声明的 peerDependencies<br/>只留名字，从不留版本范围"]
+  end
+
+  HARVEST --> GATE
+  GATE -->|"拒收"| REJ[["拒收报告<br/>每个名字一条作者能读懂的理由"]]
+  GATE -->|"通过"| SHELVE
+  SHELVE --> PUB[["4 · index.json + plugins.sha256.json<br/>先提交进仓库，再发到 GitHub Pages 与 npm"]]
+  PUB --> HOST["5 · Host 半边<br/>竞速所有来源、校验 sha256、缓存"]
+  HOST --> DEP{"6 · 依赖检查<br/>把记录下的每个 peer<br/>拿到你自己的 profile 里解析"}
+  DEP -->|"有一个解析不到"| BAD["不兼容<br/>卡片直接列出缺了什么"]
+  DEP -->|"全部解析得到"| GOOD["可安装"]
+  BAD --> CLIENT["Client 半边 —— 设置页标签<br/>只有九个 shop/* 方法，无网络、无文件系统"]
+  GOOD --> CLIENT
+  CLIENT -->|"dsh plugin add"| PROF[("你的 dsh profile")]
 ```
 
-Pages 那个框左边的一切属于本仓库的 `registry/`，右边的一切属于 `packages/dsh-plugin-shop/`
-里的 npm 包。两者不共享代码，只共享 schema。
+第 1–4 步属于本仓库的 `registry/`，第 5–6 步属于 `packages/dsh-plugin-shop/` 里的 npm 包。
+两者不共享代码，只共享 schema。
+
+图里有两处值得单独点出来，因为它们跟一般人的预期不同：
+
+- **闸门是"拒收"，不是"悄悄丢掉"。** 没过的候选会变成一条带理由的具名拒收，附在那次构建上。
+  没有东西会不声不响地消失。
+- **依赖检查不是目录里的事实。** 构建只记 peer 的**名字**，从不记版本范围——因为几乎每个 dsh
+  插件都声明 `"*"`，而 harness 自己发的预发布版本又不满足普通范围，真按范围校验，第一批被打成
+  不兼容的就是那些实际能跑的插件。名字解析得到与否，由你的安装、对着你的 profile 决定。
 
 ## 📦 安装商店
 
@@ -103,7 +149,7 @@ dsh --profile <profile>
 |---|---|
 | **公开、由社区驱动** | 带 `dsh-plugin` 或 `deepseek-harness` 关键字发布到 npm 就会被发现，不需要向本项目提交任何东西。 |
 | **可用 git 审计** | 每日目录变更都是一份可评审的 diff，而不是某个数据库里的一行。 |
-| **分层信任** | 已评审与未评审的插件在视觉上可区分，且评审钉在它当初覆盖的那个确切版本上——作者过了一次评审，不能靠发布恶意新版本来继承这份信任。 |
+| **分层信任，并如实交代** | 评审钉在它当初覆盖的那个确切版本上，作者过了一次评审，不能靠发布恶意新版本来继承这份信任。**但今天 `registry/verified.yml` 是空的：没有任何一条收录被人读过，全部条目都是社区层，每次安装都会要求你确认。** 上面那套筛查是机械的，它不能替代你亲自读一遍即将运行的代码。 |
 | **零权限界面** | 攻破浏览器界面并不等于攻破运行时。 |
 
 ## 🚫 它不是什么
@@ -116,7 +162,10 @@ dsh --profile <profile>
 
 ## 📚 目录（catalog）
 
-每日构建，以静态 JSON 发布：
+每日构建，以静态 JSON 同时发到两处：npm 包 `dsh-plugin-shop-catalog` 和 GitHub Pages。你的
+安装会**竞速**这几个来源——你自己配置的 registry、npmmirror、npmjs，然后是 Pages——谁先答就用
+谁，因为从你所在的位置看，其中某条链路可能比另一条慢得多。它们承载的字节完全相同，而且在信任
+任何一份之前都会核对指针里的 sha256。设 `DSH_SHOP_CATALOG_URL` 可以退出竞速，只读你指定的那个。
 
 | 产物 | 用途 |
 |---|---|

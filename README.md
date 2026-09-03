@@ -35,20 +35,68 @@ English | [中文](README.zh.md)
 </tr>
 </table>
 
+## ✨ Highlights
+
+| | |
+|---|---|
+| **🌐 Harvested from the whole registry** | Nothing is submitted here and there is no queue to join. Every npm package carrying the `dsh-plugin` or `deepseek-harness` keyword is examined on every build, plus every GitHub repository that uses the same keywords as topics. Today's build looked at **20,891 candidates**. |
+| **🧹 Filtered, hard** | **11,514 of them did not reach the shelf** — 55% of everything examined. A package with no `dsh.bundle` is a library, not a plugin. No license or no repository means nothing can be audited. A build script or a `workspace:` dependency means the install would fail on your machine. A name a hair away from a popular one is held back until someone clears it. Seventeen recorded reasons, all mechanical, all applied on every build — and every rejection carries a line its author can read. |
+| **🔌 Dependency-checked where you are** | The catalog records the peer modules each plugin declares; **2,513 of the 9,377 listings carry them**. Your own installation resolves those names against your own profile — the same question dsh's loader asks at mount time — and a card whose modules are absent reads **Incompatible** and names them. The verdict is computed on your machine, not baked in by the build, because the answer depends on the harness you are actually running. |
+| **🗓️ Rebuilt every day** | The pipeline runs at 03:17 UTC and commits what it found, so every change to the catalog is a reviewable diff rather than a row in someone's database. New plugins appear the next morning; a repository that disappears drops out the same way. |
+| **🗂️ Classified** | Seven categories, so nine thousand entries stay browsable: **tool** 4,584 · **ui** 2,356 · **integration** 777 · **other** 565 · **provider** 463 · **workflow** 401 · **theme** 231. An author who declares `dsh.catalog` picks their own; the rest are classified for them. |
+
 ## 🗺️ How it fits together
 
 ```mermaid
-flowchart LR
-  npm(["npm registry<br/>keyword: dsh-plugin · deepseek-harness"]) -->|daily harvest| build["registry/ pipeline<br/>gate · tier · emit"]
-  build -->|committed snapshot + static JSON| pages[["GitHub Pages<br/>/v1/index.json"]]
-  pages -->|fetch, verify sha256, cache| host["Host half<br/>dsh-plugin-shop"]
-  host -->|nine shop/* methods| client["Client half<br/>the Settings tab"]
-  host -->|dsh plugin add| profile[("your dsh profile")]
+flowchart TB
+  subgraph HARVEST["1 · Harvest — the whole public registry, every day"]
+    direction LR
+    NPM(["npm packages<br/>keyword: dsh-plugin · deepseek-harness"])
+    GH(["GitHub repositories<br/>the same keywords, as topics"])
+  end
+
+  subgraph GATE["2 · Gate — every candidate, every build"]
+    direction TB
+    G1["Is it a plugin at all?<br/>a dsh.bundle the loader can mount"]
+    G2["Can it be audited?<br/>a license · a repository · still reachable"]
+    G3["Can it be installed?<br/>no build scripts · no workspace deps · not deprecated"]
+    G4["Is it what it claims?<br/>tarball integrity · publish time · not a near-miss of another name"]
+    G5["Is there anything to show?<br/>a valid dsh.catalog, or an npm description"]
+    G1 --> G2 --> G3 --> G4 --> G5
+  end
+
+  subgraph SHELVE["3 · Shelve"]
+    direction TB
+    CAT["Classify into 7 categories"]
+    PEER["Record declared peerDependencies<br/>names only, never version ranges"]
+  end
+
+  HARVEST --> GATE
+  GATE -->|"rejected"| REJ[["rejection report<br/>one author-readable reason per name"]]
+  GATE -->|"accepted"| SHELVE
+  SHELVE --> PUB[["4 · index.json + plugins.sha256.json<br/>committed, then GitHub Pages and npm"]]
+  PUB --> HOST["5 · Host half<br/>races every origin, verifies sha256, caches"]
+  HOST --> DEP{"6 · Dependency check<br/>resolve each recorded peer<br/>against YOUR profile"}
+  DEP -->|"one or more absent"| BAD["Incompatible<br/>the card names what is missing"]
+  DEP -->|"all resolve"| GOOD["installable"]
+  BAD --> CLIENT["Client half — the Settings tab<br/>nine shop/* methods, no network, no filesystem"]
+  GOOD --> CLIENT
+  CLIENT -->|"dsh plugin add"| PROF[("your dsh profile")]
 ```
 
-Everything left of the Pages box is this repository's `registry/`. Everything right of
-it is the npm package in `packages/dsh-plugin-shop/`. They share no code — only the
-schema.
+Steps 1–4 are this repository's `registry/`. Steps 5–6 are the npm package in
+`packages/dsh-plugin-shop/`. They share no code — only the schema.
+
+Two parts of that diagram are worth naming, because they are the ones people expect
+to work differently:
+
+- **The gate rejects; it never silently drops.** A candidate that fails becomes a
+  named rejection with a reason, attached to the build. Nothing vanishes quietly.
+- **The dependency check is not a catalog fact.** The build records only the peer
+  *names* — never their version ranges, because nearly every dsh plugin declares
+  `"*"` and the harness's own prereleases do not satisfy ordinary ranges, so checking
+  them would accuse plugins that work. Whether a name resolves is decided by your
+  installation, against your profile.
 
 ## 📦 Install the shop
 
@@ -108,7 +156,7 @@ Per-failure diagnostics are in the
 |---|---|
 | **Public and community-run** | Publishing to npm with the `dsh-plugin` or `deepseek-harness` keyword is all it takes to be discovered. Nothing is submitted to this project. |
 | **Git-auditable** | Every daily catalog change is a reviewable diff, not a row in someone's database. |
-| **Tiered trust** | Reviewed and unreviewed plugins are visually distinct, and a review is pinned to the exact version it covered — an author who passes review cannot publish a malicious version and inherit the trust. |
+| **Tiered trust, honestly reported** | A review is pinned to the exact version it covered, so an author who passes review once cannot publish a malicious version and inherit the trust. **Today `registry/verified.yml` is empty: no listing has been read by a human, every entry is community-tier, and every install asks for the acknowledgement.** The filtering above is mechanical, and it is not a substitute for reading the code you are about to run. |
 | **Zero-privilege UI** | Compromising the browser interface does not compromise the runtime. |
 
 ## 🚫 What it is not
@@ -124,7 +172,13 @@ enabling build scripts and pinning a commit are decisions you make explicitly.
 
 ## 📚 The catalog
 
-Built daily and published as static JSON:
+Built daily and published as static JSON, to two places at once: the npm package
+`dsh-plugin-shop-catalog` and GitHub Pages. Your installation races them — the
+registry you have configured, npmmirror, npmjs, then Pages — and takes whichever
+answers first, because the link to one of them can be far slower than the link to
+another from where you sit. All of them carry the same bytes, and the sha256 in the
+pointer is checked before any of them is trusted. `DSH_SHOP_CATALOG_URL` opts out of
+the race and reads only what you name.
 
 | Artifact | Purpose |
 |---|---|

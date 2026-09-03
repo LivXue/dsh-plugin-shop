@@ -117,12 +117,44 @@ bundle is not.
 
 | | |
 |---|---|
-| **Browse & search** | 1800+ packages harvested from npm by the `dsh-plugin` and `deepseek-harness` keywords, shown with the author's own summary when they declared one |
+| **Browse & search** | **9,377 plugins** harvested from the whole public npm registry by the `dsh-plugin` and `deepseek-harness` keywords — and from GitHub repositories using them as topics — shown with the author's own summary when they declared one, and sorted into seven categories |
 | **Install** | One confirmation. An unreviewed plugin requires an explicit acknowledgement first — an installed plugin holds the same privileges as a built-in one |
 | **Enable / disable** | Applies to an installed plugin without a restart |
 | **Installed state** | An installed plugin shows an Installed label on its card — or an Update button when the catalog has a newer version — plus an Uninstall button; the Installed filter in the category bar shows only installed plugins |
 | **Restart** | After an install, update, or uninstall, the shop offers to restart dsh — stating the cost first: the page disconnects and in-flight work is interrupted |
 | **Self-update** | The shop shows its own version next to the search box, checks npm for a newer release, and updates itself with the pinned version — then the usual restart |
+
+## 🔎 Where the shelf comes from
+
+The catalog is not a list anyone curates by hand. Six steps run every day, and two of
+them are the reason the shelf is worth reading:
+
+1. **Harvest the whole registry.** Every npm package carrying `dsh-plugin` or
+   `deepseek-harness`, plus every GitHub repository using them as topics. Nothing is
+   submitted; there is no queue.
+2. **Gate every candidate.** The last build examined 20,891 of them and **rejected
+   11,514** — 55%. A package with no `dsh.bundle` is a library, not a plugin. No
+   license or no repository means nothing can be audited. A build script or a
+   `workspace:` dependency means the install would fail on your machine. A name a hair
+   away from a popular one is held until someone clears it. Seventeen recorded
+   reasons, all mechanical, and every rejection carries a line its author can read.
+3. **Classify and record.** Seven categories, and the peer modules each plugin
+   declares — names only, never version ranges.
+4. **Publish.** Content-addressed JSON, to npm and GitHub Pages at once.
+5. **Fetch here.** This package races the origins and verifies the sha256 before
+   trusting a byte.
+6. **Check dependencies here too.** Your installation resolves each recorded peer name
+   against *your* profile — the same question dsh's loader asks at mount time. A card
+   whose modules are absent reads **Incompatible** and names them. That verdict is
+   computed on your machine, because it depends on the harness you are actually
+   running, not the one the build ran on.
+
+The full pipeline diagram lives in the
+[repository README](https://github.com/LivXue/dsh-plugin-shop#-how-it-fits-together).
+
+One thing this does **not** do: no listing has been read by a human. `verified.yml` is
+empty today, every entry is community-tier, and every install asks you to acknowledge
+that. Mechanical filtering is not review.
 
 ## 🧩 How it is put together
 
