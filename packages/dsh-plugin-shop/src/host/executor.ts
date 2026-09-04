@@ -3,7 +3,7 @@
  * `dsh plugin remove` (uninstall); the only differences are the verb and the
  * post-exit manifest confirmation. */
 
-import { spawn, type ChildProcessByStdio } from 'node:child_process'
+import { spawn, spawnSync, type ChildProcessByStdio } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -24,6 +24,13 @@ export interface InstallStatus {
 
 const MAX_LOG_LINES = 200
 const MAX_LOG_BYTES = 64 * 1024
+
+/** Bound one dsh command so a stalled install cannot hold the profile queue
+ * forever. Tests can pass a shorter value; production stays generous. */
+const INSTALL_TIMEOUT_MS = Number(process.env.DSH_SHOP_INSTALL_TIMEOUT_MS) || 15 * 60 * 1000
+
+/** Grace period for output already buffered after the child exits. */
+const PIPE_DRAIN_MS = 500
 
 interface RunningInstall {
   installId: string
@@ -164,6 +171,44 @@ export function spawnFailureDetail(
   return `dsh spawn failed: ${message}`
 }
 
+/** The failure detail for a command stopped by the shop's deadline. */
+export function installTimeoutDetail(profile: string, timeoutMs: number): string {
+  const seconds = Math.max(1, Math.round(timeoutMs / 1000))
+  return `dsh-plugin-shop: the command did not finish within ${seconds}s and was stopped.`
+    + ` Run it yourself to see what it is waiting on: dsh plugin --profile ${profile} install`
+}
+
+/** Kill primitives injected by tests so both platform branches are testable. */
+export interface KillFns {
+  killGroup: (pid: number) => void
+  killPid: (pid: number) => void
+  taskkill: (pid: number) => void
+}
+
+const nodeKills: KillFns = {
+  killGroup: pid => process.kill(-pid, 'SIGKILL'),
+  killPid: pid => process.kill(pid, 'SIGKILL'),
+  taskkill: pid => { spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' }) },
+}
+
+/** Kill a child and its descendants (process group on POSIX, taskkill tree on Windows). */
+export function killTree(pid: number | undefined, platform: NodeJS.Platform, kills: KillFns = nodeKills): void {
+  if (pid === undefined) return
+  if (platform === 'win32') {
+    kills.taskkill(pid)
+    return
+  }
+  try {
+    kills.killGroup(pid)
+  } catch {
+    try {
+      kills.killPid(pid)
+    } catch {
+      // The process already exited or cannot be signalled; the timeout result stands.
+    }
+  }
+}
+
 /** Read-only filesystem seam for the CLI lookup; the same shape as `pinFs`. */
 const nodeFs: DshCliFs = {
   exists: path => existsSync(path),
@@ -212,8 +257,9 @@ function spawnPluginCli(options: {
   confirm?: (home: string | undefined) => string | null
   afterDone?: (home: string | undefined) => Promise<{ needsRestart: boolean; restartReason?: HotRestartReason } | void>
   onStatus?: (status: InstallStatus) => void
+  timeoutMs?: number
 }): RunningInstall {
-  const { profile, argv, dshBin, env, confirm, afterDone, onStatus } = options
+  const { profile, argv, dshBin, env, confirm, afterDone, onStatus, timeoutMs = INSTALL_TIMEOUT_MS } = options
   // Argv smuggling guard: an operand that begins with `-` would be parsed as
   // a flag by the CLI. A legitimate target — a catalog name for remove, a
   // `name@version` spec for add — never begins with `-`, so refusing here
@@ -245,6 +291,7 @@ function spawnPluginCli(options: {
   // not end in \n) is appended as-is — the next chunk usually completes it
   // and the log renders plain text, so a fragment is acceptable at v0.
   const append = (line: string): void => {
+    if (state !== 'running') return
     log.push(line)
     logBytes += Buffer.byteLength(line)
     // Drop oldest until both caps hold; the newest line is never dropped,
@@ -271,38 +318,35 @@ function spawnPluginCli(options: {
       execPath: process.execPath,
       script: dshScript(),
     })
-    // Not every start failure arrives as an `error` event: spawning a Windows
-    // `.cmd` without a shell throws EINVAL synchronously out of `spawn()`
-    // (measured 2026-09-02). Left to propagate it would reject `finished`,
-    // which nothing awaits, and the install would poll as `running` forever
-    // instead of reporting why it never started.
     let child: ChildProcessByStdio<null, Readable, Readable>
     try {
       child = spawn(command, args, {
         stdio: ['ignore', 'pipe', 'pipe'],
         env: env ?? process.env,
+        detached: process.platform !== 'win32',
       })
     } catch (error) {
       resolve(failToStart(error as NodeJS.ErrnoException))
       return
     }
-    // Split on CRLF as well as LF. Every console producer on Windows —
-    // pnpm, node, dsh's own wrapper — terminates with `\r\n`, and splitting
-    // on '\n' alone left a literal `\r` on the end of every captured line.
-    // The client renders this log, and `installFailureDetail` filters it with
-    // `$`-anchored patterns that one trailing control character defeats.
-    child.stdout.on('data', (chunk: Buffer) => {
-      for (const line of chunk.toString().split(/\r?\n/)) if (line !== '') append(line)
-    })
-    child.stderr.on('data', (chunk: Buffer) => {
-      for (const line of chunk.toString().split(/\r?\n/)) if (line !== '') append(line)
-    })
-    child.on('error', (error) => {
-      resolve(failToStart(error as NodeJS.ErrnoException))
-    })
-    child.on('close', async (exitCode) => {
+
+    let exited = false
+    let closed = false
+    let exitCode: number | null = null
+    let timedOut = false
+    let drainTimer: ReturnType<typeof setTimeout> | undefined
+    let deadlineTimer: ReturnType<typeof setTimeout> | undefined
+
+    const settle = async (): Promise<void> => {
       if (state !== 'running') return
-      if (exitCode === 0) {
+      clearTimeout(drainTimer)
+      clearTimeout(deadlineTimer)
+      child.stdout.destroy()
+      child.stderr.destroy()
+      if (timedOut) {
+        state = 'failed'
+        detail = installTimeoutDetail(profile, timeoutMs)
+      } else if (exitCode === 0) {
         const confirmDetail = confirm?.(env?.DSH_HOME)
         if (confirmDetail != null) {
           state = 'failed'
@@ -313,8 +357,6 @@ function spawnPluginCli(options: {
             needsRestartOnDone = outcome?.needsRestart ?? true
             restartReason = outcome?.restartReason
           } catch {
-            // A failed hot path never fails the install — the package IS
-            // installed; it activates on restart instead.
             needsRestartOnDone = true
             restartReason = 'mount-failed'
           }
@@ -328,7 +370,45 @@ function spawnPluginCli(options: {
       }
       onStatus?.(status())
       resolve(status())
+    }
+
+    const drainThenSettle = (): void => {
+      clearTimeout(drainTimer)
+      drainTimer = setTimeout(() => { void settle() }, PIPE_DRAIN_MS)
+    }
+
+    // Split on CRLF as well as LF. Every console producer on Windows —
+    // pnpm, node, dsh's own wrapper — terminates with `\r\n`.
+    child.stdout.on('data', (chunk: Buffer) => {
+      for (const line of chunk.toString().split(/\r?\n/)) if (line !== '') append(line)
     })
+    child.stderr.on('data', (chunk: Buffer) => {
+      for (const line of chunk.toString().split(/\r?\n/)) if (line !== '') append(line)
+    })
+    child.on('error', (error) => {
+      if (state !== 'running') return
+      clearTimeout(drainTimer)
+      clearTimeout(deadlineTimer)
+      resolve(failToStart(error as NodeJS.ErrnoException))
+    })
+    // `exit` is the child's completion. `close` waits for every holder of the
+    // inherited pipes, so the record settles after a bounded drain instead.
+    child.on('exit', (code) => {
+      exited = true
+      exitCode = code
+      if (closed) void settle()
+      else drainThenSettle()
+    })
+    child.on('close', () => {
+      closed = true
+      if (exited) void settle()
+    })
+    deadlineTimer = setTimeout(() => {
+      if (state !== 'running') return
+      timedOut = true
+      killTree(child.pid, process.platform)
+      drainThenSettle()
+    }, timeoutMs)
   }))
 
   return { installId, status, finished }
@@ -348,8 +428,9 @@ export function startInstall(options: {
   expectedName?: string
   afterDone?: (home: string | undefined) => Promise<{ needsRestart: boolean; restartReason?: HotRestartReason } | void>
   onStatus?: (status: InstallStatus) => void
+  timeoutMs?: number
 }): RunningInstall {
-  const { profile, spec, dshBin = 'dsh', env, expectedName, afterDone, onStatus } = options
+  const { profile, spec, dshBin = 'dsh', env, expectedName, afterDone, onStatus, timeoutMs } = options
   return spawnPluginCli({
     profile,
     argv: ['add', spec],
@@ -358,6 +439,7 @@ export function startInstall(options: {
     confirm: expectedName !== undefined ? home => confirmBundleActivation(profile, home, expectedName) : undefined,
     afterDone,
     onStatus,
+    timeoutMs,
   })
 }
 
@@ -376,8 +458,9 @@ export function startUninstall(options: {
   expectedName?: string
   afterDone?: (home: string | undefined) => Promise<{ needsRestart: boolean; restartReason?: HotRestartReason } | void>
   onStatus?: (status: InstallStatus) => void
+  timeoutMs?: number
 }): RunningInstall {
-  const { profile, name, dshBin = 'dsh', env, expectedName, afterDone, onStatus } = options
+  const { profile, name, dshBin = 'dsh', env, expectedName, afterDone, onStatus, timeoutMs } = options
   return spawnPluginCli({
     profile,
     argv: ['remove', name],
@@ -386,5 +469,6 @@ export function startUninstall(options: {
     confirm: expectedName !== undefined ? home => confirmBundleRemoval(profile, home, expectedName) : undefined,
     afterDone,
     onStatus,
+    timeoutMs,
   })
 }
