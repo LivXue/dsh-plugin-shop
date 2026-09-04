@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Readable } from 'node:stream'
+import { StringDecoder } from 'node:string_decoder'
 import { readProfileManifest, resolveProfileDir } from '@deepseek-ai/dsh-app-boot'
 import { dshCommand, resolveDshScript, DSH_PACKAGE, type DshCliFs } from './dsh-cli.ts'
 import type { HotRestartReason } from './hot.ts'
@@ -209,6 +210,30 @@ export function killTree(pid: number | undefined, platform: NodeJS.Platform, kil
   }
 }
 
+/** One stream's line assembler, retaining partial UTF-8 and text lines. */
+export interface LineSink {
+  write: (chunk: Buffer) => void
+  flush: () => void
+}
+
+export function lineSink(emit: (line: string) => void): LineSink {
+  const decoder = new StringDecoder('utf8')
+  let pending = ''
+  return {
+    write(chunk) {
+      pending += decoder.write(chunk)
+      const parts = pending.split(/\r?\n/)
+      pending = parts.pop() ?? ''
+      for (const line of parts) if (line !== '') emit(line)
+    },
+    flush() {
+      pending += decoder.end()
+      if (pending !== '') emit(pending)
+      pending = ''
+    },
+  }
+}
+
 /** Read-only filesystem seam for the CLI lookup; the same shape as `pinFs`. */
 const nodeFs: DshCliFs = {
   exists: path => existsSync(path),
@@ -287,9 +312,8 @@ function spawnPluginCli(options: {
     ...(detail !== undefined ? { detail } : {}),
   })
 
-  // Chunks are split into lines; a trailing partial line (a chunk that does
-  // not end in \n) is appended as-is — the next chunk usually completes it
-  // and the log renders plain text, so a fragment is acceptable at v0.
+  // lineSink holds a trailing partial until the next chunk completes it, then
+  // flushes it at settle if the stream ended without a newline.
   const append = (line: string): void => {
     if (state !== 'running') return
     log.push(line)
@@ -337,10 +361,15 @@ function spawnPluginCli(options: {
     let drainTimer: ReturnType<typeof setTimeout> | undefined
     let deadlineTimer: ReturnType<typeof setTimeout> | undefined
 
+    const outLines = lineSink(append)
+    const errLines = lineSink(append)
+
     const settle = async (): Promise<void> => {
       if (state !== 'running') return
       clearTimeout(drainTimer)
       clearTimeout(deadlineTimer)
+      outLines.flush()
+      errLines.flush()
       child.stdout.destroy()
       child.stderr.destroy()
       if (timedOut) {
@@ -379,12 +408,8 @@ function spawnPluginCli(options: {
 
     // Split on CRLF as well as LF. Every console producer on Windows —
     // pnpm, node, dsh's own wrapper — terminates with `\r\n`.
-    child.stdout.on('data', (chunk: Buffer) => {
-      for (const line of chunk.toString().split(/\r?\n/)) if (line !== '') append(line)
-    })
-    child.stderr.on('data', (chunk: Buffer) => {
-      for (const line of chunk.toString().split(/\r?\n/)) if (line !== '') append(line)
-    })
+    child.stdout.on('data', (chunk: Buffer) => { outLines.write(chunk) })
+    child.stderr.on('data', (chunk: Buffer) => { errLines.write(chunk) })
     child.on('error', (error) => {
       if (state !== 'running') return
       clearTimeout(drainTimer)

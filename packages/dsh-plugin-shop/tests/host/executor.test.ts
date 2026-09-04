@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, writeFileSync, chmodSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { installFailureDetail, installTimeoutDetail, killTree, spawnFailureDetail, startInstall, startUninstall, type InstallStatus } from '../../src/host/executor.ts'
+import { installFailureDetail, installTimeoutDetail, killTree, lineSink, spawnFailureDetail, startInstall, startUninstall, type InstallStatus } from '../../src/host/executor.ts'
 import type { HotRestartReason } from '../../src/host/hot.ts'
 
 // A fixture `dsh` that records its full argv in a marker file and exits with
@@ -568,6 +568,74 @@ describe('killTree', () => {
     calls.length = 0
     killTree(undefined, 'linux', kills)
     expect(calls).toEqual([])
+  })
+})
+
+describe('lineSink (F-6)', () => {
+  it('completes a line split across chunks instead of emitting the fragment', () => {
+    const lines: string[] = []
+    const sink = lineSink(line => lines.push(line))
+    sink.write(Buffer.from(' ERR_PNPM_FE'))
+    sink.write(Buffer.from('TCH_404 GET https://r/x: Not Found - 404\n'))
+    sink.flush()
+    expect(lines).toEqual([' ERR_PNPM_FETCH_404 GET https://r/x: Not Found - 404'])
+  })
+
+  it('reassembles a multi-byte character split across chunks', () => {
+    const lines: string[] = []
+    const sink = lineSink(line => lines.push(line))
+    const bytes = Buffer.from('已安装\n', 'utf8')
+    sink.write(bytes.subarray(0, 4))
+    sink.write(bytes.subarray(4))
+    sink.flush()
+    expect(lines).toEqual(['已安装'])
+  })
+
+  it('emits a final line the stream never terminated', () => {
+    const lines: string[] = []
+    const sink = lineSink(line => lines.push(line))
+    sink.write(Buffer.from('no newline here'))
+    expect(lines).toEqual([])
+    sink.flush()
+    expect(lines).toEqual(['no newline here'])
+  })
+
+  it('splits CRLF as well as LF and drops empty lines', () => {
+    const lines: string[] = []
+    const sink = lineSink(line => lines.push(line))
+    sink.write(Buffer.from('a\r\n\r\nb\r\n'))
+    sink.flush()
+    expect(lines).toEqual(['a', 'b'])
+  })
+})
+
+describe('startInstall line assembly (F-6)', () => {
+  it('reports the whole line when the stream splits it, not the fragment', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-split-'))
+    const bin = join(dir, 'dsh')
+    writeFileSync(bin, [
+      '#!/bin/sh',
+      "printf '%s' ' ERR_PNPM_FE'",
+      'sleep 0.3',
+      "printf '%s\\n' 'TCH_404 GET https://r/x: Not Found - 404'",
+      'exit 1',
+      '',
+    ].join('\n'))
+    chmodSync(bin, 0o755)
+    const status = await startInstall({ profile: 'split', spec: 'a@1.0.0', dshBin: bin }).finished
+    expect(status.state).toBe('failed')
+    expect(status.log).toEqual([' ERR_PNPM_FETCH_404 GET https://r/x: Not Found - 404'])
+    expect(status.detail).toMatch(/ERR_PNPM_FETCH_404/)
+  })
+
+  it('keeps a final unterminated line in the log', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-unterminated-'))
+    const bin = join(dir, 'dsh')
+    writeFileSync(bin, ['#!/bin/sh', "printf '%s' 'the bundle did not appear'", 'exit 1', ''].join('\n'))
+    chmodSync(bin, 0o755)
+    const status = await startInstall({ profile: 'unterminated', spec: 'a@1.0.0', dshBin: bin }).finished
+    expect(status.log).toEqual(['the bundle did not appear'])
+    expect(status.detail).toMatch(/did not appear/)
   })
 })
 
