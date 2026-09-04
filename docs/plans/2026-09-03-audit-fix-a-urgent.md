@@ -2462,23 +2462,24 @@ prose lands in the docs commit of this same PR."
 - Modify: `registry/scripts/src/github-stars.ts:28` (`fetchStarCounts`)
 - Modify: `.github/workflows/daily.yml:28` (the `build` job)
 
-> **Anchors re-measured 2026-09-03, before dispatch.** Two of the five were stale: `withTimeout` was
-> cited at `:23-50` and is at `:204`; `fetchRobust` was cited at `:42-62` and is at `:118` — Task 4 and
-> Task 7's five fix rounds moved `github-client.ts` by hundreds of lines. The other three were checked
-> and are correct.
+> **This task's line anchors are not maintained, deliberately.** Every attempt to keep them current
+> has failed: the `Files:` header was re-measured and the inline anchors were not, then the correction
+> naming that mistake got four of its own five replacements wrong, because the same fix rounds that
+> prompted each re-measure kept moving the file underneath it. `github-client.ts` alone moved by ~700
+> lines across Task 4 and Task 7. Do not trust any line number in this task; locate the subject by
+> name instead:
 >
-> **The inline anchors inside the Step bodies were NOT re-measured and are wrong by the same ~250
-> lines** — `fetchRepoCandidate` is at `:763` not `:511`, `RepoHarvestOptions` at `:859` not `:568`,
-> the destructure at `:911` not `:613`, the call site at `:947` not `:638`, and `FetchTimeoutError` at
-> `:179` not `:24`. Re-measuring only the `Files:` header is not enough, and this note previously said
-> "verify any anchor before trusting it" while itself having verified only five of ten.
+> ```sh
+> grep -n 'function fetchRobust\|function fetchRepoCandidate\|interface RepoHarvestOptions' \
+>   registry/scripts/src/github-client.ts
+> grep -n 'function withTimeout\|class FetchTimeoutError' registry/scripts/src/npm-client.ts
+> grep -n 'function runBatches\|function fetchStarCounts' \
+>   registry/scripts/src/llm-client.ts registry/scripts/src/github-stars.ts
+> ```
 >
-> **Also measured: `timeout-minutes` already exists once, on `publish` (`:225`, ten minutes).** Neither
-> `build` nor `deploy` has one, so both inherit GitHub's six-hour default — on the job that runs a
-> ~50-minute harvest, a hung fetch burns six hours of runner time every morning. `publish`'s existing
-> comment is the model for the one this task adds: it states what the job actually costs and why the
-> number is generous rather than tight.
-- Test: `registry/scripts/tests/github-client.test.ts`, `registry/scripts/tests/llm-client.test.ts`, `registry/scripts/tests/github-stars.test.ts`, `registry/scripts/tests/workflow.test.ts`
+> **Measured before dispatch and still true:** `timeout-minutes` already exists on the `publish` job
+> (ten minutes) and on neither `build` nor `deploy`, so both inherited GitHub's six-hour default on a
+> job whose harvest takes about fifty minutes.
 
 **Interfaces:**
 - Consumes: `registry/scripts/tests/workflow.test.ts` and its `workflow` helper from Task 5
