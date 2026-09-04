@@ -64,9 +64,14 @@
  *   the §8 offer `[data-shop-restart]` (only when needsRestart && the host
  *   can restart)
  * - uninstall: `[data-shop-uninstall]`; done view `[data-shop-uninstall-done]`
- * - loader inventory tab: `dialog.getByRole('tab', { name: '插件列表' })`;
- *   each card `[data-plugin-entry=<entryId>]` with the enabled tag
- *   `[data-enabled=true]` and the phase dot `[data-phase=active]`
+ * - loader inventory tab: `dialog.getByRole('tab', { name: '插件列表' })`, then
+ *   `expandGlobalPlane` — the tab splits into 会话插件 (the selected agent
+ *   preset's composition rows: bare ids, no phase dot) and 全局插件 (the Loader
+ *   entries), and the second is COLLAPSED whenever a preset roster exists.
+ *   A collapsed section renders no `<li>` at all, so every Loader selector is
+ *   ABSENT rather than hidden. Each card is then
+ *   `[data-plugin-entry=<entryId>]` with the enabled tag `[data-kind=enabled]`
+ *   and the phase dot `[data-phase=active]`
  * - settings modal close: `.VOzbGW_close` (visually-hidden label 关闭)
  */
 
@@ -75,9 +80,38 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { chromium, type Browser, type Page } from 'playwright'
+import { chromium, type Browser, type Locator, type Page } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { startInstall } from '../../src/host/executor.ts'
+
+/** Expand the 插件列表 tab's 全局插件 section, which holds the Loader entries.
+ *
+ * Harness 0.1.2-rc.1 split that tab in two — agent presets first, then the
+ * global plane — and collapses the global plane whenever a preset roster is
+ * composed, which the `web` profile always has. A collapsed section renders no
+ * `<li>`, so `[data-plugin-entry]` and `[data-phase]` are absent, not hidden:
+ * every assertion below this point either times out or, worse, passes
+ * vacuously. The three `count()).toBe(0)` "nothing is live" checks are exactly
+ * that hazard — an empty collapsed section satisfies them for free.
+ *
+ * Expanded through its own disclosure and NOT the 搜索插件 box: search also
+ * FILTERS the list, which would make those same "nothing is live" assertions
+ * vacuous in the other direction.
+ *
+ * The postcondition waits for an `include:`-prefixed entry rather than for
+ * `aria-expanded`, because that prefix is what distinguishes a Loader entry
+ * from a preset composition row — it proves the right section rendered, not
+ * merely that a button was clicked. The disclosure itself is waited for
+ * explicitly: it renders after the tab's content, and Playwright's implicit
+ * wait on `click()` would hide that ordering from a reader.
+ */
+async function expandGlobalPlane(dialog: Locator): Promise<void> {
+  const disclosure = dialog.getByRole('button', { name: /全局插件/ }).first()
+  await disclosure.waitFor({ state: 'visible', timeout: 15_000 })
+  if ((await disclosure.getAttribute('aria-expanded')) !== 'true') await disclosure.click()
+  await dialog.locator('[data-plugin-entry^="include:"]').first()
+    .waitFor({ state: 'visible', timeout: 15_000 })
+}
 import { zh } from '../../src/client/locales.ts'
 import { startCatalogServer, type CatalogServer } from '../fixtures/catalog-server.ts'
 import { startLocalRegistry, type LocalRegistry } from '../fixtures/local-registry.ts'
@@ -368,9 +402,10 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // include, so the loader lists it as `include:typert-gateway:mkt-e2e-live`
       // — plus the enabled tag and the active phase dot.
       await dialog.getByRole('tab', { name: '插件列表' }).click()
+      await expandGlobalPlane(dialog)
       const liveEntry = dialog.locator('[data-plugin-entry="include:typert-gateway:mkt-e2e-live"]')
       await liveEntry.waitFor({ state: 'visible', timeout: 15_000 })
-      await liveEntry.locator('[data-enabled="true"]').waitFor({ state: 'visible' })
+      await liveEntry.locator('[data-kind="enabled"]').waitFor({ state: 'visible' })
       await liveEntry.locator('[data-phase="active"]').waitFor({ state: 'visible' })
 
       // The installed actions need a fresh installed() read, so the settings
@@ -439,6 +474,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await dialog3.waitFor({ state: 'visible', timeout: 10_000 })
       await dialog3.getByRole('button', { name: '插件', exact: true }).click()
       await dialog3.getByRole('tab', { name: '插件列表' }).click()
+      await expandGlobalPlane(dialog3)
       await dialog3.locator('[data-phase]').first().waitFor({ state: 'visible', timeout: 15_000 })
       expect(await dialog3.locator('[data-plugin-entry="include:typert-gateway:mkt-e2e-live"]').count()).toBe(0)
     },
@@ -488,6 +524,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await dialog2.waitFor({ state: 'visible', timeout: 10_000 })
       await dialog2.getByRole('button', { name: '插件', exact: true }).click()
       await dialog2.getByRole('tab', { name: '插件列表' }).click()
+      await expandGlobalPlane(dialog2)
       await dialog2.locator('[data-phase]').first().waitFor({ state: 'visible', timeout: 15_000 })
       expect(await dialog2.locator('[data-plugin-entry="include:typert-gateway:mkt-e2e-config"]').count()).toBe(0)
     },

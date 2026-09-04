@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { fetchStarCounts, STAR_BATCH_SIZE } from '../src/github-stars.ts'
+import { fetchStarCounts, STAR_BATCH_SIZE, STARS_BUDGET_MS, STARS_REQUEST_TIMEOUT_MS } from '../src/github-stars.ts'
+import { headersThenStalledBody } from './stalling-fetch.ts'
 
 const options = { token: 'gh-token' }
 const repo = (i: number) => ({ owner: `owner${i}`, name: `repo${i}` })
@@ -118,5 +119,164 @@ describe('partial GraphQL responses', () => {
     expect(stars.get('good/one')).toBe(5)
     expect(skipped).toHaveLength(3)
     expect(skipped.every(s => s.endsWith(': no count'))).toBe(true)
+  })
+})
+
+describe('request deadlines', () => {
+  it('has a per-request deadline at all', () => {
+    // A literal, not a re-export of the constant: a fixture computed from the
+    // value it tests can never detect that value moving.
+    expect(STARS_REQUEST_TIMEOUT_MS).toBe(30_000)
+  })
+
+  it('skips a batch whose request never answers instead of hanging the build', async () => {
+    // Stars are advisory and every failure mode already ends in `skipped`; the
+    // deadline is what makes a stalled GraphQL endpoint one of those failure
+    // modes rather than the job's six-hour kill.
+    const fetchImpl = (async () => new Promise<Response>(() => {})) as unknown as typeof fetch
+    const started = Date.now()
+    const result = await fetchStarCounts([repo(0)], {
+      ...options, fetchImpl, sleep: async (_ms: number) => {}, timeoutMs: 50,
+    })
+    expect(result.stars.size).toBe(0)
+    expect(result.skipped).toHaveLength(1)
+    expect(result.skipped[0]).toContain('owner0/repo0')
+    expect(result.skipped[0]).toContain('gateway unreachable')
+    expect(Date.now() - started).toBeLessThan(5000)
+  })
+
+  it('does not fire early: a slow but healthy batch still yields its counts', async () => {
+    // The other side of the bound. A deadline wired to the wrong number passes
+    // the stall test above and then drops every star count in the catalog —
+    // silently, because losing them is already a supported outcome here.
+    const SLOW_MS = 40
+    const DEADLINE_MS = 2000
+    const fetchImpl = (async () => {
+      await new Promise(resolve => setTimeout(resolve, SLOW_MS))
+      return okResponse({ 'owner0/repo0': 7 })
+    }) as unknown as typeof fetch
+    const result = await fetchStarCounts([repo(0)], { ...options, fetchImpl, timeoutMs: DEADLINE_MS })
+    expect(result.stars.get('owner0/repo0')).toBe(7)
+    expect(result.skipped).toEqual([])
+  })
+})
+
+describe('the stars step is bounded in aggregate', () => {
+  const MINUTE = 60_000
+
+  it('has an aggregate budget at all', () => {
+    expect(STARS_BUDGET_MS).toBe(600_000)
+  })
+
+  it('stops asking once the budget is spent, and still gives every repo a row', async () => {
+    // Measured before it was bounded: batches run SEQUENTIALLY and a throw is
+    // not retried (the ladder matches on status), so the product is
+    // batches x 1 x STARS_REQUEST_TIMEOUT_MS -- no multiplier, but linear in
+    // the catalog. At ~4000 GitHub repos that is 80 batches x 30s = ~40
+    // minutes, and it grows with the ecosystem. fetchStarCounts runs at
+    // build.ts:214, BEFORE every artifact write at :264-270, so that stall is
+    // charged to the catalog even though stars are advisory and every failure
+    // here already ends in `skipped`.
+    const REPOS = 250
+    let clock = 0
+    let calls = 0
+    const fetchImpl = (async () => {
+      calls += 1
+      clock += 6 * MINUTE
+      return new Promise<Response>(() => {})
+    }) as unknown as typeof fetch
+    const result = await fetchStarCounts(Array.from({ length: REPOS }, (_, i) => repo(i)), {
+      ...options, fetchImpl, now: () => clock, sleep: async (_ms: number) => {}, timeoutMs: 20, budgetMs: 15 * MINUTE,
+    })
+    // Three asked (0->6, 6->12, 12->18), then the budget stops the rest.
+    expect(calls).toBe(3)
+    expect(result.stars.size).toBe(0)
+    expect(result.skipped).toHaveLength(REPOS)
+    expect(result.skipped.some(entry => entry.includes('budget'))).toBe(true)
+  })
+
+  it('uses STARS_BUDGET_MS when no budget is handed in', async () => {
+    // The production wiring, which every other budget test here bypasses by
+    // injecting both seams at once.
+    let clock = 0
+    let calls = 0
+    const fetchImpl = (async () => {
+      calls += 1
+      clock += 15 * MINUTE
+      return new Promise<Response>(() => {})
+    }) as unknown as typeof fetch
+    const result = await fetchStarCounts(Array.from({ length: 250 }, (_, i) => repo(i)), {
+      ...options, fetchImpl, now: () => clock, sleep: async (_ms: number) => {}, timeoutMs: 20,
+    })
+    // One batch asked, then the default ten-minute budget is spent.
+    expect(calls).toBe(1)
+    expect(result.skipped).toHaveLength(250)
+    expect(result.skipped.some(entry => entry.includes('budget'))).toBe(true)
+  })
+
+  it('uses a real clock when none is handed in', async () => {
+    let calls = 0
+    const fetchImpl = (async () => { calls += 1; return new Promise<Response>(() => {}) }) as unknown as typeof fetch
+    const result = await fetchStarCounts(Array.from({ length: 250 }, (_, i) => repo(i)), {
+      ...options, fetchImpl, sleep: async (_ms: number) => {}, timeoutMs: 40, budgetMs: 60,
+    })
+    expect(calls).toBeGreaterThanOrEqual(1)
+    expect(calls).toBeLessThan(5)
+    expect(result.skipped).toHaveLength(250)
+  })
+
+  it('leaves a healthy run untouched', async () => {
+    // The other side: a budget that fired on a healthy run would drop star
+    // counts silently, which is already a supported outcome and so would go
+    // unnoticed indefinitely.
+    let clock = 0
+    let calls = 0
+    const fetchImpl = (async () => {
+      calls += 1
+      clock += 1 * MINUTE
+      return okResponse(Object.fromEntries(Array.from({ length: STAR_BATCH_SIZE }, (_, i) => [`k${i}`, i])))
+    }) as unknown as typeof fetch
+    const result = await fetchStarCounts(Array.from({ length: 250 }, (_, i) => repo(i)), {
+      ...options, fetchImpl, now: () => clock, budgetMs: 15 * MINUTE,
+    })
+    expect(calls).toBe(5)
+    expect(result.stars.size).toBe(250)
+    expect(result.skipped).toEqual([])
+  })
+})
+
+describe('a deadline is not a malformed body', () => {
+  // The last of the repo's five body readers still relabelling its own
+  // deadline. npm-client's twin states the rule outright ("A deadline is not a
+  // malformed body... Same rethrow as github-client's twin reader") and
+  // github-client's three readers follow it; this one answered a mid-body
+  // stall with `o/r: unreadable body`, which is a statement about GitHub's
+  // response when the truth is that our clock ran out.
+  //
+  // Impact is small on purpose: build.ts publishes only the COUNT of
+  // `skipped`, so the string reaches no artifact. It is the rule that matters
+  // — the next reader copies whichever of the two shapes it finds.
+
+  it('reports a mid-body stall as a stall, never as an unreadable body', async () => {
+    const started = Date.now()
+    const result = await fetchStarCounts([repo(0)], {
+      ...options, fetchImpl: headersThenStalledBody(), sleep: async (_ms: number) => {}, timeoutMs: 50,
+    })
+    expect(result.stars.size).toBe(0)
+    expect(result.skipped).toHaveLength(1)
+    expect(result.skipped[0]).not.toContain('unreadable body')
+    // The outer catch already says the honest thing, and names our own clock.
+    expect(result.skipped[0]).toContain('owner0/repo0: gateway unreachable')
+    expect(result.skipped[0]).toContain('github graphql request exceeded 50ms')
+    expect(Date.now() - started).toBeLessThan(5000)
+  })
+
+  it('still calls a genuinely malformed body unreadable', async () => {
+    // The other side: a 200 carrying an error page is exactly what "unreadable
+    // body" is for, and the rethrow must not swallow that case too.
+    const fetchImpl = (async () => new Response('<!doctype html>', { status: 200 })) as unknown as typeof fetch
+    const result = await fetchStarCounts([repo(0), repo(1)], { ...options, fetchImpl })
+    expect(result.stars.size).toBe(0)
+    expect(result.skipped).toEqual(['owner0/repo0: unreadable body', 'owner1/repo1: unreadable body'])
   })
 })

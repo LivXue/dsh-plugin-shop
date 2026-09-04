@@ -149,6 +149,106 @@ describe('runPipeline', () => {
     expect(first.pluginsJson).toBe(second.pluginsJson)
     expect(JSON.parse(first.indexJson).stars).toEqual(stars)
   })
+
+  it('keeps plugins.json bounded when a candidate carries megabyte strings', () => {
+    // The real toCandidate -> gate -> assignTier -> emit path produced a
+    // 203 MB plugins.json from ONE package with 1 MB strings. Every reader
+    // downloads that file.
+    const hostile: Candidate = {
+      name: 'dsh-hostile-plugin',
+      version: '1.0.0',
+      integrity: 'sha512-x',
+      publishedAt: '2026-08-01T12:00:00.000Z',
+      repository: `https://github.com/you/${'x'.repeat(1024 * 1024)}`,
+      license: 'M'.repeat(1024 * 1024),
+      deprecated: false,
+      hasBundle: true,
+      catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: ['c'.repeat(1024 * 1024)] },
+      description: 'A hostile plugin.',
+      keywords: [],
+      peers: Array.from({ length: 200 }, () => 'p'.repeat(1024 * 1024)),
+    }
+    // A first-seen row so the size assertion below is what fails when the
+    // bounds are gone: without one, assignTier throws on the listed hostile
+    // entry and the test would never reach a byte of plugins.json. Once the
+    // bounds hold, the gate rejects the candidate and the row is never read.
+    const withHostileRow = parseRegistryConfig({
+      verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: github:r\n  reviewCommit: abc\n  notes: fine\n',
+      denied: '[]',
+      allowedSimilar: '[]',
+      categories: '[]',
+      firstSeen: [
+        '- name: dsh-fs-tool',
+        '  added: 2026-08-10',
+        '- name: dsh-hello-plugin',
+        '  added: 2026-08-11',
+        '- name: dsh-derived-plugin',
+        '  added: 2026-08-12',
+        '- name: dsh-hostile-plugin',
+        '  added: 2026-08-15',
+      ].join('\n') + '\n',
+    })
+    const { pluginsJson, report } = runPipeline([...candidates, hostile], [], withHostileRow, BUILT_AT)
+    const parsed = JSON.parse(pluginsJson) as { plugins: { name: string }[] }
+    expect(parsed.plugins.map(p => p.name)).not.toContain('dsh-hostile-plugin')
+    expect(report).toContain('| dsh-hostile-plugin | no-license |')
+    expect(pluginsJson.length).toBeLessThan(64 * 1024)
+  })
+
+  it('keeps plugins.json bounded when every field is legal and the ENTRY is not', () => {
+    // The case a per-field bound cannot see. Each value below is inside its
+    // own limit -- `peers` is exactly what toCandidate admits today, 200 names
+    // of 214 characters -- and the entry still costs 45,608 bytes of a file
+    // whose live average entry is 797 B. 100 such packages added 4.7 MB to a
+    // 7.2 MB file, and against the live catalog (3,514 npm + 5,908 github)
+    // the aggregate ceiling was ~186 MiB. The entry budget is what caps that;
+    // this pins it through the real gate -> assignTier -> emit path rather
+    // than at the gate's own return value.
+    const HOSTILE = 100
+    const bloated = Array.from({ length: HOSTILE }, (_, n): Candidate => ({
+      name: `dsh-bloat-${String(n).padStart(3, '0')}`,
+      version: '1.0.0',
+      integrity: 'sha512-x',
+      publishedAt: '2026-08-01T12:00:00.000Z',
+      repository: 'https://github.com/you/bloat',
+      license: 'MIT',
+      deprecated: false,
+      hasBundle: true,
+      catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
+      description: 'A bloated plugin.',
+      keywords: [],
+      peers: Array.from({ length: 200 }, (_, i) => `${String(i).padStart(4, '0')}${'p'.repeat(210)}`),
+    }))
+    // first-seen rows for all of them, so that WITHOUT the budget this test
+    // fails on the size rather than on assignTier throwing before a byte of
+    // plugins.json exists. With the budget they are rejected and never read.
+    const withBloatRows = parseRegistryConfig({
+      verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: github:r\n  reviewCommit: abc\n  notes: fine\n',
+      denied: '[]',
+      allowedSimilar: '[]',
+      categories: '[]',
+      firstSeen: [
+        '- name: dsh-fs-tool',
+        '  added: 2026-08-10',
+        '- name: dsh-hello-plugin',
+        '  added: 2026-08-11',
+        '- name: dsh-derived-plugin',
+        '  added: 2026-08-12',
+        ...bloated.flatMap(c => [`- name: ${c.name}`, '  added: 2026-08-15']),
+      ].join('\n') + '\n',
+    })
+    const clean = runPipeline(candidates, [], config, BUILT_AT)
+    const { pluginsJson, report } = runPipeline([...candidates, ...bloated], [], withBloatRows, BUILT_AT)
+    const listed = (JSON.parse(pluginsJson) as { plugins: { name: string }[] }).plugins.map(p => p.name)
+    expect(listed.filter(n => n.startsWith('dsh-bloat-'))).toEqual([])
+    // Not one byte of the 4.5 MB reaches the file: the catalog is the clean
+    // one, exactly.
+    expect(pluginsJson).toBe(clean.pluginsJson)
+    // Every one of them is named in the report with an author-readable reason,
+    // because nothing disappears without a reason attached to its name.
+    expect(report).toContain('| dsh-bloat-000 | no-manifest | Would publish 45608 bytes of catalog entry, past the 12288-byte budget one entry may occupy in plugins.json. |')
+    expect(report.match(/\| dsh-bloat-\d\d\d \| no-manifest \|/g)).toHaveLength(HOSTILE)
+  })
 })
 
 describe('runPipeline with repository candidates', () => {
@@ -262,5 +362,100 @@ describe('subpackage entries and the schemaVersion bump', () => {
   it('defaults to schemaVersion 3 when the flag is off', () => {
     const artifacts = runPipeline([], [subCandidate], config, BUILT_AT)
     expect(JSON.parse(artifacts.indexJson).schemaVersion).toBe(3)
+  })
+})
+
+describe('nothing unpaired leaves for plugins.json', () => {
+  // The claim three rounds tried to make and kept scoping too narrowly.
+  // toWellFormedCatalog covered the CATALOG SECTION; plugins.json is not the
+  // catalog section. Entry.license, Entry.repository, Entry.publisher and
+  // Entry.peers[] are npm-manifest strings taken verbatim and bounded on
+  // LENGTH only, so `"license": "MIT\ud800"` put a lone surrogate straight
+  // into the artifact — the same UnicodeEncodeError the catalog fix cites as
+  // the reason it matters.
+  //
+  // So the guarantee is stated where it can stay true: every string in every
+  // emitted Entry, at the emit boundary, whatever fields an Entry grows next.
+  const LONE_SURROGATE_ESCAPE = /\\ud[89ab][0-9a-f]{2}/i
+
+  const hostileConfig = parseRegistryConfig({
+    verified: '[]', denied: '[]', allowedSimilar: '[]', categories: '[]',
+    firstSeen: '- name: dsh-hostile-plugin\n  added: 2026-08-11\n',
+  })
+
+  const hostile: Candidate = {
+    name: 'dsh-hostile-plugin',
+    version: '1.0.0\uD800',
+    integrity: 'sha512-x\uDC00',
+    publishedAt: '2026-08-01T12:00:00.000Z',
+    repository: 'https://github.com/you/p\uD800',
+    license: 'MIT\uD800',
+    deprecated: false,
+    hasBundle: true,
+    catalog: { category: 'tool', summary: { en: 'en \uD800', zh: 'zh \uDC00' }, capabilities: ['cap \uD800'] },
+    description: 'A plugin.',
+    keywords: [],
+    publisher: 'someone\uD800',
+    peers: ['peer-a\uD800', 'peer-b'],
+  }
+
+  it('emits no unpaired surrogate in any entry it publishes', () => {
+    // "in any entry", not "anywhere in the file": the pass covers Entry, which
+    // is what `plugins` holds. The sibling `denied[]` array is built from
+    // rejection details and does not pass through it — not a live gap (those
+    // strings are human-authored denial reasons from denied.yml), but the
+    // claim is scoped to what is actually enforced.
+    const { pluginsJson } = runPipeline([hostile], [], hostileConfig, BUILT_AT)
+    // JSON.stringify escapes an orphan as \udXXX, so the file stays ASCII and
+    // the content hash stays stable — which is precisely why no existing test
+    // noticed. The escape is what has to be absent.
+    expect(LONE_SURROGATE_ESCAPE.test(pluginsJson)).toBe(false)
+  })
+
+  it('covers the fields outside the catalog section, one at a time', () => {
+    // Named individually so a regression points at the field that regressed
+    // rather than at "something somewhere in the entry".
+    const { pluginsJson } = runPipeline([hostile], [], hostileConfig, BUILT_AT)
+    const entry = (JSON.parse(pluginsJson) as { plugins: Record<string, unknown>[] }).plugins[0]
+    const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+    for (const field of ['version', 'integrity', 'repository', 'license', 'publisher']) {
+      expect(lone.test(String(entry?.[field] ?? '')), field).toBe(false)
+    }
+    for (const peer of (entry?.peers as string[] | undefined) ?? []) {
+      expect(lone.test(peer), 'peers').toBe(false)
+    }
+  })
+
+  it('preserves every entry\'s key order through the well-formedness pass', () => {
+    // The pass rebuilds each object (Object.fromEntries over Object.entries),
+    // so key order is a property it can silently change — and a reorder
+    // rewrites every entry in plugins.json, moves the content hash and
+    // invalidates every CDN cache, which is the harm the builtAt invariant
+    // exists to prevent. Mutating the recursion to sort keys left 441/441
+    // green before this assertion existed.
+    const { pluginsJson } = runPipeline(candidates, [], config, BUILT_AT)
+    const parsed = JSON.parse(pluginsJson) as { plugins: Record<string, unknown>[] }
+    const entry = parsed.plugins.find(p => p.name === 'dsh-fs-tool')
+    const keys = Object.keys(entry ?? {})
+    expect(keys).toEqual([
+      'name', 'version', 'integrity', 'publishedAt', 'repository', 'license',
+      'metadata', 'catalog', 'source', 'added', 'tier', 'review',
+    ])
+    // Stated twice on purpose: the list above pins the exact order, and this
+    // pins that the order is not merely SOME deterministic order — sorting is
+    // the specific reordering a rebuild is most likely to introduce.
+    expect(keys).not.toEqual([...keys].sort())
+    // The nested objects are rebuilt too, so they need the same statement.
+    const catalog = entry?.catalog as Record<string, unknown> | undefined
+    expect(Object.keys(catalog ?? {})).toEqual(['category', 'summary', 'capabilities'])
+  })
+
+  it('leaves a well-formed catalog byte-identical', () => {
+    // toWellFormed is the identity on well-formed text, and the ordinary build
+    // must not acquire a replacement character or a reordered key. The
+    // fixtures' artifact is the strongest available statement of that.
+    const before = runPipeline(candidates, [], config, BUILT_AT)
+    expect(before.pluginsJson).toContain('dsh-hello-plugin')
+    expect(LONE_SURROGATE_ESCAPE.test(before.pluginsJson)).toBe(false)
   })
 })

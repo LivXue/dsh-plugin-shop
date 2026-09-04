@@ -182,13 +182,18 @@ function readOptional(dir: string, file: string): string {
 
 /**
  * Serialize the first-seen file: header, sorted rows, trailing newline.
- * Names are always double-quoted because scoped names start with `@`, which
- * YAML would otherwise read as a tag.
+ *
+ * Names are always JSON-quoted. Quoting at all is because a scoped name starts
+ * with `@`, which YAML would otherwise read as a tag; JSON escaping rather
+ * than bare double quotes is because this file receives EVERY harvested repo
+ * candidate name, gated or not (build.ts), and a GitHub manifest name is
+ * unrestricted. An unescaped `"` in one made `loadRegistryConfig` throw on
+ * every subsequent build until a human edited the file by hand.
  */
 export function serializeFirstSeen(rows: ReadonlyMap<string, string>): string {
   const rowsText = [...rows]
     .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
-    .map(([name, added]) => `- name: "${name}"\n  added: ${added}`)
+    .map(([name, added]) => `- name: ${JSON.stringify(name)}\n  added: ${added}`)
   const body = rowsText.length === 0 ? ['[]'] : rowsText
   const header = [
     '# First catalog appearance per package name (YYYY-MM-DD). Appended by the daily build;',

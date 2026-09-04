@@ -3,7 +3,16 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { incompatibilityMap, nodeResolver } from '../../src/host/peers.ts'
+import {
+  createPeerVersionCheck,
+  incompatibilityMap,
+  nodeResolver,
+  nodeVersionResolver,
+  peerVersionMismatches,
+  peerVersionWarning,
+  type PeerVersionResolver,
+} from '../../src/host/peers.ts'
+import { ownPeerRanges } from '../../src/own-version.ts'
 
 // The real division on the machine where this broke: everything the harness
 // ships resolves from the profile anchor; dsh-client-store, which exists only
@@ -130,5 +139,243 @@ describe('nodeResolver', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+// ── The load-time harness peer-version self-check ──────────────────────────
+
+/** The harness peer ranges this build declares, verbatim from package.json.
+ * `ownPeerRanges` is asserted against this table below, so the fixture cannot
+ * drift into describing a shape the shop no longer ships. */
+const DECLARED: Record<string, string> = {
+  '@deepseek-ai/cordis': '^4.0.1',
+  '@deepseek-ai/cordis-plugin-include': '^1.0.6',
+  '@deepseek-ai/dsh-app-boot': '^0.1.1-rc.2',
+  '@deepseek-ai/dsh-home-paths': '^0.1.1-rc.2',
+  '@deepseek-ai/dsh-typert-protocol': '^0.1.1-rc.2',
+}
+
+/** A resolver over a fixed table: a name the table does not carry yields no
+ * version, which is the no-verdict signal (absence is not a violation). */
+const versions = (table: Record<string, string>): PeerVersionResolver =>
+  spec => table[spec] ?? null
+
+describe('peerVersionMismatches', () => {
+  it('is silent for the versions installed today: 0.1.2-rc.1 against ^0.1.1-rc.2', () => {
+    // The real shape. The harness ships nothing but -rc versions, so strict
+    // semver calls every one of these a violation and this test is what fails
+    // if the comparison ever regresses to strict mode.
+    expect(peerVersionMismatches(DECLARED, versions({
+      '@deepseek-ai/cordis': '4.0.1',
+      '@deepseek-ai/cordis-plugin-include': '1.0.6',
+      '@deepseek-ai/dsh-app-boot': '0.1.2-rc.1',
+      '@deepseek-ai/dsh-home-paths': '0.1.2-rc.1',
+      '@deepseek-ai/dsh-typert-protocol': '0.1.9-rc.3',
+    }))).toEqual([])
+  })
+
+  it('reports a minor-line move — the real breaking change', () => {
+    expect(peerVersionMismatches(
+      { '@deepseek-ai/dsh-app-boot': '^0.1.1-rc.2' },
+      versions({ '@deepseek-ai/dsh-app-boot': '0.2.0-rc.1' }),
+    )).toEqual([{ spec: '@deepseek-ai/dsh-app-boot', range: '^0.1.1-rc.2', found: '0.2.0-rc.1' }])
+  })
+
+  it('reports a version older than the pinned prerelease', () => {
+    // 0.1.1-rc.1 precedes 0.1.1-rc.2, so ^0.1.1-rc.2 excludes it in both modes.
+    expect(peerVersionMismatches(
+      { '@deepseek-ai/dsh-home-paths': '^0.1.1-rc.2' },
+      versions({ '@deepseek-ai/dsh-home-paths': '0.1.1-rc.1' }),
+    )).toEqual([{ spec: '@deepseek-ai/dsh-home-paths', range: '^0.1.1-rc.2', found: '0.1.1-rc.1' }])
+  })
+
+  it('reports a major-line move', () => {
+    expect(peerVersionMismatches(
+      { '@deepseek-ai/cordis': '^4.0.1' },
+      versions({ '@deepseek-ai/cordis': '5.0.0' }),
+    )).toEqual([{ spec: '@deepseek-ai/cordis', range: '^4.0.1', found: '5.0.0' }])
+  })
+
+  it('gives no verdict for a peer it cannot resolve, and still judges the rest', () => {
+    // Only home-paths is installed here. The four absent peers must produce
+    // nothing at all: absence is not a version violation, and the presence
+    // machinery (incompatibilityMap) is what covers it.
+    expect(peerVersionMismatches(DECLARED, versions({
+      '@deepseek-ai/dsh-home-paths': '0.2.0-rc.1',
+    }))).toEqual([{ spec: '@deepseek-ai/dsh-home-paths', range: '^0.1.1-rc.2', found: '0.2.0-rc.1' }])
+  })
+
+  it('treats a throwing resolver as no verdict rather than as a violation', () => {
+    // The same rule incompatibilityMap documents, for the same reason: one
+    // false warning teaches a reader to ignore every warning.
+    const throwing = (): string | null => { throw new Error('anchor unavailable') }
+    expect(peerVersionMismatches(DECLARED, throwing)).toEqual([])
+  })
+
+  it('gives no verdict when the found version is not semver', () => {
+    // `satisfies` answers false for an unparseable version, which would read
+    // as an accusation; an unreadable fact must stay unspoken.
+    expect(peerVersionMismatches(
+      { '@deepseek-ai/dsh-app-boot': '^0.1.1-rc.2' },
+      versions({ '@deepseek-ai/dsh-app-boot': 'nightly' }),
+    )).toEqual([])
+  })
+
+  it('gives no verdict when the declared range is not a range', () => {
+    // e.g. a `workspace:^0.1.1-rc.2` spec, which semver cannot parse.
+    expect(peerVersionMismatches(
+      { '@deepseek-ai/dsh-typert-protocol': 'workspace:^0.1.1-rc.2' },
+      versions({ '@deepseek-ai/dsh-typert-protocol': '0.1.2-rc.1' }),
+    )).toEqual([])
+  })
+
+  it('orders mismatches by peer name, whatever order the manifest declares', () => {
+    const out = peerVersionMismatches(
+      { 'z-peer': '^1.0.0', 'a-peer': '^1.0.0' },
+      versions({ 'z-peer': '2.0.0', 'a-peer': '2.0.0' }),
+    )
+    expect(out.map(m => m.spec)).toEqual(['a-peer', 'z-peer'])
+  })
+
+  it('resolves each declared peer once', () => {
+    let calls = 0
+    const counting = (spec: string): string | null => { calls += 1; return spec === '@deepseek-ai/cordis' ? '4.0.1' : null }
+    peerVersionMismatches(DECLARED, counting)
+    expect(calls).toBe(Object.keys(DECLARED).length)
+  })
+})
+
+describe('peerVersionWarning', () => {
+  it('says nothing when nothing is wrong', () => {
+    expect(peerVersionWarning([])).toBeNull()
+  })
+
+  it('names the peer, its declared range and the version found', () => {
+    expect(peerVersionWarning([
+      { spec: '@deepseek-ai/dsh-app-boot', range: '^0.1.1-rc.2', found: '0.2.0-rc.1' },
+    ])).toBe(
+      'dsh-plugin-shop: the harness does not provide the peer versions this shop declares'
+      + ' — @deepseek-ai/dsh-app-boot ^0.1.1-rc.2, found 0.2.0-rc.1.'
+      + ' The shop still loads; if a path misbehaves, check this first.',
+    )
+  })
+
+  it('names every mismatch in one message', () => {
+    const message = peerVersionWarning([
+      { spec: '@deepseek-ai/dsh-app-boot', range: '^0.1.1-rc.2', found: '0.2.0-rc.1' },
+      { spec: '@deepseek-ai/dsh-home-paths', range: '^0.1.1-rc.2', found: '0.1.1-rc.1' },
+    ])
+    expect(message).toContain('@deepseek-ai/dsh-app-boot ^0.1.1-rc.2, found 0.2.0-rc.1')
+    expect(message).toContain('@deepseek-ai/dsh-home-paths ^0.1.1-rc.2, found 0.1.1-rc.1')
+  })
+})
+
+describe('createPeerVersionCheck', () => {
+  it('warns once, however many times it is called', () => {
+    const warnings: string[] = []
+    const check = createPeerVersionCheck({
+      ranges: { '@deepseek-ai/dsh-app-boot': '^0.1.1-rc.2' },
+      resolve: versions({ '@deepseek-ai/dsh-app-boot': '0.2.0-rc.1' }),
+      warn: message => warnings.push(message),
+    })
+    check()
+    check()
+    check()
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain('@deepseek-ai/dsh-app-boot ^0.1.1-rc.2, found 0.2.0-rc.1')
+  })
+
+  it('stays silent when every declared peer satisfies its range', () => {
+    const warnings: string[] = []
+    createPeerVersionCheck({
+      ranges: DECLARED,
+      resolve: versions({
+        '@deepseek-ai/cordis': '4.0.1',
+        '@deepseek-ai/cordis-plugin-include': '1.0.6',
+        '@deepseek-ai/dsh-app-boot': '0.1.2-rc.1',
+        '@deepseek-ai/dsh-home-paths': '0.1.2-rc.1',
+        '@deepseek-ai/dsh-typert-protocol': '0.1.2-rc.1',
+      }),
+      warn: message => warnings.push(message),
+    })()
+    expect(warnings).toEqual([])
+  })
+
+  it('never throws when the resolver does', () => {
+    const warnings: string[] = []
+    const check = createPeerVersionCheck({
+      ranges: DECLARED,
+      resolve: () => { throw new Error('anchor unavailable') },
+      warn: message => warnings.push(message),
+    })
+    expect(() => check()).not.toThrow()
+    expect(warnings).toEqual([])
+  })
+})
+
+describe('nodeVersionResolver', () => {
+  it('reads the version out of a resolvable package manifest', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'peerversion-'))
+    try {
+      const pkgDir = join(dir, 'node_modules', 'versioned-pkg')
+      mkdirSync(pkgDir, { recursive: true })
+      writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: 'versioned-pkg', version: '0.1.2-rc.1' }))
+      const resolveHere = nodeVersionResolver(pathToFileURL(join(dir, 'anchor.js')).href)
+      expect(resolveHere('versioned-pkg')).toBe('0.1.2-rc.1')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('answers null for a package that is not installed', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'peerversion-'))
+    try {
+      const resolveHere = nodeVersionResolver(pathToFileURL(join(dir, 'anchor.js')).href)
+      expect(resolveHere('genuinely-missing-pkg')).toBeNull()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('answers null for a package that restricts ./package.json in its exports', () => {
+    // nodeResolver rethrows here because `false` would be an accusation of
+    // absence; there is no version to read either way, and null already means
+    // no verdict, so this resolver simply answers null.
+    const dir = mkdtempSync(join(tmpdir(), 'peerversion-'))
+    try {
+      const pkgDir = join(dir, 'node_modules', 'restricted-pkg')
+      mkdirSync(pkgDir, { recursive: true })
+      writeFileSync(
+        join(pkgDir, 'package.json'),
+        JSON.stringify({ name: 'restricted-pkg', version: '1.0.0', main: 'index.js', exports: { '.': './index.js' } }),
+      )
+      writeFileSync(join(pkgDir, 'index.js'), '')
+      const resolveHere = nodeVersionResolver(pathToFileURL(join(dir, 'anchor.js')).href)
+      expect(resolveHere('restricted-pkg')).toBeNull()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('answers null for a manifest that declares no version', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'peerversion-'))
+    try {
+      const pkgDir = join(dir, 'node_modules', 'unversioned-pkg')
+      mkdirSync(pkgDir, { recursive: true })
+      writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: 'unversioned-pkg' }))
+      const resolveHere = nodeVersionResolver(pathToFileURL(join(dir, 'anchor.js')).href)
+      expect(resolveHere('unversioned-pkg')).toBeNull()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('ownPeerRanges', () => {
+  it('reads the peer ranges this build actually declares', () => {
+    // Keeps the DECLARED fixture above honest: a peer range that moves in
+    // package.json fails here, which is the prompt to re-examine whether the
+    // silent case above is still the shape that ships.
+    expect(ownPeerRanges()).toEqual(DECLARED)
   })
 })

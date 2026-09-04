@@ -1,7 +1,10 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { parse } from 'yaml'
 import { loadRegistryConfig, parseRegistryConfig, serializeFirstSeen } from '../src/config.ts'
 
 const empty = {
@@ -257,6 +260,28 @@ describe('serializeFirstSeen', () => {
     const config = parseRegistryConfig({ ...empty, firstSeen: serializeFirstSeen(rows) })
     expect([...config.firstSeen]).toEqual([['@scope/dsh-a', '2026-08-02'], ['dsh-b', '2026-08-01']])
   })
+
+  it('round-trips the four hostile-name probes through serialise then parse', () => {
+    // first-seen.yml receives EVERY harvested repo candidate name, gated or
+    // not (build.ts), so it is the first of the two bot-written files a
+    // hostile manifest name reaches. An unescaped `"` made every subsequent
+    // build throw in loadRegistryConfig until a human edited the file.
+    const probes = [
+      'dsh-"quote',
+      'dsh-a"\n  added: 2026-01-01\n- name: "dsh-victim',
+      'dsh-trailing\\',
+      'dsh-b" # comment',
+    ]
+    const rows = new Map(probes.map(name => [name, '2026-09-03']))
+    const text = serializeFirstSeen(rows)
+    const parsed = parse(text) as { name: string; added: string }[]
+    expect(parsed).toHaveLength(4)
+    expect(parsed.map(row => row.name).sort()).toEqual([...probes].sort())
+    // And the loader accepts what the serialiser wrote — the property that
+    // actually broke: the next build reads this file.
+    const config = parseRegistryConfig({ ...empty, firstSeen: text })
+    expect(config.firstSeen.size).toBe(4)
+  })
 })
 
 describe('loadRegistryConfig', () => {
@@ -281,4 +306,107 @@ describe('loadRegistryConfig', () => {
       rmSync(dir, { recursive: true, force: true })
     }
   })
+})
+
+// ---------------------------------------------------------------------------
+// NPM_BACKUP_REGISTRY, the other registry input — read from the environment
+// rather than from a YAML file, and validated at startup by the entry points
+// that read it.
+//
+// A non-empty value that is not a URL is a TYPO, not a disable: silently
+// treating `registry.npmmirror.com` (scheme dropped) as "no backup" would
+// leave every packument fetch without the failover the 2026-08-31
+// hub-borrowings design turned on by default, and nothing anywhere would say
+// so. An empty (or all-whitespace) value is the documented way to turn the
+// backup off, and must still be accepted.
+//
+// The guard shipped with no test of any kind, which is the state in which a
+// fail-loud check can be deleted green. It is exercised here the only way
+// that proves it actually fires — by running the entry point, as a script,
+// the way production does.
+//
+// Two things make that safe, and both are asserted rather than assumed:
+//  - the child runs in an EMPTY temp directory, so `registry/verified.yml`
+//    does not exist and `loadRegistryConfig` throws ENOENT long before the
+//    first network request. The accept cases below assert that ENOENT, which
+//    is what makes them a positive control: without it, "did not print the
+//    URL error" would also be satisfied by a child that never ran at all.
+//  - credentials are stripped from the child's environment, and `timeout` +
+//    SIGKILL bound it, so a future reordering that put a fetch before the
+//    guard fails this file loudly instead of harvesting npm from a unit test.
+// ---------------------------------------------------------------------------
+
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
+const srcDir = join(repoRoot, 'registry', 'scripts', 'src')
+
+/** Never handed to a child: nothing here may authenticate anywhere, and
+ * SHOP_HARVEST_REPOS must not flip the GitHub half on. */
+const WITHHELD_FROM_CHILD = [
+  'NPM_BACKUP_REGISTRY', 'NPM_TOKEN', 'GITHUB_TOKEN', 'STARS_TOKEN', 'LLM_API_KEY', 'SHOP_HARVEST_REPOS',
+]
+
+/** The modules that read NPM_BACKUP_REGISTRY out of the environment, derived
+ * from the sources so a THIRD reader added later is checked without anyone
+ * remembering to extend a list. */
+function backupRegistryReaders(): string[] {
+  return readdirSync(srcDir)
+    .filter(file => file.endsWith('.ts'))
+    .sort()
+    .filter(file => readFileSync(join(srcDir, file), 'utf8').includes('process.env.NPM_BACKUP_REGISTRY'))
+}
+
+/** Runs one entry point as a script, in an empty directory, with
+ * NPM_BACKUP_REGISTRY set to `value` (or unset when it is `undefined`). */
+function runWithBackupRegistry(file: string, value: string | undefined): { status: number | null; stderr: string } {
+  const cwd = mkdtempSync(join(tmpdir(), 'backup-registry-guard-'))
+  try {
+    const env: NodeJS.ProcessEnv = { ...process.env }
+    for (const name of WITHHELD_FROM_CHILD) delete env[name]
+    if (value !== undefined) env.NPM_BACKUP_REGISTRY = value
+    const result = spawnSync(
+      process.execPath,
+      ['--experimental-strip-types', join(srcDir, file)],
+      { cwd, env, encoding: 'utf8', timeout: 30_000, killSignal: 'SIGKILL' },
+    )
+    const spawnError = result.error === undefined ? '' : `\nspawn error: ${result.error.message}`
+    return { status: result.status, stderr: `${result.stderr}${spawnError}` }
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+}
+
+describe('NPM_BACKUP_REGISTRY is refused at startup when it is not a URL', () => {
+  it('finds the modules that read it, so the checks below cannot pass by scanning nothing', () => {
+    const readers = backupRegistryReaders()
+    expect(readers).toContain('build.ts')
+    expect(readers).toContain('classify.ts')
+  })
+
+  for (const file of backupRegistryReaders()) {
+    it(`${file} refuses a non-URL value, and stops before it reads any input`, () => {
+      // The realistic typo: the scheme dropped. URL.canParse says no.
+      const run = runWithBackupRegistry(file, 'registry.npmmirror.com')
+      expect(run.status, `stderr:\n${run.stderr}`).not.toBe(0)
+      expect(run.stderr).toContain('NPM_BACKUP_REGISTRY is not a URL')
+      // …and it stopped THERE. No registry file was read, so no ENOENT: the
+      // guard is a startup check, not something a later failure happens to
+      // pre-empt.
+      expect(run.stderr, 'the guard must fire before the registry inputs are read').not.toContain('ENOENT')
+    })
+
+    it(`${file} accepts a URL, an all-whitespace disable, and no value at all`, () => {
+      // Three values that must all get PAST the guard: the production
+      // default's own URL, the documented disable (fetchWithFailover treats
+      // '' and an all-whitespace value as "no backup"), and the unset case.
+      for (const value of ['https://registry.npmmirror.com', '   ', undefined]) {
+        const label = value === undefined ? '(unset)' : JSON.stringify(value)
+        const run = runWithBackupRegistry(file, value)
+        expect(run.stderr, `${label} was refused:\n${run.stderr}`).not.toContain('NPM_BACKUP_REGISTRY is not a URL')
+        // The positive control: it really did run on, and died on the missing
+        // registry input in the empty directory rather than never starting.
+        expect(run.stderr, `${label} did not reach loadRegistryConfig:\n${run.stderr}`).toContain('ENOENT')
+        expect(run.status, `${label}:\n${run.stderr}`).not.toBe(0)
+      }
+    })
+  }
 })

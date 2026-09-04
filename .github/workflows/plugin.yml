@@ -20,7 +20,19 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 24, cache: pnpm }
       - run: pnpm install --frozen-lockfile
-      - run: npm install -g @deepseek-ai/dsh@0.1.1-rc.2
+      # Pinned to the harness the e2e's DOM contract is written against, NOT to
+      # the workspace's own lockfile (which still resolves the harness dev deps
+      # at 0.1.1-rc.2 — a separate, deliberate pin). This global install is what
+      # serves the web UI the e2e drives, and the two versions render mutually
+      # exclusive contracts. Measured 2026-09-04 in
+      # @deepseek-ai/dsh-client-ui-settings-plugin-inventory:
+      #   0.1.1-rc.2  data-enabled x2, data-kind x0, no 全局插件 section
+      #   0.1.2-rc.1  data-enabled x0, data-kind x5, 插件列表 split in two with
+      #               the Loader plane COLLAPSED when a preset roster exists
+      # So a selector suite can satisfy one and only one of them. It is written
+      # against 0.1.2-rc.1 because that is what users install today; when this
+      # pin moves again, expect web-full-flow.e2e.ts to move with it.
+      - run: npm install -g @deepseek-ai/dsh@0.1.2-rc.1
       - run: dsh --version
       # The web full-flow e2e (P2 exit criterion) needs a playwright browser;
       # without --with-deps for now — the ubuntu-latest image already carries

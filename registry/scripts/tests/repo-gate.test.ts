@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { gateRepo } from '../src/repo-gate.ts'
+import { ENTRY_PAYLOAD_MAX_BYTES, LICENSE_MAX_LENGTH, REPOSITORY_MAX_LENGTH, gate } from '../src/gate.ts'
 import { parseRegistryConfig } from '../src/config.ts'
 import type { RepoCandidate } from '../src/types.ts'
 
@@ -12,6 +13,9 @@ const config = parseRegistryConfig({
 })
 
 const commit = 'a'.repeat(40)
+
+/** An unpaired UTF-16 surrogate; see gate.test.ts for the hazard it marks. */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
 
 function repo(overrides: Partial<RepoCandidate> = {}): RepoCandidate {
   return {
@@ -87,6 +91,26 @@ describe('gateRepo', () => {
       expect(result.accepted.metadata).toBe('derived')
       expect(result.accepted.catalog.summary.en).toBe('Derives from the description.')
     }
+  })
+
+  it('never splits a surrogate pair when capping a derived summary', () => {
+    // The same defect as gate.ts's, in the twin call site. A repo description
+    // is GitHub-supplied free text and lands in the same published
+    // plugins.json; see the gate.test.ts case for the end-to-end measurement.
+    const result = gateRepo(repo({ catalog: null, description: `${'a'.repeat(199)}\u{1F600}tail` }), config)
+    if (!result.ok) throw new Error('expected acceptance')
+    const en = result.accepted.catalog.summary.en
+    expect(en).toMatch(/^a{199}$/)
+    expect(LONE_SURROGATE.test(en)).toBe(false)
+  })
+
+  it('keeps an astral character that ends exactly at the cap', () => {
+    const result = gateRepo(repo({ catalog: null, description: `${'a'.repeat(198)}\u{1F600}tail` }), config)
+    if (!result.ok) throw new Error('expected acceptance')
+    const en = result.accepted.catalog.summary.en
+    expect(en.length).toBe(200)
+    expect(en.endsWith('\u{1F600}')).toBe(true)
+    expect(LONE_SURROGATE.test(en)).toBe(false)
   })
 
   it('rejects a repository with neither a catalog nor a description', () => {
@@ -209,5 +233,121 @@ describe('the shop excludes its own repository', () => {
       repository: 'https://github.com/someone-else/dsh-plugin-shop',
     }), config)
     expect(result.ok, 'another owner is not us').toBe(true)
+  })
+})
+
+describe('the bounds the two channels share', () => {
+  // `license` and `repository` are the same two published fields on both
+  // channels, and only the npm gate bounded them. Low risk today — a repo
+  // license is GitHub's `license.spdx_id` (live maximum 37) and `repository`
+  // is built from `meta.fullName` (live maximum 108) — but an API shape change
+  // is precisely what a bound exists for, and a field bounded on one channel
+  // and not the other is a hole with a published name on it.
+
+  /** The npm candidate the same over-long value would arrive on, so the two
+   * details can be compared rather than transcribed. */
+  const npmConfig = parseRegistryConfig({
+    verified: '[]', denied: '[]', allowedSimilar: '[]', categories: '[]', firstSeen: '[]',
+  })
+  const npmCandidate = (overrides: Partial<import('../src/types.ts').Candidate>) => ({
+    name: 'dsh-hello-plugin',
+    version: '1.0.0',
+    integrity: 'sha512-abc',
+    publishedAt: '2026-08-01T12:00:00.000Z',
+    repository: 'https://github.com/you/hello-plugin',
+    license: 'MIT',
+    deprecated: false,
+    hasBundle: true,
+    catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
+    description: 'A plugin.',
+    keywords: [],
+    peers: [],
+    ...overrides,
+  })
+
+  it("rejects an over-long license with the reason npm's gate gives, word for word", () => {
+    const license = 'M'.repeat(LICENSE_MAX_LENGTH + 1)
+    const result = gateRepo(repo({ license }), config)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.rejection.code).toBe('no-license')
+    expect(result.rejection.detail).toBe(
+      'Declares a license string longer than 128 characters, so it is not an SPDX identifier.')
+    // The claim itself: an author reads the same sentence whichever channel
+    // their listing came from. Compared rather than transcribed, so the two
+    // cannot drift apart without this failing.
+    const npm = gate(npmCandidate({ license }), npmConfig)
+    expect(npm.ok).toBe(false)
+    if (npm.ok) return
+    expect(result.rejection.detail).toBe(npm.rejection.detail)
+  })
+
+  it("rejects an over-long repository URL with the reason npm's gate gives, word for word", () => {
+    const repository = `https://github.com/you/${'x'.repeat(REPOSITORY_MAX_LENGTH)}`
+    const result = gateRepo(repo({ repository }), config)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.rejection.code).toBe('no-repository')
+    expect(result.rejection.detail).toBe(
+      'Declares a repository URL longer than 512 characters, so it cannot be audited as a source location.')
+    const npm = gate(npmCandidate({ repository }), npmConfig)
+    expect(npm.ok).toBe(false)
+    if (npm.ok) return
+    expect(result.rejection.detail).toBe(npm.rejection.detail)
+  })
+
+  it('accepts a license and a repository exactly at the bounds', () => {
+    expect(gateRepo(repo({ license: 'M'.repeat(LICENSE_MAX_LENGTH) }), config).ok, 'license').toBe(true)
+    expect(gateRepo(repo({ repository: `https://h/${'x'.repeat(REPOSITORY_MAX_LENGTH - 10)}` }), config).ok, 'repository').toBe(true)
+  })
+
+  it('names the rejection by the unit an author fixes, not by the bundle name', () => {
+    // The repo gate keys every rejection on `owner/slug`; the two new bounds
+    // must not be the ones that key on something else.
+    const result = gateRepo(repo({ license: 'M'.repeat(LICENSE_MAX_LENGTH + 1) }), config)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.rejection.name).toBe('someone/dsh-repo-plugin')
+  })
+})
+
+describe('the per-entry size budget on the github channel', () => {
+  // A repo entry carries no `peers`, so the budget is not where its weight is
+  // today — but a release-rescued entry publishes `tarball.url` straight from
+  // the GitHub releases API, and that string is bounded nowhere else. The
+  // budget is the backstop for it and for whatever field an entry grows next.
+
+  it('rejects a repo entry whose published payload is past the budget', () => {
+    const result = gateRepo(repo({
+      requiresBuild: true,
+      release: {
+        tag: 'v1.0.0',
+        url: `https://github.com/someone/dsh-repo-plugin/releases/download/v1.0.0/${'u'.repeat(20_000)}.tgz`,
+        sha256: 'a'.repeat(64),
+      },
+    }), config)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.rejection.code).toBe('no-manifest')
+    expect(result.rejection.detail).toContain(`past the ${ENTRY_PAYLOAD_MAX_BYTES}-byte budget`)
+    expect(result.rejection.name).toBe('someone/dsh-repo-plugin')
+  })
+
+  it('accepts the worst repo entry the live catalog could hold', () => {
+    // Every maximum measured against the live catalog on 2026-09-04, in one
+    // entry: repository 108, license 37, both summaries 200 CJK characters
+    // (599 UTF-8 bytes each), 20 capabilities of 14. A github entry has no
+    // peers and no publisher, so this is the whole of its weight — about
+    // 2.5 KiB against a 12,288-byte budget.
+    const summary = `${'中'.repeat(199)}x`
+    const result = gateRepo(repo({
+      repository: `https://github.com/an-organization/${'r'.repeat(73)}`,
+      license: 'l'.repeat(37),
+      catalog: {
+        category: 'tool',
+        summary: { en: summary, zh: summary },
+        capabilities: Array.from({ length: 20 }, () => 'c'.repeat(14)),
+      },
+    }), config)
+    expect(result.ok).toBe(true)
   })
 })

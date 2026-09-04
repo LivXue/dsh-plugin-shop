@@ -100,9 +100,14 @@ list is a different product surface and stays out.
 
 ## C. Registry fallback chain (fetch layer only)
 
-The harvest's npm fetches (search + packument) gain a backup registry for
-transport failures. Installs are explicitly NOT touched — they run in the
-user's profile through the user's pnpm and registry config.
+The harvest's npm fetches (search + packument as drafted here; **amended
+2026-09-03**: packument only — registry.npmmirror.com does not implement
+the `keywords:` qualifier the search depends on, measured 2026-09-03 as
+`{"objects":[],"total":0}` for both harvest keywords, so the search never
+receives a backup argument; `searchByKeywords` still accepts one, unused by
+both production call sites) gain a backup registry for transport failures.
+Installs are explicitly NOT touched — they run in the user's profile
+through the user's pnpm and registry config.
 
 - **Ordering**: primary `https://registry.npmjs.org`, backup
   `https://registry.npmmirror.com` (env `NPM_BACKUP_REGISTRY` to override

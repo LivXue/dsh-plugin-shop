@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { catalogPackageFiles, nextCatalogVersion } from '../src/npm-package.ts'
+import { catalogPackageFiles, catalogPublishDecision, nextCatalogVersion } from '../src/npm-package.ts'
 
 describe('nextCatalogVersion', () => {
   it('stamps YYYY.MMDD.0 for the first build of a day', () => {
@@ -95,6 +95,11 @@ describe('catalogPackageFiles', () => {
     expect(manifest.catalogShas).toEqual({ plugins: 'abc123', stars: 'def456' })
   })
 
+  it('records the build time so the next publish can refuse to go backwards', () => {
+    const manifest = JSON.parse(catalogPackageFiles(input).packageJson) as Record<string, unknown>
+    expect(manifest.catalogBuiltAt).toBe('2026-09-01T03:17:00.000Z')
+  })
+
   it('records a null stars hash when the build published no sidecar', () => {
     const manifest = JSON.parse(
       catalogPackageFiles({ ...input, starsFileName: null, shas: { plugins: 'abc123', stars: null } }).packageJson,
@@ -126,5 +131,89 @@ describe('catalogPackageFiles', () => {
       expect(text.endsWith('\n')).toBe(true)
       expect(text.endsWith('\n\n')).toBe(false)
     }
+  })
+})
+
+describe('catalogPublishDecision', () => {
+  const shas = { plugins: 'abc123', stars: 'def456' }
+  const published = {
+    version: '2026.903.5',
+    shas: { plugins: 'older-plugins', stars: 'older-stars' },
+    builtAt: '2026-09-03T09:27:42.934Z',
+  }
+  const newer = { builtAt: '2026-09-04T03:17:00.000Z', shas }
+
+  it('publishes when the package has never been published', () => {
+    expect(catalogPublishDecision(newer, null)).toEqual({ kind: 'publish' })
+  })
+
+  it('publishes a build newer than the published one', () => {
+    expect(catalogPublishDecision(newer, published)).toEqual({ kind: 'publish' })
+  })
+
+  it('skips when both content hashes match the published version', () => {
+    const decision = catalogPublishDecision({ ...newer, shas: published.shas }, published)
+    expect(decision.kind).toBe('skip')
+  })
+
+  // The regression this guard exists for. At 2026-09-03T16:46Z a
+  // `publish:catalog` run from a tree whose `dist/v1` had not been rebuilt
+  // since 09-02 shipped that stale build as 2026.903.6, and npm moved
+  // `latest` onto it: readers whose origin race went to npm got a catalog two
+  // days old and 818 entries short. The hash check passed and always would --
+  // stale content hashes differ from the published ones exactly as new
+  // content does -- so the build time is the only fact that separates them.
+  it('refuses a build older than the published one', () => {
+    const decision = catalogPublishDecision({ builtAt: '2026-09-02T08:32:15.310Z', shas }, published)
+    expect(decision.kind).toBe('refuse')
+  })
+
+  it('names both build times and the way out in the refusal', () => {
+    const decision = catalogPublishDecision({ builtAt: '2026-09-02T08:32:15.310Z', shas }, published)
+    if (decision.kind !== 'refuse') throw new Error(`expected a refusal, got ${decision.kind}`)
+    expect(decision.reason).toContain('2026-09-02T08:32:15.310Z')
+    expect(decision.reason).toContain('2026-09-03T09:27:42.934Z')
+    expect(decision.reason).toContain('2026.903.5')
+    expect(decision.reason).toContain('build:catalog')
+  })
+
+  // Same clock reading, different bytes: whatever produced this, it is not a
+  // build that ran after the published one, and publishing it would move
+  // `latest` onto content whose provenance we cannot order.
+  it('refuses a build stamped at the same instant as the published one', () => {
+    const decision = catalogPublishDecision({ builtAt: published.builtAt, shas }, published)
+    expect(decision.kind).toBe('refuse')
+  })
+
+  // Identical content is nothing to publish whichever way the clock reads, so
+  // the skip is decided before the guard. Refusing here would fail a job that
+  // has nothing to do -- the daily build on an ecosystem that did not change.
+  it('skips, rather than refuses, a stale build whose content is identical', () => {
+    const decision = catalogPublishDecision(
+      { builtAt: '2026-09-02T08:32:15.310Z', shas: published.shas },
+      published,
+    )
+    expect(decision.kind).toBe('skip')
+  })
+
+  // Every version published before `catalogBuiltAt` existed carries no build
+  // time, and 2026.903.5 -- the `latest` this guard ships against -- is one of
+  // them. An unorderable pair cannot be refused without blocking the very
+  // publish that introduces the field, so the guard starts working one
+  // published version later, and says so rather than pretending otherwise.
+  it('publishes against a published version that carries no build time', () => {
+    expect(catalogPublishDecision(newer, { ...published, builtAt: null })).toEqual({ kind: 'publish' })
+  })
+
+  it('publishes against a published build time it cannot parse', () => {
+    expect(catalogPublishDecision(newer, { ...published, builtAt: 'not a date' })).toEqual({ kind: 'publish' })
+  })
+
+  // A local build time that will not parse is a malformed `dist/v1/index.json`.
+  // The project stops rather than publishing something plausible and wrong.
+  it('refuses a local build time it cannot parse', () => {
+    const decision = catalogPublishDecision({ builtAt: 'not a date', shas }, published)
+    expect(decision.kind).toBe('refuse')
+    expect(catalogPublishDecision({ builtAt: 'not a date', shas }, null).kind).toBe('refuse')
   })
 })

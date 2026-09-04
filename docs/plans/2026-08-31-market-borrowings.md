@@ -20,7 +20,7 @@
 - Rejections must be tested through the executor/RPC, never by asserting a UI button state.
 - `builtAt` never enters the hashed content; entries sort by package name before emit; every rejection carries an author-readable `detail`.
 - User-facing docs are bilingual; design docs and plans are English only.
-- Never run `pnpm build:catalog` to check compilation — it performs ~1390 live npm requests.
+- Never run `pnpm build:catalog` to check compilation — it performs thousands of live npm requests (~5,600 packuments plus paged searches, measured 2026-09-04).
 - Do not commit `packages/dsh-plugin-shop/tests/client/self-update-repro.spec.ts` (pre-existing untracked work, not part of this plan).
 
 ---

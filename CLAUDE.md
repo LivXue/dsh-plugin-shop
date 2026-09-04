@@ -31,10 +31,10 @@ pnpm install
 pnpm test           # vitest
 pnpm typecheck      # tsc --noEmit
 pnpm emit:schema    # regenerate registry/schema/plugin-entry.schema.json
-pnpm build:catalog  # ~1390 live npm requests, several minutes — see below
+pnpm build:catalog  # thousands of live network requests, several minutes — see below
 ```
 
-**`build:catalog` hits the public npm registry roughly 1390 times and takes minutes.** Do not run it to check that a change compiles; the tests cover every policy decision without a network. Run it when you have changed the fetching or writing layer and need to see it work end to end.
+**`build:catalog` makes thousands of live network requests and takes minutes.** The npm half fetches one packument per harvested name — the deduplicated union of the two keywords, 5,658 on 2026-09-04 — plus about forty paged searches. The two keywords' own totals are deliberately not restated here: `PARTITION_KEYWORDS`'s comment in `registry/scripts/src/npm-client.ts` is the one place that measures and keeps them, because its partition arithmetic is counted against them, and three copies of that figure had already drifted apart on the same date. The GitHub half re-fetches up to `REPO_BACKFILL_BUDGET` (2,000 by default) of the 14,740 repositories in `repo-state.json`, several requests each. The figure this replaced was one keyword's size in August 2026 quoted as if it were the whole run; it predated both the second keyword and the GitHub half. The figure tracks the ecosystem, so re-measure it with one `size=1` search per keyword rather than trusting the number written here. Do not run the build to check that a change compiles; the tests cover every policy decision without a network. Run it when you have changed the fetching or writing layer and need to see it work end to end.
 
 ## The one architectural rule
 
@@ -47,7 +47,7 @@ A policy decision that migrates into the shell becomes untestable. If a pure mod
 
 ## Invariants worth breaking a build over
 
-- **`builtAt` never enters the hashed content.** It belongs to `index.json` alone. Putting it in the data changes the content hash daily, invalidating every CDN cache and filling each commit with noise. A determinism test in `pipeline.test.ts` enforces this; if you find yourself editing that test to pass, you have broken the property it protects.
+- **`builtAt` never enters the hashed content.** Putting it in the data changes the content hash daily, invalidating every CDN cache and filling each commit with noise. A determinism test in `pipeline.test.ts` enforces this; if you find yourself editing that test to pass, you have broken the property it protects. Outside the hash it travels freely — `index.json`, the npm package's readme, and its `catalogBuiltAt` manifest field, which `publish-catalog.ts` reads to refuse a build older than the published `latest`; all three are regenerated per publish, so none of them churn a hash.
 - **Live daily data stays in its own sidecar.** Star counts change every day; they live in a separate content-addressed `stars.<sha>.json` so the plugin data hash never churns daily. The same rule as `builtAt`, applied to data.
 - **Entries sort by package name before emit.** Output must not depend on the order npm returned them in.
 - **`verified` pins a version, never a name.** A published version newer than `reviewedVersion` downgrades to `verified-stale` and keeps the review. Attaching verification to a package name lets an author pass review once and inherit trust for every future version — the cheapest supply-chain attack there is.
@@ -62,10 +62,12 @@ This project would rather stop than publish something plausible and wrong. Concr
 - A malformed registry file throws. Silently listing nothing is indistinguishable from an empty ecosystem.
 - A duplicate name in `verified.yml` or `denied.yml` throws. Last-one-wins would silently pick a review.
 - A malformed `dsh.catalog` is rejected, never downgraded to a derived listing. The author declared it and got it wrong; hiding that leaves them wondering why their text never appeared.
-- Hitting the search page bound throws rather than truncating.
+- **A search that cannot enumerate its whole result set throws rather than truncating.** One npm query reaches 5,250 names (`from` is capped at 5,000, and a larger one silently returns page 0), so an over-window keyword is partitioned on `keywords:a,b` intersections — the only filtering qualifier the API honors, and it has no negation, so a partition is never covering by construction. The harvest therefore measures what it enumerated against the keyword's own total and throws on a shortfall; it stops paging on the answered `total`, never on a short page, and a response carrying no `total` throws too. The GitHub half splits each topic into stars/date/size windows under the 1,000-result search cap and throws when one still exceeds it after every split. `keywords:deepseek-harness` was 118 names short of the npm window on 2026-09-04 and is closing on it; that headroom is `SEARCH_WINDOW` less the keyword total `npm-client.ts` records, so re-derive it there rather than trusting this sentence.
 - A package that cannot be fetched becomes a `fetch-failed` rejection in the build report. Nothing disappears without a reason attached to its name.
 
-Every rejection carries an author-readable `detail`. Those strings are published, and a plugin author reads them to find out why their package is not listed — a wrong or misattributed reason is a defect, not a wording nit.
+Every rejection carries an author-readable `detail`. Those strings are published, and a plugin author reads them to find out why their package is not listed — a wrong or misattributed reason is a defect, not a wording nit. `no-license`, `no-repository` and above all `no-manifest` are knowingly broader than the cases they name. A `license` or `repository` past its length bound reports `no-license` / `no-repository`; `no-manifest` is the code for every way a manifest we DID read cannot be listed — refused for its size, unreadable, over-bounded in `name`, `version` or `publisher`, past the per-entry payload budget, declaring a name outside the bundle-name grammar, declaring no name and no installable subpackage, or naming a subpackage directory past its bound. So the report's Reason column can read "no" about a field the author did declare. The `detail` is the accurate half and says which bound was crossed; a new code is a change to a published artifact, so the fix is to keep the reason in the `detail`, not to mint one. Resist restating that list as a count — "three codes" is what this sentence said until the set grew and the number quietly became false.
+
+The converse is the invariant that keeps `no-manifest` meaningful, and it is two-sided: **`no-manifest` means the manifest was read, or a 404 answered for it — never that a request failed.** A transport failure is `fetch-failed`, which `harvestRepos` does not persist and the next build retries. Collapsing the two is what made a blocked `raw.githubusercontent.com` write "No package.json at the repository root" into the durable record of every repository it could not reach.
 
 ## Untrusted input
 
