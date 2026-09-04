@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { diffRepoState, nextRepoState, parseRepoState, serializeRepoState, staleFailureRepos } from '../src/repo-state.ts'
+import { diffRepoState, nextRepoState, parseRepoState, repoGoneDetail, serializeRepoState, staleFailureRepos } from '../src/repo-state.ts'
 import type { RepoState, RepoStateEntry } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
 
@@ -179,5 +179,30 @@ describe('staleFailureRepos', () => {
 
   it('selects nothing for a state with no such records', () => {
     expect(staleFailureRepos({ 'd/listed': state['d/listed']! }, 'no-manifest', mislabelled, 10)).toEqual([])
+  })
+})
+
+describe('repoGoneDetail', () => {
+  it('names topic removal, the one cause that leaves a live repository its author can act on', () => {
+    // `gone` means only that neither harvest topic returned the repository.
+    // The published reason said "(deleted, renamed, or private)" and stopped
+    // there, which is all three false for the likeliest cause of all: the
+    // owner edited the repository's topics. That repository still exists, is
+    // public and was never renamed — and its author reads this line to find
+    // out why the shop dropped it. CLAUDE.md counts a misattributed reason as
+    // a defect rather than a wording nit, and this one also hides the only
+    // remedy: re-add the topic and the next build lists it again.
+    const detail = repoGoneDetail(['dsh-plugin', 'deepseek-harness'])
+    expect(detail).toContain('dsh-plugin/deepseek-harness')
+    expect(detail).toContain('topic was removed')
+    // The other three causes are real and stay named.
+    expect(detail).toContain('deleted, renamed, or made private')
+  })
+
+  it('takes the topics rather than restating them, so the two cannot drift', () => {
+    // Hardcoding the names here would be a third copy of HARVEST_TOPICS, and
+    // repo-state.ts is pure — importing the list from the network module to
+    // read it would be the wrong direction.
+    expect(repoGoneDetail(['only-one'])).toContain('its only-one topic was removed')
   })
 })

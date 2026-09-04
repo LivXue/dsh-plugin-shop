@@ -152,6 +152,29 @@ export function diffRepoState(state: RepoState, seen: RepoSeen[]): { toFetch: Re
 }
 
 /**
+ * The published reason a recorded repository is no longer listed.
+ *
+ * It lives beside {@link diffRepoState}, which is what DECIDES a repo is gone.
+ * The detail is an author-readable published string — CLAUDE.md counts a
+ * misattributed one as a defect rather than a wording nit — so it belongs with
+ * the rule it describes rather than inlined in build.ts's shell, where nothing
+ * could test it and where it was the only rejection reason not minted by a
+ * pure module.
+ *
+ * `gone` means one thing only: neither harvest topic returned the repository.
+ * The old wording named three causes and left out the likeliest — the owner
+ * edited the topics. That repository still exists, is public and was never
+ * renamed, so all three published causes were false for it, and it is the only
+ * one of the four its author can act on: re-add the topic and the next build
+ * lists it again.
+ * @param topics - the harvest topics, passed in because this module is pure and
+ *   the list lives in the network module; restating it here would be a third copy.
+ */
+export function repoGoneDetail(topics: readonly string[]): string {
+  return `The topic search no longer returns this repository: its ${topics.join('/')} topic was removed, or the repository was deleted, renamed, or made private.`
+}
+
+/**
  * The recorded repos whose failure record was written by the rule that
  * labelled every non-ok manifest response `no-manifest` (audit D-3).
  *

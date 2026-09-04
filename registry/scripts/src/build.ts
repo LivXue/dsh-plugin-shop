@@ -17,8 +17,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { loadRegistryConfig, serializeFirstSeen } from './config.ts'
 import { fetchStarCounts } from './github-stars.ts'
-import { harvestRepos } from './github-client.ts'
-import { parseRepoState, serializeRepoState } from './repo-state.ts'
+import { HARVEST_TOPICS, harvestRepos } from './github-client.ts'
+import { parseRepoState, repoGoneDetail, serializeRepoState } from './repo-state.ts'
 import { githubOwnerName } from './github-repo.ts'
 import { fetchCandidates, searchByKeywords } from './npm-client.ts'
 import { runPipeline } from './pipeline.ts'
@@ -160,7 +160,7 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
       rejections.push({
         name: repo,
         code: 'repo-gone',
-        detail: 'The topic search no longer returns this repository (deleted, renamed, or private).',
+        detail: repoGoneDetail(HARVEST_TOPICS),
       })
     }
     writeFileSync(repoStatePath, serializeRepoState(repos.nextState))

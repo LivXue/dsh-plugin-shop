@@ -819,6 +819,42 @@ git commit -m "fix(harvest): page on the raw item count and reconcile each windo
 
 ### Task 5: An incomplete enumeration reports nothing gone and loses nothing from the state
 
+> **Outcome: MOOT, and not implementable on its own.** Verified 2026-09-04.
+>
+> Every step here consumes Task 4's `incompleteWindows`, which the shipped code
+> never produces: plan A **throws** on an under-enumerated window instead. Under
+> that throw the build dies before `harvestRepos` returns, so
+> `repo-state.json` is never rewritten and no `repo-gone` is ever published —
+> which is precisely the guarantee this task set out to add. Implementing it
+> would mean first reverting plan A's throw to a report, i.e. applying the Task
+> 4 regression documented above; on its own it adds a `pruneGone` parameter
+> with no caller, an `incompleteWindows` field that is always `[]`, and a
+> `gone: []` branch nothing can reach.
+>
+> Its argument deserves recording, because it is not obviously wrong: a short
+> GitHub window costs the whole shelf a day, including a healthy npm half of
+> ~9,500 entries. Two things answer it. CLAUDE.md states the doctrine for both
+> halves — "A search that cannot enumerate its whole result set throws rather
+> than truncating" — and a failed build publishes nothing, so yesterday's
+> catalog stays live and the badge date stops advancing where a maintainer can
+> see it. And the frequency argument is weaker than when this was written: the
+> likeliest trigger, a transient `incomplete_results`, is now retried rather
+> than thrown (Task 4's note). **This is a policy choice, not a fact** — moving
+> to publish-short-and-report would be a coherent design, and it would start by
+> amending that CLAUDE.md sentence.
+>
+> **What this task DID contribute, and what shipped instead:** its premise —
+> that `repo-gone` is a published reason and emitting a false one is a defect —
+> holds independently of enumeration, and reading it that way found a live one.
+> The detail read *"The topic search no longer returns this repository (deleted,
+> renamed, or private)"*, naming three causes and omitting the likeliest: the
+> owner edited the repository's topics. That repository still exists, is public
+> and was never renamed, so all three published causes were false for it — and
+> it is the only one of the four its author can act on. The reason now also
+> names topic removal, and it moved out of `build.ts` into `repo-state.ts`
+> beside `diffRepoState`, the pure rule that decides a repo is gone: it was the
+> only rejection reason minted in the shell, where nothing could test it.
+
 **Files:**
 - Modify: `registry/scripts/src/repo-state.ts:116-148` (`nextRepoState`)
 - Modify: `registry/scripts/src/github-client.ts:582-605` (`RepoHarvestResult`) and `612-680` (`harvestRepos`)
