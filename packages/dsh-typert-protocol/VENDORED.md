@@ -1,15 +1,14 @@
 # Vendored: @deepseek-ai/dsh-typert-protocol
 
 Vendored from `@deepseek-ai/dsh-typert-protocol@0.1.1-rc.2` (MIT): the compiled
-`lib/` exactly as shipped on npm, its `LICENSE`, and the original manifest.
-This copy exists for the typert build; it is never published.
+`lib/` exactly as shipped on npm, its `LICENSE`, and the original manifest plus
+the `./typert` export required by the workspace typert generator. This copy
+exists for the typert build; it is never published.
 
-A `./typert` export was added here at some point pointing at
-`lib/typert.host.js` and `lib/typert.host.d.ts`. Neither file was ever copied
-in and nothing imports the specifier, so both the export and its `files`
-entries were removed on 2026-09-03. `registry/scripts/tests/repo-guards.test.ts`
-now asserts that every path this manifest names exists, so a partial re-sync
-fails a test instead of sitting here unnoticed.
+The `./typert` paths are generated host artifacts, not files copied from the
+upstream protocol package. The generator validates that the workspace manifest
+declares them before it emits the shop's host face; `pnpm build` is the step
+that creates the corresponding files in the shop package's `lib/` directory.
 
 ## Why it is vendored
 
