@@ -2912,8 +2912,18 @@ a skip. timeout-minutes: 120 on the build job is the outer bound."
 The prose has no automated guard, so the check is a mechanical grep that fails at HEAD. Run it before editing and record the output:
 
 ```bash
-# Every place that repeats the stale ~1390 figure. Expect 4 hits before, 0 after
-# (the .github/ comments are updated too, since they cite the same number).
+# Every place that repeats the stale ~1390 figure. Measured 2026-09-04: SEVEN
+# hits, not the four this plan first claimed -- three of them in daily.yml
+# (:8, :162, :247), which the plan mentioned but did not count.
+#
+# The figure is not merely out of date, it is wrong by a different shape: it
+# predates BOTH repo harvesting and the keyword-union correction. The npm half
+# alone fetches ~5,600 packuments (the union 5,095 + 3,699 - 3,178, per the
+# audit's own amendment) plus ~36 search pages; the GitHub half adds a budgeted
+# ~2,000 repos per run against 14,740 known. Derive the replacement from those
+# numbers and say what it counts -- npm requests, or all network requests --
+# because "roughly 1390 times" currently reads as the total and is about 4x low
+# on the npm side before GitHub is counted at all.
 grep -rn '1390' CLAUDE.md README.md README.zh.md .github/workflows/daily.yml
 
 # The published field bounds. Expect 0 hits before, one per language after.
