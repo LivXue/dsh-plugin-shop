@@ -35,21 +35,23 @@ const PROBE_TIMEOUT_MS = 10_000
  * mirror -> 0.12 s for 1.5 MB; npmjs direct 1.99 MB/s -> 0.75 s). */
 const COMMIT_TIMEOUT_MS = 30_000
 
-/** Reject with a TransportError if `work` outlives `COMMIT_TIMEOUT_MS`. The
- * underlying fetch is left to finish or fail on its own and its result is
- * discarded: aborting it would need a signal threaded through OriginHandle,
- * and a stalled origin we have already abandoned costs nothing but its own
- * socket. */
-async function withCommitTimeout<T>(work: Promise<T>, id: string): Promise<T> {
+/** Run one committed-origin read under a deadline and abort it on expiry. */
+async function withCommitBudget<T>(
+  id: string,
+  what: string,
+  start: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     return await Promise.race([
-      work,
+      start(controller.signal),
       new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(
-          () => reject(new TransportError(`${id} did not produce a pointer within ${COMMIT_TIMEOUT_MS} ms`)),
-          COMMIT_TIMEOUT_MS,
-        )
+        timer = setTimeout(() => {
+          const expired = new TransportError(`${id} did not ${what} within ${COMMIT_TIMEOUT_MS} ms`)
+          controller.abort(expired)
+          reject(expired)
+        }, COMMIT_TIMEOUT_MS)
       }),
     ])
   } finally {
@@ -413,7 +415,7 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
       continue
     }
     try {
-      pointerText = await withCommitTimeout(settled.value.pointer(), settled.value.id)
+      pointerText = await withCommitBudget(settled.value.id, 'produce a pointer', () => settled.value.pointer())
       handle = settled.value
       break
     } catch (error) {
@@ -436,7 +438,11 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
   // the other pointer-interpretation failures, instead of a stale fallback.
   let dataText: string
   try {
-    dataText = await handle.file(pointer.plugins.url)
+    dataText = await withCommitBudget(
+      handle.id,
+      `serve ${pointer.plugins.url}`,
+      signal => handle!.file(pointer.plugins.url, signal),
+    )
   } catch (error) {
     if (!(error instanceof TransportError)) throw error
     return cachedOrThrow(error)
@@ -460,16 +466,21 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
 
   let stars: Record<string, number> = {}
   if (pointer.stars !== undefined) {
+    const sidecar = pointer.stars
     try {
       // Resolution sits inside the advisory catch: a refused (absolute or
       // cross-origin) stars url must degrade to no stars like any other
       // sidecar failure — it still prevents the fetch, but never throws the
       // loader out of a catalog whose data fetched fine (spec §5, §9.2).
-      const starsText = await handle.file(pointer.stars.url)
+      const starsText = await withCommitBudget(
+        handle.id,
+        `serve ${sidecar.url}`,
+        signal => handle!.file(sidecar.url, signal),
+      )
       const starsActual = createHash('sha256').update(starsText).digest('hex')
-      if (starsActual === pointer.stars.sha256) {
+      if (starsActual === sidecar.sha256) {
         stars = parseStarsText(starsText)
-        fsImpl.write(join(cacheDir, basename(pointer.stars.url)), starsText)
+        fsImpl.write(join(cacheDir, basename(sidecar.url)), starsText)
       }
     } catch {
       // Advisory: an unreachable or refused sidecar means no stars this run

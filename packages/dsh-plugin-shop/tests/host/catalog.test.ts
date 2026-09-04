@@ -685,6 +685,10 @@ describe('origin racing', () => {
     pointerHangs?: boolean
     /** Fails on the bulk fetch, after the winner is committed to. */
     dataFails?: 'transport' | 'loud'
+    /** Never settles on the data file. */
+    dataHangs?: boolean
+    /** Never settles on the stars sidecar. */
+    starsHangs?: boolean
     data?: string
     pointer?: string
   }): CatalogOrigin {
@@ -702,7 +706,9 @@ describe('origin racing', () => {
             if (opts.pointerFails === 'loud') throw new Error(`${id} pointer corrupt`)
             return opts.pointer ?? ''
           },
-          file: async () => {
+          file: async (url) => {
+            if (opts.dataHangs === true && url.startsWith('plugins.')) return new Promise<string>(() => {})
+            if (opts.starsHangs === true && url.startsWith('stars.')) return new Promise<string>(() => {})
             if (opts.dataFails === 'transport') throw new TransportError(`${id} data down`)
             if (opts.dataFails === 'loud') throw new Error(`${id} data corrupt`)
             return opts.data ?? ''
@@ -873,6 +879,92 @@ describe('origin racing', () => {
       now: () => new Date('2026-09-01T00:00:00Z'),
       origins: [],
     })).rejects.toThrow('loadCatalog: no origins')
+  })
+  describe('the commit budget covers the bulk reads (G-2)', () => {
+    it('degrades to the cache when the committed origin answers the pointer and never the data file', async () => {
+      vi.useFakeTimers()
+      try {
+        const data = dataJson([entry])
+        const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
+        const fs = memFs()
+        fs.files.set('/cache/index.json', pointer)
+        fs.files.set(`/cache/${url}`, data)
+        const pending = loadCatalog({
+          cacheDir: '/cache', fsImpl: fs,
+          now: () => new Date('2026-09-01T00:00:00Z'),
+          origins: [fakeOrigin('stalls-on-data', { delay: 0, pointer, dataHangs: true })],
+        })
+        await vi.advanceTimersByTimeAsync(30_000)
+        const result = await pending
+        expect(result.stale).toBe(true)
+        expect(result.snapshot.entries).toHaveLength(1)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('throws, naming the budget, when the data file stalls and there is no cache', async () => {
+      vi.useFakeTimers()
+      try {
+        const data = dataJson([entry])
+        const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
+        const pending = loadCatalog({
+          cacheDir: '/cache', fsImpl: memFs(),
+          origins: [fakeOrigin('stalls-on-data', { delay: 0, pointer, dataHangs: true })],
+        })
+        const settled = pending.catch((error: unknown) => error)
+        await vi.advanceTimersByTimeAsync(30_000)
+        const failure = await settled
+        expect(String(failure)).toMatch(new RegExp(`did not serve ${url.replace(/\./g, '\\.')} within 30000 ms`))
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('completes with no stars when the sidecar stalls', async () => {
+      vi.useFakeTimers()
+      try {
+        const data = dataJson([entry])
+        const stars = starsFile({ 'dsh-hello-plugin': 7 })
+        const { pointer } = pointerFor(data, '2026-08-25T00:00:00Z', { url: stars.url, sha256: stars.sha256 })
+        const pending = loadCatalog({
+          cacheDir: '/cache', fsImpl: memFs(),
+          origins: [fakeOrigin('stalls-on-stars', { delay: 0, pointer, data, starsHangs: true })],
+        })
+        await vi.advanceTimersByTimeAsync(30_000)
+        const result = await pending
+        expect(result.snapshot.entries).toHaveLength(1)
+        expect(result.snapshot.stars).toEqual({})
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('aborts the data fetch itself, not merely the wait', async () => {
+      vi.useFakeTimers()
+      try {
+        const data = dataJson([entry])
+        const { pointer } = pointerFor(data, '2026-08-25T00:00:00Z')
+        let aborted = false
+        const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
+          if (String(input).endsWith('/index.json')) return new Response(pointer, { status: 200 })
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => {
+              aborted = true
+              reject(new Error('aborted'))
+            })
+          })
+        }) as unknown as typeof fetch
+        const settled = loadCatalog({
+          baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs(),
+        }).catch((error: unknown) => error)
+        await vi.advanceTimersByTimeAsync(30_000)
+        await settled
+        expect(aborted).toBe(true)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
   })
 })
 
