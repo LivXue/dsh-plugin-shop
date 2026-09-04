@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
 import { mergeMarketRows, serializeMarketRows, type MarketRow } from '../src/markets.ts'
 import { parseMarketResponse } from '../src/market-judge.ts'
+import { parseRegistryConfig } from '../src/config.ts'
 
 const human: MarketRow = { name: 'dsh-tea-store', market: false, by: 'human', reason: '存茶指南' }
 
@@ -73,5 +74,35 @@ describe('parseMarketResponse', () => {
   it('yields nothing from a truncated or non-JSON completion', () => {
     expect(parseMarketResponse('[{"name":"a","mark', expected).size).toBe(0)
     expect(parseMarketResponse('I cannot help with that.', expected).size).toBe(0)
+  })
+})
+
+describe('a steered verdict cannot delist a neighbour', () => {
+  it('records a neighbour-named true as an llm hold, which hides nothing', () => {
+    // The batch asked about dsh-a and its neighbour dsh-b. A hostile
+    // description in dsh-a's metadata steers the model into answering `true`
+    // for dsh-b. The parser cannot tell that apart from a legitimate answer —
+    // batches may be answered in any order — so the defence is downstream:
+    // an llm verdict is a hold a human confirms, never a hide.
+    const verdicts = parseMarketResponse(
+      '[{"name":"dsh-a","market":false},{"name":"dsh-b","market":true}]',
+      new Set(['dsh-a', 'dsh-b']),
+    )
+    const rows = serializeMarketRows(mergeMarketRows([], verdicts, new Map()))
+    const config = parseRegistryConfig({
+      verified: '[]', denied: '[]', allowedSimilar: '[]', categories: '[]', firstSeen: '[]',
+      markets: rows,
+    })
+    expect(config.notAShop.has('dsh-b'), 'an llm true must not hide the entry').toBe(true)
+    expect([...config.marketHolds]).toEqual(['dsh-b'])
+  })
+
+  it('lets a human row confirm the hold', () => {
+    const config = parseRegistryConfig({
+      verified: '[]', denied: '[]', allowedSimilar: '[]', categories: '[]', firstSeen: '[]',
+      markets: '- name: dsh-b\n  market: true\n  by: human\n  reason: it sells dsh plugins\n',
+    })
+    expect(config.notAShop.has('dsh-b')).toBe(false)
+    expect(config.marketHolds.size).toBe(0)
   })
 })
