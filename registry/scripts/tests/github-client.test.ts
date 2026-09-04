@@ -1253,21 +1253,63 @@ describe('harvestRepos', () => {
     expect(result.searchStars.has('s/no-stars')).toBe(false)
   })
 
-  it('keeps a failure as a reason and carries the recorded candidate for that repo', async () => {
+  it('retires the stale candidate of a repo that deleted its package.json', async () => {
+    // Replaces "keeps a failure as a reason and carries the recorded
+    // candidate for that repo", which pinned the defect: the candidate
+    // survived and `pushedAt` stayed behind, so the entry stayed on the shelf
+    // forever, the report said `no-manifest` about a listed entry, and the
+    // repo re-consumed the fetch budget on every run. A `no-manifest` is a
+    // fact about the contents at this `pushed_at`, so it is recorded.
+    const state: RepoState = { 'x/gutted': { ...entryOf('x/gutted'), pushedAt: '2026-07-01T00:00:00Z' } }
+    const seen = [{ repo: 'x/gutted', pushedAt: '2026-08-02T00:00:00Z' }]
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      const searched = searchItems(text, seen)
+      if (searched !== undefined) return searched
+      return new Response('404: Not Found', { status: 404 })
+    }) as unknown as typeof fetch
+    const result = await harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' })
+    expect(result.failures).toEqual([{ repo: 'x/gutted', code: 'no-manifest', detail: 'No package.json at the repository root, so there is nothing for dsh to install.' }])
+    expect(result.candidates).toEqual([])
+    expect(result.nextState['x/gutted']?.candidates).toEqual([])
+    expect(result.nextState['x/gutted']?.failure?.code).toBe('no-manifest')
+    // The advanced pushedAt is what stops the daily re-fetch.
+    expect(result.nextState['x/gutted']?.pushedAt).toBe('2026-08-02T00:00:00Z')
+  })
+
+  it('keeps a recorded candidate and its old pushedAt when the manifest fetch fails on transport', async () => {
+    // The transient half of the same rule. A 503 says nothing about the
+    // repository, so nothing is written: the recorded entry and its old
+    // `pushedAt` stay, and the mismatch schedules the retry next run. It
+    // reaches `failures` as `fetch-failed` because the non-404 status throws
+    // and harvestRepos' catch names it.
     const state: RepoState = { 'x/broken': { ...entryOf('x/broken'), pushedAt: '2026-07-01T00:00:00Z' } }
     const seen = [{ repo: 'x/broken', pushedAt: '2026-08-02T00:00:00Z' }]
     const fetchImpl = (async (url: string | URL) => {
       const text = String(url)
       const searched = searchItems(text, seen)
       if (searched !== undefined) return searched
-      return new Response('missing', { status: 404 })
+      return new Response('upstream broke', { status: 503 })
     }) as unknown as typeof fetch
     const result = await harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' })
-    expect(result.failures).toEqual([{ repo: 'x/broken', code: 'no-manifest', detail: 'No package.json at the repository root, so there is nothing for dsh to install.' }])
-    // The carried candidate survives the failed refetch, and the recorded
-    // pushedAt is kept — the mismatch schedules the retry again next run.
+    expect(result.failures[0]?.code).toBe('fetch-failed')
     expect(result.candidates.map(c => c.repo)).toEqual(['x/broken'])
     expect(result.nextState['x/broken']?.pushedAt).toBe('2026-07-01T00:00:00Z')
+    expect(result.nextState['x/broken']?.failure).toBeUndefined()
+  })
+
+  it('records a no-manifest for a repo it has never seen before', async () => {
+    // Unchanged behaviour, asserted so the widened condition does not lose
+    // the case it was written for: a dead end must not re-consume the budget.
+    const seen = [{ repo: 'y/new-dead-end', pushedAt: '2026-08-02T00:00:00Z' }]
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      const searched = searchItems(text, seen)
+      if (searched !== undefined) return searched
+      return new Response('404: Not Found', { status: 404 })
+    }) as unknown as typeof fetch
+    const result = await harvestRepos({ state: {}, budget: 5, fetchImpl, sleep, token: 't' })
+    expect(result.nextState['y/new-dead-end']?.failure?.code).toBe('no-manifest')
   })
 
   it('threads a subpackage name failure into the report as its own repo#subdir rejection', async () => {

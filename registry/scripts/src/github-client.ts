@@ -1351,13 +1351,19 @@ export async function harvestRepos(options: RepoHarvestOptions): Promise<RepoHar
         // (a root with an unusable name whose subpackage was refused for
         // size); they are reported and persisted the same as on the ok branch.
         if (result.subpackageFailures !== undefined) failures.push(...result.subpackageFailures)
-        // A deterministic failure on a repo with NO recorded entry is
-        // recorded so the next runs carry the reason instead of re-fetching
-        // the same dead end and re-consuming the budget. A repo WITH a
-        // recorded entry keeps its candidates: the old pushedAt mismatch
-        // schedules the retry next run (a `fetch-failed` stays transient
-        // either way).
-        if (result.code === 'no-manifest' && state[entry.repo] === undefined) {
+        // A `no-manifest` is a fact about the repository's contents at this
+        // `pushed_at`, so it is recorded whether or not the repo was recorded
+        // before. Recording it for a KNOWN repo is what retires a stale
+        // candidate: a repo that deletes its package.json used to keep its
+        // old candidate on the shelf forever while the same run reported it
+        // `no-manifest`, and re-consumed the fetch budget every day because
+        // the recorded `pushedAt` never advanced (D-3).
+        //
+        // A `fetch-failed` is a fact about the network and is never recorded:
+        // the recorded entry and its old `pushedAt` stay, which schedules the
+        // retry next run, and a repo never fetched at all stays out of the
+        // state entirely so next run's `toFetch` picks it up again.
+        if (result.code === 'no-manifest') {
           fresh.set(entry.repo, {
             candidates: [],
             failure: { code: result.code, detail: result.detail },
