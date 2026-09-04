@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { GITHUB_REQUEST_TIMEOUT_MS, MAX_TARBALL_BYTES, MAX_THROWN_FRACTION, MIN_THROWN_TO_BOUND, TARBALL_REQUEST_TIMEOUT_MS, fetchRepoCandidate, harvestRepos, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
+import { BUNDLE_NAME_MAX_LENGTH, BUNDLE_NAME_RE, GITHUB_REQUEST_TIMEOUT_MS, MAX_MANIFEST_BYTES, MAX_TARBALL_BYTES, MAX_THROWN_FRACTION, MIN_THROWN_TO_BOUND, TARBALL_REQUEST_TIMEOUT_MS, fetchRepoCandidate, harvestRepos, isBundleName, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
 import { parseRepoState, serializeRepoState } from '../src/repo-state.ts'
 import type { RepoState } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
@@ -203,6 +203,64 @@ describe('fetchRepoCandidate', () => {
         expect(result.code).toBe('no-manifest')
         expect(result.detail).toContain('is not a usable package name')
       }
+    }
+  })
+
+  it('refuses a grammar-legal name past the length bound, which the manifest cap alone would admit', async () => {
+    // BUNDLE_NAME_RE has no length limit of its own — `a+` matches a million
+    // of them — and the only other bound on this value is MAX_MANIFEST_BYTES,
+    // which admits about a megabyte. So the length clause in isBundleName is
+    // the ONLY thing standing between a hostile manifest and a 300 KB name in
+    // first-seen.yml, categories.yml, markets.yml, manifest.lock, the
+    // published entry and the build report — the six artifacts that clause's
+    // own comment names. Nothing asserted it: removing it left the suite
+    // green.
+    expect(isBundleName('a'.repeat(BUNDLE_NAME_MAX_LENGTH))).toBe(true)
+    expect(isBundleName('a'.repeat(BUNDLE_NAME_MAX_LENGTH + 1))).toBe(false)
+    expect(isBundleName(`@${'s'.repeat(BUNDLE_NAME_MAX_LENGTH)}/p`)).toBe(false)
+
+    // …and end to end, at a size the manifest cap really does let through.
+    const huge = 'a'.repeat(300_000)
+    expect(huge.length).toBeLessThan(MAX_MANIFEST_BYTES) // the cap would not have caught it
+    expect(BUNDLE_NAME_RE.test(huge)).toBe(true) // nor would the grammar
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(JSON.stringify({
+        name: huge,
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': new Response(JSON.stringify({
+        sha: commit,
+        commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.code).toBe('no-manifest')
+  })
+
+  it('echoes only the head of an unusable name into the published rejection detail', async () => {
+    // The detail is published: it reaches report.md on Pages, which is where
+    // an author reads why their repository is not listed. The manifest cap
+    // admits about a megabyte, so without the echo cap a name that long is
+    // copied verbatim into that page — and into every row that quotes it.
+    // Nothing asserted the cap either.
+    const badName = `${'a'.repeat(40)} ${'b'.repeat(5_000)}` // the space is what fails the grammar
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(JSON.stringify({
+        name: badName,
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': new Response(JSON.stringify({
+        sha: commit,
+        commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.detail).toContain(badName.slice(0, 80)) // enough to recognise the name
+      expect(result.detail).not.toContain(badName.slice(0, 81)) // and not one character more
+      expect(result.detail.length).toBeLessThan(300) // the whole row, not just the echo
     }
   })
 

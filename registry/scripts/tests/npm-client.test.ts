@@ -699,6 +699,31 @@ describe('searchByKeywords', () => {
     expect(calls).toBe(3) // pre-paging probe, the one page, and the post-paging re-probe
   })
 
+  it('refuses a short UNPARTITIONED harvest, naming the keyword and both counts', () => {
+    // The coverage check runs on both branches, but only the partitioned
+    // branch's shortfall message was ever asserted: making the check
+    // `partitioned && forKeyword.size < required` — or deleting the
+    // unpartitioned message outright — left the whole suite green, and this
+    // is the branch that carries every keyword under the window, which today
+    // is BOTH of them (keywords:deepseek-harness measured 5,131 against a
+    // 5,250 window on 2026-09-04).
+    //
+    // The reachable shape is the mid-stream empty page the check's own
+    // comment names: the `||` in the page loop's break ends a cell on ANY
+    // empty page, including one arriving before the cell's answered total
+    // says the cell is exhausted. Here page 0 carries 5 of 10 names and page
+    // 1 is empty, so the cell ends four names early with nothing else to
+    // notice it.
+    const totals = { 'keywords:dsh-plugin': 10, 'keywords:deepseek-harness': 0 }
+    const { fetchImpl } = stubSearch(totals, (query, from) =>
+      query === 'keywords:dsh-plugin' && from === 0
+        ? Array.from({ length: 5 }, (_, i) => `p${i}`)
+        : [])
+    return expect(searchByKeywords(fetchImpl)).rejects.toThrow(
+      /^npm search for keywords:dsh-plugin enumerated 5 of 10 names; the search ended before reaching the answered total, so the harvest would be silently short$/,
+    )
+  })
+
   it('refuses to ask for a from past the window instead of paging into the wrap', async () => {
     // The probe says the keyword fits, the pages say it does not. `from=5250`
     // would silently return page 0 (measured live), so the loop must throw.

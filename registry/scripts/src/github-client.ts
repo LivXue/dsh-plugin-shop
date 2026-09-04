@@ -649,6 +649,14 @@ function projectCandidate(
  * call sites.
  */
 function describeBadName(rawName: unknown): string {
+  // 80 characters is an ECHO of hostile input, not a name bound: this string
+  // is published to report.md on Pages. The name that gets here has already
+  // failed the grammar, so its only remaining bound is
+  // {@link MAX_MANIFEST_BYTES} — about a megabyte, copied verbatim into that
+  // page and into every row quoting it. 80 is enough to recognise a name by;
+  // the value itself is JSON-escaped because a raw one carries newlines and
+  // quotes (`Skills Manager` and `{{PKG_NAME}}` are already in the committed
+  // repo-state).
   const shown = typeof rawName === 'string'
     ? JSON.stringify(rawName.slice(0, 80))
     : `a ${typeof rawName}`
