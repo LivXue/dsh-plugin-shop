@@ -328,6 +328,9 @@ export class ShopGateway extends TypertRemoteService {
   /** The origin list built for the last-seen `catalogUrl`, memoised so the
    * user's npmrc is read at most once per gateway (see `originsFor`). */
   private originCache: { catalogUrl: string; origins: CatalogOrigin[] } | null = null
+  /** The user's own `registry=` from `~/.npmrc`, read at most once per
+   * gateway. A wrapper distinguishes a genuine `null` from an unread value. */
+  private npmRegistryCache: { value: string | null } | null = null
   /** The incompatibility map already computed for `lastSnapshot`, keyed by
    * that snapshot's own object identity. Design §3 asks for the verdict
    * once per loaded snapshot, not once per RPC call: `loadCatalog` serves
@@ -357,7 +360,7 @@ export class ShopGateway extends TypertRemoteService {
     this.exit = options.exit ?? ((code?: number) => process.exit(code))
     this.restartExitDelayMs = options.restartExitDelayMs ?? ShopGateway.RESTART_EXIT_DELAY_MS
     this.restartParentPid = options.restartParentPid ?? process.pid
-    this.latestVersion = options.fetchLatestVersion ?? (() => fetchLatestVersion())
+    this.latestVersion = options.fetchLatestVersion ?? (() => fetchLatestVersion(fetch, { registry: this.npmRegistry() }))
     this.pinFs = options.pinFs ?? {
       exists: path => existsSync(path),
       read: path => readFileSync(path, 'utf8'),
@@ -597,12 +600,12 @@ export class ShopGateway extends TypertRemoteService {
     return { catalogUrl, cacheDir }
   }
 
-  /** The origins to race for this row's catalog. Read once per gateway: the
-   * user's npmrc does not change under a running dsh, and re-reading it on
-   * every catalog call would put a filesystem read on the hot path. */
-  private originsFor(catalogUrl: string): CatalogOrigin[] {
-    if (this.originCache?.catalogUrl === catalogUrl) return this.originCache.origins
-    const registry = npmrcRegistry(path => {
+  /** The user's own registry, read once. The self-update check and catalog
+   * race share this preference so neither path repeatedly touches ~/.npmrc. */
+  private npmRegistry(): string | null {
+    const cached = this.npmRegistryCache
+    if (cached !== null) return cached.value
+    const value = npmrcRegistry(path => {
       try {
         return readFileSync(path, 'utf8')
       } catch {
@@ -611,7 +614,16 @@ export class ShopGateway extends TypertRemoteService {
         return null
       }
     }, homedir())
-    const origins = catalogOrigins(catalogUrl, fetch, registry)
+    this.npmRegistryCache = { value }
+    return value
+  }
+
+  /** The origins to race for this row's catalog. Read once per gateway: the
+   * user's npmrc does not change under a running dsh, and re-reading it on
+   * every catalog call would put a filesystem read on the hot path. */
+  private originsFor(catalogUrl: string): CatalogOrigin[] {
+    if (this.originCache?.catalogUrl === catalogUrl) return this.originCache.origins
+    const origins = catalogOrigins(catalogUrl, fetch, this.npmRegistry())
     this.originCache = { catalogUrl, origins }
     return origins
   }
