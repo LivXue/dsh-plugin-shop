@@ -1185,6 +1185,44 @@ export async function fetchRepoCandidate(
  * bursts, and the API's per-token rate budget is modest. */
 const REPO_CONCURRENCY = 4
 
+/**
+ * The per-run fetch budget when `REPO_BACKFILL_BUDGET` is unset: 2,000 of the
+ * ~14,700 recorded repositories. Named here, beside the knob it bounds, rather
+ * than left as a `?? '2000'` literal in build.ts — that file is a
+ * top-level-await script with no test seam, so a policy number written there
+ * is one nothing can read back.
+ */
+export const REPO_BACKFILL_BUDGET_DEFAULT = 2000
+
+/**
+ * Parse the per-run fetch budget from its environment string.
+ *
+ * `Number()` fails open in three ways that all end in the same place — a
+ * silent no-harvest reported as `0 fetched` — because {@link harvestRepos}
+ * slices its queue at the budget:
+ *
+ * - `Number('abc')` is `NaN`, and `[...].slice(0, NaN)` is `[]`.
+ * - `Number('')` is `0`, and so is `Number(' ')`.
+ * - `slice(0, -1)` counts from the END, so a negative budget quietly fetches
+ *   all-but-one instead of the one it looks like.
+ *
+ * `0` is deliberately NOT one of them: it is a real instruction — search the
+ * topics, fetch nothing — which is why the check cannot just refuse a falsy
+ * budget.
+ * @param raw - the environment value, or undefined when unset.
+ * @param fallback - the budget to use when the variable is unset.
+ * @throws when the value is present but not a non-negative integer, quoting it
+ *   back: the operator cannot see the value in a log line that says `0 fetched`.
+ */
+export function parseHarvestBudget(raw: string | undefined, fallback: number): number {
+  if (raw === undefined) return fallback
+  const budget = Number(raw)
+  if (raw.trim() === '' || !Number.isInteger(budget) || budget < 0) {
+    throw new Error(`REPO_BACKFILL_BUDGET must be a non-negative integer; got ${JSON.stringify(raw)}`)
+  }
+  return budget
+}
+
 export interface RepoHarvestOptions {
   /** The previous committed state; the run carries untouched repos over. */
   state: RepoState

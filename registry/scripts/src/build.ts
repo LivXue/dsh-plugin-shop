@@ -17,7 +17,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { loadRegistryConfig, serializeFirstSeen } from './config.ts'
 import { fetchStarCounts } from './github-stars.ts'
-import { HARVEST_TOPICS, harvestRepos } from './github-client.ts'
+import { HARVEST_TOPICS, REPO_BACKFILL_BUDGET_DEFAULT, harvestRepos, parseHarvestBudget } from './github-client.ts'
 import { parseRepoState, repoGoneDetail, serializeRepoState } from './repo-state.ts'
 import { githubOwnerName } from './github-repo.ts'
 import { fetchCandidates, searchByKeywords } from './npm-client.ts'
@@ -134,7 +134,7 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     const repoState = existsSync(repoStatePath)
       ? parseRepoState(readFileSync(repoStatePath, 'utf8'))
       : {}
-    const budget = Number(process.env.REPO_BACKFILL_BUDGET ?? '2000')
+    const budget = parseHarvestBudget(process.env.REPO_BACKFILL_BUDGET, REPO_BACKFILL_BUDGET_DEFAULT)
     // Subpackage probing rides the schemaVersion-4 flag: probing off, the
     // harvest behaves exactly as before and emits v3; the flag flips in the
     // release commit that ships the v4-reading client.

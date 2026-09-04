@@ -1423,6 +1423,16 @@ git commit -m "fix(npm): name the keyword on an unreadable search body and cap e
 
 ### Task 7: A malformed `REPO_BACKFILL_BUDGET` throws instead of harvesting nothing
 
+> **Outcome: DONE as written.** The defect was still live at `build.ts:137`,
+> and all three fail-open modes were reproduced before the fix: `slice(0, NaN)`
+> is `[]`, `Number('')` is `0`, and `slice(0, -1)` counts from the END — so a
+> negative budget fetched all-but-one rather than the one it looks like.
+>
+> One addition beyond the steps: the `2000` default became
+> `REPO_BACKFILL_BUDGET_DEFAULT`, exported beside the parser, so the shell
+> carries no bare policy literal. A sweep for the same pattern elsewhere found
+> no other numeric environment parse in `registry/scripts/src`.
+
 **Files:**
 - Modify: `registry/scripts/src/github-client.ts` (add `parseHarvestBudget` beside `RepoHarvestOptions`, after line 580)
 - Modify: `registry/scripts/src/build.ts:105`

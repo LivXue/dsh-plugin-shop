@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { BUNDLE_NAME_MAX_LENGTH, BUNDLE_NAME_RE, GITHUB_REQUEST_TIMEOUT_MS, MAX_MANIFEST_BYTES, MAX_TARBALL_BYTES, MAX_THROWN_FRACTION, MIN_THROWN_TO_BOUND, SUBDIR_MAX_LENGTH, TARBALL_REQUEST_TIMEOUT_MS, fetchRepoCandidate, harvestRepos, isBundleName, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
+import { BUNDLE_NAME_MAX_LENGTH, BUNDLE_NAME_RE, GITHUB_REQUEST_TIMEOUT_MS, MAX_MANIFEST_BYTES, MAX_TARBALL_BYTES, MAX_THROWN_FRACTION, MIN_THROWN_TO_BOUND, REPO_BACKFILL_BUDGET_DEFAULT, SUBDIR_MAX_LENGTH, TARBALL_REQUEST_TIMEOUT_MS, fetchRepoCandidate, harvestRepos, isBundleName, parseHarvestBudget, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
 import { parseRepoState, serializeRepoState } from '../src/repo-state.ts'
 import type { RepoState } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
@@ -2748,5 +2748,40 @@ describe('a deadline is never relabelled as a malformed body', () => {
     const fetchImpl = headersThenBodyError(expiry)
     await expect(searchReposByTopic(fetchImpl, sleep, 'token')).rejects.toThrow('exceeded 30000ms')
     await expect(searchReposByTopic(fetchImpl, sleep, 'token')).rejects.not.toThrow('not JSON')
+  })
+})
+
+describe('parseHarvestBudget', () => {
+  it('reads a plain integer, and falls back when the variable is unset', () => {
+    expect(parseHarvestBudget('500', REPO_BACKFILL_BUDGET_DEFAULT)).toBe(500)
+    expect(parseHarvestBudget(undefined, REPO_BACKFILL_BUDGET_DEFAULT)).toBe(REPO_BACKFILL_BUDGET_DEFAULT)
+  })
+
+  it('accepts zero, a deliberate "search only, fetch nothing" run', () => {
+    // Distinct from the failure modes below: `0` is a real instruction, which
+    // is why the throw cannot simply be "falsy budget".
+    expect(parseHarvestBudget('0', REPO_BACKFILL_BUDGET_DEFAULT)).toBe(0)
+  })
+
+  it('throws on each of the three values Number() used to fail open on', () => {
+    // All three ended in a silent no-harvest, reported as `0 fetched` with no
+    // error, because harvestRepos slices its queue at the budget:
+    //   Number('abc') is NaN   and slice(0, NaN) is []
+    //   Number('') is 0        and so is Number(' ')
+    //   slice(0, -1) counts from the END, so a negative budget fetches
+    //     all-but-one rather than the one it looks like
+    for (const raw of ['abc', '', ' ', '-1', '1.5', 'Infinity']) {
+      expect(() => parseHarvestBudget(raw, REPO_BACKFILL_BUDGET_DEFAULT), `${JSON.stringify(raw)} must throw`)
+        .toThrow(/REPO_BACKFILL_BUDGET/)
+    }
+    // The value is quoted back, because the whole point is that the operator
+    // cannot see it in a log line that says "0 fetched".
+    expect(() => parseHarvestBudget('abc', REPO_BACKFILL_BUDGET_DEFAULT)).toThrow(/"abc"/)
+  })
+
+  it('names the default in one place, so the shell carries no bare literal', () => {
+    // build.ts is a top-level-await script with no test seam; a `?? '2000'`
+    // there is a policy number nothing can read back.
+    expect(REPO_BACKFILL_BUDGET_DEFAULT).toBe(2000)
   })
 })
