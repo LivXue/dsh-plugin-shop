@@ -1,10 +1,10 @@
 # Audit fixes — the plan of plans
 
 Date: 2026-09-03
-Spec: [2026-09-03-debug-audit.md](2026-09-03-debug-audit.md) — 69 findings, 82 finding ids (G-11 and E-13 were both added while these plans were written)
-Status (2026-09-04): **plan A is implemented** on `fix/audit-a-urgent` — 9 tasks, 47 commits, 495 tests, not yet pushed or merged. Plans B, C, D and E are still proposals; every fix in them is a proposal until its failing test exists. Plan A's own task checkboxes are left unticked deliberately: the commits are the record, and a checkbox that has to be ticked by hand is one more thing to forget.
+Spec: [2026-09-03-debug-audit.md](2026-09-03-debug-audit.md) — 73 findings, 86 finding ids (G-11 and E-13 were added while these plans were written; D-10, E-14, H-10 and H-11 were added on 2026-09-04 by the review of plan A's implementation)
+Status (2026-09-04): **plan A is implemented and reviewed** on `fix/audit-a-urgent` — 9 tasks, 60 commits, 598 registry tests, not yet pushed or merged. A whole-branch review then found 3 Critical, 8 Important and 15 Minor defects in what plan A shipped; all 26 are fixed in the last 7 commits, and the review's own by-products are findings D-10, E-14, H-10 and H-11 below. Plans B, C, D and E are still proposals; every fix in them is a proposal until its failing test exists. Plan A's own task checkboxes are left unticked deliberately: the commits are the record, and a checkbox that has to be ticked by hand is one more thing to forget.
 
-The audit spans five subsystems that do not share state: the harvest's network shell, the gate's trust model, the artifacts and the workflow that publishes them, the host and client that read them, and the test suite that is supposed to hold all of it. Writing one plan for all 69 findings would produce a document nobody can execute a task from. So there are five, each independently shippable, each with its own TDD task list.
+The audit spans five subsystems that do not share state: the harvest's network shell, the gate's trust model, the artifacts and the workflow that publishes them, the host and client that read them, and the test suite that is supposed to hold all of it. Writing one plan for every finding would produce a document nobody can execute a task from. So there are five, each independently shippable, each with its own TDD task list.
 
 ## The five plans
 
@@ -12,11 +12,13 @@ The audit spans five subsystems that do not share state: the harvest's network s
 |---|---|---|---|---|
 | [A — stop the bleeding](2026-09-03-audit-fix-a-urgent.md) | The live and imminent registry defects | 8 | 9 | A daily build; no package release |
 | [B — identity and trust](2026-09-03-audit-fix-b-identity-trust.md) | A listing's identity is `(source, name, repo, subdir)`, not `name`; the review model; the LLM's reach | 16 | 17 | A daily build + spec amendments |
-| [C — network, artifacts, CI](2026-09-03-audit-fix-c-network-artifacts-ci.md) | Weather in the GitHub client, what Pages serves, the workflow's permissions and pins | 15 | 18 | A daily build + workflow changes |
+| [C — network, artifacts, CI](2026-09-03-audit-fix-c-network-artifacts-ci.md) | Weather in the GitHub client, what Pages serves, the workflow's permissions and pins | 17 | 18 | A daily build + workflow changes |
 | [D — host and client](2026-09-03-audit-fix-d-host-client.md) | The RPC boundary, process spawning, body bounds, the client's state and sort | 21 | 28 | An npm release through `beta` first |
-| [E — close the test gaps](2026-09-03-audit-fix-e-test-gaps.md) | Tests that pass for the wrong reason, proven by injecting the break | 9 | 11 | Rides along with A–D |
+| [E — close the test gaps](2026-09-03-audit-fix-e-test-gaps.md) | Tests that pass for the wrong reason, proven by injecting the break | 11 | 11 | Rides along with A–D |
 
-Coverage was checked mechanically, not by eye: all 82 ids appear in exactly one plan, with no orphans and no duplicates.
+Coverage was checked mechanically, not by eye: the original 82 ids each appear in exactly one plan, with no orphans and no duplicates.
+
+**The four ids added on 2026-09-04 are counted in the table above but have no task yet.** D-10 and E-14 belong to plan C, H-10 and H-11 to plan E, and each needs a task written before that plan is executed — the table's finding counts moved, the task counts did not. Two of them are notes rather than bugs to fix: D-10 records why a build that stops must not be "fixed" by reverting the narrowing that made it stop, and H-10 records two hypotheses that were tested and disproved, so the next person does not retry them.
 
 ## One invariant the plans surfaced, which nothing recorded before
 
@@ -52,7 +54,7 @@ Three items are decisions, not code:
 
 ## What writing the plans changed in the audit
 
-Planning found five things the audit got wrong or missed. The audit doc has been amended in place, so it now carries 69 findings rather than 67:
+Planning found five things the audit got wrong or missed. The audit doc was amended in place, so it carried 69 findings rather than 67 by the time the plans were written (the count has moved since; the header is authoritative):
 
 1. **D-1's fix direction was not achievable.** The audit said "partition the query so the window is never needed". The live API was probed before plan A was written: a `text` term added to `keywords:<k>` leaves `total` unchanged and only re-ranks, `keywords:a,-b` returns 0 (no negation), and `size=1000` still returns 250. The only filtering dimension is the `keywords:a,b` intersection, and without negation a cell's complement is inexpressible — **no covering partition exists**. Plan A partitions on intersections and then measures coverage against the answered `total`, throwing on a shortfall: safe by check, not by construction.
 2. **The packument count was double-counted.** "~8,800 packuments" was the sum of two overlapping keyword totals. The harvest fetches the union: 5,095 + 3,699 − 3,178 ≈ 5,600 today.
