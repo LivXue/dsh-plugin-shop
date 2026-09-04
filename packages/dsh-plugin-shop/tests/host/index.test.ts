@@ -1699,3 +1699,65 @@ describe('ShopGateway.catalog incompatibility', () => {
     expect(resolvePeer).toHaveBeenCalledTimes(2)
   })
 })
+
+describe('concurrent catalog loads (G-7)', () => {
+  const entries: CatalogEntry[] = [{
+    name: 'dsh-one', version: '2.0.0', integrity: null, publishedAt: null, repository: null,
+    license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25',
+  }]
+
+  it('loads once when catalog() and installed() are called together on a cold cache', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-once-'))
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: { 'dsh-one': '^1.0.0' } }))
+    let loadCalls = 0
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
+      loadCatalog: async () => {
+        loadCalls += 1
+        await gate
+        return { snapshot: { schemaVersion: 6, builtAt: '', entries, denied: [], stars: {} }, stale: false } as CatalogResult
+      },
+    })
+    const both = Promise.all([gateway.catalog({}), gateway.installed()])
+    await vi.waitFor(() => expect(loadCalls).toBeGreaterThan(0))
+    release()
+    const [, installed] = await both
+    expect(loadCalls).toBe(1)
+    expect(installed).toHaveLength(1)
+  })
+
+  it('still re-asks the loader after a failed load', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-once-fail-'))
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
+    let loadCalls = 0
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
+      loadCatalog: async () => {
+        loadCalls += 1
+        if (loadCalls === 1) throw new Error('offline')
+        return { snapshot: { schemaVersion: 6, builtAt: '', entries, denied: [], stars: {} }, stale: false } as CatalogResult
+      },
+    })
+    await expect(gateway.catalog({})).rejects.toThrow('offline')
+    await expect(gateway.catalog({})).resolves.toMatchObject({ schemaVersion: 6 })
+    expect(loadCalls).toBe(2)
+  })
+
+  it('a refresh always reaches the loader', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-once-refresh-'))
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
+    const seen: Array<boolean | undefined> = []
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
+      loadCatalog: async options => {
+        seen.push(options.refresh)
+        return { snapshot: { schemaVersion: 6, builtAt: '', entries, denied: [], stars: {} }, stale: false } as CatalogResult
+      },
+    })
+    await gateway.catalog({})
+    await gateway.catalog({ refresh: true })
+    expect(seen).toEqual([false, true])
+  })
+})

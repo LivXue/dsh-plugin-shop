@@ -11,7 +11,7 @@ import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import { ownPeerRanges, ownVersion } from '../own-version.ts'
 import { catalogOrigins, loadCatalog, type LoadCatalogOptions } from './catalog.ts'
-import type { CatalogSnapshot } from './catalog.ts'
+import type { CatalogResult, CatalogSnapshot } from './catalog.ts'
 import type { CatalogOrigin } from './origin.ts'
 import { npmrcRegistry } from './npmrc.ts'
 import type { CatalogEntry, DeniedEntry } from './types.ts'
@@ -318,6 +318,8 @@ export class ShopGateway extends TypertRemoteService {
   /** The install gate runs against the last loaded snapshot, never a fresh
    * fetch per request (§7.2: the Host's cached snapshot is the truth). */
   private lastSnapshot: CatalogSnapshot | null = null
+  /** A cold-cache catalog load shared by concurrent RPC calls. */
+  private inFlightLoad: Promise<CatalogResult> | null = null
   /** The origin list built for the last-seen `catalogUrl`, memoised so the
    * user's npmrc is read at most once per gateway (see `originsFor`). */
   private originCache: { catalogUrl: string; origins: CatalogOrigin[] } | null = null
@@ -608,6 +610,32 @@ export class ShopGateway extends TypertRemoteService {
     return origins
   }
 
+  /** Join an in-flight load; refresh requests always start a new load. */
+  private loadCatalogOnce(refresh: boolean): Promise<CatalogResult> {
+    const existing = this.inFlightLoad
+    if (!refresh && existing !== null) return existing
+    const { catalogUrl, cacheDir } = this.rowConfig()
+    const load = this.options.loadCatalog ?? loadCatalog
+    const started = load({ origins: this.originsFor(catalogUrl), cacheDir, refresh })
+      .then(result => {
+        this.lastSnapshot = result.snapshot
+        return result
+      })
+    this.inFlightLoad = started
+    const forget = (): void => {
+      if (this.inFlightLoad === started) this.inFlightLoad = null
+    }
+    started.then(forget, forget)
+    return started
+  }
+
+  /** Return the current snapshot, loading it once when needed. */
+  private async snapshotNow(): Promise<CatalogSnapshot> {
+    if (this.lastSnapshot !== null) return this.lastSnapshot
+    const { snapshot } = await this.loadCatalogOnce(false)
+    return snapshot
+  }
+
   /** The explicit restart override. Only the row's `config:` sub-object is
    * passed to a plugin — a top-level `allowRestart:` beside `name:` would be
    * silently ignored by the loader (dsh-market README, #227). */
@@ -630,10 +658,7 @@ export class ShopGateway extends TypertRemoteService {
   /** Browse the catalog (§7.3): cached snapshot, refreshed on demand. */
   @Remote('catalog')
   async catalog(args?: { refresh?: boolean }): Promise<ShopCatalogResult> {
-    const { catalogUrl, cacheDir } = this.rowConfig()
-    const load = this.options.loadCatalog ?? loadCatalog
-    const { snapshot, stale } = await load({ origins: this.originsFor(catalogUrl), cacheDir, refresh: args?.refresh ?? false })
-    this.lastSnapshot = snapshot
+    const { snapshot, stale } = await this.loadCatalogOnce(args?.refresh ?? false)
     let incompatible: Record<string, string[]>
     if (this.incompatibleCache !== null && this.incompatibleCache.snapshot === snapshot) {
       incompatible = this.incompatibleCache.map
@@ -681,13 +706,8 @@ export class ShopGateway extends TypertRemoteService {
   // this on the real composition (§7.3 amendment, 2026-08-25).
   @Remote('installStart')
   async install(args: InstallArgs): Promise<ShopInstallResult> {
-    if (this.lastSnapshot === null) {
-      const { catalogUrl, cacheDir } = this.rowConfig()
-      const load = this.options.loadCatalog ?? loadCatalog
-      const { snapshot } = await load({ origins: this.originsFor(catalogUrl), cacheDir })
-      this.lastSnapshot = snapshot
-    }
-    const verdict = validateInstall(this.lastSnapshot, args)
+    const snapshot = await this.snapshotNow()
+    const verdict = validateInstall(snapshot, args)
     if (!verdict.ok) return { ok: false, code: verdict.code, detail: verdict.detail }
     // The validator resolved the row by identity. Re-finding it by name is
     // what installed another repository's commit when names collided.
@@ -815,12 +835,7 @@ export class ShopGateway extends TypertRemoteService {
    * from this one list. */
   @Remote('installed')
   async installed(): Promise<ShopInstalledEntry[]> {
-    if (this.lastSnapshot === null) {
-      const { catalogUrl, cacheDir } = this.rowConfig()
-      const load = this.options.loadCatalog ?? loadCatalog
-      const { snapshot } = await load({ origins: this.originsFor(catalogUrl), cacheDir })
-      this.lastSnapshot = snapshot
-    }
+    const snapshot = await this.snapshotNow()
     const manifest = readProfileManifest('dsh-plugin-shop', this.profileDirResolved())
     const dependencies = manifest.dependencies ?? {}
     const pins = readRepoPins(this.pinFs, this.pinsPath())
@@ -855,7 +870,7 @@ export class ShopGateway extends TypertRemoteService {
       return present.length === 0 || present.every(([, enabled]) => enabled)
     }
     const installed: ShopInstalledEntry[] = []
-    for (const entry of this.lastSnapshot.entries) {
+    for (const entry of snapshot.entries) {
       const spec = dependencies[entry.name]
       if (spec === undefined) continue
       // A profile has one dependency per name, so the spec is the only way
@@ -913,13 +928,8 @@ export class ShopGateway extends TypertRemoteService {
    * itself). The same install records/polling serve the client. */
   @Remote('uninstallStart')
   async uninstall(args: { name: string }): Promise<ShopUninstallResult> {
-    if (this.lastSnapshot === null) {
-      const { catalogUrl, cacheDir } = this.rowConfig()
-      const load = this.options.loadCatalog ?? loadCatalog
-      const { snapshot } = await load({ origins: this.originsFor(catalogUrl), cacheDir })
-      this.lastSnapshot = snapshot
-    }
-    const named = this.lastSnapshot.entries.filter(entry => entry.name === args.name)
+    const snapshot = await this.snapshotNow()
+    const named = snapshot.entries.filter(entry => entry.name === args.name)
     if (named.length === 0) {
       return { ok: false, detail: `dsh-plugin-shop: ${args.name} is not in the catalog` }
     }
