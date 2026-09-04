@@ -694,3 +694,33 @@ describe('spawnFailureDetail', () => {
       .toBe('dsh spawn failed: spawn dsh EACCES')
   })
 })
+
+describe('the child environment (F-12 residual)', () => {
+  it('passes the parent environment to the child, deliberately', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-env-'))
+    const bin = join(dir, 'dsh')
+    writeFileSync(bin, ['#!/bin/sh', `printf '%s\n' "$SHOP_F12_PROBE" > "${join(dir, 'env.txt')}"`, 'exit 0', ''].join('\n'))
+    chmodSync(bin, 0o755)
+    process.env.SHOP_F12_PROBE = 'inherited'
+    try {
+      await startInstall({ profile: 'env', spec: 'a@1.0.0', dshBin: bin }).finished
+      expect(readFileSync(join(dir, 'env.txt'), 'utf8').trim()).toBe('inherited')
+    } finally {
+      delete process.env.SHOP_F12_PROBE
+    }
+  })
+
+  it('uses only the given environment when one is passed', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-env-pinned-'))
+    const bin = join(dir, 'dsh')
+    writeFileSync(bin, ['#!/bin/sh', `printf '%s\n' "$SHOP_F12_PROBE" > "${join(dir, 'env.txt')}"`, 'exit 0', ''].join('\n'))
+    chmodSync(bin, 0o755)
+    process.env.SHOP_F12_PROBE = 'inherited'
+    try {
+      await startInstall({ profile: 'env-pinned', spec: 'a@1.0.0', dshBin: bin, env: { PATH: process.env.PATH ?? '' } }).finished
+      expect(readFileSync(join(dir, 'env.txt'), 'utf8').trim()).toBe('')
+    } finally {
+      delete process.env.SHOP_F12_PROBE
+    }
+  })
+})

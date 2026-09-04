@@ -346,6 +346,10 @@ function spawnPluginCli(options: {
     try {
       child = spawn(command, args, {
         stdio: ['ignore', 'pipe', 'pipe'],
+        // Deliberate F-12 residual: dsh inherits the environment it needs for
+        // PATH, HOME, proxies, and npm/pnpm configuration. Callers may pass a
+        // narrower env explicitly; guessing an allowlist here would break
+        // valid installs and process.env carries no variable provenance.
         env: env ?? process.env,
         detached: process.platform !== 'win32',
       })
