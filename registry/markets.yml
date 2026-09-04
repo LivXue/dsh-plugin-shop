@@ -151,6 +151,11 @@
   by: human
   reason: "可安装的 DeepSeek Harness 插件市场，替换设置里的插件页"
 
+- name: "@thewaifu/dsh-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: The dshmarket.ai plugin marketplace inside DeepSeek Harness Web Settings"
+
 - name: "@tobewin/dsh-plugin-market"
   market: true
   by: human
@@ -215,6 +220,11 @@
   market: true
   by: human
   reason: "A safety-first plugin marketplace for the DeepSeek Harness web GUI: a curated community shortlist, and an install that starts with a security review"
+
+- name: "dsh-dify-marketplace"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: DeepSeek Harness plugin: browse, search, and install Dify Marketplace plugins from Settings, with daemon-based .difypkg installs and Cordis child fibers."
 
 - name: "dsh-mall"
   market: true
@@ -285,6 +295,11 @@
   market: true
   by: llm
   reason: "Judged a dsh plugin market from: The most comprehensive DeepSeek Harness plugin market — refreshed daily, sourced across the Internet, reviewed before publishing."
+
+- name: "dsh-plugin-shop-catalog"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: The dsh plugin catalog, as published by dsh-plugin-shop."
 
 - name: "dsh-plugin-store"
   market: true
