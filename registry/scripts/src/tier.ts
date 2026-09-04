@@ -46,8 +46,9 @@ export function assignTier(accepted: Accepted, config: RegistryConfig): Entry {
     ...(candidate.publisher !== undefined ? { publisher: candidate.publisher } : {}),
     ...(candidate.peers.length > 0 ? { peers: candidate.peers } : {}),
   }
-  // A review whose only pin is a commit belongs to a repo entry of the same
-  // bundle name, not to this npm candidate.
+  // Defence in depth: a github review is keyed by its repository now, so it
+  // can no longer be reached by an npm name at all (config.ts). If one ever
+  // were, a commit pin still says nothing about this npm package.
   if (review === undefined || review.reviewedVersion === undefined) return { ...base, tier: 'community' }
   const stale = gt(candidate.version, review.reviewedVersion)
   return { ...base, tier: stale ? 'verified-stale' : 'verified', review }
@@ -71,7 +72,13 @@ export function assignTier(accepted: Accepted, config: RegistryConfig): Entry {
  */
 export function assignRepoTier(accepted: RepoAccepted, config: RegistryConfig): Entry {
   const { repo } = accepted
-  const review = config.verified.get(repo.name)
+  // By repository, never by bundle name. A review binds (repo, commit): 83
+  // live bundle names are claimed by both a fork and an original and
+  // `dsh-skill-manager` by 14 repositories, so a name lookup handed every one
+  // of them the verdict, the reviewer's byline and — at the reviewed commit —
+  // the skipped install acknowledgement. Lowercased because GitHub resolves
+  // repository names case-insensitively.
+  const review = config.verified.get(repo.repo.toLowerCase())
   const release = repo.release
   const base = {
     name: repo.name,

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { installIdentity } from './identity.ts'
 import type { Entry, Rejection } from './types.ts'
 
 /**
@@ -103,9 +104,7 @@ export function assertCatalogInvariants(entries: Entry[], builtAt: string): void
   }
   const identities = new Set<string>()
   for (const entry of entries) {
-    const key = entry.source === 'npm'
-      ? `npm:${entry.name}`
-      : `github:${entry.repo ?? entry.name}#${entry.subdir ?? ''}`
+    const key = installIdentity(entry)
     if (identities.has(key)) throw new Error(`catalog invariant: duplicate install identity ${key}`)
     identities.add(key)
   }

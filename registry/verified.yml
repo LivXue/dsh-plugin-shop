@@ -1,24 +1,31 @@
-# Human review results. A review is pinned to the exact version it covered:
-# when npm's latest exceeds reviewedVersion the entry is downgraded to
-# verified-stale, so passing review once cannot bless every future version.
-# A repository entry (github channel) is pinned by reviewedCommit instead;
-# any other commit downgrades it the same way. A release-rescued entry
-# (github channel, installed from a release tarball) is pinned by
-# reviewedSha256 — the tarball's content hash, never the tag: a tag is a
-# mutable ref an author can re-create on different content, and verified
-# trust must name what the entry actually installs.
+# Human review results. A review is pinned to the exact thing it covered and
+# never to a name.
 #
-# - name: dsh-hello-plugin          # npm entry: reviewedVersion
+#   npm entry      reviewedVersion — the exact published version. Any other
+#                  version, newer OR older, is verified-stale: a `latest`
+#                  behind the review is what a hotfix published without --tag
+#                  leaves behind, and an unpublish does the same.
+#   github entry   repo + reviewedCommit. The review BINDS to the repository:
+#                  a bundle name is claimed by up to 14 repositories, and 83
+#                  live bundle names are shared by a fork and an original, so
+#                  a review keyed by name would hand every fork the verdict.
+#   release rescue repo + reviewedSha256 — the tarball's content hash, never
+#                  the tag: a tag is a mutable ref an author can re-create on
+#                  different content.
+#
+# - name: dsh-hello-plugin          # npm entry: reviewedVersion, no repo
 #   reviewedVersion: 1.2.0
 #   reviewer: github:someone
 #   reviewCommit: abc1234
 #   notes: Reads only the workspace; no network.
-# - name: dsh-repo-plugin           # github entry: reviewedCommit
+# - name: dsh-repo-plugin           # github entry: repo + reviewedCommit
+#   repo: someone/dsh-repo-plugin
 #   reviewedCommit: <40-hex commit>
 #   reviewer: github:someone
 #   reviewCommit: abc1234
 #   notes: Reads only the workspace; no network.
-# - name: dsh-repo-plugin           # github release-rescued entry: reviewedSha256
+# - name: dsh-repo-plugin           # github release-rescued: repo + reviewedSha256
+#   repo: someone/dsh-repo-plugin
 #   reviewedSha256: <64-hex sha256 of the reviewed release tarball>
 #   reviewer: github:someone
 #   reviewCommit: abc1234
