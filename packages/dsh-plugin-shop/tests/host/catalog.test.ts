@@ -1165,6 +1165,28 @@ describe('entry grammar at the boundary (G-6 / F-3)', () => {
   })
 })
 
+describe('the stars sidecar carries no prototype (G-8)', () => {
+  it('hands the client a null-prototype map', async () => {
+    const entry = {
+      name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null,
+      repository: null, license: 'MIT', tier: 'community', metadata: 'derived',
+      added: '2026-08-25',
+    }
+    const data = dataJson([entry])
+    const stars = starsFile({ 'dsh-hello-plugin': 7 })
+    const { pointer } = pointerFor(data, '2026-08-25T00:00:00Z', { url: stars.url, sha256: stars.sha256 })
+    const fetchImpl = (async (input: string | URL) => {
+      const url = String(input)
+      if (url.endsWith('/index.json')) return new Response(pointer, { status: 200 })
+      if (url.endsWith(stars.url)) return new Response(stars.text, { status: 200 })
+      return new Response(data, { status: 200 })
+    }) as unknown as typeof fetch
+    const result = await loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() })
+    expect(result.snapshot.stars['dsh-hello-plugin']).toBe(7)
+    expect(Object.getPrototypeOf(result.snapshot.stars)).toBeNull()
+  })
+})
+
 describe('catalogOrigins', () => {
   const fetchImpl = (async () => new Response('', { status: 200 })) as unknown as typeof fetch
 

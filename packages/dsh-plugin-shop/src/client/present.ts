@@ -315,7 +315,11 @@ export function entryKey(entry: CatalogEntry): string {
  * repo, one the catalog never even listed.
  */
 export function starsOf(entry: CatalogEntry, stars: Record<string, number>): number | undefined {
-  return stars[entry.repo ?? entry.name]
+  const key = entry.repo ?? entry.name
+  // Package names are untrusted keys; never borrow Object.prototype members
+  // such as `constructor` or `toString` as if they were star counts.
+  if (!Object.hasOwn(stars, key)) return undefined
+  return stars[key]
 }
 
 /** Sort the shelf: stars descending, un-starred entries last, name ascending

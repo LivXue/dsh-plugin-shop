@@ -265,7 +265,9 @@ function parseStarsText(text: string): Record<string, number> {
   try {
     const parsed = JSON.parse(text) as { stars?: unknown }
     if (typeof parsed.stars !== 'object' || parsed.stars === null) return {}
-    const out: Record<string, number> = {}
+    // The sidecar keys are package/repository names, so keep the parsed map
+    // free of inherited names such as `constructor`.
+    const out: Record<string, number> = Object.create(null) as Record<string, number>
     for (const [key, value] of Object.entries(parsed.stars)) {
       if (typeof value === 'number') out[key] = value
     }

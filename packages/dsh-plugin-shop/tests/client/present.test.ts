@@ -79,6 +79,24 @@ describe('INSTALL_POLL_MS', () => {
   })
 })
 
+describe('starsOf against a prototype-bearing map (G-8)', () => {
+  for (const name of ['constructor', 'toString', 'valueOf', 'hasOwnProperty']) {
+    it(`answers undefined for an entry named ${name}`, () => {
+      expect(starsOf({ ...entry, name }, {})).toBeUndefined()
+    })
+  }
+
+  it('still reads a real count for such a name', () => {
+    expect(starsOf({ ...entry, name: 'constructor' }, { constructor: 12 })).toBe(12)
+  })
+
+  it('does not sort a prototype-named entry to the top of the shelf', () => {
+    const proto = { ...entry, name: 'constructor' }
+    const real = { ...entry, name: 'dsh-real' }
+    expect(sortByStars([proto, real], { 'dsh-real': 5 }).map(e => e.name)).toEqual(['dsh-real', 'constructor'])
+  })
+})
+
 describe('reduceInstall', () => {
   it('starts from idle into running with the install id', () => {
     const next = reduceInstall({ kind: 'idle' }, { type: 'started', installId: 'abc' })
