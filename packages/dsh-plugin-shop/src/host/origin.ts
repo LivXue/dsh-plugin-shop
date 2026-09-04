@@ -23,7 +23,7 @@ export interface OriginHandle {
   /** One file named by the pointer, by the pointer's own raw url string.
    * Callers pass that string verbatim — never a basename, which would strip
    * a hostile absolute url into a fetchable relative one. */
-  file: (url: string) => Promise<string>
+  file: (url: string, signal?: AbortSignal) => Promise<string>
 }
 
 export interface CatalogOrigin {
@@ -48,6 +48,53 @@ export function resolveDataUrl(baseUrl: string, url: string): string {
   return resolved.href
 }
 
+/** The largest catalog body this host reads into memory. */
+export const MAX_BODY_BYTES = 64 * 1024 * 1024
+
+/** Read a response body through a byte cap, converting transport failures. */
+export async function readCappedBytes(
+  response: Response,
+  label: string,
+  maxBytes: number = MAX_BODY_BYTES,
+): Promise<Buffer> {
+  if (response.body === null) throw new TransportError(`${label} returned no body`)
+  const reader = response.body.getReader()
+  const chunks: Buffer[] = []
+  let bytes = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      bytes += value.byteLength
+      if (bytes > maxBytes) {
+        try {
+          await reader.cancel()
+        } catch {
+          // The stream may already have closed; the cap verdict still holds.
+        }
+        throw new TransportError(`${label} exceeded the ${maxBytes}-byte cap`)
+      }
+      chunks.push(Buffer.from(value))
+    }
+  } catch (error) {
+    if (error instanceof TransportError) throw error
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new TransportError(`${label} body read failed: ${detail}`, { cause: error })
+  } finally {
+    reader.releaseLock()
+  }
+  return Buffer.concat(chunks)
+}
+
+/** Read a capped response body as UTF-8 text. */
+export async function readCappedText(
+  response: Response,
+  label: string,
+  maxBytes: number = MAX_BODY_BYTES,
+): Promise<string> {
+  return (await readCappedBytes(response, label, maxBytes)).toString('utf8')
+}
+
 /** The transport this project has always used: a static `v1/` tree. */
 export function httpOrigin(baseUrl: string, fetchImpl: typeof fetch): CatalogOrigin {
   const id = `http:${baseUrl}`
@@ -65,24 +112,24 @@ export function httpOrigin(baseUrl: string, fetchImpl: typeof fetch): CatalogOri
         throw new TransportError(`catalog pointer fetch failed for ${id}: ${detail}`, { cause: error })
       }
       if (!response.ok) throw new TransportError(`catalog pointer returned ${response.status} for ${id}`)
-      const pointerText = await response.text()
+      const pointerText = await readCappedText(response, `catalog pointer fetch for ${id}`)
       return {
         id,
         pointer: async () => pointerText,
         // resolveDataUrl throws a plain Error on a refused url — deliberately
         // NOT a TransportError. A pointer naming another host is a poisoned
         // catalog, not a flaky link, and must not be retried elsewhere.
-        file: async (url) => {
+        file: async (url, signal) => {
           const resolved = resolveDataUrl(baseUrl, url)
           let dataResponse: Response
           try {
-            dataResponse = await fetchImpl(resolved)
+            dataResponse = await fetchImpl(resolved, signal === undefined ? undefined : { signal })
           } catch (error) {
             const detail = error instanceof Error ? error.message : String(error)
             throw new TransportError(`catalog data fetch failed for ${id}: ${detail}`, { cause: error })
           }
           if (!dataResponse.ok) throw new TransportError(`catalog data returned ${dataResponse.status} for ${id}`)
-          return dataResponse.text()
+          return readCappedText(dataResponse, `catalog data fetch for ${id}`)
         },
       }
     },

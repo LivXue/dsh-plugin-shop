@@ -1187,6 +1187,37 @@ describe('the stars sidecar carries no prototype (G-8)', () => {
   })
 })
 
+describe('a truncated body degrades to the cache (G-3)', () => {
+  it('serves the cached snapshot when the data body dies after ten bytes', async () => {
+    const entry = {
+      name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null,
+      repository: null, license: 'MIT', tier: 'community', metadata: 'derived',
+      added: '2026-08-25',
+    }
+    const data = dataJson([entry])
+    const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
+    const fs = memFs()
+    fs.write('/cache/index.json', pointer)
+    fs.write(`/cache/${url}`, data)
+    const fetchImpl = (async (input: string | URL) => {
+      if (String(input).endsWith('/index.json')) return new Response(pointer, { status: 200 })
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(10))
+          controller.error(new TypeError('terminated'))
+        },
+      }), { status: 200 })
+    }) as unknown as typeof fetch
+
+    const result = await loadCatalog({
+      baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs,
+      now: () => new Date('2026-09-01T00:00:00Z'),
+    })
+    expect(result.stale).toBe(true)
+    expect(result.snapshot.entries[0]?.name).toBe('dsh-hello-plugin')
+  })
+})
+
 describe('catalogOrigins', () => {
   const fetchImpl = (async () => new Response('', { status: 200 })) as unknown as typeof fetch
 
