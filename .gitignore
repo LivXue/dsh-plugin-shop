@@ -5,8 +5,19 @@ lib/
 !packages/dsh-typert-protocol/lib/**
 dist/
 *.tsbuildinfo
+# Every dotenv variant, not just the bare name: `.env.local` and
+# `.env.production` must never be picked up by `git add -A`.
 .env
+.env.*
 .DS_Store
+# `npm pack` and `pnpm pack` drop a tarball in the package directory during
+# every release. The fixture below is deliberately tracked; this negation
+# records that intent and keeps it visible to git.
+*.tgz
+!packages/dsh-plugin-shop/tests/fixtures/catalog-package.tgz
+# Agent scratch state can contain a shadow git repository and must not enter
+# the project history.
+.raven/
 .playwright-mcp/
 .claude/settings.local.json
 .claude/worktrees/

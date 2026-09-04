@@ -8,7 +8,8 @@
  * confirms it. A convention no test enforces is a convention that drifts
  * silently, which is what readme-pins.test.ts exists to prove. */
 
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -144,3 +145,108 @@ describe('secrets are scoped to the steps that consume them', () => {
   })
 })
 
+describe('the published shop manifest', () => {
+  const pkg = JSON.parse(read('packages/dsh-plugin-shop/package.json')) as {
+    devDependencies?: Record<string, string>
+  }
+
+  it('declares the vendored protocol with the workspace protocol', () => {
+    // Load-bearing: pnpm 11 does not link a workspace member from a plain
+    // range, and the typert generator only recognises @Remote symbols
+    // declared in a workspace package under packages/ (VENDORED.md).
+    expect(pkg.devDependencies?.['@deepseek-ai/dsh-typert-protocol']).toMatch(/^workspace:/)
+  })
+
+  it('is released with the tool that rewrites that specifier', () => {
+    // `npm publish` shipped `workspace:^0.1.1-rc.2` into the published
+    // manifest of 0.7.4 (measured with npm view); `pnpm publish` and `pnpm pack`
+    // resolve it. The specifier above and the release command are one
+    // decision, and this is the coupling that keeps them agreeing.
+    const claude = read('CLAUDE.md')
+    const release = claude.slice(claude.indexOf('## Release channels'))
+    expect(release, 'CLAUDE.md has no Release channels section').not.toBe('')
+    expect(release).toContain('pnpm publish --tag beta')
+    expect(release, 'a bare `npm publish` would ship the workspace: specifier').not.toMatch(/^npm publish/m)
+  })
+})
+
+describe('the vendored typert protocol', () => {
+  const pkg = JSON.parse(read('packages/dsh-typert-protocol/package.json')) as {
+    version: string
+    exports: Record<string, unknown>
+    files?: string[]
+  }
+
+  it('records the same version in VENDORED.md and package.json', () => {
+    // A re-sync replaces lib/ and bumps the version; recording one without
+    // the other leaves the copy claiming to be something it is not, and
+    // nothing checked.
+    const match = /@deepseek-ai\/dsh-typert-protocol@(\S+?)`/.exec(read('packages/dsh-typert-protocol/VENDORED.md'))
+    expect(match?.[1], 'VENDORED.md names no source version').toBeDefined()
+    expect(match?.[1]).toBe(pkg.version)
+  })
+
+  it('ships every lib file its exports and files list name', () => {
+    // The `./typert` export pointed at lib/typert.host.js and
+    // lib/typert.host.d.ts, neither of which was ever copied in — dead, and
+    // undetectable because nothing imports the specifier either.
+    const named = new Set<string>([
+      ...[...JSON.stringify(pkg.exports).matchAll(/"\.\/(lib\/[^"*]+)"/g)].map(m => m[1]!),
+      ...(pkg.files ?? []).filter(entry => !entry.includes('*')),
+    ])
+    expect(named.size).toBeGreaterThan(0)
+    for (const target of named) {
+      expect(
+        existsSync(join(repoRoot, 'packages/dsh-typert-protocol', target)),
+        `${target} is named by the vendored manifest but missing from the copy`,
+      ).toBe(true)
+    }
+  })
+})
+
+describe('what git is allowed to pick up', () => {
+  /** `git check-ignore` exits 0 when the path is ignored, 1 when it is not.
+   * Asked of git rather than parsed out of .gitignore, because the pattern
+   * that matters is the one git actually applies — including the negation. */
+  const ignored = (path: string): boolean => {
+    try {
+      execFileSync('git', ['check-ignore', '-q', '--no-index', path], { cwd: repoRoot, stdio: 'ignore' })
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  it('ignores the agent scratch directory', () => {
+    // 4.4 MB containing shadow.git, untracked AND unignored: one `git add -A`
+    // from being committed.
+    expect(ignored('.raven/NOTICE.txt')).toBe(true)
+    expect(ignored('.raven/shadow.git')).toBe(true)
+  })
+
+  it('ignores every dotenv variant, not just the bare name', () => {
+    // `.env` was covered; `.env.local` and `.env.production` were not.
+    for (const file of ['.env', '.env.local', '.env.production', '.env.test.local']) {
+      expect(ignored(file), `${file} is not ignored`).toBe(true)
+    }
+  })
+
+  it('ignores packed tarballs but keeps the tracked fixture', () => {
+    // `npm pack` drops one in the package directory during every release.
+    // The fixture is deliberately tracked, so the negation states that and
+    // this asserts it: an ignore rule does not untrack a tracked file, but a
+    // later `git rm --cached` plus re-add would silently drop it.
+    expect(ignored('packages/dsh-plugin-shop/dsh-plugin-shop-9.9.9.tgz')).toBe(true)
+    expect(ignored('some-package.tgz')).toBe(true)
+    expect(ignored('packages/dsh-plugin-shop/tests/fixtures/catalog-package.tgz')).toBe(false)
+  })
+
+  it('keeps the fixture tarball tracked', () => {
+    // The negation is worthless if the file it exempts stopped being tracked.
+    const tracked = execFileSync('git', ['ls-files', 'packages/dsh-plugin-shop/tests/fixtures/catalog-package.tgz'], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    })
+    expect(tracked.trim()).toBe('packages/dsh-plugin-shop/tests/fixtures/catalog-package.tgz')
+  })
+})

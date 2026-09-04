@@ -183,11 +183,12 @@ describe('parseRegistryConfig', () => {
 
   it('names verified.yml when reviewedVersion is not a semver version', () => {
     // The build used to die in tier.ts with `Invalid Version:
-    // one-point-two`, which names no file and no row.
+    // one-point-two`, which names no file and no row. parseFile now validates
+    // the row at load time and reports its one-based row and package name.
     expect(() => parseRegistryConfig({
       ...empty,
       verified: '- name: dsh-x\n  reviewedVersion: one-point-two\n  reviewer: r\n  reviewCommit: c\n',
-    })).toThrow(/verified\.yml: 0\.reviewedVersion.*semver/s)
+    })).toThrow(/verified\.yml: row 1 \(dsh-x\).*reviewedVersion.*semver/s)
   })
 
   it('requires the canonical semver spelling, so an exact comparison is a semver comparison', () => {
@@ -608,4 +609,62 @@ describe('NPM_BACKUP_REGISTRY is refused at startup when it is not a URL', () =>
       }
     })
   }
+})
+
+describe('parseRegistryConfig diagnostics', () => {
+  it('names the package, not the row index, when a row is malformed', () => {
+    // `verified.yml: 1.reviewer Invalid input` makes a reader count rows in a
+    // file that will one day have hundreds. The name is what they are
+    // looking for, and it is right there in the row.
+    expect(() => parseRegistryConfig({
+      ...empty,
+      verified: '- name: dsh-good\n  reviewedVersion: 1.0.0\n  reviewer: r\n  reviewCommit: c\n'
+        + '- name: dsh-missing-reviewer\n  reviewedVersion: 1.0.0\n  reviewCommit: c\n',
+    })).toThrow(/verified\.yml: row 2 \(dsh-missing-reviewer\).*reviewer/s)
+  })
+
+  it('names the package on a whole-row refinement failure too', () => {
+    // The refine's issue path is the row index alone, so the name has to come
+    // from the row rather than from the path.
+    expect(() => parseRegistryConfig({
+      ...empty,
+      verified: '- name: dsh-unpinned\n  reviewer: r\n  reviewCommit: c\n',
+    })).toThrow(/verified\.yml: row 1 \(dsh-unpinned\).*reviewedVersion.*reviewedCommit.*reviewedSha256/s)
+  })
+
+  it('falls back to the row index when the row carries no usable name', () => {
+    // allowed-similar.yml is a list of plain strings, and a malformed
+    // verified row can be a scalar too. No name to print, so say so.
+    expect(() => parseRegistryConfig({ ...empty, allowedSimilar: '- 42\n' }))
+      .toThrow(/allowed-similar\.yml: row 1 /)
+  })
+
+  it('says the file is empty rather than reporting a YAML object', () => {
+    // `parse('')` and `parse('# comment\n')` both return null, and
+    // `typeof null === 'object'`, so it used to accuse the file of being a
+    // map. It stays fatal — a malformed registry file must stop the build —
+    // but it now says what to write.
+    for (const text of ['', '# nothing here\n', '\n\n']) {
+      expect(() => parseRegistryConfig({ ...empty, verified: text }), `${JSON.stringify(text)} must name the emptiness`)
+        .toThrow(/verified\.yml: the file has no YAML document.*\[\]/s)
+    }
+  })
+
+  it('parses a file whose first line carries a UTF-8 BOM', () => {
+    // An editor that writes a BOM produced `Unexpected scalar at node end at
+    // line 1, column 4` — no file name, and a caret pointing into a line that
+    // looks correct. A BOM is an encoding marker, not content.
+    const config = parseRegistryConfig({
+      ...empty,
+      verified: '\ufeff- name: dsh-bom\n  reviewedVersion: 1.0.0\n  reviewer: r\n  reviewCommit: c\n',
+    })
+    expect(config.verified.get('dsh-bom')?.reviewedVersion).toBe('1.0.0')
+  })
+
+  it('still names the file when the document is a map instead of a list', () => {
+    // Unchanged behaviour, re-asserted so the null special-case above does
+    // not swallow the genuine wrong-shape message.
+    expect(() => parseRegistryConfig({ ...empty, denied: 'name: x\n' }))
+      .toThrow(/denied\.yml: expected a YAML list, got object/)
+  })
 })

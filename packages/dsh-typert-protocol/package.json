@@ -25,19 +25,13 @@
       "default": "./lib/types/types.js"
     },
     "./src/*": "./src/*",
-    "./package.json": "./package.json",
-    "./typert": {
-      "types": "./lib/typert.host.d.ts",
-      "default": "./lib/typert.host.js"
-    }
+    "./package.json": "./package.json"
   },
   "files": [
     "lib/index.js",
     "lib/invariant.js",
     "lib/types/**/*.js",
-    "lib/types/**/*.d.ts",
-    "lib/typert.host.js",
-    "lib/typert.host.d.ts"
+    "lib/types/**/*.d.ts"
   ],
   "license": "MIT",
   "peerDependencies": {

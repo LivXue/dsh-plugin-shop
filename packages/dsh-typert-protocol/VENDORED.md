@@ -1,9 +1,15 @@
 # Vendored: @deepseek-ai/dsh-typert-protocol
 
 Vendored from `@deepseek-ai/dsh-typert-protocol@0.1.1-rc.2` (MIT): the compiled
-`lib/` exactly as shipped on npm, its `LICENSE`, and the original manifest plus
-a `./typert` export. This copy exists for the typert build; it is never
-published.
+`lib/` exactly as shipped on npm, its `LICENSE`, and the original manifest.
+This copy exists for the typert build; it is never published.
+
+A `./typert` export was added here at some point pointing at
+`lib/typert.host.js` and `lib/typert.host.d.ts`. Neither file was ever copied
+in and nothing imports the specifier, so both the export and its `files`
+entries were removed on 2026-09-03. `registry/scripts/tests/repo-guards.test.ts`
+now asserts that every path this manifest names exists, so a partial re-sync
+fails a test instead of sitting here unnoticed.
 
 ## Why it is vendored
 

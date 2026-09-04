@@ -151,16 +151,41 @@ export interface RegistryConfig {
  * Parse one file, failing loudly with the file's name in the message. A
  * malformed registry file must stop the build: silently listing nothing looks
  * identical to an empty ecosystem.
+ *
+ * The message is the whole product of this function, because its reader is a
+ * human with a broken file. Three things it used to get wrong: a row was
+ * identified by its zero-based index rather than by the package name sitting
+ * in it; an empty or comments-only file was reported as `got object`, since
+ * `parse('')` is `null` and `typeof null === 'object'`; and a leading UTF-8
+ * BOM failed inside the YAML parser as `Unexpected scalar at node end at line
+ * 1, column 4`, naming no file and pointing at a line that looks correct.
  */
 function parseFile<T>(label: string, text: string, schema: z.ZodType<T>): T {
-  const raw: unknown = parse(text)
+  // A BOM is an encoding marker, not content. yaml reads it as part of the
+  // first token and fails several characters later.
+  const raw: unknown = parse(text.replace(/^\ufeff/, ''))
+  if (raw === null || raw === undefined) {
+    throw new Error(`${label}: the file has no YAML document (it is empty, or only comments); write [] for an empty list`)
+  }
   if (!Array.isArray(raw)) throw new Error(`${label}: expected a YAML list, got ${typeof raw}`)
   const result = schema.safeParse(raw)
   if (result.success) return result.data
   const issue = result.error.issues[0]
-  const path = issue === undefined ? '' : issue.path.join('.')
-  const message = issue === undefined ? 'invalid' : issue.message
-  throw new Error(`${label}: ${path} ${message}`)
+  if (issue === undefined) throw new Error(`${label}: invalid`)
+  // The first path segment is the row index for every schema here (they are
+  // all arrays), so the row can be looked up and named. A refinement failure
+  // has ONLY that segment, which is exactly the case where the index alone
+  // told the reader least.
+  const [first, ...rest] = issue.path
+  const row = typeof first === 'number' ? raw[first] : undefined
+  const name = typeof row === 'object' && row !== null && typeof (row as { name?: unknown }).name === 'string'
+    ? (row as { name: string }).name
+    : undefined
+  const where = typeof first === 'number'
+    ? `row ${first + 1}${name === undefined ? '' : ` (${name})`}`
+    : issue.path.join('.')
+  const field = typeof first === 'number' ? rest.join('.') : ''
+  throw new Error([label + ':', where, field, issue.message].filter(part => part !== '').join(' '))
 }
 
 /**

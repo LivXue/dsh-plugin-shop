@@ -101,10 +101,24 @@ npm carries two dist-tags. `latest` is what `dsh plugin add dsh-plugin-shop` ins
 ```sh
 pnpm -C packages/dsh-plugin-shop test       # includes the live-harness e2e
 pnpm -C packages/dsh-plugin-shop typecheck
-npm publish --tag beta                      # X.Y.Z-beta.N — latest untouched
+rm -rf packages/dsh-plugin-shop/lib && pnpm -C packages/dsh-plugin-shop build
+cd packages/dsh-plugin-shop
+pnpm publish --tag beta                     # X.Y.Z-beta.N — latest untouched
 # install that build on a real profile and use the thing that changed, then:
-npm publish                                 # X.Y.Z — moves latest
+pnpm publish                                # X.Y.Z — moves latest
 ```
+
+**`pnpm publish`, never `npm publish`.** The package declares the vendored
+protocol as `workspace:^0.1.1-rc.2` — load-bearing, because pnpm 11 does not
+link a workspace member from a plain range and the typert generator only
+recognises `@Remote` symbols declared in a workspace package under
+`packages/`. `npm publish` ships that specifier verbatim: 0.7.4's published
+manifest carries `workspace:^0.1.1-rc.2` today, which is inert for consumers
+and breaks anything that resolves the manifest. `pnpm publish` rewrites it to
+the resolved range. `pnpm publish` also refuses a dirty tree, which is a
+feature — and the `rm -rf lib && build` above it is not optional: `test` and
+`typecheck --noEmit` both skip `lib/`, so a pack from a stale `lib/` ships old
+code under a new version number.
 
 A prerelease version (`X.Y.Z-beta.N`) is mandatory for the beta tag: it keeps `latest` resolution away from the build even if the tag is ever mistyped, and semver orders a prerelease BELOW its own release, so the self-update check tells a beta tester to move to the stable build the moment it ships and never the other way. The shop reads `dist-tags.latest` alone, so a stable user never sees a beta.
 
