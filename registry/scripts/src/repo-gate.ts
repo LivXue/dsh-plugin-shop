@@ -79,8 +79,14 @@ export function gateRepo(
 
 
   if (!candidate.hasBundle) {
-    return reject(unit, 'no-bundle',
-      'Declares no dsh.bundle in its package.json, so dsh installs it as a plain dependency, not a plugin.')
+    // Same code either way — the repository is not installable as a plugin —
+    // but the detail has to name the file the author can act on. A monorepo
+    // root whose subpackage is the plugin was being told to edit the root
+    // manifest (hub-borrowings §A, audit B-7).
+    const probed = candidate.probedSubpackages ?? 0
+    return reject(unit, 'no-bundle', probed > 0
+      ? `Declares no dsh.bundle in its package.json, and ${probed} subpackage manifest(s) were probed — none of them declares dsh.bundle either, so dsh would install this repository as a plain dependency, not a plugin. Declare dsh.bundle in the subpackage that IS the plugin.`
+      : 'Declares no dsh.bundle in its package.json, so dsh installs it as a plain dependency, not a plugin.')
   }
   if (candidate.requiresBuild && candidate.release === undefined) {
     return reject(unit, 'requires-build',
