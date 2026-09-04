@@ -96,6 +96,14 @@ export interface RepoCandidate {
    * monorepo subpackage rather than the repo root; absent for root entries.
    */
   subdir?: string
+  /**
+   * How many subpackage manifests the harvest probed for this root, when it
+   * probed any and none declared a bundle. Present only on a bundle-less
+   * monorepo root, and only to make its rejection truthful: without it the
+   * root is told to add `dsh.bundle` to the file the author already knows is
+   * not the plugin (hub-borrowings §A, audit B-7).
+   */
+  probedSubpackages?: number
   /** A prebuilt GitHub Release tarball, when the fetch layer probed one for a
    * `requiresBuild` repo. Its presence turns the entry into a
    * release-pinned entry: `version` = the tag, `integrity` = the tarball

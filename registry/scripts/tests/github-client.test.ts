@@ -573,6 +573,36 @@ describe('fetchRepoCandidate', () => {
     }
   })
 
+  it('records how many subpackages were probed so the root rejection can say so', async () => {
+    // The plumbing, not the wording. repo-gate.test.ts injects
+    // probedSubpackages directly and so proves only the rendering: with this
+    // assignment removed the field is never set in production and the
+    // improved detail never appears. Verified by mutation — that was green
+    // until this case existed.
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/monorepo/main/package.json':
+        new Response(JSON.stringify({ name: 'mono', private: true, workspaces: ['packages/*'] }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/commits/main': new Response(JSON.stringify({
+        sha: commit,
+        commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/git/trees/main?recursive=1': new Response(JSON.stringify({
+        tree: [
+          { path: 'package.json' },
+          { path: 'packages/one/package.json' },
+          { path: 'packages/two/package.json' },
+        ],
+      }), { status: 200 }),
+      'https://raw.githubusercontent.com/someone/monorepo/main/packages/one/package.json':
+        new Response(JSON.stringify({ name: 'one' }), { status: 200 }),
+      'https://raw.githubusercontent.com/someone/monorepo/main/packages/two/package.json':
+        new Response(JSON.stringify({ name: 'two' }), { status: 200 }),
+    })
+    const result = await fetchRepoCandidate({ ...meta, fullName: 'someone/monorepo' }, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.candidates[0]?.probedSubpackages).toBe(2)
+  })
+
   it('still accepts an uppercase manifest name — a bundle name is not an npm publication', async () => {
     // npm forbids uppercase in a NEW publication; a GitHub bundle name is not
     // one, and rejecting DSH-FS-TOOL would drop a repository that installs

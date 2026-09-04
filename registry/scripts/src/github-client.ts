@@ -962,7 +962,7 @@ async function probeSubpackageCandidates(
   sleep: (ms: number) => Promise<void>,
   token: string | undefined,
   timeoutMs: number = GITHUB_REQUEST_TIMEOUT_MS,
-): Promise<{ candidates: RepoCandidate[]; failures: RepoFetchFailure[]; anyClaimed: boolean }> {
+): Promise<{ candidates: RepoCandidate[]; failures: RepoFetchFailure[]; anyClaimed: boolean; probed: number }> {
   const treeUrl = `${GITHUB_API}/repos/${owner}/${slug}/git/trees/${meta.defaultBranch}?recursive=1`
   const treeResponse = await fetchRobust(treeUrl, fetchImpl, sleep, token, timeoutMs)
   // A 404 is a fact: there is no tree at that branch, so there are no
@@ -972,7 +972,7 @@ async function probeSubpackageCandidates(
   // installable subpackage" that is false. That is exactly the reasoning the
   // catch below already applies to a deadline on this same read; a 500 or a
   // rate-limit 403 differs from a stall only in how it is spelled.
-  if (treeResponse.status === 404) return { candidates: [], failures: [], anyClaimed: false }
+  if (treeResponse.status === 404) return { candidates: [], failures: [], anyClaimed: false, probed: 0 }
   if (!treeResponse.ok) {
     throw new Error(`github api returned ${treeResponse.status} listing the tree of ${owner}/${slug}`)
   }
@@ -986,7 +986,7 @@ async function probeSubpackageCandidates(
     // with no bundle of its own then earns a persisted `no-manifest` saying it
     // "declares no name and no installable subpackage" — false, and durable.
     if (error instanceof FetchTimeoutError) throw error
-    return { candidates: [], failures: [], anyClaimed: false }
+    return { candidates: [], failures: [], anyClaimed: false, probed: 0 }
   }
   // A truncated tree (>100k entries) may hide some subpackages; the repo is
   // re-probed when it changes, and the loss costs only a later re-probe —
@@ -1061,7 +1061,7 @@ async function probeSubpackageCandidates(
       failures.push(subpackageFailure(owner, slug, dir, describeBadName(rawName)))
     }
   }
-  return { candidates, failures, anyClaimed }
+  return { candidates, failures, anyClaimed, probed: dirs.length }
 }
 
 /**
@@ -1150,7 +1150,11 @@ export async function fetchRepoCandidate(
     return { ok: true, candidates: [root] }
   }
   if (probeSubpackages && monorepoSignal(manifest)) {
-    const { candidates: subs, failures: subFailures, anyClaimed } = await probeSubpackageCandidates(owner, slug, meta, manifest, head, fetchImpl, sleep, token, timeoutMs)
+    const { candidates: subs, failures: subFailures, anyClaimed, probed } = await probeSubpackageCandidates(owner, slug, meta, manifest, head, fetchImpl, sleep, token, timeoutMs)
+    // The probe happened and found nothing installable. Record how many
+    // manifests it read so the root's rejection can say so instead of
+    // pointing the author at the root manifest (B-7).
+    if (root !== null && subs.length === 0 && probed > 0) root.probedSubpackages = probed
     if (subs.length > 0) {
       return { ok: true, candidates: subs, ...(subFailures.length > 0 ? { subpackageFailures: subFailures } : {}) }
     }

@@ -477,3 +477,28 @@ describe('case folding on the GitHub channel', () => {
     if (!result.ok) expect(result.rejection.code).toBe('name-too-similar')
   })
 })
+
+describe('the no-bundle detail names the file the author must fix', () => {
+  it('tells a plain package to declare dsh.bundle in its package.json', () => {
+    const result = gateRepo(repo({ hasBundle: false }), config)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.rejection.code).toBe('no-bundle')
+      expect(result.rejection.detail).toContain('plain dependency')
+      expect(result.rejection.detail).not.toContain('subpackage')
+    }
+  })
+
+  it('tells a probed monorepo root that no subpackage declared one either', () => {
+    // hub-borrowings §A: the root keeps the `no-bundle` code, but the detail
+    // has to say a probe happened — otherwise the author of a monorepo whose
+    // subpackage is the plugin is told to edit the root manifest.
+    const result = gateRepo(repo({ hasBundle: false, probedSubpackages: 6 }), config)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.rejection.code).toBe('no-bundle')
+      expect(result.rejection.detail).toContain('6 subpackage')
+      expect(result.rejection.detail).toContain('none of them declares dsh.bundle')
+    }
+  })
+})
