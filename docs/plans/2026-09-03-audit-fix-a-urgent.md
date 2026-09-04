@@ -2606,6 +2606,24 @@ Expected: FAIL — `AssertionError: expected '  build:\n    runs-on: ubuntu-late
 
 - [ ] **Step 3: Write the implementation**
 
+> **Step 3b's `try/catch` was rejected during implementation, and must not be reinstated.** The draft
+> wrapped the manifest fetch in `fetchRepoCandidate` with a catch that turned a timeout into a
+> `fetch-failed` row. It broke five existing tests and three invariants at once:
+>
+> 1. It published `error.message` verbatim in the row's `detail`. `github-client.test.ts` already
+>    asserts `expect(boom?.detail).not.toContain('scripts')`, precisely because a raw exception under a
+>    repository's name blames an author for our defect.
+> 2. It removed every throw from `harvestRepos`'s `thrown` counter, **silently disabling the
+>    systematic-failure bound added one commit earlier** (`MIN_THROWN_TO_BOUND` / `MAX_THROWN_FRACTION`,
+>    Task 7 fix round 5). Two bound tests went from rejecting to resolving. A GitHub that stalls for
+>    every repository is a broken harvest, not 300 bad repositories.
+> 3. Its own comment said "this catch must not add to the D-3 misclassification" — and the catch is
+>    what causes it.
+>
+> `harvestRepos`'s existing catch was already the correct handler: sanitised detail, raw message to
+> stderr, counted toward the bound. The shipped code has no catch here and says so in a comment.
+
+
 **3a.** `registry/scripts/src/npm-client.ts` — export the helper and let it name its subject. Before (`:23-50`):
 
 ```ts
