@@ -125,7 +125,7 @@ describe('nodeResolver', () => {
     expect(resolveHere('@deepseek-ai/dsh-client-store-that-does-not-exist')).toBe(false)
   })
 
-  it('throws when a package restricts ./package.json in its exports map', () => {
+  it('treats a package that restricts ./package.json as present', () => {
     const dir = mkdtempSync(join(tmpdir(), 'noderesolver-'))
     try {
       // Create a package with exports that do not list "./package.json"
@@ -144,10 +144,44 @@ describe('nodeResolver', () => {
 
       const resolveHere = nodeResolver(pathToFileURL(join(dir, 'anchor.js')).href)
 
-      // Must throw because ./package.json is not in exports, not silently
-      // return false. The error code is ERR_PACKAGE_PATH_NOT_EXPORTED, which
-      // incompatibilityMap's catch will turn into no-verdict.
-      expect(() => resolveHere('restricted-pkg')).toThrow()
+      // The directory was found; an exports restriction only hides the
+      // package.json subpath and does not mean the peer is absent.
+      expect(resolveHere('restricted-pkg')).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("keeps a genuinely missing sibling's verdict beside a restricted package", () => {
+    const dir = mkdtempSync(join(tmpdir(), 'noderesolver-pair-'))
+    try {
+      const pkgDir = join(dir, 'node_modules', 'restricted-pkg')
+      mkdirSync(pkgDir, { recursive: true })
+      writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({
+        name: 'restricted-pkg', version: '1.0.0', main: 'index.js', exports: { '.': './index.js' },
+      }))
+      writeFileSync(join(pkgDir, 'index.js'), '')
+
+      const resolveHere = nodeResolver(pathToFileURL(join(dir, 'anchor.js')).href)
+      expect(incompatibilityMap(
+        [{ source: 'npm', name: 'x', peers: ['restricted-pkg', 'definitely-missing-peer'] }],
+        resolveHere,
+      )).toEqual({ 'npm:x': ['definitely-missing-peer'] })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('still throws for a resolution failure that is neither of those', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'noderesolver-invalid-'))
+    try {
+      const pkgDir = join(dir, 'node_modules', 'invalid-pkg')
+      mkdirSync(pkgDir, { recursive: true })
+      writeFileSync(join(pkgDir, 'package.json'), '{not valid json')
+      const throwing = nodeResolver(pathToFileURL(join(dir, 'anchor.js')).href)
+      // A malformed package manifest is neither absent nor an exports
+      // restriction, so the resolver must keep surfacing the unknown failure.
+      expect(() => throwing('invalid-pkg')).toThrow()
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
