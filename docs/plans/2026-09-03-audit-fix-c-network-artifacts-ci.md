@@ -3856,3 +3856,27 @@ Checked before this plan was finished:
 4. **Line numbers were verified at `49db942`** by reading each file, not by trusting the audit: `emit.ts:77`, `build.ts:105` and `:190-198`, `github-client.ts:279`, `:526`, `:618`, `:651`, `npm-client.ts:301` and `:344`, `config.ts:84-90`, `classify.ts:122` and `:134`, `daily.yml:30-31`, `plugin.yml:29`, `packages/dsh-plugin-shop/package.json:121`.
 5. **Two existing tests are changed, and both say why in the test body.** `github-client.test.ts:465-482` pinned D-3's second leg as correct behaviour (Task 2), and `stars-assemble.test.ts` is rewritten around the entry-keyed assembler (Task 9). Nothing else has an assertion edited to make a run green.
 6. **Every count in this plan was measured, not estimated:** 14,740 repos and 1,918 mislabelled records from `registry/repo-state.json`; 334 tests and 22 files from `npx vitest run`; the seven action SHAs and their versions from `gh api`; the `workspace:` specifier from `packages/dsh-plugin-shop/package.json:121`; the missing `lib/typert.host.js` from the vendored tree; the three E-12 messages from running the loader against fixtures.
+
+### Task 19: D-10 — a build that stops here must not be "fixed" by widening the status back
+
+Finding D-10. **No code change. This task exists so the first person to see the build stop does not undo the fix that made it stop.**
+
+Task 1 narrowed `no-manifest` to a genuine 404, so every other non-ok status from `readManifest` throws, and the systematic-failure bound (`MIN_THROWN_TO_BOUND = 20`, `MAX_THROWN_FRACTION = 0.1` in `github-client.ts`) turns a pool-wide throw into a failed build. That is this project's stated preference over persisting false verdicts, and it is what closed the case where a blocked `raw.githubusercontent.com` wrote "No package.json at the repository root" into the durable record of every repository it could not reach.
+
+But it moves a silent degradation to a loud stop on a path with a plausible real trigger: **a REST rate-limit 403 on `git/trees` at `REPO_BACKFILL_BUDGET` 2,000.**
+
+- [ ] **Step 1: When the build stops with a pool-wide throw, read the thrown detail first.**
+
+If the statuses are 403 or 429, the harvest is rate-limited, not broken.
+
+- [ ] **Step 2: Lower `REPO_BACKFILL_BUDGET`. Do NOT widen the status classification.**
+
+Widening `no-manifest` back to "any non-ok status" restores the false-verdict bug in full: the durable `repo-state.json` record would again say "no package.json at the root" about every repository a rate limit hid. `no-manifest` is a verdict about a repository; a 403 is a statement about us.
+
+- [ ] **Step 3: If lowering the budget proves too noisy, add an in-harvest budget — not a reclassification.**
+
+`MAX_THROWN_FRACTION`'s own comment already names the missing in-harvest bound. Record the decision beside it, so the next reader finds the reasoning where the constant lives.
+
+**Verification:** none. There is nothing to test; the guard this note protects is already tested by Task 1.
+
+---
