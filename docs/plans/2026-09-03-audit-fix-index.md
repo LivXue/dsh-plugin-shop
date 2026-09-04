@@ -2,7 +2,7 @@
 
 Date: 2026-09-03
 Spec: [2026-09-03-debug-audit.md](2026-09-03-debug-audit.md) — 69 findings, 82 finding ids (G-11 and E-13 were both added while these plans were written)
-Status: plans written, nothing implemented. Every fix below is a proposal until its failing test exists.
+Status (2026-09-04): **plan A is implemented** on `fix/audit-a-urgent` — 9 tasks, 47 commits, 495 tests, not yet pushed or merged. Plans B, C, D and E are still proposals; every fix in them is a proposal until its failing test exists. Plan A's own task checkboxes are left unticked deliberately: the commits are the record, and a checkbox that has to be ticked by hand is one more thing to forget.
 
 The audit spans five subsystems that do not share state: the harvest's network shell, the gate's trust model, the artifacts and the workflow that publishes them, the host and client that read them, and the test suite that is supposed to hold all of it. Writing one plan for all 69 findings would produce a document nobody can execute a task from. So there are five, each independently shippable, each with its own TDD task list.
 
