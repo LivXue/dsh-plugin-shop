@@ -352,9 +352,12 @@ describe('sortByStars cost (G-5)', () => {
       if (i % 3 === 0) stars[candidate.name] = (i * 31) % 5000
     }
     const runs = 5
-    const started = performance.now()
+    // CPU time measures the comparator itself; wall time is dominated by
+    // scheduler contention when Vitest runs every package suite in parallel.
+    const started = process.cpuUsage()
     for (let run = 0; run < runs; run += 1) sortByStars(entries, stars)
-    const perRun = (performance.now() - started) / runs
+    const used = process.cpuUsage(started)
+    const perRun = (used.user + used.system) / 1000 / runs
     expect(perRun).toBeLessThan(60)
   })
 
