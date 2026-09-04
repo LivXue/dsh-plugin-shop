@@ -20,7 +20,7 @@ import { fetchStarCounts } from './github-stars.ts'
 import { harvestRepos } from './github-client.ts'
 import { parseRepoState, serializeRepoState } from './repo-state.ts'
 import { githubOwnerName } from './github-repo.ts'
-import { fetchCandidates, searchByKeywords } from './npm-client.ts'
+import { fetchCandidates, searchByKeywords, type KeywordShortfall } from './npm-client.ts'
 import { runPipeline } from './pipeline.ts'
 import { CATALOG_SCHEMA_VERSION, SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION } from './emit.ts'
 import { assembleStarsByKey } from './stars-assemble.ts'
@@ -80,6 +80,8 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   const config = loadRegistryConfig(REGISTRY_DIR)
   let candidates: Candidate[]
   let rejections: Rejection[]
+  /** Tolerated npm search shortfalls, for the published report. */
+  let npmNote = ''
   if (harvestFrom === undefined) {
     // registry.npmmirror.com does not implement the `keywords:` qualifier this
     // search depends on — measured 2026-09-03, it answers
@@ -89,18 +91,34 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     // a stalled or 5xx npmjs search would publish a zero-name harvest with a
     // green build rather than failing loud. The search below therefore takes
     // no backup argument; classify.ts's harvest call carries the same fix.
-    const names = await searchByKeywords(fetch, undefined, npmToken)
+    // A shortfall inside MAX_SEARCH_SHORTFALL does not stop the harvest, but it
+    // does mean this build is missing that many packages, and nothing here can
+    // name them. Collected so the published report says so — the count is the
+    // only honest thing available.
+    const shortfalls: KeywordShortfall[] = []
+    const names = await searchByKeywords(fetch, undefined, npmToken, undefined, undefined, s => shortfalls.push(s))
+    for (const s of shortfalls) {
+      npmNote += `${npmNote === '' ? '' : '; '}keywords:${s.keyword} enumerated ${s.enumerated} of ${s.required}`
+      process.stderr.write(`npm: keywords:${s.keyword} enumerated ${s.enumerated} of ${s.required} names, within the tolerated shortfall\n`)
+    }
     process.stderr.write(`harvested ${names.length} npm candidate(s)\n`)
     const harvested = await fetchCandidates(names, fetch, npmToken, npmBackupRegistry)
     candidates = harvested.candidates
     rejections = harvested.rejections
   } else {
-    const parsed = JSON.parse(readFileSync(harvestFrom, 'utf8')) as { candidates?: unknown; rejections?: unknown }
+    const parsed = JSON.parse(readFileSync(harvestFrom, 'utf8')) as {
+      candidates?: unknown; rejections?: unknown; shortfalls?: unknown
+    }
     if (!Array.isArray(parsed.candidates) || !Array.isArray(parsed.rejections)) {
       throw new Error(`--harvest-from ${harvestFrom}: expected { candidates, rejections } arrays`)
     }
     candidates = parsed.candidates as Candidate[]
     rejections = parsed.rejections as Rejection[]
+    // Optional: a handoff written before this field existed simply carries
+    // none, and an older build reading a newer handoff ignores it.
+    for (const s of Array.isArray(parsed.shortfalls) ? parsed.shortfalls as KeywordShortfall[] : []) {
+      npmNote += `${npmNote === '' ? '' : '; '}keywords:${s.keyword} enumerated ${s.enumerated} of ${s.required}`
+    }
     process.stderr.write(`reusing harvest: ${candidates.length} npm candidate(s)\n`)
   }
 
@@ -269,8 +287,9 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   writeFileSync(join(OUT_DIR, 'badge.json'), artifacts.badgeJson)
   writeFileSync(join(REGISTRY_DIR, 'snapshots/manifest.lock'), artifacts.manifestLock)
   writeFileSync(join(REGISTRY_DIR, 'first-seen.yml'), serializeFirstSeen(firstSeen))
+  const npmLine = npmNote === '' ? '' : `\nnpm search shortfall (tolerated, packages missing from this build): ${npmNote}\n`
   const repoLine = repoNote === '' ? '' : `\nGitHub: ${repoNote}\n`
-  writeFileSync(join(OUT_DIR, 'report.md'), `${artifacts.report}\nStars: ${starsNote}\n${repoLine}`)
+  writeFileSync(join(OUT_DIR, 'report.md'), `${artifacts.report}\nStars: ${starsNote}\n${npmLine}${repoLine}`)
 
   process.stderr.write(`wrote ${OUT_DIR}/${artifacts.pluginsFileName}\n`)
 }

@@ -31,6 +31,41 @@ export const MAX_SEARCH_FROM = 5000
 export const SEARCH_WINDOW = MAX_SEARCH_FROM + PAGE_SIZE
 
 /**
+ * The largest per-keyword shortfall the harvest publishes through rather than
+ * refusing.
+ *
+ * The coverage check below already absorbs churn two ways — `Math.min` of the
+ * totals probed before and after, and one full re-page — and neither can close
+ * the case this bound exists for: npm answering a `total` it cannot serve. On
+ * 2026-09-04 `main`'s daily build died on `enumerated 3746 of 3747`, one name,
+ * with both probes answering 3747 and the second pass finding the same 3746.
+ * This module's own comment names the mechanism ("Same for a `total` npm
+ * overstates by one"), so it is a shortfall no amount of re-reading closes. The
+ * scheduled run that hour had passed and the push run failed, which makes it a
+ * coin flip per run, and a lost flip freezes the shelf for the day.
+ *
+ * Why 3, and not a rounder number: two magnitudes for a REAL gap are recorded
+ * in this file. A partition gap is "hundreds of names", and PARTITION_KEYWORDS
+ * was measured FIFTEEN names short the day after it was documented as
+ * complete. A bound at or above 15 would have absorbed that one silently. 3
+ * covers what it is for — an overstated total, a page serving 249 objects of
+ * 250 — and stops well short of anything this repo has seen go genuinely
+ * wrong.
+ *
+ * A tolerated shortfall is never silent: {@link searchByKeywords} reports it to
+ * its caller, because nothing here can name the missing package — that is the
+ * whole difficulty — so the count is the honest thing to publish.
+ */
+export const MAX_SEARCH_SHORTFALL = 3
+
+/** One keyword that enumerated fewer names than its own total promised. */
+export interface KeywordShortfall {
+  keyword: string
+  enumerated: number
+  required: number
+}
+
+/**
  * Refinement keywords the harvest ANDs onto an over-window keyword to split it
  * into reachable cells, most-covering first.
  *
@@ -732,6 +767,7 @@ export async function searchByKeywords(
   token: string | undefined = undefined,
   backupRegistry: string | undefined = undefined,
   timeoutMs: number = REQUEST_TIMEOUT_MS,
+  onShortfall: (shortfall: KeywordShortfall) => void = () => {},
 ): Promise<string[]> {
   const seen = new Set<string>()
   const probe = (keywords: readonly string[]): Promise<number> =>
@@ -840,7 +876,13 @@ export async function searchByKeywords(
       await enumerate()
       required = Math.min(required, await probe([keyword]))
     }
-    if (forKeyword.size < required) {
+    const shortfall = required - forKeyword.size
+    if (shortfall > 0 && shortfall <= MAX_SEARCH_SHORTFALL) {
+      // Small enough to be the registry answering a total it cannot serve.
+      // Reported, never swallowed: the caller puts it in the build report, and
+      // a bound this low cannot hide any gap this repo has seen.
+      onShortfall({ keyword, enumerated: forKeyword.size, required })
+    } else if (shortfall > 0) {
       throw new Error(partitioned
         ? `npm search for ${keywordQuery([keyword])} enumerated ${forKeyword.size} of ${required} names across ${cells.length} partition cell(s) plus the keyword's own reachable window, and a second full pass found no more; the refinement keywords do not cover the keyword, so the harvest would be silently short`
         : `npm search for ${keywordQuery([keyword])} enumerated ${forKeyword.size} of ${required} names, and a second full pass found no more; the search ended before reaching the answered total, so the harvest would be silently short`)
