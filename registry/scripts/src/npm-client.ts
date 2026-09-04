@@ -613,6 +613,50 @@ function publisherOf(maintainers: unknown, npmUser: unknown): string | undefined
   return names[0]
 }
 
+/**
+ * The declared license as a string, from any spelling npm actually serves.
+ *
+ * The current field is an SPDX string, but the registry still carries the two
+ * legacy forms — `license: { type, url }` and `licenses: [{ type, url }]` —
+ * which npm publishes with a warning rather than a refusal. Reading only the
+ * string form told those authors "Declares no license.", a published reason
+ * that was simply false (audit A-7).
+ * @param license - the manifest `license` value, unvalidated.
+ * @param licenses - the manifest `licenses` value, unvalidated.
+ * @returns the license identifier, or null when nothing declares one.
+ */
+function normalizeLicense(license: unknown, licenses: unknown): string | null {
+  if (typeof license === 'string') return license.trim() === '' ? null : license
+  if (license !== null && typeof license === 'object' && !Array.isArray(license)) {
+    const type = (license as { type?: unknown }).type
+    if (typeof type === 'string' && type.trim() !== '') return type
+  }
+  if (Array.isArray(licenses)) {
+    for (const item of licenses) {
+      if (typeof item === 'string' && item.trim() !== '') return item
+      if (item !== null && typeof item === 'object') {
+        const type = (item as { type?: unknown }).type
+        if (typeof type === 'string' && type.trim() !== '') return type
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * Whether npm reports this version deprecated.
+ *
+ * `npm deprecate <pkg> ""` is the documented un-deprecate, and it leaves
+ * `deprecated: ""` behind — so the presence of the key says nothing. A
+ * non-empty message means deprecated; so does a bare `true`, which some
+ * manifests carry and which we must not read as "fine" (audit B-5).
+ * @param deprecated - the manifest `deprecated` value, unvalidated.
+ */
+function isDeprecated(deprecated: unknown): boolean {
+  if (deprecated === true) return true
+  return typeof deprecated === 'string' && deprecated.trim() !== ''
+}
+
 export function toCandidate(packument: unknown): Candidate | null {
   // `null` is legal JSON, so a 200 whose whole body is those four bytes
   // parses cleanly and arrives here — and every property read below the cast
@@ -638,6 +682,7 @@ export function toCandidate(packument: unknown): Candidate | null {
     versions?: Record<string, {
       dist?: { integrity?: unknown }
       license?: unknown
+      licenses?: unknown
       repository?: unknown
       deprecated?: unknown
       description?: unknown
@@ -666,8 +711,8 @@ export function toCandidate(packument: unknown): Candidate | null {
     integrity: typeof manifest.dist?.integrity === 'string' ? manifest.dist.integrity : null,
     publishedAt: typeof publishedAt === 'string' ? publishedAt : null,
     repository: normalizeRepository(manifest.repository),
-    license: typeof manifest.license === 'string' ? manifest.license : null,
-    deprecated: manifest.deprecated !== undefined,
+    license: normalizeLicense(manifest.license, manifest.licenses),
+    deprecated: isDeprecated(manifest.deprecated),
     hasBundle: manifest.dsh?.bundle !== undefined,
     catalog: manifest.dsh?.catalog ?? null,
     description: typeof manifest.description === 'string' ? manifest.description : null,

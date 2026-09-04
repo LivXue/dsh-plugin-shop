@@ -31,6 +31,82 @@ describe('toCandidate', () => {
     },
   }
 
+  it('reads an empty deprecated string as NOT deprecated, which is how npm spells un-deprecate', () => {
+    // `npm deprecate <pkg> ""` is the documented way to undo a deprecation
+    // and it leaves the key in place with an empty value. Reading "the key
+    // exists" published "Marked deprecated on npm." for a package whose
+    // author had explicitly withdrawn that.
+    const undeprecated = {
+      ...packument,
+      versions: { '1.2.0': { ...packument.versions['1.2.0'], deprecated: '' } },
+    }
+    expect(toCandidate(undeprecated)?.deprecated).toBe(false)
+    const blank = {
+      ...packument,
+      versions: { '1.2.0': { ...packument.versions['1.2.0'], deprecated: '   ' } },
+    }
+    expect(blank && toCandidate(blank)?.deprecated).toBe(false)
+  })
+
+  it('still reads a real deprecation message, and a bare boolean', () => {
+    const withMessage = {
+      ...packument,
+      versions: { '1.2.0': { ...packument.versions['1.2.0'], deprecated: 'use dsh-hello-2 instead' } },
+    }
+    expect(toCandidate(withMessage)?.deprecated).toBe(true)
+    // Some manifests carry `true` rather than a message; refusing to read it
+    // would list a deprecated package.
+    const withBoolean = {
+      ...packument,
+      versions: { '1.2.0': { ...packument.versions['1.2.0'], deprecated: true } },
+    }
+    expect(toCandidate(withBoolean)?.deprecated).toBe(true)
+  })
+
+  it('reads the legacy license object and licenses array npm still serves', () => {
+    const legacyObject = {
+      ...packument,
+      versions: {
+        '1.2.0': { ...packument.versions['1.2.0'], license: { type: 'MIT', url: 'http://example.test/LICENSE' } },
+      },
+    }
+    expect(toCandidate(legacyObject)?.license).toBe('MIT')
+    const legacyArray = {
+      ...packument,
+      versions: {
+        '1.2.0': {
+          ...packument.versions['1.2.0'],
+          license: undefined,
+          licenses: [{ type: 'Apache-2.0', url: 'http://example.test/LICENSE' }],
+        },
+      },
+    }
+    expect(toCandidate(legacyArray)?.license).toBe('Apache-2.0')
+    const legacyStringArray = {
+      ...packument,
+      versions: { '1.2.0': { ...packument.versions['1.2.0'], license: undefined, licenses: ['ISC'] } },
+    }
+    expect(toCandidate(legacyStringArray)?.license).toBe('ISC')
+  })
+
+  it('reports no license only when nothing declares one', () => {
+    const none = {
+      ...packument,
+      versions: { '1.2.0': { ...packument.versions['1.2.0'], license: undefined } },
+    }
+    expect(toCandidate(none)?.license).toBeNull()
+    const empty = {
+      ...packument,
+      versions: { '1.2.0': { ...packument.versions['1.2.0'], license: '  ' } },
+    }
+    expect(toCandidate(empty)?.license).toBeNull()
+    const objectWithoutType = {
+      ...packument,
+      versions: { '1.2.0': { ...packument.versions['1.2.0'], license: { url: 'http://example.test/L' } } },
+    }
+    expect(toCandidate(objectWithoutType)?.license).toBeNull()
+  })
+
   it('never takes the publisher from the unverified author field', () => {
     // `author` is free text the publisher writes, and a clone inherits it
     // verbatim: `dsh-agent-squad`, published by the account `shenzhsjtu`,

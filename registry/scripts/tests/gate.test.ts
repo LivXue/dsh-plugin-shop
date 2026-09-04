@@ -213,6 +213,14 @@ describe('gate', () => {
     expect(result.rejection.code).toBe('no-license')
   })
 
+  it('names the SPDX expectation when nothing declares a license', () => {
+    const result = gate(candidate({ license: null }), config)
+    if (result.ok) throw new Error('expected rejection')
+    expect(result.rejection.code).toBe('no-license')
+    expect(result.rejection.detail).toContain('SPDX')
+    expect(result.rejection.detail).toContain('"license": "MIT"')
+  })
+
   it('rejects a package with no repository and says why that matters', () => {
     const result = gate(candidate({ repository: null }), config)
     if (result.ok) throw new Error('expected rejection')

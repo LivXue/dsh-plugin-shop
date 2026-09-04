@@ -61,8 +61,11 @@ export function truncateWholeCharacters(value: string, maxLength: number): strin
  * reaches every published entry; a value past this is not an SPDX identifier
  * (the longest expression in use, `Apache-2.0 WITH LLVM-exception`, is 30
  * characters). Bounded HERE and not in `toCandidate`, so the rejection can say
- * what is actually wrong: nulling the field in the shell would publish
- * "Declares no license." for a package that declared a one-megabyte one.
+ * what is actually wrong: nulling the field in the shell would give a package
+ * that declared a one-megabyte license the nothing-declared detail instead of
+ * the over-length one. Both carry the `no-license` code — the detail is the
+ * accurate half — so this quotes neither string, which is what let the old
+ * wording here go stale.
  */
 export const LICENSE_MAX_LENGTH = 128
 
@@ -267,7 +270,12 @@ export function gate(
       `Declares a version string longer than ${VERSION_MAX_LENGTH} characters, so it is not a version the snapshot can record.`)
   }
   if (candidate.license === null || candidate.license === '') {
-    return reject(name, 'no-license', 'Declares no license.')
+    // The detail names what npm expects, because the author has to act on it:
+    // the projection already accepts the two legacy forms (`license: { type }`
+    // and `licenses: []`), so reaching here means nothing declares a license
+    // at all.
+    return reject(name, 'no-license',
+      'Declares no license, so nobody can tell on what terms the code may be used. Declare an SPDX identifier, e.g. "license": "MIT".')
   }
   if (candidate.license.length > LICENSE_MAX_LENGTH) {
     return reject(name, 'no-license',
