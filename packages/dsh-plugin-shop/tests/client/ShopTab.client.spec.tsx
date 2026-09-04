@@ -1603,3 +1603,58 @@ describe('ShopTab catalog reload', () => {
     expect(screen.queryByText(en.refreshFailed)).toBeNull()
   })
 })
+
+describe('ShopTab mutation flows (G-9)', () => {
+  it('re-reads the installed list once an install reaches done', async () => {
+    const { injected, installed } = bench(snapshot({ tier: 'verified' }))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(installed).toHaveBeenCalledTimes(1)
+    fireEvent.click(container.querySelector('[data-shop-install]')!)
+    await waitFor(() => expect(installed).toHaveBeenCalledTimes(2), { timeout: 3000 })
+  })
+
+  it('re-reads the installed list once an uninstall reaches done', async () => {
+    const { injected, installed } = bench(snapshot(), [{
+      name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true,
+    }])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(installed).toHaveBeenCalledTimes(1)
+    fireEvent.click(container.querySelector('[data-shop-uninstall]')!)
+    await waitFor(() => expect(installed).toHaveBeenCalledTimes(2), { timeout: 3000 })
+  })
+
+  it('shows one install flow on both panels of an outdated entry', async () => {
+    const { injected } = bench(snapshot({ tier: 'verified' }), [{
+      name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true,
+    }])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText(en.installedSection)).toBeTruthy())
+    expect(container.querySelectorAll('[data-shop-update]')).toHaveLength(2)
+    fireEvent.click(container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-update]')!)
+    await waitFor(() => expect(container.querySelectorAll('[data-shop-update]')).toHaveLength(0))
+  })
+
+  it('keeps a running install when a search change unmounts its card', async () => {
+    const result = snapshot({ tier: 'verified' })
+    result.plugins = [
+      { ...result.plugins[0]!, name: 'dsh-hello-plugin' },
+      { ...result.plugins[0]!, name: 'dsh-other-plugin' },
+    ]
+    const { injected, installStatus } = bench(result)
+    installStatus.mockResolvedValue({ found: true, state: 'running', log: ['working'] })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-install]')!)
+    await waitFor(() => expect(screen.getByText(en.installing)).toBeTruthy())
+
+    const search = screen.getByLabelText(en.search)
+    fireEvent.change(search, { target: { value: 'other' } })
+    await waitFor(() => expect(screen.queryByText('dsh-hello-plugin')).toBeNull())
+    fireEvent.change(search, { target: { value: '' } })
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-install]')).toBeNull()
+    expect(screen.getByText(en.installing)).toBeTruthy()
+  })
+})

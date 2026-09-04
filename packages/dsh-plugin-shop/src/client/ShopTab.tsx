@@ -4,11 +4,11 @@
  * details — never markup, so hostile npm descriptions cannot inject (spec
  * §11.3.4): no render path here may ever use dangerouslySetInnerHTML. */
 
-import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
 import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Category, authorOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatStars, hasGithubHome, identityKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, rejectionCodeKey, restartReasonKey, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
-import { useInstall } from './useInstall.ts'
+import { useInstallFlows, type InstallFlow } from './useInstall.ts'
 import { useUninstall } from './useUninstall.ts'
 import { useUpdateSelf } from './useUpdateSelf.ts'
 import css from './ShopTab.module.css'
@@ -72,18 +72,19 @@ function ChevronIcon({ open }: { open: boolean }): ReactNode {
  * install controls. An installed plugin's card carries its installed row:
  * current → the non-interactive installed label, behind → the update button;
  * uninstalled → the install button. */
-const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, t, install, installStatus, uninstall, restart, restartSupported, setEnabled }: {
+const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, t, flowFor, installStatus, uninstall, restart, restartSupported, setEnabled, onSettled }: {
   entry: CatalogEntry
   stars: number | undefined
   installed: ShopInstalledEntry | undefined
   missing: string[]
   t: ShopTabProps['t']
-  install: ShopTabInjected['install']
+  flowFor: (key: string) => InstallFlow
   installStatus: ShopTabInjected['installStatus']
   uninstall: ShopTabInjected['uninstall']
   restart: ShopTabInjected['restart']
   restartSupported: boolean
   setEnabled: ShopTabInjected['setEnabled']
+  onSettled: () => void
 }): ReactNode {
   const [open, setOpen] = useState(false)
   const detailId = useId()
@@ -99,6 +100,7 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, t,
     repo: entry.repo,
     subdir: entry.subdir,
   }
+  const flow = flowFor(entryKey(entry))
   return (
     <div className={css.card} data-shop-entry={entry.name} data-category={category}>
       <span className={css.cardSpine} aria-hidden="true" />
@@ -232,14 +234,14 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, t,
        * width below them, where it has room. */}
       <div className={css.cardActions} data-shop-actions>
         {installed === undefined ? (
-          <InstallPanel target={installTarget} tier={entry.tier} missing={missing} missingStated t={t} install={install} installStatus={installStatus} restart={restart} restartSupported={restartSupported} />
+          <InstallPanel target={installTarget} tier={entry.tier} missing={missing} missingStated flow={flow} t={t} restart={restart} restartSupported={restartSupported} />
         ) : (
           <>
             {installed.outdated ? (
               // The update button drives the same install flow for the
               // catalog's latest version; the community gate still applies
               // (§9.3).
-              <InstallPanel target={installTarget} tier={entry.tier} variant="update" missing={missing} missingStated t={t} install={install} installStatus={installStatus} restart={restart} restartSupported={restartSupported} />
+              <InstallPanel target={installTarget} tier={entry.tier} variant="update" missing={missing} missingStated flow={flow} t={t} restart={restart} restartSupported={restartSupported} />
             ) : (
               // No button on this branch, so the badge follows the label that
               // takes its place: an installed plugin whose modules are absent
@@ -252,7 +254,7 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, t,
             {/* The hot enable/disable switch (§8) sits on every installed
              * row — current or outdated — and reads the inventory state. */}
             <EnabledSwitch row={installed} t={t} setEnabled={setEnabled} />
-            <UninstallPanel name={entry.name} t={t} uninstall={uninstall} installStatus={installStatus} restart={restart} restartSupported={restartSupported} />
+            <UninstallPanel name={entry.name} t={t} uninstall={uninstall} installStatus={installStatus} restart={restart} restartSupported={restartSupported} onSettled={onSettled} />
           </>
         )}
         {/* Who put this here, pushed to the right edge of the action row. A
@@ -299,7 +301,7 @@ function IncompatibleBadge({ missing, t }: {
  * failure detail, rejection detail — driven by `useInstall`. Shared by the
  * catalog cards (`variant: 'install'`) and the outdated rows' update button
  * (`variant: 'update'`, which drives the same install flow for `name@latest`). */
-function InstallPanel({ target, tier, missing, missingStated = false, variant = 'install', t, install, installStatus, restart, restartSupported }: {
+function InstallPanel({ target, tier, missing, missingStated = false, variant = 'install', flow, t, restart, restartSupported }: {
   /** The install request this panel drives, identity included. */
   target: InstallArgs
   tier: CatalogEntry['tier']
@@ -311,14 +313,14 @@ function InstallPanel({ target, tier, missing, missingStated = false, variant = 
    * the modules are named in plain sight. */
   missingStated?: boolean
   variant?: 'install' | 'update'
+  /** Shared by every panel rendering this install identity. */
+  flow: InstallFlow
   t: ShopTabProps['t']
-  install: ShopTabInjected['install']
-  installStatus: ShopTabInjected['installStatus']
   restart: ShopTabInjected['restart']
   restartSupported: boolean
 }): ReactNode {
   const [gateOpen, setGateOpen] = useState(false)
-  const { view, start } = useInstall(install, installStatus)
+  const { view, start } = flow
 
   if (view.kind === 'running') {
     return (
@@ -443,15 +445,19 @@ function InstallPanel({ target, tier, missing, missingStated = false, variant = 
  * §9.3 is about granting. A business failure (not in the catalog / not
  * installed) lands in the failed view with the host's published detail; a
  * transport failure carries the empty detail and the localized fallback. */
-function UninstallPanel({ name, t, uninstall, installStatus, restart, restartSupported }: {
+function UninstallPanel({ name, t, uninstall, installStatus, restart, restartSupported, onSettled }: {
   name: string
   t: ShopTabProps['t']
   uninstall: ShopTabInjected['uninstall']
   installStatus: ShopTabInjected['installStatus']
   restart: ShopTabInjected['restart']
   restartSupported: boolean
+  onSettled: () => void
 }): ReactNode {
   const { view, start } = useUninstall(uninstall, installStatus)
+  useEffect(() => {
+    if (view.kind === 'done') onSettled()
+  }, [view.kind, onSettled])
 
   if (view.kind === 'running') {
     return (
@@ -684,14 +690,13 @@ function EnabledSwitch({ row, t, setEnabled }: {
 /** One outdated install row (§7.3): the name, the installed and latest
  * versions, the hot enable/disable switch, and the update button (the
  * install flow for `name@latest`, reusing `InstallPanel`). */
-function OutdatedRow({ row, tier, missing, t, setEnabled, install, installStatus, restart, restartSupported }: {
+function OutdatedRow({ row, tier, missing, t, setEnabled, flowFor, restart, restartSupported }: {
   row: ShopInstalledEntry
   tier: CatalogEntry['tier']
   missing: string[]
   t: ShopTabProps['t']
   setEnabled: ShopTabInjected['setEnabled']
-  install: ShopTabInjected['install']
-  installStatus: ShopTabInjected['installStatus']
+  flowFor: (key: string) => InstallFlow
   restart: ShopTabInjected['restart']
   restartSupported: boolean
 }): ReactNode {
@@ -708,7 +713,7 @@ function OutdatedRow({ row, tier, missing, t, setEnabled, install, installStatus
         <EnabledSwitch row={row} t={t} setEnabled={setEnabled} />
         <InstallPanel
           target={{ name: row.name, version: row.latest, source: row.source, repo: row.repo, subdir: row.subdir }}
-          tier={tier} variant="update" missing={missing} t={t} install={install} installStatus={installStatus} restart={restart} restartSupported={restartSupported}
+          tier={tier} variant="update" missing={missing} flow={flowFor(identityKey(row))} t={t} restart={restart} restartSupported={restartSupported}
         />
       </div>
     </div>
@@ -722,14 +727,13 @@ function OutdatedRow({ row, tier, missing, t, setEnabled, install, installStatus
  * tier for the update gate is looked up from the catalog by name (community →
  * acknowledgement); an entry absent from the catalog defaults to the
  * community gate (the safer read). */
-function OutdatedSection({ state, entriesByKey, missingByKey, t, setEnabled, install, installStatus, restart, restartSupported }: {
+function OutdatedSection({ state, entriesByKey, missingByKey, t, setEnabled, flowFor, restart, restartSupported }: {
   state: InstalledState
   entriesByKey: ReadonlyMap<string, CatalogEntry>
   missingByKey: ReadonlyMap<string, string[]>
   t: ShopTabProps['t']
   setEnabled: ShopTabInjected['setEnabled']
-  install: ShopTabInjected['install']
-  installStatus: ShopTabInjected['installStatus']
+  flowFor: (key: string) => InstallFlow
   restart: ShopTabInjected['restart']
   restartSupported: boolean
 }): ReactNode {
@@ -751,8 +755,7 @@ function OutdatedSection({ state, entriesByKey, missingByKey, t, setEnabled, ins
               missing={missingByKey.get(identityKey(row)) ?? []}
               t={t}
               setEnabled={setEnabled}
-              install={install}
-              installStatus={installStatus}
+              flowFor={flowFor}
               restart={restart}
               restartSupported={restartSupported}
             />
@@ -785,6 +788,11 @@ export function ShopTab(props: ShopTabProps): ReactNode {
   const [selfRestartGate, setSelfRestartGate] = useState(false)
   const selfUpdate = useUpdateSelf(updateStart, installStatus)
   const [request, setRequest] = useState<LoadRequest>({ kind: 'initial' })
+  // Mutations refresh only the installed projection; the catalog stays on
+  // screen and its network/cache policy remains driven by `request`.
+  const [mutations, setMutations] = useState(0)
+  const noteMutation = useCallback(() => { setMutations(current => current + 1) }, [])
+  const flows = useInstallFlows(install, installStatus, noteMutation)
   // A refresh deliberately leaves the current shelf on screen (§10), so the
   // reload control carries the only sign that the click did anything.
   const [reloading, setReloading] = useState(false)
@@ -897,7 +905,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     }
     void load()
     return () => { cancelled = true }
-  }, [installed, request])
+  }, [installed, request, mutations])
 
   // Each shelf card looks its installed state up by install identity; the
   // Installed filter below selects on the same map.
@@ -1247,7 +1255,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
               * orphaned in the DOM when the filter changed. */}
             {visible.map(entry => (
               <li key={entryKey(entry)}>
-                <EntryCard entry={entry} stars={starsOf(entry, stars)} installed={installedByKey.get(entryKey(entry))} missing={missingByKey.get(entryKey(entry)) ?? []} t={t} install={install} installStatus={installStatus} uninstall={uninstall} restart={restart} restartSupported={restartSupported} setEnabled={setEnabled} />
+                <EntryCard entry={entry} stars={starsOf(entry, stars)} installed={installedByKey.get(entryKey(entry))} missing={missingByKey.get(entryKey(entry)) ?? []} t={t} flowFor={flows.flowFor} installStatus={installStatus} uninstall={uninstall} restart={restart} restartSupported={restartSupported} setEnabled={setEnabled} onSettled={noteMutation} />
               </li>
             ))}
             {incremental && visibleCount < filtered.length && (
@@ -1267,8 +1275,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
         missingByKey={missingByKey}
         t={t}
         setEnabled={setEnabled}
-        install={install}
-        installStatus={installStatus}
+        flowFor={flows.flowFor}
         restart={restart}
         restartSupported={restartSupported}
       />
