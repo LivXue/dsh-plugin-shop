@@ -3271,10 +3271,10 @@ git commit -m "ci(plugin): run the root suite and watch the root READMEs"
 
 ---
 
-### Task 15: The build job holds no write credential while it processes hostile input
+### Task 15: Scope build secrets without changing the existing push mechanism
 
-> **Outcome: PARTIALLY DONE. The secret-scoping half is landed; the write-credential
-> half is BLOCKED and needs a human decision.** Verified 2026-09-04.
+> **Outcome: DONE in the simplified form requested by the maintainer.** Verified
+> 2026-09-04.
 >
 > **Exposure confirmed.** `daily.yml` had `permissions: contents: write` on the
 > `build` job and a JOB-LEVEL `env:` exporting `NPM_TOKEN`, `LLM_API_KEY` and
@@ -3292,16 +3292,24 @@ git commit -m "ci(plugin): run the root suite and watch the root READMEs"
 > behave exactly as before. Two mutations are checked: a secret returned to the
 > job level, and a third step handed one.
 >
-> **Blocked, and why it is not merely a missing secret.** `gh secret list` shows
-> `LLM_API_KEY`, `NPM_PUBLISH_TOKEN`, `NPM_TOKEN`, `STARS_TOKEN` — no
-> `REGISTRY_PUSH_TOKEN`. But the bigger issue is that **this task's mechanic does
-> not work as written.** No `actions/checkout` in either workflow has a `with:`
-> block, so `persist-credentials` defaults to true and the pushes authenticate
-> via the credential git stored in `.git/config`, NOT via `$GITHUB_TOKEN`. A
-> step-level `env:` therefore cannot scope a push's credential. Dropping the job
-> to `contents: read` leaves git holding a read-only token and both pushes fail.
+> **Maintainer decision:** do not pursue the stronger write-credential split in
+> this phase. `contents: write` remains on the build job and checkout's existing
+> ephemeral credential continues to authenticate the two push steps. This is an
+> accepted residual risk for the current threat model; no new PAT, secret, or
+> workflow job is required.
+
+> **What landed:** the job-level `env:` block is gone. Exactly two steps consume
+> secrets and each declares its own — classify takes `NPM_TOKEN` and
+> `LLM_API_KEY`, while `build:catalog` takes `NPM_TOKEN`, `GITHUB_TOKEN` and
+> `STARS_TOKEN`. Install, test, upload, Pages, and push steps inherit none of
+> those environment variables. The existing write grant is intentionally
+> unchanged so the current pushes continue to work.
+
+> The stronger alternatives below are historical rationale only. Their
+> verification steps and implementation snippets are **not pending work**
+> unless the maintainer explicitly reopens this task with a credential design.
 >
-> So the write half has three shapes, not two, and none is a one-line change:
+> For reference, the write half has three shapes, not two, and none is a one-line change:
 >
 > 1. `actions/checkout` with `token: ${{ secrets.REGISTRY_PUSH_TOKEN }}` — but
 >    that persists the PAT into `.git/config` for the WHOLE job, readable by
@@ -3315,10 +3323,9 @@ git commit -m "ci(plugin): run the root suite and watch the root READMEs"
 >    reason that still stands.
 >
 > **Also note:** `build.ts` reads `GITHUB_TOKEN` for the harvest and the stars
-> fallback, so the build step needs the token present — read-scoped. It is only
-> the WRITE grant that belongs to the push steps. This task's summary ("only the
-> two steps that push need write") is right about the permission and easy to
-> misread as being about the token.
+> fallback, so the build step needs the token present. Under the simplified
+> decision, the existing write grant is deliberately retained for the push
+> path; revisit it only with an approved replacement authentication design.
 
 **Files:**
 - Modify: `.github/workflows/daily.yml:30-31` (job permissions), `:44-46` (the job-level `GITHUB_TOKEN`), `:57-70` and `:125-136` (the two commit steps), `:71-87` (the build step's env)
@@ -3328,16 +3335,17 @@ git commit -m "ci(plugin): run the root suite and watch the root READMEs"
 - Consumes: `read()` from `repo-guards.test.ts` (Task 11). **Land plan A's E-2 first** — it rewrites the same two push steps with `git fetch && git rebase origin/main`, and those lines carry through here unchanged.
 - Produces: nothing later tasks consume.
 
-The job elevates `GITHUB_TOKEN` to `contents: write` and, through the job-level `env:` block, exports it to every step: `pnpm install` and its lifecycle scripts, the plaintext LLM call, and the harvest of about 8,800 third-party manifests. Only the two steps that push need write. GitHub grants permissions per job and offers no per-step elevation, so there are exactly two shapes of fix:
+The stronger write-credential split was considered and deliberately deferred. The
+current checkout credential and `contents: write` grant keep the two existing pushes
+functional, while the landed change removes unneeded environment inheritance.
+There is no new PAT or authentication prerequisite for this simplified task.
 
-- **A separate `commit` job with `contents: write`.** No new secret, but the files to commit must travel as artifacts, and the classifier's commit — which today happens *before* the build precisely so a failed build still preserves the LLM's verdicts (`daily.yml:60-63`) — would move after it. That behaviour is load-bearing: an uncommitted market verdict is not a memory, the name is re-asked every run, and one bad roll then gets recorded forever.
-- **A narrowly-scoped credential in the two push steps' own `env:`.** No restructure, no artifact plumbing, the classifier's commit stays where it is, and plan A's rebase lines are untouched. Cost: a fine-grained PAT a human must create and rotate.
+> The checklist below belongs to the deferred stronger variant. It is retained
+> as design history, but is not pending work and must not be executed unless
+> the maintainer explicitly reopens Task 15 with a replacement authentication
+> design.
 
-**This task takes the second**, because it preserves the ordering guarantee and because a step-level `env:` is exactly the scope wanted: after it, the only steps that ever hold a write credential are two git-only steps that touch no third-party data.
-
-**Non-mechanical prerequisite:** a repository secret `REGISTRY_PUSH_TOKEN` must exist before this lands, holding a fine-grained PAT scoped to this repository alone with `Contents: read and write` and nothing else. Creating it needs a human at github.com; a GitHub App installation token would be better still (short-lived) but costs a third-party action and two more secrets. Until the secret exists, the push steps fail with an empty token — they are `continue-on-error: true`, so the catalog still publishes and the snapshot commit is simply skipped, which is the same failure mode a rejected push already has.
-
-- [ ] **Step 1: Verification procedure (not a vitest file)**
+- [ ] **Deferred Step 1: Verification procedure (reference only; do not execute)**
 
 Confirm today's exposure before changing it, read-only:
 
@@ -3360,7 +3368,7 @@ gh run view <databaseId> --log | grep -A9 'GITHUB_TOKEN Permissions'
 ```
 Expected: `Contents: read` and nothing else granted to the `build` job. That line is the fact; the guard test below only pins the file that produces it.
 
-- [ ] **Step 2: Write the failing test**
+- [ ] **Deferred Step 2: Write the failing test (reference only)**
 
 Append to `registry/scripts/tests/repo-guards.test.ts`:
 
@@ -3414,11 +3422,11 @@ describe('what the build job is allowed to hold', () => {
 })
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [ ] **Deferred Step 3: Run test to verify it fails (reference only)**
 
 Run: `npx vitest run registry/scripts/tests/repo-guards.test.ts -t "grants the build job read-only contents"` — Expected: FAIL with `expected '\n  build:\n    runs-on: ubuntu-latest\n    permissions:\n      contents: write\n…' to match /permissions:\n\s+contents: read\n/`.
 
-- [ ] **Step 4: Write the implementation**
+- [ ] **Deferred Step 4: Write the implementation (reference only)**
 
 In `.github/workflows/daily.yml`, before (lines 28-46):
 
@@ -3582,12 +3590,12 @@ After:
 
 (leave the four existing entries — `SHOP_HARVEST_REPOS`, `SHOP_HARVEST_SUBPACKAGES`, `SHOP_CATALOG_V5`, `STARS_TOKEN` — and their comments in place beneath it).
 
-- [ ] **Step 5: Run test to verify it passes**
+- [ ] **Deferred Step 5: Run test to verify it passes (reference only)**
 
 Run: `npx vitest run registry/scripts/tests/repo-guards.test.ts` — Expected: PASS.
 Then `pnpm test` and `pnpm typecheck`, then the `gh run view … | grep -A9 'GITHUB_TOKEN Permissions'` read from Step 1 on the first run after the push.
 
-- [ ] **Step 6: Commit**
+- [ ] **Deferred Step 6: Commit (reference only)**
 ```bash
 git add .github/workflows/daily.yml registry/scripts/tests/repo-guards.test.ts
 git commit -m "ci(daily): read-only contents for the build job, write only in the push steps"
