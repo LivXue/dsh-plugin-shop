@@ -56,6 +56,7 @@ export function rejectionCodeKey(code: InstallRejectionCode): ShopLocaleKey {
     case 'version-mismatch': return 'versionMismatchCode'
     case 'needs-acknowledgement': return 'needsAcknowledgementCode'
     case 'tarball-integrity': return 'tarballIntegrityCode'
+    case 'ambiguous-identity': return 'ambiguousIdentityCode'
   }
 }
 
