@@ -5,11 +5,12 @@ on:
     - cron: '17 3 * * *'
   push:
     branches: [main]
-    # A full harvest is ~1390 live npm requests. Without this filter every
-    # commit ran one, docs included: on 2026-08-26 a burst of README pushes
-    # fired seventeen harvests in a morning and npm throttled the search
-    # endpoint, so the badge went red for reasons that had nothing to do with
-    # the catalog. Only the inputs to the build belong here.
+    # A full harvest is thousands of live npm and GitHub requests. Without
+    # this filter every commit ran one, docs included: on 2026-08-26 a burst
+    # of README pushes fired seventeen harvests in a morning and npm
+    # throttled the search endpoint, so the badge went red for reasons that
+    # had nothing to do with the catalog. Only the inputs to the build
+    # belong here.
     paths: &catalog-inputs
       - 'registry/**'
       - 'package.json'
@@ -159,9 +160,9 @@ jobs:
       - name: Upload catalog dist for the publish job
         # dist/ is git-ignored and does not survive between jobs. The publish
         # job needs the exact bytes this run built, never a rebuild — a
-        # rebuild would spend another ~1390 npm requests and could
-        # legitimately disagree with what Pages just got below, publishing
-        # mismatched content between the two transports.
+        # rebuild would spend another full harvest and could legitimately
+        # disagree with what Pages just got below, publishing mismatched
+        # content between the two transports.
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         # Never fatal to this job. Steps run in sequence and any failure ends
         # the job, so a bad minute from the artifact service would otherwise
@@ -244,8 +245,8 @@ jobs:
       contents: read
       # Provenance attestation on the catalog publish is minted from
       # GitHub's OIDC endpoint. Confined to this job rather than `build`, so
-      # the ~1390-request harvest and the LLM classification step never run
-      # with an OIDC token in scope.
+      # the full harvest and the LLM classification step never run with an
+      # OIDC token in scope.
       id-token: write
     # Bounded because the mirror-warm poll at the end of publish:catalog has
     # no timeout of its own (Task 7 review, Minor): it makes up to 21

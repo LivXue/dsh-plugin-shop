@@ -31,10 +31,10 @@ pnpm install
 pnpm test           # vitest
 pnpm typecheck      # tsc --noEmit
 pnpm emit:schema    # regenerate registry/schema/plugin-entry.schema.json
-pnpm build:catalog  # ~1390 live npm requests, several minutes — see below
+pnpm build:catalog  # thousands of live network requests, several minutes — see below
 ```
 
-**`build:catalog` hits the public npm registry roughly 1390 times and takes minutes.** Do not run it to check that a change compiles; the tests cover every policy decision without a network. Run it when you have changed the fetching or writing layer and need to see it work end to end.
+**`build:catalog` makes thousands of live network requests and takes minutes.** The npm half fetches one packument per harvested name — the deduplicated union of the two keywords, 5,654 measured 2026-09-04 (`dsh-plugin` 3,729 plus `deepseek-harness` 5,128 less the 3,203 in both) — plus about forty paged searches. The GitHub half re-fetches up to `REPO_BACKFILL_BUDGET` (2,000 by default) of the 14,740 repositories in `repo-state.json`, several requests each. The figure this replaced was one keyword's size in August 2026 quoted as if it were the whole run; it predated both the second keyword and the GitHub half. The figure tracks the ecosystem, so re-measure it with one `size=1` search per keyword rather than trusting the number written here. Do not run the build to check that a change compiles; the tests cover every policy decision without a network. Run it when you have changed the fetching or writing layer and need to see it work end to end.
 
 ## The one architectural rule
 
@@ -62,10 +62,10 @@ This project would rather stop than publish something plausible and wrong. Concr
 - A malformed registry file throws. Silently listing nothing is indistinguishable from an empty ecosystem.
 - A duplicate name in `verified.yml` or `denied.yml` throws. Last-one-wins would silently pick a review.
 - A malformed `dsh.catalog` is rejected, never downgraded to a derived listing. The author declared it and got it wrong; hiding that leaves them wondering why their text never appeared.
-- Hitting the search page bound throws rather than truncating.
+- **A search that cannot enumerate its whole result set throws rather than truncating.** One npm query reaches 5,250 names (`from` is capped at 5,000, and a larger one silently returns page 0), so an over-window keyword is partitioned on `keywords:a,b` intersections — the only filtering qualifier the API honors, and it has no negation, so a partition is never covering by construction. The harvest therefore measures what it enumerated against the keyword's own total and throws on a shortfall; it stops paging on the answered `total`, never on a short page, and a response carrying no `total` throws too. The GitHub half splits each topic into stars/date/size windows under the 1,000-result search cap and throws when one still exceeds it after every split. `keywords:deepseek-harness` was 122 names short of the npm window on 2026-09-04.
 - A package that cannot be fetched becomes a `fetch-failed` rejection in the build report. Nothing disappears without a reason attached to its name.
 
-Every rejection carries an author-readable `detail`. Those strings are published, and a plugin author reads them to find out why their package is not listed — a wrong or misattributed reason is a defect, not a wording nit.
+Every rejection carries an author-readable `detail`. Those strings are published, and a plugin author reads them to find out why their package is not listed — a wrong or misattributed reason is a defect, not a wording nit. Three codes are knowingly broader than the case they can carry: a `license` or `repository` past its length bound reports `no-license` / `no-repository`, and a `package.json` refused for its size reports `no-manifest`, so the report's Reason column can read "no" about a field the author did declare. The `detail` is the accurate half and says which bound was crossed; a new code is a change to a published artifact, so the fix is to keep the reason in the `detail`, not to mint one.
 
 ## Untrusted input
 

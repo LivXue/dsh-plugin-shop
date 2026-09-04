@@ -25,7 +25,7 @@ If you declare `dsh.catalog`, both languages are required — declaring the sect
 | `category` | yes | One of `tool`, `provider`, `ui`, `workflow`, `integration`, `theme`, `other` |
 | `summary.en` | yes | One line, 1–200 characters. Not synthesized: a missing translation stays missing |
 | `summary.zh` | yes | The same, in Chinese |
-| `capabilities` | yes | Up to 20 free-form strings naming the dsh services the plugin uses |
+| `capabilities` | yes | Up to 20 free-form strings, 1–64 characters each, naming the dsh services the plugin uses |
 
 If you do not declare `category`, the shop may assign one by automated review; declare it to stay in control. The `theme` category is for plugins that change the interface's appearance: skins, themes, visual styles (皮肤、主题、外观).
 
@@ -33,7 +33,11 @@ If your repository is on GitHub, its star count is shown automatically — there
 
 **`capabilities` is self-declared and unenforced.** dsh does not sandbox plugins, so this field describes what the author says the plugin touches. It is displayed, never checked. Do not read it as a permission grant.
 
-Unknown fields are rejected rather than ignored, so a typo fails the build with a message naming the field instead of silently dropping your data. **A `dsh.catalog` section that fails validation is rejected outright** — it never falls back to a derived listing, because an author who declared the section and got it wrong deserves the build report to say so, not a silent substitute.
+**Every field that reaches the published catalog is length-bounded.** A declared section is copied verbatim into a file every reader downloads, so a value past its bound is rejected with the field named rather than published: `summary.en` and `summary.zh` at 200 characters each, every `capabilities` item at 64. The build bounds the npm manifest fields it reads on your behalf the same way — `license` at 128 characters (past that it is not an SPDX identifier) and `repository` at 512 — and it records at most 200 `peerDependencies` names, each at most 214 characters, dropping the rest rather than refusing the listing. A listing taken from a GitHub repository needs its root `package.json` under 1 MB (1,048,576 bytes) and a `name` in npm's own grammar: an optional `@scope/`, then letters, digits, `.`, `-` or `_`, at most 214 characters.
+
+The build report lists each rejection as a **Reason** and a **Detail** — read the Detail. A few Reason codes are broader than the case they carry: a `license` or `repository` past its bound reports `no-license` or `no-repository`, and a `package.json` refused for its size reports `no-manifest`, so the code says "no" about a field you did declare. The Detail is the accurate half and names the bound you crossed.
+
+Unknown fields are rejected rather than ignored, so a typo fails the build with a message naming the field instead of silently dropping your data. That message is itself capped at 200 characters and ends with `… (truncated)` when it was cut; the field name comes first, so the part you need to act on always survives. **A `dsh.catalog` section that fails validation is rejected outright** — it never falls back to a derived listing, because an author who declared the section and got it wrong deserves the build report to say so, not a silent substitute.
 
 ## Listed without a `dsh.catalog`
 
@@ -45,7 +49,7 @@ Omit the section entirely and your package is still listed, from your npm `packa
 | `summary.en` | your text | your npm `description`, trimmed and capped at 200 characters |
 | `summary.zh` | your text | absent |
 | `category` | your choice | `other` |
-| `capabilities` | your list | empty |
+| `capabilities` | your list (up to 20 items, 64 characters each) | empty |
 
 A package with no `dsh.catalog` and no npm `description` is not listed at all — there is nothing to show. A derived listing carries `metadata: "derived"` in the published entry; adding a `dsh.catalog` section is how you claim it. The shop no longer badges derived entries visually.
 

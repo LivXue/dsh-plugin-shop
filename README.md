@@ -258,8 +258,8 @@ pnpm test        # vitest
 pnpm typecheck
 ```
 
-`pnpm build:catalog` runs the real harvest against the public npm registry — roughly
-1390 requests and several minutes. The tests cover every policy decision without a
+`pnpm build:catalog` runs the real harvest against npm and GitHub — thousands of live
+requests and several minutes. The tests cover every policy decision without a
 network, so reach for it only when you have changed the fetching or writing layer.
 
 Status and open work: [docs/plans/2026-08-18-remaining-work.md](docs/plans/2026-08-18-remaining-work.md).

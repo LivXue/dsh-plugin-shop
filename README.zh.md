@@ -236,7 +236,7 @@ pnpm test        # vitest
 pnpm typecheck
 ```
 
-`pnpm build:catalog` 会对公共 npm registry 跑真实采集——大约 1390 次请求、数分钟。所有策略判断
+`pnpm build:catalog` 会对 npm 和 GitHub 跑真实采集——数千次实时请求、数分钟。所有策略判断
 都有不联网的测试覆盖，所以只在你改了拉取层或写出层、需要端到端看一次时才用它。
 
 状态与未完成工作：[docs/plans/2026-08-18-remaining-work.md](docs/plans/2026-08-18-remaining-work.md)。
