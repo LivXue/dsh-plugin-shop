@@ -5,6 +5,7 @@ import {
   DERIVED_SUMMARY_MAX_LENGTH, ENTRY_PAYLOAD_MAX_BYTES, LICENSE_MAX_LENGTH, REPOSITORY_MAX_LENGTH,
   SIMILARITY_THRESHOLD, entryPayloadBytes, truncateWholeCharacters,
 } from './gate.ts'
+import { repoUnit } from './identity.ts'
 import type { RegistryConfig } from './config.ts'
 import type { CatalogSection, Rejection, RepoCandidate } from './types.ts'
 
@@ -51,8 +52,9 @@ export function gateRepo(
   config: RegistryConfig,
 ): { ok: true; accepted: RepoAccepted } | { ok: false; rejection: Rejection } {
   // The unit an author acts on: the repo, or `repo#subdir` for a monorepo
-  // subpackage — rejection names must point at the thing to fix.
-  const unit = candidate.subdir === undefined ? candidate.repo : `${candidate.repo}#${candidate.subdir}`
+  // subpackage — rejection names must point at the thing to fix. Shared with
+  // pipeline.ts's shadow row so the two spellings cannot drift (C-6).
+  const unit = repoUnit(candidate)
 
   // Denied by repo or by bundle name. `owner/slug` strings cannot collide
   // with npm package names (unscoped names carry no slash), so one map holds

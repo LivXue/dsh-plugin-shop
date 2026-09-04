@@ -40,7 +40,7 @@ pnpm build:catalog  # thousands of live network requests, several minutes — se
 
 **A pure core, an impure shell.**
 
-- Pure: `gate.ts`, `tier.ts`, `emit.ts`, `pipeline.ts`, `schema.ts`, `types.ts`. No clock, no network, no filesystem, no environment. Every policy decision lives here, which is why fixtures can drive all of it.
+- Pure: `gate.ts`, `tier.ts`, `emit.ts`, `pipeline.ts`, `schema.ts`, `types.ts`, `identity.ts`. No clock, no network, no filesystem, no environment — and no locale: every comparison is code-unit, because a locale-aware sort would make the published bytes depend on the machine. Every policy decision lives here, which is why fixtures can drive all of it.
 - Impure: `npm-client.ts`, `llm-client.ts`, and `github-stars.ts` (the only modules that reach the network), `build.ts` (reads the clock once, writes the artifacts), `config.ts` (reads the registry YAML), `emit-schema.ts` (writes the generated schema).
 
 A policy decision that migrates into the shell becomes untestable. If a pure module needs the time, take it as a parameter — `build.ts` reads the clock exactly once and passes it down.
