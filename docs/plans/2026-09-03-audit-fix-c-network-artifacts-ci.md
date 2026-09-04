@@ -53,6 +53,31 @@
 
 ### Task 1: Only a 404 is `no-manifest`
 
+> **Outcome: ALREADY DONE by plan A, more strongly than the steps below ask.
+> Do not apply Step 3 — it would be a regression.** Verified 2026-09-04 at
+> `github-client.ts:1102-1122`.
+>
+> Plan A narrowed the same branch, and where this task says "return
+> `fetch-failed`", plan A **throws**. That difference is the whole point: a
+> returned rejection is a verdict `harvestRepos` records, while a throw lands
+> in its catch, publishes a reason we wrote, records nothing so the next build
+> retries — and counts toward the systematic-failure bound, which counts
+> throws alone and so could never fire for a returned status. A pool-wide 403
+> is a broken harvest, not fourteen thousand bad repositories, and only the
+> throw can stop the build.
+>
+> Coverage is wider than the three cases below:
+> `describe('only a 404 is a verdict about the repository')` in
+> `github-client.test.ts` holds eight, including a single-repo 500, "records
+> nothing so the next run retries it", the pool-wide bound firing
+> (`40 of 40 repositories threw`), the genuine 404 still persisting, and the
+> tree and subpackage variants.
+>
+> Task 19 (D-10) is the note that exists because of this task: when the
+> narrowing stops a build, the answer is a lower `REPO_BACKFILL_BUDGET`, never
+> a widening back to a returned status.
+
+
 **Files:**
 - Modify: `registry/scripts/src/github-client.ts:523-527`
 - Test: `registry/scripts/tests/github-client.test.ts` (the `fetchRepoCandidate` describe, after line 144)
