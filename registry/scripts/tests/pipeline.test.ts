@@ -650,27 +650,39 @@ describe('determinism under every perturbation', () => {
   })
 })
 
-describe('the market holds reach the build report', () => {
-  it('names every held listing so a human can confirm or clear it', () => {
-    const withHolds = parseRegistryConfig({
+describe('the LLM-only market verdicts reach the build report', () => {
+  it('names every listing withheld on an LLM verdict alone, so it can be spot-checked', () => {
+    const withLlmVerdict = parseRegistryConfig({
       verified: '[]',
       denied: '[]',
       allowedSimilar: '[]',
       categories: '[]',
       firstSeen: '- name: dsh-hello-plugin\n  added: 2026-08-11\n- name: dsh-derived-plugin\n  added: 2026-08-12\n- name: dsh-fs-tool\n  added: 2026-08-10\n',
-      markets: '- name: dsh-hello-plugin\n  market: true\n  by: llm\n  reason: looks like a market\n',
+      markets: [
+        '- name: dsh-hello-plugin\n  market: true\n  by: llm\n  reason: looks like a market\n',
+        // A human verdict needs no spot-check, and there are 45 of them live:
+        // listing those would bury the rows that do need one.
+        '- name: dsh-derived-plugin\n  market: true\n  by: human\n  reason: really is a market\n',
+        // An LLM verdict about a name this build did not list is noise — the
+        // reader cannot act on a row that reaches no entry.
+        '- name: dsh-not-harvested\n  market: true\n  by: llm\n  reason: looks like a market\n',
+      ].join(''),
     })
-    const { report, pluginsJson } = runPipeline(candidates, [], withHolds, BUILT_AT)
-    expect(report).toContain('Market holds awaiting human confirmation: 1')
+    const { report, pluginsJson } = runPipeline(candidates, [], withLlmVerdict, BUILT_AT)
+    expect(report).toContain('Withheld from the shelf on an LLM verdict alone: 1')
     expect(report).toContain('- dsh-hello-plugin')
-    // And the entry is still on the shelf: the hold does not remove it.
+    expect(report, 'a human verdict needs no spot-check').not.toContain('- dsh-derived-plugin')
+    expect(report, 'a row reaching no listed entry is noise').not.toContain('- dsh-not-harvested')
+    // The verdict decides, so the name is NOT cleared. The report line is the
+    // whole review mechanism: a recorded row is never re-asked, so nothing
+    // else would ever surface an LLM-only withholding.
     const parsed = JSON.parse(pluginsJson) as { notAShop: string[] }
-    expect(parsed.notAShop).toContain('dsh-hello-plugin')
+    expect(parsed.notAShop).not.toContain('dsh-hello-plugin')
   })
 
-  it('says nothing when there are no holds', () => {
+  it('says nothing when no listing was withheld by the classifier alone', () => {
     const { report } = runPipeline(candidates, [], config, BUILT_AT)
-    expect(report).not.toContain('Market holds')
+    expect(report).not.toContain('Withheld from the shelf')
   })
 
   it('publishes each cleared name once, however many entries share it', () => {

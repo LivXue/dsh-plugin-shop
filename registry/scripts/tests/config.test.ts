@@ -12,14 +12,17 @@ const empty = {
 }
 
 describe('parseRegistryConfig', () => {
-  it('withholds a listing only for a HUMAN market verdict; an LLM true is a hold', () => {
-    // markets.yml records BOTH verdicts so the classifier has a memory and
-    // never re-asks. What clears the client's name filter is "not judged a
-    // market BY A HUMAN": an LLM `true` used to hide the entry from every
-    // shelf, permanently and silently, which is the CLAUDE.md rule that LLM
-    // output never removes an entry (audit D-7). A wrong `false` lists one
-    // competitor on a shelf of nine thousand; a wrong `true` deletes a
-    // working plugin. Those are not equal.
+  it('clears a market:false verdict and withholds a market:true one, whichever judged it', () => {
+    // The verdict decides; `by` only records who said it. One LLM pass is
+    // accurate enough for "is this a marketplace FOR dsh plugins" — a narrow
+    // question a name and a description usually answer — and the build report
+    // lists every LLM-only withholding so it can be spot-checked.
+    //
+    // This is NOT a `by: human` gate. That was tried on 2026-09-04 and was
+    // wrong in this codebase: `notAShop` means CLEARED, and the client shows
+    // a name that is either cleared or not shop-like
+    // (`ShopTab.tsx:920-922`), so routing an LLM `true` into `notAShop`
+    // ADVERTISED 16 competing markets the name heuristic had been hiding.
     const config = parseRegistryConfig({
       ...empty,
       markets: [
@@ -29,8 +32,7 @@ describe('parseRegistryConfig', () => {
         '- name: dsh-maybe-market\n  market: true\n  by: llm\n  reason: looks like a market\n',
       ].join(''),
     })
-    expect([...config.notAShop].sort()).toEqual(['dsh-maybe-market', 'dsh-skin-market', 'dsh-tea-store'])
-    expect([...config.marketHolds]).toEqual(['dsh-maybe-market'])
+    expect([...config.notAShop].sort()).toEqual(['dsh-skin-market', 'dsh-tea-store'])
     // Judged covers every verdict: the classifier asks only about names
     // absent from it, so a name judged a market must be in here or it is
     // re-asked every day and can flip on a bad roll.

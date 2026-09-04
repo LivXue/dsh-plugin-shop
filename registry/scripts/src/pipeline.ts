@@ -167,11 +167,18 @@ export function runPipeline(
   // and they are sorted so the report diffs cleanly.
   const notes: string[] = []
   const listedNames = new Set(entries.map(entry => entry.name))
-  const holds = [...config.marketHolds].filter(name => listedNames.has(name)).sort(compareStrings)
-  if (holds.length > 0) {
+  // Withheld on a classifier pass alone. The verdict stands — one pass is
+  // accurate enough for the question — but a recorded row is never asked
+  // again, so this line is the only thing that would ever surface a wrong one
+  // for a spot-check.
+  const llmOnly = config.marketRows
+    .filter(row => row.market && row.by === 'llm' && listedNames.has(row.name))
+    .map(row => row.name)
+    .sort(compareStrings)
+  if (llmOnly.length > 0) {
     notes.push(
-      `Market holds awaiting human confirmation: ${holds.length}. An LLM judged these a competing plugin market. They are still on the shelf: record \`market: true, by: human\` in markets.yml to withhold one, or \`market: false\` to clear it.`,
-      ...holds.map(name => `- ${name}`),
+      `Withheld from the shelf on an LLM verdict alone: ${llmOnly.length}. Each was judged a competing plugin market by the classifier and no human has looked. To correct one, edit its row in markets.yml — \`market: false\` clears it, and a recorded row is never re-asked.`,
+      ...llmOnly.map(name => `- ${name}`),
     )
   }
   notes.push(...unmatchedRegistryNotes(candidates, repoCandidates, config))
