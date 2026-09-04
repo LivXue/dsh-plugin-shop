@@ -3271,61 +3271,67 @@ git commit -m "ci(plugin): run the root suite and watch the root READMEs"
 
 ---
 
-### Task 15: Scope build secrets without changing the existing push mechanism
+### Task 15: The build job holds no write credential while it processes hostile input
 
-> **Outcome: DONE in the simplified form requested by the maintainer.** Verified
-> 2026-09-04.
+> **Outcome: DONE, both halves.** Verified 2026-09-04.
 >
-> **Exposure confirmed.** `daily.yml` had `permissions: contents: write` on the
-> `build` job and a JOB-LEVEL `env:` exporting `NPM_TOKEN`, `LLM_API_KEY` and
-> `GITHUB_TOKEN` — so all three sat in every step's environment, including
+> **This task was reopened after being deferred, and the order matters.** At
+> 12:36 UTC an outcome recorded here read *"Maintainer decision: do not pursue
+> the stronger write-credential split in this phase… no new PAT, secret, or
+> workflow job is required"*, and said the checklist below *"must not be
+> executed unless the maintainer explicitly reopens Task 15 with a replacement
+> authentication design."* At 12:54 UTC the maintainer created
+> `REGISTRY_PUSH_TOKEN` — a fine-grained PAT scoped to this repository with
+> `Contents: read and write` and nothing else — and directed the work to
+> continue. That is the explicit reopening the deferral asked for, so the
+> heading and outcome are restored to the stronger form.
+>
+> **Exposure that was there.** `permissions: contents: write` on the `build`
+> job plus a JOB-LEVEL `env:` exporting `NPM_TOKEN`, `LLM_API_KEY` and
+> `GITHUB_TOKEN` — all three in every step's environment, including
 > `pnpm install`'s, where a postinstall hook in any transitive dependency could
-> read them, and `LLM_API_KEY` sat in the environment of the step that fetches
-> thousands of third-party manifests.
+> read them.
 >
-> **Landed, needing no new secret:** the job-level `env:` block is gone. Exactly
-> two steps consume any secret and each declares its own — classify takes
-> `NPM_TOKEN` and `LLM_API_KEY`, `build:catalog` takes `NPM_TOKEN`,
-> `GITHUB_TOKEN` and the already-scoped `STARS_TOKEN`. `pnpm install`,
-> `pnpm test`, `pnpm typecheck`, both uploads, the Pages publish and both commit
-> steps now hold none. `permissions:` is deliberately untouched, so the pushes
-> behave exactly as before. Two mutations are checked: a secret returned to the
-> job level, and a third step handed one.
+> **This task's stated mechanic does not work, and that changed the fix.** No
+> `actions/checkout` had a `with:` block, so `persist-credentials` defaulted to
+> true and the pushes authenticated via the credential git wrote into
+> `.git/config` — NOT via `$GITHUB_TOKEN`. A step-level `env:` cannot scope
+> that: every later step could read the file and push with it. So the change is
+> three parts, not one:
 >
-> **Maintainer decision:** do not pursue the stronger write-credential split in
-> this phase. `contents: write` remains on the build job and checkout's existing
-> ephemeral credential continues to authenticate the two push steps. This is an
-> accepted residual risk for the current threat model; no new PAT, secret, or
-> workflow job is required.
-
-> **What landed:** the job-level `env:` block is gone. Exactly two steps consume
-> secrets and each declares its own — classify takes `NPM_TOKEN` and
-> `LLM_API_KEY`, while `build:catalog` takes `NPM_TOKEN`, `GITHUB_TOKEN` and
-> `STARS_TOKEN`. Install, test, upload, Pages, and push steps inherit none of
-> those environment variables. The existing write grant is intentionally
-> unchanged so the current pushes continue to work.
-
-> The stronger alternatives below are historical rationale only. Their
-> verification steps and implementation snippets are **not pending work**
-> unless the maintainer explicitly reopens this task with a credential design.
+> 1. The job-level `env:` block is gone; each of the four secret-consuming
+>    steps declares its own.
+> 2. The build job's checkout takes `persist-credentials: false`, which is what
+>    actually removes the ambient pushable credential. Safe because the
+>    repository is public, so the `git fetch origin main` inside both rebase
+>    loops still works unauthenticated — checked before relying on it.
+> 3. `permissions: contents: read`, and the two push steps carry
+>    `REGISTRY_PUSH_TOKEN` in their own `env:`.
 >
-> For reference, the write half has three shapes, not two, and none is a one-line change:
+> **How the credential reaches git.** `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n` —
+> the environment spelling of `-c` — installs a credential helper that prints
+> the token, with `VALUE_0` an EMPTY `credential.helper` to reset any inherited
+> helper list. The env spelling is used rather than `-c` for two reasons: the
+> helper script stays out of argv, and `git push` stays adjacent so
+> `workflow.test.ts`'s push-step detector keeps its meaning. A first draft used
+> `-c`, which separated those two words and emptied that detector's list; its
+> top-level throw caught it immediately, doing exactly what its comment says it
+> exists for.
 >
-> 1. `actions/checkout` with `token: ${{ secrets.REGISTRY_PUSH_TOKEN }}` — but
->    that persists the PAT into `.git/config` for the WHOLE job, readable by
->    every later step including the harvest. **Strictly worse than today**, since
->    a fine-grained PAT does not expire with the run the way `GITHUB_TOKEN` does.
-> 2. The push steps override the remote themselves, e.g. an `http.extraheader`
->    built from a step-scoped `env:`. This is the only shape that actually
->    achieves step scoping, and it means rewriting both push commands — which
->    plan A's rebase lines also touch.
-> 3. The separate `commit` job this task already rejected, for the ordering
->    reason that still stands.
+> Both `run:` blocks were checked with `bash -n` and reference the token by NAME
+> with no inline `secrets.` expression. Five mutations are checked: the job back
+> to `contents: write`, checkout persisting credentials again, the push
+> abandoning the scoped credential, the helper-list reset removed, and one push
+> step losing the secret.
 >
 > **Also note:** `build.ts` reads `GITHUB_TOKEN` for the harvest and the stars
-> fallback, so the build step needs the token present. Under the simplified
-> decision, the existing write grant is deliberately retained for the push
-> path; revisit it only with an approved replacement authentication design.
+> fallback, so the build step needs the token present, read-scoped. It is only
+> the WRITE grant that belongs to the push steps.
+>
+> **Failure mode if the PAT is wrong or expires:** both pushes fail, which
+> `continue-on-error: true` turns into the `::error::` these steps already emit
+> for a rejected push. The catalog still publishes; only the registry commits
+> are skipped.
 
 **Files:**
 - Modify: `.github/workflows/daily.yml:30-31` (job permissions), `:44-46` (the job-level `GITHUB_TOKEN`), `:57-70` and `:125-136` (the two commit steps), `:71-87` (the build step's env)
@@ -3335,17 +3341,17 @@ git commit -m "ci(plugin): run the root suite and watch the root READMEs"
 - Consumes: `read()` from `repo-guards.test.ts` (Task 11). **Land plan A's E-2 first** — it rewrites the same two push steps with `git fetch && git rebase origin/main`, and those lines carry through here unchanged.
 - Produces: nothing later tasks consume.
 
-The stronger write-credential split was considered and deliberately deferred. The
-current checkout credential and `contents: write` grant keep the two existing pushes
-functional, while the landed change removes unneeded environment inheritance.
-There is no new PAT or authentication prerequisite for this simplified task.
+The stronger write-credential split was deferred at 12:36 UTC on 2026-09-04 and
+REOPENED at 12:54 the same day, when the maintainer created
+`REGISTRY_PUSH_TOKEN` and directed the work to continue. It is done — see the
+outcome at the top of this task.
 
-> The checklist below belongs to the deferred stronger variant. It is retained
-> as design history, but is not pending work and must not be executed unless
-> the maintainer explicitly reopens Task 15 with a replacement authentication
-> design.
+> The checklist below is the ORIGINAL plan, kept because the mechanic it
+> specifies turned out to be wrong: a step-level `env:` cannot scope a push
+> whose credential `actions/checkout` wrote into `.git/config`. The outcome
+> above records what shipped instead, and why.
 
-- [ ] **Deferred Step 1: Verification procedure (reference only; do not execute)**
+- [x] **Step 1: Verification procedure (run 2026-09-04; see the outcome)**
 
 Confirm today's exposure before changing it, read-only:
 

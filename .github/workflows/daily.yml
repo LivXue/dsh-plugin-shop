@@ -60,7 +60,11 @@ jobs:
     # that would take, and none exists yet.
     timeout-minutes: 120
     permissions:
-      contents: write
+      # read, not write. This job installs dependencies, calls a plaintext LLM
+      # gateway and fetches thousands of third-party manifests; the ambient
+      # grant is what every one of those steps runs under. The two steps that
+      # push carry their own credential in their own `env:` instead.
+      contents: read
     # No job-level `env:`. Anything declared there is in EVERY step's
     # environment, and this block held NPM_TOKEN, LLM_API_KEY and GITHUB_TOKEN
     # — so all three sat in `pnpm install`'s environment, readable by a
@@ -69,6 +73,14 @@ jobs:
     # Exactly two steps consume any of them, and each now declares its own.
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # Otherwise checkout writes an http.extraheader credential into
+          # .git/config, where EVERY later step can read it and push with it —
+          # a postinstall hook in any transitive dependency included. Scoping a
+          # token to the push steps' env: is pointless while that file holds
+          # one. `git fetch origin main` in those steps still works
+          # unauthenticated: the repository is public.
+          persist-credentials: false
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with: { node-version: 24, cache: pnpm }
@@ -204,6 +216,15 @@ jobs:
         # and fails this step there; while it did not, the snapshot step below
         # committed the markers and the throw arrived a build later, on a
         # malformed registry file, with nothing naming the run that wrote it.
+        env:
+          # The only write credential in this job, and it lives here rather
+          # than job-wide: a fine-grained PAT scoped to this repository with
+          # Contents: read and write and nothing else, read by the credential
+          # helper inside the push below. An empty value (a fork, a local run,
+          # an expired token) makes the push fail, which continue-on-error
+          # turns into the ::error:: this step already emits for a rejected
+          # push — the catalog still publishes.
+          REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
         run: |
           git config user.name 'dsh-plugin-shop bot'
           git config user.email 'bot@users.noreply.github.com'
@@ -247,7 +268,21 @@ jobs:
                 echo "::error::the rebase reported success but its autostash did not reapply; $1 was not pushed and the tree holds conflict markers with the stash still unapplied. Someone landed on main inside this run's window; nothing on main needs undoing, so re-run the workflow."
                 return 1
               fi
-              if git push origin HEAD:main; then return 0; fi
+              # The credential reaches git through the ENVIRONMENT and nothing
+              # else: not .git/config (checkout no longer writes one) and not a
+              # command line. GIT_CONFIG_COUNT/KEY/VALUE is the env spelling of
+              # `-c`, used instead of `-c` for two reasons — the helper script
+              # stays out of argv, and `git push` stays adjacent so
+              # workflow.test.ts's push-step detector keeps working. KEY_0 is an
+              # EMPTY credential.helper, which resets any inherited helper list
+              # so KEY_1 is the only one consulted; that helper prints the
+              # token, which the shell git spawns for it expands from this
+              # step's env.
+              if GIT_CONFIG_COUNT=2 \
+                 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= \
+                 GIT_CONFIG_KEY_1=credential.helper \
+                 GIT_CONFIG_VALUE_1='!f() { echo username=x-access-token; echo "password=$REGISTRY_PUSH_TOKEN"; }; f' \
+                 git push origin HEAD:main; then return 0; fi
               echo "::warning::push attempt $attempt was rejected; refetching"
             done
             echo "::error::could not push $1 after two attempts; this run's changes were not recorded"
@@ -290,6 +325,15 @@ jobs:
         # above, for the same reason and with the same load-bearing parentheses.
         if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'push') && github.ref == 'refs/heads/main'
         continue-on-error: true
+        env:
+          # The only write credential in this job, and it lives here rather
+          # than job-wide: a fine-grained PAT scoped to this repository with
+          # Contents: read and write and nothing else, read by the credential
+          # helper inside the push below. An empty value (a fork, a local run,
+          # an expired token) makes the push fail, which continue-on-error
+          # turns into the ::error:: this step already emits for a rejected
+          # push — the catalog still publishes.
+          REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
         run: |
           git config user.name 'dsh-plugin-shop bot'
           git config user.email 'bot@users.noreply.github.com'
@@ -333,7 +377,21 @@ jobs:
                 echo "::error::the rebase reported success but its autostash did not reapply; $1 was not pushed and the tree holds conflict markers with the stash still unapplied. Someone landed on main inside this run's window; nothing on main needs undoing, so re-run the workflow."
                 return 1
               fi
-              if git push origin HEAD:main; then return 0; fi
+              # The credential reaches git through the ENVIRONMENT and nothing
+              # else: not .git/config (checkout no longer writes one) and not a
+              # command line. GIT_CONFIG_COUNT/KEY/VALUE is the env spelling of
+              # `-c`, used instead of `-c` for two reasons — the helper script
+              # stays out of argv, and `git push` stays adjacent so
+              # workflow.test.ts's push-step detector keeps working. KEY_0 is an
+              # EMPTY credential.helper, which resets any inherited helper list
+              # so KEY_1 is the only one consulted; that helper prints the
+              # token, which the shell git spawns for it expands from this
+              # step's env.
+              if GIT_CONFIG_COUNT=2 \
+                 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= \
+                 GIT_CONFIG_KEY_1=credential.helper \
+                 GIT_CONFIG_VALUE_1='!f() { echo username=x-access-token; echo "password=$REGISTRY_PUSH_TOKEN"; }; f' \
+                 git push origin HEAD:main; then return 0; fi
               echo "::warning::push attempt $attempt was rejected; refetching"
             done
             echo "::error::could not push $1 after two attempts; this run's changes were not recorded"

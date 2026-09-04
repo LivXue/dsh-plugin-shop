@@ -121,11 +121,12 @@ describe('workflow action pins', () => {
 })
 
 describe('secrets are scoped to the steps that consume them', () => {
+  interface Step { name?: string; run?: string; uses?: string; env?: Record<string, string>; with?: Record<string, unknown> }
+  interface BuildJob { permissions?: Record<string, string>; env?: Record<string, string>; steps: Step[] }
+
   /** The `build` job, parsed. */
-  function buildJob(): { env?: Record<string, string>; steps: { name?: string; run?: string; uses?: string; env?: Record<string, string> }[] } {
-    const workflow = parse(read('.github/workflows/daily.yml')) as {
-      jobs: Record<string, { env?: Record<string, string>; steps: { name?: string; run?: string; uses?: string; env?: Record<string, string> }[] }>
-    }
+  function buildJob(): BuildJob {
+    const workflow = parse(read('.github/workflows/daily.yml')) as { jobs: Record<string, BuildJob> }
     const job = workflow.jobs.build
     if (job === undefined) throw new Error('daily.yml declares no build job')
     return job
@@ -145,16 +146,56 @@ describe('secrets are scoped to the steps that consume them', () => {
     }
   })
 
-  it('gives the classifier and the harvest their own credentials, and nothing else any', () => {
-    // Named per step rather than counted, so adding a secret to a third step
-    // is a decision someone has to make here as well as there.
+  it('names every step that holds a secret, so a new one is a decision made twice', () => {
+    // Named rather than counted alone: adding a secret to a fifth step should
+    // have to be written here as well as there.
     const job = buildJob()
     const holders = job.steps
       .filter(step => Object.values(step.env ?? {}).some(v => /secrets\./.test(String(v))))
       .map(step => step.name ?? step.run ?? step.uses ?? '?')
-    expect(holders).toHaveLength(2)
-    expect(holders.some(h => h.includes('Classify'))).toBe(true)
-    expect(holders.some(h => h.includes('build:catalog'))).toBe(true)
+    expect(holders).toHaveLength(4)
+    expect(holders.filter(h => h.includes('Classify'))).toHaveLength(1)
+    expect(holders.filter(h => h.includes('build:catalog'))).toHaveLength(1)
+    expect(holders.filter(h => h.startsWith('Commit'))).toHaveLength(2)
+  })
+
+  it('runs the whole job under contents: read', () => {
+    // The ambient grant is what `pnpm install`, the plaintext LLM call and the
+    // harvest of thousands of third-party manifests all run under. Only the two
+    // git-only push steps need write, and they carry it themselves.
+    expect(buildJob().permissions?.contents).toBe('read')
+  })
+
+  it('does not let checkout leave a pushable credential on disk', () => {
+    // With the default `persist-credentials: true`, checkout writes an
+    // http.extraheader credential into .git/config, where every later step can
+    // read it and push with it. Scoping a token to the push steps' env: is
+    // pointless while that file holds one, which is why this and the
+    // REGISTRY_PUSH_TOKEN below are one change rather than two.
+    const checkout = buildJob().steps.find(step => (step.uses ?? '').startsWith('actions/checkout@'))
+    expect(checkout, 'the build job does not check out').toBeDefined()
+    expect(checkout?.with?.['persist-credentials']).toBe(false)
+  })
+
+  it('gives the write credential to the two push steps and to nothing else', () => {
+    // The whole point: after this, the only steps that ever hold a credential
+    // that can write to the repository are two git-only steps that touch no
+    // third-party data.
+    const job = buildJob()
+    const writers = job.steps.filter(step => 'REGISTRY_PUSH_TOKEN' in (step.env ?? {}))
+    expect(writers).toHaveLength(2)
+    expect(writers.every(w => (w.name ?? '').startsWith('Commit'))).toBe(true)
+    for (const step of writers) {
+      // It reaches git from the environment, never from a command line or a
+      // config file: the argv carries the variable NAME.
+      expect(step.run, `${step.name ?? '?'} does not push with the scoped credential`)
+        .toContain('password=$REGISTRY_PUSH_TOKEN')
+      // An EMPTY credential.helper resets any inherited list. Matched on the
+      // empty value specifically: an assertion for the bare key is also
+      // satisfied by the real helper's own line, so it could never fail.
+      expect(step.run, `${step.name ?? '?'} does not reset the inherited helper list`)
+        .toMatch(/GIT_CONFIG_VALUE_0=\s/)
+    }
   })
 })
 
