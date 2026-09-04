@@ -9,8 +9,9 @@
 
 export interface CatalogPackageInput {
   version: string
-  /** The build time, from the emitted `index.json`. Readme only: it must not
-   * enter any hashed content. */
+  /** The build time, from the emitted `index.json`. Reaches the readme and
+   * the manifest's `catalogBuiltAt`, never any hashed content: those two are
+   * regenerated per publish anyway, so carrying it costs no cache churn. */
   builtAt: string
   count: number
   pluginsFileName: string
@@ -48,6 +49,86 @@ export function nextCatalogVersion(today: Date, publishedLatest: string | null):
   return `${prefix}0`
 }
 
+/** A published version of the catalog package, as read from the packument. */
+export interface PublishedCatalog {
+  version: string
+  shas: { plugins: string; stars: string | null }
+  /** The build that version carries. `null` for one published before
+   * `catalogBuiltAt` was recorded — there is nothing to order against. */
+  builtAt: string | null
+}
+
+/** The build sitting in `dist/v1`, as read from its `index.json`. */
+export interface LocalCatalog {
+  builtAt: string
+  shas: { plugins: string; stars: string | null }
+}
+
+/** Publish it, skip it, or refuse it. `refuse` fails the run. */
+export type CatalogPublishDecision =
+  | { kind: 'publish' }
+  | { kind: 'skip'; reason: string }
+  | { kind: 'refuse'; reason: string }
+
+/**
+ * Whether the build in `dist/v1` may become the published `latest`.
+ *
+ * Two guards, in this order:
+ *
+ * 1. **Identical content is nothing to publish.** Both hashes matching the
+ *    published version means the ecosystem did not move; the daily build
+ *    exits 0 with nothing to do. Checked first so a tree that is BOTH stale
+ *    and content-identical is a no-op rather than a failure.
+ * 2. **The build must move forward.** A `dist/v1` older than the published
+ *    `latest` is a tree that was never rebuilt, and publishing it moves
+ *    `latest` backwards. On 2026-09-03T16:46Z exactly that happened: a
+ *    `publish:catalog` run against a `dist/v1` last built on 09-02 shipped as
+ *    2026.903.6 and demoted a catalog 818 entries larger. Guard 1 cannot
+ *    catch it — stale hashes differ from the published ones exactly as fresh
+ *    content does — and the version number cannot either, because
+ *    `nextCatalogVersion` reads the wall clock, not the build. The build time
+ *    is the only fact that separates a new catalog from an old one.
+ *
+ * The guard is one published version behind itself at introduction: the
+ * `latest` it first runs against predates `catalogBuiltAt` and carries no
+ * build time, so that publish is allowed through and every later one is
+ * ordered.
+ */
+export function catalogPublishDecision(
+  local: LocalCatalog,
+  published: PublishedCatalog | null,
+): CatalogPublishDecision {
+  if (published !== null
+    && published.shas.plugins === local.shas.plugins
+    && published.shas.stars === local.shas.stars) {
+    return { kind: 'skip', reason: `catalog unchanged since ${published.version} — nothing to publish` }
+  }
+
+  const localBuilt = Date.parse(local.builtAt)
+  if (Number.isNaN(localBuilt)) {
+    return {
+      kind: 'refuse',
+      reason: `dist/v1/index.json carries an unparsable builtAt (${local.builtAt}); run build:catalog`,
+    }
+  }
+
+  if (published === null || published.builtAt === null) return { kind: 'publish' }
+  const publishedBuilt = Date.parse(published.builtAt)
+  // An unparsable PUBLISHED time is not this run's fault and not something it
+  // can fix; refusing would wedge every future publish behind a bad record.
+  if (Number.isNaN(publishedBuilt)) return { kind: 'publish' }
+
+  if (localBuilt <= publishedBuilt) {
+    return {
+      kind: 'refuse',
+      reason: `dist/v1 was built ${local.builtAt}, which is not newer than the published `
+        + `${published.version} (${published.builtAt}). Publishing it would move `
+        + 'latest backwards; run build:catalog first.',
+    }
+  }
+  return { kind: 'publish' }
+}
+
 /** The package's own files. The `v1/` tree is copied, not generated. */
 export function catalogPackageFiles(input: CatalogPackageInput): CatalogPackageFiles {
   const packageJson = `${JSON.stringify({
@@ -61,6 +142,7 @@ export function catalogPackageFiles(input: CatalogPackageInput): CatalogPackageF
     type: 'commonjs',
     main: 'index.js',
     files: ['v1', 'index.js'],
+    catalogBuiltAt: input.builtAt,
     catalogShas: input.shas,
   }, null, 2)}\n`
 

@@ -47,7 +47,7 @@ A policy decision that migrates into the shell becomes untestable. If a pure mod
 
 ## Invariants worth breaking a build over
 
-- **`builtAt` never enters the hashed content.** It belongs to `index.json` alone. Putting it in the data changes the content hash daily, invalidating every CDN cache and filling each commit with noise. A determinism test in `pipeline.test.ts` enforces this; if you find yourself editing that test to pass, you have broken the property it protects.
+- **`builtAt` never enters the hashed content.** Putting it in the data changes the content hash daily, invalidating every CDN cache and filling each commit with noise. A determinism test in `pipeline.test.ts` enforces this; if you find yourself editing that test to pass, you have broken the property it protects. Outside the hash it travels freely — `index.json`, the npm package's readme, and its `catalogBuiltAt` manifest field, which `publish-catalog.ts` reads to refuse a build older than the published `latest`; all three are regenerated per publish, so none of them churn a hash.
 - **Live daily data stays in its own sidecar.** Star counts change every day; they live in a separate content-addressed `stars.<sha>.json` so the plugin data hash never churns daily. The same rule as `builtAt`, applied to data.
 - **Entries sort by package name before emit.** Output must not depend on the order npm returned them in.
 - **`verified` pins a version, never a name.** A published version newer than `reviewedVersion` downgrades to `verified-stale` and keeps the review. Attaching verification to a package name lets an author pass review once and inherit trust for every future version — the cheapest supply-chain attack there is.

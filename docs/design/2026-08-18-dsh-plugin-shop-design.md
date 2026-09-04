@@ -287,7 +287,7 @@ package this is, and who published it — costs nothing and cannot be wrong.
 
 A derived listing may carry an LLM-assigned `catalog.category` sourced from `registry/categories.yml`; the assignment is advisory and never gates a listing.
 
-`builtAt` appears **only in index.json and never inside the hashed content**. Otherwise the hash changes daily, every CDN cache is invalidated, and every git diff is noise.
+`builtAt` **never appears inside the hashed content**. Otherwise the hash changes daily, every CDN cache is invalidated, and every git diff is noise. Outside the hash it travels freely: `index.json` carries it, and so do the npm package's readme and its `catalogBuiltAt` manifest field — which the catalog-mirrors design uses to refuse a publish that would move `latest` backwards. All three are regenerated per publish and churn no hash.
 
 **Amendment (2026-08-31, market borrowings): `schemaVersion` is 5**, emitted behind the build's `SHOP_CATALOG_V5` flag, with the release-order choreography as before (the v3→v4 precedent): the v5-parsing client ships first, and the flag flips in the release commit, so an old client never meets the new enum value. The bump is gated because `theme` is a new enum value and an old client's closed enum rejects a catalog containing it wholesale; the purely additive fields ride lower versions, since consumer-side zod strips unknown keys. Below v5 the emission boundary downgrades `theme` entries to `other` — the classifier and `categories.yml` keep `theme`, the build report counts the downgrades, and the flag flip restores the category with no data change.
 

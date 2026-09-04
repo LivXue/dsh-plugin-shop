@@ -9,14 +9,21 @@
  *
  * Skips when the published `latest` already carries the same plugins and
  * stars hashes. Exits 0 on a skip: an unchanged catalog is a success, not a
- * failure.
+ * failure. Refuses, non-zero, when `dist/v1` is older than that `latest` —
+ * a tree nobody rebuilt, which the hash check cannot distinguish from a
+ * fresh one (see `catalogPublishDecision`).
  */
 
 import { execFileSync } from 'node:child_process'
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { withTimeout } from './npm-client.ts'
-import { catalogPackageFiles, nextCatalogVersion } from './npm-package.ts'
+import {
+  catalogPackageFiles,
+  catalogPublishDecision,
+  nextCatalogVersion,
+  type PublishedCatalog,
+} from './npm-package.ts'
 
 /**
  * Deadline on resolving the published packument — the request that DECIDES
@@ -73,25 +80,44 @@ if (basename(process.argv[1] ?? '') === 'publish-catalog.ts') {
   const pointer = JSON.parse(readFileSync(join(OUT_DIR, 'index.json'), 'utf8')) as Pointer
   const shas = { plugins: pointer.plugins.sha256, stars: pointer.stars?.sha256 ?? null }
 
-  /** The published `latest`, and the hashes it was built from. Absent when the
-   * package has never been published — the first run. */
-  async function publishedLatest(): Promise<{ version: string; shas: { plugins: string; stars: string | null } } | null> {
+  /** The published `latest`: the hashes it was built from, and the build time
+   * it carries. Absent when the package has never been published — the first
+   * run. `catalogBuiltAt` is absent on every version published before the
+   * ordering guard existed, which is what the `null` distinguishes. */
+  async function publishedLatest(): Promise<PublishedCatalog | null> {
     const response = await timedRegistryFetch(`${REGISTRY}/${PACKAGE_NAME}`)
     if (response.status === 404) return null
     if (!response.ok) throw new Error(`resolving ${PACKAGE_NAME} returned ${response.status}`)
     const packument = await response.json() as {
       'dist-tags'?: { latest?: string }
-      versions?: Record<string, { catalogShas?: { plugins: string; stars: string | null } }>
+      versions?: Record<string, {
+        catalogShas?: { plugins: string; stars: string | null }
+        catalogBuiltAt?: string
+      }>
     }
     const version = packument['dist-tags']?.latest
     if (version === undefined) return null
-    return { version, shas: packument.versions?.[version]?.catalogShas ?? { plugins: '', stars: null } }
+    const record = packument.versions?.[version]
+    return {
+      version,
+      shas: record?.catalogShas ?? { plugins: '', stars: null },
+      builtAt: record?.catalogBuiltAt ?? null,
+    }
   }
 
   const previous = await publishedLatest()
-  if (previous !== null && previous.shas.plugins === shas.plugins && previous.shas.stars === shas.stars) {
-    console.log(`catalog unchanged since ${previous.version} — nothing to publish`)
+  const decision = catalogPublishDecision({ builtAt: pointer.builtAt, shas }, previous)
+  if (decision.kind === 'skip') {
+    console.log(decision.reason)
     process.exit(0)
+  }
+  if (decision.kind === 'refuse') {
+    // Non-zero, and refused before `--dry-run` gets a say: a dry run whose only
+    // fault is a tree nobody rebuilt should report that, not rehearse a publish
+    // that must not happen. This is the last point at which anything can notice
+    // (2026-09-03: nothing did, and `latest` went back two days).
+    console.error(`publish:catalog refused: ${decision.reason}`)
+    process.exit(1)
   }
 
   const version = nextCatalogVersion(new Date(), previous?.version ?? null)

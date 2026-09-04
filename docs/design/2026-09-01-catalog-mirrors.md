@@ -128,6 +128,27 @@ two artifacts into two packages — plugins (~2–3/week) and stars (daily,
 0.15 MB), halving the yearly footprint. That mirrors the sidecar split
 the catalog already has, and it is deliberately not built now.
 
+**Amendment (2026-09-04, a publish that moved `latest` backwards): a
+build older than the published `latest` is refused, not published.** The
+skip above compares content hashes, and a stale build's hashes differ
+from the published ones exactly as a fresh build's do, so it cannot tell
+a rebuilt catalog from a tree nobody rebuilt. The version number cannot
+either: `nextCatalogVersion` reads the wall clock, not the build. On
+2026-09-03T16:46Z a `publish:catalog` run against a `dist/v1` last built
+on 09-02 shipped that build as `2026.903.6`; npm moved `latest` onto it,
+and every reader whose origin race went to npm was served a catalog two
+days old and 818 entries short until the tag was moved back by hand. The
+pack step therefore records its build time in the manifest as
+`catalogBuiltAt`, and the publish refuses, non-zero and before
+`--dry-run` gets a say, when `dist/v1` is not strictly newer than the
+`latest` it would replace. `builtAt` stays out of the hashed content as
+always — the manifest is regenerated per publish, so carrying it churns
+nothing. Identical content is still a skip rather than a refusal, so an
+unchanged ecosystem is a no-op and not a failure. The guard is one
+published version behind itself at introduction, the `latest` it first
+runs against carrying no `catalogBuiltAt`, and orders every publish
+after that.
+
 ### After publishing
 
 CI triggers the npmmirror sync and waits for the task to leave
@@ -290,7 +311,7 @@ fourth runtime dependency — the shop has three (`js-yaml`, `semver`,
 | Layer | What is proven |
 |---|---|
 | Pure | tar parsing from real tarball bytes; path-escape rejection; race selection through injected probes; pointer normalisation |
-| Registry | the pack step's contents; version derivation; the publish-skip decision |
+| Registry | the pack step's contents; version derivation; the publish decision — skip, refuse, or publish |
 | Host | origin selection through an injected fetch; sha512 mismatch is refused; npm's bulk fetch (inside `pointer()`) falls through to another origin on failure; HTTP's (after a winner is chosen) falls back to the disk cache instead |
 | E2E | the existing `catalog-server.ts` HTTP fixture, plus an npm-origin fixture serving a real packument and a real tarball |
 
