@@ -550,3 +550,102 @@ describe('a repo denial survives the author publishing to npm', () => {
     expect(report).not.toContain('shadowed-by-npm')
   })
 })
+
+describe('determinism under every perturbation', () => {
+  const commitA = 'a'.repeat(40)
+  const commitB = 'b'.repeat(40)
+
+  function repoAt(name: string, repo: string, commit: string, subdir?: string): import('../src/types.ts').RepoCandidate {
+    return {
+      name,
+      repo,
+      commit,
+      version: commit,
+      publishedAt: '2026-08-01T12:00:00.000Z',
+      repository: `https://github.com/${repo}`,
+      license: 'MIT',
+      hasBundle: true,
+      requiresBuild: false,
+      hasWorkspaceDeps: false,
+      catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
+      description: 'x',
+      ...(subdir === undefined ? {} : { subdir }),
+    }
+  }
+
+  // Four accepted entries sharing two bundle names, two of them subpackages
+  // of one repository, plus two rejected subpackages of another — every tie
+  // the comparators have to break.
+  const repos = [
+    repoAt('dsh-shared', 'alice/dsh-shared', commitA),
+    repoAt('dsh-shared', 'bob/dsh-shared', commitB),
+    repoAt('dsh-sub', 'carol/monorepo', commitA, 'packages/one'),
+    repoAt('dsh-sub', 'carol/monorepo', commitA, 'packages/two'),
+    { ...repoAt('dsh-bad', 'dave/monorepo', commitA, 'packages/x'), hasBundle: false },
+    { ...repoAt('dsh-bad', 'dave/monorepo', commitA, 'packages/y'), hasBundle: false },
+  ]
+  const preexisting: Rejection[] = [
+    { name: 'dsh-twice', code: 'fetch-failed', detail: 'npm registry returned 500' },
+    { name: 'dsh-twice', code: 'no-manifest', detail: 'package.json was unreadable.' },
+  ]
+  const stars = { url: 'stars.deadbeef.json', sha256: 'deadbeef' }
+  // Every ACCEPTED entry needs a recorded row here, or its `added` comes from
+  // the clock (Task 10) and the across-clocks comparison below would fail for
+  // the right reason. The verified row keeps `dsh-fs-too1` held, exactly as
+  // the suite's shared config does, so the accepted set is the three plugins
+  // plus the four repository entries.
+  const dated = parseRegistryConfig({
+    verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: github:r\n  reviewCommit: abc\n  notes: fine\n',
+    denied: '[]',
+    allowedSimilar: '[]',
+    categories: '[]',
+    firstSeen: [
+      '- name: dsh-derived-plugin\n  added: 2026-08-12\n',
+      '- name: dsh-fs-tool\n  added: 2026-08-10\n',
+      '- name: dsh-hello-plugin\n  added: 2026-08-11\n',
+      '- name: alice/dsh-shared\n  added: 2026-08-01\n',
+      '- name: bob/dsh-shared\n  added: 2026-08-02\n',
+      '- name: carol/monorepo\n  added: 2026-08-03\n',
+    ].join(''),
+  })
+
+  it('is byte-identical in every artifact when only the input order changes', () => {
+    const first = runPipeline(candidates, repos, dated, BUILT_AT, preexisting, stars)
+    const second = runPipeline(
+      [...candidates].reverse(), [...repos].reverse(), dated, BUILT_AT, [...preexisting].reverse(), stars,
+    )
+    for (const key of ['pluginsFileName', 'pluginsJson', 'indexJson', 'badgeJson', 'manifestLock', 'report'] as const) {
+      expect(second[key], key).toBe(first[key])
+    }
+    expect([...second.firstSeen]).toEqual([...first.firstSeen])
+  })
+
+  it('keeps the hashed data identical across build times, with only the index and badge moving', () => {
+    const first = runPipeline(candidates, repos, dated, BUILT_AT, preexisting, stars)
+    const second = runPipeline(
+      [...candidates].reverse(), [...repos].reverse(), dated, '2030-01-01T00:00:00.000Z',
+      [...preexisting].reverse(), stars,
+    )
+    expect(second.pluginsJson).toBe(first.pluginsJson)
+    expect(second.pluginsFileName).toBe(first.pluginsFileName)
+    expect(second.manifestLock).toBe(first.manifestLock)
+    expect(second.report).toBe(first.report)
+    // builtAt belongs to the index and the badge alone.
+    expect(second.indexJson).not.toBe(first.indexJson)
+    expect(second.badgeJson).not.toBe(first.badgeJson)
+  })
+
+  it('names each shadowed subpackage by its repo#subdir unit', () => {
+    // C-6: both rows read `dave/monorepo` and were indistinguishable, so their
+    // order in the report followed the harvest.
+    const shadowing: Candidate[] = candidates.filter(c => c.name === 'dsh-hello-plugin')
+    const { report } = runPipeline(shadowing, [
+      repoAt('dsh-hello-plugin', 'dave/monorepo', commitA, 'packages/y'),
+      repoAt('dsh-hello-plugin', 'dave/monorepo', commitA, 'packages/x'),
+    ], dated, BUILT_AT)
+    const rows = report.split('\n').filter(line => line.includes('shadowed-by-npm'))
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toContain('| dave/monorepo#packages/x |')
+    expect(rows[1]).toContain('| dave/monorepo#packages/y |')
+  })
+})
