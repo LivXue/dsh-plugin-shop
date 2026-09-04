@@ -3,7 +3,7 @@ import './__loader__.ts'
 import { loadModule } from './__loader__.ts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, renderHook } from '@testing-library/react'
-import { apply, inject, NS } from '../../src/client/index.ts'
+import { apply, inject, NS, WARM_TTL_MS } from '../../src/client/index.ts'
 import { useInstall } from '../../src/client/useInstall.ts'
 import type { ShopTabInjected } from '../../src/client/ShopTab.tsx'
 import type { InstallArgs, ShopInstallResult } from '../../src/host/index.ts'
@@ -147,5 +147,33 @@ describe('shop client apply warm', () => {
     const { injected } = await boot({ catalog })
     expect(await injected.catalog(undefined)).toBe(fakeCatalog)
     expect(catalog).toHaveBeenCalledTimes(2)
+  })
+
+  it('serves the refreshed catalog to the next plain open, not the boot catalog', async () => {
+    const second = { ...fakeCatalog, builtAt: '2026-08-28T00:00:00Z' }
+    const catalog = vi.fn()
+      .mockResolvedValueOnce({ ok: true, value: fakeCatalog })
+      .mockResolvedValue({ ok: true, value: second })
+    const { injected } = await boot({ catalog })
+    expect(await injected.catalog({ refresh: true })).toBe(second)
+    expect(await injected.catalog(undefined)).toBe(second)
+    expect(catalog).toHaveBeenCalledTimes(2)
+  })
+
+  it('re-asks the host once the stash outlives the freshness window', async () => {
+    const catalog = vi.fn().mockResolvedValue({ ok: true, value: fakeCatalog })
+    const { injected } = await boot({ catalog })
+    expect(catalog).toHaveBeenCalledTimes(1)
+    vi.useFakeTimers({ now: Date.now() + WARM_TTL_MS + 1 })
+    try {
+      await injected.catalog(undefined)
+      expect(catalog).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("bounds the stash at the host's own freshness window", () => {
+    expect(WARM_TTL_MS).toBe(5 * 60 * 1000)
   })
 })

@@ -27,14 +27,19 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 /** Dictionary namespace owned by this plugin. */
 export const NS = 'settings.shop'
 
+/** How long a stashed catalog may satisfy a plain open. The host applies the
+ * same five-minute freshness window, so the client stash must not outlive it. */
+export const WARM_TTL_MS = 5 * 60 * 1000
+
 /** The boot-time warm fetch: the catalog the tab wants on its first open.
  * Started in apply — the client bundle boots with the web app, long before
  * the user reaches Settings — so the host's slow network fetch runs while
  * nobody is looking at the shop, and the tab's mount consumes this promise
  * instead of starting its own fetch. A rejection stays stored (the injected
  * catalog falls back to a fresh call); the extra catch keeps the
- * fire-and-forget from surfacing as an unhandled rejection. */
-let warmCatalog: Promise<ShopCatalogResult> | null = null
+ * fire-and-forget from surfacing as an unhandled rejection. Every later
+ * result, including an explicit refresh, replaces this timestamped stash. */
+let warmCatalog: { at: number; result: Promise<ShopCatalogResult> } | null = null
 
 /** Services required by the tab registration and the Remote mount.
  *
@@ -89,28 +94,31 @@ export async function apply(ctx: ClientContext): Promise<void> {
   warmCatalog = null
   // Promise.resolve wraps the wire result so a stub or an ill-behaved
   // transport can never throw synchronously out of apply.
-  warmCatalog = Promise.resolve(ns.catalog(undefined)).then(result => unwrap(result))
-  void warmCatalog.catch(() => {})
+  const warmed = Promise.resolve(ns.catalog(undefined)).then(result => unwrap(result))
+  warmCatalog = { at: Date.now(), result: warmed }
+  void warmed.catch(() => {})
   void Promise.resolve(ns.installed()).then(result => unwrap(result)).catch(() => {})
   void Promise.resolve(ns.version()).then(result => unwrap(result)).catch(() => {})
 
   const injected = (): ShopTabInjected => ({
     catalog: async args => {
-      // A refresh always goes to the wire; a plain open consumes the
-      // boot-time fetch when it exists — the host's snapshot is the same
-      // one a fresh call would serve, so freshness semantics are
-      // unchanged (§10).
-      if (args?.refresh === true) return unwrap(await ns.catalog(args))
+      // Every result becomes the stash, refresh included. A plain open only
+      // consumes it inside the host's own freshness window.
+      if (args?.refresh === true) {
+        const refreshed = unwrap(await ns.catalog(args))
+        warmCatalog = { at: Date.now(), result: Promise.resolve(refreshed) }
+        return refreshed
+      }
       const warm = warmCatalog
-      if (warm !== null) {
+      if (warm !== null && Date.now() - warm.at < WARM_TTL_MS) {
         try {
-          return await warm
+          return await warm.result
         } catch {
-          // The boot-time fetch failed; a fresh call is the retry.
+          // The stashed fetch failed; a fresh call is the retry.
         }
       }
       const fresh = unwrap(await ns.catalog(args))
-      warmCatalog = Promise.resolve(fresh)
+      warmCatalog = { at: Date.now(), result: Promise.resolve(fresh) }
       return fresh
     },
     install: async args => unwrap(await ns.installStart(args)),
