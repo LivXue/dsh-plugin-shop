@@ -3273,6 +3273,53 @@ git commit -m "ci(plugin): run the root suite and watch the root READMEs"
 
 ### Task 15: The build job holds no write credential while it processes hostile input
 
+> **Outcome: PARTIALLY DONE. The secret-scoping half is landed; the write-credential
+> half is BLOCKED and needs a human decision.** Verified 2026-09-04.
+>
+> **Exposure confirmed.** `daily.yml` had `permissions: contents: write` on the
+> `build` job and a JOB-LEVEL `env:` exporting `NPM_TOKEN`, `LLM_API_KEY` and
+> `GITHUB_TOKEN` — so all three sat in every step's environment, including
+> `pnpm install`'s, where a postinstall hook in any transitive dependency could
+> read them, and `LLM_API_KEY` sat in the environment of the step that fetches
+> thousands of third-party manifests.
+>
+> **Landed, needing no new secret:** the job-level `env:` block is gone. Exactly
+> two steps consume any secret and each declares its own — classify takes
+> `NPM_TOKEN` and `LLM_API_KEY`, `build:catalog` takes `NPM_TOKEN`,
+> `GITHUB_TOKEN` and the already-scoped `STARS_TOKEN`. `pnpm install`,
+> `pnpm test`, `pnpm typecheck`, both uploads, the Pages publish and both commit
+> steps now hold none. `permissions:` is deliberately untouched, so the pushes
+> behave exactly as before. Two mutations are checked: a secret returned to the
+> job level, and a third step handed one.
+>
+> **Blocked, and why it is not merely a missing secret.** `gh secret list` shows
+> `LLM_API_KEY`, `NPM_PUBLISH_TOKEN`, `NPM_TOKEN`, `STARS_TOKEN` — no
+> `REGISTRY_PUSH_TOKEN`. But the bigger issue is that **this task's mechanic does
+> not work as written.** No `actions/checkout` in either workflow has a `with:`
+> block, so `persist-credentials` defaults to true and the pushes authenticate
+> via the credential git stored in `.git/config`, NOT via `$GITHUB_TOKEN`. A
+> step-level `env:` therefore cannot scope a push's credential. Dropping the job
+> to `contents: read` leaves git holding a read-only token and both pushes fail.
+>
+> So the write half has three shapes, not two, and none is a one-line change:
+>
+> 1. `actions/checkout` with `token: ${{ secrets.REGISTRY_PUSH_TOKEN }}` — but
+>    that persists the PAT into `.git/config` for the WHOLE job, readable by
+>    every later step including the harvest. **Strictly worse than today**, since
+>    a fine-grained PAT does not expire with the run the way `GITHUB_TOKEN` does.
+> 2. The push steps override the remote themselves, e.g. an `http.extraheader`
+>    built from a step-scoped `env:`. This is the only shape that actually
+>    achieves step scoping, and it means rewriting both push commands — which
+>    plan A's rebase lines also touch.
+> 3. The separate `commit` job this task already rejected, for the ordering
+>    reason that still stands.
+>
+> **Also note:** `build.ts` reads `GITHUB_TOKEN` for the harvest and the stars
+> fallback, so the build step needs the token present — read-scoped. It is only
+> the WRITE grant that belongs to the push steps. This task's summary ("only the
+> two steps that push need write") is right about the permission and easy to
+> misread as being about the token.
+
 **Files:**
 - Modify: `.github/workflows/daily.yml:30-31` (job permissions), `:44-46` (the job-level `GITHUB_TOKEN`), `:57-70` and `:125-136` (the two commit steps), `:71-87` (the build step's env)
 - Test: `registry/scripts/tests/repo-guards.test.ts` (append)

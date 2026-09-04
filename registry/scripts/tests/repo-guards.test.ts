@@ -12,6 +12,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { parse } from 'yaml'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 const read = (relative: string): string => readFileSync(join(repoRoot, relative), 'utf8')
@@ -102,6 +103,44 @@ describe('workflow action pins', () => {
     for (const [action, shas] of byAction) {
       expect([...shas], `${action} is pinned to more than one commit`).toHaveLength(1)
     }
+  })
+})
+
+describe('secrets are scoped to the steps that consume them', () => {
+  /** The `build` job, parsed. */
+  function buildJob(): { env?: Record<string, string>; steps: { name?: string; run?: string; uses?: string; env?: Record<string, string> }[] } {
+    const workflow = parse(read('.github/workflows/daily.yml')) as {
+      jobs: Record<string, { env?: Record<string, string>; steps: { name?: string; run?: string; uses?: string; env?: Record<string, string> }[] }>
+    }
+    const job = workflow.jobs.build
+    if (job === undefined) throw new Error('daily.yml declares no build job')
+    return job
+  }
+
+  it('keeps every secret out of the job-level env, so no other step inherits one', () => {
+    // A job-level `env:` block is in EVERY step's environment. It held
+    // NPM_TOKEN, LLM_API_KEY and GITHUB_TOKEN, which put all three into
+    // `pnpm install` and its lifecycle scripts — a postinstall hook in any
+    // transitive dependency could read them — and put LLM_API_KEY into the
+    // harvest of thousands of third-party manifests. Only two steps need any
+    // of them.
+    const job = buildJob()
+    for (const [name, value] of Object.entries(job.env ?? {})) {
+      expect(String(value), `job-level env ${name} exposes a secret to every step`)
+        .not.toMatch(/secrets\./)
+    }
+  })
+
+  it('gives the classifier and the harvest their own credentials, and nothing else any', () => {
+    // Named per step rather than counted, so adding a secret to a third step
+    // is a decision someone has to make here as well as there.
+    const job = buildJob()
+    const holders = job.steps
+      .filter(step => Object.values(step.env ?? {}).some(v => /secrets\./.test(String(v))))
+      .map(step => step.name ?? step.run ?? step.uses ?? '?')
+    expect(holders).toHaveLength(2)
+    expect(holders.some(h => h.includes('Classify'))).toBe(true)
+    expect(holders.some(h => h.includes('build:catalog'))).toBe(true)
   })
 })
 
