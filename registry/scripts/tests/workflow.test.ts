@@ -788,11 +788,73 @@ describe('the daily workflow pushes safely', () => {
         // own output to stage rather than yesterday's copy.
         expect(git(runner, 'status', '--porcelain=v1')).toContain('g')
         expect(readFileSync(join(runner, 'g'), 'utf8')).toBe('written by build:catalog\n')
+        // Nothing kept in the stash and no unmerged index entry — the two
+        // signals the reapply guard fires on. Asserted here, on the healthy
+        // run, because this is the side that decides the guard cannot cost a
+        // good morning its push: a guard that fired here would annotate
+        // ::error:: on every ordinary day, since one of the two commit steps
+        // always meets the other's uncommitted files.
+        expect(git(runner, 'stash', 'list')).toBe('')
+        expect(git(runner, 'ls-files', '--unmerged')).toBe('')
         // And the human's commit survived, as in the clean-tree case.
         git(seed, 'fetch', '--quiet', 'origin', 'main')
         const log = git(seed, 'log', '--format=%s', 'FETCH_HEAD').split('\n').filter(Boolean)
         expect(log.slice(0, 3)).toEqual(['bot', 'human edits human', 'base'])
         expect(log).toHaveLength(ORIGIN_COMMITS + 2)
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+
+    it(`"${label}" fails loudly when the autostash cannot be reapplied`, () => {
+      // The residual the case above leaves behind, and the one arrangement
+      // that produces it: the bot's COMMIT touches a file the human's commit
+      // does not, so the rebase itself is clean and reports success, while
+      // the bot's still-uncommitted output and the human's commit touch the
+      // same line of the same file, so only the autostash REAPPLY conflicts.
+      //
+      // Measured on git 2.34.1 before this guard existed: `git rebase
+      // --autostash origin/main` exited 0 with "Successfully rebased and
+      // updated refs/heads/main", left three conflict-marker lines in the
+      // working tree and kept the stash. This step's own commit is clean, so
+      // the push went through; the NEXT commit step then staged the marked
+      // file and pushed THAT, and the corruption surfaced one build later as
+      // a malformed-registry throw with nothing pointing back at this run.
+      const { dir, seed, runner } = sandbox()
+      try {
+        humanPush(seed, 'g', 'human g\n')
+        writeFileSync(join(runner, 'bot'), 'bot\n')
+        git(runner, 'add', 'bot')
+        git(runner, 'commit', '--quiet', '-m', 'bot')
+        // Same write as the healthy case above — what differs is that a human
+        // landed on this very file while the ~50-minute run was in flight.
+        writeFileSync(join(runner, 'g'), 'written by build:catalog\n')
+        const { status, out } = runPush(dir, runner, pushFunction(step))
+        // The premise, asserted rather than assumed: this is NOT the aborted
+        // rebase of the case below. The bot's commit really was replayed on
+        // top of the human's, so git reported success and only the reapply
+        // failed. A git that stops keeping the stash, or learns to reapply
+        // this cleanly, must fail here loudly instead of leaving the case
+        // passing for a reason it was not written for.
+        expect(git(runner, 'log', '--format=%s', 'HEAD').split('\n').filter(Boolean).slice(0, 3))
+          .toEqual(['bot', 'human edits g', 'base'])
+        expect(git(runner, 'stash', 'list')).toContain('autostash')
+        expect(readFileSync(join(runner, 'g'), 'utf8')).toContain('<<<<<<<')
+        // The behaviour: the step fails where the damage is.
+        expect(status).toBe(1)
+        expect(out).toContain('::error::')
+        // No retry burned. Refetching and rebasing again cannot reapply a
+        // stash that already conflicts, so the loop stops rather than
+        // spending a second attempt and reporting the generic
+        // "could not push after two attempts", which names the wrong cause.
+        expect(out.match(/::warning::/g) ?? []).toHaveLength(0)
+        // Nothing reached origin: the bot's own commit is clean, but pushing
+        // it would leave the run looking successful with a marked file still
+        // in the tree for the next step to stage.
+        git(seed, 'fetch', '--quiet', 'origin', 'main')
+        const log = git(seed, 'log', '--format=%s', 'FETCH_HEAD').split('\n').filter(Boolean)
+        expect(log.slice(0, 2)).toEqual(['human edits g', 'base'])
+        expect(log).toHaveLength(ORIGIN_COMMITS + 1)
       } finally {
         rmSync(dir, { recursive: true, force: true })
       }

@@ -187,13 +187,14 @@ jobs:
         #
         # `--autostash` is what lets the rebase run from here at all: the
         # snapshot step's three files are already written and still uncommitted
-        # underneath it. One measured edge, documented rather than defended —
-        # if the autostash cannot be reapplied (a human commit on main touching
-        # one of those three bot-written files inside the same window) git
-        # leaves conflict markers in the tree, keeps the stash, and still
-        # reports the rebase successful; the snapshot step below would commit
-        # them and the next build throws on the malformed registry file, which
-        # is the loud failure that class of corruption is meant to get.
+        # underneath it. Its one measured edge is now checked rather than
+        # documented — if the autostash cannot be reapplied (a human commit on
+        # main touching one of those three bot-written files inside the same
+        # window) git leaves conflict markers in the tree, keeps the stash, and
+        # STILL reports the rebase successful. push_with_rebase looks for that
+        # and fails this step there; while it did not, the snapshot step below
+        # committed the markers and the throw arrived a build later, on a
+        # malformed registry file, with nothing naming the run that wrote it.
         run: |
           git config user.name 'dsh-plugin-shop bot'
           git config user.email 'bot@users.noreply.github.com'
@@ -207,6 +208,36 @@ jobs:
               # progress?", and the un-rebased push is rejected — the very
               # `(fetch first)` failure this function exists to end.
               git rebase --autostash origin/main || { git rebase --abort || true; }
+              # A rebase that reports success says nothing about the REAPPLY.
+              # Measured on git 2.34.1: when the rebase itself is clean and
+              # only the autostash conflicts, git exits 0 with "Successfully
+              # rebased and updated refs/heads/main", writes conflict markers
+              # into the working tree and KEEPS the stash. This step's own
+              # commit is clean, so the push below would go through; the OTHER
+              # commit step then `git add`s the marked file and pushes THAT,
+              # and the corruption surfaces a build later as a
+              # malformed-registry throw with nothing naming the run that
+              # wrote it.
+              #
+              # Both signals, and deliberately redundant rather than two
+              # distinct cases: on git 2.34.1 they fired together in both
+              # failure shapes measured — a conflicting reapply, and a reapply
+              # onto a file the upstream commit had deleted (`DU`) — so
+              # neither is load-bearing alone today. The kept stash is what
+              # git leaves behind; an unmerged index entry is the corruption
+              # itself; either still fires if a later git stops producing the
+              # other. Not a grep for the markers: it would read every tracked
+              # file and cannot tell corruption from a line that legitimately
+              # starts `<<<<<<<`. Neither fires on a healthy run (a clean
+              # reapply drops the stash) nor after `git rebase --abort` (which
+              # restores the autostash to the tree it was taken from) — both
+              # measured, and both pinned by workflow.test.ts, which also pins
+              # that no retry is spent here: a second fetch-and-rebase cannot
+              # reapply a stash that already conflicts.
+              if [ -n "$(git stash list)" ] || [ -n "$(git ls-files --unmerged)" ]; then
+                echo "::error::the rebase reported success but its autostash did not reapply; $1 was not pushed and the tree holds conflict markers with the stash still unapplied. Someone landed on main inside this run's window; nothing on main needs undoing, so re-run the workflow."
+                return 1
+              fi
               if git push origin HEAD:main; then return 0; fi
               echo "::warning::push attempt $attempt was rejected; refetching"
             done
@@ -263,6 +294,36 @@ jobs:
               # progress?", and the un-rebased push is rejected — the very
               # `(fetch first)` failure this function exists to end.
               git rebase --autostash origin/main || { git rebase --abort || true; }
+              # A rebase that reports success says nothing about the REAPPLY.
+              # Measured on git 2.34.1: when the rebase itself is clean and
+              # only the autostash conflicts, git exits 0 with "Successfully
+              # rebased and updated refs/heads/main", writes conflict markers
+              # into the working tree and KEEPS the stash. This step's own
+              # commit is clean, so the push below would go through; the OTHER
+              # commit step then `git add`s the marked file and pushes THAT,
+              # and the corruption surfaces a build later as a
+              # malformed-registry throw with nothing naming the run that
+              # wrote it.
+              #
+              # Both signals, and deliberately redundant rather than two
+              # distinct cases: on git 2.34.1 they fired together in both
+              # failure shapes measured — a conflicting reapply, and a reapply
+              # onto a file the upstream commit had deleted (`DU`) — so
+              # neither is load-bearing alone today. The kept stash is what
+              # git leaves behind; an unmerged index entry is the corruption
+              # itself; either still fires if a later git stops producing the
+              # other. Not a grep for the markers: it would read every tracked
+              # file and cannot tell corruption from a line that legitimately
+              # starts `<<<<<<<`. Neither fires on a healthy run (a clean
+              # reapply drops the stash) nor after `git rebase --abort` (which
+              # restores the autostash to the tree it was taken from) — both
+              # measured, and both pinned by workflow.test.ts, which also pins
+              # that no retry is spent here: a second fetch-and-rebase cannot
+              # reapply a stash that already conflicts.
+              if [ -n "$(git stash list)" ] || [ -n "$(git ls-files --unmerged)" ]; then
+                echo "::error::the rebase reported success but its autostash did not reapply; $1 was not pushed and the tree holds conflict markers with the stash still unapplied. Someone landed on main inside this run's window; nothing on main needs undoing, so re-run the workflow."
+                return 1
+              fi
               if git push origin HEAD:main; then return 0; fi
               echo "::warning::push attempt $attempt was rejected; refetching"
             done
