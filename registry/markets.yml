@@ -311,6 +311,11 @@
   by: human
   reason: "Harness Plugin Store Optimized: a customized fork of dsh-plugin-hub — configurable plugin download directory, bundle-layer conflict detection, automat"
 
+- name: "dsh-pluginmall"
+  market: false
+  by: llm
+  reason: "Judged NOT a dsh plugin market from: An empty plugin scaffold for the DeepSeek Harness (DSH) ecosystem. It installs and loads without doing anything — a clean starting point for your own plugin."
+
 - name: "dsh-plugins-market"
   market: true
   by: human
@@ -325,6 +330,11 @@
   market: true
   by: human
   reason: "DSH STORE — third-party plugin marketplace and guarded lifecycle manager for DeepSeek Harness."
+
+- name: "dsh-shop"
+  market: false
+  by: llm
+  reason: "Judged NOT a dsh plugin market from: Shop operations toolkit for dsh - name reserved; first release in development."
 
 - name: "dsh-skill-market"
   market: false
@@ -355,6 +365,11 @@
   market: false
   by: human
   reason: "烈酒存储 — spirits storage. \"store\" is the verb."
+
+- name: "dsh-stock-market"
+  market: false
+  by: llm
+  reason: "Judged NOT a dsh plugin market from: 有效解决了写代码的时候账户不能同时亏钱的BUG"
 
 - name: "dsh-store"
   market: true
