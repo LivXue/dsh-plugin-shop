@@ -152,6 +152,38 @@ export function diffRepoState(state: RepoState, seen: RepoSeen[]): { toFetch: Re
 }
 
 /**
+ * The recorded repos whose failure record was written by the rule that
+ * labelled every non-ok manifest response `no-manifest` (audit D-3).
+ *
+ * They cannot be told apart from genuine 404s — the old code wrote the same
+ * code and the same detail for a 404, a 403, a 451 and a 503 — so the whole
+ * class is invalidated once and re-fetched under the corrected rule.
+ * Deleting the ENTRY, not just its `failure`, is what schedules the
+ * re-fetch: {@link diffRepoState} re-fetches a repo only when it is absent
+ * or its `pushed_at` moved, and a repo whose manifest fetch failed has
+ * neither.
+ * @param state - the recorded state.
+ * @param code - the failure code to invalidate.
+ * @param detail - the exact detail string the superseded rule wrote.
+ * @param limit - at most this many, in sorted order, so a large
+ *   invalidation can be paced across runs and every slice is deterministic
+ *   and disjoint from the last.
+ * @returns the repo full names to delete, sorted.
+ */
+export function staleFailureRepos(
+  state: RepoState,
+  code: 'no-manifest' | 'fetch-failed',
+  detail: string,
+  limit: number,
+): string[] {
+  return Object.entries(state)
+    .filter(([, entry]) => entry.failure?.code === code && entry.failure.detail === detail)
+    .map(([repo]) => repo)
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+    .slice(0, limit)
+}
+
+/**
  * Merge one run's results into the next state: fetched repos record their
  * fresh outcome (candidates or a failure); carried repos keep the recorded
  * one; gone repos drop.

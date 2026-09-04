@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { diffRepoState, nextRepoState, parseRepoState, serializeRepoState } from '../src/repo-state.ts'
+import { diffRepoState, nextRepoState, parseRepoState, serializeRepoState, staleFailureRepos } from '../src/repo-state.ts'
+import type { RepoState, RepoStateEntry } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
 
 const commit = 'a'.repeat(40)
@@ -138,5 +139,45 @@ describe('persisted subpackage failures', () => {
     const next = nextRepoState({}, [{ repo: 'a/b', pushedAt: base.pushedAt }],
       new Map([['a/b', { candidates: [], subpackageFailures: [] }]]))
     expect(Object.keys(next['a/b'] ?? {})).not.toContain('subpackageFailures')
+  })
+})
+
+describe('staleFailureRepos', () => {
+  const mislabelled = 'No package.json at the repository root, so there is nothing for dsh to install.'
+  const failing = (code: 'no-manifest' | 'fetch-failed', detail: string): RepoStateEntry => ({
+    pushedAt: '2026-08-01T00:00:00Z',
+    commit: 'a'.repeat(40),
+    candidates: [],
+    failure: { code, detail },
+  })
+
+  const state: RepoState = {
+    'z/mislabelled': failing('no-manifest', mislabelled),
+    'a/mislabelled': failing('no-manifest', mislabelled),
+    'b/unreadable': failing('no-manifest', 'package.json was unreadable.'),
+    'c/transient': failing('fetch-failed', 'Could not resolve the head commit of c/transient.'),
+    // Same detail, different code. Contrived — nothing writes this pair — but
+    // `code` is a parameter a second caller can pass differently, and a
+    // parameter that does not filter is a bug waiting for that caller.
+    'e/same-detail-other-code': failing('fetch-failed', mislabelled),
+    'd/listed': { pushedAt: '2026-08-01T00:00:00Z', commit: 'a'.repeat(40), candidates: [] },
+  }
+
+  it('selects only the records the mislabelling rule wrote, sorted', () => {
+    // The old rule wrote this exact code and detail for a 404, a 403, a 451
+    // and a 503 alike, so the whole class is invalidated together. The other
+    // two `no-manifest` details only ever followed a successful 200, so their
+    // reasons were never in doubt and they stay.
+    expect(staleFailureRepos(state, 'no-manifest', mislabelled, Number.POSITIVE_INFINITY))
+      .toEqual(['a/mislabelled', 'z/mislabelled'])
+  })
+
+  it('honours the limit so the invalidation can be paced across runs', () => {
+    // Sorted before slicing, so day two's slice is disjoint from day one's.
+    expect(staleFailureRepos(state, 'no-manifest', mislabelled, 1)).toEqual(['a/mislabelled'])
+  })
+
+  it('selects nothing for a state with no such records', () => {
+    expect(staleFailureRepos({ 'd/listed': state['d/listed']! }, 'no-manifest', mislabelled, 10)).toEqual([])
   })
 })
