@@ -86,53 +86,6 @@ jobs:
       - run: pnpm typecheck
       - name: Classify new listings
         run: node --experimental-strip-types registry/scripts/src/classify.ts
-      - name: Commit the classifier's output
-        if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'push') && github.ref == 'refs/heads/main'
-        continue-on-error: true
-        # markets.yml as well as categories.yml. The classify step writes both,
-        # and a market verdict that is not committed is not a memory: the name
-        # would be re-asked every run, which is the flip-flop the file exists to
-        # prevent — and one bad roll would then be recorded forever.
-        #
-        # The push fetches and rebases first, with one retry. Without it both
-        # pushes were rejected `(fetch first)` on 2026-09-02 and 2026-09-03
-        # while the run reported success, discarding each day's verdicts. The
-        # step stays continue-on-error (a failed commit must not skip the Pages
-        # deploy below), so the rejection is surfaced as ::error:: instead.
-        #
-        # The `github.ref` guard belongs to that push rather than being
-        # boilerplate: `workflow_dispatch` fires on ANY ref, and while this
-        # step ended in a bare `git push` a dispatch from a feature branch was
-        # harmless — it went to that branch's own upstream. `HEAD:main` would
-        # replay the dispatched branch onto main and push it. The parentheses
-        # are load-bearing: `&&` binds tighter than `||`, so without them the
-        # guard would cover only the `push` disjunct.
-        #
-        # KNOWN HAZARD, documented rather than fixed here: this rebase mutates
-        # the working tree mid-job. `pnpm install --frozen-lockfile`, `pnpm
-        # test` and `pnpm typecheck` above validated the checked-out SHA, and
-        # `build:catalog` below then harvests against whatever the rebase
-        # brought in, with node_modules resolved from a possibly superseded
-        # lockfile. The fix is a workflow restructure, and it belongs to
-        # docs/plans/2026-09-03-audit-fix-c-network-artifacts-ci.md, which owns
-        # this file.
-        run: |
-          git config user.name 'dsh-plugin-shop bot'
-          git config user.email 'bot@users.noreply.github.com'
-          push_with_rebase() {
-            for attempt in 1 2; do
-              git fetch origin main || true
-              git rebase origin/main || { git rebase --abort || true; }
-              if git push origin HEAD:main; then return 0; fi
-              echo "::warning::push attempt $attempt was rejected; refetching"
-            done
-            echo "::error::could not push $1 after two attempts; this run's changes were not recorded"
-            return 1
-          }
-          git add registry/categories.yml registry/markets.yml
-          git diff --cached --quiet && exit 0
-          git commit -m "chore(registry): llm classifier update"
-          push_with_rebase "the classifier's output"
       - run: pnpm build:catalog -- --harvest-from dist/v1/harvest.json
         env:
           # Flipped in the 0.4.10 release: the client that reads schemaVersion 3
@@ -187,6 +140,83 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           path: dist
+      - name: Commit the classifier's output
+        if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'push') && github.ref == 'refs/heads/main'
+        continue-on-error: true
+        # markets.yml as well as categories.yml. The classify step writes both,
+        # and a market verdict that is not committed is not a memory: the name
+        # would be re-asked every run, which is the flip-flop the file exists to
+        # prevent — and one bad roll would then be recorded forever.
+        #
+        # The push fetches and rebases first, with one retry. Without it both
+        # pushes were rejected `(fetch first)` on 2026-09-02 and 2026-09-03
+        # while the run reported success, discarding each day's verdicts. The
+        # step stays continue-on-error: a rejected push must not skip `Commit
+        # the snapshot` below it, and must not fail the job that `publish` and
+        # `deploy` both declare `needs: build` on. The rejection is surfaced as
+        # ::error:: instead.
+        #
+        # The `github.ref` guard belongs to that push rather than being
+        # boilerplate: `workflow_dispatch` fires on ANY ref, and while this
+        # step ended in a bare `git push` a dispatch from a feature branch was
+        # harmless — it went to that branch's own upstream. `HEAD:main` would
+        # replay the dispatched branch onto main and push it. The parentheses
+        # are load-bearing: `&&` binds tighter than `||`, so without them the
+        # guard would cover only the `push` disjunct.
+        #
+        # WHY IT SITS HERE and not beside the classify step that produced it:
+        # push_with_rebase mutates the working tree. Between `pnpm test` and
+        # `pnpm build:catalog`, where this step used to run, it pulled whatever
+        # a human landed on main during the ~50-minute run into the tree AFTER
+        # the tests had validated the checked-out SHA and BEFORE the harvest
+        # read `registry/`, with node_modules resolved from a possibly
+        # superseded lockfile. workflow.test.ts now fails on any tree-mutating
+        # git command before build:catalog.
+        #
+        # The trade-off, stated rather than deferred: committing down here
+        # means a failing `build:catalog` loses the day's LLM verdicts, and
+        # committing up there would have kept them. This is the cheaper side.
+        # Per CLAUDE.md the classifier is advisory — a failed classification
+        # leaves the entry unclassified and is retried on the next build — so
+        # a lost day costs one more classification run, while a rebase in front
+        # of the harvest costs a catalog built from inputs nothing validated,
+        # published to npm `latest` and to Pages unattended. (The early
+        # position preserved nothing on its own either: the runner is
+        # discarded, so only the PUSH preserves a verdict, and the push is the
+        # half that cannot move.)
+        #
+        # `--autostash` is what lets the rebase run from here at all: the
+        # snapshot step's three files are already written and still uncommitted
+        # underneath it. One measured edge, documented rather than defended —
+        # if the autostash cannot be reapplied (a human commit on main touching
+        # one of those three bot-written files inside the same window) git
+        # leaves conflict markers in the tree, keeps the stash, and still
+        # reports the rebase successful; the snapshot step below would commit
+        # them and the next build throws on the malformed registry file, which
+        # is the loud failure that class of corruption is meant to get.
+        run: |
+          git config user.name 'dsh-plugin-shop bot'
+          git config user.email 'bot@users.noreply.github.com'
+          push_with_rebase() {
+            for attempt in 1 2; do
+              git fetch origin main || true
+              # --autostash: both commit steps now run after the harvest, so
+              # each meets the OTHER's freshly written, uncommitted files.
+              # A plain rebase refuses that outright ("cannot rebase: You have
+              # unstaged changes"), the abort then answers "No rebase in
+              # progress?", and the un-rebased push is rejected — the very
+              # `(fetch first)` failure this function exists to end.
+              git rebase --autostash origin/main || { git rebase --abort || true; }
+              if git push origin HEAD:main; then return 0; fi
+              echo "::warning::push attempt $attempt was rejected; refetching"
+            done
+            echo "::error::could not push $1 after two attempts; this run's changes were not recorded"
+            return 1
+          }
+          git add registry/categories.yml registry/markets.yml
+          git diff --cached --quiet && exit 0
+          git commit -m "chore(registry): llm classifier update"
+          push_with_rebase "the classifier's output"
       - name: Commit the snapshot
         # push included: the repo-state.json backfill memory must persist
         # across push-triggered runs, or every run restarts from empty.
@@ -202,12 +232,19 @@ jobs:
         # The push fetches and rebases first, with one retry — the same
         # function as the classifier commit above, and the same `(fetch first)`
         # rejections on 2026-09-02 and 2026-09-03. continue-on-error stays for
-        # a different reason than it does there: this is the last step in
-        # `build`, so nothing later in this job is at stake, but `publish` and
-        # `deploy` both declare `needs: build` and would be skipped wholesale
-        # if a rejected push failed the job — costing the run its npm publish
-        # and its Pages deploy over a commit that can simply be made again
-        # tomorrow. The ::error:: annotation is what keeps that visible.
+        # half the reason it does there: this is the last step in `build`, so
+        # nothing later in this job is at stake — but `publish` and `deploy`
+        # both declare `needs: build` and would be skipped wholesale if a
+        # rejected push failed the job, costing the run its npm publish and its
+        # Pages deploy over a commit that can simply be made again tomorrow.
+        # The ::error:: annotation is what keeps that visible.
+        #
+        # This step runs after the classifier commit, not before it, and the
+        # order is load-bearing in one direction: whichever of the two runs
+        # first meets the other's uncommitted files, which is why both copies
+        # of push_with_rebase carry --autostash. Swapping them would work
+        # equally well; putting either back in front of `build:catalog` would
+        # not, and workflow.test.ts fails on that.
         #
         # The `github.ref` guard is the one described on the classifier commit
         # above, for the same reason and with the same load-bearing parentheses.
@@ -219,7 +256,13 @@ jobs:
           push_with_rebase() {
             for attempt in 1 2; do
               git fetch origin main || true
-              git rebase origin/main || { git rebase --abort || true; }
+              # --autostash: both commit steps now run after the harvest, so
+              # each meets the OTHER's freshly written, uncommitted files.
+              # A plain rebase refuses that outright ("cannot rebase: You have
+              # unstaged changes"), the abort then answers "No rebase in
+              # progress?", and the un-rebased push is rejected — the very
+              # `(fetch first)` failure this function exists to end.
+              git rebase --autostash origin/main || { git rebase --abort || true; }
               if git push origin HEAD:main; then return 0; fi
               echo "::warning::push attempt $attempt was rejected; refetching"
             done
@@ -290,5 +333,13 @@ jobs:
     environment:
       name: github-pages
       url: https://LivXue.github.io/dsh-plugin-shop
+    # `build` and `publish` carried bounds and this job did not, so a stuck
+    # deploy ran to the six-hour platform default. Its one step is
+    # `actions/deploy-pages@v4`, which requests the deployment and then POLLS
+    # the Pages API until it goes live; that poll has its own `timeout` input,
+    # 600000 ms by default. Fifteen sits just above it so the action's own
+    # message is what a stalled deployment reports, while anything that hangs
+    # before reaching that path still dies in minutes rather than hours.
+    timeout-minutes: 15
     steps:
       - uses: actions/deploy-pages@v4

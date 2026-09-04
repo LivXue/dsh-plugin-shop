@@ -454,6 +454,75 @@ function pushFunction(step: WorkflowStep): string {
   return lines.slice(open, close + 1).join('\n')
 }
 
+// ---------------------------------------------------------------------------
+// Nothing rewrites the working tree before `build:catalog` reads it.
+//
+// `pnpm install --frozen-lockfile`, `pnpm test` and `pnpm typecheck` validate
+// the SHA `actions/checkout` left on the runner, and `build:catalog` then
+// harvests against `registry/` out of that same tree. `push_with_rebase` runs
+// `git fetch origin main` + `git rebase origin/main`, so while the classifier's
+// commit step sat between the two, anything a human landed on main during the
+// ~50-minute run arrived AFTER the tests had validated the checked-out SHA and
+// BEFORE the harvest read its inputs, with node_modules resolved from a
+// possibly superseded lockfile. On an unattended job that publishes to npm
+// `latest` and to Pages, that is the 0.5.0 failure mode with a longer fuse.
+// Both commit steps therefore belong after `build:catalog`.
+// ---------------------------------------------------------------------------
+
+/** Git subcommands that can rewrite tracked file content or move HEAD.
+ *
+ * `git config`, `git add` and `git commit` are deliberately absent: they touch
+ * configuration, the index and a new commit object, and leave every tracked
+ * file exactly as the steps above validated it. `git rebase` is the one this
+ * list was written for; the rest are the neighbouring spellings — `git pull`,
+ * a `git checkout` of a ref, `git reset --hard` — that would reintroduce the
+ * same hazard under another name.
+ *
+ * Deliberately not anchored to the start of a line, for the same reason
+ * `pushSteps` is not: the rebase this guard exists for lives inside a shell
+ * function body, and `&& git reset --hard` is one edit away. */
+const TREE_MUTATING_GIT =
+  /\bgit\s+(?:-\S+\s+)*(?:am|apply|checkout|cherry-pick|clean|merge|pull|rebase|reset|restore|revert|stash|switch)\b/
+
+describe('nothing rewrites the working tree before build:catalog reads it', () => {
+  it('recognises the workflow\'s own rebase, so the scan is not vacuously clean', () => {
+    // The same reflex as "finds the writers, so the extraction itself is not
+    // silently empty" above. A typo in TREE_MUTATING_GIT, or a rewording of
+    // the rebase in daily.yml, would otherwise leave the ordering check
+    // scanning for something no workflow ever contains and reporting green
+    // over a job full of rebases.
+    expect(workflow).toMatch(TREE_MUTATING_GIT)
+    expect(buildSteps.filter(step => TREE_MUTATING_GIT.test(step.run ?? '')).map(step => step.name))
+      .toEqual(["Commit the classifier's output", 'Commit the snapshot'])
+  })
+
+  it('runs no tree-mutating git command in any step before build:catalog', () => {
+    const before = buildSteps.slice(0, buildCatalogStep.index)
+    // Non-vacuous by construction: checkout, install, test and typecheck all
+    // precede the harvest. If this ever drops to zero the loop below stops
+    // asserting anything.
+    expect(before.length).toBeGreaterThan(0)
+    for (const step of before) {
+      expect(
+        step.run ?? '',
+        `"${step.name ?? '(unnamed)'}" runs before build:catalog, so it must not rewrite the working tree`,
+      ).not.toMatch(TREE_MUTATING_GIT)
+    }
+  })
+
+  it('pushes only after build:catalog, whatever the pushing steps are called', () => {
+    // Keyed off `pushSteps`, which finds a pushing step by scanning every
+    // `run:` for `git push` rather than by name, so renaming a step or adding
+    // a new one cannot slip a rebase-and-push back in front of the harvest.
+    for (const step of pushSteps) {
+      expect(
+        buildSteps.indexOf(step),
+        `"${step.name ?? '(unnamed)'}" pushes, so it must run after build:catalog`,
+      ).toBeGreaterThan(buildCatalogStep.index)
+    }
+  })
+})
+
 describe('the daily workflow pushes safely', () => {
   const IDENT = {
     GIT_AUTHOR_NAME: 'test', GIT_AUTHOR_EMAIL: 'test@example.invalid',
@@ -480,8 +549,18 @@ describe('the daily workflow pushes safely', () => {
    * depth-1 boundary was the root commit, the clone held the entire history,
    * and every case below passed identically against a full clone — the
    * shallow checkout they are named for was never exercised. Several commits
-   * make the boundary a real graft. */
-  const ORIGIN_COMMITS = 40
+   * make the boundary a real graft.
+   *
+   * Three, not the forty this started at. Every sandbox case builds its own
+   * origin one commit at a time, so this count is a linear cost on what was
+   * the slowest file in the suite, and forty bought no discrimination the
+   * property needs: what the shallowness case turns on is
+   * `count(runner, 'HEAD') < count(origin, 'main')`, true at any value above
+   * one. Measured: 6.3s of a ~9s run at 40, 1.0s at 3, identical verdicts,
+   * and the shallowness assertions still go red against a full clone at the
+   * lower value. Two is the floor the property allows; three keeps a commit
+   * between the graft boundary and the tip. */
+  const ORIGIN_COMMITS = 3
 
   /** A bare origin with a real history behind its tip, plus a depth-1 clone.
    *
@@ -498,6 +577,11 @@ describe('the daily workflow pushes safely', () => {
       git(dir, 'init', '--quiet', '--bare', origin)
       const seed = join(dir, 'seed')
       git(dir, 'clone', '--quiet', origin, seed)
+      // A second tracked file, so a case can leave one dirty without touching
+      // `f` — which the conflict case below collides on, and which the log
+      // assertions name. It rides into the first commit of the loop.
+      writeFileSync(join(seed, 'g'), 'untouched\n')
+      git(seed, 'add', 'g')
       for (let n = 1; n <= ORIGIN_COMMITS; n++) {
         const last = n === ORIGIN_COMMITS
         // The tip stays `base`/`base\n` so the conflict case still collides on
@@ -671,6 +755,49 @@ describe('the daily workflow pushes safely', () => {
       }
     })
 
+    it(`"${label}" rebases past the other commit step's uncommitted output`, () => {
+      // Both commit steps now run after `build:catalog`, which is what keeps a
+      // rebase out of the harvest's way — and it means each one meets the
+      // OTHER's freshly written, still-uncommitted files. "Commit the
+      // classifier's output" runs first and stages only categories.yml and
+      // markets.yml, leaving manifest.lock, repo-state.json and first-seen.yml
+      // dirty underneath it.
+      //
+      // A plain `git rebase` refuses that outright — "error: cannot rebase:
+      // You have unstaged changes", measured — the `git rebase --abort` that
+      // follows answers "No rebase in progress?", and the un-rebased push is
+      // rejected on both attempts: the exact `(fetch first)` failure of
+      // 2026-09-02 and 2026-09-03 that this function was written to end,
+      // restored by the reorder. `--autostash` is what keeps it working, and
+      // this case is what notices its removal.
+      const { dir, seed, runner } = sandbox()
+      try {
+        humanPush(seed, 'human', 'human\n')
+        writeFileSync(join(runner, 'bot'), 'bot\n')
+        git(runner, 'add', 'bot')
+        git(runner, 'commit', '--quiet', '-m', 'bot')
+        // The other commit step's output: a tracked file rewritten and left
+        // unstaged, exactly as `build:catalog` leaves the three it writes.
+        writeFileSync(join(runner, 'g'), 'written by build:catalog\n')
+        const { status, out } = runPush(dir, runner, pushFunction(step))
+        expect({ status, out }).toEqual({ status: 0, out: expect.any(String) })
+        expect(out).not.toContain('::error::')
+        expect(out).not.toContain('::warning::')
+        // Still dirty afterwards, and byte-identical: the autostash was
+        // reapplied, so the commit step that follows this one still has its
+        // own output to stage rather than yesterday's copy.
+        expect(git(runner, 'status', '--porcelain=v1')).toContain('g')
+        expect(readFileSync(join(runner, 'g'), 'utf8')).toBe('written by build:catalog\n')
+        // And the human's commit survived, as in the clean-tree case.
+        git(seed, 'fetch', '--quiet', 'origin', 'main')
+        const log = git(seed, 'log', '--format=%s', 'FETCH_HEAD').split('\n').filter(Boolean)
+        expect(log.slice(0, 3)).toEqual(['bot', 'human edits human', 'base'])
+        expect(log).toHaveLength(ORIGIN_COMMITS + 2)
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+
     it(`"${label}" retries once when the push is rejected, and says so`, () => {
       const { dir, seed, runner } = sandbox()
       try {
@@ -715,15 +842,38 @@ describe('the daily workflow pushes safely', () => {
   }
 })
 
-describe('the build job is bounded', () => {
-  function timeoutMinutes(job: string): unknown {
+describe('every job in the workflow is bounded', () => {
+  function allJobs(): Record<string, unknown> {
     const doc: unknown = parse(workflow)
     const jobs = typeof doc === 'object' && doc !== null ? (doc as Record<string, unknown>).jobs : undefined
     if (typeof jobs !== 'object' || jobs === null) throw new Error('daily.yml: `jobs` is not a mapping — the workflow shape changed')
-    const value = (jobs as Record<string, unknown>)[job]
+    return jobs as Record<string, unknown>
+  }
+
+  function timeoutMinutes(job: string): unknown {
+    const value = allJobs()[job]
     if (typeof value !== 'object' || value === null) throw new Error(`daily.yml: jobs.${job} is not a mapping — the workflow shape changed`)
     return (value as Record<string, unknown>)['timeout-minutes']
   }
+
+  it('bounds every job, so the next one added cannot be the unbounded one', () => {
+    // Task 8 asked only for the build job, and `deploy` was left carrying the
+    // six-hour platform default it was never meant to reach: its one step is
+    // `actions/deploy-pages@v4`, which polls the Pages API and can sit there.
+    // Written over the whole `jobs` map rather than a list of three names so
+    // a fourth job inherits the requirement instead of quietly opting out.
+    const names = Object.keys(allJobs())
+    // The premise, asserted rather than assumed: an empty or renamed `jobs`
+    // map would make the loop below vacuous and this file would say nothing.
+    expect(names).toEqual(['build', 'publish', 'deploy'])
+    for (const name of names) {
+      const minutes = timeoutMinutes(name)
+      expect(minutes, `daily.yml: jobs.${name} has no timeout-minutes`).toEqual(expect.any(Number))
+      // A bound above the platform's own six-hour kill is not a bound.
+      expect(minutes as number, `daily.yml: jobs.${name}.timeout-minutes`).toBeGreaterThan(0)
+      expect(minutes as number, `daily.yml: jobs.${name}.timeout-minutes`).toBeLessThan(360)
+    }
+  })
 
   it('sets timeout-minutes on the build job', () => {
     // The publish job has one; the build job — the harvest, the plaintext LLM
