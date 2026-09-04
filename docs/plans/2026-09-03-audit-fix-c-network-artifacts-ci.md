@@ -2766,6 +2766,25 @@ git commit -m "fix(pages): publish only the spec'd artifacts from a staged direc
 
 ### Task 12: The pointer's cache window — name the fallback and its cost
 
+> **Outcome: DONE as written, with the verification run.** Measured
+> 2026-09-04: `cache-control: max-age=600` (so 600 and "ten minutes" both
+> stand as written), an `etag`, and a `plugins.<sha256>.json` the site was
+> never given answers 404.
+>
+> **One limit on the evidence, recorded rather than papered over.** No deploy
+> landed between the two probes, so a genuinely superseded generation was never
+> observed 404ing — the fabricated-hash 404 only proves Pages serves nothing
+> outside the generation it was uploaded. That the upload holds exactly one
+> generation is true by construction instead: CI checks out fresh, and Task
+> 11's staging is an `rmSync` followed by a copy of exactly the names the
+> pointer lists. The design amendment says this plainly rather than implying a
+> measurement that was not taken.
+>
+> The handover was checked, not assumed: plan D's origin task has the HTTP
+> data-file 404 falling through to the next origin
+> (`docs/plans/2026-09-03-audit-fix-d-host-client.md`, "it falls through to the
+> next origin").
+
 **Files:**
 - Modify: `docs/design/2026-09-01-catalog-mirrors.md` (a new subsection under §3, after "Origins may disagree" which ends at line 195)
 - Modify: `README.md:210-212` and the matching paragraph in `README.zh.md`

@@ -37,3 +37,25 @@ describe('what CI publishes to Pages', () => {
     expect(read('.github/workflows/daily.yml')).toContain('--harvest-from dist/harvest.json')
   })
 })
+
+describe('the pointer cache window', () => {
+  it('is recorded in the mirrors design with the fallback it chose', () => {
+    // A known ten-minute hole in one transport is a fact a reader of the
+    // design needs, and a decision NOT to close something gets silently
+    // re-litigated if it is not written down with its price.
+    const design = read('docs/design/2026-09-01-catalog-mirrors.md')
+    expect(design).toContain('### The pointer outlives the data it names')
+    expect(design).toContain('max-age=600')
+    expect(design).toContain('dsh-plugin-shop-catalog')
+  })
+
+  it('is stated in both READMEs beside the artifact table', () => {
+    // Anyone fetching /v1/ themselves needs to know the data names change
+    // per build and where to get a self-consistent pair instead.
+    for (const file of ['README.md', 'README.zh.md']) {
+      expect(read(file), `${file} does not name the npm fallback`).toContain('dsh-plugin-shop-catalog')
+      expect(read(file), `${file} does not mention the 404 a stale pointer causes`).toContain('404')
+    }
+  })
+})
+

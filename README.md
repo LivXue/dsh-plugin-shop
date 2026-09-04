@@ -210,6 +210,12 @@ Each build's rejection report, carrying an author-readable reason for every reje
 package, is attached to the workflow run. Nothing disappears without a reason attached
 to its name.
 
+The data files are content-addressed, so each build publishes new names and the previous
+ones stop existing, while the pointer above them is cached for ten minutes. If you fetch
+`/v1/` yourself, re-read `index.json` whenever a data URL answers 404 — or read the same
+bytes from the npm package `dsh-plugin-shop-catalog`, where the pointer and the data it
+names always ship in one tarball.
+
 ## 🏷️ Listing a plugin
 
 Add a harvest keyword (`dsh-plugin` or `deepseek-harness`) to your `package.json` and publish to npm; the daily build picks it up. A plugin that never publishes to npm is listed from its GitHub repository instead: add the same keyword as a repo *topic* and keep a `package.json` at the root with a `name` and `dsh.bundle` — the catalog pins the default-branch commit as the version.
