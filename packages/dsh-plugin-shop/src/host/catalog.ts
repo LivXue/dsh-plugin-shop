@@ -57,13 +57,31 @@ async function withCommitTimeout<T>(work: Promise<T>, id: string): Promise<T> {
   }
 }
 
+/** npm's package-name grammar. The value becomes half of an install spec, so
+ * aliases and shell punctuation must not reach the CLI. */
+const NPM_NAME = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/
+
+/** Canonical SemVer 2.0.0, including legal prerelease/build metadata. */
+const NPM_VERSION = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*)?(?:\+[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*)?$/
+
+/** A GitHub commit pin. */
+const COMMIT_SHA = /^[0-9a-f]{40}$/
+
+/** A release tag used by a release-rescued GitHub entry. */
+const RELEASE_TAG = /^[A-Za-z0-9][A-Za-z0-9._+/-]{0,127}$/
+
+/** The repository binding used to build a GitHub install spec. */
+const REPO_FULL_NAME = /^[\w.-]+\/[\w.-]+$/
+
 /** Records when the loader itself wrote the cache; the pointer's `builtAt` is
  * the catalog's build time, not the cache's fetch time. */
 const META_FILE = 'index.meta.json'
 
 const entrySchema = z.object({
-  name: z.string(),
-  version: z.string(),
+  // Bounded and control-character-free for every source. GitHub names can
+  // originate in an untrusted repository manifest and still reach argv.
+  name: z.string().min(1).max(214).regex(/^[^\u0000-\u001f\u007f]+$/, 'entry name carries a control character'),
+  version: z.string().min(1).max(256),
   integrity: z.string().nullable(),
   publishedAt: z.string().nullable(),
   repository: z.string().nullable(),
@@ -90,7 +108,7 @@ const entrySchema = z.object({
   }).optional(),
   // v3 (github channel); defaulted so a cached v2 catalog still parses.
   source: z.enum(['npm', 'github']).default('npm'),
-  repo: z.string().optional(),
+  repo: z.string().regex(REPO_FULL_NAME, 'repo must be owner/slug').optional(),
   // v4 (monorepo subpackages). The value reaches the install spec's argv,
   // so the boundary keeps it to relative directory segments — and no
   // segment may be `.` or `..`, which would escape the repository root.
@@ -102,7 +120,7 @@ const entrySchema = z.object({
   // made 0.5.0 refuse the still-published v4 catalog outright. Our own
   // builds always carry it (registry E9); the client never renders it.
   added: z.string().optional(),
-  tarball: z.object({ url: z.string(), sha256: z.string() }).optional(),
+  tarball: z.object({ url: z.string(), sha256: z.string().regex(/^[0-9a-f]{64}$/) }).optional(),
   // The npm publishing account, additive and optional — deliberately NOT a
   // schemaVersion bump. A version higher than SUPPORTED_SCHEMA_VERSION is
   // refused outright above, so bumping to 6 would make every installed 0.5.x
@@ -115,6 +133,26 @@ const entrySchema = z.object({
   // carries no such field, and making `added` required is exactly what made
   // 0.5.0 refuse the published catalog for every user.
   peers: z.array(z.string()).optional(),
+}).superRefine((entry, ctx) => {
+  // The install spec differs by source, so the grammar does too. Refusing at
+  // this boundary prevents catalog bytes from reaching the process layer.
+  if (entry.source === 'npm') {
+    if (!NPM_NAME.test(entry.name)) {
+      ctx.addIssue({ code: 'custom', path: ['name'], message: `npm entry name ${JSON.stringify(entry.name)} is outside npm package-name grammar` })
+    }
+    if (!NPM_VERSION.test(entry.version)) {
+      ctx.addIssue({ code: 'custom', path: ['version'], message: `npm entry version ${JSON.stringify(entry.version)} is not a plain semver version` })
+    }
+    return
+  }
+  if (entry.repo === undefined) {
+    ctx.addIssue({ code: 'custom', path: ['repo'], message: 'a github entry must carry its repo — it is the entry\'s identity and the spec is built from it' })
+  }
+  // GitHub entries use either a commit pin or a release tag. A tag may exist
+  // without a tarball; install() will report that missing rescue explicitly.
+  if (!COMMIT_SHA.test(entry.version) && !RELEASE_TAG.test(entry.version)) {
+    ctx.addIssue({ code: 'custom', path: ['version'], message: `github entry version ${JSON.stringify(entry.version)} is neither a 40-character commit sha nor a release tag` })
+  }
 })
 
 const dataSchema = z.object({
@@ -149,6 +187,11 @@ function validateEntryCoherence(entries: CatalogEntry[]): void {
     }
     if (parsed.protocol !== 'https:' || parsed.hostname !== 'github.com') {
       throw new Error(`catalog entry ${entry.name}: tarball url must be https on github.com`)
+    }
+    // Query strings and fragments can carry shell punctuation into the
+    // install spec. Release assets are addressed by their path alone.
+    if (parsed.search !== '' || parsed.hash !== '') {
+      throw new Error(`catalog entry ${entry.name}: tarball url must carry no query or fragment`)
     }
     const segments = parsed.pathname.split('/').filter(s => s !== '')
     const owner = segments[0] ?? ''
