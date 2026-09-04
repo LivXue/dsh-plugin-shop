@@ -7,7 +7,7 @@
 import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
-import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Category, authorOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatStars, hasGithubHome, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, rejectionCodeKey, restartReasonKey, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
+import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Category, authorOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatStars, hasGithubHome, identityKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, rejectionCodeKey, restartReasonKey, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
 import { useInstall } from './useInstall.ts'
 import { useUninstall } from './useUninstall.ts'
 import { useUpdateSelf } from './useUpdateSelf.ts'
@@ -92,6 +92,13 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, t,
   const npmUrl = npmPageUrl(entry)
   const author = authorOf(entry)
   const category = entry.catalog?.category ?? 'other'
+  const installTarget: InstallArgs = {
+    name: entry.name,
+    version: entry.version,
+    source: entry.source,
+    repo: entry.repo,
+    subdir: entry.subdir,
+  }
   return (
     <div className={css.card} data-shop-entry={entry.name} data-category={category}>
       <span className={css.cardSpine} aria-hidden="true" />
@@ -225,14 +232,14 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, t,
        * width below them, where it has room. */}
       <div className={css.cardActions} data-shop-actions>
         {installed === undefined ? (
-          <InstallPanel name={entry.name} version={entry.version} tier={entry.tier} missing={missing} missingStated t={t} install={install} installStatus={installStatus} restart={restart} restartSupported={restartSupported} />
+          <InstallPanel target={installTarget} tier={entry.tier} missing={missing} missingStated t={t} install={install} installStatus={installStatus} restart={restart} restartSupported={restartSupported} />
         ) : (
           <>
             {installed.outdated ? (
               // The update button drives the same install flow for the
               // catalog's latest version; the community gate still applies
               // (§9.3).
-              <InstallPanel name={entry.name} version={entry.version} tier={entry.tier} variant="update" missing={missing} missingStated t={t} install={install} installStatus={installStatus} restart={restart} restartSupported={restartSupported} />
+              <InstallPanel target={installTarget} tier={entry.tier} variant="update" missing={missing} missingStated t={t} install={install} installStatus={installStatus} restart={restart} restartSupported={restartSupported} />
             ) : (
               // No button on this branch, so the badge follows the label that
               // takes its place: an installed plugin whose modules are absent
@@ -292,9 +299,9 @@ function IncompatibleBadge({ missing, t }: {
  * failure detail, rejection detail — driven by `useInstall`. Shared by the
  * catalog cards (`variant: 'install'`) and the outdated rows' update button
  * (`variant: 'update'`, which drives the same install flow for `name@latest`). */
-function InstallPanel({ name, version, tier, missing, missingStated = false, variant = 'install', t, install, installStatus, restart, restartSupported }: {
-  name: string
-  version: string
+function InstallPanel({ target, tier, missing, missingStated = false, variant = 'install', t, install, installStatus, restart, restartSupported }: {
+  /** The install request this panel drives, identity included. */
+  target: InstallArgs
   tier: CatalogEntry['tier']
   missing: string[]
   /** The surface around this panel already states what is missing, so the
@@ -390,7 +397,7 @@ function InstallPanel({ name, version, tier, missing, missingStated = false, var
             data-shop-confirm
             onClick={() => {
               setGateOpen(false)
-              void start({ name, version, acknowledged: true })
+              void start({ ...target, acknowledged: true })
             }}
           >
             {t('confirm')}
@@ -412,7 +419,7 @@ function InstallPanel({ name, version, tier, missing, missingStated = false, var
         onClick={() => {
           if (tier === 'verified') {
             // Reviewed: install directly; there is nothing to acknowledge (§9.3).
-            void start({ name, version, acknowledged: undefined })
+            void start({ ...target, acknowledged: undefined })
           } else {
             setGateOpen(true)
           }
@@ -677,10 +684,9 @@ function EnabledSwitch({ row, t, setEnabled }: {
 /** One outdated install row (§7.3): the name, the installed and latest
  * versions, the hot enable/disable switch, and the update button (the
  * install flow for `name@latest`, reusing `InstallPanel`). */
-function OutdatedRow({ row, tier, source, missing, t, setEnabled, install, installStatus, restart, restartSupported }: {
+function OutdatedRow({ row, tier, missing, t, setEnabled, install, installStatus, restart, restartSupported }: {
   row: ShopInstalledEntry
   tier: CatalogEntry['tier']
-  source: CatalogEntry['source']
   missing: string[]
   t: ShopTabProps['t']
   setEnabled: ShopTabInjected['setEnabled']
@@ -694,13 +700,16 @@ function OutdatedRow({ row, tier, source, missing, t, setEnabled, install, insta
       <div className={css.outdatedInfo}>
         <span className={css.name}>{row.name}</span>
         <span className={css.outdatedVersions}>
-          <span>{t('installedVersion', { version: source === 'github' ? row.installed.slice(0, 7) : row.installed })}</span>
+          <span>{t('installedVersion', { version: row.source === 'github' ? row.installed.slice(0, 7) : row.installed })}</span>
           <span>{t('latestVersion', { version: row.latest })}</span>
         </span>
       </div>
       <div className={css.outdatedActions}>
         <EnabledSwitch row={row} t={t} setEnabled={setEnabled} />
-        <InstallPanel name={row.name} version={row.latest} tier={tier} variant="update" missing={missing} t={t} install={install} installStatus={installStatus} restart={restart} restartSupported={restartSupported} />
+        <InstallPanel
+          target={{ name: row.name, version: row.latest, source: row.source, repo: row.repo, subdir: row.subdir }}
+          tier={tier} variant="update" missing={missing} t={t} install={install} installStatus={installStatus} restart={restart} restartSupported={restartSupported}
+        />
       </div>
     </div>
   )
@@ -713,11 +722,10 @@ function OutdatedRow({ row, tier, source, missing, t, setEnabled, install, insta
  * tier for the update gate is looked up from the catalog by name (community →
  * acknowledgement); an entry absent from the catalog defaults to the
  * community gate (the safer read). */
-function OutdatedSection({ state, tiers, sources, missingByName, t, setEnabled, install, installStatus, restart, restartSupported }: {
+function OutdatedSection({ state, entriesByKey, missingByKey, t, setEnabled, install, installStatus, restart, restartSupported }: {
   state: InstalledState
-  tiers: ReadonlyMap<string, CatalogEntry['tier']>
-  sources: ReadonlyMap<string, CatalogEntry['source']>
-  missingByName: ReadonlyMap<string, string[]>
+  entriesByKey: ReadonlyMap<string, CatalogEntry>
+  missingByKey: ReadonlyMap<string, string[]>
   t: ShopTabProps['t']
   setEnabled: ShopTabInjected['setEnabled']
   install: ShopTabInjected['install']
@@ -736,12 +744,11 @@ function OutdatedSection({ state, tiers, sources, missingByName, t, setEnabled, 
       <h2 className={css.catalogHeading}>{t('installedSection')}</h2>
       <ul className={css.outdatedList}>
         {outdated.map(row => (
-          <li key={row.name}>
+          <li key={identityKey(row)}>
             <OutdatedRow
               row={row}
-              tier={tiers.get(row.name) ?? 'community'}
-              source={sources.get(row.name) ?? 'npm'}
-              missing={missingByName.get(row.name) ?? []}
+              tier={entriesByKey.get(identityKey(row))?.tier ?? 'community'}
+              missing={missingByKey.get(identityKey(row)) ?? []}
               t={t}
               setEnabled={setEnabled}
               install={install}
@@ -892,12 +899,12 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     return () => { cancelled = true }
   }, [installed, request])
 
-  // Each shelf card looks its installed state up by name; the Installed
-  // filter below selects on the same map.
-  const installedByName = useMemo(() => {
+  // Each shelf card looks its installed state up by install identity; the
+  // Installed filter below selects on the same map.
+  const installedByKey = useMemo(() => {
     const map = new Map<string, ShopInstalledEntry>()
     if (installedState.kind === 'ready') {
-      for (const entry of installedState.entries) map.set(entry.name, entry)
+      for (const entry of installedState.entries) map.set(identityKey(entry), entry)
     }
     return map
   }, [installedState])
@@ -926,7 +933,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     const q = query.trim().toLowerCase()
     return browsable.filter(entry => {
       if (category === 'installed') {
-        if (!installedByName.has(entry.name)) return false
+        if (!installedByKey.has(entryKey(entry))) return false
       } else if (category !== null && categoryKey(entry) !== categoryLocaleKey(category)) {
         return false
       }
@@ -937,7 +944,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
         || summaryEn.toLowerCase().includes(q)
         || summaryZh.toLowerCase().includes(q)
     })
-  }, [browsable, query, category, installedByName])
+  }, [browsable, query, category, installedByKey])
   filteredLenRef.current = filtered.length
 
   // The shelf sorts by GitHub stars: the most-starred entries fill the first
@@ -985,22 +992,12 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     return installedState.entries.filter(entry => !isShopLike(entry.name)).length
   }, [installedState])
 
-  // The outdated rows' update gate needs each entry's tier; the catalog is the
-  // only source for it (ShopInstalledEntry carries none). An entry missing from
-  // the loaded catalog defaults to the community gate at render.
-  const tiers = useMemo(() => {
-    const map = new Map<string, CatalogEntry['tier']>()
+  // The outdated rows' update gate and source display both come from the
+  // catalog entry, looked up by install identity.
+  const entriesByKey = useMemo(() => {
+    const map = new Map<string, CatalogEntry>()
     if (catalogState.kind === 'ready') {
-      for (const entry of catalogState.result.plugins) map.set(entry.name, entry.tier)
-    }
-    return map
-  }, [catalogState])
-  // The same lookup shape for each entry's install source, so a github
-  // entry's 40-hex commit renders as the short form everywhere.
-  const sources = useMemo(() => {
-    const map = new Map<string, CatalogEntry['source']>()
-    if (catalogState.kind === 'ready') {
-      for (const entry of catalogState.result.plugins) map.set(entry.name, entry.source)
+      for (const entry of catalogState.result.plugins) map.set(entryKey(entry), entry)
     }
     return map
   }, [catalogState])
@@ -1010,11 +1007,11 @@ export function ShopTab(props: ShopTabProps): ReactNode {
   // the JSX below would hand EntryCard's memo a new array on every
   // unrelated re-render (a keystroke, a poll tick), forcing every visible
   // card to re-render regardless of whether anything about it changed.
-  const missingByName = useMemo(() => {
+  const missingByKey = useMemo(() => {
     const map = new Map<string, string[]>()
     if (catalogState.kind === 'ready') {
       for (const entry of catalogState.result.plugins) {
-        map.set(entry.name, missingPeersOf(catalogState.result.incompatible, entry.name))
+        map.set(entryKey(entry), missingPeersOf(catalogState.result.incompatible, entryKey(entry)))
       }
     }
     return map
@@ -1248,7 +1245,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
               * orphaned in the DOM when the filter changed. */}
             {visible.map(entry => (
               <li key={entryKey(entry)}>
-                <EntryCard entry={entry} stars={starsOf(entry, stars)} installed={installedByName.get(entry.name)} missing={missingByName.get(entry.name) ?? []} t={t} install={install} installStatus={installStatus} uninstall={uninstall} restart={restart} restartSupported={restartSupported} setEnabled={setEnabled} />
+                <EntryCard entry={entry} stars={starsOf(entry, stars)} installed={installedByKey.get(entryKey(entry))} missing={missingByKey.get(entryKey(entry)) ?? []} t={t} install={install} installStatus={installStatus} uninstall={uninstall} restart={restart} restartSupported={restartSupported} setEnabled={setEnabled} />
               </li>
             ))}
             {incremental && visibleCount < filtered.length && (
@@ -1264,9 +1261,8 @@ export function ShopTab(props: ShopTabProps): ReactNode {
       )}
       <OutdatedSection
         state={installedState}
-        tiers={tiers}
-        sources={sources}
-        missingByName={missingByName}
+        entriesByKey={entriesByKey}
+        missingByKey={missingByKey}
         t={t}
         setEnabled={setEnabled}
         install={install}

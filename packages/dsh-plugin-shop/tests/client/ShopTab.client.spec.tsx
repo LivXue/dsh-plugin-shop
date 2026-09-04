@@ -174,7 +174,7 @@ describe('ShopTab', () => {
     expect(screen.getByText(en.acknowledgementTitle)).toBeTruthy()
     expect(install).not.toHaveBeenCalled()
     fireEvent.click(screen.getByText(en.confirm))
-    await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true }))
+    await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true, source: 'npm', repo: undefined, subdir: undefined }))
   })
 
   it('closes the acknowledgement gate on cancel without installing', async () => {
@@ -193,7 +193,7 @@ describe('ShopTab', () => {
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     fireEvent.click(screen.getByText(en.install))
-    await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: undefined }))
+    await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: undefined, source: 'npm', repo: undefined, subdir: undefined }))
     expect(screen.queryByText(en.acknowledgementBody)).toBeNull()
   })
 
@@ -863,7 +863,7 @@ describe('ShopTab', () => {
     // The card and the installed-section row both carry an update button; this
     // test drives the section's.
     fireEvent.click(container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-update]')!)
-    await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: undefined }))
+    await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: undefined, source: 'npm', repo: undefined, subdir: undefined }))
   })
 
   it('gates a community-tier update behind the acknowledgement', async () => {
@@ -874,7 +874,7 @@ describe('ShopTab', () => {
     await waitFor(() => expect(screen.getByText(en.acknowledgementBody)).toBeTruthy())
     expect(install).not.toHaveBeenCalled()
     fireEvent.click(screen.getByText(en.confirm))
-    await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true }))
+    await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true, source: 'npm', repo: undefined, subdir: undefined }))
   })
 
   it('shows the installed label instead of an install button on the card of a current install', async () => {
@@ -898,7 +898,7 @@ describe('ShopTab', () => {
     // branch in ShopTab.tsx: an installed plugin whose modules are absent
     // gets no other signal once there is no update to offer.
     const { injected } = bench(
-      { ...snapshot(), incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] } },
+      { ...snapshot(), incompatible: { 'npm:dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] } },
       [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }],
     )
     const { container } = renderTab(injected)
@@ -921,7 +921,7 @@ describe('ShopTab', () => {
     // Update and uninstall sit side by side.
     expect(card?.querySelector('[data-shop-uninstall]')).not.toBeNull()
     fireEvent.click(card!.querySelector('[data-shop-update]')!)
-    await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: undefined }))
+    await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: undefined, source: 'npm', repo: undefined, subdir: undefined }))
   })
 
   it('uninstalls an installed plugin through the card button and shows the restart notice', async () => {
@@ -971,7 +971,7 @@ describe('ShopTab', () => {
     await waitFor(() => expect(screen.getByText(en.acknowledgementBody)).toBeTruthy())
     expect(install).not.toHaveBeenCalled()
     fireEvent.click(screen.getByText(en.confirm))
-    await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true }))
+    await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true, source: 'npm', repo: undefined, subdir: undefined }))
   })
 
   it('sorts the shelf by stars and renders the badge on starred entries', async () => {
@@ -1004,7 +1004,7 @@ describe('ShopTab', () => {
   it('badges a catalog entry whose peer the harness does not provide', async () => {
     const { injected } = bench({
       ...snapshot({ tier: 'community' }),
-      incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] },
+      incompatible: { 'npm:dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] },
     })
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
@@ -1019,7 +1019,7 @@ describe('ShopTab', () => {
     // unchanged and is the second half — warn, never block.
     const { injected, install } = bench({
       ...snapshot({ tier: 'community' }),
-      incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] },
+      incompatible: { 'npm:dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] },
     })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
@@ -1039,7 +1039,7 @@ describe('ShopTab', () => {
 
   it('badges the installed-list row for an outdated install whose peer the harness does not provide', async () => {
     const { injected } = bench(
-      { ...snapshot({ tier: 'community' }), incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] } },
+      { ...snapshot({ tier: 'community' }), incompatible: { 'npm:dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] } },
       [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }],
     )
     const { container } = renderTab(injected)
@@ -1060,7 +1060,7 @@ describe('ShopTab', () => {
     // versions on this row. One string is what a translator maintains, so the
     // remaining imprecision is the deliberate price.
     const { injected } = bench(
-      { ...snapshot({ tier: 'community' }), incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] } },
+      { ...snapshot({ tier: 'community' }), incompatible: { 'npm:dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] } },
       [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }],
     )
     const { container } = renderTab(injected)
@@ -1081,7 +1081,7 @@ describe('ShopTab', () => {
     // .starsBadge above): the visible word stays the compact "Incompatible"
     // label while the accessible name carries the full explanation.
     const { injected } = bench(
-      { ...snapshot({ tier: 'community' }), incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] } },
+      { ...snapshot({ tier: 'community' }), incompatible: { 'npm:dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] } },
       [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }],
     )
     const { container } = renderTab(injected)
@@ -1101,7 +1101,7 @@ describe('ShopTab', () => {
     // happens if I press this", so it sits beside the button it qualifies.
     const { injected } = bench({
       ...snapshot({ tier: 'community' }),
-      incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] },
+      incompatible: { 'npm:dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] },
     })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
@@ -1114,7 +1114,7 @@ describe('ShopTab', () => {
 
   it('sits the badge to the right of the Update button on the installed-list row', async () => {
     const { injected } = bench(
-      { ...snapshot({ tier: 'community' }), incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] } },
+      { ...snapshot({ tier: 'community' }), incompatible: { 'npm:dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] } },
       [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }],
     )
     const { container } = renderTab(injected)
@@ -1131,7 +1131,7 @@ describe('ShopTab', () => {
     // fails here rather than shipping a one-line warning.
     const { injected } = bench({
       ...snapshot({ tier: 'community' }),
-      incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] },
+      incompatible: { 'npm:dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] },
     })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
@@ -1150,7 +1150,7 @@ describe('ShopTab', () => {
     // obvious the moment they were unified.
     const { injected } = bench({
       ...snapshot({ tier: 'community' }),
-      incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] },
+      incompatible: { 'npm:dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] },
     })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
@@ -1169,7 +1169,7 @@ describe('ShopTab', () => {
   it('warns with the same wording when the gate opens for an update', async () => {
     // The gate serves both variants and now says one thing in both.
     const { injected } = bench(
-      { ...snapshot({ tier: 'community' }), incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] } },
+      { ...snapshot({ tier: 'community' }), incompatible: { 'npm:dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] } },
       [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }],
     )
     const { container } = renderTab(injected)
@@ -1357,7 +1357,7 @@ describe('ShopTab github entries', () => {
     fireEvent.click(screen.getByText(en.install))
     await waitFor(() => expect(screen.getByText(en.acknowledgementBody)).toBeTruthy())
     fireEvent.click(screen.getByText(en.confirm))
-    await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: commit, acknowledged: true }))
+    await waitFor(() => expect(install).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', version: commit, acknowledged: true, source: 'github', repo: 'someone/dsh-hello-plugin', subdir: undefined }))
   })
 })
 
@@ -1472,6 +1472,50 @@ describe('ShopTab duplicate catalog names', () => {
     // Only the hello plugin is installed, so Installed shows exactly its card.
     fireEvent.click(categoryButton(container, en.installed))
     await waitFor(() => expect(cardNames(container)).toEqual(['dsh-hello-plugin']))
+  })
+
+  it('addresses two same-named repository entries separately (G-1)', async () => {
+    const aliceCommit = 'a'.repeat(40)
+    const bobCommit = 'b'.repeat(40)
+    const base = snapshot().plugins[0]
+    if (base === undefined) throw new Error('the fixture snapshot has no entry')
+    const alice = { ...base, name: 'dsh-foo', version: aliceCommit, source: 'github' as const, repo: 'alice/dsh-foo' }
+    const bob = { ...alice, version: bobCommit, repo: 'bob/dsh-foo' }
+    const { injected, install } = bench(
+      {
+        ...snapshot(),
+        plugins: [alice, bob],
+        incompatible: { 'github:bob/dsh-foo#': ['@deepseek-ai/dsh-client-store'] },
+      },
+      [{
+        name: 'dsh-foo', source: 'github', repo: 'bob/dsh-foo',
+        installed: 'c'.repeat(40), latest: bobCommit, outdated: true, enabled: true,
+      }],
+    )
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText(en.installedSection)).toBeTruthy())
+    expect(container.querySelectorAll('[data-shop-outdated-entry]')).toHaveLength(1)
+    expect(container.querySelectorAll('[data-shop-outdated-entry] [data-shop-incompatible]')).toHaveLength(1)
+    expect(container.querySelectorAll('[data-shop-entry="dsh-foo"]')).toHaveLength(2)
+    expect(container.querySelectorAll('[data-shop-install]')).toHaveLength(1)
+
+    fireEvent.click(container.querySelector('[data-shop-outdated-entry] [data-shop-update]')!)
+    fireEvent.click(container.querySelector('[data-shop-outdated-entry] [data-shop-confirm]')!)
+    await waitFor(() => expect(install).toHaveBeenCalled())
+    expect(install).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'dsh-foo', version: bobCommit, source: 'github', repo: 'bob/dsh-foo', acknowledged: true,
+    }))
+  })
+
+  it('sends the identity on a plain shelf install too', async () => {
+    const { injected, install } = bench(snapshot({ tier: 'verified' }))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-install]')!)
+    await waitFor(() => expect(install).toHaveBeenCalled())
+    expect(install).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'dsh-hello-plugin', version: '1.2.0', source: 'npm',
+    }))
   })
 })
 

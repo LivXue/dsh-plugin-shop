@@ -33,9 +33,10 @@ export function tierKey(tier: CatalogEntry['tier']): ShopLocaleKey {
 
 /** The peers the Host said this installation does not provide, or none when it
  * said nothing — a plugin that runs here and one the Host could not judge are
- * both rendered as no warning at all. */
-export function missingPeersOf(incompatible: Record<string, string[]>, name: string): string[] {
-  return incompatible[name] ?? []
+ * both rendered as no warning at all. The map is keyed by install identity,
+ * never by name, because two entries can share a name. */
+export function missingPeersOf(incompatible: Record<string, string[]>, key: string): string[] {
+  return incompatible[key] ?? []
 }
 
 /** Spec §9.3 verbatim — the community-tier acknowledgement. The zh dictionary
