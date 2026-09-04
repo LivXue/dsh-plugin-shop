@@ -477,6 +477,49 @@ git commit -m "fix(harvest): invalidate the 1918 records the old manifest rule m
 
 ### Task 4: Page a window on the raw item count, honour `incomplete_results`, reconcile against the probe
 
+> **Outcome: all three findings were ALREADY FIXED by plan A, more strongly
+> than the steps below ask. Do not apply Step 3 — it would be a regression.**
+> Verified 2026-09-04 at `github-client.ts` (`searchPage`, `searchReposByTopic`).
+>
+> Every one of the three:
+>
+> 1. **Paging on the raw count.** `enumerated += metas.length + skipped`, and
+>    the loop never breaks on a short page at all — it stops on the total the
+>    API answered for that page, or on an empty one.
+> 2. **`incomplete_results`.** Read, and it **throws**.
+> 3. **Reconciliation against the probe.** `enumerated < probed` re-probes and
+>    throws, with `Math.min(probed, after)` absorbing a window that shrank
+>    mid-run.
+>
+> The difference is `incompleteWindows` versus a throw, and it is the same
+> difference as Task 1: this task would publish a catalog known to be short
+> and then suppress the consequence, while plan A stops the build. CLAUDE.md
+> is explicit — "A search that cannot enumerate its whole result set throws
+> rather than truncating" — and a failed build publishes nothing, so yesterday's
+> catalog stays live and the badge date stops advancing where a maintainer can
+> see it. **Task 5 is moot for the same reason**: a throw means `repo-state.json`
+> is never rewritten and no `repo-gone` is ever published, which is exactly what
+> Task 5 set out to guarantee.
+>
+> **What this task DID contribute, and what shipped instead:** re-reading the
+> two guards for this comparison found a hole plan A left, and a way its throw
+> was needlessly brittle. `searchPage` checked `incomplete_results`;
+> `probeTotal` did not — and the probe is the more dangerous half, because a
+> timed-out probe answers an UNDERCOUNTED `total_count`, which is the number the
+> partition splits on, the zero-window skip reads, and the coverage check
+> measures every enumeration against. A probe timing out to `0` skipped its
+> whole window in silence: the failing test for it recorded
+> `promise resolved "{ seen: [], metas: Map{}, …(1) }"` — the entire harvest
+> returning empty with no error anywhere. Separately, `incomplete_results` means
+> the query TIMED OUT, which is transient, so throwing on the first one failed
+> the whole daily build on one slow second at GitHub.
+>
+> Both are one change: `searchBody`, the single request-and-read step both
+> callers now use, which retries exactly once on a partial answer and throws
+> when it stays partial. Strictly stronger than plan A (the probe is now
+> covered) and strictly less brittle (a transient timeout no longer fails the
+> build), with the doctrine unchanged.
+
 **Files:**
 - Modify: `registry/scripts/src/github-client.ts:151-170` (`searchPage`) and `262-287` (`searchReposByTopic`)
 - Test: `registry/scripts/tests/github-client.test.ts` (the `searchReposByTopic` describe, after line 109)

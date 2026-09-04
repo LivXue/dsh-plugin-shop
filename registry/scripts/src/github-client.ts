@@ -272,11 +272,14 @@ async function searchRequest(
 
 /**
  * Probe one query's `total_count` with a minimal page.
- * @throws when the response answers no numeric total. A malformed probe must
- *   not read as an empty window: this number decides the partition split, the
- *   zero-window skip in {@link searchReposByTopic} and the coverage check
- *   there, and a silent 0 disables all three — it now skips the window
- *   outright. Same rule, and the same reason, as npm-client's `searchTotal`.
+ * @throws when the response answers no numeric total, or stays partial across
+ *   {@link searchBody}'s retry. A malformed probe must not read as an empty
+ *   window: this number decides the partition split, the zero-window skip in
+ *   {@link searchReposByTopic} and the coverage check there, and a silent 0
+ *   disables all three — it now skips the window outright. Same rule, and the
+ *   same reason, as npm-client's `searchTotal`. `incomplete_results` is the
+ *   same hazard wearing a 200: a timed-out probe answers an UNDERCOUNT, which
+ *   reads as a smaller window rather than a broken measurement.
  */
 export async function probeTotal(
   query: string,
@@ -285,9 +288,7 @@ export async function probeTotal(
   token: string | undefined,
 ): Promise<number> {
   const url = `${GITHUB_API}/search/repositories?q=${encodeURIComponent(query)}&per_page=1`
-  const response = await searchRequest(url, fetchImpl, sleep, token)
-  if (!response.ok) throw new Error(`github search probe for ${query} failed: ${response.status}`)
-  const body = await readSearchBody(response, `github search probe for ${query}`)
+  const body = await searchBody(url, `github search probe for ${query}`, fetchImpl, sleep, token)
   if (typeof body.total_count !== 'number') {
     throw new Error(`github search probe for ${query} answered no total_count; a window's size cannot be measured without it`)
   }
@@ -337,6 +338,49 @@ async function readSearchBody(
 }
 
 /**
+ * Request one search URL and read its body, retrying once when GitHub says the
+ * answer it served is partial.
+ *
+ * `incomplete_results` is GitHub reporting that the query TIMED OUT server-side
+ * and what came back is a partial result set wearing an ordinary 200. Both
+ * callers have to refuse it, for the same reason and with different blast
+ * radii: a partial PAGE cannot be told from a whole one by looking at its
+ * items, and a partial PROBE answers an undercounted `total_count` — the
+ * number the partition splits on, the zero-window skip reads, and the coverage
+ * check in {@link searchReposByTopic} measures every enumeration against. A
+ * probe that times out to 0 therefore skips its whole window in silence, which
+ * is precisely the failure the throw-on-missing-total above exists to prevent;
+ * checking one and not the other left the more dangerous half open.
+ *
+ * But a timeout is transient by definition, and throwing on the first one
+ * fails the entire daily build — every window, each paged — on one slow second
+ * at GitHub, publishing nothing at all. So it gets the one retry its
+ * transience deserves (paced for free: {@link searchRequest} sleeps before
+ * every request) and the throw stands only when the answer stays partial.
+ * @param url - the fully-built search URL.
+ * @param what - this request's name, used verbatim in every error it raises.
+ * @throws when the request fails, the body is unreadable, or both attempts
+ *   come back partial.
+ */
+async function searchBody(
+  url: string,
+  what: string,
+  fetchImpl: typeof fetch,
+  sleep: (ms: number) => Promise<void>,
+  token: string | undefined,
+): Promise<{ total_count?: unknown; items?: unknown; incomplete_results?: unknown }> {
+  for (let attempt = 1; ; attempt += 1) {
+    const response = await searchRequest(url, fetchImpl, sleep, token)
+    if (!response.ok) throw new Error(`${what} failed: ${response.status}`)
+    const body = await readSearchBody(response, what)
+    if (body.incomplete_results !== true) return body
+    if (attempt > 1) {
+      throw new Error(`${what} answered incomplete_results on ${attempt} attempts: the query timed out and what it served is partial`)
+    }
+  }
+}
+
+/**
  * One page of a windowed search.
  *
  * `skipped` is separate from `metas` on purpose, and it is the whole reason
@@ -356,9 +400,9 @@ interface SearchPageResult {
 
 /**
  * Fetch one page of a windowed search.
- * @throws when the page reports `incomplete_results` (GitHub's own signal that
- *   the query timed out and the page is partial) or answers no numeric total —
- *   neither can be told apart from a complete page by looking at the items.
+ * @throws when the page answers no numeric total, or stays partial across
+ *   {@link searchBody}'s retry — neither can be told apart from a complete
+ *   page by looking at the items.
  */
 async function searchPage(
   query: string,
@@ -368,16 +412,7 @@ async function searchPage(
   token: string | undefined,
 ): Promise<SearchPageResult> {
   const url = `${GITHUB_API}/search/repositories?q=${encodeURIComponent(query)}&per_page=${SEARCH_PAGE_SIZE}&page=${page}`
-  const response = await searchRequest(url, fetchImpl, sleep, token)
-  if (!response.ok) throw new Error(`github search for ${query} failed: ${response.status}`)
-  const body = await readSearchBody(response, `github search for ${query}`)
-  // GitHub sets this when the query timed out and what it served is a PARTIAL
-  // result set. The response is an ordinary 200 carrying ordinary items, so
-  // nothing downstream can notice — it would page and measure as if the window
-  // were whole. A timeout is the realistic production trigger for it.
-  if (body.incomplete_results === true) {
-    throw new Error(`github search for ${query} page ${page} answered incomplete_results: the query timed out and the page it served is partial`)
-  }
+  const body = await searchBody(url, `github search for ${query} page ${page}`, fetchImpl, sleep, token)
   // Same rule as the npm half: a page carrying no total cannot be told apart
   // from a truncated one, so it throws rather than ending the window on
   // whatever happened to arrive.

@@ -303,6 +303,92 @@ describe('a window is enumerated whole, or the harvest stops', () => {
       .rejects.toThrow(/incomplete_results/)
   })
 
+  it('retries a page GitHub reports as incomplete rather than failing the whole build', async () => {
+    // `incomplete_results` means the query TIMED OUT, which is transient by
+    // definition. Throwing on the first one fails the entire daily build —
+    // roughly forty windows, each paged — on one slow second at GitHub, and a
+    // failed build publishes nothing at all. One retry costs one request and
+    // weakens nothing: the throw above still fires when the page stays
+    // partial, which is the case that cannot be told apart from a whole one.
+    const items = repoItems(120)
+    let pageAttempts = 0
+    const fetchImpl = (async (url: string | URL) => {
+      const parsed = new URL(String(url))
+      const query = parsed.searchParams.get('q') ?? ''
+      if (!dshPlugin(query)) return new Response(JSON.stringify({ total_count: 0, items: [] }), { status: 200 })
+      if (parsed.searchParams.get('per_page') === '1') {
+        return new Response(JSON.stringify({ total_count: 120 }), { status: 200 })
+      }
+      pageAttempts += 1
+      const page = Number(parsed.searchParams.get('page') ?? '1')
+      const start = (page - 1) * SEARCH_PAGE_SIZE
+      const body: Record<string, unknown> = { total_count: 120, items: items.slice(start, start + SEARCH_PAGE_SIZE) }
+      // Page 1's first attempt times out; everything after it is healthy.
+      if (pageAttempts === 1) body.incomplete_results = true
+      return new Response(JSON.stringify(body), { status: 200 })
+    }) as unknown as typeof fetch
+
+    const { seen } = await searchReposByTopic(fetchImpl, sleep, 'token')
+    // The window is enumerated whole, and page 1 was asked for twice.
+    expect(seen).toHaveLength(120)
+    expect(pageAttempts).toBe(3)
+  })
+
+  it('throws when the PROBE says it is incomplete, rather than measuring the window short', async () => {
+    // The page checked the flag and the probe did not, which left the more
+    // dangerous half open: an incomplete probe answers an UNDERCOUNTED
+    // `total_count`, and that number is the one every guard here reads. A
+    // probe timing out to 0 is skipped as an empty window (`probed === 0`) —
+    // the whole window vanishes, silently, which is the exact failure
+    // probeTotal's own throw-on-missing-total was added to prevent. A probe
+    // undercounting to a nonzero number disables the coverage check instead:
+    // a short enumeration compares against the short measurement and passes.
+    let attempts = 0
+    const fetchImpl = (async (url: string | URL) => {
+      const parsed = new URL(String(url))
+      const query = parsed.searchParams.get('q') ?? ''
+      if (!dshPlugin(query)) return new Response(JSON.stringify({ total_count: 0, items: [] }), { status: 200 })
+      if (parsed.searchParams.get('per_page') === '1') {
+        attempts += 1
+        return new Response(JSON.stringify({ total_count: 0, incomplete_results: true }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ total_count: 0, items: [] }), { status: 200 })
+    }) as unknown as typeof fetch
+
+    await expect(searchReposByTopic(fetchImpl, sleep, 'token'))
+      .rejects.toThrow(/incomplete_results/)
+    // Exactly one retry, and the count is asserted rather than left to the
+    // wording: the search API meters at 30 requests/minute and searchRequest
+    // paces every one of them by 2s, so a wider retry ladder is spent budget
+    // on an answer already known to be partial.
+    expect(attempts).toBe(2)
+  })
+
+  it('retries an incomplete probe and uses the total the retry answered', async () => {
+    // Same transience, same one retry — and the number it settles on has to be
+    // the RETRY's, not the timed-out first answer: adopting the undercount is
+    // what the test above is about.
+    let probeAttempts = 0
+    const fetchImpl = (async (url: string | URL) => {
+      const parsed = new URL(String(url))
+      const query = parsed.searchParams.get('q') ?? ''
+      if (!dshPlugin(query)) return new Response(JSON.stringify({ total_count: 0, items: [] }), { status: 200 })
+      if (parsed.searchParams.get('per_page') === '1') {
+        probeAttempts += 1
+        return probeAttempts === 1
+          ? new Response(JSON.stringify({ total_count: 4, incomplete_results: true }), { status: 200 })
+          : new Response(JSON.stringify({ total_count: 40 }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ total_count: 40, items: repoItems(40) }), { status: 200 })
+    }) as unknown as typeof fetch
+
+    const { seen } = await searchReposByTopic(fetchImpl, sleep, 'token')
+    expect(seen).toHaveLength(40)
+    // Had the undercounted 4 been adopted, the window would have measured 4
+    // and its 40 rows would have read as a healthy over-enumeration.
+    expect(probeAttempts).toBeGreaterThan(1)
+  })
+
   it('throws when a window has grown past the page ceiling since it was partitioned', async () => {
     // `page <= MAX_SEARCH_PAGES` had the same shape as the short-page break: a
     // window that crossed 1,000 results between the probe and the paging
