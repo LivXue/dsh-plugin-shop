@@ -173,6 +173,55 @@ describe('parseRegistryConfig', () => {
     expect(config.verified.get('bob/dsh-repo-plugin')?.reviewer).toBe('github:bob-reviewer')
   })
 
+  it('rejects a denial whose name is not a package name or an owner/slug', () => {
+    // A padded, cased or newline-terminated name loads fine and then matches
+    // nothing forever: the denial fails OPEN, which is the one direction a
+    // denylist must never fail in.
+    for (const name of ['" dsh-evil "', '"dsh evil"', '"dsh-evil\\n"', '"a/b/c"']) {
+      expect(() => parseRegistryConfig({ ...empty, denied: `- name: ${name}\n  reason: Bad.\n` }),
+        `denied.yml must reject ${name}`).toThrow(/denied\.yml/)
+    }
+  })
+
+  it('accepts both denial forms: an npm name and a GitHub owner/slug', () => {
+    const config = parseRegistryConfig({
+      ...empty,
+      denied: [
+        '- name: dsh-evil-plugin\n  reason: Exfiltrates credentials.\n',
+        '- name: "@scope/dsh-evil"\n  reason: Same code, scoped.\n',
+        '- name: Someone/dsh-repo-plugin\n  reason: known bad actor\n',
+      ].join(''),
+    })
+    expect(config.denied.get('dsh-evil-plugin')?.reason).toBe('Exfiltrates credentials.')
+    expect(config.denied.get('@scope/dsh-evil')?.reason).toBe('Same code, scoped.')
+    // The repo form also gets a case-folded index, because GitHub resolves
+    // repository names case-insensitively and both gates read it.
+    expect(config.deniedRepos.get('someone/dsh-repo-plugin')?.reason).toBe('known bad actor')
+    expect(config.deniedRepos.has('dsh-evil-plugin')).toBe(false)
+  })
+
+  it('throws when two denials name the same repository in different cases', () => {
+    expect(() => parseRegistryConfig({
+      ...empty,
+      denied: '- name: Someone/dsh-x\n  reason: a\n- name: someone/dsh-x\n  reason: b\n',
+    })).toThrow(/denied\.yml.*duplicate entry for someone\/dsh-x/s)
+  })
+
+  it('rejects a malformed allowed-similar row and indexes the repo form case-folded', () => {
+    expect(() => parseRegistryConfig({ ...empty, allowedSimilar: '- " dsh-fs-tools "\n' }))
+      .toThrow(/allowed-similar\.yml/)
+    const config = parseRegistryConfig({ ...empty, allowedSimilar: '- dsh-fs-tools\n- Good/dsh-fs-tool\n' })
+    expect(config.allowedSimilar.has('dsh-fs-tools')).toBe(true)
+    expect([...config.allowedSimilarRepos]).toEqual(['good/dsh-fs-tool'])
+  })
+
+  it('rejects a review whose repo is not an owner/slug', () => {
+    expect(() => parseRegistryConfig({
+      ...empty,
+      verified: `- name: dsh-x\n  repo: not-a-repo\n  reviewedCommit: ${'a'.repeat(40)}\n  reviewer: r\n  reviewCommit: c\n`,
+    })).toThrow(/verified\.yml.*owner\/slug/s)
+  })
+
   it('throws on two reviews of the same repository', () => {
     expect(() => parseRegistryConfig({
       ...empty,

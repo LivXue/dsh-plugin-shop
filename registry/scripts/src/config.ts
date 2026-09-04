@@ -5,9 +5,40 @@ import { z } from 'zod'
 import type { MarketRow } from './markets.ts'
 import { CATEGORIES, type Category, type Review } from './types.ts'
 
+/**
+ * An npm package name as the registry can actually serve one: at most 214
+ * characters, an optional `@scope/`, no whitespace, no control characters and
+ * no leading `.` or `_`. Uppercase is permitted — npm refuses uppercase for
+ * NEW packages but still serves the legacy ones, and a denial has to be able
+ * to name one.
+ */
+const NPM_NAME = /^(?:@[A-Za-z0-9-~][A-Za-z0-9-._~]*\/)?[A-Za-z0-9-~][A-Za-z0-9-._~]*$/
+
+/**
+ * A GitHub repository full name, `owner/slug`. Never a leading `@` and always
+ * exactly one slash — which is what keeps the repo keyspace from colliding
+ * with the npm keyspace inside `denied`, `verified` and `first-seen.yml`.
+ */
+const REPO_FULL_NAME = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/
+
+/** A row that must name an npm package. */
+const npmName = z.string().min(1).max(214).regex(
+  NPM_NAME,
+  'must be an npm package name: no spaces, no newlines, no leading dot or underscore, at most 214 characters',
+)
+
+/** A row that may name an npm package or a GitHub repository. */
+const npmNameOrRepo = z.string().min(1).max(214).refine(
+  value => NPM_NAME.test(value) || REPO_FULL_NAME.test(value),
+  { message: 'must be an npm package name or a GitHub owner/slug: no spaces, no newlines, exactly one slash for a repo' },
+)
+
+/** A row that must name a GitHub repository. */
+const repoFullName = z.string().min(1).max(140).regex(REPO_FULL_NAME, 'must be a GitHub owner/slug')
+
 const verifiedSchema = z.array(z.object({
-  name: z.string().min(1),
-  repo: z.string().min(1).optional(),
+  name: npmName,
+  repo: repoFullName.optional(),
   reviewedVersion: z.string().min(1).optional(),
   reviewedCommit: z.string().min(1).optional(),
   reviewedSha256: z.string().min(1).optional(),
@@ -31,12 +62,12 @@ const verifiedSchema = z.array(z.object({
 ))
 
 const deniedSchema = z.array(z.object({
-  name: z.string().min(1),
+  name: npmNameOrRepo,
   reason: z.string().min(1),
-  replacement: z.string().min(1).optional(),
+  replacement: npmNameOrRepo.optional(),
 }).strict())
 
-const allowedSimilarSchema = z.array(z.string().min(1))
+const allowedSimilarSchema = z.array(npmNameOrRepo)
 
 const categoriesSchema = z.array(z.object({
   name: z.string().min(1),
@@ -79,10 +110,16 @@ export interface RegistryConfig {
    */
   verifiedNames: Set<string>
   /** Package name to the reason it is excluded, plus the known replacement
-   * when a human recorded one. */
+   * when a human recorded one. Keyed as written. */
   denied: Map<string, { reason: string; replacement?: string }>
-  /** Names cleared past the similarity hold. */
+  /** The `owner/slug`-shaped denials, lowercased. Read by both gates: a
+   * denial names a project, and a project has two published spellings. */
+  deniedRepos: Map<string, { reason: string; replacement?: string }>
+  /** Names cleared past the similarity hold, as written. */
   allowedSimilar: Set<string>
+  /** The `owner/slug`-shaped clearances, lowercased — the only form the
+   * GitHub channel honours. */
+  allowedSimilarRepos: Set<string>
   /** Names cleared past the client's shop-like name filter: judged NOT to be
    * competing plugin markets, so the shelf shows them. */
   notAShop: Set<string>
@@ -164,13 +201,28 @@ export function parseRegistryConfig(
     verifiedNames.add(row.name)
   }
   const denied = new Map<string, { reason: string; replacement?: string }>()
+  const deniedRepos = new Map<string, { reason: string; replacement?: string }>()
   for (const row of parseFile('denied.yml', input.denied, deniedSchema)) {
-    setUnique(denied, 'denied.yml', row.name, {
+    const value = {
       reason: row.reason,
       ...(row.replacement !== undefined ? { replacement: row.replacement } : {}),
-    })
+    }
+    setUnique(denied, 'denied.yml', row.name, value)
+    // A denial written as `owner/slug` gets a second, case-folded index. Both
+    // gates read it: the repo gate because GitHub resolves repository names
+    // case-insensitively (B-8), and the npm gate because the author of a
+    // denied repository can publish the same code to npm and win the bundle
+    // name (B-6).
+    if (REPO_FULL_NAME.test(row.name)) setUnique(deniedRepos, 'denied.yml', row.name.toLowerCase(), value)
   }
-  const allowedSimilar = new Set(parseFile('allowed-similar.yml', input.allowedSimilar, allowedSimilarSchema))
+  const allowedSimilarRows = parseFile('allowed-similar.yml', input.allowedSimilar, allowedSimilarSchema)
+  const allowedSimilar = new Set(allowedSimilarRows)
+  // The repo-shaped clearances, case-folded. The GitHub channel honours ONLY
+  // this set: a bundle-name clearance cleared every repository using the name
+  // (A-4).
+  const allowedSimilarRepos = new Set(
+    allowedSimilarRows.filter(entry => REPO_FULL_NAME.test(entry)).map(entry => entry.toLowerCase()),
+  )
   const marketVerdicts = new Map<string, boolean>()
   const marketRows: MarketRow[] = []
   for (const row of parseFile('markets.yml', input.markets ?? '[]', marketsSchema)) {
@@ -187,7 +239,10 @@ export function parseRegistryConfig(
   for (const row of parseFile('first-seen.yml', input.firstSeen, firstSeenSchema)) {
     setUnique(firstSeen, 'first-seen.yml', row.name, row.added)
   }
-  return { verified, verifiedNames, denied, allowedSimilar, notAShop, marketsJudged, marketRows, categories, firstSeen }
+  return {
+    verified, verifiedNames, denied, deniedRepos, allowedSimilar, allowedSimilarRepos,
+    notAShop, marketsJudged, marketRows, categories, firstSeen,
+  }
 }
 
 /**
