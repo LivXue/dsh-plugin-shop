@@ -6,7 +6,10 @@ resolves them against the running installation; the client annotates
 incompatible entries in three places and warns — never blocks — before
 installing one. The authority spec
 (`2026-08-18-dsh-plugin-shop-design.md`) is amended in the same change.
-English only, per convention.
+English only, per convention. **Amended 2026-09-04 (§7): the shop's own
+declared peer RANGES are checked at load and warned about once** — the
+one package whose ranges this project holds, and the one case where the
+presence-only rule above leaves a real gap.
 
 ## 0. The incident
 
@@ -206,7 +209,9 @@ both languages regardless of their dsh setting.
 
 **Deliberately not built:** filtering or reordering the catalog by
 compatibility, blocking an install, deriving a minimum harness version,
-and checking version ranges.
+and checking version ranges. **Amended 2026-09-04: the last of those is
+scoped to CATALOG entries** — see §7, which checks ranges for the shop's
+own declared peers, the one package whose ranges we hold.
 
 ## 5. Testing
 
@@ -241,3 +246,66 @@ assumption as the code agreed with it.
 3. The release goes through the `beta` dist-tag first. A version that
    changes what the host reads is precisely the class the channel exists
    for.
+
+## 7. Amendment (2026-09-04): the shop's own peers, checked at load
+
+Everything above judges OTHER packages, on presence alone, because the
+catalog records peer names without ranges (§2). The shop's own
+`package.json` is the opposite case: it declares real ranges on five
+packages, three of them harness packages at `^0.1.1-rc.2`, and nothing
+enforced them. `dsh plugin add` does not, and the presence machinery
+answers a different question.
+
+The cost was measured the hard way: the harness moved from `0.1.1-rc.2`
+to `0.1.2-rc.1` under this repo overnight, a plugin path silently changed
+behaviour, and hours went into diagnosing what one line at load would
+have said.
+
+**The check.** At load, `ShopGateway` reads the ranges from its own
+shipped manifest (`ownPeerRanges`), reads the version each peer resolves
+at through the same profile anchor the presence check uses
+(`nodeVersionResolver` — `nodeResolver`'s own resolution, kept instead of
+collapsed to a boolean), and compares:
+
+```
+satisfies(found, range, { includePrerelease: true })
+```
+
+**`includePrerelease` is load-bearing.** The harness ships nothing but
+`-rc` versions, so strict semver rejects every one of them, including the
+version that is installed and works. Measured against `^0.1.1-rc.2`:
+
+| Version | strict | includePrerelease | What it is |
+|---|---|---|---|
+| `0.1.2-rc.1` | violates | satisfies | installed now, works fine |
+| `0.1.9-rc.3` | violates | satisfies | a later rc on the same minor line |
+| `0.1.1-rc.1` | violates | violates | older than pinned |
+| `0.2.0-rc.1` | violates | violates | minor-line move — the real breaking change |
+| `1.0.0` | violates | violates | major-line move |
+
+Strict mode would fire on the current install for a non-problem and turn
+every future rc bump into a false alarm. `includePrerelease` keeps
+discrimination on both sides, which is the same reason §3's no-verdict
+rule exists: one false warning teaches a reader to ignore every warning.
+
+**Warn once, loudly; never throw.** One message per load naming each
+mismatch with its declared range and the version found. Refusing to load
+would cost the user the entire shop, which is worse than a degraded one,
+so the check cannot fail a load: it is wrapped, and a repeated message is
+suppressed by a guard inside the check itself.
+
+**No verdict for a peer that cannot be read.** Absent, restricting
+`./package.json` in its exports, an unreadable manifest, a version that
+is not semver, a declared range semver cannot parse — each yields nothing
+for that peer while the others are still judged. Absence is not a version
+violation; §3's presence check is what covers it.
+
+**Pure core, impure shell**, as everywhere else: `peerVersionMismatches`
+and `peerVersionWarning` are pure and fixture-driven;
+`nodeVersionResolver` and `ownPeerRanges` are the only parts that touch
+the filesystem, and both arrive through injection seams
+(`resolvePeerVersion`, `peerRanges`) beside the existing `resolvePeer`.
+
+**Deliberately not built:** blocking the load, reporting the mismatch
+over the RPC or into the client UI, and checking ranges for catalog
+entries — the catalog has no ranges to check.

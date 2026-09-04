@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
-import { ownVersion } from '../own-version.ts'
+import { ownPeerRanges, ownVersion } from '../own-version.ts'
 import { catalogOrigins, loadCatalog, type LoadCatalogOptions } from './catalog.ts'
 import type { CatalogSnapshot } from './catalog.ts'
 import type { CatalogOrigin } from './origin.ts'
@@ -23,7 +23,14 @@ import { fetchLatestVersion } from './self-update.ts'
 import { detectSupervisor } from './supervisor.ts'
 import { readRepoPins, writeRepoPins, type RepoPinFs } from './repo-pins.ts'
 import { discoverProfile, ownedEntryIds, ownsEntryId, setUserLayerRow, setUserLayerRows } from './profile.ts'
-import { incompatibilityMap, nodeResolver, type PeerResolver } from './peers.ts'
+import {
+  createPeerVersionCheck,
+  incompatibilityMap,
+  nodeResolver,
+  nodeVersionResolver,
+  type PeerResolver,
+  type PeerVersionResolver,
+} from './peers.ts'
 
 // Re-exported so the boundary type is reachable from the package's public
 // ./types subpath; the typert generator refuses remote parameter types it
@@ -109,6 +116,12 @@ export interface ShopGatewayOptions {
   /** Test-only injection: answers whether a peer resolves. Production builds
    * one from the profile anchor. */
   resolvePeer?: PeerResolver
+  /** Test-only injection: answers which version a peer resolves at, for the
+   * load-time self-check. Production builds one from the profile anchor. */
+  resolvePeerVersion?: PeerVersionResolver
+  /** Test-only injection: the peer ranges the self-check judges against;
+   * production reads them from the shipped package.json. */
+  peerRanges?: Record<string, string>
 }
 
 /** `shop/installStart` result (§7.3): rejections are typed wire values with an
@@ -351,6 +364,39 @@ export class ShopGateway extends TypertRemoteService {
       // not resolve yet (the stub-ctx test constructions) has nothing to
       // wipe, and failing a boot over a missing wipe dir would be the worse
       // failure.
+    }
+    // The harness self-check, at load and only here: the shop declares real
+    // peer ranges on harness packages and nothing enforces them — `dsh plugin
+    // add` does not, and the catalog's presence check answers a different
+    // question (does it resolve?) about OTHER plugins. A harness that moved
+    // under this build gets one line naming it, which is what an afternoon of
+    // diagnosing a silently changed plugin path cost.
+    this.checkPeerVersions()
+  }
+
+  /**
+   * Warn once, at load, about any declared peer the harness provides outside
+   * its declared range. Advisory by construction: it cannot throw, and it
+   * never refuses the load — losing the whole shop is a worse outcome than
+   * running against a harness that moved.
+   */
+  private checkPeerVersions(): void {
+    try {
+      createPeerVersionCheck({
+        ranges: this.options.peerRanges ?? ownPeerRanges(),
+        resolve: this.options.resolvePeerVersion
+          ?? nodeVersionResolver(pathToFileURL(join(this.profileDirResolved(), 'cordis.yml')).href),
+        warn: message => {
+          const logger = (this.ctx as { logger?: { warn(message: string): void } }).logger
+          if (logger === undefined) console.warn(message)
+          else logger.warn(message)
+        },
+      })()
+    } catch {
+      // Swallows a missing profile anchor (a bare test construction resolves
+      // none) and an unreadable own manifest. Either way no verdict is
+      // formable, and silence is the documented answer for a fact we cannot
+      // read — never an accusation, and never a failed load.
     }
   }
 

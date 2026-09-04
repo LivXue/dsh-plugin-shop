@@ -122,6 +122,69 @@ describe('ShopGateway', () => {
     expect(result.ok).toBe(true)
   })
 
+  it('warns at load when the harness provides a peer outside the declared range', async () => {
+    // The whole point of the check: the mismatch is said once, at load, in the
+    // shop's own words — not diagnosed for hours from a path that silently
+    // changed behaviour.
+    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-peerversion-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
+    const warnings: string[] = []
+    const ctx = { get: () => undefined, reflect: { provide: () => {} }, logger: { warn: (m: string) => warnings.push(m) } } as never
+    new ShopGateway(ctx, {
+      profile: 'web', profileDir,
+      peerRanges: { '@deepseek-ai/dsh-app-boot': '^0.1.1-rc.2' },
+      resolvePeerVersion: () => '0.2.0-rc.1',
+    })
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain('@deepseek-ai/dsh-app-boot ^0.1.1-rc.2, found 0.2.0-rc.1')
+  })
+
+  it('loads silently when the harness satisfies every declared peer range', async () => {
+    // 0.1.2-rc.1 against ^0.1.1-rc.2 is what is installed today: silence.
+    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-peerversion-ok-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
+    const warnings: string[] = []
+    const ctx = { get: () => undefined, reflect: { provide: () => {} }, logger: { warn: (m: string) => warnings.push(m) } } as never
+    new ShopGateway(ctx, {
+      profile: 'web', profileDir,
+      peerRanges: { '@deepseek-ai/dsh-app-boot': '^0.1.1-rc.2' },
+      resolvePeerVersion: () => '0.1.2-rc.1',
+    })
+    expect(warnings).toEqual([])
+  })
+
+  it('gives no verdict for a declared peer that is installed nowhere', async () => {
+    // Absence is not a version violation — the presence check (peers.ts's
+    // incompatibilityMap) is what covers a missing peer. The resolver here is
+    // the real one; only the range table is injected, and it names a package
+    // that exists in no store.
+    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-peerversion-absent-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
+    const warnings: string[] = []
+    const ctx = { get: () => undefined, reflect: { provide: () => {} }, logger: { warn: (m: string) => warnings.push(m) } } as never
+    new ShopGateway(ctx, {
+      profile: 'web', profileDir,
+      peerRanges: { '@deepseek-ai/dsh-peer-installed-nowhere': '^1.0.0' },
+    })
+    expect(warnings).toEqual([])
+  })
+
+  it('loads silently against the harness this repo actually installs', async () => {
+    // The production path with nothing injected: the real declared ranges,
+    // read from the shipped package.json, against the real installed
+    // versions. A `createRequire` inside vitest carries pnpm's virtual store
+    // on its module.paths, so this resolves the same versions a profile
+    // would. If the harness under this repo ever moves off the declared
+    // line, this test failing IS the warning firing — read the message and
+    // decide whether the ranges or the install is wrong.
+    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-peerversion-live-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
+    const warnings: string[] = []
+    const ctx = { get: () => undefined, reflect: { provide: () => {} }, logger: { warn: (m: string) => warnings.push(m) } } as never
+    new ShopGateway(ctx, { profile: 'web', profileDir })
+    expect(warnings).toEqual([])
+  })
+
 })
 
 describe('ShopGateway.catalog', () => {
