@@ -23,6 +23,7 @@ import { fetchLatestVersion } from './self-update.ts'
 import { detectSupervisor } from './supervisor.ts'
 import { readRepoPins, writeRepoPins, type RepoPinFs } from './repo-pins.ts'
 import { discoverProfile, ownedEntryIds, ownsEntryId, setUserLayerRow, setUserLayerRows } from './profile.ts'
+import { identityKey } from '../shared/identity.ts'
 import {
   createPeerVersionCheck,
   incompatibilityMap,
@@ -680,10 +681,9 @@ export class ShopGateway extends TypertRemoteService {
     }
     const verdict = validateInstall(this.lastSnapshot, args)
     if (!verdict.ok) return { ok: false, code: verdict.code, detail: verdict.detail }
-    const entry = this.lastSnapshot.entries.find(e => e.name === args.name)
-    // validateInstall passed, so the entry exists; the guard keeps the type
-    // honest without asserting a state the validator never produces.
-    if (entry === undefined) return { ok: false, code: 'not-in-catalog', detail: `dsh-plugin-shop: ${args.name} is not in the catalog` }
+    // The validator resolved the row by identity. Re-finding it by name is
+    // what installed another repository's commit when names collided.
+    const entry = verdict.entry
     // The Host builds the spec itself: npm entries become `name@version`,
     // github entries become `github:owner/slug#commit` (subpackage entries
     // `github:owner/slug#commit&path:<subdir>`) — all from fields the
@@ -772,7 +772,7 @@ export class ShopGateway extends TypertRemoteService {
       // outdated honestly. A failed install leaves a pin behind, but the
       // manifest presence gate keeps it invisible.
       const pins = readRepoPins(this.pinFs, this.pinsPath())
-      writeRepoPins(this.pinFs, this.pinsPath(), { ...pins, [args.name]: args.version })
+      writeRepoPins(this.pinFs, this.pinsPath(), { ...pins, [identityKey(entry)]: entry.version })
     }
     this.installs.set(running.installId, running)
     this.installOrder.push(running.installId)

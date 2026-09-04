@@ -26,6 +26,62 @@ afterAll(() => {
   rmSync(shopHome, { recursive: true, force: true })
 })
 
+describe('two catalog entries share one name (G-1)', () => {
+  const aliceCommit = 'a'.repeat(40)
+  const bobCommit = 'b'.repeat(40)
+  const alice: CatalogEntry = {
+    name: 'dsh-foo', version: aliceCommit, integrity: aliceCommit, publishedAt: null,
+    repository: 'https://github.com/alice/dsh-foo', license: 'MIT',
+    tier: 'community', metadata: 'derived', source: 'github', repo: 'alice/dsh-foo',
+    added: '2026-08-25',
+  }
+  const bob: CatalogEntry = { ...alice, version: bobCommit, integrity: bobCommit, repo: 'bob/dsh-foo' }
+
+  function gatewayWithBoth(dir: string, dependencies: Record<string, string>): ShopGateway {
+    const bin = join(dir, 'fake-dsh')
+    writeFileSync(bin, ['#!/bin/sh', `echo "$1 $2 $3 $4 $5" >> "${join(dir, 'calls.log')}"`, 'exit 0', ''].join('\n'))
+    chmodSync(bin, 0o755)
+    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-dup-profile-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies }))
+    return new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [alice, bob], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      dshBin: bin,
+    })
+  }
+
+  it('spawns the identity that was asked for, not the first entry with the name', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-dup-install-'))
+    const gateway = gatewayWithBoth(dir, {})
+    const result = await gateway.install({
+      name: 'dsh-foo', version: bobCommit, acknowledged: true,
+      source: 'github', repo: 'bob/dsh-foo',
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const deadline = Date.now() + 5000
+    let terminal = gateway.installStatus({ installId: result.installId })
+    while (terminal.state === 'running' && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+      terminal = gateway.installStatus({ installId: result.installId })
+    }
+    const calls = readFileSync(join(dir, 'calls.log'), 'utf8')
+    expect(calls).toContain(`add github:bob/dsh-foo#${bobCommit}`)
+    expect(calls).not.toContain('alice/dsh-foo')
+    expect(JSON.parse(readFileSync(join(dir, 'cache/github-pins.json'), 'utf8')))
+      .toEqual({ 'github:bob/dsh-foo#': bobCommit })
+  })
+
+  it('refuses a name-only install request while two entries share the name', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-dup-ambiguous-'))
+    const gateway = gatewayWithBoth(dir, {})
+    const result = await gateway.install({ name: 'dsh-foo', version: bobCommit, acknowledged: true })
+    expect(result).toMatchObject({ ok: false, code: 'ambiguous-identity' })
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(existsSync(join(dir, 'calls.log'))).toBe(false)
+  })
+})
+
 function stubCtx(): never {
   return { get: () => undefined, reflect: { provide: () => {} } } as never
 }
@@ -920,7 +976,7 @@ describe('ShopGateway github entries', () => {
     }
     expect(terminal.state).toBe('done')
     expect(readFileSync(join(dir, 'calls.log'), 'utf8')).toContain(`plugin --profile web add github:someone/dsh-repo-plugin#${commit}`)
-    expect(JSON.parse(readFileSync(join(dir, 'cache/github-pins.json'), 'utf8'))).toEqual({ 'dsh-repo-plugin': commit })
+    expect(JSON.parse(readFileSync(join(dir, 'cache/github-pins.json'), 'utf8'))).toEqual({ 'github:someone/dsh-repo-plugin#': commit })
   })
 
   it('reports a github install by its pin, outdated when the catalog commit moved', async () => {
@@ -999,7 +1055,7 @@ describe('subpackage install spec', () => {
     }
     expect(terminal.state).toBe('done')
     expect(readFileSync(join(dir, 'calls.log'), 'utf8')).toContain(`plugin --profile web add github:someone/monorepo#${commit}&path:packages/sub-plugin`)
-    expect(JSON.parse(readFileSync(join(dir, 'cache/github-pins.json'), 'utf8'))).toEqual({ 'sub-plugin': commit })
+    expect(JSON.parse(readFileSync(join(dir, 'cache/github-pins.json'), 'utf8'))).toEqual({ 'github:someone/monorepo#packages/sub-plugin': commit })
   })
 })
 
@@ -1060,7 +1116,7 @@ describe('release-rescued tarball install', () => {
     }
     expect(terminal.state).toBe('done')
     expect(readFileSync(join(dir, 'calls.log'), 'utf8')).toContain(`plugin --profile web add ${TARBALL_URL}`)
-    expect(JSON.parse(readFileSync(join(dir, 'cache/github-pins.json'), 'utf8'))).toEqual({ 'dsh-rescued': tag })
+    expect(JSON.parse(readFileSync(join(dir, 'cache/github-pins.json'), 'utf8'))).toEqual({ 'github:owner/slug#': tag })
   })
 
   it('rejects tarball-integrity without spawning when the bytes do not match the recorded sha256', async () => {
