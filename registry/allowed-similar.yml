@@ -1,6 +1,18 @@
-# Package names close enough to a verified name to trip the typosquatting gate,
-# adjudicated by a human as legitimate. Listing a name here only clears the
+# Sources close enough to a verified name to trip the typosquatting gate,
+# adjudicated by a human as legitimate. Listing something here only clears the
 # similarity hold; it grants no trust tier.
 #
+# The unit differs per channel, because the identity does:
+#
+#   npm channel     the package name.
+#   GitHub channel  `owner/slug` — the repository, never the bundle name. A
+#                   bundle name is claimed by up to 14 repositories, so a
+#                   name-shaped clearance cleared every fork at once. A repo
+#                   clearance covers that repository's subpackages too.
+#
+# The repository a `verified.yml` row names needs no row here: a review binds
+# (repo, commit), so the reviewed identity is exempt from the hold already.
+#
 # - dsh-fs-tools
+# - good/dsh-fs-tool
 []
