@@ -3141,6 +3141,27 @@ git commit -m "chore(ci): pin every action to a commit SHA and enable Dependabot
 
 ### Task 14: The README-pin guard runs on the commits it exists for
 
+> **Outcome: DONE as written.** The premise was confirmed against both
+> workflows: `plugin.yml` ran only `pnpm -C packages/dsh-plugin-shop
+> test/typecheck/build`, and `daily.yml` filters on `registry/**` plus the
+> ROOT `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml` and its own
+> file — none of which a release commit touches. The two root READMEs matched
+> neither workflow, so a commit fixing only those triggered nothing at all.
+>
+> **Two corrections to the plan's text.** Its anchor for the new step quotes
+> `npm install -g @deepseek-ai/dsh@0.1.1-rc.2`, which has since moved to
+> `0.1.2-rc.1` (with a long comment about why); the real text was used. And the
+> step is not "three seconds": the root suite is 733 tests at about 8 s of
+> vitest duration and ~10.5 s wall, measured 2026-09-04, and the comment in the
+> workflow says that rather than the plan's figure.
+>
+> **One safety check the plan does not mention.** Root `pnpm test` is plain
+> `vitest run`, and the root config includes only
+> `registry/scripts/tests/**/*.test.ts` — so the new step cannot reach the
+> package e2e, which the `dsh` global install and `playwright install` steps
+> below it exist to set up. Had it been workspace-wide, this step would have
+> run the e2e before its own prerequisites. The workflow comment records it.
+
 **Files:**
 - Modify: `.github/workflows/plugin.yml:3-8` (the path filters) and `:22-23` (a root-suite step)
 - Test: `registry/scripts/tests/readme-pins.test.ts` (append)
