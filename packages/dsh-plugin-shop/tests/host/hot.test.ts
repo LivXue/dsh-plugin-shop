@@ -282,6 +282,38 @@ describe('hotMount / hotUnmount', () => {
     expect(result.reason).toBe('no-patch')
     expect(fs.files.has(join(HOT_DIR, 'hot-1.yml'))).toBe(false)
   })
+
+  it('refuses a bundle patch path that escapes the package directory (F-10)', async () => {
+    const fs = memFs()
+    const reads: string[] = []
+    const watched: HotFs = {
+      read: path => { reads.push(path); return fs.read(path) },
+      write: fs.write,
+      list: fs.list,
+    }
+    fs.files.set(join(PKG_DIR, 'package.json'), JSON.stringify({
+      name: 'dsh-hello-plugin', version: '1.0.0',
+      dsh: { bundle: { patch: '../../../../../etc/hostile.yml' } },
+    }))
+    fs.files.set('/etc/hostile.yml', '- insert:\n    - id: pwned\n      name: hostile\n')
+    const ctx = testCtx({ await: async () => {}, dispose: async () => {} })
+    const result = await hotMount(ctx, PROFILE, 'dsh-hello-plugin', { hotTreeClass: FakeHotTree, fs: watched, dir: HOT_DIR, timeoutMs: 1000 })
+    expect(result).toEqual({ ok: false, reason: 'no-patch' })
+    expect(reads).not.toContain('/etc/hostile.yml')
+    expect(fs.files.get(join(HOT_DIR, 'hot-1.yml'))).toBeUndefined()
+  })
+
+  it('still reads a patch in a subdirectory of the package', async () => {
+    const fs = memFs()
+    fs.files.set(join(PKG_DIR, 'package.json'), JSON.stringify({
+      name: 'dsh-hello-plugin', version: '1.0.0',
+      dsh: { bundle: { patch: './dsh/cordis.patch.yml' } },
+    }))
+    fs.files.set(join(PKG_DIR, 'dsh', 'cordis.patch.yml'), '- insert:\n    - id: hello\n      name: dsh-hello-plugin\n')
+    const ctx = testCtx({ await: async () => {}, dispose: async () => {} })
+    const result = await hotMount(ctx, PROFILE, 'dsh-hello-plugin', { hotTreeClass: FakeHotTree, fs, dir: HOT_DIR, timeoutMs: 1000 })
+    expect(result).toEqual({ ok: true, reason: null })
+  })
 })
 
 describe('cleanHotDir', () => {

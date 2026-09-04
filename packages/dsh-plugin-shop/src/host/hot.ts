@@ -29,7 +29,7 @@
  */
 
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { JSON_SCHEMA, Type, dump, load } from 'js-yaml'
 
@@ -270,9 +270,15 @@ export async function hotMount(
   // through the package's dsh field (defaulting to the conventional name).
   const packageDir = join(profileDir, 'node_modules', packageName)
   const dsh = readPkgDsh(fs, packageDir)
+  const patchFile = resolve(packageDir, dsh?.patch ?? 'cordis.patch.yml')
+  const inside = relative(packageDir, patchFile)
+  if (inside === '' || inside.startsWith('..') || isAbsolute(inside)) {
+    ctx.logger?.warn(`hot-mount ${packageName}: the declared bundle patch is outside the package directory — restart will activate it`)
+    return { ok: false, reason: 'no-patch' }
+  }
   let patchText: string
   try {
-    patchText = fs.read(join(packageDir, dsh?.patch ?? 'cordis.patch.yml'))
+    patchText = fs.read(patchFile)
   } catch {
     ctx.logger?.warn(`hot-mount ${packageName}: no patch file to mount — restart will activate it`)
     return { ok: false, reason: 'no-patch' }
