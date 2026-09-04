@@ -297,6 +297,16 @@ describe('startUninstall', () => {
     )
   })
 
+  it('refuses a target carrying shell punctuation, whatever built it', () => {
+    // dsh itself invokes pnpm with shell mode on Windows, where these
+    // characters change the command line that actually runs.
+    for (const spec of ['dsh-x@1.0.0 & calc.exe', 'dsh-x@1.0.0|calc', 'dsh-x@1.0.0"', 'dsh-x@$(calc)', 'dsh-x@1.0.0\n', 'dsh-{{x}}@1.0.0']) {
+      expect(() => startInstall({ profile: 'web', spec }), spec).toThrow(
+        /refusing to spawn with an unsafe operand/,
+      )
+    }
+  })
+
   it('spawns dsh plugin remove and reports done with needsRestart', async () => {
     const bin = fixtureDsh(0)
     const uninstall = startUninstall({ profile: 'web', name: 'dsh-hello-plugin', dshBin: bin })

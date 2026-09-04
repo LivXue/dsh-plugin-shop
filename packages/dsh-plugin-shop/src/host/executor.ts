@@ -183,6 +183,13 @@ function dshScript(): string | null {
   return cachedScript
 }
 
+/** Shell punctuation that must never reach the downstream CLI as an operand.
+ * The downstream dsh invokes pnpm with shell mode on Windows, where these
+ * characters alter the command line. `&` is intentionally allowed here: the
+ * legitimate monorepo spec uses it as `&path:<subdir>`, and catalog.ts
+ * validates each component before it reaches this layer. */
+const UNSAFE_TARGET = /[\s"'`|<>^$();\\{}]|[\u0000-\u001f\u007f]/
+
 /** Run one `dsh plugin --profile <profile> <verb> <target>` and track it.
  * Never rolls back; a failure surfaces stderr verbatim plus the recovery hint
  * (§10). The shop never passes build-script flags: `allowBuilds` stays the
@@ -215,6 +222,9 @@ function spawnPluginCli(options: {
   const target = argv[1]
   if (target === undefined || target.startsWith('-')) {
     throw new Error(`dsh-plugin-shop: refusing to spawn with a flag-like operand: ${target ?? '(none)'}`)
+  }
+  if (UNSAFE_TARGET.test(target)) {
+    throw new Error(`dsh-plugin-shop: refusing to spawn with an unsafe operand: ${JSON.stringify(target)}`)
   }
   const installId = randomUUID()
   const log: string[] = []
