@@ -30,6 +30,19 @@ describe('what CI publishes to Pages', () => {
     expect(fromStep).not.toMatch(/\n\s+path: dist\n/)
   })
 
+  it('carries a tolerated search shortfall across the harvest handoff', () => {
+    // Two files, one contract, and the reason it matters is easy to miss: CI
+    // always passes --harvest-from, so build.ts's OWN searchByKeywords call
+    // never runs there. The shortfall is found by classify.ts, and unless it
+    // rides the handoff the published report cannot say this build is missing
+    // packages. The write and the read have to move together.
+    expect(read('registry/scripts/src/classify.ts'))
+      .toContain('JSON.stringify({ candidates, rejections, shortfalls })')
+    expect(read('registry/scripts/src/build.ts')).toContain('parsed.shortfalls')
+    // And it reaches the artifact a reader actually sees.
+    expect(read('registry/scripts/src/build.ts')).toContain('npm search shortfall')
+  })
+
   it('hands the build the harvest path the classifier writes', () => {
     // Two files, one contract: classify.ts writes the handoff and daily.yml
     // tells build.ts where to read it. A silent mismatch would make the build
