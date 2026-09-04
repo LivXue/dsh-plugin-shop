@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { valid as semverValid } from 'semver'
 import { parse } from 'yaml'
 import { z } from 'zod'
 import type { MarketRow } from './markets.ts'
@@ -39,7 +40,15 @@ const repoFullName = z.string().min(1).max(140).regex(REPO_FULL_NAME, 'must be a
 const verifiedSchema = z.array(z.object({
   name: npmName,
   repo: repoFullName.optional(),
-  reviewedVersion: z.string().min(1).optional(),
+  // Canonical semver, checked here so the build fails with the FILE's name
+  // rather than dying inside tier.ts with a bare `Invalid Version`. The
+  // canonical form is required, not merely a parseable one: `assignTier`
+  // compares this string to the published version exactly, so `v1.2.0` would
+  // load and then never match anything.
+  reviewedVersion: z.string().min(1).refine(
+    value => semverValid(value) === value,
+    { message: 'must be a canonical semver version — no leading v, no build metadata, e.g. 1.2.0' },
+  ).optional(),
   reviewedCommit: z.string().min(1).optional(),
   reviewedSha256: z.string().min(1).optional(),
   reviewer: z.string().min(1),
@@ -238,6 +247,19 @@ export function parseRegistryConfig(
   const firstSeen = new Map<string, string>()
   for (const row of parseFile('first-seen.yml', input.firstSeen, firstSeenSchema)) {
     setUnique(firstSeen, 'first-seen.yml', row.name, row.added)
+  }
+  // A name cannot be reviewed and excluded at once. `gate` checks denial
+  // before anything else, so the denial wins and the review becomes dead text
+  // nobody notices — including the reviewer who wrote it. Both keyspaces are
+  // compared case-folded, because a repository review and a repository denial
+  // are both written `owner/slug`.
+  const deniedKeys = new Set([...denied.keys()].map(key => key.toLowerCase()))
+  for (const key of [...verified.keys(), ...verifiedNames]) {
+    if (deniedKeys.has(key.toLowerCase())) {
+      throw new Error(
+        `verified.yml/denied.yml: ${key} is both reviewed and denied; the denial wins silently, so remove one of the two rows`,
+      )
+    }
   }
   return {
     verified, verifiedNames, denied, deniedRepos, allowedSimilar, allowedSimilarRepos,
