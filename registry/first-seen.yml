@@ -826,6 +826,8 @@
   added: 2026-09-04
 - name: "@cxx42/dsh-tool-notes"
   added: 2026-09-04
+- name: "@cxxl/dsh-sqlite"
+  added: 2026-09-04
 - name: "@cxyhhhhh/dsh-qqbot"
   added: 2026-08-28
 - name: "@cxzrdxy/dsh-file-explorer"
@@ -5644,6 +5646,8 @@
   added: 2026-08-28
 - name: "@taptap/instant-games-open-mcp"
   added: 2026-09-04
+- name: "@tawny-labs/dsh-client-ui-theme-presets"
+  added: 2026-09-04
 - name: "@teamx-ai/dsh-plugin-bundle"
   added: 2026-08-28
 - name: "@tecfancy/dsh-dock-host"
@@ -8712,6 +8716,8 @@
   added: 2026-09-04
 - name: "dsh-auto-exit"
   added: 2026-09-02
+- name: "dsh-auto-flow"
+  added: 2026-09-04
 - name: "dsh-auto-gearbox"
   added: 2026-09-04
 - name: "dsh-auto-guard"
@@ -13522,6 +13528,8 @@
   added: 2026-08-31
 - name: "dsh-git-ai"
   added: 2026-08-31
+- name: "dsh-git-auth"
+  added: 2026-09-04
 - name: "dsh-git-badge"
   added: 2026-09-01
 - name: "dsh-git-branch"
@@ -26172,6 +26180,8 @@
   added: 2026-09-04
 - name: "everyconnect"
   added: 2026-09-01
+- name: "evidence-video-workflow"
+  added: 2026-09-04
 - name: "evo-subagent"
   added: 2026-08-25
 - name: "exam-paper-plugin"
@@ -26612,6 +26622,8 @@
   added: 2026-09-04
 - name: "memo-notebook"
   added: 2026-09-01
+- name: "memobranch"
+  added: 2026-09-04
 - name: "memoripo"
   added: 2026-09-04
 - name: "memory-auditor"
