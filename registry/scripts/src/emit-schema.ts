@@ -1,4 +1,5 @@
 import { writeFileSync } from 'node:fs'
+import { basename } from 'node:path'
 import { z } from 'zod'
 import { catalogSectionSchema } from './schema.ts'
 
@@ -19,7 +20,16 @@ export function renderJsonSchema(): string {
   return `${JSON.stringify(schema, null, 2)}\n`
 }
 
-if (process.argv[1]?.endsWith('emit-schema.ts') === true) {
+// The write — the only real work here — belongs to the entry point alone,
+// never to an import: schema.test.ts imports renderJsonSchema above to check
+// the committed file is fresh, and must not rewrite it on the way past. This
+// module drew that positive line first and the other four entry points now
+// match it; the comparison is EXACT because `endsWith('emit-schema.ts')` also
+// admits `reemit-schema.ts`. `node -e` leaves process.argv[1] undefined, so
+// basename('') matches no name and a bare import writes nothing.
+// registry/scripts/tests/strip-types.test.ts derives the entry-point list and
+// holds every member of it to both halves of this.
+if (basename(process.argv[1] ?? '') === 'emit-schema.ts') {
   writeFileSync(SCHEMA_PATH, renderJsonSchema())
   process.stdout.write(`wrote ${SCHEMA_PATH}\n`)
 }
