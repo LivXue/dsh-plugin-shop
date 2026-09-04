@@ -74,9 +74,33 @@ export interface Artifacts {
  * author supplied. An unescaped `|` would split the cell into extra columns
  * and an unescaped newline would break the row into extra lines, letting
  * that text forge or corrupt neighboring rows in the published report.
+ *
+ * Control characters and bidi formatting are neutralised for the same reason.
+ * They are inert in a browser rendering `text/markdown`, but the report's real
+ * reader is a maintainer in a terminal: U+001B opens an escape sequence — an
+ * OSC-8 hyperlink hides an arbitrary target behind harmless-looking text — and
+ * U+202E reverses the rest of the line, so a rejection row can be made to read
+ * as another package's. Each one becomes U+FFFD rather than disappearing,
+ * because a reader should be able to see that something was removed. The list
+ * is closed — C0, DEL, C1, and the bidi marks and isolates — so ordinary
+ * non-ASCII text is untouched.
+ *
+ * Order is load-bearing: the newline collapse runs FIRST, so a real line break
+ * still becomes a space instead of a replacement character.
+ *
+ * Markdown link syntax is deliberately NOT escaped. It renders as visible text
+ * in the run-artifact viewer, and escaping brackets would mangle the zod paths
+ * our own details carry (`dsh.catalog.capabilities[0]`).
+ *
+ * Every affected code point is written as a `\u` escape here and in the tests:
+ * a literal U+202E in a source file is invisible to a reviewer, which is the
+ * problem being fixed.
  */
 function escapeCell(value: string): string {
-  return value.replace(/\|/g, '\\|').replace(/\r\n|\r|\n/g, ' ')
+  return value
+    .replace(/\|/g, '\\|')
+    .replace(/\r\n|\r|\n|\t/g, ' ')
+    .replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '\ufffd')
 }
 
 /**

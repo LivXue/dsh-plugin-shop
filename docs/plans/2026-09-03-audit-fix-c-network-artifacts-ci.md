@@ -2294,6 +2294,25 @@ git commit -m "fix(stars): key the sidecar by accepted entry and serialize it in
 
 ### Task 10: Report cells neutralise controls and bidi formatting
 
+> **Outcome: DONE as written.** Every affected code point is `\u` escape text
+> in both the source and the tests, and a check confirmed no raw control or
+> bidi character entered the repository — the tool refused the first attempt to
+> paste them, which is the reviewer-invisibility problem this task is about,
+> demonstrated.
+>
+> The "order is load-bearing" claim in the doc comment is mutation-checked:
+> swapping the newline collapse and the control strip turns a real line break
+> into U+FFFD and two tests go red, so the comment is a tested statement rather
+> than prose.
+>
+> **The client half is plan D's, not this task's** — a catalog `summary.en`
+> reaches a terminal UI the same way a report cell reaches a terminal.
+> `docs/plans/2026-09-03-audit-fix-d-host-client.md:440` has the consumer zod
+> refusing a `name` that carries a control character. Worth noting when that
+> task is reached: its regex is `[^\u0000-\u001f\u007f]+`, which covers C0
+> and DEL but not C1 or the bidi marks and isolates that this task found
+> necessary here, and it guards `name` rather than the summary text.
+
 **Files:**
 - Modify: `registry/scripts/src/emit.ts:67-79` (`escapeCell`)
 - Test: `registry/scripts/tests/emit.test.ts`
