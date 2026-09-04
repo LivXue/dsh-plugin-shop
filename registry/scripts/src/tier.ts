@@ -1,16 +1,22 @@
+import { firstSeenKey } from './identity.ts'
 import type { Accepted } from './gate.ts'
 import type { RepoAccepted } from './repo-gate.ts'
 import type { RegistryConfig } from './config.ts'
 import type { Entry } from './types.ts'
 
 /**
- * The first-seen date for one listed name, failing loudly when the file has
- * no row for it. A listed entry without a date would silently omit a field
- * every consumer of `added` expects.
+ * The first-seen date for one listed IDENTITY, failing loudly when the map
+ * has no row for it. A listed entry without a date would silently omit a
+ * field every consumer of `added` expects.
+ *
+ * The key comes from {@link firstSeenKey}: the npm name, or the repository's
+ * lowercased `owner/slug`. `runPipeline` resolves a first appearance to the
+ * build date before calling either tier function, so a throw here means a
+ * caller skipped that resolution.
  */
-function firstSeenOf(config: RegistryConfig, name: string): string {
-  const added = config.firstSeen.get(name)
-  if (added === undefined) throw new Error(`first-seen.yml: ${name} has no first-seen row`)
+function firstSeenOf(config: RegistryConfig, key: string): string {
+  const added = config.firstSeen.get(key)
+  if (added === undefined) throw new Error(`first-seen.yml: ${key} has no first-seen row`)
   return added
 }
 
@@ -103,7 +109,7 @@ export function assignRepoTier(accepted: RepoAccepted, config: RegistryConfig): 
     repo: repo.repo,
     ...(repo.subdir !== undefined ? { subdir: repo.subdir } : {}),
     ...(release !== undefined ? { tarball: { url: release.url, sha256: release.sha256 } } : {}),
-    added: firstSeenOf(config, repo.name),
+    added: firstSeenOf(config, firstSeenKey({ source: 'github', name: repo.name, repo: repo.repo })),
   }
   // A release-pinned entry is reviewed by its tarball sha256: the tag is
   // display only — a mutable ref an author can re-point at different content
