@@ -322,6 +322,11 @@ export function starsOf(entry: CatalogEntry, stars: Record<string, number>): num
   return stars[key]
 }
 
+/** One collator for the whole shelf. Passing an options object to
+ * localeCompare creates a collator per comparison, which dominates the sort
+ * for a catalog with thousands of entries. */
+const NAME_COLLATOR = new Intl.Collator(undefined, { sensitivity: 'base' })
+
 /** Sort the shelf: stars descending, un-starred entries last, name ascending
  * (case-insensitive) on ties (spec 2026-08-26-github-stars-design.md D1).
  * Display-time only — the catalog's own name sort is untouched. */
@@ -332,7 +337,7 @@ export function sortByStars(entries: CatalogEntry[], stars: Record<string, numbe
   return [...entries].sort((a, b) => {
     const byStars = count(b) - count(a)
     if (byStars !== 0) return byStars
-    return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+    return NAME_COLLATOR.compare(a.name, b.name)
   })
 }
 

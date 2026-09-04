@@ -929,9 +929,17 @@ export function ShopTab(props: ShopTabProps): ReactNode {
       || (!isShopLike(entry.name) && (entry.repo === undefined || !isShopLike(entry.repo))))
   }, [catalogState])
 
+  // Sort once for a loaded catalog, then filter that stable ordering. A
+  // filtered-list sort repeated the full comparator work on every keystroke.
+  const stars = useMemo(
+    () => (catalogState.kind === 'ready' ? catalogState.result.stars : {}),
+    [catalogState],
+  )
+  const sortedBrowsable = useMemo(() => sortByStars(browsable, stars), [browsable, stars])
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    return browsable.filter(entry => {
+    return sortedBrowsable.filter(entry => {
       if (category === 'installed') {
         if (!installedByKey.has(entryKey(entry))) return false
       } else if (category !== null && categoryKey(entry) !== categoryLocaleKey(category)) {
@@ -944,14 +952,8 @@ export function ShopTab(props: ShopTabProps): ReactNode {
         || summaryEn.toLowerCase().includes(q)
         || summaryZh.toLowerCase().includes(q)
     })
-  }, [browsable, query, category, installedByKey])
+  }, [sortedBrowsable, query, category, installedByKey])
   filteredLenRef.current = filtered.length
-
-  // The shelf sorts by GitHub stars: the most-starred entries fill the first
-  // batch, so a fresh visitor sees what the community uses most (§D1). The
-  // stars sidecar is keyed by name; entries without a star count sort last.
-  const stars = catalogState.kind === 'ready' ? catalogState.result.stars : {}
-  const sorted = useMemo(() => sortByStars(filtered, stars), [filtered, stars])
 
   // The sentinel that grows the shelf: when the last rendered card's footer
   // comes within a screen and a half of the viewport, the window widens by
@@ -971,7 +973,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     return () => observer.disconnect()
   }, [incremental, visibleCount, filtered.length])
 
-  const visible = incremental ? sorted.slice(0, visibleCount) : sorted
+  const visible = incremental ? filtered.slice(0, visibleCount) : filtered
 
   // One button per category plus All; each shows how many of the browsable
   // (shop-like-excluded) entries carry that category.

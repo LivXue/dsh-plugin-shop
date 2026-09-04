@@ -341,6 +341,30 @@ describe('sortByStars', () => {
   })
 })
 
+describe('sortByStars cost (G-5)', () => {
+  it('sorts 9,400 entries well inside a keystroke budget', () => {
+    const entries: CatalogEntry[] = Array.from({ length: 9400 }, (_, i) => ({
+      ...entry,
+      name: `dsh-plugin-${(i * 7919) % 9400}`,
+    }))
+    const stars: Record<string, number> = Object.create(null)
+    for (const [i, candidate] of entries.entries()) {
+      if (i % 3 === 0) stars[candidate.name] = (i * 31) % 5000
+    }
+    const runs = 5
+    const started = performance.now()
+    for (let run = 0; run < runs; run += 1) sortByStars(entries, stars)
+    const perRun = (performance.now() - started) / runs
+    expect(perRun).toBeLessThan(60)
+  })
+
+  it('still tiebreaks case-insensitively on the name', () => {
+    const a = { ...entry, name: 'Beta' }
+    const b = { ...entry, name: 'alpha' }
+    expect(sortByStars([a, b], {}).map(candidate => candidate.name)).toEqual(['alpha', 'Beta'])
+  })
+})
+
 describe('starsOf', () => {
   it('keys a github entry by its repo and an npm entry by its name', () => {
     const gh = { ...entry, name: 'dsh-popular', source: 'github' as const, repo: 'someone/dsh-popular' }
