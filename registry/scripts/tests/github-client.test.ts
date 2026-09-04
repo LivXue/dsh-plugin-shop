@@ -7,7 +7,8 @@ import { GITHUB_REQUEST_TIMEOUT_MS, MAX_TARBALL_BYTES, MAX_THROWN_FRACTION, MIN_
 import { parseRepoState, serializeRepoState } from '../src/repo-state.ts'
 import type { RepoState } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
-import { headersThenSlowBody, headersThenStalledBody, slowBodyBytes } from './stalling-fetch.ts'
+import { FetchTimeoutError } from '../src/npm-client.ts'
+import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody, slowBodyBytes } from './stalling-fetch.ts'
 
 const sleep = async (_ms: number) => {}
 const commit = 'b'.repeat(40)
@@ -1729,6 +1730,55 @@ describe('body deadlines', () => {
     }
   })
 
+  it('still calls a genuinely unreadable manifest body unreadable', async () => {
+    // The other side of the readManifest rethrow: only a DEADLINE is rethrown.
+    // A body that really did arrive broken is still the author's `no-manifest`
+    // — widening that rethrow to every error would silently turn a real
+    // verdict into a transient retry, forever.
+    const fetchImpl = routeBody(
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json',
+      headersThenBodyError(new Error('socket hang up')),
+      releaseRoutes(),
+    )
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token', false, 2000)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.code).toBe('no-manifest')
+      expect(result.detail).toBe('package.json was unreadable.')
+    }
+  })
+
+  it('does not multiply the tarball deadline by the retry ladder', async () => {
+    // 300s is defensible for ONE attempt and indefensible for four. fetchRobust
+    // retries a throw four times with backoff, so a stalled asset HOST -- the
+    // CI egress allowlist this module's own catch comment names, where
+    // api.github.com is permitted and the asset's separate redirect host is
+    // not -- cost 4 x 300s + 14s backoff = 21 minutes per repository. Measured
+    // against the live state file: 303 of 13,120 candidates carry a release,
+    // so a 2000-repo run puts ~46 on this path, ~243 minutes at
+    // REPO_CONCURRENCY 4 -- twice the whole job bound, spent on an advisory
+    // rescue probe that degrades to "no release" anyway.
+    let assetCalls = 0
+    const routes = releaseRoutes()
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      if (text.startsWith(assetUrl)) {
+        assetCalls += 1
+        return new Promise<Response>(() => {})
+      }
+      for (const [prefix, response] of Object.entries(routes)) {
+        if (text.startsWith(prefix)) return response
+      }
+      throw new Error(`unrouted url: ${text}`)
+    }) as unknown as typeof fetch
+    const started = Date.now()
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token', true, 2000, 60)
+    expect(assetCalls).toBe(1)
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.candidates[0]?.release).toBeUndefined()
+    expect(Date.now() - started).toBeLessThan(1000)
+  })
+
   it('never turns a stalled subpackage-tree BODY into a permanent no-manifest verdict', async () => {
     // The same trap one function over. A swallowed deadline on the git/trees
     // read makes a monorepo look like it has no subpackages, and a root with
@@ -1777,5 +1827,19 @@ describe('body deadlines', () => {
     // fetches it again rather than carrying a verdict it never earned.
     expect(result.nextState['s/stalled']).toBeUndefined()
     expect(Date.now() - started).toBeLessThan(5000)
+  })
+})
+
+describe('a deadline is never relabelled as a malformed body', () => {
+  it('says the search stalled, not that GitHub sent something that is not JSON', async () => {
+    // Before the deadline reached bodies this could not happen; now it can.
+    // Throwing is right — a search that cannot complete must abort the harvest
+    // rather than publish a short ecosystem — but "answered 200 with a body
+    // that is not JSON" sends an operator hunting a proxy error page while the
+    // truth is that GitHub stalled and our own clock ran out.
+    const expiry = new FetchTimeoutError('github request exceeded 30000ms')
+    const fetchImpl = headersThenBodyError(expiry)
+    await expect(searchReposByTopic(fetchImpl, sleep, 'token')).rejects.toThrow('exceeded 30000ms')
+    await expect(searchReposByTopic(fetchImpl, sleep, 'token')).rejects.not.toThrow('not JSON')
   })
 })

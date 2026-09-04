@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
-import { headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
+import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
 
 describe('HARVEST_KEYWORDS', () => {
   it('leads with the ecosystem keyword and adds the harness keyword, neither branded', () => {
@@ -1273,5 +1273,19 @@ describe('every network module bounds its requests with withTimeout', () => {
         ).toBe(true)
       }
     }
+  })
+})
+
+describe('a deadline is never relabelled as a malformed body', () => {
+  it('says the npm search stalled, not that npm sent something that is not JSON', async () => {
+    // The twin of github-client's search reader, and the same fix: this module
+    // is where the deadline is built, so a wrong reason here is the one an
+    // operator is least likely to doubt.
+    const expiry = new FetchTimeoutError('registry request exceeded 30000ms')
+    const fetchImpl = headersThenBodyError(expiry)
+    await expect(searchByKeywords(fetchImpl, async (_ms: number) => {}, undefined, undefined, 50))
+      .rejects.toThrow('exceeded 30000ms')
+    await expect(searchByKeywords(fetchImpl, async (_ms: number) => {}, undefined, undefined, 50))
+      .rejects.not.toThrow('not JSON')
   })
 })

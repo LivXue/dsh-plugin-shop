@@ -40,9 +40,13 @@ export const STARS_REQUEST_TIMEOUT_MS = 30_000
  *
  * Ten minutes is far above a healthy run (80 sequential requests answering in
  * a second or two is ~2-3 minutes, with room for the catalog to double) and
- * far below what the harvest needs. With classify's two 15-minute calls, the
- * advisory steps cap at 40 of the job's 120 minutes, leaving 80 for the
- * harvest that actually produces the catalog.
+ * far below what the harvest needs.
+ *
+ * As with classify, the real cap is this plus one {@link
+ * STARS_REQUEST_TIMEOUT_MS}, because the check cannot interrupt an in-flight
+ * request: ~10.5 minutes. Together with classify's true 50, the advisory steps
+ * cap near 60 of the job's 120 minutes rather than the 40 an earlier version
+ * of this comment claimed, leaving ~60 for the harvest.
  */
 export const STARS_BUDGET_MS = 10 * 60_000
 
@@ -74,7 +78,9 @@ export async function fetchStarCounts(
 ): Promise<StarFetchResult> {
   const {
     token, fetchImpl = fetch, sleep = defaultSleep,
-    timeoutMs = STARS_REQUEST_TIMEOUT_MS, budgetMs = STARS_BUDGET_MS, now = Date.now,
+    timeoutMs = STARS_REQUEST_TIMEOUT_MS, budgetMs = STARS_BUDGET_MS,
+    // A duration, so a monotonic clock: an NTP step must not expire it.
+    now = () => performance.now(),
   } = options
   // Stars are advisory and every failure mode already ends in `skipped`; the
   // deadline is what makes a stalled GraphQL endpoint one of those failure

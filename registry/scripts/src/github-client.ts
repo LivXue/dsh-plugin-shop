@@ -284,7 +284,13 @@ async function readSearchBody(
   let parsed: unknown
   try {
     parsed = await response.json()
-  } catch {
+  } catch (error) {
+    // A deadline is not a malformed body. Both throw, and throwing is right
+    // here — a search that cannot complete must abort the harvest rather than
+    // publish a short ecosystem — but the REASON has to be true: "answered 200
+    // with a body that is not JSON" sends an operator hunting a proxy error
+    // page while GitHub is simply stalled and our own clock ran out.
+    if (error instanceof FetchTimeoutError) throw error
     // Same rule as npm's search: a 200 that is not JSON is a loud failure,
     // not a zero-result page.
     throw new Error(`${what} answered 200 with a body that is not JSON`)
@@ -500,7 +506,21 @@ async function fetchLatestReleaseTarball(
     // The asset alone gets the larger bound: the two requests above read a
     // few hundred bytes of GitHub's own JSON, and lending them 300s would
     // hand a stalled metadata call ten times the budget it needs.
-    const assetResponse = await fetchRobust(asset, fetchImpl, sleep, token, tarballTimeoutMs)
+    //
+    // And it deliberately does NOT go through fetchRobust. That ladder retries
+    // a throw four times with backoff, which is right for a few hundred bytes
+    // over a flaky h2 connection and ruinous at 300s an attempt: a stalled
+    // asset host -- the CI egress allowlist the catch below names, where
+    // api.github.com is permitted and the asset's separate redirect host is
+    // not -- cost 4 x 300s + 14s = 21 minutes per repository. Against the live
+    // state file, 303 of 13,120 candidates carry a release, so a 2000-repo run
+    // puts ~46 on this path: ~243 minutes at REPO_CONCURRENCY 4, twice the
+    // whole job bound, for a probe that degrades to "no release" anyway. One
+    // bounded attempt costs at most 5 minutes, so the same total is ~58 --
+    // still the largest single thing the harvest can spend on advisory data,
+    // and the place to put an aggregate budget if it is ever seen for real.
+    // fetchWithRetry still absorbs a 429, which answers immediately.
+    const assetResponse = await fetchWithRetry(asset, withTimeout(fetchImpl, tarballTimeoutMs, 'github'), sleep, token)
     if (!assetResponse.ok) return null
     const bytes = await readTarballBody(assetResponse)
     if (bytes === null) return null

@@ -136,7 +136,11 @@ interface SearchBody {
 async function readSearchBody(response: Response, query: string, from: number): Promise<SearchBody> {
   try {
     return await response.json() as SearchBody
-  } catch {
+  } catch (error) {
+    // A deadline is not a malformed body — and this module is where the
+    // deadline is built, so a wrong reason here is the one an operator is
+    // least likely to doubt. Same rethrow as github-client's twin reader.
+    if (error instanceof FetchTimeoutError) throw error
     throw new Error(`npm search for ${query} at from=${from} answered 200 with a body that is not JSON`)
   }
 }
@@ -217,6 +221,11 @@ function registryUrl(registry: string, path: string): string {
  * abort actually arrives. Aborting a request that already completed is a
  * no-op, and `Promise.race` keeps a handler on the loser, so a late abort
  * raises no unhandled rejection.
+ *
+ * One consequence of the unref, noted rather than chased: in a TEST an unref'd
+ * timer is the only thing keeping a stalled request alive, so those tests lean
+ * on vitest holding the process open. Production is unaffected — undici holds
+ * a ref'd socket for the request the deadline is racing.
  *
  * The abort REASON is the {@link FetchTimeoutError} itself, so a deadline that
  * lands mid-body surfaces at the reader as that same error instance rather

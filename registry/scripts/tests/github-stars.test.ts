@@ -194,6 +194,36 @@ describe('the stars step is bounded in aggregate', () => {
     expect(result.skipped.some(entry => entry.includes('budget'))).toBe(true)
   })
 
+  it('uses STARS_BUDGET_MS when no budget is handed in', async () => {
+    // The production wiring, which every other budget test here bypasses by
+    // injecting both seams at once.
+    let clock = 0
+    let calls = 0
+    const fetchImpl = (async () => {
+      calls += 1
+      clock += 15 * MINUTE
+      return new Promise<Response>(() => {})
+    }) as unknown as typeof fetch
+    const result = await fetchStarCounts(Array.from({ length: 250 }, (_, i) => repo(i)), {
+      ...options, fetchImpl, now: () => clock, sleep: async (_ms: number) => {}, timeoutMs: 20,
+    })
+    // One batch asked, then the default ten-minute budget is spent.
+    expect(calls).toBe(1)
+    expect(result.skipped).toHaveLength(250)
+    expect(result.skipped.some(entry => entry.includes('budget'))).toBe(true)
+  })
+
+  it('uses a real clock when none is handed in', async () => {
+    let calls = 0
+    const fetchImpl = (async () => { calls += 1; return new Promise<Response>(() => {}) }) as unknown as typeof fetch
+    const result = await fetchStarCounts(Array.from({ length: 250 }, (_, i) => repo(i)), {
+      ...options, fetchImpl, sleep: async (_ms: number) => {}, timeoutMs: 40, budgetMs: 60,
+    })
+    expect(calls).toBeGreaterThanOrEqual(1)
+    expect(calls).toBeLessThan(5)
+    expect(result.skipped).toHaveLength(250)
+  })
+
   it('leaves a healthy run untouched', async () => {
     // The other side: a budget that fired on a healthy run would drop star
     // counts silently, which is already a supported outcome and so would go

@@ -35,15 +35,21 @@ jobs:
     #
     # The two advisory steps now cap their own sums, because both sit in front
     # of work that matters and neither is worth what it could cost: classify
-    # runs BEFORE build:catalog and bounds each runBatches call at 15 minutes
-    # (it makes two, so 30), and the stars fetch runs before every artifact
-    # write and bounds itself at 10. So ~40 minutes here is the worst the
-    # optional data can take, leaving ~80 for the harvest.
+    # runs BEFORE build:catalog and bounds each runBatches call at 15 minutes,
+    # and the stars fetch runs before every artifact write and bounds itself at
+    # 10. Neither cap is the constant, though: a budget check cannot interrupt
+    # an in-flight request, so each overruns by one request deadline. Classify
+    # is 15 + 10 = 25 per call and it makes two, so 50; stars is 10 + 0.5. The
+    # optional data can therefore take ~60 of these 120 minutes, not ~40,
+    # leaving ~60 for the harvest.
     #
     # The harvest is what this bound is really for, and it is honest about what
     # it buys. Measured: one stalled repository costs four bounded attempts
-    # plus backoff, 134s, so at REPO_CONCURRENCY = 4 against a 2000 budget a
-    # total GitHub stall drains only ~212 repositories inside 120 minutes --
+    # plus backoff, 134s -- except on the release-rescue path, where the asset
+    # download's own 300s deadline puts it near 7.5 minutes (it is one attempt,
+    # not four: see TARBALL_REQUEST_TIMEOUT_MS). At REPO_CONCURRENCY = 4
+    # against a 2000 budget a total GitHub stall drains only ~212 repositories
+    # inside 120 minutes --
     # and MAX_THROWN_FRACTION, which would otherwise stop the build loudly, is
     # evaluated only once the queue has drained, so it is unreachable in that
     # state. Under a pool-wide stall the run still dies here with no report, no

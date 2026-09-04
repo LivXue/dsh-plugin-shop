@@ -269,17 +269,79 @@ describe('the classification step is bounded in aggregate', () => {
     // classification alone would consume the run and the catalog would never
     // be built. Losing 20 names to a discard is the supported outcome; losing
     // the day's catalog is not.
-    const NAMES = 100
+    // 260 names is 13 batches, so CONCURRENCY = 4 leaves at least two waves
+    // entirely past the budget. That is what pins the `break`: `continue`
+    // re-pushes every remaining batch once per skipped wave, and the exact
+    // count below is what catches the duplicate rows.
+    const NAMES = 260
     const { fetchImpl, now, calls } = stalledAt(8 * MINUTE)
     const items = Array.from({ length: NAMES }, (_, i) => item(i))
     const result = await classifyPackages(items, {
       ...options, fetchImpl, now, sleep: async (_ms: number) => {}, timeoutMs: 20, budgetMs: 15 * MINUTE,
     })
     // Every name is still accounted for — the budget skips work, never names.
+    // EXACTLY the input, counted once each: no name lost, and none duplicated.
     expect(result.classified.size + result.discarded.length).toBe(NAMES)
+    expect(new Set(result.discarded.map(d => d.name)).size).toBe(result.discarded.length)
     expect(result.discarded.some(d => d.reason.includes('budget'))).toBe(true)
-    // Unbudgeted this would be 5 batches x 4 attempts = 20 requests.
-    expect(calls()).toBeLessThan(20)
+    // Unbudgeted this would be 13 batches x 4 attempts = 52 requests.
+    expect(calls()).toBeLessThan(52)
+  })
+
+  it('overruns its budget by at most one request deadline, which is the cap that counts', async () => {
+    // The check runs at the top of a wave and in the retry condition, never
+    // during an in-flight attempt — so a wave admitted with a sliver of budget
+    // left still runs one whole deadline past it. The true cap is therefore
+    // budgetMs + GATEWAY_REQUEST_TIMEOUT_MS, and THAT is the number the
+    // comments have to state, because it is the one to check against the job.
+    //
+    // Subtracting a deadline at the gate instead would be worse than the
+    // overrun: the deadline is two thirds of the budget, so no wave could
+    // start after 5 of the 15 minutes and a healthy backfill would be
+    // truncated every build. One batch here, so the fake clock is faithful —
+    // it advances per call, which would over-count a concurrent wave.
+    const COST = 4 * MINUTE
+    const BUDGET = 15 * MINUTE
+    const { fetchImpl, now } = stalledAt(COST)
+    await classifyPackages([item(0)], {
+      ...options, fetchImpl, now, sleep: async (_ms: number) => {}, timeoutMs: 20, budgetMs: BUDGET,
+    })
+    // It really does overrun — that is the fact being pinned, not wished away.
+    expect(now()).toBeGreaterThan(BUDGET)
+    expect(now()).toBeLessThanOrEqual(BUDGET + COST)
+  })
+
+  it('uses CLASSIFY_BUDGET_MS when no budget is handed in', async () => {
+    // Every other budget test injects BOTH `now` and `budgetMs`, so none of
+    // them touches the production wiring: `budgetMs ?? Number.POSITIVE_INFINITY`
+    // left all 486 green. As tested, the budget H-1 exists to enforce was a
+    // constant and a comment. This one injects only the clock, so the default
+    // is what does the bounding.
+    const { fetchImpl, now, calls } = stalledAt(20 * MINUTE)
+    const items = Array.from({ length: 100 }, (_, i) => item(i))
+    const result = await classifyPackages(items, {
+      ...options, fetchImpl, now, sleep: async (_ms: number) => {}, timeoutMs: 20,
+    })
+    // One attempt per batch of the first wave, then the default 15-minute
+    // budget is spent: no retries, and the fifth batch is never asked.
+    expect(calls()).toBe(4)
+    expect(result.discarded.some(d => d.reason.includes('budget'))).toBe(true)
+    expect(result.classified.size + result.discarded.length).toBe(100)
+  })
+
+  it('uses a real clock when none is handed in', async () => {
+    // The other default. A frozen `now` would make every budget above pass and
+    // bound nothing in production, so this one spends a real budget in real
+    // milliseconds: 40ms attempts against a 60ms budget stop short of the
+    // four RETRY_LIMIT attempts an unbounded ladder would make.
+    let calls = 0
+    const fetchImpl = (async () => { calls += 1; return new Promise<Response>(() => {}) }) as unknown as typeof fetch
+    const result = await classifyPackages([item(0)], {
+      ...options, fetchImpl, sleep: async (_ms: number) => {}, timeoutMs: 40, budgetMs: 60,
+    })
+    expect(calls).toBeGreaterThanOrEqual(1)
+    expect(calls).toBeLessThan(4)
+    expect(result.discarded).toHaveLength(1)
   })
 
   it('leaves a healthy run untouched, however many batches it has', async () => {

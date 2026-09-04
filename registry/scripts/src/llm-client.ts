@@ -80,9 +80,19 @@ export const GATEWAY_REQUEST_TIMEOUT_MS = 600_000
  * whole day's catalog.
  *
  * A FIFTH multiplier is the caller: `classify.ts` makes two of these calls in
- * one process — the category question and the market question — so the STEP
- * caps at twice this, 30 minutes, and a third question would make it 45. That
- * is the number to check against the job's 120, not this one.
+ * one process — the category question and the market question — so whatever
+ * one call costs, the STEP costs twice.
+ *
+ * And the cap is NOT this constant. The budget is checked at the top of a wave
+ * and in the retry condition, never during an in-flight request, so the last
+ * wave admitted runs one whole {@link GATEWAY_REQUEST_TIMEOUT_MS} past it. The
+ * true cap for one call is 15 + 10 = 25 minutes, so the STEP caps at 50, and
+ * 50 is the number to check against the job's 120 — not 30.
+ *
+ * Subtracting a deadline at the gate would make the cap exact and is the wrong
+ * trade here: the deadline is two thirds of the budget, so no wave could start
+ * after 5 of the 15 minutes and a healthy backfill would be truncated every
+ * build. An overrun bounded by one request beats a ceiling that low.
  *
  * Sized to be far above any healthy run and far below the job. Erring small is
  * cheap and self-correcting: `categories.yml` is a build input, so a discarded
@@ -181,7 +191,9 @@ async function runBatches<Item extends { name: string }, Answer>(
   // one of and forgets the other.
   const timedFetch = withTimeout(options.fetchImpl ?? fetch, options.timeoutMs ?? GATEWAY_REQUEST_TIMEOUT_MS, 'llm gateway')
   const sleep = options.sleep ?? defaultSleep
-  const now = options.now ?? Date.now
+  // performance.now(), not Date.now(): the budget is a DURATION, and an NTP
+  // step mid-run would otherwise expire it early or extend it silently.
+  const now = options.now ?? (() => performance.now())
   const budgetMs = options.budgetMs ?? CLASSIFY_BUDGET_MS
   const startedAt = now()
   // Safe by CHECK, not by construction — the shape this repo already uses for
@@ -189,6 +201,11 @@ async function runBatches<Item extends { name: string }, Answer>(
   // arrangement of the constants that makes the product safe; only measuring
   // the time actually spent does.
   const budgetSpent = (): boolean => now() - startedAt >= budgetMs
+  // Reaches an artifact for the CATEGORY question only: classify.ts drops the
+  // market question's discards on the floor (`marketDiscards` is dead — a
+  // pre-existing gap owned by plan C). So for half the calls this row is a
+  // stderr-and-nothing fact, and saying otherwise would promise a report line
+  // that never arrives.
   const notAttempted = `classification stopped: the step's ${budgetMs}ms budget was spent before this batch was asked. It is asked again on the next build.`
   const classified = new Map<string, Answer>()
   const discarded: { name: string; reason: string }[] = []
