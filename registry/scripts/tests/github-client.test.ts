@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { BUNDLE_NAME_MAX_LENGTH, BUNDLE_NAME_RE, GITHUB_REQUEST_TIMEOUT_MS, MAX_MANIFEST_BYTES, MAX_TARBALL_BYTES, MAX_THROWN_FRACTION, MIN_THROWN_TO_BOUND, TARBALL_REQUEST_TIMEOUT_MS, fetchRepoCandidate, harvestRepos, isBundleName, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
+import { BUNDLE_NAME_MAX_LENGTH, BUNDLE_NAME_RE, GITHUB_REQUEST_TIMEOUT_MS, MAX_MANIFEST_BYTES, MAX_TARBALL_BYTES, MAX_THROWN_FRACTION, MIN_THROWN_TO_BOUND, SUBDIR_MAX_LENGTH, TARBALL_REQUEST_TIMEOUT_MS, fetchRepoCandidate, harvestRepos, isBundleName, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
 import { parseRepoState, serializeRepoState } from '../src/repo-state.ts'
 import type { RepoState } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
@@ -24,33 +24,102 @@ function stubFetch(routes: Record<string, Response>): typeof fetch {
   return impl
 }
 
-/** A search stub that answers total probes (per_page=1) and page fetches. */
-function stubSearch(pages: Record<string, Array<{ full_name: string }>>, totals?: Record<string, number>): typeof fetch {
-  const impl = (async (url: string | URL) => {
-    const text = String(url)
-    if (new URL(text).searchParams.get('per_page') === '1') {
-      const q = new URL(text).searchParams.get('q') ?? ''
-      const total = totals?.[q] ?? 0
+/** GitHub's page size, mirrored so a fixture can page like the client does. */
+const SEARCH_PAGE_SIZE = 100
+
+/** One search item in the shape the harvest reads off the API. */
+function repoItem(fullName: string, extra: Record<string, unknown> = {}): unknown {
+  return {
+    full_name: fullName,
+    default_branch: 'main',
+    description: null,
+    license: { spdx_id: 'MIT' },
+    pushed_at: '2026-08-01T00:00:00Z',
+    ...extra,
+  }
+}
+
+/**
+ * A search stub whose probe and pages AGREE: the `per_page=1` probe answers
+ * how many items the same query will serve, and each page serves its own
+ * 100-item slice of them, carrying that same `total_count`.
+ *
+ * Every fixture in this file used to answer `total_count: 0` to the probe and
+ * then serve repositories from the page. That is not a shortcut — it is a
+ * window whose measured size contradicts its own contents, so neither the
+ * coverage check nor the zero-window skip can be exercised by it, and a
+ * truncating paging loop passes it. Answering the truth is what makes those
+ * two guards testable at all.
+ * @param itemsFor - the items one window query serves, in page order.
+ * @param totalFor - the `total_count` to answer; defaults to the truth.
+ * @returns a router: the search response for a search URL, else undefined.
+ */
+function searchResponder(
+  itemsFor: (query: string) => readonly unknown[],
+  totalFor: (query: string, items: readonly unknown[]) => number = (_query, items) => items.length,
+): (text: string) => Response | undefined {
+  return (text: string) => {
+    const url = new URL(text)
+    if (!url.pathname.endsWith('/search/repositories')) return undefined
+    const query = url.searchParams.get('q') ?? ''
+    const items = itemsFor(query)
+    const total = totalFor(query, items)
+    if (url.searchParams.get('per_page') === '1') {
       return new Response(JSON.stringify({ total_count: total }), { status: 200 })
     }
-    const q = new URL(text).searchParams.get('q') ?? ''
-    const items = (pages[q] ?? []).map(full_name => ({
-      full_name,
-      default_branch: 'main',
-      description: `description of ${full_name}`,
-      license: { spdx_id: 'MIT' },
-      pushed_at: '2026-08-01T00:00:00Z',
-    }))
-    return new Response(JSON.stringify({ items }), { status: 200 })
+    const page = Number(url.searchParams.get('page') ?? '1')
+    const start = (page - 1) * SEARCH_PAGE_SIZE
+    return new Response(
+      JSON.stringify({ total_count: total, items: items.slice(start, start + SEARCH_PAGE_SIZE) }),
+      { status: 200 },
+    )
+  }
+}
+
+/**
+ * A whole fetch stub: the search half from {@link searchResponder}, everything
+ * else from `routes`, and an unrouted URL is a loud throw rather than a
+ * silently empty answer.
+ */
+function stubSearchAnd(
+  itemsFor: (query: string) => readonly unknown[],
+  routes: (text: string) => Response | undefined = () => undefined,
+  totalFor?: (query: string, items: readonly unknown[]) => number,
+): typeof fetch {
+  const search = searchResponder(itemsFor, totalFor)
+  return (async (url: string | URL) => {
+    const text = String(url)
+    const answered = search(text) ?? routes(text)
+    if (answered === undefined) throw new Error(`unrouted url: ${text}`)
+    return answered
   }) as unknown as typeof fetch
-  return impl
+}
+
+/** `count` distinct repositories, named so their sort order is their index. */
+function repoItems(count: number, owner = 'owner'): unknown[] {
+  return Array.from({ length: count }, (_, i) => repoItem(`${owner}/repo-${String(i).padStart(4, '0')}`))
+}
+
+/**
+ * The search half of a harvest fixture: both topics answer the repositories in
+ * `seen`, with a `total_count` that matches them and pages that slice them.
+ * Undefined for a URL that is not a search, so the caller's own routes answer.
+ */
+function searchItems(
+  text: string,
+  seen: readonly { repo: string; pushedAt: string }[],
+): Response | undefined {
+  return searchResponder(() => seen.map(s => repoItem(s.repo, { pushed_at: s.pushedAt })))(text)
 }
 
 describe('partitionTopic', () => {
-  it('keeps a small pool as one window', async () => {
+  it('keeps a small pool as one window, and carries the size it measured', async () => {
     const probes: string[] = []
     const windows = await partitionTopic('dsh-plugin', async q => { probes.push(q); return 500 })
-    expect(windows).toEqual([{}])
+    // The total rides along with the window. It was read for the split
+    // decision and then dropped, which left searchReposByTopic nothing to
+    // measure its paging against — the whole of the truncation defect.
+    expect(windows).toEqual([{ window: {}, total: 500 }])
     expect(probes).toEqual(['topic:dsh-plugin'])
   })
 
@@ -64,12 +133,15 @@ describe('partitionTopic', () => {
     const probe = async (q: string) => totals[q] ?? 0
     const windows = await partitionTopic('dsh-plugin', probe)
     // every window probed at or under the cap
-    for (const w of windows) {
+    for (const { window: w, total } of windows) {
       const q = `topic:dsh-plugin${w.stars ? ` stars:${w.stars}` : ''}${w.created ? ` created:${w.created}` : ''}${w.size ? ` size:${w.size}` : ''}`
       expect(totals[q] ?? 0).toBeLessThanOrEqual(1000)
+      // And the size it reports is the one its own probe answered, not a
+      // number invented for the record.
+      expect(total).toBe(totals[q] ?? 0)
     }
     // stars split happened: no window lacks the stars qualifier
-    expect(windows.every(w => w.stars !== undefined)).toBe(true)
+    expect(windows.every(({ window: w }) => w.stars !== undefined)).toBe(true)
   })
 
   it('throws rather than truncating when every split dimension is exhausted', async () => {
@@ -81,14 +153,15 @@ describe('partitionTopic', () => {
 describe('searchReposByTopic', () => {
   it('searches both topics through the windows, deduplicates, and sorts', async () => {
     const urls: string[] = []
+    const search = searchResponder(query => (query.includes('topic:dsh-plugin')
+      ? [repoItem('zeta/plugin'), repoItem('alpha/plugin')]
+      : [repoItem('alpha/plugin'), repoItem('beta/plugin')]))
     const fetchImpl = (async (url: string | URL) => {
       const text = String(url)
       urls.push(text)
-      if (new URL(text).searchParams.get('per_page') === '1') return new Response(JSON.stringify({ total_count: 0 }), { status: 200 })
-      if (decodeURIComponent(new URL(text).searchParams.get('q') ?? '').includes('topic:dsh-plugin')) {
-        return new Response(JSON.stringify({ items: ['zeta/plugin', 'alpha/plugin'].map(full_name => ({ full_name, default_branch: 'main', description: null, license: null, pushed_at: '2026-08-01T00:00:00Z' })) }), { status: 200 })
-      }
-      return new Response(JSON.stringify({ items: ['alpha/plugin', 'beta/plugin'].map(full_name => ({ full_name, default_branch: 'main', description: null, license: null, pushed_at: '2026-08-01T00:00:00Z' })) }), { status: 200 })
+      const answered = search(text)
+      if (answered === undefined) throw new Error(`unrouted url: ${text}`)
+      return answered
     }) as unknown as typeof fetch
     const { seen, metas, windowCount } = await searchReposByTopic(fetchImpl, sleep, 'token')
     expect(seen.map(s => s.repo)).toEqual(['alpha/plugin', 'beta/plugin', 'zeta/plugin'])
@@ -98,13 +171,14 @@ describe('searchReposByTopic', () => {
     expect(urls.some(u => decodeURIComponent(u).includes('topic:deepseek-harness'))).toBe(true)
   })
 
-  it('drops search items the schema cannot trust', async () => {
-    const fetchImpl = (async (url: string | URL) => {
-      if (new URL(String(url)).searchParams.get('per_page') === '1') return new Response(JSON.stringify({ total_count: 0 }), { status: 200 })
-      return new Response(JSON.stringify({
-        items: [{ full_name: 'ok/repo', default_branch: 'main', pushed_at: '2026-08-01T00:00:00Z' }, { full_name: 42 }],
-      }), { status: 200 })
-    }) as unknown as typeof fetch
+  it('drops search items the schema cannot trust, without dropping the window', async () => {
+    // Both items count toward the window's size — the untrusted one occupies a
+    // slot in the result set — so the window is still enumerated whole even
+    // though only one of the two names a repository.
+    const fetchImpl = stubSearchAnd(() => [
+      { full_name: 'ok/repo', default_branch: 'main', pushed_at: '2026-08-01T00:00:00Z' },
+      { full_name: 42 },
+    ])
     const { seen } = await searchReposByTopic(fetchImpl, sleep, 'token')
     expect(seen.map(s => s.repo)).toEqual(['ok/repo'])
   })
@@ -112,6 +186,184 @@ describe('searchReposByTopic', () => {
   it('fails loudly when the search API answers with an error status', async () => {
     const fetchImpl = (async () => new Response('nope', { status: 403 })) as unknown as typeof fetch
     await expect(searchReposByTopic(fetchImpl, sleep, 'token')).rejects.toThrow(/403/)
+  })
+})
+
+describe('a window is enumerated whole, or the harvest stops', () => {
+  // CLAUDE.md, verbatim: "A search that cannot enumerate its whole result set
+  // throws rather than truncating." Task 1 removed that defect from the npm
+  // half and left it standing here. The paging loop broke on
+  // `metas.length < SEARCH_PAGE_SIZE` — PARSED metas — while parseRepoMeta had
+  // just been changed to return null instead of throwing for an item it cannot
+  // read, so ONE null item in a full page ended the window with 99 of its 250
+  // repositories, one request, and no error anywhere.
+  //
+  // What that costs is why it is not a cosmetic bug: every repository the
+  // window lost is absent from `seen`, so diffRepoState reports it `gone`,
+  // build.ts publishes `repo-gone` ("deleted, renamed, or private") under its
+  // name — false — and then commits a state file with the entry and its
+  // recorded candidates removed.
+  const dshPlugin = (query: string) => query.includes('topic:dsh-plugin')
+
+  /** Records which pages of the `dsh-plugin` windows were actually requested. */
+  function pageRecorder(): { pages: number[]; watch: (text: string) => void } {
+    const pages: number[] = []
+    return {
+      pages,
+      watch: (text: string) => {
+        const url = new URL(text)
+        if (!url.pathname.endsWith('/search/repositories')) return
+        if (url.searchParams.get('per_page') === '1') return
+        if (!dshPlugin(url.searchParams.get('q') ?? '')) return
+        pages.push(Number(url.searchParams.get('page') ?? '1'))
+      },
+    }
+  }
+
+  it('pages a window past an item it could not parse, instead of stopping on it', async () => {
+    const items = repoItems(250)
+    // One unreadable item, mid-page-1, of the kind parseRepoMeta answers null
+    // for. It occupies a slot in the result set whether or not we can read it.
+    items[50] = null
+    const { pages, watch } = pageRecorder()
+    const search = searchResponder(query => (dshPlugin(query) ? items : []))
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      watch(text)
+      const answered = search(text)
+      if (answered === undefined) throw new Error(`unrouted url: ${text}`)
+      return answered
+    }) as unknown as typeof fetch
+    const { seen } = await searchReposByTopic(fetchImpl, sleep, 'token')
+    // 249 of 250: the unreadable item names no repository, so it cannot be
+    // enumerated — but the 150 behind it are not collateral.
+    expect(seen).toHaveLength(249)
+    expect(pages).toEqual([1, 2, 3])
+  })
+
+  it('throws rather than publishing a window it enumerated short', async () => {
+    // The window measures 250 and its pages serve 100. Truncating here is
+    // indistinguishable from 150 repositories having been deleted overnight,
+    // and that is exactly what the catalog would have said about them.
+    const fetchImpl = stubSearchAnd(
+      query => (dshPlugin(query) ? repoItems(100) : []),
+      () => undefined,
+      query => (dshPlugin(query) ? 250 : 0),
+    )
+    await expect(searchReposByTopic(fetchImpl, sleep, 'token'))
+      .rejects.toThrow(/enumerated 100 of 250/)
+  })
+
+  it('absorbs a window that shrank under it rather than failing the build', async () => {
+    // The other side of the coverage check, and the reason it re-probes: these
+    // windows are `stars:0` and `stars:>=1`, so one repository earning its
+    // first star DURING the run leaves one window and joins another. A pool of
+    // 14,740 makes that an ordinary Tuesday, and a strict compare against the
+    // first probe would fail the daily build over it. Same `min(before, after)`
+    // shape searchByKeywords uses on the npm half — but paid for only on the
+    // shortfall path, so a healthy run costs no extra request.
+    const items = repoItems(249)
+    let probes = 0
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      const search = new URL(text)
+      const query = search.searchParams.get('q') ?? ''
+      if (!dshPlugin(query)) return new Response(JSON.stringify({ total_count: 0, items: [] }), { status: 200 })
+      if (search.searchParams.get('per_page') === '1') {
+        probes += 1
+        // The first probe saw 250; by the time the pages landed one had left.
+        return new Response(JSON.stringify({ total_count: probes === 1 ? 250 : 249 }), { status: 200 })
+      }
+      const page = Number(search.searchParams.get('page') ?? '1')
+      const start = (page - 1) * SEARCH_PAGE_SIZE
+      return new Response(JSON.stringify({ total_count: 249, items: items.slice(start, start + SEARCH_PAGE_SIZE) }), { status: 200 })
+    }) as unknown as typeof fetch
+    const { seen } = await searchReposByTopic(fetchImpl, sleep, 'token')
+    expect(seen).toHaveLength(249)
+    // The re-probe is what absorbed it, so it must actually have happened.
+    expect(probes).toBe(2)
+  })
+
+  it('throws when GitHub says the page it answered is incomplete', async () => {
+    // `incomplete_results: true` is GitHub telling us the query timed out and
+    // this page is a PARTIAL result set. Nothing in this repo read the field,
+    // and a timeout is the realistic production trigger — the response is a
+    // 200 carrying ordinary-looking items, so it pages and measures as if it
+    // were whole.
+    const items = repoItems(120)
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      const url2 = new URL(text)
+      const query = url2.searchParams.get('q') ?? ''
+      if (!dshPlugin(query)) return new Response(JSON.stringify({ total_count: 0, items: [] }), { status: 200 })
+      if (url2.searchParams.get('per_page') === '1') return new Response(JSON.stringify({ total_count: 120 }), { status: 200 })
+      return new Response(JSON.stringify({ total_count: 120, incomplete_results: true, items: items.slice(0, 100) }), { status: 200 })
+    }) as unknown as typeof fetch
+    await expect(searchReposByTopic(fetchImpl, sleep, 'token'))
+      .rejects.toThrow(/incomplete_results/)
+  })
+
+  it('throws when a window has grown past the page ceiling since it was partitioned', async () => {
+    // `page <= MAX_SEARCH_PAGES` had the same shape as the short-page break: a
+    // window that crossed 1,000 results between the probe and the paging
+    // stopped at page 10 with no post-loop check and published the first 1,000.
+    const items = repoItems(1500)
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      const url2 = new URL(text)
+      const query = url2.searchParams.get('q') ?? ''
+      if (!dshPlugin(query)) return new Response(JSON.stringify({ total_count: 0, items: [] }), { status: 200 })
+      // Partitioned as a 900-result window — one window, under the cap — and
+      // 1,500 by the time its pages are read.
+      if (url2.searchParams.get('per_page') === '1') return new Response(JSON.stringify({ total_count: 900 }), { status: 200 })
+      const page = Number(url2.searchParams.get('page') ?? '1')
+      const start = (page - 1) * SEARCH_PAGE_SIZE
+      return new Response(JSON.stringify({ total_count: 1500, items: items.slice(start, start + SEARCH_PAGE_SIZE) }), { status: 200 })
+    }) as unknown as typeof fetch
+    await expect(searchReposByTopic(fetchImpl, sleep, 'token'))
+      .rejects.toThrow(/page 11/)
+  })
+
+  it('throws when a search page answers no total, rather than ending on it', async () => {
+    // A page with no `total_count` cannot be told apart from a truncated one,
+    // the rule the npm half already states. Every fixture in this file used to
+    // send exactly that.
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      if (new URL(text).searchParams.get('per_page') === '1') return new Response(JSON.stringify({ total_count: 2 }), { status: 200 })
+      return new Response(JSON.stringify({ items: repoItems(2) }), { status: 200 })
+    }) as unknown as typeof fetch
+    await expect(searchReposByTopic(fetchImpl, sleep, 'token'))
+      .rejects.toThrow(/no total_count/)
+  })
+
+  it('throws when a window probe answers no total, rather than reading it as empty', async () => {
+    // The probe's number decides the split, the zero-skip below and the
+    // coverage check above; a malformed probe read as 0 disables all three and
+    // now silently skips the whole window. Same throw, same reason, as
+    // npm-client's searchTotal.
+    const fetchImpl = (async () => new Response(JSON.stringify({ items: [] }), { status: 200 })) as unknown as typeof fetch
+    await expect(searchReposByTopic(fetchImpl, sleep, 'token'))
+      .rejects.toThrow(/no total_count/)
+  })
+
+  it('does not page a window its probe measured as empty', async () => {
+    // `0 <= GITHUB_SEARCH_CAP`, so an empty topic still cost a request and the
+    // 2s search pace. The npm half skips a zero cell explicitly; the asymmetry
+    // would read as an oversight later.
+    const requests: string[] = []
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      requests.push(text)
+      return new Response(JSON.stringify({ total_count: 0 }), { status: 200 })
+    }) as unknown as typeof fetch
+    const { seen, windowCount } = await searchReposByTopic(fetchImpl, sleep, 'token')
+    expect(seen).toEqual([])
+    // One probe per topic, and not one page request.
+    expect(requests).toHaveLength(2)
+    expect(requests.every(u => new URL(u).searchParams.get('per_page') === '1')).toBe(true)
+    // Still counted as a partitioned window: build.ts reports that number.
+    expect(windowCount).toBe(2)
   })
 })
 
@@ -264,6 +516,63 @@ describe('fetchRepoCandidate', () => {
     }
   })
 
+  it('says something grammatical about a name that is not a string at all', async () => {
+    // `a ${typeof rawName}` produced "package.json declares a object" and
+    // "declares a number", published verbatim to report.md on Pages under the
+    // repository's name. The fact is right and the sentence is not; a rejection
+    // detail is the one thing an author reads to find out why they are missing.
+    for (const [name, expected] of [
+      [{ deep: 'seek' }, 'a non-string name (object)'],
+      [42, 'a non-string name (number)'],
+      [true, 'a non-string name (boolean)'],
+    ] as const) {
+      const fetchImpl = stubFetch({
+        'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(JSON.stringify({
+          name,
+          dsh: { bundle: { patch: './cordis.patch.yml' } },
+        }), { status: 200 }),
+        'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': new Response(JSON.stringify({
+          sha: commit,
+          commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+        }), { status: 200 }),
+      })
+      const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+      expect(result.ok, `name ${JSON.stringify(name)}`).toBe(false)
+      if (!result.ok) {
+        expect(result.detail).toContain(expected)
+        expect(result.detail).toContain('is not a usable package name')
+        // The article-plus-typeof shape, in any of its spellings.
+        expect(result.detail).not.toMatch(/declares a (?:object|number|boolean|undefined)\b/)
+      }
+    }
+  })
+
+  it('tells a subpackage that declared a bundle and no name exactly that', async () => {
+    // The subpackage path reaches describeBadName with an ABSENT name — the
+    // root path cannot — and rendered "package.json declares a undefined".
+    // What that author needs is the missing field, not a grammar lesson.
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/monorepo/main/package.json':
+        new Response(JSON.stringify({ private: true, workspaces: ['packages/*'] }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/commits/main': new Response(JSON.stringify({
+        sha: commit,
+        commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/git/trees/main?recursive=1': new Response(JSON.stringify({
+        tree: [{ path: 'package.json' }, { path: 'packages/nameless/package.json' }],
+      }), { status: 200 }),
+      'https://raw.githubusercontent.com/someone/monorepo/main/packages/nameless/package.json':
+        new Response(JSON.stringify({ dsh: { bundle: {} } }), { status: 200 }),
+    })
+    const result = await fetchRepoCandidate({ ...meta, fullName: 'someone/monorepo' }, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.subpackageFailures?.[0]?.repo).toBe('someone/monorepo#packages/nameless')
+      expect(result.subpackageFailures?.[0]?.detail).toContain('declares no name')
+      expect(result.subpackageFailures?.[0]?.detail).not.toContain('undefined')
+    }
+  })
+
   it('still accepts an uppercase manifest name — a bundle name is not an npm publication', async () => {
     // npm forbids uppercase in a NEW publication; a GitHub bundle name is not
     // one, and rejecting DSH-FS-TOOL would drop a repository that installs
@@ -355,6 +664,249 @@ describe('fetchRepoCandidate', () => {
       // Nothing was read on this path, and the reason says so.
       expect(result.detail).toContain('so it is not read')
     }
+  })
+
+  it('stops reading at the cap even when content-length says the body is tiny', async () => {
+    // The pre-read check trusts `content-length`, and on
+    // raw.githubusercontent.com that is the GZIP-COMPRESSED size. Measured
+    // live: TypeScript's own package.json answers content-length 744 with
+    // content-encoding gzip for 1,838 decoded bytes, and a package.json whose
+    // `description` is 256 MB of one repeated character compresses to 260,986
+    // — a 1029:1 ratio, comfortably under the 1,048,576 the check compares it
+    // to. So a content-length at the cap admitted roughly a GIGABYTE, and
+    // `await response.text()` then buffered every decompressed byte of it as a
+    // UTF-16 string BEFORE the size was looked at. Any public repository
+    // carrying a harvest topic could do that, and a run visits up to
+    // REPO_BACKFILL_BUDGET (2,000) of them.
+    const CHUNK = 64 * 1024
+    const CHUNKS_IF_UNBOUNDED = 64 // 4 MB, were the whole body buffered
+    let produced = 0
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (produced >= CHUNKS_IF_UNBOUNDED) { controller.close(); return }
+        produced += 1
+        controller.enqueue(new Uint8Array(CHUNK))
+      },
+    })
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json':
+        new Response(body, { status: 200, headers: { 'content-length': '744' } }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': new Response(JSON.stringify({
+        sha: commit,
+        commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.code).toBe('no-manifest')
+      expect(result.detail).toContain('larger than 1048576 bytes')
+      // It DID reach us, one chunk at a time, so the reason must not claim the
+      // body went unread — the declared length was simply a lie.
+      expect(result.detail).toContain('discarded without being parsed')
+    }
+    // The cap is sixteen of these chunks; the seventeenth trips it and the
+    // reader is cancelled. A couple of chunks of pull-ahead is the stream's
+    // own buffering — sixty-four would be the whole body in memory, which is
+    // the thing being refused.
+    expect(produced).toBeLessThanOrEqual(20)
+  })
+
+  it('measures the manifest cap in bytes, not UTF-16 code units', async () => {
+    // The constant is a BYTE count, the published reason says "1048576 bytes",
+    // and docs/schema.md states the same — but the check read `text.length`,
+    // which counts UTF-16 code units. Since a UTF-8 byte count is never below
+    // a code-unit count the rejection was never a false accusation, but the
+    // cap it enforced was up to 3x looser than the one it announced. The
+    // streamed total below is a byte count by construction.
+    const filler = '€'.repeat(400_000) // one code unit each, three UTF-8 bytes each
+    const huge = JSON.stringify({ name: 'dsh-repo-plugin', dsh: { bundle: {}, catalog: { note: filler } } })
+    expect(huge.length).toBeLessThan(MAX_MANIFEST_BYTES) // what the old check measured
+    expect(Buffer.byteLength(huge, 'utf8')).toBeGreaterThan(MAX_MANIFEST_BYTES) // what it claimed to
+    const fetchImpl = stubFetch({
+      // No content-length (a Response built from a string sends none), so the
+      // declared-length branch cannot stand in for the measurement.
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(huge, { status: 200 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': new Response(JSON.stringify({
+        sha: commit,
+        commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.code).toBe('no-manifest')
+      expect(result.detail).toContain('larger than 1048576 bytes')
+    }
+  })
+})
+
+describe('only a 404 is a verdict about the repository', () => {
+  // `no-manifest` was returned for ANY non-ok status, and fetchWithRetry
+  // retries only a 429 — so a 500, a 403 or a blocked host was RETURNED as a
+  // verdict rather than thrown. harvestRepos PERSISTS `no-manifest` for every
+  // repository with no recorded entry, and the systematic-failure bound counts
+  // throws alone, so it never fired for a single one of them.
+  //
+  // The failure mode is concrete: a CI egress allowlist that permits
+  // api.github.com but not raw.githubusercontent.com — the exact scenario
+  // fetchLatestReleaseTarball's own catch comment names — leaves the search
+  // healthy, so nothing aborts, and writes off every repository new to the
+  // state file with "No package.json at the repository root", which is simply
+  // untrue. None of them is re-fetched until its `pushedAt` moves.
+  //
+  // They THROW rather than returning `fetch-failed` so they land where the
+  // comment above the root fetch already sends a deadline: harvestRepos
+  // publishes a reason we wrote, sends the status to stderr, records nothing,
+  // and — the part a returned row silently skips — counts it toward the bound.
+  const meta = { fullName: 'someone/dsh-repo-plugin', defaultBranch: 'main', description: 'A repo plugin.', license: 'MIT', pushedAt: '2026-08-01T00:00:00Z', stars: null as number | null }
+  const monorepoMeta = { ...meta, fullName: 'someone/monorepo' }
+  const headBody = () => new Response(JSON.stringify({ sha: commit, commit: { author: { date: '2026-08-01T12:00:00.000Z' } } }), { status: 200 })
+
+  it('does not call a 500 on the root manifest "no package.json"', async () => {
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response('upstream error', { status: 500 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': headBody(),
+    })
+    await expect(fetchRepoCandidate(meta, fetchImpl, sleep, 'token')).rejects.toThrow(/500/)
+  })
+
+  it('records nothing for a repository whose manifest 500d, so the next run retries it', async () => {
+    const stderr: string[] = []
+    const write = process.stderr.write.bind(process.stderr)
+    process.stderr.write = ((chunk: string | Uint8Array) => { stderr.push(String(chunk)); return true }) as typeof process.stderr.write
+    let result
+    try {
+      const seen = [{ repo: 's/blocked', pushedAt: '2026-08-02T00:00:00Z' }]
+      const fetchImpl = (async (url: string | URL) => {
+        const text = String(url)
+        const searched = searchItems(text, seen)
+        if (searched !== undefined) return searched
+        return new Response('upstream error', { status: 500 })
+      }) as unknown as typeof fetch
+      result = await harvestRepos({ state: {}, budget: 5, fetchImpl, sleep, token: 't' })
+    } finally {
+      process.stderr.write = write
+    }
+    expect(result.failures).toHaveLength(1)
+    expect(result.failures[0]?.code).toBe('fetch-failed')
+    // The published reason stays the one WE wrote — a status code under the
+    // repository's name would blame an author for our transport.
+    expect(result.failures[0]?.detail).toContain('not a judgement on the repository')
+    // Nothing recorded: the dead end was ours, so the repo is fetched again
+    // next run instead of carrying a verdict it never earned.
+    expect(result.nextState['s/blocked']).toBeUndefined()
+    // Counted, which is what makes the bound below able to fire at all.
+    expect(result.thrown).toBe(1)
+    // And the status an operator needs is on stderr, where it can be acted on.
+    expect(stderr.join('')).toContain('500')
+  })
+
+  it('stops the build when every repository answers the same non-404 status', async () => {
+    // The systematic hole this closes: 40 repositories, one blocked host, and
+    // a green publish that rejects every one of them by name — every day,
+    // because a fetch-failed is not persisted and the same repositories retry
+    // into the same block. A returned row cannot trip the bound; a throw can.
+    const stderr: string[] = []
+    const write = process.stderr.write.bind(process.stderr)
+    process.stderr.write = (() => true) as typeof process.stderr.write
+    try {
+      const seen = Array.from({ length: 40 }, (_, i) => ({ repo: `owner/repo-${i}`, pushedAt: '2026-08-02T00:00:00Z' }))
+      const fetchImpl = (async (url: string | URL) => {
+        const text = String(url)
+        const searched = searchItems(text, seen)
+        if (searched !== undefined) return searched
+        return new Response('blocked by egress policy', { status: 403 })
+      }) as unknown as typeof fetch
+      await expect(harvestRepos({ state: {}, budget: 100, fetchImpl, sleep, token: 't' }))
+        .rejects.toThrow(/40 of 40 repositories threw/)
+    } finally {
+      process.stderr.write = write
+      expect(stderr).toEqual([])
+    }
+  })
+
+  it('still persists a genuine 404 as the dead end it is', async () => {
+    // The other side, and the reason this is a narrowing rather than a
+    // removal: a repository that really has no package.json must still be
+    // written off, or the harvest re-fetches every one of them forever.
+    const seen = [{ repo: 's/empty', pushedAt: '2026-08-02T00:00:00Z' }]
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      const searched = searchItems(text, seen)
+      if (searched !== undefined) return searched
+      return new Response('404: Not Found', { status: 404 })
+    }) as unknown as typeof fetch
+    const result = await harvestRepos({ state: {}, budget: 5, fetchImpl, sleep, token: 't' })
+    expect(result.failures[0]?.code).toBe('no-manifest')
+    expect(result.nextState['s/empty']?.failure?.code).toBe('no-manifest')
+    expect(result.thrown).toBe(0)
+  })
+
+  it('never tells a monorepo it has no installable subpackage because the tree read failed', async () => {
+    // The same misattribution one function over, and a worse one: a tree we
+    // could not list looks exactly like a monorepo with no subpackages, so a
+    // bundle-less root earns a PERSISTED "declares no name and no installable
+    // subpackage" — published under its name, and false. The deadline on this
+    // read is already rethrown for precisely this reason; a 500 is no
+    // different.
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/monorepo/main/package.json':
+        new Response(JSON.stringify({ private: true, workspaces: ['packages/*'] }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/commits/main': headBody(),
+      'https://api.github.com/repos/someone/monorepo/git/trees/main?recursive=1': new Response('upstream error', { status: 500 }),
+    })
+    await expect(fetchRepoCandidate(monorepoMeta, fetchImpl, sleep, 'token')).rejects.toThrow(/500/)
+  })
+
+  it('never drops a subpackage because its own manifest read failed', async () => {
+    // A subpackage lost to a 500 is a plugin missing from the catalog with
+    // nothing said about it anywhere — and if it was the only one, the root
+    // collects the same false "no installable subpackage" verdict.
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/monorepo/main/package.json':
+        new Response(JSON.stringify({ private: true, workspaces: ['packages/*'] }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/commits/main': headBody(),
+      'https://api.github.com/repos/someone/monorepo/git/trees/main?recursive=1': new Response(JSON.stringify({
+        tree: [{ path: 'package.json' }, { path: 'packages/the-plugin/package.json' }],
+      }), { status: 200 }),
+      'https://raw.githubusercontent.com/someone/monorepo/main/packages/the-plugin/package.json':
+        new Response('upstream error', { status: 500 }),
+    })
+    await expect(fetchRepoCandidate(monorepoMeta, fetchImpl, sleep, 'token')).rejects.toThrow(/500/)
+  })
+
+  it('leaves a 404 on the tree itself the silent skip it always was', async () => {
+    // A branch with no tree has no subpackages to find, which is a fact about
+    // the repository and not a transport failure. Without this the narrowing
+    // above would read as "any non-ok throws", and an ordinary missing tree
+    // would kill a repository that still has a perfectly good root.
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/monorepo/main/package.json':
+        new Response(JSON.stringify({ name: 'monorepo-root', private: true, workspaces: ['packages/*'] }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/commits/main': headBody(),
+      'https://api.github.com/repos/someone/monorepo/git/trees/main?recursive=1': new Response('404: Not Found', { status: 404 }),
+    })
+    const result = await fetchRepoCandidate(monorepoMeta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.candidates.map(c => c.name)).toEqual(['monorepo-root'])
+  })
+
+  it('leaves a 404 on a subpackage the silent skip it always was', async () => {
+    // Same, one level down: the tree listed a path that is not there.
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/monorepo/main/package.json':
+        new Response(JSON.stringify({ name: 'monorepo-root', private: true, workspaces: ['packages/*'] }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/commits/main': headBody(),
+      'https://api.github.com/repos/someone/monorepo/git/trees/main?recursive=1': new Response(JSON.stringify({
+        tree: [{ path: 'package.json' }, { path: 'packages/gone/package.json' }],
+      }), { status: 200 }),
+      'https://raw.githubusercontent.com/someone/monorepo/main/packages/gone/package.json':
+        new Response('404: Not Found', { status: 404 }),
+    })
+    const result = await fetchRepoCandidate(monorepoMeta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.candidates.map(c => c.name)).toEqual(['monorepo-root'])
   })
 })
 
@@ -633,12 +1185,10 @@ describe('harvestRepos', () => {
     }
     const fetchImpl = (async (url: string | URL) => {
       const text = String(url)
-      if (new URL(text).searchParams.get('per_page') === '1') return new Response(JSON.stringify({ total_count: 0 }), { status: 200 })
-      if (text.includes('/search/repositories')) {
-        const q = new URL(text).searchParams.get('q') ?? ''
-        const items = (q.includes('topic:dsh-plugin') ? seen : []).map(s => ({ full_name: s.repo, default_branch: 'main', description: null, license: { spdx_id: 'MIT' }, pushed_at: s.pushedAt }))
-        return new Response(JSON.stringify({ items }), { status: 200 })
-      }
+      const searched = searchResponder(q => (q.includes('topic:dsh-plugin')
+        ? seen.map(s => repoItem(s.repo, { pushed_at: s.pushedAt }))
+        : []))(text)
+      if (searched !== undefined) return searched
       for (const [prefix, response] of Object.entries(routes)) {
         if (text.startsWith(prefix)) return response
       }
@@ -659,15 +1209,11 @@ describe('harvestRepos', () => {
   it('exposes the star counts the search items carry as a free byproduct', async () => {
     const fetchImpl = (async (url: string | URL) => {
       const text = String(url)
-      if (new URL(text).searchParams.get('per_page') === '1') return new Response(JSON.stringify({ total_count: 0 }), { status: 200 })
-      if (text.includes('/search/repositories')) {
-        return new Response(JSON.stringify({
-          items: [
-            { full_name: 's/with-stars', default_branch: 'main', description: null, license: null, pushed_at: '2026-08-02T00:00:00Z', stargazers_count: 42 },
-            { full_name: 's/no-stars', default_branch: 'main', description: null, license: null, pushed_at: '2026-08-02T00:00:00Z' },
-          ],
-        }), { status: 200 })
-      }
+      const searched = searchResponder(() => [
+        repoItem('s/with-stars', { pushed_at: '2026-08-02T00:00:00Z', stargazers_count: 42 }),
+        repoItem('s/no-stars', { pushed_at: '2026-08-02T00:00:00Z' }),
+      ])(text)
+      if (searched !== undefined) return searched
       throw new Error(`unrouted: ${text}`)
     }) as unknown as typeof fetch
     // budget 0: the search still runs and its star counts still surface;
@@ -682,10 +1228,8 @@ describe('harvestRepos', () => {
     const seen = [{ repo: 'x/broken', pushedAt: '2026-08-02T00:00:00Z' }]
     const fetchImpl = (async (url: string | URL) => {
       const text = String(url)
-      if (new URL(text).searchParams.get('per_page') === '1') return new Response(JSON.stringify({ total_count: 0 }), { status: 200 })
-      if (text.includes('/search/repositories')) {
-        return new Response(JSON.stringify({ items: seen.map(s => ({ full_name: s.repo, default_branch: 'main', description: null, license: { spdx_id: 'MIT' }, pushed_at: s.pushedAt })) }), { status: 200 })
-      }
+      const searched = searchItems(text, seen)
+      if (searched !== undefined) return searched
       return new Response('missing', { status: 404 })
     }) as unknown as typeof fetch
     const result = await harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' })
@@ -705,10 +1249,8 @@ describe('harvestRepos', () => {
     const rootManifest = JSON.stringify({ private: true, workspaces: ['packages/*'] })
     const fetchImpl = (async (url: string | URL) => {
       const text = String(url)
-      if (new URL(text).searchParams.get('per_page') === '1') return new Response(JSON.stringify({ total_count: 0 }), { status: 200 })
-      if (text.includes('/search/repositories')) {
-        return new Response(JSON.stringify({ items: seen.map(s => ({ full_name: s.repo, default_branch: 'main', description: null, license: { spdx_id: 'MIT' }, pushed_at: s.pushedAt })) }), { status: 200 })
-      }
+      const searched = searchItems(text, seen)
+      if (searched !== undefined) return searched
       if (text === 'https://raw.githubusercontent.com/someone/monorepo/main/package.json') return new Response(rootManifest, { status: 200 })
       if (text === 'https://api.github.com/repos/someone/monorepo/commits/main') {
         return new Response(JSON.stringify({ sha: commit, commit: { author: { date: '2026-08-02T00:00:00.000Z' } } }), { status: 200 })
@@ -751,10 +1293,8 @@ describe('harvestRepos', () => {
     const seen = [{ repo: 'a/boom', pushedAt: '2026-08-02T00:00:00Z' }, { repo: 'b/fine', pushedAt: '2026-08-02T00:00:00Z' }]
     const fetchImpl = (async (url: string | URL) => {
       const text = String(url)
-      if (new URL(text).searchParams.get('per_page') === '1') return new Response(JSON.stringify({ total_count: 0 }), { status: 200 })
-      if (text.includes('/search/repositories')) {
-        return new Response(JSON.stringify({ items: seen.map(sr => ({ full_name: sr.repo, default_branch: 'main', description: null, license: { spdx_id: 'MIT' }, pushed_at: sr.pushedAt })) }), { status: 200 })
-      }
+      const searched = searchItems(text, seen)
+      if (searched !== undefined) return searched
       if (text.startsWith('https://raw.githubusercontent.com/a/boom/')) throw new TypeError('Cannot read properties of null (reading \'scripts\')')
       if (text === 'https://raw.githubusercontent.com/b/fine/main/package.json') {
         return new Response(JSON.stringify({ name: 'b-fine', dsh: { bundle: {} } }), { status: 200 })
@@ -794,10 +1334,8 @@ describe('harvestRepos', () => {
     const seen = Array.from({ length: 40 }, (_, i) => ({ repo: `owner/repo-${i}`, pushedAt: '2026-08-02T00:00:00Z' }))
     const fetchImpl = (async (url: string | URL) => {
       const text = String(url)
-      if (new URL(text).searchParams.get('per_page') === '1') return new Response(JSON.stringify({ total_count: 0 }), { status: 200 })
-      if (text.includes('/search/repositories')) {
-        return new Response(JSON.stringify({ items: seen.map(sr => ({ full_name: sr.repo, default_branch: 'main', description: null, license: { spdx_id: 'MIT' }, pushed_at: sr.pushedAt })) }), { status: 200 })
-      }
+      const searched = searchItems(text, seen)
+      if (searched !== undefined) return searched
       throw new TypeError('fetch failed: egress blocked')
     }) as unknown as typeof fetch
     await expect(harvestRepos({ state: {}, budget: 100, fetchImpl, sleep, token: 't' }))
@@ -810,10 +1348,8 @@ describe('harvestRepos', () => {
     const seen = Array.from({ length: 40 }, (_, i) => ({ repo: `owner/repo-${i}`, pushedAt: '2026-08-02T00:00:00Z' }))
     const fetchImpl = (async (url: string | URL) => {
       const text = String(url)
-      if (new URL(text).searchParams.get('per_page') === '1') return new Response(JSON.stringify({ total_count: 0 }), { status: 200 })
-      if (text.includes('/search/repositories')) {
-        return new Response(JSON.stringify({ items: seen.map(sr => ({ full_name: sr.repo, default_branch: 'main', description: null, license: { spdx_id: 'MIT' }, pushed_at: sr.pushedAt })) }), { status: 200 })
-      }
+      const searched = searchItems(text, seen)
+      if (searched !== undefined) return searched
       if (text.startsWith('https://raw.githubusercontent.com/owner/repo-7/')) throw new TypeError('only this one')
       if (text.endsWith('/main/package.json')) {
         const name = new URL(text).pathname.split('/')[2] ?? 'x'
@@ -847,10 +1383,8 @@ describe('harvestRepos', () => {
     const throwing = new Set(Array.from({ length: 20 }, (_, i) => `owner/repo-${i}`))
     const fetchImpl = (async (url: string | URL) => {
       const text = String(url)
-      if (new URL(text).searchParams.get('per_page') === '1') return new Response(JSON.stringify({ total_count: 0 }), { status: 200 })
-      if (text.includes('/search/repositories')) {
-        return new Response(JSON.stringify({ items: seen.map(sr => ({ full_name: sr.repo, default_branch: 'main', description: null, license: { spdx_id: 'MIT' }, pushed_at: sr.pushedAt })) }), { status: 200 })
-      }
+      const searched = searchItems(text, seen)
+      if (searched !== undefined) return searched
       const parts = new URL(text).pathname.split('/').filter(Boolean)
       const repo = text.startsWith('https://raw.') ? `${parts[0]}/${parts[1]}` : `${parts[1]}/${parts[2]}`
       if (throwing.has(repo)) throw new TypeError('this one only')
@@ -877,10 +1411,8 @@ describe('harvestRepos', () => {
     const throwing = new Set(Array.from({ length: 25 }, (_, i) => `owner/repo-${i}`))
     const fetchImpl = (async (url: string | URL) => {
       const text = String(url)
-      if (new URL(text).searchParams.get('per_page') === '1') return new Response(JSON.stringify({ total_count: 0 }), { status: 200 })
-      if (text.includes('/search/repositories')) {
-        return new Response(JSON.stringify({ items: seen.map(sr => ({ full_name: sr.repo, default_branch: 'main', description: null, license: { spdx_id: 'MIT' }, pushed_at: sr.pushedAt })) }), { status: 200 })
-      }
+      const searched = searchItems(text, seen)
+      if (searched !== undefined) return searched
       const owner = new URL(text).pathname.split('/').filter(Boolean)
       const repo = text.startsWith('https://raw.') ? `${owner[0]}/${owner[1]}` : `${owner[1]}/${owner[2]}`
       if (throwing.has(repo)) throw new TypeError('this one only')
@@ -912,10 +1444,8 @@ describe('harvestRepos', () => {
     const namedRoot = JSON.stringify({ name: 'monorepo-root', private: true, workspaces: ['packages/*'] })
     const fetchImpl = (async (url: string | URL) => {
       const text = String(url)
-      if (new URL(text).searchParams.get('per_page') === '1') return new Response(JSON.stringify({ total_count: 0 }), { status: 200 })
-      if (text.includes('/search/repositories')) {
-        return new Response(JSON.stringify({ items: seen.map(sr => ({ full_name: sr.repo, default_branch: 'main', description: null, license: { spdx_id: 'MIT' }, pushed_at: sr.pushedAt })) }), { status: 200 })
-      }
+      const searched = searchItems(text, seen)
+      if (searched !== undefined) return searched
       if (text === 'https://raw.githubusercontent.com/someone/monorepo/main/package.json') return new Response(namedRoot, { status: 200 })
       if (text === 'https://api.github.com/repos/someone/monorepo/commits/main') {
         return new Response(JSON.stringify({ sha: commit, commit: { author: { date: '2026-08-02T00:00:00.000Z' } } }), { status: 200 })
@@ -1005,11 +1535,15 @@ describe('the search path survives a body it did not expect', () => {
   it('skips an unusable search item instead of throwing on it', async () => {
     // parseRepoMeta's own contract: an item it cannot read is skipped, the
     // same as one missing full_name. Only `null` ever threw.
+    // Four items, one of them usable: the window's total is FOUR, because the
+    // three the parser refuses still occupy slots in the result set. A fixture
+    // claiming a total of one would be describing a window that does not exist
+    // and would hide a paging loop that counts only what it parsed.
     const items = [null, 'a string', 42, { full_name: 'a/b', default_branch: 'main', description: null, license: { spdx_id: 'MIT' }, pushed_at: seen[0]?.pushedAt }]
     const fetchImpl = (async (url: string | URL) => {
       const text = String(url)
-      if (new URL(text).searchParams.get('per_page') === '1') return new Response(JSON.stringify({ total_count: 1 }), { status: 200 })
-      if (text.includes('/search/repositories')) return new Response(JSON.stringify({ items }), { status: 200 })
+      const searched = searchResponder(() => items)(text)
+      if (searched !== undefined) return searched
       if (text === 'https://raw.githubusercontent.com/a/b/main/package.json') return new Response(JSON.stringify({ name: 'a-b', dsh: { bundle: {} } }), { status: 200 })
       if (text === 'https://api.github.com/repos/a/b/commits/main') return new Response(JSON.stringify({ sha: commit, commit: { author: { date: '2026-08-02T00:00:00.000Z' } } }), { status: 200 })
       throw new Error(`unrouted: ${text}`)
@@ -1053,7 +1587,7 @@ describe('split regression', () => {
     }
     const windows = await partitionTopic('dsh-plugin', probe)
     expect(dayCalls).toBeGreaterThan(0)
-    for (const w of windows) {
+    for (const { window: w } of windows) {
       const q = `topic:dsh-plugin${w.stars ? ` stars:${w.stars}` : ''}${w.created ? ` created:${w.created}` : ''}${w.size ? ` size:${w.size}` : ''}`
       expect(totals[q] ?? 0).toBeLessThanOrEqual(1000)
     }
@@ -1465,17 +1999,153 @@ describe('subpackage probe', () => {
   })
 })
 
+describe('a subpackage path is bounded before it is published', () => {
+  // MAX_SUBPACKAGES bounds how MANY subpackages a repository contributes and
+  // nothing bounded how LONG one of their paths is — but the path is the
+  // rejection's own key (`owner/slug#subdir`) and report.md's first column, so
+  // an unbounded one is republished by the very rejection meant to stop it.
+  // The npm half had the identical hole on `name` and closed it the same way.
+  //
+  // The candidate side matters just as much and is not reachable from the
+  // gate: repo-gate builds `${repo}#${subdir}` as the unit for every one of
+  // its own rejections (no-bundle, requires-build, …), and those fire long
+  // before its entry-payload budget. Refusing the path HERE is what keeps an
+  // unbounded one from ever leaving this module in either shape.
+  const meta = { fullName: 'someone/monorepo', defaultBranch: 'main', description: 'A monorepo.', license: 'MIT', pushedAt: '2026-08-01T00:00:00Z', stars: null as number | null }
+  const rootManifest = JSON.stringify({ name: 'monorepo-root', private: true, workspaces: ['packages/*'] })
+
+  function monorepoWith(dir: string): typeof fetch {
+    return stubFetch({
+      'https://raw.githubusercontent.com/someone/monorepo/main/package.json': new Response(rootManifest, { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/commits/main': new Response(JSON.stringify({
+        sha: commit,
+        commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/git/trees/main?recursive=1': new Response(JSON.stringify({
+        tree: [{ path: 'package.json' }, { path: `${dir}/package.json` }],
+      }), { status: 200 }),
+      [`https://raw.githubusercontent.com/someone/monorepo/main/${dir}/package.json`]: new Response(JSON.stringify({
+        name: 'the-plugin',
+        dsh: { bundle: {}, catalog: { category: 'tool', summary: { en: 'x' }, capabilities: [] } },
+      }), { status: 200 }),
+    })
+  }
+
+  it('bounds the path at more than three times the longest one that exists', () => {
+    // Measured against the committed repo-state.json: 597 subpackage entries,
+    // the longest path 61 characters
+    // (`apps/desktop/bundled-server/plugins/dsh-better-sidebar-skills`). A
+    // literal, so the fixtures below cannot drift with the constant.
+    expect(SUBDIR_MAX_LENGTH).toBe(200)
+  })
+
+  it('publishes a cut key and says so, rather than republishing the path', async () => {
+    const dir = `packages/${'a'.repeat(400)}`
+    const result = await fetchRepoCandidate(meta, monorepoWith(dir), sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const row = result.subpackageFailures?.[0]
+    expect(row?.repo).toHaveLength('someone/monorepo#'.length + SUBDIR_MAX_LENGTH + 1) // + the ellipsis
+    expect(row?.repo.endsWith('…')).toBe(true)
+    // A row that quietly cut the key would leave the author looking for a
+    // directory whose name we invented.
+    expect(row?.detail).toContain('cut')
+    expect(row?.detail).toContain(String(SUBDIR_MAX_LENGTH))
+    // And it is not listed under the unbounded identifier instead. The named
+    // root still stands as the bundle-less candidate, exactly as it does for a
+    // subpackage refused for size — what must not exist is a candidate
+    // carrying that path, because repo-gate republishes `repo#subdir` as the
+    // unit of every rejection it makes and emit puts it in plugins.json.
+    expect(result.candidates.map(c => c.name)).toEqual(['monorepo-root'])
+    expect(result.candidates.every(c => c.subdir === undefined)).toBe(true)
+  })
+
+  it('cuts on whole characters, so no half a character is ever published', async () => {
+    // The cut lands mid-astral-character on purpose: `packages/` is 9, then
+    // 190 filler, so the 200th and 201st code units are the two halves of one
+    // 𝔞. A plain slice() publishes the first half alone, and every consumer
+    // that re-encodes the artifact as UTF-8 fails on it (Python raises
+    // UnicodeEncodeError: surrogates not allowed) — the exact reason
+    // truncateWholeCharacters exists.
+    const dir = `packages/${'a'.repeat(190)}${'𝔞'.repeat(20)}`
+    expect(dir.length).toBeGreaterThan(SUBDIR_MAX_LENGTH)
+    const result = await fetchRepoCandidate(meta, monorepoWith(dir), sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const key = result.subpackageFailures?.[0]?.repo ?? ''
+    // A lone high surrogate survives JSON but not a UTF-8 round trip: it comes
+    // back as U+FFFD, so this equality is what a split character breaks.
+    expect(Buffer.from(key, 'utf8').toString('utf8')).toBe(key)
+    expect(key).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/)
+  })
+
+  it('never fetches the manifest of a path it will not publish', async () => {
+    // The refusal is about the path itself, so it is made before the request:
+    // a hostile tree should not also cost the quota.
+    const dir = `packages/${'a'.repeat(400)}`
+    const requested: string[] = []
+    const inner = monorepoWith(dir)
+    const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+      requested.push(String(url))
+      return inner(String(url), init)
+    }) as unknown as typeof fetch
+    await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(requested.some(u => u.includes('a'.repeat(400)))).toBe(false)
+  })
+
+  it('leaves a path at the bound exactly as it is', async () => {
+    // The boundary from the other side: a legitimate deep path must still list
+    // untouched, or the bound is a silent amputation of the ecosystem's tail.
+    const dir = `packages/${'a'.repeat(SUBDIR_MAX_LENGTH - 'packages/'.length)}`
+    expect(dir).toHaveLength(SUBDIR_MAX_LENGTH)
+    const result = await fetchRepoCandidate(meta, monorepoWith(dir), sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.candidates.map(c => c.subdir)).toEqual([dir])
+      expect(result.subpackageFailures).toBeUndefined()
+    }
+  })
+
+  it('carries the bounded key, not the raw path, into the committed state', async () => {
+    // These rows are persisted verbatim into repo-state.json, which the daily
+    // workflow commits — so an unbounded key is not a page a later build can
+    // shrink, it is a commit.
+    const dir = `packages/${'a'.repeat(400)}`
+    const seen = [{ repo: 'someone/monorepo', pushedAt: '2026-08-02T00:00:00Z' }]
+    const inner = monorepoWith(dir)
+    const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+      const text = String(url)
+      const searched = searchItems(text, seen)
+      if (searched !== undefined) return searched
+      return inner(text, init)
+    }) as unknown as typeof fetch
+    const result = await harvestRepos({ state: {}, budget: 5, fetchImpl, sleep, token: 't' })
+    const persisted = result.nextState['someone/monorepo']?.subpackageFailures?.[0]?.repo ?? ''
+    expect(persisted.length).toBeLessThanOrEqual('someone/monorepo#'.length + SUBDIR_MAX_LENGTH + 1)
+    expect(serializeRepoState(result.nextState)).not.toContain('a'.repeat(SUBDIR_MAX_LENGTH + 1))
+  })
+})
+
 // ---------------------------------------------------------------------------
 // The structural guard.
 //
-// This branch has now been bitten three times by the same shape: a second
-// pushing step, a second committing step, and a second manifest read. Each
-// time the fix was written for the site someone happened to be looking at,
-// and each time an identical uncapped/unguarded twin survived a few lines
-// away. A test that names ONE site cannot catch the fourth; this one reads
-// the module's own source and requires every response-body read in it to be
-// either `readManifest` — the single place the cap lives — or an entry in a
-// table that says, in words, why that read is not a manifest.
+// This branch has now been bitten four times by the same shape: a second
+// pushing step, a second committing step, a second manifest read, and — the
+// one that widened this guard — a second READER, where the manifest bought its
+// whole body with `response.text()` while an identical cap sat fifty lines up
+// pulling the tarball through a reader and cancelling at the limit. Each time
+// the fix was written for the site someone happened to be looking at, and each
+// time the twin survived a few lines away.
+//
+// So the guard reads the module's own source and requires every response-body
+// read in it to be either inside `readCappedBody` — the single place a byte cap
+// is enforced — or an entry in a table that says, in words, why that read
+// carries no repository-authored bytes.
+//
+// It used to scan for `.json()` and `.text()` alone, which is how a streaming
+// reader could have been added uncapped without failing anything: neither
+// `getReader()` nor `arrayBuffer()` was a "read" as far as this test was
+// concerned, and both are exactly how you buy a whole body today.
 //
 // Excuses are keyed by SNIPPET, not line number, following the idiom in
 // workflow.test.ts: if a future edit rewrites the line an excuse was written
@@ -1572,15 +2242,19 @@ function functionRegion(source: string, name: string): { first: number; last: nu
 
 /** Every response-body read in the module. Deliberately matches the call and
  * not its receiver: `(await x).json()` and a wrapped `.json()` are reads too,
- * and a receiver pattern would miss both. */
+ * and a receiver pattern would miss both. `getReader` and `arrayBuffer` are in
+ * the list because they are how a body is bought without `.text()` — the
+ * spelling the manifest cap was rewritten INTO, and the one the previous
+ * version of this scan could not see. */
 function findBodyReads(source: string): LogicalLine[] {
-  return logicalLines(source).filter(line => /\.\s*(?:json|text)\s*\(\s*\)/.test(line.text))
+  return logicalLines(source)
+    .filter(line => /\.\s*(?:json|text|arrayBuffer|blob|bytes|formData|getReader)\s*\(\s*\)/.test(line.text))
 }
 
 describe('every response body read in github-client.ts is capped or excused', () => {
-  const region = functionRegion(githubClientSource, 'readManifest')
+  const region = functionRegion(githubClientSource, 'readCappedBody')
 
-  it('locates readManifest, so the region check cannot pass by excusing everything', () => {
+  it('locates readCappedBody, so the region check cannot pass by excusing everything', () => {
     expect(region.first).toBeGreaterThan(0)
     expect(region.last).toBeGreaterThan(region.first)
   })
@@ -1593,16 +2267,17 @@ describe('every response body read in github-client.ts is capped or excused', ()
     expect(reads.some(r => r.lineNumber >= region.first && r.lineNumber <= region.last)).toBe(true)
   })
 
-  it('is inside readManifest, or an excused non-manifest read, for every one of them', () => {
+  it('is inside readCappedBody, or an excused non-manifest read, for every one of them', () => {
     for (const read of findBodyReads(githubClientSource)) {
       if (read.lineNumber >= region.first && read.lineNumber <= region.last) continue
       const excused = EXCUSED_BODY_READS.some(e => read.text.includes(e.snippet.replace(/\s+/g, ' ')))
       expect(
         excused,
-        `github-client.ts:${read.lineNumber} reads a response body outside readManifest `
-          + `(lines ${region.first}-${region.last}). A manifest body must go through readManifest, `
-          + 'which is where MAX_MANIFEST_BYTES is enforced; anything else needs a reasoned entry in '
-          + `EXCUSED_BODY_READS saying why it is not a manifest. Line: ${read.text}`,
+        `github-client.ts:${read.lineNumber} reads a response body outside readCappedBody `
+          + `(lines ${region.first}-${region.last}). A body carrying repository-authored bytes — a `
+          + 'manifest, a release tarball — must go through readCappedBody, which is where the byte '
+          + 'cap is enforced and where an over-cap body is cancelled rather than bought; anything '
+          + `else needs a reasoned entry in EXCUSED_BODY_READS saying why. Line: ${read.text}`,
       ).toBe(true)
     }
   })
@@ -1681,12 +2356,8 @@ describe('request deadlines', () => {
     // number is honored rather than the 30s default quietly standing in.
     const fetchImpl = (async (url: string | URL) => {
       const text = String(url)
-      if (new URL(text).searchParams.get('per_page') === '1') return new Response(JSON.stringify({ total_count: 0 }), { status: 200 })
-      if (text.includes('/search/repositories')) {
-        return new Response(JSON.stringify({
-          items: [{ full_name: 's/stalled', default_branch: 'main', description: null, license: null, pushed_at: '2026-08-02T00:00:00Z' }],
-        }), { status: 200 })
-      }
+      const searched = searchItems(text, [{ repo: 's/stalled', pushedAt: '2026-08-02T00:00:00Z' }])
+      if (searched !== undefined) return searched
       // raw.githubusercontent.com: accepts and never answers.
       return new Promise<Response>(() => {})
     }) as unknown as typeof fetch
@@ -1866,12 +2537,8 @@ describe('body deadlines', () => {
     // lands where every other transient failure does.
     const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
       const text = String(url)
-      if (new URL(text).searchParams.get('per_page') === '1') return new Response(JSON.stringify({ total_count: 0 }), { status: 200 })
-      if (text.includes('/search/repositories')) {
-        return new Response(JSON.stringify({
-          items: [{ full_name: 's/stalled', default_branch: 'main', description: null, license: null, pushed_at: '2026-08-02T00:00:00Z' }],
-        }), { status: 200 })
-      }
+      const searched = searchItems(text, [{ repo: 's/stalled', pushedAt: '2026-08-02T00:00:00Z' }])
+      if (searched !== undefined) return searched
       return headersThenStalledBody()(text, init)
     }) as unknown as typeof fetch
     const started = Date.now()

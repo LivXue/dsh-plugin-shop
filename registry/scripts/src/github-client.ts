@@ -15,6 +15,7 @@
  */
 
 import { createHash } from 'node:crypto'
+import { truncateWholeCharacters } from './gate.ts'
 import { FetchTimeoutError, fetchWithRetry, withTimeout } from './npm-client.ts'
 import { diffRepoState, nextRepoState, type RepoSeen, type RepoState } from './repo-state.ts'
 import { hasWorkspaceDeps, monorepoSignal, selectSubpackagePaths } from './subpackage-select.ts'
@@ -126,6 +127,27 @@ export const BUNDLE_NAME_MAX_LENGTH = 214
  */
 export const BUNDLE_NAME_RE = /^(?:@[A-Za-z0-9][A-Za-z0-9._-]*\/)?[A-Za-z0-9][A-Za-z0-9._-]*$/
 
+/**
+ * The longest subpackage directory path a repository may contribute.
+ *
+ * `MAX_SUBPACKAGES` bounds how MANY subpackages a repository contributes and
+ * nothing bounded how long one of their paths is — but the path is not
+ * incidental data, it is the entry's own identifier: `owner/slug#subdir` is
+ * the key of every row this module publishes for a subpackage, and `repo-gate`
+ * builds the same string as the unit for each of ITS rejections. So an
+ * unbounded path is republished by the very rejection meant to stop it (the
+ * npm half had the identical hole on `name`, gate.ts), lands in the COMMITTED
+ * repo-state.json, and reaches report.md and the published entry.
+ *
+ * Bounded here, beside {@link BUNDLE_NAME_MAX_LENGTH}, for the same reason
+ * that one is: this is where an untrusted string becomes a published
+ * identifier. 200 is more than three times the longest path that exists —
+ * measured against the committed repo-state.json, whose 597 subpackage entries
+ * top out at 61 characters
+ * (`apps/desktop/bundled-server/plugins/dsh-better-sidebar-skills`).
+ */
+export const SUBDIR_MAX_LENGTH = 200
+
 /** Whether an untrusted manifest `name` is a usable bundle name. */
 export function isBundleName(value: unknown): value is string {
   return typeof value === 'string'
@@ -163,9 +185,12 @@ async function fetchRobust(
 
 /** One repository's fetch outcome: gated-able candidates (one for a plugin
  * root, several for a monorepo's plugin subpackages), or the reason none
- * could be produced. `no-manifest` means the repo exists but has no usable
- * `package.json` at the default branch — the repo is not an installable
- * plugin unit, an author-readable fact distinct from a transient failure.
+ * could be produced. `no-manifest` means the repo ANSWERED — a 404 for its
+ * `package.json`, or a body that is not a usable manifest — so it is not an
+ * installable plugin unit, an author-readable fact distinct from a transient
+ * failure. Any other non-ok status is a transient failure and never a
+ * `no-manifest`: it throws, and harvestRepos turns it into a `fetch-failed`
+ * row that is counted and recorded nowhere.
  * `subpackageFailures` rides alongside a successful outcome: a subpackage
  * that declared `dsh.bundle` but failed the name grammar is not silently
  * dropped like a bundle-less one — it claimed to be a plugin, so it gets
@@ -245,7 +270,14 @@ async function searchRequest(
   return response
 }
 
-/** Probe one query's `total_count` with a minimal page. */
+/**
+ * Probe one query's `total_count` with a minimal page.
+ * @throws when the response answers no numeric total. A malformed probe must
+ *   not read as an empty window: this number decides the partition split, the
+ *   zero-window skip in {@link searchReposByTopic} and the coverage check
+ *   there, and a silent 0 disables all three — it now skips the window
+ *   outright. Same rule, and the same reason, as npm-client's `searchTotal`.
+ */
 export async function probeTotal(
   query: string,
   fetchImpl: typeof fetch,
@@ -256,7 +288,10 @@ export async function probeTotal(
   const response = await searchRequest(url, fetchImpl, sleep, token)
   if (!response.ok) throw new Error(`github search probe for ${query} failed: ${response.status}`)
   const body = await readSearchBody(response, `github search probe for ${query}`)
-  return typeof body.total_count === 'number' ? body.total_count : 0
+  if (typeof body.total_count !== 'number') {
+    throw new Error(`github search probe for ${query} answered no total_count; a window's size cannot be measured without it`)
+  }
+  return body.total_count
 }
 
 /**
@@ -280,7 +315,7 @@ export async function probeTotal(
 async function readSearchBody(
   response: Response,
   what: string,
-): Promise<{ total_count?: unknown; items?: unknown }> {
+): Promise<{ total_count?: unknown; items?: unknown; incomplete_results?: unknown }> {
   let parsed: unknown
   try {
     parsed = await response.json()
@@ -298,28 +333,66 @@ async function readSearchBody(
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     throw new Error(`${what} answered 200 with a body that is not JSON: ${JSON.stringify(parsed)?.slice(0, 60) ?? typeof parsed}`)
   }
-  return parsed as { total_count?: unknown; items?: unknown }
+  return parsed as { total_count?: unknown; items?: unknown; incomplete_results?: unknown }
 }
 
-/** Fetch one page of a windowed search. */
+/**
+ * One page of a windowed search.
+ *
+ * `skipped` is separate from `metas` on purpose, and it is the whole reason
+ * this is a record rather than an array. An item {@link parseRepoMeta} cannot
+ * read still OCCUPIES a slot in the result set, so a caller that measures its
+ * progress in parsed items alone falls one behind per unreadable item — and
+ * the loop that broke on a short page of them abandoned everything after the
+ * first one.
+ */
+interface SearchPageResult {
+  metas: RepoMeta[]
+  /** Items on this page that {@link parseRepoMeta} refused. */
+  skipped: number
+  /** `total_count` as answered for THIS page; tracks a window that shrank. */
+  total: number
+}
+
+/**
+ * Fetch one page of a windowed search.
+ * @throws when the page reports `incomplete_results` (GitHub's own signal that
+ *   the query timed out and the page is partial) or answers no numeric total —
+ *   neither can be told apart from a complete page by looking at the items.
+ */
 async function searchPage(
   query: string,
   page: number,
   fetchImpl: typeof fetch,
   sleep: (ms: number) => Promise<void>,
   token: string | undefined,
-): Promise<RepoMeta[]> {
+): Promise<SearchPageResult> {
   const url = `${GITHUB_API}/search/repositories?q=${encodeURIComponent(query)}&per_page=${SEARCH_PAGE_SIZE}&page=${page}`
   const response = await searchRequest(url, fetchImpl, sleep, token)
   if (!response.ok) throw new Error(`github search for ${query} failed: ${response.status}`)
   const body = await readSearchBody(response, `github search for ${query}`)
+  // GitHub sets this when the query timed out and what it served is a PARTIAL
+  // result set. The response is an ordinary 200 carrying ordinary items, so
+  // nothing downstream can notice — it would page and measure as if the window
+  // were whole. A timeout is the realistic production trigger for it.
+  if (body.incomplete_results === true) {
+    throw new Error(`github search for ${query} page ${page} answered incomplete_results: the query timed out and the page it served is partial`)
+  }
+  // Same rule as the npm half: a page carrying no total cannot be told apart
+  // from a truncated one, so it throws rather than ending the window on
+  // whatever happened to arrive.
+  if (typeof body.total_count !== 'number') {
+    throw new Error(`github search for ${query} page ${page} answered no total_count; a truncated page cannot be told from a complete one`)
+  }
   const items = Array.isArray(body.items) ? body.items : []
   const metas: RepoMeta[] = []
+  let skipped = 0
   for (const item of items) {
     const meta = parseRepoMeta(item)
-    if (meta !== null) metas.push(meta)
+    if (meta === null) skipped += 1
+    else metas.push(meta)
   }
-  return metas
+  return { metas, skipped, total: body.total_count }
 }
 
 /** One partition window: extra qualifiers appended to `topic:<topic>`. */
@@ -359,21 +432,37 @@ function splitRange(start: string, end: string): string | null {
 }
 
 /**
+ * One window to page, with the size its own probe measured.
+ *
+ * The total used to be read for the split decision and then DISCARDED, which
+ * left the paging loop with nothing to measure itself against: it stopped on
+ * the first short page, so one unreadable item ended a window early and
+ * nothing anywhere said so. Carrying it costs no extra request — the probe
+ * already ran — and it is what turns "the pages stopped" into "the pages
+ * stopped short", which is the difference between a harvest and a guess.
+ */
+export interface WindowPlan {
+  window: Window
+  total: number
+}
+
+/**
  * Partition one topic into mutually exclusive windows whose totals each fit
  * under {@link GITHUB_SEARCH_CAP}, so paging them enumerates the WHOLE pool.
  * Cascade: stars bucket → created-date bisection (day floor) → size bucket.
  * The probe counts every window once; the pool is ~13k repos concentrated in
  * recent days, and the stars split alone brings the worst day under the cap.
+ * @returns each window paired with the total its probe answered.
  */
 export async function partitionTopic(
   topic: string,
   probe: (query: string) => Promise<number>,
-): Promise<Window[]> {
-  const windows: Window[] = []
+): Promise<WindowPlan[]> {
+  const windows: WindowPlan[] = []
   const expand = async (window: Window): Promise<void> => {
     const total = await probe(windowQuery(topic, window))
     if (total <= GITHUB_SEARCH_CAP) {
-      windows.push(window)
+      windows.push({ window, total })
       return
     }
     if (window.stars === undefined) {
@@ -420,16 +509,56 @@ export async function searchReposByTopic(
   const byName = new Map<string, RepoMeta>()
   let windowCount = 0
   for (const topic of HARVEST_TOPICS) {
-    const windows = await partitionTopic(topic, query => probeTotal(query, fetchImpl, sleep, token))
-    windowCount += windows.length
-    for (const window of windows) {
+    const plans = await partitionTopic(topic, query => probeTotal(query, fetchImpl, sleep, token))
+    windowCount += plans.length
+    for (const { window, total: probed } of plans) {
       const query = windowQuery(topic, window)
-      for (let page = 1; page <= MAX_SEARCH_PAGES; page += 1) {
-        const metas = await searchPage(query, page, fetchImpl, sleep, token)
+      // A window the probe measured as empty has nothing to page, and asking
+      // anyway costs a request plus the 2s search pace. `0 <= GITHUB_SEARCH_CAP`
+      // is true, so every empty window used to be paged; the npm half skips a
+      // zero cell explicitly, and the asymmetry reads as an oversight. Safe to
+      // skip only because probeTotal now THROWS on a body with no total: a
+      // malformed probe read as 0 would otherwise drop a whole window here.
+      if (probed === 0) continue
+      // Parsed plus skipped: an item we could not read still occupies a slot,
+      // and counting only the parsed ones is precisely what let one `null`
+      // item end a 250-repository window after 99 of them.
+      let enumerated = 0
+      for (let page = 1; ; page += 1) {
+        if (page > MAX_SEARCH_PAGES) {
+          // The window outgrew the cap between its probe and its pages. The
+          // old bound stopped here in silence and published the first 1,000 —
+          // the same defect as the short-page break, one line down.
+          throw new Error(
+            `github search for ${query} needs page ${page}, past the ${MAX_SEARCH_PAGES} pages the ${GITHUB_SEARCH_CAP}-result cap allows: it enumerated ${enumerated} of ${probed} measured at partition time, so the window has grown past the cap since and the partition is stale`,
+          )
+        }
+        const { metas, skipped, total } = await searchPage(query, page, fetchImpl, sleep, token)
         for (const meta of metas) {
           if (!byName.has(meta.fullName)) byName.set(meta.fullName, meta)
         }
-        if (metas.length < SEARCH_PAGE_SIZE) break
+        enumerated += metas.length + skipped
+        // Stop on the total the API answered for THIS page — which tracks a
+        // window that shrank mid-run — never on a short page. An empty page is
+        // the other terminator: there is nothing further to ask for, and the
+        // coverage check below is what decides whether that is acceptable.
+        if (metas.length + skipped === 0 || enumerated >= total) break
+      }
+      if (enumerated < probed) {
+        // Safe by CHECK, the shape searchByKeywords uses on the npm half, and
+        // for the same reason: the API has no way to prove a window was read
+        // whole. The re-probe absorbs churn — these windows are `stars:0` and
+        // `stars:>=1`, so a repository earning its first star mid-run leaves
+        // one and joins another, and against a 14,740-repo pool that is an
+        // ordinary day, not a broken harvest. It is paid for ONLY on the
+        // shortfall path, so a healthy run costs no extra request.
+        const after = await probeTotal(query, fetchImpl, sleep, token)
+        const required = Math.min(probed, after)
+        if (enumerated < required) {
+          throw new Error(
+            `github search for ${query} enumerated ${enumerated} of ${required} results; the window ended before its answered total, so the harvest would be silently short — and every repository it lost publishes repo-gone under its own name and is dropped from the committed state`,
+          )
+        }
       }
     }
   }
@@ -540,26 +669,32 @@ async function fetchLatestReleaseTarball(
 }
 
 /**
- * Read an asset body with a hard cap, returning null when it exceeds
- * {@link MAX_TARBALL_BYTES}. The probe is advisory, so an over-cap tarball is
- * un-rescuable, same as an absent one — it must refuse the body rather than
- * hold a giant asset in memory. A `content-length` over the cap is refused
- * before any byte is read; a streamed body (no content-length) is pulled
- * through a reader and cancelled the moment the cap trips.
+ * Read a response body with a hard BYTE cap, returning null the moment it
+ * exceeds `cap`. The one body reader in this module, and the one place either
+ * cap is enforced.
+ *
+ * It is shared rather than written twice because the two readers had already
+ * drifted apart in the way that matters: this loop, written for the tarball,
+ * cancels as soon as the cap trips, while the manifest's `await
+ * response.text()` buffered the WHOLE decompressed body and then measured it.
+ * `content-length` cannot stand in for the measurement — on
+ * raw.githubusercontent.com it is the gzip-compressed size, so a manifest
+ * whose header says 744 bytes can decode to a gigabyte — which is why the
+ * count that decides is the one taken here, off the bytes as they arrive.
+ * @param response - an `ok` response whose body is to be read.
+ * @param cap - the largest body, in bytes, the caller will hold.
+ * @returns the bytes, or null when the body is larger than `cap`.
  */
-async function readTarballBody(response: Response): Promise<Uint8Array | null> {
-  const length = Number(response.headers.get('content-length'))
-  if (Number.isFinite(length) && length > MAX_TARBALL_BYTES) return null
+async function readCappedBody(response: Response, cap: number): Promise<Uint8Array | null> {
   const body = response.body
   if (body == null) {
-    // No readable stream (or a fixture that only fakes `arrayBuffer`): the
-    // content-length check above already bounded the body, so the one-shot
-    // read cannot OOM — any failure just degrades the probe to null.
-    try {
-      return new Uint8Array(await response.arrayBuffer())
-    } catch {
-      return null
-    }
+    // No readable stream (or a fixture that only fakes `arrayBuffer`): one
+    // shot, then measured. A throw here belongs to the caller — the tarball
+    // probe degrades to null, readManifest calls it an unreadable body — so it
+    // is deliberately not swallowed at this level, which would leave neither
+    // of them able to tell "empty" from "broken".
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    return bytes.byteLength > cap ? null : bytes
   }
   const reader = body.getReader()
   const chunks: Uint8Array[] = []
@@ -569,7 +704,7 @@ async function readTarballBody(response: Response): Promise<Uint8Array | null> {
       const { done, value } = await reader.read()
       if (done) break
       total += value.byteLength
-      if (total > MAX_TARBALL_BYTES) {
+      if (total > cap) {
         // Stop pulling the rest of the body: over the cap, refuse.
         await reader.cancel()
         return null
@@ -586,6 +721,20 @@ async function readTarballBody(response: Response): Promise<Uint8Array | null> {
     offset += chunk.byteLength
   }
   return bytes
+}
+
+/**
+ * Read an asset body with a hard cap, returning null when it exceeds
+ * {@link MAX_TARBALL_BYTES}. The probe is advisory, so an over-cap tarball is
+ * un-rescuable, same as an absent one — it must refuse the body rather than
+ * hold a giant asset in memory. A `content-length` over the cap is refused
+ * before any byte is read; everything else is measured by
+ * {@link readCappedBody} as it arrives.
+ */
+async function readTarballBody(response: Response): Promise<Uint8Array | null> {
+  const length = Number(response.headers.get('content-length'))
+  if (Number.isFinite(length) && length > MAX_TARBALL_BYTES) return null
+  return await readCappedBody(response, MAX_TARBALL_BYTES)
 }
 
 /**
@@ -649,6 +798,7 @@ function projectCandidate(
  * call sites.
  */
 function describeBadName(rawName: unknown): string {
+  const grammar = `is not a usable package name (an optional @scope/, then letters, digits, ".", "-" or "_", at most ${BUNDLE_NAME_MAX_LENGTH} characters), so dsh cannot register it.`
   // 80 characters is an ECHO of hostile input, not a name bound: this string
   // is published to report.md on Pages. The name that gets here has already
   // failed the grammar, so its only remaining bound is
@@ -657,10 +807,22 @@ function describeBadName(rawName: unknown): string {
   // the value itself is JSON-escaped because a raw one carries newlines and
   // quotes (`Skills Manager` and `{{PKG_NAME}}` are already in the committed
   // repo-state).
-  const shown = typeof rawName === 'string'
-    ? JSON.stringify(rawName.slice(0, 80))
-    : `a ${typeof rawName}`
-  return `package.json declares ${shown}, which is not a usable package name (an optional @scope/, then letters, digits, ".", "-" or "_", at most ${BUNDLE_NAME_MAX_LENGTH} characters), so dsh cannot register it.`
+  if (typeof rawName === 'string') {
+    return `package.json declares ${JSON.stringify(rawName.slice(0, 80))}, which ${grammar}`
+  }
+  // No name at all. Reachable from the SUBPACKAGE call site alone (the root
+  // checks for undefined before asking), where a directory declared dsh.bundle
+  // and no name — so the useful sentence names the missing field rather than
+  // reciting a grammar the author did not break. It read "declares a
+  // undefined".
+  if (rawName === undefined || rawName === null) {
+    return 'package.json declares no name, so dsh cannot register it.'
+  }
+  // A name that is not a string: an object, a number, a boolean. The old
+  // `a ${typeof rawName}` published "declares a object" verbatim under the
+  // repository's name. The type is the specific fact worth keeping; the
+  // article was the part that was wrong.
+  return `package.json declares a non-string name (${typeof rawName}), which ${grammar}`
 }
 
 /**
@@ -705,11 +867,18 @@ async function readManifest(
     // Refused before a byte is read. An over-cap manifest is not an
     // installable plugin unit, and its raw `catalog` value would otherwise be
     // committed to repo-state.json whether or not the gate accepts it.
+    //
+    // This header is a FLOOR and never the cap: raw.githubusercontent.com
+    // serves gzip, so it reports the COMPRESSED size (measured live: 744 bytes
+    // for a 1,838-byte manifest, and a 256 MB one-character `description`
+    // compresses to 260,986 — 1029:1). A value at the cap therefore admits
+    // about a gigabyte, which is why the count that actually decides is taken
+    // off the bytes as they arrive, below.
     return { ok: false, reason: 'too-large', detail: `package.json is larger than ${MAX_MANIFEST_BYTES} bytes, so it is not read.` }
   }
-  let text: string
+  let bytes: Uint8Array | null
   try {
-    text = await response.text()
+    bytes = await readCappedBody(response, MAX_MANIFEST_BYTES)
   } catch (error) {
     // A deadline is not an unreadable manifest. `unreadable` becomes a
     // `no-manifest`, which harvestRepos PERSISTS in repo-state.json as a dead
@@ -722,18 +891,50 @@ async function readManifest(
     // Same rule as npm: an unreadable body is a rejection, not a crash.
     return { ok: false, reason: 'unreadable', detail: 'package.json was unreadable.' }
   }
-  if (text.length > MAX_MANIFEST_BYTES) {
-    // No content-length (a chunked response): the cap is applied to what
-    // arrived rather than trusted from a header a third party wrote. The body
-    // did reach us on this path, so the reason says discarded, not unread.
+  if (bytes === null) {
+    // Over the cap by MEASUREMENT — the header understated it, or there was
+    // none (a chunked response) — and the reader was cancelled the moment the
+    // count crossed. The body did start reaching us on this path, so the
+    // reason says discarded, not unread. A byte count, not a string length:
+    // the constant and this sentence both say bytes, and `text.length` counted
+    // UTF-16 code units, admitting up to 3x what it announced.
     return { ok: false, reason: 'too-large', detail: `package.json is larger than ${MAX_MANIFEST_BYTES} bytes, so it was discarded without being parsed.` }
   }
   try {
-    return { ok: true, manifest: JSON.parse(text) }
+    return { ok: true, manifest: JSON.parse(new TextDecoder().decode(bytes)) }
   } catch {
     // A body that arrived but is not JSON is the same rejection as one that
     // could not be read: nothing else reaches here, and neither is a crash.
     return { ok: false, reason: 'unreadable', detail: 'package.json was unreadable.' }
+  }
+}
+
+/**
+ * Build one subpackage failure row, keyed `owner/slug#subdir`.
+ *
+ * EVERY subpackage row goes through here, which is the point of it existing
+ * rather than the key being interpolated at each site: the key is a PUBLISHED
+ * identifier — report.md's first column, and a value persisted verbatim into
+ * the committed repo-state.json — so a path past {@link SUBDIR_MAX_LENGTH}
+ * would be republished by the very rejection meant to stop it. The cut lands
+ * on a whole character (see {@link truncateWholeCharacters}: a split astral
+ * pair leaves an orphan surrogate that survives JSON and breaks any consumer
+ * re-encoding it as UTF-8), it is marked with an ellipsis, and the detail says
+ * it happened — a quietly cut key sends an author looking for a directory
+ * whose name we invented.
+ * @param owner - the repository owner.
+ * @param slug - the repository name.
+ * @param dir - the subpackage directory, untrusted and unbounded.
+ * @param detail - the author-readable reason, before any cut is noted.
+ */
+function subpackageFailure(owner: string, slug: string, dir: string, detail: string): RepoFetchFailure {
+  if (dir.length <= SUBDIR_MAX_LENGTH) {
+    return { repo: `${owner}/${slug}#${dir}`, code: 'no-manifest', detail }
+  }
+  return {
+    repo: `${owner}/${slug}#${truncateWholeCharacters(dir, SUBDIR_MAX_LENGTH)}…`,
+    code: 'no-manifest',
+    detail: `${detail} The path in this row is cut to that length.`,
   }
 }
 
@@ -764,7 +965,17 @@ async function probeSubpackageCandidates(
 ): Promise<{ candidates: RepoCandidate[]; failures: RepoFetchFailure[]; anyClaimed: boolean }> {
   const treeUrl = `${GITHUB_API}/repos/${owner}/${slug}/git/trees/${meta.defaultBranch}?recursive=1`
   const treeResponse = await fetchRobust(treeUrl, fetchImpl, sleep, token, timeoutMs)
-  if (!treeResponse.ok) return { candidates: [], failures: [], anyClaimed: false }
+  // A 404 is a fact: there is no tree at that branch, so there are no
+  // subpackages to find. Any other status is our transport failing, and
+  // swallowing it makes a monorepo look like it has none — after which a
+  // bundle-less root earns a PERSISTED, published "declares no name and no
+  // installable subpackage" that is false. That is exactly the reasoning the
+  // catch below already applies to a deadline on this same read; a 500 or a
+  // rate-limit 403 differs from a stall only in how it is spelled.
+  if (treeResponse.status === 404) return { candidates: [], failures: [], anyClaimed: false }
+  if (!treeResponse.ok) {
+    throw new Error(`github api returned ${treeResponse.status} listing the tree of ${owner}/${slug}`)
+  }
   let treeBody: { tree?: unknown } = {}
   try {
     const parsed = await treeResponse.json() as unknown
@@ -796,9 +1007,29 @@ async function probeSubpackageCandidates(
   // remembered at each new return site.
   let anyClaimed = false
   for (const dir of dirs) {
+    // The path itself, before it costs a request. A subpackage's directory is
+    // its published identifier — this row's key, `repo-gate`'s unit for every
+    // rejection it makes, and the `subdir` field of the entry in plugins.json
+    // — and unlike a name it cannot be truncated for the entry, because a cut
+    // path is an install location that does not exist. So an over-long one is
+    // refused outright, with a reason, rather than listed under a lie or
+    // dropped in silence.
+    if (dir.length > SUBDIR_MAX_LENGTH) {
+      failures.push(subpackageFailure(owner, slug, dir,
+        `dsh does not list a subpackage whose directory path is longer than ${SUBDIR_MAX_LENGTH} characters: the path identifies the entry and is published in the catalog and in this report.`))
+      continue
+    }
     const subUrl = `${RAW_GITHUB}/${owner}/${slug}/${meta.defaultBranch}/${dir}/package.json`
     const subResponse = await fetchRobust(subUrl, fetchImpl, sleep, token, timeoutMs)
-    if (!subResponse.ok) continue
+    // Same rule, third site: a 404 means the tree listed a path that is not
+    // there, which is nothing to report. Anything else is a subpackage we
+    // FAILED to read — a plugin silently missing from the catalog, and, when
+    // it was the only one, a root handed the same false "no installable
+    // subpackage" verdict. The whole repository is retried next run instead.
+    if (subResponse.status === 404) continue
+    if (!subResponse.ok) {
+      throw new Error(`github raw returned ${subResponse.status} fetching ${owner}/${slug}/${dir}/package.json`)
+    }
     const subRead = await readManifest(subResponse)
     if (!subRead.ok) {
       // Only the size refusal is reported. A failure here is keyed by PATH,
@@ -810,7 +1041,7 @@ async function probeSubpackageCandidates(
       // and staying silent would let the repository be published as having no
       // installable subpackage when it plainly has one.
       if (subRead.reason === 'too-large') {
-        failures.push({ repo: `${owner}/${slug}#${dir}`, code: 'no-manifest', detail: subRead.detail })
+        failures.push(subpackageFailure(owner, slug, dir, subRead.detail))
       }
       continue
     }
@@ -827,7 +1058,7 @@ async function probeSubpackageCandidates(
     if (sub === null && declaresBundle) {
       const rawName = (subManifest as { name?: unknown } | null)?.name
       anyClaimed = true
-      failures.push({ repo: `${owner}/${slug}#${dir}`, code: 'no-manifest', detail: describeBadName(rawName) })
+      failures.push(subpackageFailure(owner, slug, dir, describeBadName(rawName)))
     }
   }
   return { candidates, failures, anyClaimed }
@@ -837,6 +1068,12 @@ async function probeSubpackageCandidates(
  * Fetch one repository's manifest — and, for a monorepo root without a
  * bundle, its subpackage manifests — and project them into candidates.
  * @returns the candidates, or a code + author-readable reason.
+ * @throws when a request fails in a way that says nothing about the
+ *   repository: a stalled deadline, or any non-ok status that is not a 404.
+ *   {@link harvestRepos} is the handler — it publishes a reason we wrote,
+ *   diagnoses to stderr, persists nothing, and counts the failure toward the
+ *   systematic-failure bound. Returning those as `no-manifest` instead is what
+ *   let one blocked host write off every repository new to the state file.
  */
 export async function fetchRepoCandidate(
   meta: RepoMeta,
@@ -862,8 +1099,26 @@ export async function fetchRepoCandidate(
   // bad repositories, and it must stop the build rather than publish a catalog
   // that blames each of them by name.
   const manifestResponse = await fetchRobust(rawUrl, fetchImpl, sleep, token, timeoutMs)
-  if (!manifestResponse.ok) {
+  if (manifestResponse.status === 404) {
     return { ok: false, code: 'no-manifest', detail: 'No package.json at the repository root, so there is nothing for dsh to install.' }
+  }
+  if (!manifestResponse.ok) {
+    // ONLY a 404 is a verdict about the repository. Every other status is a
+    // failure of the transport this module owns — a 5xx, or the CI egress
+    // allowlist that permits api.github.com and not raw.githubusercontent.com
+    // that fetchLatestReleaseTarball's own catch names — and `no-manifest` was
+    // returned for all of them. fetchWithRetry retries only a 429, so a 500 or
+    // a 403 was RETURNED rather than thrown, harvestRepos PERSISTED it for
+    // every repository with no recorded entry, and each was written off with
+    // "No package.json at the repository root" until its `pushedAt` moved.
+    //
+    // It throws for the reason the comment above gives for a deadline:
+    // harvestRepos is the right handler. It publishes a reason we wrote,
+    // sends the status to stderr, records nothing — and counts the failure
+    // toward the systematic-failure bound, which counts throws alone and so
+    // could never fire for a status. A whole pool answering 403 is a broken
+    // harvest, not fourteen thousand bad repositories.
+    throw new Error(`github raw returned ${manifestResponse.status} fetching ${meta.fullName}/${meta.defaultBranch}/package.json`)
   }
   const rootRead = await readManifest(manifestResponse)
   if (!rootRead.ok) return { ok: false, code: 'no-manifest', detail: rootRead.detail }
