@@ -22,7 +22,7 @@
 - `strict` and `noUncheckedIndexedAccess` are on: guard index access, never assert it away.
 - Every file ends with exactly one trailing newline.
 - **G-1 changes an RPC shape** (`InstallArgs` and `ShopInstalledEntry`), so this release goes to `beta` first at `0.8.0-beta.0` and is installed by hand into a throwaway `DSH_HOME` before promotion. README install pins track `latest`, so all four move only in the promotion commit, never in the beta.
-- Baseline at HEAD plus the working tree's Incompatible-badge change: `pnpm -C packages/dsh-plugin-shop test` = **25 files / 492 tests green**; both typechecks clean. The working tree's badge change (`IncompatibleBadge` is a component; `InstallPanel`'s idle branch returns a fragment of button + badge) is preserved by every task here.
+- Baseline at `5f48787`, with the Incompatible-badge change merged (`cbd90d5`, `8c43cb4`) and shipped in `0.7.5-beta.0`: `pnpm -C packages/dsh-plugin-shop test` = **25 files / 519 tests green**; both typechecks clean. `IncompatibleBadge` is a component and `InstallPanel`'s idle branch returns a fragment of button + badge; that shape is preserved by every task here.
 - `test` and `typecheck --noEmit` both skip `lib/`, so any task that packs must `rm -rf lib && pnpm build` first.
 
 ---

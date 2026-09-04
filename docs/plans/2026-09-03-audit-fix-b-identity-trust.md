@@ -24,7 +24,7 @@
 - **Files end with exactly one trailing newline** (`emit.test.ts:158-165` pins this for the artifacts).
 - **`SIMILARITY_THRESHOLD = 2`** (`registry/scripts/src/gate.ts:13`). `DERIVED_SUMMARY_MAX_LENGTH = 200` (`gate.ts:20`). `MAX_SUBPACKAGES = 8` (`subpackage-select.ts:12`).
 - **`fastest-levenshtein` is plain Levenshtein, not Damerau-Levenshtein**: a transposition costs 2, not 1, so a transposed pair sits exactly at the threshold. Any new fixture asserting a distance must be recomputed by hand — two fixtures in this repo shipped with wrong distances and passed for the wrong reason.
-- **Baseline at `49db942`: 22 test files, 334 tests, green in ~4 s; `pnpm typecheck` clean.** Every task ends with `pnpm test` and `pnpm typecheck` before its commit.
+- **Baseline at `5f48787` (plan A merged): 24 test files, 611 tests, green in ~6 s; `pnpm typecheck` clean.** Every task ends with `pnpm test` and `pnpm typecheck` before its commit.
 - **Registry-side only.** Nothing here changes an RPC shape or the host's parsing: `Entry.review` reaches the client through a non-strict zod object (`packages/dsh-plugin-shop/src/host/catalog.ts:73-82`, and `:164` "Do not add .strict()"), so the new `review.repo` field is additive and an installed 0.7.4 shop strips it. No package release is required; the changes ship on the next daily build.
 
 ---
@@ -4362,11 +4362,12 @@ git diff --stat main                    # registry/ + docs/ only; no packages/, 
 ```
 
 The per-task test counts quoted in each Step 4 are arithmetic from the 334-test
-baseline at `49db942`. A difference of a test or two — because a fixture grew,
+baseline at `49db942`, which predates plan A; the baseline is 611 at `5f48787`,
+so read those numbers as deltas rather than totals. A difference of a test or two — because a fixture grew,
 or because a task's tests were split differently — is fine; what must not
 differ is green.
 
-Do **not** run `pnpm build:catalog` to check this work: it makes ~8,800 live npm requests and takes minutes, and every policy decision here is covered by fixtures. The first real exercise is the next scheduled daily build, whose `report.md` should show the two new diagnostic sections and whose `manifest.lock` diff will be larger than usual exactly once, from the identity tiebreak in Task 11.
+Do **not** run `pnpm build:catalog` to check this work: it makes thousands of live npm and GitHub requests and takes tens of minutes (CLAUDE.md's Commands section measures it and is the authority; the ~8,800 this replaced was two overlapping keyword totals added together), and every policy decision here is covered by fixtures. The first real exercise is the next scheduled daily build, whose `report.md` should show the two new diagnostic sections and whose `manifest.lock` diff will be larger than usual exactly once, from the identity tiebreak in Task 11.
 
 Mutation-check every new test the way audit H did before considering a task done: copy the module under test to the scratchpad, inject the bug the test claims to catch, point the test at the copy, and watch it fail. A test that stays green under its own mutation is not a test. The specific mutations worth trying here: swap `compareEntries`'s tiebreak order; drop the `.toLowerCase()` in `firstSeenKey`; change `verifiedAsThisPackage` to `ownReview !== undefined`; change `notAShop`'s filter to `!row.market`; change `globToRegex`'s `$` back to nothing.
 
