@@ -47,20 +47,37 @@ export const SEARCH_WINDOW = MAX_SEARCH_FROM + PAGE_SIZE
  * under three different terms), so a text term re-ranks the head but never
  * moves a name into the reachable window. The intersections do split it:
  * `dsh` 4,255, `dsh-plugin` 3,178, `plugin` 1,604, `deepseek` 949, `agent`
- * 498, `mcp` 213, `cli` 72, `harness` 41, `claude` 35, `tool` 29, `cordis`
- * 20, `codex` 10, `claude-code` 10, `desktop-pet` 7.
+ * 498, `mcp` 213, `cli` 72, `harness` 41, `claude` 35, `ai` 31, `tool` 29,
+ * `cordis` 20, `codex` 10, `claude-code` 10, `desktop-pet` 7.
+ *
+ * That list is the PROBE, not this constant, and the two differ in both
+ * directions — read them as one list and the arithmetic below stops adding
+ * up. `harness` (41) and `ai` (31) were measured and never shipped. This
+ * constant instead carries `deepseek-harness`, which cannot appear in a list
+ * measured against `keywords:deepseek-harness`: it is there for the OTHER
+ * harvest keyword, where `keywords:dsh-plugin,deepseek-harness` is a real
+ * cell, and {@link partitionKeyword} skips it as self on this one.
  *
  * There is no negation qualifier (`keywords:a,-b` returns total 0), so a
  * cell's complement cannot be expressed and this partition is NOT covering by
  * construction. {@link searchByKeywords} therefore MEASURES its coverage
  * against the keyword's own total and throws on a shortfall: safe by check,
  * not by construction. `cordis`, `codex`, `claude-code`, and `desktop-pet`
- * were added 2026-09-03 to close a measured 44-name gap (the other ten cells
- * alone reached 5,059 of 5,103, paged live the same day). Adding a keyword
- * here is the documented response to that throw; a cell is always
- * `keywords:<harvest-keyword>,<refinement>`, so a refinement can only narrow
- * the net a listing sees, never widen it — an addition is a coverage
- * decision, not a policy one.
+ * were added 2026-09-03 to close a measured 44-name gap: the ten entries this
+ * constant shipped with reached 5,059 of `keywords:deepseek-harness`'s 5,103,
+ * paged live the same day. Ten ENTRIES, nine cells — `deepseek-harness`
+ * contributes none of those names, because a keyword is never ANDed onto
+ * itself. The gap was measured against exactly that nine-cell result, so the
+ * four additions close all of it and `harness` was never needed; adding it
+ * now would replace a reproducible number with one nobody has paged.
+ *
+ * Nothing here has ever run in production: partitioning starts above
+ * SEARCH_WINDOW, and on 2026-09-04 `keywords:deepseek-harness` measured 5,131
+ * and `keywords:dsh-plugin` 3,731. The first keyword to cross is what will
+ * re-derive these numbers. Adding a keyword here is the documented response
+ * to that throw; a cell is always `keywords:<harvest-keyword>,<refinement>`,
+ * so a refinement can only narrow the net a listing sees, never widen it — an
+ * addition is a coverage decision, not a policy one.
  */
 export const PARTITION_KEYWORDS: readonly string[] = [
   'dsh', 'dsh-plugin', 'deepseek-harness', 'plugin', 'deepseek',
@@ -92,6 +109,13 @@ export async function partitionKeyword(
   const cells: string[][] = []
   const oversized: string[][] = []
   for (const refinement of PARTITION_KEYWORDS) {
+    // `keywords:X,X` is X: a cell that re-states the keyword partitions
+    // nothing, and above the window — the only place this runs — it lands in
+    // `oversized` and can throw "no refinement keyword splits it" on a
+    // keyword every other cell splits fine. It is also why PARTITION_KEYWORDS
+    // yields one fewer cell than it has entries whenever it names the harvest
+    // keyword itself, which is what the coverage arithmetic in that constant's
+    // comment is counted against.
     if (refinement === keyword) continue
     const cell = [keyword, refinement]
     const cellTotal = await probe(cell)

@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
+import { FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
 
 describe('HARVEST_KEYWORDS', () => {
@@ -350,6 +350,45 @@ describe('toCandidate', () => {
     for (const entry of [null, 'not a manifest', 42, ['an', 'array']]) {
       expect(toCandidate({ ...packument, versions: { '1.2.0': entry } })).toBe(null)
     }
+  })
+})
+
+describe('partitionKeyword', () => {
+  it('never ANDs a harvest keyword onto itself', async () => {
+    // PARTITION_KEYWORDS names `deepseek-harness`, which is also a harvest
+    // keyword. `keywords:X,X` is X, so as a cell it partitions nothing — and
+    // above the window, the only place this code runs, it lands in `oversized`
+    // and can throw "no refinement keyword splits it" for a keyword every
+    // other cell splits fine. The skip had no test of its own: deleting it
+    // left all 506 green, because every fixture reaching this function drives
+    // it through searchByKeywords with static totals that hide the extra cell.
+    //
+    // It is also the arithmetic in PARTITION_KEYWORDS' own comment: ten
+    // entries yield NINE cells against this keyword, which is what the
+    // 5,059-of-5,103 coverage measurement was taken against.
+    const probed: string[] = []
+    const probe = async (keywords: readonly string[]): Promise<number> => {
+      const query = keywordQuery(keywords)
+      probed.push(query)
+      return query === 'keywords:deepseek-harness' ? SEARCH_WINDOW + 1 : 10
+    }
+
+    const { cells, partitioned } = await partitionKeyword('deepseek-harness', probe)
+    expect(partitioned).toBe(true)
+    expect(probed).not.toContain('keywords:deepseek-harness,deepseek-harness')
+    expect(cells).toHaveLength(PARTITION_KEYWORDS.filter(k => k !== 'deepseek-harness').length)
+    expect(cells.every(cell => cell.filter(k => k === 'deepseek-harness').length === 1)).toBe(true)
+  })
+
+  it('keeps a refinement that merely resembles the keyword', async () => {
+    // The skip is an equality, not a prefix or a substring test: `harness`
+    // and `deepseek-harness` are different queries, and dropping either as
+    // "close enough" would silently delete a cell from the partition.
+    const probe = async (keywords: readonly string[]): Promise<number> =>
+      keywords.length === 1 ? SEARCH_WINDOW + 1 : 10
+    const { cells } = await partitionKeyword('harness', probe)
+    expect(cells).toContainEqual(['harness', 'deepseek-harness'])
+    expect(cells).toHaveLength(PARTITION_KEYWORDS.length)
   })
 })
 
