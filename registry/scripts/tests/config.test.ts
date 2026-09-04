@@ -173,6 +173,57 @@ describe('parseRegistryConfig', () => {
     expect(config.verified.get('bob/dsh-repo-plugin')?.reviewer).toBe('github:bob-reviewer')
   })
 
+  it('names verified.yml when reviewedVersion is not a semver version', () => {
+    // The build used to die in tier.ts with `Invalid Version:
+    // one-point-two`, which names no file and no row.
+    expect(() => parseRegistryConfig({
+      ...empty,
+      verified: '- name: dsh-x\n  reviewedVersion: one-point-two\n  reviewer: r\n  reviewCommit: c\n',
+    })).toThrow(/verified\.yml: 0\.reviewedVersion.*semver/s)
+  })
+
+  it('requires the canonical semver spelling, so an exact comparison is a semver comparison', () => {
+    // `v1.2.0` and `1.2.0+build` both mean 1.2.0 to semver but are different
+    // strings; tier.ts compares strings (Task 7), so the file must carry the
+    // canonical form or the review would silently never match.
+    for (const version of ['v1.2.0', '1.2.0+build', '1.2']) {
+      expect(() => parseRegistryConfig({
+        ...empty,
+        verified: `- name: dsh-x\n  reviewedVersion: ${version}\n  reviewer: r\n  reviewCommit: c\n`,
+      }), `verified.yml must reject ${version}`).toThrow(/verified\.yml/)
+    }
+    const config = parseRegistryConfig({
+      ...empty,
+      verified: '- name: dsh-x\n  reviewedVersion: 1.2.0-rc.9\n  reviewer: r\n  reviewCommit: c\n',
+    })
+    expect(config.verified.get('dsh-x')?.reviewedVersion).toBe('1.2.0-rc.9')
+  })
+
+  it('throws when a name is both reviewed and denied instead of letting the denial win silently', () => {
+    expect(() => parseRegistryConfig({
+      ...empty,
+      verified: '- name: dsh-x\n  reviewedVersion: 1.0.0\n  reviewer: r\n  reviewCommit: c\n',
+      denied: '- name: dsh-x\n  reason: Exfiltrates credentials.\n',
+    })).toThrow(/verified\.yml\/denied\.yml: dsh-x is both reviewed and denied/)
+  })
+
+  it('throws when a reviewed repository is also denied, in either case spelling', () => {
+    // Both directions on purpose. The verified key is already lowercased at
+    // insert, and the denied key is kept as written, so ONLY a denial spelled
+    // in a different case exercises the fold on the denied side — the first
+    // half of this test passes with that fold removed.
+    expect(() => parseRegistryConfig({
+      ...empty,
+      verified: `- name: dsh-x\n  repo: Alice/dsh-x\n  reviewedCommit: ${'a'.repeat(40)}\n  reviewer: r\n  reviewCommit: c\n`,
+      denied: '- name: alice/dsh-x\n  reason: known bad actor\n',
+    })).toThrow(/is both reviewed and denied/)
+    expect(() => parseRegistryConfig({
+      ...empty,
+      verified: `- name: dsh-x\n  repo: alice/dsh-x\n  reviewedCommit: ${'a'.repeat(40)}\n  reviewer: r\n  reviewCommit: c\n`,
+      denied: '- name: Alice/dsh-x\n  reason: known bad actor\n',
+    })).toThrow(/is both reviewed and denied/)
+  })
+
   it('rejects a denial whose name is not a package name or an owner/slug', () => {
     // A padded, cased or newline-terminated name loads fine and then matches
     // nothing forever: the denial fails OPEN, which is the one direction a
