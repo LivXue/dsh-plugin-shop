@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { installIdentity } from './identity.ts'
+import { compareEntries, compareRejections, compareStrings, installIdentity } from './identity.ts'
 import type { Entry, Rejection } from './types.ts'
 
 /**
@@ -193,7 +193,11 @@ export function emit(
     }
     return next
   })
-  const sorted = [...emitted].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+  // Name first — that is the order §7.1 promises a reader — then the rest of
+  // the identity, so a tie can never fall back to the order npm or GitHub
+  // answered in. 172 live bundle names over 451 entries are claimed by
+  // several repositories.
+  const sorted = [...emitted].sort(compareEntries)
   const denied = rejections
     .filter(r => r.code === 'denied')
     .map(r => ({
@@ -201,7 +205,9 @@ export function emit(
       detail: r.detail,
       ...(r.replacement !== undefined ? { replacement: r.replacement } : {}),
     }))
-    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    // One name can be denied twice — an npm package and its repository both
+    // carry a row — so the detail breaks the tie.
+    .sort((a, b) => compareStrings(a.name, b.name) || compareStrings(a.detail, b.detail))
   // The client hides entries whose NAME reads like a competing plugin market.
   // That heuristic cannot tell a plugin storing tea from one selling plugins,
   // so `not-a-shop.yml` clears the ones a human or the classifier judged
@@ -217,7 +223,9 @@ export function emit(
   const sha256 = createHash('sha256').update(pluginsJson).digest('hex')
   const pluginsFileName = `plugins.${sha256}.json`
 
-  const sortedRejections = [...rejections].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+  // Name, code, detail: a monorepo emits several rows under one repo, and a
+  // pre-existing fetch failure can share a name with a gate rejection.
+  const sortedRejections = [...rejections].sort(compareRejections)
 
   const indexJson = `${JSON.stringify({
     schemaVersion,

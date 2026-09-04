@@ -2,7 +2,7 @@ import { gate, type Accepted } from './gate.ts'
 import { gateRepo, type RepoAccepted } from './repo-gate.ts'
 import { assignTier, assignRepoTier } from './tier.ts'
 import { emit, SCHEMA_VERSION, type Artifacts, type StarsPointer } from './emit.ts'
-import { firstSeenKey } from './identity.ts'
+import { firstSeenKey, repoUnit } from './identity.ts'
 import type { RegistryConfig } from './config.ts'
 import type { Candidate, Entry, Rejection, RepoCandidate } from './types.ts'
 
@@ -75,7 +75,10 @@ export function runPipeline(
   for (const repoCandidate of repoCandidates) {
     if (npmNames.has(repoCandidate.name)) {
       rejections.push({
-        name: repoCandidate.repo,
+        // The same unit `repo-gate.ts` names, so a monorepo's shadowed
+        // subpackages are distinguishable rows instead of N identical ones
+        // whose order followed the harvest (C-6).
+        name: repoUnit(repoCandidate),
         code: 'shadowed-by-npm',
         detail: `The npm package ${repoCandidate.name} is already listed; the repository is not listed separately.`,
       })

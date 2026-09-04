@@ -370,3 +370,44 @@ describe('the shields endpoint badge', () => {
     expect(a.pluginsFileName).toBe(b.pluginsFileName)
   })
 })
+
+describe('the sorts key on the whole identity, not the name', () => {
+  it('orders entries that share a bundle name by source, repo, then subdir', () => {
+    const { pluginsJson } = emit([
+      repoEntry('dsh-shared', 'bob/dsh-shared'),
+      repoEntry('dsh-shared', 'alice/mono', 'packages/b'),
+      entry('dsh-shared'),
+      repoEntry('dsh-shared', 'alice/mono', 'packages/a'),
+    ], [], '2026-08-18T00:00:00.000Z')
+    const parsed = JSON.parse(pluginsJson) as { plugins: { source: string; repo?: string; subdir?: string }[] }
+    expect(parsed.plugins.map(p => [p.source, p.repo ?? '', p.subdir ?? ''])).toEqual([
+      ['github', 'alice/mono', 'packages/a'],
+      ['github', 'alice/mono', 'packages/b'],
+      ['github', 'bob/dsh-shared', ''],
+      ['npm', '', ''],
+    ])
+  })
+
+  it('orders rejections that share a name by code and then detail', () => {
+    const { report } = emit([], [
+      { name: 'a/b', code: 'no-license', detail: 'second' },
+      { name: 'a/b', code: 'no-bundle', detail: 'zzz' },
+      { name: 'a/b', code: 'no-bundle', detail: 'aaa' },
+    ], '2026-08-18T00:00:00.000Z')
+    const rows = report.split('\n').filter(line => line.startsWith('| a/b '))
+    expect(rows).toEqual([
+      '| a/b | no-bundle | aaa |',
+      '| a/b | no-bundle | zzz |',
+      '| a/b | no-license | second |',
+    ])
+  })
+
+  it('orders the published denied list by name and then detail', () => {
+    const { pluginsJson } = emit([], [
+      { name: 'a/b', code: 'denied', detail: 'zzz' },
+      { name: 'a/b', code: 'denied', detail: 'aaa' },
+    ], '2026-08-18T00:00:00.000Z')
+    const parsed = JSON.parse(pluginsJson) as { denied: { detail: string }[] }
+    expect(parsed.denied.map(d => d.detail)).toEqual(['aaa', 'zzz'])
+  })
+})
