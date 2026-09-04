@@ -3839,6 +3839,8 @@ Tasks 1 through 9 are independent of the workflow and ship on a daily build; run
 ## Deliberately not changed
 
 - **`probeTotal` and `searchPage` in `github-client.ts` still call `response.json()` uncaught,** so a non-JSON 200 from the GitHub search API throws a bare `SyntaxError` — the same class as D-9, on the other client. No finding covers it and inventing the work would put an unreviewed change in the harvest's hottest path. D-5 (plan A) is already opening these functions for timeouts; it is the natural place to add it.
+
+> **Struck 2026-09-04.** Task 8 of plan A opened `fetchRobust`, `fetchRepoCandidate`, `probeSubpackageCandidates` and `harvestRepos` — never `probeTotal` or `searchPage`, so this was never going to arrive that way. The concern is moot regardless: both now route through `readSearchBody` (`github-client.ts:245`), which catches the parse. Do not presume this done because of D-5.
 - **`fetch-failed` remains in `RepoStateEntry.failure`'s union** even though `harvestRepos` no longer writes it (Task 2). The union has to keep parsing a committed file that may contain one, and narrowing it would make `parseRepoState` throw on a state file it wrote itself.
 - **The gate runs twice per build** after Task 9. Stated with its cost in that task; collapsing it would leave `runPipeline` exercised only by tests.
 - **`dist/v1` is not cleaned by the build** (Task 11), because it is how the classifier's harvest and the two reports reach their consumers. Only `dist/pages` is rebuilt from scratch.

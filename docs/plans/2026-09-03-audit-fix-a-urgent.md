@@ -2465,7 +2465,13 @@ prose lands in the docs commit of this same PR."
 > **Anchors re-measured 2026-09-03, before dispatch.** Two of the five were stale: `withTimeout` was
 > cited at `:23-50` and is at `:204`; `fetchRobust` was cited at `:42-62` and is at `:118` — Task 4 and
 > Task 7's five fix rounds moved `github-client.ts` by hundreds of lines. The other three were checked
-> and are correct. Verify any anchor before trusting it.
+> and are correct.
+>
+> **The inline anchors inside the Step bodies were NOT re-measured and are wrong by the same ~250
+> lines** — `fetchRepoCandidate` is at `:763` not `:511`, `RepoHarvestOptions` at `:859` not `:568`,
+> the destructure at `:911` not `:613`, the call site at `:947` not `:638`, and `FetchTimeoutError` at
+> `:179` not `:24`. Re-measuring only the `Files:` header is not enough, and this note previously said
+> "verify any anchor before trusting it" while itself having verified only five of ten.
 >
 > **Also measured: `timeout-minutes` already exists once, on `publish` (`:225`, ten minutes).** Neither
 > `build` nor `deploy` has one, so both inherit GitHub's six-hour default — on the job that runs a
