@@ -1794,6 +1794,27 @@ git commit -m "fix(harvest): the whole-harvest retry reuses one options object"
 
 ### Task 9: The stars sidecar is built from accepted entries by a pure serialiser
 
+> **Outcome: DONE, all three parts.** The waste was re-measured against the
+> live artifacts on 2026-09-04 rather than taken from this plan: of 16,879
+> sidecar keys, **7,624 (45%) are not catalog entries** — about 252 KB of the
+> 602 KB every reader downloads. (This plan said 7,553 of 16,714 and ~265 KB of
+> 596 KB; the catalog has grown since, and the figure tracks the ecosystem, so
+> re-measure rather than trusting either.)
+>
+> **One correction to the produced interface.** `selectEntries` takes `builtAt`
+> as a fourth parameter, which the plan's signature omits. It cannot be left
+> out: `added` is the date an identity first reached the catalog, so the tiering
+> needs the build date, and the alternative — reading a clock inside a pure
+> module — is the thing CLAUDE.md forbids. `build.ts`'s single clock read moved
+> above the stars step instead, so it is still read exactly once.
+>
+> **One extra fix, found while rewriting.** The tally was per-candidate while
+> the keys are per-repository, so a monorepo contributing three plugin
+> subpackages produced one key and a tally of three: the build note read
+> `1 starred (3 from the search, 0 from GraphQL)`, a line contradicting its own
+> count. Reproduced against the old function before changing it. Each key is
+> now tallied once.
+
 **Files:**
 - Modify: `registry/scripts/src/stars-assemble.ts` (add `assembleStarsForEntries`, `SerializedStars`, `serializeStars`)
 - Modify: `registry/scripts/src/pipeline.ts:24-63` (extract `selectEntries`)

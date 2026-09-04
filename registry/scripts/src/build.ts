@@ -12,7 +12,6 @@
  * @module build
  */
 
-import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { loadRegistryConfig, serializeFirstSeen } from './config.ts'
@@ -21,9 +20,9 @@ import { HARVEST_TOPICS, REPO_BACKFILL_BUDGET_DEFAULT, harvestRepos, parseHarves
 import { parseRepoState, repoGoneDetail, serializeRepoState } from './repo-state.ts'
 import { githubOwnerName } from './github-repo.ts'
 import { fetchCandidates, searchByKeywords } from './npm-client.ts'
-import { runPipeline } from './pipeline.ts'
+import { runPipeline, selectEntries } from './pipeline.ts'
 import { CATALOG_SCHEMA_VERSION, SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION } from './emit.ts'
-import { assembleStarsByKey } from './stars-assemble.ts'
+import { assembleStarsForEntries, serializeStars } from './stars-assemble.ts'
 import type { Candidate, Rejection, RepoCandidate } from './types.ts'
 
 // Real work — network fetches, and filesystem writes that overwrite
@@ -193,6 +192,14 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   // see. GraphQL therefore covers only the npm pool (~4k points), which a
   // dedicated read-only PAT (STARS_TOKEN, 5k points/hour) absorbs; the
   // Actions GITHUB_TOKEN's ~1k quota would not.
+  // The single clock read, moved above the stars step: selectEntries needs the
+  // build date to stamp `added`, and the stars step needs to know which
+  // candidates are ENTRIES before it asks GraphQL about any of them.
+  const builtAt = new Date().toISOString()
+  // The catalog this build will publish, decided before the network step.
+  // runPipeline re-derives it from the same inputs and cannot disagree
+  // (pipeline.test.ts asserts the equality).
+  const { entries: selectedEntries } = selectEntries(candidates, repoCandidates, config, builtAt)
   const starsToken = process.env.STARS_TOKEN ?? ghToken
   let starsInfo: { url: string; sha256: string } | null = null
   let starsNote = ''
@@ -201,9 +208,12 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     process.stderr.write(`stars: ${starsNote}\n`)
   } else {
     // Repos the search already covered: ask GraphQL only for the rest.
+    // Listed entries only. Asking about every candidate spent quota points on
+    // packages the gate had already rejected and that no reader would ever see
+    // a star count for.
     const graphqlRepos = new Map<string, { owner: string; name: string }>()
-    for (const candidate of [...candidates, ...repoCandidates]) {
-      const parsed = githubOwnerName(candidate.repository)
+    for (const entry of selectedEntries) {
+      const parsed = githubOwnerName(entry.repository)
       if (parsed === null) continue
       const fullName = `${parsed.owner}/${parsed.name}`
       if (!repoSearchStars.has(fullName)) graphqlRepos.set(fullName, parsed)
@@ -225,15 +235,14 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
           graphqlNote = `graphql failed: ${error instanceof Error ? error.message : String(error)}`
         }
       }
-      const assembled = assembleStarsByKey(candidates, repoCandidates, repoSearchStars, graphqlStars)
+      const assembled = assembleStarsForEntries(selectedEntries, repoSearchStars, graphqlStars)
       if (Object.keys(assembled.stars).length === 0) {
         starsNote = graphqlNote === '' ? 'no star counts' : `no star counts (${graphqlNote})`
         process.stderr.write(`stars: ${starsNote}\n`)
       } else {
-        const starsJson = `${JSON.stringify({ stars: Object.fromEntries(Object.entries(assembled.stars).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) }, null, 2)}\n`
-        const starsSha = createHash('sha256').update(starsJson).digest('hex')
-        writeFileSync(join(OUT_DIR, `stars.${starsSha}.json`), starsJson)
-        starsInfo = { url: `stars.${starsSha}.json`, sha256: starsSha }
+        const sidecar = serializeStars(assembled)
+        writeFileSync(join(OUT_DIR, sidecar.fileName), sidecar.json)
+        starsInfo = { url: sidecar.fileName, sha256: sidecar.sha256 }
         const parts = [`${Object.keys(assembled.stars).length} starred (${assembled.fromSearch} from the search, ${assembled.fromGraphql} from GraphQL)`]
         if (skipped.length > 0) parts.push(`${skipped.length} skipped`)
         if (graphqlNote !== '') parts.push(graphqlNote)
@@ -249,7 +258,6 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   // that were never listed (B-9). The appended file is written back after the
   // pipeline, so the daily commit carries both the new dates and the manifest
   // lock together.
-  const builtAt = new Date().toISOString()
 
   // v5 is a release-time flag (design §3.5): `theme` is a new enum value and an
   // old client's zod enum rejects a catalog containing it wholesale, so the flag

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { runPipeline, unmatchedRegistryNotes } from '../src/pipeline.ts'
+import { runPipeline, selectEntries, unmatchedRegistryNotes } from '../src/pipeline.ts'
 import { parseRegistryConfig } from '../src/config.ts'
 import type { Candidate, Rejection } from '../src/types.ts'
 
@@ -788,5 +788,54 @@ describe('unmatchedRegistryNotes', () => {
     const { report } = runPipeline(candidates, [], stale, BUILT_AT)
     expect(report).toContain('Registry rows that matched no harvested candidate this run:')
     expect(report).toContain('- denied.yml: dsh-never-seen')
+  })
+})
+
+describe('selectEntries', () => {
+  it('produces exactly the entries runPipeline publishes, from the same inputs', () => {
+    // This equality is the whole licence for build.ts calling selectEntries
+    // before the network step and runPipeline after it. If the two could
+    // disagree, the stars sidecar would be keyed off a different catalog than
+    // the one that gets published — which is the class of bug the sidecar had
+    // in the first place.
+    const selected = selectEntries(candidates, [], config, BUILT_AT)
+    const built = runPipeline(candidates, [], config, BUILT_AT)
+    const published = (JSON.parse(built.pluginsJson) as { plugins: { name: string }[] }).plugins
+    expect(selected.entries).toHaveLength(published.length)
+    expect(selected.entries.map(e => e.name).sort()).toEqual(published.map(p => p.name).sort())
+  })
+
+  it('is a gate, so a rejected candidate is not among its entries', () => {
+    const selected = selectEntries(candidates, [], config, BUILT_AT)
+    const names = new Set(selected.entries.map(e => e.name))
+    expect(selected.rejections.length).toBeGreaterThan(0)
+    for (const rejection of selected.rejections) {
+      // A rejection can share a NAME with an accepted entry from the other
+      // channel (a shadowed repo), so this checks the npm-keyed ones only.
+      if (rejection.code === 'shadowed-by-npm') continue
+      expect(names.has(rejection.name), `${rejection.name} was both rejected and listed`).toBe(false)
+    }
+  })
+
+  it('stamps added from the build date it is given, and a recorded row still wins', () => {
+    // Purity: the one clock read lives in build.ts, and selectEntries is now a
+    // second caller of the same value rather than a second reader of the clock.
+    //
+    // Both halves, because the shared config fixture happens to record every
+    // name the packuments fixture yields — so a test that only looked for
+    // freshly-stamped entries would have found none and proved nothing about
+    // the date at all.
+    const unrecorded = parseRegistryConfig({
+      verified: '[]', denied: '[]', allowedSimilar: '[]', categories: '[]', firstSeen: '[]',
+    })
+    const fresh = selectEntries(candidates, [], unrecorded, '2026-12-25T00:00:00.000Z')
+    expect(fresh.entries.length).toBeGreaterThan(0)
+    expect(fresh.entries.every(e => e.added === '2026-12-25')).toBe(true)
+
+    // The same build date against the recorded fixture: every date is the
+    // committed one, and none of them is today's.
+    const recorded = selectEntries(candidates, [], config, '2026-12-25T00:00:00.000Z')
+    expect(recorded.entries.length).toBeGreaterThan(0)
+    expect(recorded.entries.some(e => e.added === '2026-12-25')).toBe(false)
   })
 })

@@ -72,36 +72,37 @@ export function unmatchedRegistryNotes(
 }
 
 /**
- * Run the whole catalog build as a pure function.
+ * Run the admission gate and the tiering, and nothing else.
  *
- * Purity is what makes the determinism test possible: the only inputs are the
- * candidates, the registry files, and the timestamp, so the same three
- * produce byte-identical artifacts regardless of candidate order or clock.
- * The one clock-dependent output is `added` for an identity appearing for the
- * FIRST time, which is why the committed `first-seen.yml` is what keeps the
- * content hash stable from day to day.
+ * Split out of {@link runPipeline} because `build.ts` needs to know which
+ * candidates ARE entries before its network step: the stars sidecar is keyed
+ * by the catalog, and the GraphQL star fetch should ask about listed entries
+ * rather than every candidate the harvest saw. Both callers pass the same
+ * inputs and this function is pure, so they cannot disagree — a property
+ * `pipeline.test.ts` asserts directly, because a sidecar keyed off a different
+ * catalog than the published one is exactly the bug this replaced.
+ *
+ * The gate therefore runs twice per build. Both passes are pure, do no I/O,
+ * and their heaviest work is a levenshtein sweep against `verified.yml`, which
+ * holds zero rows. The alternative — `build.ts` calling this and `emit`
+ * directly, skipping `runPipeline` — was rejected because it would leave
+ * `runPipeline` exercised only by tests.
  * @param candidates - packages fetched from npm, in any order.
  * @param repoCandidates - repositories fetched from GitHub, in any order.
  * @param config - the human-authored registry files.
- * @param builtAt - ISO 8601 build timestamp.
- * @param preexistingRejections - rejections decided before this function ran, such as a
- *   name that could not be turned into a candidate at all (e.g. a failed fetch); merged
- *   into the emitted report alongside every rejection this function produces itself.
- * @param stars - optional pointer to a published stars sidecar, passed through to emit.
- * @returns the artifacts to publish and commit, and the first-seen rows to write back.
+ * @param builtAt - ISO 8601 build timestamp; only its date part is read, to
+ *   stamp `added` for an identity reaching the catalog for the first time.
+ * @returns the tiered entries, every rejection the gate produced, and the
+ *   first-seen map to commit.
  */
-export function runPipeline(
-  candidates: Candidate[],
-  repoCandidates: RepoCandidate[],
+export function selectEntries(
+  candidates: readonly Candidate[],
+  repoCandidates: readonly RepoCandidate[],
   config: RegistryConfig,
   builtAt: string,
-  preexistingRejections: Rejection[] = [],
-  stars: StarsPointer | null = null,
-  schemaVersion: number = SCHEMA_VERSION,
-): PipelineResult {
-  const rejections: Rejection[] = [...preexistingRejections]
+): { entries: Entry[]; rejections: Rejection[]; firstSeen: Map<string, string> } {
+  const rejections: Rejection[] = []
   const today = builtAt.slice(0, 10)
-
   // Gate everything first, tier second. `added` is the date an entry first
   // appeared in the CATALOG (types.ts), so it cannot be decided until the
   // gate has said which candidates ARE entries. Stamping every harvested
@@ -163,6 +164,42 @@ export function runPipeline(
     ...accepted.map(item => assignTier(item, withFirstSeen)),
     ...acceptedRepos.map(item => assignRepoTier(item, withFirstSeen)),
   ]
+  return { entries, rejections, firstSeen }
+}
+
+/**
+ * Run the whole catalog build as a pure function.
+ *
+ * Purity is what makes the determinism test possible: the only inputs are the
+ * candidates, the registry files, and the timestamp, so the same three
+ * produce byte-identical artifacts regardless of candidate order or clock.
+ * The one clock-dependent output is `added` for an identity appearing for the
+ * FIRST time, which is why the committed `first-seen.yml` is what keeps the
+ * content hash stable from day to day.
+ * @param candidates - packages fetched from npm, in any order.
+ * @param repoCandidates - repositories fetched from GitHub, in any order.
+ * @param config - the human-authored registry files.
+ * @param builtAt - ISO 8601 build timestamp.
+ * @param preexistingRejections - rejections decided before this function ran, such as a
+ *   name that could not be turned into a candidate at all (e.g. a failed fetch); merged
+ *   into the emitted report alongside every rejection this function produces itself.
+ * @param stars - optional pointer to a published stars sidecar, passed through to emit.
+ * @returns the artifacts to publish and commit, and the first-seen rows to write back.
+ */
+export function runPipeline(
+  candidates: Candidate[],
+  repoCandidates: RepoCandidate[],
+  config: RegistryConfig,
+  builtAt: string,
+  preexistingRejections: Rejection[] = [],
+  stars: StarsPointer | null = null,
+  schemaVersion: number = SCHEMA_VERSION,
+): PipelineResult {
+  const selected = selectEntries(candidates, repoCandidates, config, builtAt)
+  const rejections: Rejection[] = [...preexistingRejections, ...selected.rejections]
+  const entries = selected.entries
+  const firstSeen = selected.firstSeen
+
   // Report-only diagnostics. They ride `report.md`, never the hashed data,
   // and they are sorted so the report diffs cleanly.
   const notes: string[] = []
