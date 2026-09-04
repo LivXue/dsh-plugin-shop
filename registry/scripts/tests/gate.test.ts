@@ -633,3 +633,43 @@ describe('the hold and the candidate own identity', () => {
     if (!result.ok) expect(result.rejection.code).toBe('name-too-similar')
   })
 })
+
+describe('a denial names a project, not one of its two spellings', () => {
+  const denied = parseRegistryConfig({
+    verified: '[]',
+    denied: '- name: Evil/dsh-x\n  reason: Exfiltrates credentials.\n  replacement: dsh-good\n',
+    allowedSimilar: '[]',
+    categories: '[]',
+    firstSeen: '[]',
+  })
+
+  it('rejects an npm package whose declared repository is denied, whatever the case', () => {
+    const result = gate(candidate({ name: 'dsh-x', repository: 'https://github.com/evil/dsh-x' }), denied)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.rejection.code).toBe('denied')
+    expect(result.rejection.detail)
+      .toBe('Denied by the registry: Exfiltrates credentials. Known replacement: dsh-good.')
+    expect(result.rejection.replacement).toBe('dsh-good')
+
+    // And with the OTHER spelling. The denial is written `Evil/dsh-x` and
+    // lowercased at insert, so only a candidate declaring the repository in a
+    // different case exercises the fold on the lookup side — the assertion
+    // above passes with it removed.
+    const cased = gate(candidate({ name: 'dsh-x', repository: 'https://github.com/Evil/dsh-x' }), denied)
+    expect(cased.ok).toBe(false)
+    if (!cased.ok) expect(cased.rejection.code).toBe('denied')
+  })
+
+  it('leaves a package from another repository alone', () => {
+    expect(gate(candidate({ name: 'dsh-x', repository: 'https://github.com/honest/dsh-x' }), denied).ok).toBe(true)
+  })
+
+  it('does not trip over a package that declares no repository', () => {
+    // The denial check runs before the no-repository check, so a null
+    // repository must reach the no-repository rejection, not throw here.
+    const result = gate(candidate({ name: 'dsh-x', repository: null }), denied)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.rejection.code).toBe('no-repository')
+  })
+})

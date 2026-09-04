@@ -459,3 +459,58 @@ describe('nothing unpaired leaves for plugins.json', () => {
     expect(LONE_SURROGATE_ESCAPE.test(before.pluginsJson)).toBe(false)
   })
 })
+
+describe('a repo denial survives the author publishing to npm', () => {
+  const commit = 'e'.repeat(40)
+
+  it('publishes both denial rows and lists nothing', () => {
+    // B-6: the npm package won the bundle name, the repository was reported
+    // `shadowed-by-npm`, and `denied[]` — which the Host's install gate reads
+    // — stayed empty, so the install went through.
+    const denied = parseRegistryConfig({
+      verified: '[]',
+      denied: '- name: evil/dsh-x\n  reason: Exfiltrates credentials.\n',
+      allowedSimilar: '[]',
+      categories: '[]',
+      firstSeen: '- name: dsh-x\n  added: 2026-08-10\n- name: evil/dsh-x\n  added: 2026-08-10\n',
+    })
+    const npmCandidate: Candidate = {
+      name: 'dsh-x',
+      version: '1.0.0',
+      integrity: 'sha512-x',
+      publishedAt: '2026-08-01T12:00:00.000Z',
+      repository: 'https://github.com/evil/dsh-x',
+      license: 'MIT',
+      deprecated: false,
+      hasBundle: true,
+      catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
+      description: 'x',
+      keywords: [],
+      peers: [],
+    }
+    const repoCandidate: import('../src/types.ts').RepoCandidate = {
+      name: 'dsh-x',
+      repo: 'evil/dsh-x',
+      commit,
+      version: commit,
+      publishedAt: '2026-08-01T12:00:00.000Z',
+      repository: 'https://github.com/evil/dsh-x',
+      license: 'MIT',
+      hasBundle: true,
+      requiresBuild: false,
+      hasWorkspaceDeps: false,
+      catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
+      description: 'x',
+    }
+    const { pluginsJson, report } = runPipeline([npmCandidate], [repoCandidate], denied, BUILT_AT)
+    const parsed = JSON.parse(pluginsJson) as {
+      plugins: unknown[]
+      denied: { name: string; detail: string }[]
+    }
+    expect(parsed.plugins).toEqual([])
+    expect(parsed.denied.map(d => d.name)).toEqual(['dsh-x', 'evil/dsh-x'])
+    // And nothing is reported as shadowed: the npm candidate never reached
+    // `npmNames`, so the repository was judged on its own.
+    expect(report).not.toContain('shadowed-by-npm')
+  })
+})
