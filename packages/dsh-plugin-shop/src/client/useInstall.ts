@@ -71,6 +71,7 @@ export function useInstall(
 export interface InstallFlow {
   view: InstallView
   start: (args: InstallArgs) => Promise<void>
+  reset: () => void
 }
 
 export interface UseInstallFlows {
@@ -125,6 +126,15 @@ export function useInstallFlows(
     }
   }, [install, put])
 
+  const reset = useCallback((key: string): void => {
+    setViews(current => {
+      if (!current.has(key)) return current
+      const next = new Map(current)
+      next.delete(key)
+      return next
+    })
+  }, [])
+
   // One interval polls every running identity; duplicate panels never poll
   // the same host record independently.
   useEffect(() => {
@@ -149,7 +159,8 @@ export function useInstallFlows(
   const flowFor = useCallback((key: string): InstallFlow => ({
     view: views.get(key) ?? { kind: 'idle' },
     start: args => start(key, args),
-  }), [views, start])
+    reset: () => reset(key),
+  }), [views, start, reset])
 
   return { flowFor }
 }

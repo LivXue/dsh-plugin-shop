@@ -1607,22 +1607,36 @@ describe('ShopTab catalog reload', () => {
 describe('ShopTab mutation flows (G-9)', () => {
   it('re-reads the installed list once an install reaches done', async () => {
     const { injected, installed } = bench(snapshot({ tier: 'verified' }))
+    installed
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([{
+        name: 'dsh-hello-plugin', source: 'npm', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true,
+      }])
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     expect(installed).toHaveBeenCalledTimes(1)
     fireEvent.click(container.querySelector('[data-shop-install]')!)
     await waitFor(() => expect(installed).toHaveBeenCalledTimes(2), { timeout: 3000 })
+    // Catching up the installed projection must not erase the terminal
+    // outcome and its restart decision.
+    await waitFor(() => expect(container.querySelector('[data-shop-restart-notice]')).toBeTruthy())
   })
 
   it('re-reads the installed list once an uninstall reaches done', async () => {
-    const { injected, installed } = bench(snapshot(), [{
+    const row: InstalledFixture = {
       name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true,
-    }])
+    }
+    const { injected, installed } = bench(snapshot(), [row])
+    installed
+      .mockResolvedValueOnce([{ ...row, source: row.source ?? 'npm' }])
+      .mockResolvedValue([])
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     expect(installed).toHaveBeenCalledTimes(1)
     fireEvent.click(container.querySelector('[data-shop-uninstall]')!)
     await waitFor(() => expect(installed).toHaveBeenCalledTimes(2), { timeout: 3000 })
+    await waitFor(() => expect(container.querySelector('[data-shop-install]')).toBeTruthy())
+    expect(container.querySelector('[data-shop-uninstall]')).toBeNull()
   })
 
   it('shows one install flow on both panels of an outdated entry', async () => {

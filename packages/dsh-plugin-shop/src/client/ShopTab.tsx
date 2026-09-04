@@ -101,6 +101,12 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, t,
     subdir: entry.subdir,
   }
   const flow = flowFor(entryKey(entry))
+  const uninstallSettled = useCallback(() => {
+    // Once removal lands, an install/update result from the same session is
+    // stale. Clear it before the installed projection drops this row.
+    flow.reset()
+    onSettled()
+  }, [flow, onSettled])
   return (
     <div className={css.card} data-shop-entry={entry.name} data-category={category}>
       <span className={css.cardSpine} aria-hidden="true" />
@@ -237,11 +243,11 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, t,
           <InstallPanel target={installTarget} tier={entry.tier} missing={missing} missingStated flow={flow} t={t} restart={restart} restartSupported={restartSupported} />
         ) : (
           <>
-            {installed.outdated ? (
+            {installed.outdated || flow.view.kind !== 'idle' ? (
               // The update button drives the same install flow for the
-              // catalog's latest version; the community gate still applies
-              // (§9.3).
-              <InstallPanel target={installTarget} tier={entry.tier} variant="update" missing={missing} missingStated flow={flow} t={t} restart={restart} restartSupported={restartSupported} />
+              // catalog's latest version; a completed flow stays mounted
+              // after installed() catches up so its outcome remains visible.
+              <InstallPanel target={installTarget} tier={entry.tier} variant={installed.outdated ? 'update' : 'install'} missing={missing} missingStated flow={flow} t={t} restart={restart} restartSupported={restartSupported} />
             ) : (
               // No button on this branch, so the badge follows the label that
               // takes its place: an installed plugin whose modules are absent
@@ -254,7 +260,7 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, t,
             {/* The hot enable/disable switch (§8) sits on every installed
              * row — current or outdated — and reads the inventory state. */}
             <EnabledSwitch row={installed} t={t} setEnabled={setEnabled} />
-            <UninstallPanel name={entry.name} t={t} uninstall={uninstall} installStatus={installStatus} restart={restart} restartSupported={restartSupported} onSettled={onSettled} />
+            <UninstallPanel name={entry.name} t={t} uninstall={uninstall} installStatus={installStatus} restart={restart} restartSupported={restartSupported} onSettled={uninstallSettled} />
           </>
         )}
         {/* Who put this here, pushed to the right edge of the action row. A
@@ -455,9 +461,11 @@ function UninstallPanel({ name, t, uninstall, installStatus, restart, restartSup
   onSettled: () => void
 }): ReactNode {
   const { view, start } = useUninstall(uninstall, installStatus)
+  const settled = useRef(onSettled)
+  settled.current = onSettled
   useEffect(() => {
-    if (view.kind === 'done') onSettled()
-  }, [view.kind, onSettled])
+    if (view.kind === 'done') settled.current()
+  }, [view.kind])
 
   if (view.kind === 'running') {
     return (
