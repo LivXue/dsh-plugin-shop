@@ -2449,6 +2449,26 @@ git commit -m "fix(report): strip controls and bidi formatting from table cells"
 
 ### Task 11: Pages gets a staged directory holding only the spec'd artifacts
 
+> **Outcome: DONE as written**, with the leak confirmed against the live site
+> on 2026-09-04 rather than taken on faith. All three answered 200:
+> `/v1/harvest.json` at **4,037,180 bytes**, `/v1/report.md` at **1,722,904**,
+> `/v1/classification-report.md` at 87 — beside a 486-byte `index.json`.
+>
+> The staging was simulated locally before committing: `dist/pages/` holds only
+> `v1/`, so the published URLs are unchanged, and `dist/pages/v1/` holds
+> exactly the four spec'd artifacts while the handoff and both reports stay in
+> `dist/v1` as run artifacts.
+>
+> **One addition.** `publish-catalog.ts` already staged its own directory from
+> scratch, as this task notes — but from a hardcoded list inline in the shell,
+> differing from the Pages set by exactly one file (`badge.json`, which is the
+> shields.io endpoint fetched over HTTP and never read out of the tarball).
+> Leaving one transport's publishable set untested while the other is pure is
+> the same asymmetry that let Pages publish 4 MB of hostile input for months,
+> so `npmArtifactNames` joined the module and the one-file difference is now
+> stated and tested instead of coincidental. The npm set is byte-identical to
+> what it published before.
+
 **Files:**
 - Create: `registry/scripts/src/pages-artifacts.ts`
 - Modify: `registry/scripts/src/build.ts` (the `node:fs` import on line 16; a staging block appended after line 239)

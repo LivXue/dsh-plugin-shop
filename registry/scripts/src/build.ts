@@ -12,7 +12,7 @@
  * @module build
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { loadRegistryConfig, serializeFirstSeen } from './config.ts'
 import { fetchStarCounts } from './github-stars.ts'
@@ -20,6 +20,7 @@ import { HARVEST_TOPICS, REPO_BACKFILL_BUDGET_DEFAULT, harvestRepos, parseHarves
 import { parseRepoState, repoGoneDetail, serializeRepoState } from './repo-state.ts'
 import { githubOwnerName } from './github-repo.ts'
 import { fetchCandidates, searchByKeywords } from './npm-client.ts'
+import { pagesArtifactNames } from './pages-artifacts.ts'
 import { runPipeline, selectEntries } from './pipeline.ts'
 import { CATALOG_SCHEMA_VERSION, SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION } from './emit.ts'
 import { assembleStarsForEntries, serializeStars } from './stars-assemble.ts'
@@ -279,6 +280,21 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   writeFileSync(join(REGISTRY_DIR, 'first-seen.yml'), serializeFirstSeen(artifacts.firstSeen))
   const repoLine = repoNote === '' ? '' : `\nGitHub: ${repoNote}\n`
   writeFileSync(join(OUT_DIR, 'report.md'), `${artifacts.report}\nStars: ${starsNote}\n${repoLine}`)
+
+  // Pages gets a directory staged from scratch, holding exactly the artifacts
+  // the spec lists. `dist/v1` is NOT cleaned and is not what deploys: the
+  // classifier's harvest reaches this run through `dist/`, the two reports are
+  // uploaded from `dist/v1` as run artifacts, and a local `dist/v1`
+  // accumulates old sidecars — all harmless once nothing publishes from it.
+  const PAGES_DIR = 'dist/pages'
+  rmSync(PAGES_DIR, { recursive: true, force: true })
+  mkdirSync(join(PAGES_DIR, 'v1'), { recursive: true })
+  const pagesFiles = pagesArtifactNames({
+    plugins: { url: artifacts.pluginsFileName },
+    ...(starsInfo === null ? {} : { stars: { url: starsInfo.url } }),
+  })
+  for (const name of pagesFiles) copyFileSync(join(OUT_DIR, name), join(PAGES_DIR, 'v1', name))
+  process.stderr.write(`staged ${pagesFiles.length} file(s) for Pages: ${pagesFiles.join(', ')}\n`)
 
   process.stderr.write(`wrote ${OUT_DIR}/${artifacts.pluginsFileName}\n`)
 }

@@ -86,7 +86,7 @@ jobs:
       - run: pnpm typecheck
       - name: Classify new listings
         run: node --experimental-strip-types registry/scripts/src/classify.ts
-      - run: pnpm build:catalog -- --harvest-from dist/v1/harvest.json
+      - run: pnpm build:catalog -- --harvest-from dist/harvest.json
         env:
           # Flipped in the 0.4.10 release: the client that reads schemaVersion 3
           # (repo entries) ships, so the catalog may publish them.
@@ -139,7 +139,7 @@ jobs:
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          path: dist/pages
       - name: Commit the classifier's output
         if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'push') && github.ref == 'refs/heads/main'
         continue-on-error: true

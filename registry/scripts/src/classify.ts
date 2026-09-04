@@ -45,6 +45,13 @@ import type { Category, RepoCandidate } from './types.ts'
 if (basename(process.argv[1] ?? '') === 'classify.ts') {
   const REGISTRY_DIR = 'registry'
   const OUT_DIR = 'dist/v1'
+  // The harvest handoff is an internal artifact, not an output: it carries
+  // every candidate verbatim, rejected ones included, with unvalidated
+  // `dsh.catalog` values. It sat in `dist/v1/` and was therefore published by
+  // Pages — 4 MB of it, live. `v1/` now means "publishable" and this is not.
+  // The path here and `--harvest-from` in daily.yml are one contract; a guard
+  // test in repo-guards.test.ts pins both.
+  const DIST_DIR = 'dist'
 
   // The gateway serves plain HTTP only (probed: no TLS listener). The Bearer
   // key therefore rides plaintext on the runner→gateway path; the key is a
@@ -56,7 +63,7 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
   const npmToken = process.env.NPM_TOKEN
 
   // The daily harvest runs HERE, not in build.ts: the workflow passes
-  // `--harvest-from dist/v1/harvest.json` so the ecosystem is fetched once. That
+  // `--harvest-from dist/harvest.json` so the ecosystem is fetched once. That
   // made the mirror failover from the 2026-08-31 hub-borrowings design (C) dead
   // code in production — build.ts had it and this path did not. Same default as
   // build.ts. An empty string (or an all-whitespace value) disables the backup
@@ -159,7 +166,8 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
   mkdirSync(OUT_DIR, { recursive: true })
   mkdirSync(join(REGISTRY_DIR), { recursive: true })
   writeFileSync(join(REGISTRY_DIR, 'categories.yml'), serializeCategoryRows(merged))
-  writeFileSync(join(OUT_DIR, 'harvest.json'), `${JSON.stringify({ candidates, rejections })}\n`)
+  mkdirSync(DIST_DIR, { recursive: true })
+  writeFileSync(join(DIST_DIR, 'harvest.json'), `${JSON.stringify({ candidates, rejections })}\n`)
   const sortedDiscards = [...discarded].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
   const reportLines = [
     '# Classification report',
