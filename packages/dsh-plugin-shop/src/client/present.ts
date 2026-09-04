@@ -3,6 +3,8 @@
  * drive all of it. */
 
 export { isShopLike } from '../shared/shop-like.ts'
+export { identityKey, installedSpecMatches, parseRepoSpec, type EntryIdentity } from '../shared/identity.ts'
+import { identityKey } from '../shared/identity.ts'
 import type { ShopLocaleKey } from './locales.ts'
 import type { CatalogEntry, HotRestartReason, InstallRejectionCode } from '../host/index.ts'
 
@@ -293,9 +295,7 @@ export function npmPageUrl(entry: CatalogEntry): string | null {
  * This mirrors the registry's identity verbatim; the two must not drift.
  */
 export function entryKey(entry: CatalogEntry): string {
-  return entry.source === 'npm'
-    ? `npm:${entry.name}`
-    : `github:${entry.repo ?? entry.name}#${entry.subdir ?? ''}`
+  return identityKey(entry)
 }
 
 /**
