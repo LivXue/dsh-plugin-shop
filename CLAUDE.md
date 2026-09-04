@@ -11,9 +11,10 @@ dsh-plugin-shop is the plugin market for [DeepSeek Harness](https://github.com/d
 ```
 registry/          The catalog pipeline. All of P0.
   schema/          plugin-entry.schema.json — GENERATED, never hand-edited
-  verified.yml     Human review record, pinned per version
-  denied.yml       Denylist, every entry states why
-  allowed-similar.yml  Names cleared past the typosquatting hold
+  verified.yml     Human review record, pinned per version — empty; see "Who reviews"
+  denied.yml       Denylist, every entry states why — empty
+  allowed-similar.yml  Names cleared past the typosquatting hold — empty
+  markets.yml      Competing-market verdicts. The one review file that IS populated
   snapshots/       manifest.lock, committed daily
   scripts/src/     Pipeline modules
   scripts/tests/   One test file per module
@@ -45,6 +46,14 @@ pnpm build:catalog  # thousands of live network requests, several minutes — se
 
 A policy decision that migrates into the shell becomes untestable. If a pure module needs the time, take it as a parameter — `build.ts` reads the clock exactly once and passes it down.
 
+## Who reviews
+
+**Plugin review is automated: the LLM classifier is the reviewer, and a human steps in only when a particular verdict is worth correcting by hand.**
+
+`verified.yml`, `denied.yml` and `allowed-similar.yml` are all empty, and that is the design rather than a backlog — a door held open, not a process that runs. The consequence is worth stating because it is easy to design around wrongly: **a mechanism whose only exit is a human is a permanent no-op.** That is what sank the `market: true, by: llm` hold, which shipped and was reverted the same day (`docs/design/2026-09-03-market-judge.md` §4).
+
+So an automated verdict decides, and the build report names what the classifier decided on its own — a line a maintainer can skim is the review; a queue waiting for a signature is not. Correcting one means editing its row, which is also why a recorded verdict is never re-asked.
+
 ## Invariants worth breaking a build over
 
 - **`builtAt` never enters the hashed content.** Putting it in the data changes the content hash daily, invalidating every CDN cache and filling each commit with noise. A determinism test in `pipeline.test.ts` enforces this; if you find yourself editing that test to pass, you have broken the property it protects. Outside the hash it travels freely — `index.json`, the npm package's readme, and its `catalogBuiltAt` manifest field, which `publish-catalog.ts` reads to refuse a build older than the published `latest`; all three are regenerated per publish, so none of them churn a hash.
@@ -53,7 +62,7 @@ A policy decision that migrates into the shell becomes untestable. If a pure mod
 - **`verified` pins one exact artifact, never a name.** An npm review pins `reviewedVersion`, a github review pins `repo` + `reviewedCommit`, a release-rescued entry pins `repo` + `reviewedSha256`. All three compare by equality: any other version — newer OR older — is `verified-stale` and keeps the review, because a `latest` behind the review is what a hotfix published without `--tag` leaves behind. Attaching verification to a package name lets an author pass review once and inherit trust for every future version — the cheapest supply-chain attack there is — and attaching it to a bundle name hands the same trust to every fork: 83 live bundle names are claimed by both a fork and an original.
 - **Tiering and metadata are orthogonal.** `tier` answers "has a human read this?", `metadata` answers "did the author describe it?". A derived listing can be verified; do not couple them.
 - **Harvest by keyword, never by name pattern.** A name pattern is trivially spoofed.
-- **LLM output is advisory.** The classifier may change a category, never gate a listing, never remove an entry, and never block a publish. A failed classification leaves the entry unclassified and is retried on the next build; `categories.yml` and `markets.yml` are build inputs like `verified.yml`. In `markets.yml` the verdict decides and `by` records who judged it: one classifier pass settles "is this a marketplace FOR dsh plugins", and the build report names every `by: llm` withholding so it can be spot-checked, because a recorded row is never re-asked. Making `by: human` the gate was tried and reverted — `notAShop` is the CLEARED list, so it advertised the 16 shop-like names the heuristic had been hiding (`docs/design/2026-09-03-market-judge.md` §4).
+- **LLM output never decides what is IN the catalog.** That is the gate's job, and fixtures drive every rule of it. The classifier may not admit a package, reject one, remove an entry, or block a publish. What it does decide is presentation — the category, and whether the shelf advertises a name — and a wrong call there changes what a browser sees, never what the catalog holds. A failed classification leaves the entry unclassified and is retried on the next build; `categories.yml` and `markets.yml` are build inputs like `verified.yml`. In `markets.yml` the verdict decides and `by` records who judged it: one classifier pass settles "is this a marketplace FOR dsh plugins", and the build report names every `by: llm` withholding so it can be spot-checked, because a recorded row is never re-asked. Making `by: human` the gate was tried and reverted — `notAShop` is the CLEARED list, so it advertised the 16 shop-like names the heuristic had been hiding (`docs/design/2026-09-03-market-judge.md` §4).
 
 ## Failing loudly
 
