@@ -20,6 +20,32 @@ const ENDPOINT = 'https://api.github.com/graphql'
  * the same endpoint host, the same reason. */
 export const STARS_REQUEST_TIMEOUT_MS = 30_000
 
+/**
+ * Wall-clock budget for the whole stars fetch. Past it, the remaining repos
+ * are skipped unasked.
+ *
+ * Measured rather than assumed. Unlike llm-client there is no multiplier here:
+ * batches run SEQUENTIALLY, and a throw is not retried (the ladder below
+ * matches on status), so the cost of a stalled endpoint is
+ * batches x 1 x {@link STARS_REQUEST_TIMEOUT_MS} — but that is linear in the
+ * catalog and nothing caps it. At the ~4000 GitHub repositories the live
+ * catalog carries, that is 80 batches x 30s = ~40 minutes, and it grows with
+ * the ecosystem: at twice the catalog it exceeds what the job has left.
+ *
+ * That cost is charged to the CATALOG, not just to the stars: fetchStarCounts
+ * runs at build.ts:214 and every artifact is written after it, at :264-270. So
+ * a stalled GraphQL endpoint delays — and at the job bound, destroys — a
+ * catalog that was otherwise ready, over data this module already treats as
+ * optional in every other failure mode.
+ *
+ * Ten minutes is far above a healthy run (80 sequential requests answering in
+ * a second or two is ~2-3 minutes, with room for the catalog to double) and
+ * far below what the harvest needs. With classify's two 15-minute calls, the
+ * advisory steps cap at 40 of the job's 120 minutes, leaving 80 for the
+ * harvest that actually produces the catalog.
+ */
+export const STARS_BUDGET_MS = 10 * 60_000
+
 function defaultSleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
@@ -40,9 +66,16 @@ export async function fetchStarCounts(
     /** Per-attempt deadline on a GraphQL request. Defaults to
      * {@link STARS_REQUEST_TIMEOUT_MS}; a seam, so a test need not wait one out. */
     timeoutMs?: number
+    /** Wall-clock budget for the whole fetch. Defaults to {@link STARS_BUDGET_MS}. */
+    budgetMs?: number
+    /** The clock, so a test can spend a ten-minute budget in milliseconds. */
+    now?: () => number
   },
 ): Promise<StarFetchResult> {
-  const { token, fetchImpl = fetch, sleep = defaultSleep, timeoutMs = STARS_REQUEST_TIMEOUT_MS } = options
+  const {
+    token, fetchImpl = fetch, sleep = defaultSleep,
+    timeoutMs = STARS_REQUEST_TIMEOUT_MS, budgetMs = STARS_BUDGET_MS, now = Date.now,
+  } = options
   // Stars are advisory and every failure mode already ends in `skipped`; the
   // deadline is what makes a stalled GraphQL endpoint one of those failure
   // modes rather than the job's outer kill.
@@ -54,7 +87,15 @@ export async function fetchStarCounts(
   const batches: { owner: string; name: string }[][] = []
   for (let i = 0; i < repos.length; i += STAR_BATCH_SIZE) batches.push(repos.slice(i, i + STAR_BATCH_SIZE))
 
+  const startedAt = now()
   for (const batch of batches) {
+    if (now() - startedAt >= budgetMs) {
+      // Skipped, not dropped: a repo that vanished from the report would be
+      // indistinguishable from one with no stars, and the note build.ts prints
+      // is the only place this is visible at all.
+      for (const r of batch) skipped.push(`${r.owner}/${r.name}: stars budget spent (${budgetMs}ms), not asked`)
+      continue
+    }
     try {
       const aliases = batch.map((r, i) => `a${i}: repository(owner: ${JSON.stringify(r.owner)}, name: ${JSON.stringify(r.name)}) { stargazerCount }`).join('\n')
       const query = `query {\n${aliases}\n}`

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fetchStarCounts, STAR_BATCH_SIZE, STARS_REQUEST_TIMEOUT_MS } from '../src/github-stars.ts'
+import { fetchStarCounts, STAR_BATCH_SIZE, STARS_BUDGET_MS, STARS_REQUEST_TIMEOUT_MS } from '../src/github-stars.ts'
 
 const options = { token: 'gh-token' }
 const repo = (i: number) => ({ owner: `owner${i}`, name: `repo${i}` })
@@ -156,6 +156,60 @@ describe('request deadlines', () => {
     }) as unknown as typeof fetch
     const result = await fetchStarCounts([repo(0)], { ...options, fetchImpl, timeoutMs: DEADLINE_MS })
     expect(result.stars.get('owner0/repo0')).toBe(7)
+    expect(result.skipped).toEqual([])
+  })
+})
+
+describe('the stars step is bounded in aggregate', () => {
+  const MINUTE = 60_000
+
+  it('has an aggregate budget at all', () => {
+    expect(STARS_BUDGET_MS).toBe(600_000)
+  })
+
+  it('stops asking once the budget is spent, and still gives every repo a row', async () => {
+    // Measured before it was bounded: batches run SEQUENTIALLY and a throw is
+    // not retried (the ladder matches on status), so the product is
+    // batches x 1 x STARS_REQUEST_TIMEOUT_MS -- no multiplier, but linear in
+    // the catalog. At ~4000 GitHub repos that is 80 batches x 30s = ~40
+    // minutes, and it grows with the ecosystem. fetchStarCounts runs at
+    // build.ts:214, BEFORE every artifact write at :264-270, so that stall is
+    // charged to the catalog even though stars are advisory and every failure
+    // here already ends in `skipped`.
+    const REPOS = 250
+    let clock = 0
+    let calls = 0
+    const fetchImpl = (async () => {
+      calls += 1
+      clock += 6 * MINUTE
+      return new Promise<Response>(() => {})
+    }) as unknown as typeof fetch
+    const result = await fetchStarCounts(Array.from({ length: REPOS }, (_, i) => repo(i)), {
+      ...options, fetchImpl, now: () => clock, sleep: async (_ms: number) => {}, timeoutMs: 20, budgetMs: 15 * MINUTE,
+    })
+    // Three asked (0->6, 6->12, 12->18), then the budget stops the rest.
+    expect(calls).toBe(3)
+    expect(result.stars.size).toBe(0)
+    expect(result.skipped).toHaveLength(REPOS)
+    expect(result.skipped.some(entry => entry.includes('budget'))).toBe(true)
+  })
+
+  it('leaves a healthy run untouched', async () => {
+    // The other side: a budget that fired on a healthy run would drop star
+    // counts silently, which is already a supported outcome and so would go
+    // unnoticed indefinitely.
+    let clock = 0
+    let calls = 0
+    const fetchImpl = (async () => {
+      calls += 1
+      clock += 1 * MINUTE
+      return okResponse(Object.fromEntries(Array.from({ length: STAR_BATCH_SIZE }, (_, i) => [`k${i}`, i])))
+    }) as unknown as typeof fetch
+    const result = await fetchStarCounts(Array.from({ length: 250 }, (_, i) => repo(i)), {
+      ...options, fetchImpl, now: () => clock, budgetMs: 15 * MINUTE,
+    })
+    expect(calls).toBe(5)
+    expect(result.stars.size).toBe(250)
     expect(result.skipped).toEqual([])
   })
 })

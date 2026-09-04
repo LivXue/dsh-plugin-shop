@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { classifyPackages, CLASSIFY_BATCH_SIZE, GATEWAY_REQUEST_TIMEOUT_MS } from '../src/llm-client.ts'
+import { classifyPackages, CLASSIFY_BATCH_SIZE, CLASSIFY_BUDGET_MS, GATEWAY_REQUEST_TIMEOUT_MS } from '../src/llm-client.ts'
 import { headersThenStalledBody } from './stalling-fetch.ts'
 
 const options = { baseUrl: 'http://gateway.example/v1', model: 'deepseek-v4-flash', apiKey: 'k' }
@@ -222,6 +222,85 @@ describe('request deadlines', () => {
     }) as unknown as typeof fetch
     const result = await classifyPackages([item(0)], { ...options, fetchImpl, timeoutMs: DEADLINE_MS })
     expect(result.classified.get('dsh-pkg-0')).toBe('tool')
+    expect(result.discarded).toEqual([])
+  })
+})
+
+describe('the classification step is bounded in aggregate', () => {
+  const MINUTE = 60_000
+
+  /** A gateway that stalls, and a clock that says each attempt cost `costMs`.
+   * The fake clock is what makes this deterministic: the real deadline stays
+   * at 20ms so the suite runs in milliseconds, while the budget sees minutes. */
+  function stalledAt(costMs: number): { fetchImpl: typeof fetch; now: () => number; calls: () => number } {
+    let clock = 0
+    let calls = 0
+    const fetchImpl = (async () => {
+      calls += 1
+      clock += costMs
+      return new Promise<Response>(() => {})
+    }) as unknown as typeof fetch
+    return { fetchImpl, now: () => clock, calls: () => calls }
+  }
+
+  it('has an aggregate budget at all', () => {
+    // Per runBatches CALL, and classify.ts makes two of them, so the step caps
+    // at twice this. A literal, so the constant cannot move unnoticed.
+    expect(CLASSIFY_BUDGET_MS).toBe(900_000)
+  })
+
+  it('stops retrying a stalled gateway once the budget is spent', () => {
+    // Deterministic because one batch cannot interleave with itself: the
+    // ladder would otherwise run RETRY_LIMIT = 4 attempts at 600s each.
+    const { fetchImpl, now, calls } = stalledAt(8 * MINUTE)
+    return classifyPackages([item(0)], {
+      ...options, fetchImpl, now, sleep: async (_ms: number) => {}, timeoutMs: 20, budgetMs: 15 * MINUTE,
+    }).then(result => {
+      expect(calls()).toBe(2)
+      expect(result.discarded).toHaveLength(1)
+    })
+  })
+
+  it('discards the batches it never reaches rather than spending the whole job on them', async () => {
+    // The finding this exists for. Adding the timeout retry multiplied a
+    // stalled gateway by RETRY_LIMIT: for the 2724-name backfill that is
+    // 137 batches / CONCURRENCY 4 x 4 attempts x 600s ~= 1400 minutes, inside
+    // a 120-minute job, in a step that runs BEFORE build:catalog — so
+    // classification alone would consume the run and the catalog would never
+    // be built. Losing 20 names to a discard is the supported outcome; losing
+    // the day's catalog is not.
+    const NAMES = 100
+    const { fetchImpl, now, calls } = stalledAt(8 * MINUTE)
+    const items = Array.from({ length: NAMES }, (_, i) => item(i))
+    const result = await classifyPackages(items, {
+      ...options, fetchImpl, now, sleep: async (_ms: number) => {}, timeoutMs: 20, budgetMs: 15 * MINUTE,
+    })
+    // Every name is still accounted for — the budget skips work, never names.
+    expect(result.classified.size + result.discarded.length).toBe(NAMES)
+    expect(result.discarded.some(d => d.reason.includes('budget'))).toBe(true)
+    // Unbudgeted this would be 5 batches x 4 attempts = 20 requests.
+    expect(calls()).toBeLessThan(20)
+  })
+
+  it('leaves a healthy run untouched, however many batches it has', async () => {
+    // The other side. A budget that fires on a healthy backfill would discard
+    // the tail of the ecosystem every build, which is the silent loss the
+    // retry was added to prevent, reintroduced from the other end.
+    let clock = 0
+    let calls = 0
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      calls += 1
+      clock += 1 * MINUTE
+      const body = JSON.parse(String(init?.body)) as { messages: { content: string }[] }
+      const input = JSON.parse(body.messages[1]!.content.match(/\[[\s\S]*\]/)![0]) as { name: string }[]
+      return okResponse(input.map(i => i.name))
+    }) as unknown as typeof fetch
+    const items = Array.from({ length: 100 }, (_, i) => item(i))
+    const result = await classifyPackages(items, {
+      ...options, fetchImpl, now: () => clock, budgetMs: 15 * MINUTE,
+    })
+    expect(calls).toBe(5)
+    expect(result.classified.size).toBe(100)
     expect(result.discarded).toEqual([])
   })
 })

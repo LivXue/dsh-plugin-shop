@@ -64,6 +64,33 @@ const RETRY_MAX_DELAY_MS = 8000
  */
 export const GATEWAY_REQUEST_TIMEOUT_MS = 600_000
 
+/**
+ * Wall-clock budget for ONE {@link runBatches} call. Past it, batches are
+ * discarded unattempted rather than asked.
+ *
+ * A per-request deadline bounds one request; nothing bounded their SUM, and
+ * the sum is a product of four things no single constant reveals:
+ * ceil(batches / {@link CONCURRENCY}) waves, x {@link RETRY_LIMIT} attempts,
+ * x {@link GATEWAY_REQUEST_TIMEOUT_MS}. For the 2724-name backfill in
+ * MAX_TOKENS' comment that is 137 batches / 4 x 4 x 600s = ~1400 minutes,
+ * inside a job bounded at 120 — and `classify.ts` runs BEFORE
+ * `build:catalog`, so a stalled gateway would consume the run and the catalog
+ * would never be built at all. Adding the retry made this 20x worse than the
+ * ~70 minutes it cost before, trading a batch of 20 discarded names for the
+ * whole day's catalog.
+ *
+ * A FIFTH multiplier is the caller: `classify.ts` makes two of these calls in
+ * one process — the category question and the market question — so the STEP
+ * caps at twice this, 30 minutes, and a third question would make it 45. That
+ * is the number to check against the job's 120, not this one.
+ *
+ * Sized to be far above any healthy run and far below the job. Erring small is
+ * cheap and self-correcting: `categories.yml` is a build input, so a discarded
+ * tail is simply asked again next build, and successive builds converge.
+ * Erring large costs the catalog.
+ */
+export const CLASSIFY_BUDGET_MS = 15 * 60_000
+
 function defaultSleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
@@ -96,6 +123,10 @@ interface Options {
   /** Per-attempt deadline on a gateway request. Defaults to
    * {@link GATEWAY_REQUEST_TIMEOUT_MS}; a seam, so a test need not wait one out. */
   timeoutMs?: number
+  /** Wall-clock budget for this whole call. Defaults to {@link CLASSIFY_BUDGET_MS}. */
+  budgetMs?: number
+  /** The clock, so a test can spend a 15-minute budget in milliseconds. */
+  now?: () => number
 }
 
 /**
@@ -150,12 +181,30 @@ async function runBatches<Item extends { name: string }, Answer>(
   // one of and forgets the other.
   const timedFetch = withTimeout(options.fetchImpl ?? fetch, options.timeoutMs ?? GATEWAY_REQUEST_TIMEOUT_MS, 'llm gateway')
   const sleep = options.sleep ?? defaultSleep
+  const now = options.now ?? Date.now
+  const budgetMs = options.budgetMs ?? CLASSIFY_BUDGET_MS
+  const startedAt = now()
+  // Safe by CHECK, not by construction — the shape this repo already uses for
+  // its coverage guards and its systematic-failure bound. There is no
+  // arrangement of the constants that makes the product safe; only measuring
+  // the time actually spent does.
+  const budgetSpent = (): boolean => now() - startedAt >= budgetMs
+  const notAttempted = `classification stopped: the step's ${budgetMs}ms budget was spent before this batch was asked. It is asked again on the next build.`
   const classified = new Map<string, Answer>()
   const discarded: { name: string; reason: string }[] = []
   const batches: Item[][] = []
   for (let i = 0; i < items.length; i += CLASSIFY_BATCH_SIZE) batches.push(items.slice(i, i + CLASSIFY_BATCH_SIZE))
 
   for (let i = 0; i < batches.length; i += CONCURRENCY) {
+    if (budgetSpent()) {
+      // Every remaining name still gets a row. The budget skips WORK, never a
+      // name: a name that silently vanished from the report would be the
+      // 2026-09-01 backfill's defect again, where 1049 discards said nothing.
+      for (const batch of batches.slice(i)) {
+        for (const b of batch) discarded.push({ name: b.name, reason: notAttempted })
+      }
+      break
+    }
     const slice = batches.slice(i, i + CONCURRENCY)
     await Promise.all(slice.map(async batch => {
       const expected = new Set(batch.map(b => b.name))
@@ -190,7 +239,7 @@ async function runBatches<Item extends { name: string }, Answer>(
         let outcome = await attempt()
         for (let retry = 0;
           (outcome instanceof FetchTimeoutError || outcome.status === 429 || outcome.status >= 500)
-            && retry < RETRY_LIMIT - 1;
+            && retry < RETRY_LIMIT - 1 && !budgetSpent();
           retry += 1) {
           const retryAfter = outcome instanceof FetchTimeoutError ? NaN : Number(outcome.headers.get('retry-after'))
           const delay = Number.isFinite(retryAfter) && retryAfter > 0

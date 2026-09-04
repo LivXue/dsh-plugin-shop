@@ -30,21 +30,27 @@ jobs:
     # A full healthy run -- install, tests, classify, harvest, stars, emit --
     # takes about 50 minutes, so this does not constrain one.
     #
-    # What it is for: the per-request deadlines the network clients carry bound
-    # a SINGLE request, and nothing else bounds their SUM. This is the only
-    # thing that does. Measured: one stalled repository costs four bounded
-    # attempts plus backoff, 134s, so at REPO_CONCURRENCY = 4 against a 2000
-    # budget a total GitHub stall drains only ~212 repositories inside these
-    # 120 minutes -- and MAX_THROWN_FRACTION, which would otherwise stop the
-    # build loudly, is only evaluated once the whole queue has drained, so it
-    # is unreachable in that state. The stars fetch alone is ~40 minutes
-    # sequential under a stall.
+    # What it is for: a per-request deadline bounds ONE request, and it is the
+    # SUM that decides whether this job survives a stalled counterpart.
     #
-    # So be plain about what this buys: under a pool-wide stall the run still
-    # dies here with no report, no state commit and no catalog. It caps the
-    # wasted runner time at two hours instead of six. It does not turn that
-    # outcome into a reported one -- an in-harvest bound would be needed for
-    # that, and none exists yet.
+    # The two advisory steps now cap their own sums, because both sit in front
+    # of work that matters and neither is worth what it could cost: classify
+    # runs BEFORE build:catalog and bounds each runBatches call at 15 minutes
+    # (it makes two, so 30), and the stars fetch runs before every artifact
+    # write and bounds itself at 10. So ~40 minutes here is the worst the
+    # optional data can take, leaving ~80 for the harvest.
+    #
+    # The harvest is what this bound is really for, and it is honest about what
+    # it buys. Measured: one stalled repository costs four bounded attempts
+    # plus backoff, 134s, so at REPO_CONCURRENCY = 4 against a 2000 budget a
+    # total GitHub stall drains only ~212 repositories inside 120 minutes --
+    # and MAX_THROWN_FRACTION, which would otherwise stop the build loudly, is
+    # evaluated only once the queue has drained, so it is unreachable in that
+    # state. Under a pool-wide stall the run still dies here with no report, no
+    # state commit and no catalog. This caps the wasted runner time at two
+    # hours instead of six; it does not turn that outcome into a reported one.
+    # An in-harvest budget, of the kind classify and stars now carry, is what
+    # that would take, and none exists yet.
     timeout-minutes: 120
     permissions:
       contents: write
