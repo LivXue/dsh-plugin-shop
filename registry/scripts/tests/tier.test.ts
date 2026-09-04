@@ -15,6 +15,7 @@ const config = parseRegistryConfig({
     '  reviewCommit: abc',
     '  notes: fine',
     '- name: dsh-tagged-plugin',
+    '  repo: someone/dsh-tagged-plugin',
     `  reviewedSha256: ${reviewedSha256}`,
     '  reviewer: github:r',
     '  reviewCommit: abc',
@@ -25,6 +26,7 @@ const config = parseRegistryConfig({
     '  reviewCommit: abc',
     '  notes: fine',
     '- name: dsh-commit-pinned',
+    '  repo: someone/dsh-commit-pinned',
     `  reviewedCommit: ${commit}`,
     '  reviewer: github:r',
     '  reviewCommit: abc',
@@ -268,5 +270,23 @@ describe('assignRepoTier', () => {
   it('downgrades a non-release entry whose commit moved past a commit-only review', () => {
     const entry = assignRepoTier(repoAccepted('dsh-commit-pinned', undefined, 'd'.repeat(40)), config)
     expect(entry.tier).toBe('verified-stale')
+  })
+
+  it('gives a fork of the reviewed bundle name no tier and no review', () => {
+    // B-3 / A-4: `bob/dsh-commit-pinned` at the commit ALICE reviewed used to
+    // list as `verified` — acknowledgement skipped — and at any other commit
+    // as `verified-stale` carrying Alice's byline. The review names a
+    // repository; a bundle name is claimed by up to 14 of them.
+    const base = repoAccepted('dsh-commit-pinned')
+    const fork = { ...base, repo: { ...base.repo, repo: 'bob/dsh-commit-pinned' } }
+    const entry = assignRepoTier(fork, config)
+    expect(entry.tier).toBe('community')
+    expect(entry.review).toBeUndefined()
+  })
+
+  it('finds the review whatever case the repository is spelled in', () => {
+    const base = repoAccepted('dsh-commit-pinned')
+    const cased = { ...base, repo: { ...base.repo, repo: 'Someone/dsh-commit-pinned' } }
+    expect(assignRepoTier(cased, config).tier).toBe('verified')
   })
 })

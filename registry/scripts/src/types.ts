@@ -153,6 +153,18 @@ export interface Review {
    * content-addressed identity; the tag is display only, a mutable ref that
    * must never carry the trust. */
   reviewedSha256?: string
+  /**
+   * `owner/slug` of the repository the review covers, as the reviewer wrote
+   * it. Present exactly when the pin is a commit or a release sha256.
+   *
+   * A GitHub review binds `(repo, commit)`. A bundle name is not an identity:
+   * 83 live bundle names are claimed by both a fork and an original, so a
+   * review found by bundle name alone handed `bob/dsh-repo-plugin` the
+   * verdict — and the reviewer's name — that a human wrote about
+   * `alice/dsh-repo-plugin`, and at the reviewed commit it also handed it the
+   * skipped install acknowledgement.
+   */
+  repo?: string
   reviewer: string
   reviewCommit: string
   notes: string

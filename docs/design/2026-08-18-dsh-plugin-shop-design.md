@@ -319,7 +319,9 @@ harvest -> fetch manifest -> classify -> gate -> tier -> emit -> commit snapshot
 
    > **verified pins a version. It never attaches to a name.**
 
-   `verified.yml` records `{ name, reviewedVersion, reviewedSha256, reviewer, reviewCommit, notes }`. If npm's latest exceeds `reviewedVersion`, the entry is **downgraded to `verified-stale`**, and the UI shows "reviewed v1.2.0 / current v1.3.0 unreviewed".
+   `verified.yml` records `{ name, repo?, reviewedVersion?, reviewedCommit?, reviewedSha256?, reviewer, reviewCommit, notes }`. Exactly one pin is present, and it selects the channel: `reviewedVersion` is an npm review and carries no `repo`; `reviewedCommit` and `reviewedSha256` are github reviews and MUST carry `repo`. If npm's latest exceeds `reviewedVersion`, the entry is **downgraded to `verified-stale`**, and the UI shows "reviewed v1.2.0 / current v1.3.0 unreviewed".
+
+   **Amendment (2026-09-03, audit B-2 / B-3 / A-4): a github review binds `(repo, commit)`.** The review index is keyed by the identity the review covers — an npm review by its package name, a github review by its lowercased `owner/slug` — and `assignRepoTier` looks a review up by repository, never by bundle name. A bundle name is not an identity: 83 live bundle names are claimed by both a fork and an original, and `dsh-skill-manager` by 14 repositories, so a name lookup gave `bob/dsh-repo-plugin` the tier, the reviewer's name and (at the reviewed commit) the skipped acknowledgement that a human had written about `alice/dsh-repo-plugin`. Two repositories sharing a bundle name may each hold their own review; a second review of the same repository still throws. The reviewed repository is also **exempt from the typosquatting hold**, which previously rejected the very repository a human had reviewed as an impersonator of itself; every other repository carrying that bundle name is still held.
 
    Most markets attach verification to a package name, which means an author who passes review can then publish a malicious version and inherit the trust automatically. That is the cheapest supply-chain attack available.
 

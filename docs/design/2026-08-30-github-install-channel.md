@@ -192,11 +192,19 @@ a commit, never a raw spec":
 
 ## 7. Tiering
 
-`community` by default. `verified` pins a **commit**, not a repo: the review
-record for a GitHub entry carries `reviewedCommit` instead of
-`reviewedVersion`, and a newer commit downgrades to `verified-stale` exactly as
-a newer version does. The core invariant — trust never inherits across
-unreviewed code — holds across both sources.
+`community` by default. `verified` pins a **commit** — and names the
+repository that commit belongs to: the review record for a GitHub entry
+carries `repo: owner/slug` plus `reviewedCommit` instead of
+`reviewedVersion`, and any other commit downgrades to `verified-stale`
+exactly as any other version does. The core invariant — trust never inherits
+across unreviewed code — holds across both sources.
+
+**Amendment (2026-09-03, audit B-3 / A-4):** the `repo` field is required, not
+decorative. Without it the review was found by bundle name, so a fork
+carrying the reviewed name inherited the tier and the reviewer's byline
+(measured: 83 live bundle names are claimed by both a fork and an original).
+`allowed-similar.yml` on this channel is likewise `owner/slug` and never a
+bundle name: clearing a name cleared every repository using it.
 
 ## 8. UI
 

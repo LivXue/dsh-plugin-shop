@@ -100,6 +100,97 @@ describe('parseRegistryConfig', () => {
     expect(config.allowedSimilar.has('dsh-fs-tools')).toBe(true)
   })
 
+  it('keys a github review by the repository it covers, and an npm review by the package name', () => {
+    // A GitHub review binds (repo, commit). 83 live bundle names are claimed
+    // by both a fork and an original, so a review keyed by the bundle name
+    // handed every fork the reviewer's verdict — and, at the reviewed commit,
+    // the skipped install acknowledgement (B-3 / A-4).
+    const config = parseRegistryConfig({
+      ...empty,
+      verified: [
+        '- name: dsh-npm-plugin',
+        '  reviewedVersion: 1.2.0',
+        '  reviewer: github:someone',
+        '  reviewCommit: abc1234',
+        '- name: dsh-repo-plugin',
+        '  repo: Alice/dsh-repo-plugin',
+        `  reviewedCommit: ${'a'.repeat(40)}`,
+        '  reviewer: github:someone',
+        '  reviewCommit: abc1234',
+      ].join('\n') + '\n',
+    })
+    expect(config.verified.get('dsh-npm-plugin')?.reviewedVersion).toBe('1.2.0')
+    // Lowercased: GitHub resolves repository names case-insensitively, and
+    // `own.ts` already folds case on the same string.
+    expect(config.verified.get('alice/dsh-repo-plugin')?.reviewedCommit).toBe('a'.repeat(40))
+    expect(config.verified.get('alice/dsh-repo-plugin')?.repo).toBe('Alice/dsh-repo-plugin')
+    expect(config.verified.get('dsh-repo-plugin')).toBeUndefined()
+    // The bundle name still reaches the typosquatting probe set: a lookalike
+    // of a reviewed name is held whichever channel published it.
+    expect([...config.verifiedNames].sort()).toEqual(['dsh-npm-plugin', 'dsh-repo-plugin'])
+  })
+
+  it('throws when a github review names no repo', () => {
+    expect(() => parseRegistryConfig({
+      ...empty,
+      verified: `- name: dsh-repo-plugin\n  reviewedCommit: ${'a'.repeat(40)}\n  reviewer: r\n  reviewCommit: c\n`,
+    })).toThrow(/verified\.yml.*repo: owner\/slug/s)
+  })
+
+  it('throws when a release review names no repo', () => {
+    expect(() => parseRegistryConfig({
+      ...empty,
+      verified: `- name: dsh-repo-plugin\n  reviewedSha256: ${'a'.repeat(64)}\n  reviewer: r\n  reviewCommit: c\n`,
+    })).toThrow(/verified\.yml.*repo: owner\/slug/s)
+  })
+
+  it('throws when an npm review carries a repo', () => {
+    // An npm review is pinned by the version alone; a `repo:` on it would
+    // read as a github review and never match anything.
+    expect(() => parseRegistryConfig({
+      ...empty,
+      verified: '- name: dsh-npm-plugin\n  repo: a/b\n  reviewedVersion: 1.0.0\n  reviewer: r\n  reviewCommit: c\n',
+    })).toThrow(/verified\.yml.*github review/s)
+  })
+
+  it('lets two repositories sharing a bundle name each hold their own review', () => {
+    const config = parseRegistryConfig({
+      ...empty,
+      verified: [
+        '- name: dsh-repo-plugin',
+        '  repo: alice/dsh-repo-plugin',
+        `  reviewedCommit: ${'a'.repeat(40)}`,
+        '  reviewer: github:alice-reviewer',
+        '  reviewCommit: abc',
+        '- name: dsh-repo-plugin',
+        '  repo: bob/dsh-repo-plugin',
+        `  reviewedCommit: ${'b'.repeat(40)}`,
+        '  reviewer: github:bob-reviewer',
+        '  reviewCommit: def',
+      ].join('\n') + '\n',
+    })
+    expect(config.verified.get('alice/dsh-repo-plugin')?.reviewer).toBe('github:alice-reviewer')
+    expect(config.verified.get('bob/dsh-repo-plugin')?.reviewer).toBe('github:bob-reviewer')
+  })
+
+  it('throws on two reviews of the same repository', () => {
+    expect(() => parseRegistryConfig({
+      ...empty,
+      verified: [
+        '- name: dsh-repo-plugin',
+        '  repo: alice/dsh-repo-plugin',
+        `  reviewedCommit: ${'a'.repeat(40)}`,
+        '  reviewer: r',
+        '  reviewCommit: c',
+        '- name: dsh-other-name',
+        '  repo: Alice/dsh-repo-plugin',
+        `  reviewedCommit: ${'b'.repeat(40)}`,
+        '  reviewer: r',
+        '  reviewCommit: d',
+      ].join('\n') + '\n',
+    })).toThrow(/verified\.yml.*duplicate entry for alice\/dsh-repo-plugin/s)
+  })
+
   it('throws on a verified entry with none of the three pins', () => {
     expect(() => parseRegistryConfig({
       ...empty,
@@ -107,20 +198,20 @@ describe('parseRegistryConfig', () => {
     })).toThrow(/reviewedVersion.*reviewedCommit.*reviewedSha256/)
   })
 
-  it('accepts a verified entry pinned by commit for a repository', () => {
+  it('accepts a verified entry pinned by commit, keyed by the repository it covers', () => {
     const config = parseRegistryConfig({
       ...empty,
-      verified: '- name: dsh-hello-plugin\n  reviewedCommit: abc123def\n  reviewer: github:someone\n  reviewCommit: abc\n',
+      verified: '- name: dsh-hello-plugin\n  repo: someone/hello\n  reviewedCommit: abc123def\n  reviewer: github:someone\n  reviewCommit: abc\n',
     })
-    expect(config.verified.get('dsh-hello-plugin')?.reviewedCommit).toBe('abc123def')
+    expect(config.verified.get('someone/hello')?.reviewedCommit).toBe('abc123def')
   })
 
   it('accepts a verified entry pinned by tarball sha256 for a release-rescued entry', () => {
     const config = parseRegistryConfig({
       ...empty,
-      verified: `- name: dsh-hello-plugin\n  reviewedSha256: ${'a'.repeat(64)}\n  reviewer: github:someone\n  reviewCommit: abc\n`,
+      verified: `- name: dsh-hello-plugin\n  repo: someone/hello\n  reviewedSha256: ${'a'.repeat(64)}\n  reviewer: github:someone\n  reviewCommit: abc\n`,
     })
-    expect(config.verified.get('dsh-hello-plugin')?.reviewedSha256).toBe('a'.repeat(64))
+    expect(config.verified.get('someone/hello')?.reviewedSha256).toBe('a'.repeat(64))
   })
 
   it('throws on a denied entry with no reason', () => {

@@ -7,6 +7,7 @@ import { CATEGORIES, type Category, type Review } from './types.ts'
 
 const verifiedSchema = z.array(z.object({
   name: z.string().min(1),
+  repo: z.string().min(1).optional(),
   reviewedVersion: z.string().min(1).optional(),
   reviewedCommit: z.string().min(1).optional(),
   reviewedSha256: z.string().min(1).optional(),
@@ -16,6 +17,17 @@ const verifiedSchema = z.array(z.object({
 }).strict().refine(
   row => row.reviewedVersion !== undefined || row.reviewedCommit !== undefined || row.reviewedSha256 !== undefined,
   { message: 'declare reviewedVersion (npm), reviewedCommit (github), or reviewedSha256 (release tarball)' },
+).refine(
+  // A github review binds (repo, commit): without the repo there is nothing
+  // to bind it to, and the review would attach to a bundle name that up to 14
+  // repositories claim.
+  row => (row.reviewedCommit === undefined && row.reviewedSha256 === undefined) || row.repo !== undefined,
+  { message: 'a github review must name the repository it covers: repo: owner/slug' },
+).refine(
+  // An npm review is pinned by the version alone. A `repo:` beside it would
+  // be keyed as a github review and match nothing.
+  row => row.reviewedVersion === undefined || row.repo === undefined,
+  { message: 'repo: belongs to a github review (reviewedCommit / reviewedSha256), not to an npm review' },
 ))
 
 const deniedSchema = z.array(z.object({
@@ -52,8 +64,20 @@ const firstSeenSchema = z.array(z.object({
 
 /** The human-authored inputs to one catalog build. */
 export interface RegistryConfig {
-  /** Package name to its pinned review. */
+  /**
+   * Review index, keyed by the identity the review covers: an npm review by
+   * its package `name`, a github review by its lowercased `repo`. The two
+   * keyspaces cannot collide — `owner/slug` carries a slash and never a
+   * leading `@` — so one map holds both, exactly as {@link denied} does.
+   */
   verified: Map<string, Review>
+  /**
+   * Every package or bundle name a review covers. This — and never
+   * {@link verified}'s keys — is the typosquatting hold's probe set: a
+   * Levenshtein distance from an npm name to `owner/slug` is meaningless,
+   * because the owner prefix drowns the distance.
+   */
+  verifiedNames: Set<string>
   /** Package name to the reason it is excluded, plus the known replacement
    * when a human recorded one. */
   denied: Map<string, { reason: string; replacement?: string }>
@@ -122,15 +146,22 @@ export function parseRegistryConfig(
   },
 ): RegistryConfig {
   const verified = new Map<string, Review>()
+  const verifiedNames = new Set<string>()
   for (const row of parseFile('verified.yml', input.verified, verifiedSchema)) {
-    setUnique(verified, 'verified.yml', row.name, {
+    // The key is the identity the review covers, so two repositories sharing
+    // a bundle name can each hold their own review — and a second review of
+    // the SAME repository still throws.
+    const key = row.repo === undefined ? row.name : row.repo.toLowerCase()
+    setUnique(verified, 'verified.yml', key, {
       reviewedVersion: row.reviewedVersion,
       reviewedCommit: row.reviewedCommit,
       reviewedSha256: row.reviewedSha256,
+      repo: row.repo,
       reviewer: row.reviewer,
       reviewCommit: row.reviewCommit,
       notes: row.notes,
     })
+    verifiedNames.add(row.name)
   }
   const denied = new Map<string, { reason: string; replacement?: string }>()
   for (const row of parseFile('denied.yml', input.denied, deniedSchema)) {
@@ -156,7 +187,7 @@ export function parseRegistryConfig(
   for (const row of parseFile('first-seen.yml', input.firstSeen, firstSeenSchema)) {
     setUnique(firstSeen, 'first-seen.yml', row.name, row.added)
   }
-  return { verified, denied, allowedSimilar, notAShop, marketsJudged, marketRows, categories, firstSeen }
+  return { verified, verifiedNames, denied, allowedSimilar, notAShop, marketsJudged, marketRows, categories, firstSeen }
 }
 
 /**
