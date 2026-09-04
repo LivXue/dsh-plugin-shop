@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { discoverProfile, ownedEntryIds, ownsEntryId, setUserLayerRow, setUserLayerRows } from '../../src/host/profile.ts'
@@ -161,6 +161,33 @@ describe('setUserLayerRows', () => {
     expect(written).not.toMatch(/id: a\b/)
     expect(written).not.toMatch(/id: b\b/)
     expect(written).toContain('other')
+  })
+})
+
+describe('setUserLayerRows and the !!js spelling (F-9)', () => {
+  it('writes an existing !!js scalar back as !!js, not as __jsExpr', () => {
+    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-jsexpr-'))
+    writeFileSync(join(profileDir, 'cordis.patch.yml'), [
+      '- id: provider-row',
+      '  config:',
+      '    apiKey: !!js process.env.DEEPSEEK_API_KEY',
+      '',
+    ].join('\n'))
+
+    setUserLayerRows({ profileDir, rows: [{ id: 'hello-row', disabled: true }] })
+
+    const written = readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')
+    expect(written).toContain('!!js process.env.DEEPSEEK_API_KEY')
+    expect(written).not.toContain('__jsExpr')
+    expect(written).toContain('hello-row')
+    rmSync(profileDir, { recursive: true, force: true })
+  })
+
+  it('still writes a plain row unchanged', () => {
+    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-jsexpr-plain-'))
+    setUserLayerRows({ profileDir, rows: [{ id: 'a', disabled: true }, { id: 'b', disabled: false }] })
+    expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toBe('- id: a\n  disabled: true\n')
+    rmSync(profileDir, { recursive: true, force: true })
   })
 })
 
