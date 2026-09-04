@@ -1241,6 +1241,16 @@ export interface RepoHarvestOptions {
   /** Per-attempt deadline on a release-tarball download, which reads a body up
    * to {@link MAX_TARBALL_BYTES}. Defaults to {@link TARBALL_REQUEST_TIMEOUT_MS}. */
   tarballTimeoutMs?: number
+  /**
+   * Pause before retrying the WHOLE harvest once, when the first attempt
+   * throws. Unset means no retry.
+   *
+   * Opt-in on purpose, and deliberately not defaulted: a unit test that
+   * retried by accident would turn a real failure into a slow pass. The daily
+   * build sets it because the GitHub half runs through shared egress whose
+   * throttles outlast the per-request backoffs.
+   */
+  retryAfterMs?: number
 }
 
 export interface RepoHarvestResult {
@@ -1274,14 +1284,50 @@ export interface RepoHarvestResult {
   thrown: number
   carried: number
   deferred: number
+  /**
+   * The first attempt's error message when {@link RepoHarvestOptions.retryAfterMs}
+   * bought a second one, else null. Reported rather than swallowed: a harvest
+   * that needed a retry is not the same event as one that did not.
+   */
+  firstAttemptError: string | null
 }
 
 /**
- * Harvest every repository candidate for the topics: partition the search,
- * diff against the recorded state, re-fetch only new or changed repos (up to
- * the budget), and carry the untouched candidates over.
+ * Harvest every repository candidate for the topics, retrying the whole run
+ * once when {@link RepoHarvestOptions.retryAfterMs} is set.
+ *
+ * The retry lives HERE rather than at the call site, and that is the point.
+ * It used to sit in build.ts, which rebuilt the options object by hand for the
+ * second attempt and left out `probeSubpackages`; this function defaults that
+ * to `true` while build.ts's `schemaVersion` kept following the env flag. So a
+ * retried harvest emitted `subdir` entries under schemaVersion 3 — and a v3
+ * client ignores `subdir` and installs the monorepo ROOT, a silent no-op for
+ * the user. Only the retry path could produce it, which is why nothing ever
+ * saw it. One call site and one options object makes the class impossible
+ * rather than merely fixed.
  */
 export async function harvestRepos(options: RepoHarvestOptions): Promise<RepoHarvestResult> {
+  const { retryAfterMs } = options
+  try {
+    return { ...await harvestOnce(options), firstAttemptError: null }
+  } catch (error) {
+    if (retryAfterMs === undefined) throw error
+    const firstAttemptError = error instanceof Error ? error.message : String(error)
+    const sleep = options.sleep ?? (async (ms: number) => { await new Promise(resolve => setTimeout(resolve, ms)) })
+    await sleep(retryAfterMs)
+    // The SAME object, never a rebuilt one. A second failure propagates: a
+    // half-harvested catalog is worse than a red build, and the daily workflow
+    // runs again tomorrow.
+    return { ...await harvestOnce(options), firstAttemptError }
+  }
+}
+
+/**
+ * One harvest attempt: partition the search, diff against the recorded state,
+ * re-fetch only new or changed repos (up to the budget), and carry the
+ * untouched candidates over.
+ */
+async function harvestOnce(options: RepoHarvestOptions): Promise<Omit<RepoHarvestResult, 'firstAttemptError'>> {
   const {
     state, budget,
     fetchImpl = fetch,

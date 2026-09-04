@@ -139,17 +139,19 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     // harvest behaves exactly as before and emits v3; the flag flips in the
     // release commit that ships the v4-reading client.
     probeSubpackages = process.env.SHOP_HARVEST_SUBPACKAGES === '1'
-    let repos: Awaited<ReturnType<typeof harvestRepos>>
-    try {
-      repos = await harvestRepos({ state: repoState, budget, fetchImpl: fetch, token: ghToken, probeSubpackages })
-    } catch (error) {
-      // One whole-harvest retry after a pause: the GitHub half runs through
-      // shared egress whose throttles outlast the per-request backoffs. A
-      // second failure kills the build loudly — a half-harvested catalog is
-      // worse than a red one, and the daily workflow retries next run.
-      process.stderr.write(`github: first attempt failed (${error instanceof Error ? error.message : String(error)}); retrying once after 30s\n`)
-      await new Promise(resolve => setTimeout(resolve, 30_000))
-      repos = await harvestRepos({ state: repoState, budget, fetchImpl: fetch, token: ghToken })
+    // One whole-harvest retry after a pause: the GitHub half runs through
+    // shared egress whose throttles outlast the per-request backoffs. A second
+    // failure kills the build loudly — a half-harvested catalog is worse than a
+    // red one, and the daily workflow retries next run. The retry is inside
+    // harvestRepos so that this one options object is the only one there is;
+    // the version of this that rebuilt it by hand dropped `probeSubpackages`
+    // and emitted v4 entries under schemaVersion 3.
+    const repos = await harvestRepos({
+      state: repoState, budget, fetchImpl: fetch, token: ghToken, probeSubpackages,
+      retryAfterMs: 30_000,
+    })
+    if (repos.firstAttemptError !== null) {
+      process.stderr.write(`github: first attempt failed (${repos.firstAttemptError}); retried once after 30s\n`)
     }
     repoCandidates = repos.candidates
     repoSearchStars = repos.searchStars

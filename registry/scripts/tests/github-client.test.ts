@@ -1322,6 +1322,96 @@ describe('harvestRepos', () => {
     expect(Object.keys(result.nextState).sort()).toEqual(['a/unchanged', 'b/changed', 'd/new'])
   })
 
+  /**
+   * A harvest whose search fails `failures` times before answering, serving one
+   * bundle-less monorepo root. The root carries `workspaces`, so it trips
+   * `monorepoSignal` — which means the git/trees probe fires if and only if
+   * `probeSubpackages` is on, and `treeProbes` is a direct read of the option
+   * the retry was given.
+   */
+  function flakyMonorepoHarvest(failures: number): { fetchImpl: typeof fetch; treeProbes: () => number; attempts: () => number } {
+    let searchAttempts = 0
+    let trees = 0
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      if (text.includes('/search/repositories')) {
+        searchAttempts += 1
+        // 404, not a 5xx: fetchRobust retries a thrown request four times, so a
+        // 5xx here is absorbed WITHIN one harvest attempt and never reaches the
+        // whole-harvest retry this fixture exists to drive. A non-ok status is
+        // returned, not thrown, so searchBody's own check raises it exactly once.
+        if (searchAttempts <= failures) return new Response('no such search', { status: 404 })
+        return searchResponder(q => (q.includes('topic:dsh-plugin')
+          ? [repoItem('m/mono', { pushed_at: '2026-08-02T00:00:00Z' })]
+          : []))(text) as Response
+      }
+      if (text.includes('/git/trees/')) {
+        trees += 1
+        return new Response(JSON.stringify({ tree: [{ path: 'packages/a/package.json', type: 'blob' }] }), { status: 200 })
+      }
+      if (text.startsWith('https://raw.githubusercontent.com/m/mono/main/package.json')) {
+        return new Response(JSON.stringify({ name: 'mono', workspaces: ['packages/*'] }), { status: 200 })
+      }
+      if (text.startsWith('https://raw.githubusercontent.com/m/mono/main/packages/a/package.json')) {
+        return new Response(JSON.stringify({ name: 'dsh-sub-plugin', dsh: { bundle: {} } }), { status: 200 })
+      }
+      if (text.startsWith('https://api.github.com/repos/m/mono/commits/main')) {
+        return new Response(JSON.stringify({ sha: commit, commit: { author: { date: '2026-08-02T00:00:00.000Z' } } }), { status: 200 })
+      }
+      throw new Error(`unrouted: ${text}`)
+    }) as unknown as typeof fetch
+    return { fetchImpl, treeProbes: () => trees, attempts: () => searchAttempts }
+  }
+
+  it('retries the whole harvest once, with the SAME options it was given', async () => {
+    // The retry used to live in build.ts and rebuilt the options object by
+    // hand, omitting `probeSubpackages` — which harvestRepos defaults to TRUE
+    // while build.ts's `schemaVersion` keeps following the env flag. So a
+    // retried harvest emitted `subdir` entries under schemaVersion 3, and a v3
+    // client ignores `subdir` and installs the monorepo ROOT: a silent no-op
+    // for the user. Only the retry path could produce it, which is why nothing
+    // ever saw it.
+    //
+    // Moving the retry inside harvestRepos makes the class structurally
+    // impossible: one call site, one options object. This test reads the
+    // option back off the retry rather than trusting that.
+    const { fetchImpl, treeProbes, attempts } = flakyMonorepoHarvest(1)
+    const result = await harvestRepos({
+      state: {}, budget: 5, fetchImpl, sleep, token: 't',
+      probeSubpackages: false, retryAfterMs: 1,
+    })
+    // It failed, then completed — `attempts()` counts REQUESTS, and a healthy
+    // harvest makes several per topic, so the one-retry BOUND is asserted in
+    // the give-up test below rather than by a request count here.
+    expect(result.firstAttemptError).toContain('404')
+    expect(result.candidates.map(c => c.repo)).toEqual(['m/mono'])
+    expect(attempts()).toBeGreaterThan(1)
+    // And probing stayed OFF on the retry: `m/mono` carries `workspaces`, so
+    // the tree probe fires if and only if `probeSubpackages` is on.
+    expect(treeProbes()).toBe(0)
+    expect(result.candidates.every(c => c.subdir === undefined)).toBe(true)
+  })
+
+  it('does not retry unless asked, so a unit test cannot mask a failure by accident', async () => {
+    const { fetchImpl, attempts } = flakyMonorepoHarvest(1)
+    await expect(harvestRepos({ state: {}, budget: 5, fetchImpl, sleep, token: 't', probeSubpackages: false }))
+      .rejects.toThrow(/404/)
+    expect(attempts()).toBe(1)
+  })
+
+  it('gives up after the one retry, and reports null when the first attempt worked', async () => {
+    // A second failure kills the build loudly: a half-harvested catalog is
+    // worse than a red one, and the daily workflow runs again tomorrow.
+    const twice = flakyMonorepoHarvest(2)
+    await expect(harvestRepos({ state: {}, budget: 5, fetchImpl: twice.fetchImpl, sleep, token: 't', probeSubpackages: false, retryAfterMs: 1 }))
+      .rejects.toThrow(/404/)
+    expect(twice.attempts()).toBe(2)
+
+    const clean = flakyMonorepoHarvest(0)
+    const result = await harvestRepos({ state: {}, budget: 5, fetchImpl: clean.fetchImpl, sleep, token: 't', probeSubpackages: false, retryAfterMs: 1 })
+    expect(result.firstAttemptError).toBeNull()
+  })
+
   it('exposes the star counts the search items carry as a free byproduct', async () => {
     const fetchImpl = (async (url: string | URL) => {
       const text = String(url)

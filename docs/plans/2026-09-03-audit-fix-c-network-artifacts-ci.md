@@ -1543,6 +1543,28 @@ git commit -m "fix(harvest): a malformed REPO_BACKFILL_BUDGET throws instead of 
 
 ### Task 8: The whole-harvest retry cannot change the harvest's shape
 
+> **Outcome: DONE, minus the Task 5 dependency.** The defect was live exactly
+> as described: `build.ts` re-called `harvestRepos` without
+> `probeSubpackages`, this module defaults it to `true`, and
+> `schemaVersion` kept following the env flag — so a retried harvest emitted
+> `subdir` entries under schemaVersion 3, which a v3 client ignores while
+> installing the monorepo root. Only the retry path could produce it, which is
+> why nothing ever saw it.
+>
+> `RepoHarvestResult.incompleteWindows` is NOT part of this: Task 5 is moot
+> (see its note). `retryAfterMs` and `firstAttemptError` shipped as specified.
+> The mutation that reintroduces the original defect — the retry rebuilding its
+> options without `probeSubpackages` — is checked, and the fixture reads the
+> option back off the retry through the git/trees probe, which fires if and only
+> if probing is on.
+>
+> One fixture correction worth recording: a 5xx does not drive this test.
+> `fetchRobust` retries a thrown request four times, so a 503 search is
+> absorbed WITHIN one harvest attempt and never reaches the whole-harvest
+> retry — the first version of the fixture passed against the unfixed code for
+> that reason. A non-ok status is returned rather than thrown, so a 404 raises
+> exactly once, which is what makes the attempt fail.
+
 **Files:**
 - Modify: `registry/scripts/src/github-client.ts:568-680` (options, result, and the split of `harvestRepos` into a retry wrapper over `harvestOnce`)
 - Modify: `registry/scripts/src/build.ts:110-121`
