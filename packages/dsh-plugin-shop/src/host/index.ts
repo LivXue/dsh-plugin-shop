@@ -23,7 +23,7 @@ import { fetchLatestVersion } from './self-update.ts'
 import { detectSupervisor } from './supervisor.ts'
 import { readRepoPins, writeRepoPins, type RepoPinFs } from './repo-pins.ts'
 import { discoverProfile, ownedEntryIds, ownsEntryId, setUserLayerRow, setUserLayerRows } from './profile.ts'
-import { identityKey } from '../shared/identity.ts'
+import { identityKey, installedSpecMatches } from '../shared/identity.ts'
 import {
   createPeerVersionCheck,
   incompatibilityMap,
@@ -168,13 +168,20 @@ export type ShopUpdateResult =
   | { ok: true; installId: string }
   | { ok: false; detail: string }
 
-/** `shop/installed` entry (§7.3): one installed catalog plugin. `installed`
- * is the profile manifest's dependency spec verbatim (a range, a tag, or
- * `workspace:*`) — for a github entry it is the pinned commit the shop
- * installed, falling back to the `github:owner/slug` spec when the pin is
- * unknown; `outdated` is the Host's verdict that the installed version sits
- * behind the catalog's — the client never does version math. */
-export interface ShopInstalledEntry { name: string; installed: string; latest: string; outdated: boolean; enabled: boolean }
+/** `shop/installed` entry (§7.3): one installed catalog plugin. The identity
+ * fields distinguish same-named npm and GitHub rows; `installed` remains the
+ * manifest spec or the recorded GitHub pin, and the client never does version
+ * math. */
+export interface ShopInstalledEntry {
+  name: string
+  source: 'npm' | 'github'
+  repo?: string
+  subdir?: string
+  installed: string
+  latest: string
+  outdated: boolean
+  enabled: boolean
+}
 
 /** One row of the row config the bundle patch (§cordis.patch.yml) supplies. */
 interface ShopRowConfig {
@@ -850,14 +857,19 @@ export class ShopGateway extends TypertRemoteService {
     for (const entry of this.lastSnapshot.entries) {
       const spec = dependencies[entry.name]
       if (spec === undefined) continue
+      // A profile has one dependency per name, so the spec is the only way
+      // to choose among same-named catalog entries.
+      if (!installedSpecMatches(entry, spec)) continue
+      const identity = { source: entry.source, repo: entry.repo, subdir: entry.subdir }
       if (entry.source === 'github') {
         // The manifest spec is `github:owner/slug` — no commit. The pin the
         // shop recorded at install time is the commit truth; without one the
         // entry was installed by other means and reads as current rather
         // than killing the RPC over an unknowable comparison.
-        const pin = pins[entry.name]
+        const pin = pins[identityKey(entry)] ?? pins[entry.name]
         installed.push({
           name: entry.name,
+          ...identity,
           installed: pin ?? spec,
           latest: entry.version,
           outdated: pin !== undefined && pin !== entry.version,
@@ -866,6 +878,7 @@ export class ShopGateway extends TypertRemoteService {
       } else {
         installed.push({
           name: entry.name,
+          ...identity,
           installed: spec,
           latest: entry.version,
           outdated: this.isBehind(spec, entry.version),
@@ -905,14 +918,20 @@ export class ShopGateway extends TypertRemoteService {
       const { snapshot } = await load({ origins: this.originsFor(catalogUrl), cacheDir })
       this.lastSnapshot = snapshot
     }
-    if (!this.lastSnapshot.entries.some(entry => entry.name === args.name)) {
+    const named = this.lastSnapshot.entries.filter(entry => entry.name === args.name)
+    if (named.length === 0) {
       return { ok: false, detail: `dsh-plugin-shop: ${args.name} is not in the catalog` }
     }
     const manifest = readProfileManifest('dsh-plugin-shop', this.profileDirResolved())
     const dependencies = manifest.dependencies ?? {}
-    if (dependencies[args.name] === undefined) {
+    const spec = dependencies[args.name]
+    if (spec === undefined) {
       return { ok: false, detail: `dsh-plugin-shop: ${args.name} is not installed` }
     }
+    // The dependency is removed by name, but the matching row tells us which
+    // identity pin to forget. If no row matches, still allow removal: revoking
+    // a dependency is safer than trapping it behind an unrecognised spec.
+    const installedEntry = named.find(entry => installedSpecMatches(entry, spec))
     // Resolve the entry ids while the package is still on disk: `afterDone`
     // runs after the uninstall removed it, and its bundle patch with it.
     // Best-effort for the same reason as the update path: a package with an
@@ -940,8 +959,14 @@ export class ShopGateway extends TypertRemoteService {
     // Forget the commit pin alongside the dependency; a stale pin would
     // otherwise outlive the uninstall in the shop's cache.
     const pins = readRepoPins(this.pinFs, this.pinsPath())
-    if (pins[args.name] !== undefined) {
-      delete pins[args.name]
+    const stalePins = [args.name, ...(installedEntry === undefined ? [] : [identityKey(installedEntry)])]
+    let forgot = false
+    for (const key of stalePins) {
+      if (pins[key] === undefined) continue
+      delete pins[key]
+      forgot = true
+    }
+    if (forgot) {
       writeRepoPins(this.pinFs, this.pinsPath(), pins)
     }
     this.installs.set(running.installId, running)

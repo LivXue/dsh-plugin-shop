@@ -32,12 +32,19 @@ function snapshot(overrides: Partial<ShopCatalogResult['plugins'][number]> = {})
   }
 }
 
-function bench(catalogResult: ShopCatalogResult, installedEntries: ShopInstalledEntry[] = []) {
+/** Installed-row fixtures default to the npm channel; repo fixtures can state
+ * their identity fields explicitly when a test needs them. */
+type InstalledFixture =
+  Omit<ShopInstalledEntry, 'source' | 'repo' | 'subdir'>
+  & Partial<Pick<ShopInstalledEntry, 'source' | 'repo' | 'subdir'>>
+
+function bench(catalogResult: ShopCatalogResult, installedEntries: InstalledFixture[] = []) {
   const catalog = vi.fn<ShopTabInjected['catalog']>().mockResolvedValue(catalogResult)
   const install = vi.fn<ShopTabInjected['install']>().mockResolvedValue({ ok: true, installId: 'i1' })
   const installStatus = vi.fn<ShopTabInjected['installStatus']>().mockResolvedValue({ found: true, state: 'done', log: [], needsRestart: true })
   const setEnabled = vi.fn<ShopTabInjected['setEnabled']>().mockResolvedValue({ ok: true })
-  const installed = vi.fn<ShopTabInjected['installed']>().mockResolvedValue(installedEntries)
+  const rows: ShopInstalledEntry[] = installedEntries.map(row => ({ source: 'npm', ...row }))
+  const installed = vi.fn<ShopTabInjected['installed']>().mockResolvedValue(rows)
   const uninstall = vi.fn<ShopTabInjected['uninstall']>().mockResolvedValue({ ok: true, installId: 'u1' })
   const restart = vi.fn<ShopTabInjected['restart']>().mockResolvedValue({ ok: true })
   const version = vi.fn<ShopTabInjected['version']>().mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartSupported: true })
