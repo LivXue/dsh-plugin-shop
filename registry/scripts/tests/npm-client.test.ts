@@ -2,7 +2,8 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
+import { FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, MAX_SEARCH_FROM, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
+import { ENTRY_PAYLOAD_MAX_BYTES, entryPayloadBytes } from '../src/gate.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
 
 describe('HARVEST_KEYWORDS', () => {
@@ -273,10 +274,10 @@ describe('toCandidate', () => {
   })
 
   it('drops a peer name past the length bound, the way it drops the count tail', () => {
-    // 200 peer names are recorded and each reaches every reader's plugins.json
-    // verbatim with no bound of its own. The documented policy for this field
-    // is "the excess is dropped, never rejected" — an oversized manifest costs
-    // the author the tail, not the listing.
+    // Every recorded peer name reaches every reader's plugins.json verbatim,
+    // and a `peerDependencies` key carries no bound of its own. The documented
+    // policy for this field is "the excess is dropped, never rejected" — an
+    // oversized manifest costs the author the tail, not the listing.
     const result = toCandidate({
       ...packument,
       versions: {
@@ -289,25 +290,37 @@ describe('toCandidate', () => {
     expect(result?.peers).toEqual(['ok'])
   })
 
-  it('keeps a peer name of exactly 214 characters, npm\'s own maximum', () => {
-    // 214 is the entire reason the constant has the value it has: a name of
-    // exactly that length is legal on npm, publishable, and must survive the
-    // filter. Two off-by-one mutations drop it silently -- `<=` to `<`, and
-    // 214 to 213 -- and no other test in this file notices either. The literal
-    // is written out rather than derived from PEER_NAME_MAX_LENGTH, or the
-    // fixture would move with the constant and pin nothing.
-    const name = 'p'.repeat(214)
+  it('keeps a peer name of exactly the bound, and no longer keeps the 214 npm allows', () => {
+    // This pinned 214 on the rationale that 214 is npm's OWN name limit, so a
+    // name of exactly that length is legal, publishable, and must survive the
+    // filter. That rationale is retired, deliberately. The bound was never a
+    // grammar check — a `peerDependencies` key is an arbitrary JSON key and
+    // this filter only ever measured its length — and 200 names of 214 make
+    // this one field 45,239 serialized bytes, 3.68x gate.ts's byte budget for
+    // an ENTIRE entry. Measured against the published catalog on 2026-09-04,
+    // the longest peer name any of 9,422 entries declares is 50 characters.
+    // So the cap is a measured 128, 2.56x that, and a peer name of 129 to 214
+    // characters — legal on npm, never yet observed — is now DROPPED. The
+    // author loses the tail of one list, silently, by this field's own
+    // documented policy; never the listing.
+    //
+    // The literals are written out rather than derived from
+    // PEER_NAME_MAX_LENGTH, or the fixture would move with the constant and
+    // pin nothing. Two off-by-one mutations are what it exists for: `<=` to
+    // `<`, and 128 to 127.
+    const kept = 'p'.repeat(128)
+    const dropped = 'q'.repeat(214)
     const result = toCandidate({
       ...packument,
       versions: {
         '1.2.0': {
           ...packument.versions['1.2.0'],
-          peerDependencies: { [name]: '*' },
+          peerDependencies: { [kept]: '*', [dropped]: '*' },
         },
       },
     })
-    expect(PEER_NAME_MAX_LENGTH).toBe(214)
-    expect(result?.peers).toEqual([name])
+    expect(PEER_NAME_MAX_LENGTH).toBe(128)
+    expect(result?.peers).toEqual([kept])
   })
 
   it('drops an empty peer name, which is no package at all', () => {
@@ -353,6 +366,87 @@ describe('toCandidate', () => {
   })
 })
 
+describe('the peers bounds', () => {
+  // Measured against the published catalog on 2026-09-04, 9,422 entries: the
+  // largest peerDependencies list any listed package declares is 58 names,
+  // and the longest single peer name is 50 characters.
+  const LIVE_MAX_PEER_COUNT = 58
+  const LIVE_MAX_PEER_NAME_LENGTH = 50
+
+  it('admits every peers list the live catalog holds', () => {
+    // A peer dropped by these bounds is dropped SILENTLY: there is no
+    // rejection code for it and no published `detail` an author can read. A
+    // bound that cuts into real data therefore costs somebody a resolution
+    // they declared and tells nobody, which is why both must clear the live
+    // maximum outright rather than merely approach it.
+    expect(PEERS_MAX_COUNT).toBeGreaterThanOrEqual(LIVE_MAX_PEER_COUNT)
+    expect(PEER_NAME_MAX_LENGTH).toBeGreaterThanOrEqual(LIVE_MAX_PEER_NAME_LENGTH)
+  })
+
+  it('stays within reach of that maximum instead of an order of magnitude above it', () => {
+    // 200 x 214 is 3.4x the live count and 4.3x the live name length, and the
+    // two MULTIPLY. A per-field bound that far above anything real is not
+    // bounding the field — it leaves gate.ts's byte budget to do all the work,
+    // which is exactly what was happening.
+    expect(PEERS_MAX_COUNT).toBeLessThan(LIVE_MAX_PEER_COUNT * 3)
+    expect(PEER_NAME_MAX_LENGTH).toBeLessThan(LIVE_MAX_PEER_NAME_LENGTH * 3)
+  })
+
+  it('no longer lets the peers block alone dwarf gate.ts\u2019s whole per-entry budget', () => {
+    // Measured through gate.ts's own serializer, so the two files cannot
+    // disagree about the number. At 200 x 214 the peers block alone serialized
+    // to 45,239 bytes — 3.68x ENTRY_PAYLOAD_MAX_BYTES, which is the budget for
+    // an ENTIRE entry — so this one field set the per-entry ceiling. At
+    // 128 x 128 it is 17,959, and the largest peers list actually listed
+    // (58 x 50) is 3,635, under a third of the budget.
+    //
+    // Still ABOVE the budget, deliberately: a field bound says what one value
+    // may look like, the budget says what a whole entry may cost, and a
+    // package maxing out every field at once is refused entirely. The two are
+    // not meant to be jointly satisfiable, so this pins that the peers block
+    // no longer DOMINATES the budget — not that it fits inside it.
+    const worst = Array.from({ length: PEERS_MAX_COUNT }, () => 'p'.repeat(PEER_NAME_MAX_LENGTH))
+    expect(entryPayloadBytes({ peers: worst })).toBeLessThan(ENTRY_PAYLOAD_MAX_BYTES * 2)
+    const live = Array.from({ length: LIVE_MAX_PEER_COUNT }, () => 'p'.repeat(LIVE_MAX_PEER_NAME_LENGTH))
+    expect(entryPayloadBytes({ peers: live })).toBeLessThan(ENTRY_PAYLOAD_MAX_BYTES / 2)
+  })
+})
+
+describe('PARTITION_KEYWORDS', () => {
+  it('names each refinement once, so no intersection is probed and paged twice', () => {
+    // On the partitioned branch every entry costs a size=1 probe and, if it
+    // answers non-zero, a paged cell of up to 21 requests. A duplicate entry
+    // buys no names at all and pays for both twice.
+    expect(new Set(PARTITION_KEYWORDS).size).toBe(PARTITION_KEYWORDS.length)
+  })
+
+  it('ships every keyword its own coverage note credits with closing the gap', () => {
+    // This constant's note has now been wrong twice about the same thing and
+    // in the same direction — it described as covering a partition that was
+    // not. Round 2 summed four MARGINAL contributions across four overlapping
+    // sets (20+10+10+7 = 47 against a 44-name gap) and concluded from the sum
+    // that the four additions closed all of it; paged the next day, the 13
+    // cells reached 5,117 of keywords:deepseek-harness's 5,132. Prose cannot
+    // be tested, but the one mechanical part of it — WHICH keywords the note
+    // says it added — can be, and a note naming a keyword the constant below
+    // it does not ship is the exact shape of both failures.
+    const source = readFileSync(join(srcDir, 'npm-client.ts'), 'utf8')
+    const note = source.slice(0, source.indexOf('export const PARTITION_KEYWORDS'))
+    const credited = [...note.matchAll(/^\s*\*\s{3}(\S+) -> \S/gm)]
+      .map(match => match[1])
+      .filter((keyword): keyword is string => keyword !== undefined)
+    // The scan's own positive control: with no claims found it would pass by
+    // checking nothing.
+    expect(credited).toHaveLength(12)
+    for (const keyword of credited) {
+      expect(
+        PARTITION_KEYWORDS,
+        `the coverage note credits \`${keyword}\` with closing part of the measured gap, but the constant below it does not ship that keyword`,
+      ).toContain(keyword)
+    }
+  })
+})
+
 describe('partitionKeyword', () => {
   it('never ANDs a harvest keyword onto itself', async () => {
     // PARTITION_KEYWORDS names `deepseek-harness`, which is also a harvest
@@ -389,6 +483,30 @@ describe('partitionKeyword', () => {
     const { cells } = await partitionKeyword('harness', probe)
     expect(cells).toContainEqual(['harness', 'deepseek-harness'])
     expect(cells).toHaveLength(PARTITION_KEYWORDS.length)
+  })
+
+  it('pages a deeper intersection once, however many oversized cells reach it', async () => {
+    // When both `[k,'dsh']` and `[k,'plugin']` are over the window, each is
+    // split by the other's refinement — and `keywords:k,dsh,plugin` and
+    // `keywords:k,plugin,dsh` are the SAME intersection behind two different
+    // `text` values. Names deduplicate downstream, so the cost is purely the
+    // paging: one wasted probe and up to 21 wasted page fetches for a set of
+    // names already enumerated.
+    const probed: string[] = []
+    const probe = async (keywords: readonly string[]): Promise<number> => {
+      probed.push(keywordQuery(keywords))
+      if (keywords.length === 1) return SEARCH_WINDOW + 1
+      if (keywords.length === 2) return keywords[1] === 'dsh' || keywords[1] === 'plugin' ? SEARCH_WINDOW + 1 : 0
+      return 10
+    }
+
+    const { cells } = await partitionKeyword('deepseek-harness', probe)
+    const intersections = cells.map(cell => [...cell].sort().join(','))
+    expect(new Set(intersections).size).toBe(intersections.length)
+    // Deduplicated on the SET and BEFORE the probe, so the second spelling
+    // costs no request either.
+    expect(probed).toContain('keywords:deepseek-harness,dsh,plugin')
+    expect(probed).not.toContain('keywords:deepseek-harness,plugin,dsh')
   })
 })
 
@@ -663,6 +781,125 @@ describe('searchByKeywords', () => {
     expect(names).toContain('h299')
   })
 
+  it('pages the keyword\u2019s own reachable window beside the cells, and stops AT the window', async () => {
+    // The structural half of the coverage story. A refinement partition is
+    // never covering by construction — there is no negation qualifier — so
+    // the keyword itself is also paged, as far as the registry will serve it,
+    // and its names are unioned in. That cell is deliberately NON-COMPLETING:
+    // it must stop at the window rather than trip the "needs from=N" throw,
+    // which is the one place in this module a short enumeration is intended.
+    //
+    // The fixture is the residual, isolated: the refinement cell holds ONLY
+    // the single name that lies outside the reachable window, so the harvest
+    // completes if and only if both halves are unioned. Without the window
+    // cell it enumerates 1 of 5,251.
+    const pageSize = SEARCH_WINDOW - MAX_SEARCH_FROM // the last reachable page's size is the page size
+    const totals: Record<string, number> = {
+      'keywords:dsh-plugin': SEARCH_WINDOW + 1,
+      'keywords:dsh-plugin,dsh': 1,
+      'keywords:deepseek-harness': 0,
+    }
+    const { fetchImpl, urls } = stubSearch(totals, (query, from) => {
+      if (query === 'keywords:dsh-plugin,dsh') return from === 0 ? [`p${SEARCH_WINDOW}`] : []
+      if (query !== 'keywords:dsh-plugin') return []
+      return Array.from({ length: pageSize }, (_, i) => `p${from + i}`)
+    })
+
+    const names = await searchByKeywords(fetchImpl)
+    expect(names).toHaveLength(SEARCH_WINDOW + 1)
+    expect(names).toContain('p0')
+    expect(names).toContain(`p${SEARCH_WINDOW - 1}`) // the last name the window reaches
+    expect(names).toContain(`p${SEARCH_WINDOW}`) // past it; only the refinement cell carries this one
+    // Every page of the window cell, and not one request past the cap: a
+    // `from` above it silently returns page 0 (measured live), so paging into
+    // the wrap would re-count the head and read as coverage.
+    const windowFroms = urls
+      .map(url => new URL(url).searchParams)
+      .filter(params => params.get('text') === 'keywords:dsh-plugin' && params.get('size') !== '1')
+      .map(params => Number(params.get('from')))
+    expect(windowFroms).toEqual(Array.from({ length: SEARCH_WINDOW / pageSize }, (_, i) => i * pageSize))
+    expect(Math.max(...windowFroms)).toBe(MAX_SEARCH_FROM)
+  })
+
+  it('throws when a page of the window cell answers no total, exactly like any other cell', async () => {
+    // The window cell is the one cell allowed to end short, and that must not
+    // slide into tolerating a page whose completeness cannot be judged at
+    // all: the registry has served a 200 with `<!doctype html>` on an
+    // ordinary search page. Only the WINDOW cell's pages drop the total here,
+    // so no other cell can satisfy this assertion by throwing first.
+    const fetchImpl = (async (url: string | URL) => {
+      const params = new URL(String(url)).searchParams
+      const query = params.get('text') ?? ''
+      const total = query === 'keywords:dsh-plugin'
+        ? SEARCH_WINDOW + 1
+        : query === 'keywords:dsh-plugin,dsh' ? 1 : 0
+      if (params.get('size') === '1') return new Response(JSON.stringify({ total, objects: [] }), { status: 200 })
+      if (query === 'keywords:dsh-plugin') return new Response(JSON.stringify({ objects: [] }), { status: 200 })
+      return new Response(JSON.stringify({ total, objects: [{ package: { name: 'p0' } }] }), { status: 200 })
+    }) as unknown as typeof fetch
+
+    await expect(searchByKeywords(fetchImpl)).rejects.toThrow(
+      /npm search for keywords:dsh-plugin at from=0 answered no total; a truncated page cannot be told from a complete one/,
+    )
+  })
+
+  it('re-pages a keyword once when npm omits an object, rather than freezing the shelf for the day', async () => {
+    // The floor is exact, so one missing name throws — and the anomaly that
+    // motivated the floor does not survive it. npm served a 249-object page
+    // of a 600-name result set; `from` advances by the page size, so the
+    // omitted object is never re-requested and the keyword enumerates 599 of
+    // 600. One registry hiccup would freeze the shelf until a human looked.
+    // A second full pass separates a transient omission from a genuine
+    // partition gap, which is the distinction the throw's own message claims
+    // to draw.
+    let firstPageFetches = 0
+    const { fetchImpl } = stubSearch(
+      { 'keywords:dsh-plugin': 600, 'keywords:deepseek-harness': 0 },
+      (query, from) => {
+        if (query !== 'keywords:dsh-plugin') return []
+        if (from === 0) {
+          firstPageFetches += 1
+          // Pass 1 drops `a249` from an otherwise full page; pass 2 serves it.
+          return Array.from({ length: firstPageFetches === 1 ? 249 : 250 }, (_, i) => `a${i}`)
+        }
+        if (from === 250) return Array.from({ length: 250 }, (_, i) => `b${i}`)
+        if (from === 500) return Array.from({ length: 100 }, (_, i) => `c${i}`)
+        return []
+      },
+    )
+
+    const names = await searchByKeywords(fetchImpl)
+    expect(names).toHaveLength(600)
+    expect(names).toContain('a249') // the object pass 1 skipped
+    // Twice, and only twice: a registry genuinely serving short must still
+    // fail the build rather than loop.
+    expect(firstPageFetches).toBe(2)
+  })
+
+  it('refuses a negative total, which would disable the coverage floor outright', async () => {
+    // `typeof total === 'number'` was the whole check. A negative total makes
+    // `required = min(total, after)` negative and `forKeyword.size < required`
+    // false for any harvest at all: `{"total": -1, "objects": []}` for both
+    // keywords returned an EMPTY name list with a green build — the zero-name
+    // harvest with no error that the floor exists to refuse.
+    const fetchImpl = (async () => new Response(JSON.stringify({ total: -1, objects: [] }), { status: 200 })) as unknown as typeof fetch
+    await expect(searchByKeywords(fetchImpl)).rejects.toThrow(
+      /npm search for keywords:dsh-plugin at from=0 answered total=-1, which is not a count of packages/,
+    )
+  })
+
+  it('refuses a total that is not a whole number', async () => {
+    // `1e999` parses to Infinity, and JSON has no integer type, so a
+    // fractional total is one keystroke away too. Neither is a count of
+    // packages: Infinity used to partition every keyword and then report "no
+    // refinement keyword splits it", blaming PARTITION_KEYWORDS for a
+    // malformed body.
+    const fetchImpl = (async () => new Response('{"total": 1e999, "objects": []}', { status: 200 })) as unknown as typeof fetch
+    await expect(searchByKeywords(fetchImpl)).rejects.toThrow(
+      /npm search for keywords:dsh-plugin at from=0 answered total=Infinity, which is not a count of packages/,
+    )
+  })
+
   it('throws when the refinement cells do not cover the keyword', async () => {
     // No negation qualifier exists, so a partition is never covering by
     // construction — the shortfall must be measured and refused, never
@@ -677,7 +914,7 @@ describe('searchByKeywords', () => {
         ? Array.from({ length: 10 }, (_, i) => `n${i}`)
         : [])
     await expect(searchByKeywords(fetchImpl)).rejects.toThrow(
-      /npm search for keywords:dsh-plugin enumerated 10 of 5300 names across 1 partition cell\(s\); the refinement keywords do not cover the keyword/,
+      /npm search for keywords:dsh-plugin enumerated 10 of 5300 names across 1 partition cell\(s\) plus the keyword's own reachable window, and a second full pass found no more; the refinement keywords do not cover the keyword/,
     )
   })
 
@@ -687,19 +924,20 @@ describe('searchByKeywords', () => {
     // fixture above uses a static `totals` map, so `before === after` always
     // held — swapping `Math.min` for `Math.max`, or deleting the second probe
     // entirely, left every one of them green.
-    let dshPluginProbes = 0
+    let dshPluginTotalReads = 0
     const totals = (query: string): number => {
       if (query === 'keywords:dsh-plugin') {
-        dshPluginProbes += 1
-        // Before paging: 5,300 (over the window, so it partitions). After
-        // paging: 5,297 — three names unpublished mid-run.
-        return dshPluginProbes === 1 ? 5300 : 5297
+        dshPluginTotalReads += 1
+        // Before paging: 5,300 (over the window, so it partitions). Every
+        // later read of this query's total — the window cell's own pages
+        // included — answers 5,297: three names unpublished mid-run.
+        return dshPluginTotalReads === 1 ? 5300 : 5297
       }
       if (query === 'keywords:dsh-plugin,dsh') return 5000
       if (query === 'keywords:dsh-plugin,deepseek-harness') return 297
       return 0 // deepseek-harness itself, and every other refinement cell
     }
-    const { fetchImpl } = stubSearch(totals, (query, from) => {
+    const { fetchImpl, urls } = stubSearch(totals, (query, from) => {
       if (query !== 'keywords:dsh-plugin,dsh' && query !== 'keywords:dsh-plugin,deepseek-harness') return []
       const total = query === 'keywords:dsh-plugin,dsh' ? 5000 : 297
       const prefix = query === 'keywords:dsh-plugin,dsh' ? 'd' : 'h'
@@ -710,7 +948,16 @@ describe('searchByKeywords', () => {
     })
     const names = await searchByKeywords(fetchImpl)
     expect(names).toHaveLength(5297)
-    expect(dshPluginProbes).toBe(2) // the pre-partition probe, then the post-paging recheck
+    // Counted off the URLs rather than off the stub's total reader: the
+    // keyword's own reachable window is now PAGED as well as probed, so a
+    // count of total-reads no longer isolates the probes. size=1 is the
+    // probe, and there are exactly two — the pre-partition probe and the
+    // post-paging recheck, which is the whole point of this fixture.
+    const probes = urls.filter(url => {
+      const params = new URL(url).searchParams
+      return params.get('text') === 'keywords:dsh-plugin' && params.get('size') === '1'
+    })
+    expect(probes).toHaveLength(2)
   })
 
   it('tolerates churn on the unpartitioned branch too', async () => {
@@ -759,7 +1006,7 @@ describe('searchByKeywords', () => {
         ? Array.from({ length: 5 }, (_, i) => `p${i}`)
         : [])
     return expect(searchByKeywords(fetchImpl)).rejects.toThrow(
-      /^npm search for keywords:dsh-plugin enumerated 5 of 10 names; the search ended before reaching the answered total, so the harvest would be silently short$/,
+      /^npm search for keywords:dsh-plugin enumerated 5 of 10 names, and a second full pass found no more; the search ended before reaching the answered total, so the harvest would be silently short$/,
     )
   })
 
@@ -854,7 +1101,7 @@ describe('searchByKeywords', () => {
       }), { status: 200 })
     }) as unknown as typeof fetch
     await expect(searchByKeywords(fetchImpl)).rejects.toThrow(
-      /npm search for keywords:dsh-plugin enumerated 1 of 2 names; the search ended before reaching the answered total/,
+      /npm search for keywords:dsh-plugin enumerated 1 of 2 names, and a second full pass found no more; the search ended before reaching the answered total/,
     )
   })
 })
@@ -933,6 +1180,34 @@ describe('fetchCandidate', () => {
     const result = await fetchCandidate('dsh-malformed-body', fetchImpl)
     expect(result.ok).toBe(false)
     expect(!result.ok && result.detail).toContain('unreadable')
+  })
+
+  it('reports a deadline that lands MID-BODY as the stall it is, not as an unreadable body', async () => {
+    // withTimeout leaves its timer armed past the headers precisely so a
+    // stalled body aborts, and the abort reason is the FetchTimeoutError
+    // itself — so this catch can tell "our 30s deadline fired" from "npm sent
+    // something malformed". The header-phase catch immediately above already
+    // does; readSearchBody in the same module already does, with a comment
+    // saying a deadline is not a malformed body; this site was the one missed,
+    // and it publishes the wrong half of that pair to the author.
+    const expiry = new FetchTimeoutError('registry request exceeded 50ms')
+    const result = await fetchCandidate('dsh-stalled-body', headersThenBodyError(expiry), async (_ms: number) => {}, undefined, undefined, 50)
+    expect(result.ok).toBe(false)
+    // The same sentence the HEADER phase produces for the same deadline.
+    expect(!result.ok && result.detail).toBe('dsh-stalled-body: the npm registry did not answer within 50ms')
+  })
+
+  it('refuses a packument that names a package other than the one requested', async () => {
+    // Nothing compared the answered `doc.name` with the name we asked for,
+    // and `name`, `version`, `integrity`, `publishedAt` and `publisher` are
+    // then taken verbatim into plugins.json, manifest.lock, the committed
+    // first-seen.yml and the published report. The integrity hash pins the
+    // tarball a reader installs; it says nothing about which package that
+    // tarball is filed under.
+    const fetchImpl = (async () => new Response(JSON.stringify(packument), { status: 200 })) as unknown as typeof fetch
+    const result = await fetchCandidate('dsh-hello-plugln', fetchImpl)
+    expect(result.ok).toBe(false)
+    expect(!result.ok && result.detail).toBe('dsh-hello-plugln: the registry answered with the packument for dsh-hello-plugin')
   })
 })
 
@@ -1075,6 +1350,24 @@ describe('registry failover', () => {
     expect(names).toContain('dsh-from-backup')
   })
 
+  it('never takes a candidate the BACKUP registry renamed', async () => {
+    // This is the threat the cross-check exists for. The backup answers
+    // whenever the primary throws, stalls or 5xxs, and NPM_BACKUP_REGISTRY is
+    // any URL an operator sets — registry.npmmirror.com by default. A mirror
+    // answering `/dsh-failover` with another package's document publishes
+    // that package's version, integrity, publisher and publish date under the
+    // name we asked for, into artifacts that are committed and pushed. The
+    // integrity hash — the stated reason a mirror answer is interchangeable —
+    // pins the tarball, not the name it is filed under.
+    const fetchImpl = (async (url: string | URL) => {
+      if (String(url).startsWith('https://registry.npmjs.org')) throw new Error('primary down')
+      return new Response(JSON.stringify({ ...packument, name: 'dsh-something-else' }), { status: 200 })
+    }) as unknown as typeof fetch
+    const result = await fetchCandidate('dsh-failover', fetchImpl, noSleep, undefined, 'https://registry.npmmirror.com')
+    expect(result.ok).toBe(false)
+    expect(!result.ok && result.detail).toBe('dsh-failover: the registry answered with the packument for dsh-something-else')
+  })
+
   it('never sends the npm token to the backup registry', async () => {
     // The token is an npmjs.org credential. Forwarding it to a third-party
     // mirror hands that mirror a Bearer token it was never issued; the fixture
@@ -1139,20 +1432,25 @@ describe('fetchCandidates', () => {
 
   it('records a 500 as a fetch-failed row and still returns the other candidates', async () => {
     // H-2: no test ever called fetchCandidates, so mislabelling the code and
-    // dropping the rejection entirely both survived the suite. Eight good
-    // names plus one bad one cross HARVEST_CONCURRENCY's batch boundary: a
-    // mutation that drops the batch's upper bound (`names.slice(i)` with no
-    // end) fetches everything in one pass, then loops a second time over the
-    // tail and double-processes 'bad' — invisible on a 2-name fixture, where
-    // the single batch already covers the whole array either way.
+    // dropping the rejection entirely both survived the suite. The list is
+    // longer than HARVEST_CONCURRENCY and the bad name sits in the MIDDLE of
+    // it, so good names are in flight both before and after the failure — the
+    // claim round 3's comment made about a fixture that ended on the bad name
+    // and could not support it. A worker that stops claiming after a
+    // rejection, or an index claimed twice, shows up here as a short or
+    // duplicated candidate list.
     const goodNames = Array.from({ length: HARVEST_CONCURRENCY }, (_, i) => `good-${i}`)
+    const names = [...goodNames.slice(0, 4), 'bad', ...goodNames.slice(4)]
     const fetchImpl = (async (url: string | URL) => {
       if (String(url).endsWith('/bad')) return new Response('server error', { status: 500 })
       const name = decodeURIComponent(String(url).split('/').pop() ?? '')
       return new Response(JSON.stringify({ ...packument, name }), { status: 200 })
     }) as unknown as typeof fetch
-    const { candidates, rejections } = await fetchCandidates([...goodNames, 'bad'], fetchImpl, undefined, undefined, noSleep)
-    expect(candidates.map(c => c.name).sort()).toEqual(goodNames)
+    const { candidates, rejections } = await fetchCandidates(names, fetchImpl, undefined, undefined, noSleep)
+    // Unsorted: the pool completes in whatever order the network answers, and
+    // the result is collected by INPUT index so that harvest.json does not
+    // churn on a reordering nobody chose.
+    expect(candidates.map(c => c.name)).toEqual(goodNames)
     expect(rejections).toEqual([
       { name: 'bad', code: 'fetch-failed', detail: 'npm registry returned 500 fetching bad' },
     ])
@@ -1203,19 +1501,52 @@ describe('fetchCandidates', () => {
     // and toCandidate then read `doc.name` off it. The TypeError escaped
     // fetchCandidate entirely, rejected this Promise.all, and — with no outer
     // catch in build.ts or classify.ts — ended the daily catalog on one
-    // packument. The batch spans HARVEST_CONCURRENCY so the good names sit on
-    // both sides of the bad one.
+    // packument. The list is longer than HARVEST_CONCURRENCY and the bad name
+    // sits in the middle of it, so the good names really are on both sides of
+    // it while the pool is running.
     const goodNames = Array.from({ length: HARVEST_CONCURRENCY }, (_, i) => `good-${i}`)
+    const names = [...goodNames.slice(0, 4), 'bad', ...goodNames.slice(4)]
     const fetchImpl = (async (url: string | URL) => {
       if (String(url).endsWith('/bad')) return new Response('null', { status: 200 })
       const name = decodeURIComponent(String(url).split('/').pop() ?? '')
       return new Response(JSON.stringify({ ...packument, name }), { status: 200 })
     }) as unknown as typeof fetch
-    const { candidates, rejections } = await fetchCandidates([...goodNames, 'bad'], fetchImpl, undefined, undefined, noSleep)
-    expect(candidates.map(c => c.name).sort()).toEqual(goodNames)
+    const { candidates, rejections } = await fetchCandidates(names, fetchImpl, undefined, undefined, noSleep)
+    expect(candidates.map(c => c.name)).toEqual(goodNames)
     expect(rejections).toEqual([
       { name: 'bad', code: 'fetch-failed', detail: 'bad: packument names no usable latest version' },
     ])
+  })
+
+  it('keeps every slot working while one name stalls, instead of idling behind a batch barrier', async () => {
+    // Round 3 awaited Promise.all over each slice of HARVEST_CONCURRENCY, so
+    // every batch cost its SLOWEST member: one packument stalling for the
+    // full 30s deadline idled the other seven slots for those 30 seconds,
+    // ~5,650 names deep. Here `n0` never answers until this test releases it,
+    // and every other name must still have been requested — under a batch
+    // barrier exactly HARVEST_CONCURRENCY of them ever start.
+    const names = Array.from({ length: HARVEST_CONCURRENCY * 2 }, (_, i) => `n${i}`)
+    let release = (): void => {}
+    const stall = new Promise<void>(resolve => { release = resolve })
+    const started: string[] = []
+    const fetchImpl = (async (url: string | URL) => {
+      const name = decodeURIComponent(String(url).split('/').pop() ?? '')
+      started.push(name)
+      if (name === 'n0') await stall
+      return new Response(JSON.stringify({ ...packument, name }), { status: 200 })
+    }) as unknown as typeof fetch
+
+    const running = fetchCandidates(names, fetchImpl, undefined, undefined, noSleep)
+    // Let the pool run itself dry against the one name that never answers.
+    for (let turn = 0; turn < 100; turn += 1) await new Promise(resolve => setTimeout(resolve, 0))
+    expect(started.sort()).toEqual([...names].sort())
+
+    release()
+    const { candidates, rejections } = await running
+    expect(rejections).toEqual([])
+    // n0 finishes LAST and is still first in the output: the results are
+    // collected by input index, not by completion.
+    expect(candidates.map(c => c.name)).toEqual(names)
   })
 })
 

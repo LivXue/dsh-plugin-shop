@@ -45,44 +45,102 @@ export const SEARCH_WINDOW = MAX_SEARCH_FROM + PAGE_SIZE
  * 2,500 against the untermed query. It still cannot widen the reachable
  * window — the *tail* is score-stable (`from=5000` returns identical names
  * under three different terms), so a text term re-ranks the head but never
- * moves a name into the reachable window. The intersections do split it:
- * `dsh` 4,255, `dsh-plugin` 3,178, `plugin` 1,604, `deepseek` 949, `agent`
- * 498, `mcp` 213, `cli` 72, `harness` 41, `claude` 35, `ai` 31, `tool` 29,
- * `cordis` 20, `codex` 10, `claude-code` 10, `desktop-pet` 7.
+ * moves a name into the reachable window.
  *
- * That list is the PROBE, not this constant, and the two differ in both
- * directions — read them as one list and the arithmetic below stops adding
- * up. `harness` (41) and `ai` (31) were measured and never shipped. This
- * constant instead carries `deepseek-harness`, which cannot appear in a list
- * measured against `keywords:deepseek-harness`: it is there for the OTHER
- * harvest keyword, where `keywords:dsh-plugin,deepseek-harness` is a real
- * cell, and {@link partitionKeyword} skips it as self on this one.
+ * TWO KINDS OF NUMBER FOLLOW, and they must never be summed together. Printing
+ * them as one list, and then adding four of the second kind up, is how a
+ * partition fifteen names short came to be documented as covering.
  *
+ * (i) Measured CELL TOTALS, `keywords:deepseek-harness,<refinement>` — how big
+ * a cell is. Dated per entry, because they were not all measured on one day:
+ * an entry marked * was re-measured 2026-09-04 against that keyword's 5,132,
+ * and the rest were measured 2026-09-03 against its 5,103.
+ * `dsh` 4,255, `dsh-plugin` 3,178, `plugin` 1,604, `cordis`* 1,279,
+ * `deepseek` 949, `agent` 498, `mcp` 213, `codex`* 155, `claude-code`* 110,
+ * `cli` 72, `desktop-pet`* 50, `harness` 41, `claude` 35, `ai` 31, `tool` 29.
+ *
+ * (ii) Measured MARGINAL CONTRIBUTIONS to the union, 2026-09-03 — how many
+ * names a cell adds that the cells before it did not already have:
+ * `cordis` 20, `codex` 10, `claude-code` 10, `desktop-pet` 7. These four are
+ * a hundredth of their own cell totals, and the previous round of this
+ * comment printed them in the list above as if they were totals, then summed
+ * them across four OVERLAPPING sets (20+10+10+7 = 47 against a 44-name gap)
+ * and concluded coverage from the sum. A marginal contribution is valid only
+ * against one fixed set of preceding cells; four of them add to nothing.
+ *
+ * WHAT THE CELLS REACHED, paged live 2026-09-04, before the additions below:
+ * the fourteen entries this constant shipped with that morning yield thirteen
+ * cells against `keywords:deepseek-harness` — fourteen ENTRIES, thirteen
+ * cells, because a keyword is never ANDed onto itself (see {@link
+ * partitionKeyword}'s self-skip) — and those thirteen enumerated 5,117 of
+ * that keyword's 5,132. Fifteen short, not zero.
+ *
+ * The twelve entries added 2026-09-04 are a greedy minimum cover over exactly
+ * those fifteen names, so each line below is a refinement and the uncovered
+ * names it brings in — NOT a cell total, and not summable with anything:
+ *   hesi -> hesi-dsh-plan, hesi-dsh-roundtable
+ *   memory -> @agentscope-ai/reme, @cziyi/dsh-mnemosyne
+ *   pi-extension -> @demo-0416/pi-trace, pi-turn-metrics
+ *   academic-writing -> dsh-plugin-writing-guard
+ *   agent-virtualization -> dsh-llm-agent-virtualization
+ *   agents -> openswarm
+ *   ai-review -> dsh-spec-collab
+ *   approval -> @mangobsh/dsh-approval-notify
+ *   client-plugin -> dsh-client-ui-writing
+ *   embedding -> dsh-tool-writing
+ *   remote -> dsh-writing-remote
+ *   statistics -> @chengwd96/dsh-usage-analytics
+ *
+ * That is today's gap, and a hand-extended list closes a gap once. The
+ * STRUCTURAL half is in {@link searchByKeywords}: it also pages
+ * `keywords:<keyword>` itself, `from=0` through `from=`{@link
+ * MAX_SEARCH_FROM}, and unions those names in. That cell is deliberately
+ * NON-COMPLETING — it stops at the window instead of throwing, the one place
+ * in this module where a short enumeration is intended — and it costs 21
+ * requests, against the ~57 the thirteen cells cost before the twelve entries
+ * above widened that. It takes the refinements out of the picture for every
+ * name INSIDE the window, whatever that name is tagged with, and the window is
+ * the whole keyword bar its lowest-scoring tail: a keyword at
+ * `SEARCH_WINDOW + k` puts exactly k names beyond reach, so one on the day it
+ * first crosses, growing with the overshoot. That leaves the refinements responsible only for the
+ * tail, and the measurement says that is the half they are good at: the
+ * fifteen names they missed ranked 90 to 4,530 (median 2,879) of 5,132, and
+ * NOT ONE was in the worst 250. Uncovered-ness does not track score. The
+ * bottom of the ranking is template copies carrying the generic tags this
+ * list already names; a package a refinement misses carries a niche tag and
+ * scores too well to fall out of the window in the first place.
+ *
+ * So the residual is precise, and it is not zero: a name is missed only if it
+ * is BOTH outside the reachable window AND carries no refinement keyword.
  * There is no negation qualifier (`keywords:a,-b` returns total 0), so a
- * cell's complement cannot be expressed and this partition is NOT covering by
+ * cell's complement cannot be expressed and this partition is not covering by
  * construction. {@link searchByKeywords} therefore MEASURES its coverage
  * against the keyword's own total and throws on a shortfall: safe by check,
- * not by construction. `cordis`, `codex`, `claude-code`, and `desktop-pet`
- * were added 2026-09-03 to close a measured 44-name gap: the ten entries this
- * constant shipped with reached 5,059 of `keywords:deepseek-harness`'s 5,103,
- * paged live the same day. Ten ENTRIES, nine cells — `deepseek-harness`
- * contributes none of those names, because a keyword is never ANDed onto
- * itself. The gap was measured against exactly that nine-cell result, so the
- * four additions close all of it and `harness` was never needed; adding it
- * now would replace a reproducible number with one nobody has paged.
+ * not by construction. The window cell shrinks the residual; it does not
+ * retire the check.
  *
- * Nothing here has ever run in production: partitioning starts above
- * SEARCH_WINDOW, and on 2026-09-04 `keywords:deepseek-harness` measured 5,131
- * and `keywords:dsh-plugin` 3,731. The first keyword to cross is what will
- * re-derive these numbers. Adding a keyword here is the documented response
- * to that throw; a cell is always `keywords:<harvest-keyword>,<refinement>`,
- * so a refinement can only narrow the net a listing sees, never widen it — an
+ * Two entries above are not what a reader expects. `harness` (41) and `ai`
+ * (31) were measured and never shipped. `deepseek-harness` cannot appear in a
+ * list measured against `keywords:deepseek-harness` at all: it is here for the
+ * OTHER harvest keyword, where `keywords:dsh-plugin,deepseek-harness` is a
+ * real cell, and it is skipped as self on this one.
+ *
+ * None of this has run in production yet: partitioning starts above
+ * SEARCH_WINDOW, and on 2026-09-04 `keywords:deepseek-harness` measured 5,132
+ * and `keywords:dsh-plugin` 3,731. That leaves 118 names of headroom, growing
+ * about thirty a day, so the first crossing is days away and it is what will
+ * re-derive every number here. Adding a keyword is the documented response to
+ * that throw; a cell is always `keywords:<harvest-keyword>,<refinement>`, so a
+ * refinement can only narrow the net a listing sees, never widen it — an
  * addition is a coverage decision, not a policy one.
  */
 export const PARTITION_KEYWORDS: readonly string[] = [
   'dsh', 'dsh-plugin', 'deepseek-harness', 'plugin', 'deepseek',
   'agent', 'mcp', 'cli', 'claude', 'tool',
   'cordis', 'codex', 'claude-code', 'desktop-pet',
+  'hesi', 'memory', 'pi-extension', 'academic-writing', 'agent-virtualization',
+  'agents', 'ai-review', 'approval', 'client-plugin', 'embedding',
+  'remote', 'statistics',
 ]
 
 /** One query's `text` value: the keyword, plus any refinements ANDed on. */
@@ -123,13 +181,32 @@ export async function partitionKeyword(
     if (cellTotal <= SEARCH_WINDOW) cells.push(cell)
     else oversized.push(cell)
   }
+  // One intersection, however many oversized cells reach it. If `[k,'dsh']`
+  // and `[k,'plugin']` are both over the window, each is split by the other's
+  // refinement — and `keywords:k,dsh,plugin` and `keywords:k,plugin,dsh` are
+  // the same set of names behind two different `text` values. Names dedupe
+  // downstream, so the whole cost is requests: one probe and up to 21 pages
+  // for names already enumerated. Keyed on the SORTED tuple and consulted
+  // BEFORE the probe, so the duplicate costs nothing at all. An intersection
+  // already accepted still counts as a split for the second parent: its names
+  // are in `cells` either way, so that parent is exactly as covered.
+  const deeper = new Map<string, boolean>()
   for (const cell of oversized) {
     let split = false
     for (const refinement of PARTITION_KEYWORDS) {
       if (cell.includes(refinement)) continue
-      const deeperTotal = await probe([...cell, refinement])
-      if (deeperTotal === 0 || deeperTotal > SEARCH_WINDOW) continue
-      cells.push([...cell, refinement])
+      const deeperCell = [...cell, refinement]
+      const intersection = [...deeperCell].sort().join(',')
+      const known = deeper.get(intersection)
+      if (known !== undefined) {
+        split = split || known
+        continue
+      }
+      const deeperTotal = await probe(deeperCell)
+      const usable = deeperTotal !== 0 && deeperTotal <= SEARCH_WINDOW
+      deeper.set(intersection, usable)
+      if (!usable) continue
+      cells.push(deeperCell)
       split = true
     }
     if (!split) {
@@ -181,11 +258,39 @@ async function readSearchBody(response: Response, query: string, from: number): 
 }
 
 /**
+ * One search response's `total`, refused unless it is a count of packages.
+ *
+ * `typeof total === 'number'` was the whole check, and it admits values that
+ * silently disable every guard downstream. A NEGATIVE total makes the coverage
+ * floor `min(total, after)` negative, so `forKeyword.size < required` is false
+ * however little the harvest found: `{"total": -1, "objects": []}` for both
+ * keywords returned an EMPTY name list with a green build — the zero-name
+ * harvest with no error that the floor exists to refuse, and the same outcome
+ * the backup-registry rule at {@link searchByKeywords} is written against.
+ * `Infinity` (which is what `1e999` parses to) and a fractional total are the
+ * same class: JSON has no integer type, neither value is a count, and
+ * Infinity used to partition every keyword and then blame PARTITION_KEYWORDS
+ * for not splitting a cell that never existed.
+ * @param stake - what cannot be decided without the number. The two callers
+ *   read the same field for different reasons, and each says its own.
+ */
+function readTotal(body: SearchBody, query: string, from: number, stake: string): number {
+  const total = body.total
+  if (typeof total !== 'number') {
+    throw new Error(`npm search for ${query} at from=${from} answered no total; ${stake}`)
+  }
+  if (!Number.isInteger(total) || total < 0) {
+    throw new Error(`npm search for ${query} at from=${from} answered total=${total}, which is not a count of packages; ${stake}`)
+  }
+  return total
+}
+
+/**
  * Read one query's `total` with a single-object request.
- * @throws when the request fails, or the response answers no numeric total —
- *   a malformed probe must not read as an empty keyword: {@link
+ * @throws when the request fails, or {@link readTotal} refuses the answer — a
+ *   malformed probe must not read as an empty keyword: {@link
  *   partitionKeyword} and the coverage check in {@link searchByKeywords} both
- *   trust this number, and a silent 0 disables both.
+ *   trust this number, and a silent 0 disables both, as does a negative one.
  */
 async function searchTotal(
   keywords: readonly string[],
@@ -200,10 +305,7 @@ async function searchTotal(
   const response = await fetchWithFailover(path, fetchImpl, sleep, token, backupRegistry, timeoutMs)
   if (!response.ok) throw new Error(`npm search for ${query} failed: ${response.status}`)
   const body = await readSearchBody(response, query, 0)
-  if (typeof body.total !== 'number') {
-    throw new Error(`npm search for ${query} at from=0 answered no total; a keyword's size cannot be measured without it`)
-  }
-  return body.total
+  return readTotal(body, query, 0, "a keyword's size cannot be measured without it")
 }
 
 /**
@@ -432,24 +534,55 @@ function normalizeRepository(value: unknown): string | null {
 
 /**
  * Maximum number of peer names recorded from one package's manifest.
- * `peerDependencies` keys are the one new field on this branch that flows
- * from hostile npm input straight to a published artifact, and the object
- * carries no size limit of its own: a manifest declaring thousands of them
- * would bloat every published `plugins.json` and force each reader's host
- * to attempt that many peer resolutions on every catalog load. The excess
- * is dropped, never rejected — an author's oversized manifest costs them
- * the tail of the list, not the listing.
+ * `peerDependencies` keys flow from hostile npm input straight to a published
+ * artifact, and the object carries no size limit of its own: a manifest
+ * declaring thousands of them would bloat every published `plugins.json` and
+ * force each reader's host to attempt that many peer resolutions on every
+ * catalog load. The excess is dropped, never rejected — an author's oversized
+ * manifest costs them the tail of the list, not the listing.
+ *
+ * These two bounds MULTIPLY, and their product was the largest thing in a
+ * published entry. Measured through gate.ts's own serializer: 200 names of
+ * 214 characters is 45,239 bytes of `plugins.json`, which is 3.68x
+ * `ENTRY_PAYLOAD_MAX_BYTES` — the budget for an ENTIRE entry — so this one
+ * field set the per-entry ceiling for every other. Against the published
+ * catalog of 2026-09-04, 9,422 entries, the largest peers list any listed
+ * package declares is 58 names of at most 50 characters, which serializes to
+ * 3,635 bytes. 200 x 214 was bounding nothing that exists.
+ *
+ * 128 is 2.2x the largest real list and drops no peer any listed package
+ * declares today. At 128 x 128 the block is 17,959 bytes — still ABOVE the
+ * 12 KiB entry budget, and that is not an oversight: a field bound says what
+ * one value may look like, the budget says what a whole entry may cost, and a
+ * package maxing out every field at once is refused entirely. The two are
+ * deliberately not jointly satisfiable. At real sizes they never meet — the
+ * budget admits ~188 peer names of 50 characters, 3.2x the live maximum.
  */
-export const PEERS_MAX_COUNT = 200
+export const PEERS_MAX_COUNT = 128
 
 /**
- * Maximum length of one recorded peer name — npm's own name limit. Each of the
- * {@link PEERS_MAX_COUNT} names reaches every reader's `plugins.json`
- * verbatim, and `peerDependencies` keys carry no bound of their own. Dropped
- * rather than rejected, the same policy the count cap already states: an
+ * Maximum length of one recorded peer name. Each of the {@link
+ * PEERS_MAX_COUNT} names reaches every reader's `plugins.json` verbatim.
+ * Dropped rather than rejected, the same policy the count cap states: an
  * oversized manifest costs the author the tail of the list, not the listing.
+ *
+ * This was 214 — npm's own name limit — and that rationale is retired rather
+ * than mislaid. It was never a grammar check: a `peerDependencies` key is an
+ * arbitrary JSON key, this filter only ever measured its length, and 214
+ * admitted 214 emoji as readily as a package name. What it did do was
+ * multiply by {@link PEERS_MAX_COUNT} into the 45,239-byte block described
+ * there, and the longest peer name in the live catalog is 50 characters.
+ * 128 is 2.56x that.
+ *
+ * The consequence, stated rather than buried: a peer name of 129 to 214
+ * characters is legal on npm and is now DROPPED. None has ever been observed,
+ * and the loss is the tail of one list — silent, like every other drop this
+ * field makes, because no rejection code and no published `detail` covers a
+ * truncated peers list. If one ever shows up, this bound is what to revisit;
+ * `length` here counts UTF-16 code units, so a name's cost in the byte budget
+ * is up to six times this number and the byte budget is what actually decides.
  */
-export const PEER_NAME_MAX_LENGTH = 214
+export const PEER_NAME_MAX_LENGTH = 128
 
 /**
  * Project one npm packument into a candidate.
@@ -560,6 +693,12 @@ export function toCandidate(packument: unknown): Candidate | null {
  * List every package name carrying one of the harvest keywords: one paged
  * search per keyword, unioned and deduplicated, sorted for determinism.
  *
+ * A keyword past {@link SEARCH_WINDOW} is paged as refinement cells (see
+ * {@link PARTITION_KEYWORDS}) PLUS the keyword's own reachable window, which
+ * stops at the window instead of throwing. The union of the two is then
+ * measured against the keyword's own total, re-paged once on a shortfall, and
+ * refused if the shortfall survives that.
+ *
  * Harvesting by keyword rather than by name pattern is deliberate: a name
  * pattern is trivially spoofed. A keyword search that cannot complete
  * aborts the harvest — harvesting only the keywords that answered would
@@ -579,11 +718,13 @@ export function toCandidate(packument: unknown): Candidate | null {
  *   scans both call sites for this.
  * @returns every matching package name, sorted and deduplicated.
  * @throws when the registry answers with a non-OK status after the 429
- *   retries are exhausted; when a search page or a total probe answers with
- *   no numeric total; when a keyword's total is past {@link SEARCH_WINDOW}
- *   and no refinement keyword splits it; when a cell would need a `from`
- *   past {@link MAX_SEARCH_FROM}; or when a keyword's cells enumerate fewer
- *   names than its own total says to expect.
+ *   retries are exhausted; when a search page or a total probe answers no
+ *   total, or one that is not a whole count of packages; when a keyword's
+ *   total is past {@link SEARCH_WINDOW} and no refinement keyword splits it;
+ *   when a PARTITION CELL would need a `from` past {@link MAX_SEARCH_FROM}
+ *   (the keyword's own window cell stops there instead — that one is expected
+ *   not to fit); or when a keyword still enumerates fewer names than its own
+ *   total says to expect after a second full pass.
  */
 export async function searchByKeywords(
   fetchImpl: typeof fetch = fetch,
@@ -595,50 +736,80 @@ export async function searchByKeywords(
   const seen = new Set<string>()
   const probe = (keywords: readonly string[]): Promise<number> =>
     searchTotal(keywords, fetchImpl, sleep, token, backupRegistry, timeoutMs)
+  /**
+   * Page one query to its answered total, into `into` and into the union.
+   * @param pastWindow - what a `from` past {@link MAX_SEARCH_FROM} means here.
+   *   `throw` for a partition cell: the partition MEASURED that cell as
+   *   fitting, so needing another page says the partition is wrong and a
+   *   larger `from` would silently re-serve page 0. `stop` for the keyword's
+   *   own window cell, which is expected not to fit — sweeping the reachable
+   *   window is the entire job, and ending at the window is the answer, not a
+   *   truncation.
+   */
+  const pageCell = async (
+    cell: readonly string[],
+    into: Set<string>,
+    pastWindow: 'throw' | 'stop',
+  ): Promise<void> => {
+    const query = keywordQuery(cell)
+    for (let from = 0; ; from += PAGE_SIZE) {
+      if (from > MAX_SEARCH_FROM) {
+        if (pastWindow === 'stop') return
+        throw new Error(
+          `npm search for ${query} needs from=${from}, past the ${MAX_SEARCH_FROM} the registry honors (a larger from silently returns page 0); the partition is wrong`,
+        )
+      }
+      const path = `-/v1/search?text=${encodeURIComponent(query)}&size=${PAGE_SIZE}&from=${from}`
+      const response = await fetchWithFailover(path, fetchImpl, sleep, token, backupRegistry, timeoutMs)
+      if (!response.ok) throw new Error(`npm search for ${query} failed: ${response.status}`)
+      const body = await readSearchBody(response, query, from)
+      // Array-checked, not `?? []`: a non-array `objects` is not iterable
+      // and `for…of` would throw on it. An unusable `objects` reads as an
+      // empty page, which the coverage check below refuses BY NAME rather
+      // than by TypeError. Each element is optional-chained for the same
+      // reason: `{"objects":[null]}` is legal JSON, and an entry naming no
+      // package is not a package.
+      const objects = Array.isArray(body.objects) ? body.objects : []
+      for (const object of objects) {
+        const found = object?.package?.name
+        if (typeof found === 'string') {
+          seen.add(found)
+          into.add(found)
+        }
+      }
+      // Stop on the total the registry answered, NEVER on a short page: npm
+      // has served a 249-object page of a 600-name result set, and breaking
+      // there dropped every later page of that keyword in silence. A
+      // missing total cannot be told apart from a truncated page, so it
+      // throws rather than defaulting to 0 and ending the cell on whatever
+      // page happened to arrive first — live shape: the registry has
+      // served a 200 with `<!doctype html>` and a 429 with a 7 KB HTML
+      // body on ordinary search pages. The window cell is bounded by the
+      // window, never by a page it cannot judge, so this throw applies to it
+      // exactly as it does to a partition cell.
+      const cellTotal = readTotal(body, query, from, 'a truncated page cannot be told from a complete one')
+      if (objects.length === 0 || from + objects.length >= cellTotal) return
+    }
+  }
   for (const keyword of HARVEST_KEYWORDS) {
     const { cells, total, partitioned } = await partitionKeyword(keyword, probe)
     const forKeyword = new Set<string>()
-    for (const cell of cells) {
-      const query = keywordQuery(cell)
-      for (let from = 0; ; from += PAGE_SIZE) {
-        if (from > MAX_SEARCH_FROM) {
-          throw new Error(
-            `npm search for ${query} needs from=${from}, past the ${MAX_SEARCH_FROM} the registry honors (a larger from silently returns page 0); the partition is wrong`,
-          )
-        }
-        const path = `-/v1/search?text=${encodeURIComponent(query)}&size=${PAGE_SIZE}&from=${from}`
-        const response = await fetchWithFailover(path, fetchImpl, sleep, token, backupRegistry, timeoutMs)
-        if (!response.ok) throw new Error(`npm search for ${query} failed: ${response.status}`)
-        const body = await readSearchBody(response, query, from)
-        // Array-checked, not `?? []`: a non-array `objects` is not iterable
-        // and `for…of` would throw on it. An unusable `objects` reads as an
-        // empty page, which the coverage check below refuses BY NAME rather
-        // than by TypeError. Each element is optional-chained for the same
-        // reason: `{"objects":[null]}` is legal JSON, and an entry naming no
-        // package is not a package.
-        const objects = Array.isArray(body.objects) ? body.objects : []
-        for (const object of objects) {
-          const found = object?.package?.name
-          if (typeof found === 'string') {
-            seen.add(found)
-            forKeyword.add(found)
-          }
-        }
-        // Stop on the total the registry answered, NEVER on a short page: npm
-        // has served a 249-object page of a 600-name result set, and breaking
-        // there dropped every later page of that keyword in silence. A
-        // missing total cannot be told apart from a truncated page, so it
-        // throws rather than defaulting to 0 and ending the cell on whatever
-        // page happened to arrive first — live shape: the registry has
-        // served a 200 with `<!doctype html>` and a 429 with a 7 KB HTML
-        // body on ordinary search pages.
-        if (typeof body.total !== 'number') {
-          throw new Error(`npm search for ${query} at from=${from} answered no total; a truncated page cannot be told from a complete one`)
-        }
-        const cellTotal = body.total
-        if (objects.length === 0 || from + objects.length >= cellTotal) break
-      }
+    const enumerate = async (): Promise<void> => {
+      // The keyword's own reachable window, unioned in beside the refinement
+      // cells and deliberately NON-COMPLETING. A refinement partition is not
+      // covering by construction — there is no negation qualifier — so
+      // PARTITION_KEYWORDS is a list somebody has to extend every time the
+      // ecosystem moves, and it was fifteen names short the day after it was
+      // documented as complete. This cell needs no list: it takes the
+      // refinements out of the picture for every name INSIDE the window,
+      // leaving them responsible only for the lowest-scoring tail beyond it,
+      // which is the half they measure well on. See PARTITION_KEYWORDS for
+      // the ranks. It costs 21 requests and shrinks the residual to names
+      // that are BOTH outside the window AND carry no refinement keyword.
+      if (partitioned) await pageCell([keyword], forKeyword, 'stop')
+      for (const cell of cells) await pageCell(cell, forKeyword, 'throw')
     }
+    await enumerate()
     // The API has no complement operator, so a partition's coverage is
     // measured rather than assumed: `min` of the totals before and after
     // absorbs a package published or unpublished during the run, and a
@@ -648,15 +819,31 @@ export async function searchByKeywords(
     // it could absorb no churn at all — an ordinary unpublish between the
     // probe and the page landing then looked identical to a truncated
     // harvest. The re-probe costs one extra size=1 request per top-level
-    // keyword; it also catches a mid-stream empty page: the `||` in the
-    // break above ends a cell on ANY empty page, even one arriving before
-    // the cell's own total says the cell is exhausted.
-    const after = await probe([keyword])
-    const required = Math.min(total, after)
+    // keyword; it also catches a mid-stream empty page: the `||` that ends
+    // pageCell above returns on ANY empty page, even one arriving before the
+    // cell's own total says the cell is exhausted.
+    let required = Math.min(total, await probe([keyword]))
+    if (forKeyword.size < required) {
+      // ONE re-page before the throw. The floor is exact, and the anomaly
+      // that motivated it does not survive it: npm served a 249-object page
+      // of a 600-name result set, `from` advances by PAGE_SIZE, so the object
+      // npm omitted is never re-requested and that keyword enumerates 599 of
+      // 600. Same for a `total` npm overstates by one. One registry hiccup
+      // would freeze the shelf for the day with no catalog published. A
+      // second full pass separates a transient omission from a genuine
+      // partition gap — the distinction both messages below already claim to
+      // draw — and it is bounded at one, so a registry really serving short
+      // still fails the build rather than looping. It UNIONS into the same
+      // set, because pass two may omit a different object than pass one did,
+      // and the floor takes the minimum across every total observed, so churn
+      // during the retry is tolerated exactly as churn during the first pass.
+      await enumerate()
+      required = Math.min(required, await probe([keyword]))
+    }
     if (forKeyword.size < required) {
       throw new Error(partitioned
-        ? `npm search for ${keywordQuery([keyword])} enumerated ${forKeyword.size} of ${required} names across ${cells.length} partition cell(s); the refinement keywords do not cover the keyword, so the harvest would be silently short`
-        : `npm search for ${keywordQuery([keyword])} enumerated ${forKeyword.size} of ${required} names; the search ended before reaching the answered total, so the harvest would be silently short`)
+        ? `npm search for ${keywordQuery([keyword])} enumerated ${forKeyword.size} of ${required} names across ${cells.length} partition cell(s) plus the keyword's own reachable window, and a second full pass found no more; the refinement keywords do not cover the keyword, so the harvest would be silently short`
+        : `npm search for ${keywordQuery([keyword])} enumerated ${forKeyword.size} of ${required} names, and a second full pass found no more; the search ended before reaching the answered total, so the harvest would be silently short`)
     }
   }
   return [...seen].sort()
@@ -724,13 +911,40 @@ export async function fetchCandidate(
   let body: unknown
   try {
     body = await response.json()
-  } catch {
+  } catch (error) {
+    // A deadline landing MID-BODY arrives here, not at the header-phase catch
+    // above: `fetch` resolves on the headers, and {@link withTimeout} leaves
+    // its timer armed past that point precisely so a stalled body still
+    // aborts — with the FetchTimeoutError itself as the abort reason, so this
+    // catch can tell the two apart. Publishing "response body was unreadable"
+    // for our own 30s stall tells the author npm sent something malformed and
+    // sends them looking at a package that is fine. The header phase above
+    // already reports it correctly, and readSearchBody in this module rethrows
+    // it with a comment saying a deadline is not a malformed body; this was
+    // the site that missed. Same reason, same sentence — a rejection rather
+    // than a rethrow, because this function never throws.
+    if (error instanceof FetchTimeoutError) {
+      return { ok: false, detail: `${name}: the npm registry did not answer within ${timeoutMs}ms` }
+    }
     // response.json() throws on a body that is not valid JSON; recorded as a
     // rejection like any other unusable response, rather than aborting the build.
     return { ok: false, detail: `${name}: response body was unreadable` }
   }
   const candidate = toCandidate(body)
   if (candidate === null) return { ok: false, detail: `${name}: packument names no usable latest version` }
+  // The packument has to BE the package we asked for. Nothing compared the
+  // two, and {@link fetchWithFailover} serves a NPM_BACKUP_REGISTRY answer
+  // whenever the primary throws, stalls, or 5xxs — to any URL an operator
+  // sets, registry.npmmirror.com by default. `name`, `version`, `integrity`,
+  // `publishedAt` and `publisher` are then taken verbatim into plugins.json,
+  // manifest.lock, the committed-and-pushed first-seen.yml and the published
+  // report. The integrity hash — the design's stated reason a mirror answer is
+  // interchangeable — pins the TARBALL a reader installs; it says nothing
+  // about which package that tarball is filed under. One string comparison,
+  // at the only boundary where both strings are in scope.
+  if (candidate.name !== name) {
+    return { ok: false, detail: `${name}: the registry answered with the packument for ${candidate.name}` }
+  }
   return { ok: true, candidate }
 }
 
@@ -739,6 +953,21 @@ export const HARVEST_CONCURRENCY = 8
 /**
  * Fetch every name into a candidate, turning un-fetchable names into
  * `fetch-failed` rejections rather than dropping them (build.ts rationale).
+ *
+ * A sliding pool of {@link HARVEST_CONCURRENCY} workers, not a batch barrier.
+ * Awaiting `Promise.all` over each slice of eight made every batch cost its
+ * SLOWEST member: one packument stalling to the full 30s deadline idled the
+ * other seven slots for those 30 seconds, and the harvest runs ~5,650 names
+ * deep. Each worker claims the next index and starts on it the moment its own
+ * name is done, so a stall costs one slot rather than eight.
+ *
+ * Results are written back at the CLAIMED INDEX and collected in input order
+ * afterwards, never pushed as they land. With a pool, completion order is
+ * whatever the network did that morning: pushing would reorder `harvest.json`
+ * — which classify.ts writes and build.ts reads — on every run, and reorder
+ * the `fetch-failed` rows for no reason anyone chose. The index is claimed
+ * synchronously, before the first await, so no two workers can read the same
+ * one.
  */
 export async function fetchCandidates(
   names: string[],
@@ -748,23 +977,36 @@ export async function fetchCandidates(
   sleep: (ms: number) => Promise<void> = defaultSleep,
   timeoutMs: number = REQUEST_TIMEOUT_MS,
 ): Promise<{ candidates: Candidate[]; rejections: Rejection[] }> {
-  const candidates: Candidate[] = []
-  const rejections: Rejection[] = []
-  for (let i = 0; i < names.length; i += HARVEST_CONCURRENCY) {
-    const batch = names.slice(i, i + HARVEST_CONCURRENCY)
-    // `fetchCandidate` never throws — transport, parse AND projection — so
-    // `Promise.all` can no longer reject: every name lands as a candidate or
-    // as a rejection carrying its reason. One rejected promise here fails the
-    // whole batch and the whole harvest, and there is no outer catch above:
-    // build.ts and classify.ts both call this at module scope.
-    const results = await Promise.all(batch.map(async name => ({
-      name,
-      result: await fetchCandidate(name, fetchImpl, sleep, token, backupRegistry, timeoutMs),
-    })))
-    for (const { name, result } of results) {
-      if (result.ok) candidates.push(result.candidate)
-      else rejections.push({ name, code: 'fetch-failed', detail: result.detail })
+  const results: (CandidateResult | undefined)[] = names.map(() => undefined)
+  let next = 0
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const index = next
+      next += 1
+      if (index >= names.length) return
+      const name = names[index]
+      // `noUncheckedIndexedAccess`: an index below `length` can still be a
+      // hole in a sparse array. Nothing here produces one — the caller's list
+      // is searchByKeywords' sorted union — and a hole is no name to fetch,
+      // so it leaves an empty slot the collection below skips rather than a
+      // rejection row naming `undefined` in the published report.
+      if (name === undefined) continue
+      // `fetchCandidate` never throws — transport, parse AND projection — so
+      // no worker can reject: every name lands as a candidate or as a
+      // rejection carrying its reason. One rejected promise here takes down
+      // the `Promise.all` and the whole harvest with it, and there is no outer
+      // catch above: build.ts and classify.ts both call this at module scope.
+      results[index] = await fetchCandidate(name, fetchImpl, sleep, token, backupRegistry, timeoutMs)
     }
   }
+  await Promise.all(Array.from({ length: Math.min(HARVEST_CONCURRENCY, names.length) }, () => worker()))
+  const candidates: Candidate[] = []
+  const rejections: Rejection[] = []
+  names.forEach((name, index) => {
+    const result = results[index]
+    if (result === undefined) return
+    if (result.ok) candidates.push(result.candidate)
+    else rejections.push({ name, code: 'fetch-failed', detail: result.detail })
+  })
   return { candidates, rejections }
 }
