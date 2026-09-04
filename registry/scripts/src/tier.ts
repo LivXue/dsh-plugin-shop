@@ -1,4 +1,3 @@
-import { gt } from 'semver'
 import type { Accepted } from './gate.ts'
 import type { RepoAccepted } from './repo-gate.ts'
 import type { RegistryConfig } from './config.ts'
@@ -18,11 +17,17 @@ function firstSeenOf(config: RegistryConfig, name: string): string {
 /**
  * Assign a trust tier to one accepted candidate.
  *
- * A review is pinned to the version it covered: when the published version is
- * newer than `reviewedVersion` the entry becomes `verified-stale` and keeps
- * the review, so a consumer can name both versions. Attaching verification to
- * a package name instead would let an author publish a malicious version and
+ * A review is pinned to the exact version it covered: any other published
+ * version — newer OR older — makes the entry `verified-stale` and keeps the
+ * review, so a consumer can name both versions. Attaching verification to a
+ * package name instead would let an author publish a malicious version and
  * inherit the trust automatically.
+ *
+ * "Newer" is not the test, because a `latest` BEHIND the review is a real
+ * shape: a hotfix published without `--tag` moves `latest` backwards (the
+ * dsh-market incident, 2026-08-31-market-borrowings §C-2), and an unpublish
+ * does the same. Under the old `gt` comparison every such version rendered
+ * `verified` and the Host skipped its install acknowledgement.
  * @param accepted - a candidate that passed the gate.
  * @param config - the human-authored registry files.
  * @returns the published catalog entry.
@@ -50,7 +55,12 @@ export function assignTier(accepted: Accepted, config: RegistryConfig): Entry {
   // can no longer be reached by an npm name at all (config.ts). If one ever
   // were, a commit pin still says nothing about this npm package.
   if (review === undefined || review.reviewedVersion === undefined) return { ...base, tier: 'community' }
-  const stale = gt(candidate.version, review.reviewedVersion)
+  // Exact match, like the commit and sha256 pins. A string comparison IS a
+  // semver comparison here because `config.ts` requires `reviewedVersion` to
+  // be the canonical spelling (no leading `v`, no build metadata), so the
+  // only strings that differ are versions that differ. A version differing
+  // only by build metadata reads as stale, which is the safe direction.
+  const stale = candidate.version !== review.reviewedVersion
   return { ...base, tier: stale ? 'verified-stale' : 'verified', review }
 }
 
