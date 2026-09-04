@@ -322,12 +322,39 @@ export function gate(
     metadata = 'declared'
   }
 
-  if (!config.allowedSimilar.has(name)) {
-    for (const verifiedName of config.verified.keys()) {
+  // The hold is skipped for exactly one identity: an npm package a human
+  // reviewed AS AN NPM PACKAGE. Both halves of that sentence are load-bearing.
+  //
+  // "reviewed" (B-4): verifying `dsh-tool-a` and `dsh-tool-b` — distance 1,
+  // the shape of a same-author suite — used to delist both, each held against
+  // the other, because the hold skipped only the candidate's own exact name.
+  // A review is already the adjudication the hold asks for.
+  //
+  // "as an npm package" (A-2): a name verified by `reviewedCommit` or
+  // `reviewedSha256` belongs to a GITHUB entry, which is a different
+  // identity. Skipping at distance 0 let any npm publisher take that bundle
+  // name, shadow the verified repository (`shadowed-by-npm`) and inherit its
+  // shelf position and `added` date. `allowed-similar.yml` — the npm-name
+  // form — is the human escape when the npm package really is the same
+  // project.
+  //
+  // The `reviewedVersion !== undefined` half is DEFENCE IN DEPTH, not a live
+  // branch: since a github review is keyed by its repository, an npm name
+  // cannot reach one at all. Measured against the `good/dsh-x` fixture,
+  // `verified.get('dsh-x')` is undefined and `verifiedNames` is ['dsh-x'], so
+  // what actually holds the npm publisher is the probe set plus the absence
+  // of the `edits === 0` skip. Mutating this half alone leaves the suite
+  // green, and no contrived fixture is added to make it red — the same
+  // reasoning `assignTier` records for the mirror-image case.
+  const ownReview = config.verified.get(name)
+  const verifiedAsThisPackage = ownReview !== undefined && ownReview.reviewedVersion !== undefined
+  if (!verifiedAsThisPackage && !config.allowedSimilar.has(name)) {
+    for (const verifiedName of config.verifiedNames) {
       const edits = distance(name, verifiedName)
-      if (edits === 0 || edits > SIMILARITY_THRESHOLD) continue
-      return reject(name, 'name-too-similar',
-        `Within ${edits} edit(s) of the verified package ${verifiedName}; held for human adjudication.`)
+      if (edits > SIMILARITY_THRESHOLD) continue
+      return reject(name, 'name-too-similar', edits === 0
+        ? `Exactly matches ${verifiedName}, which is verified as a repository rather than as this npm package, so publishing it here is a different identity claiming a reviewed name; held for human adjudication.`
+        : `Within ${edits} edit(s) of the verified package ${verifiedName}; held for human adjudication.`)
     }
   }
 
