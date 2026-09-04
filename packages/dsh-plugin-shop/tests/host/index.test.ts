@@ -1240,6 +1240,30 @@ describe('release-rescued tarball install', () => {
     expect(repoResult.ok).toBe(true)
     expect(fetchTarball).not.toHaveBeenCalled()
   })
+
+  it('reports a release-rescued install as outdated when the catalog tag moves (G-11)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-tarball-outdated-'))
+    mkdirSync(join(dir, 'cache'), { recursive: true })
+    writeFileSync(join(dir, 'cache/github-pins.json'), JSON.stringify({ 'github:owner/slug#': 'v1.0.0' }))
+    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-tarball-outdated-profile-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
+      name: 'dsh-profile-web', dsh: { profile: { bundles: [] } },
+      dependencies: { 'dsh-rescued': TARBALL_URL },
+    }))
+    const newer: CatalogEntry = {
+      ...tarballEntry, version: 'v1.1.0',
+      tarball: { url: 'https://github.com/owner/slug/releases/download/v1.1.0/plugin.tgz', sha256: 'b'.repeat(64) },
+    }
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [newer], denied: [], stars: {} }, stale: false }) as CatalogResult,
+    })
+    await gateway.catalog({})
+    expect(await gateway.installed()).toEqual([{
+      name: 'dsh-rescued', source: 'github', repo: 'owner/slug',
+      installed: 'v1.0.0', latest: 'v1.1.0', outdated: true, enabled: true,
+    }])
+  })
 })
 
 describe('verifyTarballSha256', () => {

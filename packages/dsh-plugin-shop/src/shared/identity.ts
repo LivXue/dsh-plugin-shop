@@ -21,6 +21,12 @@ export function identityKey(identity: EntryIdentity): string {
     : `github:${identity.repo ?? identity.name}#${identity.subdir ?? ''}`
 }
 
+/** A GitHub commit pin. */
+export const COMMIT_SHA = /^[0-9a-f]{40}$/
+
+/** A GitHub release tag accepted as the version/pin of a rescued entry. */
+export const RELEASE_TAG = /^[A-Za-z0-9][A-Za-z0-9._+/-]{0,127}$/
+
 /** `owner/slug`, lowercased, or null when this is not a repository reference. */
 const REPO = '([\\w.-]+)\\/([\\w.-]+?)'
 const GITHUB_SHORTHAND = new RegExp(`^github:${REPO}(?:[#&].*)?$`)

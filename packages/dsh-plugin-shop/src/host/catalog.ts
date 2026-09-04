@@ -8,6 +8,7 @@ import { type CatalogOrigin, type OriginHandle, TransportError, httpOrigin } fro
 import { normalizeRegistryUrl, npmOrigin } from './npm-origin.ts'
 import { inCompletionOrder } from './race.ts'
 import type { CatalogEntry, DeniedEntry } from './types.ts'
+import { COMMIT_SHA, RELEASE_TAG } from '../shared/identity.ts'
 
 /** Highest schemaVersion this build understands; a higher one is refused (§10).
  * 3 adds `source` and repo entries (github install channel); 4 adds `subdir`
@@ -65,12 +66,6 @@ const NPM_NAME = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/
 
 /** Canonical SemVer 2.0.0, including legal prerelease/build metadata. */
 const NPM_VERSION = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*)?(?:\+[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*)?$/
-
-/** A GitHub commit pin. */
-const COMMIT_SHA = /^[0-9a-f]{40}$/
-
-/** A release tag used by a release-rescued GitHub entry. */
-const RELEASE_TAG = /^[A-Za-z0-9][A-Za-z0-9._+/-]{0,127}$/
 
 /** The repository binding used to build a GitHub install spec. */
 const REPO_FULL_NAME = /^[\w.-]+\/[\w.-]+$/

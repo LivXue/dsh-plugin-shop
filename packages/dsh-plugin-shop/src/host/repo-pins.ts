@@ -10,13 +10,15 @@
  * never reported.
  */
 
+import { COMMIT_SHA, RELEASE_TAG } from '../shared/identity.ts'
+
 export interface RepoPinFs {
   exists: (path: string) => boolean
   read: (path: string) => string
   write: (path: string, data: string) => void
 }
 
-/** Bundle name to the pinned commit. */
+/** Install identity to the pinned commit or release tag. */
 export type RepoPins = Record<string, string>
 
 /** Read the pins file; any irregularity degrades to an empty record. */
@@ -26,8 +28,8 @@ export function readRepoPins(fs: RepoPinFs, path: string): RepoPins {
     const parsed = JSON.parse(fs.read(path)) as unknown
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {}
     const out: RepoPins = {}
-    for (const [name, commit] of Object.entries(parsed)) {
-      if (typeof commit === 'string' && /^[0-9a-f]{40}$/.test(commit)) out[name] = commit
+    for (const [name, pin] of Object.entries(parsed)) {
+      if (typeof pin === 'string' && (COMMIT_SHA.test(pin) || RELEASE_TAG.test(pin))) out[name] = pin
     }
     return out
   } catch {
