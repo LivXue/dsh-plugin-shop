@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { classifyPackages, CLASSIFY_BATCH_SIZE, GATEWAY_REQUEST_TIMEOUT_MS } from '../src/llm-client.ts'
+import { headersThenStalledBody } from './stalling-fetch.ts'
 
 const options = { baseUrl: 'http://gateway.example/v1', model: 'deepseek-v4-flash', apiKey: 'k' }
 
@@ -139,22 +140,52 @@ describe('classifyPackages', () => {
 })
 
 describe('request deadlines', () => {
-  it('has a per-request deadline at all', () => {
-    // A literal, not a re-export of the constant: a fixture computed from the
-    // value it tests can never detect that value moving. Generous next to the
-    // other two clients because a batch completion genuinely takes seconds.
-    expect(GATEWAY_REQUEST_TIMEOUT_MS).toBe(120_000)
+  it('has a per-request deadline sized for a whole non-streaming completion', () => {
+    // A literal, not a re-export of the constant. 120s was the wrong number
+    // and could fire on a HEALTHY run: nothing sets `stream: true`, so the
+    // headers do not arrive until the completion is finished, and the deadline
+    // therefore bounds total generation of up to MAX_TOKENS = 16384 tokens
+    // with CONCURRENCY = 4 streams sharing one self-hosted reasoning model.
+    // 120s demanded 137 tok/s sustained; 600s asks for 27 tok/s.
+    expect(GATEWAY_REQUEST_TIMEOUT_MS).toBe(600_000)
+  })
+
+  it('retries a timeout the way it retries a 429, instead of discarding twenty names at once', async () => {
+    // A timeout used to skip the ladder entirely: the loop matches on STATUS,
+    // and a throw went straight to the catch that discards every name in the
+    // batch. A timeout is transient in exactly the way a 429 is, and because a
+    // slow gateway is systematic the same batches were discarded again on
+    // every build — the "retried on the next build" that the discard reason
+    // promises never arrived. MAX_TOKENS' own comment records this project
+    // making the identical unmeasured-bound mistake once, at a cost of 1049
+    // names out of 2724.
+    let calls = 0
+    const fetchImpl = (async () => {
+      calls += 1
+      if (calls <= 2) return new Promise<Response>(() => {})
+      return okResponse(['dsh-pkg-0'])
+    }) as unknown as typeof fetch
+    const result = await classifyPackages([item(0)], {
+      ...options, fetchImpl, sleep: async (_ms: number) => {}, timeoutMs: 50,
+    })
+    expect(calls).toBe(3)
+    expect(result.classified.get('dsh-pkg-0')).toBe('tool')
+    expect(result.discarded).toEqual([])
   })
 
   it('discards a batch whose gateway request never answers', async () => {
     // The classifier is advisory, so a stall must degrade to a discard the
     // next build retries — not to the six-hour Actions kill. The gateway is
     // plaintext to a bare IP, so an on-path stall is not hypothetical.
-    const fetchImpl = (async () => new Promise<Response>(() => {})) as unknown as typeof fetch
+    let calls = 0
+    const fetchImpl = (async () => { calls += 1; return new Promise<Response>(() => {}) }) as unknown as typeof fetch
     const started = Date.now()
     const result = await classifyPackages([item(0)], {
       ...options, fetchImpl, sleep: async (_ms: number) => {}, timeoutMs: 50,
     })
+    // The whole ladder runs first — a gateway that never answers is given the
+    // same four chances a 429 gets — and only then does the batch discard.
+    expect(calls).toBe(4)
     expect(result.classified.size).toBe(0)
     expect(result.discarded).toHaveLength(1)
     expect(result.discarded[0]?.name).toBe('dsh-pkg-0')
@@ -162,12 +193,29 @@ describe('request deadlines', () => {
     expect(Date.now() - started).toBeLessThan(5000)
   })
 
+  it('calls a stalled completion BODY unreachable, not unparseable', async () => {
+    // The gateway answers 200 and then stalls the body. Reporting that as
+    // "unparseable batch (finish_reason=?, content 0 chars)" would put a
+    // statement that is simply untrue under each of the batch's package names,
+    // in the table an operator reads to find out what went wrong.
+    const started = Date.now()
+    const result = await classifyPackages([item(0)], {
+      ...options, fetchImpl: headersThenStalledBody(), sleep: async (_ms: number) => {}, timeoutMs: 50,
+    })
+    expect(result.classified.size).toBe(0)
+    expect(result.discarded[0]?.reason).toContain('gateway unreachable')
+    expect(result.discarded[0]?.reason).not.toContain('unparseable')
+    expect(Date.now() - started).toBeLessThan(5000)
+  })
+
   it('does not fire early: a slow but healthy completion is still adopted', async () => {
     // The other side of the bound. A reasoning model spends seconds per batch;
     // a deadline wired to the wrong number passes the stall test above and
     // then discards the entire ecosystem every single build.
-    const SLOW_MS = 40
-    const DEADLINE_MS = 2000
+    // Under 10x on purpose: at the 50x this started with, `ms / 10` survived
+    // green — and `ms / 10` in production is this gateway at 12s.
+    const SLOW_MS = 50
+    const DEADLINE_MS = 400
     const fetchImpl = (async () => {
       await new Promise(resolve => setTimeout(resolve, SLOW_MS))
       return okResponse(['dsh-pkg-0'])

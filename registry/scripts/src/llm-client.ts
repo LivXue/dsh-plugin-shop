@@ -10,7 +10,7 @@
  */
 
 import { parseClassificationResponse } from './llm-parse.ts'
-import { withTimeout } from './npm-client.ts'
+import { FetchTimeoutError, withTimeout } from './npm-client.ts'
 import type { Category } from './types.ts'
 
 /** One package to classify: public npm metadata only (spec §3). */
@@ -45,14 +45,24 @@ const RETRY_BASE_DELAY_MS = 1000
 const RETRY_MAX_DELAY_MS = 8000
 
 /**
- * Per-attempt bound on a gateway completion. Generous — this is a reasoning
- * model and a batch takes seconds — but bounded: the classify step is advisory
- * and a stall must become a discard the next build retries, not the build
- * job's outer kill. Before it, a gateway that accepted and never answered fell
- * back on undici's 300s default, times the retry ladder, times the concurrency
- * window.
+ * Per-attempt bound on a gateway completion.
+ *
+ * It has to be this large because the request is NOT streaming: nothing here
+ * sets `stream: true`, so the response headers do not arrive until the model
+ * has finished generating, and this deadline therefore bounds TOTAL GENERATION
+ * of up to {@link MAX_TOKENS} = 16384 tokens — on a reasoning model, where D3
+ * measured 171 of 174 completion tokens going to reasoning — with
+ * {@link CONCURRENCY} = 4 streams sharing one self-hosted gateway. At 120s
+ * that demanded 137 tok/s sustained per stream, which a healthy run can miss;
+ * 600s asks for 27 tok/s, below any rate at which the step is worth running.
+ *
+ * Sized so it does not fire on a healthy run, NOT so it bounds a bad day: a
+ * gateway that is down or hopelessly slow is capped by the build job's own
+ * `timeout-minutes`, which is the only bound that sees the aggregate. What
+ * keeps this number off the critical path is the retry ladder below, which now
+ * treats a timeout as the transient failure it is.
  */
-export const GATEWAY_REQUEST_TIMEOUT_MS = 120_000
+export const GATEWAY_REQUEST_TIMEOUT_MS = 600_000
 
 function defaultSleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
@@ -138,7 +148,7 @@ async function runBatches<Item extends { name: string }, Answer>(
   // Wrapped once, here, rather than at each of the two call sites below: the
   // retry line and the first attempt are exactly the pair a later edit bounds
   // one of and forgets the other.
-  const fetchImpl = withTimeout(options.fetchImpl ?? fetch, options.timeoutMs ?? GATEWAY_REQUEST_TIMEOUT_MS, 'llm gateway')
+  const timedFetch = withTimeout(options.fetchImpl ?? fetch, options.timeoutMs ?? GATEWAY_REQUEST_TIMEOUT_MS, 'llm gateway')
   const sleep = options.sleep ?? defaultSleep
   const classified = new Map<string, Answer>()
   const discarded: { name: string; reason: string }[] = []
@@ -161,16 +171,38 @@ async function runBatches<Item extends { name: string }, Answer>(
           messages: [{ role: 'system', content: ask.systemPrompt }, { role: 'user', content: ask.toUser(batch) }],
         }),
       }
+      // A timeout is transient in exactly the way a 429 or a 503 is, so it
+      // belongs in the ladder rather than in the catch below. It used to skip
+      // the ladder entirely — the loop matches on STATUS, and a throw goes
+      // straight to the catch — which discarded all CLASSIFY_BATCH_SIZE names
+      // in one go. And because a slow gateway is systematic, the same batches
+      // were discarded again on every build: the "retried on the next build"
+      // this module's discard reason promises never actually arrived.
+      const attempt = async (): Promise<Response | FetchTimeoutError> => {
+        try {
+          return await timedFetch(`${options.baseUrl}/chat/completions`, request)
+        } catch (error) {
+          if (error instanceof FetchTimeoutError) return error
+          throw error
+        }
+      }
       try {
-        let response = await fetchImpl(`${options.baseUrl}/chat/completions`, request)
-        for (let attempt = 0; (response.status === 429 || response.status >= 500) && attempt < RETRY_LIMIT - 1; attempt += 1) {
-          const retryAfter = Number(response.headers.get('retry-after'))
+        let outcome = await attempt()
+        for (let retry = 0;
+          (outcome instanceof FetchTimeoutError || outcome.status === 429 || outcome.status >= 500)
+            && retry < RETRY_LIMIT - 1;
+          retry += 1) {
+          const retryAfter = outcome instanceof FetchTimeoutError ? NaN : Number(outcome.headers.get('retry-after'))
           const delay = Number.isFinite(retryAfter) && retryAfter > 0
             ? Math.min(retryAfter * 1000, RETRY_MAX_DELAY_MS)
-            : Math.min(RETRY_BASE_DELAY_MS * 2 ** attempt, RETRY_MAX_DELAY_MS)
+            : Math.min(RETRY_BASE_DELAY_MS * 2 ** retry, RETRY_MAX_DELAY_MS)
           await sleep(delay)
-          response = await fetchImpl(`${options.baseUrl}/chat/completions`, request)
+          outcome = await attempt()
         }
+        // Out of chances: hand it to the catch below, which is where a batch
+        // becomes one `gateway unreachable` discard per name.
+        if (outcome instanceof FetchTimeoutError) throw outcome
+        const response = outcome
         if (!response.ok) {
           for (const b of batch) discarded.push({ name: b.name, reason: `gateway ${response.status}` })
           return
@@ -186,7 +218,12 @@ async function runBatches<Item extends { name: string }, Answer>(
           text = typeof body.choices?.[0]?.message?.content === 'string' ? body.choices[0].message.content : ''
           finishReason = body.choices?.[0]?.finish_reason
           completionTokens = body.usage?.completion_tokens
-        } catch {
+        } catch (error) {
+          // A deadline that lands mid-body is not an unparseable completion,
+          // and reporting it as one would publish a reason that is simply
+          // untrue under each of the batch's package names. Rethrown to the
+          // catch below, which says the honest thing.
+          if (error instanceof FetchTimeoutError) throw error
           // A 200 whose body is not JSON or not the OpenAI shape: the batch degrades to unparseable discards below.
           text = ''
         }

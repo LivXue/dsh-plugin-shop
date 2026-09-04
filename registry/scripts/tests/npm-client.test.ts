@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
+import { headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
 
 describe('HARVEST_KEYWORDS', () => {
   it('leads with the ecosystem keyword and adds the harness keyword, neither branded', () => {
@@ -1093,8 +1094,15 @@ describe('withTimeout', () => {
     // Both numbers are literals rather than fractions of the deadline: a
     // fixture computed from the constant it tests can never detect that
     // constant moving.
-    const SLOW_MS = 40
-    const DEADLINE_MS = 2000
+    // The margin is deliberately UNDER 10x. At the 50x it started with, the
+    // test could not see the very unit error it is named after: `ms / 10`
+    // survived green across the whole suite, and in production that is GitHub
+    // at 3s and the gateway at 12s. 8x still fails deterministically under
+    // `ms / 10` (a 50ms deadline against a 50ms body) because both are timers
+    // and the shorter one is queued first — it is timer ordering, not a
+    // wall-clock race, so load delays both equally.
+    const SLOW_MS = 50
+    const DEADLINE_MS = 400
     const slow = (async () => {
       await new Promise(resolve => setTimeout(resolve, SLOW_MS))
       return new Response('a slow but healthy answer', { status: 200 })
@@ -1102,6 +1110,35 @@ describe('withTimeout', () => {
     const response = await withTimeout(slow, DEADLINE_MS, 'registry')('https://example.invalid/x')
     expect(response.status).toBe(200)
     expect(await response.text()).toBe('a slow but healthy answer')
+  })
+
+  it('bounds the BODY, not only the headers', async () => {
+    // `fetch` resolves when the HEADERS arrive. A deadline cleared at that
+    // moment bounds nothing that follows, and this module newly routes the
+    // largest body read in the repo — a 32 MB release tarball — through here.
+    // Measured against a real localhost socket that answered 200 and then
+    // stalled its body: armed, the read threw at 153ms; cleared, the same read
+    // was still hanging at 1206ms. undici's bodyTimeout is inactivity-based,
+    // so a slow trickle never trips it either.
+    const started = Date.now()
+    const response = await withTimeout(headersThenStalledBody(), 60, 'github')('https://example.invalid/x')
+    expect(response.status).toBe(200)
+    await expect(response.text()).rejects.toBeInstanceOf(FetchTimeoutError)
+    await expect(withTimeout(headersThenStalledBody(), 60, 'github')('https://example.invalid/x')
+      .then(async r => r.text())).rejects.toThrow('github request exceeded 60ms')
+    expect(Date.now() - started).toBeLessThan(5000)
+  })
+
+  it('does not fire early on a body that arrives, slowly, inside the deadline', async () => {
+    // The other side of the body bound, and the reason the tarball path needs
+    // a deadline of its own: a large body is slow by nature, and killing a
+    // healthy one is the same defect as never bounding a stalled one.
+    const CHUNKS = 5
+    const GAP_MS = 10
+    const DEADLINE_MS = 400
+    const response = await withTimeout(headersThenSlowBody(CHUNKS, GAP_MS), DEADLINE_MS, 'github')('https://example.invalid/x')
+    const body = new Uint8Array(await response.arrayBuffer())
+    expect(body.byteLength).toBe(CHUNKS * 1024)
   })
 
   it('passes an abort signal through to the implementation', async () => {
@@ -1130,27 +1167,63 @@ describe('withTimeout', () => {
 // one a future change forgets, so this reads the sources instead of trusting
 // a list somebody has to remember to extend.
 //
-// The detector is `typeof fetch`: every module here that reaches the network
-// takes its fetch as an injected seam, because that is the only way its tests
-// can drive it. A module that called the global `fetch` directly would evade
-// this scan — and would also be untestable, which is the convention this
-// project already enforces everywhere else.
+// Three separate ways past this scan have already been identified and closed:
+// a module that types its seam structurally rather than as `typeof fetch`; a
+// module whose only mention of `withTimeout(` is the comment explaining it;
+// and — the realistic one — a module that builds the wrapper, keeps it in a
+// const, and then calls the RAW seam anyway, which satisfies a
+// does-it-mention-withTimeout check, compiles clean (there is no
+// `noUnusedLocals`), and is bounded by nothing at all.
 // ---------------------------------------------------------------------------
 
 const srcDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'src')
+
+interface SourceLine {
+  readonly text: string
+  readonly lineNumber: number
+}
+
+/** The lines of a module that are CODE. A line whose trimmed form opens with a
+ * comment marker is prose, and prose about a deadline is not a deadline. */
+function codeLines(source: string): SourceLine[] {
+  return source.split('\n')
+    .map((line, index) => ({ text: line.trim(), lineNumber: index + 1 }))
+    .filter(({ text }) => !(text.startsWith('*') || text.startsWith('//') || text.startsWith('/*')))
+}
+
+/**
+ * The marks an injectable fetch seam leaves, any one of which makes a module a
+ * network module. `typeof fetch` alone was too narrow: a module declaring
+ * `type FetchLike = (input: string, init?: RequestInit) => Promise<Response>`
+ * never entered the scan, though it is every bit as injectable, as testable,
+ * and as able to hang the build for six hours.
+ */
+const SEAM_MARKERS: readonly RegExp[] = [
+  /typeof fetch/,
+  /Promise<\s*Response\s*>/,
+  /\bRequestInit\b/,
+  /(?<![.\w])fetch\s*\(/,
+]
 
 function networkModules(): { file: string; source: string }[] {
   return readdirSync(srcDir)
     .filter(file => file.endsWith('.ts'))
     .sort()
     .map(file => ({ file, source: readFileSync(join(srcDir, file), 'utf8') }))
-    .filter(({ source }) => /typeof fetch/.test(source))
+    .filter(({ source }) => codeLines(source).some(line => SEAM_MARKERS.some(marker => marker.test(line.text))))
+}
+
+/** Where the raw, unwrapped seam is invoked. Only npm-client may: it owns
+ * `withTimeout` and `fetchWithRetry`, the two primitives that necessarily call
+ * the impl they were handed. Everywhere else the wrapped value is the only
+ * thing that may be called, which is what makes this detectable at all. */
+function rawSeamInvocations(source: string): SourceLine[] {
+  return codeLines(source).filter(line =>
+    /\bfetchImpl\s*\(/.test(line.text) || /(?<![.\w])fetch\s*\(/.test(line.text))
 }
 
 describe('every network module bounds its requests with withTimeout', () => {
   it('finds the network modules at all, so the scan cannot pass by matching nothing', () => {
-    // Without this, a detector that stops matching turns the check below into
-    // a loop over an empty list — green, and guarding nothing.
     const files = networkModules().map(m => m.file)
     expect(files).toContain('npm-client.ts')
     expect(files).toContain('github-client.ts')
@@ -1158,23 +1231,47 @@ describe('every network module bounds its requests with withTimeout', () => {
     expect(files).toContain('github-stars.ts')
   })
 
-  it('routes each of them through this module’s withTimeout', () => {
+  it('detects a raw invocation at all, so the prohibition below cannot pass by matching nothing', () => {
+    // npm-client is the one module that legitimately invokes the impl handed
+    // to it, so it doubles as the detector's own positive control: if this
+    // stops finding anything, the check below is guarding an empty list.
+    const npmClient = networkModules().find(m => m.file === 'npm-client.ts')
+    expect(npmClient?.source).toBeDefined()
+    expect(rawSeamInvocations(npmClient?.source ?? '').length).toBeGreaterThan(0)
+  })
+
+  it('routes each of them through this module’s withTimeout, in code and not in a comment', () => {
     for (const { file, source } of networkModules()) {
       if (file === 'npm-client.ts') {
         expect(
-          /export function withTimeout\(/.test(source),
+          codeLines(source).some(line => /export function withTimeout\(/.test(line.text)),
           'npm-client.ts owns withTimeout and must keep exporting it: the other three network '
             + 'modules import their deadline from here rather than each growing a copy.',
         ).toBe(true)
         continue
       }
       expect(
-        /withTimeout\(/.test(source) && source.includes("'./npm-client.ts'"),
-        `${file} accepts an injected fetch — it reaches the network — but never wraps it with `
-          + "npm-client's withTimeout. An unwrapped client falls back on undici's 300s headers "
-          + 'timeout, multiplied by its own retry ladder, and a stalled counterpart then runs to '
-          + "the build job's outer kill with no report and no state commit.",
+        codeLines(source).some(line => /withTimeout\s*\(/.test(line.text)) && source.includes("'./npm-client.ts'"),
+        `${file} accepts an injected fetch — it reaches the network — but never calls `
+          + "npm-client's withTimeout in code. An unwrapped client falls back on undici's 300s "
+          + 'headers timeout, multiplied by its own retry ladder, and a stalled counterpart then '
+          + "runs to the build job's outer kill with no report and no state commit.",
       ).toBe(true)
+    }
+  })
+
+  it('never invokes the raw seam, so a wrapper that is built and then bypassed cannot pass', () => {
+    for (const { file, source } of networkModules()) {
+      if (file === 'npm-client.ts') continue
+      for (const line of rawSeamInvocations(source)) {
+        expect(
+          false,
+          `${file}:${line.lineNumber} calls the RAW injected fetch. Only the value returned by `
+            + 'withTimeout may be invoked — building the wrapper and then calling `fetchImpl` '
+            + 'anyway leaves the request bounded by nothing, and passes every other check in '
+            + `this file. Line: ${line.text}`,
+        ).toBe(true)
+      }
     }
   })
 })

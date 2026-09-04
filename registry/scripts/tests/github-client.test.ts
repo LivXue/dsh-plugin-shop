@@ -3,10 +3,11 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { GITHUB_REQUEST_TIMEOUT_MS, MAX_TARBALL_BYTES, MAX_THROWN_FRACTION, MIN_THROWN_TO_BOUND, fetchRepoCandidate, harvestRepos, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
+import { GITHUB_REQUEST_TIMEOUT_MS, MAX_TARBALL_BYTES, MAX_THROWN_FRACTION, MIN_THROWN_TO_BOUND, TARBALL_REQUEST_TIMEOUT_MS, fetchRepoCandidate, harvestRepos, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
 import { parseRepoState, serializeRepoState } from '../src/repo-state.ts'
 import type { RepoState } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
+import { headersThenSlowBody, headersThenStalledBody, slowBodyBytes } from './stalling-fetch.ts'
 
 const sleep = async (_ms: number) => {}
 const commit = 'b'.repeat(40)
@@ -1594,8 +1595,10 @@ describe('request deadlines', () => {
     // The other side of the bound. A deadline the caller cannot set, or one
     // wired to the wrong number, passes the stall test above and then kills
     // every healthy repository behind a slow CDN.
-    const SLOW_MS = 40
-    const DEADLINE_MS = 2000
+    // Under 10x on purpose: at the 50x this started with, `ms / 10` survived
+    // green — and `ms / 10` in production is this client at 3s.
+    const SLOW_MS = 50
+    const DEADLINE_MS = 400
     const base = stubFetch({
       [manifestUrl]: new Response(JSON.stringify({
         name: 'dsh-repo-plugin',
@@ -1645,6 +1648,134 @@ describe('request deadlines', () => {
     expect(result.thrown).toBe(1)
     // The whole proof that the INJECTED deadline is honored: on the 30s
     // default these four attempts take two minutes and vitest kills the test.
+    expect(Date.now() - started).toBeLessThan(5000)
+  })
+})
+
+describe('body deadlines', () => {
+  const meta = { fullName: 'someone/dsh-repo-plugin', defaultBranch: 'main', description: 'A repo plugin.', license: 'MIT', pushedAt: '2026-08-01T00:00:00Z', stars: null as number | null }
+  const assetUrl = 'https://github.com/someone/dsh-repo-plugin/releases/download/v1.0.0/dsh-repo-plugin.tgz'
+  const buildManifest = JSON.stringify({
+    name: 'dsh-repo-plugin',
+    scripts: { prepare: 'npm run build' },
+    dsh: { bundle: {}, catalog: { category: 'tool', summary: { en: 'x' }, capabilities: [] } },
+  })
+
+  /** Routes one URL to a body-producing impl (which needs the signal, so the
+   * init is forwarded) and everything else to a plain canned response. */
+  function routeBody(bodyUrl: string, bodyImpl: typeof fetch, routes: Record<string, Response>): typeof fetch {
+    return (async (url: string | URL, init?: RequestInit) => {
+      const text = String(url)
+      if (text.startsWith(bodyUrl)) return bodyImpl(text, init)
+      for (const [prefix, response] of Object.entries(routes)) {
+        if (text.startsWith(prefix)) return response
+      }
+      throw new Error(`unrouted url: ${text}`)
+    }) as unknown as typeof fetch
+  }
+
+  function releaseRoutes(): Record<string, Response> {
+    return {
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(buildManifest, { status: 200 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': new Response(JSON.stringify({
+        sha: commit, commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/releases/latest': new Response(JSON.stringify({
+        tag_name: 'v1.0.0', assets: [{ browser_download_url: assetUrl }],
+      }), { status: 200 }),
+    }
+  }
+
+  it('gives the 32 MB tarball read a deadline of its own, larger than the metadata one', () => {
+    // Literals on both: the tarball bound exists precisely BECAUSE it must not
+    // be the metadata bound, and a test computing one from the other could not
+    // see them collapse back together.
+    expect(TARBALL_REQUEST_TIMEOUT_MS).toBe(300_000)
+    expect(GITHUB_REQUEST_TIMEOUT_MS).toBe(30_000)
+    expect(TARBALL_REQUEST_TIMEOUT_MS).toBeGreaterThan(GITHUB_REQUEST_TIMEOUT_MS)
+  })
+
+  it('bounds a tarball that sends headers and then stalls its body', async () => {
+    // The case a header-phase deadline cannot see, on the one path that reads
+    // up to MAX_TARBALL_BYTES. The rescue probe is advisory, so the bounded
+    // failure degrades to "no release" — the repo itself still lists.
+    const fetchImpl = routeBody(assetUrl, headersThenStalledBody(), releaseRoutes())
+    const started = Date.now()
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token', true, 2000, 60)
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.candidates[0]?.requiresBuild).toBe(true)
+      expect(result.candidates[0]?.release).toBeUndefined()
+    }
+    // Between the two deadlines on purpose: the metadata bound handed in above
+    // is 2000ms, so a tarball read that ignored its own 60ms bound and fell
+    // back on the metadata one would still finish — just not this fast.
+    expect(Date.now() - started).toBeLessThan(1000)
+  })
+
+  it('does not kill a large tarball body that is slow but healthy', async () => {
+    // The other side. A 32 MB asset is slow by nature; killing a healthy one
+    // costs the repo its prebuilt tarball until its next push, because the
+    // release rides through the state file rather than being re-probed daily.
+    const CHUNKS = 5
+    const GAP_MS = 10
+    const fetchImpl = routeBody(assetUrl, headersThenSlowBody(CHUNKS, GAP_MS), releaseRoutes())
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token', true, 2000, 400)
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.candidates[0]?.release?.tag).toBe('v1.0.0')
+      expect(result.candidates[0]?.release?.sha256)
+        .toBe(createHash('sha256').update(slowBodyBytes(CHUNKS)).digest('hex'))
+    }
+  })
+
+  it('never turns a stalled subpackage-tree BODY into a permanent no-manifest verdict', async () => {
+    // The same trap one function over. A swallowed deadline on the git/trees
+    // read makes a monorepo look like it has no subpackages, and a root with
+    // no bundle of its own then earns "declares no name and no installable
+    // subpackage" — persisted, published, and false.
+    const treeUrl = 'https://api.github.com/repos/someone/monorepo/git/trees/main?recursive=1'
+    const monorepoMeta = { ...meta, fullName: 'someone/monorepo' }
+    const fetchImpl = routeBody(treeUrl, headersThenStalledBody(), {
+      'https://raw.githubusercontent.com/someone/monorepo/main/package.json':
+        new Response(JSON.stringify({ private: true, workspaces: ['packages/*'] }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/commits/main': new Response(JSON.stringify({
+        sha: commit, commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+    })
+    const started = Date.now()
+    await expect(fetchRepoCandidate(monorepoMeta, fetchImpl, sleep, 'token', true, 60))
+      .rejects.toThrow('github request exceeded 60ms')
+    expect(Date.now() - started).toBeLessThan(5000)
+  })
+
+  it('never turns a stalled manifest BODY into a permanent no-manifest verdict', async () => {
+    // The deadline now reaches the body, and readManifest's catch used to call
+    // every unreadable body "package.json was unreadable" — a `no-manifest`,
+    // which harvestRepos PERSISTS in repo-state.json as a dead end and
+    // publishes under the repository's name. For a stall on OUR side that is a
+    // false and durable accusation, so the deadline is rethrown instead and
+    // lands where every other transient failure does.
+    const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+      const text = String(url)
+      if (new URL(text).searchParams.get('per_page') === '1') return new Response(JSON.stringify({ total_count: 0 }), { status: 200 })
+      if (text.includes('/search/repositories')) {
+        return new Response(JSON.stringify({
+          items: [{ full_name: 's/stalled', default_branch: 'main', description: null, license: null, pushed_at: '2026-08-02T00:00:00Z' }],
+        }), { status: 200 })
+      }
+      return headersThenStalledBody()(text, init)
+    }) as unknown as typeof fetch
+    const started = Date.now()
+    const result = await harvestRepos({ state: {}, budget: 5, fetchImpl, sleep, token: 't', timeoutMs: 60 })
+    expect(result.failures).toHaveLength(1)
+    expect(result.failures[0]?.repo).toBe('s/stalled')
+    expect(result.failures[0]?.code).toBe('fetch-failed')
+    expect(result.failures[0]?.detail).toContain('not a judgement on the repository')
+    expect(result.thrown).toBe(1)
+    // Not written off: nothing about this repo is recorded, so the next run
+    // fetches it again rather than carrying a verdict it never earned.
+    expect(result.nextState['s/stalled']).toBeUndefined()
     expect(Date.now() - started).toBeLessThan(5000)
   })
 })

@@ -199,9 +199,31 @@ function registryUrl(registry: string, path: string): string {
   return `${registry.replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}`
 }
 
-/** Wrap a fetch so no request can outlive `ms`: the timer aborts the
- * request's own signal and rejects the returned promise, whichever a given
- * implementation honors.
+/**
+ * Wrap a fetch so that `ms` after the request starts, the request is over:
+ * the timer aborts the request's own signal, which both rejects the returned
+ * promise during the header phase AND errors an in-flight body stream after
+ * it. The deadline covers the WHOLE exchange, not the part before the headers.
+ *
+ * That distinction is the whole point. `fetch` resolves as soon as the
+ * response headers arrive, so the timer this used to clear at that moment
+ * bounded the header phase alone: a counterpart answering `200 OK` and then
+ * stalling its body left the read running against a controller that would
+ * never abort. Measured against a real localhost socket — the wrapper resolved
+ * at 62ms and the body was still hanging at 1564ms — and undici's own
+ * `bodyTimeout` is inactivity-based, so a slow trickle never trips it either.
+ * The timer is therefore left ARMED and `unref`'d: unref so a deadline still
+ * pending on a finished request cannot hold the process open, armed so the
+ * abort actually arrives. Aborting a request that already completed is a
+ * no-op, and `Promise.race` keeps a handler on the loser, so a late abort
+ * raises no unhandled rejection.
+ *
+ * The abort REASON is the {@link FetchTimeoutError} itself, so a deadline that
+ * lands mid-body surfaces at the reader as that same error instance rather
+ * than an anonymous abort — which is how a caller tells "our deadline fired"
+ * apart from "this body is malformed", a distinction {@link readManifest}'s
+ * counterpart in github-client.ts depends on to avoid publishing a permanent
+ * verdict for a transient stall.
  *
  * Lives here and is exported because npm-client was the ONLY module passing an
  * AbortSignal. Against a socket that accepts and never writes, npm-client
@@ -212,24 +234,24 @@ function registryUrl(registry: string, path: string): string {
  * commit and no catalog. One wrapper reused by four modules, rather than four
  * copies of it, is what keeps the fourth network module from being the one
  * that forgets.
+ *
+ * A body large enough to be slow on purpose needs a deadline sized for it:
+ * see `TARBALL_REQUEST_TIMEOUT_MS` in github-client.ts, the one path here that
+ * reads up to 32 MB.
  * @param subject - names the stalled counterpart in the error message.
  */
 export function withTimeout(fetchImpl: typeof fetch, ms: number, subject = 'registry'): typeof fetch {
   return async (input, init) => {
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), ms)
-    try {
-      return await Promise.race([
-        fetchImpl(input, { ...init, signal: controller.signal }),
-        new Promise<never>((_, reject) => {
-          controller.signal.addEventListener('abort', () => {
-            reject(new FetchTimeoutError(`${subject} request exceeded ${ms}ms`))
-          }, { once: true })
-        }),
-      ])
-    } finally {
-      clearTimeout(timer)
-    }
+    const expiry = new FetchTimeoutError(`${subject} request exceeded ${ms}ms`)
+    const timer = setTimeout(() => controller.abort(expiry), ms)
+    timer.unref()
+    return await Promise.race([
+      fetchImpl(input, { ...init, signal: controller.signal }),
+      new Promise<never>((_, reject) => {
+        controller.signal.addEventListener('abort', () => reject(expiry), { once: true })
+      }),
+    ])
   }
 }
 

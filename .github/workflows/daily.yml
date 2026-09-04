@@ -27,13 +27,24 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    # Bounded because a stalled counterpart used to run to the six-hour Actions
-    # kill: only npm-client passed an AbortSignal, so a GitHub or LLM-gateway
-    # socket that accepted and never answered fell back on undici's 300s
-    # default, times each client's own retry ladder. The three clients now carry
-    # per-request deadlines; this is the outer bound. A full run -- install,
-    # tests, classify, harvest, stars, emit -- takes about 50 minutes, so 120 is
-    # generous and still fails hours before the platform limit.
+    # A full healthy run -- install, tests, classify, harvest, stars, emit --
+    # takes about 50 minutes, so this does not constrain one.
+    #
+    # What it is for: the per-request deadlines the network clients carry bound
+    # a SINGLE request, and nothing else bounds their SUM. This is the only
+    # thing that does. Measured: one stalled repository costs four bounded
+    # attempts plus backoff, 134s, so at REPO_CONCURRENCY = 4 against a 2000
+    # budget a total GitHub stall drains only ~212 repositories inside these
+    # 120 minutes -- and MAX_THROWN_FRACTION, which would otherwise stop the
+    # build loudly, is only evaluated once the whole queue has drained, so it
+    # is unreachable in that state. The stars fetch alone is ~40 minutes
+    # sequential under a stall.
+    #
+    # So be plain about what this buys: under a pool-wide stall the run still
+    # dies here with no report, no state commit and no catalog. It caps the
+    # wasted runner time at two hours instead of six. It does not turn that
+    # outcome into a reported one -- an in-harvest bound would be needed for
+    # that, and none exists yet.
     timeout-minutes: 120
     permissions:
       contents: write

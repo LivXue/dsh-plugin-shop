@@ -15,7 +15,29 @@
 import { execFileSync } from 'node:child_process'
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { withTimeout } from './npm-client.ts'
 import { catalogPackageFiles, nextCatalogVersion } from './npm-package.ts'
+
+/**
+ * Deadline on resolving the published packument — the request that DECIDES
+ * whether to publish. Generous, because being wrong here blocks a release
+ * rather than degrading one, and it is a single request on a job with a
+ * ten-minute budget.
+ */
+const REGISTRY_REQUEST_TIMEOUT_MS = 60_000
+
+/**
+ * Deadline on one npmmirror warm request. Tighter than the registry's because
+ * the warm loop makes up to 21 of them with 3s between: at 30s apiece a
+ * stalled mirror would need 11.5 minutes and take the job's ten-minute bound
+ * with it, failing a release that had ALREADY published successfully. At 10s
+ * the same total stall costs 4.4 minutes and still warms nothing, which is the
+ * documented best-effort outcome.
+ */
+const MIRROR_REQUEST_TIMEOUT_MS = 10_000
+
+const timedRegistryFetch = withTimeout(fetch, REGISTRY_REQUEST_TIMEOUT_MS, 'npm registry')
+const timedMirrorFetch = withTimeout(fetch, MIRROR_REQUEST_TIMEOUT_MS, 'npmmirror')
 
 // Real work — resolving the published packument over the network and, past
 // that, an actual `npm publish` — belongs to the entry point alone, never to
@@ -50,7 +72,7 @@ const shas = { plugins: pointer.plugins.sha256, stars: pointer.stars?.sha256 ?? 
 /** The published `latest`, and the hashes it was built from. Absent when the
  * package has never been published — the first run. */
 async function publishedLatest(): Promise<{ version: string; shas: { plugins: string; stars: string | null } } | null> {
-  const response = await fetch(`${REGISTRY}/${PACKAGE_NAME}`)
+  const response = await timedRegistryFetch(`${REGISTRY}/${PACKAGE_NAME}`)
   if (response.status === 404) return null
   if (!response.ok) throw new Error(`resolving ${PACKAGE_NAME} returned ${response.status}`)
   const packument = await response.json() as {
@@ -116,11 +138,11 @@ console.log(`published ${PACKAGE_NAME}@${version}`)
 // this whole design exists for (design §2). Failing to warm is not failing to
 // publish, so this never exits non-zero.
 try {
-  const created = await fetch(`${MIRROR_SYNC}/-/package/${PACKAGE_NAME}/syncs`, { method: 'PUT' })
+  const created = await timedMirrorFetch(`${MIRROR_SYNC}/-/package/${PACKAGE_NAME}/syncs`, { method: 'PUT' })
   const task = await created.json() as { id?: string }
   if (task.id === undefined) throw new Error(`sync request returned ${created.status}`)
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    const status = await fetch(`${MIRROR_SYNC}/-/package/${PACKAGE_NAME}/syncs/${task.id}`)
+    const status = await timedMirrorFetch(`${MIRROR_SYNC}/-/package/${PACKAGE_NAME}/syncs/${task.id}`)
     const state = (await status.json() as { state?: string }).state
     if (state !== 'waiting') { console.log(`npmmirror sync ${task.id}: ${String(state)}`); break }
     await new Promise(resolve => setTimeout(resolve, 3000))

@@ -15,7 +15,7 @@
  */
 
 import { createHash } from 'node:crypto'
-import { fetchWithRetry, withTimeout } from './npm-client.ts'
+import { FetchTimeoutError, fetchWithRetry, withTimeout } from './npm-client.ts'
 import { diffRepoState, nextRepoState, type RepoSeen, type RepoState } from './repo-state.ts'
 import { hasWorkspaceDeps, monorepoSignal, selectSubpackagePaths } from './subpackage-select.ts'
 import type { RepoCandidate } from './types.ts'
@@ -56,6 +56,22 @@ export const MAX_MANIFEST_BYTES = 1024 * 1024
  * defaults.
  */
 export const GITHUB_REQUEST_TIMEOUT_MS = 30_000
+
+/**
+ * Per-attempt bound on a release-tarball DOWNLOAD, as opposed to the metadata
+ * requests around it.
+ *
+ * The deadline covers the body now (see withTimeout), and this is the only
+ * path in the repo that reads a body up to {@link MAX_TARBALL_BYTES} — 32 MB,
+ * or 32,768x a manifest's cap. On the shared 30s bound a healthy 32 MB asset
+ * would have to sustain 1.07 MB/s (8.5 Mbit/s) or be killed. At 300s the floor
+ * is 109 KB/s (0.87 Mbit/s), far below any plausible runner-to-GitHub-CDN
+ * throughput. Being wrong the other way is cheap and self-correcting: the
+ * probe is advisory and degrades to no release. Being wrong THIS way is not —
+ * a missed release rides through the state file and is not re-probed until the
+ * repository is pushed to again.
+ */
+export const TARBALL_REQUEST_TIMEOUT_MS = 300_000
 
 /**
  * The share of one run's fetch attempts that may throw before the harvest is
@@ -458,6 +474,7 @@ async function fetchLatestReleaseTarball(
   sleep: (ms: number) => Promise<void>,
   token: string | undefined,
   timeoutMs: number = GITHUB_REQUEST_TIMEOUT_MS,
+  tarballTimeoutMs: number = TARBALL_REQUEST_TIMEOUT_MS,
 ): Promise<{ tag: string; url: string; sha256: string } | null> {
   // The whole probe is advisory, so no failure inside it may crash the
   // harvest: every transport or read failure degrades to null, the
@@ -480,7 +497,10 @@ async function fetchLatestReleaseTarball(
       .map(a => (a as { browser_download_url?: unknown }).browser_download_url)
       .find((u): u is string => typeof u === 'string' && /\.(?:tgz|tar\.gz)$/i.test(u))
     if (asset === undefined) return null
-    const assetResponse = await fetchRobust(asset, fetchImpl, sleep, token, timeoutMs)
+    // The asset alone gets the larger bound: the two requests above read a
+    // few hundred bytes of GitHub's own JSON, and lending them 300s would
+    // hand a stalled metadata call ten times the budget it needs.
+    const assetResponse = await fetchRobust(asset, fetchImpl, sleep, token, tarballTimeoutMs)
     if (!assetResponse.ok) return null
     const bytes = await readTarballBody(assetResponse)
     if (bytes === null) return null
@@ -662,7 +682,15 @@ async function readManifest(
   let text: string
   try {
     text = await response.text()
-  } catch {
+  } catch (error) {
+    // A deadline is not an unreadable manifest. `unreadable` becomes a
+    // `no-manifest`, which harvestRepos PERSISTS in repo-state.json as a dead
+    // end and publishes under the repository's name — a false and durable
+    // accusation when the truth is that OUR request ran out of time. Now that
+    // the deadline reaches the body, this catch can see one, so it rethrows:
+    // the stall lands in harvestRepos' catch with every other transient
+    // failure, sanitized, counted, and recorded nowhere.
+    if (error instanceof FetchTimeoutError) throw error
     // Same rule as npm: an unreadable body is a rejection, not a crash.
     return { ok: false, reason: 'unreadable', detail: 'package.json was unreadable.' }
   }
@@ -713,7 +741,12 @@ async function probeSubpackageCandidates(
   try {
     const parsed = await treeResponse.json() as unknown
     if (parsed !== null && typeof parsed === 'object') treeBody = parsed as typeof treeBody
-  } catch {
+  } catch (error) {
+    // Same rule as readManifest's: swallowing a deadline here would make a
+    // stalled tree read look like a monorepo with no subpackages, and a root
+    // with no bundle of its own then earns a persisted `no-manifest` saying it
+    // "declares no name and no installable subpackage" — false, and durable.
+    if (error instanceof FetchTimeoutError) throw error
     return { candidates: [], failures: [], anyClaimed: false }
   }
   // A truncated tree (>100k entries) may hide some subpackages; the repo is
@@ -784,6 +817,7 @@ export async function fetchRepoCandidate(
   token: string | undefined = undefined,
   probeSubpackages = true,
   timeoutMs: number = GITHUB_REQUEST_TIMEOUT_MS,
+  tarballTimeoutMs: number = TARBALL_REQUEST_TIMEOUT_MS,
 ): Promise<RepoFetchResult> {
   const [owner, slug] = meta.fullName.split('/')
   if (owner === undefined || slug === undefined) {
@@ -826,7 +860,7 @@ export async function fetchRepoCandidate(
   // is probed. The release rides the candidate through the state file, so a
   // repo with no release does not re-consume this budget daily.
   if (root !== null && root.requiresBuild) {
-    const release = await fetchLatestReleaseTarball(owner, slug, fetchImpl, sleep, token, timeoutMs)
+    const release = await fetchLatestReleaseTarball(owner, slug, fetchImpl, sleep, token, timeoutMs, tarballTimeoutMs)
     if (release !== null) root.release = release
   }
   if (root !== null && root.hasBundle) {
@@ -897,6 +931,9 @@ export interface RepoHarvestOptions {
   /** Per-attempt deadline on every per-repo request. Defaults to
    * {@link GITHUB_REQUEST_TIMEOUT_MS}; a seam, so a test need not wait one out. */
   timeoutMs?: number
+  /** Per-attempt deadline on a release-tarball download, which reads a body up
+   * to {@link MAX_TARBALL_BYTES}. Defaults to {@link TARBALL_REQUEST_TIMEOUT_MS}. */
+  tarballTimeoutMs?: number
 }
 
 export interface RepoHarvestResult {
@@ -945,6 +982,7 @@ export async function harvestRepos(options: RepoHarvestOptions): Promise<RepoHar
     token = undefined,
     probeSubpackages = true,
     timeoutMs = GITHUB_REQUEST_TIMEOUT_MS,
+    tarballTimeoutMs = TARBALL_REQUEST_TIMEOUT_MS,
   } = options
   if (token === undefined) {
     return { candidates: [], failures: [], thrown: 0, seen: [], gone: [], nextState: state, skipped: true, searchStars: new Map(), windowCount: 0, fetched: 0, carried: 0, deferred: 0 }
@@ -974,7 +1012,7 @@ export async function harvestRepos(options: RepoHarvestOptions): Promise<RepoHar
       const meta = metas.get(entry.repo)
       if (meta === undefined) return { entry, result: { ok: false, code: 'fetch-failed', detail: 'search result lost between the enumeration and the fetch' } as RepoFetchResult }
       try {
-        return { entry, result: await fetchRepoCandidate(meta, fetchImpl, sleep, token, probeSubpackages, timeoutMs) }
+        return { entry, result: await fetchRepoCandidate(meta, fetchImpl, sleep, token, probeSubpackages, timeoutMs, tarballTimeoutMs) }
       } catch (error) {
         // One repository must not be able to end the harvest. Everything in
         // this file already turns a bad package into a row; without this, an
