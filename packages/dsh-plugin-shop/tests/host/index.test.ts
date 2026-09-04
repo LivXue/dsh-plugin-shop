@@ -1785,3 +1785,70 @@ describe('concurrent catalog loads (G-7)', () => {
     expect(seen).toEqual([false, true])
   })
 })
+
+describe('restart while an install is running (F-5)', () => {
+  it('refuses instead of booting a new dsh against a half-mutated profile', async () => {
+    // A command that is still rewriting the profile owns the profile for the
+    // duration of the operation. Restart must leave both that child and the
+    // serving process alone until it has settled.
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-restart-busy-'))
+    const slow = join(dir, 'dsh')
+    writeFileSync(slow, ['#!/bin/sh', 'sleep 2', 'exit 0', ''].join('\n'))
+    chmodSync(slow, 0o755)
+    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-restart-busy-profile-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
+    const listed: CatalogEntry = {
+      name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null, repository: null,
+      license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25',
+    }
+    const exit = vi.fn()
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: mkdtempSync(join(tmpdir(), 'dsh-restart-busy-cache-')),
+      profile: 'web', profileDir, dshBin: slow, exit, restartArgv: ['web'],
+      // A dead pid lets the pre-fix helper run without waiting for this test
+      // worker; the failing assertion is the returned restart outcome.
+      restartParentPid: 1_000_000_000,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [listed], denied: [], stars: {} }, stale: false }) as CatalogResult,
+    })
+    const started = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true, source: 'npm' })
+    expect(started.ok).toBe(true)
+    if (!started.ok) return
+    expect(gateway.installStatus({ installId: started.installId }).state).toBe('running')
+
+    const outcome = await gateway.restart()
+    expect(outcome).toEqual({
+      ok: false,
+      detail: 'dsh-plugin-shop: an install is still running in this profile; a restart now would boot the new dsh against a half-written profile. Wait for it to finish and try again.',
+    })
+    expect(exit).not.toHaveBeenCalled()
+    await vi.waitFor(() => {
+      expect(gateway.installStatus({ installId: started.installId }).state).not.toBe('running')
+    }, { timeout: 5000 })
+  })
+
+  it('allows the restart once the install has settled', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-restart-idle-'))
+    const quick = join(dir, 'dsh')
+    writeFileSync(quick, ['#!/bin/sh', 'exit 0', ''].join('\n'))
+    chmodSync(quick, 0o755)
+    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-restart-idle-profile-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: ['dsh-hello-plugin'] } }, dependencies: {} }))
+    const listed: CatalogEntry = {
+      name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null, repository: null,
+      license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25',
+    }
+    const exit = vi.fn()
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: mkdtempSync(join(tmpdir(), 'dsh-restart-idle-cache-')),
+      profile: 'web', profileDir, dshBin: quick, exit, restartArgv: ['web'],
+      restartExitDelayMs: 1, restartParentPid: 1,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [listed], denied: [], stars: {} }, stale: false }) as CatalogResult,
+    })
+    const started = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true, source: 'npm' })
+    if (!started.ok) throw new Error('the fixture install was rejected')
+    await vi.waitFor(() => {
+      expect(gateway.installStatus({ installId: started.installId }).state).not.toBe('running')
+    }, { timeout: 5000 })
+    expect(await gateway.restart()).toEqual({ ok: true })
+  })
+})

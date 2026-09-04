@@ -821,6 +821,14 @@ export class ShopGateway extends TypertRemoteService {
     for (const id of finishedIds.slice(0, excess)) this.installs.delete(id)
   }
 
+  /** Whether any command this gateway started is still running. */
+  private hasRunningCommand(): boolean {
+    for (const record of this.installs.values()) {
+      if (record.status().state === 'running') return true
+    }
+    return false
+  }
+
   /** Poll one install's progress (§7.2); unknown ids report `found: false`. */
   @Remote('installStatus')
   installStatus(args: { installId: string }): ShopInstallStatusResult {
@@ -993,6 +1001,16 @@ export class ShopGateway extends TypertRemoteService {
    * new server answers. Refusals are issued before anything is torn down. */
   @Remote('restart')
   async restart(): Promise<ShopRestartResult> {
+    // A running install owns the profile: `pnpm` may be rewriting its
+    // package.json, lockfile and node_modules. Exiting now would hand the
+    // takeover helper a half-written profile, so refuse before anything is
+    // torn down (F-5).
+    if (this.hasRunningCommand()) {
+      return {
+        ok: false,
+        detail: 'dsh-plugin-shop: an install is still running in this profile; a restart now would boot the new dsh against a half-written profile. Wait for it to finish and try again.',
+      }
+    }
     // The handoff helper is a POSIX shell one-liner (restart.ts) and there is
     // no `sh` on Windows. That spawn fails ASYNCHRONOUSLY, so committing here
     // would answer `ok: true`, exit this process, and leave nothing to take
