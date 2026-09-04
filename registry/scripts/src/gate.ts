@@ -1,5 +1,5 @@
 import { distance } from 'fastest-levenshtein'
-import { isHarnessRepo } from './github-repo.ts'
+import { githubOwnerName, isHarnessRepo } from './github-repo.ts'
 import { isOwnPackage } from './own.ts'
 import { parseCatalogSection } from './schema.ts'
 import type { RegistryConfig } from './config.ts'
@@ -235,7 +235,23 @@ export function gate(
       'This is the shop itself, so it is not listed on its own shelf; install it with dsh plugin add.')
   }
 
+  // Denied by npm name, or by the repository this package declares. A denial
+  // names a PROJECT, and a project has two published spellings: `evil/dsh-x`
+  // on GitHub and `dsh-x` on npm. Checking only the name let the author of a
+  // denied repository publish the same code to npm, win the bundle name (npm
+  // wins by design), and get the repository reported `shadowed-by-npm` while
+  // `denied[]` — the list the Host's install gate consults — stayed empty.
+  //
+  // Case-folded on the repo side, as everywhere else on that keyspace. The
+  // declared repository is attacker-controlled text, so `githubOwnerName`
+  // returns null for anything that is not a plain
+  // `https://github.com/<owner>/<name>` URL and the lookup is simply skipped
+  // — the no-repository and harness-repository checks below still run.
+  const declaredRepo = githubOwnerName(candidate.repository)
   const denial = config.denied.get(name)
+    ?? (declaredRepo === null
+      ? undefined
+      : config.deniedRepos.get(`${declaredRepo.owner}/${declaredRepo.name}`.toLowerCase()))
   if (denial !== undefined) {
     const suffix = denial.replacement === undefined ? '' : ` Known replacement: ${denial.replacement}.`
     return reject(name, 'denied', `Denied by the registry: ${denial.reason}${suffix}`, denial.replacement)
