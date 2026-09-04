@@ -51,7 +51,7 @@
 | `category` | 你的选择 | `other` |
 | `capabilities` | 你的列表（至多 20 项，每项至多 64 字符） | 空列表 |
 
-如果既没有 `dsh.catalog`，npm 上也没有 `description`，这个包就不会被列出——没有任何文字可以展示。推导出的列表在发布数据里带 `metadata: "derived"`，消费端可以把它呈现为"尚未认领"；补上 `dsh.catalog` 就是认领它的方式。
+如果既没有 `dsh.catalog`，npm 上也没有 `description`，这个包就不会被列出——没有任何文字可以展示。推导出的列表在发布数据里带 `metadata: "derived"`，补上 `dsh.catalog` 就是认领它的方式。插件商店本身已经不再给推导条目加视觉标记，别的消费端要不要标成“尚未认领”由它们自己决定。
 
 `metadata` 和信任等级是两回事：一条推导式列表照样可以被标为 `verified`，因为审核看的是插件代码，不是文案。
 

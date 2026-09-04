@@ -28,7 +28,7 @@ What does **not** exist yet: nothing further in the P0-P3 plan. Remaining are th
 
 ### The one thing to understand before touching anything
 
-The live ecosystem is real and it is large. Roughly 1390 npm packages already carry the `dsh-plugin` keyword; a 100-package sample found 94% declaring `dsh.bundle` and **none** declaring `dsh.catalog`. That measurement is what forced dual-track listings, and it is why the gate must never require a field this project invented. If you find yourself adding a required field to the author-facing contract, check it against that number first.
+The live ecosystem is real and it is large. Roughly 5,100 npm packages already carry the `dsh-plugin` keyword (measured 2026-09-04; this paragraph said 1390 until then, and the argument below leans on the number, so it is worth re-probing before you cite it); a 100-package sample found 94% declaring `dsh.bundle` and **none** declaring `dsh.catalog`. That measurement is what forced dual-track listings, and it is why the gate must never require a field this project invented. If you find yourself adding a required field to the author-facing contract, check it against that number first.
 
 ## Decisions only a human can make
 
