@@ -19,6 +19,59 @@ export interface PipelineResult extends Artifacts {
 }
 
 /**
+ * Registry rows that matched nothing this run, as report lines.
+ *
+ * A denial, a review or a clearance is matched EXACTLY (the repo keyspace
+ * case-folded), so a row whose name is mistyped, re-cased, or left behind by
+ * an unpublish simply never fires — and a denial nobody can act on is worse
+ * than no denial, because it reads as protection (audit E-5). The grammar
+ * check in `config.ts` catches shapes that can never match; this catches the
+ * shapes that can but do not.
+ *
+ * Report-only: no row is dropped and no listing changes. Whether a stale row
+ * should be deleted is a human's call — a package can be unpublished for a
+ * week and come back.
+ * @param candidates - every npm candidate this run harvested.
+ * @param repoCandidates - every repository candidate this run harvested.
+ * @param config - the human-authored registry files.
+ * @returns the lines to add to the build report, or `[]` when everything matched.
+ */
+export function unmatchedRegistryNotes(
+  candidates: readonly Candidate[],
+  repoCandidates: readonly RepoCandidate[],
+  config: RegistryConfig,
+): string[] {
+  const npmNames = new Set(candidates.map(candidate => candidate.name))
+  const repoFullNames = new Set(repoCandidates.map(candidate => candidate.repo.toLowerCase()))
+  const bundleNames = new Set(repoCandidates.map(candidate => candidate.name))
+  const rows: { file: string; row: string }[] = []
+  for (const [key, review] of config.verified) {
+    // The key already says which channel the review is for: an npm review is
+    // keyed by package name, a github review by lowercased `owner/slug`.
+    const matched = review.reviewedVersion === undefined
+      ? repoFullNames.has(key)
+      : npmNames.has(key)
+    if (!matched) rows.push({ file: 'verified.yml', row: key })
+  }
+  for (const key of config.denied.keys()) {
+    // A denial may name an npm package, a repository, or a bundle name — the
+    // repo gate reads all three.
+    const matched = npmNames.has(key) || bundleNames.has(key) || repoFullNames.has(key.toLowerCase())
+    if (!matched) rows.push({ file: 'denied.yml', row: key })
+  }
+  for (const entry of config.allowedSimilar) {
+    const matched = npmNames.has(entry) || repoFullNames.has(entry.toLowerCase())
+    if (!matched) rows.push({ file: 'allowed-similar.yml', row: entry })
+  }
+  if (rows.length === 0) return []
+  rows.sort((a, b) => compareStrings(a.file, b.file) || compareStrings(a.row, b.row))
+  return [
+    'Registry rows that matched no harvested candidate this run:',
+    ...rows.map(row => `- ${row.file}: ${row.row}`),
+  ]
+}
+
+/**
  * Run the whole catalog build as a pure function.
  *
  * Purity is what makes the determinism test possible: the only inputs are the
@@ -121,6 +174,7 @@ export function runPipeline(
       ...holds.map(name => `- ${name}`),
     )
   }
+  notes.push(...unmatchedRegistryNotes(candidates, repoCandidates, config))
   return {
     ...emit(entries, rejections, builtAt, stars, schemaVersion, config.notAShop, notes),
     firstSeen,

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { runPipeline } from '../src/pipeline.ts'
+import { runPipeline, unmatchedRegistryNotes } from '../src/pipeline.ts'
 import { parseRegistryConfig } from '../src/config.ts'
 import type { Candidate, Rejection } from '../src/types.ts'
 
@@ -695,5 +695,86 @@ describe('the market holds reach the build report', () => {
     ], cleared, BUILT_AT)
     const parsed = JSON.parse(pluginsJson) as { notAShop: string[] }
     expect(parsed.notAShop).toEqual(['dsh-store'])
+  })
+})
+
+describe('unmatchedRegistryNotes', () => {
+  const commit = 'c'.repeat(40)
+  const npmCandidate = candidates.find(c => c.name === 'dsh-hello-plugin')
+  if (npmCandidate === undefined) throw new Error('fixture dsh-hello-plugin is missing')
+  const repoCandidate: import('../src/types.ts').RepoCandidate = {
+    name: 'dsh-repo-plugin', repo: 'Someone/dsh-repo-plugin', commit, version: commit,
+    publishedAt: '2026-08-01T12:00:00.000Z', repository: 'https://github.com/Someone/dsh-repo-plugin',
+    license: 'MIT', hasBundle: true, requiresBuild: false, hasWorkspaceDeps: false,
+    catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
+    description: 'x',
+  }
+
+  it('says nothing when every row matched something', () => {
+    const matched = parseRegistryConfig({
+      verified: '- name: dsh-hello-plugin\n  reviewedVersion: 1.0.0\n  reviewer: r\n  reviewCommit: c\n',
+      denied: '- name: someone/dsh-repo-plugin\n  reason: known bad actor\n',
+      allowedSimilar: '- dsh-hello-plugin\n',
+      categories: '[]',
+      firstSeen: '[]',
+    })
+    expect(unmatchedRegistryNotes([npmCandidate], [repoCandidate], matched)).toEqual([])
+  })
+
+  it('names every row that matched nothing, with its file, sorted', () => {
+    // A denial nobody can act on is worse than none: it reads as protection.
+    const stale = parseRegistryConfig({
+      verified: [
+        '- name: dsh-unpublished\n  reviewedVersion: 1.0.0\n  reviewer: r\n  reviewCommit: c\n',
+        `- name: dsh-renamed\n  repo: old/dsh-renamed\n  reviewedCommit: ${commit}\n  reviewer: r\n  reviewCommit: c\n`,
+      ].join(''),
+      denied: '- name: DSH-Evil\n  reason: typed in the wrong case\n',
+      allowedSimilar: '- dsh-gone\n',
+      categories: '[]',
+      firstSeen: '[]',
+    })
+    expect(unmatchedRegistryNotes([npmCandidate], [repoCandidate], stale)).toEqual([
+      'Registry rows that matched no harvested candidate this run:',
+      '- allowed-similar.yml: dsh-gone',
+      '- denied.yml: DSH-Evil',
+      '- verified.yml: dsh-unpublished',
+      '- verified.yml: old/dsh-renamed',
+    ])
+  })
+
+  it('matches a repo row case-folded, and a denial against the bundle name too', () => {
+    // A review and a denial of the same name cannot coexist (Task 4 throws),
+    // so the two shapes are checked one config at a time. The candidate's
+    // repo is `Someone/dsh-repo-plugin`, spelled differently in both rows.
+    const reviewedAndCleared = parseRegistryConfig({
+      verified: `- name: dsh-repo-plugin\n  repo: someone/dsh-repo-plugin\n  reviewedCommit: ${commit}\n  reviewer: r\n  reviewCommit: c\n`,
+      denied: '[]',
+      allowedSimilar: '- SOMEONE/dsh-repo-plugin\n',
+      categories: '[]',
+      firstSeen: '[]',
+    })
+    expect(unmatchedRegistryNotes([], [repoCandidate], reviewedAndCleared)).toEqual([])
+
+    const deniedByBundleName = parseRegistryConfig({
+      verified: '[]',
+      denied: '- name: dsh-repo-plugin\n  reason: denied by bundle name\n',
+      allowedSimilar: '[]',
+      categories: '[]',
+      firstSeen: '[]',
+    })
+    expect(unmatchedRegistryNotes([], [repoCandidate], deniedByBundleName)).toEqual([])
+  })
+
+  it('rides the build report', () => {
+    const stale = parseRegistryConfig({
+      verified: '[]',
+      denied: '- name: dsh-never-seen\n  reason: nothing matches this\n',
+      allowedSimilar: '[]',
+      categories: '[]',
+      firstSeen: '- name: dsh-hello-plugin\n  added: 2026-08-11\n- name: dsh-derived-plugin\n  added: 2026-08-12\n- name: dsh-fs-tool\n  added: 2026-08-10\n',
+    })
+    const { report } = runPipeline(candidates, [], stale, BUILT_AT)
+    expect(report).toContain('Registry rows that matched no harvested candidate this run:')
+    expect(report).toContain('- denied.yml: dsh-never-seen')
   })
 })
