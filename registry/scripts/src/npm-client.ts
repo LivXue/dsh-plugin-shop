@@ -544,6 +544,15 @@ export function toCandidate(packument: unknown): Candidate | null {
  * @param fetchImpl - the fetch implementation, injected for testing.
  * @param sleep - the delay implementation, injected so tests do not wait.
  * @param token - an optional read-only npm token; see {@link fetchWithRetry}.
+ * @param backupRegistry - accepted, and NEVER passed by a production caller.
+ *   registry.npmmirror.com does not implement the `keywords:` qualifier this
+ *   search depends on: measured 2026-09-03 it answers
+ *   `{"objects":[],"total":0}` for both harvest keywords, and a numeric zero
+ *   is not an error — the coverage floor becomes `min(0, 0) = 0` and passes,
+ *   so a stalled or 5xx npmjs search would publish a zero-name harvest with a
+ *   green build. The failover belongs on {@link fetchCandidate}, where the
+ *   integrity hash makes a mirror answer interchangeable. npm-client.test.ts
+ *   scans both call sites for this.
  * @returns every matching package name, sorted and deduplicated.
  * @throws when the registry answers with a non-OK status after the 429
  *   retries are exhausted; when a search page or a total probe answers with

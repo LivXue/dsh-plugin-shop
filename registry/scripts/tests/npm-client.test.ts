@@ -993,7 +993,16 @@ describe('registry failover', () => {
     expect(!result.ok && result.detail).toBe('dsh-failover: could not reach the npm registry (primary down)')
   })
 
-  it('searches through the failover too', async () => {
+  it('searches through the failover too — an API the production callers must not use', async () => {
+    // The parameter works, and this pins that it does. It is nonetheless
+    // withheld at BOTH production call sites, and the scan lower in this file
+    // is what enforces that: registry.npmmirror.com does not implement the
+    // `keywords:` qualifier — measured 2026-09-03, it answers
+    // `{"objects":[],"total":0}` for both harvest keywords — so failing the
+    // search over to it publishes a zero-name harvest that the coverage floor
+    // waves through at min(0, 0). Nothing about THIS test is wrong; a reader
+    // reaching for the fourth argument because a test blesses it is, so the
+    // reason lives here beside it rather than only at the call sites.
     const fetchImpl = (async (url: string | URL) => {
       if (String(url).startsWith('https://registry.npmjs.org')) throw new Error('primary down')
       return new Response(JSON.stringify({ total: 1, objects: [{ package: { name: 'dsh-from-backup' } }] }), { status: 200 })
@@ -1352,6 +1361,156 @@ describe('every network module bounds its requests with withTimeout', () => {
             + 'withTimeout may be invoked — building the wrapper and then calling `fetchImpl` '
             + 'anyway leaves the request bounded by nothing, and passes every other check in '
             + `this file. Line: ${line.text}`,
+        ).toBe(true)
+      }
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The backup registry reaches the PACKUMENT fetch and NEVER the paged search.
+//
+// registry.npmmirror.com does not implement the `keywords:` qualifier the
+// harvest depends on: measured 2026-09-03, it answers
+// `{"objects":[],"total":0}` for both harvest keywords while answering
+// `total=10000` for `text=react`. A numeric zero is not an error, so nothing
+// upstream refuses it — `searchTotal` returns 0, the keyword reports
+// unpartitioned, the empty first page breaks the cell, and the coverage floor
+// becomes `min(0, 0) = 0`, which passes. A stalled or 5xx npmjs search would
+// therefore publish a ZERO-NAME npm harvest with a green build, and
+// classify.ts:155 prunes categories.yml by the live names — roughly nine
+// thousand deleted category rows, committed and pushed by the classifier
+// step.
+//
+// Both production callers withhold the argument, each with a long comment
+// saying why. A comment is not a guard: adding the argument back to either
+// call site compiles, typechecks, and passed all 500 tests in this repo.
+// npm-client.test.ts also has a module-level test asserting that the search
+// DOES fail over, because the API still supports it — so the rule cannot live
+// in the module's own behaviour and has to be read off the call sites.
+// ---------------------------------------------------------------------------
+
+/** `source` with every comment-only line blanked and the line numbering
+ * preserved, so a call site can be located but prose ABOUT a call site cannot
+ * be mistaken for one. Same definition of prose as {@link codeLines}. */
+function withoutCommentLines(source: string): string {
+  return source.split('\n')
+    .map(line => (/^\s*(?:\/\/|\/\*|\*)/.test(line) ? '' : line))
+    .join('\n')
+}
+
+interface SearchCall {
+  readonly args: string[]
+  readonly lineNumber: number
+}
+
+/** Every `searchByKeywords(…)` call in `source`, with its arguments split at
+ * top-level commas. Hand-scanned rather than matched: the argument list is
+ * variable-length and may nest parentheses or carry a string, and a regex
+ * capture group keeps only its last repetition. */
+function searchCalls(source: string): SearchCall[] {
+  const scanned = withoutCommentLines(source)
+  const needle = 'searchByKeywords('
+  const calls: SearchCall[] = []
+  let searchFrom = 0
+  for (;;) {
+    const start = scanned.indexOf(needle, searchFrom)
+    if (start === -1) break
+    searchFrom = start + needle.length
+    // The declaration is not a call site: `export async function
+    // searchByKeywords(` opens the same parenthesis, and its parameter list
+    // names `backupRegistry` by definition. Skipping it here rather than
+    // excluding npm-client.ts by name keeps the caller set derived — if the
+    // search ever moves to another module, that module is still scanned.
+    if (/\bfunction\s+$/.test(scanned.slice(Math.max(0, start - 32), start))) continue
+    const args: string[] = []
+    let current = ''
+    let depth = 1
+    let quote = ''
+    let cursor = searchFrom
+    while (cursor < scanned.length && depth > 0) {
+      const ch = scanned.charAt(cursor)
+      if (quote !== '') {
+        if (ch === '\\') { current += scanned.slice(cursor, cursor + 2); cursor += 2; continue }
+        if (ch === quote) quote = ''
+        current += ch
+        cursor += 1
+        continue
+      }
+      if (ch === "'" || ch === '"' || ch === '`') { quote = ch }
+      else if (ch === '(' || ch === '[' || ch === '{') { depth += 1 }
+      else if (ch === ')' || ch === ']' || ch === '}') {
+        depth -= 1
+        if (depth === 0) { cursor += 1; break }
+      }
+      else if (ch === ',' && depth === 1) { args.push(current.trim()); current = ''; cursor += 1; continue }
+      current += ch
+      cursor += 1
+    }
+    if (current.trim() !== '') args.push(current.trim())
+    calls.push({ args, lineNumber: scanned.slice(0, start).split('\n').length })
+  }
+  return calls
+}
+
+/** The zero-based position of `backupRegistry` in `searchByKeywords`'s
+ * parameter list — `(fetchImpl, sleep, token, backupRegistry, timeoutMs)`.
+ * The slot, not the arity, is what the rule is about: a call overriding
+ * `timeoutMs` must still be able to pass this one as `undefined`. */
+const BACKUP_ARGUMENT_INDEX = 3
+
+/** The modules that call the paged search in production. Derived from the
+ * sources, so a THIRD caller added later is checked without anyone
+ * remembering to extend a list. */
+function searchCallers(): { file: string; calls: SearchCall[] }[] {
+  return readdirSync(srcDir)
+    .filter(file => file.endsWith('.ts'))
+    .sort()
+    .map(file => ({ file, calls: searchCalls(readFileSync(join(srcDir, file), 'utf8')) }))
+    .filter(({ calls }) => calls.length > 0)
+}
+
+describe('no production caller hands the paged search a backup registry', () => {
+  it('finds the callers at all, so the rule below cannot pass by matching nothing', () => {
+    const files = searchCallers().map(c => c.file)
+    expect(files).toContain('build.ts')
+    expect(files).toContain('classify.ts')
+  })
+
+  it('reads the argument list far enough to see a fourth argument, so the rule cannot pass by parsing nothing', () => {
+    // The realistic way past a scan like this is a parser that stops early
+    // and reports three arguments for a five-argument call. This is the
+    // detector's own positive control: the exact mutation the rule exists to
+    // catch, in a synthetic source, must be visible as argument 4.
+    const mutated = 'const names = await searchByKeywords(fetch, undefined, npmToken, npmBackupRegistry)\n'
+    const [call] = searchCalls(mutated)
+    expect(call?.args).toEqual(['fetch', 'undefined', 'npmToken', 'npmBackupRegistry'])
+    expect(call?.args[BACKUP_ARGUMENT_INDEX]).not.toBe('undefined')
+    // …and prose about a call site is not a call site.
+    expect(searchCalls('// searchByKeywords(fetch, undefined, npmToken, npmBackupRegistry)\n')).toEqual([])
+    // …nor is the declaration, whose parameter list names backupRegistry by
+    // definition. This skip is the one that could swallow a real call, so it
+    // is pinned in both directions: the declaration is dropped, and a call on
+    // the very next line of the same source is still found.
+    const declared = 'export async function searchByKeywords(\n  backupRegistry: string | undefined = undefined,\n) {}\n'
+    expect(searchCalls(declared)).toEqual([])
+    expect(searchCalls(`${declared}await searchByKeywords(fetch)\n`).map(c => c.args)).toEqual([['fetch']])
+  })
+
+  it('withholds the backup argument at every production call site', () => {
+    for (const { file, calls } of searchCallers()) {
+      for (const call of calls) {
+        const passed = call.args[BACKUP_ARGUMENT_INDEX]
+        expect(
+          passed === undefined || passed === 'undefined',
+          `${file}:${call.lineNumber} passes \`${passed}\` as searchByKeywords' backup registry. `
+            + 'registry.npmmirror.com does not implement the `keywords:` qualifier this search '
+            + 'depends on — it answers {"objects":[],"total":0} for both harvest keywords — and a '
+            + 'numeric zero total is not an error: the coverage floor becomes min(0, 0) = 0 and '
+            + 'passes, so a stalled or 5xx npmjs search publishes a ZERO-NAME harvest with a green '
+            + 'build, and the classifier then prunes ~9,000 category rows against that empty name '
+            + 'list. The backup belongs on the PACKUMENT fetch (fetchCandidates), where a mirror '
+            + 'answer is interchangeable because the integrity hash pins it.',
         ).toBe(true)
       }
     }
