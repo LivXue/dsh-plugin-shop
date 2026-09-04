@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { fetchStarCounts, STAR_BATCH_SIZE, STARS_BUDGET_MS, STARS_REQUEST_TIMEOUT_MS } from '../src/github-stars.ts'
+import { headersThenStalledBody } from './stalling-fetch.ts'
 
 const options = { token: 'gh-token' }
 const repo = (i: number) => ({ owner: `owner${i}`, name: `repo${i}` })
@@ -241,5 +242,41 @@ describe('the stars step is bounded in aggregate', () => {
     expect(calls).toBe(5)
     expect(result.stars.size).toBe(250)
     expect(result.skipped).toEqual([])
+  })
+})
+
+describe('a deadline is not a malformed body', () => {
+  // The last of the repo's five body readers still relabelling its own
+  // deadline. npm-client's twin states the rule outright ("A deadline is not a
+  // malformed body... Same rethrow as github-client's twin reader") and
+  // github-client's three readers follow it; this one answered a mid-body
+  // stall with `o/r: unreadable body`, which is a statement about GitHub's
+  // response when the truth is that our clock ran out.
+  //
+  // Impact is small on purpose: build.ts publishes only the COUNT of
+  // `skipped`, so the string reaches no artifact. It is the rule that matters
+  // — the next reader copies whichever of the two shapes it finds.
+
+  it('reports a mid-body stall as a stall, never as an unreadable body', async () => {
+    const started = Date.now()
+    const result = await fetchStarCounts([repo(0)], {
+      ...options, fetchImpl: headersThenStalledBody(), sleep: async (_ms: number) => {}, timeoutMs: 50,
+    })
+    expect(result.stars.size).toBe(0)
+    expect(result.skipped).toHaveLength(1)
+    expect(result.skipped[0]).not.toContain('unreadable body')
+    // The outer catch already says the honest thing, and names our own clock.
+    expect(result.skipped[0]).toContain('owner0/repo0: gateway unreachable')
+    expect(result.skipped[0]).toContain('github graphql request exceeded 50ms')
+    expect(Date.now() - started).toBeLessThan(5000)
+  })
+
+  it('still calls a genuinely malformed body unreadable', async () => {
+    // The other side: a 200 carrying an error page is exactly what "unreadable
+    // body" is for, and the rethrow must not swallow that case too.
+    const fetchImpl = (async () => new Response('<!doctype html>', { status: 200 })) as unknown as typeof fetch
+    const result = await fetchStarCounts([repo(0), repo(1)], { ...options, fetchImpl })
+    expect(result.stars.size).toBe(0)
+    expect(result.skipped).toEqual(['owner0/repo0: unreadable body', 'owner1/repo1: unreadable body'])
   })
 })

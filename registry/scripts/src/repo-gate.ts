@@ -1,7 +1,10 @@
 import { distance } from 'fastest-levenshtein'
 import { isOwnRepo } from './own.ts'
 import { parseCatalogSection } from './schema.ts'
-import { DERIVED_SUMMARY_MAX_LENGTH, SIMILARITY_THRESHOLD, truncateWholeCharacters } from './gate.ts'
+import {
+  DERIVED_SUMMARY_MAX_LENGTH, ENTRY_PAYLOAD_MAX_BYTES, LICENSE_MAX_LENGTH, REPOSITORY_MAX_LENGTH,
+  SIMILARITY_THRESHOLD, entryPayloadBytes, truncateWholeCharacters,
+} from './gate.ts'
 import type { RegistryConfig } from './config.ts'
 import type { CatalogSection, Rejection, RepoCandidate } from './types.ts'
 
@@ -80,6 +83,21 @@ export function gateRepo(
   if (candidate.license === null || candidate.license === '') {
     return reject(unit, 'no-license', 'The repository declares no license.')
   }
+  // `license` and `repository` are the SAME two published fields the npm gate
+  // bounds, so they carry the same bounds and the same sentences: an author
+  // reads one reason whichever channel their listing came from. The values are
+  // GitHub's `license.spdx_id` and a URL built from `meta.fullName` today, so
+  // neither is near its bound — an API shape change is what the bound is for,
+  // and a field bounded on one channel and not the other is a hole with a
+  // published name on it.
+  if (candidate.license.length > LICENSE_MAX_LENGTH) {
+    return reject(unit, 'no-license',
+      `Declares a license string longer than ${LICENSE_MAX_LENGTH} characters, so it is not an SPDX identifier.`)
+  }
+  if (candidate.repository.length > REPOSITORY_MAX_LENGTH) {
+    return reject(unit, 'no-repository',
+      `Declares a repository URL longer than ${REPOSITORY_MAX_LENGTH} characters, so it cannot be audited as a source location.`)
+  }
 
   let catalog: CatalogSection
   let metadata: 'declared' | 'derived'
@@ -123,6 +141,31 @@ export function gateRepo(
             : `Within ${edits} edit(s) of the verified package ${verifiedName}; held for human adjudication.`)
       }
     }
+  }
+
+  // The same per-entry budget the npm gate applies, over this channel's own
+  // untrusted fields and in `assignRepoTier`'s key order, so the measured
+  // bytes are the bytes `emit` will write. A repo entry carries no `peers`,
+  // which is where the npm weight is — but `tarball.url` comes straight from
+  // the GitHub releases API and is bounded nowhere else, and the budget is
+  // what covers whatever field an entry grows next. Last, so that every reason
+  // naming a single field is reported ahead of it.
+  const release = candidate.release
+  const payloadBytes = entryPayloadBytes({
+    name: candidate.name,
+    version: release !== undefined ? release.tag : candidate.commit,
+    integrity: release !== undefined ? release.sha256 : candidate.commit,
+    publishedAt: candidate.publishedAt ?? '',
+    repository: candidate.repository,
+    license: candidate.license,
+    catalog,
+    repo: candidate.repo,
+    ...(candidate.subdir !== undefined ? { subdir: candidate.subdir } : {}),
+    ...(release !== undefined ? { tarball: { url: release.url, sha256: release.sha256 } } : {}),
+  })
+  if (payloadBytes > ENTRY_PAYLOAD_MAX_BYTES) {
+    return reject(unit, 'no-manifest',
+      `Would publish ${payloadBytes} bytes of catalog entry, past the ${ENTRY_PAYLOAD_MAX_BYTES}-byte budget one entry may occupy in plugins.json.`)
   }
 
   return { ok: true, accepted: { repo: candidate, catalog, metadata } }

@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { gate } from '../src/gate.ts'
+import {
+  ENTRY_PAYLOAD_MAX_BYTES, INTEGRITY_MAX_LENGTH, NAME_MAX_LENGTH, PUBLISHED_AT_MAX_LENGTH,
+  PUBLISHER_MAX_LENGTH, VERSION_MAX_LENGTH, gate,
+} from '../src/gate.ts'
 import { parseRegistryConfig } from '../src/config.ts'
 import type { Candidate } from '../src/types.ts'
 
@@ -354,5 +357,200 @@ describe('field length bounds', () => {
   it('accepts a license and a repository at the bounds', () => {
     expect(gate(candidate({ license: 'M'.repeat(128) }), config).ok).toBe(true)
     expect(gate(candidate({ repository: `https://h/${'x'.repeat(502)}` }), config).ok).toBe(true)
+  })
+})
+
+describe('the identity and provenance fields npm hands us', () => {
+  // `name`, `version`, `integrity`, `publishedAt` and `publisher` are taken
+  // from the packument verbatim and reach plugins.json, manifest.lock,
+  // first-seen.yml (committed and pushed) and report.md. Nothing bounded them:
+  // Task 7 set out to bound "every free-text field that reaches a published
+  // artifact" and its Produces list simply never named these five.
+  //
+  // Each bound lives in the gate rather than in `toCandidate`, for the reason
+  // the license bound already states: nulling the field in the projection
+  // would publish "Declares no license." about a package that declared a
+  // megabyte one, and a misattributed published reason is a defect.
+
+  it('states each bound as a literal, so a fixture cannot follow the value it tests', () => {
+    expect(NAME_MAX_LENGTH).toBe(214)
+    expect(VERSION_MAX_LENGTH).toBe(128)
+    expect(INTEGRITY_MAX_LENGTH).toBe(256)
+    expect(PUBLISHED_AT_MAX_LENGTH).toBe(64)
+    expect(PUBLISHER_MAX_LENGTH).toBe(128)
+  })
+
+  it('rejects an over-long package name and does not republish it in the row', () => {
+    // The rejection's own `name` is what report.md prints, so an unbounded
+    // name would put its megabyte into the published report by way of the
+    // rejection that was meant to stop it. Checked FIRST in the gate for
+    // exactly that reason: every later rejection then carries a bounded name.
+    const name = `dsh-${'n'.repeat(300)}`
+    const result = gate(candidate({ name }), config)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.rejection.code).toBe('no-manifest')
+    expect(result.rejection.detail).toBe(
+      "Declares a package name longer than 214 characters, which is past npm's own limit, so it cannot be listed; the name in this row is cut to that length.")
+    expect(result.rejection.name.length).toBeLessThanOrEqual(NAME_MAX_LENGTH + 1)
+    expect(result.rejection.name.startsWith('dsh-nnn')).toBe(true)
+  })
+
+  it("accepts a package name exactly at npm's own limit", () => {
+    expect(gate(candidate({ name: 'd'.repeat(NAME_MAX_LENGTH) }), config).ok).toBe(true)
+  })
+
+  it('rejects an over-long version with a reason about its length', () => {
+    const result = gate(candidate({ version: `1.0.0-${'b'.repeat(200)}` }), config)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.rejection.code).toBe('no-manifest')
+    expect(result.rejection.detail).toBe(
+      'Declares a version string longer than 128 characters, so it is not a version the snapshot can record.')
+  })
+
+  it('rejects an over-long dist.integrity under the integrity code', () => {
+    // Not `no-manifest`: npm's own no-integrity rejection already says "cannot
+    // be recorded in the snapshot", and this is the same failure by another
+    // route, so it reads under the same code.
+    const result = gate(candidate({ integrity: `sha512-${'A'.repeat(300)}` }), config)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.rejection.code).toBe('no-integrity')
+    expect(result.rejection.detail).toBe(
+      "The published version's dist.integrity is longer than 256 characters, so it cannot be recorded in the snapshot.")
+  })
+
+  it('rejects an over-long publication time under the publish-time code', () => {
+    const result = gate(candidate({ publishedAt: `2026-08-01T12:00:00.000Z${' '.repeat(80)}` }), config)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.rejection.code).toBe('no-publish-time')
+    expect(result.rejection.detail).toBe(
+      'npm reports a publication time longer than 64 characters, which is not a timestamp.')
+  })
+
+  it('rejects an over-long publisher rather than publishing the provenance claim', () => {
+    // `publisher` is the registry's own statement of who pushed this version —
+    // provenance, not decoration (see Candidate.publisher for why it is not
+    // `author`). A value that cannot be an account name is a provenance claim
+    // we will not republish, and the gate cannot drop the field on its own:
+    // assignTier reads candidate.publisher directly.
+    const result = gate(candidate({ publisher: 'p'.repeat(129) }), config)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.rejection.code).toBe('no-manifest')
+    expect(result.rejection.detail).toBe(
+      'Names a publishing account longer than 128 characters, which is not an npm account name.')
+  })
+
+  it('accepts every one of the five at its bound', () => {
+    // The other side of each bound. A bound wired one character low would pass
+    // every rejection test above and quietly stop listing real packages.
+    expect(gate(candidate({ name: 'd'.repeat(NAME_MAX_LENGTH) }), config).ok, 'name').toBe(true)
+    expect(gate(candidate({ version: '1'.repeat(VERSION_MAX_LENGTH) }), config).ok, 'version').toBe(true)
+    expect(gate(candidate({ integrity: 'i'.repeat(INTEGRITY_MAX_LENGTH) }), config).ok, 'integrity').toBe(true)
+    expect(gate(candidate({ publishedAt: 'p'.repeat(PUBLISHED_AT_MAX_LENGTH) }), config).ok, 'publishedAt').toBe(true)
+    expect(gate(candidate({ publisher: 'p'.repeat(PUBLISHER_MAX_LENGTH) }), config).ok, 'publisher').toBe(true)
+  })
+
+  it('leaves a package that names no publisher alone', () => {
+    // Absent stays absent: the bound must not turn a missing field into a
+    // rejection or into an empty string.
+    const result = gate(candidate({ publisher: undefined }), config)
+    expect(result.ok).toBe(true)
+  })
+})
+
+describe('the per-entry size budget', () => {
+  // Every field above is bounded on its own, and their PRODUCT was the
+  // ceiling: against the peer bounds this budget was written to answer (200
+  // names x 214 characters) one npm entry cost 49,055 bytes of plugins.json,
+  // 44.2 KiB of it `peers`. Against the live catalog (3,514 npm + 5,908 github
+  // entries, 7.51 MB, 797 B average) that put the aggregate ceiling at ~186 MiB
+  // and let 100 hostile packages add 4.7 MB to a 7.2 MB file. The peer bounds
+  // have since been cut to 128 x 128 (peers block 17,959 bytes, entry 21,775),
+  // which is still 1.46x this budget on the peers alone — the budget, not the
+  // peer bounds, is what caps the total instead of each part.
+  //
+  // Deliberately NOT jointly satisfiable with the per-field bounds: the field
+  // bounds say what one value may look like, the budget says what the whole
+  // entry may cost, and a package that maxes out every field at once is
+  // refused. That is the point of having both.
+
+  const peers = (count: number, length: number): string[] =>
+    Array.from({ length: count }, (_, i) => `${String(i).padStart(4, '0')}${'p'.repeat(length - 4)}`)
+
+  it('states the budget as a literal', () => {
+    expect(ENTRY_PAYLOAD_MAX_BYTES).toBe(12 * 1024)
+  })
+
+  it('rejects an entry whose published payload is past the budget', () => {
+    // The shape the risk actually has today: `peers` was bounded at 200 names
+    // of 214 characters, 12x the live maximum of 58 names of 50 characters.
+    const result = gate(candidate({ peers: peers(200, 214) }), config)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.rejection.code).toBe('no-manifest')
+    expect(result.rejection.detail).toBe(
+      'Would publish 45620 bytes of catalog entry, past the 12288-byte budget one entry may occupy in plugins.json.')
+  })
+
+  it('accepts the worst entry the live catalog could hold', () => {
+    // Every maximum measured against the live published catalog on 2026-09-04,
+    // all in ONE entry — they are independent observations, so this entry
+    // almost certainly does not exist, and it is the ceiling of what the data
+    // could hold. It measures 6,261 bytes against a 12,288-byte budget, so
+    // the budget drops nothing that is listed today.
+    //
+    // capability item 14, license 37, repository 108, summary.en 200 code
+    // units / 599 UTF-8 bytes, peer name 50, peers count 58. The summaries are
+    // CJK, which is where the 599 bytes come from: the budget counts UTF-8
+    // bytes, because that is what a reader downloads.
+    const summary = `${'中'.repeat(199)}x`
+    const result = gate(candidate({
+      name: 'd'.repeat(214),
+      version: '1.0.0-rc.1+build.20260904',
+      integrity: `sha512-${'A'.repeat(88)}`,
+      publishedAt: '2026-09-04T12:00:00.000Z',
+      repository: `https://github.com/an-organization/${'r'.repeat(73)}`,
+      license: 'l'.repeat(37),
+      publisher: 'p'.repeat(50),
+      peers: peers(58, 50),
+      catalog: {
+        category: 'tool',
+        summary: { en: summary, zh: summary },
+        capabilities: Array.from({ length: 20 }, () => 'c'.repeat(14)),
+      },
+    }), config)
+    expect(result.ok).toBe(true)
+  })
+
+  it('reports the size only after every reason that names a field', () => {
+    // A hostile package that is over budget AND missing a license reads the
+    // license reason: the specific answer helps the author, the size does not.
+    const result = gate(candidate({ peers: peers(200, 214), license: null }), config)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.rejection.code).toBe('no-license')
+  })
+
+  it('counts UTF-8 bytes, not code units', () => {
+    // A three-byte character costs a reader three bytes, so that is what the
+    // budget counts. 100 peer names of 48 characters, 44 of them CJK, weigh
+    // 15,220 UTF-8 bytes and 6,439 code units: over the budget by the true
+    // measure and half of it by the wrong one. A budget counting code units
+    // would let a CJK entry occupy three times what it may.
+    const cjkPeers = Array.from({ length: 100 }, (_, i) => `${String(i).padStart(4, '0')}${'中'.repeat(44)}`)
+    const result = gate(candidate({ peers: cjkPeers }), config)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.rejection.code).toBe('no-manifest')
+    expect(result.rejection.detail).toBe(
+      'Would publish 15220 bytes of catalog entry, past the 12288-byte budget one entry may occupy in plugins.json.')
+    // The arithmetic the claim rests on, stated rather than assumed: measured
+    // in code units the same payload is well inside the budget, so a budget
+    // reading `String.length` would have accepted it.
+    expect(JSON.stringify({ plugins: [{ peers: cjkPeers }] }, null, 2).length).toBeLessThan(ENTRY_PAYLOAD_MAX_BYTES)
   })
 })

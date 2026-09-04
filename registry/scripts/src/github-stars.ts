@@ -7,7 +7,7 @@
  * @module github-stars
  */
 
-import { withTimeout } from './npm-client.ts'
+import { FetchTimeoutError, withTimeout } from './npm-client.ts'
 
 export const STAR_BATCH_SIZE = 50
 
@@ -130,7 +130,15 @@ export async function fetchStarCounts(
         // `.errors`/`.data` to read; default to an empty object so the access
         // below cannot throw (spec D4 — every failure mode stays in `skipped`).
         if (parsed !== null && typeof parsed === 'object') body = parsed as typeof body
-      } catch {
+      } catch (error) {
+        // A deadline is not a malformed body. `unreadable body` is a statement
+        // about GitHub's response, and a mid-body stall is a statement about
+        // our own clock; rethrown, it lands in this batch's outer catch with
+        // every other transport failure and reports `gateway unreachable:
+        // github graphql request exceeded <n>ms`, which is true. The same
+        // rethrow npm-client's search reader and github-client's three readers
+        // already carry — the rule, not a special case for stars.
+        if (error instanceof FetchTimeoutError) throw error
         // A 200 whose body is not JSON: the batch has no readable counts.
         for (const r of batch) skipped.push(`${r.owner}/${r.name}: unreadable body`)
         continue

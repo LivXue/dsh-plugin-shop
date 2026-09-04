@@ -194,6 +194,61 @@ describe('runPipeline', () => {
     expect(report).toContain('| dsh-hostile-plugin | no-license |')
     expect(pluginsJson.length).toBeLessThan(64 * 1024)
   })
+
+  it('keeps plugins.json bounded when every field is legal and the ENTRY is not', () => {
+    // The case a per-field bound cannot see. Each value below is inside its
+    // own limit -- `peers` is exactly what toCandidate admits today, 200 names
+    // of 214 characters -- and the entry still costs 45,608 bytes of a file
+    // whose live average entry is 797 B. 100 such packages added 4.7 MB to a
+    // 7.2 MB file, and against the live catalog (3,514 npm + 5,908 github)
+    // the aggregate ceiling was ~186 MiB. The entry budget is what caps that;
+    // this pins it through the real gate -> assignTier -> emit path rather
+    // than at the gate's own return value.
+    const HOSTILE = 100
+    const bloated = Array.from({ length: HOSTILE }, (_, n): Candidate => ({
+      name: `dsh-bloat-${String(n).padStart(3, '0')}`,
+      version: '1.0.0',
+      integrity: 'sha512-x',
+      publishedAt: '2026-08-01T12:00:00.000Z',
+      repository: 'https://github.com/you/bloat',
+      license: 'MIT',
+      deprecated: false,
+      hasBundle: true,
+      catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
+      description: 'A bloated plugin.',
+      keywords: [],
+      peers: Array.from({ length: 200 }, (_, i) => `${String(i).padStart(4, '0')}${'p'.repeat(210)}`),
+    }))
+    // first-seen rows for all of them, so that WITHOUT the budget this test
+    // fails on the size rather than on assignTier throwing before a byte of
+    // plugins.json exists. With the budget they are rejected and never read.
+    const withBloatRows = parseRegistryConfig({
+      verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: github:r\n  reviewCommit: abc\n  notes: fine\n',
+      denied: '[]',
+      allowedSimilar: '[]',
+      categories: '[]',
+      firstSeen: [
+        '- name: dsh-fs-tool',
+        '  added: 2026-08-10',
+        '- name: dsh-hello-plugin',
+        '  added: 2026-08-11',
+        '- name: dsh-derived-plugin',
+        '  added: 2026-08-12',
+        ...bloated.flatMap(c => [`- name: ${c.name}`, '  added: 2026-08-15']),
+      ].join('\n') + '\n',
+    })
+    const clean = runPipeline(candidates, [], config, BUILT_AT)
+    const { pluginsJson, report } = runPipeline([...candidates, ...bloated], [], withBloatRows, BUILT_AT)
+    const listed = (JSON.parse(pluginsJson) as { plugins: { name: string }[] }).plugins.map(p => p.name)
+    expect(listed.filter(n => n.startsWith('dsh-bloat-'))).toEqual([])
+    // Not one byte of the 4.5 MB reaches the file: the catalog is the clean
+    // one, exactly.
+    expect(pluginsJson).toBe(clean.pluginsJson)
+    // Every one of them is named in the report with an author-readable reason,
+    // because nothing disappears without a reason attached to its name.
+    expect(report).toContain('| dsh-bloat-000 | no-manifest | Would publish 45608 bytes of catalog entry, past the 12288-byte budget one entry may occupy in plugins.json. |')
+    expect(report.match(/\| dsh-bloat-\d\d\d \| no-manifest \|/g)).toHaveLength(HOSTILE)
+  })
 })
 
 describe('runPipeline with repository candidates', () => {
