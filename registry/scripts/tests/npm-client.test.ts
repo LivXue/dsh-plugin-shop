@@ -2,8 +2,9 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, MAX_SEARCH_FROM, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
+import { FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
 import { ENTRY_PAYLOAD_MAX_BYTES, entryPayloadBytes } from '../src/gate.ts'
+import { MAX_TARBALL_BYTES } from '../src/github-client.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
 
 describe('HARVEST_KEYWORDS', () => {
@@ -1999,5 +2000,78 @@ describe('a deadline is never relabelled as a malformed body', () => {
       .rejects.toThrow('exceeded 30000ms')
     await expect(searchByKeywords(fetchImpl, async (_ms: number) => {}, undefined, undefined, 50))
       .rejects.not.toThrow('not JSON')
+  })
+})
+
+describe('body bounds', () => {
+  const sleep = async (_ms: number) => {}
+  // The github half caps every body it reads (MAX_TARBALL_BYTES,
+  // MAX_MANIFEST_BYTES); the npm half capped nothing. `response.json()`
+  // buffers whatever the origin sends before any of our code sees a byte, and
+  // the origin is not always npm: fetchWithFailover serves a
+  // NPM_BACKUP_REGISTRY answer — registry.npmmirror.com by default — whenever
+  // the primary throws, stalls or 5xxs, and a run fetches one packument per
+  // harvested name.
+  const packument = {
+    name: 'dsh-hello-plugin',
+    'dist-tags': { latest: '1.2.0' },
+    time: { '1.2.0': '2026-08-01T12:00:00.000Z' },
+    versions: { '1.2.0': { dist: { integrity: 'sha512-hello' }, license: 'MIT', repository: 'https://github.com/o/r', dsh: { bundle: {} } } },
+  }
+
+  it('refuses a search page whose content-length exceeds the cap, before reading the body', async () => {
+    let requested = false
+    const fetchImpl = (async () => {
+      requested = true
+      return new Response('{"objects":[],"total":0}', {
+        status: 200,
+        headers: { 'content-length': String(MAX_SEARCH_BODY_BYTES + 1) },
+      })
+    }) as unknown as typeof fetch
+    await expect(searchByKeywords(fetchImpl, sleep)).rejects.toThrow(new RegExp(String(MAX_SEARCH_BODY_BYTES)))
+    expect(requested).toBe(true) // the request happened; the BODY did not
+  })
+
+  it('refuses a streamed search page that exceeds the cap mid-download', async () => {
+    // No content-length, so only the count taken off the bytes as they arrive
+    // can stop it — the same reason github's reader measures the stream rather
+    // than trusting the header. The stream never ends on its own: without the
+    // cap this test hangs instead of failing.
+    const chunk = new Uint8Array(1024 * 1024)
+    const fetchImpl = (async () => new Response(new ReadableStream({
+      pull(controller) { controller.enqueue(chunk) },
+    }), { status: 200 })) as unknown as typeof fetch
+    await expect(searchByKeywords(fetchImpl, sleep)).rejects.toThrow(new RegExp(String(MAX_SEARCH_BODY_BYTES)))
+  })
+
+  it('turns an over-cap packument into a rejection naming the package, not a crash', async () => {
+    // Asymmetric with the search on purpose: a packument the build cannot read
+    // is one package, and nothing disappears without a reason attached to its
+    // name. A search page that cannot be read is the whole candidate set.
+    const fetchImpl = (async () => new Response(JSON.stringify(packument), {
+      status: 200,
+      headers: { 'content-length': String(MAX_PACKUMENT_BYTES + 1) },
+    })) as unknown as typeof fetch
+    const result = await fetchCandidate('dsh-enormous', fetchImpl, sleep)
+    expect(result.ok).toBe(false)
+    expect(!result.ok && result.detail).toContain('dsh-enormous')
+    expect(!result.ok && result.detail).toContain(String(MAX_PACKUMENT_BYTES))
+  })
+
+  it('still reads a packument under the cap', async () => {
+    const fetchImpl = (async () => new Response(JSON.stringify(packument), { status: 200 })) as unknown as typeof fetch
+    const result = await fetchCandidate('dsh-hello-plugin', fetchImpl, sleep)
+    expect(result.ok).toBe(true)
+    expect(result.ok && result.candidate.version).toBe('1.2.0')
+  })
+
+  it('caps a search page below a packument, and a packument below a tarball', () => {
+    // The relationship is the justification: a search page carries size=250
+    // objects of registry metadata (~500 KB live), a packument may legitimately
+    // be large, and neither may approach the 32 MB a tarball is allowed.
+    expect(MAX_SEARCH_BODY_BYTES).toBeLessThan(MAX_PACKUMENT_BYTES)
+    expect(MAX_SEARCH_BODY_BYTES).toBe(8 * 1024 * 1024)
+    expect(MAX_PACKUMENT_BYTES).toBe(16 * 1024 * 1024)
+    expect(MAX_PACKUMENT_BYTES).toBeLessThan(MAX_TARBALL_BYTES)
   })
 })

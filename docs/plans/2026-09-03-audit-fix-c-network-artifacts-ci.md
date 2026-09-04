@@ -1125,6 +1125,45 @@ git commit -m "fix(harvest): an incomplete enumeration prunes nothing and report
 
 ### Task 6: Catch the search body's parse, and cap every JSON body
 
+> **Outcome: first half ALREADY DONE by plan A; second half SHIPPED, but by
+> extracting the existing reader rather than writing the third copy this task
+> asks for.** Verified 2026-09-04.
+>
+> **Catching the search body's parse** is done: `npm-client.ts`'s own
+> `readSearchBody` names the keyword and the `from`, rethrows a
+> `FetchTimeoutError` untouched because a deadline is not a malformed body, and
+> separately refuses a body that parses but is not a search response (a bare
+> `null` satisfies the cast structurally). Its wording is `at from=0 ... not a
+> search response`, not this task's `page 0 ... unreadable`; an existing test
+> pins it, so the sentences below are stale and were not applied.
+>
+> **The caps were genuinely missing**, and the asymmetry was as described:
+> github-client capped every body it read while npm-client capped none, across
+> one packument per harvested name plus every search page — and
+> `fetchWithFailover` serves those from `NPM_BACKUP_REGISTRY`,
+> registry.npmmirror.com by default, whenever the primary throws, stalls or
+> 5xxs. `MAX_SEARCH_BODY_BYTES` (8 MB, throws) and `MAX_PACKUMENT_BYTES`
+> (16 MB, a `fetch-failed` row) shipped with the split consequence this task
+> argued for.
+>
+> **What changed from the plan:** Step 3 says to write `readJsonCapped` with
+> the "Same shape as `readTarballBody` in github-client.ts". That reader's own
+> doc comment is an argument against doing so: *"It is shared rather than
+> written twice because the two readers had already drifted apart in the way
+> that matters"* — one cancelled at the cap while the other bought the whole
+> body and then measured it. A third copy would repeat the mistake the comment
+> records. `readCappedBody` moved to `http-body.ts` instead and both clients
+> import it; `readJsonCapped` is a thin JSON wrapper over it. The plan's
+> content-length check survives as an early refusal only, never the
+> measurement — a compressed body's header understates what it decodes to,
+> which is the same reason the github reader counts bytes as they arrive.
+>
+> The guard test that enforces this got stronger rather than weaker: it was
+> anchored to `github-client.ts` and would have gone green the moment the
+> reader left that file, while npm-client — the module that had never capped
+> anything — was never scanned at all. It now scans every module that reads a
+> body. Both directions are mutation-checked.
+
 **Files:**
 - Modify: `registry/scripts/src/npm-client.ts` (new constants and `readJsonCapped` after `fetchWithRetry` at line 160; `searchByKeywords:301`; `fetchCandidate:342-349`)
 - Test: `registry/scripts/tests/npm-client.test.ts`

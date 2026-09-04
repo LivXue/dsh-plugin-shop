@@ -20,6 +20,7 @@ import { FetchTimeoutError, fetchWithRetry, withTimeout } from './npm-client.ts'
 import { diffRepoState, nextRepoState, type RepoSeen, type RepoState } from './repo-state.ts'
 import { hasWorkspaceDeps, monorepoSignal, selectSubpackagePaths } from './subpackage-select.ts'
 import type { RepoCandidate } from './types.ts'
+import { readCappedBody } from './http-body.ts'
 
 const GITHUB_API = 'https://api.github.com'
 const RAW_GITHUB = 'https://raw.githubusercontent.com'
@@ -703,60 +704,6 @@ async function fetchLatestReleaseTarball(
   }
 }
 
-/**
- * Read a response body with a hard BYTE cap, returning null the moment it
- * exceeds `cap`. The one body reader in this module, and the one place either
- * cap is enforced.
- *
- * It is shared rather than written twice because the two readers had already
- * drifted apart in the way that matters: this loop, written for the tarball,
- * cancels as soon as the cap trips, while the manifest's `await
- * response.text()` buffered the WHOLE decompressed body and then measured it.
- * `content-length` cannot stand in for the measurement — on
- * raw.githubusercontent.com it is the gzip-compressed size, so a manifest
- * whose header says 744 bytes can decode to a gigabyte — which is why the
- * count that decides is the one taken here, off the bytes as they arrive.
- * @param response - an `ok` response whose body is to be read.
- * @param cap - the largest body, in bytes, the caller will hold.
- * @returns the bytes, or null when the body is larger than `cap`.
- */
-async function readCappedBody(response: Response, cap: number): Promise<Uint8Array | null> {
-  const body = response.body
-  if (body == null) {
-    // No readable stream (or a fixture that only fakes `arrayBuffer`): one
-    // shot, then measured. A throw here belongs to the caller — the tarball
-    // probe degrades to null, readManifest calls it an unreadable body — so it
-    // is deliberately not swallowed at this level, which would leave neither
-    // of them able to tell "empty" from "broken".
-    const bytes = new Uint8Array(await response.arrayBuffer())
-    return bytes.byteLength > cap ? null : bytes
-  }
-  const reader = body.getReader()
-  const chunks: Uint8Array[] = []
-  let total = 0
-  try {
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      total += value.byteLength
-      if (total > cap) {
-        // Stop pulling the rest of the body: over the cap, refuse.
-        await reader.cancel()
-        return null
-      }
-      chunks.push(value)
-    }
-  } finally {
-    reader.releaseLock()
-  }
-  const bytes = new Uint8Array(total)
-  let offset = 0
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-  return bytes
-}
 
 /**
  * Read an asset body with a hard cap, returning null when it exceeds

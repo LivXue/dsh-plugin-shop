@@ -2311,10 +2311,26 @@ describe('a subpackage path is bounded before it is published', () => {
 // it, rather than quietly covering a line it was never reasoned about.
 // ---------------------------------------------------------------------------
 
-const githubClientSource = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'github-client.ts'),
-  'utf8',
-)
+function srcOf(file: string): string {
+  return readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', file), 'utf8')
+}
+
+const githubClientSource = srcOf('github-client.ts')
+
+/**
+ * The scan covers every module that reads a response body, not just this one.
+ * `readCappedBody` moved to http-body.ts when the npm half needed the same
+ * bound, and a check anchored to one file would have gone green the moment the
+ * reader left it — while npm-client, which had never capped anything, stayed
+ * unscanned the whole time.
+ */
+const SCANNED_SOURCES: readonly { file: string; source: string }[] = [
+  { file: 'github-client.ts', source: githubClientSource },
+  { file: 'npm-client.ts', source: srcOf('npm-client.ts') },
+  { file: 'http-body.ts', source: srcOf('http-body.ts') },
+]
+
+const httpBodySource = srcOf('http-body.ts')
 
 interface ExcusedBodyRead {
   readonly snippet: string
@@ -2409,8 +2425,10 @@ function findBodyReads(source: string): LogicalLine[] {
     .filter(line => /\.\s*(?:json|text|arrayBuffer|blob|bytes|formData|getReader)\s*\(\s*\)/.test(line.text))
 }
 
-describe('every response body read in github-client.ts is capped or excused', () => {
-  const region = functionRegion(githubClientSource, 'readCappedBody')
+describe('every response body read in a network client is capped or excused', () => {
+  const region = functionRegion(httpBodySource, 'readCappedBody')
+  const inReader = (file: string, lineNumber: number) =>
+    file === 'http-body.ts' && lineNumber >= region.first && lineNumber <= region.last
 
   it('locates readCappedBody, so the region check cannot pass by excusing everything', () => {
     expect(region.first).toBeGreaterThan(0)
@@ -2419,24 +2437,30 @@ describe('every response body read in github-client.ts is capped or excused', ()
 
   it('finds the reads at all, so the scan cannot pass by matching nothing', () => {
     // Without this, a regex that stops matching turns the exhaustiveness check
-    // below into a loop over an empty list — green, and guarding nothing.
-    const reads = findBodyReads(githubClientSource)
-    expect(reads.length).toBeGreaterThanOrEqual(EXCUSED_BODY_READS.length + 1)
-    expect(reads.some(r => r.lineNumber >= region.first && r.lineNumber <= region.last)).toBe(true)
+    // below into a loop over an empty list — green, and guarding nothing. Both
+    // halves have to be non-empty: the reader must still contain the reads it
+    // exists to own, and the clients must still contain the excused ones.
+    expect(findBodyReads(httpBodySource).some(r => inReader('http-body.ts', r.lineNumber))).toBe(true)
+    const clientReads = SCANNED_SOURCES
+      .filter(s => s.file !== 'http-body.ts')
+      .flatMap(s => findBodyReads(s.source))
+    expect(clientReads.length).toBeGreaterThanOrEqual(EXCUSED_BODY_READS.length)
   })
 
-  it('is inside readCappedBody, or an excused non-manifest read, for every one of them', () => {
-    for (const read of findBodyReads(githubClientSource)) {
-      if (read.lineNumber >= region.first && read.lineNumber <= region.last) continue
-      const excused = EXCUSED_BODY_READS.some(e => read.text.includes(e.snippet.replace(/\s+/g, ' ')))
-      expect(
-        excused,
-        `github-client.ts:${read.lineNumber} reads a response body outside readCappedBody `
-          + `(lines ${region.first}-${region.last}). A body carrying repository-authored bytes — a `
-          + 'manifest, a release tarball — must go through readCappedBody, which is where the byte '
-          + 'cap is enforced and where an over-cap body is cancelled rather than bought; anything '
-          + `else needs a reasoned entry in EXCUSED_BODY_READS saying why. Line: ${read.text}`,
-      ).toBe(true)
+  it('is inside readCappedBody, or an excused read, for every one of them', () => {
+    for (const { file, source } of SCANNED_SOURCES) {
+      for (const read of findBodyReads(source)) {
+        if (inReader(file, read.lineNumber)) continue
+        const excused = EXCUSED_BODY_READS.some(e => read.text.includes(e.snippet.replace(/\s+/g, ' ')))
+        expect(
+          excused,
+          `${file}:${read.lineNumber} reads a response body outside readCappedBody `
+            + `(http-body.ts:${region.first}-${region.last}). A body carrying third-party bytes — a `
+            + 'manifest, a release tarball, a packument, a search page — must go through readCappedBody, '
+            + 'which is where the byte cap is enforced and where an over-cap body is cancelled rather '
+            + `than bought; anything else needs a reasoned entry in EXCUSED_BODY_READS saying why. Line: ${read.text}`,
+        ).toBe(true)
+      }
     }
   })
 
@@ -2446,8 +2470,8 @@ describe('every response body read in github-client.ts is capped or excused', ()
     // line happened to contain that text next.
     for (const excused of EXCUSED_BODY_READS) {
       expect(
-        githubClientSource.includes(excused.snippet),
-        'EXCUSED_BODY_READS carries a snippet that is no longer in github-client.ts, so its reason '
+        SCANNED_SOURCES.some(s => s.source.includes(excused.snippet)),
+        'EXCUSED_BODY_READS carries a snippet that is no longer in any scanned module, so its reason '
           + `("${excused.reason}") no longer applies to anything: ${excused.snippet}`,
       ).toBe(true)
     }
