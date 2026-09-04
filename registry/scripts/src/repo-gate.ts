@@ -59,7 +59,15 @@ export function gateRepo(
   // Denied by repo or by bundle name. `owner/slug` strings cannot collide
   // with npm package names (unscoped names carry no slash), so one map holds
   // both keyspaces.
-  const denial = config.denied.get(candidate.repo) ?? config.denied.get(candidate.name)
+  //
+  // The repo side is case-folded, matching `own.ts` and `github-repo.ts`:
+  // GitHub resolves repository names case-insensitively, so a denial written
+  // in one case must catch every spelling of the same repository. The bundle
+  // name is matched as written — an npm name is a distinct string — and a
+  // mistyped name denial is caught by the matched-nothing report line instead
+  // (E-5, Task 17).
+  const denial = config.deniedRepos.get(candidate.repo.toLowerCase())
+    ?? config.denied.get(candidate.name)
   if (denial !== undefined) {
     const suffix = denial.replacement === undefined ? '' : ` Known replacement: ${denial.replacement}.`
     return reject(unit, 'denied', `Denied by the registry: ${denial.reason}${suffix}`, denial.replacement)
@@ -155,8 +163,13 @@ export function gateRepo(
   const slug = candidate.repo.split('/')[1] ?? candidate.repo
   if (!config.verified.has(repoKey) && !config.allowedSimilarRepos.has(repoKey)) {
     for (const verifiedName of config.verifiedNames) {
-      for (const probe of [slug, candidate.name]) {
-        const edits = distance(probe, verifiedName)
+      // Folded on both sides: a repository whose manifest name is
+      // `DSH-FS-TOOL` sat nine edits — one per changed letter — from verified
+      // `dsh-fs-tool` and sailed past a threshold of 2. The detail still
+      // quotes the verified name as the reviewer wrote it.
+      const target = verifiedName.toLowerCase()
+      for (const probe of [slug.toLowerCase(), candidate.name.toLowerCase()]) {
+        const edits = distance(probe, target)
         if (edits > SIMILARITY_THRESHOLD) continue
         return reject(unit, 'name-too-similar',
           edits === 0

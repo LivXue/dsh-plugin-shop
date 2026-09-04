@@ -425,3 +425,55 @@ describe('the hold and the reviewed identity', () => {
     expect(sub.ok, sub.ok ? '' : sub.rejection.detail).toBe(true)
   })
 })
+
+describe('case folding on the GitHub channel', () => {
+  it('matches a repo denial whatever case the repository is spelled in', () => {
+    // GitHub resolves repository names case-insensitively, so `Someone/x` and
+    // `someone/x` are one repository — and a denial that misses one of the
+    // two spellings fails open.
+    const denied = parseRegistryConfig({
+      verified: '[]',
+      denied: '- name: someone/dsh-repo-plugin\n  reason: known bad actor\n',
+      allowedSimilar: '[]',
+      categories: '[]',
+      firstSeen: '[]',
+    })
+    const result = gateRepo(repo({ repo: 'Someone/dsh-repo-plugin' }), denied)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.rejection.code).toBe('denied')
+      expect(result.rejection.detail).toBe('Denied by the registry: known bad actor')
+    }
+  })
+
+  it('holds an uppercase bundle name that folds onto a verified name', () => {
+    // Plain Levenshtein puts DSH-FS-TOOL nine edits from dsh-fs-tool — one
+    // per changed letter — so the hold never saw it.
+    const result = gateRepo(repo({ repo: 'someone/anything', name: 'DSH-FS-TOOL' }), config)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.rejection.code).toBe('name-too-similar')
+  })
+
+  it('holds an uppercase slug that folds onto a verified name', () => {
+    const result = gateRepo(repo({ repo: 'someone/DSH-FS-TOOL', name: 'something-else' }), config)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.rejection.code).toBe('name-too-similar')
+  })
+
+  it('holds a lowercase lookalike of a verified name that is itself uppercase', () => {
+    // The fold is needed on the VERIFIED side too, not just the probe. npm
+    // still serves legacy uppercase names and Task 3's grammar admits them on
+    // purpose, so a review can name `DSH-Legacy` — and `dsh-legacy` sits four
+    // substitutions away from it unfolded, clear of a threshold of 2.
+    const upper = parseRegistryConfig({
+      verified: '- name: DSH-Legacy\n  reviewedVersion: 1.0.0\n  reviewer: r\n  reviewCommit: c\n',
+      denied: '[]',
+      allowedSimilar: '[]',
+      categories: '[]',
+      firstSeen: '[]',
+    })
+    const result = gateRepo(repo({ repo: 'someone/dsh-legacy', name: 'something-else' }), upper)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.rejection.code).toBe('name-too-similar')
+  })
+})
