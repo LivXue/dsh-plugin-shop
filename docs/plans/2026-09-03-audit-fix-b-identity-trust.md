@@ -3565,6 +3565,21 @@ Read the printed `dependencies`:
 
 Record the exact printed line under this task before going on.
 
+**Outcome: CONFIRMED (run 2026-09-04, pnpm 11.13.0).** The packed manifest printed:
+
+```json
+  "dependencies": {
+    "repro-lib": "^1.0.0"
+  },
+```
+
+The `workspace:` prefix is gone — `pnpm pack` resolved it. The second half of
+the premise was verified in the source rather than assumed:
+`fetchLatestReleaseTarball` reads `body.assets[].browser_download_url` and
+nothing else, and `tarball_url` / `zipball_url` appear **zero** times in
+`github-client.ts`, so the rescued artifact is author-uploaded pack output and
+never GitHub's auto-generated source snapshot. Steps 2-4 were executed.
+
 - [ ] **Step 2: Write the failing test (only if CONFIRMED)**
 
 Append to `registry/scripts/tests/repo-gate.test.ts`:
