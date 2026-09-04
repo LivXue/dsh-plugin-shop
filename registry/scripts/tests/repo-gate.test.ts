@@ -502,3 +502,43 @@ describe('the no-bundle detail names the file the author must fix', () => {
     }
   })
 })
+
+describe('workspace deps and the release rescue', () => {
+  it('still rejects a git-installed repository with workspace: dependencies', () => {
+    const result = gateRepo(repo({ hasWorkspaceDeps: true }), config)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.rejection.code).toBe('workspace-deps')
+      expect(result.rejection.detail).toContain('a git install from outside it cannot succeed')
+      // All three exits, because the tarball one is the point of this change:
+      // an author reads this string to find out what to do, and a clause
+      // nothing asserts can be dropped without a test noticing.
+      expect(result.rejection.detail).toContain('Publish the package to npm')
+      expect(result.rejection.detail).toContain('attach a packed release tarball')
+      expect(result.rejection.detail).toContain('drop the workspace: specifiers')
+    }
+  })
+
+  it('accepts a release-rescued repository whose SOURCE manifest has workspace: deps', () => {
+    // B-11, reproduced 2026-09-04 with pnpm 11.13.0: `pnpm pack` rewrites
+    // `workspace:^1.0.0` to `^1.0.0` in the packed manifest, and a
+    // release-rescued entry installs that tarball, never the git ref. The old
+    // rejection told the author a git install would fail — for an entry that
+    // performs no git install. The rescue reads assets[].browser_download_url
+    // only (tarball_url and zipball_url appear nowhere), so the artifact is
+    // pack output rather than GitHub's source snapshot, which is what makes
+    // the rewrite apply. A sibling that is genuinely unpublished is still an
+    // honest install-time failure the executor reports verbatim, which is the
+    // same posture the github-channel design takes for transitive postinstall
+    // scripts (§4, item 2b).
+    const result = gateRepo(repo({
+      hasWorkspaceDeps: true,
+      release: {
+        tag: 'v1.0.0',
+        url: 'https://github.com/someone/dsh-repo-plugin/releases/download/v1.0.0/plugin.tgz',
+        sha256: 'a'.repeat(64),
+      },
+    }), config)
+    expect(result.ok, result.ok ? '' : result.rejection.detail).toBe(true)
+  })
+})

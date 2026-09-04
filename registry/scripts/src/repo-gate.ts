@@ -92,9 +92,18 @@ export function gateRepo(
     return reject(unit, 'requires-build',
       'Declares a prepare/prepack build script, which a git install requires and pnpm blocks by default; the shop never enables build scripts, so the repository could not install. Publish to npm, or drop the script, and it can be listed.')
   }
-  if (candidate.hasWorkspaceDeps) {
+  // Only for a GIT install, which is what the reason describes. A
+  // release-rescued entry installs the release tarball, and `pnpm pack`
+  // rewrites `workspace:` specifiers into resolved ranges when it builds one
+  // (reproduced, audit B-11) — so this rejection would have named a failure
+  // mode that entry cannot have. Symmetric with the `requires-build` rule
+  // directly above: the rescue answers exactly the objections that are about
+  // installing from git. An unpublished sibling remains an honest
+  // install-time failure the executor reports verbatim, as the github-channel
+  // design §4 already accepts for transitive postinstall scripts.
+  if (candidate.hasWorkspaceDeps && candidate.release === undefined) {
     return reject(unit, 'workspace-deps',
-      'Declares workspace:-protocol dependencies, which resolve only inside the repository\'s own workspace; a git install from outside it cannot succeed. Publish the package to npm, or drop the workspace: specifiers, and it can be listed.')
+      'Declares workspace:-protocol dependencies, which resolve only inside the repository\'s own workspace; a git install from outside it cannot succeed. Publish the package to npm, attach a packed release tarball, or drop the workspace: specifiers, and it can be listed.')
   }
   if (candidate.license === null || candidate.license === '') {
     return reject(unit, 'no-license', 'The repository declares no license.')
