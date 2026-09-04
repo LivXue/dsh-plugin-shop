@@ -59,3 +59,49 @@ describe('the pointer cache window', () => {
   })
 })
 
+describe('workflow action pins', () => {
+  const workflows = ['.github/workflows/daily.yml', '.github/workflows/plugin.yml']
+
+  it('pins every action to a full commit SHA and names the version in a comment', () => {
+    // A major tag is a moving reference, and whoever can move it runs code in
+    // a job holding LLM_API_KEY, NPM_TOKEN, STARS_TOKEN and a repo token —
+    // pnpm/action-setup, a third-party action, installs the very binary that
+    // later runs publish:catalog. The trailing comment is not decoration: it
+    // is how the file stays readable, and it is what Dependabot rewrites.
+    for (const file of workflows) {
+      const uses = [...read(file).matchAll(/^[ \t]*(?:-[ \t]*)?uses:[ \t]*(\S+)[ \t]*(?:#[ \t]*(\S+))?/gm)]
+      expect(uses.length, `${file} declares no actions`).toBeGreaterThan(0)
+      for (const match of uses) {
+        expect(match[1], `${file}: ${String(match[1])} is not pinned to a 40-hex commit`)
+          .toMatch(/^[\w.-]+\/[\w.-]+@[0-9a-f]{40}$/)
+        expect(match[2], `${file}: ${String(match[1])} names no version in a trailing comment`)
+          .toMatch(/^v\d+\.\d+\.\d+$/)
+      }
+    }
+  })
+
+  it('asks Dependabot to keep the pins current', () => {
+    // A SHA pin that nobody bumps is a security patch nobody applies. The
+    // weekly PR is the other half of the trade.
+    const dependabot = read('.github/dependabot.yml')
+    expect(dependabot).toContain('package-ecosystem: github-actions')
+    expect(dependabot).toMatch(/interval:\s*weekly/)
+  })
+
+  it('uses one SHA per action across both workflows', () => {
+    // daily.yml checks out three times and plugin.yml once; four different
+    // pins of actions/checkout would be four things to review.
+    const byAction = new Map<string, Set<string>>()
+    for (const file of workflows) {
+      for (const match of read(file).matchAll(/uses:[ \t]*([\w.-]+\/[\w.-]+)@([0-9a-f]{40})/g)) {
+        const action = match[1]!
+        if (!byAction.has(action)) byAction.set(action, new Set())
+        byAction.get(action)!.add(match[2]!)
+      }
+    }
+    for (const [action, shas] of byAction) {
+      expect([...shas], `${action} is pinned to more than one commit`).toHaveLength(1)
+    }
+  })
+})
+

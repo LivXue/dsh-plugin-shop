@@ -2923,6 +2923,26 @@ git commit -m "docs(mirrors): name the pointer cache window and the npm fallback
 
 ### Task 13: Pin every action to a commit SHA, and let Dependabot move them
 
+> **Outcome: DONE as written. All seven SHAs re-resolved on 2026-09-04 and the
+> table is correct, every entry.** 14 `uses:` lines across the two workflows,
+> one SHA per action.
+>
+> **A methodology note, because the first attempt at re-resolution was wrong.**
+> Reading the version off `matching-refs/tags/v4.` and taking the LAST entry is
+> lexicographic, not semver — `v4.4.0` sorts after `v4.10.0` as strings — and
+> it reported `pnpm/action-setup` as v4.3.0's plan entry being stale at v4.4.0.
+> Dereferencing every tag under the major and keeping the ones whose commit
+> equals the pin gives the real answer, and it matched the plan: v4.3.0.
+> `pnpm/action-setup@v4` points at v4.3.0 even though v4.4.0 exists — the
+> floating major LAGS, which is the moving-reference hazard from the other
+> direction and another reason not to depend on it.
+>
+> Each pin was then checked twice against upstream: the commit exists, and it
+> is exactly the commit its `# vX.Y.Z` comment claims. All three YAML files
+> were confirmed to parse, and no `@vN` reference remains anywhere. Four
+> mutations are checked: a floated pin, a stripped comment, two SHAs for one
+> action, and a missing Dependabot config.
+
 **Files:**
 - Modify: `.github/workflows/daily.yml:48-50, 89, 110, 122, 163-165, 169, 198`
 - Modify: `.github/workflows/plugin.yml:18-20`
