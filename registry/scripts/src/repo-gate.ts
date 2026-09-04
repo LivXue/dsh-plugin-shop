@@ -126,14 +126,35 @@ export function gateRepo(
 
   // The typosquatting hold probes the slug (without the owner, whose prefix
   // would drown any distance) AND the bundle name: either can impersonate a
-  // verified package. Unlike the npm gate — where an exact name IS the same
-  // identity — an exact match here is a DIFFERENT identity claiming a
+  // verified package. Unlike the npm gate — where an exact npm name IS the
+  // same identity — an exact match here is a DIFFERENT identity claiming a
   // verified name, the most dangerous lookalike there is, so edits === 0
-  // holds too. `allowed-similar.yml` is the human escape for a legitimate
-  // source (e.g. the verified package's own repository).
+  // holds too.
+  //
+  // The probe set is `verifiedNames`, never `verified.keys()`: since a github
+  // review is keyed by its repository, a key is `owner/slug` and a Levenshtein
+  // distance from a slug to it is meaningless — the owner prefix drowns it,
+  // and the hold silently stopped holding anything a github review covered.
+  //
+  // Two exits, and only two:
+  //
+  // 1. The repository the review itself names. A review binds (repo, commit),
+  //    so this identity is the reviewed one and cannot be impersonating
+  //    itself — without this exemption a `verified.yml` row for
+  //    `someone/dsh-repo-plugin` rejected that repository with "Exactly
+  //    matches the verified package dsh-repo-plugin" and the pipeline listed
+  //    nothing (B-2). Every OTHER repository carrying the bundle name is
+  //    still held, which is what stops the fork (B-3).
+  // 2. `allowed-similar.yml`, by `owner/slug` ONLY. A bundle-name clearance
+  //    cleared every repository using the name at once, and 83 live bundle
+  //    names are claimed by both a fork and an original (A-4). Clearing a
+  //    repo clears its subpackages with it: the review and the clearance are
+  //    both statements about a source, and the subdirectory does not change
+  //    who publishes it.
+  const repoKey = candidate.repo.toLowerCase()
   const slug = candidate.repo.split('/')[1] ?? candidate.repo
-  if (!config.allowedSimilar.has(candidate.repo) && !config.allowedSimilar.has(candidate.name)) {
-    for (const verifiedName of config.verified.keys()) {
+  if (!config.verified.has(repoKey) && !config.allowedSimilarRepos.has(repoKey)) {
+    for (const verifiedName of config.verifiedNames) {
       for (const probe of [slug, candidate.name]) {
         const edits = distance(probe, verifiedName)
         if (edits > SIMILARITY_THRESHOLD) continue

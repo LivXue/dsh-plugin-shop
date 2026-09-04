@@ -351,3 +351,77 @@ describe('the per-entry size budget on the github channel', () => {
     expect(result.ok).toBe(true)
   })
 })
+
+describe('the hold and the reviewed identity', () => {
+  const commitPin = 'b'.repeat(40)
+  const reviewed = parseRegistryConfig({
+    verified: [
+      '- name: dsh-repo-plugin',
+      '  repo: someone/dsh-repo-plugin',
+      `  reviewedCommit: ${commitPin}`,
+      '  reviewer: github:alice-reviewer',
+      '  reviewCommit: abc',
+      '  notes: fine',
+    ].join('\n') + '\n',
+    denied: '[]',
+    allowedSimilar: '[]',
+    categories: '[]',
+    firstSeen: '[]',
+  })
+
+  it('lists the repository the review names instead of rejecting it as an impersonator of itself', () => {
+    // B-2: edits === 0 on the slug used to make the reviewed repo the "most
+    // dangerous lookalike" of the review written about it, and the pipeline
+    // listed nothing at all.
+    const result = gateRepo(repo(), reviewed)
+    expect(result.ok, result.ok ? '' : result.rejection.detail).toBe(true)
+    // And whatever case the candidate spells the repository in. The review
+    // key is lowercased at insert, so ONLY the fold on the candidate side
+    // makes these meet; without it the reviewed repository falls into the
+    // hold loop and is held as an exact match of its own bundle name. Task 6
+    // folds the denial lookup and the probes, but not this exemption.
+    const cased = gateRepo(repo({ repo: 'Someone/dsh-repo-plugin' }), reviewed)
+    expect(cased.ok, cased.ok ? '' : cased.rejection.detail).toBe(true)
+  })
+
+  it('still holds a different repository carrying the reviewed bundle name', () => {
+    // B-3 / A-4: this is the fork. It must not reach the catalog on the
+    // strength of somebody else's review.
+    const fork = gateRepo(repo({ repo: 'bob/dsh-repo-plugin' }), reviewed)
+    expect(fork.ok).toBe(false)
+    if (!fork.ok) {
+      expect(fork.rejection.name).toBe('bob/dsh-repo-plugin')
+      expect(fork.rejection.code).toBe('name-too-similar')
+      expect(fork.rejection.detail).toContain('dsh-repo-plugin')
+    }
+  })
+
+  it('clears a lookalike source by owner/slug and never by bundle name', () => {
+    // A bundle-name clearance would clear every repository using the name —
+    // 83 live bundle names are claimed by both a fork and an original.
+    const byRepo = parseRegistryConfig({
+      verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: r\n  reviewCommit: c\n',
+      denied: '[]',
+      allowedSimilar: '- good/dsh-fs-tol\n',
+      categories: '[]',
+      firstSeen: '[]',
+    })
+    expect(gateRepo(repo({ repo: 'good/dsh-fs-tol', name: 'something-else' }), byRepo).ok).toBe(true)
+    expect(gateRepo(repo({ repo: 'evil/dsh-fs-tol', name: 'something-else' }), byRepo).ok).toBe(false)
+
+    const byName = parseRegistryConfig({
+      verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: r\n  reviewCommit: c\n',
+      denied: '[]',
+      allowedSimilar: '- dsh-fs-tol\n',
+      categories: '[]',
+      firstSeen: '[]',
+    })
+    const held = gateRepo(repo({ repo: 'anyone/dsh-fs-tol', name: 'something-else' }), byName)
+    expect(held.ok, 'a bundle-name clearance must not clear a repository').toBe(false)
+  })
+
+  it('exempts every subpackage of the reviewed repository, since the clearance unit is the repo', () => {
+    const sub = gateRepo(repo({ subdir: 'packages/plugin' }), reviewed)
+    expect(sub.ok, sub.ok ? '' : sub.rejection.detail).toBe(true)
+  })
+})
