@@ -27,6 +27,14 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Bounded because a stalled counterpart used to run to the six-hour Actions
+    # kill: only npm-client passed an AbortSignal, so a GitHub or LLM-gateway
+    # socket that accepted and never answered fell back on undici's 300s
+    # default, times each client's own retry ladder. The three clients now carry
+    # per-request deadlines; this is the outer bound. A full run -- install,
+    # tests, classify, harvest, stars, emit -- takes about 50 minutes, so 120 is
+    # generous and still fails hours before the platform limit.
+    timeout-minutes: 120
     permissions:
       contents: write
     env:

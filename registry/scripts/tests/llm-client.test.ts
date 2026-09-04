@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { classifyPackages, CLASSIFY_BATCH_SIZE } from '../src/llm-client.ts'
+import { classifyPackages, CLASSIFY_BATCH_SIZE, GATEWAY_REQUEST_TIMEOUT_MS } from '../src/llm-client.ts'
 
 const options = { baseUrl: 'http://gateway.example/v1', model: 'deepseek-v4-flash', apiKey: 'k' }
 
@@ -135,5 +135,45 @@ describe('classifyPackages', () => {
     expect(result.classified.size).toBe(0)
     expect(result.discarded.map(d => d.name).sort()).toEqual(['dsh-pkg-0', 'dsh-pkg-1'])
     for (const d of result.discarded) expect(d.reason.startsWith('gateway unreachable')).toBe(true)
+  })
+})
+
+describe('request deadlines', () => {
+  it('has a per-request deadline at all', () => {
+    // A literal, not a re-export of the constant: a fixture computed from the
+    // value it tests can never detect that value moving. Generous next to the
+    // other two clients because a batch completion genuinely takes seconds.
+    expect(GATEWAY_REQUEST_TIMEOUT_MS).toBe(120_000)
+  })
+
+  it('discards a batch whose gateway request never answers', async () => {
+    // The classifier is advisory, so a stall must degrade to a discard the
+    // next build retries — not to the six-hour Actions kill. The gateway is
+    // plaintext to a bare IP, so an on-path stall is not hypothetical.
+    const fetchImpl = (async () => new Promise<Response>(() => {})) as unknown as typeof fetch
+    const started = Date.now()
+    const result = await classifyPackages([item(0)], {
+      ...options, fetchImpl, sleep: async (_ms: number) => {}, timeoutMs: 50,
+    })
+    expect(result.classified.size).toBe(0)
+    expect(result.discarded).toHaveLength(1)
+    expect(result.discarded[0]?.name).toBe('dsh-pkg-0')
+    expect(result.discarded[0]?.reason).toContain('gateway unreachable')
+    expect(Date.now() - started).toBeLessThan(5000)
+  })
+
+  it('does not fire early: a slow but healthy completion is still adopted', async () => {
+    // The other side of the bound. A reasoning model spends seconds per batch;
+    // a deadline wired to the wrong number passes the stall test above and
+    // then discards the entire ecosystem every single build.
+    const SLOW_MS = 40
+    const DEADLINE_MS = 2000
+    const fetchImpl = (async () => {
+      await new Promise(resolve => setTimeout(resolve, SLOW_MS))
+      return okResponse(['dsh-pkg-0'])
+    }) as unknown as typeof fetch
+    const result = await classifyPackages([item(0)], { ...options, fetchImpl, timeoutMs: DEADLINE_MS })
+    expect(result.classified.get('dsh-pkg-0')).toBe('tool')
+    expect(result.discarded).toEqual([])
   })
 })

@@ -15,7 +15,7 @@
  */
 
 import { createHash } from 'node:crypto'
-import { fetchWithRetry } from './npm-client.ts'
+import { fetchWithRetry, withTimeout } from './npm-client.ts'
 import { diffRepoState, nextRepoState, type RepoSeen, type RepoState } from './repo-state.ts'
 import { hasWorkspaceDeps, monorepoSignal, selectSubpackagePaths } from './subpackage-select.ts'
 import type { RepoCandidate } from './types.ts'
@@ -47,6 +47,15 @@ export const MAX_TARBALL_BYTES = 32 * 1024 * 1024
  * candidate. The largest real dsh manifest observed is about 100 KB.
  */
 export const MAX_MANIFEST_BYTES = 1024 * 1024
+
+/**
+ * Per-attempt bound on a GitHub request (API or raw). Matches npm-client's: a
+ * run makes thousands of these, and a stalled one must not consume the job's
+ * whole budget. Applied INSIDE {@link fetchRobust}'s retry ladder, so four
+ * attempts cost at most four deadlines rather than four of undici's 300s
+ * defaults.
+ */
+export const GITHUB_REQUEST_TIMEOUT_MS = 30_000
 
 /**
  * The share of one run's fetch attempts that may throw before the harvest is
@@ -120,10 +129,15 @@ async function fetchRobust(
   fetchImpl: typeof fetch,
   sleep: (ms: number) => Promise<void>,
   token: string | undefined,
+  timeoutMs: number = GITHUB_REQUEST_TIMEOUT_MS,
 ): Promise<Response> {
+  // The deadline wraps the impl INSIDE the retry ladder, so each of the four
+  // attempts is bounded rather than the ladder multiplying undici's 300s
+  // default by four.
+  const timed = withTimeout(fetchImpl, timeoutMs, 'github')
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await fetchWithRetry(url, fetchImpl, sleep, token)
+      return await fetchWithRetry(url, timed, sleep, token)
     } catch (error) {
       if (attempt >= 3) throw error
       await sleep(2000 * 2 ** attempt)
@@ -411,9 +425,10 @@ async function fetchHeadCommit(
   fetchImpl: typeof fetch,
   sleep: (ms: number) => Promise<void>,
   token: string | undefined,
+  timeoutMs: number = GITHUB_REQUEST_TIMEOUT_MS,
 ): Promise<{ sha: string; date: string } | null> {
   const url = `${GITHUB_API}/repos/${owner}/${slug}/commits/${branch}`
-  const response = await fetchRobust(url, fetchImpl, sleep, token)
+  const response = await fetchRobust(url, fetchImpl, sleep, token, timeoutMs)
   if (!response.ok) return null
   const body = await response.json() as { sha?: unknown; commit?: { author?: { date?: unknown } } }
   if (typeof body.sha !== 'string' || !/^[0-9a-f]{40}$/.test(body.sha)) return null
@@ -442,6 +457,7 @@ async function fetchLatestReleaseTarball(
   fetchImpl: typeof fetch,
   sleep: (ms: number) => Promise<void>,
   token: string | undefined,
+  timeoutMs: number = GITHUB_REQUEST_TIMEOUT_MS,
 ): Promise<{ tag: string; url: string; sha256: string } | null> {
   // The whole probe is advisory, so no failure inside it may crash the
   // harvest: every transport or read failure degrades to null, the
@@ -449,7 +465,7 @@ async function fetchLatestReleaseTarball(
   // never throws").
   try {
     const url = `${GITHUB_API}/repos/${owner}/${slug}/releases/latest`
-    const response = await fetchRobust(url, fetchImpl, sleep, token)
+    const response = await fetchRobust(url, fetchImpl, sleep, token, timeoutMs)
     if (!response.ok) return null
     let body: { tag_name?: unknown; assets?: unknown }
     try {
@@ -464,7 +480,7 @@ async function fetchLatestReleaseTarball(
       .map(a => (a as { browser_download_url?: unknown }).browser_download_url)
       .find((u): u is string => typeof u === 'string' && /\.(?:tgz|tar\.gz)$/i.test(u))
     if (asset === undefined) return null
-    const assetResponse = await fetchRobust(asset, fetchImpl, sleep, token)
+    const assetResponse = await fetchRobust(asset, fetchImpl, sleep, token, timeoutMs)
     if (!assetResponse.ok) return null
     const bytes = await readTarballBody(assetResponse)
     if (bytes === null) return null
@@ -688,9 +704,10 @@ async function probeSubpackageCandidates(
   fetchImpl: typeof fetch,
   sleep: (ms: number) => Promise<void>,
   token: string | undefined,
+  timeoutMs: number = GITHUB_REQUEST_TIMEOUT_MS,
 ): Promise<{ candidates: RepoCandidate[]; failures: RepoFetchFailure[]; anyClaimed: boolean }> {
   const treeUrl = `${GITHUB_API}/repos/${owner}/${slug}/git/trees/${meta.defaultBranch}?recursive=1`
-  const treeResponse = await fetchRobust(treeUrl, fetchImpl, sleep, token)
+  const treeResponse = await fetchRobust(treeUrl, fetchImpl, sleep, token, timeoutMs)
   if (!treeResponse.ok) return { candidates: [], failures: [], anyClaimed: false }
   let treeBody: { tree?: unknown } = {}
   try {
@@ -719,7 +736,7 @@ async function probeSubpackageCandidates(
   let anyClaimed = false
   for (const dir of dirs) {
     const subUrl = `${RAW_GITHUB}/${owner}/${slug}/${meta.defaultBranch}/${dir}/package.json`
-    const subResponse = await fetchRobust(subUrl, fetchImpl, sleep, token)
+    const subResponse = await fetchRobust(subUrl, fetchImpl, sleep, token, timeoutMs)
     if (!subResponse.ok) continue
     const subRead = await readManifest(subResponse)
     if (!subRead.ok) {
@@ -766,6 +783,7 @@ export async function fetchRepoCandidate(
   sleep: (ms: number) => Promise<void> = async (ms: number) => { await new Promise(resolve => setTimeout(resolve, ms)) },
   token: string | undefined = undefined,
   probeSubpackages = true,
+  timeoutMs: number = GITHUB_REQUEST_TIMEOUT_MS,
 ): Promise<RepoFetchResult> {
   const [owner, slug] = meta.fullName.split('/')
   if (owner === undefined || slug === undefined) {
@@ -773,7 +791,15 @@ export async function fetchRepoCandidate(
   }
 
   const rawUrl = `${RAW_GITHUB}/${owner}/${slug}/${meta.defaultBranch}/package.json`
-  const manifestResponse = await fetchRobust(rawUrl, fetchImpl, sleep, token)
+  // No catch here on purpose. A deadline rejection propagates to harvestRepos,
+  // whose existing catch is already the right handler for it: it publishes a
+  // reason we wrote rather than a raw exception message under the repository's
+  // name, sends the diagnostic to stderr, and — the part a local catch would
+  // silently disable — counts the failure toward the systematic-failure bound.
+  // A GitHub that stalls for EVERY repo is a broken harvest, not three hundred
+  // bad repositories, and it must stop the build rather than publish a catalog
+  // that blames each of them by name.
+  const manifestResponse = await fetchRobust(rawUrl, fetchImpl, sleep, token, timeoutMs)
   if (!manifestResponse.ok) {
     return { ok: false, code: 'no-manifest', detail: 'No package.json at the repository root, so there is nothing for dsh to install.' }
   }
@@ -781,7 +807,7 @@ export async function fetchRepoCandidate(
   if (!rootRead.ok) return { ok: false, code: 'no-manifest', detail: rootRead.detail }
   const manifest = rootRead.manifest
 
-  const head = await fetchHeadCommit(owner, slug, meta.defaultBranch, fetchImpl, sleep, token)
+  const head = await fetchHeadCommit(owner, slug, meta.defaultBranch, fetchImpl, sleep, token, timeoutMs)
   if (head === null) {
     return { ok: false, code: 'fetch-failed', detail: `Could not resolve the head commit of ${meta.fullName}.` }
   }
@@ -800,14 +826,14 @@ export async function fetchRepoCandidate(
   // is probed. The release rides the candidate through the state file, so a
   // repo with no release does not re-consume this budget daily.
   if (root !== null && root.requiresBuild) {
-    const release = await fetchLatestReleaseTarball(owner, slug, fetchImpl, sleep, token)
+    const release = await fetchLatestReleaseTarball(owner, slug, fetchImpl, sleep, token, timeoutMs)
     if (release !== null) root.release = release
   }
   if (root !== null && root.hasBundle) {
     return { ok: true, candidates: [root] }
   }
   if (probeSubpackages && monorepoSignal(manifest)) {
-    const { candidates: subs, failures: subFailures, anyClaimed } = await probeSubpackageCandidates(owner, slug, meta, manifest, head, fetchImpl, sleep, token)
+    const { candidates: subs, failures: subFailures, anyClaimed } = await probeSubpackageCandidates(owner, slug, meta, manifest, head, fetchImpl, sleep, token, timeoutMs)
     if (subs.length > 0) {
       return { ok: true, candidates: subs, ...(subFailures.length > 0 ? { subpackageFailures: subFailures } : {}) }
     }
@@ -868,6 +894,9 @@ export interface RepoHarvestOptions {
   /** Whether bundle-less monorepo roots get a subpackage probe. Gated by the
    * schemaVersion-4 flag so no v3 client ever meets a subdir entry. */
   probeSubpackages?: boolean
+  /** Per-attempt deadline on every per-repo request. Defaults to
+   * {@link GITHUB_REQUEST_TIMEOUT_MS}; a seam, so a test need not wait one out. */
+  timeoutMs?: number
 }
 
 export interface RepoHarvestResult {
@@ -915,6 +944,7 @@ export async function harvestRepos(options: RepoHarvestOptions): Promise<RepoHar
     sleep = async (ms: number) => { await new Promise(resolve => setTimeout(resolve, ms)) },
     token = undefined,
     probeSubpackages = true,
+    timeoutMs = GITHUB_REQUEST_TIMEOUT_MS,
   } = options
   if (token === undefined) {
     return { candidates: [], failures: [], thrown: 0, seen: [], gone: [], nextState: state, skipped: true, searchStars: new Map(), windowCount: 0, fetched: 0, carried: 0, deferred: 0 }
@@ -944,7 +974,7 @@ export async function harvestRepos(options: RepoHarvestOptions): Promise<RepoHar
       const meta = metas.get(entry.repo)
       if (meta === undefined) return { entry, result: { ok: false, code: 'fetch-failed', detail: 'search result lost between the enumeration and the fetch' } as RepoFetchResult }
       try {
-        return { entry, result: await fetchRepoCandidate(meta, fetchImpl, sleep, token, probeSubpackages) }
+        return { entry, result: await fetchRepoCandidate(meta, fetchImpl, sleep, token, probeSubpackages, timeoutMs) }
       } catch (error) {
         // One repository must not be able to end the harvest. Everything in
         // this file already turns a bad package into a row; without this, an

@@ -175,8 +175,9 @@ async function searchTotal(
  */
 const REQUEST_TIMEOUT_MS = 30_000
 
-/** A request that outlived {@link REQUEST_TIMEOUT_MS}; a failover trigger. */
-class FetchTimeoutError extends Error {}
+/** A request that outlived its deadline; a failover trigger. Exported so the
+ * other three network modules can classify their own stalls the same way. */
+export class FetchTimeoutError extends Error {}
 
 /**
  * The primary registry answered with a 5xx. Carries the status so that once
@@ -200,8 +201,20 @@ function registryUrl(registry: string, path: string): string {
 
 /** Wrap a fetch so no request can outlive `ms`: the timer aborts the
  * request's own signal and rejects the returned promise, whichever a given
- * implementation honors. */
-function withTimeout(fetchImpl: typeof fetch, ms: number): typeof fetch {
+ * implementation honors.
+ *
+ * Lives here and is exported because npm-client was the ONLY module passing an
+ * AbortSignal. Against a socket that accepts and never writes, npm-client
+ * rejected after 2s while github-client was still pending at 8s: the only
+ * bound anywhere else was undici's 300s headers timeout, after which the
+ * GitHub client's own retry ladder ran three more times, so a stalled GitHub
+ * or gateway ended in the six-hour Actions kill with no report, no state
+ * commit and no catalog. One wrapper reused by four modules, rather than four
+ * copies of it, is what keeps the fourth network module from being the one
+ * that forgets.
+ * @param subject - names the stalled counterpart in the error message.
+ */
+export function withTimeout(fetchImpl: typeof fetch, ms: number, subject = 'registry'): typeof fetch {
   return async (input, init) => {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), ms)
@@ -210,7 +223,7 @@ function withTimeout(fetchImpl: typeof fetch, ms: number): typeof fetch {
         fetchImpl(input, { ...init, signal: controller.signal }),
         new Promise<never>((_, reject) => {
           controller.signal.addEventListener('abort', () => {
-            reject(new FetchTimeoutError(`registry request exceeded ${ms}ms`))
+            reject(new FetchTimeoutError(`${subject} request exceeded ${ms}ms`))
           }, { once: true })
         }),
       ])

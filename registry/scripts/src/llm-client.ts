@@ -10,6 +10,7 @@
  */
 
 import { parseClassificationResponse } from './llm-parse.ts'
+import { withTimeout } from './npm-client.ts'
 import type { Category } from './types.ts'
 
 /** One package to classify: public npm metadata only (spec §3). */
@@ -43,6 +44,16 @@ const RETRY_LIMIT = 4
 const RETRY_BASE_DELAY_MS = 1000
 const RETRY_MAX_DELAY_MS = 8000
 
+/**
+ * Per-attempt bound on a gateway completion. Generous — this is a reasoning
+ * model and a batch takes seconds — but bounded: the classify step is advisory
+ * and a stall must become a discard the next build retries, not the build
+ * job's outer kill. Before it, a gateway that accepted and never answered fell
+ * back on undici's 300s default, times the retry ladder, times the concurrency
+ * window.
+ */
+export const GATEWAY_REQUEST_TIMEOUT_MS = 120_000
+
 function defaultSleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
@@ -72,6 +83,9 @@ interface Options {
   apiKey: string
   fetchImpl?: typeof fetch
   sleep?: (ms: number) => Promise<void>
+  /** Per-attempt deadline on a gateway request. Defaults to
+   * {@link GATEWAY_REQUEST_TIMEOUT_MS}; a seam, so a test need not wait one out. */
+  timeoutMs?: number
 }
 
 /**
@@ -121,7 +135,10 @@ async function runBatches<Item extends { name: string }, Answer>(
   },
   options: Options,
 ): Promise<{ adopted: Map<string, Answer>; discarded: { name: string; reason: string }[] }> {
-  const fetchImpl = options.fetchImpl ?? fetch
+  // Wrapped once, here, rather than at each of the two call sites below: the
+  // retry line and the first attempt are exactly the pair a later edit bounds
+  // one of and forgets the other.
+  const fetchImpl = withTimeout(options.fetchImpl ?? fetch, options.timeoutMs ?? GATEWAY_REQUEST_TIMEOUT_MS, 'llm gateway')
   const sleep = options.sleep ?? defaultSleep
   const classified = new Map<string, Answer>()
   const discarded: { name: string; reason: string }[] = []

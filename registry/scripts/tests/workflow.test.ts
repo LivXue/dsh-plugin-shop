@@ -714,3 +714,39 @@ describe('the daily workflow pushes safely', () => {
     })
   }
 })
+
+describe('the build job is bounded', () => {
+  function timeoutMinutes(job: string): unknown {
+    const doc: unknown = parse(workflow)
+    const jobs = typeof doc === 'object' && doc !== null ? (doc as Record<string, unknown>).jobs : undefined
+    if (typeof jobs !== 'object' || jobs === null) throw new Error('daily.yml: `jobs` is not a mapping — the workflow shape changed')
+    const value = (jobs as Record<string, unknown>)[job]
+    if (typeof value !== 'object' || value === null) throw new Error(`daily.yml: jobs.${job} is not a mapping — the workflow shape changed`)
+    return (value as Record<string, unknown>)['timeout-minutes']
+  }
+
+  it('sets timeout-minutes on the build job', () => {
+    // The publish job has one; the build job — the harvest, the plaintext LLM
+    // step and the stars fetch — had none, so a stalled dependency ran to the
+    // six-hour Actions kill with no report and no state commit. The three
+    // clients now carry per-request deadlines; this is the outer bound behind
+    // them, and the only thing that bounds the search path's own aggregate.
+    expect(timeoutMinutes('build')).toEqual(expect.any(Number))
+  })
+
+  it('leaves room for the whole harvest, and still fails well short of the platform kill', () => {
+    // The other side of the bound. A number that merely exists is not a
+    // useful one: too small kills a healthy fifty-minute run every morning,
+    // and too large is the six-hour default it was added to beat.
+    //
+    // Both endpoints are literals rather than fractions of the configured
+    // value: a band computed from the number it bounds could never detect
+    // that number moving.
+    const minutes = timeoutMinutes('build')
+    if (typeof minutes !== 'number') {
+      throw new Error('daily.yml: jobs.build.timeout-minutes is not a number, so the build job is unbounded')
+    }
+    expect(minutes).toBeGreaterThanOrEqual(60)
+    expect(minutes).toBeLessThan(360)
+  })
+})

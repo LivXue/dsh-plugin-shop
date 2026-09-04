@@ -7,12 +7,18 @@
  * @module github-stars
  */
 
+import { withTimeout } from './npm-client.ts'
+
 export const STAR_BATCH_SIZE = 50
 
 const RETRY_LIMIT = 4
 const RETRY_BASE_DELAY_MS = 1000
 const RETRY_MAX_DELAY_MS = 8000
 const ENDPOINT = 'https://api.github.com/graphql'
+
+/** Per-attempt bound on a stars GraphQL request. Matches the GitHub client's:
+ * the same endpoint host, the same reason. */
+export const STARS_REQUEST_TIMEOUT_MS = 30_000
 
 function defaultSleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
@@ -27,9 +33,20 @@ export interface StarFetchResult {
 
 export async function fetchStarCounts(
   repos: { owner: string; name: string }[],
-  options: { token: string; fetchImpl?: typeof fetch; sleep?: (ms: number) => Promise<void> },
+  options: {
+    token: string
+    fetchImpl?: typeof fetch
+    sleep?: (ms: number) => Promise<void>
+    /** Per-attempt deadline on a GraphQL request. Defaults to
+     * {@link STARS_REQUEST_TIMEOUT_MS}; a seam, so a test need not wait one out. */
+    timeoutMs?: number
+  },
 ): Promise<StarFetchResult> {
-  const { token, fetchImpl = fetch, sleep = defaultSleep } = options
+  const { token, fetchImpl = fetch, sleep = defaultSleep, timeoutMs = STARS_REQUEST_TIMEOUT_MS } = options
+  // Stars are advisory and every failure mode already ends in `skipped`; the
+  // deadline is what makes a stalled GraphQL endpoint one of those failure
+  // modes rather than the job's outer kill.
+  const timed = withTimeout(fetchImpl, timeoutMs, 'github graphql')
   const stars = new Map<string, number>()
   const skipped: string[] = []
   if (token === '' || repos.length === 0) return { stars, skipped }
@@ -41,7 +58,7 @@ export async function fetchStarCounts(
     try {
       const aliases = batch.map((r, i) => `a${i}: repository(owner: ${JSON.stringify(r.owner)}, name: ${JSON.stringify(r.name)}) { stargazerCount }`).join('\n')
       const query = `query {\n${aliases}\n}`
-      const request = (): Promise<Response> => fetchImpl(ENDPOINT, {
+      const request = (): Promise<Response> => timed(ENDPOINT, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ query }),

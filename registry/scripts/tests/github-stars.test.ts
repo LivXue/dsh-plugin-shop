@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fetchStarCounts, STAR_BATCH_SIZE } from '../src/github-stars.ts'
+import { fetchStarCounts, STAR_BATCH_SIZE, STARS_REQUEST_TIMEOUT_MS } from '../src/github-stars.ts'
 
 const options = { token: 'gh-token' }
 const repo = (i: number) => ({ owner: `owner${i}`, name: `repo${i}` })
@@ -118,5 +118,44 @@ describe('partial GraphQL responses', () => {
     expect(stars.get('good/one')).toBe(5)
     expect(skipped).toHaveLength(3)
     expect(skipped.every(s => s.endsWith(': no count'))).toBe(true)
+  })
+})
+
+describe('request deadlines', () => {
+  it('has a per-request deadline at all', () => {
+    // A literal, not a re-export of the constant: a fixture computed from the
+    // value it tests can never detect that value moving.
+    expect(STARS_REQUEST_TIMEOUT_MS).toBe(30_000)
+  })
+
+  it('skips a batch whose request never answers instead of hanging the build', async () => {
+    // Stars are advisory and every failure mode already ends in `skipped`; the
+    // deadline is what makes a stalled GraphQL endpoint one of those failure
+    // modes rather than the job's six-hour kill.
+    const fetchImpl = (async () => new Promise<Response>(() => {})) as unknown as typeof fetch
+    const started = Date.now()
+    const result = await fetchStarCounts([repo(0)], {
+      ...options, fetchImpl, sleep: async (_ms: number) => {}, timeoutMs: 50,
+    })
+    expect(result.stars.size).toBe(0)
+    expect(result.skipped).toHaveLength(1)
+    expect(result.skipped[0]).toContain('owner0/repo0')
+    expect(result.skipped[0]).toContain('gateway unreachable')
+    expect(Date.now() - started).toBeLessThan(5000)
+  })
+
+  it('does not fire early: a slow but healthy batch still yields its counts', async () => {
+    // The other side of the bound. A deadline wired to the wrong number passes
+    // the stall test above and then drops every star count in the catalog —
+    // silently, because losing them is already a supported outcome here.
+    const SLOW_MS = 40
+    const DEADLINE_MS = 2000
+    const fetchImpl = (async () => {
+      await new Promise(resolve => setTimeout(resolve, SLOW_MS))
+      return okResponse({ 'owner0/repo0': 7 })
+    }) as unknown as typeof fetch
+    const result = await fetchStarCounts([repo(0)], { ...options, fetchImpl, timeoutMs: DEADLINE_MS })
+    expect(result.stars.get('owner0/repo0')).toBe(7)
+    expect(result.skipped).toEqual([])
   })
 })

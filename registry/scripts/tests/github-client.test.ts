@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { MAX_TARBALL_BYTES, MAX_THROWN_FRACTION, MIN_THROWN_TO_BOUND, fetchRepoCandidate, harvestRepos, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
+import { GITHUB_REQUEST_TIMEOUT_MS, MAX_TARBALL_BYTES, MAX_THROWN_FRACTION, MIN_THROWN_TO_BOUND, fetchRepoCandidate, harvestRepos, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
 import { parseRepoState, serializeRepoState } from '../src/repo-state.ts'
 import type { RepoState } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
@@ -1558,5 +1558,93 @@ describe('every response body read in github-client.ts is capped or excused', ()
           + `("${excused.reason}") no longer applies to anything: ${excused.snippet}`,
       ).toBe(true)
     }
+  })
+})
+
+describe('request deadlines', () => {
+  const meta = { fullName: 'someone/dsh-repo-plugin', defaultBranch: 'main', description: 'A repo plugin.', license: 'MIT', pushedAt: '2026-08-01T00:00:00Z', stars: null as number | null }
+
+  const manifestUrl = 'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json'
+  const commitUrl = 'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main'
+
+  it('has a per-request deadline at all', () => {
+    // A literal, not a re-export of the constant: a fixture computed from the
+    // value it tests can never detect that value moving.
+    expect(GITHUB_REQUEST_TIMEOUT_MS).toBe(30_000)
+  })
+
+  it('bounds a socket that accepts and never answers', async () => {
+    // Only npm-client passed an AbortSignal. Against a socket that accepts and
+    // never writes, npm-client rejected after 2s and github-client was still
+    // pending at 8s; the only bound was undici's 300s headers timeout, after
+    // which fetchRobust retried three more times — so a stalled GitHub ended
+    // in the six-hour Actions kill with no report and no state commit.
+    //
+    // It REJECTS rather than returning a row: harvestRepos is the one place
+    // that decides what a throw from here means, and the test below drives it.
+    const fetchImpl = (async () => new Promise<Response>(() => {})) as unknown as typeof fetch
+    const started = Date.now()
+    // probeSubpackages false, then the 50ms deadline: four bounded attempts.
+    await expect(fetchRepoCandidate(meta, fetchImpl, sleep, 'token', false, 50))
+      .rejects.toThrow('github request exceeded 50ms')
+    expect(Date.now() - started).toBeLessThan(5000)
+  })
+
+  it('does not fire early: a slow but healthy repository still becomes a candidate', async () => {
+    // The other side of the bound. A deadline the caller cannot set, or one
+    // wired to the wrong number, passes the stall test above and then kills
+    // every healthy repository behind a slow CDN.
+    const SLOW_MS = 40
+    const DEADLINE_MS = 2000
+    const base = stubFetch({
+      [manifestUrl]: new Response(JSON.stringify({
+        name: 'dsh-repo-plugin',
+        dsh: { bundle: { patch: './cordis.patch.yml' }, catalog: { category: 'tool', summary: { en: 'x' }, capabilities: [] } },
+      }), { status: 200 }),
+      [commitUrl]: new Response(JSON.stringify({ sha: commit, commit: { author: { date: '2026-08-01T12:00:00.000Z' } } }), { status: 200 }),
+    })
+    const slow = (async (url: string | URL) => {
+      await new Promise(resolve => setTimeout(resolve, SLOW_MS))
+      return base(url)
+    }) as unknown as typeof fetch
+    const result = await fetchRepoCandidate(meta, slow, sleep, 'token', false, DEADLINE_MS)
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.candidates[0]?.name).toBe('dsh-repo-plugin')
+  })
+
+  it('carries the deadline into the harvest, so one stalled repository is a row and not the run', async () => {
+    // RepoHarvestOptions is the seam build.ts actually uses: a deadline the
+    // per-repo fetch honors but the harvest cannot set is one no production
+    // caller can reach. The detail naming 50ms is what proves the INJECTED
+    // number is honored rather than the 30s default quietly standing in.
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      if (new URL(text).searchParams.get('per_page') === '1') return new Response(JSON.stringify({ total_count: 0 }), { status: 200 })
+      if (text.includes('/search/repositories')) {
+        return new Response(JSON.stringify({
+          items: [{ full_name: 's/stalled', default_branch: 'main', description: null, license: null, pushed_at: '2026-08-02T00:00:00Z' }],
+        }), { status: 200 })
+      }
+      // raw.githubusercontent.com: accepts and never answers.
+      return new Promise<Response>(() => {})
+    }) as unknown as typeof fetch
+    const started = Date.now()
+    const result = await harvestRepos({ state: {}, budget: 5, fetchImpl, sleep, token: 't', timeoutMs: 50 })
+    expect(result.failures).toHaveLength(1)
+    expect(result.failures[0]?.repo).toBe('s/stalled')
+    expect(result.failures[0]?.code).toBe('fetch-failed')
+    // The published reason stays the one WE wrote: a raw "github request
+    // exceeded 50ms" under the repository's name would blame an author for a
+    // stall on our side, the misattribution the throw-isolation test above
+    // exists to prevent.
+    expect(result.failures[0]?.detail).toContain('not a judgement on the repository')
+    expect(result.failures[0]?.detail).not.toContain('exceeded')
+    // Counted, so a GitHub that stalls for EVERY repo trips the systematic-
+    // failure bound and stops the build instead of publishing a catalog that
+    // blames three hundred innocent repositories by name.
+    expect(result.thrown).toBe(1)
+    // The whole proof that the INJECTED deadline is honored: on the 30s
+    // default these four attempts take two minutes and vitest kills the test.
+    expect(Date.now() - started).toBeLessThan(5000)
   })
 })

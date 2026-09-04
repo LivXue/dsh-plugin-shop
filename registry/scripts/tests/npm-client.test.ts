@@ -1,5 +1,8 @@
+import { readFileSync, readdirSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, searchByKeywords, toCandidate } from '../src/npm-client.ts'
+import { FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
 
 describe('HARVEST_KEYWORDS', () => {
   it('leads with the ecosystem keyword and adds the harness keyword, neither branded', () => {
@@ -1057,5 +1060,121 @@ describe('fetchCandidates', () => {
     expect(candidates.map(c => c.name)).toEqual(['good'])
     expect(rejections).toEqual([])
     expect(urls[1]).toContain('registry.npmmirror.com')
+  })
+})
+
+describe('withTimeout', () => {
+  /** A socket that accepts and never writes: the shape neither undici's
+   * defaults nor any retry ladder bounds usefully. */
+  const stalled = (async () => new Promise<Response>(() => {})) as unknown as typeof fetch
+
+  it('rejects a request that outlives the deadline, naming the stalled counterpart', async () => {
+    await expect(withTimeout(stalled, 20, 'github')('https://example.invalid/x'))
+      .rejects.toBeInstanceOf(FetchTimeoutError)
+    await expect(withTimeout(stalled, 20, 'github')('https://example.invalid/x'))
+      .rejects.toThrow('github request exceeded 20ms')
+  })
+
+  it('defaults the subject to the registry, so every existing call site keeps its message', async () => {
+    // fetchCandidate turns this rejection into "the npm registry did not
+    // answer within Nms"; a subject that changed under it would republish a
+    // wrong reason on an author's package.
+    await expect(withTimeout(stalled, 20)('https://example.invalid/x'))
+      .rejects.toThrow('registry request exceeded 20ms')
+  })
+
+  it('does not fire early: a response that arrives inside the deadline is returned untouched', async () => {
+    // The other side of the bound. A wrapper that aborts too eagerly — a zero,
+    // a seconds/milliseconds mix-up, a timer started before the deadline is
+    // read — passes every stall test above and then kills every slow but
+    // healthy request in production, which is the failure this whole task is
+    // meant to prevent, inverted.
+    //
+    // Both numbers are literals rather than fractions of the deadline: a
+    // fixture computed from the constant it tests can never detect that
+    // constant moving.
+    const SLOW_MS = 40
+    const DEADLINE_MS = 2000
+    const slow = (async () => {
+      await new Promise(resolve => setTimeout(resolve, SLOW_MS))
+      return new Response('a slow but healthy answer', { status: 200 })
+    }) as unknown as typeof fetch
+    const response = await withTimeout(slow, DEADLINE_MS, 'registry')('https://example.invalid/x')
+    expect(response.status).toBe(200)
+    expect(await response.text()).toBe('a slow but healthy answer')
+  })
+
+  it('passes an abort signal through to the implementation', async () => {
+    // The rejection alone would satisfy the tests above while leaving the real
+    // socket open for undici's 300s default; the signal is what actually ends
+    // the request.
+    let signal: AbortSignal | undefined
+    const capture = (async (_input: string, init?: RequestInit) => {
+      signal = init?.signal ?? undefined
+      return new Response('ok', { status: 200 })
+    }) as unknown as typeof fetch
+    await withTimeout(capture, 2000, 'registry')('https://example.invalid/x')
+    expect(signal).toBeInstanceOf(AbortSignal)
+    expect(signal?.aborted).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The deadline is a property of EVERY network module, not of this one.
+//
+// npm-client was for a long time the only module that passed an AbortSignal.
+// Against a socket that accepts and never writes it rejected after 2s while
+// github-client was still pending at 8s: the only bound anywhere else was
+// undici's 300s headers timeout, multiplied by each client's own retry ladder.
+// The fix wraps three more clients — and the third one added is exactly the
+// one a future change forgets, so this reads the sources instead of trusting
+// a list somebody has to remember to extend.
+//
+// The detector is `typeof fetch`: every module here that reaches the network
+// takes its fetch as an injected seam, because that is the only way its tests
+// can drive it. A module that called the global `fetch` directly would evade
+// this scan — and would also be untestable, which is the convention this
+// project already enforces everywhere else.
+// ---------------------------------------------------------------------------
+
+const srcDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'src')
+
+function networkModules(): { file: string; source: string }[] {
+  return readdirSync(srcDir)
+    .filter(file => file.endsWith('.ts'))
+    .sort()
+    .map(file => ({ file, source: readFileSync(join(srcDir, file), 'utf8') }))
+    .filter(({ source }) => /typeof fetch/.test(source))
+}
+
+describe('every network module bounds its requests with withTimeout', () => {
+  it('finds the network modules at all, so the scan cannot pass by matching nothing', () => {
+    // Without this, a detector that stops matching turns the check below into
+    // a loop over an empty list — green, and guarding nothing.
+    const files = networkModules().map(m => m.file)
+    expect(files).toContain('npm-client.ts')
+    expect(files).toContain('github-client.ts')
+    expect(files).toContain('llm-client.ts')
+    expect(files).toContain('github-stars.ts')
+  })
+
+  it('routes each of them through this module’s withTimeout', () => {
+    for (const { file, source } of networkModules()) {
+      if (file === 'npm-client.ts') {
+        expect(
+          /export function withTimeout\(/.test(source),
+          'npm-client.ts owns withTimeout and must keep exporting it: the other three network '
+            + 'modules import their deadline from here rather than each growing a copy.',
+        ).toBe(true)
+        continue
+      }
+      expect(
+        /withTimeout\(/.test(source) && source.includes("'./npm-client.ts'"),
+        `${file} accepts an injected fetch — it reaches the network — but never wraps it with `
+          + "npm-client's withTimeout. An unwrapped client falls back on undici's 300s headers "
+          + 'timeout, multiplied by its own retry ladder, and a stalled counterpart then runs to '
+          + "the build job's outer kill with no report and no state commit.",
+      ).toBe(true)
+    }
   })
 })
