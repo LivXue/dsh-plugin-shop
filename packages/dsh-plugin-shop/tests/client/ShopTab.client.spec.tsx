@@ -884,6 +884,26 @@ describe('ShopTab', () => {
     expect(container.querySelector('[data-shop-outdated]')).toBeNull()
   })
 
+  it('badges the installed-and-current label too, the one case with no button to sit beside', async () => {
+    // This branch renders no button at all, so `sits the badge to the right
+    // of the Install/Update button` (above) cannot cover it -- yet it is
+    // "exactly the case that most needs to say so" per the comment on this
+    // branch in ShopTab.tsx: an installed plugin whose modules are absent
+    // gets no other signal once there is no update to offer.
+    const { injected } = bench(
+      { ...snapshot(), incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] } },
+      [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }],
+    )
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const card = container.querySelector('[data-shop-entry="dsh-hello-plugin"]') as HTMLElement
+    const label = card.querySelector('[data-shop-installed]') as HTMLElement
+    expect(label.textContent).toBe(en.installed)
+    // No button on this branch, so the badge follows the label instead.
+    expect(label.nextElementSibling?.hasAttribute('data-shop-incompatible'), 'immediately after the installed label').toBe(true)
+    expect(card.querySelectorAll('[data-shop-incompatible]').length, 'exactly one badge per card').toBe(1)
+  })
+
   it('shows the update button instead of an install button on the card of an install behind the catalog', async () => {
     const { injected, install } = bench(snapshot({ tier: 'verified' }), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
     const { container } = renderTab(injected)
@@ -1042,6 +1062,30 @@ describe('ShopTab', () => {
     const detail = en.incompatibleDetail.replace('{modules}', '@deepseek-ai/dsh-client-store')
     expect(badge?.getAttribute('title')).toBe(detail)
     expect(badge?.textContent).toBe(en.incompatibleBadge)
+  })
+
+  it('names the outdated row\'s missing modules for assistive tech, not only the mouse tooltip', async () => {
+    // OutdatedRow prints no [data-shop-incompatible-detail] line -- unlike the
+    // catalog card, which always renders one once anything is missing -- so on
+    // this row the module list would otherwise reach the accessibility tree
+    // ONLY through `title`: not keyboard-reachable, and announced unreliably
+    // or not at all by screen readers. role="img" + aria-label is this
+    // file's own idiom for naming an otherwise-generic badge (compare
+    // .starsBadge above): the visible word stays the compact "Incompatible"
+    // label while the accessible name carries the full explanation.
+    const { injected } = bench(
+      { ...snapshot({ tier: 'community' }), incompatible: { 'dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] } },
+      [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }],
+    )
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText(en.installedSection)).toBeTruthy())
+    const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]') as HTMLElement
+    const badge = row.querySelector('[data-shop-incompatible]') as HTMLElement
+    const detail = en.incompatibleDetail.replace('{modules}', '@deepseek-ai/dsh-client-store')
+    expect(badge.getAttribute('role')).toBe('img')
+    expect(badge.getAttribute('aria-label')).toBe(detail)
+    // The mouse affordance from the test above is not lost.
+    expect(badge.getAttribute('title')).toBe(detail)
   })
 
 

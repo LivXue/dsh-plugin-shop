@@ -271,8 +271,17 @@ function IncompatibleBadge({ missing, t }: {
   t: ShopTabProps['t']
 }): ReactNode {
   if (missing.length === 0) return null
+  const detail = t('incompatibleDetail', { modules: missing.join(', ') })
   return (
-    <span className={css.incompatibleBadge} data-shop-incompatible title={t('incompatibleDetail', { modules: missing.join(', ') })}>
+    // role="img" + aria-label is this file's own idiom for naming an
+    // otherwise-generic element for assistive tech (see .starsBadge above):
+    // the visible word stays the compact "Incompatible" label while the
+    // accessible name carries the full explanation. This matters most on
+    // OutdatedRow, which prints no [data-shop-incompatible-detail] line, so
+    // without this the module list would reach the accessibility tree only
+    // through `title` -- not keyboard-reachable, and announced unreliably or
+    // not at all by screen readers. `title` stays too, for the mouse.
+    <span className={css.incompatibleBadge} data-shop-incompatible role="img" aria-label={detail} title={detail}>
       {t('incompatibleBadge')}
     </span>
   )
