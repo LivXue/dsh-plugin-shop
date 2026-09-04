@@ -18,7 +18,7 @@ import type { CatalogEntry, DeniedEntry } from './types.ts'
 import { validateInstall, type InstallArgs, type InstallRejectionCode } from './install.ts'
 import { startInstall, startUninstall, type InstallStatus } from './executor.ts'
 import { cleanHotDir, hotMount, hotUnmount } from './hot.ts'
-import { startRestart, type RestartOutcome } from './restart.ts'
+import { restartCommand, startRestart, type RestartOutcome } from './restart.ts'
 import { fetchLatestVersion } from './self-update.ts'
 import { detectSupervisor } from './supervisor.ts'
 import { readRepoPins, writeRepoPins, type RepoPinFs } from './repo-pins.ts'
@@ -86,6 +86,9 @@ export interface ShopGatewayOptions {
   /** The dsh argv this process was launched with, for `shop/restart`;
    * defaults to the real `process.argv` minus node and the script path. */
   restartArgv?: string[]
+  /** The JS entry `shop/restart` re-runs; defaults to `process.argv[1]`, the
+   * script this dsh was started with. */
+  restartScript?: string
   /** Test-only injection: the exit the restart calls after the response is
    * delivered. Production uses `process.exit`. */
   exit?: (code?: number) => void
@@ -287,6 +290,8 @@ export class ShopGateway extends TypertRemoteService {
   /** The argv `shop/restart` re-spawns: the real process argv minus node and
    * the CLI script path, or a test-provided substitute. */
   private readonly restartArgv: string[]
+  /** The script the restart re-runs — this process's own entry. */
+  private readonly restartScript: string | undefined
   /** The exit the restart calls once the response is out; `process.exit` in
    * production, a spy in tests. */
   private readonly exit: (code?: number) => void
@@ -348,6 +353,7 @@ export class ShopGateway extends TypertRemoteService {
     this.loaderEntriesInjected = options.loaderEntries
     this.dshBin = options.dshBin ?? 'dsh'
     this.restartArgv = options.restartArgv ?? process.argv.slice(2)
+    this.restartScript = options.restartScript ?? process.argv[1]
     this.exit = options.exit ?? ((code?: number) => process.exit(code))
     this.restartExitDelayMs = options.restartExitDelayMs ?? ShopGateway.RESTART_EXIT_DELAY_MS
     this.restartParentPid = options.restartParentPid ?? process.pid
@@ -1037,9 +1043,16 @@ export class ShopGateway extends TypertRemoteService {
     }
     try {
       const { cacheDir } = this.rowConfig()
-      startRestart({
+      const { command, args } = restartCommand({
         dshBin: this.dshBin,
         argv: this.restartArgv,
+        execPath: process.execPath,
+        execArgv: process.execArgv,
+        script: this.restartScript,
+      })
+      startRestart({
+        command,
+        args,
         parentPid: this.restartParentPid,
         logFile: join(cacheDir, 'restart.log'),
         env: process.env,

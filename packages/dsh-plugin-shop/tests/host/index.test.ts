@@ -815,6 +815,23 @@ describe('ShopGateway.restart', () => {
     if (!result.ok) expect(result.detail).toContain('restart could not be started')
     expect(exit).not.toHaveBeenCalled()
   })
+
+  it("re-runs this process's own entry when dshBin is the bare default", async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-restart-node-'))
+    const marker = join(dir, 'ran.log')
+    const script = join(dir, 'fake-bin.js')
+    writeFileSync(script, `require('node:fs').appendFileSync(${JSON.stringify(marker)}, process.argv.slice(2).join(' ') + '\\n')\n`)
+    const exit = vi.fn()
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: dir, profile: 'web',
+      exit, restartExitDelayMs: 1, restartParentPid: 1_000_000_000,
+      restartArgv: ['web', '--no-open'], restartScript: script,
+    })
+    expect(await gateway.restart()).toEqual({ ok: true })
+    await vi.waitFor(() => { expect(existsSync(marker)).toBe(true) }, { timeout: 5000 })
+    expect(readFileSync(marker, 'utf8')).toContain('web --no-open')
+    rmSync(dir, { recursive: true, force: true })
+  })
 })
 
 // File-scope fixture options shared by the restart-guard describe and the hot

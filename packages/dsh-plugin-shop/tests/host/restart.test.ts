@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { startRestart } from '../../src/host/restart.ts'
+import { restartCommand, startRestart } from '../../src/host/restart.ts'
 
 // A fixture `dsh` that records its argv in a marker file when it finally
 // runs — the marker's appearance is the proof the helper waited for the
@@ -43,8 +43,8 @@ describe('startRestart', () => {
     const marker = join(dir, 'calls.log')
     const logFile = join(dir, 'restart.log')
     startRestart({
-      dshBin: fixtureDsh(marker),
-      argv: ['web', '--no-open'],
+      command: fixtureDsh(marker),
+      args: ['web', '--no-open'],
       parentPid: await deadPid(),
       logFile,
     })
@@ -60,8 +60,8 @@ describe('startRestart', () => {
     const marker = join(dir, 'calls.log')
     const sleeper = spawn('sh', ['-c', 'exec sleep 10'])
     startRestart({
-      dshBin: fixtureDsh(marker),
-      argv: ['web'],
+      command: fixtureDsh(marker),
+      args: ['web'],
       parentPid: sleeper.pid!,
       logFile: join(dir, 'restart.log'),
     })
@@ -74,10 +74,60 @@ describe('startRestart', () => {
 
   it('throws when the log file cannot be opened, before committing', () => {
     expect(() => startRestart({
-      dshBin: fixtureDsh(join(tmpdir(), 'unused.log')),
-      argv: ['web'],
+      command: fixtureDsh(join(tmpdir(), 'unused.log')),
+      args: ['web'],
       parentPid: 1,
       logFile: join(tmpdir(), 'no-such-dir', 'restart.log'),
     })).toThrow()
+  })
+})
+
+describe('restartCommand', () => {
+  it('re-runs this process by its own entry, not a name on PATH', () => {
+    expect(restartCommand({
+      dshBin: 'dsh',
+      argv: ['web', '--no-open'],
+      execPath: '/usr/bin/node',
+      execArgv: ['--enable-source-maps'],
+      script: '/opt/dsh/lib/bin.js',
+    })).toEqual({
+      command: '/usr/bin/node',
+      args: ['--enable-source-maps', '/opt/dsh/lib/bin.js', 'web', '--no-open'],
+    })
+  })
+
+  it('honours an explicit dshBin as given', () => {
+    expect(restartCommand({
+      dshBin: '/tmp/fixture/dsh',
+      argv: ['web'],
+      execPath: '/usr/bin/node',
+      execArgv: [],
+      script: '/opt/dsh/lib/bin.js',
+    })).toEqual({ command: '/tmp/fixture/dsh', args: ['web'] })
+  })
+
+  it('falls back to the bare name when this process has no script path', () => {
+    expect(restartCommand({
+      dshBin: 'dsh', argv: ['web'], execPath: '/usr/bin/node', execArgv: [], script: undefined,
+    })).toEqual({ command: 'dsh', args: ['web'] })
+  })
+})
+
+describe('restart helper startup failure', () => {
+  it('records a helper that could not start, instead of raising an uncaught event', async () => {
+    // An empty PATH makes the helper's `sh` lookup fail asynchronously. The
+    // failure must be diagnosable in the handoff log after this function has
+    // already returned to its caller.
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-restart-nopath-'))
+    const logFile = join(dir, 'restart.log')
+    startRestart({
+      command: 'dsh',
+      args: ['web'],
+      parentPid: await deadPid(),
+      logFile,
+      env: { PATH: '' },
+    })
+    await until(() => existsSync(logFile) && readFileSync(logFile, 'utf8').includes('the restart helper could not start'), 5000)
+    rmSync(dir, { recursive: true, force: true })
   })
 })
