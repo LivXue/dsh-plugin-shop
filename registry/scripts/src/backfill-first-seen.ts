@@ -5,9 +5,11 @@
  * commit the produced file, then never run it again (the daily build appends).
  *
  * manifest.lock line shapes (emit.ts): npm entries are `name version integrity`,
- * repo entries are `owner/slug name version`. Scoped npm names lead with `@`
- * (and contain a slash); repo slugs are `owner/slug` with no leading `@` — so
- * the leading `@`, not the slash, decides which field holds the name. */
+ * repo entries are `owner/slug name version`. Either way the FIRST field is
+ * the first-seen key — the npm name, or the repository `owner/slug` — because
+ * `added` is keyed by identity and a bundle name is claimed by up to 14
+ * repositories (identity.ts, audit B-9). Repo keys are lowercased to match
+ * `firstSeenKey`; npm names are left as published. */
 import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
@@ -20,7 +22,7 @@ import { serializeFirstSeen } from './config.ts'
 // Positive: the form this replaced ended in `process.exit(0)` at module
 // scope, which terminates whatever process IMPORTS this module — under
 // vitest, a worker that vanishes mid-suite and reports success, which is what
-// the first unit test of `namesOf` below would have run into. emit-schema.ts
+// the first unit test of `keysOf` below would have run into. emit-schema.ts
 // drew the positive line first, and schema.test.ts already relies on it to
 // import renderJsonSchema without the write side effect.
 // Exact: `endsWith('backfill-first-seen.ts')` also admits
@@ -32,16 +34,16 @@ if (basename(process.argv[1] ?? '') === 'backfill-first-seen.ts') {
   const REGISTRY_DIR = 'registry'
   const LOCK = 'snapshots/manifest.lock'
 
-  function namesOf(lockText: string): Set<string> {
-    const names = new Set<string>()
+  function keysOf(lockText: string): Set<string> {
+    const keys = new Set<string>()
     for (const line of lockText.split('\n')) {
       if (line === '') continue
-      const parts = line.split(' ')
-      const first = parts[0] ?? ''
-      const name = first.startsWith('@') || !first.includes('/') ? parts[0] : parts[1]
-      if (name !== undefined && name !== '') names.add(name)
+      const key = line.split(' ')[0]
+      if (key === undefined || key === '') continue
+      // A repo line leads with `owner/slug`: no leading `@`, exactly one slash.
+      keys.add(!key.startsWith('@') && key.includes('/') ? key.toLowerCase() : key)
     }
-    return names
+    return keys
   }
 
   function lockAt(sha: string): string {
@@ -57,7 +59,7 @@ if (basename(process.argv[1] ?? '') === 'backfill-first-seen.ts') {
       return { sha: sha ?? '', date: date ?? '' }
     })
 
-  const current = namesOf(readFileSync(join(REGISTRY_DIR, LOCK), 'utf8'))
+  const current = keysOf(readFileSync(join(REGISTRY_DIR, LOCK), 'utf8'))
   const firstSeen = new Map<string, string>()
   for (const { sha, date } of history) {
     if (sha === '' || date === '') continue
@@ -67,7 +69,7 @@ if (basename(process.argv[1] ?? '') === 'backfill-first-seen.ts') {
     } catch {
       continue // a rename or filter edge — the next commit still answers
     }
-    for (const name of namesOf(lockText)) {
+    for (const name of keysOf(lockText)) {
       if (current.has(name) && !firstSeen.has(name)) firstSeen.set(name, date)
     }
   }

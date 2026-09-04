@@ -241,15 +241,13 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     }
   }
 
-  // First-seen bookkeeping: any name this run harvested for the first time gets
-  // today. The appended file is written back after the pipeline, so the daily
-  // commit carries both the new dates and the manifest lock together.
+  // The clock, read exactly once, and passed down. First-seen bookkeeping moved
+  // into the pipeline: which candidates are ENTRIES is a policy question the
+  // gate answers, and stamping every harvested candidate here dated packages
+  // that were never listed (B-9). The appended file is written back after the
+  // pipeline, so the daily commit carries both the new dates and the manifest
+  // lock together.
   const builtAt = new Date().toISOString()
-  const today = builtAt.slice(0, 10)
-  const firstSeen = new Map(config.firstSeen)
-  for (const candidate of candidates) if (!firstSeen.has(candidate.name)) firstSeen.set(candidate.name, today)
-  for (const repo of repoCandidates) if (!firstSeen.has(repo.name)) firstSeen.set(repo.name, today)
-  const configWithFirstSeen = { ...config, firstSeen }
 
   // v5 is a release-time flag (design §3.5): `theme` is a new enum value and an
   // old client's zod enum rejects a catalog containing it wholesale, so the flag
@@ -262,13 +260,13 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   const schemaVersion = v5Flag
     ? CATALOG_SCHEMA_VERSION
     : (probeSubpackages ? SUBPACKAGE_SCHEMA_VERSION : SCHEMA_VERSION)
-  const artifacts = runPipeline(candidates, repoCandidates, configWithFirstSeen, builtAt, rejections, starsInfo, schemaVersion)
+  const artifacts = runPipeline(candidates, repoCandidates, config, builtAt, rejections, starsInfo, schemaVersion)
 
   writeFileSync(join(OUT_DIR, artifacts.pluginsFileName), artifacts.pluginsJson)
   writeFileSync(join(OUT_DIR, 'index.json'), artifacts.indexJson)
   writeFileSync(join(OUT_DIR, 'badge.json'), artifacts.badgeJson)
   writeFileSync(join(REGISTRY_DIR, 'snapshots/manifest.lock'), artifacts.manifestLock)
-  writeFileSync(join(REGISTRY_DIR, 'first-seen.yml'), serializeFirstSeen(firstSeen))
+  writeFileSync(join(REGISTRY_DIR, 'first-seen.yml'), serializeFirstSeen(artifacts.firstSeen))
   const repoLine = repoNote === '' ? '' : `\nGitHub: ${repoNote}\n`
   writeFileSync(join(OUT_DIR, 'report.md'), `${artifacts.report}\nStars: ${starsNote}\n${repoLine}`)
 

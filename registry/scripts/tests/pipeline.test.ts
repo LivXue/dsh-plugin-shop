@@ -20,9 +20,11 @@ const config = parseRegistryConfig({
     '  added: 2026-08-11',
     '- name: dsh-derived-plugin',
     '  added: 2026-08-12',
-    '- name: dsh-repo-plugin',
+    // Repo entries are keyed by `owner/slug`: a bundle name is claimed by up
+    // to 14 repositories, so it cannot carry one repository's date.
+    '- name: someone/dsh-repo-plugin',
     '  added: 2026-08-13',
-    '- name: sub-plugin',
+    '- name: someone/monorepo',
     '  added: 2026-08-14',
   ].join('\n') + '\n',
 })
@@ -119,7 +121,7 @@ describe('runPipeline', () => {
     expect(parsed.plugins.find(p => p.name === 'dsh-hello-plugin')?.added).toBe('2026-08-11')
   })
 
-  it('throws with the file name when a listed name has no first-seen row', () => {
+  it('stamps a first appearance with the build date and returns the row to commit', () => {
     const withoutRow = parseRegistryConfig({
       verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: github:r\n  reviewCommit: abc\n  notes: fine\n',
       denied: '[]',
@@ -127,8 +129,22 @@ describe('runPipeline', () => {
       categories: '[]',
       firstSeen: '- name: dsh-hello-plugin\n  added: 2026-08-11\n- name: dsh-derived-plugin\n  added: 2026-08-12\n',
     })
-    expect(() => runPipeline(candidates, [], withoutRow, BUILT_AT))
-      .toThrow('first-seen.yml: dsh-fs-tool has no first-seen row')
+    const { pluginsJson, firstSeen } = runPipeline(candidates, [], withoutRow, BUILT_AT)
+    const parsed = JSON.parse(pluginsJson) as { plugins: { name: string; added: string }[] }
+    expect(parsed.plugins.find(p => p.name === 'dsh-fs-tool')?.added).toBe('2026-08-18')
+    expect(firstSeen.get('dsh-fs-tool')).toBe('2026-08-18')
+    // A recorded row is never overwritten.
+    expect(firstSeen.get('dsh-hello-plugin')).toBe('2026-08-11')
+  })
+
+  it('never stamps a rejected candidate, so a package listed after weeks of rejection keeps its real date', () => {
+    // B-9: the stamp used to happen before the gate, so `dsh-lib-only` —
+    // rejected `no-bundle` every day — had a row from its first harvest, and
+    // the day it finally declared a bundle it was "added" months earlier.
+    const { firstSeen } = runPipeline(candidates, [], config, BUILT_AT)
+    expect(firstSeen.has('dsh-lib-only')).toBe(false)
+    expect(firstSeen.has('dsh-no-license')).toBe(false)
+    expect(firstSeen.has('dsh-no-summary')).toBe(false)
   })
 
   it('produces identical data across build times', () => {
@@ -276,16 +292,36 @@ describe('runPipeline with repository candidates', () => {
     }])
   })
 
-  it('throws when a repository entry has no first-seen row', () => {
-    const withoutRow = parseRegistryConfig({
-      verified: '[]',
-      denied: '[]',
-      allowedSimilar: '[]',
-      categories: '[]',
-      firstSeen: '[]',
+  it('keys a repository first appearance by owner/slug and not by the bundle name', () => {
+    const noRows = parseRegistryConfig({
+      verified: '[]', denied: '[]', allowedSimilar: '[]', categories: '[]', firstSeen: '[]',
     })
-    expect(() => runPipeline([], [repoCandidate], withoutRow, BUILT_AT))
-      .toThrow('first-seen.yml: dsh-repo-plugin has no first-seen row')
+    const { firstSeen, pluginsJson } = runPipeline([], [repoCandidate], noRows, BUILT_AT)
+    expect(firstSeen.get('someone/dsh-repo-plugin')).toBe('2026-08-18')
+    expect(firstSeen.has('dsh-repo-plugin')).toBe(false)
+    const parsed = JSON.parse(pluginsJson) as { plugins: { added: string }[] }
+    expect(parsed.plugins[0]?.added).toBe('2026-08-18')
+  })
+
+  it('gives two repositories sharing a bundle name their own first-seen rows', () => {
+    // A-2's other half: with one row per bundle name, an npm package taking a
+    // verified repo's name inherited its `added` date and looked as old as
+    // the entry it displaced.
+    const noRows = parseRegistryConfig({
+      verified: '[]', denied: '[]', allowedSimilar: '[]', categories: '[]',
+      firstSeen: '- name: alice/dsh-repo-plugin\n  added: 2026-07-01\n',
+    })
+    const { firstSeen, pluginsJson } = runPipeline([], [
+      { ...repoCandidate, repo: 'alice/dsh-repo-plugin' },
+      { ...repoCandidate, repo: 'bob/dsh-repo-plugin' },
+    ], noRows, BUILT_AT)
+    expect(firstSeen.get('alice/dsh-repo-plugin')).toBe('2026-07-01')
+    expect(firstSeen.get('bob/dsh-repo-plugin')).toBe('2026-08-18')
+    const parsed = JSON.parse(pluginsJson) as { plugins: { repo: string; added: string }[] }
+    expect(parsed.plugins.map(p => [p.repo, p.added])).toEqual([
+      ['alice/dsh-repo-plugin', '2026-07-01'],
+      ['bob/dsh-repo-plugin', '2026-08-18'],
+    ])
   })
 
   it('shadows a repository whose bundle name already ships as an npm package, with a reason', () => {

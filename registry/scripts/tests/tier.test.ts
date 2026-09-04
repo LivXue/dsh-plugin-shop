@@ -42,14 +42,17 @@ const config = parseRegistryConfig({
     '  added: 2026-08-11',
     '- name: dsh-derived-plugin',
     '  added: 2026-08-12',
-    '- name: dsh-repo-plugin',
+    // Repo entries are keyed by lowercased `owner/slug` (identity.ts).
+    '- name: someone/dsh-repo-plugin',
     '  added: 2026-08-13',
-    '- name: dsh-tagged-plugin',
+    '- name: someone/dsh-tagged-plugin',
     '  added: 2026-08-14',
-    '- name: dsh-commit-pinned',
+    '- name: someone/dsh-commit-pinned',
     '  added: 2026-08-15',
-    '- name: dsh-version-pinned',
+    '- name: someone/dsh-version-pinned',
     '  added: 2026-08-16',
+    '- name: bob/dsh-commit-pinned',
+    '  added: 2026-08-17',
   ].join('\n') + '\n',
 })
 
@@ -219,9 +222,12 @@ describe('assignRepoTier', () => {
     expect(assignRepoTier(repoAccepted('dsh-repo-plugin'), config).added).toBe('2026-08-13')
   })
 
-  it('throws when a repo name has no first-seen row', () => {
+  it('throws, naming the repository, when a repo identity has no first-seen row', () => {
+    // The loud failure stays: `assignRepoTier` must never invent a date. The
+    // pipeline resolves a first appearance before it gets here (B-9), so this
+    // throw now means a caller skipped that resolution.
     expect(() => assignRepoTier(repoAccepted('dsh-unseen'), config))
-      .toThrow('first-seen.yml: dsh-unseen has no first-seen row')
+      .toThrow('first-seen.yml: someone/dsh-unseen has no first-seen row')
   })
 
   it('pins a release-rescued entry to its tag and tarball', () => {
