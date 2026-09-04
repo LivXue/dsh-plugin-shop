@@ -6,6 +6,7 @@
 import { createRequire } from 'node:module'
 import { readFileSync } from 'node:fs'
 import { satisfies, valid, validRange } from 'semver'
+import { identityKey, type EntryIdentity } from '../shared/identity.ts'
 
 /** Answers "can this installation provide `spec`?" — injected so fixtures
  * drive every verdict and exactly one call site touches the filesystem. */
@@ -47,7 +48,7 @@ export function nodeResolver(baseUrl: string): PeerResolver {
  * ignore every warning.
  */
 export function incompatibilityMap(
-  entries: readonly { name: string; peers?: string[] }[],
+  entries: readonly (EntryIdentity & { peers?: string[] })[],
   resolve: PeerResolver,
 ): Record<string, string[]> {
   const known = new Map<string, boolean | null>() // null marks "threw"
@@ -76,7 +77,7 @@ export function incompatibilityMap(
       }
       if (!present) missing.push(spec)
     }
-    if (usable && missing.length > 0) out[entry.name] = missing
+    if (usable && missing.length > 0) out[identityKey(entry)] = missing
   }
   return out
 }

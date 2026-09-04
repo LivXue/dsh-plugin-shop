@@ -264,9 +264,10 @@ export interface ShopCatalogResult {
   /** GitHub star counts by package name; {} when the pointer names no sidecar
    * or the sidecar could not be fetched/verified (§5). */
   stars: Record<string, number>
-  /** Package name → the declared peers this installation does not provide
-   * (design 2026-09-01). A name is absent when the plugin runs here or when
-   * no verdict could be formed; the client renders nothing for both. */
+  /** Install identity (`npm:<name>` / `github:<repo>#<subdir>`) → the declared
+   * peers this installation does not provide. A key is absent when the plugin
+   * runs here or when no verdict could be formed; same-named entries stay
+   * independent. */
   incompatible: Record<string, string[]>
 }
 

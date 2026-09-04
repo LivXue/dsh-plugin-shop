@@ -1631,7 +1631,7 @@ describe('ShopGateway.catalog incompatibility', () => {
       { resolvePeer: (spec: string) => spec !== '@deepseek-ai/dsh-client-store' },
     )
     const result = await gateway.catalog({})
-    expect(result.incompatible).toEqual({ 'dsh-timeline': ['@deepseek-ai/dsh-client-store'] })
+    expect(result.incompatible).toEqual({ 'npm:dsh-timeline': ['@deepseek-ai/dsh-client-store'] })
   })
 
   it('reports nothing when every peer resolves', async () => {
@@ -1689,11 +1689,11 @@ describe('ShopGateway.catalog incompatibility', () => {
     )
 
     const first = await gateway.catalog({})
-    expect(first.incompatible).toEqual({ 'dsh-timeline': ['@deepseek-ai/dsh-client-store'] })
+    expect(first.incompatible).toEqual({ 'npm:dsh-timeline': ['@deepseek-ai/dsh-client-store'] })
     expect(resolvePeer).toHaveBeenCalledTimes(2) // the two distinct peer names on `peered`
 
     const second = await gateway.catalog({})
-    expect(second.incompatible).toEqual({ 'dsh-timeline': ['@deepseek-ai/dsh-client-store'] })
+    expect(second.incompatible).toEqual({ 'npm:dsh-timeline': ['@deepseek-ai/dsh-client-store'] })
     // Unchanged: the second call must reuse the cached map, never ask the
     // resolver again for a snapshot it has already judged.
     expect(resolvePeer).toHaveBeenCalledTimes(2)
