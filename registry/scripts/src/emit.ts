@@ -155,6 +155,8 @@ function wellFormed(value: unknown): unknown {
  * @param builtAt - ISO 8601 build timestamp, supplied by the caller.
  * @param stars - optional pointer to a published stars sidecar; omitted from the index when null.
  * @param notAShop - names cleared past the client's shop-like NAME filter.
+ * @param notes - report-only diagnostic lines (market holds, registry rows that
+ *   matched nothing). They ride `report.md` and never the hashed data.
  * @returns the artifacts to publish and commit.
  */
 export function emit(
@@ -164,6 +166,7 @@ export function emit(
   stars?: StarsPointer | null,
   schemaVersion: number = SCHEMA_VERSION,
   notAShop: ReadonlySet<string> = new Set(),
+  notes: readonly string[] = [],
 ): Artifacts {
   assertCatalogInvariants(entries, builtAt)
   // Below v5 the catalog must not carry the `theme` category: `theme` is a
@@ -215,10 +218,12 @@ export function emit(
   // a client-side list would only take effect on its next release, while this
   // lands on the next daily build. Restricted to names actually listed, and
   // sorted, so the content hash follows the catalog and not the file's order.
-  const notAShopListed = sorted
-    .map(entry => entry.name)
-    .filter(name => notAShop.has(name))
-    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  // Deduplicated: the list is keyed by NAME because that is what the client's
+  // filter reads, and one name can belong to many entries — 151 live names
+  // are shared by 243 entries, so the old expression emitted the same name
+  // once per entry.
+  const notAShopListed = [...new Set(sorted.filter(entry => notAShop.has(entry.name)).map(entry => entry.name))]
+    .sort(compareStrings)
   const pluginsJson = `${JSON.stringify({ schemaVersion, plugins: sorted, denied, notAShop: notAShopListed }, null, 2)}\n`
   const sha256 = createHash('sha256').update(pluginsJson).digest('hex')
   const pluginsFileName = `plugins.${sha256}.json`
@@ -259,6 +264,10 @@ export function emit(
     `Accepted: ${sorted.length}`,
     `Rejected: ${sortedRejections.length}`,
     ...(themeDowngraded > 0 ? [`Theme entries emitted as other (schemaVersion < 5): ${themeDowngraded}`] : []),
+    // Diagnostics before the table, escaped like a cell: a note can quote a
+    // package name, and an unescaped `|` or newline in one would corrupt the
+    // document a maintainer reads.
+    ...(notes.length > 0 ? ['', ...notes.map(escapeCell)] : []),
     '',
     '| Package | Reason | Detail |',
     '|---|---|---|',

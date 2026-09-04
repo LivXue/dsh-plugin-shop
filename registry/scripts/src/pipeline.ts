@@ -2,7 +2,7 @@ import { gate, type Accepted } from './gate.ts'
 import { gateRepo, type RepoAccepted } from './repo-gate.ts'
 import { assignTier, assignRepoTier } from './tier.ts'
 import { emit, SCHEMA_VERSION, type Artifacts, type StarsPointer } from './emit.ts'
-import { firstSeenKey, repoUnit } from './identity.ts'
+import { compareStrings, firstSeenKey, repoUnit } from './identity.ts'
 import type { RegistryConfig } from './config.ts'
 import type { Candidate, Entry, Rejection, RepoCandidate } from './types.ts'
 
@@ -110,8 +110,19 @@ export function runPipeline(
     ...accepted.map(item => assignTier(item, withFirstSeen)),
     ...acceptedRepos.map(item => assignRepoTier(item, withFirstSeen)),
   ]
+  // Report-only diagnostics. They ride `report.md`, never the hashed data,
+  // and they are sorted so the report diffs cleanly.
+  const notes: string[] = []
+  const listedNames = new Set(entries.map(entry => entry.name))
+  const holds = [...config.marketHolds].filter(name => listedNames.has(name)).sort(compareStrings)
+  if (holds.length > 0) {
+    notes.push(
+      `Market holds awaiting human confirmation: ${holds.length}. An LLM judged these a competing plugin market. They are still on the shelf: record \`market: true, by: human\` in markets.yml to withhold one, or \`market: false\` to clear it.`,
+      ...holds.map(name => `- ${name}`),
+    )
+  }
   return {
-    ...emit(entries, rejections, builtAt, stars, schemaVersion, config.notAShop),
+    ...emit(entries, rejections, builtAt, stars, schemaVersion, config.notAShop, notes),
     firstSeen,
   }
 }

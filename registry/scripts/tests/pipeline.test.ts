@@ -649,3 +649,51 @@ describe('determinism under every perturbation', () => {
     expect(rows[1]).toContain('| dave/monorepo#packages/y |')
   })
 })
+
+describe('the market holds reach the build report', () => {
+  it('names every held listing so a human can confirm or clear it', () => {
+    const withHolds = parseRegistryConfig({
+      verified: '[]',
+      denied: '[]',
+      allowedSimilar: '[]',
+      categories: '[]',
+      firstSeen: '- name: dsh-hello-plugin\n  added: 2026-08-11\n- name: dsh-derived-plugin\n  added: 2026-08-12\n- name: dsh-fs-tool\n  added: 2026-08-10\n',
+      markets: '- name: dsh-hello-plugin\n  market: true\n  by: llm\n  reason: looks like a market\n',
+    })
+    const { report, pluginsJson } = runPipeline(candidates, [], withHolds, BUILT_AT)
+    expect(report).toContain('Market holds awaiting human confirmation: 1')
+    expect(report).toContain('- dsh-hello-plugin')
+    // And the entry is still on the shelf: the hold does not remove it.
+    const parsed = JSON.parse(pluginsJson) as { notAShop: string[] }
+    expect(parsed.notAShop).toContain('dsh-hello-plugin')
+  })
+
+  it('says nothing when there are no holds', () => {
+    const { report } = runPipeline(candidates, [], config, BUILT_AT)
+    expect(report).not.toContain('Market holds')
+  })
+
+  it('publishes each cleared name once, however many entries share it', () => {
+    // A-8 adjacent: `notAShop` was built one element per ENTRY, and 151 live
+    // names are shared by 243 entries.
+    const commit = 'f'.repeat(40)
+    const cleared = parseRegistryConfig({
+      verified: '[]', denied: '[]', allowedSimilar: '[]', categories: '[]',
+      firstSeen: '- name: alice/dsh-store\n  added: 2026-08-01\n- name: bob/dsh-store\n  added: 2026-08-02\n',
+      markets: '- name: dsh-store\n  market: false\n  by: human\n  reason: stores session logs\n',
+    })
+    const base: import('../src/types.ts').RepoCandidate = {
+      name: 'dsh-store', repo: 'alice/dsh-store', commit, version: commit,
+      publishedAt: '2026-08-01T12:00:00.000Z', repository: 'https://github.com/alice/dsh-store',
+      license: 'MIT', hasBundle: true, requiresBuild: false, hasWorkspaceDeps: false,
+      catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
+      description: 'x',
+    }
+    const { pluginsJson } = runPipeline([], [
+      base,
+      { ...base, repo: 'bob/dsh-store', repository: 'https://github.com/bob/dsh-store' },
+    ], cleared, BUILT_AT)
+    const parsed = JSON.parse(pluginsJson) as { notAShop: string[] }
+    expect(parsed.notAShop).toEqual(['dsh-store'])
+  })
+})

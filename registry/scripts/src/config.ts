@@ -87,9 +87,10 @@ const categoriesSchema = z.array(z.object({
  * whether it IS a competing plugin market. Both verdicts are recorded, not
  * just the exemptions — that memory is what stops the daily classifier
  * re-asking about a name, and stops an LLM flip-flopping one in and out of
- * the shelf and churning the content hash with it. `by` keeps a wrong LLM
- * verdict visible and correctable; `reason` says what the plugin actually is,
- * because the name already misled once. */
+ * the shelf and churning the content hash with it. `by` decides what the
+ * verdict DOES: `human` + `market: true` withholds the listing, while `llm` +
+ * `market: true` is a hold that only a human can confirm. `reason` says what
+ * the plugin actually is, because the name already misled once. */
 const marketsSchema = z.array(z.object({
   name: z.string().min(1),
   market: z.boolean(),
@@ -130,8 +131,12 @@ export interface RegistryConfig {
    * GitHub channel honours. */
   allowedSimilarRepos: Set<string>
   /** Names cleared past the client's shop-like name filter: judged NOT to be
-   * competing plugin markets, so the shelf shows them. */
+   * competing plugin markets BY A HUMAN, so the shelf shows them. An LLM
+   * `market: true` leaves the name here — it is a hold, not a hide. */
   notAShop: Set<string>
+  /** Names an LLM judged a competing market and no human has confirmed. They
+   * are still shelved; the build report lists them for review. */
+  marketHolds: Set<string>
   /** Every name `markets.yml` has a verdict for, either way. The classifier
    * asks only about names absent from this set. */
   marketsJudged: Set<string>
@@ -239,7 +244,20 @@ export function parseRegistryConfig(
     marketRows.push(row)
   }
   const marketsJudged = new Set(marketVerdicts.keys())
-  const notAShop = new Set([...marketVerdicts].filter(([, isMarket]) => !isMarket).map(([name]) => name))
+  // Only a HUMAN `market: true` withholds a listing. An LLM `true` is a
+  // HOLD: it stops the classifier re-asking — the flip-flop this file exists
+  // to prevent — and it queues the name for a human, but the entry stays on
+  // the shelf until somebody records `by: human`.
+  //
+  // Before this, an LLM `true` hid the entry from every shelf, permanently,
+  // and nothing said so: the verdict was never re-asked and never
+  // overwritten. `parseMarketResponse` adopts any name the batch asked about,
+  // and batches are sorted names, so a hostile npm description could steer a
+  // `true` onto a neighbouring package and delist a competitor for good
+  // (audit D-7). CLAUDE.md: the classifier may change a category, never gate
+  // a listing and never remove an entry.
+  const notAShop = new Set(marketRows.filter(row => !(row.market && row.by === 'human')).map(row => row.name))
+  const marketHolds = new Set(marketRows.filter(row => row.market && row.by === 'llm').map(row => row.name))
   const categories = new Map<string, Category>()
   for (const row of parseFile('categories.yml', input.categories, categoriesSchema)) {
     setUnique(categories, 'categories.yml', row.name, row.category)
@@ -263,7 +281,7 @@ export function parseRegistryConfig(
   }
   return {
     verified, verifiedNames, denied, deniedRepos, allowedSimilar, allowedSimilarRepos,
-    notAShop, marketsJudged, marketRows, categories, firstSeen,
+    notAShop, marketHolds, marketsJudged, marketRows, categories, firstSeen,
   }
 }
 

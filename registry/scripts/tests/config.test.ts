@@ -12,24 +12,30 @@ const empty = {
 }
 
 describe('parseRegistryConfig', () => {
-  it('derives the shop-like exemption from market:false rows only', () => {
+  it('withholds a listing only for a HUMAN market verdict; an LLM true is a hold', () => {
     // markets.yml records BOTH verdicts so the classifier has a memory and
-    // never re-asks. Only the false ones clear the client's name filter — a
-    // reading a `Set(rows.keys())` would get wrong, silently shelving all 45
-    // genuine markets.
+    // never re-asks. What clears the client's name filter is "not judged a
+    // market BY A HUMAN": an LLM `true` used to hide the entry from every
+    // shelf, permanently and silently, which is the CLAUDE.md rule that LLM
+    // output never removes an entry (audit D-7). A wrong `false` lists one
+    // competitor on a shelf of nine thousand; a wrong `true` deletes a
+    // working plugin. Those are not equal.
     const config = parseRegistryConfig({
       ...empty,
       markets: [
         '- name: dsh-plugin-market\n  market: true\n  by: human\n  reason: a market\n',
         '- name: dsh-tea-store\n  market: false\n  by: human\n  reason: stores tea\n',
         '- name: dsh-skin-market\n  market: false\n  by: llm\n  reason: sells skins\n',
+        '- name: dsh-maybe-market\n  market: true\n  by: llm\n  reason: looks like a market\n',
       ].join(''),
     })
-    expect([...config.notAShop].sort()).toEqual(['dsh-skin-market', 'dsh-tea-store'])
-    // Judged covers both verdicts: the classifier asks only about names absent
-    // from it, so a name judged a market must be in here or it is re-asked
-    // every day and can flip on a bad roll.
-    expect([...config.marketsJudged].sort()).toEqual(['dsh-plugin-market', 'dsh-skin-market', 'dsh-tea-store'])
+    expect([...config.notAShop].sort()).toEqual(['dsh-maybe-market', 'dsh-skin-market', 'dsh-tea-store'])
+    expect([...config.marketHolds]).toEqual(['dsh-maybe-market'])
+    // Judged covers every verdict: the classifier asks only about names
+    // absent from it, so a name judged a market must be in here or it is
+    // re-asked every day and can flip on a bad roll.
+    expect([...config.marketsJudged].sort())
+      .toEqual(['dsh-maybe-market', 'dsh-plugin-market', 'dsh-skin-market', 'dsh-tea-store'])
   })
 
   it('throws on a duplicate name in markets.yml', () => {
