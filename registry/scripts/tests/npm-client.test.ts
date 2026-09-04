@@ -324,6 +324,33 @@ describe('toCandidate', () => {
     })
     expect(result?.peers).toEqual(['ok'])
   })
+
+  it('projects a packument that is not an object shape to no candidate, rather than throwing', () => {
+    // `null` is legal JSON, so a 200 whose whole body is those four bytes
+    // parses cleanly and reaches here — and every property read below the
+    // cast throws a TypeError on it. github-client's twin projection took
+    // this guard on this branch after a real public repository served exactly
+    // that; the npm twin never got it. A throw here is not a rejection: it
+    // escapes fetchCandidate (whose catches wrap the transport and the JSON
+    // parse, not the projection), rejects fetchCandidates' Promise.all, and
+    // neither build.ts nor classify.ts has an outer catch — one hostile
+    // packument out of thousands would take the daily catalog down.
+    for (const body of [null, undefined, 'a string', 42, true, ['an', 'array']]) {
+      expect(toCandidate(body)).toBe(null)
+    }
+  })
+
+  it('projects a null version entry to no candidate, rather than throwing', () => {
+    // The second instance of the same input class, inside this same function:
+    // `versions['1.2.0']: null` passes the `!== undefined` check the manifest
+    // guard used to be, and `manifest.dist?.integrity` then throws on it. A
+    // version entry that is not an object carries no manifest, so it names no
+    // usable latest version — the same answer as a missing one, and the same
+    // author-readable `fetch-failed` row rather than an aborted harvest.
+    for (const entry of [null, 'not a manifest', 42, ['an', 'array']]) {
+      expect(toCandidate({ ...packument, versions: { '1.2.0': entry } })).toBe(null)
+    }
+  })
 })
 
 describe('searchByKeywords', () => {
@@ -731,6 +758,41 @@ describe('searchByKeywords', () => {
     )
     expect(call).toBe(1) // the probe itself trips the throw; no page is ever fetched
   })
+
+  it('names the keyword when a search body is null, rather than dying on a bare TypeError', async () => {
+    // The same input class as A-1, one boundary over: `null` is legal JSON,
+    // so readSearchBody's try/catch never fires and the `SearchBody` cast is
+    // satisfied structurally by a value that has no properties at all.
+    // `body.total` then throws `Cannot read properties of null` — naming no
+    // keyword, which is the exact defect readSearchBody was written to fix
+    // (page 13 of keywords:dsh-plugin once answered 200 with `<!doctype
+    // html>`, and the bare SyntaxError named no keyword either).
+    const fetchImpl = (async () => new Response('null', { status: 200 })) as unknown as typeof fetch
+    await expect(searchByKeywords(fetchImpl)).rejects.toThrow(
+      /npm search for keywords:dsh-plugin at from=0 answered 200 with a body that is not a search response/,
+    )
+  })
+
+  it('skips a null object in a search page instead of dying on it', async () => {
+    // `{"objects":[null]}` is legal JSON too, and `object.package?.name`
+    // throws on the element rather than the body. A page entry that names no
+    // package is not a package — skipped, exactly like one whose name is not
+    // a string; the coverage check below is what refuses the resulting
+    // shortfall, with the keyword in its message.
+    const fetchImpl = (async (url: string | URL) => {
+      const params = new URL(String(url)).searchParams
+      const query = params.get('text') ?? ''
+      if (!query.includes('dsh-plugin')) return new Response(JSON.stringify({ total: 0, objects: [] }), { status: 200 })
+      if (params.get('size') === '1') return new Response(JSON.stringify({ total: 2, objects: [] }), { status: 200 })
+      return new Response(JSON.stringify({
+        total: 2,
+        objects: [null, { package: { name: 'dsh-real' } }, { package: null }, 'not an object'],
+      }), { status: 200 })
+    }) as unknown as typeof fetch
+    await expect(searchByKeywords(fetchImpl)).rejects.toThrow(
+      /npm search for keywords:dsh-plugin enumerated 1 of 2 names; the search ended before reaching the answered total/,
+    )
+  })
 })
 
 describe('fetchCandidate', () => {
@@ -1061,6 +1123,26 @@ describe('fetchCandidates', () => {
     expect(candidates.map(c => c.name)).toEqual(['good'])
     expect(rejections).toEqual([])
     expect(urls[1]).toContain('registry.npmmirror.com')
+  })
+
+  it('records a null packument body as a fetch-failed row and still returns the rest of the batch', async () => {
+    // A-1: `null` is legal JSON, response.json() returns it without throwing,
+    // and toCandidate then read `doc.name` off it. The TypeError escaped
+    // fetchCandidate entirely, rejected this Promise.all, and — with no outer
+    // catch in build.ts or classify.ts — ended the daily catalog on one
+    // packument. The batch spans HARVEST_CONCURRENCY so the good names sit on
+    // both sides of the bad one.
+    const goodNames = Array.from({ length: HARVEST_CONCURRENCY }, (_, i) => `good-${i}`)
+    const fetchImpl = (async (url: string | URL) => {
+      if (String(url).endsWith('/bad')) return new Response('null', { status: 200 })
+      const name = decodeURIComponent(String(url).split('/').pop() ?? '')
+      return new Response(JSON.stringify({ ...packument, name }), { status: 200 })
+    }) as unknown as typeof fetch
+    const { candidates, rejections } = await fetchCandidates([...goodNames, 'bad'], fetchImpl, undefined, undefined, noSleep)
+    expect(candidates.map(c => c.name).sort()).toEqual(goodNames)
+    expect(rejections).toEqual([
+      { name: 'bad', code: 'fetch-failed', detail: 'bad: packument names no usable latest version' },
+    ])
   })
 })
 

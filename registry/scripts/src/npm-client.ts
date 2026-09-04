@@ -122,9 +122,10 @@ export async function partitionKeyword(
   return { cells, total, partitioned: true }
 }
 
-/** The two fields the harvest reads off a search response. */
+/** The two fields the harvest reads off a search response. `objects` admits a
+ * null element because JSON does: the registry's shape is not a guarantee. */
 interface SearchBody {
-  objects?: { package?: { name?: unknown } }[]
+  objects?: ({ package?: { name?: unknown } | null } | null)[]
   total?: unknown
 }
 
@@ -134,8 +135,9 @@ interface SearchBody {
  * `<!doctype html>`, and the bare `SyntaxError` named no keyword.
  */
 async function readSearchBody(response: Response, query: string, from: number): Promise<SearchBody> {
+  let parsed: unknown
   try {
-    return await response.json() as SearchBody
+    parsed = await response.json()
   } catch (error) {
     // A deadline is not a malformed body — and this module is where the
     // deadline is built, so a wrong reason here is the one an operator is
@@ -143,6 +145,15 @@ async function readSearchBody(response: Response, query: string, from: number): 
     if (error instanceof FetchTimeoutError) throw error
     throw new Error(`npm search for ${query} at from=${from} answered 200 with a body that is not JSON`)
   }
+  // `null` parses without throwing and satisfies the `SearchBody` cast
+  // structurally, so the try/catch above never fires and `body.total` in the
+  // caller throws `Cannot read properties of null` instead — a bare TypeError
+  // naming no keyword, which is the very failure this function exists to
+  // prevent. Named here, where the query is still in scope.
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`npm search for ${query} at from=${from} answered 200 with a body that is not a search response`)
+  }
+  return parsed as SearchBody
 }
 
 /**
@@ -446,6 +457,22 @@ function publisherOf(maintainers: unknown, npmUser: unknown): string | undefined
 }
 
 export function toCandidate(packument: unknown): Candidate | null {
+  // `null` is legal JSON, so a 200 whose whole body is those four bytes
+  // parses cleanly and arrives here — and every property read below the cast
+  // throws a TypeError on it. Checked before the cast rather than after it:
+  // the cast is a claim about shape that `null` satisfies structurally and
+  // not in fact. Anything that is not an object shape can carry no name, so
+  // it projects to no candidate, the same as a packument naming no latest
+  // version — one author-readable `fetch-failed` row instead of an aborted
+  // harvest. github-client's twin projection took this guard on this branch
+  // after a real public repository served exactly that body; a throw HERE is
+  // worse, because fetchCandidate's catches wrap the transport and the JSON
+  // parse but not the projection, so it rejects fetchCandidates' Promise.all
+  // and neither build.ts nor classify.ts has an outer catch. The Array clause
+  // is belt-and-braces: an array's `.name` is undefined and would be rejected
+  // below anyway — it is here so the guard reads as "not an object shape"
+  // rather than as a null check that happens to suffice today.
+  if (typeof packument !== 'object' || packument === null || Array.isArray(packument)) return null
   const doc = packument as {
     name?: unknown
     'dist-tags'?: { latest?: unknown }
@@ -467,7 +494,14 @@ export function toCandidate(packument: unknown): Candidate | null {
   const version = doc['dist-tags']?.latest
   if (typeof name !== 'string' || typeof version !== 'string') return null
   const manifest = doc.versions?.[version]
-  if (manifest === undefined) return null
+  // The same input class, one level down: `"versions": {"1.2.0": null}` is
+  // legal JSON, it passes an `=== undefined` check, and `manifest.dist` then
+  // throws. A version entry that is not an object shape carries no manifest,
+  // so it names no usable latest version — and a hollow candidate built from
+  // one would reach the gate to be rejected for a license and a repository it
+  // was never asked for, which is a misattributed reason in a published
+  // report.
+  if (typeof manifest !== 'object' || manifest === null || Array.isArray(manifest)) return null
   const publishedAt = doc.time?.[version]
   return {
     name,
@@ -543,11 +577,18 @@ export async function searchByKeywords(
         const response = await fetchWithFailover(path, fetchImpl, sleep, token, backupRegistry, timeoutMs)
         if (!response.ok) throw new Error(`npm search for ${query} failed: ${response.status}`)
         const body = await readSearchBody(response, query, from)
-        const objects = body.objects ?? []
+        // Array-checked, not `?? []`: a non-array `objects` is not iterable
+        // and `for…of` would throw on it. An unusable `objects` reads as an
+        // empty page, which the coverage check below refuses BY NAME rather
+        // than by TypeError. Each element is optional-chained for the same
+        // reason: `{"objects":[null]}` is legal JSON, and an entry naming no
+        // package is not a package.
+        const objects = Array.isArray(body.objects) ? body.objects : []
         for (const object of objects) {
-          if (typeof object.package?.name === 'string') {
-            seen.add(object.package.name)
-            forKeyword.add(object.package.name)
+          const found = object?.package?.name
+          if (typeof found === 'string') {
+            seen.add(found)
+            forKeyword.add(found)
           }
         }
         // Stop on the total the registry answered, NEVER on a short page: npm
@@ -605,10 +646,14 @@ export type CandidateResult =
  * @param sleep - the delay implementation, injected so tests do not wait.
  * @param token - an optional read-only npm token; see {@link fetchWithRetry}.
  * @returns the candidate, or the reason none could be produced. NEVER throws:
- *   a 429 is retried a bounded number of times, and a transport failure
- *   (network error, stall, or an exhausted failover) becomes a rejection whose
- *   detail names that cause — one dead packument out of thousands must not
- *   take the daily catalog down with it.
+ *   a 429 is retried a bounded number of times, a transport failure (network
+ *   error, stall, or an exhausted failover) becomes a rejection whose detail
+ *   names that cause, and {@link toCandidate} answers `null` for any body it
+ *   cannot project rather than dereferencing it — one dead packument out of
+ *   thousands must not take the daily catalog down with it. That last clause
+ *   is the one this branch had to add twice: the three catches below wrap the
+ *   transport and the JSON parse, NOT the projection, so a `null` body (legal
+ *   JSON, parsed without complaint) threw straight past all of them.
  */
 export async function fetchCandidate(
   name: string,
@@ -674,8 +719,11 @@ export async function fetchCandidates(
   const rejections: Rejection[] = []
   for (let i = 0; i < names.length; i += HARVEST_CONCURRENCY) {
     const batch = names.slice(i, i + HARVEST_CONCURRENCY)
-    // `fetchCandidate` never throws, so `Promise.all` can no longer reject:
-    // every name lands as a candidate or as a rejection carrying its reason.
+    // `fetchCandidate` never throws — transport, parse AND projection — so
+    // `Promise.all` can no longer reject: every name lands as a candidate or
+    // as a rejection carrying its reason. One rejected promise here fails the
+    // whole batch and the whole harvest, and there is no outer catch above:
+    // build.ts and classify.ts both call this at module scope.
     const results = await Promise.all(batch.map(async name => ({
       name,
       result: await fetchCandidate(name, fetchImpl, sleep, token, backupRegistry, timeoutMs),
