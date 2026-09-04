@@ -77,13 +77,22 @@ describe('parseMarketResponse', () => {
   })
 })
 
-describe('a steered verdict cannot delist a neighbour', () => {
-  it('records a neighbour-named true as an llm hold, which hides nothing', () => {
+describe('what a steered verdict can and cannot reach', () => {
+  it('withholds the neighbour it named, and records the row for a spot-check', () => {
     // The batch asked about dsh-a and its neighbour dsh-b. A hostile
     // description in dsh-a's metadata steers the model into answering `true`
     // for dsh-b. The parser cannot tell that apart from a legitimate answer —
-    // batches may be answered in any order — so the defence is downstream:
-    // an llm verdict is a hold a human confirms, never a hide.
+    // batches may be answered in any order — so there is no positional check
+    // to add, and the verdict stands.
+    //
+    // The blast radius is what bounds this, measured 2026-09-04: `notAShop`
+    // is the CLEARED list, and the client shows any name that is cleared OR
+    // not shop-like (`ShopTab.tsx:920-922`). isShopLike('dsh-hello-plugin')
+    // and isShopLike('dsh-fs-tool') are both false, so a steered `true` on an
+    // ordinarily-named plugin withholds NOTHING — it can only bite a name
+    // that already reads like a marketplace, and those are hidden by default
+    // anyway. What it does cost such a name is the re-ask: a recorded row is
+    // never asked again. Hence the report line.
     const verdicts = parseMarketResponse(
       '[{"name":"dsh-a","market":false},{"name":"dsh-b","market":true}]',
       new Set(['dsh-a', 'dsh-b']),
@@ -93,16 +102,15 @@ describe('a steered verdict cannot delist a neighbour', () => {
       verified: '[]', denied: '[]', allowedSimilar: '[]', categories: '[]', firstSeen: '[]',
       markets: rows,
     })
-    expect(config.notAShop.has('dsh-b'), 'an llm true must not hide the entry').toBe(true)
-    expect([...config.marketHolds]).toEqual(['dsh-b'])
+    expect(config.notAShop.has('dsh-a'), 'a false clears').toBe(true)
+    expect(config.notAShop.has('dsh-b'), 'a true withholds').toBe(false)
   })
 
-  it('lets a human row confirm the hold', () => {
+  it('treats a human row exactly the same, because the verdict is what decides', () => {
     const config = parseRegistryConfig({
       verified: '[]', denied: '[]', allowedSimilar: '[]', categories: '[]', firstSeen: '[]',
       markets: '- name: dsh-b\n  market: true\n  by: human\n  reason: it sells dsh plugins\n',
     })
     expect(config.notAShop.has('dsh-b')).toBe(false)
-    expect(config.marketHolds.size).toBe(0)
   })
 })

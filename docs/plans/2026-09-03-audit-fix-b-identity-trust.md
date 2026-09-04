@@ -3675,6 +3675,28 @@ git commit -m "docs: close audit B-11 — pnpm pack keeps workspace: specifiers,
 
 ### Task 16: an LLM market verdict is a hold, not a delisting
 
+> **Outcome: implemented 2026-09-04, then the `by: human` gate was REVERTED the
+> same day.** The steps below are kept as written because the rest of the task
+> shipped and stands — the `notes` channel on `emit`, the deduplicated
+> `notAShopListed`, and `docs/design/2026-09-03-market-judge.md`. What was
+> reverted is the one line deriving `notAShop`, plus the `marketHolds` field
+> it fed.
+>
+> Two measurements killed the gate. `notAShop` is the CLEARED list and the
+> client shows a name that is cleared OR not shop-like
+> (`ShopTab.tsx:920-922`), so routing an LLM `true` into it ADVERTISED the 16
+> shop-like names among the 17 live `by: llm` rows — the opposite of a hold.
+> And there is no human: `verified.yml`, `denied.yml` and
+> `allowed-similar.yml` are empty by design, so a hold whose only exit is a
+> human is a permanent no-op. The same reading bounds D-7's severity, which
+> this task overstated: a steered `true` on an ordinarily-named plugin
+> withholds nothing, because `isShopLike` is false for it. See
+> `docs/design/2026-09-03-market-judge.md` §4 for the full record.
+>
+> Policy as shipped: the verdict decides, `by` records who judged it, and the
+> build report names every `by: llm` withholding for a spot-check.
+
+
 Finding D-7. `market: true, by: llm` hides an entry from every shelf: only `market: false` names reach `notAShop` in `plugins.json` (`config.ts:150`, `emit.ts:171-175`), the client hides shop-like names absent from that list (`ShopTab.tsx:890-894`), and `mergeMarketRows` never re-asks or overwrites a recorded verdict — so the hide is permanent and no human ever sees it happen. `parseMarketResponse` accepts any name in the batch's `expected` set, and batches are sorted names, so a description in package A that steers the model into emitting `{"name": "<neighbour>", "market": true}` removes a competitor for good. That is the CLAUDE.md rule "LLM output ... never removes an entry" being broken in production, on 14 live rows.
 
 The fix is not to make the parser cleverer — the model may legitimately answer the batch in any order, so there is no positional check to add. The fix is that an LLM `true` cannot hide anything by itself.
@@ -4360,7 +4382,7 @@ git commit -m "feat(registry): report registry rows that matched no harvested ca
 
 ## Operational items — not code, and not for an agent to do alone
 
-1. **Promote or correct the 14 `market: true, by: llm` rows.** Task 16 turns those rows into holds, so the first daily build after it lands puts 14 names back on the shelf and lists them in `report.md`. Thirteen of them look like genuine competing markets by name (`dsh-marketplace`, `harness-plugin-market`, `@dshindex/dsh-plugin-marketplace`, …) and the fourteenth is `dsh-plugin-shop`, which the gate excludes as our own package anyway (`own.ts:27`). Withholding them again requires reading each plugin and recording `by: human` — a human review pass, and LivXue's call, not a code change. Until then they are visible, which is the direction the design chooses: a wrong `false` lists one competitor on a shelf of nine thousand, a wrong `true` deletes a working plugin.
+1. **Spot-check the 17 `market: true, by: llm` rows when convenient — nothing is blocked on it.** Superseded 2026-09-04: Task 16's hold was reverted, so those rows withhold as they always did and the shelf does not advertise them. What the build report now carries is the list itself, under "Withheld from the shelf on an LLM verdict alone", because a recorded row is never re-asked. Two of the 17 are our own packages (`dsh-plugin-shop`, `dsh-plugin-shop-catalog`), which `own.ts` excludes anyway, and `dsw-workshop-plugin` is the one name among them `isShopLike` does not match, so its verdict changes nothing either way. Correcting any row means editing it to `market: false`.
 2. **Move the LLM gateway to TLS.** `http://8.141.31.123:3000/v1` (`classify.ts:53`, `.github/workflows/daily.yml:73` — re-derived 2026-09-04; the `:37` / `:41` written here first had already drifted) is plaintext to a bare IP, so an on-path party can read `LLM_API_KEY` and forge verdicts the bot commits. Task 16 reduces the blast radius of a forged `true` to a hold, but a forged `false` still shelves a competing market and a stolen token is still a stolen token. Infrastructure work: a hostname, a certificate, and `LLM_BASE_URL` updated in the workflow. Recorded in `docs/design/2026-09-03-market-judge.md` §6.
 3. **Run `backfill-first-seen.ts` once, after WP0's C-1 fix (plan A).** Task 10 Step 6 has the command and the reason it needs a human on the diff.
 

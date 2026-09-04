@@ -1,7 +1,7 @@
 # The market judge and `markets.yml` — design
 
 Date: 2026-09-03
-Status: describes shipped behaviour, with the D-7 amendment this document was written for.
+Status: describes shipped behaviour. Records the D-7 amendment this document was commissioned for, the `by: human` gate that amendment asked for, and why that gate was reverted the same day (§4).
 
 ## 1. Why the filter exists, and why it is not the answer
 
@@ -26,7 +26,7 @@ catches goes to a recorded verdict.
 | `market-judge.ts` | shell | the prompt, and `parseMarketResponse`, which is pure |
 | `markets.ts` | pure | `mergeMarketRows`, `serializeMarketRows` |
 | `registry/markets.yml` | data | the recorded verdicts — a build input, like `verified.yml` |
-| `config.ts` | shell | derives `notAShop` and `marketHolds` from the rows |
+| `config.ts` | shell | derives `notAShop` from the rows; `pipeline.ts` reads `marketRows` for the report line |
 
 `markets.yml` is keyed by NAME, which is the unit the client filters on and
 NOT the catalog's install identity. The two differ: the 73 caught entries carry
@@ -47,28 +47,62 @@ recorded one is not.
 
 ## 4. What a verdict may do — the D-7 amendment
 
-**An LLM verdict never removes an entry.** This is the CLAUDE.md rule, and
-until 2026-09-03 the code broke it:
+**The verdict decides. `by` records who judged it.**
 
-- `market: true, by: human` — withholds the listing. A human read the plugin.
-- `market: true, by: llm` — a **hold**. The name is recorded, so the
-  classifier does not re-ask it, and the build report lists it under "Market
-  holds awaiting human confirmation". The entry stays on the shelf until a
-  human records `by: human`.
-- `market: false` — clears the name filter and nothing else. No trust tier, no
-  skipped gate.
+- `market: true` — withheld from the shelf, whichever judged it.
+- `market: false` — clears the name filter and nothing else. No trust tier,
+  no skipped gate.
 
-Why the asymmetry: a wrong `true` deletes a working plugin from every user's
-view and nothing says so; a wrong `false` lists one competitor on a shelf of
-nine thousand. Those costs are not equal.
+One classifier pass is accurate enough for the question in §3: it is narrow,
+and a name plus a description usually settle it. What the `by` field buys is
+review, not authority — `pipeline.ts` puts every `by: llm` withholding in the
+build report under "Withheld from the shelf on an LLM verdict alone", because
+a recorded row is never re-asked and nothing else would ever surface a wrong
+one. Correcting it means editing the row.
 
-Why a hold and not a stricter parser: `parseMarketResponse` adopts any name
-the batch asked about, and it must — the model may answer a batch in any
-order, so there is no positional check to add. But batches are sorted names,
-so a package's own description can name its neighbour, and a hostile
-description that steers the model into `{"name": "<neighbour>", "market":
-true}` used to delist that neighbour permanently. The defence has to be
-downstream of the parse, and it is: nothing an LLM says hides anything.
+### The `by: human` gate that was tried, and why it was wrong
+
+D-7 asked for an LLM `true` to be a HOLD — recorded, but not withholding,
+until a human wrote `by: human`. That shipped on 2026-09-04 and was reverted
+the same day. Two measurements killed it:
+
+**It advertised what the heuristic had been hiding.** `notAShop` is the
+CLEARED list, and the client shows a name that is cleared **or** not shop-like
+(`ShopTab.tsx:920-922`). Routing an LLM `true` into `notAShop` therefore did
+not "leave the entry shelved pending review" — it cleared the name filter for
+it. Of the 17 `market: true, by: llm` rows live at the time, `isShopLike`
+matched 16. The hold advertised sixteen competing markets.
+
+**And there is no human.** `verified.yml`, `denied.yml` and
+`allowed-similar.yml` are all empty by design: the human-review path is a door
+left open for the future, not a process that runs. A hold whose only exit is a
+human is not a queue, it is a permanent no-op.
+
+### What D-7's severity actually is
+
+The finding says a steered verdict "removes a competitor for good". Measured
+2026-09-04, that overstates it in one direction and understates the real cost
+in another.
+
+`isShopLike('dsh-hello-plugin')` and `isShopLike('dsh-fs-tool')` are both
+false, and a name that is not shop-like is shown whether or not it is cleared.
+So a hostile description that steers the model into
+`{"name": "<neighbour>", "market": true}` withholds **nothing** when the
+neighbour has an ordinary name. The attack can only bite a victim whose name
+already reads like a marketplace — and those are hidden by default anyway.
+
+What it does cost such a victim is the re-ask: the recorded row means the
+classifier never asks again, so a plugin like 存茶指南 or 腌菜保存 wrongly
+flagged once stays flagged. That is the harm the report line addresses, and it
+is why the line exists rather than a stricter parser: `parseMarketResponse`
+must accept any name the batch asked about, because the model may answer a
+batch in any order, so there is no positional check to add.
+
+Nor is withholding a deletion. `ShopTab.tsx:911` puts it plainly — *not
+advertised is not hidden*: a withheld entry is absent from `browsable`, so it
+cannot be browsed, searched or counted in the shop, but it stays in
+`plugins.json`, an installed copy stays manageable in the installed section,
+and `dsh plugin add <name>` still works.
 
 Rows are never pruned, for the reason the memory exists: a name that drops out
 of the catalog for a day must not come back unjudged. `categories.yml` prunes
@@ -99,9 +133,12 @@ drifted, so cite the literal and re-derive the lines rather than trusting
 either number.
 
 An on-path party can read `LLM_API_KEY` from the request and forge verdicts
-that the daily bot then commits. Under the amendment above a forged `true` is
-only a hold, which is a real reduction in blast radius, but a forged `false`
-still shelves a competing market and a read token is still a read token.
+that the daily bot then commits. A forged `true` withholds — §4 explains why
+that is the policy, and bounds the damage to names that already read like
+marketplaces — and a forged `false` shelves a competing market. Either way it
+lands in `markets.yml`, is never re-asked, and a read token is still a read
+token. The report line surfaces a forged `true`; nothing surfaces a forged
+`false`.
 **Move the gateway to TLS with a hostname and a verified certificate.** This
 is an infrastructure task, not a code change, and it is tracked as an
 operational item in
