@@ -892,7 +892,9 @@ from the module, and a new guard test fails on the next cwd-relative path."
 
 **No mutation step.** The gap is a missing fixture, not a surviving mutation — there is no code path to break, because the path is never walked. Step 1 confirms the row does not exist today.
 
-- [ ] **Step 1: Confirm the row is never produced**
+> **Executed 2026-09-05, as written.** The predicted row is byte-for-byte what the pipeline produces: `| dsh-bad-catalog | invalid-catalog | dsh.catalog.(root): Unrecognized key: "tags \\| extra" |`. Both new assertions were run with the fixture stashed and both fail there, so the fixture is what carries them. `Accepted: 3` and the listed set are unchanged; `Rejected:` moves from 4 to 5. Root suite **763 passed (763)** across 28 files, typecheck clean.
+
+- [x] **Step 1: Confirm the row is never produced**
 
 ```bash
 cd /Evermind/sh_evermind/xuedizhan/dsh-plugin-store
@@ -902,7 +904,7 @@ grep -rn "invalid-catalog" registry/scripts/tests/pipeline.test.ts || echo "pipe
 
 Expected: no fixture entry and no pipeline assertion. `emit.test.ts:151-155` escapes a *hand-built* rejection, so the escaping is covered but the mapping from a real candidate is not.
 
-- [ ] **Step 2: Add the fixture candidate**
+- [x] **Step 2: Add the fixture candidate**
 
 In `registry/scripts/tests/fixtures/packuments.json`, add a comma after the `dsh-no-summary` object's closing brace (line 99) and insert before the closing `]`:
 
@@ -925,7 +927,7 @@ In `registry/scripts/tests/fixtures/packuments.json`, add a comma after the `dsh
 
 The unrecognised key is the one rejection whose `detail` echoes author text back into a published artifact, and the `|` inside it is why `escapeCell` exists. Everything else about the candidate is valid — a real license, a real bundle, a perfectly usable npm description — so the only reason it can fail to list is the declared section.
 
-- [ ] **Step 3: Write the assertions and verify they fail without the fixture**
+- [x] **Step 3: Write the assertions and verify they fail without the fixture**
 
 Replace `registry/scripts/tests/pipeline.test.ts:65-71` with:
 
@@ -968,7 +970,7 @@ Expected: FAIL, 2 failed — `reports all five rejections…` on the `dsh-bad-ca
 git stash pop
 ```
 
-- [ ] **Step 4: Run it green**
+- [x] **Step 4: Run it green**
 
 ```bash
 npx vitest run registry/scripts/tests/pipeline.test.ts
@@ -978,7 +980,7 @@ pnpm typecheck
 
 Expected: PASS — `pipeline.test.ts (21 tests)`, root total **341 passed (341)**. The accepted set is unchanged (`dsh-derived-plugin`, `dsh-fs-tool`, `dsh-hello-plugin`) and the report's `Rejected:` line reads 5.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add registry/scripts/tests/fixtures/packuments.json registry/scripts/tests/pipeline.test.ts
@@ -1008,7 +1010,7 @@ Two assertions in the root suite pass for any value the code could produce. `toB
 
 **No mutation step.** These are assertions that cannot fail by construction; the demonstration is that the current form passes against a wrong value, which Step 1 shows without touching production code.
 
-- [ ] **Step 1: Show the current assertions accept a wrong value**
+- [x] **Step 1: Show the current assertions accept a wrong value**
 
 ```bash
 cd /Evermind/sh_evermind/xuedizhan/dsh-plugin-store
@@ -1018,7 +1020,7 @@ node -e "console.log(['teal','not-a-colour','0.5',' '].map(v => Boolean(v)))"
 
 For the second: `emit([a, b], ...)` with two same-named repo entries returns six artifacts, and `not.toThrow()` inspects none of them — the test named "allows the same bundle name from different repos" would pass if `emit` dropped one of the two entries entirely.
 
-- [ ] **Step 2: Write the assertions that can fail**
+- [x] **Step 2: Write the assertions that can fail**
 
 Replace `registry/scripts/tests/emit.test.ts:353-361` with:
 
@@ -1060,7 +1062,7 @@ Replace `registry/scripts/tests/emit.test.ts:277-282` with:
   })
 ```
 
-- [ ] **Step 3: Verify each fails on the value it now refuses**
+- [x] **Step 3: Verify each fails on the value it now refuses**
 
 ```bash
 cp registry/scripts/src/emit.ts /tmp/emit.ts.h9.orig
@@ -1089,7 +1091,7 @@ cp /tmp/emit.ts.h9.orig registry/scripts/src/emit.ts
 git diff --numstat registry/scripts/src/emit.ts   # must print nothing
 ```
 
-- [ ] **Step 4: Run it green**
+- [x] **Step 4: Run it green**
 
 ```bash
 npx vitest run registry/scripts/tests/emit.test.ts
@@ -1099,7 +1101,7 @@ pnpm typecheck
 
 Expected: PASS — `emit.test.ts (33 tests)`, root total **341 passed (341)** (unchanged: both cases were strengthened in place, none added).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add registry/scripts/tests/emit.test.ts

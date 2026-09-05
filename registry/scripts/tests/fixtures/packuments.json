@@ -96,5 +96,19 @@
     "description": null,
     "keywords": [],
     "peers": []
+  },
+  {
+    "name": "dsh-bad-catalog",
+    "version": "1.0.0",
+    "integrity": "sha512-badcatalog",
+    "publishedAt": "2026-08-14T12:00:00.000Z",
+    "repository": "https://github.com/you/bad-catalog",
+    "license": "MIT",
+    "deprecated": false,
+    "hasBundle": true,
+    "catalog": { "category": "tool", "summary": { "en": "Renders diagrams", "zh": "渲染图表" }, "capabilities": [], "tags | extra": ["diagrams"] },
+    "description": "Declares a dsh.catalog carrying a field the schema does not know.",
+    "keywords": [],
+    "peers": []
   }
 ]

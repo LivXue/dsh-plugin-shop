@@ -69,12 +69,28 @@ describe('runPipeline', () => {
     expect(parsed.plugins.find(p => p.name === 'dsh-hello-plugin')?.metadata).toBe('declared')
   })
 
-  it('reports all four rejections with their codes', () => {
+  it('reports all five rejections with their codes', () => {
     const { report } = runPipeline(candidates, [], config, BUILT_AT)
     expect(report).toContain('| dsh-lib-only | no-bundle |')
     expect(report).toContain('| dsh-no-license | no-license |')
     expect(report).toContain('| dsh-fs-too1 | name-too-similar |')
     expect(report).toContain('| dsh-no-summary | no-summary |')
+    expect(report).toContain('| dsh-bad-catalog | invalid-catalog |')
+  })
+
+  it('publishes the invalid-catalog row escaped, and lists nothing for that package', () => {
+    const { report, pluginsJson } = runPipeline(candidates, [], config, BUILT_AT)
+    // The row a plugin author reads to find out why their text never appeared,
+    // produced end to end rather than at the unit gate (H-8). The
+    // author-supplied key name reaches a PUBLISHED artifact, so the `|` it
+    // carries has to be escaped or it forges a column in the table.
+    expect(report).toContain(
+      '| dsh-bad-catalog | invalid-catalog | dsh.catalog.(root): Unrecognized key: "tags \\| extra" |',
+    )
+    // "rejected, never downgraded to a derived listing" (CLAUDE.md): the
+    // package has a usable npm description, and it still must not list.
+    const parsed = JSON.parse(pluginsJson) as { plugins: { name: string }[] }
+    expect(parsed.plugins.map(p => p.name)).toEqual(['dsh-derived-plugin', 'dsh-fs-tool', 'dsh-hello-plugin'])
   })
 
   it('merges a pre-existing rejection into the emitted report', () => {
