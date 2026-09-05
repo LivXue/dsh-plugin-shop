@@ -2902,6 +2902,8 @@
   added: 2026-08-25
 - name: "@dsh-xhl/dsh-plugin-terminal"
   added: 2026-08-28
+- name: "@dsh-xhl/workspace-groups"
+  added: 2026-09-05
 - name: "@dsh-xiaoshuang/plugin"
   added: 2026-09-05
 - name: "@dsh-yzj/bundle"
@@ -22474,6 +22476,8 @@
   added: 2026-08-30
 - name: "dsh-proxy-switch"
   added: 2026-09-04
+- name: "dsh-proxy-toggle"
+  added: 2026-09-05
 - name: "dsh-prune-guide"
   added: 2026-09-02
 - name: "dsh-pseudo-vision"
