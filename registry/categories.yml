@@ -1753,6 +1753,8 @@
   category: provider
 - name: "@goodandready/dsh-context-lens"
   category: tool
+- name: "@goodandready/dsh-cost-meter"
+  category: ui
 - name: "@goodandready/dsh-cron"
   category: workflow
 - name: "@goodandready/dsh-dsml-artifact-guard"
@@ -6248,6 +6250,8 @@
 - name: "dsh-checkpoint-memory"
   category: tool
 - name: "dsh-checkpoint-rewind"
+  category: tool
+- name: "dsh-chem"
   category: tool
 - name: "dsh-chemistry-terms"
   category: other
@@ -13153,6 +13157,8 @@
   category: integration
 - name: "dsh-pr-description"
   category: tool
+- name: "dsh-pr-guardian"
+  category: integration
 - name: "dsh-practice-plan"
   category: tool
 - name: "dsh-praise"
