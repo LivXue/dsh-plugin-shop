@@ -12,12 +12,14 @@ import { createHash } from 'node:crypto'
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, readdirSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadCatalog, type CatalogFs } from '../../src/host/catalog.ts'
 import { httpOrigin } from '../../src/host/origin.ts'
 import { npmOrigin } from '../../src/host/npm-origin.ts'
 import { startNpmRegistry, type NpmRegistryFixture } from '../fixtures/npm-registry.ts'
+import { fileTempRoot } from './temp-root.ts'
+
+const TEMP_ROOT = fileTempRoot('transport-parity')
 
 const PKG = 'dsh-plugin-shop-catalog-parity'
 const VERSION = '2026.901.0'
@@ -66,7 +68,7 @@ beforeAll(async () => {
   pagesUrl = `http://127.0.0.1:${(pagesServer.address() as AddressInfo).port}/v1/`
 
   // The npm transport: the SAME three files, packed by npm itself.
-  workDir = mkdtempSync(join(tmpdir(), 'shop-parity-'))
+  workDir = mkdtempSync(join(TEMP_ROOT, 'shop-parity-'))
   mkdirSync(join(workDir, 'v1'), { recursive: true })
   writeFileSync(join(workDir, 'v1', 'index.json'), indexText)
   writeFileSync(join(workDir, 'v1', pluginsName), pluginsText)

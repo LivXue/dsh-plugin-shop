@@ -1,11 +1,16 @@
 import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { runPipeline, selectEntries, unmatchedRegistryNotes } from '../src/pipeline.ts'
 import { parseRegistryConfig } from '../src/config.ts'
 import type { Candidate, Rejection } from '../src/types.ts'
 
 const candidates = JSON.parse(
-  readFileSync('registry/scripts/tests/fixtures/packuments.json', 'utf8'),
+  // Resolved from THIS module, not the cwd: a cwd-relative fixture path makes
+  // the suite pass or fail on where it was invoked from, and running it from
+  // any other directory raised ENOENT before this.
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'packuments.json'), 'utf8'),
 ) as Candidate[]
 
 const config = parseRegistryConfig({
@@ -64,12 +69,28 @@ describe('runPipeline', () => {
     expect(parsed.plugins.find(p => p.name === 'dsh-hello-plugin')?.metadata).toBe('declared')
   })
 
-  it('reports all four rejections with their codes', () => {
+  it('reports all five rejections with their codes', () => {
     const { report } = runPipeline(candidates, [], config, BUILT_AT)
     expect(report).toContain('| dsh-lib-only | no-bundle |')
     expect(report).toContain('| dsh-no-license | no-license |')
     expect(report).toContain('| dsh-fs-too1 | name-too-similar |')
     expect(report).toContain('| dsh-no-summary | no-summary |')
+    expect(report).toContain('| dsh-bad-catalog | invalid-catalog |')
+  })
+
+  it('publishes the invalid-catalog row escaped, and lists nothing for that package', () => {
+    const { report, pluginsJson } = runPipeline(candidates, [], config, BUILT_AT)
+    // The row a plugin author reads to find out why their text never appeared,
+    // produced end to end rather than at the unit gate (H-8). The
+    // author-supplied key name reaches a PUBLISHED artifact, so the `|` it
+    // carries has to be escaped or it forges a column in the table.
+    expect(report).toContain(
+      '| dsh-bad-catalog | invalid-catalog | dsh.catalog.(root): Unrecognized key: "tags \\| extra" |',
+    )
+    // "rejected, never downgraded to a derived listing" (CLAUDE.md): the
+    // package has a usable npm description, and it still must not list.
+    const parsed = JSON.parse(pluginsJson) as { plugins: { name: string }[] }
+    expect(parsed.plugins.map(p => p.name)).toEqual(['dsh-derived-plugin', 'dsh-fs-tool', 'dsh-hello-plugin'])
   })
 
   it('merges a pre-existing rejection into the emitted report', () => {
@@ -78,15 +99,6 @@ describe('runPipeline', () => {
     ]
     const { report } = runPipeline(candidates, [], config, BUILT_AT, preexisting)
     expect(report).toContain('| dsh-rate-limited | fetch-failed | npm registry returned 429 fetching dsh-rate-limited |')
-  })
-
-  it('produces byte-identical artifacts for the same input', () => {
-    const first = runPipeline(candidates, [], config, BUILT_AT)
-    const second = runPipeline([...candidates].reverse(), [], config, BUILT_AT)
-    expect(second.pluginsJson).toBe(first.pluginsJson)
-    expect(second.pluginsFileName).toBe(first.pluginsFileName)
-    expect(second.manifestLock).toBe(first.manifestLock)
-    expect(second.report).toBe(first.report)
   })
 
   it('stays byte-identical when a derived listing carries a categories row', () => {
@@ -145,25 +157,6 @@ describe('runPipeline', () => {
     expect(firstSeen.has('dsh-lib-only')).toBe(false)
     expect(firstSeen.has('dsh-no-license')).toBe(false)
     expect(firstSeen.has('dsh-no-summary')).toBe(false)
-  })
-
-  it('produces identical data across build times', () => {
-    const first = runPipeline(candidates, [], config, BUILT_AT)
-    const second = runPipeline(candidates, [], config, '2030-01-01T00:00:00.000Z')
-    expect(second.pluginsJson).toBe(first.pluginsJson)
-    expect(second.pluginsFileName).toBe(first.pluginsFileName)
-    expect(second.manifestLock).toBe(first.manifestLock)
-    expect(second.report).toBe(first.report)
-    expect(second.indexJson).not.toBe(first.indexJson)
-  })
-
-  it('produces byte-identical artifacts with a stars pointer across runs', () => {
-    const stars = { url: 'stars.deadbeef.json', sha256: 'deadbeef' }
-    const first = runPipeline(candidates, [], config, BUILT_AT, [], stars)
-    const second = runPipeline(candidates, [], config, BUILT_AT, [], stars)
-    expect(first.indexJson).toBe(second.indexJson)
-    expect(first.pluginsJson).toBe(second.pluginsJson)
-    expect(JSON.parse(first.indexJson).stars).toEqual(stars)
   })
 
   it('keeps plugins.json bounded when a candidate carries megabyte strings', () => {
@@ -609,15 +602,23 @@ describe('determinism under every perturbation', () => {
     ].join(''),
   })
 
-  it('is byte-identical in every artifact when only the input order changes', () => {
+  it('is byte-identical in every artifact under a reversed input and a repeated run', () => {
     const first = runPipeline(candidates, repos, dated, BUILT_AT, preexisting, stars)
     const second = runPipeline(
       [...candidates].reverse(), [...repos].reverse(), dated, BUILT_AT, [...preexisting].reverse(), stars,
     )
+    // The same inputs a second time, which is a different claim from order
+    // independence: it is what would catch a Set or Map iterated in insertion
+    // order, or a clock read inside emit.
+    const repeated = runPipeline(candidates, repos, dated, BUILT_AT, preexisting, stars)
     for (const key of ['pluginsFileName', 'pluginsJson', 'indexJson', 'badgeJson', 'manifestLock', 'report'] as const) {
-      expect(second[key], key).toBe(first[key])
+      expect(second[key], `${key} moved with input order`).toBe(first[key])
+      expect(repeated[key], `${key} moved between runs`).toBe(first[key])
     }
     expect([...second.firstSeen]).toEqual([...first.firstSeen])
+    expect([...repeated.firstSeen]).toEqual([...first.firstSeen])
+    // The sidecar pointer rides the index and is not otherwise perturbed.
+    expect((JSON.parse(first.indexJson) as { stars: unknown }).stars).toEqual(stars)
   })
 
   it('keeps the hashed data identical across build times, with only the index and badge moving', () => {

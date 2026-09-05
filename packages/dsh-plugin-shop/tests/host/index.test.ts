@@ -1,7 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import ShopGateway, { verifyTarballSha256 } from '../../src/host/index.ts'
@@ -9,6 +8,9 @@ import type { InventoryEntry, LoaderEntryLike, ShopGatewayOptions, ShopInstallSt
 import type { HotMountResult } from '../../src/host/hot.ts'
 import type { CatalogResult, CatalogSnapshot, LoadCatalogOptions } from '../../src/host/catalog.ts'
 import type { CatalogEntry } from '../../src/host/types.ts'
+import { fileTempRoot } from './temp-root.ts'
+
+const TEMP_ROOT = fileTempRoot('index')
 
 // The install tests drive the full §7.2 path including the post-install
 // confirm, which re-reads the profile manifest through app-boot's
@@ -16,7 +18,7 @@ import type { CatalogEntry } from '../../src/host/types.ts'
 // profile manifest already lists the bundle the install tests install, so the
 // exit-0 fixture dsh passes the confirm without any dsh reconcile. Each test
 // file runs in its own vitest worker, so the pin never leaves this file.
-const shopHome = mkdtempSync(join(tmpdir(), 'dsh-gateway-home-'))
+const shopHome = mkdtempSync(join(TEMP_ROOT, 'dsh-gateway-home-'))
 process.env.DSH_HOME = shopHome
 mkdirSync(join(shopHome, 'profiles', 'web'), { recursive: true })
 writeFileSync(join(shopHome, 'profiles', 'web', 'package.json'), JSON.stringify({ dsh: { profile: { bundles: ['dsh-hello-plugin', 'dsh-repo-plugin', 'sub-plugin', 'dsh-rescued', 'dsh-plugin-shop'] } } }))
@@ -41,7 +43,7 @@ describe('two catalog entries share one name (G-1)', () => {
     const bin = join(dir, 'fake-dsh')
     writeFileSync(bin, ['#!/bin/sh', `echo "$1 $2 $3 $4 $5" >> "${join(dir, 'calls.log')}"`, 'exit 0', ''].join('\n'))
     chmodSync(bin, 0o755)
-    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-dup-profile-'))
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-dup-profile-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies }))
     return new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
@@ -51,7 +53,7 @@ describe('two catalog entries share one name (G-1)', () => {
   }
 
   it('spawns the identity that was asked for, not the first entry with the name', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-dup-install-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-dup-install-'))
     const gateway = gatewayWithBoth(dir, {})
     const result = await gateway.install({
       name: 'dsh-foo', version: bobCommit, acknowledged: true,
@@ -73,7 +75,7 @@ describe('two catalog entries share one name (G-1)', () => {
   })
 
   it('refuses a name-only install request while two entries share the name', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-dup-ambiguous-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-dup-ambiguous-'))
     const gateway = gatewayWithBoth(dir, {})
     const result = await gateway.install({ name: 'dsh-foo', version: bobCommit, acknowledged: true })
     expect(result).toMatchObject({ ok: false, code: 'ambiguous-identity' })
@@ -82,7 +84,7 @@ describe('two catalog entries share one name (G-1)', () => {
   })
 
   it('reports one row for the repository that is actually installed', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-dup-installed-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-dup-installed-'))
     mkdirSync(join(dir, 'cache'), { recursive: true })
     writeFileSync(join(dir, 'cache/github-pins.json'), JSON.stringify({ 'github:bob/dsh-foo#': bobCommit }))
     const gateway = gatewayWithBoth(dir, { 'dsh-foo': 'github:bob/dsh-foo' })
@@ -94,8 +96,8 @@ describe('two catalog entries share one name (G-1)', () => {
   })
 
   it('does not let an npm namesake claim a repo entry\'s installed row', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-dup-npm-'))
-    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-dup-npm-profile-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-dup-npm-'))
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-dup-npm-profile-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
       name: 'dsh-profile-web', dsh: { profile: { bundles: [] } },
       dependencies: { 'dsh-foo': 'github:bob/dsh-foo' },
@@ -115,7 +117,7 @@ describe('two catalog entries share one name (G-1)', () => {
   })
 
   it('forgets the identity pin on uninstall', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-dup-uninstall-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-dup-uninstall-'))
     mkdirSync(join(dir, 'cache'), { recursive: true })
     writeFileSync(join(dir, 'cache/github-pins.json'), JSON.stringify({
       'github:bob/dsh-foo#': bobCommit, 'github:alice/dsh-foo#': aliceCommit,
@@ -150,7 +152,7 @@ function fixturePackage(profileDir: string, name: string, patch: string | null):
 }
 
 function toggleProfile(): string {
-  const profileDir = mkdtempSync(join(tmpdir(), 'dsh-shop-'))
+  const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-shop-'))
   writeFileSync(join(profileDir, 'cordis.yml'), '[]\n')
   writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
   return profileDir
@@ -172,7 +174,7 @@ describe('ShopGateway', () => {
     // so the walk-up from import.meta.url finds the repo, not a profile. The
     // boot's ctx.baseUrl — the profile's cordis.yml directory — is the
     // authoritative source, and the constructor must use it.
-    const home = mkdtempSync(join(tmpdir(), 'dsh-linked-'))
+    const home = mkdtempSync(join(TEMP_ROOT, 'dsh-linked-'))
     const profileDir = join(home, 'profiles', 'web')
     mkdirSync(profileDir, { recursive: true })
     writeFileSync(join(profileDir, 'cordis.yml'), '[]\n')
@@ -199,7 +201,7 @@ describe('ShopGateway', () => {
     // The real pluginInventory service returns a snapshot object, not a bare
     // array — hub-borrowings B assumed the array, and the toggle crashed on
     // the real wire shape (0.5.1 regression fix). Pin the real shape here.
-    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-toggle-snapshot-'))
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-toggle-snapshot-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
     fixturePackage(profileDir, 'dsh-hello-fixture', "- insert:\n    - id: snapshot-row\n      name: 'dsh-hello-fixture'\n")
     const gateway = new ShopGateway(stubCtx(), {
@@ -212,7 +214,7 @@ describe('ShopGateway', () => {
   })
 
   it('drops malformed inventory rows instead of crashing', async () => {
-    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-toggle-malformed-'))
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-toggle-malformed-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
     fixturePackage(profileDir, 'dsh-hello-fixture', "- insert:\n    - id: good-row\n      name: 'dsh-hello-fixture'\n")
     const gateway = new ShopGateway(stubCtx(), {
@@ -229,7 +231,7 @@ describe('ShopGateway', () => {
     // The whole point of the check: the mismatch is said once, at load, in the
     // shop's own words — not diagnosed for hours from a path that silently
     // changed behaviour.
-    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-peerversion-'))
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-peerversion-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
     const warnings: string[] = []
     const ctx = { get: () => undefined, reflect: { provide: () => {} }, logger: { warn: (m: string) => warnings.push(m) } } as never
@@ -244,7 +246,7 @@ describe('ShopGateway', () => {
 
   it('loads silently when the harness satisfies every declared peer range', async () => {
     // 0.1.2-rc.1 against ^0.1.1-rc.2 is what is installed today: silence.
-    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-peerversion-ok-'))
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-peerversion-ok-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
     const warnings: string[] = []
     const ctx = { get: () => undefined, reflect: { provide: () => {} }, logger: { warn: (m: string) => warnings.push(m) } } as never
@@ -261,7 +263,7 @@ describe('ShopGateway', () => {
     // incompatibilityMap) is what covers a missing peer. The resolver here is
     // the real one; only the range table is injected, and it names a package
     // that exists in no store.
-    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-peerversion-absent-'))
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-peerversion-absent-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
     const warnings: string[] = []
     const ctx = { get: () => undefined, reflect: { provide: () => {} }, logger: { warn: (m: string) => warnings.push(m) } } as never
@@ -280,7 +282,7 @@ describe('ShopGateway', () => {
     // would. If the harness under this repo ever moves off the declared
     // line, this test failing IS the warning firing — read the message and
     // decide whether the ranges or the install is wrong.
-    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-peerversion-live-'))
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-peerversion-live-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
     const warnings: string[] = []
     const ctx = { get: () => undefined, reflect: { provide: () => {} }, logger: { warn: (m: string) => warnings.push(m) } } as never
@@ -368,7 +370,7 @@ describe('ShopGateway.catalog', () => {
 // A fixture `dsh` that records its argv and exits 0; the calls log path lets
 // a rejection's no-spawn property be proven by the file's absence.
 function gatewayWithSnapshot(snapshot: CatalogSnapshot, options: Partial<ShopGatewayOptions> = {}): { gateway: ShopGateway; callsLog: string } {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-gateway-fixture-'))
+  const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-gateway-fixture-'))
   const bin = join(dir, 'dsh')
   writeFileSync(bin, [
     '#!/bin/sh',
@@ -379,7 +381,7 @@ function gatewayWithSnapshot(snapshot: CatalogSnapshot, options: Partial<ShopGat
   chmodSync(bin, 0o755)
   // The install flow reads the running profile manifest before spawning (to
   // tell an update from a fresh install); the fixture supplies one.
-  const profileDir = mkdtempSync(join(tmpdir(), 'dsh-gateway-profile-'))
+  const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-gateway-profile-'))
   writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
   const gateway = new ShopGateway(stubCtx(), {
     catalogUrl: 'https://shop.test/v1/',
@@ -589,7 +591,7 @@ describe('ShopGateway.installed', () => {
   ]
 
   function gatewayWithManifest(dependencies: Record<string, string>): ShopGateway {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-installed-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-installed-'))
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies }))
     return new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
@@ -598,7 +600,7 @@ describe('ShopGateway.installed', () => {
   }
 
   it('carries the inventory enabled state onto the installed rows', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-installed-inv-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-installed-inv-'))
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: { 'dsh-one': '^1.0.0' } }))
     // The disabled state is read through the ids dsh-one's own bundle patch
     // inserts — the entry's module name is deliberately NOT the package name,
@@ -620,7 +622,7 @@ describe('ShopGateway.installed', () => {
     // `include:one-row`, so matching only the bare id found no live entry and
     // `enabledOf` fell through to its "nothing live, assume enabled" default
     // — a plugin the person had disabled kept rendering with its switch on.
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-installed-inc-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-installed-inc-'))
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: { 'dsh-one': '^1.0.0' } }))
     fixturePackage(dir, 'dsh-one', "- insert:\n    - id: one-row\n      name: 'dsh-one/host'\n")
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: { 'dsh-one': '^1.0.0' } }))
@@ -655,7 +657,7 @@ describe('ShopGateway.installed', () => {
   })
 
   it('lazily loads the catalog when installed() is called without a prior catalog()', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-installed-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-installed-'))
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: { 'dsh-one': '^1.0.0' } }))
     let loadCalls = 0
     const gateway = new ShopGateway(stubCtx(), {
@@ -683,7 +685,7 @@ describe('forwards-only outdated', () => {
   ]
 
   function gatewayWithManifest(dependencies: Record<string, string>): ShopGateway {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-forwards-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-forwards-'))
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies }))
     return new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
@@ -716,7 +718,7 @@ describe('ShopGateway.uninstall', () => {
   ]
 
   function gatewayWithManifest(dependencies: Record<string, string>): ShopGateway {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-uninstall-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-uninstall-'))
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies }))
     return new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
@@ -757,13 +759,13 @@ describe('ShopGateway.restart', () => {
   // check passes; the fixture is a harmless echo-exit so no real dsh web is
   // ever spawned by a test.
   function restartingGateway(options: { exit: ReturnType<typeof vi.fn>; cacheDir?: string; restartArgv?: string[] }): ShopGateway {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-gateway-restart-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-gateway-restart-'))
     const bin = join(dir, 'dsh')
     writeFileSync(bin, `#!/bin/sh\necho "$1 $2 $3" >> "${join(dir, 'calls.log')}"\nexit 0\n`)
     chmodSync(bin, 0o755)
     return new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/',
-      cacheDir: options.cacheDir ?? mkdtempSync(join(tmpdir(), 'dsh-restart-cache-')),
+      cacheDir: options.cacheDir ?? mkdtempSync(join(TEMP_ROOT, 'dsh-restart-cache-')),
       profile: 'web',
       dshBin: bin,
       restartArgv: options.restartArgv ?? ['web'],
@@ -817,7 +819,7 @@ describe('ShopGateway.restart', () => {
   })
 
   it("re-runs this process's own entry when dshBin is the bare default", async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-restart-node-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-restart-node-'))
     const marker = join(dir, 'ran.log')
     const script = join(dir, 'fake-bin.js')
     writeFileSync(script, `require('node:fs').appendFileSync(${JSON.stringify(marker)}, process.argv.slice(2).join(' ') + '\\n')\n`)
@@ -841,13 +843,13 @@ describe('ShopGateway.restart', () => {
 // inside it before committing. Hot-path cases spread these and add the
 // profile manifest, catalog fixture, and the hot/loader injections.
 function gatewayOptions() {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-restart-guard-'))
+  const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-restart-guard-'))
   const bin = join(dir, 'dsh')
   writeFileSync(bin, `#!/bin/sh\necho "$1 $2 $3" >> "${join(dir, 'calls.log')}"\nexit 0\n`)
   chmodSync(bin, 0o755)
   return {
     catalogUrl: 'https://shop.test/v1/',
-    cacheDir: mkdtempSync(join(tmpdir(), 'dsh-restart-guard-cache-')),
+    cacheDir: mkdtempSync(join(TEMP_ROOT, 'dsh-restart-guard-cache-')),
     profile: 'web',
     exit: () => {}, restartExitDelayMs: 0,
     dshBin: bin,
@@ -964,12 +966,12 @@ describe('ShopGateway.updateStart', () => {
   it('spawns the pinned self-update spec through the executor', async () => {
     // The confirm re-reads the profile manifest for the shop's bundle, so
     // the fixture home must already list it (an update keeps it listed).
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-self-update-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-self-update-'))
     writeFileSync(join(dir, 'package.json'), JSON.stringify({
       name: 'dsh-profile-web',
       dsh: { profile: { bundles: ['dsh-plugin-shop'] } },
     }))
-    const binDir = mkdtempSync(join(tmpdir(), 'dsh-self-update-bin-'))
+    const binDir = mkdtempSync(join(TEMP_ROOT, 'dsh-self-update-bin-'))
     const bin = join(binDir, 'dsh')
     writeFileSync(bin, [
       '#!/bin/sh',
@@ -1017,7 +1019,7 @@ describe('ShopGateway github entries', () => {
     ].join('\n'))
     chmodSync(bin, 0o755)
     // The install flow reads the running profile manifest before spawning.
-    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-repo-profile-'))
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-repo-profile-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
     return new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
@@ -1027,7 +1029,7 @@ describe('ShopGateway github entries', () => {
   }
 
   it('spawns github:owner/slug#commit from snapshot fields and records the pin', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-github-install-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-github-install-'))
     const gateway = gatewayWithRepo(dir)
     const result = await gateway.install({ name: 'dsh-repo-plugin', version: commit, acknowledged: true })
     expect(result.ok).toBe(true)
@@ -1044,11 +1046,11 @@ describe('ShopGateway github entries', () => {
   })
 
   it('reports a github install by its pin, outdated when the catalog commit moved', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-github-installed-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-github-installed-'))
     mkdirSync(join(dir, 'cache'), { recursive: true })
     const oldCommit = 'a'.repeat(40)
     writeFileSync(join(dir, 'cache/github-pins.json'), JSON.stringify({ 'dsh-repo-plugin': oldCommit }))
-    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-github-profile-'))
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-github-profile-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: { 'dsh-repo-plugin': 'github:someone/dsh-repo-plugin' } }))
     const gateway = new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
@@ -1059,8 +1061,8 @@ describe('ShopGateway github entries', () => {
   })
 
   it('forgets the pin on uninstall', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-github-uninstall-'))
-    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-github-profile-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-github-uninstall-'))
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-github-profile-'))
     mkdirSync(join(dir, 'cache'), { recursive: true })
     writeFileSync(join(dir, 'cache/github-pins.json'), JSON.stringify({ 'dsh-repo-plugin': commit }))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: { 'dsh-repo-plugin': 'github:someone/dsh-repo-plugin' } }))
@@ -1096,7 +1098,7 @@ describe('subpackage install spec', () => {
     ].join('\n'))
     chmodSync(bin, 0o755)
     // The install flow reads the running profile manifest before spawning.
-    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-sub-profile-'))
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-sub-profile-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
     return new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
@@ -1106,7 +1108,7 @@ describe('subpackage install spec', () => {
   }
 
   it('spawns github:owner/slug#commit&path:<subdir> and records the pin', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-sub-install-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-sub-install-'))
     const gateway = gatewayWithSub(dir)
     const result = await gateway.install({ name: 'sub-plugin', version: commit, acknowledged: true })
     expect(result.ok).toBe(true)
@@ -1149,7 +1151,7 @@ describe('release-rescued tarball install', () => {
     ].join('\n'))
     chmodSync(bin, 0o755)
     // The install flow reads the running profile manifest before spawning.
-    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-tarball-profile-'))
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-tarball-profile-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
     return new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
@@ -1166,7 +1168,7 @@ describe('release-rescued tarball install', () => {
     // manifest records only `github:owner/slug`, so the pins file is how
     // `installed()` reports outdated honestly).
     const fetchTarball = vi.fn(async () => new Response(tarballBytes))
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-tarball-install-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-tarball-install-'))
     const gateway = gatewayWithTarball(dir, fetchTarball)
     const result = await gateway.install({ name: 'dsh-rescued', version: tag, acknowledged: true })
     expect(result.ok).toBe(true)
@@ -1185,7 +1187,7 @@ describe('release-rescued tarball install', () => {
 
   it('rejects tarball-integrity without spawning when the bytes do not match the recorded sha256', async () => {
     const fetchTarball = vi.fn(async () => new Response(new TextEncoder().encode('tampered bytes')))
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-tarball-mismatch-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-tarball-mismatch-'))
     const gateway = gatewayWithTarball(dir, fetchTarball)
     const result = await gateway.install({ name: 'dsh-rescued', version: tag, acknowledged: true })
     expect(result).toEqual({
@@ -1201,7 +1203,7 @@ describe('release-rescued tarball install', () => {
 
   it('rejects tarball-integrity with a network-failure detail when the fetch throws', async () => {
     const fetchTarball = vi.fn(async () => { throw new Error('ECONNREFUSED') })
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-tarball-fetchfail-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-tarball-fetchfail-'))
     const gateway = gatewayWithTarball(dir, fetchTarball)
     const result = await gateway.install({ name: 'dsh-rescued', version: tag, acknowledged: true })
     expect(result.ok).toBe(false)
@@ -1218,11 +1220,11 @@ describe('release-rescued tarball install', () => {
     const fetchTarball = vi.fn(async () => new Response(tarballBytes))
     // The npm path: the spec is `name@version`, no release asset involved.
     const npmEntry: CatalogEntry = { name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25' }
-    const npmDir = mkdtempSync(join(tmpdir(), 'dsh-npm-notarball-'))
+    const npmDir = mkdtempSync(join(TEMP_ROOT, 'dsh-npm-notarball-'))
     const npmBin = join(npmDir, 'fake-dsh')
     writeFileSync(npmBin, ['#!/bin/sh', `echo "$1 $2 $3 $4 $5" >> "${join(npmDir, 'calls.log')}"`, 'exit 0', ''].join('\n'))
     chmodSync(npmBin, 0o755)
-    const npmProfileDir = mkdtempSync(join(tmpdir(), 'dsh-npm-notarball-profile-'))
+    const npmProfileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-npm-notarball-profile-'))
     writeFileSync(join(npmProfileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
     const npmGateway = new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(npmDir, 'cache'), profile: 'web', profileDir: npmProfileDir,
@@ -1241,11 +1243,11 @@ describe('release-rescued tarball install', () => {
       tier: 'community', metadata: 'declared', source: 'github', repo: 'someone/dsh-repo-plugin',
       added: '2026-08-25',
     }
-    const repoDir = mkdtempSync(join(tmpdir(), 'dsh-github-notarball-'))
+    const repoDir = mkdtempSync(join(TEMP_ROOT, 'dsh-github-notarball-'))
     const repoBin = join(repoDir, 'fake-dsh')
     writeFileSync(repoBin, ['#!/bin/sh', `echo "$1 $2 $3 $4 $5" >> "${join(repoDir, 'calls.log')}"`, 'exit 0', ''].join('\n'))
     chmodSync(repoBin, 0o755)
-    const repoProfileDir = mkdtempSync(join(tmpdir(), 'dsh-github-notarball-profile-'))
+    const repoProfileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-github-notarball-profile-'))
     writeFileSync(join(repoProfileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
     const repoGateway = new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(repoDir, 'cache'), profile: 'web', profileDir: repoProfileDir,
@@ -1259,10 +1261,10 @@ describe('release-rescued tarball install', () => {
   })
 
   it('reports a release-rescued install as outdated when the catalog tag moves (G-11)', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-tarball-outdated-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-tarball-outdated-'))
     mkdirSync(join(dir, 'cache'), { recursive: true })
     writeFileSync(join(dir, 'cache/github-pins.json'), JSON.stringify({ 'github:owner/slug#': 'v1.0.0' }))
-    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-tarball-outdated-profile-'))
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-tarball-outdated-profile-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
       name: 'dsh-profile-web', dsh: { profile: { bundles: [] } },
       dependencies: { 'dsh-rescued': TARBALL_URL },
@@ -1341,7 +1343,7 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     hot?: ShopGatewayOptions['hot']
     loaderEntries?: ShopGatewayOptions['loaderEntries']
   }): { gateway: ShopGateway; profileDir: string } {
-    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-hot-profile-'))
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-hot-profile-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
       name: 'dsh-profile-web',
       dsh: { profile: { bundles: [] } },
@@ -1748,7 +1750,7 @@ describe('concurrent catalog loads (G-7)', () => {
   }]
 
   it('loads once when catalog() and installed() are called together on a cold cache', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-once-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-once-'))
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: { 'dsh-one': '^1.0.0' } }))
     let loadCalls = 0
     let release!: () => void
@@ -1770,7 +1772,7 @@ describe('concurrent catalog loads (G-7)', () => {
   })
 
   it('still re-asks the loader after a failed load', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-once-fail-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-once-fail-'))
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
     let loadCalls = 0
     const gateway = new ShopGateway(stubCtx(), {
@@ -1787,7 +1789,7 @@ describe('concurrent catalog loads (G-7)', () => {
   })
 
   it('a refresh always reaches the loader', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-once-refresh-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-once-refresh-'))
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
     const seen: Array<boolean | undefined> = []
     const gateway = new ShopGateway(stubCtx(), {
@@ -1808,11 +1810,11 @@ describe('restart while an install is running (F-5)', () => {
     // A command that is still rewriting the profile owns the profile for the
     // duration of the operation. Restart must leave both that child and the
     // serving process alone until it has settled.
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-restart-busy-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-restart-busy-'))
     const slow = join(dir, 'dsh')
     writeFileSync(slow, ['#!/bin/sh', 'sleep 2', 'exit 0', ''].join('\n'))
     chmodSync(slow, 0o755)
-    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-restart-busy-profile-'))
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-restart-busy-profile-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
     const listed: CatalogEntry = {
       name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null, repository: null,
@@ -1820,7 +1822,7 @@ describe('restart while an install is running (F-5)', () => {
     }
     const exit = vi.fn()
     const gateway = new ShopGateway(stubCtx(), {
-      catalogUrl: 'https://shop.test/v1/', cacheDir: mkdtempSync(join(tmpdir(), 'dsh-restart-busy-cache-')),
+      catalogUrl: 'https://shop.test/v1/', cacheDir: mkdtempSync(join(TEMP_ROOT, 'dsh-restart-busy-cache-')),
       profile: 'web', profileDir, dshBin: slow, exit, restartArgv: ['web'],
       // A dead pid lets the pre-fix helper run without waiting for this test
       // worker; the failing assertion is the returned restart outcome.
@@ -1844,11 +1846,11 @@ describe('restart while an install is running (F-5)', () => {
   })
 
   it('allows the restart once the install has settled', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-restart-idle-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-restart-idle-'))
     const quick = join(dir, 'dsh')
     writeFileSync(quick, ['#!/bin/sh', 'exit 0', ''].join('\n'))
     chmodSync(quick, 0o755)
-    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-restart-idle-profile-'))
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-restart-idle-profile-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: ['dsh-hello-plugin'] } }, dependencies: {} }))
     const listed: CatalogEntry = {
       name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null, repository: null,
@@ -1856,7 +1858,7 @@ describe('restart while an install is running (F-5)', () => {
     }
     const exit = vi.fn()
     const gateway = new ShopGateway(stubCtx(), {
-      catalogUrl: 'https://shop.test/v1/', cacheDir: mkdtempSync(join(tmpdir(), 'dsh-restart-idle-cache-')),
+      catalogUrl: 'https://shop.test/v1/', cacheDir: mkdtempSync(join(TEMP_ROOT, 'dsh-restart-idle-cache-')),
       profile: 'web', profileDir, dshBin: quick, exit, restartArgv: ['web'],
       restartExitDelayMs: 1, restartParentPid: 1,
       loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [listed], denied: [], stars: {} }, stale: false }) as CatalogResult,

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { CATALOG_SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION, emit, SCHEMA_VERSION } from '../src/emit.ts'
 import type { Entry } from '../src/types.ts'
@@ -71,12 +72,25 @@ describe('emit', () => {
     expect(JSON.parse(indexJson)).toMatchObject({ builtAt: '2026-08-18T00:00:00.000Z', count: 1, rejected: 1 })
   })
 
-  it('names the plugins file by the hash of its content', () => {
+  it('names the plugins file by the hash of the bytes it actually writes', () => {
+    // Recomputed from pluginsJson, NOT read back out of the index. The old
+    // version asserted `pluginsFileName === plugins.${index.plugins.sha256}
+    // .json`, and both sides came from the same variable inside emit — so
+    // hashing bytes OTHER than the ones written left the whole suite green.
+    // Proven by mutation: replacing `update(pluginsJson)` with
+    // `update(JSON.stringify(sorted))` — the same data, a different
+    // serialisation — passed 38 of 38.
+    //
+    // What that costs downstream is the reason this matters: the host verifies
+    // the data file against this hash (packages/dsh-plugin-shop/src/host/
+    // catalog.ts), so a hash over the wrong bytes makes every published
+    // catalog unloadable while CI reports success.
     const { pluginsFileName, pluginsJson, indexJson } = emit([entry('dsh-a')], [], '2026-08-18T00:00:00.000Z')
+    const actual = createHash('sha256').update(pluginsJson).digest('hex')
+    expect(pluginsFileName).toBe(`plugins.${actual}.json`)
     const index = JSON.parse(indexJson) as { plugins: { url: string; sha256: string } }
-    expect(pluginsFileName).toBe(`plugins.${index.plugins.sha256}.json`)
+    expect(index.plugins.sha256).toBe(actual)
     expect(index.plugins.url).toBe(pluginsFileName)
-    expect(pluginsJson.length).toBeGreaterThan(0)
   })
 
   it('changes the hash when an entry changes', () => {
@@ -323,7 +337,15 @@ describe('assertCatalogInvariants', () => {
     // the registry legitimately holds distinct plugins under one name
     const a = repoEntry('dsh-a', 'owner-a/slug')
     const b = repoEntry('dsh-a', 'owner-b/slug')
-    expect(() => emit([a, b], [], '2026-08-31T00:00:00Z')).not.toThrow()
+    const { plugins } = JSON.parse(emit([a, b], [], '2026-08-31T00:00:00Z').pluginsJson) as
+      { plugins: { name: string; repo: string }[] }
+    // Both reach the artifact. A bare not.toThrow() would also pass if emit
+    // silently kept one of the two and dropped the other, which is the only
+    // way this could go wrong.
+    expect(plugins.map((p) => `${p.name}@${p.repo}`).sort()).toEqual([
+      'dsh-a@owner-a/slug',
+      'dsh-a@owner-b/slug',
+    ])
   })
 
   it('throws when an entry carries an added date later than the build date', () => {
@@ -377,6 +399,14 @@ describe('peers', () => {
   })
 })
 
+// https://shields.io/badges/endpoint-badge — the named colours the endpoint
+// schema accepts, alongside the CSS hex form. Anything else renders grey.
+const SHIELDS_COLORS = [
+  'brightgreen', 'green', 'yellow', 'yellowgreen', 'orange', 'red', 'blue',
+  'grey', 'gray', 'lightgrey', 'lightgray', 'blueviolet',
+  'success', 'important', 'critical', 'informational', 'inactive',
+]
+
 describe('the shields endpoint badge', () => {
   // GitHub's own workflow badge can say only passing / failing, and it reports
   // the last COMPLETED run — so it never says anything while a build is
@@ -398,7 +428,13 @@ describe('the shields endpoint badge', () => {
   it('carries a colour and a cache window shields will honour', () => {
     const badge = JSON.parse(emit([entry('dsh-a')], [], '2026-08-18T00:00:00.000Z').badgeJson) as
       { color: string; cacheSeconds: number }
-    expect(badge.color).toBeTruthy()
+    // shields renders a colour it does not recognise as grey rather than
+    // failing, so a truthiness check passes for 'not-a-colour' and '0.5' alike
+    // and the badge stops being blue with no test to say so. These are the
+    // names shields documents for the endpoint schema, plus its hex form.
+    const honoured =
+      SHIELDS_COLORS.includes(badge.color) || /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(badge.color)
+    expect(honoured, `shields renders "${badge.color}" grey`).toBe(true)
     // Long enough not to hammer Pages from every README view, short enough
     // that the date is never a day behind what /v1/index.json already says.
     expect(badge.cacheSeconds).toBeGreaterThanOrEqual(300)
@@ -456,3 +492,22 @@ describe('the sorts key on the whole identity, not the name', () => {
     expect(parsed.denied.map(d => d.detail)).toEqual(['aaa', 'zzz'])
   })
 })
+
+describe('the index and the data file describe the same catalog', () => {
+  it('reports a count equal to the data file it points at', () => {
+    // emit.ts used to assert this by parsing pluginsJson back and comparing
+    // lengths -- a throw that could not fire, because both numbers came from
+    // the same `sorted` array a few lines apart and JSON.stringify cannot
+    // change an array's length. The property is real; the guard was not. Here
+    // the two sides are the two EMITTED artifacts, so it goes red the day
+    // someone builds them from different sources.
+    const { indexJson, pluginsJson } = emit(
+      [entry('dsh-a'), entry('dsh-b'), entry('dsh-c')], [], '2026-08-18T00:00:00.000Z',
+    )
+    const index = JSON.parse(indexJson) as { count: number }
+    const data = JSON.parse(pluginsJson) as { plugins: unknown[] }
+    expect(index.count).toBe(data.plugins.length)
+    expect(index.count).toBe(3)
+  })
+})
+

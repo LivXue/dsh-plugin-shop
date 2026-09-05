@@ -57,5 +57,13 @@ jobs:
       # chromium's system libraries, add it only if the runner proves otherwise.
       - run: pnpm -C packages/dsh-plugin-shop exec playwright install chromium
       - run: pnpm -C packages/dsh-plugin-shop test
+        env:
+          # These two files ARE the P1 and P2 exit criteria, and both skip when
+          # they cannot find a working `dsh`. That is right on a developer's
+          # machine and wrong here, where the two steps above exist precisely to
+          # install the harness and the browser. Reproduced 2026-09-05: with
+          # `dsh` hidden from PATH the suite reported `1 skipped` and exited 0,
+          # so a green run was not evidence either criterion had executed.
+          DSH_SHOP_REQUIRE_E2E: '1'
       - run: pnpm -C packages/dsh-plugin-shop typecheck
       - run: pnpm -C packages/dsh-plugin-shop build

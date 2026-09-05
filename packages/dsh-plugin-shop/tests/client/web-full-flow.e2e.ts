@@ -141,6 +141,33 @@ function localRegistryEnv(): NodeJS.ProcessEnv {
   return { ...process.env, NO_PROXY: noProxy, no_proxy: noProxy }
 }
 
+/**
+ * When set, a skipped exit-criterion case is a FAILURE rather than a silent
+ * pass.
+ *
+ * Both this file and web-full-flow.e2e.ts probe for a working `dsh` and skip
+ * when they cannot find one. That is right locally — not every machine has the
+ * harness installed — and wrong in CI, where these two files ARE the P1 and P2
+ * exit criteria. Reproduced 2026-09-05: with `dsh` hidden from PATH the run
+ * reported `1 skipped` and **exited 0**, so a green CI run was not evidence
+ * that either criterion had executed.
+ *
+ * plugin.yml sets it, because that workflow installs the harness precisely so
+ * these can run. A machine without `dsh` still skips.
+ */
+const requireE2E = process.env.DSH_SHOP_REQUIRE_E2E === '1'
+
+describe('the P2 exit criterion is allowed to skip only where that is honest', () => {
+  it('has the harness and the browser it needs, when the environment says it must', () => {
+    expect(
+      !requireE2E || (hasDsh && hasChromium),
+      `DSH_SHOP_REQUIRE_E2E=1 but the web flow cannot run (dsh: ${hasDsh}, chromium: `
+        + `${hasChromium}), so the P2 exit criterion would have skipped and the run would `
+        + 'still have exited 0.',
+    ).toBe(true)
+  })
+})
+
 describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
   let catalogServer: CatalogServer | undefined
   let localRegistry: LocalRegistry | undefined

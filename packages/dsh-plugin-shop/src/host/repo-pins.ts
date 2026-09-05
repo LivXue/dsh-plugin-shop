@@ -27,7 +27,13 @@ export function readRepoPins(fs: RepoPinFs, path: string): RepoPins {
   try {
     const parsed = JSON.parse(fs.read(path)) as unknown
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {}
-    const out: RepoPins = {}
+    // A null prototype, not `{}`: the lookup key is a catalog entry name,
+    // which is hostile npm/GitHub input, and `constructor`, `toString` and
+    // `valueOf` are all legal package names. On a plain object each of them
+    // reads a function off Object.prototype, so `pins[name] !== undefined` is
+    // true for a package that was never installed and `installed()` reports a
+    // function as the installed commit. Same rule as the stars map.
+    const out: RepoPins = Object.create(null) as RepoPins
     for (const [name, pin] of Object.entries(parsed)) {
       if (typeof pin === 'string' && (COMMIT_SHA.test(pin) || RELEASE_TAG.test(pin))) out[name] = pin
     }

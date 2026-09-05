@@ -1,6 +1,5 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
@@ -13,6 +12,9 @@ import {
   type PeerVersionResolver,
 } from '../../src/host/peers.ts'
 import { ownPeerRanges } from '../../src/own-version.ts'
+import { fileTempRoot } from './temp-root.ts'
+
+const TEMP_ROOT = fileTempRoot('peers')
 
 // The real division on the machine where this broke: everything the harness
 // ships resolves from the profile anchor; dsh-client-store, which exists only
@@ -126,7 +128,7 @@ describe('nodeResolver', () => {
   })
 
   it('treats a package that restricts ./package.json as present', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'noderesolver-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'noderesolver-'))
     try {
       // Create a package with exports that do not list "./package.json"
       const pkgDir = join(dir, 'node_modules', 'restricted-pkg')
@@ -153,7 +155,7 @@ describe('nodeResolver', () => {
   })
 
   it("keeps a genuinely missing sibling's verdict beside a restricted package", () => {
-    const dir = mkdtempSync(join(tmpdir(), 'noderesolver-pair-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'noderesolver-pair-'))
     try {
       const pkgDir = join(dir, 'node_modules', 'restricted-pkg')
       mkdirSync(pkgDir, { recursive: true })
@@ -173,7 +175,7 @@ describe('nodeResolver', () => {
   })
 
   it('still throws for a resolution failure that is neither of those', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'noderesolver-invalid-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'noderesolver-invalid-'))
     try {
       const pkgDir = join(dir, 'node_modules', 'invalid-pkg')
       mkdirSync(pkgDir, { recursive: true })
@@ -188,7 +190,7 @@ describe('nodeResolver', () => {
   })
 
   it('still returns false for genuinely missing packages in the same directory', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'noderesolver-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'noderesolver-'))
     try {
       const resolveHere = nodeResolver(pathToFileURL(join(dir, 'anchor.js')).href)
 
@@ -374,7 +376,7 @@ describe('createPeerVersionCheck', () => {
 
 describe('nodeVersionResolver', () => {
   it('reads the version out of a resolvable package manifest', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'peerversion-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'peerversion-'))
     try {
       const pkgDir = join(dir, 'node_modules', 'versioned-pkg')
       mkdirSync(pkgDir, { recursive: true })
@@ -387,7 +389,7 @@ describe('nodeVersionResolver', () => {
   })
 
   it('answers null for a package that is not installed', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'peerversion-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'peerversion-'))
     try {
       const resolveHere = nodeVersionResolver(pathToFileURL(join(dir, 'anchor.js')).href)
       expect(resolveHere('genuinely-missing-pkg')).toBeNull()
@@ -400,7 +402,7 @@ describe('nodeVersionResolver', () => {
     // nodeResolver rethrows here because `false` would be an accusation of
     // absence; there is no version to read either way, and null already means
     // no verdict, so this resolver simply answers null.
-    const dir = mkdtempSync(join(tmpdir(), 'peerversion-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'peerversion-'))
     try {
       const pkgDir = join(dir, 'node_modules', 'restricted-pkg')
       mkdirSync(pkgDir, { recursive: true })
@@ -417,7 +419,7 @@ describe('nodeVersionResolver', () => {
   })
 
   it('answers null for a manifest that declares no version', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'peerversion-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'peerversion-'))
     try {
       const pkgDir = join(dir, 'node_modules', 'unversioned-pkg')
       mkdirSync(pkgDir, { recursive: true })

@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -8,6 +7,9 @@ import {
   type HotFs,
 } from '../../src/host/hot.ts'
 import { JSON_SCHEMA, load } from 'js-yaml'
+import { fileTempRoot } from './temp-root.ts'
+
+const TEMP_ROOT = fileTempRoot('hot')
 
 describe('parseSimplePatch', () => {
   it('parses plain id/name insert rows', () => {
@@ -318,7 +320,7 @@ describe('hotMount / hotUnmount', () => {
 
 describe('cleanHotDir', () => {
   it('wipes only this session\'s hot-<n>.yml files', () => {
-    const root = mkdtempSync(join(tmpdir(), 'dsh-shop-hot-'))
+    const root = mkdtempSync(join(TEMP_ROOT, 'dsh-shop-hot-'))
     try {
       const profileDir = join(root, 'profile')
       const hotDir = join(profileDir, '.dsh-shop')
@@ -337,9 +339,14 @@ describe('cleanHotDir', () => {
   })
 
   it('is a no-op when the namespace directory does not exist', () => {
-    const root = mkdtempSync(join(tmpdir(), 'dsh-shop-hot-'))
+    const root = mkdtempSync(join(TEMP_ROOT, 'dsh-shop-hot-'))
     try {
-      expect(() => cleanHotDir(join(root, 'profile'))).not.toThrow()
+      const profileDir = join(root, 'profile')
+      cleanHotDir(profileDir)
+      // `not.toThrow()` alone would also pass if cleanHotDir created the
+      // directory on its way past, which is the opposite of a no-op (H-9).
+      expect(existsSync(profileDir)).toBe(false)
+      expect(existsSync(join(profileDir, '.dsh-shop'))).toBe(false)
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

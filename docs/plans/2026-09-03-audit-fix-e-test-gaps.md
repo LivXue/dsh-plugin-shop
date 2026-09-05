@@ -37,6 +37,12 @@ Tasks 1, 3, 4, 5, 6, 7, 8, 9 are independent of A–D and can land in any order,
 
 ### Task 1: H-1 — name the plugins file by the bytes it actually writes
 
+> **Outcome: DONE.** The gap was reproduced first, as the task asks: replacing
+> `update(pluginsJson)` with `update(JSON.stringify(sorted))` — the same data,
+> a different serialisation — left **38 of 38 green**. The test now recomputes
+> the hash from the emitted bytes rather than reading it back out of the index,
+> and that mutation goes red.
+
 **Files:**
 - Modify: `registry/scripts/tests/emit.test.ts:74-80` (the tautological test) and add one case after it
 - Read only: `registry/scripts/src/emit.ts:176` (`const sha256 = createHash('sha256').update(pluginsJson).digest('hex')`)
@@ -47,7 +53,7 @@ Tasks 1, 3, 4, 5, 6, 7, 8, 9 are independent of A–D and can land in any order,
 
 The gap: the current test reads `index.plugins.sha256` and asserts `pluginsFileName === plugins.${that}.json`. Both sides come from the same variable, so hashing bytes other than the ones written leaves it green — and the host's integrity check (`packages/dsh-plugin-shop/src/host/catalog.ts:400-402`) then refuses every published catalog while CI passes.
 
-- [ ] **Step 1: Prove the gap — inject the mutation**
+- [x] **Step 1: Prove the gap — inject the mutation**
 
 ```bash
 cd /Evermind/sh_evermind/xuedizhan/dsh-plugin-store
@@ -60,7 +66,7 @@ npx vitest run registry/scripts/tests/emit.test.ts
 
 Expected: `Tests  31 passed (31)`. The suite is green while every published `index.json` points at a sha256 no consumer can reproduce.
 
-- [ ] **Step 2: Write the test that catches it**
+- [x] **Step 2: Write the test that catches it**
 
 Add `import { createHash } from 'node:crypto'` as the first import of `registry/scripts/tests/emit.test.ts`, then replace lines 74-80 with:
 
@@ -102,13 +108,13 @@ Add `import { createHash } from 'node:crypto'` as the first import of `registry/
   })
 ```
 
-- [ ] **Step 3: Run it against the mutated copy to verify it fails**
+- [x] **Step 3: Run it against the mutated copy to verify it fails**
 
 Run: `npx vitest run registry/scripts/tests/emit.test.ts`
 
 Expected: FAIL, 2 failed | 30 passed (32). Both new cases report `AssertionError: expected 'fcc218afb1ba02b628335c4960a70f954ddc6f0f90514ceb5c85b4288188cbb5' to be 'a71134b3602c819801bee41194843d2cae976f98d8995fb8242df20cd01538fc' // Object.is equality` (the mutated hash against the recomputed one; the digests differ for any fixture, these are the values for the two-entry case).
 
-- [ ] **Step 4: Restore the module and run it green**
+- [x] **Step 4: Restore the module and run it green**
 
 ```bash
 cp /tmp/emit.ts.orig registry/scripts/src/emit.ts
@@ -120,7 +126,7 @@ pnpm typecheck
 
 Expected: PASS — `emit.test.ts (32 tests)`, root total **335 passed (335)**, typecheck clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add registry/scripts/tests/emit.test.ts
@@ -154,7 +160,9 @@ grep -n "catch" registry/scripts/src/npm-client.ts | sed -n '1,20p'
 
 No test calls `fetchCandidates` today — `npm-client.test.ts:245` only mentions it in a comment. Both the mislabelled code and the dropped rejection survive, and a dropped rejection is exactly the silent disappearance CLAUDE.md forbids. `pipeline.test.ts:73-79` feeds a hand-built `fetch-failed` row, so it tests emit's merging, never the mapping.
 
-- [ ] **Step 1: Prove the gap — inject the mutation**
+> **Executed 2026-09-05 — already satisfied, nothing written.** A `describe('fetchCandidates')` block now sits at `npm-client.test.ts:1570`, carrying plan A's D-2 work and naming H-2 in its own comment. Both of Step 1's mutations were run against it and **both are caught**: mislabelling the code as `no-bundle` turns 3 cases red, dropping the rejection turns 4 red. Coverage exceeds what this task specified — six cases, including the 500 path, the transport throw, a stalled connection, the backup registry, a null packument body, and a sliding-pool case (`keeps every slot working while one name stalls`) that this task could not have written: `HARVEST_CONCURRENCY` is no longer a batch barrier, so Step 2's third fixture describes a mechanism that no longer exists.
+
+- [x] **Step 1: Prove the gap — inject the mutation**
 
 ```bash
 cd /Evermind/sh_evermind/xuedizhan/dsh-plugin-store
@@ -171,7 +179,7 @@ npx vitest run registry/scripts/tests/npm-client.test.ts
 
 Expected: `Tests  53 passed (53)` for **both** mutations.
 
-- [ ] **Step 2: Write the test that catches it**
+- [x] **Step 2: Write the test that catches it**
 
 Change line 2 to `import { fetchCandidate, fetchCandidates, HARVEST_KEYWORDS, PEERS_MAX_COUNT, searchByKeywords, toCandidate } from '../src/npm-client.ts'`, then append after the `describe('fetchCandidate')` block:
 
@@ -254,13 +262,13 @@ describe('fetchCandidates', () => {
 })
 ```
 
-- [ ] **Step 3: Run it against the mutated copy to verify it fails**
+- [x] **Step 3: Run it against the mutated copy to verify it fails**
 
 Run: `npx vitest run registry/scripts/tests/npm-client.test.ts` (with mutation (b) still applied from Step 1)
 
 Expected: FAIL. `records an unfetchable name as fetch-failed…` reports `AssertionError: expected [] to deeply equal [ { name: 'dsh-bad', code: 'fetch-failed', … } ]`; `reports every unfetchable name…` reports `expected [] to deeply equal [ 'dsh-a', 'dsh-b', 'dsh-c' ]`. Re-apply mutation (a) and re-run: the same two fail with `expected 'no-bundle' to be 'fetch-failed'` / the `code` field of the deep-equal diff.
 
-- [ ] **Step 4: Restore the module and run it green**
+- [x] **Step 4: Restore the module and run it green**
 
 ```bash
 cp /tmp/npm-client.ts.orig registry/scripts/src/npm-client.ts
@@ -272,7 +280,7 @@ pnpm typecheck
 
 Expected: PASS — `npm-client.test.ts (56 tests)`, root total **338 passed (338)** (335 after Task 1 plus three).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add registry/scripts/tests/npm-client.test.ts
@@ -298,7 +306,9 @@ throw path (D-2), and every failure in one batch."
 
 The documented rule is "Scanning from the end: a pnpm error code first, then any thrown error, then the last line that is not noise." Both existing verbatim fixtures carry exactly one diagnostic line, so neither half of the ordering is pinned.
 
-- [ ] **Step 1: Prove the gap — inject the mutation**
+> **Executed 2026-09-05, as written.** Both mutations survived the pre-existing suite (43 passed under each), and each now turns exactly one of the two new cases red — neither fixture catches the other's mutation, which is why the task asked for both. Line numbers had moved: `installFailureDetail` is at `executor.ts:118` (the picker at `:128-131`), and the describe block runs `executor.test.ts:404-483`. Package suite **632 passed (632)** across 28 files, typecheck clean.
+
+- [x] **Step 1: Prove the gap — inject the mutation**
 
 **Mutation (a) — first match instead of last.** Drop the reverse:
 
@@ -329,7 +339,7 @@ npx vitest run --root packages/dsh-plugin-shop tests/host/executor.test.ts
 
 Expected: `Tests  30 passed (30)` — green again. Both halves of the documented ordering can be inverted with the suite none the wiser.
 
-- [ ] **Step 2: Write the test that catches it**
+- [x] **Step 2: Write the test that catches it**
 
 Insert before the closing `})` of `describe('installFailureDetail')` (currently line 473):
 
@@ -382,13 +392,13 @@ Insert before the closing `})` of `describe('installFailureDetail')` (currently 
   })
 ```
 
-- [ ] **Step 3: Run it against the mutated copy to verify it fails**
+- [x] **Step 3: Run it against the mutated copy to verify it fails**
 
 Run: `npx vitest run --root packages/dsh-plugin-shop tests/host/executor.test.ts`
 
 Expected: FAIL, one case per mutation. With mutation (a) applied: `picks the LAST pnpm error code…` fails on `expected 'pnpm failed in the profile. Run: dsh plugin --profile web install — [ERR_PNPM_PEER_DEP_ISSUES] Unmet peer dependencies' not to match /ERR_PNPM_PEER_DEP_ISSUES/`. With mutation (b) applied: `prefers a pnpm error code over a thrown error…` fails on `expected 'pnpm failed in the profile. Run: dsh plugin --profile web install — TypeError: Cannot read properties of undefined (reading 'bundles')' to match /ERR_PNPM_NO_MATCHING_VERSION/`. Apply each mutation in turn and confirm one case turns red each time — neither mutation is caught by the other's fixture, which is why both are needed.
 
-- [ ] **Step 4: Restore the module and run it green**
+- [x] **Step 4: Restore the module and run it green**
 
 ```bash
 cp /tmp/executor.ts.orig packages/dsh-plugin-shop/src/host/executor.ts
@@ -399,7 +409,7 @@ pnpm -C packages/dsh-plugin-shop typecheck
 
 Expected: PASS — `tests/host/executor.test.ts (32 tests)`, package total **494 passed (494)**.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/dsh-plugin-shop/tests/host/executor.test.ts
@@ -415,6 +425,22 @@ code, both stayed green. Two fixtures, one per mutation: two ERR_ codes
 
 ### Task 4: H-4 — a CI run may not be green because the exit criteria skipped
 
+> **Outcome: DONE.** Step 1 reproduced it: with `dsh` hidden from PATH,
+> `real-install.test.ts` reported `1 skipped` and the run **exited 0**. The P1
+> exit criterion did not execute and nothing said so.
+>
+> `DSH_SHOP_REQUIRE_E2E=1` now turns that skip into a failure, and `plugin.yml`
+> sets it on the package-suite step — that workflow installs the harness and a
+> browser two steps earlier for exactly this purpose, so a skip there is a green
+> run that proves nothing. A developer's machine without `dsh` still skips
+> quietly, which is the honest case.
+>
+> The guard over the workflow parses the YAML. Its first version sliced 500
+> characters after the `run:` line, and the comment explaining the variable
+> pushed the variable itself out of the window — a correct workflow read as
+> broken. Same lesson as the Dependabot pairing guard the same day: grep the
+> shape and you match the prose.
+
 **Files:**
 - Modify: `packages/dsh-plugin-shop/tests/host/real-install.test.ts:18-47` (add the flag) and add one guard case
 - Modify: `packages/dsh-plugin-shop/tests/client/web-full-flow.e2e.ts:85-100` (add the flag) and add one guard describe
@@ -426,7 +452,7 @@ code, both stayed green. Two fixtures, one per mutation: two ERR_ codes
 
 **No mutation step.** This is an absence, not a surviving mutation: there is no line to mutate, because the failure mode is that the P1 and P2 exit criteria *do not run at all* and the run is green anyway. The reproduction is the skip itself, which Step 1 exercises directly.
 
-- [ ] **Step 1: Reproduce the gap — hide `dsh` and watch both criteria vanish silently**
+- [x] **Step 1: Reproduce the gap — hide `dsh` and watch both criteria vanish silently**
 
 ```bash
 cd /Evermind/sh_evermind/xuedizhan/dsh-plugin-store
@@ -438,7 +464,7 @@ echo "exit: $?"
 
 Expected: `Tests  no tests` / `5 skipped`, **exit 0**. The P1 and P2 exit criteria did not execute and nothing said so. Note also that `plugin.yml:24` gates on `dsh --version` — a bare-name spawn — while `real-install.test.ts:28-47` probes through `dshCommand`/`resolveDshScript`; the two can disagree, so a green CI run today is not evidence either criterion ran.
 
-- [ ] **Step 2: Write the test that catches it**
+- [x] **Step 2: Write the test that catches it**
 
 In `packages/dsh-plugin-shop/tests/host/real-install.test.ts`, after the `hasDsh` IIFE (line 47) add:
 
@@ -510,7 +536,7 @@ with:
           DSH_SHOP_REQUIRE_E2E: '1'
 ```
 
-- [ ] **Step 3: Run it and verify it fails when the criteria would skip**
+- [x] **Step 3: Run it and verify it fails when the criteria would skip**
 
 ```bash
 env PATH=/usr/bin:/bin DSH_SHOP_REQUIRE_E2E=1 npx vitest run --root packages/dsh-plugin-shop \
@@ -527,7 +553,7 @@ env PATH=/usr/bin:/bin npx vitest run --root packages/dsh-plugin-shop \
 
 Expected: PASS, 2 passed | 5 skipped — no dsh, no chromium, no false alarm.
 
-- [ ] **Step 4: Run the full suites green with the CLI present**
+- [x] **Step 4: Run the full suites green with the CLI present**
 
 ```bash
 pnpm -C packages/dsh-plugin-shop test
@@ -537,7 +563,7 @@ pnpm -C packages/dsh-plugin-shop typecheck
 
 Expected: PASS both ways — `tests/host/real-install.test.ts (2 tests)`, `tests/client/web-full-flow.e2e.ts (5 tests)`, package total **496 passed (496)**.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/dsh-plugin-shop/tests/host/real-install.test.ts \
@@ -555,6 +581,14 @@ turns each skip into a failed assertion; plugin.yml sets it."
 
 ### Task 5: H-5 — remove the throw that cannot fire, and assert the property it claimed
 
+> **Outcome: DONE — branch deleted, property kept.** The throw at `emit.ts` was
+> unreachable exactly as the task argues: `pluginsJson` is built from `sorted`
+> a few lines above, and `JSON.stringify` cannot change an array's length, so
+> both counts came from the same array by construction. The comparison now
+> lives in `emit.test.ts` between the two EMITTED artifacts, where it can go red
+> if they are ever built from different sources. `assertCatalogInvariants` is
+> untouched.
+
 **Files:**
 - Modify: `registry/scripts/src/emit.ts:220-223` (delete the dead branch)
 - Modify: `registry/scripts/tests/emit.test.ts` — add one case to `describe('emit')`, after the schema-version case that ends at line 96
@@ -567,7 +601,7 @@ turns each skip into a failed assertion; plugin.yml sets it."
 
 **No mutation step.** The finding is that the branch *cannot* be mutated into failing: any input that would make it fire is unreachable through `emit`'s signature. Step 1 demonstrates that instead.
 
-- [ ] **Step 1: Demonstrate the branch is unreachable — mutate its condition and watch nothing change**
+- [x] **Step 1: Demonstrate the branch is unreachable — mutate its condition and watch nothing change**
 
 ```bash
 cd /Evermind/sh_evermind/xuedizhan/dsh-plugin-store
@@ -584,7 +618,7 @@ cp /tmp/emit.ts.h5.orig registry/scripts/src/emit.ts
 git diff --numstat registry/scripts/src/emit.ts   # must print nothing
 ```
 
-- [ ] **Step 2: Write the test that pins the property**
+- [x] **Step 2: Write the test that pins the property**
 
 Add to `describe('emit')` in `registry/scripts/tests/emit.test.ts`, after the `stamps the schema version on both files` case:
 
@@ -609,7 +643,7 @@ Add to `describe('emit')` in `registry/scripts/tests/emit.test.ts`, after the `s
   })
 ```
 
-- [ ] **Step 3: Delete the dead branch**
+- [x] **Step 3: Delete the dead branch**
 
 Remove these four lines from `registry/scripts/src/emit.ts` (lines 220-223, immediately before `return { pluginsFileName, ... }`):
 
@@ -630,7 +664,7 @@ and replace them with:
   // EMITTED artifacts instead, which is a check that can actually fail.
 ```
 
-- [ ] **Step 4: Run it green**
+- [x] **Step 4: Run it green**
 
 ```bash
 npx vitest run registry/scripts/tests/emit.test.ts
@@ -640,7 +674,7 @@ pnpm typecheck
 
 Expected: PASS — `emit.test.ts (33 tests)`, root total **339 passed (339)**, typecheck clean (the removal drops the only use of `dataCount`, so an unused-variable error here means the replacement was pasted in the wrong place).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add registry/scripts/src/emit.ts registry/scripts/tests/emit.test.ts
@@ -657,6 +691,20 @@ artifacts, where it can fail if they ever stop sharing a source."
 
 ### Task 6: H-7 — resolve fixture paths from the module, not the cwd
 
+> **Outcome: DONE, and the finding was wider than Plausible.** Step 1
+> reproduced it: running `pipeline.test.ts` from `/tmp` with an explicit
+> `--root` raised `ENOENT` and reported **"no tests"** rather than a failure —
+> the shape that hides.
+>
+> `cwd-independence.test.ts` then found a **second** instance the audit did not
+> name: `schema.test.ts` read `registry/schema/plugin-entry.schema.json` the
+> same way. Both now resolve from the module.
+>
+> Verified end to end: the whole suite run from `/tmp` is 28 files, 760 tests,
+> all passing. The guard scans source rather than re-running each file from a
+> foreign directory, which would double the suite's runtime to catch a defect
+> whose signature is one regex.
+
 **Files:**
 - Modify: `registry/scripts/tests/pipeline.test.ts:1-9`
 - Modify: `registry/scripts/tests/schema.test.ts:1-2,40-44`
@@ -670,7 +718,7 @@ The audit marks H-7 *Plausible*, so Step 1 is the reproduction that confirms or 
 
 **No mutation step.** There is no production line to mutate: the defect is in the tests' own path resolution, and Step 1 reproduces it directly by changing the cwd.
 
-- [ ] **Step 1: Reproduce — run the suite from a subdirectory**
+- [x] **Step 1: Reproduce — run the suite from a subdirectory**
 
 ```bash
 cd /Evermind/sh_evermind/xuedizhan/dsh-plugin-store/registry
@@ -694,7 +742,7 @@ grep -rn "readFileSync('registry\|readFileSync(\"registry" registry/scripts/test
 grep -rn "readFileSync('packages\|readFileSync(\"packages" packages/dsh-plugin-shop/tests/
 ```
 
-- [ ] **Step 2: Fix both paths and write the guard**
+- [x] **Step 2: Fix both paths and write the guard**
 
 `registry/scripts/tests/pipeline.test.ts` lines 1-9 become:
 
@@ -787,7 +835,7 @@ describe('fixture and artifact paths', () => {
 })
 ```
 
-- [ ] **Step 3: Verify the guard fails on the defect it names**
+- [x] **Step 3: Verify the guard fails on the defect it names**
 
 ```bash
 cd /Evermind/sh_evermind/xuedizhan/dsh-plugin-store
@@ -804,7 +852,7 @@ npx vitest run registry/scripts/tests/cwd-independence.test.ts
 
 Expected: PASS.
 
-- [ ] **Step 4: Run it green, from both directories**
+- [x] **Step 4: Run it green, from both directories**
 
 ```bash
 npx vitest run registry/scripts/tests/pipeline.test.ts registry/scripts/tests/schema.test.ts
@@ -815,7 +863,7 @@ pnpm typecheck
 
 Expected: PASS everywhere — 20 + 6 tests from the subdirectory too, root total **340 passed (340)** across **23 files**.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add registry/scripts/tests/pipeline.test.ts registry/scripts/tests/schema.test.ts \
@@ -844,7 +892,9 @@ from the module, and a new guard test fails on the next cwd-relative path."
 
 **No mutation step.** The gap is a missing fixture, not a surviving mutation — there is no code path to break, because the path is never walked. Step 1 confirms the row does not exist today.
 
-- [ ] **Step 1: Confirm the row is never produced**
+> **Executed 2026-09-05, as written.** The predicted row is byte-for-byte what the pipeline produces: `| dsh-bad-catalog | invalid-catalog | dsh.catalog.(root): Unrecognized key: "tags \\| extra" |`. Both new assertions were run with the fixture stashed and both fail there, so the fixture is what carries them. `Accepted: 3` and the listed set are unchanged; `Rejected:` moves from 4 to 5. Root suite **763 passed (763)** across 28 files, typecheck clean.
+
+- [x] **Step 1: Confirm the row is never produced**
 
 ```bash
 cd /Evermind/sh_evermind/xuedizhan/dsh-plugin-store
@@ -854,7 +904,7 @@ grep -rn "invalid-catalog" registry/scripts/tests/pipeline.test.ts || echo "pipe
 
 Expected: no fixture entry and no pipeline assertion. `emit.test.ts:151-155` escapes a *hand-built* rejection, so the escaping is covered but the mapping from a real candidate is not.
 
-- [ ] **Step 2: Add the fixture candidate**
+- [x] **Step 2: Add the fixture candidate**
 
 In `registry/scripts/tests/fixtures/packuments.json`, add a comma after the `dsh-no-summary` object's closing brace (line 99) and insert before the closing `]`:
 
@@ -877,7 +927,7 @@ In `registry/scripts/tests/fixtures/packuments.json`, add a comma after the `dsh
 
 The unrecognised key is the one rejection whose `detail` echoes author text back into a published artifact, and the `|` inside it is why `escapeCell` exists. Everything else about the candidate is valid — a real license, a real bundle, a perfectly usable npm description — so the only reason it can fail to list is the declared section.
 
-- [ ] **Step 3: Write the assertions and verify they fail without the fixture**
+- [x] **Step 3: Write the assertions and verify they fail without the fixture**
 
 Replace `registry/scripts/tests/pipeline.test.ts:65-71` with:
 
@@ -920,7 +970,7 @@ Expected: FAIL, 2 failed — `reports all five rejections…` on the `dsh-bad-ca
 git stash pop
 ```
 
-- [ ] **Step 4: Run it green**
+- [x] **Step 4: Run it green**
 
 ```bash
 npx vitest run registry/scripts/tests/pipeline.test.ts
@@ -930,7 +980,7 @@ pnpm typecheck
 
 Expected: PASS — `pipeline.test.ts (21 tests)`, root total **341 passed (341)**. The accepted set is unchanged (`dsh-derived-plugin`, `dsh-fs-tool`, `dsh-hello-plugin`) and the report's `Rejected:` line reads 5.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add registry/scripts/tests/fixtures/packuments.json registry/scripts/tests/pipeline.test.ts
@@ -960,7 +1010,7 @@ Two assertions in the root suite pass for any value the code could produce. `toB
 
 **No mutation step.** These are assertions that cannot fail by construction; the demonstration is that the current form passes against a wrong value, which Step 1 shows without touching production code.
 
-- [ ] **Step 1: Show the current assertions accept a wrong value**
+- [x] **Step 1: Show the current assertions accept a wrong value**
 
 ```bash
 cd /Evermind/sh_evermind/xuedizhan/dsh-plugin-store
@@ -970,7 +1020,7 @@ node -e "console.log(['teal','not-a-colour','0.5',' '].map(v => Boolean(v)))"
 
 For the second: `emit([a, b], ...)` with two same-named repo entries returns six artifacts, and `not.toThrow()` inspects none of them — the test named "allows the same bundle name from different repos" would pass if `emit` dropped one of the two entries entirely.
 
-- [ ] **Step 2: Write the assertions that can fail**
+- [x] **Step 2: Write the assertions that can fail**
 
 Replace `registry/scripts/tests/emit.test.ts:353-361` with:
 
@@ -1012,7 +1062,7 @@ Replace `registry/scripts/tests/emit.test.ts:277-282` with:
   })
 ```
 
-- [ ] **Step 3: Verify each fails on the value it now refuses**
+- [x] **Step 3: Verify each fails on the value it now refuses**
 
 ```bash
 cp registry/scripts/src/emit.ts /tmp/emit.ts.h9.orig
@@ -1041,7 +1091,7 @@ cp /tmp/emit.ts.h9.orig registry/scripts/src/emit.ts
 git diff --numstat registry/scripts/src/emit.ts   # must print nothing
 ```
 
-- [ ] **Step 4: Run it green**
+- [x] **Step 4: Run it green**
 
 ```bash
 npx vitest run registry/scripts/tests/emit.test.ts
@@ -1051,7 +1101,7 @@ pnpm typecheck
 
 Expected: PASS — `emit.test.ts (33 tests)`, root total **341 passed (341)** (unchanged: both cases were strengthened in place, none added).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add registry/scripts/tests/emit.test.ts
@@ -1089,7 +1139,7 @@ entries would also pass if emit dropped one. Both now assert the value."
 
 **No mutation step.** These are absences — modules no test imports and assertions with no failing input. Each step below states the failing form first and confirms it fails.
 
-- [ ] **Step 1: Show the gap**
+- [x] **Step 1: Show the gap**
 
 ```bash
 cd /Evermind/sh_evermind/xuedizhan/dsh-plugin-store
@@ -1106,7 +1156,7 @@ node --experimental-strip-types /tmp/probe-pins.ts
 
 Expected: `pins.constructor is function — !== undefined: true`. `constructor`, `toString` and `valueOf` are all legal npm package names and GitHub bundle names are unrestricted, so `host/index.ts:812`'s `pins[entry.name]` reads a function off `Object.prototype` and reports it as the installed commit with `outdated: true`.
 
-- [ ] **Step 2: Write the tests**
+- [x] **Step 2: Write the tests**
 
 Create `packages/dsh-plugin-shop/tests/host/repo-pins.test.ts`:
 
@@ -1295,7 +1345,7 @@ Replace `packages/dsh-plugin-shop/tests/host/hot.test.ts:270-277` with:
 
 and add `existsSync` to the `node:fs` import on line 2: `import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'`.
 
-- [ ] **Step 3: Verify the new tests fail before the fix**
+- [x] **Step 3: Verify the new tests fail before the fix**
 
 ```bash
 npx vitest run --root packages/dsh-plugin-shop tests/host/repo-pins.test.ts
@@ -1303,7 +1353,7 @@ npx vitest run --root packages/dsh-plugin-shop tests/host/repo-pins.test.ts
 
 Expected: FAIL — `never answers a lookup from Object.prototype` reports `AssertionError: expected [Function: Object] to be undefined`. The other six cases pass (they describe behaviour the module already has, and they are what makes a future regression in the hex filter or the corrupt-file degradation visible at all).
 
-- [ ] **Step 4: Fix the prototype hazard and run everything green**
+- [x] **Step 4: Fix the prototype hazard and run everything green**
 
 In `packages/dsh-plugin-shop/src/host/repo-pins.ts`, replace line 27:
 
@@ -1338,7 +1388,18 @@ The change is to a pure function's internal record and touches no RPC shape, no 
 
 **One finding this task surfaces and does not fix.** `host/index.ts:729` writes `args.version` into the pins file, and for a release-rescued github entry that value is a tag (`v1.0.0` — see `index.test.ts:1000`), which `readRepoPins`'s 40-hex filter drops on the next read. Such an entry therefore falls back to `installed: spec` and can never report `outdated`. That changes an RPC-visible field, so it belongs to plan D beside G-1's identity work, not here. Record it in plan D rather than widening this task.
 
-- [ ] **Step 5: Commit**
+> **Executed 2026-09-05. The plan was stale in four places; what landed differs.**
+>
+> 1. **`repo-pins.test.ts` already existed** — commit `110c500` (*fix(host): preserve release tag pins*, plan D's G-11) created it with four cases: a commit round-trip, a release-tag round-trip, a drop of anything that is neither, and missing/corrupt as no memory. Those cover the plan's fixtures in a different but equivalent form, so only the absent case was added: **the prototype hazard**. Writing the plan's file verbatim would have duplicated four tests and deleted a G-11 regression guard.
+> 2. **The "finding this task does not fix" above is fixed.** `110c500` widened the filter to `COMMIT_SHA.test(pin) || RELEASE_TAG.test(pin)`, so a release-rescued entry's tag now survives the read. Nothing to record in plan D.
+> 3. **The plan's `'dsh-upper': 'A'.repeat(40)` fixture would now be wrong.** `RELEASE_TAG` is `/^[A-Za-z0-9][A-Za-z0-9._+/-]{0,127}$/`, which accepts forty uppercase letters. The fixture asserted that value is dropped; it is kept, correctly.
+> 4. **`normalizeRegistryUrl` was not untested.** `npm-origin.test.ts:270` ("keeps a registry url's path when resolving the probe request, even with no trailing slash") already drove exactly that behaviour end to end through `npmOrigin` — the mutation check found it by failing two tests instead of one. The new block still went in, pinning the two lines directly rather than only through their one caller, but its comment says so instead of claiming the gap the plan asserted.
+>
+> Line numbers had also moved: `repo-pins.ts:27` → `:30`, `hot.test.ts:270-277` → `:342`. The `HOT_DIR` the plan's replacement joins is, in `hot.test.ts`, a file-local **absolute** path (`join(PROFILE, '.dsh-shop')`) and not the module's unexported bare segment; the landed test uses the literal `'.dsh-shop'`.
+>
+> **Mutation-checked, against the plan's "no mutation step".** Every new assertion was proven able to fail: the prototype case failed before the fix; `normalizeRegistryUrl` → identity, `npmGlobal` returning a path outside the CLI package, `cleanHotDir` creating the directory on its way past, `ownVersion` → `'0.0.0'`, and a moved `lib/index.js` each failed exactly the case that names them. Package suite **630 passed (630)** across 28 files, root **762 passed (762)**, both typechecks clean.
+
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/dsh-plugin-shop/tests/host/repo-pins.test.ts \
@@ -1361,6 +1422,13 @@ bare not.toThrow()/toBeTruthy() assertions in dsh-cli and hot."
 
 ### Task 10: H-1b — recompute the stars sidecar's hash (after plan C)
 
+> **Outcome: ALREADY SATISFIED by plan C's task 9, which landed the serialiser
+> this task was waiting for.** Verified 2026-09-05 by the mutation this task
+> specifies: replacing `update(json)` with `update(JSON.stringify(sorted))` in
+> `serializeStars` turns `stars-assemble.test.ts` red. The recomputation idiom
+> was written into that test when the function was created, so there is nothing
+> further to add.
+
 **Files:**
 - Modify: `registry/scripts/tests/stars-assemble.test.ts` — the module plan C extends with its pure serialiser
 
@@ -1372,7 +1440,7 @@ bare not.toThrow()/toBeTruthy() assertions in dsh-cli and hot."
 
 **No mutation step at HEAD**, because the code to mutate does not exist yet; Step 2 mutation-checks plan C's function once it does.
 
-- [ ] **Step 1: Resolve the real names plan C landed**
+- [x] **Step 1: Resolve the real names plan C landed**
 
 ```bash
 cd /Evermind/sh_evermind/xuedizhan/dsh-plugin-store
@@ -1383,7 +1451,7 @@ grep -n "stars" registry/scripts/src/build.ts
 
 Expected: `serializeStars` and `SerializedStars` exported from `registry/scripts/src/stars-assemble.ts`, and no `createHash` left in `build.ts`'s stars path. If `serializeStars` is absent, **stop**: plan C's C-3 has not landed and `build.ts` still hashes the sidecar inline, so there is nothing pure to test.
 
-- [ ] **Step 2: Prove the gap — inject the mutation into plan C's serialiser**
+- [x] **Step 2: Prove the gap — inject the mutation into plan C's serialiser**
 
 ```bash
 cp registry/scripts/src/stars-assemble.ts /tmp/stars-assemble.ts.orig
@@ -1395,7 +1463,7 @@ npx vitest run registry/scripts/tests/stars-assemble.test.ts
 
 Expected: GREEN. Plan C's own order-independence test compares two `json` values with each other and never checks the digest against those bytes, so the file name can point at a hash of something else — and the host verifies sha256 on the fetched sidecar bytes (`host/catalog.ts:400-402`), so every reader would refuse it.
 
-- [ ] **Step 3: Write the test that catches it**
+- [x] **Step 3: Write the test that catches it**
 
 Add to plan C's stars-serialiser test file (adding `import { createHash } from 'node:crypto'` if it is not already there):
 
@@ -1420,7 +1488,7 @@ Add to plan C's stars-serialiser test file (adding `import { createHash } from '
   })
 ```
 
-- [ ] **Step 4: Restore the module and run it green**
+- [x] **Step 4: Restore the module and run it green**
 
 ```bash
 npx vitest run registry/scripts/tests/stars-assemble.test.ts
@@ -1434,7 +1502,7 @@ pnpm typecheck
 
 Expected: PASS. The root total is plan C's total **plus exactly one** — record the before and after numbers from the two `pnpm test` runs rather than trusting an absolute figure this plan cannot know.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add registry/scripts/tests/stars-assemble.test.ts
@@ -1463,7 +1531,19 @@ with each other and never checks the digest against them."
 
 **No mutation step.** The gap is a perturbation never applied and artifacts never compared — an absence. Step 1 reproduces the specific hole plan B closes, so the test is known to bite.
 
-- [ ] **Step 1: Reproduce the hole — reverse two same-named repo candidates**
+> **Executed 2026-09-05. Most of this had already landed with plans B and C; what remained was the deletion and one perturbation.**
+>
+> `describe('determinism under every perturbation')` (`pipeline.test.ts:575`) was written by plan B's C-2 work and is stronger than this task's Step 2 block: it perturbs npm candidates, repo candidates **and** pre-existing rejections together, over all six artifacts plus `firstSeen`, and its fixtures carry ties this task's did not — two subpackages of one monorepo, a bundle name claimed by two owners, and two *rejected* subpackages of a third. Rewriting it from Step 2 would have lost coverage, so it was extended rather than replaced.
+>
+> What was actually missing:
+> 1. **The repeated run.** Both existing cases compare a base against a *reversed* input; neither runs the same input twice, which is the only leg that separates nondeterminism inside `emit` from an ordering bug. Added, with the sidecar-pointer assertion carried over from the deleted stars case.
+> 2. **The three superseded partial cases** at `:104`, `:171` and `:181` were still present. Deleted — that was this task's point.
+>
+> Both of Step 3's mutations were run before and after the deletion. Reverting `compareEntries` to the name-only comparator fails the reversed leg (`pluginsFileName moved with input order`); `builtAt` inside the hashed content fails the clock case. A third, `nonce: Math.random()` in the hashed content, fails the repeat leg (`moved between runs`) and would have passed every case that existed before this change. Root suite **760 passed (760)**, exactly −3 for the three deletions; typecheck clean.
+>
+> The Step 2 stars case could not be written as specified: plan C's serialiser takes ENTRIES (`assembleStarsForEntries(entries, searchStars, graphqlStars)`), not `(candidates, repoCandidates)`, and its order-independence is already pinned by `stars-assemble.test.ts:124` beside the byte-exact hash at `:111` — which is the right place for it, since the perturbation is the assembler's own.
+
+- [x] **Step 1: Reproduce the hole — reverse two same-named repo candidates**
 
 ```bash
 cd /Evermind/sh_evermind/xuedizhan/dsh-plugin-store
@@ -1484,7 +1564,7 @@ pluginsJson equal: false   pluginsFileName equal: false   manifestLock equal: fa
 
 172 bundle names over 451 live entries are claimed by several repositories, so this is not a hypothetical shape.
 
-- [ ] **Step 2: Write the one test**
+- [x] **Step 2: Write the one test**
 
 Delete lines 144-151, then 134-142, then 81-88 (highest first, so the earlier line numbers stay valid), and add this block at the end of `registry/scripts/tests/pipeline.test.ts`:
 
@@ -1616,7 +1696,7 @@ describe('determinism', () => {
 
 Extend the imports at the top of the file: add `RepoCandidate` to the `types.ts` type import (`import type { Candidate, Rejection, RepoCandidate } from '../src/types.ts'`), and add `import { assembleStarsByKey } from '../src/stars-assemble.ts'` plus `import { serializeStars } from '../src/stars-assemble.ts'` (plan C puts the serialiser beside the assembler).
 
-- [ ] **Step 3: Verify each perturbation bites**
+- [x] **Step 3: Verify each perturbation bites**
 
 ```bash
 cd /Evermind/sh_evermind/xuedizhan/dsh-plugin-store
@@ -1651,7 +1731,7 @@ npx vitest run registry/scripts/tests/pipeline.test.ts
 
 Expected: FAIL — `carries the clock in the index and the badge, and nowhere else` reports `pluginsJson moved with the clock: expected -1 to be 0`. Restore again and confirm `git diff --numstat` prints nothing.
 
-- [ ] **Step 4: Run it green**
+- [x] **Step 4: Run it green**
 
 ```bash
 npx vitest run registry/scripts/tests/pipeline.test.ts
@@ -1662,7 +1742,7 @@ pnpm typecheck
 
 Expected: PASS. The root total is plan C's + Task 10's total **minus exactly two** (three partial determinism cases replaced by three that together cover all six artifacts, both orders, the clock and the sidecar). Record the before and after numbers from the two `pnpm test` runs; a delta other than −2 means one of the three old cases was not deleted or an extra was added.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add registry/scripts/tests/pipeline.test.ts
@@ -1720,6 +1800,8 @@ Closed by `2184265`: an `expandGlobalPlane` helper opens the 全局插件 disclo
 
 **Verification:** none — closed and green in CI.
 
+> **Reviewed 2026-09-05 — no work, as recorded.** Left as the standing hazard it describes: `plugin.yml`'s pin to `0.1.2-rc.1` and its measured contract table are still the only thing holding the e2e's selectors to a harness contract this repository does not own.
+
 ---
 
 ### Task 13: H-11 — the temp-home leak is in the host tests, not in the e2e file the finding names
@@ -1737,11 +1819,23 @@ tests/client/web-full-flow.e2e.ts    mkdtempSync=2    rmSync=2    ← balanced
 
 `web-full-flow.e2e.ts` already cleans up: `afterAll` at `:237`, `rmSync(tmpHome, { recursive: true, force: true })` at `:248`. The leak is in the host tests, and `index.test.ts` alone accounts for 39 of the unbalanced sites. The surviving directory names agree — `dsh-restart-guard` 476, `dsh-restart-guard-cache` 476, `dsh-shop` 442, `dsh-gateway-profile` 442, `dsh-gateway-fixture` 442, `dsh-profile` 320, `dsh-fixture` 280, `dsh-hot-profile` 272 — all host-test scenario names. 5,089 directories present when this task was written; the audit measured 9,769 two days earlier and clearing them did not fix H-10.
 
+> **Executed 2026-09-05. Worse than measured, and fixed with one root per file rather than paired removals.**
+>
+> Re-measured on `5988921`: **101** `mkdtempSync` sites under `tests/host/` against 12 removals, leaving **203** directories per run — not the 39 this task estimated. `index.test.ts` alone had grown from 41 sites to 59, `executor.test.ts` from 10 to 15. /tmp held **8,878**, cleared by hand after the fix.
+>
+> Two departures from the steps as written:
+> 1. **The guard runs the host directory under an isolated `TMPDIR`, not a count of `/tmp`.** `os.tmpdir()` reads `TMPDIR` first on POSIX, so every scenario's directory lands in a sandbox this test owns. A `/tmp` count races with any other suite on the machine and inherits whatever backlog is already there — it would have been green on a busy machine and red on an idle one for reasons unrelated to the code. The guard lives at `tests/`, not `tests/host/`, because a guard inside the directory it runs would spawn itself.
+> 2. **Vitest's own `VITEST*` variables are stripped from the child environment.** Inherited, the nested run believes it is a worker of the outer one and exits non-zero before running anything — which failed the guard for a reason that had nothing to do with temporary directories, and would have turned it green the moment the leak was fixed for the same wrong reason. This cost one debugging round and is the kind of thing that makes a guard look like it works.
+>
+> The fix is `tests/host/temp-root.ts`: `fileTempRoot(label)` creates one root per file and registers a single `afterAll` removal. Paired `rmSync` calls could not have held — a scenario that throws never reaches its own cleanup, and a scenario copied from another inherits the creation without the removal. Nine host files re-rooted, 101 sites, no scenario's assertions touched.
+>
+> Mutation-checked twice: dropping the `afterAll` leaves 9 roots behind, and reverting `index.test.ts` alone to `tmpdir()` leaves 139. Package suite **633 passed (633)** across 29 files, typecheck clean.
+
 **Files:**
 - Modify: `packages/dsh-plugin-shop/tests/host/index.test.ts`, `executor.test.ts`, `dsh-cli.test.ts`, `profile.test.ts`, `restart.test.ts`
 - Test: `packages/dsh-plugin-shop/tests/host/temp-home-leak.test.ts` (new)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/host/temp-home-leak.test.ts`. It counts `/tmp/dsh-*` directories, runs the host suite in a child process, and counts again:
 
@@ -1769,17 +1863,17 @@ describe('the host suite leaves no temporary DSH_HOME behind', () => {
 }, 300_000)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run tests/host/temp-home-leak.test.ts` from `packages/dsh-plugin-shop`. Expected: FAIL, `expected 5128 to be 5089` or similar — `index.test.ts` alone leaks 39 per run.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Prefer **one per-run parent** over 41 individual `rmSync` calls: give each file a `mkdtempSync(join(tmpdir(), 'dsh-<file>-'))` root created in `beforeAll`, build every scenario home beneath it, and remove the root in `afterAll` with `rmSync(root, { recursive: true, force: true })`. One cleanup site per file cannot drift out of sync with the creation sites the way 41 paired calls can, and a test that throws mid-scenario still gets its directory removed.
 
 Do not change what any scenario asserts. The homes are inputs, not subjects.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run tests/host/temp-home-leak.test.ts` — Expected: PASS.
 Run: `pnpm -C packages/dsh-plugin-shop test` — Expected: PASS, 26 files / 520 tests (25/519 at `5f48787` plus this file's one case).
@@ -1787,7 +1881,7 @@ Run: `pnpm -C packages/dsh-plugin-shop typecheck` — Expected: no output.
 
 Clear the backlog once, by hand, after the fix is in: `find /tmp -maxdepth 1 -type d -name 'dsh-*' -exec rm -rf {} +`. It matches no `claude-*` path and, being `-type d`, skips a packed `.tgz` sitting beside them.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/dsh-plugin-shop/tests/host/

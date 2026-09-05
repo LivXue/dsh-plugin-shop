@@ -4,7 +4,7 @@ import { gzipSync } from 'node:zlib'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { TransportError } from '../../src/host/origin.ts'
-import { MAX_INFLATED_BYTES, MAX_PACKAGE_BYTES, npmOrigin } from '../../src/host/npm-origin.ts'
+import { MAX_INFLATED_BYTES, MAX_PACKAGE_BYTES, normalizeRegistryUrl, npmOrigin } from '../../src/host/npm-origin.ts'
 
 /** The same real `npm pack` output Task 1 uses. Its inner paths are
  * package/v1/index.json and package/v1/plugins.abc.json. */
@@ -309,5 +309,30 @@ describe('npmOrigin body bounds (F-2 / G-10)', () => {
   it('caps a package tarball at 32 MiB on the wire and 64 MiB inflated', () => {
     expect(MAX_PACKAGE_BYTES).toBe(32 * 1024 * 1024)
     expect(MAX_INFLATED_BYTES).toBe(64 * 1024 * 1024)
+  })
+})
+
+describe('normalizeRegistryUrl', () => {
+  it('appends the trailing slash a path-prefixed registry needs to keep its prefix', () => {
+    // `new URL(path, base)` drops the base's last segment when the base has no
+    // trailing slash: without this, a ~/.npmrc `registry=https://host/npm`
+    // resolves the probe to https://host/dsh-x/latest — off its own prefix, at
+    // a path the operator never served. The probe case above ("keeps a
+    // registry url's path…") already covers that end to end; this pins the two
+    // lines themselves, so a caller that reaches them by another route — the
+    // origin id, a second probe — inherits a tested contract rather than a
+    // property proven only through npmOrigin.
+    expect(normalizeRegistryUrl('https://registry.example.com/npm')).toBe('https://registry.example.com/npm/')
+    expect(new URL('dsh-x/latest', normalizeRegistryUrl('https://registry.example.com/npm')).href)
+      .toBe('https://registry.example.com/npm/dsh-x/latest')
+  })
+
+  it('leaves a url that already ends in a slash alone', () => {
+    expect(normalizeRegistryUrl('https://registry.npmjs.org/')).toBe('https://registry.npmjs.org/')
+    // Idempotent: the origin id is `npm:${registryUrl}` and the race
+    // deduplicates on it, so two spellings of one registry must not race
+    // against each other.
+    expect(normalizeRegistryUrl(normalizeRegistryUrl('https://registry.npmjs.org')))
+      .toBe(normalizeRegistryUrl('https://registry.npmjs.org'))
   })
 })
