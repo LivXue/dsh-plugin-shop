@@ -10640,6 +10640,8 @@
   added: 2026-09-04
 - name: "dsh-approval-gate"
   added: 2026-08-25
+- name: "dsh-approval-gate-safe"
+  added: 2026-09-05
 - name: "dsh-approval-guardian"
   added: 2026-09-04
 - name: "dsh-approval-hotkeys"
@@ -33338,6 +33340,8 @@
   added: 2026-09-01
 - name: "pulse"
   added: 2026-09-04
+- name: "pure-craft/dsh-capability-panel"
+  added: 2026-09-05
 - name: "pureskywalk/dsh-context-show"
   added: 2026-09-01
 - name: "pview-panel"

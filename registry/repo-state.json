@@ -1055,15 +1055,15 @@
     ]
   },
   "1052326311/dsh-ask-first": {
-    "pushedAt": "2026-09-05T01:27:54Z",
-    "commit": "016c87a3a5cb8a338cc5f9c37e4079ce5a616d99",
+    "pushedAt": "2026-09-05T20:17:55Z",
+    "commit": "7bcb928754969c1e107425b33c1e98480d686dbd",
     "candidates": [
       {
         "name": "dsh-ask-first",
         "repo": "1052326311/dsh-ask-first",
-        "commit": "016c87a3a5cb8a338cc5f9c37e4079ce5a616d99",
-        "version": "016c87a3a5cb8a338cc5f9c37e4079ce5a616d99",
-        "publishedAt": "2026-09-05T01:26:49Z",
+        "commit": "7bcb928754969c1e107425b33c1e98480d686dbd",
+        "version": "7bcb928754969c1e107425b33c1e98480d686dbd",
+        "publishedAt": "2026-09-05T20:17:50Z",
         "repository": "https://github.com/1052326311/dsh-ask-first",
         "license": "MIT",
         "hasBundle": true,
@@ -8716,7 +8716,7 @@
     }
   },
   "AdamPlatin123/dsh-plugin-radar": {
-    "pushedAt": "2026-09-05T19:45:52Z",
+    "pushedAt": "2026-09-05T20:16:03Z",
     "commit": "",
     "candidates": [],
     "failure": {
@@ -19298,7 +19298,7 @@
     }
   },
   "CherryHQ/cherry-studio": {
-    "pushedAt": "2026-09-05T19:54:11Z",
+    "pushedAt": "2026-09-05T20:30:18Z",
     "commit": "b244934858ee074ba796297b7431c7ea3718216b",
     "candidates": [
       {
@@ -27786,19 +27786,20 @@
     }
   },
   "FAVKTOXIC/dsh-theme-liquid-glass": {
-    "pushedAt": "2026-08-27T10:15:36Z",
-    "commit": "c09c3807c9a3666d5b3bab949c7d9a911e296dd4",
+    "pushedAt": "2026-09-05T20:21:32Z",
+    "commit": "d24167a4fbbfb08c07b60ef64cbbde6a49cecfc1",
     "candidates": [
       {
         "name": "dsh-theme-liquid-glass",
         "repo": "FAVKTOXIC/dsh-theme-liquid-glass",
-        "commit": "c09c3807c9a3666d5b3bab949c7d9a911e296dd4",
-        "version": "c09c3807c9a3666d5b3bab949c7d9a911e296dd4",
-        "publishedAt": "2026-08-27T10:15:33Z",
+        "commit": "d24167a4fbbfb08c07b60ef64cbbde6a49cecfc1",
+        "version": "d24167a4fbbfb08c07b60ef64cbbde6a49cecfc1",
+        "publishedAt": "2026-09-05T20:33:49Z",
         "repository": "https://github.com/FAVKTOXIC/dsh-theme-liquid-glass",
         "license": "MIT",
         "hasBundle": true,
         "requiresBuild": true,
+        "hasWorkspaceDeps": false,
         "catalog": null,
         "description": "Apple Liquid Glass theme for DeepSeek Harness"
       }
@@ -30220,7 +30221,7 @@
     ]
   },
   "FuRongJun-1999/CommonTrustProtocol": {
-    "pushedAt": "2026-09-05T19:37:57Z",
+    "pushedAt": "2026-09-05T20:18:59Z",
     "commit": "",
     "candidates": [],
     "failure": {
@@ -32756,15 +32757,15 @@
     ]
   },
   "GooDAnDReaDY/dsh-grok-xsearch": {
-    "pushedAt": "2026-09-05T13:18:50Z",
-    "commit": "44a0068f223a9c96dd503c1081a93b07351102ee",
+    "pushedAt": "2026-09-05T19:52:41Z",
+    "commit": "bce9b4f7eb15dc3a9e49c39f6f4bce65e6ebdd87",
     "candidates": [
       {
         "name": "@goodandready/dsh-grok-xsearch",
         "repo": "GooDAnDReaDY/dsh-grok-xsearch",
-        "commit": "44a0068f223a9c96dd503c1081a93b07351102ee",
-        "version": "44a0068f223a9c96dd503c1081a93b07351102ee",
-        "publishedAt": "2026-09-04T20:47:21Z",
+        "commit": "bce9b4f7eb15dc3a9e49c39f6f4bce65e6ebdd87",
+        "version": "bce9b4f7eb15dc3a9e49c39f6f4bce65e6ebdd87",
+        "publishedAt": "2026-09-05T19:48:26Z",
         "repository": "https://github.com/GooDAnDReaDY/dsh-grok-xsearch",
         "license": "MIT",
         "hasBundle": true,
@@ -32916,15 +32917,15 @@
     ]
   },
   "GooDAnDReaDY/dsh-moa": {
-    "pushedAt": "2026-09-05T18:39:34Z",
-    "commit": "ae2cfc7314a75b21bb4f72ccd06bddbadd47f665",
+    "pushedAt": "2026-09-05T20:08:51Z",
+    "commit": "1301a9fabc66077f8a6b34ac24a1c818a3d79680",
     "candidates": [
       {
         "name": "@goodandready/dsh-moa",
         "repo": "GooDAnDReaDY/dsh-moa",
-        "commit": "ae2cfc7314a75b21bb4f72ccd06bddbadd47f665",
-        "version": "ae2cfc7314a75b21bb4f72ccd06bddbadd47f665",
-        "publishedAt": "2026-09-05T18:32:49Z",
+        "commit": "1301a9fabc66077f8a6b34ac24a1c818a3d79680",
+        "version": "1301a9fabc66077f8a6b34ac24a1c818a3d79680",
+        "publishedAt": "2026-09-05T20:07:47Z",
         "repository": "https://github.com/GooDAnDReaDY/dsh-moa",
         "license": "MIT",
         "hasBundle": true,
@@ -32956,15 +32957,15 @@
     ]
   },
   "GooDAnDReaDY/dsh-russian-lang": {
-    "pushedAt": "2026-09-05T17:09:06Z",
-    "commit": "937fb06b9dc3f43c192ab2cab50401f8c325e41b",
+    "pushedAt": "2026-09-05T19:56:03Z",
+    "commit": "6c94dcfb0a3f6ba9eec71980bad760af1066063c",
     "candidates": [
       {
         "name": "@goodandready/dsh-russian-lang",
         "repo": "GooDAnDReaDY/dsh-russian-lang",
-        "commit": "937fb06b9dc3f43c192ab2cab50401f8c325e41b",
-        "version": "937fb06b9dc3f43c192ab2cab50401f8c325e41b",
-        "publishedAt": "2026-09-05T17:08:32Z",
+        "commit": "6c94dcfb0a3f6ba9eec71980bad760af1066063c",
+        "version": "6c94dcfb0a3f6ba9eec71980bad760af1066063c",
+        "publishedAt": "2026-09-05T19:55:46Z",
         "repository": "https://github.com/GooDAnDReaDY/dsh-russian-lang",
         "license": "MIT",
         "hasBundle": true,
@@ -32996,15 +32997,15 @@
     ]
   },
   "GooDAnDReaDY/dsh-subscriptions": {
-    "pushedAt": "2026-09-05T14:53:33Z",
-    "commit": "829c589738ed3ab119e6c6630b699b92f71664c5",
+    "pushedAt": "2026-09-05T20:14:43Z",
+    "commit": "e3fddbb6bf239af41c1048d27b75a13305905239",
     "candidates": [
       {
         "name": "@goodandready/dsh-subscriptions",
         "repo": "GooDAnDReaDY/dsh-subscriptions",
-        "commit": "829c589738ed3ab119e6c6630b699b92f71664c5",
-        "version": "829c589738ed3ab119e6c6630b699b92f71664c5",
-        "publishedAt": "2026-09-05T14:52:49Z",
+        "commit": "e3fddbb6bf239af41c1048d27b75a13305905239",
+        "version": "e3fddbb6bf239af41c1048d27b75a13305905239",
+        "publishedAt": "2026-09-05T20:09:22Z",
         "repository": "https://github.com/GooDAnDReaDY/dsh-subscriptions",
         "license": "MIT",
         "hasBundle": true,
@@ -33279,7 +33280,7 @@
     ]
   },
   "GrazianoGuiducci/maios-project-kernel": {
-    "pushedAt": "2026-09-01T10:55:54Z",
+    "pushedAt": "2026-09-05T20:05:27Z",
     "commit": "",
     "candidates": [],
     "failure": {
@@ -38272,15 +38273,15 @@
     ]
   },
   "Icather/dsh-clean-desktop-shell": {
-    "pushedAt": "2026-09-04T20:22:04Z",
-    "commit": "05d7aab624c48c9e07915a22568e9b25e8df20d9",
+    "pushedAt": "2026-09-05T20:00:20Z",
+    "commit": "01a4447d0cd0ac5202028b4de22771aded0e0377",
     "candidates": [
       {
         "name": "dsh-clean-desktop-shell",
         "repo": "Icather/dsh-clean-desktop-shell",
-        "commit": "05d7aab624c48c9e07915a22568e9b25e8df20d9",
-        "version": "05d7aab624c48c9e07915a22568e9b25e8df20d9",
-        "publishedAt": "2026-09-04T20:22:03Z",
+        "commit": "01a4447d0cd0ac5202028b4de22771aded0e0377",
+        "version": "01a4447d0cd0ac5202028b4de22771aded0e0377",
+        "publishedAt": "2026-09-05T20:00:19Z",
         "repository": "https://github.com/Icather/dsh-clean-desktop-shell",
         "license": "MIT",
         "hasBundle": true,
@@ -44674,7 +44675,7 @@
     ]
   },
   "KeepLost/harniverse": {
-    "pushedAt": "2026-09-05T18:19:58Z",
+    "pushedAt": "2026-09-05T20:05:04Z",
     "commit": "e0281098c77ac2580ca5064ff97f4c9787ddf7dd",
     "candidates": [
       {
@@ -50078,15 +50079,15 @@
     ]
   },
   "LivXue/dsh-plugin-shop": {
-    "pushedAt": "2026-09-05T19:33:49Z",
-    "commit": "f894747cdb0e5a92af74508eadfbe89dfc92f08b",
+    "pushedAt": "2026-09-05T20:04:32Z",
+    "commit": "df48f58c5ea4e84c02aaf54af9514cbb1d7ed7e5",
     "candidates": [
       {
         "name": "dsh-plugin-shop",
         "repo": "LivXue/dsh-plugin-shop",
-        "commit": "f894747cdb0e5a92af74508eadfbe89dfc92f08b",
-        "version": "f894747cdb0e5a92af74508eadfbe89dfc92f08b",
-        "publishedAt": "2026-09-05T19:33:46Z",
+        "commit": "df48f58c5ea4e84c02aaf54af9514cbb1d7ed7e5",
+        "version": "df48f58c5ea4e84c02aaf54af9514cbb1d7ed7e5",
+        "publishedAt": "2026-09-05T20:04:29Z",
         "repository": "https://github.com/LivXue/dsh-plugin-shop",
         "license": "Apache-2.0",
         "hasBundle": true,
@@ -55143,15 +55144,15 @@
     ]
   },
   "MinChanSike/dsh-plugin-explorer": {
-    "pushedAt": "2026-09-04T20:18:24Z",
-    "commit": "961fa570472552188d724a863ecf8f840bf5e37f",
+    "pushedAt": "2026-09-05T20:17:18Z",
+    "commit": "51611a78926b2a2405d828fa998ffd46153c29fd",
     "candidates": [
       {
         "name": "deepseek-harness-plugin-explorer",
         "repo": "MinChanSike/dsh-plugin-explorer",
-        "commit": "961fa570472552188d724a863ecf8f840bf5e37f",
-        "version": "961fa570472552188d724a863ecf8f840bf5e37f",
-        "publishedAt": "2026-09-04T20:18:22Z",
+        "commit": "51611a78926b2a2405d828fa998ffd46153c29fd",
+        "version": "51611a78926b2a2405d828fa998ffd46153c29fd",
+        "publishedAt": "2026-09-05T20:17:16Z",
         "repository": "https://github.com/MinChanSike/dsh-plugin-explorer",
         "license": null,
         "hasBundle": false,
@@ -59392,7 +59393,7 @@
     ]
   },
   "NanmiCoder/dsh-auto-mode": {
-    "pushedAt": "2026-09-05T19:48:12Z",
+    "pushedAt": "2026-09-05T20:00:54Z",
     "commit": "1077a0a525b654a8da16c7afcf2dc2b8358d1c42",
     "candidates": [
       {
@@ -60591,15 +60592,15 @@
     ]
   },
   "NinjaSln-labs/dsh-context-compass": {
-    "pushedAt": "2026-09-03T17:15:31Z",
-    "commit": "d1a5d7f075325210256b745fec139dfe7502072e",
+    "pushedAt": "2026-09-05T20:17:16Z",
+    "commit": "c030157b82ccba145f133de0e987987fd17d711d",
     "candidates": [
       {
         "name": "dsh-context-compass",
         "repo": "NinjaSln-labs/dsh-context-compass",
-        "commit": "d1a5d7f075325210256b745fec139dfe7502072e",
-        "version": "d1a5d7f075325210256b745fec139dfe7502072e",
-        "publishedAt": "2026-09-03T17:15:14Z",
+        "commit": "c030157b82ccba145f133de0e987987fd17d711d",
+        "version": "c030157b82ccba145f133de0e987987fd17d711d",
+        "publishedAt": "2026-09-05T20:17:11Z",
         "repository": "https://github.com/NinjaSln-labs/dsh-context-compass",
         "license": "MIT",
         "hasBundle": true,
@@ -77233,15 +77234,15 @@
     ]
   },
   "StvLi/dsh-ros2": {
-    "pushedAt": "2026-09-05T13:17:23Z",
-    "commit": "4c35ea81c85257aaf8c7d739ea27ef263f842d16",
+    "pushedAt": "2026-09-05T20:13:17Z",
+    "commit": "fbd09a2689a2182e3674e4beda515942aa00d5dc",
     "candidates": [
       {
         "name": "dsh-ros2-core",
         "repo": "StvLi/dsh-ros2",
-        "commit": "4c35ea81c85257aaf8c7d739ea27ef263f842d16",
-        "version": "4c35ea81c85257aaf8c7d739ea27ef263f842d16",
-        "publishedAt": "2026-09-05T13:16:22Z",
+        "commit": "fbd09a2689a2182e3674e4beda515942aa00d5dc",
+        "version": "fbd09a2689a2182e3674e4beda515942aa00d5dc",
+        "publishedAt": "2026-09-05T20:10:56Z",
         "repository": "https://github.com/StvLi/dsh-ros2",
         "license": "MIT",
         "hasBundle": true,
@@ -77254,9 +77255,9 @@
       {
         "name": "dsh-ros2",
         "repo": "StvLi/dsh-ros2",
-        "commit": "4c35ea81c85257aaf8c7d739ea27ef263f842d16",
-        "version": "4c35ea81c85257aaf8c7d739ea27ef263f842d16",
-        "publishedAt": "2026-09-05T13:16:22Z",
+        "commit": "fbd09a2689a2182e3674e4beda515942aa00d5dc",
+        "version": "fbd09a2689a2182e3674e4beda515942aa00d5dc",
+        "publishedAt": "2026-09-05T20:10:56Z",
         "repository": "https://github.com/StvLi/dsh-ros2",
         "license": "MIT",
         "hasBundle": true,
@@ -77269,9 +77270,9 @@
       {
         "name": "dsh-ros2-state",
         "repo": "StvLi/dsh-ros2",
-        "commit": "4c35ea81c85257aaf8c7d739ea27ef263f842d16",
-        "version": "4c35ea81c85257aaf8c7d739ea27ef263f842d16",
-        "publishedAt": "2026-09-05T13:16:22Z",
+        "commit": "fbd09a2689a2182e3674e4beda515942aa00d5dc",
+        "version": "fbd09a2689a2182e3674e4beda515942aa00d5dc",
+        "publishedAt": "2026-09-05T20:10:56Z",
         "repository": "https://github.com/StvLi/dsh-ros2",
         "license": "MIT",
         "hasBundle": true,
@@ -77284,9 +77285,9 @@
       {
         "name": "dsh-ros2-moveit",
         "repo": "StvLi/dsh-ros2",
-        "commit": "4c35ea81c85257aaf8c7d739ea27ef263f842d16",
-        "version": "4c35ea81c85257aaf8c7d739ea27ef263f842d16",
-        "publishedAt": "2026-09-05T13:16:22Z",
+        "commit": "fbd09a2689a2182e3674e4beda515942aa00d5dc",
+        "version": "fbd09a2689a2182e3674e4beda515942aa00d5dc",
+        "publishedAt": "2026-09-05T20:10:56Z",
         "repository": "https://github.com/StvLi/dsh-ros2",
         "license": "MIT",
         "hasBundle": true,
@@ -77299,9 +77300,9 @@
       {
         "name": "dsh-ros2-profile",
         "repo": "StvLi/dsh-ros2",
-        "commit": "4c35ea81c85257aaf8c7d739ea27ef263f842d16",
-        "version": "4c35ea81c85257aaf8c7d739ea27ef263f842d16",
-        "publishedAt": "2026-09-05T13:16:22Z",
+        "commit": "fbd09a2689a2182e3674e4beda515942aa00d5dc",
+        "version": "fbd09a2689a2182e3674e4beda515942aa00d5dc",
+        "publishedAt": "2026-09-05T20:10:56Z",
         "repository": "https://github.com/StvLi/dsh-ros2",
         "license": "MIT",
         "hasBundle": true,
@@ -77314,9 +77315,9 @@
       {
         "name": "dsh-ros2-safety",
         "repo": "StvLi/dsh-ros2",
-        "commit": "4c35ea81c85257aaf8c7d739ea27ef263f842d16",
-        "version": "4c35ea81c85257aaf8c7d739ea27ef263f842d16",
-        "publishedAt": "2026-09-05T13:16:22Z",
+        "commit": "fbd09a2689a2182e3674e4beda515942aa00d5dc",
+        "version": "fbd09a2689a2182e3674e4beda515942aa00d5dc",
+        "publishedAt": "2026-09-05T20:10:56Z",
         "repository": "https://github.com/StvLi/dsh-ros2",
         "license": "MIT",
         "hasBundle": true,
@@ -82514,22 +82515,22 @@
     }
   },
   "TritiumWang/dsh-universal-worldbook": {
-    "pushedAt": "2026-09-05T18:38:24Z",
-    "commit": "5f3857ae007f23bc8bb051837ae2642bea89ac55",
+    "pushedAt": "2026-09-05T20:09:07Z",
+    "commit": "259c9c58b18b07b2794a09f4067bf4812605d273",
     "candidates": [
       {
         "name": "dsh-universal-worldbook",
         "repo": "TritiumWang/dsh-universal-worldbook",
-        "commit": "5f3857ae007f23bc8bb051837ae2642bea89ac55",
-        "version": "5f3857ae007f23bc8bb051837ae2642bea89ac55",
-        "publishedAt": "2026-09-05T18:38:24Z",
+        "commit": "259c9c58b18b07b2794a09f4067bf4812605d273",
+        "version": "259c9c58b18b07b2794a09f4067bf4812605d273",
+        "publishedAt": "2026-09-05T20:07:58Z",
         "repository": "https://github.com/TritiumWang/dsh-universal-worldbook",
         "license": "MIT",
         "hasBundle": true,
         "requiresBuild": false,
         "hasWorkspaceDeps": false,
         "catalog": null,
-        "description": "SillyTavern-style worldbook for general purpose. Generating per-request injections to user message without long-lasting context contamination."
+        "description": "酒馆风格的通用世界书，为最新用户消息附加一次性的提示词注入，无上下文污染。SillyTavern-style worldbook for general purpose. Generating per-request injections to user message without long-lasting context contamination."
       }
     ]
   },
@@ -84218,15 +84219,15 @@
     ]
   },
   "Victor-770/dsh-plugin-directory": {
-    "pushedAt": "2026-09-05T14:38:00Z",
-    "commit": "99da642732ca4e1be17eb0bc251bdc80c597c9c1",
+    "pushedAt": "2026-09-05T20:05:53Z",
+    "commit": "691f8a4975087d134cb23d4a97a2c79d6fafd69e",
     "candidates": [
       {
         "name": "dsh-plugin-directory",
         "repo": "Victor-770/dsh-plugin-directory",
-        "commit": "99da642732ca4e1be17eb0bc251bdc80c597c9c1",
-        "version": "99da642732ca4e1be17eb0bc251bdc80c597c9c1",
-        "publishedAt": "2026-09-05T14:37:51Z",
+        "commit": "691f8a4975087d134cb23d4a97a2c79d6fafd69e",
+        "version": "691f8a4975087d134cb23d4a97a2c79d6fafd69e",
+        "publishedAt": "2026-09-05T20:05:43Z",
         "repository": "https://github.com/Victor-770/dsh-plugin-directory",
         "license": "AGPL-3.0",
         "hasBundle": false,
@@ -85857,15 +85858,15 @@
     }
   },
   "WSL043/DSH-Portable": {
-    "pushedAt": "2026-09-05T19:04:40Z",
-    "commit": "bf01d5d1a3a5ca8ffbe430459759dd192e412ae1",
+    "pushedAt": "2026-09-05T20:09:58Z",
+    "commit": "30be1e6286b6bea91cfd9b374c10e2c66b934bc4",
     "candidates": [
       {
         "name": "dsh-portable",
         "repo": "WSL043/DSH-Portable",
-        "commit": "bf01d5d1a3a5ca8ffbe430459759dd192e412ae1",
-        "version": "bf01d5d1a3a5ca8ffbe430459759dd192e412ae1",
-        "publishedAt": "2026-09-04T22:24:16Z",
+        "commit": "30be1e6286b6bea91cfd9b374c10e2c66b934bc4",
+        "version": "30be1e6286b6bea91cfd9b374c10e2c66b934bc4",
+        "publishedAt": "2026-09-05T20:09:56Z",
         "repository": "https://github.com/WSL043/DSH-Portable",
         "license": "Apache-2.0",
         "hasBundle": false,
@@ -86663,7 +86664,7 @@
     }
   },
   "Waterkyuu/theoria": {
-    "pushedAt": "2026-09-05T19:57:21Z",
+    "pushedAt": "2026-09-05T20:16:34Z",
     "commit": "cd9ca6a19e52edb7831ef8da64d4b7118f6cd3a2",
     "candidates": [
       {
@@ -91781,15 +91782,15 @@
     ]
   },
   "Yan-Zero/dsh-codex": {
-    "pushedAt": "2026-09-05T19:25:15Z",
-    "commit": "8ff8096d1616b210e5f8a8ed6a3c2f255349fbd2",
+    "pushedAt": "2026-09-05T20:05:17Z",
+    "commit": "f99e828f844769f24629e8c18b7c055e6de458ea",
     "candidates": [
       {
         "name": "dsh-codex",
         "repo": "Yan-Zero/dsh-codex",
-        "commit": "8ff8096d1616b210e5f8a8ed6a3c2f255349fbd2",
-        "version": "8ff8096d1616b210e5f8a8ed6a3c2f255349fbd2",
-        "publishedAt": "2026-09-05T19:24:20Z",
+        "commit": "f99e828f844769f24629e8c18b7c055e6de458ea",
+        "version": "f99e828f844769f24629e8c18b7c055e6de458ea",
+        "publishedAt": "2026-09-05T20:05:16Z",
         "repository": "https://github.com/Yan-Zero/dsh-codex",
         "license": "Apache-2.0",
         "hasBundle": true,
@@ -94473,15 +94474,15 @@
     ]
   },
   "Yurzi/dsh-pdf-mineru": {
-    "pushedAt": "2026-09-05T19:52:37Z",
-    "commit": "f3eff4fd5f7f6b0d12d007140d312c753b02c4fc",
+    "pushedAt": "2026-09-05T20:16:22Z",
+    "commit": "70aa65d5e4a1600fb3a66d5f4cce5ee6121a69bb",
     "candidates": [
       {
         "name": "dsh-pdf-mineru",
         "repo": "Yurzi/dsh-pdf-mineru",
-        "commit": "f3eff4fd5f7f6b0d12d007140d312c753b02c4fc",
-        "version": "f3eff4fd5f7f6b0d12d007140d312c753b02c4fc",
-        "publishedAt": "2026-09-05T19:52:33Z",
+        "commit": "70aa65d5e4a1600fb3a66d5f4cce5ee6121a69bb",
+        "version": "70aa65d5e4a1600fb3a66d5f4cce5ee6121a69bb",
+        "publishedAt": "2026-09-05T20:16:15Z",
         "repository": "https://github.com/Yurzi/dsh-pdf-mineru",
         "license": "MIT",
         "hasBundle": true,
@@ -100104,7 +100105,7 @@
     ]
   },
   "agentrq/agentrq": {
-    "pushedAt": "2026-09-05T19:45:42Z",
+    "pushedAt": "2026-09-05T20:13:23Z",
     "commit": "",
     "candidates": [],
     "failure": {
@@ -102016,15 +102017,15 @@
     ]
   },
   "americanjeff/modelspoke": {
-    "pushedAt": "2026-09-05T17:12:48Z",
-    "commit": "92234f982eb2702aeb0ddd9b10faa10b3ef3ca05",
+    "pushedAt": "2026-09-05T20:10:45Z",
+    "commit": "a6745a50564323e619142984ea33604241252e33",
     "candidates": [
       {
         "name": "modelspoke",
         "repo": "americanjeff/modelspoke",
-        "commit": "92234f982eb2702aeb0ddd9b10faa10b3ef3ca05",
-        "version": "92234f982eb2702aeb0ddd9b10faa10b3ef3ca05",
-        "publishedAt": "2026-09-05T17:12:23Z",
+        "commit": "a6745a50564323e619142984ea33604241252e33",
+        "version": "a6745a50564323e619142984ea33604241252e33",
+        "publishedAt": "2026-09-05T20:10:16Z",
         "repository": "https://github.com/americanjeff/modelspoke",
         "license": "MIT",
         "hasBundle": true,
@@ -102033,9 +102034,9 @@
         "catalog": null,
         "description": "Local OpenAI-compatible model-server discovery + tiered reasoning-metadata resolution for DeepSeek Harness (dsh).",
         "release": {
-          "tag": "v0.1.2",
-          "url": "https://github.com/americanjeff/modelspoke/releases/download/v0.1.2/modelspoke-0.1.2.tgz",
-          "sha256": "6e192241cc64e2ce0d7b62b765e746a732ef667f81a2bf61add29b255daa936b"
+          "tag": "v0.1.3",
+          "url": "https://github.com/americanjeff/modelspoke/releases/download/v0.1.3/modelspoke-0.1.3.tgz",
+          "sha256": "d7080d82bfa4086b7446c52ba47bce1b9f0b9252c0cf6f19b09efd4e53aabcfa"
         }
       }
     ]
@@ -104352,15 +104353,15 @@
     ]
   },
   "astra3294/dsh-doctor": {
-    "pushedAt": "2026-09-05T15:11:40Z",
-    "commit": "cf8bf213251f809b6adfb14403461a52aba689eb",
+    "pushedAt": "2026-09-05T20:18:37Z",
+    "commit": "c1aea3234ea515ef07c165134f103e933b1f3ebe",
     "candidates": [
       {
         "name": "dsh-doctor",
         "repo": "astra3294/dsh-doctor",
-        "commit": "cf8bf213251f809b6adfb14403461a52aba689eb",
-        "version": "cf8bf213251f809b6adfb14403461a52aba689eb",
-        "publishedAt": "2026-09-05T15:11:39Z",
+        "commit": "c1aea3234ea515ef07c165134f103e933b1f3ebe",
+        "version": "c1aea3234ea515ef07c165134f103e933b1f3ebe",
+        "publishedAt": "2026-09-05T20:18:36Z",
         "repository": "https://github.com/astra3294/dsh-doctor",
         "license": "MIT",
         "hasBundle": true,
@@ -104915,7 +104916,7 @@
     }
   },
   "awesome-deepseekharness/deepseek-official-tracker": {
-    "pushedAt": "2026-09-05T14:51:42Z",
+    "pushedAt": "2026-09-05T20:06:20Z",
     "commit": "",
     "candidates": [],
     "failure": {
@@ -106422,7 +106423,7 @@
     ]
   },
   "baiyuscc13724-max/deepseek-harness-desktop": {
-    "pushedAt": "2026-09-05T19:53:47Z",
+    "pushedAt": "2026-09-05T20:00:47Z",
     "commit": "e72389d6155c76821810ff4ed52d22dee170524b",
     "candidates": [
       {
@@ -115617,7 +115618,7 @@
     ]
   },
   "cherrchen/deepseek-harness-electron": {
-    "pushedAt": "2026-09-05T14:47:41Z",
+    "pushedAt": "2026-09-05T20:04:12Z",
     "commit": "19ce3fbd04faa334d27f7b9d84c9740d39d3625d",
     "candidates": [
       {
@@ -124581,15 +124582,15 @@
     ]
   },
   "dingzhenyao/dsh-plugin-directory": {
-    "pushedAt": "2026-09-05T14:50:52Z",
-    "commit": "3acd02b9d4a3ef9e88b7379456bf447e7380d03f",
+    "pushedAt": "2026-09-05T20:06:37Z",
+    "commit": "97b22c5f20d73cfc3e82333ab7eff07c86a2282a",
     "candidates": [
       {
         "name": "dsh-plugin-directory",
         "repo": "dingzhenyao/dsh-plugin-directory",
-        "commit": "3acd02b9d4a3ef9e88b7379456bf447e7380d03f",
-        "version": "3acd02b9d4a3ef9e88b7379456bf447e7380d03f",
-        "publishedAt": "2026-09-05T14:50:51Z",
+        "commit": "97b22c5f20d73cfc3e82333ab7eff07c86a2282a",
+        "version": "97b22c5f20d73cfc3e82333ab7eff07c86a2282a",
+        "publishedAt": "2026-09-05T20:06:35Z",
         "repository": "https://github.com/dingzhenyao/dsh-plugin-directory",
         "license": null,
         "hasBundle": true,
@@ -127628,15 +127629,15 @@
     ]
   },
   "dsh-pub/dsh-pub": {
-    "pushedAt": "2026-09-05T10:09:14Z",
-    "commit": "d832dca59c810346fb638fa727d45c18ef102419",
+    "pushedAt": "2026-09-05T19:56:41Z",
+    "commit": "aeb1ba94002ce1abfd6a6f3629639d24a0f53d9e",
     "candidates": [
       {
         "name": "@dsh-pub/plugin-directory",
         "repo": "dsh-pub/dsh-pub",
-        "commit": "d832dca59c810346fb638fa727d45c18ef102419",
-        "version": "d832dca59c810346fb638fa727d45c18ef102419",
-        "publishedAt": "2026-09-05T10:09:14Z",
+        "commit": "aeb1ba94002ce1abfd6a6f3629639d24a0f53d9e",
+        "version": "aeb1ba94002ce1abfd6a6f3629639d24a0f53d9e",
+        "publishedAt": "2026-09-05T19:56:00Z",
         "repository": "https://github.com/dsh-pub/dsh-pub",
         "license": "MIT",
         "hasBundle": true,
@@ -129986,15 +129987,15 @@
     ]
   },
   "elysia395/dsh-wallpaper-engine": {
-    "pushedAt": "2026-09-03T10:30:31Z",
-    "commit": "70853ad51e461bfc3ccbfa822e697296ce2fd250",
+    "pushedAt": "2026-09-05T20:13:20Z",
+    "commit": "1b9c2deee397b370560dd6dbcdadb4f6d5d70c5e",
     "candidates": [
       {
         "name": "dsh-plugin-wallpaper-engine",
         "repo": "elysia395/dsh-wallpaper-engine",
-        "commit": "70853ad51e461bfc3ccbfa822e697296ce2fd250",
-        "version": "70853ad51e461bfc3ccbfa822e697296ce2fd250",
-        "publishedAt": "2026-09-03T10:29:54Z",
+        "commit": "1b9c2deee397b370560dd6dbcdadb4f6d5d70c5e",
+        "version": "1b9c2deee397b370560dd6dbcdadb4f6d5d70c5e",
+        "publishedAt": "2026-09-05T19:29:27Z",
         "repository": "https://github.com/elysia395/dsh-wallpaper-engine",
         "license": "MIT",
         "hasBundle": true,
@@ -134110,26 +134111,6 @@
       }
     ]
   },
-  "flg1217/dsh-quick-commands": {
-    "pushedAt": "2026-09-03T10:03:25Z",
-    "commit": "0f3fad3c4697a77d8070db2f036699f3ce1a52fa",
-    "candidates": [
-      {
-        "name": "@flg1217/dsh-quick-commands",
-        "repo": "flg1217/dsh-quick-commands",
-        "commit": "0f3fad3c4697a77d8070db2f036699f3ce1a52fa",
-        "version": "0f3fad3c4697a77d8070db2f036699f3ce1a52fa",
-        "publishedAt": "2026-09-03T08:55:57Z",
-        "repository": "https://github.com/flg1217/dsh-quick-commands",
-        "license": "MIT",
-        "hasBundle": true,
-        "requiresBuild": false,
-        "hasWorkspaceDeps": false,
-        "catalog": null,
-        "description": "User-defined slash commands for DeepSeek Harness: configure quick commands (name + prompt) in the settings panel; /name inserts a chip that expands to the prompt on send."
-      }
-    ]
-  },
   "flg1217/dsh-subagent-codebuddy": {
     "pushedAt": "2026-09-03T10:03:17Z",
     "commit": "18856466741ca29cba3ecc1797519dd51b506eab",
@@ -135921,15 +135902,15 @@
     ]
   },
   "fuilyha56-wq/dsh-for-mofox-ada": {
-    "pushedAt": "2026-09-05T11:25:48Z",
-    "commit": "412d3f22400ae201acbf272e2879a98e5ccc26e7",
+    "pushedAt": "2026-09-05T19:55:44Z",
+    "commit": "740d6f1075f87417bcd2436ef6535e30ff51d881",
     "candidates": [
       {
         "name": "dsh-for-mofox-ada",
         "repo": "fuilyha56-wq/dsh-for-mofox-ada",
-        "commit": "412d3f22400ae201acbf272e2879a98e5ccc26e7",
-        "version": "412d3f22400ae201acbf272e2879a98e5ccc26e7",
-        "publishedAt": "2026-09-05T11:25:26Z",
+        "commit": "740d6f1075f87417bcd2436ef6535e30ff51d881",
+        "version": "740d6f1075f87417bcd2436ef6535e30ff51d881",
+        "publishedAt": "2026-09-05T20:29:41Z",
         "repository": "https://github.com/fuilyha56-wq/dsh-for-mofox-ada",
         "license": null,
         "hasBundle": true,
@@ -142710,7 +142691,7 @@
     ]
   },
   "hashgraph-online/hol-guard": {
-    "pushedAt": "2026-09-05T19:47:47Z",
+    "pushedAt": "2026-09-05T20:17:53Z",
     "commit": "",
     "candidates": [],
     "failure": {
@@ -145867,26 +145848,6 @@
       }
     ]
   },
-  "hotpot-labs/dsh-version-plugin": {
-    "pushedAt": "2026-09-01T14:13:28Z",
-    "commit": "f751fdf0bca5c2d1be50d8792eba7459ff3125d8",
-    "candidates": [
-      {
-        "name": "dsh-version-plugin",
-        "repo": "hotpot-labs/dsh-version-plugin",
-        "commit": "f751fdf0bca5c2d1be50d8792eba7459ff3125d8",
-        "version": "f751fdf0bca5c2d1be50d8792eba7459ff3125d8",
-        "publishedAt": "2026-09-01T14:12:59Z",
-        "repository": "https://github.com/hotpot-labs/dsh-version-plugin",
-        "license": "MIT",
-        "hasBundle": true,
-        "requiresBuild": true,
-        "hasWorkspaceDeps": false,
-        "catalog": null,
-        "description": "展示dsh版本，提供更新到最新版按钮"
-      }
-    ]
-  },
   "hotpot-labs/dsh-wooden-fish": {
     "pushedAt": "2026-09-03T13:35:00Z",
     "commit": "ca019b6023a78bdf0011dce1dfc2334e39b59d5f",
@@ -146839,15 +146800,15 @@
     }
   },
   "huangruiteng/loopx": {
-    "pushedAt": "2026-09-05T19:25:19Z",
-    "commit": "8a2c89c8f92e8e1852ee60056ff7a082f0178a22",
+    "pushedAt": "2026-09-05T20:11:42Z",
+    "commit": "f8f82f3e5d3e61b064dee66008cf883aade56434",
     "candidates": [
       {
         "name": "dsh-loopx-plugin",
         "repo": "huangruiteng/loopx",
-        "commit": "8a2c89c8f92e8e1852ee60056ff7a082f0178a22",
-        "version": "8a2c89c8f92e8e1852ee60056ff7a082f0178a22",
-        "publishedAt": "2026-09-05T19:25:17Z",
+        "commit": "f8f82f3e5d3e61b064dee66008cf883aade56434",
+        "version": "f8f82f3e5d3e61b064dee66008cf883aade56434",
+        "publishedAt": "2026-09-05T20:30:29Z",
         "repository": "https://github.com/huangruiteng/loopx",
         "license": "Apache-2.0",
         "hasBundle": true,
@@ -148088,26 +148049,6 @@
         "hasWorkspaceDeps": false,
         "catalog": null,
         "description": "DSH插件，消息功能增强"
-      }
-    ]
-  },
-  "hw-cola/dsh-remote-control": {
-    "pushedAt": "2026-08-25T01:37:17Z",
-    "commit": "ef7142d270c06a4be9af317b13e62ef0ff4b1992",
-    "candidates": [
-      {
-        "name": "@dsh/remote-control",
-        "repo": "hw-cola/dsh-remote-control",
-        "commit": "ef7142d270c06a4be9af317b13e62ef0ff4b1992",
-        "version": "ef7142d270c06a4be9af317b13e62ef0ff4b1992",
-        "publishedAt": "2026-08-25T01:36:51Z",
-        "repository": "https://github.com/hw-cola/dsh-remote-control",
-        "license": "MIT",
-        "hasBundle": true,
-        "requiresBuild": false,
-        "hasWorkspaceDeps": false,
-        "catalog": null,
-        "description": "DSH插件，手机远程控制"
       }
     ]
   },
@@ -149650,7 +149591,7 @@
     ]
   },
   "iia-arg/dsh-plugins": {
-    "pushedAt": "2026-09-05T19:20:06Z",
+    "pushedAt": "2026-09-05T20:11:06Z",
     "commit": "",
     "candidates": [],
     "failure": {
@@ -184970,15 +184911,15 @@
     ]
   },
   "mrme000m/dsh-prime-orchestrator": {
-    "pushedAt": "2026-09-05T16:42:17Z",
-    "commit": "dad19e8c39e7153762f6693fee0088b00a6b2dbc",
+    "pushedAt": "2026-09-05T19:52:05Z",
+    "commit": "659738d943515702ac4a949513d242fd045d546a",
     "candidates": [
       {
         "name": "dsh-prime-orchestrator",
         "repo": "mrme000m/dsh-prime-orchestrator",
-        "commit": "dad19e8c39e7153762f6693fee0088b00a6b2dbc",
-        "version": "dad19e8c39e7153762f6693fee0088b00a6b2dbc",
-        "publishedAt": "2026-09-05T16:42:10Z",
+        "commit": "659738d943515702ac4a949513d242fd045d546a",
+        "version": "659738d943515702ac4a949513d242fd045d546a",
+        "publishedAt": "2026-09-05T19:52:03Z",
         "repository": "https://github.com/mrme000m/dsh-prime-orchestrator",
         "license": "MIT",
         "hasBundle": true,
@@ -193443,15 +193384,15 @@
     ]
   },
   "orziz/odai": {
-    "pushedAt": "2026-09-05T11:57:19Z",
-    "commit": "0afe83bbfc434f62d01bb6811381239508da505a",
+    "pushedAt": "2026-09-05T20:03:40Z",
+    "commit": "271227408369fd24365c90a38702ce8a2da25a65",
     "candidates": [
       {
         "name": "odai-workspace",
         "repo": "orziz/odai",
-        "commit": "0afe83bbfc434f62d01bb6811381239508da505a",
-        "version": "0afe83bbfc434f62d01bb6811381239508da505a",
-        "publishedAt": "2026-09-05T11:56:06Z",
+        "commit": "271227408369fd24365c90a38702ce8a2da25a65",
+        "version": "271227408369fd24365c90a38702ce8a2da25a65",
+        "publishedAt": "2026-09-05T20:23:37Z",
         "repository": "https://github.com/orziz/odai",
         "license": "MIT",
         "hasBundle": false,
@@ -193799,6 +193740,15 @@
         "description": "Daily token-consumption stats for the dsh web surface: aggregates provider-reported usage from every session log by local day, serves a /token-stats report page and /api/token-stats JSON, and adds a Token 用量 settings section to the web GUI"
       }
     ]
+  },
+  "oxbshw/watch-skill": {
+    "pushedAt": "2026-09-05T20:15:11Z",
+    "commit": "",
+    "candidates": [],
+    "failure": {
+      "code": "no-manifest",
+      "detail": "No package.json at the repository root, so there is nothing for dsh to install."
+    }
   },
   "oxgbl/dsh-deepseek-price": {
     "pushedAt": "2026-09-05T14:53:06Z",
@@ -197603,6 +197553,26 @@
         "hasWorkspaceDeps": false,
         "catalog": null,
         "description": "arXiv paper tools for DeepSeek Harness: search, summarize, translate, and survey papers as native tools. No Python, no MCP — HTML-first extraction."
+      }
+    ]
+  },
+  "pure-craft/dsh-capability-panel": {
+    "pushedAt": "2026-09-05T20:11:30Z",
+    "commit": "40c1b15845e8fae269d70acf624d4ebc385a5a0e",
+    "candidates": [
+      {
+        "name": "dsh-capability-panel",
+        "repo": "pure-craft/dsh-capability-panel",
+        "commit": "40c1b15845e8fae269d70acf624d4ebc385a5a0e",
+        "version": "40c1b15845e8fae269d70acf624d4ebc385a5a0e",
+        "publishedAt": "2026-09-05T20:11:25Z",
+        "repository": "https://github.com/pure-craft/dsh-capability-panel",
+        "license": "MIT",
+        "hasBundle": true,
+        "requiresBuild": false,
+        "hasWorkspaceDeps": false,
+        "catalog": null,
+        "description": "DeepSeek Harness plugin: see what your agent can actually reach — skills, MCP servers, system tools with true in-context state, and per-session / per-preset switches"
       }
     ]
   },
@@ -202085,15 +202055,15 @@
     }
   },
   "reshuibuduo/tmcra-plugin-deepseek-harness": {
-    "pushedAt": "2026-09-05T19:47:23Z",
-    "commit": "daae3ddffbfbeea7fbe3dbec71b9d5f995e56aa5",
+    "pushedAt": "2026-09-05T20:07:03Z",
+    "commit": "9f77e6f71ac7a894896155695e0f48f85c158230",
     "candidates": [
       {
         "name": "dsh-tmcra-memory",
         "repo": "reshuibuduo/tmcra-plugin-deepseek-harness",
-        "commit": "daae3ddffbfbeea7fbe3dbec71b9d5f995e56aa5",
-        "version": "daae3ddffbfbeea7fbe3dbec71b9d5f995e56aa5",
-        "publishedAt": "2026-09-05T19:47:23Z",
+        "commit": "9f77e6f71ac7a894896155695e0f48f85c158230",
+        "version": "9f77e6f71ac7a894896155695e0f48f85c158230",
+        "publishedAt": "2026-09-05T20:05:07Z",
         "repository": "https://github.com/reshuibuduo/tmcra-plugin-deepseek-harness",
         "license": "Apache-2.0",
         "hasBundle": true,
@@ -202275,15 +202245,15 @@
     ]
   },
   "riesbri/dshline": {
-    "pushedAt": "2026-09-05T19:43:24Z",
-    "commit": "2dfea8a00ebc74643efa732d81ecbb74d8bac999",
+    "pushedAt": "2026-09-05T20:21:45Z",
+    "commit": "600060ebf09bbb924933c3f72778e85f898482fe",
     "candidates": [
       {
         "name": "@dshline/dshline",
         "repo": "riesbri/dshline",
-        "commit": "2dfea8a00ebc74643efa732d81ecbb74d8bac999",
-        "version": "2dfea8a00ebc74643efa732d81ecbb74d8bac999",
-        "publishedAt": "2026-09-04T13:56:07Z",
+        "commit": "600060ebf09bbb924933c3f72778e85f898482fe",
+        "version": "600060ebf09bbb924933c3f72778e85f898482fe",
+        "publishedAt": "2026-09-05T20:04:25Z",
         "repository": "https://github.com/riesbri/dshline",
         "license": "MIT",
         "hasBundle": true,
@@ -202445,15 +202415,15 @@
     ]
   },
   "rirko/dsh-melody-launcher": {
-    "pushedAt": "2026-09-05T18:46:30Z",
-    "commit": "35368068dd57faef7cf81db58e5141f7ea013751",
+    "pushedAt": "2026-09-05T19:50:49Z",
+    "commit": "cbf7417a150e51f888bc608e1cfd25fb7706b675",
     "candidates": [
       {
         "name": "dsh-launcher",
         "repo": "rirko/dsh-melody-launcher",
-        "commit": "35368068dd57faef7cf81db58e5141f7ea013751",
-        "version": "35368068dd57faef7cf81db58e5141f7ea013751",
-        "publishedAt": "2026-09-05T18:46:27Z",
+        "commit": "cbf7417a150e51f888bc608e1cfd25fb7706b675",
+        "version": "cbf7417a150e51f888bc608e1cfd25fb7706b675",
+        "publishedAt": "2026-09-05T19:50:45Z",
         "repository": "https://github.com/rirko/dsh-melody-launcher",
         "license": null,
         "hasBundle": false,
@@ -213794,7 +213764,7 @@
     ]
   },
   "strukto-ai/mirage": {
-    "pushedAt": "2026-09-05T19:17:13Z",
+    "pushedAt": "2026-09-05T20:08:57Z",
     "commit": "",
     "candidates": [],
     "failure": {
@@ -254499,7 +254469,7 @@
     ]
   },
   "whiteguo233/OpenBiliClaw": {
-    "pushedAt": "2026-09-05T17:36:50Z",
+    "pushedAt": "2026-09-05T20:17:17Z",
     "commit": "",
     "candidates": [],
     "failure": {
@@ -255650,7 +255620,7 @@
     ]
   },
   "wink-run/dsh-plugin-store": {
-    "pushedAt": "2026-09-05T17:11:42Z",
+    "pushedAt": "2026-09-05T19:52:24Z",
     "commit": "",
     "candidates": [],
     "failure": {
@@ -268168,26 +268138,6 @@
       }
     ]
   },
-  "xuexiaolei1997/dsh-plugin-stock-x": {
-    "pushedAt": "2026-08-29T11:00:25Z",
-    "commit": "9f374247c476cbf715b0749acac8cccbfd73c2ab",
-    "candidates": [
-      {
-        "name": "dsh-plugin-stock-x",
-        "repo": "xuexiaolei1997/dsh-plugin-stock-x",
-        "commit": "9f374247c476cbf715b0749acac8cccbfd73c2ab",
-        "version": "9f374247c476cbf715b0749acac8cccbfd73c2ab",
-        "publishedAt": "2026-08-29T11:00:23Z",
-        "repository": "https://github.com/xuexiaolei1997/dsh-plugin-stock-x",
-        "license": "MIT",
-        "hasBundle": true,
-        "requiresBuild": false,
-        "hasWorkspaceDeps": false,
-        "catalog": null,
-        "description": "A/港/美/全球股票实时行情盯盘与量化投研插件 - 适配 DeepSeek Harness (DSH) Web 宿主"
-      }
-    ]
-  },
   "xujiping/dsh-plugins": {
     "pushedAt": "2026-08-28T07:30:41Z",
     "commit": "",
@@ -269262,7 +269212,7 @@
     ]
   },
   "yailPeralta/ast-mcp-server": {
-    "pushedAt": "2026-09-05T19:36:42Z",
+    "pushedAt": "2026-09-05T20:08:40Z",
     "commit": "6173a39a73f1540c17335a330ea7f14f982387cb",
     "candidates": [
       {
@@ -283856,7 +283806,7 @@
     ]
   },
   "zuohaisu/dsh-ai-soul": {
-    "pushedAt": "2026-09-05T18:58:41Z",
+    "pushedAt": "2026-09-05T20:01:19Z",
     "commit": "47850d23238516227cd7e1ae65d615fce04ec99a",
     "candidates": [
       {
