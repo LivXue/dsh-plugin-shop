@@ -1437,6 +1437,8 @@
   category: ui
 - name: "@dsh-xhl/dsh-plugin-terminal"
   category: ui
+- name: "@dsh-xhl/workspace-groups"
+  category: ui
 - name: "@dsh-xiaoshuang/plugin"
   category: other
 - name: "@dsh-yzj/bundle"
@@ -10051,6 +10053,8 @@
   category: tool
 - name: "dsh-lighting-calc"
   category: tool
+- name: "dsh-lightroom-py"
+  category: integration
 - name: "dsh-lightweight-plugin-enhance"
   category: tool
 - name: "dsh-line-select"
@@ -13379,6 +13383,8 @@
   category: tool
 - name: "dsh-proxy-routing"
   category: tool
+- name: "dsh-proxy-toggle"
+  category: tool
 - name: "dsh-prune-guide"
   category: tool
 - name: "dsh-ptc-cordis-preset"
@@ -16349,6 +16355,8 @@
   category: integration
 - name: "dsh-universal-attachments"
   category: tool
+- name: "dsh-universal-worldbook"
+  category: tool
 - name: "dsh-universe-api"
   category: tool
 - name: "dsh-unknown-theme"
@@ -16782,8 +16790,6 @@
 - name: "dsh-vox-input"
   category: tool
 - name: "dsh-vpn-ops"
-  category: tool
-- name: "dsh-vpn-toggle"
   category: tool
 - name: "dsh-vsceditor"
   category: integration
