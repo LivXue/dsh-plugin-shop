@@ -160,7 +160,9 @@ grep -n "catch" registry/scripts/src/npm-client.ts | sed -n '1,20p'
 
 No test calls `fetchCandidates` today — `npm-client.test.ts:245` only mentions it in a comment. Both the mislabelled code and the dropped rejection survive, and a dropped rejection is exactly the silent disappearance CLAUDE.md forbids. `pipeline.test.ts:73-79` feeds a hand-built `fetch-failed` row, so it tests emit's merging, never the mapping.
 
-- [ ] **Step 1: Prove the gap — inject the mutation**
+> **Executed 2026-09-05 — already satisfied, nothing written.** A `describe('fetchCandidates')` block now sits at `npm-client.test.ts:1570`, carrying plan A's D-2 work and naming H-2 in its own comment. Both of Step 1's mutations were run against it and **both are caught**: mislabelling the code as `no-bundle` turns 3 cases red, dropping the rejection turns 4 red. Coverage exceeds what this task specified — six cases, including the 500 path, the transport throw, a stalled connection, the backup registry, a null packument body, and a sliding-pool case (`keeps every slot working while one name stalls`) that this task could not have written: `HARVEST_CONCURRENCY` is no longer a batch barrier, so Step 2's third fixture describes a mechanism that no longer exists.
+
+- [x] **Step 1: Prove the gap — inject the mutation**
 
 ```bash
 cd /Evermind/sh_evermind/xuedizhan/dsh-plugin-store
@@ -177,7 +179,7 @@ npx vitest run registry/scripts/tests/npm-client.test.ts
 
 Expected: `Tests  53 passed (53)` for **both** mutations.
 
-- [ ] **Step 2: Write the test that catches it**
+- [x] **Step 2: Write the test that catches it**
 
 Change line 2 to `import { fetchCandidate, fetchCandidates, HARVEST_KEYWORDS, PEERS_MAX_COUNT, searchByKeywords, toCandidate } from '../src/npm-client.ts'`, then append after the `describe('fetchCandidate')` block:
 
@@ -260,13 +262,13 @@ describe('fetchCandidates', () => {
 })
 ```
 
-- [ ] **Step 3: Run it against the mutated copy to verify it fails**
+- [x] **Step 3: Run it against the mutated copy to verify it fails**
 
 Run: `npx vitest run registry/scripts/tests/npm-client.test.ts` (with mutation (b) still applied from Step 1)
 
 Expected: FAIL. `records an unfetchable name as fetch-failed…` reports `AssertionError: expected [] to deeply equal [ { name: 'dsh-bad', code: 'fetch-failed', … } ]`; `reports every unfetchable name…` reports `expected [] to deeply equal [ 'dsh-a', 'dsh-b', 'dsh-c' ]`. Re-apply mutation (a) and re-run: the same two fail with `expected 'no-bundle' to be 'fetch-failed'` / the `code` field of the deep-equal diff.
 
-- [ ] **Step 4: Restore the module and run it green**
+- [x] **Step 4: Restore the module and run it green**
 
 ```bash
 cp /tmp/npm-client.ts.orig registry/scripts/src/npm-client.ts
@@ -278,7 +280,7 @@ pnpm typecheck
 
 Expected: PASS — `npm-client.test.ts (56 tests)`, root total **338 passed (338)** (335 after Task 1 plus three).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add registry/scripts/tests/npm-client.test.ts
@@ -304,7 +306,9 @@ throw path (D-2), and every failure in one batch."
 
 The documented rule is "Scanning from the end: a pnpm error code first, then any thrown error, then the last line that is not noise." Both existing verbatim fixtures carry exactly one diagnostic line, so neither half of the ordering is pinned.
 
-- [ ] **Step 1: Prove the gap — inject the mutation**
+> **Executed 2026-09-05, as written.** Both mutations survived the pre-existing suite (43 passed under each), and each now turns exactly one of the two new cases red — neither fixture catches the other's mutation, which is why the task asked for both. Line numbers had moved: `installFailureDetail` is at `executor.ts:118` (the picker at `:128-131`), and the describe block runs `executor.test.ts:404-483`. Package suite **632 passed (632)** across 28 files, typecheck clean.
+
+- [x] **Step 1: Prove the gap — inject the mutation**
 
 **Mutation (a) — first match instead of last.** Drop the reverse:
 
@@ -335,7 +339,7 @@ npx vitest run --root packages/dsh-plugin-shop tests/host/executor.test.ts
 
 Expected: `Tests  30 passed (30)` — green again. Both halves of the documented ordering can be inverted with the suite none the wiser.
 
-- [ ] **Step 2: Write the test that catches it**
+- [x] **Step 2: Write the test that catches it**
 
 Insert before the closing `})` of `describe('installFailureDetail')` (currently line 473):
 
@@ -388,13 +392,13 @@ Insert before the closing `})` of `describe('installFailureDetail')` (currently 
   })
 ```
 
-- [ ] **Step 3: Run it against the mutated copy to verify it fails**
+- [x] **Step 3: Run it against the mutated copy to verify it fails**
 
 Run: `npx vitest run --root packages/dsh-plugin-shop tests/host/executor.test.ts`
 
 Expected: FAIL, one case per mutation. With mutation (a) applied: `picks the LAST pnpm error code…` fails on `expected 'pnpm failed in the profile. Run: dsh plugin --profile web install — [ERR_PNPM_PEER_DEP_ISSUES] Unmet peer dependencies' not to match /ERR_PNPM_PEER_DEP_ISSUES/`. With mutation (b) applied: `prefers a pnpm error code over a thrown error…` fails on `expected 'pnpm failed in the profile. Run: dsh plugin --profile web install — TypeError: Cannot read properties of undefined (reading 'bundles')' to match /ERR_PNPM_NO_MATCHING_VERSION/`. Apply each mutation in turn and confirm one case turns red each time — neither mutation is caught by the other's fixture, which is why both are needed.
 
-- [ ] **Step 4: Restore the module and run it green**
+- [x] **Step 4: Restore the module and run it green**
 
 ```bash
 cp /tmp/executor.ts.orig packages/dsh-plugin-shop/src/host/executor.ts
@@ -405,7 +409,7 @@ pnpm -C packages/dsh-plugin-shop typecheck
 
 Expected: PASS — `tests/host/executor.test.ts (32 tests)`, package total **494 passed (494)**.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/dsh-plugin-shop/tests/host/executor.test.ts

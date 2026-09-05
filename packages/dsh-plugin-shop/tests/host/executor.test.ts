@@ -480,6 +480,53 @@ describe('installFailureDetail', () => {
     expect(detail).not.toMatch(/\r/)
   })
 
+
+  it('picks the LAST pnpm error code when a failed install emits several', () => {
+    // "Scanning from the end" is the documented rule, and with two codes it is
+    // the only thing that decides which one a user reads. Both existing
+    // verbatim fixtures carry exactly one diagnostic line, so dropping the
+    // reverse and taking the first match passed (H-3). pnpm emits the peer
+    // warning while resolving and the fetch failure when it gives up: the later
+    // line is the one that ended the install.
+    const log = [
+      '+ dsh-two-codes 1.0.0',
+      '[ERR_PNPM_PEER_DEP_ISSUES] Unmet peer dependencies',
+      'Progress: resolved 12, reused 12, downloaded 0',
+      '[ERR_PNPM_FETCH_404] GET https://registry.npmjs.org/dsh-nope: Not Found - 404',
+      'dsh: pnpm failed in profile directory /root/probe/profiles/f7',
+    ]
+    const detail = installFailureDetail('web', log)
+    expect(detail).toMatch(/ERR_PNPM_FETCH_404/)
+    expect(detail).not.toMatch(/ERR_PNPM_PEER_DEP_ISSUES/)
+    // The noise filter still ran: neither the Progress line nor dsh's own
+    // wrapper may be what the user is shown.
+    expect(detail).not.toMatch(/Progress: resolved/)
+    expect(detail).not.toMatch(/pnpm failed in profile directory/)
+    // The approve-builds hint belongs to ERR_PNPM_IGNORED_BUILDS alone.
+    expect(detail).not.toMatch(/approve-builds/)
+  })
+
+  it('prefers a pnpm error code over a thrown error even when the throw came later', () => {
+    // The rule is a precedence, not a position: "a pnpm error code first, then
+    // any thrown error". The TypeError below is LATER in the log than the pnpm
+    // code, so scanning from the end alone would pick it — which is what makes
+    // this able to catch a swap of the two find clauses. pnpm named the actual
+    // failure; dsh's own reconcile then threw over the half-installed profile,
+    // which is a consequence, not the cause.
+    const log = [
+      'Done in 1.2s using pnpm v11.13.0',
+      '[ERR_PNPM_NO_MATCHING_VERSION] No matching version found for dsh-nope@9.9.9',
+      'TypeError: Cannot read properties of undefined (reading \'bundles\')',
+      '    at reconcile (file:///…/dsh-app-boot/lib/index.js:512:9)',
+      'Node.js v26.6.0',
+    ]
+    const detail = installFailureDetail('web', log)
+    expect(detail).toMatch(/ERR_PNPM_NO_MATCHING_VERSION/)
+    expect(detail).toMatch(/dsh-nope@9\.9\.9/)
+    expect(detail).not.toMatch(/TypeError/)
+    expect(detail).not.toMatch(/Node\.js v26/)
+    expect(detail).toMatch(/Run: dsh plugin --profile web install/)
+  })
 })
 
 describe('the install deadline and the process group (F-1)', () => {
