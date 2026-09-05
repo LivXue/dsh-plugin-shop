@@ -29360,6 +29360,8 @@
   added: 2026-09-01
 - name: "goodandready/dsh-agent-loop-guard"
   added: 2026-09-03
+- name: "goodandready/dsh-cost-meter"
+  added: 2026-09-05
 - name: "goodandready/dsh-dsml-artifact-guard"
   added: 2026-09-05
 - name: "goodandready/dsh-im-hub-media"
@@ -29642,6 +29644,8 @@
   added: 2026-08-31
 - name: "harzva/dsh-obsidian"
   added: 2026-08-31
+- name: "harzva/dsh-pr-guardian"
+  added: 2026-09-05
 - name: "harzva/dsh-research-lab"
   added: 2026-08-31
 - name: "harzva/dsh-restart-autoresume"
@@ -35184,6 +35188,8 @@
   added: 2026-08-31
 - name: "tyeclipse/dsh-checkdigit"
   added: 2026-09-01
+- name: "tyeclipse/dsh-chem"
+  added: 2026-09-05
 - name: "tyeclipse/dsh-color"
   added: 2026-09-01
 - name: "tyeclipse/dsh-finance"

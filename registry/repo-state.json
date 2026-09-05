@@ -8188,15 +8188,15 @@
     ]
   },
   "AQian0/dsh-desktop": {
-    "pushedAt": "2026-09-03T16:26:08Z",
-    "commit": "82a1b2d6035584a1d530bce2bdbdbcd6c8f9b714",
+    "pushedAt": "2026-09-05T21:53:59Z",
+    "commit": "061e489742450e05892aac93a5c100823db759fd",
     "candidates": [
       {
         "name": "@aqian0/dsh-desktop",
         "repo": "AQian0/dsh-desktop",
-        "commit": "82a1b2d6035584a1d530bce2bdbdbcd6c8f9b714",
-        "version": "82a1b2d6035584a1d530bce2bdbdbcd6c8f9b714",
-        "publishedAt": "2026-09-03T16:23:43Z",
+        "commit": "061e489742450e05892aac93a5c100823db759fd",
+        "version": "061e489742450e05892aac93a5c100823db759fd",
+        "publishedAt": "2026-09-05T21:49:32Z",
         "repository": "https://github.com/AQian0/dsh-desktop",
         "license": "MIT",
         "hasBundle": false,
@@ -8716,7 +8716,7 @@
     }
   },
   "AdamPlatin123/dsh-plugin-radar": {
-    "pushedAt": "2026-09-05T21:30:54Z",
+    "pushedAt": "2026-09-05T22:15:47Z",
     "commit": "",
     "candidates": [],
     "failure": {
@@ -19308,7 +19308,7 @@
     }
   },
   "CherryHQ/cherry-studio": {
-    "pushedAt": "2026-09-05T21:59:56Z",
+    "pushedAt": "2026-09-05T22:16:25Z",
     "commit": "67ca175cc833ba6a286464343f64ec1e426d443a",
     "candidates": [
       {
@@ -24328,15 +24328,15 @@
     ]
   },
   "DoloresCaritasAngelus/DSH-AUX": {
-    "pushedAt": "2026-09-05T21:36:20Z",
-    "commit": "634bce6824f073649e240a2cf6a6a63ed2c5f702",
+    "pushedAt": "2026-09-05T22:11:16Z",
+    "commit": "9137903e72db6ff46cb3461233756431ed4ddb50",
     "candidates": [
       {
         "name": "dsh-aux-workspace",
         "repo": "DoloresCaritasAngelus/DSH-AUX",
-        "commit": "634bce6824f073649e240a2cf6a6a63ed2c5f702",
-        "version": "634bce6824f073649e240a2cf6a6a63ed2c5f702",
-        "publishedAt": "2026-09-05T21:56:55Z",
+        "commit": "9137903e72db6ff46cb3461233756431ed4ddb50",
+        "version": "9137903e72db6ff46cb3461233756431ed4ddb50",
+        "publishedAt": "2026-09-05T22:11:14Z",
         "repository": "https://github.com/DoloresCaritasAngelus/DSH-AUX",
         "license": "MIT",
         "hasBundle": false,
@@ -26798,7 +26798,7 @@
     }
   },
   "Ericwong5021/deepseek-plugin-store": {
-    "pushedAt": "2026-09-04T23:25:28Z",
+    "pushedAt": "2026-09-05T22:06:49Z",
     "commit": "b1d0b4d0bc230a3726483aa6ae6e0566cee2ff36",
     "candidates": [
       {
@@ -30231,7 +30231,7 @@
     ]
   },
   "FuRongJun-1999/CommonTrustProtocol": {
-    "pushedAt": "2026-09-05T21:18:13Z",
+    "pushedAt": "2026-09-05T22:20:37Z",
     "commit": "",
     "candidates": [],
     "failure": {
@@ -32667,15 +32667,15 @@
     ]
   },
   "GooDAnDReaDY/dsh-context-lens": {
-    "pushedAt": "2026-09-05T13:18:35Z",
-    "commit": "dfbe678f4abd69db9ba8b112f5198dbbe6c402f2",
+    "pushedAt": "2026-09-05T22:12:20Z",
+    "commit": "e0e58a44948791a2e6d7853dc9170b00eb46b6ad",
     "candidates": [
       {
         "name": "@goodandready/dsh-context-lens",
         "repo": "GooDAnDReaDY/dsh-context-lens",
-        "commit": "dfbe678f4abd69db9ba8b112f5198dbbe6c402f2",
-        "version": "dfbe678f4abd69db9ba8b112f5198dbbe6c402f2",
-        "publishedAt": "2026-09-04T22:49:51Z",
+        "commit": "e0e58a44948791a2e6d7853dc9170b00eb46b6ad",
+        "version": "e0e58a44948791a2e6d7853dc9170b00eb46b6ad",
+        "publishedAt": "2026-09-05T22:07:36Z",
         "repository": "https://github.com/GooDAnDReaDY/dsh-context-lens",
         "license": "MIT",
         "hasBundle": true,
@@ -32683,6 +32683,26 @@
         "hasWorkspaceDeps": false,
         "catalog": null,
         "description": "DSH plugin for AST context compression, test log filtering, and token budget guard"
+      }
+    ]
+  },
+  "GooDAnDReaDY/dsh-cost-meter": {
+    "pushedAt": "2026-09-05T19:56:34Z",
+    "commit": "a925b354ab1fff160a207be4b3aba240b420ce58",
+    "candidates": [
+      {
+        "name": "@goodandready/dsh-cost-meter",
+        "repo": "GooDAnDReaDY/dsh-cost-meter",
+        "commit": "a925b354ab1fff160a207be4b3aba240b420ce58",
+        "version": "a925b354ab1fff160a207be4b3aba240b420ce58",
+        "publishedAt": "2026-09-05T19:53:33Z",
+        "repository": "https://github.com/GooDAnDReaDY/dsh-cost-meter",
+        "license": "MIT",
+        "hasBundle": true,
+        "requiresBuild": false,
+        "hasWorkspaceDeps": false,
+        "catalog": null,
+        "description": "DeepSeek Harness plugin: a session cost chip in the conversation header - live token usage by bucket, peak/off-peak tariff, and a countdown to the next tariff switch."
       }
     ]
   },
@@ -35208,7 +35228,7 @@
     ]
   },
   "HarnessRouter/harnessrouter": {
-    "pushedAt": "2026-09-05T22:03:26Z",
+    "pushedAt": "2026-09-05T22:25:43Z",
     "commit": "",
     "candidates": [],
     "failure": {
@@ -35513,6 +35533,26 @@
         "requiresBuild": false,
         "catalog": null,
         "description": "Public-safe, first-party registry for Harzva-maintained DeepSeek Harness plugins"
+      }
+    ]
+  },
+  "Harzva/dsh-pr-guardian": {
+    "pushedAt": "2026-09-05T22:04:04Z",
+    "commit": "ddb4c5957ca9e6f56a373b20adc2082def9ec872",
+    "candidates": [
+      {
+        "name": "dsh-pr-guardian",
+        "repo": "Harzva/dsh-pr-guardian",
+        "commit": "ddb4c5957ca9e6f56a373b20adc2082def9ec872",
+        "version": "ddb4c5957ca9e6f56a373b20adc2082def9ec872",
+        "publishedAt": "2026-09-05T22:04:01Z",
+        "repository": "https://github.com/Harzva/dsh-pr-guardian",
+        "license": "MIT",
+        "hasBundle": true,
+        "requiresBuild": false,
+        "hasWorkspaceDeps": false,
+        "catalog": null,
+        "description": "Authored PR feedback inbox with shared Codex/DSH progress and read-only GitHub collection."
       }
     ]
   },
@@ -44685,7 +44725,7 @@
     ]
   },
   "KeepLost/harniverse": {
-    "pushedAt": "2026-09-05T20:48:20Z",
+    "pushedAt": "2026-09-05T21:55:11Z",
     "commit": "e0281098c77ac2580ca5064ff97f4c9787ddf7dd",
     "candidates": [
       {
@@ -50089,15 +50129,15 @@
     ]
   },
   "LivXue/dsh-plugin-shop": {
-    "pushedAt": "2026-09-05T21:37:40Z",
-    "commit": "65a75eda950f502a1e6bac1b97d2b10273b1fc8d",
+    "pushedAt": "2026-09-05T22:08:14Z",
+    "commit": "74c0f60d770ef623182b9a81da516fc84030c519",
     "candidates": [
       {
         "name": "dsh-plugin-shop",
         "repo": "LivXue/dsh-plugin-shop",
-        "commit": "65a75eda950f502a1e6bac1b97d2b10273b1fc8d",
-        "version": "65a75eda950f502a1e6bac1b97d2b10273b1fc8d",
-        "publishedAt": "2026-09-05T21:37:37Z",
+        "commit": "74c0f60d770ef623182b9a81da516fc84030c519",
+        "version": "74c0f60d770ef623182b9a81da516fc84030c519",
+        "publishedAt": "2026-09-05T22:08:12Z",
         "repository": "https://github.com/LivXue/dsh-plugin-shop",
         "license": "Apache-2.0",
         "hasBundle": true,
@@ -62866,7 +62906,7 @@
     }
   },
   "PGZXB/dsh-feishu": {
-    "pushedAt": "2026-09-05T21:48:04Z",
+    "pushedAt": "2026-09-05T21:56:02Z",
     "commit": "5c0d85633bc1c892135ad20950dc9bfa524605c1",
     "candidates": [
       {
@@ -65107,7 +65147,7 @@
     ]
   },
   "PeterBon/dsh-hooks": {
-    "pushedAt": "2026-09-02T08:53:32Z",
+    "pushedAt": "2026-09-05T22:13:49Z",
     "commit": "444c6fef0ef92e7088650d262dd238209d3564ef",
     "candidates": [
       {
@@ -79108,6 +79148,26 @@
       }
     ]
   },
+  "TYEclipse/dsh-chem": {
+    "pushedAt": "2026-09-05T22:07:32Z",
+    "commit": "f6ffe3b9e791576f0a5eb9d251a7660695069226",
+    "candidates": [
+      {
+        "name": "dsh-chem",
+        "repo": "TYEclipse/dsh-chem",
+        "commit": "f6ffe3b9e791576f0a5eb9d251a7660695069226",
+        "version": "f6ffe3b9e791576f0a5eb9d251a7660695069226",
+        "publishedAt": "2026-09-05T22:07:13Z",
+        "repository": "https://github.com/TYEclipse/dsh-chem",
+        "license": "MIT",
+        "hasBundle": true,
+        "requiresBuild": false,
+        "hasWorkspaceDeps": false,
+        "catalog": null,
+        "description": "Deterministic chemistry math for DeepSeek Harness: formula parsing + molar mass, mass/mole/particle conversions, solution concentration and pH math — zero runtime dependencies"
+      }
+    ]
+  },
   "TYEclipse/dsh-color": {
     "pushedAt": "2026-09-04T21:21:03Z",
     "commit": "700b826a49efc1df0ccfa12f63b9f5a2705e9e79",
@@ -79229,7 +79289,7 @@
     ]
   },
   "TYEclipse/dsh-plugins-hub": {
-    "pushedAt": "2026-09-04T21:24:46Z",
+    "pushedAt": "2026-09-05T22:21:02Z",
     "commit": "",
     "candidates": [],
     "failure": {
@@ -86675,15 +86735,15 @@
     }
   },
   "Waterkyuu/theoria": {
-    "pushedAt": "2026-09-05T22:00:59Z",
-    "commit": "cd9ca6a19e52edb7831ef8da64d4b7118f6cd3a2",
+    "pushedAt": "2026-09-05T22:22:59Z",
+    "commit": "693b4df17946c27fc1a1175336df3850d1a69491",
     "candidates": [
       {
         "name": "theoria",
         "repo": "Waterkyuu/theoria",
-        "commit": "cd9ca6a19e52edb7831ef8da64d4b7118f6cd3a2",
-        "version": "cd9ca6a19e52edb7831ef8da64d4b7118f6cd3a2",
-        "publishedAt": "2026-09-05T19:48:49Z",
+        "commit": "693b4df17946c27fc1a1175336df3850d1a69491",
+        "version": "693b4df17946c27fc1a1175336df3850d1a69491",
+        "publishedAt": "2026-09-05T22:14:41Z",
         "repository": "https://github.com/Waterkyuu/theoria",
         "license": null,
         "hasBundle": false,
@@ -90580,15 +90640,15 @@
     ]
   },
   "YELEBAI/dsh-plugin-marketplace": {
-    "pushedAt": "2026-09-05T18:33:05Z",
-    "commit": "8979cb24008e985fea1d1aeb01f4b1518c4ed88b",
+    "pushedAt": "2026-09-05T22:15:40Z",
+    "commit": "651fde84868517c5763a850649e68d7a3b996ef8",
     "candidates": [
       {
         "name": "dsh-plugin-marketplace",
         "repo": "YELEBAI/dsh-plugin-marketplace",
-        "commit": "8979cb24008e985fea1d1aeb01f4b1518c4ed88b",
-        "version": "8979cb24008e985fea1d1aeb01f4b1518c4ed88b",
-        "publishedAt": "2026-09-05T18:32:58Z",
+        "commit": "651fde84868517c5763a850649e68d7a3b996ef8",
+        "version": "651fde84868517c5763a850649e68d7a3b996ef8",
+        "publishedAt": "2026-09-05T22:15:34Z",
         "repository": "https://github.com/YELEBAI/dsh-plugin-marketplace",
         "license": "MIT",
         "hasBundle": true,
@@ -100116,7 +100176,7 @@
     ]
   },
   "agentrq/agentrq": {
-    "pushedAt": "2026-09-05T20:13:23Z",
+    "pushedAt": "2026-09-05T22:12:01Z",
     "commit": "",
     "candidates": [],
     "failure": {
@@ -102202,7 +102262,7 @@
     ]
   },
   "amruthpillai/reactive-resume": {
-    "pushedAt": "2026-09-05T21:49:39Z",
+    "pushedAt": "2026-09-05T22:18:49Z",
     "commit": "7a98f6662ffc6fd5a1a7281c30ab3829fe3722ec",
     "candidates": [
       {
@@ -106494,7 +106554,7 @@
     ]
   },
   "baiyuscc13724-max/scoop-harness-desktop": {
-    "pushedAt": "2026-09-05T11:52:03Z",
+    "pushedAt": "2026-09-05T22:05:38Z",
     "commit": "",
     "candidates": [],
     "failure": {
@@ -125453,7 +125513,7 @@
     ]
   },
   "dongsheng123132/awesome-dsh-plugins": {
-    "pushedAt": "2026-09-05T18:23:48Z",
+    "pushedAt": "2026-09-05T22:09:22Z",
     "commit": "bfe223e237c43eceef5d76d2c4bfcab7b1db6d26",
     "candidates": [
       {
@@ -128101,15 +128161,15 @@
     }
   },
   "dshworks/awesome-dsh-plugins": {
-    "pushedAt": "2026-09-05T17:14:13Z",
-    "commit": "8139c0548eef5c8e14ca1f09efe39c199569bec4",
+    "pushedAt": "2026-09-05T22:27:46Z",
+    "commit": "adccfc66cff201ed0b8d38f7ca09787fc70d8a87",
     "candidates": [
       {
         "name": "awesome-dsh-plugins",
         "repo": "dshworks/awesome-dsh-plugins",
-        "commit": "8139c0548eef5c8e14ca1f09efe39c199569bec4",
-        "version": "8139c0548eef5c8e14ca1f09efe39c199569bec4",
-        "publishedAt": "2026-09-05T17:14:12Z",
+        "commit": "adccfc66cff201ed0b8d38f7ca09787fc70d8a87",
+        "version": "adccfc66cff201ed0b8d38f7ca09787fc70d8a87",
+        "publishedAt": "2026-09-05T22:27:45Z",
         "repository": "https://github.com/dshworks/awesome-dsh-plugins",
         "license": "MIT",
         "hasBundle": false,
@@ -129405,15 +129465,15 @@
     ]
   },
   "edison7009/EchoBird": {
-    "pushedAt": "2026-09-05T18:18:04Z",
-    "commit": "5b725a15a4e2b1be186baca1ba54ee18e0857c0f",
+    "pushedAt": "2026-09-05T22:03:29Z",
+    "commit": "bf05894ef18dec129190643a6ee106180ed7e61c",
     "candidates": [
       {
         "name": "echobird",
         "repo": "edison7009/EchoBird",
-        "commit": "5b725a15a4e2b1be186baca1ba54ee18e0857c0f",
-        "version": "5b725a15a4e2b1be186baca1ba54ee18e0857c0f",
-        "publishedAt": "2026-09-05T18:18:03Z",
+        "commit": "bf05894ef18dec129190643a6ee106180ed7e61c",
+        "version": "bf05894ef18dec129190643a6ee106180ed7e61c",
+        "publishedAt": "2026-09-05T22:03:27Z",
         "repository": "https://github.com/edison7009/EchoBird",
         "license": "MIT",
         "hasBundle": false,
@@ -129958,7 +130018,7 @@
     ]
   },
   "elviass/dsh-cost-insights": {
-    "pushedAt": "2026-08-29T22:23:57Z",
+    "pushedAt": "2026-09-05T22:23:02Z",
     "commit": "1852682db97d6311a7ed96505dce6bb65bcf4cb4",
     "candidates": [
       {
@@ -142722,7 +142782,7 @@
     ]
   },
   "hashgraph-online/hol-guard": {
-    "pushedAt": "2026-09-05T21:46:13Z",
+    "pushedAt": "2026-09-05T22:19:32Z",
     "commit": "",
     "candidates": [],
     "failure": {
@@ -146851,7 +146911,7 @@
     }
   },
   "huangruiteng/loopx": {
-    "pushedAt": "2026-09-05T21:48:33Z",
+    "pushedAt": "2026-09-05T22:19:55Z",
     "commit": "788acc143296ab9995a1f1aa10ce1e63cb91ad77",
     "candidates": [
       {
@@ -149662,7 +149722,7 @@
     ]
   },
   "iia-arg/dsh-plugins": {
-    "pushedAt": "2026-09-05T21:45:27Z",
+    "pushedAt": "2026-09-05T22:20:50Z",
     "commit": "",
     "candidates": [],
     "failure": {
@@ -169608,7 +169668,7 @@
     ]
   },
   "like-study1/Oh-My-DSH": {
-    "pushedAt": "2026-09-05T18:21:00Z",
+    "pushedAt": "2026-09-05T22:05:17Z",
     "commit": "",
     "candidates": [],
     "failure": {
@@ -197657,15 +197717,15 @@
     ]
   },
   "pure-craft/dsh-capability-panel": {
-    "pushedAt": "2026-09-05T21:47:57Z",
-    "commit": "f7657972d555c160b7a2eb923349d2ddde3d0462",
+    "pushedAt": "2026-09-05T22:18:56Z",
+    "commit": "5f9cc195aaeab990cb04862916969bfdc6a13b8c",
     "candidates": [
       {
         "name": "dsh-capability-panel",
         "repo": "pure-craft/dsh-capability-panel",
-        "commit": "f7657972d555c160b7a2eb923349d2ddde3d0462",
-        "version": "f7657972d555c160b7a2eb923349d2ddde3d0462",
-        "publishedAt": "2026-09-05T21:47:52Z",
+        "commit": "5f9cc195aaeab990cb04862916969bfdc6a13b8c",
+        "version": "5f9cc195aaeab990cb04862916969bfdc6a13b8c",
+        "publishedAt": "2026-09-05T22:28:53Z",
         "repository": "https://github.com/pure-craft/dsh-capability-panel",
         "license": "MIT",
         "hasBundle": true,
@@ -210437,15 +210497,15 @@
     ]
   },
   "skyf0xx/hedgehog": {
-    "pushedAt": "2026-09-05T09:38:50Z",
-    "commit": "ebbfb49334097912da9439192b8163608514c55e",
+    "pushedAt": "2026-09-05T22:21:34Z",
+    "commit": "54f573ae212eb89dd1948f7331ec30a2feb8e259",
     "candidates": [
       {
         "name": "@skyf0xx/hedgehog",
         "repo": "skyf0xx/hedgehog",
-        "commit": "ebbfb49334097912da9439192b8163608514c55e",
-        "version": "ebbfb49334097912da9439192b8163608514c55e",
-        "publishedAt": "2026-09-05T09:38:49Z",
+        "commit": "54f573ae212eb89dd1948f7331ec30a2feb8e259",
+        "version": "54f573ae212eb89dd1948f7331ec30a2feb8e259",
+        "publishedAt": "2026-09-05T22:21:28Z",
         "repository": "https://github.com/skyf0xx/hedgehog",
         "license": "MIT",
         "hasBundle": false,
@@ -212303,15 +212363,15 @@
     ]
   },
   "sperictao/dsh-pro-max": {
-    "pushedAt": "2026-09-05T18:13:33Z",
-    "commit": "7523a065160b92e8eeeef3c55ef46908935fc4c4",
+    "pushedAt": "2026-09-05T22:26:35Z",
+    "commit": "f4303545a7bde11e62a571dccd0cfe5b18f70d30",
     "candidates": [
       {
         "name": "dsh-pro-max",
         "repo": "sperictao/dsh-pro-max",
-        "commit": "7523a065160b92e8eeeef3c55ef46908935fc4c4",
-        "version": "7523a065160b92e8eeeef3c55ef46908935fc4c4",
-        "publishedAt": "2026-09-05T18:13:17Z",
+        "commit": "f4303545a7bde11e62a571dccd0cfe5b18f70d30",
+        "version": "f4303545a7bde11e62a571dccd0cfe5b18f70d30",
+        "publishedAt": "2026-09-05T22:26:25Z",
         "repository": "https://github.com/sperictao/dsh-pro-max",
         "license": "MIT",
         "hasBundle": false,
@@ -255720,7 +255780,7 @@
     ]
   },
   "wink-run/dsh-plugin-store": {
-    "pushedAt": "2026-09-05T19:52:24Z",
+    "pushedAt": "2026-09-05T21:57:37Z",
     "commit": "",
     "candidates": [],
     "failure": {
@@ -276301,7 +276361,7 @@
     ]
   },
   "zachshi-ai/newmind": {
-    "pushedAt": "2026-09-05T21:10:29Z",
+    "pushedAt": "2026-09-05T22:08:45Z",
     "commit": "",
     "candidates": [],
     "failure": {
@@ -283926,7 +283986,7 @@
     ]
   },
   "zuohaisu/dsh-ai-soul": {
-    "pushedAt": "2026-09-05T21:49:48Z",
+    "pushedAt": "2026-09-05T22:04:08Z",
     "commit": "8e1ddf7cadfa3ce487abe520736f5514cb0558fb",
     "candidates": [
       {
