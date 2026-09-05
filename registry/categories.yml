@@ -3371,6 +3371,8 @@
   category: ui
 - name: "@supanexus/dsh-plugin-supanexus-core"
   category: provider
+- name: "@super_camel/dsh-plugin-panel"
+  category: ui
 - name: "@supercarlosluo/dsh-tool-example"
   category: tool
 - name: "@superfish058/dsh-llm-proxy"
@@ -4249,6 +4251,8 @@
   category: theme
 - name: "awesome-dsh-pet"
   category: ui
+- name: "backdrop-bridge-dsh"
+  category: integration
 - name: "bailian-kb-dsh"
   category: provider
 - name: "balance-dock"
@@ -4471,6 +4475,8 @@
   category: ui
 - name: "deepseek-kernel-harness"
   category: tool
+- name: "deepseek-orchestrator"
+  category: workflow
 - name: "deepseek-peak-blocker"
   category: tool
 - name: "deepseek-peak-valley-router"
@@ -5066,6 +5072,8 @@
 - name: "dsh-approval-first"
   category: tool
 - name: "dsh-approval-gate"
+  category: tool
+- name: "dsh-approval-gate-safe"
   category: tool
 - name: "dsh-approval-hotkeys"
   category: ui
@@ -6141,6 +6149,8 @@
   category: tool
 - name: "dsh-chartlab"
   category: tool
+- name: "dsh-chase-send-plugin"
+  category: ui
 - name: "dsh-chat"
   category: ui
 - name: "dsh-chat-enhancer"
@@ -8187,6 +8197,8 @@
   category: integration
 - name: "dsh-f1-skin"
   category: theme
+- name: "dsh-f12-inspector"
+  category: tool
 - name: "dsh-fabric"
   category: tool
 - name: "dsh-fabric-care"
@@ -8583,6 +8595,8 @@
   category: other
 - name: "dsh-furniture-fix"
   category: other
+- name: "dsh-fuse"
+  category: tool
 - name: "dsh-fusion-pixel-font"
   category: theme
 - name: "dsh-fusion-pixel-ui-adapt"
@@ -13117,6 +13131,8 @@
   category: tool
 - name: "dsh-power-xc"
   category: ui
+- name: "dsh-powerkit"
+  category: tool
 - name: "dsh-ppt"
   category: tool
 - name: "dsh-ppt-creator"
@@ -14881,10 +14897,14 @@
   category: theme
 - name: "dsh-skin-kamisato"
   category: theme
+- name: "dsh-skin-kit"
+  category: theme
 - name: "dsh-skin-koi-pond"
   category: theme
 - name: "dsh-skin-lab"
   category: ui
+- name: "dsh-skin-leg"
+  category: theme
 - name: "dsh-skin-manager"
   category: ui
 - name: "dsh-skin-mari"
@@ -14913,6 +14933,8 @@
   category: ui
 - name: "dsh-skin-type"
   category: tool
+- name: "dsh-skinctl"
+  category: ui
 - name: "dsh-skins"
   category: theme
 - name: "dsh-sky-skin"
@@ -15244,6 +15266,8 @@
 - name: "dsh-subagent"
   category: tool
 - name: "dsh-subagent-admission"
+  category: tool
+- name: "dsh-subagent-cassette"
   category: tool
 - name: "dsh-subagent-claude-live"
   category: integration
@@ -17181,6 +17205,8 @@
   category: ui
 - name: "dsh-whale-musume"
   category: ui
+- name: "dsh-whale-musume-persona"
+  category: other
 - name: "dsh-whale-pet"
   category: ui
 - name: "dsh-whale-pet-plugin"
@@ -17315,6 +17341,8 @@
   category: integration
 - name: "dsh-workbench-plugin"
   category: other
+- name: "dsh-workbench-ui"
+  category: ui
 - name: "dsh-workbuddy-connect"
   category: integration
 - name: "dsh-workbuddy-files"
