@@ -14,6 +14,23 @@ updates:
       interval: weekly
     commit-message:
       prefix: 'ci'
-    # One PR per action, so CI judges each bump on its own. A batched PR that
-    # goes red says nothing about which of the bumps did it.
-    open-pull-requests-limit: 5
+    # One PR per action, so CI judges each bump on its own: a batched PR that
+    # goes red says nothing about which of the bumps did it. The exception is a
+    # PAIR of actions that only work at matching versions -- those move as one,
+    # because half a pair is worse than neither half.
+    groups:
+      # upload-artifact writes the artifact that the publish job's
+      # download-artifact reads back. On 2026-09-05 Dependabot proposed
+      # upload-artifact 4.6.2 -> 7.0.1 and left download-artifact at 4.3.0 with
+      # no PR at all, because open-pull-requests-limit cut the list at five.
+      # A dry run cannot catch that mismatch: `publish` is the only job that
+      # downloads, and it is skipped on pull_request.
+      artifact-transfer:
+        patterns: ['actions/upload-artifact', 'actions/download-artifact']
+      # upload-pages-artifact writes what deploy-pages deploys; same argument.
+      pages-deploy:
+        patterns: ['actions/upload-pages-artifact', 'actions/deploy-pages']
+    # High enough that no action is ever silently dropped off the end of the
+    # list. That is what split the artifact pair: the cap was the reason
+    # download-artifact got no PR, not a decision anybody made.
+    open-pull-requests-limit: 10
