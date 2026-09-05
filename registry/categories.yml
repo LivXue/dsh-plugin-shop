@@ -2403,6 +2403,8 @@
   category: tool
 - name: "@lemoncat7/dsh-ssh"
   category: tool
+- name: "@lemoncat7/dsh-theme-xiaohei"
+  category: theme
 - name: "@lemoncat7/dsh-web-search"
   category: tool
 - name: "@lengduan/dsh-client-ui-skin-815"
@@ -15765,6 +15767,8 @@
   category: ui
 - name: "dsh-ths-holdings"
   category: integration
+- name: "dsh-thumb"
+  category: ui
 - name: "dsh-thunderforge"
   category: tool
 - name: "dsh-tick-rail"
