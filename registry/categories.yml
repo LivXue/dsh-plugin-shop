@@ -1453,6 +1453,8 @@
   category: tool
 - name: "@dsh/provider-dispatcher"
   category: provider
+- name: "@dsh/remote-control"
+  category: tool
 - name: "@dsharness/dsh-sound-notify"
   category: ui
 - name: "@dshd/dsh-usage"
@@ -1635,6 +1637,8 @@
   category: tool
 - name: "@flg1217/dsh-llm-agy"
   category: integration
+- name: "@flg1217/dsh-quick-commands"
+  category: tool
 - name: "@flg1217/dsh-subagent-codebuddy"
   category: integration
 - name: "@floatingdeaming/minimax-usage"
@@ -12825,6 +12829,8 @@
   category: workflow
 - name: "dsh-plugin-stock"
   category: tool
+- name: "dsh-plugin-stock-x"
+  category: provider
 - name: "dsh-plugin-store"
   category: ui
 - name: "dsh-plugin-store-optimized"
