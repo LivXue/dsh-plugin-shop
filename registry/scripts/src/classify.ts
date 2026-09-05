@@ -23,7 +23,7 @@ import { classifyPackages } from './llm-client.ts'
 import { judgeMarkets, type MarketItem } from './market-judge.ts'
 import { selectMarketPending } from './market-select.ts'
 import { mergeMarketRows, serializeMarketRows } from './markets.ts'
-import { fetchCandidates, searchByKeywords } from './npm-client.ts'
+import { fetchCandidates, searchByKeywords, type KeywordShortfall } from './npm-client.ts'
 import { parseRepoState } from './repo-state.ts'
 import type { Category, RepoCandidate } from './types.ts'
 
@@ -80,7 +80,16 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
   const npmBackupRegistry = rawBackupRegistry ?? 'https://registry.npmmirror.com'
 
   const config = loadRegistryConfig(REGISTRY_DIR)
-  const names = await searchByKeywords(fetch, undefined, npmToken)
+  // A shortfall inside MAX_SEARCH_SHORTFALL publishes rather than stopping the
+  // build, but it means this harvest is missing that many packages. It is
+  // collected here rather than only in build.ts because CI reuses THIS harvest
+  // (`--harvest-from`), so build.ts's own search never runs there — and this is
+  // the call that actually died on `3746 of 3747` on 2026-09-04.
+  const shortfalls: KeywordShortfall[] = []
+  const names = await searchByKeywords(fetch, undefined, npmToken, undefined, undefined, s => shortfalls.push(s))
+  for (const s of shortfalls) {
+    process.stderr.write(`classify: keywords:${s.keyword} enumerated ${s.enumerated} of ${s.required} names, within the tolerated shortfall\n`)
+  }
   process.stderr.write(`classify: harvested ${names.length} candidate(s)\n`)
   const { candidates, rejections } = await fetchCandidates(names, fetch, npmToken, npmBackupRegistry)
 
@@ -159,7 +168,7 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
   mkdirSync(OUT_DIR, { recursive: true })
   mkdirSync(join(REGISTRY_DIR), { recursive: true })
   writeFileSync(join(REGISTRY_DIR, 'categories.yml'), serializeCategoryRows(merged))
-  writeFileSync(join(OUT_DIR, 'harvest.json'), `${JSON.stringify({ candidates, rejections })}\n`)
+  writeFileSync(join(OUT_DIR, 'harvest.json'), `${JSON.stringify({ candidates, rejections, shortfalls })}\n`)
   const sortedDiscards = [...discarded].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
   const reportLines = [
     '# Classification report',

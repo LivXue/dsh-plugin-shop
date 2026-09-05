@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, MAX_SEARCH_FROM, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
+import { FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
 import { ENTRY_PAYLOAD_MAX_BYTES, entryPayloadBytes } from '../src/gate.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
 
@@ -1088,8 +1088,14 @@ describe('searchByKeywords', () => {
     // `{"objects":[null]}` is legal JSON too, and `object.package?.name`
     // throws on the element rather than the body. A page entry that names no
     // package is not a package — skipped, exactly like one whose name is not
-    // a string; the coverage check below is what refuses the resulting
-    // shortfall, with the keyword in its message.
+    // a string. That is this test's subject and it is unchanged.
+    //
+    // What its tail asserts DID change: the resulting 1-of-2 shortfall
+    // used to be refused here, and a shortfall of one is now inside
+    // MAX_SEARCH_SHORTFALL, so it is reported and the harvest publishes.
+    // The refusal has not gone anywhere — the 5-of-10 case above and the
+    // one-past-the-bound case in the shortfall describe below both keep
+    // it covered.
     const fetchImpl = (async (url: string | URL) => {
       const params = new URL(String(url)).searchParams
       const query = params.get('text') ?? ''
@@ -1100,10 +1106,73 @@ describe('searchByKeywords', () => {
         objects: [null, { package: { name: 'dsh-real' } }, { package: null }, 'not an object'],
       }), { status: 200 })
     }) as unknown as typeof fetch
-    await expect(searchByKeywords(fetchImpl)).rejects.toThrow(
-      /npm search for keywords:dsh-plugin enumerated 1 of 2 names, and a second full pass found no more; the search ended before reaching the answered total/,
-    )
+    const seen: KeywordShortfall[] = []
+    const names = await searchByKeywords(fetchImpl, undefined, undefined, undefined, undefined, s => seen.push(s))
+    expect(names).toEqual(['dsh-real'])
+    expect(seen).toEqual([{ keyword: 'dsh-plugin', enumerated: 1, required: 2 }])
   })
+
+  describe('a shortfall small enough to be registry noise', () => {
+    // Live on 2026-09-04, `main`'s daily build died here:
+    //   npm search for keywords:dsh-plugin enumerated 3746 of 3747 names,
+    //   and a second full pass found no more
+    // One name out of 3747. The two churn tolerances above cannot help with
+    // it: `Math.min(total, after)` needs the two probes to DISAGREE, and both
+    // answered 3747, while the second full pass re-pages the same cells and
+    // finds the same 3746. This module's own comment names the mechanism —
+    // "Same for a `total` npm overstates by one" — so it is a shortfall no
+    // amount of re-reading can close, and the build simply stopped.
+    //
+    // The scheduled run at 07:58 had passed and the push run at 08:39 failed,
+    // so it is a coin flip per run, and a lost flip freezes the shelf for the
+    // day. A bounded tolerance is the trade: at most MAX_SEARCH_SHORTFALL
+    // names may be missing from one keyword, reported rather than silent,
+    // against a build that publishes.
+
+    /** total 10, page 0 serves `served`, page 1 is empty — the mid-stream
+     * empty page that ends a cell early, which is the reachable shape. */
+    const shortBy = (served: number) => stubSearch(
+      { 'keywords:dsh-plugin': 10, 'keywords:deepseek-harness': 0 },
+      (query, from) => (query === 'keywords:dsh-plugin' && from === 0
+        ? Array.from({ length: served }, (_, i) => `p${i}`)
+        : []),
+    ).fetchImpl
+
+    it('publishes, and reports the shortfall instead of swallowing it', async () => {
+      const seen: { keyword: string; enumerated: number; required: number }[] = []
+      const names = await searchByKeywords(shortBy(9), undefined, undefined, undefined, undefined, (s: KeywordShortfall) => seen.push(s))
+      expect(names).toHaveLength(9)
+      // Not silent: the caller gets the numbers so the build report can carry
+      // them. Nothing else can name the missing package — that is the whole
+      // difficulty — so the count is the honest thing to publish.
+      expect(seen).toEqual([{ keyword: 'dsh-plugin', enumerated: 9, required: 10 }])
+    })
+
+    it('tolerates a shortfall exactly at the bound and refuses one past it', async () => {
+      await expect(searchByKeywords(shortBy(10 - MAX_SEARCH_SHORTFALL))).resolves.toHaveLength(10 - MAX_SEARCH_SHORTFALL)
+      await expect(searchByKeywords(shortBy(10 - MAX_SEARCH_SHORTFALL - 1)))
+        .rejects.toThrow(/enumerated \d+ of 10 names/)
+    })
+
+    it('reports nothing when the keyword enumerated whole', async () => {
+      const seen: unknown[] = []
+      await searchByKeywords(shortBy(10), undefined, undefined, undefined, undefined, (s: KeywordShortfall) => seen.push(s))
+      expect(seen).toEqual([])
+    })
+
+    it('stays well under the smallest coverage gap this repo has actually seen', () => {
+      // The bound is not a round number picked for comfort. Two magnitudes are
+      // recorded in npm-client.ts itself: a genuine partition gap is "hundreds
+      // of names", and PARTITION_KEYWORDS was measured FIFTEEN names short the
+      // day after it was documented as complete. A tolerance at or above 15
+      // would have absorbed that real gap silently.
+      expect(MAX_SEARCH_SHORTFALL).toBeLessThan(15)
+      // And large enough for the mechanisms it exists for: npm overstating a
+      // total by one, plus a page or two serving 249 objects of 250.
+      expect(MAX_SEARCH_SHORTFALL).toBeGreaterThanOrEqual(1)
+    })
+  })
+
 })
 
 describe('fetchCandidate', () => {
