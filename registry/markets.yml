@@ -71,6 +71,11 @@
   by: human
   reason: "DeepSeek Harness 插件市场 · 持续收录 1500+ DSH 插件：中文搜索 + 实用五维评分 + 一键安装。Web 版与 DSH 侧边栏插件双形态。Plugin marketplace for DeepSeek Harness: 1500+ plugins, Chinese sea"
 
+- name: "@dsh-trading/tool-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: Model-facing market analysis tools (list_symbols, get_ohlcv) over the @dsh-trading/market-data seam"
+
 - name: "@dshindex/dsh-plugin-marketplace"
   market: true
   by: llm
