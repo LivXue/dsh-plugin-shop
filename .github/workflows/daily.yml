@@ -88,11 +88,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Otherwise checkout writes an http.extraheader credential into
-          # .git/config, where EVERY later step can read it and push with it —
-          # a postinstall hook in any transitive dependency included. Scoping a
-          # token to the push steps' env: is pointless while that file holds
-          # one. `git fetch origin main` in those steps still works
+          # Otherwise checkout leaves a usable http.extraheader credential
+          # behind for EVERY later step to read and push with — a postinstall
+          # hook in any transitive dependency included. Where it leaves it
+          # moved in v7: a separate config file under $RUNNER_TEMP
+          # (src/git-auth-helper.ts, `credentialsConfigPath`) instead of
+          # .git/config, which changes the hiding place and not the reach.
+          # Scoping a token to the push steps' env: is pointless while any such
+          # file exists. `git fetch origin main` in those steps still works
           # unauthenticated: the repository is public.
           persist-credentials: false
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
