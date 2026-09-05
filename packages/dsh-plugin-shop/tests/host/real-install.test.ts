@@ -9,11 +9,13 @@
 import { afterAll, describe, expect, it } from 'vitest'
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { startInstall } from '../../src/host/executor.ts'
 import { dshCommand, resolveDshScript } from '../../src/host/dsh-cli.ts'
+import { fileTempRoot } from './temp-root.ts'
+
+const TEMP_ROOT = fileTempRoot('real-install')
 
 // The test needs the real dsh CLI installed. CI installs it in
 // .github/workflows/plugin.yml; the skip fires only on machines that never
@@ -75,7 +77,7 @@ describe('real installation', () => {
     ).toBe(true)
   })
 
-  const tmpHome = mkdtempSync(join(tmpdir(), 'dsh-home-'))
+  const tmpHome = mkdtempSync(join(TEMP_ROOT, 'dsh-home-'))
   const fixtureDir = fileURLToPath(new URL('../fixtures/hello-packages/dsh-plugin-shop', import.meta.url))
 
   afterAll(() => {

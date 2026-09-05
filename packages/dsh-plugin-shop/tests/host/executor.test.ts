@@ -4,12 +4,15 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { installFailureDetail, installTimeoutDetail, killTree, lineSink, spawnFailureDetail, startInstall, startUninstall, type InstallStatus } from '../../src/host/executor.ts'
 import type { HotRestartReason } from '../../src/host/hot.ts'
+import { fileTempRoot } from './temp-root.ts'
+
+const TEMP_ROOT = fileTempRoot('executor')
 
 // A fixture `dsh` that records its full argv in a marker file and exits with
 // the requested code, proving the executor passes --profile and the pinned
 // spec through: `dsh plugin --profile <p> add <spec>` is `$1 $2 $3 $4 $5`.
 function fixtureDsh(exitCode: number): string {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-fixture-'))
+  const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-fixture-'))
   const bin = join(dir, 'dsh')
   writeFileSync(bin, [
     '#!/bin/sh',
@@ -27,7 +30,7 @@ function fixtureDsh(exitCode: number): string {
 // bytes come from the script, not the host, so this reproduces the Windows
 // stream shape while running on Linux or macOS.
 function fixtureDshCrlf(exitCode: number, lines: readonly string[]): string {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-fixture-crlf-'))
+  const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-fixture-crlf-'))
   const bin = join(dir, 'dsh')
   const payload = lines.map(line => `${line}\\r\\n`).join('')
   writeFileSync(bin, [
@@ -83,7 +86,7 @@ describe('startInstall', () => {
   })
 
   it('serializes installs into one profile', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-serialize-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-serialize-'))
     const bin = join(dir, 'dsh')
     writeFileSync(bin, [
       '#!/bin/sh',
@@ -110,7 +113,7 @@ describe('startInstall', () => {
   })
 
   it('caps the log at 200 lines, dropping the oldest', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-cap-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-cap-'))
     const bin = join(dir, 'dsh')
     writeFileSync(bin, [
       '#!/bin/sh',
@@ -132,7 +135,7 @@ describe('startInstall', () => {
   })
 
   it('surfaces stderr verbatim in the log with the recovery hint on failure', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-stderr-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-stderr-'))
     const bin = join(dir, 'dsh')
     writeFileSync(bin, [
       '#!/bin/sh',
@@ -192,7 +195,7 @@ describe('startInstall post-install confirm (§7.2 step 6)', () => {
   // reconcile is needed — the fixture dsh exits 0 and the manifest is what
   // the confirm must verify against.
   function confirmHome(bundles: string[]): string {
-    const home = mkdtempSync(join(tmpdir(), 'dsh-confirm-'))
+    const home = mkdtempSync(join(TEMP_ROOT, 'dsh-confirm-'))
     mkdirSync(join(home, 'profiles', 'web'), { recursive: true })
     writeFileSync(
       join(home, 'profiles', 'web', 'package.json'),
@@ -235,7 +238,7 @@ describe('startInstall post-install confirm (§7.2 step 6)', () => {
   it('reports failed, naming the file, when the manifest cannot be read', async () => {
     // A profile dir that does not exist at all — readProfileManifest throws,
     // and the executor must not crash: it reports the same failed outcome.
-    const home = mkdtempSync(join(tmpdir(), 'dsh-confirm-missing-'))
+    const home = mkdtempSync(join(TEMP_ROOT, 'dsh-confirm-missing-'))
     const install = startInstall({
       profile: 'web',
       spec: 'dsh-hello-fixture@1.0.0',
@@ -347,7 +350,7 @@ describe('startUninstall', () => {
 
 describe('startUninstall post-remove confirm', () => {
   function confirmHome(bundles: string[]): string {
-    const home = mkdtempSync(join(tmpdir(), 'dsh-confirm-remove-'))
+    const home = mkdtempSync(join(TEMP_ROOT, 'dsh-confirm-remove-'))
     mkdirSync(join(home, 'profiles', 'web'), { recursive: true })
     writeFileSync(
       join(home, 'profiles', 'web', 'package.json'),
@@ -385,7 +388,7 @@ describe('startUninstall post-remove confirm', () => {
   })
 
   it('reports failed, naming the file, when the manifest cannot be read', async () => {
-    const home = mkdtempSync(join(tmpdir(), 'dsh-confirm-remove-missing-'))
+    const home = mkdtempSync(join(TEMP_ROOT, 'dsh-confirm-remove-missing-'))
     const uninstall = startUninstall({
       profile: 'web',
       name: 'dsh-hello-fixture',
@@ -531,7 +534,7 @@ describe('installFailureDetail', () => {
 
 describe('the install deadline and the process group (F-1)', () => {
   function grandchildDsh(sleepSeconds: number): { bin: string; pidFile: string } {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-grandchild-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-grandchild-'))
     const pidFile = join(dir, 'grandchild.pid')
     const bin = join(dir, 'dsh')
     writeFileSync(bin, [
@@ -562,7 +565,7 @@ describe('the install deadline and the process group (F-1)', () => {
   })
 
   it('stops a command that outlives its deadline and frees the profile queue', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-deadline-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-deadline-'))
     const hung = join(dir, 'dsh')
     writeFileSync(hung, [
       '#!/bin/sh',
@@ -658,7 +661,7 @@ describe('lineSink (F-6)', () => {
 
 describe('startInstall line assembly (F-6)', () => {
   it('reports the whole line when the stream splits it, not the fragment', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-split-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-split-'))
     const bin = join(dir, 'dsh')
     writeFileSync(bin, [
       '#!/bin/sh',
@@ -676,7 +679,7 @@ describe('startInstall line assembly (F-6)', () => {
   })
 
   it('keeps a final unterminated line in the log', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-unterminated-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-unterminated-'))
     const bin = join(dir, 'dsh')
     writeFileSync(bin, ['#!/bin/sh', "printf '%s' 'the bundle did not appear'", 'exit 1', ''].join('\n'))
     chmodSync(bin, 0o755)
@@ -744,7 +747,7 @@ describe('spawnFailureDetail', () => {
 
 describe('the child environment (F-12 residual)', () => {
   it('passes the parent environment to the child, deliberately', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-env-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-env-'))
     const bin = join(dir, 'dsh')
     writeFileSync(bin, ['#!/bin/sh', `printf '%s\n' "$SHOP_F12_PROBE" > "${join(dir, 'env.txt')}"`, 'exit 0', ''].join('\n'))
     chmodSync(bin, 0o755)
@@ -758,7 +761,7 @@ describe('the child environment (F-12 residual)', () => {
   })
 
   it('uses only the given environment when one is passed', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-env-pinned-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-env-pinned-'))
     const bin = join(dir, 'dsh')
     writeFileSync(bin, ['#!/bin/sh', `printf '%s\n' "$SHOP_F12_PROBE" > "${join(dir, 'env.txt')}"`, 'exit 0', ''].join('\n'))
     chmodSync(bin, 0o755)

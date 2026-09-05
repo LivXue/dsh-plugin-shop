@@ -4,12 +4,15 @@ import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { restartCommand, startRestart } from '../../src/host/restart.ts'
+import { fileTempRoot } from './temp-root.ts'
+
+const TEMP_ROOT = fileTempRoot('restart')
 
 // A fixture `dsh` that records its argv in a marker file when it finally
 // runs — the marker's appearance is the proof the helper waited for the
 // parent pid and then exec'd the command.
 function fixtureDsh(marker: string): string {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-restart-bin-'))
+  const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-restart-bin-'))
   const bin = join(dir, 'dsh')
   writeFileSync(bin, [
     '#!/bin/sh',
@@ -39,7 +42,7 @@ async function deadPid(): Promise<number> {
 
 describe('startRestart', () => {
   it('execs the dsh command verbatim once the parent pid is gone, logging its output', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-restart-case-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-restart-case-'))
     const marker = join(dir, 'calls.log')
     const logFile = join(dir, 'restart.log')
     startRestart({
@@ -56,7 +59,7 @@ describe('startRestart', () => {
   })
 
   it('holds the child back while the parent pid is alive', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-restart-case-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-restart-case-'))
     const marker = join(dir, 'calls.log')
     const sleeper = spawn('sh', ['-c', 'exec sleep 10'])
     startRestart({
@@ -118,7 +121,7 @@ describe('restart helper startup failure', () => {
     // An empty PATH makes the helper's `sh` lookup fail asynchronously. The
     // failure must be diagnosable in the handoff log after this function has
     // already returned to its caller.
-    const dir = mkdtempSync(join(tmpdir(), 'dsh-restart-nopath-'))
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-restart-nopath-'))
     const logFile = join(dir, 'restart.log')
     startRestart({
       command: 'dsh',

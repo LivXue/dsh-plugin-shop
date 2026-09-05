@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { discoverProfile, ownedEntryIds, ownsEntryId, setUserLayerRow, setUserLayerRows } from '../../src/host/profile.ts'
+import { fileTempRoot } from './temp-root.ts'
+
+const TEMP_ROOT = fileTempRoot('profile')
 
 function fixtureProfile(): string {
-  const home = mkdtempSync(join(tmpdir(), 'dsh-profile-'))
+  const home = mkdtempSync(join(TEMP_ROOT, 'dsh-profile-'))
   const dir = join(home, 'profiles', 'web')
   mkdirSync(dir, { recursive: true })
   writeFileSync(join(dir, 'cordis.yml'), '[]\n')
@@ -31,20 +33,20 @@ describe('discoverProfile', () => {
     // ancestor of the module path is a profile; the boot's ctx.baseUrl (the
     // profile's cordis.yml directory) is the authoritative fallback.
     const dir = fixtureProfile()
-    const linkedSource = mkdtempSync(join(tmpdir(), 'dsh-linked-source-'))
+    const linkedSource = mkdtempSync(join(TEMP_ROOT, 'dsh-linked-source-'))
     expect(discoverProfile(join(linkedSource, 'packages', 'dsh-plugin-shop', 'lib', 'index.js'), dir))
       .toEqual({ name: 'web', dir })
   })
 
   it('ignores a base directory that is not a profile and walks up as before', () => {
     const dir = fixtureProfile()
-    const stray = mkdtempSync(join(tmpdir(), 'dsh-stray-'))
+    const stray = mkdtempSync(join(TEMP_ROOT, 'dsh-stray-'))
     expect(discoverProfile(join(dir, 'node_modules', 'dsh-plugin-shop', 'lib', 'index.js'), stray))
       .toEqual({ name: 'web', dir })
   })
 
   it('throws when no ancestor is a profile directory and no base directory is given', () => {
-    const stray = mkdtempSync(join(tmpdir(), 'dsh-stray-'))
+    const stray = mkdtempSync(join(TEMP_ROOT, 'dsh-stray-'))
     expect(() => discoverProfile(join(stray, 'x.js'))).toThrow(/no profile directory/)
   })
 })
@@ -166,7 +168,7 @@ describe('setUserLayerRows', () => {
 
 describe('setUserLayerRows and the !!js spelling (F-9)', () => {
   it('writes an existing !!js scalar back as !!js, not as __jsExpr', () => {
-    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-jsexpr-'))
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-jsexpr-'))
     writeFileSync(join(profileDir, 'cordis.patch.yml'), [
       '- id: provider-row',
       '  config:',
@@ -184,7 +186,7 @@ describe('setUserLayerRows and the !!js spelling (F-9)', () => {
   })
 
   it('still writes a plain row unchanged', () => {
-    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-jsexpr-plain-'))
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-jsexpr-plain-'))
     setUserLayerRows({ profileDir, rows: [{ id: 'a', disabled: true }, { id: 'b', disabled: false }] })
     expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toBe('- id: a\n  disabled: true\n')
     rmSync(profileDir, { recursive: true, force: true })

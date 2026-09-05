@@ -1800,6 +1800,8 @@ Closed by `2184265`: an `expandGlobalPlane` helper opens the 全局插件 disclo
 
 **Verification:** none — closed and green in CI.
 
+> **Reviewed 2026-09-05 — no work, as recorded.** Left as the standing hazard it describes: `plugin.yml`'s pin to `0.1.2-rc.1` and its measured contract table are still the only thing holding the e2e's selectors to a harness contract this repository does not own.
+
 ---
 
 ### Task 13: H-11 — the temp-home leak is in the host tests, not in the e2e file the finding names
@@ -1817,11 +1819,23 @@ tests/client/web-full-flow.e2e.ts    mkdtempSync=2    rmSync=2    ← balanced
 
 `web-full-flow.e2e.ts` already cleans up: `afterAll` at `:237`, `rmSync(tmpHome, { recursive: true, force: true })` at `:248`. The leak is in the host tests, and `index.test.ts` alone accounts for 39 of the unbalanced sites. The surviving directory names agree — `dsh-restart-guard` 476, `dsh-restart-guard-cache` 476, `dsh-shop` 442, `dsh-gateway-profile` 442, `dsh-gateway-fixture` 442, `dsh-profile` 320, `dsh-fixture` 280, `dsh-hot-profile` 272 — all host-test scenario names. 5,089 directories present when this task was written; the audit measured 9,769 two days earlier and clearing them did not fix H-10.
 
+> **Executed 2026-09-05. Worse than measured, and fixed with one root per file rather than paired removals.**
+>
+> Re-measured on `5988921`: **101** `mkdtempSync` sites under `tests/host/` against 12 removals, leaving **203** directories per run — not the 39 this task estimated. `index.test.ts` alone had grown from 41 sites to 59, `executor.test.ts` from 10 to 15. /tmp held **8,878**, cleared by hand after the fix.
+>
+> Two departures from the steps as written:
+> 1. **The guard runs the host directory under an isolated `TMPDIR`, not a count of `/tmp`.** `os.tmpdir()` reads `TMPDIR` first on POSIX, so every scenario's directory lands in a sandbox this test owns. A `/tmp` count races with any other suite on the machine and inherits whatever backlog is already there — it would have been green on a busy machine and red on an idle one for reasons unrelated to the code. The guard lives at `tests/`, not `tests/host/`, because a guard inside the directory it runs would spawn itself.
+> 2. **Vitest's own `VITEST*` variables are stripped from the child environment.** Inherited, the nested run believes it is a worker of the outer one and exits non-zero before running anything — which failed the guard for a reason that had nothing to do with temporary directories, and would have turned it green the moment the leak was fixed for the same wrong reason. This cost one debugging round and is the kind of thing that makes a guard look like it works.
+>
+> The fix is `tests/host/temp-root.ts`: `fileTempRoot(label)` creates one root per file and registers a single `afterAll` removal. Paired `rmSync` calls could not have held — a scenario that throws never reaches its own cleanup, and a scenario copied from another inherits the creation without the removal. Nine host files re-rooted, 101 sites, no scenario's assertions touched.
+>
+> Mutation-checked twice: dropping the `afterAll` leaves 9 roots behind, and reverting `index.test.ts` alone to `tmpdir()` leaves 139. Package suite **633 passed (633)** across 29 files, typecheck clean.
+
 **Files:**
 - Modify: `packages/dsh-plugin-shop/tests/host/index.test.ts`, `executor.test.ts`, `dsh-cli.test.ts`, `profile.test.ts`, `restart.test.ts`
 - Test: `packages/dsh-plugin-shop/tests/host/temp-home-leak.test.ts` (new)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/host/temp-home-leak.test.ts`. It counts `/tmp/dsh-*` directories, runs the host suite in a child process, and counts again:
 
@@ -1849,17 +1863,17 @@ describe('the host suite leaves no temporary DSH_HOME behind', () => {
 }, 300_000)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run tests/host/temp-home-leak.test.ts` from `packages/dsh-plugin-shop`. Expected: FAIL, `expected 5128 to be 5089` or similar — `index.test.ts` alone leaks 39 per run.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Prefer **one per-run parent** over 41 individual `rmSync` calls: give each file a `mkdtempSync(join(tmpdir(), 'dsh-<file>-'))` root created in `beforeAll`, build every scenario home beneath it, and remove the root in `afterAll` with `rmSync(root, { recursive: true, force: true })`. One cleanup site per file cannot drift out of sync with the creation sites the way 41 paired calls can, and a test that throws mid-scenario still gets its directory removed.
 
 Do not change what any scenario asserts. The homes are inputs, not subjects.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run tests/host/temp-home-leak.test.ts` — Expected: PASS.
 Run: `pnpm -C packages/dsh-plugin-shop test` — Expected: PASS, 26 files / 520 tests (25/519 at `5f48787` plus this file's one case).
@@ -1867,7 +1881,7 @@ Run: `pnpm -C packages/dsh-plugin-shop typecheck` — Expected: no output.
 
 Clear the backlog once, by hand, after the fix is in: `find /tmp -maxdepth 1 -type d -name 'dsh-*' -exec rm -rf {} +`. It matches no `claude-*` path and, being `-type d`, skips a packed `.tgz` sitting beside them.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/dsh-plugin-shop/tests/host/

@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -8,6 +7,9 @@ import {
   type HotFs,
 } from '../../src/host/hot.ts'
 import { JSON_SCHEMA, load } from 'js-yaml'
+import { fileTempRoot } from './temp-root.ts'
+
+const TEMP_ROOT = fileTempRoot('hot')
 
 describe('parseSimplePatch', () => {
   it('parses plain id/name insert rows', () => {
@@ -318,7 +320,7 @@ describe('hotMount / hotUnmount', () => {
 
 describe('cleanHotDir', () => {
   it('wipes only this session\'s hot-<n>.yml files', () => {
-    const root = mkdtempSync(join(tmpdir(), 'dsh-shop-hot-'))
+    const root = mkdtempSync(join(TEMP_ROOT, 'dsh-shop-hot-'))
     try {
       const profileDir = join(root, 'profile')
       const hotDir = join(profileDir, '.dsh-shop')
@@ -337,7 +339,7 @@ describe('cleanHotDir', () => {
   })
 
   it('is a no-op when the namespace directory does not exist', () => {
-    const root = mkdtempSync(join(tmpdir(), 'dsh-shop-hot-'))
+    const root = mkdtempSync(join(TEMP_ROOT, 'dsh-shop-hot-'))
     try {
       const profileDir = join(root, 'profile')
       cleanHotDir(profileDir)

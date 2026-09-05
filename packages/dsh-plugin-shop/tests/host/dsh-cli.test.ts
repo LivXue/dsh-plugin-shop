@@ -3,6 +3,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { delimiter, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { dshCommand, resolveDshScript, type DshCliFs } from '../../src/host/dsh-cli.ts'
+import { fileTempRoot } from './temp-root.ts'
+
+const TEMP_ROOT = fileTempRoot('dsh-cli')
 
 // Fixtures over mocks: every case builds a real directory tree and reads it
 // through the same seam production uses, so a resolution bug cannot hide
@@ -18,7 +21,7 @@ const realFs: DshCliFs = {
  * `%APPDATA%\npm\node_modules\@deepseek-ai\dsh`. */
 function npmGlobal(options: { bin?: unknown; entry?: string | null } = {}): { shimDir: string; entry: string } {
   const { bin = { dsh: 'lib/bin.js' }, entry = 'lib/bin.js' } = options
-  const shimDir = mkdtempSync(join(tmpdir(), 'dsh-cli-global-'))
+  const shimDir = mkdtempSync(join(TEMP_ROOT, 'dsh-cli-global-'))
   const packageDir = join(shimDir, 'node_modules', '@deepseek-ai', 'dsh')
   mkdirSync(join(packageDir, 'lib'), { recursive: true })
   writeFileSync(join(packageDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh', version: '0.1.1-rc.2', bin }))
@@ -90,7 +93,7 @@ describe('resolveDshScript', () => {
     // Under vitest `argv1` is the test runner's entry. Accepting it would
     // spawn `node <vitest cli> plugin --profile …`, so the owner check is
     // what keeps the real-install test honest.
-    const decoy = mkdtempSync(join(tmpdir(), 'dsh-cli-decoy-'))
+    const decoy = mkdtempSync(join(TEMP_ROOT, 'dsh-cli-decoy-'))
     const vitestDir = join(decoy, 'node_modules', 'vitest')
     mkdirSync(vitestDir, { recursive: true })
     writeFileSync(join(vitestDir, 'package.json'), JSON.stringify({ name: 'vitest', bin: { vitest: 'cli.js' } }))
@@ -131,14 +134,14 @@ describe('resolveDshScript', () => {
   it('returns null when nothing on PATH carries the CLI package', () => {
     expect(resolveDshScript(realFs, { argv1: undefined, path: undefined })).toBeNull()
     expect(resolveDshScript(realFs, { argv1: undefined, path: '' })).toBeNull()
-    expect(resolveDshScript(realFs, { argv1: undefined, path: mkdtempSync(join(tmpdir(), 'dsh-cli-empty-')) })).toBeNull()
+    expect(resolveDshScript(realFs, { argv1: undefined, path: mkdtempSync(join(TEMP_ROOT, 'dsh-cli-empty-')) })).toBeNull()
   })
 
   it('survives a malformed manifest rather than throwing', () => {
     // Everything read off disk here is outside our control; a manifest that
     // is not JSON means "not the package we are looking for", and the scan
     // must continue to the next PATH entry.
-    const broken = mkdtempSync(join(tmpdir(), 'dsh-cli-broken-'))
+    const broken = mkdtempSync(join(TEMP_ROOT, 'dsh-cli-broken-'))
     mkdirSync(join(broken, 'node_modules', '@deepseek-ai', 'dsh'), { recursive: true })
     writeFileSync(join(broken, 'node_modules', '@deepseek-ai', 'dsh', 'package.json'), '{ not json')
     const { shimDir, entry } = npmGlobal()
