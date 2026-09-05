@@ -22,7 +22,21 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: catalog-${{ github.ref }}
+  # ONE group for every pull-request run, because what this workflow contends
+  # for is a single GitHub token's search quota, not a ref. Grouping by ref let
+  # any number of them run at once: on 2026-09-05 seven catalog runs started
+  # within 90 seconds — a merge to main, a branch push, and the five Dependabot
+  # PRs that landed the moment .github/dependabot.yml did — each running the
+  # full 82-window live harvest on the same token. The search API answered 403
+  # and main's post-merge build died on it, having published nothing.
+  #
+  # With one group and cancel-in-progress, five action-bump PRs collapse to one
+  # run, which is the right answer for them: a SHA bump cannot change the
+  # catalog, and the dry run is there to prove the workflow still parses and
+  # harvests. A legitimate PR's run can be cancelled by a later one; re-run it.
+  #
+  # main keeps its own group so a PR can never cancel a run that publishes.
+  group: catalog-${{ github.event_name == 'pull_request' && 'pull_request' || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
