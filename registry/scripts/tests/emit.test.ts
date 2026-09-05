@@ -337,7 +337,15 @@ describe('assertCatalogInvariants', () => {
     // the registry legitimately holds distinct plugins under one name
     const a = repoEntry('dsh-a', 'owner-a/slug')
     const b = repoEntry('dsh-a', 'owner-b/slug')
-    expect(() => emit([a, b], [], '2026-08-31T00:00:00Z')).not.toThrow()
+    const { plugins } = JSON.parse(emit([a, b], [], '2026-08-31T00:00:00Z').pluginsJson) as
+      { plugins: { name: string; repo: string }[] }
+    // Both reach the artifact. A bare not.toThrow() would also pass if emit
+    // silently kept one of the two and dropped the other, which is the only
+    // way this could go wrong.
+    expect(plugins.map((p) => `${p.name}@${p.repo}`).sort()).toEqual([
+      'dsh-a@owner-a/slug',
+      'dsh-a@owner-b/slug',
+    ])
   })
 
   it('throws when an entry carries an added date later than the build date', () => {
@@ -391,6 +399,14 @@ describe('peers', () => {
   })
 })
 
+// https://shields.io/badges/endpoint-badge — the named colours the endpoint
+// schema accepts, alongside the CSS hex form. Anything else renders grey.
+const SHIELDS_COLORS = [
+  'brightgreen', 'green', 'yellow', 'yellowgreen', 'orange', 'red', 'blue',
+  'grey', 'gray', 'lightgrey', 'lightgray', 'blueviolet',
+  'success', 'important', 'critical', 'informational', 'inactive',
+]
+
 describe('the shields endpoint badge', () => {
   // GitHub's own workflow badge can say only passing / failing, and it reports
   // the last COMPLETED run — so it never says anything while a build is
@@ -412,7 +428,13 @@ describe('the shields endpoint badge', () => {
   it('carries a colour and a cache window shields will honour', () => {
     const badge = JSON.parse(emit([entry('dsh-a')], [], '2026-08-18T00:00:00.000Z').badgeJson) as
       { color: string; cacheSeconds: number }
-    expect(badge.color).toBeTruthy()
+    // shields renders a colour it does not recognise as grey rather than
+    // failing, so a truthiness check passes for 'not-a-colour' and '0.5' alike
+    // and the badge stops being blue with no test to say so. These are the
+    // names shields documents for the endpoint schema, plus its hex form.
+    const honoured =
+      SHIELDS_COLORS.includes(badge.color) || /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(badge.color)
+    expect(honoured, `shields renders "${badge.color}" grey`).toBe(true)
     // Long enough not to hammer Pages from every README view, short enough
     // that the date is never a day behind what /v1/index.json already says.
     expect(badge.cacheSeconds).toBeGreaterThanOrEqual(300)
