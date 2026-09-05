@@ -650,7 +650,7 @@ ovensi/dsh-plugin-minimax-usage @dsh-external/minimax-usage 16af76b37a2c17293b0e
 csiroqa/dsh-plugin-forge @dsh-external/plugin-forge ceebe9aa89224772f607248f0d6dbbbcf8fc80da
 AlexCHONG8/dsh-viewboost @dsh-external/viewboost 81a911a1e61fd16e69102c787c8efee375238d00
 bettermen/xiashuo @dsh-external/xiashuo ebfc4ba421ba657a17992a22515ac3ea885d6b2d
-PGZXB/dsh-feishu @dsh-feishu/dsh-feishu 5c0d85633bc1c892135ad20950dc9bfa524605c1
+PGZXB/dsh-feishu @dsh-feishu/dsh-feishu 4841e7afb972f0bd14519638714e7876e5feea9c
 @dsh-fish/hub 0.4.2 sha512-K+Tf7pfHvCqA5y1Y45p/bw0PeiCoNsAI9YHVi5HD/JJtpA3QMz7DYUZXFw7DTuQApyxnSGqIxv8lpCJi7R+mhg==
 zsxian11/dsh-flywheel @dsh-flywheel/dsh-bundle 2541c0a33307cad1566eb7704c24be11069e4051
 TheChengXi/dsh-focus @dsh-focus/focus-plugin 4c650b89c1e7fad736b0399f7c4ac463c9d608a8
@@ -1532,8 +1532,8 @@ peterwangze/software-project-governance @peterwangze/software-project-governance
 philmingdao/anno-dsh-native @philmingdao/anno-dsh-native bea668f7598f2be54d7c2bec9b0257dad5c2d0c6
 Lzh3070/dsh-session-cost @phynez_1103/dsh-session-cost 986c34e1445ca5012d32e2d9d02768c5cb0cb12c
 @picgo/dsh-plugin 0.2.0 sha512-Waz6+hgOIW68+GdHzdTITXN6qHM4Fzhw5RHw9CWodargBbXhrUW4mJkZBHu7qho72ScJo9DdLTAuOxZxNQKfig==
-picoaide/picoaide-harness @picoaide/dsh-branding 775e6cb7b19b08bfbf27897d7ec0b7d2b62675de
-picoaide/picoaide-harness @picoaide/dsh-connectors 775e6cb7b19b08bfbf27897d7ec0b7d2b62675de
+picoaide/picoaide-harness @picoaide/dsh-branding f741a1d0a9fafa50955838e7a7ceaa3f6aa99f1b
+picoaide/picoaide-harness @picoaide/dsh-connectors f741a1d0a9fafa50955838e7a7ceaa3f6aa99f1b
 @piercat/dsh-codex-bridge 0.2.34 sha512-WIonsj34ItR++e9z3ka9Np9yog36OTxHyn+Djo4IkAX7k3Sdw07oY4NoetPVIs1bLducZp7DFWQbKO8f6uT48w==
 @pinkbanana/dsh-balance 0.5.0 sha512-2uAF/sXgxKGe0JD9he6RkuE6mELV/9COcKhHBWcpzL1zLKBHdBgqH3OAQvmubaI1BPZDxM2nTkRdsgybLQhRvg==
 PionsAI/dsh-web-search-firecrawl @pionai/dsh-web-search-firecrawl d6f7ae7e723acea49faf3151538607e13cc85b96
@@ -3062,7 +3062,7 @@ Ansonfishing/dsh-cap-profile dsh-cap-profile ef1675acaf48e41297f94f24bd8f4ca1362
 777-Zen/dsh-capability-index dsh-capability-index c1803133660c6bc30dbc2d3eda493724b801aad0
 tree201/dsh-capability-inspector dsh-capability-inspector 7dded4f1137bf424d86a8c1e71807bc3370faaf3
 dsh-capability-optimizer 0.7.0 sha512-Y58zc6L3vNnc3XExLEj/NoCrmwNxZ11BUvWib6yWrzExeBGliLhiLsKzh4uYwUY4nE3TOKxXkWkFNP5IJ273Zg==
-pure-craft/dsh-capability-panel dsh-capability-panel 5f9cc195aaeab990cb04862916969bfdc6a13b8c
+dsh-capability-panel 1.0.0 sha512-xlWuSGyanaoKoQfSrFNDMfNFtsJ8ATTRA+sfOI28QZRghzyHMP3S6AQMU0Mbi0hgjYrxtPZr4k1pYHVRtn7EyA==
 dongsheng123132/dsh-capability-receipt dsh-capability-receipt 53fe2a117909c17be7996c7eadfea330897398c2
 striveh/dsh-capability-resolver dsh-capability-resolver v0.1.1
 lifeopsgo/dsh-capability-toggle-plugin dsh-capability-toggle-plugin 5e27bd537605b21d8134e3192db50b6359e80356

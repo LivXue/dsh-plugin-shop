@@ -11936,6 +11936,8 @@
   added: 2026-09-01
 - name: "dsh-capability-optimizer"
   added: 2026-08-25
+- name: "dsh-capability-panel"
+  added: 2026-09-05
 - name: "dsh-capability-receipt"
   added: 2026-09-01
 - name: "dsh-capability-resolver"
