@@ -9832,6 +9832,8 @@
   added: 2026-09-01
 - name: "drscrewdriver/dsh-thinking-levels"
   added: 2026-09-01
+- name: "drshy-org/lightroom-py"
+  added: 2026-09-05
 - name: "ds-agentshell"
   added: 2026-09-04
 - name: "ds-auths-plugin"
@@ -20906,6 +20908,8 @@
   added: 2026-09-01
 - name: "dsh-plugin-dialogue-context-bridge"
   added: 2026-09-01
+- name: "dsh-plugin-dictate"
+  added: 2026-09-05
 - name: "dsh-plugin-dida365"
   added: 2026-09-04
 - name: "dsh-plugin-diepi"
@@ -35094,6 +35098,8 @@
   added: 2026-09-01
 - name: "triss-dsh-provider-bundle"
   added: 2026-08-28
+- name: "tritiumwang/dsh-universal-worldbook"
+  added: 2026-09-05
 - name: "trueriscoacnt/maa-dsh-skill"
   added: 2026-09-01
 - name: "try-works/dsh-browser-agent"
