@@ -199,6 +199,8 @@
   category: tool
 - name: "@anarkhgatsby/deepseek-harness-channel-config"
   category: tool
+- name: "@anarkhgatsby/deepseek-harness-channel-dingtalk"
+  category: integration
 - name: "@anarkhgatsby/deepseek-harness-channel-feishu"
   category: integration
 - name: "@anarkhgatsby/deepseek-harness-channel-imessage"
@@ -10927,6 +10929,8 @@
   category: tool
 - name: "dsh-mobile-nav"
   category: ui
+- name: "dsh-mobile-push-notify"
+  category: tool
 - name: "dsh-mobile-pwa"
   category: ui
 - name: "dsh-mobile-remote"
@@ -12380,6 +12384,8 @@
 - name: "dsh-plugin-dew"
   category: integration
 - name: "dsh-plugin-dialogue-context-bridge"
+  category: tool
+- name: "dsh-plugin-dictate"
   category: tool
 - name: "dsh-plugin-diepi"
   category: tool
