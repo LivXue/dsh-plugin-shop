@@ -299,10 +299,14 @@ export function emit(
   ]
   const report = `${lines.join('\n')}\n`
 
-  // E12: the pointer's count must equal the data file's plugin array — the
-  // two artifacts are built separately and this keeps them honest.
-  const dataCount = (JSON.parse(pluginsJson) as { plugins: unknown[] }).plugins.length
-  if (dataCount !== sorted.length) throw new Error('catalog invariant: index count does not match the data file')
+  // E12 -- the pointer's count must equal the data file's plugin array -- used
+  // to be checked here by parsing `pluginsJson` back and comparing lengths.
+  // That throw could not fire: `pluginsJson` is built from `sorted` a few lines
+  // up, and `JSON.stringify` cannot change an array's length, so both numbers
+  // came from the same array by construction. An unreachable throw is a guard
+  // no test can verify. The property is real and worth keeping, so it moved to
+  // emit.test.ts, where it compares the emitted index against the emitted data
+  // file and goes red the day someone builds the two from different sources.
 
   return { pluginsFileName, pluginsJson, indexJson, badgeJson, manifestLock, report }
 }

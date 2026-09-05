@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { CATALOG_SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION, emit, SCHEMA_VERSION } from '../src/emit.ts'
 import type { Entry } from '../src/types.ts'
@@ -71,12 +72,25 @@ describe('emit', () => {
     expect(JSON.parse(indexJson)).toMatchObject({ builtAt: '2026-08-18T00:00:00.000Z', count: 1, rejected: 1 })
   })
 
-  it('names the plugins file by the hash of its content', () => {
+  it('names the plugins file by the hash of the bytes it actually writes', () => {
+    // Recomputed from pluginsJson, NOT read back out of the index. The old
+    // version asserted `pluginsFileName === plugins.${index.plugins.sha256}
+    // .json`, and both sides came from the same variable inside emit — so
+    // hashing bytes OTHER than the ones written left the whole suite green.
+    // Proven by mutation: replacing `update(pluginsJson)` with
+    // `update(JSON.stringify(sorted))` — the same data, a different
+    // serialisation — passed 38 of 38.
+    //
+    // What that costs downstream is the reason this matters: the host verifies
+    // the data file against this hash (packages/dsh-plugin-shop/src/host/
+    // catalog.ts), so a hash over the wrong bytes makes every published
+    // catalog unloadable while CI reports success.
     const { pluginsFileName, pluginsJson, indexJson } = emit([entry('dsh-a')], [], '2026-08-18T00:00:00.000Z')
+    const actual = createHash('sha256').update(pluginsJson).digest('hex')
+    expect(pluginsFileName).toBe(`plugins.${actual}.json`)
     const index = JSON.parse(indexJson) as { plugins: { url: string; sha256: string } }
-    expect(pluginsFileName).toBe(`plugins.${index.plugins.sha256}.json`)
+    expect(index.plugins.sha256).toBe(actual)
     expect(index.plugins.url).toBe(pluginsFileName)
-    expect(pluginsJson.length).toBeGreaterThan(0)
   })
 
   it('changes the hash when an entry changes', () => {
@@ -456,3 +470,22 @@ describe('the sorts key on the whole identity, not the name', () => {
     expect(parsed.denied.map(d => d.detail)).toEqual(['aaa', 'zzz'])
   })
 })
+
+describe('the index and the data file describe the same catalog', () => {
+  it('reports a count equal to the data file it points at', () => {
+    // emit.ts used to assert this by parsing pluginsJson back and comparing
+    // lengths -- a throw that could not fire, because both numbers came from
+    // the same `sorted` array a few lines apart and JSON.stringify cannot
+    // change an array's length. The property is real; the guard was not. Here
+    // the two sides are the two EMITTED artifacts, so it goes red the day
+    // someone builds them from different sources.
+    const { indexJson, pluginsJson } = emit(
+      [entry('dsh-a'), entry('dsh-b'), entry('dsh-c')], [], '2026-08-18T00:00:00.000Z',
+    )
+    const index = JSON.parse(indexJson) as { count: number }
+    const data = JSON.parse(pluginsJson) as { plugins: unknown[] }
+    expect(index.count).toBe(data.plugins.length)
+    expect(index.count).toBe(3)
+  })
+})
+

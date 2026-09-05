@@ -37,6 +37,12 @@ Tasks 1, 3, 4, 5, 6, 7, 8, 9 are independent of A–D and can land in any order,
 
 ### Task 1: H-1 — name the plugins file by the bytes it actually writes
 
+> **Outcome: DONE.** The gap was reproduced first, as the task asks: replacing
+> `update(pluginsJson)` with `update(JSON.stringify(sorted))` — the same data,
+> a different serialisation — left **38 of 38 green**. The test now recomputes
+> the hash from the emitted bytes rather than reading it back out of the index,
+> and that mutation goes red.
+
 **Files:**
 - Modify: `registry/scripts/tests/emit.test.ts:74-80` (the tautological test) and add one case after it
 - Read only: `registry/scripts/src/emit.ts:176` (`const sha256 = createHash('sha256').update(pluginsJson).digest('hex')`)
@@ -555,6 +561,14 @@ turns each skip into a failed assertion; plugin.yml sets it."
 
 ### Task 5: H-5 — remove the throw that cannot fire, and assert the property it claimed
 
+> **Outcome: DONE — branch deleted, property kept.** The throw at `emit.ts` was
+> unreachable exactly as the task argues: `pluginsJson` is built from `sorted`
+> a few lines above, and `JSON.stringify` cannot change an array's length, so
+> both counts came from the same array by construction. The comparison now
+> lives in `emit.test.ts` between the two EMITTED artifacts, where it can go red
+> if they are ever built from different sources. `assertCatalogInvariants` is
+> untouched.
+
 **Files:**
 - Modify: `registry/scripts/src/emit.ts:220-223` (delete the dead branch)
 - Modify: `registry/scripts/tests/emit.test.ts` — add one case to `describe('emit')`, after the schema-version case that ends at line 96
@@ -656,6 +670,20 @@ artifacts, where it can fail if they ever stop sharing a source."
 ---
 
 ### Task 6: H-7 — resolve fixture paths from the module, not the cwd
+
+> **Outcome: DONE, and the finding was wider than Plausible.** Step 1
+> reproduced it: running `pipeline.test.ts` from `/tmp` with an explicit
+> `--root` raised `ENOENT` and reported **"no tests"** rather than a failure —
+> the shape that hides.
+>
+> `cwd-independence.test.ts` then found a **second** instance the audit did not
+> name: `schema.test.ts` read `registry/schema/plugin-entry.schema.json` the
+> same way. Both now resolve from the module.
+>
+> Verified end to end: the whole suite run from `/tmp` is 28 files, 760 tests,
+> all passing. The guard scans source rather than re-running each file from a
+> foreign directory, which would double the suite's runtime to catch a defect
+> whose signature is one regex.
 
 **Files:**
 - Modify: `registry/scripts/tests/pipeline.test.ts:1-9`
@@ -1360,6 +1388,13 @@ bare not.toThrow()/toBeTruthy() assertions in dsh-cli and hot."
 ---
 
 ### Task 10: H-1b — recompute the stars sidecar's hash (after plan C)
+
+> **Outcome: ALREADY SATISFIED by plan C's task 9, which landed the serialiser
+> this task was waiting for.** Verified 2026-09-05 by the mutation this task
+> specifies: replacing `update(json)` with `update(JSON.stringify(sorted))` in
+> `serializeStars` turns `stars-assemble.test.ts` red. The recomputation idiom
+> was written into that test when the function was created, so there is nothing
+> further to add.
 
 **Files:**
 - Modify: `registry/scripts/tests/stars-assemble.test.ts` — the module plan C extends with its pure serialiser

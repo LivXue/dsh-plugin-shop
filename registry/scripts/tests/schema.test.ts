@@ -1,4 +1,6 @@
 import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { CATALOG_ERROR_MAX_LENGTH, parseCatalogSection } from '../src/schema.ts'
 import { renderJsonSchema } from '../src/emit-schema.ts'
@@ -121,7 +123,9 @@ describe('the composed error is itself a bounded published field', () => {
 
 describe('published JSON Schema', () => {
   it('matches the committed file', () => {
-    const committed = readFileSync('registry/schema/plugin-entry.schema.json', 'utf8')
+    // From the module, not the cwd — see cwd-independence.test.ts.
+    const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
+    const committed = readFileSync(join(repoRoot, 'registry', 'schema', 'plugin-entry.schema.json'), 'utf8')
     expect(committed).toBe(renderJsonSchema())
   })
 })

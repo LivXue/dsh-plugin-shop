@@ -1,11 +1,16 @@
 import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { runPipeline, selectEntries, unmatchedRegistryNotes } from '../src/pipeline.ts'
 import { parseRegistryConfig } from '../src/config.ts'
 import type { Candidate, Rejection } from '../src/types.ts'
 
 const candidates = JSON.parse(
-  readFileSync('registry/scripts/tests/fixtures/packuments.json', 'utf8'),
+  // Resolved from THIS module, not the cwd: a cwd-relative fixture path makes
+  // the suite pass or fail on where it was invoked from, and running it from
+  // any other directory raised ENOENT before this.
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'packuments.json'), 'utf8'),
 ) as Candidate[]
 
 const config = parseRegistryConfig({
