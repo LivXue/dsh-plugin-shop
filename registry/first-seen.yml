@@ -3994,6 +3994,8 @@
   added: 2026-09-01
 - name: "@kagurazakayashi/dsh-delete-session"
   added: 2026-08-25
+- name: "@kagurazakayashi/dsh-startup-command"
+  added: 2026-09-05
 - name: "@kaguyaluna2333/dsh-token-stats"
   added: 2026-09-04
 - name: "@kai232/dsh-rag"
@@ -26054,6 +26056,8 @@
   added: 2026-08-31
 - name: "dsh-tool-folder"
   added: 2026-09-04
+- name: "dsh-tool-gate"
+  added: 2026-09-05
 - name: "dsh-tool-gbt9704"
   added: 2026-09-04
 - name: "dsh-tool-generate-image"
