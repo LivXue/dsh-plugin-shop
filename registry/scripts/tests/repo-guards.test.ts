@@ -114,6 +114,37 @@ describe('workflow action pins', () => {
     }
   })
 
+  it('moves paired actions together, and never drops one off a limit', () => {
+    // upload-artifact writes the artifact the publish job's download-artifact
+    // reads back, and upload-pages-artifact writes what deploy-pages deploys.
+    // Each pair has to move as one. On 2026-09-05 they did not: an
+    // open-pull-requests-limit of 5 made Dependabot propose upload-artifact
+    // 4.6.2 -> 7.0.1 and leave download-artifact at 4.3.0 with no PR at all,
+    // and the mismatch is invisible to a dry run because `publish` — the only
+    // job that downloads — is skipped on pull_request. Merging that PR alone
+    // could have broken publishing on main with nothing red beforehand.
+    //
+    // Parsed, not grepped: a text search for the two names is satisfied by the
+    // COMMENT above each group that happens to mention both, which a mutation
+    // splitting the pages pair proved by leaving the suite green.
+    const config = parse(read('.github/dependabot.yml')) as {
+      updates: { groups?: Record<string, { patterns?: string[] }>; 'open-pull-requests-limit'?: number }[]
+    }
+    const actions = config.updates[0]
+    expect(actions, 'dependabot.yml declares no update block').toBeDefined()
+    const groups = Object.values(actions?.groups ?? {}).map(g => g.patterns ?? [])
+    for (const pair of [['actions/upload-artifact', 'actions/download-artifact'],
+                        ['actions/upload-pages-artifact', 'actions/deploy-pages']]) {
+      expect(
+        groups.some(p => pair.every(name => p.includes(name))),
+        `${pair.join(' and ')} are not in one group, so Dependabot can move one without the other`,
+      ).toBe(true)
+    }
+    // And the cap must not be what decides which actions get proposed: it was
+    // the reason download-artifact got no PR, not a decision anybody made.
+    expect(actions?.['open-pull-requests-limit'] ?? 0).toBeGreaterThanOrEqual(10)
+  })
+
   it('asks Dependabot to keep the pins current', () => {
     // A SHA pin that nobody bumps is a security patch nobody applies. The
     // weekly PR is the other half of the trade.
