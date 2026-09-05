@@ -1109,8 +1109,6 @@
   category: ui
 - name: "@dsh-external/dsh-paper-tutor"
   category: tool
-- name: "@dsh-external/dsh-parallel-pool"
-  category: tool
 - name: "@dsh-external/dsh-pdf"
   category: tool
 - name: "@dsh-external/dsh-peak"
@@ -1379,6 +1377,8 @@
   category: ui
 - name: "@dsh-suite/plugin-team-board"
   category: tool
+- name: "@dsh-suite/preset-center"
+  category: other
 - name: "@dsh-theme/ti"
   category: theme
 - name: "@dsh-toolbox/compatibility-radar"
@@ -2171,6 +2171,8 @@
   category: ui
 - name: "@kagurazakayashi/dsh-delete-session"
   category: ui
+- name: "@kagurazakayashi/dsh-startup-command"
+  category: workflow
 - name: "@kai232/dsh-rag"
   category: tool
 - name: "@kaiwangleo/dsh-xiwen"
@@ -3317,6 +3319,8 @@
   category: tool
 - name: "@starryhui/dsh-background"
   category: theme
+- name: "@stars-w/dsh-parallel-pool"
+  category: workflow
 - name: "@stars-w/dsh-shell-callback"
   category: tool
 - name: "@starwish-ai/xingyuan-dsh"
@@ -3647,6 +3651,8 @@
   category: ui
 - name: "@wanyexin1998/dsh-workbench"
   category: ui
+- name: "@waterwx/dsh-novel-forge"
+  category: tool
 - name: "@weaxs/dsh-stock-analysis"
   category: tool
 - name: "@webwalkerhq/dsh-replay-lab"
@@ -4655,6 +4661,8 @@
   category: tool
 - name: "dsh-admin"
   category: ui
+- name: "dsh-admin-bridge"
+  category: tool
 - name: "dsh-admin-gateway"
   category: other
 - name: "dsh-adult-vaccine"
@@ -9993,6 +10001,8 @@
   category: tool
 - name: "dsh-led-circuit"
   category: tool
+- name: "dsh-ledger-compact"
+  category: tool
 - name: "dsh-leekbox"
   category: ui
 - name: "dsh-legal-dashboard"
@@ -10505,6 +10515,8 @@
   category: ui
 - name: "dsh-mcp-market"
   category: tool
+- name: "dsh-mcp-matlab"
+  category: integration
 - name: "dsh-mcp-mgr"
   category: tool
 - name: "dsh-mcp-oauth-client"
@@ -10985,6 +10997,8 @@
   category: ui
 - name: "dsh-model-gate"
   category: tool
+- name: "dsh-model-groups"
+  category: provider
 - name: "dsh-model-headers"
   category: tool
 - name: "dsh-model-jury"
@@ -13169,6 +13183,8 @@
   category: tool
 - name: "dsh-print-dpi"
   category: tool
+- name: "dsh-print3d"
+  category: tool
 - name: "dsh-prism"
   category: ui
 - name: "dsh-privacy-check"
@@ -15235,6 +15251,8 @@
   category: tool
 - name: "dsh-subagent-cassette"
   category: tool
+- name: "dsh-subagent-claude-live"
+  category: integration
 - name: "dsh-subagent-code-agents"
   category: integration
 - name: "dsh-subagent-codex"
@@ -15939,6 +15957,8 @@
   category: tool
 - name: "dsh-tool-fold"
   category: ui
+- name: "dsh-tool-gate"
+  category: tool
 - name: "dsh-tool-generate-image"
   category: tool
 - name: "dsh-tool-git"
@@ -16892,6 +16912,8 @@
 - name: "dsh-web-lan-access"
   category: other
 - name: "dsh-web-launcher"
+  category: tool
+- name: "dsh-web-manager"
   category: tool
 - name: "dsh-web-mermaid"
   category: ui
@@ -17867,6 +17889,8 @@
   category: provider
 - name: "llm-llamacpp"
   category: provider
+- name: "llm-wiki-sidebar"
+  category: tool
 - name: "llmtrim-stats-plugin"
   category: ui
 - name: "local-ocr-cli"

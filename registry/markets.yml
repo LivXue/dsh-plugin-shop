@@ -64,6 +64,11 @@
   by: human
   reason: "DSH 插件市场：管理 HTTPS 插件仓库、校验下载并管理静态插件插拔。"
 
+- name: "@deepseek-ai/dsh-root"
+  market: false
+  by: llm
+  reason: "Judged NOT a dsh plugin market from: DeepSeek Harness desktop app"
+
 - name: "@dsh-external/dsh-plugin-market"
   market: true
   by: llm
@@ -203,6 +208,11 @@
   market: false
   by: human
   reason: "Installs the plugin marketplaces of OTHER agents (Claude Code, Codex, Cursor, Kimi). A bridge to other ecosystems, not a dsh shelf."
+
+- name: "dsh-atom-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: DeepSeek Harness 社区插件（dsh-plugin）：把 Software Atom Market 变成 Agent 可逛/可校验/可投稿的能力库。Tools: atom_search/atom_read/atom_validate/atom_draft. 默认数据源=GitHub 商店，零配置。"
 
 - name: "dsh-claude-marketplace"
   market: false
