@@ -2440,6 +2440,8 @@
   added: 2026-09-04
 - name: "@dsh-external/dsh-token-stats"
   added: 2026-09-04
+- name: "@dsh-external/dsh-tool-args-unwrap"
+  added: 2026-09-05
 - name: "@dsh-external/dsh-tool-github"
   added: 2026-08-31
 - name: "@dsh-external/dsh-trajectory-replay"
@@ -3430,6 +3432,8 @@
   added: 2026-09-01
 - name: "@guntur-d/dsh-memory"
   added: 2026-09-04
+- name: "@guojin-ai/dsh-plugin-guard"
+  added: 2026-09-05
 - name: "@guyunli/dsh-provider-quota"
   added: 2026-09-04
 - name: "@gwsbhqt/dsh-insight"
@@ -4102,6 +4106,8 @@
   added: 2026-09-04
 - name: "@kkbsgg/dsh-balance"
   added: 2026-08-25
+- name: "@kkkneko/dsh-search-enhance"
+  added: 2026-09-05
 - name: "@kksw/dsh-my-files"
   added: 2026-09-01
 - name: "@known-mouse/dsh-history-question-nav"
@@ -5454,6 +5460,8 @@
   added: 2026-08-25
 - name: "@plusl/dsh-emotion-ball"
   added: 2026-08-28
+- name: "@po-et/dsh-session-guard"
+  added: 2026-09-05
 - name: "@pocket30/dsh-serendipity"
   added: 2026-09-04
 - name: "@porcelaintech/dsh-plugin-voice-input"
@@ -5680,6 +5688,8 @@
   added: 2026-09-02
 - name: "@sandersyao/dsh-storage-mysql"
   added: 2026-09-03
+- name: "@sandersyao/dsh-workspace-bootstrap"
+  added: 2026-09-05
 - name: "@sanqi-normal/dsh-webui-market-plugin"
   added: 2026-08-31
 - name: "@sanzhihema/dsh-client-ui-git-sync"
@@ -5800,6 +5810,10 @@
   added: 2026-09-03
 - name: "@sjshare/dsh-workbench"
   added: 2026-09-04
+- name: "@skill-ops/dsh"
+  added: 2026-09-05
+- name: "@skill-ops/dsh-client"
+  added: 2026-09-05
 - name: "@skillre/dsh-exam"
   added: 2026-08-30
 - name: "@skillroute/dsh-plugin"
@@ -5992,6 +6006,8 @@
   added: 2026-09-04
 - name: "@supanexus/dsh-plugin-file-explorer"
   added: 2026-09-04
+- name: "@supanexus/dsh-plugin-supanexus-core"
+  added: 2026-09-05
 - name: "@super_camel/dsh-plugin-panel"
   added: 2026-08-31
 - name: "@supercarlosluo/dsh-tool-example"
@@ -9898,6 +9914,8 @@
   added: 2026-08-31
 - name: "dsh-acp-gateway"
   added: 2026-09-04
+- name: "dsh-acp-interactive"
+  added: 2026-09-05
 - name: "dsh-acp-paseo"
   added: 2026-09-04
 - name: "dsh-acp-paseo-root"
@@ -10576,6 +10594,8 @@
   added: 2026-09-01
 - name: "dsh-arcgis-pro-bridge"
   added: 2026-09-02
+- name: "dsh-arch-advisor"
+  added: 2026-09-05
 - name: "dsh-arch-doc"
   added: 2026-09-02
 - name: "dsh-archify"
@@ -11674,6 +11694,8 @@
   added: 2026-09-01
 - name: "dsh-build-plugin"
   added: 2026-08-31
+- name: "dsh-builder"
+  added: 2026-09-05
 - name: "dsh-builtin-browser"
   added: 2026-08-25
 - name: "dsh-builtin-toggles"
@@ -11718,6 +11740,8 @@
   added: 2026-08-31
 - name: "dsh-butter-convert"
   added: 2026-09-01
+- name: "dsh-button"
+  added: 2026-09-05
 - name: "dsh-buy-check"
   added: 2026-09-01
 - name: "dsh-bybit"
@@ -16238,6 +16262,8 @@
   added: 2026-09-04
 - name: "dsh-header-controls"
   added: 2026-09-04
+- name: "dsh-header-overflow"
+  added: 2026-09-05
 - name: "dsh-header-status"
   added: 2026-09-04
 - name: "dsh-headers"
@@ -18104,6 +18130,8 @@
   added: 2026-09-04
 - name: "dsh-marketing"
   added: 2026-09-04
+- name: "dsh-marketing-toolkit"
+  added: 2026-09-05
 - name: "dsh-marketplace"
   added: 2026-09-04
 - name: "dsh-marketplace-publish"
@@ -18368,6 +18396,8 @@
   added: 2026-09-01
 - name: "dsh-memflow"
   added: 2026-09-01
+- name: "dsh-memgas"
+  added: 2026-09-05
 - name: "dsh-memoir"
   added: 2026-08-25
 - name: "dsh-memoria"
@@ -18824,6 +18854,8 @@
   added: 2026-09-04
 - name: "dsh-model-cascade"
   added: 2026-09-01
+- name: "dsh-model-caveman"
+  added: 2026-09-05
 - name: "dsh-model-center"
   added: 2026-09-01
 - name: "dsh-model-collapse"
@@ -19862,6 +19894,8 @@
   added: 2026-09-04
 - name: "dsh-orbit"
   added: 2026-09-01
+- name: "dsh-orca"
+  added: 2026-09-05
 - name: "dsh-orchestra"
   added: 2026-09-01
 - name: "dsh-orchestrate"
@@ -20654,6 +20688,8 @@
   added: 2026-08-25
 - name: "dsh-plugin-claude-import"
   added: 2026-08-25
+- name: "dsh-plugin-clawbot"
+  added: 2026-09-05
 - name: "dsh-plugin-clawrouters"
   added: 2026-09-01
 - name: "dsh-plugin-cli-session"
@@ -20996,6 +21032,8 @@
   added: 2026-09-04
 - name: "dsh-plugin-inline-image"
   added: 2026-09-02
+- name: "dsh-plugin-insights"
+  added: 2026-09-05
 - name: "dsh-plugin-inspector"
   added: 2026-09-04
 - name: "dsh-plugin-install"
@@ -23782,6 +23820,8 @@
   added: 2026-08-28
 - name: "dsh-session-link-pro"
   added: 2026-09-01
+- name: "dsh-session-log-header"
+  added: 2026-09-05
 - name: "dsh-session-management"
   added: 2026-08-28
 - name: "dsh-session-manager"
@@ -23884,6 +23924,8 @@
   added: 2026-08-25
 - name: "dsh-session-slm-router"
   added: 2026-09-03
+- name: "dsh-session-snapshot"
+  added: 2026-09-05
 - name: "dsh-session-spend"
   added: 2026-09-04
 - name: "dsh-session-stars"
@@ -25636,6 +25678,8 @@
   added: 2026-09-04
 - name: "dsh-thirteen-bg"
   added: 2026-08-25
+- name: "dsh-thoughtdag"
+  added: 2026-09-05
 - name: "dsh-thread"
   added: 2026-09-02
 - name: "dsh-throttle"
@@ -28224,6 +28268,8 @@
   added: 2026-08-31
 - name: "dsh-xlsx"
   added: 2026-09-04
+- name: "dsh-xmap"
+  added: 2026-09-05
 - name: "dsh-xmemo"
   added: 2026-08-25
 - name: "dsh-xml"
@@ -29424,6 +29470,8 @@
   added: 2026-09-04
 - name: "harness-one"
   added: 2026-09-04
+- name: "harness-ops"
+  added: 2026-09-05
 - name: "harness-pet"
   added: 2026-09-04
 - name: "harness-plugin-market"
