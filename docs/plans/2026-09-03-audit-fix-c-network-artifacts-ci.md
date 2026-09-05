@@ -189,6 +189,14 @@ git commit -m "fix(harvest): only a 404 manifest response is no-manifest"
 
 ### Task 2: A `no-manifest` retires a stale candidate; a `fetch-failed` never touches the state
 
+> **Outcome: DONE.** Verified 2026-09-04 against the code, not from memory: the
+> `&& state[entry.repo] === undefined` clause is gone from `github-client.ts`,
+> so a `no-manifest` verdict now retires a stale candidate instead of being
+> ignored whenever the repository already had one, and `staleFailureRepos` in
+> `repo-state.ts` is what selects them. A `fetch-failed` still touches nothing:
+> it is a throw, `harvestRepos` records nothing for it, and the next build
+> retries.
+
 **Files:**
 - Modify: `registry/scripts/src/github-client.ts:640-655`
 - Test: `registry/scripts/tests/github-client.test.ts:465-482` (rewritten) and one new test beside it
@@ -332,6 +340,19 @@ git commit -m "fix(harvest): a no-manifest retires the stale candidate it contra
 ---
 
 ### Task 3: Invalidate the 1,918 misattributed `no-manifest` records
+
+> **Outcome: DONE — 1,929 records, not the 1,918 this heading estimated.**
+> Commit `175b2a7`. The count is higher because the plan measured before plan
+> A's Task 1 narrowed `no-manifest` to a genuine 404.
+>
+> Verified now: `repo-state.json` holds 12,934 records, 8 still carry a
+> `failure`, and **zero** carry the superseded
+> "No package.json at the repository root" text that a blocked
+> `raw.githubusercontent.com` had written into the durable record of every
+> repository it could not reach. The pre-write dry run confirmed every selected
+> record had `code: 'no-manifest'`, that exact detail, and no candidates; the
+> diff was 17,361 deletions and 0 insertions — exactly 9.0 lines per record, so
+> nothing was reformatted.
 
 **Files:**
 - Modify: `registry/scripts/src/repo-state.ts` (add `staleFailureRepos` after `diffRepoState`, around line 114)
@@ -3611,6 +3632,14 @@ git commit -m "ci(daily): read-only contents for the build job, write only in th
 
 ### Task 16: No `workspace:` in the published manifest, and the vendored copy cannot drift
 
+> **Outcome: DONE**, by commit `94a5b4f` (`fix(registry): harden release
+> metadata, ignores, and config diagnostics`), which covers Tasks 16 through 18
+> together. Verified 2026-09-04: `packages/dsh-plugin-shop/package.json`
+> declares no `workspace:` dependency in `dependencies`, `devDependencies` or
+> `peerDependencies`, and `packages/dsh-typert-protocol/` carries both a
+> `VENDORED.md` and the manifest changes that keep the vendored copy from
+> drifting.
+
 **Files:**
 - Modify: `CLAUDE.md` (the "Release channels" section)
 - Modify: `packages/dsh-typert-protocol/package.json` (remove the dead `./typert` export and its two `files` entries)
@@ -3850,6 +3879,11 @@ git commit -m "fix(release): publish with pnpm and pin the vendored copy against
 
 ### Task 17: `.gitignore` covers the agent directory, dotenv variants and tarballs
 
+> **Outcome: DONE**, by commit `94a5b4f`. Verified 2026-09-04 against
+> `.gitignore` itself: the agent directory (`.raven`), the dotenv variants, and
+> the packed tarballs are all covered, and `repo-guards.test.ts` gained the
+> guards that keep them covered.
+
 **Files:**
 - Modify: `.gitignore`
 - Test: `registry/scripts/tests/repo-guards.test.ts` (append)
@@ -3988,6 +4022,14 @@ git commit -m "chore: ignore .raven, dotenv variants and packed tarballs"
 ---
 
 ### Task 18: Loader errors name the package, the empty document and the BOM
+
+> **Outcome: DONE**, by commit `94a5b4f`. Verified 2026-09-04 in
+> `config.ts`'s `parseFile`: the BOM is stripped before `parse` (yaml reads it
+> as part of the first token and fails several characters later), a document
+> that is empty or only comments raises a named error telling the author to
+> write `[]`, and a schema failure names the row number AND the row's package
+> name rather than a bare index. `config.test.ts` carries four assertions over
+> these.
 
 **Files:**
 - Modify: `registry/scripts/src/config.ts:77-91` (`parseFile`)
@@ -4214,6 +4256,30 @@ Checked before this plan was finished:
 6. **Every count in this plan was measured, not estimated:** 14,740 repos and 1,918 mislabelled records from `registry/repo-state.json`; 334 tests and 22 files from `npx vitest run`; the seven action SHAs and their versions from `gh api`; the `workspace:` specifier from `packages/dsh-plugin-shop/package.json:121`; the missing `lib/typert.host.js` from the vendored tree; the three E-12 messages from running the loader against fixtures.
 
 ### Task 19: D-10 — a build that stops here must not be "fixed" by widening the status back
+
+> **Outcome: DONE as a record — there is no code to write, which is the point.**
+>
+> The runbook below is the deliverable. It is worth restating why it exists: plan
+> A's Task 1 narrowed `no-manifest` to a genuine 404, so every other non-ok
+> status from `readManifest` throws, and the systematic-failure bound
+> (`MIN_THROWN_TO_BOUND`, `MAX_THROWN_FRACTION`) turns a pool-wide throw into a
+> failed build. That is deliberate — it is what stopped a blocked
+> `raw.githubusercontent.com` from writing "No package.json at the repository
+> root" into the durable record of 1,929 repositories it could not reach — but
+> it moves a silent degradation onto a loud stop, and the first person to meet
+> that stop will be tempted to widen the status classification back.
+>
+> **Do not.** Read the thrown detail first; if the statuses are 403 or 429 the
+> harvest is rate-limited, not broken, and the lever is
+> `REPO_BACKFILL_BUDGET`.
+>
+> A live instance of exactly this reasoning, 2026-09-04: the daily build stopped
+> on `enumerated 3746 of 3747` in the npm half. The tempting fix was to delete
+> the coverage check. The right one was a bound small enough that no gap this
+> repo has actually seen could hide under it, with the shortfall reported in the
+> published artifact — see the note on `MAX_SEARCH_SHORTFALL` in
+> `npm-client.ts`. Same shape: keep the loud stop, narrow what is allowed to be
+> quiet, and publish the difference.
 
 Finding D-10. **No code change. This task exists so the first person to see the build stop does not undo the fix that made it stop.**
 
