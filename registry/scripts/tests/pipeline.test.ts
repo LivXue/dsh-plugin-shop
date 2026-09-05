@@ -101,15 +101,6 @@ describe('runPipeline', () => {
     expect(report).toContain('| dsh-rate-limited | fetch-failed | npm registry returned 429 fetching dsh-rate-limited |')
   })
 
-  it('produces byte-identical artifacts for the same input', () => {
-    const first = runPipeline(candidates, [], config, BUILT_AT)
-    const second = runPipeline([...candidates].reverse(), [], config, BUILT_AT)
-    expect(second.pluginsJson).toBe(first.pluginsJson)
-    expect(second.pluginsFileName).toBe(first.pluginsFileName)
-    expect(second.manifestLock).toBe(first.manifestLock)
-    expect(second.report).toBe(first.report)
-  })
-
   it('stays byte-identical when a derived listing carries a categories row', () => {
     const categorized = parseRegistryConfig({
       verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: github:r\n  reviewCommit: abc\n  notes: fine\n',
@@ -166,25 +157,6 @@ describe('runPipeline', () => {
     expect(firstSeen.has('dsh-lib-only')).toBe(false)
     expect(firstSeen.has('dsh-no-license')).toBe(false)
     expect(firstSeen.has('dsh-no-summary')).toBe(false)
-  })
-
-  it('produces identical data across build times', () => {
-    const first = runPipeline(candidates, [], config, BUILT_AT)
-    const second = runPipeline(candidates, [], config, '2030-01-01T00:00:00.000Z')
-    expect(second.pluginsJson).toBe(first.pluginsJson)
-    expect(second.pluginsFileName).toBe(first.pluginsFileName)
-    expect(second.manifestLock).toBe(first.manifestLock)
-    expect(second.report).toBe(first.report)
-    expect(second.indexJson).not.toBe(first.indexJson)
-  })
-
-  it('produces byte-identical artifacts with a stars pointer across runs', () => {
-    const stars = { url: 'stars.deadbeef.json', sha256: 'deadbeef' }
-    const first = runPipeline(candidates, [], config, BUILT_AT, [], stars)
-    const second = runPipeline(candidates, [], config, BUILT_AT, [], stars)
-    expect(first.indexJson).toBe(second.indexJson)
-    expect(first.pluginsJson).toBe(second.pluginsJson)
-    expect(JSON.parse(first.indexJson).stars).toEqual(stars)
   })
 
   it('keeps plugins.json bounded when a candidate carries megabyte strings', () => {
@@ -630,15 +602,23 @@ describe('determinism under every perturbation', () => {
     ].join(''),
   })
 
-  it('is byte-identical in every artifact when only the input order changes', () => {
+  it('is byte-identical in every artifact under a reversed input and a repeated run', () => {
     const first = runPipeline(candidates, repos, dated, BUILT_AT, preexisting, stars)
     const second = runPipeline(
       [...candidates].reverse(), [...repos].reverse(), dated, BUILT_AT, [...preexisting].reverse(), stars,
     )
+    // The same inputs a second time, which is a different claim from order
+    // independence: it is what would catch a Set or Map iterated in insertion
+    // order, or a clock read inside emit.
+    const repeated = runPipeline(candidates, repos, dated, BUILT_AT, preexisting, stars)
     for (const key of ['pluginsFileName', 'pluginsJson', 'indexJson', 'badgeJson', 'manifestLock', 'report'] as const) {
-      expect(second[key], key).toBe(first[key])
+      expect(second[key], `${key} moved with input order`).toBe(first[key])
+      expect(repeated[key], `${key} moved between runs`).toBe(first[key])
     }
     expect([...second.firstSeen]).toEqual([...first.firstSeen])
+    expect([...repeated.firstSeen]).toEqual([...first.firstSeen])
+    // The sidecar pointer rides the index and is not otherwise perturbed.
+    expect((JSON.parse(first.indexJson) as { stars: unknown }).stars).toEqual(stars)
   })
 
   it('keeps the hashed data identical across build times, with only the index and badge moving', () => {

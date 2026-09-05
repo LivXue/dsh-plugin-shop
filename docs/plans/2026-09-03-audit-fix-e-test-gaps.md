@@ -1531,7 +1531,19 @@ with each other and never checks the digest against them."
 
 **No mutation step.** The gap is a perturbation never applied and artifacts never compared — an absence. Step 1 reproduces the specific hole plan B closes, so the test is known to bite.
 
-- [ ] **Step 1: Reproduce the hole — reverse two same-named repo candidates**
+> **Executed 2026-09-05. Most of this had already landed with plans B and C; what remained was the deletion and one perturbation.**
+>
+> `describe('determinism under every perturbation')` (`pipeline.test.ts:575`) was written by plan B's C-2 work and is stronger than this task's Step 2 block: it perturbs npm candidates, repo candidates **and** pre-existing rejections together, over all six artifacts plus `firstSeen`, and its fixtures carry ties this task's did not — two subpackages of one monorepo, a bundle name claimed by two owners, and two *rejected* subpackages of a third. Rewriting it from Step 2 would have lost coverage, so it was extended rather than replaced.
+>
+> What was actually missing:
+> 1. **The repeated run.** Both existing cases compare a base against a *reversed* input; neither runs the same input twice, which is the only leg that separates nondeterminism inside `emit` from an ordering bug. Added, with the sidecar-pointer assertion carried over from the deleted stars case.
+> 2. **The three superseded partial cases** at `:104`, `:171` and `:181` were still present. Deleted — that was this task's point.
+>
+> Both of Step 3's mutations were run before and after the deletion. Reverting `compareEntries` to the name-only comparator fails the reversed leg (`pluginsFileName moved with input order`); `builtAt` inside the hashed content fails the clock case. A third, `nonce: Math.random()` in the hashed content, fails the repeat leg (`moved between runs`) and would have passed every case that existed before this change. Root suite **760 passed (760)**, exactly −3 for the three deletions; typecheck clean.
+>
+> The Step 2 stars case could not be written as specified: plan C's serialiser takes ENTRIES (`assembleStarsForEntries(entries, searchStars, graphqlStars)`), not `(candidates, repoCandidates)`, and its order-independence is already pinned by `stars-assemble.test.ts:124` beside the byte-exact hash at `:111` — which is the right place for it, since the perturbation is the assembler's own.
+
+- [x] **Step 1: Reproduce the hole — reverse two same-named repo candidates**
 
 ```bash
 cd /Evermind/sh_evermind/xuedizhan/dsh-plugin-store
@@ -1552,7 +1564,7 @@ pluginsJson equal: false   pluginsFileName equal: false   manifestLock equal: fa
 
 172 bundle names over 451 live entries are claimed by several repositories, so this is not a hypothetical shape.
 
-- [ ] **Step 2: Write the one test**
+- [x] **Step 2: Write the one test**
 
 Delete lines 144-151, then 134-142, then 81-88 (highest first, so the earlier line numbers stay valid), and add this block at the end of `registry/scripts/tests/pipeline.test.ts`:
 
@@ -1684,7 +1696,7 @@ describe('determinism', () => {
 
 Extend the imports at the top of the file: add `RepoCandidate` to the `types.ts` type import (`import type { Candidate, Rejection, RepoCandidate } from '../src/types.ts'`), and add `import { assembleStarsByKey } from '../src/stars-assemble.ts'` plus `import { serializeStars } from '../src/stars-assemble.ts'` (plan C puts the serialiser beside the assembler).
 
-- [ ] **Step 3: Verify each perturbation bites**
+- [x] **Step 3: Verify each perturbation bites**
 
 ```bash
 cd /Evermind/sh_evermind/xuedizhan/dsh-plugin-store
@@ -1719,7 +1731,7 @@ npx vitest run registry/scripts/tests/pipeline.test.ts
 
 Expected: FAIL — `carries the clock in the index and the badge, and nowhere else` reports `pluginsJson moved with the clock: expected -1 to be 0`. Restore again and confirm `git diff --numstat` prints nothing.
 
-- [ ] **Step 4: Run it green**
+- [x] **Step 4: Run it green**
 
 ```bash
 npx vitest run registry/scripts/tests/pipeline.test.ts
@@ -1730,7 +1742,7 @@ pnpm typecheck
 
 Expected: PASS. The root total is plan C's + Task 10's total **minus exactly two** (three partial determinism cases replaced by three that together cover all six artifacts, both orders, the clock and the sidecar). Record the before and after numbers from the two `pnpm test` runs; a delta other than −2 means one of the three old cases was not deleted or an extra was added.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add registry/scripts/tests/pipeline.test.ts
