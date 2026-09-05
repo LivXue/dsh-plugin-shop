@@ -12766,6 +12766,8 @@
   added: 2026-08-25
 - name: "dsh-codex-connect-plus"
   added: 2026-08-25
+- name: "dsh-codex-context"
+  added: 2026-09-05
 - name: "dsh-codex-continue"
   added: 2026-08-30
 - name: "dsh-codex-file-panel"
