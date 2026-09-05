@@ -18,6 +18,25 @@ import { parse } from 'yaml'
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 const read = (relative: string): string => readFileSync(join(repoRoot, relative), 'utf8')
 
+describe('the catalog harvest is serialised across refs', () => {
+  it('puts every pull-request run in ONE concurrency group', () => {
+    // The harvest is bounded by one GitHub token's search quota, not by the
+    // ref, so a per-ref group lets any number of them run at once. Measured
+    // 2026-09-05: seven catalog runs started within 90 seconds — a merge to
+    // main, a branch push, and five Dependabot PRs that landed the moment
+    // .github/dependabot.yml did — each running the full 82-window live
+    // harvest on the same token. The search API answered 403 and main's
+    // post-merge build died on it.
+    //
+    // main keeps its own group, so a PR can never cancel a run that publishes.
+    const workflow = read('.github/workflows/daily.yml')
+    const group = workflow.match(/^\s*group:\s*(.+)$/m)?.[1] ?? ''
+    expect(group, 'daily.yml groups by ref alone, so PR runs do not queue')
+      .toMatch(/pull_request/)
+    expect(group, 'main must not share the pull-request group').toMatch(/github\.ref/)
+  })
+})
+
 describe('what CI publishes to Pages', () => {
   it('uploads the staged directory, never dist itself', () => {
     // `path: dist` published /v1/harvest.json, /v1/report.md and
