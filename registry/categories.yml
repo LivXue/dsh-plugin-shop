@@ -9939,6 +9939,8 @@
   category: integration
 - name: "dsh-lark-channel"
   category: integration
+- name: "dsh-lark-claw"
+  category: integration
 - name: "dsh-lark-meeting-notifier"
   category: integration
 - name: "dsh-latency-pct"
