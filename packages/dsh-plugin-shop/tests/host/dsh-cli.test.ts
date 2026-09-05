@@ -79,7 +79,11 @@ describe('resolveDshScript', () => {
     // whichever one PATH happens to name.
     const { shimDir, entry } = npmGlobal()
     expect(resolveDshScript(realFs, { argv1: entry, path: undefined })).toBe(entry)
-    expect(shimDir).toBeTruthy()
+    // `toBeTruthy()` on an mkdtemp result can never fail (H-9). The claim is
+    // that the answer came from argv1's OWNING package rather than from PATH —
+    // which was not consulted at all here — so assert the resolved entry is the
+    // CLI package's own file inside the fixture tree.
+    expect(entry.startsWith(join(shimDir, 'node_modules', '@deepseek-ai', 'dsh'))).toBe(true)
   })
 
   it('rejects a running script owned by some other package and falls back to PATH', () => {

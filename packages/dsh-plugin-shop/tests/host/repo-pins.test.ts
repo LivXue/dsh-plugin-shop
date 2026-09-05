@@ -41,6 +41,23 @@ describe('readRepoPins', () => {
     expect(readRepoPins(fs, '/pins.json')).toEqual({ good: commit })
   })
 
+  it('never answers a lookup from Object.prototype', () => {
+    // The lookup key is a catalog entry name — hostile npm/GitHub input — and
+    // `constructor`, `toString` and `valueOf` are all legal npm package names,
+    // while a GitHub bundle name is unrestricted. On a prototype-bearing
+    // record each of them reads a FUNCTION, which `pins[entry.name] !==
+    // undefined` accepts as a recorded pin: host/index.ts then reports a
+    // function as the installed commit, with outdated: true, for a package
+    // that was never installed.
+    const fs = memFs()
+    fs.files.set('/pins.json', JSON.stringify({ 'dsh-real': commit }))
+    const pins = readRepoPins(fs, '/pins.json')
+    for (const inherited of ['constructor', 'toString', 'valueOf', 'hasOwnProperty', '__proto__']) {
+      expect(pins[inherited], `${inherited} answered a lookup`).toBeUndefined()
+    }
+    expect(pins['dsh-real']).toBe(commit)
+  })
+
   it('reads a missing or corrupt file as no memory', () => {
     const fs = memFs()
     expect(readRepoPins(fs, '/pins.json')).toEqual({})

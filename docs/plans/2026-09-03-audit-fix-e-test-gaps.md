@@ -1133,7 +1133,7 @@ entries would also pass if emit dropped one. Both now assert the value."
 
 **No mutation step.** These are absences — modules no test imports and assertions with no failing input. Each step below states the failing form first and confirms it fails.
 
-- [ ] **Step 1: Show the gap**
+- [x] **Step 1: Show the gap**
 
 ```bash
 cd /Evermind/sh_evermind/xuedizhan/dsh-plugin-store
@@ -1150,7 +1150,7 @@ node --experimental-strip-types /tmp/probe-pins.ts
 
 Expected: `pins.constructor is function — !== undefined: true`. `constructor`, `toString` and `valueOf` are all legal npm package names and GitHub bundle names are unrestricted, so `host/index.ts:812`'s `pins[entry.name]` reads a function off `Object.prototype` and reports it as the installed commit with `outdated: true`.
 
-- [ ] **Step 2: Write the tests**
+- [x] **Step 2: Write the tests**
 
 Create `packages/dsh-plugin-shop/tests/host/repo-pins.test.ts`:
 
@@ -1339,7 +1339,7 @@ Replace `packages/dsh-plugin-shop/tests/host/hot.test.ts:270-277` with:
 
 and add `existsSync` to the `node:fs` import on line 2: `import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'`.
 
-- [ ] **Step 3: Verify the new tests fail before the fix**
+- [x] **Step 3: Verify the new tests fail before the fix**
 
 ```bash
 npx vitest run --root packages/dsh-plugin-shop tests/host/repo-pins.test.ts
@@ -1347,7 +1347,7 @@ npx vitest run --root packages/dsh-plugin-shop tests/host/repo-pins.test.ts
 
 Expected: FAIL — `never answers a lookup from Object.prototype` reports `AssertionError: expected [Function: Object] to be undefined`. The other six cases pass (they describe behaviour the module already has, and they are what makes a future regression in the hex filter or the corrupt-file degradation visible at all).
 
-- [ ] **Step 4: Fix the prototype hazard and run everything green**
+- [x] **Step 4: Fix the prototype hazard and run everything green**
 
 In `packages/dsh-plugin-shop/src/host/repo-pins.ts`, replace line 27:
 
@@ -1382,7 +1382,18 @@ The change is to a pure function's internal record and touches no RPC shape, no 
 
 **One finding this task surfaces and does not fix.** `host/index.ts:729` writes `args.version` into the pins file, and for a release-rescued github entry that value is a tag (`v1.0.0` — see `index.test.ts:1000`), which `readRepoPins`'s 40-hex filter drops on the next read. Such an entry therefore falls back to `installed: spec` and can never report `outdated`. That changes an RPC-visible field, so it belongs to plan D beside G-1's identity work, not here. Record it in plan D rather than widening this task.
 
-- [ ] **Step 5: Commit**
+> **Executed 2026-09-05. The plan was stale in four places; what landed differs.**
+>
+> 1. **`repo-pins.test.ts` already existed** — commit `110c500` (*fix(host): preserve release tag pins*, plan D's G-11) created it with four cases: a commit round-trip, a release-tag round-trip, a drop of anything that is neither, and missing/corrupt as no memory. Those cover the plan's fixtures in a different but equivalent form, so only the absent case was added: **the prototype hazard**. Writing the plan's file verbatim would have duplicated four tests and deleted a G-11 regression guard.
+> 2. **The "finding this task does not fix" above is fixed.** `110c500` widened the filter to `COMMIT_SHA.test(pin) || RELEASE_TAG.test(pin)`, so a release-rescued entry's tag now survives the read. Nothing to record in plan D.
+> 3. **The plan's `'dsh-upper': 'A'.repeat(40)` fixture would now be wrong.** `RELEASE_TAG` is `/^[A-Za-z0-9][A-Za-z0-9._+/-]{0,127}$/`, which accepts forty uppercase letters. The fixture asserted that value is dropped; it is kept, correctly.
+> 4. **`normalizeRegistryUrl` was not untested.** `npm-origin.test.ts:270` ("keeps a registry url's path when resolving the probe request, even with no trailing slash") already drove exactly that behaviour end to end through `npmOrigin` — the mutation check found it by failing two tests instead of one. The new block still went in, pinning the two lines directly rather than only through their one caller, but its comment says so instead of claiming the gap the plan asserted.
+>
+> Line numbers had also moved: `repo-pins.ts:27` → `:30`, `hot.test.ts:270-277` → `:342`. The `HOT_DIR` the plan's replacement joins is, in `hot.test.ts`, a file-local **absolute** path (`join(PROFILE, '.dsh-shop')`) and not the module's unexported bare segment; the landed test uses the literal `'.dsh-shop'`.
+>
+> **Mutation-checked, against the plan's "no mutation step".** Every new assertion was proven able to fail: the prototype case failed before the fix; `normalizeRegistryUrl` → identity, `npmGlobal` returning a path outside the CLI package, `cleanHotDir` creating the directory on its way past, `ownVersion` → `'0.0.0'`, and a moved `lib/index.js` each failed exactly the case that names them. Package suite **630 passed (630)** across 28 files, root **762 passed (762)**, both typechecks clean.
+
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/dsh-plugin-shop/tests/host/repo-pins.test.ts \

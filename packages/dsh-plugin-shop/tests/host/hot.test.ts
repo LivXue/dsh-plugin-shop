@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -339,7 +339,12 @@ describe('cleanHotDir', () => {
   it('is a no-op when the namespace directory does not exist', () => {
     const root = mkdtempSync(join(tmpdir(), 'dsh-shop-hot-'))
     try {
-      expect(() => cleanHotDir(join(root, 'profile'))).not.toThrow()
+      const profileDir = join(root, 'profile')
+      cleanHotDir(profileDir)
+      // `not.toThrow()` alone would also pass if cleanHotDir created the
+      // directory on its way past, which is the opposite of a no-op (H-9).
+      expect(existsSync(profileDir)).toBe(false)
+      expect(existsSync(join(profileDir, '.dsh-shop'))).toBe(false)
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
