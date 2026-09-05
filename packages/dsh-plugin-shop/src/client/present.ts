@@ -3,6 +3,8 @@
  * drive all of it. */
 
 export { isShopLike } from '../shared/shop-like.ts'
+export { identityKey, installedSpecMatches, parseRepoSpec, type EntryIdentity } from '../shared/identity.ts'
+import { identityKey } from '../shared/identity.ts'
 import type { ShopLocaleKey } from './locales.ts'
 import type { CatalogEntry, HotRestartReason, InstallRejectionCode } from '../host/index.ts'
 
@@ -31,9 +33,10 @@ export function tierKey(tier: CatalogEntry['tier']): ShopLocaleKey {
 
 /** The peers the Host said this installation does not provide, or none when it
  * said nothing — a plugin that runs here and one the Host could not judge are
- * both rendered as no warning at all. */
-export function missingPeersOf(incompatible: Record<string, string[]>, name: string): string[] {
-  return incompatible[name] ?? []
+ * both rendered as no warning at all. The map is keyed by install identity,
+ * never by name, because two entries can share a name. */
+export function missingPeersOf(incompatible: Record<string, string[]>, key: string): string[] {
+  return incompatible[key] ?? []
 }
 
 /** Spec §9.3 verbatim — the community-tier acknowledgement. The zh dictionary
@@ -54,6 +57,7 @@ export function rejectionCodeKey(code: InstallRejectionCode): ShopLocaleKey {
     case 'version-mismatch': return 'versionMismatchCode'
     case 'needs-acknowledgement': return 'needsAcknowledgementCode'
     case 'tarball-integrity': return 'tarballIntegrityCode'
+    case 'ambiguous-identity': return 'ambiguousIdentityCode'
   }
 }
 
@@ -293,9 +297,7 @@ export function npmPageUrl(entry: CatalogEntry): string | null {
  * This mirrors the registry's identity verbatim; the two must not drift.
  */
 export function entryKey(entry: CatalogEntry): string {
-  return entry.source === 'npm'
-    ? `npm:${entry.name}`
-    : `github:${entry.repo ?? entry.name}#${entry.subdir ?? ''}`
+  return identityKey(entry)
 }
 
 /**
@@ -313,8 +315,17 @@ export function entryKey(entry: CatalogEntry): string {
  * repo, one the catalog never even listed.
  */
 export function starsOf(entry: CatalogEntry, stars: Record<string, number>): number | undefined {
-  return stars[entry.repo ?? entry.name]
+  const key = entry.repo ?? entry.name
+  // Package names are untrusted keys; never borrow Object.prototype members
+  // such as `constructor` or `toString` as if they were star counts.
+  if (!Object.hasOwn(stars, key)) return undefined
+  return stars[key]
 }
+
+/** One collator for the whole shelf. Passing an options object to
+ * localeCompare creates a collator per comparison, which dominates the sort
+ * for a catalog with thousands of entries. */
+const NAME_COLLATOR = new Intl.Collator(undefined, { sensitivity: 'base' })
 
 /** Sort the shelf: stars descending, un-starred entries last, name ascending
  * (case-insensitive) on ties (spec 2026-08-26-github-stars-design.md D1).
@@ -326,7 +337,7 @@ export function sortByStars(entries: CatalogEntry[], stars: Record<string, numbe
   return [...entries].sort((a, b) => {
     const byStars = count(b) - count(a)
     if (byStars !== 0) return byStars
-    return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+    return NAME_COLLATOR.compare(a.name, b.name)
   })
 }
 

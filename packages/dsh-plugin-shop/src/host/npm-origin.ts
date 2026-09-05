@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto'
 import { gunzipSync } from 'node:zlib'
 import { z } from 'zod'
 import { readTar } from './tar.ts'
-import { type CatalogOrigin, type OriginHandle, TransportError } from './origin.ts'
+import { MAX_BODY_BYTES, readCappedBytes, type CatalogOrigin, type OriginHandle, TransportError } from './origin.ts'
 
 /** The abbreviated `latest` manifest. Non-strict: a registry may add keys,
  * and stripping them is what keeps an old host working against a new one. */
@@ -20,6 +20,12 @@ const latestSchema = z.object({
 
 /** Where the published package keeps the catalog tree (design §2). */
 const PACKAGE_ROOT = 'package/v1/'
+
+/** Maximum compressed package bytes read from a registry. */
+export const MAX_PACKAGE_BYTES = 32 * 1024 * 1024
+
+/** Maximum bytes allowed after gzip inflation. */
+export const MAX_INFLATED_BYTES = MAX_BODY_BYTES
 
 /** Verify tarball bytes against npm's own Subresource-Integrity string.
  * `dist.integrity` may carry several space-separated digests; npm publishes
@@ -124,7 +130,7 @@ export function npmOrigin(rawRegistryUrl: string, packageName: string, fetchImpl
       }
 
       let files: Map<string, Buffer> | null = null
-      const load = async (): Promise<Map<string, Buffer>> => {
+      const load = async (loadSignal?: AbortSignal): Promise<Map<string, Buffer>> => {
         if (files !== null) return files
         // A registry that serves its tarballs from somewhere else is refused
         // rather than followed. npmmirror rewrites dist.tarball to its own
@@ -153,7 +159,7 @@ export function npmOrigin(rawRegistryUrl: string, packageName: string, fetchImpl
         }
         let tarballResponse: Response
         try {
-          tarballResponse = await fetchImpl(tarballUrl.href)
+          tarballResponse = await fetchImpl(tarballUrl.href, loadSignal === undefined ? undefined : { signal: loadSignal })
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error)
           throw new TransportError(`npm origin ${registryUrl} tarball fetch failed: ${detail}`, { cause: error })
@@ -161,18 +167,17 @@ export function npmOrigin(rawRegistryUrl: string, packageName: string, fetchImpl
         if (!tarballResponse.ok) {
           throw new TransportError(`npm origin ${registryUrl} tarball returned ${tarballResponse.status}`)
         }
-        // The fetch CALL above is wrapped and the body read was not, but
-        // `fetch` resolves its Response as soon as the headers arrive: a
-        // stream that truncates or resets mid-download rejects here, with a
-        // raw `TypeError: fetch failed` that escapes the race loop. The
-        // purest transport failure of the set.
-        let bytes: Buffer
-        try {
-          bytes = Buffer.from(await tarballResponse.arrayBuffer())
-        } catch (error) {
-          const detail = error instanceof Error ? error.message : String(error)
-          throw new TransportError(`npm origin ${registryUrl} tarball body read failed: ${detail}`, { cause: error })
+        const declaredLength = Number(tarballResponse.headers.get('content-length'))
+        if (Number.isFinite(declaredLength) && declaredLength > MAX_PACKAGE_BYTES) {
+          throw new TransportError(`npm origin ${registryUrl} tarball exceeded the ${MAX_PACKAGE_BYTES}-byte cap`)
         }
+        // Stream through the wire cap; arrayBuffer() would hold an
+        // attacker-controlled body in full before any bound could apply.
+        const bytes = await readCappedBytes(
+          tarballResponse,
+          `npm origin ${registryUrl} tarball`,
+          MAX_PACKAGE_BYTES,
+        )
         // Deliberately OUTSIDE the try below. A sha MISMATCH says "these
         // bytes are not what they claim" — a claim about content — and stays
         // a loud, non-retried plain Error (§4). What follows is a different
@@ -190,17 +195,24 @@ export function npmOrigin(rawRegistryUrl: string, packageName: string, fetchImpl
         // origins standing".
         let parsed: Map<string, Buffer>
         try {
-          parsed = readTar(gunzipSync(bytes))
+          parsed = readTar(gunzipSync(bytes, { maxOutputLength: MAX_INFLATED_BYTES }))
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error)
+          const code = (error as NodeJS.ErrnoException).code
+          if (code === 'ERR_BUFFER_TOO_LARGE' || /larger than|too large/i.test(detail)) {
+            throw new TransportError(
+              `npm origin ${registryUrl}: the tarball inflates past the ${MAX_INFLATED_BYTES}-byte cap; refusing to read it`,
+              { cause: error },
+            )
+          }
           throw new TransportError(`npm origin ${registryUrl} served an unparsable tarball: ${detail}`, { cause: error })
         }
         files = parsed
         return files
       }
 
-      const read = async (name: string): Promise<string> => {
-        const entry = (await load()).get(`${PACKAGE_ROOT}${name}`)
+      const read = async (name: string, readSignal?: AbortSignal): Promise<string> => {
+        const entry = (await load(readSignal)).get(`${PACKAGE_ROOT}${name}`)
         // A file the pointer or the package itself should carry, but does
         // not — a tarball published without v1/, a version skew between the
         // pointer and the package — is this mirror failing to speak the
@@ -221,11 +233,11 @@ export function npmOrigin(rawRegistryUrl: string, packageName: string, fetchImpl
         // publishes. Anything else — a path, an absolute url — is refused
         // rather than resolved, the npm-side equivalent of resolveDataUrl's
         // cross-origin guard.
-        file: async (url) => {
+        file: async (url, fileSignal) => {
           if (url.includes('/') || url.startsWith('.')) {
             throw new Error(`npm origin ${registryUrl}: ${JSON.stringify(url)} must be a plain file name`)
           }
-          return read(url)
+          return read(url, fileSignal)
         },
       }
     },

@@ -59,7 +59,15 @@ export function gateRepo(
   // Denied by repo or by bundle name. `owner/slug` strings cannot collide
   // with npm package names (unscoped names carry no slash), so one map holds
   // both keyspaces.
-  const denial = config.denied.get(candidate.repo) ?? config.denied.get(candidate.name)
+  //
+  // The repo side is case-folded, matching `own.ts` and `github-repo.ts`:
+  // GitHub resolves repository names case-insensitively, so a denial written
+  // in one case must catch every spelling of the same repository. The bundle
+  // name is matched as written — an npm name is a distinct string — and a
+  // mistyped name denial is caught by the matched-nothing report line instead
+  // (E-5, Task 17).
+  const denial = config.deniedRepos.get(candidate.repo.toLowerCase())
+    ?? config.denied.get(candidate.name)
   if (denial !== undefined) {
     const suffix = denial.replacement === undefined ? '' : ` Known replacement: ${denial.replacement}.`
     return reject(unit, 'denied', `Denied by the registry: ${denial.reason}${suffix}`, denial.replacement)
@@ -71,16 +79,31 @@ export function gateRepo(
 
 
   if (!candidate.hasBundle) {
-    return reject(unit, 'no-bundle',
-      'Declares no dsh.bundle in its package.json, so dsh installs it as a plain dependency, not a plugin.')
+    // Same code either way — the repository is not installable as a plugin —
+    // but the detail has to name the file the author can act on. A monorepo
+    // root whose subpackage is the plugin was being told to edit the root
+    // manifest (hub-borrowings §A, audit B-7).
+    const probed = candidate.probedSubpackages ?? 0
+    return reject(unit, 'no-bundle', probed > 0
+      ? `Declares no dsh.bundle in its package.json, and ${probed} subpackage manifest(s) were probed — none of them declares dsh.bundle either, so dsh would install this repository as a plain dependency, not a plugin. Declare dsh.bundle in the subpackage that IS the plugin.`
+      : 'Declares no dsh.bundle in its package.json, so dsh installs it as a plain dependency, not a plugin.')
   }
   if (candidate.requiresBuild && candidate.release === undefined) {
     return reject(unit, 'requires-build',
       'Declares a prepare/prepack build script, which a git install requires and pnpm blocks by default; the shop never enables build scripts, so the repository could not install. Publish to npm, or drop the script, and it can be listed.')
   }
-  if (candidate.hasWorkspaceDeps) {
+  // Only for a GIT install, which is what the reason describes. A
+  // release-rescued entry installs the release tarball, and `pnpm pack`
+  // rewrites `workspace:` specifiers into resolved ranges when it builds one
+  // (reproduced, audit B-11) — so this rejection would have named a failure
+  // mode that entry cannot have. Symmetric with the `requires-build` rule
+  // directly above: the rescue answers exactly the objections that are about
+  // installing from git. An unpublished sibling remains an honest
+  // install-time failure the executor reports verbatim, as the github-channel
+  // design §4 already accepts for transitive postinstall scripts.
+  if (candidate.hasWorkspaceDeps && candidate.release === undefined) {
     return reject(unit, 'workspace-deps',
-      'Declares workspace:-protocol dependencies, which resolve only inside the repository\'s own workspace; a git install from outside it cannot succeed. Publish the package to npm, or drop the workspace: specifiers, and it can be listed.')
+      'Declares workspace:-protocol dependencies, which resolve only inside the repository\'s own workspace; a git install from outside it cannot succeed. Publish the package to npm, attach a packed release tarball, or drop the workspace: specifiers, and it can be listed.')
   }
   if (candidate.license === null || candidate.license === '') {
     return reject(unit, 'no-license', 'The repository declares no license.')
@@ -126,16 +149,42 @@ export function gateRepo(
 
   // The typosquatting hold probes the slug (without the owner, whose prefix
   // would drown any distance) AND the bundle name: either can impersonate a
-  // verified package. Unlike the npm gate — where an exact name IS the same
-  // identity — an exact match here is a DIFFERENT identity claiming a
+  // verified package. Unlike the npm gate — where an exact npm name IS the
+  // same identity — an exact match here is a DIFFERENT identity claiming a
   // verified name, the most dangerous lookalike there is, so edits === 0
-  // holds too. `allowed-similar.yml` is the human escape for a legitimate
-  // source (e.g. the verified package's own repository).
+  // holds too.
+  //
+  // The probe set is `verifiedNames`, never `verified.keys()`: since a github
+  // review is keyed by its repository, a key is `owner/slug` and a Levenshtein
+  // distance from a slug to it is meaningless — the owner prefix drowns it,
+  // and the hold silently stopped holding anything a github review covered.
+  //
+  // Two exits, and only two:
+  //
+  // 1. The repository the review itself names. A review binds (repo, commit),
+  //    so this identity is the reviewed one and cannot be impersonating
+  //    itself — without this exemption a `verified.yml` row for
+  //    `someone/dsh-repo-plugin` rejected that repository with "Exactly
+  //    matches the verified package dsh-repo-plugin" and the pipeline listed
+  //    nothing (B-2). Every OTHER repository carrying the bundle name is
+  //    still held, which is what stops the fork (B-3).
+  // 2. `allowed-similar.yml`, by `owner/slug` ONLY. A bundle-name clearance
+  //    cleared every repository using the name at once, and 83 live bundle
+  //    names are claimed by both a fork and an original (A-4). Clearing a
+  //    repo clears its subpackages with it: the review and the clearance are
+  //    both statements about a source, and the subdirectory does not change
+  //    who publishes it.
+  const repoKey = candidate.repo.toLowerCase()
   const slug = candidate.repo.split('/')[1] ?? candidate.repo
-  if (!config.allowedSimilar.has(candidate.repo) && !config.allowedSimilar.has(candidate.name)) {
-    for (const verifiedName of config.verified.keys()) {
-      for (const probe of [slug, candidate.name]) {
-        const edits = distance(probe, verifiedName)
+  if (!config.verified.has(repoKey) && !config.allowedSimilarRepos.has(repoKey)) {
+    for (const verifiedName of config.verifiedNames) {
+      // Folded on both sides: a repository whose manifest name is
+      // `DSH-FS-TOOL` sat nine edits — one per changed letter — from verified
+      // `dsh-fs-tool` and sailed past a threshold of 2. The detail still
+      // quotes the verified name as the reviewer wrote it.
+      const target = verifiedName.toLowerCase()
+      for (const probe of [slug.toLowerCase(), candidate.name.toLowerCase()]) {
+        const edits = distance(probe, target)
         if (edits > SIMILARITY_THRESHOLD) continue
         return reject(unit, 'name-too-similar',
           edits === 0

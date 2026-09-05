@@ -11,18 +11,19 @@ import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import { ownPeerRanges, ownVersion } from '../own-version.ts'
 import { catalogOrigins, loadCatalog, type LoadCatalogOptions } from './catalog.ts'
-import type { CatalogSnapshot } from './catalog.ts'
+import type { CatalogResult, CatalogSnapshot } from './catalog.ts'
 import type { CatalogOrigin } from './origin.ts'
 import { npmrcRegistry } from './npmrc.ts'
 import type { CatalogEntry, DeniedEntry } from './types.ts'
 import { validateInstall, type InstallArgs, type InstallRejectionCode } from './install.ts'
 import { startInstall, startUninstall, type InstallStatus } from './executor.ts'
 import { cleanHotDir, hotMount, hotUnmount } from './hot.ts'
-import { startRestart, type RestartOutcome } from './restart.ts'
+import { restartCommand, startRestart, type RestartOutcome } from './restart.ts'
 import { fetchLatestVersion } from './self-update.ts'
 import { detectSupervisor } from './supervisor.ts'
 import { readRepoPins, writeRepoPins, type RepoPinFs } from './repo-pins.ts'
 import { discoverProfile, ownedEntryIds, ownsEntryId, setUserLayerRow, setUserLayerRows } from './profile.ts'
+import { identityKey, installedSpecMatches } from '../shared/identity.ts'
 import {
   createPeerVersionCheck,
   incompatibilityMap,
@@ -85,6 +86,9 @@ export interface ShopGatewayOptions {
   /** The dsh argv this process was launched with, for `shop/restart`;
    * defaults to the real `process.argv` minus node and the script path. */
   restartArgv?: string[]
+  /** The JS entry `shop/restart` re-runs; defaults to `process.argv[1]`, the
+   * script this dsh was started with. */
+  restartScript?: string
   /** Test-only injection: the exit the restart calls after the response is
    * delivered. Production uses `process.exit`. */
   exit?: (code?: number) => void
@@ -167,13 +171,20 @@ export type ShopUpdateResult =
   | { ok: true; installId: string }
   | { ok: false; detail: string }
 
-/** `shop/installed` entry (§7.3): one installed catalog plugin. `installed`
- * is the profile manifest's dependency spec verbatim (a range, a tag, or
- * `workspace:*`) — for a github entry it is the pinned commit the shop
- * installed, falling back to the `github:owner/slug` spec when the pin is
- * unknown; `outdated` is the Host's verdict that the installed version sits
- * behind the catalog's — the client never does version math. */
-export interface ShopInstalledEntry { name: string; installed: string; latest: string; outdated: boolean; enabled: boolean }
+/** `shop/installed` entry (§7.3): one installed catalog plugin. The identity
+ * fields distinguish same-named npm and GitHub rows; `installed` remains the
+ * manifest spec or the recorded GitHub pin, and the client never does version
+ * math. */
+export interface ShopInstalledEntry {
+  name: string
+  source: 'npm' | 'github'
+  repo?: string
+  subdir?: string
+  installed: string
+  latest: string
+  outdated: boolean
+  enabled: boolean
+}
 
 /** One row of the row config the bundle patch (§cordis.patch.yml) supplies. */
 interface ShopRowConfig {
@@ -256,9 +267,10 @@ export interface ShopCatalogResult {
   /** GitHub star counts by package name; {} when the pointer names no sidecar
    * or the sidecar could not be fetched/verified (§5). */
   stars: Record<string, number>
-  /** Package name → the declared peers this installation does not provide
-   * (design 2026-09-01). A name is absent when the plugin runs here or when
-   * no verdict could be formed; the client renders nothing for both. */
+  /** Install identity (`npm:<name>` / `github:<repo>#<subdir>`) → the declared
+   * peers this installation does not provide. A key is absent when the plugin
+   * runs here or when no verdict could be formed; same-named entries stay
+   * independent. */
   incompatible: Record<string, string[]>
 }
 
@@ -278,6 +290,8 @@ export class ShopGateway extends TypertRemoteService {
   /** The argv `shop/restart` re-spawns: the real process argv minus node and
    * the CLI script path, or a test-provided substitute. */
   private readonly restartArgv: string[]
+  /** The script the restart re-runs — this process's own entry. */
+  private readonly restartScript: string | undefined
   /** The exit the restart calls once the response is out; `process.exit` in
    * production, a spy in tests. */
   private readonly exit: (code?: number) => void
@@ -309,9 +323,14 @@ export class ShopGateway extends TypertRemoteService {
   /** The install gate runs against the last loaded snapshot, never a fresh
    * fetch per request (§7.2: the Host's cached snapshot is the truth). */
   private lastSnapshot: CatalogSnapshot | null = null
+  /** A cold-cache catalog load shared by concurrent RPC calls. */
+  private inFlightLoad: Promise<CatalogResult> | null = null
   /** The origin list built for the last-seen `catalogUrl`, memoised so the
    * user's npmrc is read at most once per gateway (see `originsFor`). */
   private originCache: { catalogUrl: string; origins: CatalogOrigin[] } | null = null
+  /** The user's own `registry=` from `~/.npmrc`, read at most once per
+   * gateway. A wrapper distinguishes a genuine `null` from an unread value. */
+  private npmRegistryCache: { value: string | null } | null = null
   /** The incompatibility map already computed for `lastSnapshot`, keyed by
    * that snapshot's own object identity. Design §3 asks for the verdict
    * once per loaded snapshot, not once per RPC call: `loadCatalog` serves
@@ -337,10 +356,11 @@ export class ShopGateway extends TypertRemoteService {
     this.loaderEntriesInjected = options.loaderEntries
     this.dshBin = options.dshBin ?? 'dsh'
     this.restartArgv = options.restartArgv ?? process.argv.slice(2)
+    this.restartScript = options.restartScript ?? process.argv[1]
     this.exit = options.exit ?? ((code?: number) => process.exit(code))
     this.restartExitDelayMs = options.restartExitDelayMs ?? ShopGateway.RESTART_EXIT_DELAY_MS
     this.restartParentPid = options.restartParentPid ?? process.pid
-    this.latestVersion = options.fetchLatestVersion ?? (() => fetchLatestVersion())
+    this.latestVersion = options.fetchLatestVersion ?? (() => fetchLatestVersion(fetch, { registry: this.npmRegistry() }))
     this.pinFs = options.pinFs ?? {
       exists: path => existsSync(path),
       read: path => readFileSync(path, 'utf8'),
@@ -580,12 +600,12 @@ export class ShopGateway extends TypertRemoteService {
     return { catalogUrl, cacheDir }
   }
 
-  /** The origins to race for this row's catalog. Read once per gateway: the
-   * user's npmrc does not change under a running dsh, and re-reading it on
-   * every catalog call would put a filesystem read on the hot path. */
-  private originsFor(catalogUrl: string): CatalogOrigin[] {
-    if (this.originCache?.catalogUrl === catalogUrl) return this.originCache.origins
-    const registry = npmrcRegistry(path => {
+  /** The user's own registry, read once. The self-update check and catalog
+   * race share this preference so neither path repeatedly touches ~/.npmrc. */
+  private npmRegistry(): string | null {
+    const cached = this.npmRegistryCache
+    if (cached !== null) return cached.value
+    const value = npmrcRegistry(path => {
       try {
         return readFileSync(path, 'utf8')
       } catch {
@@ -594,9 +614,44 @@ export class ShopGateway extends TypertRemoteService {
         return null
       }
     }, homedir())
-    const origins = catalogOrigins(catalogUrl, fetch, registry)
+    this.npmRegistryCache = { value }
+    return value
+  }
+
+  /** The origins to race for this row's catalog. Read once per gateway: the
+   * user's npmrc does not change under a running dsh, and re-reading it on
+   * every catalog call would put a filesystem read on the hot path. */
+  private originsFor(catalogUrl: string): CatalogOrigin[] {
+    if (this.originCache?.catalogUrl === catalogUrl) return this.originCache.origins
+    const origins = catalogOrigins(catalogUrl, fetch, this.npmRegistry())
     this.originCache = { catalogUrl, origins }
     return origins
+  }
+
+  /** Join an in-flight load; refresh requests always start a new load. */
+  private loadCatalogOnce(refresh: boolean): Promise<CatalogResult> {
+    const existing = this.inFlightLoad
+    if (!refresh && existing !== null) return existing
+    const { catalogUrl, cacheDir } = this.rowConfig()
+    const load = this.options.loadCatalog ?? loadCatalog
+    const started = load({ origins: this.originsFor(catalogUrl), cacheDir, refresh })
+      .then(result => {
+        this.lastSnapshot = result.snapshot
+        return result
+      })
+    this.inFlightLoad = started
+    const forget = (): void => {
+      if (this.inFlightLoad === started) this.inFlightLoad = null
+    }
+    started.then(forget, forget)
+    return started
+  }
+
+  /** Return the current snapshot, loading it once when needed. */
+  private async snapshotNow(): Promise<CatalogSnapshot> {
+    if (this.lastSnapshot !== null) return this.lastSnapshot
+    const { snapshot } = await this.loadCatalogOnce(false)
+    return snapshot
   }
 
   /** The explicit restart override. Only the row's `config:` sub-object is
@@ -621,10 +676,7 @@ export class ShopGateway extends TypertRemoteService {
   /** Browse the catalog (§7.3): cached snapshot, refreshed on demand. */
   @Remote('catalog')
   async catalog(args?: { refresh?: boolean }): Promise<ShopCatalogResult> {
-    const { catalogUrl, cacheDir } = this.rowConfig()
-    const load = this.options.loadCatalog ?? loadCatalog
-    const { snapshot, stale } = await load({ origins: this.originsFor(catalogUrl), cacheDir, refresh: args?.refresh ?? false })
-    this.lastSnapshot = snapshot
+    const { snapshot, stale } = await this.loadCatalogOnce(args?.refresh ?? false)
     let incompatible: Record<string, string[]>
     if (this.incompatibleCache !== null && this.incompatibleCache.snapshot === snapshot) {
       incompatible = this.incompatibleCache.map
@@ -672,18 +724,12 @@ export class ShopGateway extends TypertRemoteService {
   // this on the real composition (§7.3 amendment, 2026-08-25).
   @Remote('installStart')
   async install(args: InstallArgs): Promise<ShopInstallResult> {
-    if (this.lastSnapshot === null) {
-      const { catalogUrl, cacheDir } = this.rowConfig()
-      const load = this.options.loadCatalog ?? loadCatalog
-      const { snapshot } = await load({ origins: this.originsFor(catalogUrl), cacheDir })
-      this.lastSnapshot = snapshot
-    }
-    const verdict = validateInstall(this.lastSnapshot, args)
+    const snapshot = await this.snapshotNow()
+    const verdict = validateInstall(snapshot, args)
     if (!verdict.ok) return { ok: false, code: verdict.code, detail: verdict.detail }
-    const entry = this.lastSnapshot.entries.find(e => e.name === args.name)
-    // validateInstall passed, so the entry exists; the guard keeps the type
-    // honest without asserting a state the validator never produces.
-    if (entry === undefined) return { ok: false, code: 'not-in-catalog', detail: `dsh-plugin-shop: ${args.name} is not in the catalog` }
+    // The validator resolved the row by identity. Re-finding it by name is
+    // what installed another repository's commit when names collided.
+    const entry = verdict.entry
     // The Host builds the spec itself: npm entries become `name@version`,
     // github entries become `github:owner/slug#commit` (subpackage entries
     // `github:owner/slug#commit&path:<subdir>`) — all from fields the
@@ -772,7 +818,7 @@ export class ShopGateway extends TypertRemoteService {
       // outdated honestly. A failed install leaves a pin behind, but the
       // manifest presence gate keeps it invisible.
       const pins = readRepoPins(this.pinFs, this.pinsPath())
-      writeRepoPins(this.pinFs, this.pinsPath(), { ...pins, [args.name]: args.version })
+      writeRepoPins(this.pinFs, this.pinsPath(), { ...pins, [identityKey(entry)]: entry.version })
     }
     this.installs.set(running.installId, running)
     this.installOrder.push(running.installId)
@@ -793,6 +839,14 @@ export class ShopGateway extends TypertRemoteService {
     for (const id of finishedIds.slice(0, excess)) this.installs.delete(id)
   }
 
+  /** Whether any command this gateway started is still running. */
+  private hasRunningCommand(): boolean {
+    for (const record of this.installs.values()) {
+      if (record.status().state === 'running') return true
+    }
+    return false
+  }
+
   /** Poll one install's progress (§7.2); unknown ids report `found: false`. */
   @Remote('installStatus')
   installStatus(args: { installId: string }): ShopInstallStatusResult {
@@ -807,12 +861,7 @@ export class ShopGateway extends TypertRemoteService {
    * from this one list. */
   @Remote('installed')
   async installed(): Promise<ShopInstalledEntry[]> {
-    if (this.lastSnapshot === null) {
-      const { catalogUrl, cacheDir } = this.rowConfig()
-      const load = this.options.loadCatalog ?? loadCatalog
-      const { snapshot } = await load({ origins: this.originsFor(catalogUrl), cacheDir })
-      this.lastSnapshot = snapshot
-    }
+    const snapshot = await this.snapshotNow()
     const manifest = readProfileManifest('dsh-plugin-shop', this.profileDirResolved())
     const dependencies = manifest.dependencies ?? {}
     const pins = readRepoPins(this.pinFs, this.pinsPath())
@@ -847,17 +896,22 @@ export class ShopGateway extends TypertRemoteService {
       return present.length === 0 || present.every(([, enabled]) => enabled)
     }
     const installed: ShopInstalledEntry[] = []
-    for (const entry of this.lastSnapshot.entries) {
+    for (const entry of snapshot.entries) {
       const spec = dependencies[entry.name]
       if (spec === undefined) continue
+      // A profile has one dependency per name, so the spec is the only way
+      // to choose among same-named catalog entries.
+      if (!installedSpecMatches(entry, spec)) continue
+      const identity = { source: entry.source, repo: entry.repo, subdir: entry.subdir }
       if (entry.source === 'github') {
         // The manifest spec is `github:owner/slug` — no commit. The pin the
         // shop recorded at install time is the commit truth; without one the
         // entry was installed by other means and reads as current rather
         // than killing the RPC over an unknowable comparison.
-        const pin = pins[entry.name]
+        const pin = pins[identityKey(entry)] ?? pins[entry.name]
         installed.push({
           name: entry.name,
+          ...identity,
           installed: pin ?? spec,
           latest: entry.version,
           outdated: pin !== undefined && pin !== entry.version,
@@ -866,6 +920,7 @@ export class ShopGateway extends TypertRemoteService {
       } else {
         installed.push({
           name: entry.name,
+          ...identity,
           installed: spec,
           latest: entry.version,
           outdated: this.isBehind(spec, entry.version),
@@ -899,20 +954,21 @@ export class ShopGateway extends TypertRemoteService {
    * itself). The same install records/polling serve the client. */
   @Remote('uninstallStart')
   async uninstall(args: { name: string }): Promise<ShopUninstallResult> {
-    if (this.lastSnapshot === null) {
-      const { catalogUrl, cacheDir } = this.rowConfig()
-      const load = this.options.loadCatalog ?? loadCatalog
-      const { snapshot } = await load({ origins: this.originsFor(catalogUrl), cacheDir })
-      this.lastSnapshot = snapshot
-    }
-    if (!this.lastSnapshot.entries.some(entry => entry.name === args.name)) {
+    const snapshot = await this.snapshotNow()
+    const named = snapshot.entries.filter(entry => entry.name === args.name)
+    if (named.length === 0) {
       return { ok: false, detail: `dsh-plugin-shop: ${args.name} is not in the catalog` }
     }
     const manifest = readProfileManifest('dsh-plugin-shop', this.profileDirResolved())
     const dependencies = manifest.dependencies ?? {}
-    if (dependencies[args.name] === undefined) {
+    const spec = dependencies[args.name]
+    if (spec === undefined) {
       return { ok: false, detail: `dsh-plugin-shop: ${args.name} is not installed` }
     }
+    // The dependency is removed by name, but the matching row tells us which
+    // identity pin to forget. If no row matches, still allow removal: revoking
+    // a dependency is safer than trapping it behind an unrecognised spec.
+    const installedEntry = named.find(entry => installedSpecMatches(entry, spec))
     // Resolve the entry ids while the package is still on disk: `afterDone`
     // runs after the uninstall removed it, and its bundle patch with it.
     // Best-effort for the same reason as the update path: a package with an
@@ -940,8 +996,14 @@ export class ShopGateway extends TypertRemoteService {
     // Forget the commit pin alongside the dependency; a stale pin would
     // otherwise outlive the uninstall in the shop's cache.
     const pins = readRepoPins(this.pinFs, this.pinsPath())
-    if (pins[args.name] !== undefined) {
-      delete pins[args.name]
+    const stalePins = [args.name, ...(installedEntry === undefined ? [] : [identityKey(installedEntry)])]
+    let forgot = false
+    for (const key of stalePins) {
+      if (pins[key] === undefined) continue
+      delete pins[key]
+      forgot = true
+    }
+    if (forgot) {
       writeRepoPins(this.pinFs, this.pinsPath(), pins)
     }
     this.installs.set(running.installId, running)
@@ -957,6 +1019,16 @@ export class ShopGateway extends TypertRemoteService {
    * new server answers. Refusals are issued before anything is torn down. */
   @Remote('restart')
   async restart(): Promise<ShopRestartResult> {
+    // A running install owns the profile: `pnpm` may be rewriting its
+    // package.json, lockfile and node_modules. Exiting now would hand the
+    // takeover helper a half-written profile, so refuse before anything is
+    // torn down (F-5).
+    if (this.hasRunningCommand()) {
+      return {
+        ok: false,
+        detail: 'dsh-plugin-shop: an install is still running in this profile; a restart now would boot the new dsh against a half-written profile. Wait for it to finish and try again.',
+      }
+    }
     // The handoff helper is a POSIX shell one-liner (restart.ts) and there is
     // no `sh` on Windows. That spawn fails ASYNCHRONOUSLY, so committing here
     // would answer `ok: true`, exit this process, and leave nothing to take
@@ -983,9 +1055,16 @@ export class ShopGateway extends TypertRemoteService {
     }
     try {
       const { cacheDir } = this.rowConfig()
-      startRestart({
+      const { command, args } = restartCommand({
         dshBin: this.dshBin,
         argv: this.restartArgv,
+        execPath: process.execPath,
+        execArgv: process.execArgv,
+        script: this.restartScript,
+      })
+      startRestart({
+        command,
+        args,
         parentPid: this.restartParentPid,
         logFile: join(cacheDir, 'restart.log'),
         env: process.env,

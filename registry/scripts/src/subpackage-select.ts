@@ -53,15 +53,32 @@ export function hasWorkspaceDeps(manifest: unknown): boolean {
   return false
 }
 
-/** Convert one workspaces glob to an anchored regex. Supports the `*` forms
- * actually used in monorepo declarations; anything else matches nothing. */
+/**
+ * Convert one `workspaces` entry to a regex anchored at BOTH ends, matched
+ * against a subpackage directory path with no trailing slash.
+ *
+ * The end anchor is the fix: with only a start anchor, `packages/*` also
+ * matched `packages/a/lib0`, so seven nested manifests of one package filled
+ * the cap of 8 and the repository's real siblings were never probed.
+ *
+ * `*` matches one path segment, `**` matches one or more — the two forms
+ * monorepo declarations use. An entry with no `*` at all is a literal path
+ * and becomes its own exact matcher: `workspaces: ['packages/core']` is a
+ * real declaration, and dropping it left the repository with no matcher.
+ * Anything else (negations, brace expansion, `***`) yields null, and the
+ * caller falls back to the convention rather than probing nothing.
+ * @param glob - one raw workspaces entry.
+ * @returns the matcher, or null when the entry is not a form we support.
+ */
 function globToRegex(glob: string): RegExp | null {
-  const escaped = glob
-    .split('*')
-    .map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-    .join('[^/]+')
-  if (!/^\.?\/?[^*]*\*[^*]*$/.test(glob)) return null
-  return new RegExp(`^${escaped.replace(/^\.\//, '')}`)
+  const cleaned = glob.replace(/^\.?\//, '').replace(/\/+$/, '')
+  if (cleaned === '') return null
+  if (cleaned.includes('***') || /[?![\]{}()!]/.test(cleaned)) return null
+  const pattern = cleaned
+    .split(/(\*\*|\*)/)
+    .map(part => (part === '**' ? '.+' : part === '*' ? '[^/]+' : part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+    .join('')
+  return new RegExp(`^${pattern}$`)
 }
 
 /** The convention fallback when no workspaces declaration exists. */
@@ -89,15 +106,22 @@ export function selectSubpackagePaths(rootManifest: unknown, treePaths: string[]
     : {}) as { workspaces?: unknown }
   let globs: string[]
   if (Array.isArray(m.workspaces)) {
-    globs = m.workspaces.filter((entry): entry is string => typeof entry === 'string' && entry.includes('*'))
+    globs = m.workspaces.filter((entry): entry is string => typeof entry === 'string' && entry !== '')
   } else if (typeof m.workspaces === 'object' && m.workspaces !== null && Array.isArray((m.workspaces as { packages?: unknown }).packages)) {
     const packages = (m.workspaces as { packages: unknown[] }).packages
-    globs = packages.filter((entry): entry is string => typeof entry === 'string' && entry.includes('*'))
+    globs = packages.filter((entry): entry is string => typeof entry === 'string' && entry !== '')
   } else {
     globs = [CONVENTION_GLOB]
   }
   if (globs.length === 0) globs = [CONVENTION_GLOB]
-  const matchers = globs.map(globToRegex).filter((r): r is RegExp => r !== null)
+  let matchers = globs.map(globToRegex).filter((r): r is RegExp => r !== null)
+  if (matchers.length === 0) {
+    // Every declared entry was a form we do not support. Probing nothing
+    // would report the repository `no-bundle` with no probe having happened;
+    // the convention is a better guess than silence.
+    const fallback = globToRegex(CONVENTION_GLOB)
+    matchers = fallback === null ? [] : [fallback]
+  }
 
   const dirs = new Set<string>()
   for (const path of treePaths) {
@@ -105,7 +129,10 @@ export function selectSubpackagePaths(rootManifest: unknown, treePaths: string[]
     const dir = path.slice(0, -'/package.json'.length)
     if (dir === '') continue // the root's own manifest is never a subpackage
     if (EXCLUDED_DIRS.test(dir)) continue
-    if (!matchers.some(regex => regex.test(`${dir}/`))) continue
+    // Matched against the directory itself, with both anchors: matching
+    // `${dir}/` against a start-anchored regex is what let a nested manifest
+    // satisfy its parent's glob.
+    if (!matchers.some(regex => regex.test(dir))) continue
     dirs.add(dir)
   }
   return [...dirs].sort().slice(0, MAX_SUBPACKAGES)

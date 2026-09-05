@@ -17,6 +17,7 @@
 import { execFileSync } from 'node:child_process'
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
+import { npmArtifactNames } from './pages-artifacts.ts'
 import { withTimeout } from './npm-client.ts'
 import {
   catalogPackageFiles,
@@ -135,8 +136,10 @@ if (basename(process.argv[1] ?? '') === 'publish-catalog.ts') {
   writeFileSync(join(PKG_DIR, 'package.json'), files.packageJson)
   writeFileSync(join(PKG_DIR, 'index.js'), files.indexJs)
   writeFileSync(join(PKG_DIR, 'README.md'), files.readme)
-  // Copied, never regenerated: these are the bytes Pages serves.
-  for (const name of ['index.json', pointer.plugins.url, ...(pointer.stars === undefined ? [] : [pointer.stars.url])]) {
+  // Copied, never regenerated: these are the bytes Pages serves. The list
+  // itself lives in pages-artifacts.ts beside the Pages one, so the single
+  // file the two transports differ by is stated rather than coincidental.
+  for (const name of npmArtifactNames(pointer)) {
     copyFileSync(join(OUT_DIR, name), join(PKG_DIR, 'v1', name))
   }
 

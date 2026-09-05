@@ -23,24 +23,24 @@ const resolve = (spec: string): boolean => present.has(spec)
 describe('incompatibilityMap', () => {
   it('names the peers that did not resolve', () => {
     const map = incompatibilityMap(
-      [{ name: 'dsh-timeline', peers: ['@deepseek-ai/cordis', '@deepseek-ai/dsh-client-store', 'react'] }],
+      [{ source: 'npm', name: 'dsh-timeline', peers: ['@deepseek-ai/cordis', '@deepseek-ai/dsh-client-store', 'react'] }],
       resolve,
     )
-    expect(map).toEqual({ 'dsh-timeline': ['@deepseek-ai/dsh-client-store'] })
+    expect(map).toEqual({ 'npm:dsh-timeline': ['@deepseek-ai/dsh-client-store'] })
   })
 
   it('omits an entry whose peers all resolve', () => {
-    expect(incompatibilityMap([{ name: 'ok', peers: ['react'] }], resolve)).toEqual({})
+    expect(incompatibilityMap([{ source: 'npm', name: 'ok', peers: ['react'] }], resolve)).toEqual({})
   })
 
   it('omits an entry that declares no peers', () => {
-    expect(incompatibilityMap([{ name: 'bare' }], resolve)).toEqual({})
+    expect(incompatibilityMap([{ source: 'npm', name: 'bare' }], resolve)).toEqual({})
   })
 
   it('reports a missing peer that is not a harness package', () => {
     // No name pattern: the check is uniform, so a missing `temml` is reported
     // exactly like a missing @deepseek-ai module.
-    expect(incompatibilityMap([{ name: 'x', peers: ['temml'] }], resolve)).toEqual({ x: ['temml'] })
+    expect(incompatibilityMap([{ source: 'npm', name: 'x', peers: ['temml'] }], resolve)).toEqual({ 'npm:x': ['temml'] })
   })
 
   it('resolves each distinct name once however many entries share it', () => {
@@ -48,9 +48,9 @@ describe('incompatibilityMap', () => {
     const counting = (spec: string): boolean => { calls += 1; return present.has(spec) }
     incompatibilityMap(
       [
-        { name: 'a', peers: ['@deepseek-ai/cordis', 'react'] },
-        { name: 'b', peers: ['@deepseek-ai/cordis', 'react'] },
-        { name: 'c', peers: ['@deepseek-ai/cordis'] },
+        { source: 'npm', name: 'a', peers: ['@deepseek-ai/cordis', 'react'] },
+        { source: 'npm', name: 'b', peers: ['@deepseek-ai/cordis', 'react'] },
+        { source: 'npm', name: 'c', peers: ['@deepseek-ai/cordis'] },
       ],
       counting,
     )
@@ -61,7 +61,7 @@ describe('incompatibilityMap', () => {
     // Silence, never a false alarm: an unavailable fact must not read as an
     // accusation against a plugin that may be perfectly fine.
     const throwing = (): boolean => { throw new Error('anchor unavailable') }
-    expect(incompatibilityMap([{ name: 'x', peers: ['whatever'] }], throwing)).toEqual({})
+    expect(incompatibilityMap([{ source: 'npm', name: 'x', peers: ['whatever'] }], throwing)).toEqual({})
   })
 
   it('discards a partial missing list when a later peer throws', () => {
@@ -69,7 +69,7 @@ describe('incompatibilityMap', () => {
       if (spec === 'react') return false
       throw new Error('anchor unavailable')
     }
-    expect(incompatibilityMap([{ name: 'x', peers: ['react', 'whatever'] }], flaky)).toEqual({})
+    expect(incompatibilityMap([{ source: 'npm', name: 'x', peers: ['react', 'whatever'] }], flaky)).toEqual({})
   })
 
   it('when a shared peer throws, both entries get no verdict and it is resolved once', () => {
@@ -82,14 +82,39 @@ describe('incompatibilityMap', () => {
 
     const map = incompatibilityMap(
       [
-        { name: 'a', peers: ['react', 'throwing-peer'] },
-        { name: 'b', peers: ['throwing-peer', 'react'] },
+        { source: 'npm', name: 'a', peers: ['react', 'throwing-peer'] },
+        { source: 'npm', name: 'b', peers: ['throwing-peer', 'react'] },
       ],
       mockResolve,
     )
 
     expect(map).toEqual({}) // both entries get no verdict
     expect(calls).toBe(2) // 'react' once, 'throwing-peer' once
+  })
+})
+
+describe('incompatibilityMap identity (G-1)', () => {
+  it('keys each verdict by the entry identity, so same-named entries do not merge', () => {
+    const map = incompatibilityMap(
+      [
+        { source: 'github', name: 'dsh-foo', repo: 'alice/dsh-foo', peers: ['@deepseek-ai/dsh-client-store'] },
+        { source: 'github', name: 'dsh-foo', repo: 'bob/dsh-foo', peers: ['react'] },
+        { source: 'npm', name: 'dsh-foo', peers: ['temml'] },
+      ],
+      resolve,
+    )
+    expect(map).toEqual({
+      'github:alice/dsh-foo#': ['@deepseek-ai/dsh-client-store'],
+      'npm:dsh-foo': ['temml'],
+    })
+  })
+
+  it('keys a subpackage entry by its subdir', () => {
+    const map = incompatibilityMap(
+      [{ source: 'github', name: 'sub', repo: 'someone/mono', subdir: 'packages/a', peers: ['temml'] }],
+      resolve,
+    )
+    expect(map).toEqual({ 'github:someone/mono#packages/a': ['temml'] })
   })
 })
 
@@ -100,7 +125,7 @@ describe('nodeResolver', () => {
     expect(resolveHere('@deepseek-ai/dsh-client-store-that-does-not-exist')).toBe(false)
   })
 
-  it('throws when a package restricts ./package.json in its exports map', () => {
+  it('treats a package that restricts ./package.json as present', () => {
     const dir = mkdtempSync(join(tmpdir(), 'noderesolver-'))
     try {
       // Create a package with exports that do not list "./package.json"
@@ -119,10 +144,44 @@ describe('nodeResolver', () => {
 
       const resolveHere = nodeResolver(pathToFileURL(join(dir, 'anchor.js')).href)
 
-      // Must throw because ./package.json is not in exports, not silently
-      // return false. The error code is ERR_PACKAGE_PATH_NOT_EXPORTED, which
-      // incompatibilityMap's catch will turn into no-verdict.
-      expect(() => resolveHere('restricted-pkg')).toThrow()
+      // The directory was found; an exports restriction only hides the
+      // package.json subpath and does not mean the peer is absent.
+      expect(resolveHere('restricted-pkg')).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("keeps a genuinely missing sibling's verdict beside a restricted package", () => {
+    const dir = mkdtempSync(join(tmpdir(), 'noderesolver-pair-'))
+    try {
+      const pkgDir = join(dir, 'node_modules', 'restricted-pkg')
+      mkdirSync(pkgDir, { recursive: true })
+      writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({
+        name: 'restricted-pkg', version: '1.0.0', main: 'index.js', exports: { '.': './index.js' },
+      }))
+      writeFileSync(join(pkgDir, 'index.js'), '')
+
+      const resolveHere = nodeResolver(pathToFileURL(join(dir, 'anchor.js')).href)
+      expect(incompatibilityMap(
+        [{ source: 'npm', name: 'x', peers: ['restricted-pkg', 'definitely-missing-peer'] }],
+        resolveHere,
+      )).toEqual({ 'npm:x': ['definitely-missing-peer'] })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('still throws for a resolution failure that is neither of those', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'noderesolver-invalid-'))
+    try {
+      const pkgDir = join(dir, 'node_modules', 'invalid-pkg')
+      mkdirSync(pkgDir, { recursive: true })
+      writeFileSync(join(pkgDir, 'package.json'), '{not valid json')
+      const throwing = nodeResolver(pathToFileURL(join(dir, 'anchor.js')).href)
+      // A malformed package manifest is neither absent nor an exports
+      // restriction, so the resolver must keep surfacing the unknown failure.
+      expect(() => throwing('invalid-pkg')).toThrow()
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

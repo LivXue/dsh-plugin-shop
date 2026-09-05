@@ -152,6 +152,61 @@ export function diffRepoState(state: RepoState, seen: RepoSeen[]): { toFetch: Re
 }
 
 /**
+ * The published reason a recorded repository is no longer listed.
+ *
+ * It lives beside {@link diffRepoState}, which is what DECIDES a repo is gone.
+ * The detail is an author-readable published string — CLAUDE.md counts a
+ * misattributed one as a defect rather than a wording nit — so it belongs with
+ * the rule it describes rather than inlined in build.ts's shell, where nothing
+ * could test it and where it was the only rejection reason not minted by a
+ * pure module.
+ *
+ * `gone` means one thing only: neither harvest topic returned the repository.
+ * The old wording named three causes and left out the likeliest — the owner
+ * edited the topics. That repository still exists, is public and was never
+ * renamed, so all three published causes were false for it, and it is the only
+ * one of the four its author can act on: re-add the topic and the next build
+ * lists it again.
+ * @param topics - the harvest topics, passed in because this module is pure and
+ *   the list lives in the network module; restating it here would be a third copy.
+ */
+export function repoGoneDetail(topics: readonly string[]): string {
+  return `The topic search no longer returns this repository: its ${topics.join('/')} topic was removed, or the repository was deleted, renamed, or made private.`
+}
+
+/**
+ * The recorded repos whose failure record was written by the rule that
+ * labelled every non-ok manifest response `no-manifest` (audit D-3).
+ *
+ * They cannot be told apart from genuine 404s — the old code wrote the same
+ * code and the same detail for a 404, a 403, a 451 and a 503 — so the whole
+ * class is invalidated once and re-fetched under the corrected rule.
+ * Deleting the ENTRY, not just its `failure`, is what schedules the
+ * re-fetch: {@link diffRepoState} re-fetches a repo only when it is absent
+ * or its `pushed_at` moved, and a repo whose manifest fetch failed has
+ * neither.
+ * @param state - the recorded state.
+ * @param code - the failure code to invalidate.
+ * @param detail - the exact detail string the superseded rule wrote.
+ * @param limit - at most this many, in sorted order, so a large
+ *   invalidation can be paced across runs and every slice is deterministic
+ *   and disjoint from the last.
+ * @returns the repo full names to delete, sorted.
+ */
+export function staleFailureRepos(
+  state: RepoState,
+  code: 'no-manifest' | 'fetch-failed',
+  detail: string,
+  limit: number,
+): string[] {
+  return Object.entries(state)
+    .filter(([, entry]) => entry.failure?.code === code && entry.failure.detail === detail)
+    .map(([repo]) => repo)
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+    .slice(0, limit)
+}
+
+/**
  * Merge one run's results into the next state: fetched repos record their
  * fresh outcome (candidates or a failure); carried repos keep the recorded
  * one; gone repos drop.

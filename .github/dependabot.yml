@@ -1,0 +1,19 @@
+# SHA-pinned actions are only as current as whoever bumps them, so the pin
+# and this file are one decision: the pin removes the moving reference, and
+# the weekly PR restores the updates the moving reference used to deliver.
+# Dependabot rewrites both the SHA and the `# vX.Y.Z` comment beside it,
+# which is why the comment format is part of the convention.
+#
+# Actions only. The npm dependencies are governed by pnpm-lock.yaml and a
+# frozen-lockfile install, and bumping them is a release decision.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: 'ci'
+    # One PR per action, so CI judges each bump on its own. A batched PR that
+    # goes red says nothing about which of the bumps did it.
+    open-pull-requests-limit: 5

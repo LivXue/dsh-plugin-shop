@@ -53,6 +53,31 @@
 
 ### Task 1: Only a 404 is `no-manifest`
 
+> **Outcome: ALREADY DONE by plan A, more strongly than the steps below ask.
+> Do not apply Step 3 — it would be a regression.** Verified 2026-09-04 at
+> `github-client.ts:1102-1122`.
+>
+> Plan A narrowed the same branch, and where this task says "return
+> `fetch-failed`", plan A **throws**. That difference is the whole point: a
+> returned rejection is a verdict `harvestRepos` records, while a throw lands
+> in its catch, publishes a reason we wrote, records nothing so the next build
+> retries — and counts toward the systematic-failure bound, which counts
+> throws alone and so could never fire for a returned status. A pool-wide 403
+> is a broken harvest, not fourteen thousand bad repositories, and only the
+> throw can stop the build.
+>
+> Coverage is wider than the three cases below:
+> `describe('only a 404 is a verdict about the repository')` in
+> `github-client.test.ts` holds eight, including a single-repo 500, "records
+> nothing so the next run retries it", the pool-wide bound firing
+> (`40 of 40 repositories threw`), the genuine 404 still persisting, and the
+> tree and subpackage variants.
+>
+> Task 19 (D-10) is the note that exists because of this task: when the
+> narrowing stops a build, the answer is a lower `REPO_BACKFILL_BUDGET`, never
+> a widening back to a returned status.
+
+
 **Files:**
 - Modify: `registry/scripts/src/github-client.ts:523-527`
 - Test: `registry/scripts/tests/github-client.test.ts` (the `fetchRepoCandidate` describe, after line 144)
@@ -163,6 +188,14 @@ git commit -m "fix(harvest): only a 404 manifest response is no-manifest"
 ---
 
 ### Task 2: A `no-manifest` retires a stale candidate; a `fetch-failed` never touches the state
+
+> **Outcome: DONE.** Verified 2026-09-04 against the code, not from memory: the
+> `&& state[entry.repo] === undefined` clause is gone from `github-client.ts`,
+> so a `no-manifest` verdict now retires a stale candidate instead of being
+> ignored whenever the repository already had one, and `staleFailureRepos` in
+> `repo-state.ts` is what selects them. A `fetch-failed` still touches nothing:
+> it is a throw, `harvestRepos` records nothing for it, and the next build
+> retries.
 
 **Files:**
 - Modify: `registry/scripts/src/github-client.ts:640-655`
@@ -308,6 +341,19 @@ git commit -m "fix(harvest): a no-manifest retires the stale candidate it contra
 
 ### Task 3: Invalidate the 1,918 misattributed `no-manifest` records
 
+> **Outcome: DONE — 1,929 records, not the 1,918 this heading estimated.**
+> Commit `175b2a7`. The count is higher because the plan measured before plan
+> A's Task 1 narrowed `no-manifest` to a genuine 404.
+>
+> Verified now: `repo-state.json` holds 12,934 records, 8 still carry a
+> `failure`, and **zero** carry the superseded
+> "No package.json at the repository root" text that a blocked
+> `raw.githubusercontent.com` had written into the durable record of every
+> repository it could not reach. The pre-write dry run confirmed every selected
+> record had `code: 'no-manifest'`, that exact detail, and no candidates; the
+> diff was 17,361 deletions and 0 insertions — exactly 9.0 lines per record, so
+> nothing was reformatted.
+
 **Files:**
 - Modify: `registry/scripts/src/repo-state.ts` (add `staleFailureRepos` after `diffRepoState`, around line 114)
 - Modify: `registry/repo-state.json` (data; rewritten by the one-off script)
@@ -451,6 +497,49 @@ git commit -m "fix(harvest): invalidate the 1918 records the old manifest rule m
 ---
 
 ### Task 4: Page a window on the raw item count, honour `incomplete_results`, reconcile against the probe
+
+> **Outcome: all three findings were ALREADY FIXED by plan A, more strongly
+> than the steps below ask. Do not apply Step 3 — it would be a regression.**
+> Verified 2026-09-04 at `github-client.ts` (`searchPage`, `searchReposByTopic`).
+>
+> Every one of the three:
+>
+> 1. **Paging on the raw count.** `enumerated += metas.length + skipped`, and
+>    the loop never breaks on a short page at all — it stops on the total the
+>    API answered for that page, or on an empty one.
+> 2. **`incomplete_results`.** Read, and it **throws**.
+> 3. **Reconciliation against the probe.** `enumerated < probed` re-probes and
+>    throws, with `Math.min(probed, after)` absorbing a window that shrank
+>    mid-run.
+>
+> The difference is `incompleteWindows` versus a throw, and it is the same
+> difference as Task 1: this task would publish a catalog known to be short
+> and then suppress the consequence, while plan A stops the build. CLAUDE.md
+> is explicit — "A search that cannot enumerate its whole result set throws
+> rather than truncating" — and a failed build publishes nothing, so yesterday's
+> catalog stays live and the badge date stops advancing where a maintainer can
+> see it. **Task 5 is moot for the same reason**: a throw means `repo-state.json`
+> is never rewritten and no `repo-gone` is ever published, which is exactly what
+> Task 5 set out to guarantee.
+>
+> **What this task DID contribute, and what shipped instead:** re-reading the
+> two guards for this comparison found a hole plan A left, and a way its throw
+> was needlessly brittle. `searchPage` checked `incomplete_results`;
+> `probeTotal` did not — and the probe is the more dangerous half, because a
+> timed-out probe answers an UNDERCOUNTED `total_count`, which is the number the
+> partition splits on, the zero-window skip reads, and the coverage check
+> measures every enumeration against. A probe timing out to `0` skipped its
+> whole window in silence: the failing test for it recorded
+> `promise resolved "{ seen: [], metas: Map{}, …(1) }"` — the entire harvest
+> returning empty with no error anywhere. Separately, `incomplete_results` means
+> the query TIMED OUT, which is transient, so throwing on the first one failed
+> the whole daily build on one slow second at GitHub.
+>
+> Both are one change: `searchBody`, the single request-and-read step both
+> callers now use, which retries exactly once on a partial answer and throws
+> when it stays partial. Strictly stronger than plan A (the probe is now
+> covered) and strictly less brittle (a transient timeout no longer fails the
+> build), with the doctrine unchanged.
 
 **Files:**
 - Modify: `registry/scripts/src/github-client.ts:151-170` (`searchPage`) and `262-287` (`searchReposByTopic`)
@@ -751,6 +840,42 @@ git commit -m "fix(harvest): page on the raw item count and reconcile each windo
 
 ### Task 5: An incomplete enumeration reports nothing gone and loses nothing from the state
 
+> **Outcome: MOOT, and not implementable on its own.** Verified 2026-09-04.
+>
+> Every step here consumes Task 4's `incompleteWindows`, which the shipped code
+> never produces: plan A **throws** on an under-enumerated window instead. Under
+> that throw the build dies before `harvestRepos` returns, so
+> `repo-state.json` is never rewritten and no `repo-gone` is ever published —
+> which is precisely the guarantee this task set out to add. Implementing it
+> would mean first reverting plan A's throw to a report, i.e. applying the Task
+> 4 regression documented above; on its own it adds a `pruneGone` parameter
+> with no caller, an `incompleteWindows` field that is always `[]`, and a
+> `gone: []` branch nothing can reach.
+>
+> Its argument deserves recording, because it is not obviously wrong: a short
+> GitHub window costs the whole shelf a day, including a healthy npm half of
+> ~9,500 entries. Two things answer it. CLAUDE.md states the doctrine for both
+> halves — "A search that cannot enumerate its whole result set throws rather
+> than truncating" — and a failed build publishes nothing, so yesterday's
+> catalog stays live and the badge date stops advancing where a maintainer can
+> see it. And the frequency argument is weaker than when this was written: the
+> likeliest trigger, a transient `incomplete_results`, is now retried rather
+> than thrown (Task 4's note). **This is a policy choice, not a fact** — moving
+> to publish-short-and-report would be a coherent design, and it would start by
+> amending that CLAUDE.md sentence.
+>
+> **What this task DID contribute, and what shipped instead:** its premise —
+> that `repo-gone` is a published reason and emitting a false one is a defect —
+> holds independently of enumeration, and reading it that way found a live one.
+> The detail read *"The topic search no longer returns this repository (deleted,
+> renamed, or private)"*, naming three causes and omitting the likeliest: the
+> owner edited the repository's topics. That repository still exists, is public
+> and was never renamed, so all three published causes were false for it — and
+> it is the only one of the four its author can act on. The reason now also
+> names topic removal, and it moved out of `build.ts` into `repo-state.ts`
+> beside `diffRepoState`, the pure rule that decides a repo is gone: it was the
+> only rejection reason minted in the shell, where nothing could test it.
+
 **Files:**
 - Modify: `registry/scripts/src/repo-state.ts:116-148` (`nextRepoState`)
 - Modify: `registry/scripts/src/github-client.ts:582-605` (`RepoHarvestResult`) and `612-680` (`harvestRepos`)
@@ -1021,6 +1146,45 @@ git commit -m "fix(harvest): an incomplete enumeration prunes nothing and report
 
 ### Task 6: Catch the search body's parse, and cap every JSON body
 
+> **Outcome: first half ALREADY DONE by plan A; second half SHIPPED, but by
+> extracting the existing reader rather than writing the third copy this task
+> asks for.** Verified 2026-09-04.
+>
+> **Catching the search body's parse** is done: `npm-client.ts`'s own
+> `readSearchBody` names the keyword and the `from`, rethrows a
+> `FetchTimeoutError` untouched because a deadline is not a malformed body, and
+> separately refuses a body that parses but is not a search response (a bare
+> `null` satisfies the cast structurally). Its wording is `at from=0 ... not a
+> search response`, not this task's `page 0 ... unreadable`; an existing test
+> pins it, so the sentences below are stale and were not applied.
+>
+> **The caps were genuinely missing**, and the asymmetry was as described:
+> github-client capped every body it read while npm-client capped none, across
+> one packument per harvested name plus every search page — and
+> `fetchWithFailover` serves those from `NPM_BACKUP_REGISTRY`,
+> registry.npmmirror.com by default, whenever the primary throws, stalls or
+> 5xxs. `MAX_SEARCH_BODY_BYTES` (8 MB, throws) and `MAX_PACKUMENT_BYTES`
+> (16 MB, a `fetch-failed` row) shipped with the split consequence this task
+> argued for.
+>
+> **What changed from the plan:** Step 3 says to write `readJsonCapped` with
+> the "Same shape as `readTarballBody` in github-client.ts". That reader's own
+> doc comment is an argument against doing so: *"It is shared rather than
+> written twice because the two readers had already drifted apart in the way
+> that matters"* — one cancelled at the cap while the other bought the whole
+> body and then measured it. A third copy would repeat the mistake the comment
+> records. `readCappedBody` moved to `http-body.ts` instead and both clients
+> import it; `readJsonCapped` is a thin JSON wrapper over it. The plan's
+> content-length check survives as an early refusal only, never the
+> measurement — a compressed body's header understates what it decodes to,
+> which is the same reason the github reader counts bytes as they arrive.
+>
+> The guard test that enforces this got stronger rather than weaker: it was
+> anchored to `github-client.ts` and would have gone green the moment the
+> reader left that file, while npm-client — the module that had never capped
+> anything — was never scanned at all. It now scans every module that reads a
+> body. Both directions are mutation-checked.
+
 **Files:**
 - Modify: `registry/scripts/src/npm-client.ts` (new constants and `readJsonCapped` after `fetchWithRetry` at line 160; `searchByKeywords:301`; `fetchCandidate:342-349`)
 - Test: `registry/scripts/tests/npm-client.test.ts`
@@ -1280,6 +1444,16 @@ git commit -m "fix(npm): name the keyword on an unreadable search body and cap e
 
 ### Task 7: A malformed `REPO_BACKFILL_BUDGET` throws instead of harvesting nothing
 
+> **Outcome: DONE as written.** The defect was still live at `build.ts:137`,
+> and all three fail-open modes were reproduced before the fix: `slice(0, NaN)`
+> is `[]`, `Number('')` is `0`, and `slice(0, -1)` counts from the END — so a
+> negative budget fetched all-but-one rather than the one it looks like.
+>
+> One addition beyond the steps: the `2000` default became
+> `REPO_BACKFILL_BUDGET_DEFAULT`, exported beside the parser, so the shell
+> carries no bare policy literal. A sweep for the same pattern elsewhere found
+> no other numeric environment parse in `registry/scripts/src`.
+
 **Files:**
 - Modify: `registry/scripts/src/github-client.ts` (add `parseHarvestBudget` beside `RepoHarvestOptions`, after line 580)
 - Modify: `registry/scripts/src/build.ts:105`
@@ -1389,6 +1563,28 @@ git commit -m "fix(harvest): a malformed REPO_BACKFILL_BUDGET throws instead of 
 ---
 
 ### Task 8: The whole-harvest retry cannot change the harvest's shape
+
+> **Outcome: DONE, minus the Task 5 dependency.** The defect was live exactly
+> as described: `build.ts` re-called `harvestRepos` without
+> `probeSubpackages`, this module defaults it to `true`, and
+> `schemaVersion` kept following the env flag — so a retried harvest emitted
+> `subdir` entries under schemaVersion 3, which a v3 client ignores while
+> installing the monorepo root. Only the retry path could produce it, which is
+> why nothing ever saw it.
+>
+> `RepoHarvestResult.incompleteWindows` is NOT part of this: Task 5 is moot
+> (see its note). `retryAfterMs` and `firstAttemptError` shipped as specified.
+> The mutation that reintroduces the original defect — the retry rebuilding its
+> options without `probeSubpackages` — is checked, and the fixture reads the
+> option back off the retry through the git/trees probe, which fires if and only
+> if probing is on.
+>
+> One fixture correction worth recording: a 5xx does not drive this test.
+> `fetchRobust` retries a thrown request four times, so a 503 search is
+> absorbed WITHIN one harvest attempt and never reaches the whole-harvest
+> retry — the first version of the fixture passed against the unfixed code for
+> that reason. A non-ok status is returned rather than thrown, so a 404 raises
+> exactly once, which is what makes the attempt fail.
 
 **Files:**
 - Modify: `registry/scripts/src/github-client.ts:568-680` (options, result, and the split of `harvestRepos` into a retry wrapper over `harvestOnce`)
@@ -1618,6 +1814,27 @@ git commit -m "fix(harvest): the whole-harvest retry reuses one options object"
 ---
 
 ### Task 9: The stars sidecar is built from accepted entries by a pure serialiser
+
+> **Outcome: DONE, all three parts.** The waste was re-measured against the
+> live artifacts on 2026-09-04 rather than taken from this plan: of 16,879
+> sidecar keys, **7,624 (45%) are not catalog entries** — about 252 KB of the
+> 602 KB every reader downloads. (This plan said 7,553 of 16,714 and ~265 KB of
+> 596 KB; the catalog has grown since, and the figure tracks the ecosystem, so
+> re-measure rather than trusting either.)
+>
+> **One correction to the produced interface.** `selectEntries` takes `builtAt`
+> as a fourth parameter, which the plan's signature omits. It cannot be left
+> out: `added` is the date an identity first reached the catalog, so the tiering
+> needs the build date, and the alternative — reading a clock inside a pure
+> module — is the thing CLAUDE.md forbids. `build.ts`'s single clock read moved
+> above the stars step instead, so it is still read exactly once.
+>
+> **One extra fix, found while rewriting.** The tally was per-candidate while
+> the keys are per-repository, so a monorepo contributing three plugin
+> subpackages produced one key and a tally of three: the build note read
+> `1 starred (3 from the search, 0 from GraphQL)`, a line contradicting its own
+> count. Reproduced against the old function before changing it. Each key is
+> now tallied once.
 
 **Files:**
 - Modify: `registry/scripts/src/stars-assemble.ts` (add `assembleStarsForEntries`, `SerializedStars`, `serializeStars`)
@@ -2098,6 +2315,25 @@ git commit -m "fix(stars): key the sidecar by accepted entry and serialize it in
 
 ### Task 10: Report cells neutralise controls and bidi formatting
 
+> **Outcome: DONE as written.** Every affected code point is `\u` escape text
+> in both the source and the tests, and a check confirmed no raw control or
+> bidi character entered the repository — the tool refused the first attempt to
+> paste them, which is the reviewer-invisibility problem this task is about,
+> demonstrated.
+>
+> The "order is load-bearing" claim in the doc comment is mutation-checked:
+> swapping the newline collapse and the control strip turns a real line break
+> into U+FFFD and two tests go red, so the comment is a tested statement rather
+> than prose.
+>
+> **The client half is plan D's, not this task's** — a catalog `summary.en`
+> reaches a terminal UI the same way a report cell reaches a terminal.
+> `docs/plans/2026-09-03-audit-fix-d-host-client.md:440` has the consumer zod
+> refusing a `name` that carries a control character. Worth noting when that
+> task is reached: its regex is `[^\u0000-\u001f\u007f]+`, which covers C0
+> and DEL but not C1 or the bidi marks and isolates that this task found
+> necessary here, and it guards `name` rather than the summary text.
+
 **Files:**
 - Modify: `registry/scripts/src/emit.ts:67-79` (`escapeCell`)
 - Test: `registry/scripts/tests/emit.test.ts`
@@ -2233,6 +2469,26 @@ git commit -m "fix(report): strip controls and bidi formatting from table cells"
 ---
 
 ### Task 11: Pages gets a staged directory holding only the spec'd artifacts
+
+> **Outcome: DONE as written**, with the leak confirmed against the live site
+> on 2026-09-04 rather than taken on faith. All three answered 200:
+> `/v1/harvest.json` at **4,037,180 bytes**, `/v1/report.md` at **1,722,904**,
+> `/v1/classification-report.md` at 87 — beside a 486-byte `index.json`.
+>
+> The staging was simulated locally before committing: `dist/pages/` holds only
+> `v1/`, so the published URLs are unchanged, and `dist/pages/v1/` holds
+> exactly the four spec'd artifacts while the handoff and both reports stay in
+> `dist/v1` as run artifacts.
+>
+> **One addition.** `publish-catalog.ts` already staged its own directory from
+> scratch, as this task notes — but from a hardcoded list inline in the shell,
+> differing from the Pages set by exactly one file (`badge.json`, which is the
+> shields.io endpoint fetched over HTTP and never read out of the tarball).
+> Leaving one transport's publishable set untested while the other is pure is
+> the same asymmetry that let Pages publish 4 MB of hostile input for months,
+> so `npmArtifactNames` joined the module and the one-file difference is now
+> stated and tested instead of coincidental. The npm set is byte-identical to
+> what it published before.
 
 **Files:**
 - Create: `registry/scripts/src/pages-artifacts.ts`
@@ -2531,6 +2787,25 @@ git commit -m "fix(pages): publish only the spec'd artifacts from a staged direc
 
 ### Task 12: The pointer's cache window — name the fallback and its cost
 
+> **Outcome: DONE as written, with the verification run.** Measured
+> 2026-09-04: `cache-control: max-age=600` (so 600 and "ten minutes" both
+> stand as written), an `etag`, and a `plugins.<sha256>.json` the site was
+> never given answers 404.
+>
+> **One limit on the evidence, recorded rather than papered over.** No deploy
+> landed between the two probes, so a genuinely superseded generation was never
+> observed 404ing — the fabricated-hash 404 only proves Pages serves nothing
+> outside the generation it was uploaded. That the upload holds exactly one
+> generation is true by construction instead: CI checks out fresh, and Task
+> 11's staging is an `rmSync` followed by a copy of exactly the names the
+> pointer lists. The design amendment says this plainly rather than implying a
+> measurement that was not taken.
+>
+> The handover was checked, not assumed: plan D's origin task has the HTTP
+> data-file 404 falling through to the next origin
+> (`docs/plans/2026-09-03-audit-fix-d-host-client.md`, "it falls through to the
+> next origin").
+
 **Files:**
 - Modify: `docs/design/2026-09-01-catalog-mirrors.md` (a new subsection under §3, after "Origins may disagree" which ends at line 195)
 - Modify: `README.md:210-212` and the matching paragraph in `README.zh.md`
@@ -2668,6 +2943,26 @@ git commit -m "docs(mirrors): name the pointer cache window and the npm fallback
 ---
 
 ### Task 13: Pin every action to a commit SHA, and let Dependabot move them
+
+> **Outcome: DONE as written. All seven SHAs re-resolved on 2026-09-04 and the
+> table is correct, every entry.** 14 `uses:` lines across the two workflows,
+> one SHA per action.
+>
+> **A methodology note, because the first attempt at re-resolution was wrong.**
+> Reading the version off `matching-refs/tags/v4.` and taking the LAST entry is
+> lexicographic, not semver — `v4.4.0` sorts after `v4.10.0` as strings — and
+> it reported `pnpm/action-setup` as v4.3.0's plan entry being stale at v4.4.0.
+> Dereferencing every tag under the major and keeping the ones whose commit
+> equals the pin gives the real answer, and it matched the plan: v4.3.0.
+> `pnpm/action-setup@v4` points at v4.3.0 even though v4.4.0 exists — the
+> floating major LAGS, which is the moving-reference hazard from the other
+> direction and another reason not to depend on it.
+>
+> Each pin was then checked twice against upstream: the commit exists, and it
+> is exactly the commit its `# vX.Y.Z` comment claims. All three YAML files
+> were confirmed to parse, and no `@vN` reference remains anywhere. Four
+> mutations are checked: a floated pin, a stripped comment, two SHAs for one
+> action, and a missing Dependabot config.
 
 **Files:**
 - Modify: `.github/workflows/daily.yml:48-50, 89, 110, 122, 163-165, 169, 198`
@@ -2867,6 +3162,27 @@ git commit -m "chore(ci): pin every action to a commit SHA and enable Dependabot
 
 ### Task 14: The README-pin guard runs on the commits it exists for
 
+> **Outcome: DONE as written.** The premise was confirmed against both
+> workflows: `plugin.yml` ran only `pnpm -C packages/dsh-plugin-shop
+> test/typecheck/build`, and `daily.yml` filters on `registry/**` plus the
+> ROOT `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml` and its own
+> file — none of which a release commit touches. The two root READMEs matched
+> neither workflow, so a commit fixing only those triggered nothing at all.
+>
+> **Two corrections to the plan's text.** Its anchor for the new step quotes
+> `npm install -g @deepseek-ai/dsh@0.1.1-rc.2`, which has since moved to
+> `0.1.2-rc.1` (with a long comment about why); the real text was used. And the
+> step is not "three seconds": the root suite is 733 tests at about 8 s of
+> vitest duration and ~10.5 s wall, measured 2026-09-04, and the comment in the
+> workflow says that rather than the plan's figure.
+>
+> **One safety check the plan does not mention.** Root `pnpm test` is plain
+> `vitest run`, and the root config includes only
+> `registry/scripts/tests/**/*.test.ts` — so the new step cannot reach the
+> package e2e, which the `dsh` global install and `playwright install` steps
+> below it exist to set up. Had it been workspace-wide, this step would have
+> run the e2e before its own prerequisites. The workflow comment records it.
+
 **Files:**
 - Modify: `.github/workflows/plugin.yml:3-8` (the path filters) and `:22-23` (a root-suite step)
 - Test: `registry/scripts/tests/readme-pins.test.ts` (append)
@@ -2978,6 +3294,66 @@ git commit -m "ci(plugin): run the root suite and watch the root READMEs"
 
 ### Task 15: The build job holds no write credential while it processes hostile input
 
+> **Outcome: DONE, both halves.** Verified 2026-09-04.
+>
+> **This task was reopened after being deferred, and the order matters.** At
+> 12:36 UTC an outcome recorded here read *"Maintainer decision: do not pursue
+> the stronger write-credential split in this phase… no new PAT, secret, or
+> workflow job is required"*, and said the checklist below *"must not be
+> executed unless the maintainer explicitly reopens Task 15 with a replacement
+> authentication design."* At 12:54 UTC the maintainer created
+> `REGISTRY_PUSH_TOKEN` — a fine-grained PAT scoped to this repository with
+> `Contents: read and write` and nothing else — and directed the work to
+> continue. That is the explicit reopening the deferral asked for, so the
+> heading and outcome are restored to the stronger form.
+>
+> **Exposure that was there.** `permissions: contents: write` on the `build`
+> job plus a JOB-LEVEL `env:` exporting `NPM_TOKEN`, `LLM_API_KEY` and
+> `GITHUB_TOKEN` — all three in every step's environment, including
+> `pnpm install`'s, where a postinstall hook in any transitive dependency could
+> read them.
+>
+> **This task's stated mechanic does not work, and that changed the fix.** No
+> `actions/checkout` had a `with:` block, so `persist-credentials` defaulted to
+> true and the pushes authenticated via the credential git wrote into
+> `.git/config` — NOT via `$GITHUB_TOKEN`. A step-level `env:` cannot scope
+> that: every later step could read the file and push with it. So the change is
+> three parts, not one:
+>
+> 1. The job-level `env:` block is gone; each of the four secret-consuming
+>    steps declares its own.
+> 2. The build job's checkout takes `persist-credentials: false`, which is what
+>    actually removes the ambient pushable credential. Safe because the
+>    repository is public, so the `git fetch origin main` inside both rebase
+>    loops still works unauthenticated — checked before relying on it.
+> 3. `permissions: contents: read`, and the two push steps carry
+>    `REGISTRY_PUSH_TOKEN` in their own `env:`.
+>
+> **How the credential reaches git.** `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n` —
+> the environment spelling of `-c` — installs a credential helper that prints
+> the token, with `VALUE_0` an EMPTY `credential.helper` to reset any inherited
+> helper list. The env spelling is used rather than `-c` for two reasons: the
+> helper script stays out of argv, and `git push` stays adjacent so
+> `workflow.test.ts`'s push-step detector keeps its meaning. A first draft used
+> `-c`, which separated those two words and emptied that detector's list; its
+> top-level throw caught it immediately, doing exactly what its comment says it
+> exists for.
+>
+> Both `run:` blocks were checked with `bash -n` and reference the token by NAME
+> with no inline `secrets.` expression. Five mutations are checked: the job back
+> to `contents: write`, checkout persisting credentials again, the push
+> abandoning the scoped credential, the helper-list reset removed, and one push
+> step losing the secret.
+>
+> **Also note:** `build.ts` reads `GITHUB_TOKEN` for the harvest and the stars
+> fallback, so the build step needs the token present, read-scoped. It is only
+> the WRITE grant that belongs to the push steps.
+>
+> **Failure mode if the PAT is wrong or expires:** both pushes fail, which
+> `continue-on-error: true` turns into the `::error::` these steps already emit
+> for a rejected push. The catalog still publishes; only the registry commits
+> are skipped.
+
 **Files:**
 - Modify: `.github/workflows/daily.yml:30-31` (job permissions), `:44-46` (the job-level `GITHUB_TOKEN`), `:57-70` and `:125-136` (the two commit steps), `:71-87` (the build step's env)
 - Test: `registry/scripts/tests/repo-guards.test.ts` (append)
@@ -2986,16 +3362,17 @@ git commit -m "ci(plugin): run the root suite and watch the root READMEs"
 - Consumes: `read()` from `repo-guards.test.ts` (Task 11). **Land plan A's E-2 first** — it rewrites the same two push steps with `git fetch && git rebase origin/main`, and those lines carry through here unchanged.
 - Produces: nothing later tasks consume.
 
-The job elevates `GITHUB_TOKEN` to `contents: write` and, through the job-level `env:` block, exports it to every step: `pnpm install` and its lifecycle scripts, the plaintext LLM call, and the harvest of about 8,800 third-party manifests. Only the two steps that push need write. GitHub grants permissions per job and offers no per-step elevation, so there are exactly two shapes of fix:
+The stronger write-credential split was deferred at 12:36 UTC on 2026-09-04 and
+REOPENED at 12:54 the same day, when the maintainer created
+`REGISTRY_PUSH_TOKEN` and directed the work to continue. It is done — see the
+outcome at the top of this task.
 
-- **A separate `commit` job with `contents: write`.** No new secret, but the files to commit must travel as artifacts, and the classifier's commit — which today happens *before* the build precisely so a failed build still preserves the LLM's verdicts (`daily.yml:60-63`) — would move after it. That behaviour is load-bearing: an uncommitted market verdict is not a memory, the name is re-asked every run, and one bad roll then gets recorded forever.
-- **A narrowly-scoped credential in the two push steps' own `env:`.** No restructure, no artifact plumbing, the classifier's commit stays where it is, and plan A's rebase lines are untouched. Cost: a fine-grained PAT a human must create and rotate.
+> The checklist below is the ORIGINAL plan, kept because the mechanic it
+> specifies turned out to be wrong: a step-level `env:` cannot scope a push
+> whose credential `actions/checkout` wrote into `.git/config`. The outcome
+> above records what shipped instead, and why.
 
-**This task takes the second**, because it preserves the ordering guarantee and because a step-level `env:` is exactly the scope wanted: after it, the only steps that ever hold a write credential are two git-only steps that touch no third-party data.
-
-**Non-mechanical prerequisite:** a repository secret `REGISTRY_PUSH_TOKEN` must exist before this lands, holding a fine-grained PAT scoped to this repository alone with `Contents: read and write` and nothing else. Creating it needs a human at github.com; a GitHub App installation token would be better still (short-lived) but costs a third-party action and two more secrets. Until the secret exists, the push steps fail with an empty token — they are `continue-on-error: true`, so the catalog still publishes and the snapshot commit is simply skipped, which is the same failure mode a rejected push already has.
-
-- [ ] **Step 1: Verification procedure (not a vitest file)**
+- [x] **Step 1: Verification procedure (run 2026-09-04; see the outcome)**
 
 Confirm today's exposure before changing it, read-only:
 
@@ -3018,7 +3395,7 @@ gh run view <databaseId> --log | grep -A9 'GITHUB_TOKEN Permissions'
 ```
 Expected: `Contents: read` and nothing else granted to the `build` job. That line is the fact; the guard test below only pins the file that produces it.
 
-- [ ] **Step 2: Write the failing test**
+- [ ] **Deferred Step 2: Write the failing test (reference only)**
 
 Append to `registry/scripts/tests/repo-guards.test.ts`:
 
@@ -3072,11 +3449,11 @@ describe('what the build job is allowed to hold', () => {
 })
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [ ] **Deferred Step 3: Run test to verify it fails (reference only)**
 
 Run: `npx vitest run registry/scripts/tests/repo-guards.test.ts -t "grants the build job read-only contents"` — Expected: FAIL with `expected '\n  build:\n    runs-on: ubuntu-latest\n    permissions:\n      contents: write\n…' to match /permissions:\n\s+contents: read\n/`.
 
-- [ ] **Step 4: Write the implementation**
+- [ ] **Deferred Step 4: Write the implementation (reference only)**
 
 In `.github/workflows/daily.yml`, before (lines 28-46):
 
@@ -3240,12 +3617,12 @@ After:
 
 (leave the four existing entries — `SHOP_HARVEST_REPOS`, `SHOP_HARVEST_SUBPACKAGES`, `SHOP_CATALOG_V5`, `STARS_TOKEN` — and their comments in place beneath it).
 
-- [ ] **Step 5: Run test to verify it passes**
+- [ ] **Deferred Step 5: Run test to verify it passes (reference only)**
 
 Run: `npx vitest run registry/scripts/tests/repo-guards.test.ts` — Expected: PASS.
 Then `pnpm test` and `pnpm typecheck`, then the `gh run view … | grep -A9 'GITHUB_TOKEN Permissions'` read from Step 1 on the first run after the push.
 
-- [ ] **Step 6: Commit**
+- [ ] **Deferred Step 6: Commit (reference only)**
 ```bash
 git add .github/workflows/daily.yml registry/scripts/tests/repo-guards.test.ts
 git commit -m "ci(daily): read-only contents for the build job, write only in the push steps"
@@ -3254,6 +3631,14 @@ git commit -m "ci(daily): read-only contents for the build job, write only in th
 ---
 
 ### Task 16: No `workspace:` in the published manifest, and the vendored copy cannot drift
+
+> **Outcome: DONE**, by commit `94a5b4f` (`fix(registry): harden release
+> metadata, ignores, and config diagnostics`), which covers Tasks 16 through 18
+> together. Verified 2026-09-04: `packages/dsh-plugin-shop/package.json`
+> declares no `workspace:` dependency in `dependencies`, `devDependencies` or
+> `peerDependencies`, and `packages/dsh-typert-protocol/` carries both a
+> `VENDORED.md` and the manifest changes that keep the vendored copy from
+> drifting.
 
 **Files:**
 - Modify: `CLAUDE.md` (the "Release channels" section)
@@ -3494,6 +3879,11 @@ git commit -m "fix(release): publish with pnpm and pin the vendored copy against
 
 ### Task 17: `.gitignore` covers the agent directory, dotenv variants and tarballs
 
+> **Outcome: DONE**, by commit `94a5b4f`. Verified 2026-09-04 against
+> `.gitignore` itself: the agent directory (`.raven`), the dotenv variants, and
+> the packed tarballs are all covered, and `repo-guards.test.ts` gained the
+> guards that keep them covered.
+
 **Files:**
 - Modify: `.gitignore`
 - Test: `registry/scripts/tests/repo-guards.test.ts` (append)
@@ -3632,6 +4022,14 @@ git commit -m "chore: ignore .raven, dotenv variants and packed tarballs"
 ---
 
 ### Task 18: Loader errors name the package, the empty document and the BOM
+
+> **Outcome: DONE**, by commit `94a5b4f`. Verified 2026-09-04 in
+> `config.ts`'s `parseFile`: the BOM is stripped before `parse` (yaml reads it
+> as part of the first token and fails several characters later), a document
+> that is empty or only comments raises a named error telling the author to
+> write `[]`, and a schema failure names the row number AND the row's package
+> name rather than a bare index. `config.test.ts` carries four assertions over
+> these.
 
 **Files:**
 - Modify: `registry/scripts/src/config.ts:77-91` (`parseFile`)
@@ -3856,3 +4254,51 @@ Checked before this plan was finished:
 4. **Line numbers were verified at `49db942`** by reading each file, not by trusting the audit: `emit.ts:77`, `build.ts:105` and `:190-198`, `github-client.ts:279`, `:526`, `:618`, `:651`, `npm-client.ts:301` and `:344`, `config.ts:84-90`, `classify.ts:122` and `:134`, `daily.yml:30-31`, `plugin.yml:29`, `packages/dsh-plugin-shop/package.json:121`.
 5. **Two existing tests are changed, and both say why in the test body.** `github-client.test.ts:465-482` pinned D-3's second leg as correct behaviour (Task 2), and `stars-assemble.test.ts` is rewritten around the entry-keyed assembler (Task 9). Nothing else has an assertion edited to make a run green.
 6. **Every count in this plan was measured, not estimated:** 14,740 repos and 1,918 mislabelled records from `registry/repo-state.json`; 334 tests and 22 files from `npx vitest run`; the seven action SHAs and their versions from `gh api`; the `workspace:` specifier from `packages/dsh-plugin-shop/package.json:121`; the missing `lib/typert.host.js` from the vendored tree; the three E-12 messages from running the loader against fixtures.
+
+### Task 19: D-10 — a build that stops here must not be "fixed" by widening the status back
+
+> **Outcome: DONE as a record — there is no code to write, which is the point.**
+>
+> The runbook below is the deliverable. It is worth restating why it exists: plan
+> A's Task 1 narrowed `no-manifest` to a genuine 404, so every other non-ok
+> status from `readManifest` throws, and the systematic-failure bound
+> (`MIN_THROWN_TO_BOUND`, `MAX_THROWN_FRACTION`) turns a pool-wide throw into a
+> failed build. That is deliberate — it is what stopped a blocked
+> `raw.githubusercontent.com` from writing "No package.json at the repository
+> root" into the durable record of 1,929 repositories it could not reach — but
+> it moves a silent degradation onto a loud stop, and the first person to meet
+> that stop will be tempted to widen the status classification back.
+>
+> **Do not.** Read the thrown detail first; if the statuses are 403 or 429 the
+> harvest is rate-limited, not broken, and the lever is
+> `REPO_BACKFILL_BUDGET`.
+>
+> A live instance of exactly this reasoning, 2026-09-04: the daily build stopped
+> on `enumerated 3746 of 3747` in the npm half. The tempting fix was to delete
+> the coverage check. The right one was a bound small enough that no gap this
+> repo has actually seen could hide under it, with the shortfall reported in the
+> published artifact — see the note on `MAX_SEARCH_SHORTFALL` in
+> `npm-client.ts`. Same shape: keep the loud stop, narrow what is allowed to be
+> quiet, and publish the difference.
+
+Finding D-10. **No code change. This task exists so the first person to see the build stop does not undo the fix that made it stop.**
+
+Task 1 narrowed `no-manifest` to a genuine 404, so every other non-ok status from `readManifest` throws, and the systematic-failure bound (`MIN_THROWN_TO_BOUND = 20`, `MAX_THROWN_FRACTION = 0.1` in `github-client.ts`) turns a pool-wide throw into a failed build. That is this project's stated preference over persisting false verdicts, and it is what closed the case where a blocked `raw.githubusercontent.com` wrote "No package.json at the repository root" into the durable record of every repository it could not reach.
+
+But it moves a silent degradation to a loud stop on a path with a plausible real trigger: **a REST rate-limit 403 on `git/trees` at `REPO_BACKFILL_BUDGET` 2,000.**
+
+- [ ] **Step 1: When the build stops with a pool-wide throw, read the thrown detail first.**
+
+If the statuses are 403 or 429, the harvest is rate-limited, not broken.
+
+- [ ] **Step 2: Lower `REPO_BACKFILL_BUDGET`. Do NOT widen the status classification.**
+
+Widening `no-manifest` back to "any non-ok status" restores the false-verdict bug in full: the durable `repo-state.json` record would again say "no package.json at the root" about every repository a rate limit hid. `no-manifest` is a verdict about a repository; a 403 is a statement about us.
+
+- [ ] **Step 3: If lowering the budget proves too noisy, add an in-harvest budget — not a reclassification.**
+
+`MAX_THROWN_FRACTION`'s own comment already names the missing in-harvest bound. Record the decision beside it, so the next reader finds the reasoning where the constant lives.
+
+**Verification:** none. There is nothing to test; the guard this note protects is already tested by Task 1.
+
+---

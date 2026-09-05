@@ -6,6 +6,7 @@
 import { createRequire } from 'node:module'
 import { readFileSync } from 'node:fs'
 import { satisfies, valid, validRange } from 'semver'
+import { identityKey, type EntryIdentity } from '../shared/identity.ts'
 
 /** Answers "can this installation provide `spec`?" — injected so fixtures
  * drive every verdict and exactly one call site touches the filesystem. */
@@ -24,14 +25,15 @@ export function nodeResolver(baseUrl: string): PeerResolver {
       require.resolve(`${spec}/package.json`)
       return true
     } catch (error) {
-      // Only genuine module-not-found means the peer is absent. Anything else
-      // (e.g., ERR_PACKAGE_PATH_NOT_EXPORTED when the module restricts
-      // exports) is a resolution error that the harness itself handles by
-      // returning no client module — rethrow so incompatibilityMap's catch
-      // turns it into no-verdict.
-      if ((error as NodeJS.ErrnoException).code === 'MODULE_NOT_FOUND') {
-        return false
-      }
+      const code = (error as NodeJS.ErrnoException).code
+      // Genuine module-not-found is the only "absent" answer.
+      if (code === 'MODULE_NOT_FOUND') return false
+      // An installed package may intentionally hide ./package.json behind an
+      // exports map. Resolution found the package directory; the restricted
+      // subpath is not evidence that the peer is missing.
+      if (code === 'ERR_PACKAGE_PATH_NOT_EXPORTED') return true
+      // Preserve unknown resolution failures so incompatibilityMap can make
+      // its explicit no-verdict choice rather than inventing a warning.
       throw error
     }
   }
@@ -47,7 +49,7 @@ export function nodeResolver(baseUrl: string): PeerResolver {
  * ignore every warning.
  */
 export function incompatibilityMap(
-  entries: readonly { name: string; peers?: string[] }[],
+  entries: readonly (EntryIdentity & { peers?: string[] })[],
   resolve: PeerResolver,
 ): Record<string, string[]> {
   const known = new Map<string, boolean | null>() // null marks "threw"
@@ -76,7 +78,7 @@ export function incompatibilityMap(
       }
       if (!present) missing.push(spec)
     }
-    if (usable && missing.length > 0) out[entry.name] = missing
+    if (usable && missing.length > 0) out[identityKey(entry)] = missing
   }
   return out
 }

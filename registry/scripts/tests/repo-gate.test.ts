@@ -351,3 +351,194 @@ describe('the per-entry size budget on the github channel', () => {
     expect(result.ok).toBe(true)
   })
 })
+
+describe('the hold and the reviewed identity', () => {
+  const commitPin = 'b'.repeat(40)
+  const reviewed = parseRegistryConfig({
+    verified: [
+      '- name: dsh-repo-plugin',
+      '  repo: someone/dsh-repo-plugin',
+      `  reviewedCommit: ${commitPin}`,
+      '  reviewer: github:alice-reviewer',
+      '  reviewCommit: abc',
+      '  notes: fine',
+    ].join('\n') + '\n',
+    denied: '[]',
+    allowedSimilar: '[]',
+    categories: '[]',
+    firstSeen: '[]',
+  })
+
+  it('lists the repository the review names instead of rejecting it as an impersonator of itself', () => {
+    // B-2: edits === 0 on the slug used to make the reviewed repo the "most
+    // dangerous lookalike" of the review written about it, and the pipeline
+    // listed nothing at all.
+    const result = gateRepo(repo(), reviewed)
+    expect(result.ok, result.ok ? '' : result.rejection.detail).toBe(true)
+    // And whatever case the candidate spells the repository in. The review
+    // key is lowercased at insert, so ONLY the fold on the candidate side
+    // makes these meet; without it the reviewed repository falls into the
+    // hold loop and is held as an exact match of its own bundle name. Task 6
+    // folds the denial lookup and the probes, but not this exemption.
+    const cased = gateRepo(repo({ repo: 'Someone/dsh-repo-plugin' }), reviewed)
+    expect(cased.ok, cased.ok ? '' : cased.rejection.detail).toBe(true)
+  })
+
+  it('still holds a different repository carrying the reviewed bundle name', () => {
+    // B-3 / A-4: this is the fork. It must not reach the catalog on the
+    // strength of somebody else's review.
+    const fork = gateRepo(repo({ repo: 'bob/dsh-repo-plugin' }), reviewed)
+    expect(fork.ok).toBe(false)
+    if (!fork.ok) {
+      expect(fork.rejection.name).toBe('bob/dsh-repo-plugin')
+      expect(fork.rejection.code).toBe('name-too-similar')
+      expect(fork.rejection.detail).toContain('dsh-repo-plugin')
+    }
+  })
+
+  it('clears a lookalike source by owner/slug and never by bundle name', () => {
+    // A bundle-name clearance would clear every repository using the name —
+    // 83 live bundle names are claimed by both a fork and an original.
+    const byRepo = parseRegistryConfig({
+      verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: r\n  reviewCommit: c\n',
+      denied: '[]',
+      allowedSimilar: '- good/dsh-fs-tol\n',
+      categories: '[]',
+      firstSeen: '[]',
+    })
+    expect(gateRepo(repo({ repo: 'good/dsh-fs-tol', name: 'something-else' }), byRepo).ok).toBe(true)
+    expect(gateRepo(repo({ repo: 'evil/dsh-fs-tol', name: 'something-else' }), byRepo).ok).toBe(false)
+
+    const byName = parseRegistryConfig({
+      verified: '- name: dsh-fs-tool\n  reviewedVersion: 1.0.0\n  reviewer: r\n  reviewCommit: c\n',
+      denied: '[]',
+      allowedSimilar: '- dsh-fs-tol\n',
+      categories: '[]',
+      firstSeen: '[]',
+    })
+    const held = gateRepo(repo({ repo: 'anyone/dsh-fs-tol', name: 'something-else' }), byName)
+    expect(held.ok, 'a bundle-name clearance must not clear a repository').toBe(false)
+  })
+
+  it('exempts every subpackage of the reviewed repository, since the clearance unit is the repo', () => {
+    const sub = gateRepo(repo({ subdir: 'packages/plugin' }), reviewed)
+    expect(sub.ok, sub.ok ? '' : sub.rejection.detail).toBe(true)
+  })
+})
+
+describe('case folding on the GitHub channel', () => {
+  it('matches a repo denial whatever case the repository is spelled in', () => {
+    // GitHub resolves repository names case-insensitively, so `Someone/x` and
+    // `someone/x` are one repository — and a denial that misses one of the
+    // two spellings fails open.
+    const denied = parseRegistryConfig({
+      verified: '[]',
+      denied: '- name: someone/dsh-repo-plugin\n  reason: known bad actor\n',
+      allowedSimilar: '[]',
+      categories: '[]',
+      firstSeen: '[]',
+    })
+    const result = gateRepo(repo({ repo: 'Someone/dsh-repo-plugin' }), denied)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.rejection.code).toBe('denied')
+      expect(result.rejection.detail).toBe('Denied by the registry: known bad actor')
+    }
+  })
+
+  it('holds an uppercase bundle name that folds onto a verified name', () => {
+    // Plain Levenshtein puts DSH-FS-TOOL nine edits from dsh-fs-tool — one
+    // per changed letter — so the hold never saw it.
+    const result = gateRepo(repo({ repo: 'someone/anything', name: 'DSH-FS-TOOL' }), config)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.rejection.code).toBe('name-too-similar')
+  })
+
+  it('holds an uppercase slug that folds onto a verified name', () => {
+    const result = gateRepo(repo({ repo: 'someone/DSH-FS-TOOL', name: 'something-else' }), config)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.rejection.code).toBe('name-too-similar')
+  })
+
+  it('holds a lowercase lookalike of a verified name that is itself uppercase', () => {
+    // The fold is needed on the VERIFIED side too, not just the probe. npm
+    // still serves legacy uppercase names and Task 3's grammar admits them on
+    // purpose, so a review can name `DSH-Legacy` — and `dsh-legacy` sits four
+    // substitutions away from it unfolded, clear of a threshold of 2.
+    const upper = parseRegistryConfig({
+      verified: '- name: DSH-Legacy\n  reviewedVersion: 1.0.0\n  reviewer: r\n  reviewCommit: c\n',
+      denied: '[]',
+      allowedSimilar: '[]',
+      categories: '[]',
+      firstSeen: '[]',
+    })
+    const result = gateRepo(repo({ repo: 'someone/dsh-legacy', name: 'something-else' }), upper)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.rejection.code).toBe('name-too-similar')
+  })
+})
+
+describe('the no-bundle detail names the file the author must fix', () => {
+  it('tells a plain package to declare dsh.bundle in its package.json', () => {
+    const result = gateRepo(repo({ hasBundle: false }), config)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.rejection.code).toBe('no-bundle')
+      expect(result.rejection.detail).toContain('plain dependency')
+      expect(result.rejection.detail).not.toContain('subpackage')
+    }
+  })
+
+  it('tells a probed monorepo root that no subpackage declared one either', () => {
+    // hub-borrowings §A: the root keeps the `no-bundle` code, but the detail
+    // has to say a probe happened — otherwise the author of a monorepo whose
+    // subpackage is the plugin is told to edit the root manifest.
+    const result = gateRepo(repo({ hasBundle: false, probedSubpackages: 6 }), config)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.rejection.code).toBe('no-bundle')
+      expect(result.rejection.detail).toContain('6 subpackage')
+      expect(result.rejection.detail).toContain('none of them declares dsh.bundle')
+    }
+  })
+})
+
+describe('workspace deps and the release rescue', () => {
+  it('still rejects a git-installed repository with workspace: dependencies', () => {
+    const result = gateRepo(repo({ hasWorkspaceDeps: true }), config)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.rejection.code).toBe('workspace-deps')
+      expect(result.rejection.detail).toContain('a git install from outside it cannot succeed')
+      // All three exits, because the tarball one is the point of this change:
+      // an author reads this string to find out what to do, and a clause
+      // nothing asserts can be dropped without a test noticing.
+      expect(result.rejection.detail).toContain('Publish the package to npm')
+      expect(result.rejection.detail).toContain('attach a packed release tarball')
+      expect(result.rejection.detail).toContain('drop the workspace: specifiers')
+    }
+  })
+
+  it('accepts a release-rescued repository whose SOURCE manifest has workspace: deps', () => {
+    // B-11, reproduced 2026-09-04 with pnpm 11.13.0: `pnpm pack` rewrites
+    // `workspace:^1.0.0` to `^1.0.0` in the packed manifest, and a
+    // release-rescued entry installs that tarball, never the git ref. The old
+    // rejection told the author a git install would fail — for an entry that
+    // performs no git install. The rescue reads assets[].browser_download_url
+    // only (tarball_url and zipball_url appear nowhere), so the artifact is
+    // pack output rather than GitHub's source snapshot, which is what makes
+    // the rewrite apply. A sibling that is genuinely unpublished is still an
+    // honest install-time failure the executor reports verbatim, which is the
+    // same posture the github-channel design takes for transitive postinstall
+    // scripts (§4, item 2b).
+    const result = gateRepo(repo({
+      hasWorkspaceDeps: true,
+      release: {
+        tag: 'v1.0.0',
+        url: 'https://github.com/someone/dsh-repo-plugin/releases/download/v1.0.0/plugin.tgz',
+        sha256: 'a'.repeat(64),
+      },
+    }), config)
+    expect(result.ok, result.ok ? '' : result.rejection.detail).toBe(true)
+  })
+})

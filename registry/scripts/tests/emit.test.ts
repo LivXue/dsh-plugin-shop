@@ -155,6 +155,51 @@ describe('emit', () => {
     expect(tableLines[0]).toBe('| dsh-x | invalid-catalog | dsh.catalog.foo \\| bar baz: unrecognized key |')
   })
 
+  it('neutralises control characters and bidi formatting in a rejection detail', () => {
+    // `detail` carries text from a third party's package.json, and the
+    // report's real reader is a maintainer in a terminal: U+001B opens an
+    // escape sequence (the OSC-8 below hides an arbitrary target behind
+    // harmless-looking text) and U+202E reverses the rest of the line, so a
+    // row can be made to read as another package's. Each stripped code point
+    // becomes U+FFFD rather than vanishing — a reader should see that
+    // something was removed.
+    //
+    // Written as \u escapes throughout, here and in the implementation: a
+    // literal U+202E in a source file is invisible to a reviewer, which is
+    // the very problem being fixed.
+    const osc8 = '\u001b]8;;https://evil.test\u0007click\u001b]8;;\u0007'
+    const detail = `safe ${osc8} \u202egnidaelsim\u202c \u2066wrapped\u2069`
+    const { report } = emit([], [{ name: 'dsh-x', code: 'invalid-catalog', detail }], '2026-08-18T00:00:00.000Z')
+    const rows = report.split('\n').filter(line => line.startsWith('| dsh-x'))
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/)
+    expect(rows[0]).toContain('safe')
+    expect(rows[0]).toContain('\ufffd')
+  })
+
+  it('neutralises a hostile rejection NAME the same way', () => {
+    // A GitHub manifest name is unrestricted, and the name column is the one
+    // a reader scans to find their own package.
+    const { report } = emit([], [{ name: 'dsh-\u202eevil', code: 'no-bundle', detail: 'x' }], '2026-08-18T00:00:00.000Z')
+    expect(report).not.toContain('\u202e')
+    expect(report).toContain('dsh-\ufffdevil')
+  })
+
+  it('turns a tab into a space and leaves the pipe and newline rules intact', () => {
+    const { report } = emit([], [{ name: 'dsh-x', code: 'no-bundle', detail: 'a\u0009b | c\u000ad' }], '2026-08-18T00:00:00.000Z')
+    const rows = report.split('\n').filter(line => line.startsWith('| dsh-x'))
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toBe('| dsh-x | no-bundle | a b \\| c d |')
+  })
+
+  it('leaves ordinary non-ASCII text alone', () => {
+    // The strip is a closed list of control and formatting code points, not
+    // an ASCII filter: a Chinese detail or an emoji is fine.
+    const detail = 'a Chinese detail with an emoji \ud83d\ude42'
+    const { report } = emit([], [{ name: 'dsh-x', code: 'no-summary', detail }], '2026-08-18T00:00:00.000Z')
+    expect(report).toContain(`| dsh-x | no-summary | ${detail} |`)
+  })
+
   it('ends every text artifact with exactly one newline', () => {
     const { pluginsJson, indexJson, manifestLock, report } = emit(
       [entry('dsh-a')], [], '2026-08-18T00:00:00.000Z')
@@ -368,5 +413,46 @@ describe('the shields endpoint badge', () => {
     // And it stays out of the hashed content, like builtAt itself.
     expect(a.pluginsJson).toBe(b.pluginsJson)
     expect(a.pluginsFileName).toBe(b.pluginsFileName)
+  })
+})
+
+describe('the sorts key on the whole identity, not the name', () => {
+  it('orders entries that share a bundle name by source, repo, then subdir', () => {
+    const { pluginsJson } = emit([
+      repoEntry('dsh-shared', 'bob/dsh-shared'),
+      repoEntry('dsh-shared', 'alice/mono', 'packages/b'),
+      entry('dsh-shared'),
+      repoEntry('dsh-shared', 'alice/mono', 'packages/a'),
+    ], [], '2026-08-18T00:00:00.000Z')
+    const parsed = JSON.parse(pluginsJson) as { plugins: { source: string; repo?: string; subdir?: string }[] }
+    expect(parsed.plugins.map(p => [p.source, p.repo ?? '', p.subdir ?? ''])).toEqual([
+      ['github', 'alice/mono', 'packages/a'],
+      ['github', 'alice/mono', 'packages/b'],
+      ['github', 'bob/dsh-shared', ''],
+      ['npm', '', ''],
+    ])
+  })
+
+  it('orders rejections that share a name by code and then detail', () => {
+    const { report } = emit([], [
+      { name: 'a/b', code: 'no-license', detail: 'second' },
+      { name: 'a/b', code: 'no-bundle', detail: 'zzz' },
+      { name: 'a/b', code: 'no-bundle', detail: 'aaa' },
+    ], '2026-08-18T00:00:00.000Z')
+    const rows = report.split('\n').filter(line => line.startsWith('| a/b '))
+    expect(rows).toEqual([
+      '| a/b | no-bundle | aaa |',
+      '| a/b | no-bundle | zzz |',
+      '| a/b | no-license | second |',
+    ])
+  })
+
+  it('orders the published denied list by name and then detail', () => {
+    const { pluginsJson } = emit([], [
+      { name: 'a/b', code: 'denied', detail: 'zzz' },
+      { name: 'a/b', code: 'denied', detail: 'aaa' },
+    ], '2026-08-18T00:00:00.000Z')
+    const parsed = JSON.parse(pluginsJson) as { denied: { detail: string }[] }
+    expect(parsed.denied.map(d => d.detail)).toEqual(['aaa', 'zzz'])
   })
 })

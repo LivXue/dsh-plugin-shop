@@ -685,6 +685,10 @@ describe('origin racing', () => {
     pointerHangs?: boolean
     /** Fails on the bulk fetch, after the winner is committed to. */
     dataFails?: 'transport' | 'loud'
+    /** Never settles on the data file. */
+    dataHangs?: boolean
+    /** Never settles on the stars sidecar. */
+    starsHangs?: boolean
     data?: string
     pointer?: string
   }): CatalogOrigin {
@@ -702,7 +706,9 @@ describe('origin racing', () => {
             if (opts.pointerFails === 'loud') throw new Error(`${id} pointer corrupt`)
             return opts.pointer ?? ''
           },
-          file: async () => {
+          file: async (url) => {
+            if (opts.dataHangs === true && url.startsWith('plugins.')) return new Promise<string>(() => {})
+            if (opts.starsHangs === true && url.startsWith('stars.')) return new Promise<string>(() => {})
             if (opts.dataFails === 'transport') throw new TransportError(`${id} data down`)
             if (opts.dataFails === 'loud') throw new Error(`${id} data corrupt`)
             return opts.data ?? ''
@@ -873,6 +879,92 @@ describe('origin racing', () => {
       now: () => new Date('2026-09-01T00:00:00Z'),
       origins: [],
     })).rejects.toThrow('loadCatalog: no origins')
+  })
+  describe('the commit budget covers the bulk reads (G-2)', () => {
+    it('degrades to the cache when the committed origin answers the pointer and never the data file', async () => {
+      vi.useFakeTimers()
+      try {
+        const data = dataJson([entry])
+        const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
+        const fs = memFs()
+        fs.files.set('/cache/index.json', pointer)
+        fs.files.set(`/cache/${url}`, data)
+        const pending = loadCatalog({
+          cacheDir: '/cache', fsImpl: fs,
+          now: () => new Date('2026-09-01T00:00:00Z'),
+          origins: [fakeOrigin('stalls-on-data', { delay: 0, pointer, dataHangs: true })],
+        })
+        await vi.advanceTimersByTimeAsync(30_000)
+        const result = await pending
+        expect(result.stale).toBe(true)
+        expect(result.snapshot.entries).toHaveLength(1)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('throws, naming the budget, when the data file stalls and there is no cache', async () => {
+      vi.useFakeTimers()
+      try {
+        const data = dataJson([entry])
+        const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
+        const pending = loadCatalog({
+          cacheDir: '/cache', fsImpl: memFs(),
+          origins: [fakeOrigin('stalls-on-data', { delay: 0, pointer, dataHangs: true })],
+        })
+        const settled = pending.catch((error: unknown) => error)
+        await vi.advanceTimersByTimeAsync(30_000)
+        const failure = await settled
+        expect(String(failure)).toMatch(new RegExp(`did not serve ${url.replace(/\./g, '\\.')} within 30000 ms`))
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('completes with no stars when the sidecar stalls', async () => {
+      vi.useFakeTimers()
+      try {
+        const data = dataJson([entry])
+        const stars = starsFile({ 'dsh-hello-plugin': 7 })
+        const { pointer } = pointerFor(data, '2026-08-25T00:00:00Z', { url: stars.url, sha256: stars.sha256 })
+        const pending = loadCatalog({
+          cacheDir: '/cache', fsImpl: memFs(),
+          origins: [fakeOrigin('stalls-on-stars', { delay: 0, pointer, data, starsHangs: true })],
+        })
+        await vi.advanceTimersByTimeAsync(30_000)
+        const result = await pending
+        expect(result.snapshot.entries).toHaveLength(1)
+        expect(result.snapshot.stars).toEqual({})
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('aborts the data fetch itself, not merely the wait', async () => {
+      vi.useFakeTimers()
+      try {
+        const data = dataJson([entry])
+        const { pointer } = pointerFor(data, '2026-08-25T00:00:00Z')
+        let aborted = false
+        const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
+          if (String(input).endsWith('/index.json')) return new Response(pointer, { status: 200 })
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => {
+              aborted = true
+              reject(new Error('aborted'))
+            })
+          })
+        }) as unknown as typeof fetch
+        const settled = loadCatalog({
+          baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs(),
+        }).catch((error: unknown) => error)
+        await vi.advanceTimersByTimeAsync(30_000)
+        await settled
+        expect(aborted).toBe(true)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
   })
 })
 
@@ -1068,6 +1160,153 @@ describe('a broken npm origin does not mask a healthy one', () => {
     // discrimination than the probe()-level test above.
     expect(result.snapshot.entries).toHaveLength(1)
     expect(result.stale).toBe(false)
+  })
+})
+
+describe('entry grammar at the boundary (G-6 / F-3)', () => {
+  const base = {
+    name: 'dsh-hello-plugin', version: '1.2.0', integrity: 'sha512-i', publishedAt: null,
+    repository: null, license: 'MIT', tier: 'community', metadata: 'derived',
+    added: '2026-08-25',
+  }
+
+  /** Serve one hand-built data file and its pointer, and return the load. */
+  function loadWith(plugins: unknown[], schemaVersion = 5): Promise<unknown> {
+    const data = JSON.stringify({ schemaVersion, plugins, denied: [] })
+    const { pointer } = pointerFor(data, '2026-09-03T00:00:00Z', undefined, schemaVersion)
+    const fetchImpl = (async (input: string | URL) => new Response(
+      String(input).endsWith('/index.json') ? pointer : data, { status: 200 },
+    )) as unknown as typeof fetch
+    return loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() })
+  }
+
+  it('refuses an npm name outside npm\'s own package-name grammar', async () => {
+    await expect(loadWith([{ ...base, name: 'dsh-x@npm:some-other-package', source: 'npm' }]))
+      .rejects.toThrow(/npm package-name grammar/)
+    await expect(loadWith([{ ...base, name: 'dsh x', source: 'npm' }]))
+      .rejects.toThrow(/npm package-name grammar/)
+  })
+
+  it('refuses an npm version that is not a plain semver version', async () => {
+    await expect(loadWith([{ ...base, version: '1.0.0 & calc.exe', source: 'npm' }]))
+      .rejects.toThrow(/plain semver version/)
+    await expect(loadWith([{ ...base, version: 'v1.2.0', source: 'npm' }]))
+      .rejects.toThrow(/plain semver version/)
+  })
+
+  it('keeps every shape the live catalog actually publishes', async () => {
+    const result = await loadWith([
+      { ...base, name: '@scope/dsh-plugin', version: '0.1.4-alpha.2', source: 'npm' },
+      { ...base, name: 'dsh.dot_under-name', version: '1.0.0+build.7', source: 'npm' },
+      { ...base, name: 'sub-plugin', version: 'd'.repeat(40), source: 'github', repo: 'someone/monorepo', subdir: 'packages/sub-plugin' },
+      { ...base, name: '{{PKG_NAME}}', version: 'e'.repeat(40), source: 'github', repo: 'someone/template' },
+      {
+        ...base, name: 'dsh-rescued', version: 'v1.0.0', source: 'github', repo: 'owner/slug',
+        tarball: { url: 'https://github.com/owner/slug/releases/download/v1.0.0/plugin.tgz', sha256: 'a'.repeat(64) },
+      },
+    ]) as { snapshot: { entries: unknown[] } }
+    expect(result.snapshot.entries).toHaveLength(5)
+  })
+
+  it('refuses a repo that is not owner/slug', async () => {
+    await expect(loadWith([{ ...base, version: 'd'.repeat(40), source: 'github', repo: 'a/b?x' }]))
+      .rejects.toThrow(/owner\/slug/)
+    await expect(loadWith([{ ...base, version: 'd'.repeat(40), source: 'github', repo: 'a/b/c' }]))
+      .rejects.toThrow(/owner\/slug/)
+  })
+
+  it('refuses a github entry with no repo, which has no installable identity', async () => {
+    await expect(loadWith([{ ...base, version: 'd'.repeat(40), source: 'github' }]))
+      .rejects.toThrow(/must carry its repo/)
+  })
+
+  it('refuses a github version that is neither a commit nor a release tag', async () => {
+    await expect(loadWith([{ ...base, version: `${'d'.repeat(40)} & calc.exe`, source: 'github', repo: 'owner/slug' }]))
+      .rejects.toThrow(/neither a 40-character commit sha nor a release tag/)
+    await expect(loadWith([{ ...base, version: 'refs/heads/main;calc', source: 'github', repo: 'owner/slug' }]))
+      .rejects.toThrow(/neither a 40-character commit sha nor a release tag/)
+  })
+
+  it('keeps a release tag, with or without a tarball beside it', async () => {
+    const result = await loadWith([
+      {
+        ...base, name: 'dsh-plugin-tui', version: 'v0.2.1', source: 'github', repo: 'ablemind/dsh-plugin-tui',
+        tarball: { url: 'https://github.com/ablemind/dsh-plugin-tui/releases/download/v0.2.1/p.tgz', sha256: 'b'.repeat(64) },
+      },
+      { ...base, name: 'dsh-tagged', version: 'release/1.0', source: 'github', repo: 'owner/tagged' },
+    ]) as { snapshot: { entries: unknown[] } }
+    expect(result.snapshot.entries).toHaveLength(2)
+  })
+
+  it('refuses a tarball url carrying a query or a fragment', async () => {
+    await expect(loadWith([{
+      ...base, name: 'dsh-rescued', version: 'v1.0.0', source: 'github', repo: 'owner/slug',
+      tarball: { url: 'https://github.com/owner/slug/releases/download/v1.0.0/p.tgz?a=1&calc', sha256: 'a'.repeat(64) },
+    }])).rejects.toThrow(/no query or fragment/)
+    await expect(loadWith([{
+      ...base, name: 'dsh-rescued', version: 'v1.0.0', source: 'github', repo: 'owner/slug',
+      tarball: { url: 'https://github.com/owner/slug/releases/download/v1.0.0/p.tgz#x', sha256: 'a'.repeat(64) },
+    }])).rejects.toThrow(/no query or fragment/)
+  })
+
+  it('refuses a tarball sha256 that is not 64 hex characters', async () => {
+    await expect(loadWith([{
+      ...base, name: 'dsh-rescued', version: 'v1.0.0', source: 'github', repo: 'owner/slug',
+      tarball: { url: 'https://github.com/owner/slug/releases/download/v1.0.0/p.tgz', sha256: 'not-a-hash' },
+    }])).rejects.toThrow()
+  })
+})
+
+describe('the stars sidecar carries no prototype (G-8)', () => {
+  it('hands the client a null-prototype map', async () => {
+    const entry = {
+      name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null,
+      repository: null, license: 'MIT', tier: 'community', metadata: 'derived',
+      added: '2026-08-25',
+    }
+    const data = dataJson([entry])
+    const stars = starsFile({ 'dsh-hello-plugin': 7 })
+    const { pointer } = pointerFor(data, '2026-08-25T00:00:00Z', { url: stars.url, sha256: stars.sha256 })
+    const fetchImpl = (async (input: string | URL) => {
+      const url = String(input)
+      if (url.endsWith('/index.json')) return new Response(pointer, { status: 200 })
+      if (url.endsWith(stars.url)) return new Response(stars.text, { status: 200 })
+      return new Response(data, { status: 200 })
+    }) as unknown as typeof fetch
+    const result = await loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() })
+    expect(result.snapshot.stars['dsh-hello-plugin']).toBe(7)
+    expect(Object.getPrototypeOf(result.snapshot.stars)).toBeNull()
+  })
+})
+
+describe('a truncated body degrades to the cache (G-3)', () => {
+  it('serves the cached snapshot when the data body dies after ten bytes', async () => {
+    const entry = {
+      name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null,
+      repository: null, license: 'MIT', tier: 'community', metadata: 'derived',
+      added: '2026-08-25',
+    }
+    const data = dataJson([entry])
+    const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
+    const fs = memFs()
+    fs.write('/cache/index.json', pointer)
+    fs.write(`/cache/${url}`, data)
+    const fetchImpl = (async (input: string | URL) => {
+      if (String(input).endsWith('/index.json')) return new Response(pointer, { status: 200 })
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(10))
+          controller.error(new TypeError('terminated'))
+        },
+      }), { status: 200 })
+    }) as unknown as typeof fetch
+
+    const result = await loadCatalog({
+      baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs,
+      now: () => new Date('2026-09-01T00:00:00Z'),
+    })
+    expect(result.stale).toBe(true)
+    expect(result.snapshot.entries[0]?.name).toBe('dsh-hello-plugin')
   })
 })
 

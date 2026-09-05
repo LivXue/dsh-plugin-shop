@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { BUNDLE_NAME_MAX_LENGTH, BUNDLE_NAME_RE, GITHUB_REQUEST_TIMEOUT_MS, MAX_MANIFEST_BYTES, MAX_TARBALL_BYTES, MAX_THROWN_FRACTION, MIN_THROWN_TO_BOUND, SUBDIR_MAX_LENGTH, TARBALL_REQUEST_TIMEOUT_MS, fetchRepoCandidate, harvestRepos, isBundleName, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
+import { BUNDLE_NAME_MAX_LENGTH, BUNDLE_NAME_RE, GITHUB_REQUEST_TIMEOUT_MS, MAX_MANIFEST_BYTES, MAX_TARBALL_BYTES, MAX_THROWN_FRACTION, MIN_THROWN_TO_BOUND, REPO_BACKFILL_BUDGET_DEFAULT, SUBDIR_MAX_LENGTH, TARBALL_REQUEST_TIMEOUT_MS, fetchRepoCandidate, harvestRepos, isBundleName, parseHarvestBudget, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
 import { parseRepoState, serializeRepoState } from '../src/repo-state.ts'
 import type { RepoState } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
@@ -303,6 +303,92 @@ describe('a window is enumerated whole, or the harvest stops', () => {
       .rejects.toThrow(/incomplete_results/)
   })
 
+  it('retries a page GitHub reports as incomplete rather than failing the whole build', async () => {
+    // `incomplete_results` means the query TIMED OUT, which is transient by
+    // definition. Throwing on the first one fails the entire daily build —
+    // roughly forty windows, each paged — on one slow second at GitHub, and a
+    // failed build publishes nothing at all. One retry costs one request and
+    // weakens nothing: the throw above still fires when the page stays
+    // partial, which is the case that cannot be told apart from a whole one.
+    const items = repoItems(120)
+    let pageAttempts = 0
+    const fetchImpl = (async (url: string | URL) => {
+      const parsed = new URL(String(url))
+      const query = parsed.searchParams.get('q') ?? ''
+      if (!dshPlugin(query)) return new Response(JSON.stringify({ total_count: 0, items: [] }), { status: 200 })
+      if (parsed.searchParams.get('per_page') === '1') {
+        return new Response(JSON.stringify({ total_count: 120 }), { status: 200 })
+      }
+      pageAttempts += 1
+      const page = Number(parsed.searchParams.get('page') ?? '1')
+      const start = (page - 1) * SEARCH_PAGE_SIZE
+      const body: Record<string, unknown> = { total_count: 120, items: items.slice(start, start + SEARCH_PAGE_SIZE) }
+      // Page 1's first attempt times out; everything after it is healthy.
+      if (pageAttempts === 1) body.incomplete_results = true
+      return new Response(JSON.stringify(body), { status: 200 })
+    }) as unknown as typeof fetch
+
+    const { seen } = await searchReposByTopic(fetchImpl, sleep, 'token')
+    // The window is enumerated whole, and page 1 was asked for twice.
+    expect(seen).toHaveLength(120)
+    expect(pageAttempts).toBe(3)
+  })
+
+  it('throws when the PROBE says it is incomplete, rather than measuring the window short', async () => {
+    // The page checked the flag and the probe did not, which left the more
+    // dangerous half open: an incomplete probe answers an UNDERCOUNTED
+    // `total_count`, and that number is the one every guard here reads. A
+    // probe timing out to 0 is skipped as an empty window (`probed === 0`) —
+    // the whole window vanishes, silently, which is the exact failure
+    // probeTotal's own throw-on-missing-total was added to prevent. A probe
+    // undercounting to a nonzero number disables the coverage check instead:
+    // a short enumeration compares against the short measurement and passes.
+    let attempts = 0
+    const fetchImpl = (async (url: string | URL) => {
+      const parsed = new URL(String(url))
+      const query = parsed.searchParams.get('q') ?? ''
+      if (!dshPlugin(query)) return new Response(JSON.stringify({ total_count: 0, items: [] }), { status: 200 })
+      if (parsed.searchParams.get('per_page') === '1') {
+        attempts += 1
+        return new Response(JSON.stringify({ total_count: 0, incomplete_results: true }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ total_count: 0, items: [] }), { status: 200 })
+    }) as unknown as typeof fetch
+
+    await expect(searchReposByTopic(fetchImpl, sleep, 'token'))
+      .rejects.toThrow(/incomplete_results/)
+    // Exactly one retry, and the count is asserted rather than left to the
+    // wording: the search API meters at 30 requests/minute and searchRequest
+    // paces every one of them by 2s, so a wider retry ladder is spent budget
+    // on an answer already known to be partial.
+    expect(attempts).toBe(2)
+  })
+
+  it('retries an incomplete probe and uses the total the retry answered', async () => {
+    // Same transience, same one retry — and the number it settles on has to be
+    // the RETRY's, not the timed-out first answer: adopting the undercount is
+    // what the test above is about.
+    let probeAttempts = 0
+    const fetchImpl = (async (url: string | URL) => {
+      const parsed = new URL(String(url))
+      const query = parsed.searchParams.get('q') ?? ''
+      if (!dshPlugin(query)) return new Response(JSON.stringify({ total_count: 0, items: [] }), { status: 200 })
+      if (parsed.searchParams.get('per_page') === '1') {
+        probeAttempts += 1
+        return probeAttempts === 1
+          ? new Response(JSON.stringify({ total_count: 4, incomplete_results: true }), { status: 200 })
+          : new Response(JSON.stringify({ total_count: 40 }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ total_count: 40, items: repoItems(40) }), { status: 200 })
+    }) as unknown as typeof fetch
+
+    const { seen } = await searchReposByTopic(fetchImpl, sleep, 'token')
+    expect(seen).toHaveLength(40)
+    // Had the undercounted 4 been adopted, the window would have measured 4
+    // and its 40 rows would have read as a healthy over-enumeration.
+    expect(probeAttempts).toBeGreaterThan(1)
+  })
+
   it('throws when a window has grown past the page ceiling since it was partitioned', async () => {
     // `page <= MAX_SEARCH_PAGES` had the same shape as the short-page break: a
     // window that crossed 1,000 results between the probe and the paging
@@ -571,6 +657,36 @@ describe('fetchRepoCandidate', () => {
       expect(result.subpackageFailures?.[0]?.detail).toContain('declares no name')
       expect(result.subpackageFailures?.[0]?.detail).not.toContain('undefined')
     }
+  })
+
+  it('records how many subpackages were probed so the root rejection can say so', async () => {
+    // The plumbing, not the wording. repo-gate.test.ts injects
+    // probedSubpackages directly and so proves only the rendering: with this
+    // assignment removed the field is never set in production and the
+    // improved detail never appears. Verified by mutation — that was green
+    // until this case existed.
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/monorepo/main/package.json':
+        new Response(JSON.stringify({ name: 'mono', private: true, workspaces: ['packages/*'] }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/commits/main': new Response(JSON.stringify({
+        sha: commit,
+        commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/git/trees/main?recursive=1': new Response(JSON.stringify({
+        tree: [
+          { path: 'package.json' },
+          { path: 'packages/one/package.json' },
+          { path: 'packages/two/package.json' },
+        ],
+      }), { status: 200 }),
+      'https://raw.githubusercontent.com/someone/monorepo/main/packages/one/package.json':
+        new Response(JSON.stringify({ name: 'one' }), { status: 200 }),
+      'https://raw.githubusercontent.com/someone/monorepo/main/packages/two/package.json':
+        new Response(JSON.stringify({ name: 'two' }), { status: 200 }),
+    })
+    const result = await fetchRepoCandidate({ ...meta, fullName: 'someone/monorepo' }, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.candidates[0]?.probedSubpackages).toBe(2)
   })
 
   it('still accepts an uppercase manifest name — a bundle name is not an npm publication', async () => {
@@ -1206,6 +1322,96 @@ describe('harvestRepos', () => {
     expect(Object.keys(result.nextState).sort()).toEqual(['a/unchanged', 'b/changed', 'd/new'])
   })
 
+  /**
+   * A harvest whose search fails `failures` times before answering, serving one
+   * bundle-less monorepo root. The root carries `workspaces`, so it trips
+   * `monorepoSignal` — which means the git/trees probe fires if and only if
+   * `probeSubpackages` is on, and `treeProbes` is a direct read of the option
+   * the retry was given.
+   */
+  function flakyMonorepoHarvest(failures: number): { fetchImpl: typeof fetch; treeProbes: () => number; attempts: () => number } {
+    let searchAttempts = 0
+    let trees = 0
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      if (text.includes('/search/repositories')) {
+        searchAttempts += 1
+        // 404, not a 5xx: fetchRobust retries a thrown request four times, so a
+        // 5xx here is absorbed WITHIN one harvest attempt and never reaches the
+        // whole-harvest retry this fixture exists to drive. A non-ok status is
+        // returned, not thrown, so searchBody's own check raises it exactly once.
+        if (searchAttempts <= failures) return new Response('no such search', { status: 404 })
+        return searchResponder(q => (q.includes('topic:dsh-plugin')
+          ? [repoItem('m/mono', { pushed_at: '2026-08-02T00:00:00Z' })]
+          : []))(text) as Response
+      }
+      if (text.includes('/git/trees/')) {
+        trees += 1
+        return new Response(JSON.stringify({ tree: [{ path: 'packages/a/package.json', type: 'blob' }] }), { status: 200 })
+      }
+      if (text.startsWith('https://raw.githubusercontent.com/m/mono/main/package.json')) {
+        return new Response(JSON.stringify({ name: 'mono', workspaces: ['packages/*'] }), { status: 200 })
+      }
+      if (text.startsWith('https://raw.githubusercontent.com/m/mono/main/packages/a/package.json')) {
+        return new Response(JSON.stringify({ name: 'dsh-sub-plugin', dsh: { bundle: {} } }), { status: 200 })
+      }
+      if (text.startsWith('https://api.github.com/repos/m/mono/commits/main')) {
+        return new Response(JSON.stringify({ sha: commit, commit: { author: { date: '2026-08-02T00:00:00.000Z' } } }), { status: 200 })
+      }
+      throw new Error(`unrouted: ${text}`)
+    }) as unknown as typeof fetch
+    return { fetchImpl, treeProbes: () => trees, attempts: () => searchAttempts }
+  }
+
+  it('retries the whole harvest once, with the SAME options it was given', async () => {
+    // The retry used to live in build.ts and rebuilt the options object by
+    // hand, omitting `probeSubpackages` — which harvestRepos defaults to TRUE
+    // while build.ts's `schemaVersion` keeps following the env flag. So a
+    // retried harvest emitted `subdir` entries under schemaVersion 3, and a v3
+    // client ignores `subdir` and installs the monorepo ROOT: a silent no-op
+    // for the user. Only the retry path could produce it, which is why nothing
+    // ever saw it.
+    //
+    // Moving the retry inside harvestRepos makes the class structurally
+    // impossible: one call site, one options object. This test reads the
+    // option back off the retry rather than trusting that.
+    const { fetchImpl, treeProbes, attempts } = flakyMonorepoHarvest(1)
+    const result = await harvestRepos({
+      state: {}, budget: 5, fetchImpl, sleep, token: 't',
+      probeSubpackages: false, retryAfterMs: 1,
+    })
+    // It failed, then completed — `attempts()` counts REQUESTS, and a healthy
+    // harvest makes several per topic, so the one-retry BOUND is asserted in
+    // the give-up test below rather than by a request count here.
+    expect(result.firstAttemptError).toContain('404')
+    expect(result.candidates.map(c => c.repo)).toEqual(['m/mono'])
+    expect(attempts()).toBeGreaterThan(1)
+    // And probing stayed OFF on the retry: `m/mono` carries `workspaces`, so
+    // the tree probe fires if and only if `probeSubpackages` is on.
+    expect(treeProbes()).toBe(0)
+    expect(result.candidates.every(c => c.subdir === undefined)).toBe(true)
+  })
+
+  it('does not retry unless asked, so a unit test cannot mask a failure by accident', async () => {
+    const { fetchImpl, attempts } = flakyMonorepoHarvest(1)
+    await expect(harvestRepos({ state: {}, budget: 5, fetchImpl, sleep, token: 't', probeSubpackages: false }))
+      .rejects.toThrow(/404/)
+    expect(attempts()).toBe(1)
+  })
+
+  it('gives up after the one retry, and reports null when the first attempt worked', async () => {
+    // A second failure kills the build loudly: a half-harvested catalog is
+    // worse than a red one, and the daily workflow runs again tomorrow.
+    const twice = flakyMonorepoHarvest(2)
+    await expect(harvestRepos({ state: {}, budget: 5, fetchImpl: twice.fetchImpl, sleep, token: 't', probeSubpackages: false, retryAfterMs: 1 }))
+      .rejects.toThrow(/404/)
+    expect(twice.attempts()).toBe(2)
+
+    const clean = flakyMonorepoHarvest(0)
+    const result = await harvestRepos({ state: {}, budget: 5, fetchImpl: clean.fetchImpl, sleep, token: 't', probeSubpackages: false, retryAfterMs: 1 })
+    expect(result.firstAttemptError).toBeNull()
+  })
+
   it('exposes the star counts the search items carry as a free byproduct', async () => {
     const fetchImpl = (async (url: string | URL) => {
       const text = String(url)
@@ -1223,21 +1429,63 @@ describe('harvestRepos', () => {
     expect(result.searchStars.has('s/no-stars')).toBe(false)
   })
 
-  it('keeps a failure as a reason and carries the recorded candidate for that repo', async () => {
+  it('retires the stale candidate of a repo that deleted its package.json', async () => {
+    // Replaces "keeps a failure as a reason and carries the recorded
+    // candidate for that repo", which pinned the defect: the candidate
+    // survived and `pushedAt` stayed behind, so the entry stayed on the shelf
+    // forever, the report said `no-manifest` about a listed entry, and the
+    // repo re-consumed the fetch budget on every run. A `no-manifest` is a
+    // fact about the contents at this `pushed_at`, so it is recorded.
+    const state: RepoState = { 'x/gutted': { ...entryOf('x/gutted'), pushedAt: '2026-07-01T00:00:00Z' } }
+    const seen = [{ repo: 'x/gutted', pushedAt: '2026-08-02T00:00:00Z' }]
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      const searched = searchItems(text, seen)
+      if (searched !== undefined) return searched
+      return new Response('404: Not Found', { status: 404 })
+    }) as unknown as typeof fetch
+    const result = await harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' })
+    expect(result.failures).toEqual([{ repo: 'x/gutted', code: 'no-manifest', detail: 'No package.json at the repository root, so there is nothing for dsh to install.' }])
+    expect(result.candidates).toEqual([])
+    expect(result.nextState['x/gutted']?.candidates).toEqual([])
+    expect(result.nextState['x/gutted']?.failure?.code).toBe('no-manifest')
+    // The advanced pushedAt is what stops the daily re-fetch.
+    expect(result.nextState['x/gutted']?.pushedAt).toBe('2026-08-02T00:00:00Z')
+  })
+
+  it('keeps a recorded candidate and its old pushedAt when the manifest fetch fails on transport', async () => {
+    // The transient half of the same rule. A 503 says nothing about the
+    // repository, so nothing is written: the recorded entry and its old
+    // `pushedAt` stay, and the mismatch schedules the retry next run. It
+    // reaches `failures` as `fetch-failed` because the non-404 status throws
+    // and harvestRepos' catch names it.
     const state: RepoState = { 'x/broken': { ...entryOf('x/broken'), pushedAt: '2026-07-01T00:00:00Z' } }
     const seen = [{ repo: 'x/broken', pushedAt: '2026-08-02T00:00:00Z' }]
     const fetchImpl = (async (url: string | URL) => {
       const text = String(url)
       const searched = searchItems(text, seen)
       if (searched !== undefined) return searched
-      return new Response('missing', { status: 404 })
+      return new Response('upstream broke', { status: 503 })
     }) as unknown as typeof fetch
     const result = await harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' })
-    expect(result.failures).toEqual([{ repo: 'x/broken', code: 'no-manifest', detail: 'No package.json at the repository root, so there is nothing for dsh to install.' }])
-    // The carried candidate survives the failed refetch, and the recorded
-    // pushedAt is kept — the mismatch schedules the retry again next run.
+    expect(result.failures[0]?.code).toBe('fetch-failed')
     expect(result.candidates.map(c => c.repo)).toEqual(['x/broken'])
     expect(result.nextState['x/broken']?.pushedAt).toBe('2026-07-01T00:00:00Z')
+    expect(result.nextState['x/broken']?.failure).toBeUndefined()
+  })
+
+  it('records a no-manifest for a repo it has never seen before', async () => {
+    // Unchanged behaviour, asserted so the widened condition does not lose
+    // the case it was written for: a dead end must not re-consume the budget.
+    const seen = [{ repo: 'y/new-dead-end', pushedAt: '2026-08-02T00:00:00Z' }]
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      const searched = searchItems(text, seen)
+      if (searched !== undefined) return searched
+      return new Response('404: Not Found', { status: 404 })
+    }) as unknown as typeof fetch
+    const result = await harvestRepos({ state: {}, budget: 5, fetchImpl, sleep, token: 't' })
+    expect(result.nextState['y/new-dead-end']?.failure?.code).toBe('no-manifest')
   })
 
   it('threads a subpackage name failure into the report as its own repo#subdir rejection', async () => {
@@ -2153,10 +2401,26 @@ describe('a subpackage path is bounded before it is published', () => {
 // it, rather than quietly covering a line it was never reasoned about.
 // ---------------------------------------------------------------------------
 
-const githubClientSource = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'github-client.ts'),
-  'utf8',
-)
+function srcOf(file: string): string {
+  return readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', file), 'utf8')
+}
+
+const githubClientSource = srcOf('github-client.ts')
+
+/**
+ * The scan covers every module that reads a response body, not just this one.
+ * `readCappedBody` moved to http-body.ts when the npm half needed the same
+ * bound, and a check anchored to one file would have gone green the moment the
+ * reader left it — while npm-client, which had never capped anything, stayed
+ * unscanned the whole time.
+ */
+const SCANNED_SOURCES: readonly { file: string; source: string }[] = [
+  { file: 'github-client.ts', source: githubClientSource },
+  { file: 'npm-client.ts', source: srcOf('npm-client.ts') },
+  { file: 'http-body.ts', source: srcOf('http-body.ts') },
+]
+
+const httpBodySource = srcOf('http-body.ts')
 
 interface ExcusedBodyRead {
   readonly snippet: string
@@ -2251,8 +2515,10 @@ function findBodyReads(source: string): LogicalLine[] {
     .filter(line => /\.\s*(?:json|text|arrayBuffer|blob|bytes|formData|getReader)\s*\(\s*\)/.test(line.text))
 }
 
-describe('every response body read in github-client.ts is capped or excused', () => {
-  const region = functionRegion(githubClientSource, 'readCappedBody')
+describe('every response body read in a network client is capped or excused', () => {
+  const region = functionRegion(httpBodySource, 'readCappedBody')
+  const inReader = (file: string, lineNumber: number) =>
+    file === 'http-body.ts' && lineNumber >= region.first && lineNumber <= region.last
 
   it('locates readCappedBody, so the region check cannot pass by excusing everything', () => {
     expect(region.first).toBeGreaterThan(0)
@@ -2261,24 +2527,30 @@ describe('every response body read in github-client.ts is capped or excused', ()
 
   it('finds the reads at all, so the scan cannot pass by matching nothing', () => {
     // Without this, a regex that stops matching turns the exhaustiveness check
-    // below into a loop over an empty list — green, and guarding nothing.
-    const reads = findBodyReads(githubClientSource)
-    expect(reads.length).toBeGreaterThanOrEqual(EXCUSED_BODY_READS.length + 1)
-    expect(reads.some(r => r.lineNumber >= region.first && r.lineNumber <= region.last)).toBe(true)
+    // below into a loop over an empty list — green, and guarding nothing. Both
+    // halves have to be non-empty: the reader must still contain the reads it
+    // exists to own, and the clients must still contain the excused ones.
+    expect(findBodyReads(httpBodySource).some(r => inReader('http-body.ts', r.lineNumber))).toBe(true)
+    const clientReads = SCANNED_SOURCES
+      .filter(s => s.file !== 'http-body.ts')
+      .flatMap(s => findBodyReads(s.source))
+    expect(clientReads.length).toBeGreaterThanOrEqual(EXCUSED_BODY_READS.length)
   })
 
-  it('is inside readCappedBody, or an excused non-manifest read, for every one of them', () => {
-    for (const read of findBodyReads(githubClientSource)) {
-      if (read.lineNumber >= region.first && read.lineNumber <= region.last) continue
-      const excused = EXCUSED_BODY_READS.some(e => read.text.includes(e.snippet.replace(/\s+/g, ' ')))
-      expect(
-        excused,
-        `github-client.ts:${read.lineNumber} reads a response body outside readCappedBody `
-          + `(lines ${region.first}-${region.last}). A body carrying repository-authored bytes — a `
-          + 'manifest, a release tarball — must go through readCappedBody, which is where the byte '
-          + 'cap is enforced and where an over-cap body is cancelled rather than bought; anything '
-          + `else needs a reasoned entry in EXCUSED_BODY_READS saying why. Line: ${read.text}`,
-      ).toBe(true)
+  it('is inside readCappedBody, or an excused read, for every one of them', () => {
+    for (const { file, source } of SCANNED_SOURCES) {
+      for (const read of findBodyReads(source)) {
+        if (inReader(file, read.lineNumber)) continue
+        const excused = EXCUSED_BODY_READS.some(e => read.text.includes(e.snippet.replace(/\s+/g, ' ')))
+        expect(
+          excused,
+          `${file}:${read.lineNumber} reads a response body outside readCappedBody `
+            + `(http-body.ts:${region.first}-${region.last}). A body carrying third-party bytes — a `
+            + 'manifest, a release tarball, a packument, a search page — must go through readCappedBody, '
+            + 'which is where the byte cap is enforced and where an over-cap body is cancelled rather '
+            + `than bought; anything else needs a reasoned entry in EXCUSED_BODY_READS saying why. Line: ${read.text}`,
+        ).toBe(true)
+      }
     }
   })
 
@@ -2288,8 +2560,8 @@ describe('every response body read in github-client.ts is capped or excused', ()
     // line happened to contain that text next.
     for (const excused of EXCUSED_BODY_READS) {
       expect(
-        githubClientSource.includes(excused.snippet),
-        'EXCUSED_BODY_READS carries a snippet that is no longer in github-client.ts, so its reason '
+        SCANNED_SOURCES.some(s => s.source.includes(excused.snippet)),
+        'EXCUSED_BODY_READS carries a snippet that is no longer in any scanned module, so its reason '
           + `("${excused.reason}") no longer applies to anything: ${excused.snippet}`,
       ).toBe(true)
     }
@@ -2566,5 +2838,40 @@ describe('a deadline is never relabelled as a malformed body', () => {
     const fetchImpl = headersThenBodyError(expiry)
     await expect(searchReposByTopic(fetchImpl, sleep, 'token')).rejects.toThrow('exceeded 30000ms')
     await expect(searchReposByTopic(fetchImpl, sleep, 'token')).rejects.not.toThrow('not JSON')
+  })
+})
+
+describe('parseHarvestBudget', () => {
+  it('reads a plain integer, and falls back when the variable is unset', () => {
+    expect(parseHarvestBudget('500', REPO_BACKFILL_BUDGET_DEFAULT)).toBe(500)
+    expect(parseHarvestBudget(undefined, REPO_BACKFILL_BUDGET_DEFAULT)).toBe(REPO_BACKFILL_BUDGET_DEFAULT)
+  })
+
+  it('accepts zero, a deliberate "search only, fetch nothing" run', () => {
+    // Distinct from the failure modes below: `0` is a real instruction, which
+    // is why the throw cannot simply be "falsy budget".
+    expect(parseHarvestBudget('0', REPO_BACKFILL_BUDGET_DEFAULT)).toBe(0)
+  })
+
+  it('throws on each of the three values Number() used to fail open on', () => {
+    // All three ended in a silent no-harvest, reported as `0 fetched` with no
+    // error, because harvestRepos slices its queue at the budget:
+    //   Number('abc') is NaN   and slice(0, NaN) is []
+    //   Number('') is 0        and so is Number(' ')
+    //   slice(0, -1) counts from the END, so a negative budget fetches
+    //     all-but-one rather than the one it looks like
+    for (const raw of ['abc', '', ' ', '-1', '1.5', 'Infinity']) {
+      expect(() => parseHarvestBudget(raw, REPO_BACKFILL_BUDGET_DEFAULT), `${JSON.stringify(raw)} must throw`)
+        .toThrow(/REPO_BACKFILL_BUDGET/)
+    }
+    // The value is quoted back, because the whole point is that the operator
+    // cannot see it in a log line that says "0 fetched".
+    expect(() => parseHarvestBudget('abc', REPO_BACKFILL_BUDGET_DEFAULT)).toThrow(/"abc"/)
+  })
+
+  it('names the default in one place, so the shell carries no bare literal', () => {
+    // build.ts is a top-level-await script with no test seam; a `?? '2000'`
+    // there is a policy number nothing can read back.
+    expect(REPO_BACKFILL_BUDGET_DEFAULT).toBe(2000)
   })
 })

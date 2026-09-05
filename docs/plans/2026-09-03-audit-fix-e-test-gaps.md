@@ -1695,3 +1695,103 @@ stars sidecar, with builtAt proven to reach only the index and the badge."
 | H-9 (weak assertions, untested modules) | 8 (registry), 9 (package) | absence |
 
 Expected totals along the way, root suite: 334 → 335 (T1) → 338 (T2) → 339 (T5) → 340 (T6) → 341 (T7) → 341 (T8) → +1 (T10) → −2 (T11). Package suite: 492 → 494 (T3) → 496 (T4) → 507 (T9).
+
+### Task 12: H-10 — CLOSED on 2026-09-04, recorded so it is not re-investigated
+
+Finding H-10. **No work remains. This entry records the answer, because the finding shipped with two disproved hypotheses and one unconfirmed suspect, and the suspect was right.**
+
+Two of `web-full-flow.e2e.ts`'s four cases failed stably against `[data-plugin-entry="include:typert-gateway:mkt-e2e-live"]` and `[data-phase]`. The finding had already disproved the registry branch's changes and H-11's temp-directory leak, and named as prime suspect the global `@deepseek-ai/dsh` install whose mtime sat minutes before the failures first appeared.
+
+**That suspect was the cause.** `@deepseek-ai/dsh-client-ui-settings-plugin-inventory` changed its contract between the two versions, measured directly:
+
+| | `0.1.1-rc.2` | `0.1.2-rc.1` |
+|---|---|---|
+| `data-enabled` | 2 | 0 |
+| `data-kind` | 0 | 5 |
+| 插件列表 | one list | split into 会话插件 (presets, open) and 全局插件 (Loader entries, **collapsed** when a preset roster exists) |
+
+So the hot mount really did succeed — the install assertion passing was not a fluke — and the Loader entry the test looked for was inside a collapsed disclosure that never opened. The id was correct all along.
+
+**A wrong diagnosis was reported before this one and is recorded so the pattern is recognised:** 27 bare ids were measured in the dialog and read as proof the plugin never mounted. Those were the preset composition rows — the OTHER of the two entry-id spaces ([[dsh-loader-id-spaces]]). Counting ids in the wrong plane looks exactly like counting them in the right one.
+
+Closed by `2184265`: an `expandGlobalPlane` helper opens the 全局插件 disclosure after each 插件列表 tab click and waits for a `[data-plugin-entry^="include:"]` row, and `[data-enabled="true"]` became `[data-kind="enabled"]`. `b98dd1f` moved `plugin.yml`'s global pin to `0.1.2-rc.1` so CI drives the contract the selectors match. Verified green: run 33842995573, `web-full-flow.e2e.ts` 4 tests passed, 519/519 overall.
+
+**The standing hazard this leaves:** the e2e drives the real `dsh` on PATH, so a harness release can break it with no change in this repository. `plugin.yml`'s pin is the only thing holding that still, and it carries the measured contract table as a comment. A same-line rc bump can still change the contract underneath it.
+
+**Verification:** none — closed and green in CI.
+
+---
+
+### Task 13: H-11 — the temp-home leak is in the host tests, not in the e2e file the finding names
+
+Finding H-11, **with its premise corrected**. The finding says "the suite creates a temporary `DSH_HOME` per scenario and never removes it" and points at `web-full-flow.e2e.ts`. Measured 2026-09-04 on `4ceb0b0`:
+
+```
+tests/host/index.test.ts             mkdtempSync=41   rmSync=2    ← dominant
+tests/host/executor.test.ts          mkdtempSync=10   rmSync=0
+tests/host/dsh-cli.test.ts           mkdtempSync=5    rmSync=0
+tests/host/profile.test.ts           mkdtempSync=5    rmSync=0
+tests/host/restart.test.ts           mkdtempSync=4    rmSync=3
+tests/client/web-full-flow.e2e.ts    mkdtempSync=2    rmSync=2    ← balanced
+```
+
+`web-full-flow.e2e.ts` already cleans up: `afterAll` at `:237`, `rmSync(tmpHome, { recursive: true, force: true })` at `:248`. The leak is in the host tests, and `index.test.ts` alone accounts for 39 of the unbalanced sites. The surviving directory names agree — `dsh-restart-guard` 476, `dsh-restart-guard-cache` 476, `dsh-shop` 442, `dsh-gateway-profile` 442, `dsh-gateway-fixture` 442, `dsh-profile` 320, `dsh-fixture` 280, `dsh-hot-profile` 272 — all host-test scenario names. 5,089 directories present when this task was written; the audit measured 9,769 two days earlier and clearing them did not fix H-10.
+
+**Files:**
+- Modify: `packages/dsh-plugin-shop/tests/host/index.test.ts`, `executor.test.ts`, `dsh-cli.test.ts`, `profile.test.ts`, `restart.test.ts`
+- Test: `packages/dsh-plugin-shop/tests/host/temp-home-leak.test.ts` (new)
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/host/temp-home-leak.test.ts`. It counts `/tmp/dsh-*` directories, runs the host suite in a child process, and counts again:
+
+```ts
+import { execFileSync } from 'node:child_process'
+import { readdirSync } from 'node:fs'
+import { describe, expect, it } from 'vitest'
+
+function tempHomes(): number {
+  return readdirSync('/tmp', { withFileTypes: true })
+    .filter(e => e.isDirectory() && e.name.startsWith('dsh-')).length
+}
+
+describe('the host suite leaves no temporary DSH_HOME behind', () => {
+  it('ends with the same /tmp/dsh-* count it started with', () => {
+    const before = tempHomes()
+    execFileSync('npx', ['vitest', 'run', 'tests/host/index.test.ts'], {
+      cwd: new URL('../..', import.meta.url).pathname, stdio: 'ignore',
+    })
+    // A leak is a defect even though the directories are near-empty: 9,769 of
+    // them turned `/tmp` into 10,557 entries and made every unrelated `ls
+    // /tmp` useless. The cost is inodes and directory entries, not disk.
+    expect(tempHomes()).toBe(before)
+  })
+}, 300_000)
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run tests/host/temp-home-leak.test.ts` from `packages/dsh-plugin-shop`. Expected: FAIL, `expected 5128 to be 5089` or similar — `index.test.ts` alone leaks 39 per run.
+
+- [ ] **Step 3: Write the implementation**
+
+Prefer **one per-run parent** over 41 individual `rmSync` calls: give each file a `mkdtempSync(join(tmpdir(), 'dsh-<file>-'))` root created in `beforeAll`, build every scenario home beneath it, and remove the root in `afterAll` with `rmSync(root, { recursive: true, force: true })`. One cleanup site per file cannot drift out of sync with the creation sites the way 41 paired calls can, and a test that throws mid-scenario still gets its directory removed.
+
+Do not change what any scenario asserts. The homes are inputs, not subjects.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `npx vitest run tests/host/temp-home-leak.test.ts` — Expected: PASS.
+Run: `pnpm -C packages/dsh-plugin-shop test` — Expected: PASS, 26 files / 520 tests (25/519 at `5f48787` plus this file's one case).
+Run: `pnpm -C packages/dsh-plugin-shop typecheck` — Expected: no output.
+
+Clear the backlog once, by hand, after the fix is in: `find /tmp -maxdepth 1 -type d -name 'dsh-*' -exec rm -rf {} +`. It matches no `claude-*` path and, being `-type d`, skips a packed `.tgz` sitting beside them.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add packages/dsh-plugin-shop/tests/host/
+git commit -m "test(host): each host test file owns one temp root and removes it"
+```
+
+---

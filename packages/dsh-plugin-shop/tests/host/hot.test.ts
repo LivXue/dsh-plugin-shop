@@ -4,9 +4,10 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
-  cleanHotDir, hotMount, hotUnmount, listHotMounts, parseSimplePatch,
+  cleanHotDir, hotMount, hotUnmount, listHotMounts, parseSimplePatch, renderRows,
   type HotFs,
 } from '../../src/host/hot.ts'
+import { JSON_SCHEMA, load } from 'js-yaml'
 
 describe('parseSimplePatch', () => {
   it('parses plain id/name insert rows', () => {
@@ -42,6 +43,33 @@ describe('parseSimplePatch', () => {
   it('rejects a trailing dangling id and empty text', () => {
     expect(parseSimplePatch('- insert:\n    - id: hello\n')).toBe(null)
     expect(parseSimplePatch('')).toBe(null)
+  })
+})
+
+describe('renderRows (F-4)', () => {
+  it('emits a scoped module name the Include dialect can parse', () => {
+    const text = renderRows([{ id: 'archify', name: '@tt-a1i/archify-dsh' }], 'mkt-')
+    expect(load(text, { schema: JSON_SCHEMA })).toEqual([{ id: 'mkt-archify', name: '@tt-a1i/archify-dsh' }])
+  })
+
+  it('emits an unscoped name unchanged, byte for byte', () => {
+    expect(renderRows([{ id: 'hello', name: 'dsh-hello-plugin' }], 'mkt-'))
+      .toBe('- id: mkt-hello\n  name: dsh-hello-plugin\n')
+  })
+
+  it('survives every scalar a package name or id can carry', () => {
+    for (const name of ['@deepseek-ai/dsh-skill-filesystem', '{{PKG_NAME}}', 'yes', 'no', 'null', '1.0', '- dash', 'a: colon', '*star', '#hash', 'tab\tinside']) {
+      const text = renderRows([{ id: 'x', name }], 'mkt-')
+      expect(load(text, { schema: JSON_SCHEMA }), name).toEqual([{ id: 'mkt-x', name }])
+    }
+  })
+
+  it('round-trips several rows', () => {
+    const text = renderRows([{ id: 'a', name: '@scope/a' }, { id: 'b', name: 'b' }], 'mkt-')
+    expect(load(text, { schema: JSON_SCHEMA })).toEqual([
+      { id: 'mkt-a', name: '@scope/a' },
+      { id: 'mkt-b', name: 'b' },
+    ])
   })
 })
 
@@ -131,6 +159,15 @@ describe('hotMount / hotUnmount', () => {
     expect(disposed).toBe(true)
     expect(await hotUnmount('dsh-hello-plugin')).toBe(false)
     expect(listHotMounts()).not.toContain('dsh-hello-plugin')
+  })
+
+  it('mounts a package whose patch inserts a scoped module', async () => {
+    const fs = memFs()
+    seedPackage(fs, "- insert:\n    - id: archify\n      name: '@tt-a1i/archify-dsh'\n")
+    const ctx = testCtx({ await: async () => {}, dispose: async () => {} })
+    const result = await hotMount(ctx, PROFILE, 'dsh-hello-plugin', { hotTreeClass: FakeHotTree, fs, dir: HOT_DIR, timeoutMs: 1000 })
+    expect(result).toEqual({ ok: true, reason: null })
+    expect(fs.files.get(join(HOT_DIR, 'hot-1.yml'))).toBe("- id: mkt-archify\n  name: '@tt-a1i/archify-dsh'\n")
   })
 
   it('numbers a second mount in the same session hot-2.yml', async () => {
@@ -244,6 +281,38 @@ describe('hotMount / hotUnmount', () => {
     expect(result.ok).toBe(false)
     expect(result.reason).toBe('no-patch')
     expect(fs.files.has(join(HOT_DIR, 'hot-1.yml'))).toBe(false)
+  })
+
+  it('refuses a bundle patch path that escapes the package directory (F-10)', async () => {
+    const fs = memFs()
+    const reads: string[] = []
+    const watched: HotFs = {
+      read: path => { reads.push(path); return fs.read(path) },
+      write: fs.write,
+      list: fs.list,
+    }
+    fs.files.set(join(PKG_DIR, 'package.json'), JSON.stringify({
+      name: 'dsh-hello-plugin', version: '1.0.0',
+      dsh: { bundle: { patch: '../../../../../etc/hostile.yml' } },
+    }))
+    fs.files.set('/etc/hostile.yml', '- insert:\n    - id: pwned\n      name: hostile\n')
+    const ctx = testCtx({ await: async () => {}, dispose: async () => {} })
+    const result = await hotMount(ctx, PROFILE, 'dsh-hello-plugin', { hotTreeClass: FakeHotTree, fs: watched, dir: HOT_DIR, timeoutMs: 1000 })
+    expect(result).toEqual({ ok: false, reason: 'no-patch' })
+    expect(reads).not.toContain('/etc/hostile.yml')
+    expect(fs.files.get(join(HOT_DIR, 'hot-1.yml'))).toBeUndefined()
+  })
+
+  it('still reads a patch in a subdirectory of the package', async () => {
+    const fs = memFs()
+    fs.files.set(join(PKG_DIR, 'package.json'), JSON.stringify({
+      name: 'dsh-hello-plugin', version: '1.0.0',
+      dsh: { bundle: { patch: './dsh/cordis.patch.yml' } },
+    }))
+    fs.files.set(join(PKG_DIR, 'dsh', 'cordis.patch.yml'), '- insert:\n    - id: hello\n      name: dsh-hello-plugin\n')
+    const ctx = testCtx({ await: async () => {}, dispose: async () => {} })
+    const result = await hotMount(ctx, PROFILE, 'dsh-hello-plugin', { hotTreeClass: FakeHotTree, fs, dir: HOT_DIR, timeoutMs: 1000 })
+    expect(result).toEqual({ ok: true, reason: null })
   })
 })
 

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { installIdentity } from './identity.ts'
+import { compareEntries, compareRejections, compareStrings, installIdentity } from './identity.ts'
 import type { Entry, Rejection } from './types.ts'
 
 /**
@@ -74,9 +74,33 @@ export interface Artifacts {
  * author supplied. An unescaped `|` would split the cell into extra columns
  * and an unescaped newline would break the row into extra lines, letting
  * that text forge or corrupt neighboring rows in the published report.
+ *
+ * Control characters and bidi formatting are neutralised for the same reason.
+ * They are inert in a browser rendering `text/markdown`, but the report's real
+ * reader is a maintainer in a terminal: U+001B opens an escape sequence — an
+ * OSC-8 hyperlink hides an arbitrary target behind harmless-looking text — and
+ * U+202E reverses the rest of the line, so a rejection row can be made to read
+ * as another package's. Each one becomes U+FFFD rather than disappearing,
+ * because a reader should be able to see that something was removed. The list
+ * is closed — C0, DEL, C1, and the bidi marks and isolates — so ordinary
+ * non-ASCII text is untouched.
+ *
+ * Order is load-bearing: the newline collapse runs FIRST, so a real line break
+ * still becomes a space instead of a replacement character.
+ *
+ * Markdown link syntax is deliberately NOT escaped. It renders as visible text
+ * in the run-artifact viewer, and escaping brackets would mangle the zod paths
+ * our own details carry (`dsh.catalog.capabilities[0]`).
+ *
+ * Every affected code point is written as a `\u` escape here and in the tests:
+ * a literal U+202E in a source file is invisible to a reviewer, which is the
+ * problem being fixed.
  */
 function escapeCell(value: string): string {
-  return value.replace(/\|/g, '\\|').replace(/\r\n|\r|\n/g, ' ')
+  return value
+    .replace(/\|/g, '\\|')
+    .replace(/\r\n|\r|\n|\t/g, ' ')
+    .replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '\ufffd')
 }
 
 /**
@@ -155,6 +179,8 @@ function wellFormed(value: unknown): unknown {
  * @param builtAt - ISO 8601 build timestamp, supplied by the caller.
  * @param stars - optional pointer to a published stars sidecar; omitted from the index when null.
  * @param notAShop - names cleared past the client's shop-like NAME filter.
+ * @param notes - report-only diagnostic lines (market holds, registry rows that
+ *   matched nothing). They ride `report.md` and never the hashed data.
  * @returns the artifacts to publish and commit.
  */
 export function emit(
@@ -164,6 +190,7 @@ export function emit(
   stars?: StarsPointer | null,
   schemaVersion: number = SCHEMA_VERSION,
   notAShop: ReadonlySet<string> = new Set(),
+  notes: readonly string[] = [],
 ): Artifacts {
   assertCatalogInvariants(entries, builtAt)
   // Below v5 the catalog must not carry the `theme` category: `theme` is a
@@ -193,7 +220,11 @@ export function emit(
     }
     return next
   })
-  const sorted = [...emitted].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+  // Name first — that is the order §7.1 promises a reader — then the rest of
+  // the identity, so a tie can never fall back to the order npm or GitHub
+  // answered in. 172 live bundle names over 451 entries are claimed by
+  // several repositories.
+  const sorted = [...emitted].sort(compareEntries)
   const denied = rejections
     .filter(r => r.code === 'denied')
     .map(r => ({
@@ -201,7 +232,9 @@ export function emit(
       detail: r.detail,
       ...(r.replacement !== undefined ? { replacement: r.replacement } : {}),
     }))
-    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    // One name can be denied twice — an npm package and its repository both
+    // carry a row — so the detail breaks the tie.
+    .sort((a, b) => compareStrings(a.name, b.name) || compareStrings(a.detail, b.detail))
   // The client hides entries whose NAME reads like a competing plugin market.
   // That heuristic cannot tell a plugin storing tea from one selling plugins,
   // so `not-a-shop.yml` clears the ones a human or the classifier judged
@@ -209,15 +242,19 @@ export function emit(
   // a client-side list would only take effect on its next release, while this
   // lands on the next daily build. Restricted to names actually listed, and
   // sorted, so the content hash follows the catalog and not the file's order.
-  const notAShopListed = sorted
-    .map(entry => entry.name)
-    .filter(name => notAShop.has(name))
-    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  // Deduplicated: the list is keyed by NAME because that is what the client's
+  // filter reads, and one name can belong to many entries — 151 live names
+  // are shared by 243 entries, so the old expression emitted the same name
+  // once per entry.
+  const notAShopListed = [...new Set(sorted.filter(entry => notAShop.has(entry.name)).map(entry => entry.name))]
+    .sort(compareStrings)
   const pluginsJson = `${JSON.stringify({ schemaVersion, plugins: sorted, denied, notAShop: notAShopListed }, null, 2)}\n`
   const sha256 = createHash('sha256').update(pluginsJson).digest('hex')
   const pluginsFileName = `plugins.${sha256}.json`
 
-  const sortedRejections = [...rejections].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+  // Name, code, detail: a monorepo emits several rows under one repo, and a
+  // pre-existing fetch failure can share a name with a gate rejection.
+  const sortedRejections = [...rejections].sort(compareRejections)
 
   const indexJson = `${JSON.stringify({
     schemaVersion,
@@ -251,6 +288,10 @@ export function emit(
     `Accepted: ${sorted.length}`,
     `Rejected: ${sortedRejections.length}`,
     ...(themeDowngraded > 0 ? [`Theme entries emitted as other (schemaVersion < 5): ${themeDowngraded}`] : []),
+    // Diagnostics before the table, escaped like a cell: a note can quote a
+    // package name, and an unescaped `|` or newline in one would corrupt the
+    // document a maintainer reads.
+    ...(notes.length > 0 ? ['', ...notes.map(escapeCell)] : []),
     '',
     '| Package | Reason | Detail |',
     '|---|---|---|',

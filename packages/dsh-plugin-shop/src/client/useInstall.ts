@@ -1,7 +1,7 @@
 /** Install driving hook for one entry: start, poll to terminal, reset. */
 
-import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from 'react'
-import { INSTALL_POLL_MS, reduceInstall, type InstallView } from './present.ts'
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
+import { INSTALL_POLL_MS, reduceInstall, type InstallEvent, type InstallView } from './present.ts'
 import type { InstallArgs, ShopInstallResult, ShopInstallStatusResult } from '../host/index.ts'
 
 export interface UseInstallResult {
@@ -65,4 +65,102 @@ export function useInstall(
   usePollStatus(view, setView, installStatus)
 
   return { view, start, reset: useCallback(() => setView({ kind: 'idle' }), []) }
+}
+
+/** One entry's install flow, as the tab hands it to a panel. */
+export interface InstallFlow {
+  view: InstallView
+  start: (args: InstallArgs) => Promise<void>
+  reset: () => void
+}
+
+export interface UseInstallFlows {
+  /** Two panels asking for the same install identity receive one flow. */
+  flowFor: (key: string) => InstallFlow
+}
+
+/**
+ * Install flows owned by the tab and keyed by install identity. Keeping the
+ * state above individual cards preserves a running operation when filtering
+ * unmounts its card, and makes the shelf and Outdated panels agree.
+ */
+export function useInstallFlows(
+  install: (args: InstallArgs) => Promise<ShopInstallResult>,
+  installStatus: (args: { installId: string }) => Promise<ShopInstallStatusResult>,
+  onSettled?: (key: string) => void,
+): UseInstallFlows {
+  const [views, setViews] = useState<ReadonlyMap<string, InstallView>>(() => new Map())
+  const settled = useRef(onSettled)
+  settled.current = onSettled
+
+  const put = useCallback((key: string, view: InstallView): void => {
+    setViews(current => {
+      const next = new Map(current)
+      next.set(key, view)
+      return next
+    })
+  }, [])
+
+  const apply = useCallback((key: string, event: InstallEvent): void => {
+    setViews(current => {
+      const before = current.get(key) ?? { kind: 'idle' as const }
+      const after = reduceInstall(before, event)
+      if (after === before) return current
+      const next = new Map(current)
+      next.set(key, after)
+      return next
+    })
+  }, [])
+
+  const start = useCallback(async (key: string, args: InstallArgs): Promise<void> => {
+    put(key, { kind: 'idle' })
+    try {
+      const result = await install(args)
+      if (!result.ok) {
+        put(key, { kind: 'rejected', code: result.code, detail: result.detail })
+        return
+      }
+      put(key, { kind: 'running', installId: result.installId, log: [] })
+    } catch {
+      put(key, { kind: 'failed', detail: '', log: [] })
+    }
+  }, [install, put])
+
+  const reset = useCallback((key: string): void => {
+    setViews(current => {
+      if (!current.has(key)) return current
+      const next = new Map(current)
+      next.delete(key)
+      return next
+    })
+  }, [])
+
+  // One interval polls every running identity; duplicate panels never poll
+  // the same host record independently.
+  useEffect(() => {
+    const running: Array<[string, string]> = []
+    for (const [key, view] of views) {
+      if (view.kind === 'running') running.push([key, view.installId])
+    }
+    if (running.length === 0) return
+    const timer = setInterval(() => {
+      for (const [key, installId] of running) {
+        void installStatus({ installId }).then(status => {
+          apply(key, { type: 'status', status })
+          if (status.found && status.state !== 'running') settled.current?.(key)
+        }, () => {
+          // Poll failures are transient; the retained host record is retried.
+        })
+      }
+    }, INSTALL_POLL_MS)
+    return () => clearInterval(timer)
+  }, [views, installStatus, apply])
+
+  const flowFor = useCallback((key: string): InstallFlow => ({
+    view: views.get(key) ?? { kind: 'idle' },
+    start: args => start(key, args),
+    reset: () => reset(key),
+  }), [views, start, reset])
+
+  return { flowFor }
 }

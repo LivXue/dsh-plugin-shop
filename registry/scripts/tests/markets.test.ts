@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
 import { mergeMarketRows, serializeMarketRows, type MarketRow } from '../src/markets.ts'
 import { parseMarketResponse } from '../src/market-judge.ts'
+import { parseRegistryConfig } from '../src/config.ts'
 
 const human: MarketRow = { name: 'dsh-tea-store', market: false, by: 'human', reason: '存茶指南' }
 
@@ -73,5 +74,43 @@ describe('parseMarketResponse', () => {
   it('yields nothing from a truncated or non-JSON completion', () => {
     expect(parseMarketResponse('[{"name":"a","mark', expected).size).toBe(0)
     expect(parseMarketResponse('I cannot help with that.', expected).size).toBe(0)
+  })
+})
+
+describe('what a steered verdict can and cannot reach', () => {
+  it('withholds the neighbour it named, and records the row for a spot-check', () => {
+    // The batch asked about dsh-a and its neighbour dsh-b. A hostile
+    // description in dsh-a's metadata steers the model into answering `true`
+    // for dsh-b. The parser cannot tell that apart from a legitimate answer —
+    // batches may be answered in any order — so there is no positional check
+    // to add, and the verdict stands.
+    //
+    // The blast radius is what bounds this, measured 2026-09-04: `notAShop`
+    // is the CLEARED list, and the client shows any name that is cleared OR
+    // not shop-like (`ShopTab.tsx:920-922`). isShopLike('dsh-hello-plugin')
+    // and isShopLike('dsh-fs-tool') are both false, so a steered `true` on an
+    // ordinarily-named plugin withholds NOTHING — it can only bite a name
+    // that already reads like a marketplace, and those are hidden by default
+    // anyway. What it does cost such a name is the re-ask: a recorded row is
+    // never asked again. Hence the report line.
+    const verdicts = parseMarketResponse(
+      '[{"name":"dsh-a","market":false},{"name":"dsh-b","market":true}]',
+      new Set(['dsh-a', 'dsh-b']),
+    )
+    const rows = serializeMarketRows(mergeMarketRows([], verdicts, new Map()))
+    const config = parseRegistryConfig({
+      verified: '[]', denied: '[]', allowedSimilar: '[]', categories: '[]', firstSeen: '[]',
+      markets: rows,
+    })
+    expect(config.notAShop.has('dsh-a'), 'a false clears').toBe(true)
+    expect(config.notAShop.has('dsh-b'), 'a true withholds').toBe(false)
+  })
+
+  it('treats a human row exactly the same, because the verdict is what decides', () => {
+    const config = parseRegistryConfig({
+      verified: '[]', denied: '[]', allowedSimilar: '[]', categories: '[]', firstSeen: '[]',
+      markets: '- name: dsh-b\n  market: true\n  by: human\n  reason: it sells dsh plugins\n',
+    })
+    expect(config.notAShop.has('dsh-b')).toBe(false)
   })
 })

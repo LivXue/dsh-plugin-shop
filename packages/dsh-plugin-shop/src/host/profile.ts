@@ -3,7 +3,7 @@
 import { existsSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { loadOptionalPatches } from '@deepseek-ai/dsh-app-boot'
-import { dump } from 'js-yaml'
+import { DEFAULT_SCHEMA, Type, dump } from 'js-yaml'
 
 /** One id-targeted user-layer row (§8: the CLI hot-reloads this file). */
 export interface UserLayerRow { id: string; disabled: boolean }
@@ -11,6 +11,27 @@ export interface UserLayerRow { id: string; disabled: boolean }
 interface ProfileShape { dsh?: { profile?: { bundles?: unknown } } }
 
 interface PackageShape { dsh?: { bundle?: { patch?: unknown } } }
+
+/** The loader's `!!js` expression scalar, retained by app-boot as a small
+ * shape rather than an executable value. js-yaml needs an explicit type to
+ * write that shape back with the original tag. */
+interface JsExpr { __jsExpr: string }
+
+function isJsExpr(value: unknown): value is JsExpr {
+  return typeof value === 'object' && value !== null
+    && typeof (value as { __jsExpr?: unknown }).__jsExpr === 'string'
+}
+
+const JS_EXPR_TYPE = new Type('tag:yaml.org,2002:js', {
+  kind: 'scalar',
+  resolve: () => true,
+  construct: (data: string): JsExpr => ({ __jsExpr: data }),
+  predicate: isJsExpr,
+  represent: (value: object) => (value as JsExpr).__jsExpr,
+})
+
+/** js-yaml's default schema plus the user-layer `!!js` round trip. */
+const USER_LAYER_SCHEMA = DEFAULT_SCHEMA.extend([JS_EXPR_TYPE])
 
 /**
  * Find the profile directory that owns `startPath`.
@@ -89,7 +110,7 @@ export function setUserLayerRows(options: { profileDir: string; rows: UserLayerR
   const others = existing.filter(row => !touched.has(row.id as string))
   const next = [...others, ...options.rows.filter(row => row.disabled).map(row => ({ id: row.id, disabled: true }))]
   const tmp = `${file}.tmp`
-  writeFileSync(tmp, dump(next, { noRefs: true }))
+  writeFileSync(tmp, dump(next, { noRefs: true, schema: USER_LAYER_SCHEMA }))
   renameSync(tmp, file)
 }
 

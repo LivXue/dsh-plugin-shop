@@ -4,7 +4,7 @@ import { gzipSync } from 'node:zlib'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { TransportError } from '../../src/host/origin.ts'
-import { npmOrigin } from '../../src/host/npm-origin.ts'
+import { MAX_INFLATED_BYTES, MAX_PACKAGE_BYTES, npmOrigin } from '../../src/host/npm-origin.ts'
 
 /** The same real `npm pack` output Task 1 uses. Its inner paths are
  * package/v1/index.json and package/v1/plugins.abc.json. */
@@ -235,11 +235,12 @@ describe('npmOrigin', () => {
           dist: { tarball: 'https://reg.test/c/-/c-1.tgz', integrity: INTEGRITY },
         }), { status: 200 })
       }
-      return {
-        ok: true,
-        status: 200,
-        arrayBuffer: () => Promise.reject(new TypeError('fetch failed')),
-      } as unknown as Response
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array([0x1f, 0x8b]))
+          controller.error(new TypeError('fetch failed'))
+        },
+      }), { status: 200 })
     }) as unknown as typeof fetch
     const handle = await npmOrigin('https://reg.test/', 'c', truncating).probe(signal())
     const failure = await handle.pointer().catch((e: unknown) => e)
@@ -282,5 +283,31 @@ describe('npmOrigin', () => {
     // appending, dropping `npm-repo` from the request entirely.
     await npmOrigin('https://artifactory.corp/api/npm/npm-repo', 'c', pathedRegistry).probe(signal())
     expect(requestedUrl).toBe('https://artifactory.corp/api/npm/npm-repo/c/latest')
+  })
+})
+
+describe('npmOrigin body bounds (F-2 / G-10)', () => {
+  it('refuses a tarball that inflates past the cap, with the cap named', async () => {
+    const bomb = gzipSync(Buffer.alloc(MAX_INFLATED_BYTES + 1))
+    const integrity = `sha512-${createHash('sha512').update(bomb).digest('base64')}`
+    const handle = await npmOrigin('https://reg.test/', 'c', registry({ tarball: bomb, integrity })).probe(signal())
+    const failure = await handle.pointer().catch((e: unknown) => e)
+    expect(failure).toBeInstanceOf(TransportError)
+    expect(String(failure)).toMatch(/inflates past the/)
+    expect(String(failure)).toMatch(String(MAX_INFLATED_BYTES))
+  })
+
+  it('refuses a tarball body over the wire cap before it is ever hashed', async () => {
+    const oversized = Buffer.alloc(MAX_PACKAGE_BYTES + 1)
+    const handle = await npmOrigin('https://reg.test/', 'c',
+      registry({ tarball: oversized, integrity: INTEGRITY })).probe(signal())
+    const failure = await handle.pointer().catch((e: unknown) => e)
+    expect(failure).toBeInstanceOf(TransportError)
+    expect(String(failure)).toMatch(/exceeded the/)
+  })
+
+  it('caps a package tarball at 32 MiB on the wire and 64 MiB inflated', () => {
+    expect(MAX_PACKAGE_BYTES).toBe(32 * 1024 * 1024)
+    expect(MAX_INFLATED_BYTES).toBe(64 * 1024 * 1024)
   })
 })

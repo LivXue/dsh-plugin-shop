@@ -20,6 +20,7 @@ import { FetchTimeoutError, fetchWithRetry, withTimeout } from './npm-client.ts'
 import { diffRepoState, nextRepoState, type RepoSeen, type RepoState } from './repo-state.ts'
 import { hasWorkspaceDeps, monorepoSignal, selectSubpackagePaths } from './subpackage-select.ts'
 import type { RepoCandidate } from './types.ts'
+import { readCappedBody } from './http-body.ts'
 
 const GITHUB_API = 'https://api.github.com'
 const RAW_GITHUB = 'https://raw.githubusercontent.com'
@@ -272,11 +273,14 @@ async function searchRequest(
 
 /**
  * Probe one query's `total_count` with a minimal page.
- * @throws when the response answers no numeric total. A malformed probe must
- *   not read as an empty window: this number decides the partition split, the
- *   zero-window skip in {@link searchReposByTopic} and the coverage check
- *   there, and a silent 0 disables all three — it now skips the window
- *   outright. Same rule, and the same reason, as npm-client's `searchTotal`.
+ * @throws when the response answers no numeric total, or stays partial across
+ *   {@link searchBody}'s retry. A malformed probe must not read as an empty
+ *   window: this number decides the partition split, the zero-window skip in
+ *   {@link searchReposByTopic} and the coverage check there, and a silent 0
+ *   disables all three — it now skips the window outright. Same rule, and the
+ *   same reason, as npm-client's `searchTotal`. `incomplete_results` is the
+ *   same hazard wearing a 200: a timed-out probe answers an UNDERCOUNT, which
+ *   reads as a smaller window rather than a broken measurement.
  */
 export async function probeTotal(
   query: string,
@@ -285,9 +289,7 @@ export async function probeTotal(
   token: string | undefined,
 ): Promise<number> {
   const url = `${GITHUB_API}/search/repositories?q=${encodeURIComponent(query)}&per_page=1`
-  const response = await searchRequest(url, fetchImpl, sleep, token)
-  if (!response.ok) throw new Error(`github search probe for ${query} failed: ${response.status}`)
-  const body = await readSearchBody(response, `github search probe for ${query}`)
+  const body = await searchBody(url, `github search probe for ${query}`, fetchImpl, sleep, token)
   if (typeof body.total_count !== 'number') {
     throw new Error(`github search probe for ${query} answered no total_count; a window's size cannot be measured without it`)
   }
@@ -337,6 +339,49 @@ async function readSearchBody(
 }
 
 /**
+ * Request one search URL and read its body, retrying once when GitHub says the
+ * answer it served is partial.
+ *
+ * `incomplete_results` is GitHub reporting that the query TIMED OUT server-side
+ * and what came back is a partial result set wearing an ordinary 200. Both
+ * callers have to refuse it, for the same reason and with different blast
+ * radii: a partial PAGE cannot be told from a whole one by looking at its
+ * items, and a partial PROBE answers an undercounted `total_count` — the
+ * number the partition splits on, the zero-window skip reads, and the coverage
+ * check in {@link searchReposByTopic} measures every enumeration against. A
+ * probe that times out to 0 therefore skips its whole window in silence, which
+ * is precisely the failure the throw-on-missing-total above exists to prevent;
+ * checking one and not the other left the more dangerous half open.
+ *
+ * But a timeout is transient by definition, and throwing on the first one
+ * fails the entire daily build — every window, each paged — on one slow second
+ * at GitHub, publishing nothing at all. So it gets the one retry its
+ * transience deserves (paced for free: {@link searchRequest} sleeps before
+ * every request) and the throw stands only when the answer stays partial.
+ * @param url - the fully-built search URL.
+ * @param what - this request's name, used verbatim in every error it raises.
+ * @throws when the request fails, the body is unreadable, or both attempts
+ *   come back partial.
+ */
+async function searchBody(
+  url: string,
+  what: string,
+  fetchImpl: typeof fetch,
+  sleep: (ms: number) => Promise<void>,
+  token: string | undefined,
+): Promise<{ total_count?: unknown; items?: unknown; incomplete_results?: unknown }> {
+  for (let attempt = 1; ; attempt += 1) {
+    const response = await searchRequest(url, fetchImpl, sleep, token)
+    if (!response.ok) throw new Error(`${what} failed: ${response.status}`)
+    const body = await readSearchBody(response, what)
+    if (body.incomplete_results !== true) return body
+    if (attempt > 1) {
+      throw new Error(`${what} answered incomplete_results on ${attempt} attempts: the query timed out and what it served is partial`)
+    }
+  }
+}
+
+/**
  * One page of a windowed search.
  *
  * `skipped` is separate from `metas` on purpose, and it is the whole reason
@@ -356,9 +401,9 @@ interface SearchPageResult {
 
 /**
  * Fetch one page of a windowed search.
- * @throws when the page reports `incomplete_results` (GitHub's own signal that
- *   the query timed out and the page is partial) or answers no numeric total —
- *   neither can be told apart from a complete page by looking at the items.
+ * @throws when the page answers no numeric total, or stays partial across
+ *   {@link searchBody}'s retry — neither can be told apart from a complete
+ *   page by looking at the items.
  */
 async function searchPage(
   query: string,
@@ -368,16 +413,7 @@ async function searchPage(
   token: string | undefined,
 ): Promise<SearchPageResult> {
   const url = `${GITHUB_API}/search/repositories?q=${encodeURIComponent(query)}&per_page=${SEARCH_PAGE_SIZE}&page=${page}`
-  const response = await searchRequest(url, fetchImpl, sleep, token)
-  if (!response.ok) throw new Error(`github search for ${query} failed: ${response.status}`)
-  const body = await readSearchBody(response, `github search for ${query}`)
-  // GitHub sets this when the query timed out and what it served is a PARTIAL
-  // result set. The response is an ordinary 200 carrying ordinary items, so
-  // nothing downstream can notice — it would page and measure as if the window
-  // were whole. A timeout is the realistic production trigger for it.
-  if (body.incomplete_results === true) {
-    throw new Error(`github search for ${query} page ${page} answered incomplete_results: the query timed out and the page it served is partial`)
-  }
+  const body = await searchBody(url, `github search for ${query} page ${page}`, fetchImpl, sleep, token)
   // Same rule as the npm half: a page carrying no total cannot be told apart
   // from a truncated one, so it throws rather than ending the window on
   // whatever happened to arrive.
@@ -668,60 +704,6 @@ async function fetchLatestReleaseTarball(
   }
 }
 
-/**
- * Read a response body with a hard BYTE cap, returning null the moment it
- * exceeds `cap`. The one body reader in this module, and the one place either
- * cap is enforced.
- *
- * It is shared rather than written twice because the two readers had already
- * drifted apart in the way that matters: this loop, written for the tarball,
- * cancels as soon as the cap trips, while the manifest's `await
- * response.text()` buffered the WHOLE decompressed body and then measured it.
- * `content-length` cannot stand in for the measurement — on
- * raw.githubusercontent.com it is the gzip-compressed size, so a manifest
- * whose header says 744 bytes can decode to a gigabyte — which is why the
- * count that decides is the one taken here, off the bytes as they arrive.
- * @param response - an `ok` response whose body is to be read.
- * @param cap - the largest body, in bytes, the caller will hold.
- * @returns the bytes, or null when the body is larger than `cap`.
- */
-async function readCappedBody(response: Response, cap: number): Promise<Uint8Array | null> {
-  const body = response.body
-  if (body == null) {
-    // No readable stream (or a fixture that only fakes `arrayBuffer`): one
-    // shot, then measured. A throw here belongs to the caller — the tarball
-    // probe degrades to null, readManifest calls it an unreadable body — so it
-    // is deliberately not swallowed at this level, which would leave neither
-    // of them able to tell "empty" from "broken".
-    const bytes = new Uint8Array(await response.arrayBuffer())
-    return bytes.byteLength > cap ? null : bytes
-  }
-  const reader = body.getReader()
-  const chunks: Uint8Array[] = []
-  let total = 0
-  try {
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      total += value.byteLength
-      if (total > cap) {
-        // Stop pulling the rest of the body: over the cap, refuse.
-        await reader.cancel()
-        return null
-      }
-      chunks.push(value)
-    }
-  } finally {
-    reader.releaseLock()
-  }
-  const bytes = new Uint8Array(total)
-  let offset = 0
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-  return bytes
-}
 
 /**
  * Read an asset body with a hard cap, returning null when it exceeds
@@ -962,7 +944,7 @@ async function probeSubpackageCandidates(
   sleep: (ms: number) => Promise<void>,
   token: string | undefined,
   timeoutMs: number = GITHUB_REQUEST_TIMEOUT_MS,
-): Promise<{ candidates: RepoCandidate[]; failures: RepoFetchFailure[]; anyClaimed: boolean }> {
+): Promise<{ candidates: RepoCandidate[]; failures: RepoFetchFailure[]; anyClaimed: boolean; probed: number }> {
   const treeUrl = `${GITHUB_API}/repos/${owner}/${slug}/git/trees/${meta.defaultBranch}?recursive=1`
   const treeResponse = await fetchRobust(treeUrl, fetchImpl, sleep, token, timeoutMs)
   // A 404 is a fact: there is no tree at that branch, so there are no
@@ -972,7 +954,7 @@ async function probeSubpackageCandidates(
   // installable subpackage" that is false. That is exactly the reasoning the
   // catch below already applies to a deadline on this same read; a 500 or a
   // rate-limit 403 differs from a stall only in how it is spelled.
-  if (treeResponse.status === 404) return { candidates: [], failures: [], anyClaimed: false }
+  if (treeResponse.status === 404) return { candidates: [], failures: [], anyClaimed: false, probed: 0 }
   if (!treeResponse.ok) {
     throw new Error(`github api returned ${treeResponse.status} listing the tree of ${owner}/${slug}`)
   }
@@ -986,7 +968,7 @@ async function probeSubpackageCandidates(
     // with no bundle of its own then earns a persisted `no-manifest` saying it
     // "declares no name and no installable subpackage" — false, and durable.
     if (error instanceof FetchTimeoutError) throw error
-    return { candidates: [], failures: [], anyClaimed: false }
+    return { candidates: [], failures: [], anyClaimed: false, probed: 0 }
   }
   // A truncated tree (>100k entries) may hide some subpackages; the repo is
   // re-probed when it changes, and the loss costs only a later re-probe —
@@ -1061,7 +1043,7 @@ async function probeSubpackageCandidates(
       failures.push(subpackageFailure(owner, slug, dir, describeBadName(rawName)))
     }
   }
-  return { candidates, failures, anyClaimed }
+  return { candidates, failures, anyClaimed, probed: dirs.length }
 }
 
 /**
@@ -1150,7 +1132,11 @@ export async function fetchRepoCandidate(
     return { ok: true, candidates: [root] }
   }
   if (probeSubpackages && monorepoSignal(manifest)) {
-    const { candidates: subs, failures: subFailures, anyClaimed } = await probeSubpackageCandidates(owner, slug, meta, manifest, head, fetchImpl, sleep, token, timeoutMs)
+    const { candidates: subs, failures: subFailures, anyClaimed, probed } = await probeSubpackageCandidates(owner, slug, meta, manifest, head, fetchImpl, sleep, token, timeoutMs)
+    // The probe happened and found nothing installable. Record how many
+    // manifests it read so the root's rejection can say so instead of
+    // pointing the author at the root manifest (B-7).
+    if (root !== null && subs.length === 0 && probed > 0) root.probedSubpackages = probed
     if (subs.length > 0) {
       return { ok: true, candidates: subs, ...(subFailures.length > 0 ? { subpackageFailures: subFailures } : {}) }
     }
@@ -1199,6 +1185,44 @@ export async function fetchRepoCandidate(
  * bursts, and the API's per-token rate budget is modest. */
 const REPO_CONCURRENCY = 4
 
+/**
+ * The per-run fetch budget when `REPO_BACKFILL_BUDGET` is unset: 2,000 of the
+ * ~14,700 recorded repositories. Named here, beside the knob it bounds, rather
+ * than left as a `?? '2000'` literal in build.ts — that file is a
+ * top-level-await script with no test seam, so a policy number written there
+ * is one nothing can read back.
+ */
+export const REPO_BACKFILL_BUDGET_DEFAULT = 2000
+
+/**
+ * Parse the per-run fetch budget from its environment string.
+ *
+ * `Number()` fails open in three ways that all end in the same place — a
+ * silent no-harvest reported as `0 fetched` — because {@link harvestRepos}
+ * slices its queue at the budget:
+ *
+ * - `Number('abc')` is `NaN`, and `[...].slice(0, NaN)` is `[]`.
+ * - `Number('')` is `0`, and so is `Number(' ')`.
+ * - `slice(0, -1)` counts from the END, so a negative budget quietly fetches
+ *   all-but-one instead of the one it looks like.
+ *
+ * `0` is deliberately NOT one of them: it is a real instruction — search the
+ * topics, fetch nothing — which is why the check cannot just refuse a falsy
+ * budget.
+ * @param raw - the environment value, or undefined when unset.
+ * @param fallback - the budget to use when the variable is unset.
+ * @throws when the value is present but not a non-negative integer, quoting it
+ *   back: the operator cannot see the value in a log line that says `0 fetched`.
+ */
+export function parseHarvestBudget(raw: string | undefined, fallback: number): number {
+  if (raw === undefined) return fallback
+  const budget = Number(raw)
+  if (raw.trim() === '' || !Number.isInteger(budget) || budget < 0) {
+    throw new Error(`REPO_BACKFILL_BUDGET must be a non-negative integer; got ${JSON.stringify(raw)}`)
+  }
+  return budget
+}
+
 export interface RepoHarvestOptions {
   /** The previous committed state; the run carries untouched repos over. */
   state: RepoState
@@ -1217,6 +1241,16 @@ export interface RepoHarvestOptions {
   /** Per-attempt deadline on a release-tarball download, which reads a body up
    * to {@link MAX_TARBALL_BYTES}. Defaults to {@link TARBALL_REQUEST_TIMEOUT_MS}. */
   tarballTimeoutMs?: number
+  /**
+   * Pause before retrying the WHOLE harvest once, when the first attempt
+   * throws. Unset means no retry.
+   *
+   * Opt-in on purpose, and deliberately not defaulted: a unit test that
+   * retried by accident would turn a real failure into a slow pass. The daily
+   * build sets it because the GitHub half runs through shared egress whose
+   * throttles outlast the per-request backoffs.
+   */
+  retryAfterMs?: number
 }
 
 export interface RepoHarvestResult {
@@ -1250,14 +1284,50 @@ export interface RepoHarvestResult {
   thrown: number
   carried: number
   deferred: number
+  /**
+   * The first attempt's error message when {@link RepoHarvestOptions.retryAfterMs}
+   * bought a second one, else null. Reported rather than swallowed: a harvest
+   * that needed a retry is not the same event as one that did not.
+   */
+  firstAttemptError: string | null
 }
 
 /**
- * Harvest every repository candidate for the topics: partition the search,
- * diff against the recorded state, re-fetch only new or changed repos (up to
- * the budget), and carry the untouched candidates over.
+ * Harvest every repository candidate for the topics, retrying the whole run
+ * once when {@link RepoHarvestOptions.retryAfterMs} is set.
+ *
+ * The retry lives HERE rather than at the call site, and that is the point.
+ * It used to sit in build.ts, which rebuilt the options object by hand for the
+ * second attempt and left out `probeSubpackages`; this function defaults that
+ * to `true` while build.ts's `schemaVersion` kept following the env flag. So a
+ * retried harvest emitted `subdir` entries under schemaVersion 3 — and a v3
+ * client ignores `subdir` and installs the monorepo ROOT, a silent no-op for
+ * the user. Only the retry path could produce it, which is why nothing ever
+ * saw it. One call site and one options object makes the class impossible
+ * rather than merely fixed.
  */
 export async function harvestRepos(options: RepoHarvestOptions): Promise<RepoHarvestResult> {
+  const { retryAfterMs } = options
+  try {
+    return { ...await harvestOnce(options), firstAttemptError: null }
+  } catch (error) {
+    if (retryAfterMs === undefined) throw error
+    const firstAttemptError = error instanceof Error ? error.message : String(error)
+    const sleep = options.sleep ?? (async (ms: number) => { await new Promise(resolve => setTimeout(resolve, ms)) })
+    await sleep(retryAfterMs)
+    // The SAME object, never a rebuilt one. A second failure propagates: a
+    // half-harvested catalog is worse than a red build, and the daily workflow
+    // runs again tomorrow.
+    return { ...await harvestOnce(options), firstAttemptError }
+  }
+}
+
+/**
+ * One harvest attempt: partition the search, diff against the recorded state,
+ * re-fetch only new or changed repos (up to the budget), and carry the
+ * untouched candidates over.
+ */
+async function harvestOnce(options: RepoHarvestOptions): Promise<Omit<RepoHarvestResult, 'firstAttemptError'>> {
   const {
     state, budget,
     fetchImpl = fetch,
@@ -1347,13 +1417,19 @@ export async function harvestRepos(options: RepoHarvestOptions): Promise<RepoHar
         // (a root with an unusable name whose subpackage was refused for
         // size); they are reported and persisted the same as on the ok branch.
         if (result.subpackageFailures !== undefined) failures.push(...result.subpackageFailures)
-        // A deterministic failure on a repo with NO recorded entry is
-        // recorded so the next runs carry the reason instead of re-fetching
-        // the same dead end and re-consuming the budget. A repo WITH a
-        // recorded entry keeps its candidates: the old pushedAt mismatch
-        // schedules the retry next run (a `fetch-failed` stays transient
-        // either way).
-        if (result.code === 'no-manifest' && state[entry.repo] === undefined) {
+        // A `no-manifest` is a fact about the repository's contents at this
+        // `pushed_at`, so it is recorded whether or not the repo was recorded
+        // before. Recording it for a KNOWN repo is what retires a stale
+        // candidate: a repo that deletes its package.json used to keep its
+        // old candidate on the shelf forever while the same run reported it
+        // `no-manifest`, and re-consumed the fetch budget every day because
+        // the recorded `pushedAt` never advanced (D-3).
+        //
+        // A `fetch-failed` is a fact about the network and is never recorded:
+        // the recorded entry and its old `pushedAt` stay, which schedules the
+        // retry next run, and a repo never fetched at all stays out of the
+        // state entirely so next run's `toFetch` picks it up again.
+        if (result.code === 'no-manifest') {
           fresh.set(entry.repo, {
             candidates: [],
             failure: { code: result.code, detail: result.detail },

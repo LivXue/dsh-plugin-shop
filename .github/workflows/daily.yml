@@ -60,33 +60,49 @@ jobs:
     # that would take, and none exists yet.
     timeout-minutes: 120
     permissions:
-      contents: write
-    env:
-      # Optional read-only npm token; lifts the search API's per-IP rate
-      # limit onto the token. Empty (e.g. on fork PRs) = unauthenticated.
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-      # LLM classifier (categories.yml). The key is a secret; an empty value
-      # (fork PRs) skips classification — the classify step is designed for it.
-      # The gateway serves plain HTTP only (no TLS listener) — the Bearer key
-      # rides plaintext on the runner→gateway path; rotate-able key, gateway
-      # owner's transport choice. Switch to https when the mirror gains TLS.
-      LLM_BASE_URL: http://8.141.31.123:3000/v1
-      LLM_MODEL: deepseek-v4-flash
-      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
-      # GitHub star counts (public GraphQL). Empty on forks/local runs; the
-      # stars step skips and the catalog publishes without them.
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # read, not write. This job installs dependencies, calls a plaintext LLM
+      # gateway and fetches thousands of third-party manifests; the ambient
+      # grant is what every one of those steps runs under. The two steps that
+      # push carry their own credential in their own `env:` instead.
+      contents: read
+    # No job-level `env:`. Anything declared there is in EVERY step's
+    # environment, and this block held NPM_TOKEN, LLM_API_KEY and GITHUB_TOKEN
+    # — so all three sat in `pnpm install`'s environment, readable by a
+    # postinstall hook in any transitive dependency, and LLM_API_KEY sat in the
+    # environment of the step that fetches thousands of third-party manifests.
+    # Exactly two steps consume any of them, and each now declares its own.
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # Otherwise checkout writes an http.extraheader credential into
+          # .git/config, where EVERY later step can read it and push with it —
+          # a postinstall hook in any transitive dependency included. Scoping a
+          # token to the push steps' env: is pointless while that file holds
+          # one. `git fetch origin main` in those steps still works
+          # unauthenticated: the repository is public.
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with: { node-version: 24, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
       - run: pnpm typecheck
       - name: Classify new listings
         run: node --experimental-strip-types registry/scripts/src/classify.ts
-      - run: pnpm build:catalog -- --harvest-from dist/v1/harvest.json
+        env:
+          # Optional read-only npm token; lifts the search API's per-IP rate
+          # limit onto the token. Empty (e.g. on fork PRs) = unauthenticated.
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # The LLM classifier's gateway. The key is a secret; an empty value
+          # (fork PRs) skips classification — this step is designed for it.
+          # The gateway serves plain HTTP only (no TLS listener) — the Bearer
+          # key rides plaintext on the runner→gateway path; rotate-able key,
+          # gateway owner's transport choice. Switch to https when the mirror
+          # gains TLS.
+          LLM_BASE_URL: http://8.141.31.123:3000/v1
+          LLM_MODEL: deepseek-v4-flash
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      - run: pnpm build:catalog -- --harvest-from dist/harvest.json
         env:
           # Flipped in the 0.4.10 release: the client that reads schemaVersion 3
           # (repo entries) ships, so the catalog may publish them.
@@ -103,8 +119,13 @@ jobs:
           # catalog's repo count; without it the GITHUB_TOKEN's ~1k points
           # cover only a third of the shelf per run.
           STARS_TOKEN: ${{ secrets.STARS_TOKEN }}
+          # Read by build.ts: the npm search rate limit, and the GitHub half of
+          # the harvest plus its stars fallback. Declared here rather than
+          # job-wide because this is the step that reads them.
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Upload build report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: catalog-report
           path: |
@@ -125,7 +146,7 @@ jobs:
         # matters: the publish job's download step has nothing to fetch and
         # stops there. Same reasoning as the two `Commit the ...` steps.
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: catalog-dist-v1
           path: dist/v1
@@ -137,9 +158,9 @@ jobs:
         # publishes from belongs in the workflow. 0.5.0 is what a wrong catalog
         # reaching everyone costs.
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
         with:
-          path: dist
+          path: dist/pages
       - name: Commit the classifier's output
         if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'push') && github.ref == 'refs/heads/main'
         continue-on-error: true
@@ -195,6 +216,15 @@ jobs:
         # and fails this step there; while it did not, the snapshot step below
         # committed the markers and the throw arrived a build later, on a
         # malformed registry file, with nothing naming the run that wrote it.
+        env:
+          # The only write credential in this job, and it lives here rather
+          # than job-wide: a fine-grained PAT scoped to this repository with
+          # Contents: read and write and nothing else, read by the credential
+          # helper inside the push below. An empty value (a fork, a local run,
+          # an expired token) makes the push fail, which continue-on-error
+          # turns into the ::error:: this step already emits for a rejected
+          # push — the catalog still publishes.
+          REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
         run: |
           git config user.name 'dsh-plugin-shop bot'
           git config user.email 'bot@users.noreply.github.com'
@@ -238,7 +268,21 @@ jobs:
                 echo "::error::the rebase reported success but its autostash did not reapply; $1 was not pushed and the tree holds conflict markers with the stash still unapplied. Someone landed on main inside this run's window; nothing on main needs undoing, so re-run the workflow."
                 return 1
               fi
-              if git push origin HEAD:main; then return 0; fi
+              # The credential reaches git through the ENVIRONMENT and nothing
+              # else: not .git/config (checkout no longer writes one) and not a
+              # command line. GIT_CONFIG_COUNT/KEY/VALUE is the env spelling of
+              # `-c`, used instead of `-c` for two reasons — the helper script
+              # stays out of argv, and `git push` stays adjacent so
+              # workflow.test.ts's push-step detector keeps working. KEY_0 is an
+              # EMPTY credential.helper, which resets any inherited helper list
+              # so KEY_1 is the only one consulted; that helper prints the
+              # token, which the shell git spawns for it expands from this
+              # step's env.
+              if GIT_CONFIG_COUNT=2 \
+                 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= \
+                 GIT_CONFIG_KEY_1=credential.helper \
+                 GIT_CONFIG_VALUE_1='!f() { echo username=x-access-token; echo "password=$REGISTRY_PUSH_TOKEN"; }; f' \
+                 git push origin HEAD:main; then return 0; fi
               echo "::warning::push attempt $attempt was rejected; refetching"
             done
             echo "::error::could not push $1 after two attempts; this run's changes were not recorded"
@@ -281,6 +325,15 @@ jobs:
         # above, for the same reason and with the same load-bearing parentheses.
         if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'push') && github.ref == 'refs/heads/main'
         continue-on-error: true
+        env:
+          # The only write credential in this job, and it lives here rather
+          # than job-wide: a fine-grained PAT scoped to this repository with
+          # Contents: read and write and nothing else, read by the credential
+          # helper inside the push below. An empty value (a fork, a local run,
+          # an expired token) makes the push fail, which continue-on-error
+          # turns into the ::error:: this step already emits for a rejected
+          # push — the catalog still publishes.
+          REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
         run: |
           git config user.name 'dsh-plugin-shop bot'
           git config user.email 'bot@users.noreply.github.com'
@@ -324,7 +377,21 @@ jobs:
                 echo "::error::the rebase reported success but its autostash did not reapply; $1 was not pushed and the tree holds conflict markers with the stash still unapplied. Someone landed on main inside this run's window; nothing on main needs undoing, so re-run the workflow."
                 return 1
               fi
-              if git push origin HEAD:main; then return 0; fi
+              # The credential reaches git through the ENVIRONMENT and nothing
+              # else: not .git/config (checkout no longer writes one) and not a
+              # command line. GIT_CONFIG_COUNT/KEY/VALUE is the env spelling of
+              # `-c`, used instead of `-c` for two reasons — the helper script
+              # stays out of argv, and `git push` stays adjacent so
+              # workflow.test.ts's push-step detector keeps working. KEY_0 is an
+              # EMPTY credential.helper, which resets any inherited helper list
+              # so KEY_1 is the only one consulted; that helper prints the
+              # token, which the shell git spawns for it expands from this
+              # step's env.
+              if GIT_CONFIG_COUNT=2 \
+                 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= \
+                 GIT_CONFIG_KEY_1=credential.helper \
+                 GIT_CONFIG_VALUE_1='!f() { echo username=x-access-token; echo "password=$REGISTRY_PUSH_TOKEN"; }; f' \
+                 git push origin HEAD:main; then return 0; fi
               echo "::warning::push attempt $attempt was rejected; refetching"
             done
             echo "::error::could not push $1 after two attempts; this run's changes were not recorded"
@@ -360,13 +427,13 @@ jobs:
     # ten is generous and still fails fast instead of burning runner time.
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with: { node-version: 24, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - name: Download catalog dist from the build job
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: catalog-dist-v1
           path: dist/v1
@@ -403,4 +470,4 @@ jobs:
     # before reaching that path still dies in minutes rather than hours.
     timeout-minutes: 15
     steps:
-      - uses: actions/deploy-pages@v4
+      - uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5

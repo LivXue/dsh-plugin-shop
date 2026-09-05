@@ -1,3 +1,4 @@
+import { readCappedBody } from './http-body.ts'
 import type { Candidate, Rejection } from './types.ts'
 
 /**
@@ -260,6 +261,64 @@ export async function partitionKeyword(
 
 /** The two fields the harvest reads off a search response. `objects` admits a
  * null element because JSON does: the registry's shape is not a guarantee. */
+/**
+ * Byte cap on one search page's JSON body. A page carries `size=250` objects
+ * of registry metadata — about 500 KB live — so this is sixteen times the
+ * observed size and still refuses a body no search page can legitimately
+ * produce.
+ */
+export const MAX_SEARCH_BODY_BYTES = 8 * 1024 * 1024
+
+/**
+ * Byte cap on one packument. Half the tarball reader's 32 MB: a dsh plugin's
+ * packument is tens of kilobytes, and the largest packuments on npm at all —
+ * thousands of versions of a monolith — sit near this figure, so nothing a
+ * plugin author can publish reaches it.
+ */
+export const MAX_PACKUMENT_BYTES = 16 * 1024 * 1024
+
+/**
+ * Read a response body as JSON under a hard byte cap.
+ *
+ * `response.json()` buffers the whole body before parsing, so an origin can
+ * spend the build's memory before any of our code sees a byte — and this
+ * module's origin is not always npm: {@link fetchWithFailover} serves a
+ * NPM_BACKUP_REGISTRY answer, registry.npmmirror.com by default, whenever the
+ * primary throws, stalls or 5xxs. The github half has capped every body it
+ * reads since its tarball reader was written; this half capped none of them,
+ * across one packument per harvested name.
+ *
+ * `content-length` is an early refusal and never the measurement: a compressed
+ * body's header understates what it decodes to, which is why the count that
+ * decides is taken off the bytes as they arrive, inside
+ * {@link readCappedBody}.
+ *
+ * A {@link FetchTimeoutError} from a stalled body is deliberately NOT caught
+ * here: a deadline is not a malformed body, and both callers already say so in
+ * their own words.
+ * @returns the parsed value, or which of the two ways it was unusable — the
+ *   callers want different consequences from the same fact.
+ */
+async function readJsonCapped(
+  response: Response,
+  cap: number,
+): Promise<{ ok: true; value: unknown } | { ok: false; reason: 'too-large' | 'not-json' }> {
+  const declared = Number(response.headers.get('content-length'))
+  if (Number.isFinite(declared) && declared > cap) return { ok: false, reason: 'too-large' }
+  const bytes = await readCappedBody(response, cap)
+  if (bytes === null) return { ok: false, reason: 'too-large' }
+  // Non-fatal decoding: an invalid sequence becomes U+FFFD rather than
+  // throwing, and JSON.parse then reports it as the malformed body it is.
+  const text = new TextDecoder().decode(bytes)
+  try {
+    return { ok: true, value: JSON.parse(text) as unknown }
+  } catch {
+    // The only thing JSON.parse throws is a SyntaxError about this text, which
+    // is precisely the 'not-json' the caller is being told about.
+    return { ok: false, reason: 'not-json' }
+  }
+}
+
 interface SearchBody {
   objects?: ({ package?: { name?: unknown } | null } | null)[]
   total?: unknown
@@ -271,16 +330,19 @@ interface SearchBody {
  * `<!doctype html>`, and the bare `SyntaxError` named no keyword.
  */
 async function readSearchBody(response: Response, query: string, from: number): Promise<SearchBody> {
-  let parsed: unknown
-  try {
-    parsed = await response.json()
-  } catch (error) {
-    // A deadline is not a malformed body — and this module is where the
-    // deadline is built, so a wrong reason here is the one an operator is
-    // least likely to doubt. Same rethrow as github-client's twin reader.
-    if (error instanceof FetchTimeoutError) throw error
-    throw new Error(`npm search for ${query} at from=${from} answered 200 with a body that is not JSON`)
+  // A deadline is not a malformed body — and this module is where the deadline
+  // is built, so a wrong reason here is the one an operator is least likely to
+  // doubt. readJsonCapped lets a FetchTimeoutError through untouched.
+  const read = await readJsonCapped(response, MAX_SEARCH_BODY_BYTES)
+  if (!read.ok) {
+    // Over-cap THROWS on this path. An unusable search page is the whole
+    // candidate set, and reading it as empty is indistinguishable from an
+    // empty ecosystem; an unusable packument is one package, and gets a row.
+    throw new Error(read.reason === 'too-large'
+      ? `npm search for ${query} at from=${from} answered a body larger than ${MAX_SEARCH_BODY_BYTES} bytes, which no search page can legitimately produce`
+      : `npm search for ${query} at from=${from} answered 200 with a body that is not JSON`)
   }
+  const parsed = read.value
   // `null` parses without throwing and satisfies the `SearchBody` cast
   // structurally, so the try/catch above never fires and `body.total` in the
   // caller throws `Cannot read properties of null` instead — a bare TypeError
@@ -648,6 +710,50 @@ function publisherOf(maintainers: unknown, npmUser: unknown): string | undefined
   return names[0]
 }
 
+/**
+ * The declared license as a string, from any spelling npm actually serves.
+ *
+ * The current field is an SPDX string, but the registry still carries the two
+ * legacy forms — `license: { type, url }` and `licenses: [{ type, url }]` —
+ * which npm publishes with a warning rather than a refusal. Reading only the
+ * string form told those authors "Declares no license.", a published reason
+ * that was simply false (audit A-7).
+ * @param license - the manifest `license` value, unvalidated.
+ * @param licenses - the manifest `licenses` value, unvalidated.
+ * @returns the license identifier, or null when nothing declares one.
+ */
+function normalizeLicense(license: unknown, licenses: unknown): string | null {
+  if (typeof license === 'string') return license.trim() === '' ? null : license
+  if (license !== null && typeof license === 'object' && !Array.isArray(license)) {
+    const type = (license as { type?: unknown }).type
+    if (typeof type === 'string' && type.trim() !== '') return type
+  }
+  if (Array.isArray(licenses)) {
+    for (const item of licenses) {
+      if (typeof item === 'string' && item.trim() !== '') return item
+      if (item !== null && typeof item === 'object') {
+        const type = (item as { type?: unknown }).type
+        if (typeof type === 'string' && type.trim() !== '') return type
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * Whether npm reports this version deprecated.
+ *
+ * `npm deprecate <pkg> ""` is the documented un-deprecate, and it leaves
+ * `deprecated: ""` behind — so the presence of the key says nothing. A
+ * non-empty message means deprecated; so does a bare `true`, which some
+ * manifests carry and which we must not read as "fine" (audit B-5).
+ * @param deprecated - the manifest `deprecated` value, unvalidated.
+ */
+function isDeprecated(deprecated: unknown): boolean {
+  if (deprecated === true) return true
+  return typeof deprecated === 'string' && deprecated.trim() !== ''
+}
+
 export function toCandidate(packument: unknown): Candidate | null {
   // `null` is legal JSON, so a 200 whose whole body is those four bytes
   // parses cleanly and arrives here — and every property read below the cast
@@ -673,6 +779,7 @@ export function toCandidate(packument: unknown): Candidate | null {
     versions?: Record<string, {
       dist?: { integrity?: unknown }
       license?: unknown
+      licenses?: unknown
       repository?: unknown
       deprecated?: unknown
       description?: unknown
@@ -701,8 +808,8 @@ export function toCandidate(packument: unknown): Candidate | null {
     integrity: typeof manifest.dist?.integrity === 'string' ? manifest.dist.integrity : null,
     publishedAt: typeof publishedAt === 'string' ? publishedAt : null,
     repository: normalizeRepository(manifest.repository),
-    license: typeof manifest.license === 'string' ? manifest.license : null,
-    deprecated: manifest.deprecated !== undefined,
+    license: normalizeLicense(manifest.license, manifest.licenses),
+    deprecated: isDeprecated(manifest.deprecated),
     hasBundle: manifest.dsh?.bundle !== undefined,
     catalog: manifest.dsh?.catalog ?? null,
     description: typeof manifest.description === 'string' ? manifest.description : null,
@@ -952,7 +1059,18 @@ export async function fetchCandidate(
   if (!response.ok) return { ok: false, detail: `npm registry returned ${response.status} fetching ${name}` }
   let body: unknown
   try {
-    body = await response.json()
+    const read = await readJsonCapped(response, MAX_PACKUMENT_BYTES)
+    if (!read.ok) {
+      // A row, not a throw: nothing disappears without a reason attached to
+      // its name, and one oversized packument is not a broken harvest.
+      return {
+        ok: false,
+        detail: read.reason === 'too-large'
+          ? `${name}: the registry answered a packument larger than ${MAX_PACKUMENT_BYTES} bytes, so it was discarded without being parsed`
+          : `${name}: response body was unreadable`,
+      }
+    }
+    body = read.value
   } catch (error) {
     // A deadline landing MID-BODY arrives here, not at the header-phase catch
     // above: `fetch` resolves on the headers, and {@link withTimeout} leaves

@@ -79,6 +79,24 @@ describe('INSTALL_POLL_MS', () => {
   })
 })
 
+describe('starsOf against a prototype-bearing map (G-8)', () => {
+  for (const name of ['constructor', 'toString', 'valueOf', 'hasOwnProperty']) {
+    it(`answers undefined for an entry named ${name}`, () => {
+      expect(starsOf({ ...entry, name }, {})).toBeUndefined()
+    })
+  }
+
+  it('still reads a real count for such a name', () => {
+    expect(starsOf({ ...entry, name: 'constructor' }, { constructor: 12 })).toBe(12)
+  })
+
+  it('does not sort a prototype-named entry to the top of the shelf', () => {
+    const proto = { ...entry, name: 'constructor' }
+    const real = { ...entry, name: 'dsh-real' }
+    expect(sortByStars([proto, real], { 'dsh-real': 5 }).map(e => e.name)).toEqual(['dsh-real', 'constructor'])
+  })
+})
+
 describe('reduceInstall', () => {
   it('starts from idle into running with the install id', () => {
     const next = reduceInstall({ kind: 'idle' }, { type: 'started', installId: 'abc' })
@@ -320,6 +338,33 @@ describe('sortByStars', () => {
     const other = make('dsh-real-favourite')
     const stars = { 'dsh-plugin-catalog': 13960, 'LuniteGlaze/dsh-plugin-catalog': 1, 'dsh-real-favourite': 40 }
     expect(sortByStars([gh, other], stars).map(e => e.name)).toEqual(['dsh-real-favourite', 'dsh-plugin-catalog'])
+  })
+})
+
+describe('sortByStars cost (G-5)', () => {
+  it('sorts 9,400 entries well inside a keystroke budget', () => {
+    const entries: CatalogEntry[] = Array.from({ length: 9400 }, (_, i) => ({
+      ...entry,
+      name: `dsh-plugin-${(i * 7919) % 9400}`,
+    }))
+    const stars: Record<string, number> = Object.create(null)
+    for (const [i, candidate] of entries.entries()) {
+      if (i % 3 === 0) stars[candidate.name] = (i * 31) % 5000
+    }
+    const runs = 5
+    // CPU time measures the comparator itself; wall time is dominated by
+    // scheduler contention when Vitest runs every package suite in parallel.
+    const started = process.cpuUsage()
+    for (let run = 0; run < runs; run += 1) sortByStars(entries, stars)
+    const used = process.cpuUsage(started)
+    const perRun = (used.user + used.system) / 1000 / runs
+    expect(perRun).toBeLessThan(60)
+  })
+
+  it('still tiebreaks case-insensitively on the name', () => {
+    const a = { ...entry, name: 'Beta' }
+    const b = { ...entry, name: 'alpha' }
+    expect(sortByStars([a, b], {}).map(candidate => candidate.name)).toEqual(['alpha', 'Beta'])
   })
 })
 

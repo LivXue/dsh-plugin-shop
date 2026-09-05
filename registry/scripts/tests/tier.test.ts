@@ -42,14 +42,17 @@ const config = parseRegistryConfig({
     '  added: 2026-08-11',
     '- name: dsh-derived-plugin',
     '  added: 2026-08-12',
-    '- name: dsh-repo-plugin',
+    // Repo entries are keyed by lowercased `owner/slug` (identity.ts).
+    '- name: someone/dsh-repo-plugin',
     '  added: 2026-08-13',
-    '- name: dsh-tagged-plugin',
+    '- name: someone/dsh-tagged-plugin',
     '  added: 2026-08-14',
-    '- name: dsh-commit-pinned',
+    '- name: someone/dsh-commit-pinned',
     '  added: 2026-08-15',
-    '- name: dsh-version-pinned',
+    '- name: someone/dsh-version-pinned',
     '  added: 2026-08-16',
+    '- name: bob/dsh-commit-pinned',
+    '  added: 2026-08-17',
   ].join('\n') + '\n',
 })
 
@@ -111,8 +114,29 @@ describe('assignTier', () => {
     expect(assignTier(accepted('dsh-hello-plugin', '1.2.1'), config).tier).toBe('verified-stale')
   })
 
-  it('treats a version older than the review as verified', () => {
-    expect(assignTier(accepted('dsh-hello-plugin', '1.1.0'), config).tier).toBe('verified')
+  // Rewritten 2026-09-03 (audit B-1). The old assertion — "treats a version
+  // older than the review as verified" — PINNED the defect: `gt` only caught
+  // newer versions, so anything at or below the reviewed version rendered
+  // `verified` and skipped the install acknowledgement (host install.ts:36).
+  // A `latest` behind the review is not a hypothetical: it is what a hotfix
+  // published without `--tag` leaves behind (dsh-market incident,
+  // 2026-08-31-market-borrowings §C-2) and what an unpublish produces. An npm
+  // review now means the reviewed version and no other, exactly as the commit
+  // and sha256 pins already did.
+  it('downgrades a version OLDER than the review to verified-stale', () => {
+    expect(assignTier(accepted('dsh-hello-plugin', '1.1.0'), config).tier).toBe('verified-stale')
+  })
+
+  it('downgrades a much older version to verified-stale and keeps the review', () => {
+    const entry = assignTier(accepted('dsh-hello-plugin', '0.0.1'), config)
+    expect(entry.tier).toBe('verified-stale')
+    expect(entry.review?.reviewedVersion).toBe('1.2.0')
+  })
+
+  it('downgrades a prerelease of the reviewed version to verified-stale', () => {
+    // 1.2.0-rc.9 sorts BELOW 1.2.0, so `gt` said "not newer" and the release
+    // candidate inherited the verdict written about the release.
+    expect(assignTier(accepted('dsh-hello-plugin', '1.2.0-rc.9'), config).tier).toBe('verified-stale')
   })
 
   it('keeps the review attached when stale, so the UI can name both versions', () => {
@@ -198,9 +222,12 @@ describe('assignRepoTier', () => {
     expect(assignRepoTier(repoAccepted('dsh-repo-plugin'), config).added).toBe('2026-08-13')
   })
 
-  it('throws when a repo name has no first-seen row', () => {
+  it('throws, naming the repository, when a repo identity has no first-seen row', () => {
+    // The loud failure stays: `assignRepoTier` must never invent a date. The
+    // pipeline resolves a first appearance before it gets here (B-9), so this
+    // throw now means a caller skipped that resolution.
     expect(() => assignRepoTier(repoAccepted('dsh-unseen'), config))
-      .toThrow('first-seen.yml: dsh-unseen has no first-seen row')
+      .toThrow('first-seen.yml: someone/dsh-unseen has no first-seen row')
   })
 
   it('pins a release-rescued entry to its tag and tarball', () => {

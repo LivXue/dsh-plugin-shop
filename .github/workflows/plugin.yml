@@ -2,9 +2,18 @@ name: plugin
 
 on:
   push:
-    paths: ['packages/dsh-plugin-shop/**', 'packages/dsh-typert-protocol/**', 'pnpm-workspace.yaml']
+    # The two root READMEs are here because a release commit moves all four
+    # install pins together, and readme-pins.test.ts is the guard for exactly
+    # that. Without them, a commit fixing only a root README triggers neither
+    # workflow: daily.yml filters on registry/** and the ROOT package.json.
+    paths: &plugin-inputs
+      - 'packages/dsh-plugin-shop/**'
+      - 'packages/dsh-typert-protocol/**'
+      - 'pnpm-workspace.yaml'
+      - 'README.md'
+      - 'README.zh.md'
   pull_request:
-    paths: ['packages/dsh-plugin-shop/**', 'packages/dsh-typert-protocol/**', 'pnpm-workspace.yaml']
+    paths: *plugin-inputs
   workflow_dispatch:
 
 concurrency:
@@ -15,11 +24,20 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with: { node-version: 24, cache: pnpm }
       - run: pnpm install --frozen-lockfile
+      # The root suite — 733 tests, about ten seconds, measured 2026-09-04 — for
+      # one test in it: readme-pins.test.ts guards the four install pins a
+      # release commit must move together, and it had never run on a release
+      # commit. plugin.yml ran only the package suite, and daily.yml's path
+      # filter names the ROOT package.json, not the package's. 0.5.0 through
+      # 0.5.2 shipped with a README three releases behind because of it.
+      # Root vitest includes only registry/scripts/tests/**, so this step never
+      # reaches the package e2e that the two steps below exist to set up.
+      - run: pnpm test
       # Pinned to the harness the e2e's DOM contract is written against, NOT to
       # the workspace's own lockfile (which still resolves the harness dev deps
       # at 0.1.1-rc.2 — a separate, deliberate pin). This global install is what

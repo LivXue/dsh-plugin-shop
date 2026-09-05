@@ -82,4 +82,20 @@ describe('README install pins', () => {
     expect(prerelease(pin)).toBeNull()
     expect(lt(pin, preparing)).toBe(true)
   })
+  it('runs in the workflow a release commit triggers', () => {
+    // This guard exists for release commits and for three releases it never
+    // ran on one: plugin.yml (which a release commit DOES trigger, because a
+    // release moves packages/dsh-plugin-shop/package.json) ran only the
+    // package suite, while daily.yml — the workflow that runs this file —
+    // filters on registry/** and the ROOT package.json, which a release
+    // commit does not touch. Drift was caught by the next scheduled build,
+    // after npm publish.
+    const plugin = readFileSync(join(repoRoot, '.github', 'workflows', 'plugin.yml'), 'utf8')
+    expect(plugin, 'plugin.yml does not run the root suite').toMatch(/^\s+- run: pnpm test$/m)
+    for (const readme of READMES) {
+      const trigger = readme.startsWith('packages/') ? "'packages/dsh-plugin-shop/**'" : `'${readme}'`
+      expect(plugin, `plugin.yml does not trigger on ${readme}`).toContain(trigger)
+    }
+  })
+
 })

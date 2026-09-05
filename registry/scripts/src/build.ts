@@ -12,18 +12,18 @@
  * @module build
  */
 
-import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { loadRegistryConfig, serializeFirstSeen } from './config.ts'
 import { fetchStarCounts } from './github-stars.ts'
-import { harvestRepos } from './github-client.ts'
-import { parseRepoState, serializeRepoState } from './repo-state.ts'
+import { HARVEST_TOPICS, REPO_BACKFILL_BUDGET_DEFAULT, harvestRepos, parseHarvestBudget } from './github-client.ts'
+import { parseRepoState, repoGoneDetail, serializeRepoState } from './repo-state.ts'
 import { githubOwnerName } from './github-repo.ts'
 import { fetchCandidates, searchByKeywords, type KeywordShortfall } from './npm-client.ts'
-import { runPipeline } from './pipeline.ts'
+import { pagesArtifactNames } from './pages-artifacts.ts'
+import { runPipeline, selectEntries } from './pipeline.ts'
 import { CATALOG_SCHEMA_VERSION, SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION } from './emit.ts'
-import { assembleStarsByKey } from './stars-assemble.ts'
+import { assembleStarsForEntries, serializeStars } from './stars-assemble.ts'
 import type { Candidate, Rejection, RepoCandidate } from './types.ts'
 
 // Real work — network fetches, and filesystem writes that overwrite
@@ -152,22 +152,24 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     const repoState = existsSync(repoStatePath)
       ? parseRepoState(readFileSync(repoStatePath, 'utf8'))
       : {}
-    const budget = Number(process.env.REPO_BACKFILL_BUDGET ?? '2000')
+    const budget = parseHarvestBudget(process.env.REPO_BACKFILL_BUDGET, REPO_BACKFILL_BUDGET_DEFAULT)
     // Subpackage probing rides the schemaVersion-4 flag: probing off, the
     // harvest behaves exactly as before and emits v3; the flag flips in the
     // release commit that ships the v4-reading client.
     probeSubpackages = process.env.SHOP_HARVEST_SUBPACKAGES === '1'
-    let repos: Awaited<ReturnType<typeof harvestRepos>>
-    try {
-      repos = await harvestRepos({ state: repoState, budget, fetchImpl: fetch, token: ghToken, probeSubpackages })
-    } catch (error) {
-      // One whole-harvest retry after a pause: the GitHub half runs through
-      // shared egress whose throttles outlast the per-request backoffs. A
-      // second failure kills the build loudly — a half-harvested catalog is
-      // worse than a red one, and the daily workflow retries next run.
-      process.stderr.write(`github: first attempt failed (${error instanceof Error ? error.message : String(error)}); retrying once after 30s\n`)
-      await new Promise(resolve => setTimeout(resolve, 30_000))
-      repos = await harvestRepos({ state: repoState, budget, fetchImpl: fetch, token: ghToken })
+    // One whole-harvest retry after a pause: the GitHub half runs through
+    // shared egress whose throttles outlast the per-request backoffs. A second
+    // failure kills the build loudly — a half-harvested catalog is worse than a
+    // red one, and the daily workflow retries next run. The retry is inside
+    // harvestRepos so that this one options object is the only one there is;
+    // the version of this that rebuilt it by hand dropped `probeSubpackages`
+    // and emitted v4 entries under schemaVersion 3.
+    const repos = await harvestRepos({
+      state: repoState, budget, fetchImpl: fetch, token: ghToken, probeSubpackages,
+      retryAfterMs: 30_000,
+    })
+    if (repos.firstAttemptError !== null) {
+      process.stderr.write(`github: first attempt failed (${repos.firstAttemptError}); retried once after 30s\n`)
     }
     repoCandidates = repos.candidates
     repoSearchStars = repos.searchStars
@@ -178,7 +180,7 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
       rejections.push({
         name: repo,
         code: 'repo-gone',
-        detail: 'The topic search no longer returns this repository (deleted, renamed, or private).',
+        detail: repoGoneDetail(HARVEST_TOPICS),
       })
     }
     writeFileSync(repoStatePath, serializeRepoState(repos.nextState))
@@ -209,6 +211,14 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   // see. GraphQL therefore covers only the npm pool (~4k points), which a
   // dedicated read-only PAT (STARS_TOKEN, 5k points/hour) absorbs; the
   // Actions GITHUB_TOKEN's ~1k quota would not.
+  // The single clock read, moved above the stars step: selectEntries needs the
+  // build date to stamp `added`, and the stars step needs to know which
+  // candidates are ENTRIES before it asks GraphQL about any of them.
+  const builtAt = new Date().toISOString()
+  // The catalog this build will publish, decided before the network step.
+  // runPipeline re-derives it from the same inputs and cannot disagree
+  // (pipeline.test.ts asserts the equality).
+  const { entries: selectedEntries } = selectEntries(candidates, repoCandidates, config, builtAt)
   const starsToken = process.env.STARS_TOKEN ?? ghToken
   let starsInfo: { url: string; sha256: string } | null = null
   let starsNote = ''
@@ -217,9 +227,12 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     process.stderr.write(`stars: ${starsNote}\n`)
   } else {
     // Repos the search already covered: ask GraphQL only for the rest.
+    // Listed entries only. Asking about every candidate spent quota points on
+    // packages the gate had already rejected and that no reader would ever see
+    // a star count for.
     const graphqlRepos = new Map<string, { owner: string; name: string }>()
-    for (const candidate of [...candidates, ...repoCandidates]) {
-      const parsed = githubOwnerName(candidate.repository)
+    for (const entry of selectedEntries) {
+      const parsed = githubOwnerName(entry.repository)
       if (parsed === null) continue
       const fullName = `${parsed.owner}/${parsed.name}`
       if (!repoSearchStars.has(fullName)) graphqlRepos.set(fullName, parsed)
@@ -241,15 +254,14 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
           graphqlNote = `graphql failed: ${error instanceof Error ? error.message : String(error)}`
         }
       }
-      const assembled = assembleStarsByKey(candidates, repoCandidates, repoSearchStars, graphqlStars)
+      const assembled = assembleStarsForEntries(selectedEntries, repoSearchStars, graphqlStars)
       if (Object.keys(assembled.stars).length === 0) {
         starsNote = graphqlNote === '' ? 'no star counts' : `no star counts (${graphqlNote})`
         process.stderr.write(`stars: ${starsNote}\n`)
       } else {
-        const starsJson = `${JSON.stringify({ stars: Object.fromEntries(Object.entries(assembled.stars).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) }, null, 2)}\n`
-        const starsSha = createHash('sha256').update(starsJson).digest('hex')
-        writeFileSync(join(OUT_DIR, `stars.${starsSha}.json`), starsJson)
-        starsInfo = { url: `stars.${starsSha}.json`, sha256: starsSha }
+        const sidecar = serializeStars(assembled)
+        writeFileSync(join(OUT_DIR, sidecar.fileName), sidecar.json)
+        starsInfo = { url: sidecar.fileName, sha256: sidecar.sha256 }
         const parts = [`${Object.keys(assembled.stars).length} starred (${assembled.fromSearch} from the search, ${assembled.fromGraphql} from GraphQL)`]
         if (skipped.length > 0) parts.push(`${skipped.length} skipped`)
         if (graphqlNote !== '') parts.push(graphqlNote)
@@ -259,15 +271,12 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     }
   }
 
-  // First-seen bookkeeping: any name this run harvested for the first time gets
-  // today. The appended file is written back after the pipeline, so the daily
-  // commit carries both the new dates and the manifest lock together.
-  const builtAt = new Date().toISOString()
-  const today = builtAt.slice(0, 10)
-  const firstSeen = new Map(config.firstSeen)
-  for (const candidate of candidates) if (!firstSeen.has(candidate.name)) firstSeen.set(candidate.name, today)
-  for (const repo of repoCandidates) if (!firstSeen.has(repo.name)) firstSeen.set(repo.name, today)
-  const configWithFirstSeen = { ...config, firstSeen }
+  // The clock, read exactly once, and passed down. First-seen bookkeeping moved
+  // into the pipeline: which candidates are ENTRIES is a policy question the
+  // gate answers, and stamping every harvested candidate here dated packages
+  // that were never listed (B-9). The appended file is written back after the
+  // pipeline, so the daily commit carries both the new dates and the manifest
+  // lock together.
 
   // v5 is a release-time flag (design §3.5): `theme` is a new enum value and an
   // old client's zod enum rejects a catalog containing it wholesale, so the flag
@@ -280,16 +289,31 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   const schemaVersion = v5Flag
     ? CATALOG_SCHEMA_VERSION
     : (probeSubpackages ? SUBPACKAGE_SCHEMA_VERSION : SCHEMA_VERSION)
-  const artifacts = runPipeline(candidates, repoCandidates, configWithFirstSeen, builtAt, rejections, starsInfo, schemaVersion)
+  const artifacts = runPipeline(candidates, repoCandidates, config, builtAt, rejections, starsInfo, schemaVersion)
 
   writeFileSync(join(OUT_DIR, artifacts.pluginsFileName), artifacts.pluginsJson)
   writeFileSync(join(OUT_DIR, 'index.json'), artifacts.indexJson)
   writeFileSync(join(OUT_DIR, 'badge.json'), artifacts.badgeJson)
   writeFileSync(join(REGISTRY_DIR, 'snapshots/manifest.lock'), artifacts.manifestLock)
-  writeFileSync(join(REGISTRY_DIR, 'first-seen.yml'), serializeFirstSeen(firstSeen))
+  writeFileSync(join(REGISTRY_DIR, 'first-seen.yml'), serializeFirstSeen(artifacts.firstSeen))
   const npmLine = npmNote === '' ? '' : `\nnpm search shortfall (tolerated, packages missing from this build): ${npmNote}\n`
   const repoLine = repoNote === '' ? '' : `\nGitHub: ${repoNote}\n`
   writeFileSync(join(OUT_DIR, 'report.md'), `${artifacts.report}\nStars: ${starsNote}\n${npmLine}${repoLine}`)
+
+  // Pages gets a directory staged from scratch, holding exactly the artifacts
+  // the spec lists. `dist/v1` is NOT cleaned and is not what deploys: the
+  // classifier's harvest reaches this run through `dist/`, the two reports are
+  // uploaded from `dist/v1` as run artifacts, and a local `dist/v1`
+  // accumulates old sidecars — all harmless once nothing publishes from it.
+  const PAGES_DIR = 'dist/pages'
+  rmSync(PAGES_DIR, { recursive: true, force: true })
+  mkdirSync(join(PAGES_DIR, 'v1'), { recursive: true })
+  const pagesFiles = pagesArtifactNames({
+    plugins: { url: artifacts.pluginsFileName },
+    ...(starsInfo === null ? {} : { stars: { url: starsInfo.url } }),
+  })
+  for (const name of pagesFiles) copyFileSync(join(OUT_DIR, name), join(PAGES_DIR, 'v1', name))
+  process.stderr.write(`staged ${pagesFiles.length} file(s) for Pages: ${pagesFiles.join(', ')}\n`)
 
   process.stderr.write(`wrote ${OUT_DIR}/${artifacts.pluginsFileName}\n`)
 }

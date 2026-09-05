@@ -213,6 +213,14 @@ describe('gate', () => {
     expect(result.rejection.code).toBe('no-license')
   })
 
+  it('names the SPDX expectation when nothing declares a license', () => {
+    const result = gate(candidate({ license: null }), config)
+    if (result.ok) throw new Error('expected rejection')
+    expect(result.rejection.code).toBe('no-license')
+    expect(result.rejection.detail).toContain('SPDX')
+    expect(result.rejection.detail).toContain('"license": "MIT"')
+  })
+
   it('rejects a package with no repository and says why that matters', () => {
     const result = gate(candidate({ repository: null }), config)
     if (result.ok) throw new Error('expected rejection')
@@ -276,6 +284,11 @@ describe('gate', () => {
   })
 
   it('admits the verified name itself, which is distance zero', () => {
+    // `dsh-fs-tool` is verified by `reviewedVersion`, i.e. AS THIS NPM
+    // PACKAGE, so the candidate is the reviewed identity and the hold does
+    // not apply. A name verified by a repository pin is a different identity
+    // and IS held — see "holds an npm package whose exact name is verified as
+    // a REPOSITORY".
     expect(gate(candidate({ name: 'dsh-fs-tool' }), config).ok).toBe(true)
   })
 
@@ -552,5 +565,119 @@ describe('the per-entry size budget', () => {
     // in code units the same payload is well inside the budget, so a budget
     // reading `String.length` would have accepted it.
     expect(JSON.stringify({ plugins: [{ peers: cjkPeers }] }, null, 2).length).toBeLessThan(ENTRY_PAYLOAD_MAX_BYTES)
+  })
+})
+
+describe('the hold and the candidate own identity', () => {
+  it('lists two verified names one edit apart instead of holding each against the other', () => {
+    // B-4: verifying dsh-tool-a and dsh-tool-b — distance 1, the shape of a
+    // same-author suite — removed BOTH from the catalog, each "Within 1
+    // edit(s) of the verified package" the other. A review is already the
+    // adjudication the hold asks for.
+    const suite = parseRegistryConfig({
+      verified: [
+        '- name: dsh-tool-a\n  reviewedVersion: 1.0.0\n  reviewer: r\n  reviewCommit: c\n',
+        '- name: dsh-tool-b\n  reviewedVersion: 1.0.0\n  reviewer: r\n  reviewCommit: c\n',
+      ].join(''),
+      denied: '[]',
+      allowedSimilar: '[]',
+      categories: '[]',
+      firstSeen: '[]',
+    })
+    expect(gate(candidate({ name: 'dsh-tool-a' }), suite).ok).toBe(true)
+    expect(gate(candidate({ name: 'dsh-tool-b' }), suite).ok).toBe(true)
+  })
+
+  const repoPinned = parseRegistryConfig({
+    verified: [
+      '- name: dsh-x',
+      '  repo: good/dsh-x',
+      `  reviewedCommit: ${'a'.repeat(40)}`,
+      '  reviewer: github:r',
+      '  reviewCommit: c',
+    ].join('\n') + '\n',
+    denied: '[]',
+    allowedSimilar: '[]',
+    categories: '[]',
+    firstSeen: '[]',
+  })
+
+  it('holds an npm package whose exact name is verified as a REPOSITORY', () => {
+    // A-2: `good/dsh-x` is verified by commit. Publishing `dsh-x` on npm used
+    // to skip the hold at distance 0, shadow the repo entry, and turn
+    // `github:good/dsh-x tier=verified` into `npm:dsh-x tier=community
+    // publisher=whoever`. The npm package is a DIFFERENT identity.
+    const result = gate(candidate({ name: 'dsh-x' }), repoPinned)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.rejection.code).toBe('name-too-similar')
+    expect(result.rejection.detail).toContain('dsh-x')
+    expect(result.rejection.detail).toContain('verified as a repository')
+  })
+
+  it('clears that npm name when a human records it in allowed-similar', () => {
+    // The escape is the npm NAME form: `good/dsh-x` in allowed-similar.yml
+    // clears the GitHub channel and says nothing about who may publish the
+    // name on npm.
+    const cleared = parseRegistryConfig({
+      verified: [
+        '- name: dsh-x',
+        '  repo: good/dsh-x',
+        `  reviewedCommit: ${'a'.repeat(40)}`,
+        '  reviewer: github:r',
+        '  reviewCommit: c',
+      ].join('\n') + '\n',
+      denied: '[]',
+      allowedSimilar: '- dsh-x\n',
+      categories: '[]',
+      firstSeen: '[]',
+    })
+    expect(gate(candidate({ name: 'dsh-x' }), cleared).ok).toBe(true)
+  })
+
+  it('still holds a lookalike of a repo-verified name', () => {
+    const result = gate(candidate({ name: 'dsh-xx' }), repoPinned)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.rejection.code).toBe('name-too-similar')
+  })
+})
+
+describe('a denial names a project, not one of its two spellings', () => {
+  const denied = parseRegistryConfig({
+    verified: '[]',
+    denied: '- name: Evil/dsh-x\n  reason: Exfiltrates credentials.\n  replacement: dsh-good\n',
+    allowedSimilar: '[]',
+    categories: '[]',
+    firstSeen: '[]',
+  })
+
+  it('rejects an npm package whose declared repository is denied, whatever the case', () => {
+    const result = gate(candidate({ name: 'dsh-x', repository: 'https://github.com/evil/dsh-x' }), denied)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.rejection.code).toBe('denied')
+    expect(result.rejection.detail)
+      .toBe('Denied by the registry: Exfiltrates credentials. Known replacement: dsh-good.')
+    expect(result.rejection.replacement).toBe('dsh-good')
+
+    // And with the OTHER spelling. The denial is written `Evil/dsh-x` and
+    // lowercased at insert, so only a candidate declaring the repository in a
+    // different case exercises the fold on the lookup side — the assertion
+    // above passes with it removed.
+    const cased = gate(candidate({ name: 'dsh-x', repository: 'https://github.com/Evil/dsh-x' }), denied)
+    expect(cased.ok).toBe(false)
+    if (!cased.ok) expect(cased.rejection.code).toBe('denied')
+  })
+
+  it('leaves a package from another repository alone', () => {
+    expect(gate(candidate({ name: 'dsh-x', repository: 'https://github.com/honest/dsh-x' }), denied).ok).toBe(true)
+  })
+
+  it('does not trip over a package that declares no repository', () => {
+    // The denial check runs before the no-repository check, so a null
+    // repository must reach the no-repository rejection, not throw here.
+    const result = gate(candidate({ name: 'dsh-x', repository: null }), denied)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.rejection.code).toBe('no-repository')
   })
 })

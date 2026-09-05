@@ -131,6 +131,16 @@ const hasDsh = (() => {
 
 const hasChromium = existsSync(chromium.executablePath())
 
+/** Keep fixture traffic local even on builders that route every HTTP request
+ * through a corporate proxy. pnpm honours both spellings depending on its
+ * transport; preserve the builder's existing bypass list alongside ours. */
+function localRegistryEnv(): NodeJS.ProcessEnv {
+  const noProxy = [process.env.NO_PROXY, process.env.no_proxy, '127.0.0.1', 'localhost']
+    .filter((value): value is string => value !== undefined && value !== '')
+    .join(',')
+  return { ...process.env, NO_PROXY: noProxy, no_proxy: noProxy }
+}
+
 describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
   let catalogServer: CatalogServer | undefined
   let localRegistry: LocalRegistry | undefined
@@ -197,7 +207,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
     // so the URL is parsed from stdout rather than guessed.
     dshProcess = spawn('dsh', ['--profile', 'web', '--no-open', '--port', '0'], {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, DSH_HOME: tmpHome, DSH_SHOP_CATALOG_URL: catalogServer.baseUrl },
+      env: { ...localRegistryEnv(), DSH_HOME: tmpHome, DSH_SHOP_CATALOG_URL: catalogServer.baseUrl },
       detached: true, // its own process group, so teardown kills the whole tree
     })
     const stdout: string[] = []
@@ -408,18 +418,12 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await liveEntry.locator('[data-kind="enabled"]').waitFor({ state: 'visible' })
       await liveEntry.locator('[data-phase="active"]').waitFor({ state: 'visible' })
 
-      // The installed actions need a fresh installed() read, so the settings
-      // modal is closed and reopened (the shop tab remounts and refetches;
-      // the 刷新 toolbar button only renders for a stale snapshot, and this
-      // fixture catalog is fresh).
-      await dialog.locator('.VOzbGW_close').click()
-      await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
-      const dialog2 = app.getByRole('dialog', { name: '设置' })
-      await dialog2.waitFor({ state: 'visible', timeout: 10_000 })
-      await dialog2.getByRole('button', { name: '插件', exact: true }).click()
-      await dialog2.getByRole('tab', { name: '插件商店' }).click()
-      await dialog2.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
-      const card2 = dialog2.locator('[data-shop-entry="dsh-shop-e2e-live"]')
+      // The settled mutation re-reads installed() in place. Switching back
+      // to the already-mounted shop must expose the installed actions without
+      // closing Settings or pressing Refresh (G-9).
+      await dialog.getByRole('tab', { name: '插件商店' }).click()
+      await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
+      const card2 = dialog.locator('[data-shop-entry="dsh-shop-e2e-live"]')
       await card2.waitFor({ state: 'visible', timeout: 15_000 })
       await card2.locator('[data-shop-uninstall]').waitFor({ state: 'visible', timeout: 15_000 })
 
@@ -457,18 +461,17 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       }
       expect(ariaRestored).toBe(ariaBefore)
 
-      // Uninstall: no gate, the poll runs to done, and needsRestart === false
-      // — the live-uninstall notice, no restart offer.
+      // Uninstall: no gate. Once the poll reaches done, installed() runs
+      // again and the card immediately returns to the Install action.
       await card2.locator('[data-shop-uninstall]').click()
-      const uninstallDone = card2.locator('[data-shop-uninstall-done]')
-      await uninstallDone.waitFor({ state: 'visible', timeout: 60_000 })
-      expect(await uninstallDone.textContent()).toContain('已卸载并立即停止')
+      await card2.locator('[data-shop-install]').waitFor({ state: 'visible', timeout: 60_000 })
+      expect(await card2.locator('[data-shop-uninstall]').count()).toBe(0)
       expect(await card2.locator('[data-shop-restart]').count()).toBe(0)
 
       // The hot fiber is gone: a fresh settings mount takes a fresh inventory
       // snapshot (the tab's list() runs per mount), which no longer lists the
       // entry. An anchor entry's phase dot proves the snapshot rendered.
-      await dialog2.locator('.VOzbGW_close').click()
+      await dialog.locator('.VOzbGW_close').click()
       await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
       const dialog3 = app.getByRole('dialog', { name: '设置' })
       await dialog3.waitFor({ state: 'visible', timeout: 10_000 })

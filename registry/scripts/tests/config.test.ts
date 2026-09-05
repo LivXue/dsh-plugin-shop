@@ -12,24 +12,32 @@ const empty = {
 }
 
 describe('parseRegistryConfig', () => {
-  it('derives the shop-like exemption from market:false rows only', () => {
-    // markets.yml records BOTH verdicts so the classifier has a memory and
-    // never re-asks. Only the false ones clear the client's name filter — a
-    // reading a `Set(rows.keys())` would get wrong, silently shelving all 45
-    // genuine markets.
+  it('clears a market:false verdict and withholds a market:true one, whichever judged it', () => {
+    // The verdict decides; `by` only records who said it. One LLM pass is
+    // accurate enough for "is this a marketplace FOR dsh plugins" — a narrow
+    // question a name and a description usually answer — and the build report
+    // lists every LLM-only withholding so it can be spot-checked.
+    //
+    // This is NOT a `by: human` gate. That was tried on 2026-09-04 and was
+    // wrong in this codebase: `notAShop` means CLEARED, and the client shows
+    // a name that is either cleared or not shop-like
+    // (`ShopTab.tsx:920-922`), so routing an LLM `true` into `notAShop`
+    // ADVERTISED 16 competing markets the name heuristic had been hiding.
     const config = parseRegistryConfig({
       ...empty,
       markets: [
         '- name: dsh-plugin-market\n  market: true\n  by: human\n  reason: a market\n',
         '- name: dsh-tea-store\n  market: false\n  by: human\n  reason: stores tea\n',
         '- name: dsh-skin-market\n  market: false\n  by: llm\n  reason: sells skins\n',
+        '- name: dsh-maybe-market\n  market: true\n  by: llm\n  reason: looks like a market\n',
       ].join(''),
     })
     expect([...config.notAShop].sort()).toEqual(['dsh-skin-market', 'dsh-tea-store'])
-    // Judged covers both verdicts: the classifier asks only about names absent
-    // from it, so a name judged a market must be in here or it is re-asked
-    // every day and can flip on a bad roll.
-    expect([...config.marketsJudged].sort()).toEqual(['dsh-plugin-market', 'dsh-skin-market', 'dsh-tea-store'])
+    // Judged covers every verdict: the classifier asks only about names
+    // absent from it, so a name judged a market must be in here or it is
+    // re-asked every day and can flip on a bad roll.
+    expect([...config.marketsJudged].sort())
+      .toEqual(['dsh-maybe-market', 'dsh-plugin-market', 'dsh-skin-market', 'dsh-tea-store'])
   })
 
   it('throws on a duplicate name in markets.yml', () => {
@@ -171,6 +179,107 @@ describe('parseRegistryConfig', () => {
     })
     expect(config.verified.get('alice/dsh-repo-plugin')?.reviewer).toBe('github:alice-reviewer')
     expect(config.verified.get('bob/dsh-repo-plugin')?.reviewer).toBe('github:bob-reviewer')
+  })
+
+  it('names verified.yml when reviewedVersion is not a semver version', () => {
+    // The build used to die in tier.ts with `Invalid Version:
+    // one-point-two`, which names no file and no row. parseFile now validates
+    // the row at load time and reports its one-based row and package name.
+    expect(() => parseRegistryConfig({
+      ...empty,
+      verified: '- name: dsh-x\n  reviewedVersion: one-point-two\n  reviewer: r\n  reviewCommit: c\n',
+    })).toThrow(/verified\.yml: row 1 \(dsh-x\).*reviewedVersion.*semver/s)
+  })
+
+  it('requires the canonical semver spelling, so an exact comparison is a semver comparison', () => {
+    // `v1.2.0` and `1.2.0+build` both mean 1.2.0 to semver but are different
+    // strings; tier.ts compares strings (Task 7), so the file must carry the
+    // canonical form or the review would silently never match.
+    for (const version of ['v1.2.0', '1.2.0+build', '1.2']) {
+      expect(() => parseRegistryConfig({
+        ...empty,
+        verified: `- name: dsh-x\n  reviewedVersion: ${version}\n  reviewer: r\n  reviewCommit: c\n`,
+      }), `verified.yml must reject ${version}`).toThrow(/verified\.yml/)
+    }
+    const config = parseRegistryConfig({
+      ...empty,
+      verified: '- name: dsh-x\n  reviewedVersion: 1.2.0-rc.9\n  reviewer: r\n  reviewCommit: c\n',
+    })
+    expect(config.verified.get('dsh-x')?.reviewedVersion).toBe('1.2.0-rc.9')
+  })
+
+  it('throws when a name is both reviewed and denied instead of letting the denial win silently', () => {
+    expect(() => parseRegistryConfig({
+      ...empty,
+      verified: '- name: dsh-x\n  reviewedVersion: 1.0.0\n  reviewer: r\n  reviewCommit: c\n',
+      denied: '- name: dsh-x\n  reason: Exfiltrates credentials.\n',
+    })).toThrow(/verified\.yml\/denied\.yml: dsh-x is both reviewed and denied/)
+  })
+
+  it('throws when a reviewed repository is also denied, in either case spelling', () => {
+    // Both directions on purpose. The verified key is already lowercased at
+    // insert, and the denied key is kept as written, so ONLY a denial spelled
+    // in a different case exercises the fold on the denied side — the first
+    // half of this test passes with that fold removed.
+    expect(() => parseRegistryConfig({
+      ...empty,
+      verified: `- name: dsh-x\n  repo: Alice/dsh-x\n  reviewedCommit: ${'a'.repeat(40)}\n  reviewer: r\n  reviewCommit: c\n`,
+      denied: '- name: alice/dsh-x\n  reason: known bad actor\n',
+    })).toThrow(/is both reviewed and denied/)
+    expect(() => parseRegistryConfig({
+      ...empty,
+      verified: `- name: dsh-x\n  repo: alice/dsh-x\n  reviewedCommit: ${'a'.repeat(40)}\n  reviewer: r\n  reviewCommit: c\n`,
+      denied: '- name: Alice/dsh-x\n  reason: known bad actor\n',
+    })).toThrow(/is both reviewed and denied/)
+  })
+
+  it('rejects a denial whose name is not a package name or an owner/slug', () => {
+    // A padded, cased or newline-terminated name loads fine and then matches
+    // nothing forever: the denial fails OPEN, which is the one direction a
+    // denylist must never fail in.
+    for (const name of ['" dsh-evil "', '"dsh evil"', '"dsh-evil\\n"', '"a/b/c"']) {
+      expect(() => parseRegistryConfig({ ...empty, denied: `- name: ${name}\n  reason: Bad.\n` }),
+        `denied.yml must reject ${name}`).toThrow(/denied\.yml/)
+    }
+  })
+
+  it('accepts both denial forms: an npm name and a GitHub owner/slug', () => {
+    const config = parseRegistryConfig({
+      ...empty,
+      denied: [
+        '- name: dsh-evil-plugin\n  reason: Exfiltrates credentials.\n',
+        '- name: "@scope/dsh-evil"\n  reason: Same code, scoped.\n',
+        '- name: Someone/dsh-repo-plugin\n  reason: known bad actor\n',
+      ].join(''),
+    })
+    expect(config.denied.get('dsh-evil-plugin')?.reason).toBe('Exfiltrates credentials.')
+    expect(config.denied.get('@scope/dsh-evil')?.reason).toBe('Same code, scoped.')
+    // The repo form also gets a case-folded index, because GitHub resolves
+    // repository names case-insensitively and both gates read it.
+    expect(config.deniedRepos.get('someone/dsh-repo-plugin')?.reason).toBe('known bad actor')
+    expect(config.deniedRepos.has('dsh-evil-plugin')).toBe(false)
+  })
+
+  it('throws when two denials name the same repository in different cases', () => {
+    expect(() => parseRegistryConfig({
+      ...empty,
+      denied: '- name: Someone/dsh-x\n  reason: a\n- name: someone/dsh-x\n  reason: b\n',
+    })).toThrow(/denied\.yml.*duplicate entry for someone\/dsh-x/s)
+  })
+
+  it('rejects a malformed allowed-similar row and indexes the repo form case-folded', () => {
+    expect(() => parseRegistryConfig({ ...empty, allowedSimilar: '- " dsh-fs-tools "\n' }))
+      .toThrow(/allowed-similar\.yml/)
+    const config = parseRegistryConfig({ ...empty, allowedSimilar: '- dsh-fs-tools\n- Good/dsh-fs-tool\n' })
+    expect(config.allowedSimilar.has('dsh-fs-tools')).toBe(true)
+    expect([...config.allowedSimilarRepos]).toEqual(['good/dsh-fs-tool'])
+  })
+
+  it('rejects a review whose repo is not an owner/slug', () => {
+    expect(() => parseRegistryConfig({
+      ...empty,
+      verified: `- name: dsh-x\n  repo: not-a-repo\n  reviewedCommit: ${'a'.repeat(40)}\n  reviewer: r\n  reviewCommit: c\n`,
+    })).toThrow(/verified\.yml.*owner\/slug/s)
   })
 
   it('throws on two reviews of the same repository', () => {
@@ -500,4 +609,62 @@ describe('NPM_BACKUP_REGISTRY is refused at startup when it is not a URL', () =>
       }
     })
   }
+})
+
+describe('parseRegistryConfig diagnostics', () => {
+  it('names the package, not the row index, when a row is malformed', () => {
+    // `verified.yml: 1.reviewer Invalid input` makes a reader count rows in a
+    // file that will one day have hundreds. The name is what they are
+    // looking for, and it is right there in the row.
+    expect(() => parseRegistryConfig({
+      ...empty,
+      verified: '- name: dsh-good\n  reviewedVersion: 1.0.0\n  reviewer: r\n  reviewCommit: c\n'
+        + '- name: dsh-missing-reviewer\n  reviewedVersion: 1.0.0\n  reviewCommit: c\n',
+    })).toThrow(/verified\.yml: row 2 \(dsh-missing-reviewer\).*reviewer/s)
+  })
+
+  it('names the package on a whole-row refinement failure too', () => {
+    // The refine's issue path is the row index alone, so the name has to come
+    // from the row rather than from the path.
+    expect(() => parseRegistryConfig({
+      ...empty,
+      verified: '- name: dsh-unpinned\n  reviewer: r\n  reviewCommit: c\n',
+    })).toThrow(/verified\.yml: row 1 \(dsh-unpinned\).*reviewedVersion.*reviewedCommit.*reviewedSha256/s)
+  })
+
+  it('falls back to the row index when the row carries no usable name', () => {
+    // allowed-similar.yml is a list of plain strings, and a malformed
+    // verified row can be a scalar too. No name to print, so say so.
+    expect(() => parseRegistryConfig({ ...empty, allowedSimilar: '- 42\n' }))
+      .toThrow(/allowed-similar\.yml: row 1 /)
+  })
+
+  it('says the file is empty rather than reporting a YAML object', () => {
+    // `parse('')` and `parse('# comment\n')` both return null, and
+    // `typeof null === 'object'`, so it used to accuse the file of being a
+    // map. It stays fatal — a malformed registry file must stop the build —
+    // but it now says what to write.
+    for (const text of ['', '# nothing here\n', '\n\n']) {
+      expect(() => parseRegistryConfig({ ...empty, verified: text }), `${JSON.stringify(text)} must name the emptiness`)
+        .toThrow(/verified\.yml: the file has no YAML document.*\[\]/s)
+    }
+  })
+
+  it('parses a file whose first line carries a UTF-8 BOM', () => {
+    // An editor that writes a BOM produced `Unexpected scalar at node end at
+    // line 1, column 4` — no file name, and a caret pointing into a line that
+    // looks correct. A BOM is an encoding marker, not content.
+    const config = parseRegistryConfig({
+      ...empty,
+      verified: '\ufeff- name: dsh-bom\n  reviewedVersion: 1.0.0\n  reviewer: r\n  reviewCommit: c\n',
+    })
+    expect(config.verified.get('dsh-bom')?.reviewedVersion).toBe('1.0.0')
+  })
+
+  it('still names the file when the document is a map instead of a list', () => {
+    // Unchanged behaviour, re-asserted so the null special-case above does
+    // not swallow the genuine wrong-shape message.
+    expect(() => parseRegistryConfig({ ...empty, denied: 'name: x\n' }))
+      .toThrow(/denied\.yml: expected a YAML list, got object/)
+  })
 })

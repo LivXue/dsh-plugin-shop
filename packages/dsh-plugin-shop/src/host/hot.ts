@@ -29,9 +29,9 @@
  */
 
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { JSON_SCHEMA, Type, load } from 'js-yaml'
+import { JSON_SCHEMA, Type, dump, load } from 'js-yaml'
 
 /** The loader's YAML dialect: `!!js` scalars round-trip as expression nodes
  * rather than throwing, so a patch carrying one is refused for its SHAPE
@@ -167,8 +167,11 @@ export function parseSimplePatch(patchText: string): HotRow[] | null {
  * Include tree mounts. Only values the line scan accepted are emitted, and
  * the output is itself a simple patch (round-trips through
  * parseSimplePatch). */
-function renderRows(rows: HotRow[], prefix: string): string {
-  return rows.map(row => `- id: ${prefix}${row.id}\n  name: ${row.name}`).join('\n') + '\n'
+export function renderRows(rows: HotRow[], prefix: string): string {
+  return dump(rows.map(row => ({ id: `${prefix}${row.id}`, name: row.name })), {
+    noRefs: true,
+    lineWidth: -1,
+  })
 }
 
 /** The next free `hot-<n>` number: one past the highest existing file, or 1
@@ -267,9 +270,15 @@ export async function hotMount(
   // through the package's dsh field (defaulting to the conventional name).
   const packageDir = join(profileDir, 'node_modules', packageName)
   const dsh = readPkgDsh(fs, packageDir)
+  const patchFile = resolve(packageDir, dsh?.patch ?? 'cordis.patch.yml')
+  const inside = relative(packageDir, patchFile)
+  if (inside === '' || inside.startsWith('..') || isAbsolute(inside)) {
+    ctx.logger?.warn(`hot-mount ${packageName}: the declared bundle patch is outside the package directory — restart will activate it`)
+    return { ok: false, reason: 'no-patch' }
+  }
   let patchText: string
   try {
-    patchText = fs.read(join(packageDir, dsh?.patch ?? 'cordis.patch.yml'))
+    patchText = fs.read(patchFile)
   } catch {
     ctx.logger?.warn(`hot-mount ${packageName}: no patch file to mount — restart will activate it`)
     return { ok: false, reason: 'no-patch' }

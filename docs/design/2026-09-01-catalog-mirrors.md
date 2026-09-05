@@ -215,6 +215,46 @@ immaterial for a daily snapshot, it is already visible — `builtAt` is
 rendered — and the `stale` flag already exists for the case that
 matters.
 
+### The pointer outlives the data it names
+
+A Pages deploy replaces the site wholesale, so the previous
+`plugins.<sha256>.json` and `stars.<sha256>.json` stop existing the moment a
+new build lands — while Pages serves `index.json` with
+`cache-control: max-age=600`. For up to ten minutes a reader holding the
+cached pointer can be sent to a data URL that answers 404.
+
+Measured on 2026-09-04: the pointer's headers carry `cache-control:
+max-age=600` and an `etag`, and a `plugins.<sha256>.json` name the site was
+never given answers 404 — Pages serves nothing outside the generation it was
+uploaded. That the upload holds exactly one generation is true by
+construction rather than by observation: CI checks out fresh, so `dist/v1`
+contains only that run's files, and the staged Pages directory is now built
+by `rmSync` followed by a copy of exactly the names the pointer lists
+(`registry/scripts/src/pages-artifacts.ts`). No superseded generation was
+observed 404ing directly, because no deploy landed between the two probes.
+
+The gap belongs to one transport alone. An npm publish packs `index.json`
+and every file it names into a single tarball
+(`registry/scripts/src/publish-catalog.ts`), so pointer and data are always
+the same generation; `dsh-plugin-shop-catalog` is the documented fallback for
+exactly this window, and because every load races, a reader normally never
+notices.
+
+Who it reaches: a reader whose HTTP probe wins the race and who has no usable
+disk cache. HTTP's bulk fetch happens after a winner is chosen, so its failure
+falls back to `cachedOrThrow` rather than to another origin (see "The race"
+above). A first-ever load inside the window fails, and reopening the shop
+succeeds.
+
+**Not retained deliberately.** Keeping the previous generation for one deploy
+would mean the build reading the published `index.json` over the network and
+re-downloading about 4.3 MB of the previous data and sidecar into the staged
+Pages directory on every run: a new network dependency and a new failure mode
+in the daily build, plus a two-generation upload, to close a ten-minute window
+that already self-heals. The durable fix belongs in the Host instead — an HTTP
+data-file 404 should fall through to the next origin rather than only to the
+disk cache — and is tracked with the rest of the host work.
+
 ## 4. Integrity and trust
 
 | Transport | Verification |

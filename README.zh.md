@@ -190,6 +190,11 @@ flowchart LR
 每次构建的拒绝报告都会附在该次 workflow run 上，其中对每个被拒包都写明作者可读的原因。不会有
 任何东西在没有理由的情况下消失。
 
+数据文件按内容寻址，所以每次构建都会发布新的文件名，旧的随即不再存在；而它们上面那个
+`index.json` 有十分钟的缓存。如果你自己抓 `/v1/`，那么只要某个数据 URL 返回 404，就重新读一次
+`index.json`——或者干脆从 npm 包 `dsh-plugin-shop-catalog` 读同样的字节，那里 pointer 和它所指的
+数据永远装在同一个 tarball 里。
+
 ## 🏷️ 让你的插件上架
 
 在 `package.json` 里加上采集关键字（`dsh-plugin` 或 `deepseek-harness`）并发布到 npm，每日构建就会

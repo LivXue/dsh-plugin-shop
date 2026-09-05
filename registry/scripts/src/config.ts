@@ -1,14 +1,54 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { valid as semverValid } from 'semver'
 import { parse } from 'yaml'
 import { z } from 'zod'
 import type { MarketRow } from './markets.ts'
 import { CATEGORIES, type Category, type Review } from './types.ts'
 
+/**
+ * An npm package name as the registry can actually serve one: at most 214
+ * characters, an optional `@scope/`, no whitespace, no control characters and
+ * no leading `.` or `_`. Uppercase is permitted — npm refuses uppercase for
+ * NEW packages but still serves the legacy ones, and a denial has to be able
+ * to name one.
+ */
+const NPM_NAME = /^(?:@[A-Za-z0-9-~][A-Za-z0-9-._~]*\/)?[A-Za-z0-9-~][A-Za-z0-9-._~]*$/
+
+/**
+ * A GitHub repository full name, `owner/slug`. Never a leading `@` and always
+ * exactly one slash — which is what keeps the repo keyspace from colliding
+ * with the npm keyspace inside `denied`, `verified` and `first-seen.yml`.
+ */
+const REPO_FULL_NAME = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/
+
+/** A row that must name an npm package. */
+const npmName = z.string().min(1).max(214).regex(
+  NPM_NAME,
+  'must be an npm package name: no spaces, no newlines, no leading dot or underscore, at most 214 characters',
+)
+
+/** A row that may name an npm package or a GitHub repository. */
+const npmNameOrRepo = z.string().min(1).max(214).refine(
+  value => NPM_NAME.test(value) || REPO_FULL_NAME.test(value),
+  { message: 'must be an npm package name or a GitHub owner/slug: no spaces, no newlines, exactly one slash for a repo' },
+)
+
+/** A row that must name a GitHub repository. */
+const repoFullName = z.string().min(1).max(140).regex(REPO_FULL_NAME, 'must be a GitHub owner/slug')
+
 const verifiedSchema = z.array(z.object({
-  name: z.string().min(1),
-  repo: z.string().min(1).optional(),
-  reviewedVersion: z.string().min(1).optional(),
+  name: npmName,
+  repo: repoFullName.optional(),
+  // Canonical semver, checked here so the build fails with the FILE's name
+  // rather than dying inside tier.ts with a bare `Invalid Version`. The
+  // canonical form is required, not merely a parseable one: `assignTier`
+  // compares this string to the published version exactly, so `v1.2.0` would
+  // load and then never match anything.
+  reviewedVersion: z.string().min(1).refine(
+    value => semverValid(value) === value,
+    { message: 'must be a canonical semver version — no leading v, no build metadata, e.g. 1.2.0' },
+  ).optional(),
   reviewedCommit: z.string().min(1).optional(),
   reviewedSha256: z.string().min(1).optional(),
   reviewer: z.string().min(1),
@@ -31,12 +71,12 @@ const verifiedSchema = z.array(z.object({
 ))
 
 const deniedSchema = z.array(z.object({
-  name: z.string().min(1),
+  name: npmNameOrRepo,
   reason: z.string().min(1),
-  replacement: z.string().min(1).optional(),
+  replacement: npmNameOrRepo.optional(),
 }).strict())
 
-const allowedSimilarSchema = z.array(z.string().min(1))
+const allowedSimilarSchema = z.array(npmNameOrRepo)
 
 const categoriesSchema = z.array(z.object({
   name: z.string().min(1),
@@ -47,9 +87,10 @@ const categoriesSchema = z.array(z.object({
  * whether it IS a competing plugin market. Both verdicts are recorded, not
  * just the exemptions — that memory is what stops the daily classifier
  * re-asking about a name, and stops an LLM flip-flopping one in and out of
- * the shelf and churning the content hash with it. `by` keeps a wrong LLM
- * verdict visible and correctable; `reason` says what the plugin actually is,
- * because the name already misled once. */
+ * the shelf and churning the content hash with it. The verdict decides what
+ * happens; `by` records who judged it, and is what lets the build report name
+ * the withholdings that rest on a classifier pass alone. `reason` says what
+ * the plugin actually is, because the name already misled once. */
 const marketsSchema = z.array(z.object({
   name: z.string().min(1),
   market: z.boolean(),
@@ -79,12 +120,20 @@ export interface RegistryConfig {
    */
   verifiedNames: Set<string>
   /** Package name to the reason it is excluded, plus the known replacement
-   * when a human recorded one. */
+   * when a human recorded one. Keyed as written. */
   denied: Map<string, { reason: string; replacement?: string }>
-  /** Names cleared past the similarity hold. */
+  /** The `owner/slug`-shaped denials, lowercased. Read by both gates: a
+   * denial names a project, and a project has two published spellings. */
+  deniedRepos: Map<string, { reason: string; replacement?: string }>
+  /** Names cleared past the similarity hold, as written. */
   allowedSimilar: Set<string>
+  /** The `owner/slug`-shaped clearances, lowercased — the only form the
+   * GitHub channel honours. */
+  allowedSimilarRepos: Set<string>
   /** Names cleared past the client's shop-like name filter: judged NOT to be
-   * competing plugin markets, so the shelf shows them. */
+   * competing plugin markets, so the shelf shows them. The verdict decides
+   * this, not who recorded it; {@link marketRows} is what tells the build
+   * report which withholdings rest on a classifier pass alone. */
   notAShop: Set<string>
   /** Every name `markets.yml` has a verdict for, either way. The classifier
    * asks only about names absent from this set. */
@@ -102,16 +151,41 @@ export interface RegistryConfig {
  * Parse one file, failing loudly with the file's name in the message. A
  * malformed registry file must stop the build: silently listing nothing looks
  * identical to an empty ecosystem.
+ *
+ * The message is the whole product of this function, because its reader is a
+ * human with a broken file. Three things it used to get wrong: a row was
+ * identified by its zero-based index rather than by the package name sitting
+ * in it; an empty or comments-only file was reported as `got object`, since
+ * `parse('')` is `null` and `typeof null === 'object'`; and a leading UTF-8
+ * BOM failed inside the YAML parser as `Unexpected scalar at node end at line
+ * 1, column 4`, naming no file and pointing at a line that looks correct.
  */
 function parseFile<T>(label: string, text: string, schema: z.ZodType<T>): T {
-  const raw: unknown = parse(text)
+  // A BOM is an encoding marker, not content. yaml reads it as part of the
+  // first token and fails several characters later.
+  const raw: unknown = parse(text.replace(/^\ufeff/, ''))
+  if (raw === null || raw === undefined) {
+    throw new Error(`${label}: the file has no YAML document (it is empty, or only comments); write [] for an empty list`)
+  }
   if (!Array.isArray(raw)) throw new Error(`${label}: expected a YAML list, got ${typeof raw}`)
   const result = schema.safeParse(raw)
   if (result.success) return result.data
   const issue = result.error.issues[0]
-  const path = issue === undefined ? '' : issue.path.join('.')
-  const message = issue === undefined ? 'invalid' : issue.message
-  throw new Error(`${label}: ${path} ${message}`)
+  if (issue === undefined) throw new Error(`${label}: invalid`)
+  // The first path segment is the row index for every schema here (they are
+  // all arrays), so the row can be looked up and named. A refinement failure
+  // has ONLY that segment, which is exactly the case where the index alone
+  // told the reader least.
+  const [first, ...rest] = issue.path
+  const row = typeof first === 'number' ? raw[first] : undefined
+  const name = typeof row === 'object' && row !== null && typeof (row as { name?: unknown }).name === 'string'
+    ? (row as { name: string }).name
+    : undefined
+  const where = typeof first === 'number'
+    ? `row ${first + 1}${name === undefined ? '' : ` (${name})`}`
+    : issue.path.join('.')
+  const field = typeof first === 'number' ? rest.join('.') : ''
+  throw new Error([label + ':', where, field, issue.message].filter(part => part !== '').join(' '))
 }
 
 /**
@@ -164,13 +238,28 @@ export function parseRegistryConfig(
     verifiedNames.add(row.name)
   }
   const denied = new Map<string, { reason: string; replacement?: string }>()
+  const deniedRepos = new Map<string, { reason: string; replacement?: string }>()
   for (const row of parseFile('denied.yml', input.denied, deniedSchema)) {
-    setUnique(denied, 'denied.yml', row.name, {
+    const value = {
       reason: row.reason,
       ...(row.replacement !== undefined ? { replacement: row.replacement } : {}),
-    })
+    }
+    setUnique(denied, 'denied.yml', row.name, value)
+    // A denial written as `owner/slug` gets a second, case-folded index. Both
+    // gates read it: the repo gate because GitHub resolves repository names
+    // case-insensitively (B-8), and the npm gate because the author of a
+    // denied repository can publish the same code to npm and win the bundle
+    // name (B-6).
+    if (REPO_FULL_NAME.test(row.name)) setUnique(deniedRepos, 'denied.yml', row.name.toLowerCase(), value)
   }
-  const allowedSimilar = new Set(parseFile('allowed-similar.yml', input.allowedSimilar, allowedSimilarSchema))
+  const allowedSimilarRows = parseFile('allowed-similar.yml', input.allowedSimilar, allowedSimilarSchema)
+  const allowedSimilar = new Set(allowedSimilarRows)
+  // The repo-shaped clearances, case-folded. The GitHub channel honours ONLY
+  // this set: a bundle-name clearance cleared every repository using the name
+  // (A-4).
+  const allowedSimilarRepos = new Set(
+    allowedSimilarRows.filter(entry => REPO_FULL_NAME.test(entry)).map(entry => entry.toLowerCase()),
+  )
   const marketVerdicts = new Map<string, boolean>()
   const marketRows: MarketRow[] = []
   for (const row of parseFile('markets.yml', input.markets ?? '[]', marketsSchema)) {
@@ -178,7 +267,21 @@ export function parseRegistryConfig(
     marketRows.push(row)
   }
   const marketsJudged = new Set(marketVerdicts.keys())
-  const notAShop = new Set([...marketVerdicts].filter(([, isMarket]) => !isMarket).map(([name]) => name))
+  // The VERDICT decides; `by` only records who said it. One classifier pass
+  // is accurate enough for "is this a marketplace FOR dsh plugins" — a narrow
+  // question a name and a description usually settle — and `pipeline.ts` puts
+  // every LLM-only withholding in the build report so it can be spot-checked.
+  //
+  // A `by: human` gate was tried on 2026-09-04 (audit D-7) and was wrong in
+  // this codebase, in the one direction that matters. This set is the CLEARED
+  // list, and the client shows a name that is cleared OR not shop-like
+  // (`ShopTab.tsx:920-922`), so routing an LLM `true` into it ADVERTISED 16
+  // competing markets the name heuristic had been hiding. The same reading
+  // bounds D-7's own severity: a steered `true` on an ordinarily-named plugin
+  // withholds nothing, because that name was never shop-like to begin with.
+  // What such a row does cost is the re-ask — a recorded verdict is never
+  // asked again — which is exactly what the report line exists to surface.
+  const notAShop = new Set(marketRows.filter(row => !row.market).map(row => row.name))
   const categories = new Map<string, Category>()
   for (const row of parseFile('categories.yml', input.categories, categoriesSchema)) {
     setUnique(categories, 'categories.yml', row.name, row.category)
@@ -187,7 +290,23 @@ export function parseRegistryConfig(
   for (const row of parseFile('first-seen.yml', input.firstSeen, firstSeenSchema)) {
     setUnique(firstSeen, 'first-seen.yml', row.name, row.added)
   }
-  return { verified, verifiedNames, denied, allowedSimilar, notAShop, marketsJudged, marketRows, categories, firstSeen }
+  // A name cannot be reviewed and excluded at once. `gate` checks denial
+  // before anything else, so the denial wins and the review becomes dead text
+  // nobody notices — including the reviewer who wrote it. Both keyspaces are
+  // compared case-folded, because a repository review and a repository denial
+  // are both written `owner/slug`.
+  const deniedKeys = new Set([...denied.keys()].map(key => key.toLowerCase()))
+  for (const key of [...verified.keys(), ...verifiedNames]) {
+    if (deniedKeys.has(key.toLowerCase())) {
+      throw new Error(
+        `verified.yml/denied.yml: ${key} is both reviewed and denied; the denial wins silently, so remove one of the two rows`,
+      )
+    }
+  }
+  return {
+    verified, verifiedNames, denied, deniedRepos, allowedSimilar, allowedSimilarRepos,
+    notAShop, marketsJudged, marketRows, categories, firstSeen,
+  }
 }
 
 /**

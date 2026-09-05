@@ -1,5 +1,5 @@
 import { distance } from 'fastest-levenshtein'
-import { isHarnessRepo } from './github-repo.ts'
+import { githubOwnerName, isHarnessRepo } from './github-repo.ts'
 import { isOwnPackage } from './own.ts'
 import { parseCatalogSection } from './schema.ts'
 import type { RegistryConfig } from './config.ts'
@@ -61,8 +61,11 @@ export function truncateWholeCharacters(value: string, maxLength: number): strin
  * reaches every published entry; a value past this is not an SPDX identifier
  * (the longest expression in use, `Apache-2.0 WITH LLVM-exception`, is 30
  * characters). Bounded HERE and not in `toCandidate`, so the rejection can say
- * what is actually wrong: nulling the field in the shell would publish
- * "Declares no license." for a package that declared a one-megabyte one.
+ * what is actually wrong: nulling the field in the shell would give a package
+ * that declared a one-megabyte license the nothing-declared detail instead of
+ * the over-length one. Both carry the `no-license` code — the detail is the
+ * accurate half — so this quotes neither string, which is what let the old
+ * wording here go stale.
  */
 export const LICENSE_MAX_LENGTH = 128
 
@@ -235,7 +238,23 @@ export function gate(
       'This is the shop itself, so it is not listed on its own shelf; install it with dsh plugin add.')
   }
 
+  // Denied by npm name, or by the repository this package declares. A denial
+  // names a PROJECT, and a project has two published spellings: `evil/dsh-x`
+  // on GitHub and `dsh-x` on npm. Checking only the name let the author of a
+  // denied repository publish the same code to npm, win the bundle name (npm
+  // wins by design), and get the repository reported `shadowed-by-npm` while
+  // `denied[]` — the list the Host's install gate consults — stayed empty.
+  //
+  // Case-folded on the repo side, as everywhere else on that keyspace. The
+  // declared repository is attacker-controlled text, so `githubOwnerName`
+  // returns null for anything that is not a plain
+  // `https://github.com/<owner>/<name>` URL and the lookup is simply skipped
+  // — the no-repository and harness-repository checks below still run.
+  const declaredRepo = githubOwnerName(candidate.repository)
   const denial = config.denied.get(name)
+    ?? (declaredRepo === null
+      ? undefined
+      : config.deniedRepos.get(`${declaredRepo.owner}/${declaredRepo.name}`.toLowerCase()))
   if (denial !== undefined) {
     const suffix = denial.replacement === undefined ? '' : ` Known replacement: ${denial.replacement}.`
     return reject(name, 'denied', `Denied by the registry: ${denial.reason}${suffix}`, denial.replacement)
@@ -251,7 +270,12 @@ export function gate(
       `Declares a version string longer than ${VERSION_MAX_LENGTH} characters, so it is not a version the snapshot can record.`)
   }
   if (candidate.license === null || candidate.license === '') {
-    return reject(name, 'no-license', 'Declares no license.')
+    // The detail names what npm expects, because the author has to act on it:
+    // the projection already accepts the two legacy forms (`license: { type }`
+    // and `licenses: []`), so reaching here means nothing declares a license
+    // at all.
+    return reject(name, 'no-license',
+      'Declares no license, so nobody can tell on what terms the code may be used. Declare an SPDX identifier, e.g. "license": "MIT".')
   }
   if (candidate.license.length > LICENSE_MAX_LENGTH) {
     return reject(name, 'no-license',
@@ -322,12 +346,39 @@ export function gate(
     metadata = 'declared'
   }
 
-  if (!config.allowedSimilar.has(name)) {
-    for (const verifiedName of config.verified.keys()) {
+  // The hold is skipped for exactly one identity: an npm package a human
+  // reviewed AS AN NPM PACKAGE. Both halves of that sentence are load-bearing.
+  //
+  // "reviewed" (B-4): verifying `dsh-tool-a` and `dsh-tool-b` — distance 1,
+  // the shape of a same-author suite — used to delist both, each held against
+  // the other, because the hold skipped only the candidate's own exact name.
+  // A review is already the adjudication the hold asks for.
+  //
+  // "as an npm package" (A-2): a name verified by `reviewedCommit` or
+  // `reviewedSha256` belongs to a GITHUB entry, which is a different
+  // identity. Skipping at distance 0 let any npm publisher take that bundle
+  // name, shadow the verified repository (`shadowed-by-npm`) and inherit its
+  // shelf position and `added` date. `allowed-similar.yml` — the npm-name
+  // form — is the human escape when the npm package really is the same
+  // project.
+  //
+  // The `reviewedVersion !== undefined` half is DEFENCE IN DEPTH, not a live
+  // branch: since a github review is keyed by its repository, an npm name
+  // cannot reach one at all. Measured against the `good/dsh-x` fixture,
+  // `verified.get('dsh-x')` is undefined and `verifiedNames` is ['dsh-x'], so
+  // what actually holds the npm publisher is the probe set plus the absence
+  // of the `edits === 0` skip. Mutating this half alone leaves the suite
+  // green, and no contrived fixture is added to make it red — the same
+  // reasoning `assignTier` records for the mirror-image case.
+  const ownReview = config.verified.get(name)
+  const verifiedAsThisPackage = ownReview !== undefined && ownReview.reviewedVersion !== undefined
+  if (!verifiedAsThisPackage && !config.allowedSimilar.has(name)) {
+    for (const verifiedName of config.verifiedNames) {
       const edits = distance(name, verifiedName)
-      if (edits === 0 || edits > SIMILARITY_THRESHOLD) continue
-      return reject(name, 'name-too-similar',
-        `Within ${edits} edit(s) of the verified package ${verifiedName}; held for human adjudication.`)
+      if (edits > SIMILARITY_THRESHOLD) continue
+      return reject(name, 'name-too-similar', edits === 0
+        ? `Exactly matches ${verifiedName}, which is verified as a repository rather than as this npm package, so publishing it here is a different identity claiming a reviewed name; held for human adjudication.`
+        : `Within ${edits} edit(s) of the verified package ${verifiedName}; held for human adjudication.`)
     }
   }
 

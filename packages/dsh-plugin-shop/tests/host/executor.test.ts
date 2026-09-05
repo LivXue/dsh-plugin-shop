@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, writeFileSync, chmodSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { installFailureDetail, spawnFailureDetail, startInstall, startUninstall, type InstallStatus } from '../../src/host/executor.ts'
+import { installFailureDetail, installTimeoutDetail, killTree, lineSink, spawnFailureDetail, startInstall, startUninstall, type InstallStatus } from '../../src/host/executor.ts'
 import type { HotRestartReason } from '../../src/host/hot.ts'
 
 // A fixture `dsh` that records its full argv in a marker file and exits with
@@ -297,6 +297,16 @@ describe('startUninstall', () => {
     )
   })
 
+  it('refuses a target carrying shell punctuation, whatever built it', () => {
+    // dsh itself invokes pnpm with shell mode on Windows, where these
+    // characters change the command line that actually runs.
+    for (const spec of ['dsh-x@1.0.0 & calc.exe', 'dsh-x@1.0.0|calc', 'dsh-x@1.0.0"', 'dsh-x@$(calc)', 'dsh-x@1.0.0\n', 'dsh-{{x}}@1.0.0']) {
+      expect(() => startInstall({ profile: 'web', spec }), spec).toThrow(
+        /refusing to spawn with an unsafe operand/,
+      )
+    }
+  })
+
   it('spawns dsh plugin remove and reports done with needsRestart', async () => {
     const bin = fixtureDsh(0)
     const uninstall = startUninstall({ profile: 'web', name: 'dsh-hello-plugin', dshBin: bin })
@@ -472,6 +482,163 @@ describe('installFailureDetail', () => {
 
 })
 
+describe('the install deadline and the process group (F-1)', () => {
+  function grandchildDsh(sleepSeconds: number): { bin: string; pidFile: string } {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-grandchild-'))
+    const pidFile = join(dir, 'grandchild.pid')
+    const bin = join(dir, 'dsh')
+    writeFileSync(bin, [
+      '#!/bin/sh',
+      'echo "installing..."',
+      `sleep ${sleepSeconds} &`,
+      `echo $! > "${pidFile}"`,
+      'exit 0',
+      '',
+    ].join('\n'))
+    chmodSync(bin, 0o755)
+    return { bin, pidFile }
+  }
+
+  it('settles on exit even while a grandchild holds the pipe', async () => {
+    const { bin, pidFile } = grandchildDsh(20)
+    const started = Date.now()
+    const status = await startInstall({ profile: 'grandchild', spec: 'a@1.0.0', dshBin: bin }).finished
+    expect(status.state).toBe('done')
+    expect(status.log.join('\n')).toContain('installing...')
+    expect(Date.now() - started).toBeLessThan(5000)
+    const grandchild = Number(readFileSync(pidFile, 'utf8').trim())
+    try {
+      process.kill(grandchild, 'SIGKILL')
+    } catch {
+      // Already gone; nothing to clean up.
+    }
+  })
+
+  it('stops a command that outlives its deadline and frees the profile queue', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-deadline-'))
+    const hung = join(dir, 'dsh')
+    writeFileSync(hung, [
+      '#!/bin/sh',
+      'sleep 30 &',
+      `echo $! > "${join(dir, 'gpid')}"`,
+      'wait',
+      '',
+    ].join('\n'))
+    chmodSync(hung, 0o755)
+
+    const first = startInstall({ profile: 'deadline', spec: 'a@1.0.0', dshBin: hung, timeoutMs: 300 })
+    const second = startInstall({ profile: 'deadline', spec: 'b@1.0.0', dshBin: fixtureDsh(0) })
+    const firstStatus = await first.finished
+    expect(firstStatus.state).toBe('failed')
+    expect(firstStatus.detail).toMatch(/did not finish within 1s and was stopped/)
+    expect(firstStatus.detail).toMatch(/dsh plugin --profile deadline install/)
+    expect((await second.finished).state).toBe('done')
+
+    const grandchild = Number(readFileSync(join(dir, 'gpid'), 'utf8').trim())
+    await vi.waitFor(() => { expect(() => process.kill(grandchild, 0)).toThrow() })
+  })
+
+  it('names the deadline rather than blaming pnpm', () => {
+    const detail = installTimeoutDetail('web', 900_000)
+    expect(detail).toMatch(/did not finish within 900s and was stopped/)
+    expect(detail).toMatch(/dsh plugin --profile web install/)
+    expect(detail).not.toMatch(/pnpm failed/)
+  })
+})
+
+describe('killTree', () => {
+  it('walks the tree with taskkill on Windows and with the group on POSIX', () => {
+    const calls: string[] = []
+    const kills = {
+      killGroup: (pid: number) => { calls.push(`group:${pid}`) },
+      killPid: (pid: number) => { calls.push(`pid:${pid}`) },
+      taskkill: (pid: number) => { calls.push(`taskkill:${pid}`) },
+    }
+    killTree(4242, 'win32', kills)
+    expect(calls).toEqual(['taskkill:4242'])
+    calls.length = 0
+    killTree(4242, 'linux', kills)
+    expect(calls).toEqual(['group:4242'])
+    calls.length = 0
+    killTree(4242, 'linux', {
+      ...kills,
+      killGroup: () => { throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' }) },
+    })
+    expect(calls).toEqual(['pid:4242'])
+    calls.length = 0
+    killTree(undefined, 'linux', kills)
+    expect(calls).toEqual([])
+  })
+})
+
+describe('lineSink (F-6)', () => {
+  it('completes a line split across chunks instead of emitting the fragment', () => {
+    const lines: string[] = []
+    const sink = lineSink(line => lines.push(line))
+    sink.write(Buffer.from(' ERR_PNPM_FE'))
+    sink.write(Buffer.from('TCH_404 GET https://r/x: Not Found - 404\n'))
+    sink.flush()
+    expect(lines).toEqual([' ERR_PNPM_FETCH_404 GET https://r/x: Not Found - 404'])
+  })
+
+  it('reassembles a multi-byte character split across chunks', () => {
+    const lines: string[] = []
+    const sink = lineSink(line => lines.push(line))
+    const bytes = Buffer.from('已安装\n', 'utf8')
+    sink.write(bytes.subarray(0, 4))
+    sink.write(bytes.subarray(4))
+    sink.flush()
+    expect(lines).toEqual(['已安装'])
+  })
+
+  it('emits a final line the stream never terminated', () => {
+    const lines: string[] = []
+    const sink = lineSink(line => lines.push(line))
+    sink.write(Buffer.from('no newline here'))
+    expect(lines).toEqual([])
+    sink.flush()
+    expect(lines).toEqual(['no newline here'])
+  })
+
+  it('splits CRLF as well as LF and drops empty lines', () => {
+    const lines: string[] = []
+    const sink = lineSink(line => lines.push(line))
+    sink.write(Buffer.from('a\r\n\r\nb\r\n'))
+    sink.flush()
+    expect(lines).toEqual(['a', 'b'])
+  })
+})
+
+describe('startInstall line assembly (F-6)', () => {
+  it('reports the whole line when the stream splits it, not the fragment', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-split-'))
+    const bin = join(dir, 'dsh')
+    writeFileSync(bin, [
+      '#!/bin/sh',
+      "printf '%s' ' ERR_PNPM_FE'",
+      'sleep 0.3',
+      "printf '%s\\n' 'TCH_404 GET https://r/x: Not Found - 404'",
+      'exit 1',
+      '',
+    ].join('\n'))
+    chmodSync(bin, 0o755)
+    const status = await startInstall({ profile: 'split', spec: 'a@1.0.0', dshBin: bin }).finished
+    expect(status.state).toBe('failed')
+    expect(status.log).toEqual([' ERR_PNPM_FETCH_404 GET https://r/x: Not Found - 404'])
+    expect(status.detail).toMatch(/ERR_PNPM_FETCH_404/)
+  })
+
+  it('keeps a final unterminated line in the log', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-unterminated-'))
+    const bin = join(dir, 'dsh')
+    writeFileSync(bin, ['#!/bin/sh', "printf '%s' 'the bundle did not appear'", 'exit 1', ''].join('\n'))
+    chmodSync(bin, 0o755)
+    const status = await startInstall({ profile: 'unterminated', spec: 'a@1.0.0', dshBin: bin }).finished
+    expect(status.log).toEqual(['the bundle did not appear'])
+    expect(status.detail).toMatch(/did not appear/)
+  })
+})
+
 describe('spawnFailureDetail', () => {
   // Reported from Windows (2026-09-02): updating the shop showed "Update
   // failed / dsh not found on PATH — install the dsh CLI to manage profile
@@ -525,5 +692,35 @@ describe('spawnFailureDetail', () => {
   it('reports any other spawn failure verbatim', () => {
     expect(spawnFailureDetail('EACCES', 'spawn dsh EACCES', 'dsh', 'linux'))
       .toBe('dsh spawn failed: spawn dsh EACCES')
+  })
+})
+
+describe('the child environment (F-12 residual)', () => {
+  it('passes the parent environment to the child, deliberately', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-env-'))
+    const bin = join(dir, 'dsh')
+    writeFileSync(bin, ['#!/bin/sh', `printf '%s\n' "$SHOP_F12_PROBE" > "${join(dir, 'env.txt')}"`, 'exit 0', ''].join('\n'))
+    chmodSync(bin, 0o755)
+    process.env.SHOP_F12_PROBE = 'inherited'
+    try {
+      await startInstall({ profile: 'env', spec: 'a@1.0.0', dshBin: bin }).finished
+      expect(readFileSync(join(dir, 'env.txt'), 'utf8').trim()).toBe('inherited')
+    } finally {
+      delete process.env.SHOP_F12_PROBE
+    }
+  })
+
+  it('uses only the given environment when one is passed', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-env-pinned-'))
+    const bin = join(dir, 'dsh')
+    writeFileSync(bin, ['#!/bin/sh', `printf '%s\n' "$SHOP_F12_PROBE" > "${join(dir, 'env.txt')}"`, 'exit 0', ''].join('\n'))
+    chmodSync(bin, 0o755)
+    process.env.SHOP_F12_PROBE = 'inherited'
+    try {
+      await startInstall({ profile: 'env-pinned', spec: 'a@1.0.0', dshBin: bin, env: { PATH: process.env.PATH ?? '' } }).finished
+      expect(readFileSync(join(dir, 'env.txt'), 'utf8').trim()).toBe('')
+    } finally {
+      delete process.env.SHOP_F12_PROBE
+    }
   })
 })

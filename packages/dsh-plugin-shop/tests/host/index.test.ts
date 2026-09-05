@@ -26,6 +26,109 @@ afterAll(() => {
   rmSync(shopHome, { recursive: true, force: true })
 })
 
+describe('two catalog entries share one name (G-1)', () => {
+  const aliceCommit = 'a'.repeat(40)
+  const bobCommit = 'b'.repeat(40)
+  const alice: CatalogEntry = {
+    name: 'dsh-foo', version: aliceCommit, integrity: aliceCommit, publishedAt: null,
+    repository: 'https://github.com/alice/dsh-foo', license: 'MIT',
+    tier: 'community', metadata: 'derived', source: 'github', repo: 'alice/dsh-foo',
+    added: '2026-08-25',
+  }
+  const bob: CatalogEntry = { ...alice, version: bobCommit, integrity: bobCommit, repo: 'bob/dsh-foo' }
+
+  function gatewayWithBoth(dir: string, dependencies: Record<string, string>): ShopGateway {
+    const bin = join(dir, 'fake-dsh')
+    writeFileSync(bin, ['#!/bin/sh', `echo "$1 $2 $3 $4 $5" >> "${join(dir, 'calls.log')}"`, 'exit 0', ''].join('\n'))
+    chmodSync(bin, 0o755)
+    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-dup-profile-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies }))
+    return new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [alice, bob], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      dshBin: bin,
+    })
+  }
+
+  it('spawns the identity that was asked for, not the first entry with the name', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-dup-install-'))
+    const gateway = gatewayWithBoth(dir, {})
+    const result = await gateway.install({
+      name: 'dsh-foo', version: bobCommit, acknowledged: true,
+      source: 'github', repo: 'bob/dsh-foo',
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const deadline = Date.now() + 5000
+    let terminal = gateway.installStatus({ installId: result.installId })
+    while (terminal.state === 'running' && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+      terminal = gateway.installStatus({ installId: result.installId })
+    }
+    const calls = readFileSync(join(dir, 'calls.log'), 'utf8')
+    expect(calls).toContain(`add github:bob/dsh-foo#${bobCommit}`)
+    expect(calls).not.toContain('alice/dsh-foo')
+    expect(JSON.parse(readFileSync(join(dir, 'cache/github-pins.json'), 'utf8')))
+      .toEqual({ 'github:bob/dsh-foo#': bobCommit })
+  })
+
+  it('refuses a name-only install request while two entries share the name', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-dup-ambiguous-'))
+    const gateway = gatewayWithBoth(dir, {})
+    const result = await gateway.install({ name: 'dsh-foo', version: bobCommit, acknowledged: true })
+    expect(result).toMatchObject({ ok: false, code: 'ambiguous-identity' })
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(existsSync(join(dir, 'calls.log'))).toBe(false)
+  })
+
+  it('reports one row for the repository that is actually installed', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-dup-installed-'))
+    mkdirSync(join(dir, 'cache'), { recursive: true })
+    writeFileSync(join(dir, 'cache/github-pins.json'), JSON.stringify({ 'github:bob/dsh-foo#': bobCommit }))
+    const gateway = gatewayWithBoth(dir, { 'dsh-foo': 'github:bob/dsh-foo' })
+    await gateway.catalog({})
+    expect(await gateway.installed()).toEqual([{
+      name: 'dsh-foo', source: 'github', repo: 'bob/dsh-foo',
+      installed: bobCommit, latest: bobCommit, outdated: false, enabled: true,
+    }])
+  })
+
+  it('does not let an npm namesake claim a repo entry\'s installed row', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-dup-npm-'))
+    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-dup-npm-profile-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
+      name: 'dsh-profile-web', dsh: { profile: { bundles: [] } },
+      dependencies: { 'dsh-foo': 'github:bob/dsh-foo' },
+    }))
+    const npmTwin: CatalogEntry = {
+      ...alice, version: '2.0.0', integrity: 'sha512-x', source: 'npm', repo: undefined,
+    }
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [npmTwin, bob], denied: [], stars: {} }, stale: false }) as CatalogResult,
+    })
+    await gateway.catalog({})
+    expect(await gateway.installed()).toEqual([{
+      name: 'dsh-foo', source: 'github', repo: 'bob/dsh-foo',
+      installed: 'github:bob/dsh-foo', latest: bobCommit, outdated: false, enabled: true,
+    }])
+  })
+
+  it('forgets the identity pin on uninstall', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-dup-uninstall-'))
+    mkdirSync(join(dir, 'cache'), { recursive: true })
+    writeFileSync(join(dir, 'cache/github-pins.json'), JSON.stringify({
+      'github:bob/dsh-foo#': bobCommit, 'github:alice/dsh-foo#': aliceCommit,
+    }))
+    const gateway = gatewayWithBoth(dir, { 'dsh-foo': 'github:bob/dsh-foo' })
+    await gateway.catalog({})
+    const result = await gateway.uninstall({ name: 'dsh-foo' })
+    expect(result.ok).toBe(true)
+    expect(JSON.parse(readFileSync(join(dir, 'cache/github-pins.json'), 'utf8')))
+      .toEqual({ 'github:alice/dsh-foo#': aliceCommit })
+  })
+})
+
 function stubCtx(): never {
   return { get: () => undefined, reflect: { provide: () => {} } } as never
 }
@@ -509,7 +612,7 @@ describe('ShopGateway.installed', () => {
       inventory: { list: async () => ({ entries: [{ entryId: 'one-row', moduleName: 'dsh-one/host', enabled: false }] }) },
     })
     await gateway.catalog({})
-    expect(await gateway.installed()).toEqual([{ name: 'dsh-one', installed: '^1.0.0', latest: '2.0.0', outdated: true, enabled: false }])
+    expect(await gateway.installed()).toEqual([{ name: 'dsh-one', source: 'npm', installed: '^1.0.0', latest: '2.0.0', outdated: true, enabled: false }])
   })
 
   it('reads the enabled state through the live ids a REAL boot produces', async () => {
@@ -527,27 +630,27 @@ describe('ShopGateway.installed', () => {
       inventory: { list: async () => ({ entries: [{ entryId: 'include:one-row', moduleName: 'dsh-one/host', enabled: false }] }) },
     })
     await gateway.catalog({})
-    expect(await gateway.installed()).toEqual([{ name: 'dsh-one', installed: '^1.0.0', latest: '2.0.0', outdated: true, enabled: false }])
+    expect(await gateway.installed()).toEqual([{ name: 'dsh-one', source: 'npm', installed: '^1.0.0', latest: '2.0.0', outdated: true, enabled: false }])
   })
 
   it('reports an installed plugin behind the catalog with outdated: true', async () => {
     const gateway = gatewayWithManifest({ 'dsh-one': '^1.0.0' })
     await gateway.catalog({}) // populates lastSnapshot
-    expect(await gateway.installed()).toEqual([{ name: 'dsh-one', installed: '^1.0.0', latest: '2.0.0', outdated: true, enabled: true }])
+    expect(await gateway.installed()).toEqual([{ name: 'dsh-one', source: 'npm', installed: '^1.0.0', latest: '2.0.0', outdated: true, enabled: true }])
   })
 
   it('reports a current installed plugin with outdated: false', async () => {
     const gateway = gatewayWithManifest({ 'dsh-one': '^2.0.0' })
     await gateway.catalog({})
-    expect(await gateway.installed()).toEqual([{ name: 'dsh-one', installed: '^2.0.0', latest: '2.0.0', outdated: false, enabled: true }])
+    expect(await gateway.installed()).toEqual([{ name: 'dsh-one', source: 'npm', installed: '^2.0.0', latest: '2.0.0', outdated: false, enabled: true }])
   })
 
   it('reads a non-semver installed spec as current instead of throwing', async () => {
     const gateway = gatewayWithManifest({ 'dsh-one': '^1.0.0', 'dsh-two': 'workspace:*' })
     await gateway.catalog({})
     expect(await gateway.installed()).toEqual([
-      { name: 'dsh-one', installed: '^1.0.0', latest: '2.0.0', outdated: true, enabled: true },
-      { name: 'dsh-two', installed: 'workspace:*', latest: '1.5.0', outdated: false, enabled: true },
+      { name: 'dsh-one', source: 'npm', installed: '^1.0.0', latest: '2.0.0', outdated: true, enabled: true },
+      { name: 'dsh-two', source: 'npm', installed: 'workspace:*', latest: '1.5.0', outdated: false, enabled: true },
     ])
   })
 
@@ -564,7 +667,7 @@ describe('ShopGateway.installed', () => {
     })
     const installed = await gateway.installed()
     expect(loadCalls).toBe(1)
-    expect(installed).toEqual([{ name: 'dsh-one', installed: '^1.0.0', latest: '2.0.0', outdated: true, enabled: true }])
+    expect(installed).toEqual([{ name: 'dsh-one', source: 'npm', installed: '^1.0.0', latest: '2.0.0', outdated: true, enabled: true }])
   })
 })
 
@@ -591,19 +694,19 @@ describe('forwards-only outdated', () => {
   it('reports an equal installed version as current', async () => {
     const gateway = gatewayWithManifest({ 'dsh-two': '1.5.0' })
     await gateway.catalog({})
-    expect(await gateway.installed()).toEqual([{ name: 'dsh-two', installed: '1.5.0', latest: '1.5.0', outdated: false, enabled: true }])
+    expect(await gateway.installed()).toEqual([{ name: 'dsh-two', source: 'npm', installed: '1.5.0', latest: '1.5.0', outdated: false, enabled: true }])
   })
 
   it('reports a backwards catalog version as current, never "outdated"', async () => {
     const gateway = gatewayWithManifest({ 'dsh-two': '2.0.0' })
     await gateway.catalog({})
-    expect(await gateway.installed()).toEqual([{ name: 'dsh-two', installed: '2.0.0', latest: '1.5.0', outdated: false, enabled: true }])
+    expect(await gateway.installed()).toEqual([{ name: 'dsh-two', source: 'npm', installed: '2.0.0', latest: '1.5.0', outdated: false, enabled: true }])
   })
 
   it('reports a behind installed version as outdated', async () => {
     const gateway = gatewayWithManifest({ 'dsh-two': '^1.0.0' })
     await gateway.catalog({})
-    expect(await gateway.installed()).toEqual([{ name: 'dsh-two', installed: '^1.0.0', latest: '1.5.0', outdated: true, enabled: true }])
+    expect(await gateway.installed()).toEqual([{ name: 'dsh-two', source: 'npm', installed: '^1.0.0', latest: '1.5.0', outdated: true, enabled: true }])
   })
 })
 
@@ -711,6 +814,23 @@ describe('ShopGateway.restart', () => {
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.detail).toContain('restart could not be started')
     expect(exit).not.toHaveBeenCalled()
+  })
+
+  it("re-runs this process's own entry when dshBin is the bare default", async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-restart-node-'))
+    const marker = join(dir, 'ran.log')
+    const script = join(dir, 'fake-bin.js')
+    writeFileSync(script, `require('node:fs').appendFileSync(${JSON.stringify(marker)}, process.argv.slice(2).join(' ') + '\\n')\n`)
+    const exit = vi.fn()
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: dir, profile: 'web',
+      exit, restartExitDelayMs: 1, restartParentPid: 1_000_000_000,
+      restartArgv: ['web', '--no-open'], restartScript: script,
+    })
+    expect(await gateway.restart()).toEqual({ ok: true })
+    await vi.waitFor(() => { expect(existsSync(marker)).toBe(true) }, { timeout: 5000 })
+    expect(readFileSync(marker, 'utf8')).toContain('web --no-open')
+    rmSync(dir, { recursive: true, force: true })
   })
 })
 
@@ -920,7 +1040,7 @@ describe('ShopGateway github entries', () => {
     }
     expect(terminal.state).toBe('done')
     expect(readFileSync(join(dir, 'calls.log'), 'utf8')).toContain(`plugin --profile web add github:someone/dsh-repo-plugin#${commit}`)
-    expect(JSON.parse(readFileSync(join(dir, 'cache/github-pins.json'), 'utf8'))).toEqual({ 'dsh-repo-plugin': commit })
+    expect(JSON.parse(readFileSync(join(dir, 'cache/github-pins.json'), 'utf8'))).toEqual({ 'github:someone/dsh-repo-plugin#': commit })
   })
 
   it('reports a github install by its pin, outdated when the catalog commit moved', async () => {
@@ -935,7 +1055,7 @@ describe('ShopGateway github entries', () => {
       loadCatalog: async () => ({ snapshot: { schemaVersion: 3, builtAt: '', entries: [repoEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
     })
     await gateway.catalog({})
-    expect(await gateway.installed()).toEqual([{ name: 'dsh-repo-plugin', installed: oldCommit, latest: commit, outdated: true, enabled: true }])
+    expect(await gateway.installed()).toEqual([{ name: 'dsh-repo-plugin', source: 'github', repo: 'someone/dsh-repo-plugin', installed: oldCommit, latest: commit, outdated: true, enabled: true }])
   })
 
   it('forgets the pin on uninstall', async () => {
@@ -999,7 +1119,7 @@ describe('subpackage install spec', () => {
     }
     expect(terminal.state).toBe('done')
     expect(readFileSync(join(dir, 'calls.log'), 'utf8')).toContain(`plugin --profile web add github:someone/monorepo#${commit}&path:packages/sub-plugin`)
-    expect(JSON.parse(readFileSync(join(dir, 'cache/github-pins.json'), 'utf8'))).toEqual({ 'sub-plugin': commit })
+    expect(JSON.parse(readFileSync(join(dir, 'cache/github-pins.json'), 'utf8'))).toEqual({ 'github:someone/monorepo#packages/sub-plugin': commit })
   })
 })
 
@@ -1060,7 +1180,7 @@ describe('release-rescued tarball install', () => {
     }
     expect(terminal.state).toBe('done')
     expect(readFileSync(join(dir, 'calls.log'), 'utf8')).toContain(`plugin --profile web add ${TARBALL_URL}`)
-    expect(JSON.parse(readFileSync(join(dir, 'cache/github-pins.json'), 'utf8'))).toEqual({ 'dsh-rescued': tag })
+    expect(JSON.parse(readFileSync(join(dir, 'cache/github-pins.json'), 'utf8'))).toEqual({ 'github:owner/slug#': tag })
   })
 
   it('rejects tarball-integrity without spawning when the bytes do not match the recorded sha256', async () => {
@@ -1136,6 +1256,30 @@ describe('release-rescued tarball install', () => {
     const repoResult = await repoGateway.install({ name: 'dsh-repo-plugin', version: commit, acknowledged: true })
     expect(repoResult.ok).toBe(true)
     expect(fetchTarball).not.toHaveBeenCalled()
+  })
+
+  it('reports a release-rescued install as outdated when the catalog tag moves (G-11)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-tarball-outdated-'))
+    mkdirSync(join(dir, 'cache'), { recursive: true })
+    writeFileSync(join(dir, 'cache/github-pins.json'), JSON.stringify({ 'github:owner/slug#': 'v1.0.0' }))
+    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-tarball-outdated-profile-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
+      name: 'dsh-profile-web', dsh: { profile: { bundles: [] } },
+      dependencies: { 'dsh-rescued': TARBALL_URL },
+    }))
+    const newer: CatalogEntry = {
+      ...tarballEntry, version: 'v1.1.0',
+      tarball: { url: 'https://github.com/owner/slug/releases/download/v1.1.0/plugin.tgz', sha256: 'b'.repeat(64) },
+    }
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [newer], denied: [], stars: {} }, stale: false }) as CatalogResult,
+    })
+    await gateway.catalog({})
+    expect(await gateway.installed()).toEqual([{
+      name: 'dsh-rescued', source: 'github', repo: 'owner/slug',
+      installed: 'v1.0.0', latest: 'v1.1.0', outdated: true, enabled: true,
+    }])
   })
 })
 
@@ -1528,7 +1672,7 @@ describe('ShopGateway.catalog incompatibility', () => {
       { resolvePeer: (spec: string) => spec !== '@deepseek-ai/dsh-client-store' },
     )
     const result = await gateway.catalog({})
-    expect(result.incompatible).toEqual({ 'dsh-timeline': ['@deepseek-ai/dsh-client-store'] })
+    expect(result.incompatible).toEqual({ 'npm:dsh-timeline': ['@deepseek-ai/dsh-client-store'] })
   })
 
   it('reports nothing when every peer resolves', async () => {
@@ -1586,13 +1730,142 @@ describe('ShopGateway.catalog incompatibility', () => {
     )
 
     const first = await gateway.catalog({})
-    expect(first.incompatible).toEqual({ 'dsh-timeline': ['@deepseek-ai/dsh-client-store'] })
+    expect(first.incompatible).toEqual({ 'npm:dsh-timeline': ['@deepseek-ai/dsh-client-store'] })
     expect(resolvePeer).toHaveBeenCalledTimes(2) // the two distinct peer names on `peered`
 
     const second = await gateway.catalog({})
-    expect(second.incompatible).toEqual({ 'dsh-timeline': ['@deepseek-ai/dsh-client-store'] })
+    expect(second.incompatible).toEqual({ 'npm:dsh-timeline': ['@deepseek-ai/dsh-client-store'] })
     // Unchanged: the second call must reuse the cached map, never ask the
     // resolver again for a snapshot it has already judged.
     expect(resolvePeer).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('concurrent catalog loads (G-7)', () => {
+  const entries: CatalogEntry[] = [{
+    name: 'dsh-one', version: '2.0.0', integrity: null, publishedAt: null, repository: null,
+    license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25',
+  }]
+
+  it('loads once when catalog() and installed() are called together on a cold cache', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-once-'))
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: { 'dsh-one': '^1.0.0' } }))
+    let loadCalls = 0
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
+      loadCatalog: async () => {
+        loadCalls += 1
+        await gate
+        return { snapshot: { schemaVersion: 6, builtAt: '', entries, denied: [], stars: {} }, stale: false } as CatalogResult
+      },
+    })
+    const both = Promise.all([gateway.catalog({}), gateway.installed()])
+    await vi.waitFor(() => expect(loadCalls).toBeGreaterThan(0))
+    release()
+    const [, installed] = await both
+    expect(loadCalls).toBe(1)
+    expect(installed).toHaveLength(1)
+  })
+
+  it('still re-asks the loader after a failed load', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-once-fail-'))
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
+    let loadCalls = 0
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
+      loadCatalog: async () => {
+        loadCalls += 1
+        if (loadCalls === 1) throw new Error('offline')
+        return { snapshot: { schemaVersion: 6, builtAt: '', entries, denied: [], stars: {} }, stale: false } as CatalogResult
+      },
+    })
+    await expect(gateway.catalog({})).rejects.toThrow('offline')
+    await expect(gateway.catalog({})).resolves.toMatchObject({ schemaVersion: 6 })
+    expect(loadCalls).toBe(2)
+  })
+
+  it('a refresh always reaches the loader', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-once-refresh-'))
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
+    const seen: Array<boolean | undefined> = []
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
+      loadCatalog: async options => {
+        seen.push(options.refresh)
+        return { snapshot: { schemaVersion: 6, builtAt: '', entries, denied: [], stars: {} }, stale: false } as CatalogResult
+      },
+    })
+    await gateway.catalog({})
+    await gateway.catalog({ refresh: true })
+    expect(seen).toEqual([false, true])
+  })
+})
+
+describe('restart while an install is running (F-5)', () => {
+  it('refuses instead of booting a new dsh against a half-mutated profile', async () => {
+    // A command that is still rewriting the profile owns the profile for the
+    // duration of the operation. Restart must leave both that child and the
+    // serving process alone until it has settled.
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-restart-busy-'))
+    const slow = join(dir, 'dsh')
+    writeFileSync(slow, ['#!/bin/sh', 'sleep 2', 'exit 0', ''].join('\n'))
+    chmodSync(slow, 0o755)
+    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-restart-busy-profile-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
+    const listed: CatalogEntry = {
+      name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null, repository: null,
+      license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25',
+    }
+    const exit = vi.fn()
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: mkdtempSync(join(tmpdir(), 'dsh-restart-busy-cache-')),
+      profile: 'web', profileDir, dshBin: slow, exit, restartArgv: ['web'],
+      // A dead pid lets the pre-fix helper run without waiting for this test
+      // worker; the failing assertion is the returned restart outcome.
+      restartParentPid: 1_000_000_000,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [listed], denied: [], stars: {} }, stale: false }) as CatalogResult,
+    })
+    const started = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true, source: 'npm' })
+    expect(started.ok).toBe(true)
+    if (!started.ok) return
+    expect(gateway.installStatus({ installId: started.installId }).state).toBe('running')
+
+    const outcome = await gateway.restart()
+    expect(outcome).toEqual({
+      ok: false,
+      detail: 'dsh-plugin-shop: an install is still running in this profile; a restart now would boot the new dsh against a half-written profile. Wait for it to finish and try again.',
+    })
+    expect(exit).not.toHaveBeenCalled()
+    await vi.waitFor(() => {
+      expect(gateway.installStatus({ installId: started.installId }).state).not.toBe('running')
+    }, { timeout: 5000 })
+  })
+
+  it('allows the restart once the install has settled', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-restart-idle-'))
+    const quick = join(dir, 'dsh')
+    writeFileSync(quick, ['#!/bin/sh', 'exit 0', ''].join('\n'))
+    chmodSync(quick, 0o755)
+    const profileDir = mkdtempSync(join(tmpdir(), 'dsh-restart-idle-profile-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: ['dsh-hello-plugin'] } }, dependencies: {} }))
+    const listed: CatalogEntry = {
+      name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null, repository: null,
+      license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25',
+    }
+    const exit = vi.fn()
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: mkdtempSync(join(tmpdir(), 'dsh-restart-idle-cache-')),
+      profile: 'web', profileDir, dshBin: quick, exit, restartArgv: ['web'],
+      restartExitDelayMs: 1, restartParentPid: 1,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [listed], denied: [], stars: {} }, stale: false }) as CatalogResult,
+    })
+    const started = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true, source: 'npm' })
+    if (!started.ok) throw new Error('the fixture install was rejected')
+    await vi.waitFor(() => {
+      expect(gateway.installStatus({ installId: started.installId }).state).not.toBe('running')
+    }, { timeout: 5000 })
+    expect(await gateway.restart()).toEqual({ ok: true })
   })
 })
