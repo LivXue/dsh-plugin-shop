@@ -357,7 +357,7 @@ QEDQCD/dsh-ocr-vision @deepseek-ai/dsh-ocr-vision 8de7cf84db16a95501018f4506ceed
 renat3u/dsh-paseo @deepseek-ai/dsh-paseo 8d3ec852c2a2e9bdd4e9c19c2384205470a337f3
 czm15053/dsh-peer-link @deepseek-ai/dsh-peer-link a6c5aa872fcacc1ab3fababec00bed9222f09e0a
 GHJIVHIDD/dsh-plugin-canvas @deepseek-ai/dsh-plugin-canvas f6a7ae496dbe602fddb26bdfb161720f3cfea85a
-Tabbyaccessorial446/dsh-plugin-canvas @deepseek-ai/dsh-plugin-canvas 5849e97440cf190b367a7432b90818a42df8bd38
+Tabbyaccessorial446/dsh-plugin-canvas @deepseek-ai/dsh-plugin-canvas 7180d1c3486edafc1a9510d34ebe9f7c9ab962b7
 NattoCB/dsh-plugin-memory @deepseek-ai/dsh-plugin-memory a83fccef21f74d5242df5df0ab5c0be7ae8ddf8b
 GHJIVHIDD/dsh-plugin-usage @deepseek-ai/dsh-plugin-usage 50b3dc35a6e46a20ae761ee33f1d853cce93f6d2
 RRRosmontis/dsh-qwen-mm @deepseek-ai/dsh-qwen-mm 6d98e9b26b60d343e9134e08b787555dfc0964c8
@@ -650,7 +650,7 @@ ovensi/dsh-plugin-minimax-usage @dsh-external/minimax-usage 16af76b37a2c17293b0e
 csiroqa/dsh-plugin-forge @dsh-external/plugin-forge ceebe9aa89224772f607248f0d6dbbbcf8fc80da
 AlexCHONG8/dsh-viewboost @dsh-external/viewboost 81a911a1e61fd16e69102c787c8efee375238d00
 bettermen/xiashuo @dsh-external/xiashuo ebfc4ba421ba657a17992a22515ac3ea885d6b2d
-PGZXB/dsh-feishu @dsh-feishu/dsh-feishu 8f25cedebd64c273cae65cbd3139481c2a0a7603
+PGZXB/dsh-feishu @dsh-feishu/dsh-feishu 5c0d85633bc1c892135ad20950dc9bfa524605c1
 @dsh-fish/hub 0.4.2 sha512-K+Tf7pfHvCqA5y1Y45p/bw0PeiCoNsAI9YHVi5HD/JJtpA3QMz7DYUZXFw7DTuQApyxnSGqIxv8lpCJi7R+mhg==
 zsxian11/dsh-flywheel @dsh-flywheel/dsh-bundle 2541c0a33307cad1566eb7704c24be11069e4051
 TheChengXi/dsh-focus @dsh-focus/focus-plugin 4c650b89c1e7fad736b0399f7c4ac463c9d608a8
@@ -909,7 +909,7 @@ GooDAnDReaDY/dsh-im-hub-media @goodandready/dsh-im-hub-media 2b2427847bca22ae4ef
 @goodandready/dsh-time-machine 0.1.8 sha512-YWG4Ti9UPMtauyxf9+TLNX3Pcp5UTOeu7463fK8mQYgbcMUcgjRqjjud8oL11mDGe0McaZNQsUKH4Xo9uFlw8w==
 @goodandready/dsh-tts 0.3.21 sha512-61Jzqqlr+nd7znWnyaSc5AZ+d9xIaJeFjP2x2aQZf/PRYszg6JrOni5S+ULOMxxCfdpf46b2rrZuSjdZKESjvQ==
 @goodandready/dsh-usage-guard 0.1.2 sha512-nf4UKhMMnzbF4KCjB9qzIz/LJfVKsoS1chXqec6qjX0Vzof3R7pgoNGGPjpIVCf3jcSNm6zvmTdDnPgduE6pzA==
-@goodandready/dsh-vision-bridge 0.5.26 sha512-naBAM/oVLMNQazbgFndNhf9CdmiOXZFVI69dBppaiqVyPP0pFMpkvFTE5tBZCPmf6Z0suvcPMvHpDb3qI8a53w==
+@goodandready/dsh-vision-bridge 0.5.27 sha512-P7eM0Eh2lpDxc5+OomhfQnge9Gp8gaeT3Lquaa9nJZlfHcM5okZGsrE/s9/+ojS1irDSvdQa7aD2ltzEECvzJw==
 @goodandready/dsh-voice 0.8.16 sha512-ZGdfiozBzwTp3wH4Z6OyGkkKito3cInbUIALRihFXbDOiAeG0P2eaHSnAW5kQrZ1iwoGpipCKfvd7kB6qeTOAw==
 @grapecity-software/dsh-spreadjs-editor 0.1.0 sha512-NuHAtX4lg72C5Nepjqsla7fvUmxzqBXHpUL4dY8Ubexng4jcq9DrCHGNhaV1fRLS7k4Q1cm/6mplfQA+u3Tu5Q==
 @graysilver/dsh-evolve-modes 0.4.0 sha512-U2VOQ8dIkeq0MLORuVL4KV12j7vnXMOTJgetRQNjeLEL/sFVs5aCA/J9jOAc8+6/IU2bH9gT4OILmoE8lTwkVw==
@@ -3060,7 +3060,7 @@ Ansonfishing/dsh-cap-profile dsh-cap-profile ef1675acaf48e41297f94f24bd8f4ca1362
 777-Zen/dsh-capability-index dsh-capability-index c1803133660c6bc30dbc2d3eda493724b801aad0
 tree201/dsh-capability-inspector dsh-capability-inspector 7dded4f1137bf424d86a8c1e71807bc3370faaf3
 dsh-capability-optimizer 0.7.0 sha512-Y58zc6L3vNnc3XExLEj/NoCrmwNxZ11BUvWib6yWrzExeBGliLhiLsKzh4uYwUY4nE3TOKxXkWkFNP5IJ273Zg==
-pure-craft/dsh-capability-panel dsh-capability-panel b0f68e1398ada32eda1a0b4d4da72a7afbf0e3a6
+pure-craft/dsh-capability-panel dsh-capability-panel f7657972d555c160b7a2eb923349d2ddde3d0462
 dongsheng123132/dsh-capability-receipt dsh-capability-receipt 53fe2a117909c17be7996c7eadfea330897398c2
 striveh/dsh-capability-resolver dsh-capability-resolver v0.1.1
 lifeopsgo/dsh-capability-toggle-plugin dsh-capability-toggle-plugin 5e27bd537605b21d8134e3192db50b6359e80356
@@ -5582,7 +5582,7 @@ dsh-mnemon 0.5.2 sha512-EWjX0VDT6OQQsKF2qhbdPrR+T/KU88vbulkF6gzplWqppm8j4A0qIf+G
 Zn-Dk/dsh-mnemon-gc dsh-mnemon-gc 3e5939d5854564069307e58fc88277b7fa7f7c3d
 dsh-mnemos 0.2.0 sha512-SB4/8awJeQNL6YBz+A5NZGL8gJRwEaogt9pbz72eSA/jPZShC4/HRcpvICJVVl/1Y3FxAvQW5UAfBUnBpQqENw==
 rebron1900/dsh-mnemosyne dsh-mnemosyne 7397f7149c4883f0836b563654a005e402971a62
-Witchwarren2344/dsh-mnemosyne-memory dsh-mnemosyne-memory ed1cafdfbac5d04d9235adea3ec405afb6c53ae0
+Witchwarren2344/dsh-mnemosyne-memory dsh-mnemosyne-memory cb05f3f14d973edc4471deacbebd554ef71238ae
 fjzzwxp/dsh-mnemosyne-memory dsh-mnemosyne-memory e98a92bac39831d07ddb53deb46b7a2786fbc6f9
 dsh-mobile 0.3.9 sha512-qCXUygMporz7e/U0h+m/LQkgiT/YL2jIvwg0wx6fGmsaFAyWRcY6loSqEVMSNQjp96C11WtWiv2UMyCiwFHEDQ==
 TongaiLinC/dsh-mobile-access dsh-mobile-access baae3fb0eb40acdf7e470430faa51182953e6198
@@ -6448,7 +6448,7 @@ dsh-plugin-manager-lite 0.1.1 sha512-h0IYUZ8oVGen9BR37dq7RkdBUjZ/0WDk5Wryxskwale
 dsh-plugin-manager-pro 0.8.2 sha512-URMKqSH+IC2PXMmbuWPzH1UZvoA8f1ohqDURD66iwWumqWTdW7iLRTUQ5/s7a43VcD3ND9NrAwgstF+2s2fdYg==
 2160039878-cyber/dsh-plugin-market dsh-plugin-market 3bc4b0e9a9f4d95e606a8baa95136631cf08dd40
 Strangelight-Merser/dsh-plugin-market dsh-plugin-market v0.5.0
-TheYoungChen/dsh-plugin-market dsh-plugin-market 3e73dc39846c215d7d68952bc4a603d853d234ba
+TheYoungChen/dsh-plugin-market dsh-plugin-market 175983a9f05b3294864b51c6b5543d05b2cd2640
 nanshan1995/DSH-Plugin-Market dsh-plugin-market cb79579df4f41be8902d53a64221e21367b46652
 sstar16/dsh-plugin-market dsh-plugin-market 555050084e97435a5d5ffde736edfab4887d3854
 uluckystar/dsh-plugin-market dsh-plugin-market 29d5ec46d2ceff3af823d52e21cf04d96d6ae616
@@ -8109,6 +8109,7 @@ zhaoyuntao-wl/dsh-plugin-thread dsh-thread 9c500faa29d7aa25712c15d6a1a4f10aefef4
 iqingyoung/429-throttle-mcp dsh-throttle 2aad6a86cf61788f8b5e789f0452f2981971fcda
 dsh-thrum 0.2.2 sha512-oi+N2jWRMwG77AnNtyjPlkgfmmf1jYO23+560aK4Ycv2siWmAj15abiYMhvWnFdOnv9PNOKdL94aYksIHusKmg==
 dsh-ths-holdings 0.1.7 sha512-QcQuVrjhFq/zaZjgfPcS1Q4JOnVUZOykKggjVtHYqY70r7+x47AJl+9u39D6TqCcFc70tUhZ4wHemGfmJrrqag==
+AliceLJY/dsh-thumb dsh-thumb d970f1f8f70764f504eec89064619d9685ec676c
 dsh-thunderforge 0.2.1 sha512-IuYfd2PvfGJpqsmxjpPCKdf5cR6rnAFppQooSrDs4NLjmifZYI8Od2Wu/3lkCwDUhOwVC0rClPapmTMMlwKDVg==
 caisiyang123/dsh-tick-rail dsh-tick-rail 2d103df93a7c4c11e43807cee525321b39730033
 dsh-ticker-jp 1.0.1 sha512-oCwB2kitQkBztfzR2hLVeXCvrgKhNfdvdH7lfKzH+Qh9Gg3TMCOeq1H6RQBg0uNlulve3ezuCwkSkJ5G7jdJTQ==
