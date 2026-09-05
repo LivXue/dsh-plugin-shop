@@ -421,6 +421,22 @@ code, both stayed green. Two fixtures, one per mutation: two ERR_ codes
 
 ### Task 4: H-4 — a CI run may not be green because the exit criteria skipped
 
+> **Outcome: DONE.** Step 1 reproduced it: with `dsh` hidden from PATH,
+> `real-install.test.ts` reported `1 skipped` and the run **exited 0**. The P1
+> exit criterion did not execute and nothing said so.
+>
+> `DSH_SHOP_REQUIRE_E2E=1` now turns that skip into a failure, and `plugin.yml`
+> sets it on the package-suite step — that workflow installs the harness and a
+> browser two steps earlier for exactly this purpose, so a skip there is a green
+> run that proves nothing. A developer's machine without `dsh` still skips
+> quietly, which is the honest case.
+>
+> The guard over the workflow parses the YAML. Its first version sliced 500
+> characters after the `run:` line, and the comment explaining the variable
+> pushed the variable itself out of the window — a correct workflow read as
+> broken. Same lesson as the Dependabot pairing guard the same day: grep the
+> shape and you match the prose.
+
 **Files:**
 - Modify: `packages/dsh-plugin-shop/tests/host/real-install.test.ts:18-47` (add the flag) and add one guard case
 - Modify: `packages/dsh-plugin-shop/tests/client/web-full-flow.e2e.ts:85-100` (add the flag) and add one guard describe

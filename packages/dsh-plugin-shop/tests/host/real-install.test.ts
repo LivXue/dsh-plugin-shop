@@ -46,7 +46,35 @@ const hasDsh = (() => {
   }
 })()
 
+/**
+ * When set, a skipped exit-criterion case is a FAILURE rather than a silent
+ * pass.
+ *
+ * Both this file and web-full-flow.e2e.ts probe for a working `dsh` and skip
+ * when they cannot find one. That is right locally — not every machine has the
+ * harness installed — and wrong in CI, where these two files ARE the P1 and P2
+ * exit criteria. Reproduced 2026-09-05: with `dsh` hidden from PATH the run
+ * reported `1 skipped` and **exited 0**, so a green CI run was not evidence
+ * that either criterion had executed.
+ *
+ * plugin.yml sets it, because that workflow installs the harness precisely so
+ * these can run. A machine without `dsh` still skips.
+ */
+const requireE2E = process.env.DSH_SHOP_REQUIRE_E2E === '1'
+
 describe('real installation', () => {
+  it('has the harness it needs, when the environment says it must', () => {
+    // Not `skipIf`: the whole point is that this one cannot be skipped. It is
+    // the guard that turns "the exit criterion did not run" from a silent
+    // pass into a red build.
+    expect(
+      !requireE2E || hasDsh,
+      'DSH_SHOP_REQUIRE_E2E=1 but no usable `dsh` was found, so the exit-criterion '
+        + 'case below would have skipped and the run would still have exited 0. '
+        + 'Either install the harness or unset the variable.',
+    ).toBe(true)
+  })
+
   const tmpHome = mkdtempSync(join(tmpdir(), 'dsh-home-'))
   const fixtureDir = fileURLToPath(new URL('../fixtures/hello-packages/dsh-plugin-shop', import.meta.url))
 

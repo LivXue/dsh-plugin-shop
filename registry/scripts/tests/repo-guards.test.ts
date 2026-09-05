@@ -318,3 +318,26 @@ describe('what git is allowed to pick up', () => {
     expect(tracked.trim()).toBe('packages/dsh-plugin-shop/tests/fixtures/catalog-package.tgz')
   })
 })
+
+describe('the exit criteria cannot skip silently in CI', () => {
+  it('tells the package suite that a skipped exit criterion is a failure', () => {
+    // real-install.test.ts and web-full-flow.e2e.ts are the P1 and P2 exit
+    // criteria, and both skip when no usable `dsh` is found. plugin.yml
+    // installs the harness and a browser two steps earlier for exactly that
+    // reason, so a skip there is not honest — it is a green run that proves
+    // nothing. Reproduced 2026-09-05: hiding `dsh` from PATH gave `1 skipped`
+    // and exit 0.
+    // Parsed, not windowed: the first version sliced 500 characters after the
+    // `run:` line and the comment explaining the env pushed the env itself out
+    // of the window, so a correct workflow read as broken.
+    const workflow = parse(read('.github/workflows/plugin.yml')) as {
+      jobs: Record<string, { steps: { run?: string; env?: Record<string, string> }[] }>
+    }
+    const steps = workflow.jobs.test?.steps ?? []
+    const suite = steps.find(step => (step.run ?? '').includes('packages/dsh-plugin-shop test'))
+    expect(suite, 'plugin.yml does not run the package suite').toBeDefined()
+    expect(suite?.env?.DSH_SHOP_REQUIRE_E2E, 'plugin.yml does not require the exit criteria to run')
+      .toBe('1')
+  })
+})
+
