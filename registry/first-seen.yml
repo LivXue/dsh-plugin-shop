@@ -3062,6 +3062,10 @@
   added: 2026-08-25
 - name: "@edge-sky/dsh-oauth-adapter"
   added: 2026-09-01
+- name: "@eduwork/dsh-mail"
+  added: 2026-09-05
+- name: "@eduwork/dsh-oidc"
+  added: 2026-09-05
 - name: "@edwardhamu/dsh-glassmorphism-theme"
   added: 2026-09-04
 - name: "@edwindigital/dsh-web-search-microsoft-webiq"
@@ -7786,6 +7790,8 @@
   added: 2026-08-31
 - name: "apageoflove/dsh-changeproof"
   added: 2026-08-31
+- name: "apeincodemountain/llm-wiki-sidebar"
+  added: 2026-09-05
 - name: "api-balance"
   added: 2026-08-31
 - name: "api-monitor"
@@ -20814,6 +20820,8 @@
   added: 2026-08-25
 - name: "dsh-plugin-context-manager"
   added: 2026-09-01
+- name: "dsh-plugin-context-trim"
+  added: 2026-09-05
 - name: "dsh-plugin-continue"
   added: 2026-09-04
 - name: "dsh-plugin-continuity"
@@ -30684,6 +30692,8 @@
   added: 2026-08-31
 - name: "kagura-agent/dsh-memes"
   added: 2026-09-01
+- name: "kagurazakayashi/dsh-startup-command"
+  added: 2026-09-05
 - name: "kaichencurry/tabnexus-dsh"
   added: 2026-08-31
 - name: "kaiqiangh/dsh-workshpace-plugin"
@@ -33174,6 +33184,8 @@
   added: 2026-09-01
 - name: "pivotstackintelligence/dsh-github"
   added: 2026-08-31
+- name: "plaaasma/dsh-subagent-claude-live"
+  added: 2026-09-05
 - name: "plaindeck"
   added: 2026-09-04
 - name: "plaindeck-web"
@@ -33748,6 +33760,8 @@
   added: 2026-09-01
 - name: "rocklau/dsh-ui-tool-graph"
   added: 2026-09-01
+- name: "roclee2692/dsh-model-groups"
+  added: 2026-09-05
 - name: "roger-yang-cn/dsh-voice-alert"
   added: 2026-09-01
 - name: "rong-coder/dsh-office-tool"
@@ -34810,6 +34824,8 @@
   added: 2026-09-01
 - name: "teachreplay-monorepo"
   added: 2026-09-04
+- name: "telagod/dsh-ledger-compact"
+  added: 2026-09-05
 - name: "telltoday/dsh-narrative-voice"
   added: 2026-09-01
 - name: "telos"
@@ -38078,6 +38094,8 @@
   added: 2026-09-02
 - name: "watericetangcw/dsh-session-pause"
   added: 2026-09-02
+- name: "watersxya/dsh-novel-forge"
+  added: 2026-09-05
 - name: "waverly-w/dsh-scratchpad"
   added: 2026-09-01
 - name: "wavespeed-dsh-skill"
@@ -38150,6 +38168,10 @@
   added: 2026-09-01
 - name: "weishao2/tizhuang-agent-skills"
   added: 2026-09-02
+- name: "weisofns/dsh-print3d"
+  added: 2026-09-05
+- name: "weisofns/dsh-security-guard"
+  added: 2026-09-05
 - name: "weivwang/dsh-stack"
   added: 2026-09-02
 - name: "weixin-clawbot"
@@ -39652,6 +39674,8 @@
   added: 2026-08-31
 - name: "ygcdsj/dsh-home-migrate"
   added: 2026-09-02
+- name: "yh01010/dsh-mcp-matlab"
+  added: 2026-09-05
 - name: "yha9806/dsh-subagent-admission"
   added: 2026-09-02
 - name: "yhfgyyf/dsh-audit-mode"
@@ -39914,6 +39938,8 @@
   added: 2026-09-01
 - name: "ywleeo/browser-mcp"
   added: 2026-09-02
+- name: "ywleeo/dsh-balance"
+  added: 2026-09-05
 - name: "ywzhang1031/dsh-aside"
   added: 2026-09-02
 - name: "yx-yinhe/dsh-message-navigator"
@@ -40328,6 +40354,8 @@
   added: 2026-09-02
 - name: "zjl88858/dsh-huadongbianzuqi"
   added: 2026-09-02
+- name: "zjlww/dsh-admin-bridge"
+  added: 2026-09-05
 - name: "zjuhbh/dsh-full-with-approval"
   added: 2026-09-02
 - name: "zjwzjw1018-git/dsh-cyberpunk-theme"
