@@ -226,6 +226,8 @@
   added: 2026-08-31
 - name: "345420242/dsh-commandcode-usage"
   added: 2026-09-06
+- name: "345420242/dsh-commandcode-usage-inline"
+  added: 2026-09-06
 - name: "3911ee/dsh-workspace-explorer"
   added: 2026-08-31
 - name: "398894496-arch/runtime36"
@@ -3306,6 +3308,8 @@
   added: 2026-08-31
 - name: "@funcodingdev/dsh-pluginhub"
   added: 2026-09-04
+- name: "@furayoshi/dsh-ui-models-invert-selection"
+  added: 2026-09-06
 - name: "@furayoshi/dsh-widechat"
   added: 2026-09-05
 - name: "@furongjun1999/dsh-memory"
@@ -8740,6 +8744,8 @@
   added: 2026-08-31
 - name: "chushiz/dsh-archive-manager"
   added: 2026-08-31
+- name: "chuxindd/dsh-context-enhancement"
+  added: 2026-09-06
 - name: "chuxumilk/dsh-404-panic-lock"
   added: 2026-09-01
 - name: "chuyue-yue/dsh-plugin-manager"
@@ -20286,6 +20292,8 @@
   added: 2026-09-01
 - name: "dsh-pentester"
   added: 2026-08-25
+- name: "dsh-per"
+  added: 2026-09-06
 - name: "dsh-per-message-model"
   added: 2026-09-04
 - name: "dsh-percent-encode"
