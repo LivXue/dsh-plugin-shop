@@ -4061,6 +4061,10 @@
   category: tool
 - name: "@zaimokuza/dsh-acp-adapter"
   category: tool
+- name: "@zaimokuza/dsh-plugin-hub"
+  category: tool
+- name: "@zaimokuza/dsh-plugin-hub-source-demo"
+  category: tool
 - name: "@zaimokuza/dsh-theme-library"
   category: ui
 - name: "@zaofan/dsh-qqbot"
@@ -8033,6 +8037,8 @@
   category: tool
 - name: "dsh-egg-size"
   category: tool
+- name: "dsh-ego-browser"
+  category: tool
 - name: "dsh-egress-guard"
   category: tool
 - name: "dsh-elden"
@@ -9919,6 +9925,8 @@
   category: tool
 - name: "dsh-kubectl"
   category: tool
+- name: "dsh-kubectl-guard"
+  category: tool
 - name: "dsh-kubernetes"
   category: tool
 - name: "dsh-kuikly-expert"
@@ -10339,8 +10347,6 @@
   category: tool
 - name: "dsh-local-skills"
   category: ui
-- name: "dsh-local-telemetry"
-  category: tool
 - name: "dsh-local-vector-memory"
   category: tool
 - name: "dsh-local-vision"
@@ -14543,8 +14549,6 @@
   category: workflow
 - name: "dsh-session-surgeon"
   category: tool
-- name: "dsh-session-sweeper"
-  category: tool
 - name: "dsh-session-sync"
   category: tool
 - name: "dsh-session-tags"
@@ -15127,6 +15131,8 @@
   category: tool
 - name: "dsh-split-plan"
   category: other
+- name: "dsh-split-screen"
+  category: ui
 - name: "dsh-split-view"
   category: ui
 - name: "dsh-sprite-gen"
