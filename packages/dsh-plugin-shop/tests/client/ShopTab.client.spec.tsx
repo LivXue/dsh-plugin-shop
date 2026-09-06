@@ -247,6 +247,35 @@ describe('ShopTab', () => {
     expect(detail?.textContent ?? '').not.toContain('Missing components')
   })
 
+  it('states both reasons when the name is taken AND components are missing', async () => {
+    // The two are independent problems with different remedies — uninstall
+    // the other plugin; upgrade the harness -- so the card must not let one
+    // stand in for the other. The name conflict reads first: it is about a
+    // plugin the reader chose and would lose.
+    const catalog = snapshot({
+      name: 'dsh-skill-manager', source: 'github', repo: 'Mvyvn/dsh-skill-manager',
+      version: 'a'.repeat(40), repository: 'https://github.com/Mvyvn/dsh-skill-manager',
+    })
+    catalog.incompatible = { 'github:Mvyvn/dsh-skill-manager#': ['@deepseek-ai/dsh-client-ui-slots'] }
+    const { injected } = bench(catalog, [{
+      name: 'dsh-skill-manager', source: 'github', repo: 'CLAPEILL/dsh-skill-manager',
+      installed: 'b'.repeat(40), latest: 'b'.repeat(40), outdated: false, enabled: true,
+    }])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-skill-manager')).toBeTruthy())
+    await waitFor(() => expect(
+      container.querySelectorAll('[data-shop-entry="dsh-skill-manager"] [data-shop-incompatible-detail]').length,
+    ).toBe(2))
+    const details = [...container.querySelectorAll('[data-shop-entry="dsh-skill-manager"] [data-shop-incompatible-detail]')]
+    expect(details[0]?.textContent ?? '').toContain('CLAPEILL/dsh-skill-manager')
+    expect(details[1]?.textContent ?? '').toContain('@deepseek-ai/dsh-client-ui-slots')
+    // The badge's accessible name carries both, since it is the only place a
+    // screen reader meets them on a row that prints no detail line.
+    const badge = container.querySelector('[data-shop-entry="dsh-skill-manager"] [data-shop-incompatible]')
+    expect(badge?.getAttribute('aria-label') ?? '').toContain('CLAPEILL/dsh-skill-manager')
+    expect(badge?.getAttribute('aria-label') ?? '').toContain('@deepseek-ai/dsh-client-ui-slots')
+  })
+
   it('does not badge the SAME plugin that is already installed', async () => {
     // The boundary: an installed entry is its own row, not a name conflict.
     const catalog = snapshot({
