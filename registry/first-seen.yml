@@ -64,6 +64,8 @@
   added: 2026-08-31
 - name: "117bs/dsh-perlica-ding"
   added: 2026-08-31
+- name: "11zld22/dsh-model-info-fill"
+  added: 2026-09-06
 - name: "121103qwq/dsh-vision-sidecar"
   added: 2026-08-31
 - name: "123dbl/dsh-side-session"
@@ -222,6 +224,8 @@
   added: 2026-08-31
 - name: "342949145/dsh-vision-bridge"
   added: 2026-08-31
+- name: "345420242/dsh-commandcode-usage"
+  added: 2026-09-06
 - name: "3911ee/dsh-workspace-explorer"
   added: 2026-08-31
 - name: "398894496-arch/runtime36"
@@ -24866,6 +24870,8 @@
   added: 2026-09-02
 - name: "dsh-split-plan"
   added: 2026-09-02
+- name: "dsh-split-screen"
+  added: 2026-09-06
 - name: "dsh-split-view"
   added: 2026-08-26
 - name: "dsh-sports"
@@ -32020,6 +32026,8 @@
   added: 2026-08-31
 - name: "meimiaoji-creator/meow-vision"
   added: 2026-09-01
+- name: "mekansm1/dsh-webgis"
+  added: 2026-09-06
 - name: "mekos2772/dsh-plugin-mimi"
   added: 2026-09-03
 - name: "meliwanx/dsh-office-cli"
