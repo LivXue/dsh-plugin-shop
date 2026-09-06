@@ -3078,6 +3078,8 @@
   added: 2026-08-25
 - name: "@edge-sky/dsh-oauth-adapter"
   added: 2026-09-01
+- name: "@eduwork/dsh-knowledge-studio"
+  added: 2026-09-06
 - name: "@eduwork/dsh-mail"
   added: 2026-09-05
 - name: "@eduwork/dsh-oidc"
@@ -6908,6 +6910,8 @@
   added: 2026-08-30
 - name: "@yadsh/dsh-prompt-firewall"
   added: 2026-08-30
+- name: "@yadsh/dsh-qa-surface"
+  added: 2026-09-06
 - name: "@yadsh/dsh-session-scope"
   added: 2026-08-30
 - name: "@yadsh/dsh-sleev"
@@ -7738,6 +7742,8 @@
   added: 2026-08-31
 - name: "andyfan1094/dsh-codebase-memory"
   added: 2026-09-01
+- name: "andyfan1094/dsh-devforge"
+  added: 2026-09-06
 - name: "andyfan1094/dsh-feishu"
   added: 2026-09-01
 - name: "andyfan1094/dsh-github"
@@ -8396,6 +8402,8 @@
   added: 2026-09-01
 - name: "bulongy/dsh-proxy"
   added: 2026-08-31
+- name: "bululuburuarua666/dsh-herald"
+  added: 2026-09-06
 - name: "bululuburuarua666/dsh-plugin-manager"
   added: 2026-09-01
 - name: "bunipai/dsh-balance-guard"
@@ -14698,6 +14706,8 @@
   added: 2026-09-04
 - name: "dsh-edge-repository"
   added: 2026-09-04
+- name: "dsh-edge-tts-chinese"
+  added: 2026-09-06
 - name: "dsh-edit"
   added: 2026-09-04
 - name: "dsh-edit-approval"
@@ -18978,6 +18988,8 @@
   added: 2026-09-05
 - name: "dsh-model-balance"
   added: 2026-08-25
+- name: "dsh-model-by-preset"
+  added: 2026-09-06
 - name: "dsh-model-capabilities"
   added: 2026-09-01
 - name: "dsh-model-capability"
@@ -29450,6 +29462,8 @@
   added: 2026-09-04
 - name: "grill-me-sleek"
   added: 2026-09-04
+- name: "grloper/dsh-claude-oauth"
+  added: 2026-09-06
 - name: "groupwork888/dsh-plugin-archived-sessions"
   added: 2026-08-31
 - name: "grstein/dsh-locale-ptbr"
@@ -29968,6 +29982,8 @@
   added: 2026-09-01
 - name: "hooks-adapter"
   added: 2026-08-31
+- name: "hoshinoick811/dsh-tool-ssh"
+  added: 2026-09-06
 - name: "hotsteel2901/dsh-client-ui-mobile-adapt"
   added: 2026-08-31
 - name: "hou-dl/dsh-token-pulse"
@@ -32352,6 +32368,8 @@
   added: 2026-09-01
 - name: "molibot"
   added: 2026-09-04
+- name: "momo20012002/dsh-hmos-emulator"
+  added: 2026-09-06
 - name: "mongfayi/dsh-local-filetree"
   added: 2026-08-31
 - name: "monicaxixi/dsh-loglens"
@@ -32994,6 +33012,8 @@
   added: 2026-09-01
 - name: "openguardrails-monorepo"
   added: 2026-09-04
+- name: "openguardrails/openguardrails"
+  added: 2026-09-06
 - name: "openharness"
   added: 2026-09-04
 - name: "openharness-core-rule"
@@ -34634,6 +34654,8 @@
   added: 2026-09-01
 - name: "stellight/dsh-imggen"
   added: 2026-09-01
+- name: "stelmakhdigital/dsh-web-automation"
+  added: 2026-09-06
 - name: "steven-ngle/dsh-elden"
   added: 2026-09-01
 - name: "stfq/dsh-showcase"
@@ -34852,6 +34874,8 @@
   added: 2026-09-01
 - name: "taikaikaikai-pixel/dsh-codebuddy-plugin"
   added: 2026-09-01
+- name: "taikaikaikai-pixel/dsh-tap"
+  added: 2026-09-06
 - name: "taishan-vision"
   added: 2026-09-01
 - name: "takasurazeem/gmail-dsh"
@@ -38574,6 +38598,8 @@
   added: 2026-08-31
 - name: "wryyyds7/dsh-plugins"
   added: 2026-09-02
+- name: "ws-file-drawer"
+  added: 2026-09-06
 - name: "wsifan31-bit/smart-dsh-market"
   added: 2026-09-02
 - name: "wsl-keepalive"
