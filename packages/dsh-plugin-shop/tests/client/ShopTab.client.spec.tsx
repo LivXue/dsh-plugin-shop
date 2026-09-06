@@ -255,6 +255,23 @@ describe('ShopTab', () => {
     expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-restart-disabled]')).toBeNull()
   })
 
+  // What the notice above must SAY, in both locales. Keying the assertions on
+  // `en.installedNoRestartNotice` alone passes for any text at all, which is
+  // how this string sat wrong: `needsRestart === false` is the hot mount
+  // having SUCCEEDED, and it read "installed, but the profile did not change
+  // — the catalog may be stale; refresh and try again". Every clause was
+  // false, and it sent a user whose plugin was already live to retry.
+  it('states the plugin is live in the no-restart notice, and asks for nothing', () => {
+    for (const notice of [en.installedNoRestartNotice, zh.installedNoRestartNotice]) {
+      expect(notice).toMatch(/no restart needed|无需重启/)
+      // The three things a success notice must not do: blame the catalog,
+      // claim nothing happened, or ask for another attempt.
+      expect(notice).not.toMatch(/catalog|目录/)
+      expect(notice).not.toMatch(/did not change|未变化/)
+      expect(notice).not.toMatch(/try again|retry|重试/)
+    }
+  })
+
   it('renders the hot-mount reason in the reader\'s own language, from the code alone', async () => {
     // The host publishes a CODE, and the client renders the dictionary entry
     // for it — so the notice follows the dsh language setting instead of the

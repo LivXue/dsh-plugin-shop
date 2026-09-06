@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, writeFileSync, chmodSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { installFailureDetail, installTimeoutDetail, killTree, lineSink, spawnFailureDetail, startInstall, startUninstall, type InstallStatus } from '../../src/host/executor.ts'
+import { activationFailureDetail, installFailureDetail, installTimeoutDetail, killTree, lineSink, spawnFailureDetail, startInstall, startUninstall, type InstallStatus } from '../../src/host/executor.ts'
 import type { HotRestartReason } from '../../src/host/hot.ts'
 import { fileTempRoot } from './temp-root.ts'
 
@@ -194,12 +194,12 @@ describe('startInstall post-install confirm (§7.2 step 6)', () => {
   // case builds a fixture home and pins it via the env option. No dsh
   // reconcile is needed — the fixture dsh exits 0 and the manifest is what
   // the confirm must verify against.
-  function confirmHome(bundles: string[]): string {
+  function confirmHome(bundles: string[], dependencies: Record<string, string> = {}): string {
     const home = mkdtempSync(join(TEMP_ROOT, 'dsh-confirm-'))
     mkdirSync(join(home, 'profiles', 'web'), { recursive: true })
     writeFileSync(
       join(home, 'profiles', 'web', 'package.json'),
-      JSON.stringify({ dsh: { profile: { bundles } } }),
+      JSON.stringify({ dependencies, dsh: { profile: { bundles } } }),
     )
     return home
   }
@@ -219,7 +219,11 @@ describe('startInstall post-install confirm (§7.2 step 6)', () => {
     expect(status.log.join('\n')).toContain('installing...')
   })
 
-  it('reports failed with the stale-catalog detail when bundles did not change', async () => {
+  // Was "reports failed with the stale-catalog detail". The detail no longer
+  // blames the catalog unconditionally — nothing installed under this name is
+  // the only branch where a catalog behind the registry is a real candidate,
+  // and this fixture is exactly that branch.
+  it('reports failed, naming the absent dependency, when bundles did not change', async () => {
     const home = confirmHome(['dsh-something-else'])
     const install = startInstall({
       profile: 'web',
@@ -230,9 +234,33 @@ describe('startInstall post-install confirm (§7.2 step 6)', () => {
     })
     const status = await install.finished
     expect(status.state).toBe('failed')
-    expect(status.detail).toBe('installed but dsh.profile.bundles did not change — the catalog may be stale; refresh it')
+    expect(status.detail).toBe(
+      'dsh-hello-fixture is in neither dsh.profile.bundles nor the profile\'s dependencies, so nothing'
+      + ' installed under this name — if the entry is new the catalog may be behind; refresh it and retry.',
+    )
     // The collected log lines are kept on the confirm failure path too.
     expect(status.log.join('\n')).toContain('installing...')
+  })
+
+  // The confirm must read the manifest's `dependencies`, not just its bundle
+  // list: a package that installed and declares no `dsh.bundle` is a different
+  // outcome from one that never landed, and reporting the second for the first
+  // is what sent a reader to refresh a catalog that was already correct.
+  it('distinguishes a plain dependency from a bundle that never landed', async () => {
+    const home = confirmHome(['dsh-something-else'], { 'dsh-hello-fixture': '1.0.0' })
+    const install = startInstall({
+      profile: 'web',
+      spec: 'dsh-hello-fixture@1.0.0',
+      dshBin: fixtureDsh(0),
+      env: { ...process.env, DSH_HOME: home },
+      expectedName: 'dsh-hello-fixture',
+    })
+    const status = await install.finished
+    expect(status.state).toBe('failed')
+    expect(status.detail).toBe(
+      'dsh-hello-fixture installed, but it declares no dsh.bundle — dsh added it as a plain'
+      + ' dependency rather than a profile layer, so the shop has nothing to activate.',
+    )
   })
 
   it('reports failed, naming the file, when the manifest cannot be read', async () => {
@@ -248,9 +276,73 @@ describe('startInstall post-install confirm (§7.2 step 6)', () => {
     })
     const status = await install.finished
     expect(status.state).toBe('failed')
+    // Was "— the catalog may be stale; refresh it". An unreadable manifest
+    // says nothing about the catalog; what it costs is knowing the outcome.
     expect(status.detail).toBe(
-      `installed but the profile manifest could not be read (${join(home, 'profiles', 'web', 'package.json')}) — the catalog may be stale; refresh it`,
+      `installed but the profile manifest could not be read (${join(home, 'profiles', 'web', 'package.json')})`
+      + ' — the install\'s result is unknown; check that file.',
     )
+  })
+})
+
+/**
+ * The branches of the confirm's detail, driven as values.
+ *
+ * The string these replace named one cause — a stale catalog — for every way
+ * an install can exit 0 without activating. Measured against the live catalog
+ * on 2026-09-06 (dsh 0.1.2-rc.1, Windows 11), installing the subpackage entry
+ * `@open-design/dsh-runtime` produced that message with a catalog fetched
+ * minutes earlier that carried the entry's `subdir` correctly, so the one
+ * remedy the message offered could not have worked.
+ */
+describe('activationFailureDetail', () => {
+  const base = { expectedName: '@acme/plugin', platform: 'linux' as NodeJS.Platform }
+
+  it('names the package itself when it installed without a dsh.bundle', () => {
+    const detail = activationFailureDetail({
+      ...base,
+      dependencies: { '@acme/plugin': '1.2.3' },
+    })
+    expect(detail).toContain('declares no dsh.bundle')
+    expect(detail).toContain('@acme/plugin')
+    // The one thing this branch must never say: the catalog is not implicated
+    // when the entry's own package is sitting in the profile's dependencies.
+    expect(detail).not.toContain('catalog')
+  })
+
+  it('names the subpackage, and cmd.exe, when a subdir entry lost its path on Windows', () => {
+    const detail = activationFailureDetail({
+      ...base,
+      platform: 'win32',
+      dependencies: { 'some-monorepo-root': 'github:acme/monorepo#0123456789abcdef' },
+      subdir: 'packages/runtime',
+    })
+    expect(detail).toContain('packages/runtime')
+    expect(detail).toContain('cmd.exe')
+    expect(detail).toContain('&path:')
+    expect(detail).not.toContain('catalog')
+  })
+
+  it('names the subpackage without the Windows cause off Windows', () => {
+    const detail = activationFailureDetail({
+      ...base,
+      dependencies: { 'some-monorepo-root': 'github:acme/monorepo#0123456789abcdef' },
+      subdir: 'packages/runtime',
+    })
+    expect(detail).toContain('packages/runtime')
+    expect(detail).toContain('&path:')
+    // The cmd.exe explanation is a Windows fact; asserting it elsewhere would
+    // publish a cause that cannot apply on the reader's platform.
+    expect(detail).not.toContain('cmd.exe')
+  })
+
+  it('keeps the catalog as a candidate only when nothing installed under the name', () => {
+    const detail = activationFailureDetail({
+      ...base,
+      dependencies: { 'unrelated-plugin': '2.0.0' },
+    })
+    expect(detail).toContain('neither dsh.profile.bundles nor')
+    expect(detail).toContain('the catalog may be behind')
   })
 })
 

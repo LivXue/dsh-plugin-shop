@@ -50,24 +50,86 @@ function chain<T>(profile: string, task: () => Promise<T>): Promise<T> {
   return next
 }
 
+/**
+ * Why a zero-exit install left `dsh.profile.bundles` unchanged.
+ *
+ * "the catalog may be stale; refresh it" used to be the entire message, on
+ * every branch. It was a guess, and on the failure that prompted this it was
+ * flatly wrong: installing the monorepo-subpackage entry
+ * `@open-design/dsh-runtime` reported a stale catalog against a catalog
+ * fetched minutes earlier that carried the entry's `subdir` correctly
+ * (measured 2026-09-06, dsh 0.1.2-rc.1, Windows 11). A published reason that
+ * misattributes the cause sends the reader to fix the one thing that was
+ * already right, so the detail now reports what the manifest actually shows.
+ *
+ * The profile manifest distinguishes the three outcomes on its own:
+ *   - the name IS a dependency but not a bundle — it installed and declares
+ *     no `dsh.bundle`, so dsh added it as a plain dependency (it says so
+ *     itself: "installed as a plain dependency, not a profile layer");
+ *   - the name is absent and the entry is a SUBPACKAGE — something else
+ *     landed. On Windows that is the repository root every time: dsh spawns
+ *     pnpm through cmd.exe, where the spec's `&path:<subdir>` separator is a
+ *     command separator, so pnpm never sees the subdirectory. Confirmed by
+ *     handing the CLI a spec whose `&` tail was `echo <marker>` and watching
+ *     the marker print;
+ *   - the name is absent with no subpackage in play — nothing installed
+ *     under this name, and a catalog behind the registry IS a real candidate.
+ * Pure: every input is a value, so each branch is driven by a fixture.
+ */
+export function activationFailureDetail(args: {
+  expectedName: string
+  dependencies: Readonly<Record<string, string>>
+  subdir?: string
+  platform: NodeJS.Platform
+}): string {
+  const { expectedName, dependencies, subdir, platform } = args
+  if (dependencies[expectedName] !== undefined) {
+    return `${expectedName} installed, but it declares no dsh.bundle — dsh added it as a plain`
+      + ' dependency rather than a profile layer, so the shop has nothing to activate.'
+  }
+  if (subdir !== undefined) {
+    const cause = platform === 'win32'
+      ? 'on Windows the spec\'s `&path:` separator is consumed by cmd.exe before pnpm sees it, so the'
+        + ' repository ROOT is installed under its own name instead'
+      : 'the spec\'s `&path:` segment did not survive, so another package was installed under its own name'
+    return `${expectedName} is the subpackage ${subdir} of its repository and is not among the profile's`
+      + ` dependencies — ${cause}. Uninstall what landed; this entry cannot be installed until the spec`
+      + ' reaches pnpm intact.'
+  }
+  return `${expectedName} is in neither dsh.profile.bundles nor the profile's dependencies, so nothing`
+    + ' installed under this name — if the entry is new the catalog may be behind; refresh it and retry.'
+}
+
 /** The §7.2 step-6 confirm: after a zero exit, re-read the profile manifest and
  * verify the bundle actually landed in `dsh.profile.bundles`. Exit 0 alone is
- * not success — a library-that-looked-like-a-plugin, or a stale catalog,
- * exits 0 while changing nothing (§10). The shop cannot force a client
- * refresh in P1, so the detail carries the signal. A manifest that cannot be
- * read or parsed is the same outcome, naming the file: the install's result
- * is then unknown, and a bare `done` would be plausible-but-wrong. `home` is
+ * not success — a library-that-looked-like-a-plugin, a subpackage entry whose
+ * path was eaten, or a stale catalog all exit 0 while changing nothing (§10).
+ * The shop cannot force a client refresh in P1, so the detail carries the
+ * signal — see `activationFailureDetail` for which signal. A manifest that
+ * cannot be read or parsed names the file instead: the install's result is
+ * then unknown, and a bare `done` would be plausible-but-wrong. `home` is
  * the DSH_HOME the child was spawned with — the parent's own DSH_HOME may
  * differ when `env` pinned it.
  */
-function confirmBundleActivation(profile: string, home: string | undefined, expectedName: string): string | null {
+function confirmBundleActivation(
+  profile: string,
+  home: string | undefined,
+  expectedName: string,
+  subdir: string | undefined,
+): string | null {
   const profileDir = resolveProfileDir(profile, home)
   try {
     const manifest = readProfileManifest('dsh-plugin-shop', profileDir)
     if (manifest.dsh?.profile?.bundles?.includes(expectedName)) return null
-    return 'installed but dsh.profile.bundles did not change — the catalog may be stale; refresh it'
+    return activationFailureDetail({
+      expectedName,
+      dependencies: manifest.dependencies ?? {},
+      subdir,
+      platform: process.platform,
+    })
   } catch {
-    return `installed but the profile manifest could not be read (${join(profileDir, 'package.json')}) — the catalog may be stale; refresh it`
+    return `installed but the profile manifest could not be read (${join(profileDir, 'package.json')})`
+      + ' — the install\'s result is unknown; check that file.'
   }
 }
 
@@ -462,8 +524,11 @@ function spawnPluginCli(options: {
 /**
  * Run one `dsh plugin --profile <profile> add <spec>` and track it.
  * When `expectedName` is given, a zero exit is confirmed against the profile
- * manifest (§7.2 step 6) before the install reports `done`. When `afterDone`
- * is given, the terminal `done` waits for it to settle (§D hot mount).
+ * manifest (§7.2 step 6) before the install reports `done`. `subdir` is the
+ * catalog entry's monorepo subpackage path when it has one — carried here
+ * only so a failed confirm can name the subpackage as the cause instead of
+ * guessing at the catalog. When `afterDone` is given, the terminal `done`
+ * waits for it to settle (§D hot mount).
  */
 export function startInstall(options: {
   profile: string
@@ -471,17 +536,20 @@ export function startInstall(options: {
   dshBin?: string
   env?: NodeJS.ProcessEnv
   expectedName?: string
+  subdir?: string
   afterDone?: (home: string | undefined) => Promise<{ needsRestart: boolean; restartReason?: HotRestartReason } | void>
   onStatus?: (status: InstallStatus) => void
   timeoutMs?: number
 }): RunningInstall {
-  const { profile, spec, dshBin = 'dsh', env, expectedName, afterDone, onStatus, timeoutMs } = options
+  const { profile, spec, dshBin = 'dsh', env, expectedName, subdir, afterDone, onStatus, timeoutMs } = options
   return spawnPluginCli({
     profile,
     argv: ['add', spec],
     dshBin,
     env,
-    confirm: expectedName !== undefined ? home => confirmBundleActivation(profile, home, expectedName) : undefined,
+    confirm: expectedName !== undefined
+      ? home => confirmBundleActivation(profile, home, expectedName, subdir)
+      : undefined,
     afterDone,
     onStatus,
     timeoutMs,

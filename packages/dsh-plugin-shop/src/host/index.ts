@@ -790,8 +790,11 @@ export class ShopGateway extends TypertRemoteService {
       spec,
       dshBin: this.dshBin,
       // §7.2 step 6: exit 0 must be confirmed against the profile manifest —
-      // a bundle that did not land is a stale catalog, not a done install.
+      // a bundle that did not land is not a done install. The entry's own
+      // `subdir` goes with it so the confirm can name a subpackage that never
+      // reached pnpm, rather than blaming the catalog for every miss.
       expectedName: args.name,
+      subdir: entry.subdir,
       // After the bundle lands, bring it up hot — unless this is an update,
       // whose old instance must be down first (see liveDisableIds). A failed
       // mount falls back to restart activation, never to a silent half-state.
