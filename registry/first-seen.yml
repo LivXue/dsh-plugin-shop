@@ -680,6 +680,8 @@
   added: 2026-09-04
 - name: "@anonyjcy/dsh-plugin-mobile-touch"
   added: 2026-08-29
+- name: "@anpiluo/dsh-proxy"
+  added: 2026-09-06
 - name: "@anspire-ai/ai-search-dsh-plugin"
   added: 2026-08-25
 - name: "@antlegion/dsh"
@@ -16458,6 +16460,8 @@
   added: 2026-08-28
 - name: "dsh-her-eyes"
   added: 2026-09-01
+- name: "dsh-herald"
+  added: 2026-09-06
 - name: "dsh-herb-warn"
   added: 2026-09-01
 - name: "dsh-herdr-bridge"
@@ -28690,6 +28694,8 @@
   added: 2026-09-04
 - name: "duhai-vision"
   added: 2026-09-01
+- name: "duhu2000/dsh-form-fill-agent"
+  added: 2026-09-06
 - name: "dujar/dsh-community-plugins"
   added: 2026-09-01
 - name: "duoasa/interactive-component-integration"
