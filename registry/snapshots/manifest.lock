@@ -402,7 +402,7 @@ dff652/deepseek-harness-community-plugins @dff652/dsh-ai-asset-hub 13b651046e7e8
 @dhicoc/dsh-codex-web-search-mcp 1.0.2 sha512-sLDmuw3CaZW9AIFlQflJ/1bTM1Ux8eBubmYKBkMwqxSOJ1Ig2/A9y7KeLlymXTfEJHH+G9rIVkhXS5Ny9uNd/Q==
 dhicoc/dsh-reverse-skill @dhicoc/dsh-reverse-skill 453f35d82bde07334637c4f7367b07c259a32732
 @dhicoc/dsh-wuyun-liuqi 1.0.4 sha512-Roe6XCyh3uc59u5Q2GbkZo/Vtk6iZEEXe5iJTTN4yKltVEHgxV6awj7Qk4IXGhRVhK1yAbj1HUbfkO7oxL7Z7w==
-dickpy/dsh-imagegen @dickpy/dsh-imagegen 5bb01c3777727966054702eafcb43727c37eb7e1
+dickpy/dsh-imagegen @dickpy/dsh-imagegen 6fafcf364dbb42b84437e520a1d67fc0c79c21cb
 @difimim/dsh-voice-input 1.0.2 sha512-QegY/cOw22pTqZFsRqc1N5hFcvz1X5AOAdgXmzGfDVHrRtPUDvv/Er5/XkY6C6xSCTfosZVjbCcyXSKTeE2LgQ==
 @dingtalk-real-ai/dsh-dingtalk 0.7.0 sha512-FzoXy4bnkTABnUB4xd3Ai6T+hfdPA/0F8PeqctfCyTYFflT0jIO4c7/w8RsSDQR8IzTUNWcdQAc8S8SLdtGkbA==
 @dingyi222666/dsh-wakatime 0.1.7 sha512-tOvC/kkUD0LiAMb47Qeda7JcRbF+qUfr0YTCF5UDxi1N2rDo+tYvTUdagZavtiXRi+DA5vO4Qb83cRyhivrMlw==
@@ -1416,7 +1416,7 @@ MkaliezZ/dsh-secret-guard @mkaliezz/dsh-secret-guard 4d433f8e72a8fd28faabcf451f9
 @mkaliezz/dsh-test-runner 0.2.2 sha512-T03Ee3WnsmlhurGo/PjkoIqINtNTKhlG/08Xtd6G168nK3XpnqiNUyw2K5oJ+KYWOhY1iauXAwCvIM0pO/y+KQ==
 z953218350/dsh-archive-manager @mlgbnb/dsh-archive-manager 60621032de2d68797b095918b97e670c79a9aaf1
 mnemon-dev/mnemon @mnemon-dev/dsh-mnemon da9b7da0e3e7f10c84d5f8e9a42e24453c8159bb
-modusensus/dsh-mneme @modusensus/dsh-mneme 5e43c00c2f9f386a84a3debebe710c7c3f126532
+modusensus/dsh-mneme @modusensus/dsh-mneme 3f40df7e1f71dc9fc3ad60e6bf1756c95c716b8c
 @mofeng2223/dsh-claude-provider 0.4.2 sha512-GhplDl8UVT4aXlCWXoKHqjmjY2WCF04oyaz8dw9IErEzfeKCIzGl/HqpWYOiDJcyny8jX8VtZZ11/n8418l4hg==
 @moguiyu/dsh-tavily 0.2.2 sha512-RrZT9e+++LHugA2gcoCmsoXXUIpte2EUniHcBohK6Fj7abcurTmukvkU9M89XBvLpsSQF+4kaQ08aFNZ68xBHA==
 @moguiyu/dsh-tavily-backend 0.2.1 sha512-Ky92Xa4MABwObZjHZ5aHbNwHZV/tEag8Z2E6XsuIhoudAg2qYrbserT/72nxl+wN4s+rho/TLHPWZMNKSem8cg==
@@ -1531,8 +1531,8 @@ peterwangze/software-project-governance @peterwangze/software-project-governance
 philmingdao/anno-dsh-native @philmingdao/anno-dsh-native bea668f7598f2be54d7c2bec9b0257dad5c2d0c6
 Lzh3070/dsh-session-cost @phynez_1103/dsh-session-cost 986c34e1445ca5012d32e2d9d02768c5cb0cb12c
 @picgo/dsh-plugin 0.2.0 sha512-Waz6+hgOIW68+GdHzdTITXN6qHM4Fzhw5RHw9CWodargBbXhrUW4mJkZBHu7qho72ScJo9DdLTAuOxZxNQKfig==
-picoaide/picoaide-harness @picoaide/dsh-branding 8802e6232bccd8d20faf051b08f3127c09601e81
-picoaide/picoaide-harness @picoaide/dsh-connectors 8802e6232bccd8d20faf051b08f3127c09601e81
+picoaide/picoaide-harness @picoaide/dsh-branding 00c6dc5360fc63c612b7054e1bf3469516413275
+picoaide/picoaide-harness @picoaide/dsh-connectors 00c6dc5360fc63c612b7054e1bf3469516413275
 @piercat/dsh-codex-bridge 0.2.34 sha512-WIonsj34ItR++e9z3ka9Np9yog36OTxHyn+Djo4IkAX7k3Sdw07oY4NoetPVIs1bLducZp7DFWQbKO8f6uT48w==
 @pinkbanana/dsh-balance 0.5.0 sha512-2uAF/sXgxKGe0JD9he6RkuE6mELV/9COcKhHBWcpzL1zLKBHdBgqH3OAQvmubaI1BPZDxM2nTkRdsgybLQhRvg==
 PionsAI/dsh-web-search-firecrawl @pionai/dsh-web-search-firecrawl d6f7ae7e723acea49faf3151538607e13cc85b96
@@ -1883,7 +1883,7 @@ WindyPro-rourou/dsh-logcat @windypro-rourou/dsh-logcat 4da285470951f7a95cadc467a
 @wingsky-1/dsh-mcp-manager 0.2.2 sha512-jv3fqNlgP1/4tWsRrBX9LXTmXMqkraktOslUbD0ltDkBUv0SpkFE+AyfzrA253dx4J19sklQ17LrjQ5DQdtuhA==
 @wingsky-1/dsh-notifier 0.2.2 sha512-4tdYUytXezWDVxLYrx3vN2sWkPFs00FlGf4yq7l/icxraNSYu1O15OC+8mjgUKA2+HBrc3pPX7UqO6FhE73Ymw==
 @wingsky-1/dsh-provider-usage 0.2.2 sha512-qzp+Fr3uJUhFMSiQclbxM/svjy5hU5y3i3V4IY38w5LmKdOfGX1aHyTI/tV65eeHOnFHyk7zHBLGV655E8lD3w==
-wingsky-1/dsh-plugin-hub @wingsky-1/dsh-verify-isolated 718022476d6e281448c6d0069fc5e3a398b1f8f1
+wingsky-1/dsh-plugin-hub @wingsky-1/dsh-verify-isolated 3da62c76d0f2424be49ceeb4e13d61be50f4483d
 @wingsky-1/dsh-web-file-preview 0.2.2 sha512-8iWoa4IOuwg0kBGphPMmbFFsegd3W8ZliPJ/LYtp7bMNg/tRQTbighl0QhhZ5RWddhEwhq9OHgQC/jc5UgYHUw==
 @winterchenhuan/dsh-shadow-mind 0.1.7 sha512-dT2g5qdmwhDYdFnZazmk+9S+lZDqOjf77LWZT/eZ/pp05d4zsC8nPmIrIHElI2RTFvtrXJAAW/Y5t5V7vkfnZQ==
 winterhuan/dsh-skills-viewer @winterchenhuan/dsh-skills-viewer 1d0c8b704dce7477edbbfb1aed5cbc28e38f2679
@@ -6025,7 +6025,7 @@ uckkk/dsh-oven-temp dsh-oven-temp e23a5b413d6d403b71ad6f7421ea8e6eee78899f
 dsh-overleaf 0.1.3 sha512-dU8khEq4TlQxxPMRSnoFJelYXKITvEFZdNMx22Cqk8shnFbd1JsbDjsjd5SlLHPCi8OCI/sujn9DBigxN/9VCQ==
 uckkk/dsh-overtime-limit dsh-overtime-limit c02966d7f24e061bd8fdf97bfb86782b67760309
 uckkk/dsh-overtime-pay dsh-overtime-pay 3a00104615f36facc85795ec9d55d0fe72371502
-Wecury/dsh-owui-chat2api dsh-owui-chat2api 6b7dca0e74581a81b290078a2728bf9790f0cf0c
+Wecury/dsh-owui-chat2api dsh-owui-chat2api 722ea653f5570c947b40e64a8dedc89de52c381c
 uckkk/dsh-oxygen dsh-oxygen 154e839fba29500774b94e804c6970813c5475e0
 GiantAxeint/DSH-P2M dsh-p2m cfac68799eb56dc51aa248aa6e9d6cdadee645bc
 uckkk/dsh-pace-calc dsh-pace-calc 124624c9d9e759d623c804c872bd7a5f6973eae1
@@ -6450,7 +6450,7 @@ dsh-plugin-manager-lite 0.1.1 sha512-h0IYUZ8oVGen9BR37dq7RkdBUjZ/0WDk5Wryxskwale
 dsh-plugin-manager-pro 0.8.2 sha512-URMKqSH+IC2PXMmbuWPzH1UZvoA8f1ohqDURD66iwWumqWTdW7iLRTUQ5/s7a43VcD3ND9NrAwgstF+2s2fdYg==
 2160039878-cyber/dsh-plugin-market dsh-plugin-market 3bc4b0e9a9f4d95e606a8baa95136631cf08dd40
 Strangelight-Merser/dsh-plugin-market dsh-plugin-market v0.5.0
-TheYoungChen/dsh-plugin-market dsh-plugin-market 175983a9f05b3294864b51c6b5543d05b2cd2640
+TheYoungChen/dsh-plugin-market dsh-plugin-market 00b7397dcf6389a6893b6de3aa56d6a056898217
 nanshan1995/DSH-Plugin-Market dsh-plugin-market cb79579df4f41be8902d53a64221e21367b46652
 sstar16/dsh-plugin-market dsh-plugin-market 555050084e97435a5d5ffde736edfab4887d3854
 uluckystar/dsh-plugin-market dsh-plugin-market 29d5ec46d2ceff3af823d52e21cf04d96d6ae616
@@ -8117,7 +8117,7 @@ dsh-thunderforge 0.2.1 sha512-IuYfd2PvfGJpqsmxjpPCKdf5cR6rnAFppQooSrDs4NLjmifZYI
 caisiyang123/dsh-tick-rail dsh-tick-rail 2d103df93a7c4c11e43807cee525321b39730033
 dsh-ticker-jp 1.0.1 sha512-oCwB2kitQkBztfzR2hLVeXCvrgKhNfdvdH7lfKzH+Qh9Gg3TMCOeq1H6RQBg0uNlulve3ezuCwkSkJ5G7jdJTQ==
 dsh-ticktick 0.1.3 sha512-Dng4vlav0OaYKExkVVTgBqr2flJRoISkHwiSgpv2mwJj/mVDTcGLrkKXhEffcJrpStIHj7cGpcZFgMPyK2DZJA==
-dsh-tiddlywiki 0.16.2 sha512-WOv1ZZzyDLeBT5nEhcrEOGf9b66UrI00bjlK+h7IuNRQXdAOS/Ozp/0Nn1r0PZ5JUqw0LplzOgnnHdbeeootPA==
+dsh-tiddlywiki 0.16.3 sha512-IJLxjmApAmHYGqt7uJQzcI+c3Ah4C5ULF8hm26B3KccuypR1biSEMdn3So8kU1cwcCfRu4pTCx8djisXrn0rOQ==
 dsh-tide-gauge 0.1.0 sha512-EWtkHgTLi+hGqE7PxUNcmzmX6/KlG0ERqZsTp+pznAmwVgh2tSn/BWGaYIPa0+UJVJaU9UQLCyQQb5fUQyHdbw==
 SoDaZilla-zzz/dsh-tide-ui dsh-tide-ui b7f6cea136a052bfe5b3cbebcc4e29788b5eb30a
 dsh-tidewatch 1.0.6 sha512-oEKJabu0tVM6Kp8cZboRlsZrLfUJwxpkygwoxsnZSKZL1qV6r++FyTt0pSCgf4/PXCr0cuS/rG7S+IFSqIXg7Q==
