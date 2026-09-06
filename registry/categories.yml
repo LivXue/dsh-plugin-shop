@@ -1057,8 +1057,6 @@
   category: tool
 - name: "@dsh-external/dsh-inspect"
   category: workflow
-- name: "@dsh-external/dsh-invoke"
-  category: tool
 - name: "@dsh-external/dsh-kb-rag"
   category: tool
 - name: "@dsh-external/dsh-kb-sieve"
@@ -1173,8 +1171,6 @@
   category: tool
 - name: "@dsh-external/dsh-schedule"
   category: workflow
-- name: "@dsh-external/dsh-session-cleanup"
-  category: tool
 - name: "@dsh-external/dsh-session-management"
   category: tool
 - name: "@dsh-external/dsh-session-manager"
@@ -1548,6 +1544,8 @@
 - name: "@eddyskywalker/dsh-chatgpt-subscription"
   category: provider
 - name: "@edge-sky/dsh-oauth-adapter"
+  category: tool
+- name: "@eduwork/dsh-knowledge-studio"
   category: tool
 - name: "@eduwork/dsh-mail"
   category: provider
@@ -3943,6 +3941,8 @@
   category: ui
 - name: "@yadsh/dsh-prompt-firewall"
   category: tool
+- name: "@yadsh/dsh-qa-surface"
+  category: ui
 - name: "@yadsh/dsh-session-scope"
   category: tool
 - name: "@yadsh/dsh-sleev"
@@ -8021,6 +8021,8 @@
   category: provider
 - name: "dsh-econ-tools"
   category: tool
+- name: "dsh-edge-tts-chinese"
+  category: ui
 - name: "dsh-edit-approval"
   category: tool
 - name: "dsh-edit-diff"
@@ -11027,6 +11029,8 @@
   category: tool
 - name: "dsh-model-balance"
   category: ui
+- name: "dsh-model-by-preset"
+  category: tool
 - name: "dsh-model-capabilities"
   category: provider
 - name: "dsh-model-capability"
@@ -13841,6 +13845,8 @@
   category: ui
 - name: "dsh-repo-health"
   category: tool
+- name: "dsh-repo-scanner"
+  category: tool
 - name: "dsh-repo-setup"
   category: tool
 - name: "dsh-report-studio"
@@ -15373,8 +15379,6 @@
   category: integration
 - name: "dsh-subagent-profile"
   category: tool
-- name: "dsh-subagent-response-promoter"
-  category: workflow
 - name: "dsh-subagent-route-badges"
   category: ui
 - name: "dsh-subagent-router"
@@ -17491,6 +17495,8 @@
   category: tool
 - name: "dsh-workspace-memory"
   category: tool
+- name: "dsh-workspace-monitor"
+  category: tool
 - name: "dsh-workspace-mover"
   category: tool
 - name: "dsh-workspace-native-open"
@@ -18513,6 +18519,8 @@
   category: tool
 - name: "write-chinese-long-screenplay"
   category: tool
+- name: "ws-file-drawer"
+  category: ui
 - name: "xby-12306-ticket-purchase-search"
   category: integration
 - name: "xby-advertising-analysis"
