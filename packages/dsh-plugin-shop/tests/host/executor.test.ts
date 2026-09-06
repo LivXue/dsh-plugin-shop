@@ -224,15 +224,40 @@ describe('startInstall post-install confirm (§7.2 step 6)', () => {
   // attempt put a different package on disk — and the caller would then
   // hot-mount the old tree and publish "running now, no restart needed" over
   // an install that did nothing. The name must also be an own dependency.
+  // A fixture dsh that MUTATES the profile manifest the way the real one
+  // does, so the before/after difference is produced by the run rather than
+  // pre-seeded. An exit-0 stub that writes nothing can only ever model "the
+  // install added nothing".
+  function fixtureDshAdding(home: string, name: string, spec: string): string {
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-fixture-add-'))
+    const bin = join(dir, 'dsh')
+    const manifest = join(home, 'profiles', 'web', 'package.json')
+    writeFileSync(bin, [
+      '#!/bin/sh',
+      'echo "installing..."',
+      `node -e '`
+      + `const f=process.argv[1];const fs=require("fs");const m=JSON.parse(fs.readFileSync(f,"utf8"));`
+      + `m.dependencies=m.dependencies||{};m.dependencies[process.argv[2]]=process.argv[3];`
+      + `fs.writeFileSync(f,JSON.stringify(m));`
+      + `' "${manifest}" "${name}" "${spec}"`,
+      'exit 0',
+      '',
+    ].join('\n'))
+    chmodSync(bin, 0o755)
+    return bin
+  }
+
   it('refuses a leftover bundle row when this install added something else', async () => {
-    const home = confirmHome(['dsh-hello-fixture'], { 'some-monorepo-root': 'github:acme/mono#0123456789abcdef' })
+    // The bundle row for the entry is ALREADY there from an earlier install,
+    // so a membership-only confirm passes — while this run actually put
+    // `some-monorepo-root` on disk and never touched the entry.
+    const home = confirmHome(['dsh-hello-fixture'], {})
     const install = startInstall({
       profile: 'web',
       spec: 'dsh-hello-fixture@1.0.0',
-      dshBin: fixtureDsh(0),
+      dshBin: fixtureDshAdding(home, 'some-monorepo-root', 'github:acme/mono#0123456789abcdef'),
       env: { ...process.env, DSH_HOME: home },
       expectedName: 'dsh-hello-fixture',
-      dependenciesBefore: {},
     })
     const status = await install.finished
     expect(status.state).toBe('failed')
@@ -299,7 +324,6 @@ describe('startInstall post-install confirm (§7.2 step 6)', () => {
       dshBin: fixtureDsh(0),
       env: { ...process.env, DSH_HOME: home },
       expectedName: 'dsh-hello-fixture',
-      dependenciesBefore: { 'dsh-hello-fixture': '0.9.0' },
     })
     const status = await install.finished
     expect(status.state).toBe('failed')

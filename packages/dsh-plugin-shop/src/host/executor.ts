@@ -415,6 +415,9 @@ function spawnPluginCli(options: {
    * `process.platform` inline is what left `shellSafeTarget`'s Windows arm
    * unexercisable on an ubuntu CI. */
   platform?: NodeJS.Platform
+  /** Run inside the chained task immediately before the spawn, with the same
+   * DSH_HOME the child gets — the confirm compares against what this saw. */
+  beforeSpawn?: (home: string | undefined) => void
   confirm?: (home: string | undefined) => string | null
   afterDone?: (home: string | undefined) => Promise<{ needsRestart: boolean; restartReason?: HotRestartReason } | void>
   onStatus?: (status: InstallStatus) => void
@@ -422,7 +425,7 @@ function spawnPluginCli(options: {
 }): RunningInstall {
   const {
     profile, argv, dshBin, env, platform = process.platform,
-    confirm, afterDone, onStatus, timeoutMs = INSTALL_TIMEOUT_MS,
+    beforeSpawn, confirm, afterDone, onStatus, timeoutMs = INSTALL_TIMEOUT_MS,
   } = options
   // Argv smuggling guard: an operand that begins with `-` would be parsed as
   // a flag by the CLI. A legitimate target — a catalog name for remove, a
@@ -478,6 +481,7 @@ function spawnPluginCli(options: {
   }
 
   const finished = chain(profile, () => new Promise<InstallStatus>((resolve) => {
+    beforeSpawn?.(env?.DSH_HOME)
     const { command, args } = dshCommand({
       dshBin,
       args: ['plugin', '--profile', profile, ...spawnArgv],
@@ -590,10 +594,9 @@ function spawnPluginCli(options: {
  * Run one `dsh plugin --profile <profile> add <spec>` and track it.
  * When `expectedName` is given, a zero exit is confirmed against the profile
  * manifest (§7.2 step 6) before the install reports `done`.
- * `dependenciesBefore` is the profile's dependency map read BEFORE the spawn:
- * the confirm reports the difference, so a miss can name what actually landed
- * instead of guessing at a cause. The caller already reads that manifest to
- * decide `isUpdate`, so this costs no extra read.
+ * The confirm compares the profile's dependencies before and after the spawn,
+ * so a miss can name what actually landed instead of guessing at a cause; the
+ * executor takes both snapshots itself.
  * When `afterDone` is given, the terminal `done` waits for it to settle
  * (§D hot mount).
  */
@@ -604,28 +607,51 @@ export function startInstall(options: {
   env?: NodeJS.ProcessEnv
   platform?: NodeJS.Platform
   expectedName?: string
-  dependenciesBefore?: Readonly<Record<string, string>>
   afterDone?: (home: string | undefined) => Promise<{ needsRestart: boolean; restartReason?: HotRestartReason } | void>
   onStatus?: (status: InstallStatus) => void
   timeoutMs?: number
 }): RunningInstall {
   const {
     profile, spec, dshBin = 'dsh', env, platform, expectedName,
-    dependenciesBefore = {}, afterDone, onStatus, timeoutMs,
+    afterDone, onStatus, timeoutMs,
   } = options
+  // The `before` snapshot is taken by the executor, not by the caller, and
+  // through the SAME resolution the confirm uses. A caller-supplied map would
+  // couple the diff to the caller's idea of where the profile lives — and if
+  // that ever diverged from `resolveProfileDir`, `before` and `after` would
+  // come from two different files and the difference would be noise. It is
+  // read inside the chained task, immediately before the spawn, so a command
+  // waiting behind another install in the same profile still sees the state
+  // the one ahead of it left.
+  let before: Readonly<Record<string, string>> = {}
   return spawnPluginCli({
     profile,
     argv: ['add', spec],
     dshBin,
     env,
     platform,
+    beforeSpawn: expectedName !== undefined
+      ? (home) => { before = readProfileDependencies(profile, home) }
+      : undefined,
     confirm: expectedName !== undefined
-      ? home => confirmBundleActivation(profile, home, expectedName, dependenciesBefore)
+      ? home => confirmBundleActivation(profile, home, expectedName, before)
       : undefined,
     afterDone,
     onStatus,
     timeoutMs,
   })
+}
+
+/** The profile's declared dependencies, or `{}` when the manifest is absent
+ * or unreadable. A missing manifest is the profile-not-initialized case —
+ * `dsh plugin` creates it — and an unreadable one is reported by the confirm,
+ * which names the file; neither is worth failing the spawn over. */
+function readProfileDependencies(profile: string, home: string | undefined): Readonly<Record<string, string>> {
+  try {
+    return readProfileManifest('dsh-plugin-shop', resolveProfileDir(profile, home)).dependencies ?? {}
+  } catch {
+    return {}
+  }
 }
 
 /**

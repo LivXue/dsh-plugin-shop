@@ -794,12 +794,11 @@ export class ShopGateway extends TypertRemoteService {
       spec,
       dshBin: this.dshBin,
       // §7.2 step 6: exit 0 must be confirmed against the profile manifest —
-      // a bundle that did not land is not a done install. The dependency map
-      // as it stands BEFORE the spawn goes with it, so a miss reports the
-      // difference and can name what actually landed, rather than inferring
-      // why the entry did not.
+      // a bundle that did not land is not a done install. The executor takes
+      // its own before/after snapshots of the profile's dependencies, through
+      // the same resolution the confirm uses, so a miss reports the difference
+      // and can name what actually landed.
       expectedName: args.name,
-      dependenciesBefore: manifest.dependencies ?? {},
       // After the bundle lands, bring it up hot — unless this is an update,
       // whose old instance must be down first (see liveDisableIds). A failed
       // mount falls back to restart activation, never to a silent half-state.
