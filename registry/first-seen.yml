@@ -8420,6 +8420,8 @@
   added: 2026-09-01
 - name: "canary-builds/dhs-connect"
   added: 2026-09-06
+- name: "canary-builds/dsh-mobile-ui"
+  added: 2026-09-06
 - name: "cangeng/yolo-mode"
   added: 2026-08-31
 - name: "canson666/dsh-finish-reason-patch"
@@ -9088,6 +9090,8 @@
   added: 2026-08-31
 - name: "d3cker/dsh-open-terminal"
   added: 2026-09-01
+- name: "d4551/cloudflare-dsh"
+  added: 2026-09-06
 - name: "d86e/dsh-doctor"
   added: 2026-09-01
 - name: "da-beda/dsh-lockstep"
