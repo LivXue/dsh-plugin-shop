@@ -922,6 +922,8 @@
   added: 2026-09-04
 - name: "@canary-builds/dsh-connect"
   added: 2026-09-06
+- name: "@canary-builds/dsh-mobile-ui"
+  added: 2026-09-06
 - name: "@canglongcl/dsh-web-review"
   added: 2026-09-04
 - name: "@canonmsg/deepseek-harness-plugin"
