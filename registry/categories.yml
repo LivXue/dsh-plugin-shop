@@ -1653,6 +1653,8 @@
   category: tool
 - name: "@fno2010/dsh-web-search-ext"
   category: provider
+- name: "@foggy-projects/deepseek-harness-plugin"
+  category: integration
 - name: "@foliodrop/dsh-publish"
   category: integration
 - name: "@fonlan/dsh-apply-patch"
@@ -4005,6 +4007,8 @@
   category: provider
 - name: "@yun520-1/deepseek-heartflow"
   category: tool
+- name: "@yunmin311/dsh-universal-palette"
+  category: ui
 - name: "@yunyv/dsh-message-edit"
   category: ui
 - name: "@yuquexianzhou/solarized-dsh-theme"
@@ -9225,6 +9229,8 @@
   category: tool
 - name: "dsh-hindsight-memory"
   category: tool
+- name: "dsh-hindsight-workspace-switch"
+  category: ui
 - name: "dsh-history"
   category: ui
 - name: "dsh-history-terms"
