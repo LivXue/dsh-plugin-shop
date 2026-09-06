@@ -100,7 +100,7 @@ export type InstallView =
   | { kind: 'idle' }
   | { kind: 'rejected'; code: InstallRejectionCode; detail: string }
   | { kind: 'running'; installId: string; log: string[] }
-  | { kind: 'done'; needsRestart: boolean; restartReason?: HotRestartReason }
+  | { kind: 'done'; needsRestart: boolean; log: string[]; restartReason?: HotRestartReason }
   | { kind: 'failed'; detail: string; log: string[] }
 
 /** One event the install view reacts to. */
@@ -164,6 +164,11 @@ export function reduceInstall(state: InstallView, event: InstallEvent): InstallV
         return {
           kind: 'done',
           needsRestart: !!status.needsRestart,
+          // The log rides the terminal state, exactly as it does on `failed`.
+          // Without it the log a user was reading vanished the instant the
+          // install succeeded — the one outcome that leaves something worth
+          // inspecting was the one that showed nothing (reported 2026-09-06).
+          log: status.log,
           ...(status.restartReason !== undefined ? { restartReason: status.restartReason } : {}),
         }
       }

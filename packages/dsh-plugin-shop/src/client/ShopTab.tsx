@@ -343,6 +343,16 @@ function InstallPanel({ target, tier, missing, missingStated = false, variant = 
   if (view.kind === 'done') {
     return (
       <div className={css.installedActions}>
+        {/* The log outlives the install, exactly as it does on `failed`. It
+            used to stop at the terminal state, so the outcome that leaves
+            something worth reading — what landed, what pnpm did — was the one
+            that showed nothing, and a user who looked away and back read that
+            as the log having been lost (reported 2026-09-06). */}
+        {view.log.length > 0 && (
+          <div className={css.log}>
+            {view.log.map((line, index) => <div key={index} className={css.logLine}>{line}</div>)}
+          </div>
+        )}
         <p className={css.notice} data-shop-restart-notice>
           {/* The done notice: a hot-mount failure names WHY through a reason
               code, localized here so it reads in the dsh language the person

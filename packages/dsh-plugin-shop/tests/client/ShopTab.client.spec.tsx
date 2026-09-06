@@ -222,6 +222,26 @@ describe('ShopTab', () => {
     expect(installStatus).toHaveBeenCalledWith({ installId: 'i1' })
   })
 
+  it('keeps the install log visible after the install succeeds', async () => {
+    // Reported 2026-09-06 and measured through a real dsh: the log had 8 lines
+    // at t+2.0s and 0 at t+2.4s, the moment the install reached done. `failed`
+    // carried its log and `done` did not, so the outcome worth inspecting was
+    // the one that showed nothing — and a user who looked away and back read
+    // it as the log having been lost.
+    const { injected, installStatus } = bench(snapshot({ tier: 'verified' }))
+    installStatus.mockResolvedValue({
+      found: true, state: 'done', needsRestart: false,
+      log: ['+ dsh-hello-plugin 1.0.0', 'Done in 1.2s using pnpm v11.13.0'],
+    })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText(en.install))
+    await waitFor(() => expect(screen.getByText(en.installedNoRestartNotice)).toBeTruthy(), { timeout: 3000 })
+    expect(screen.getByText('Done in 1.2s using pnpm v11.13.0')).toBeTruthy()
+    expect(container.querySelectorAll('[data-shop-entry="dsh-hello-plugin"] [class*="logLine"]').length)
+      .toBe(2)
+  })
+
   it('shows the live-install notice and no restart offer when the install needs no restart', async () => {
     const { injected, installStatus } = bench(snapshot({ tier: 'verified' }))
     installStatus.mockResolvedValue({ found: true, state: 'done', log: [], needsRestart: false })

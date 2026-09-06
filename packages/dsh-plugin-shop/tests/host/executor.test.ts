@@ -484,6 +484,39 @@ describe('installFailureDetail', () => {
   })
 
 
+  it('carries pnpm\'s root cause, not just the code that names the failure', () => {
+    // Reported 2026-09-06 against 0.8.0-beta.0. pnpm prints a code line and
+    // then a causal chain beneath it; the code line is the only one carrying
+    // ERR_, so the picker took it and the user read a detail that named a
+    // failure class and nothing about why. The chain's last link — pnpm marks
+    // it `╰─▶` — is the reason, and it is what tells this user their network
+    // timed out on a 151 MB tarball rather than that the plugin is broken.
+    const log = [
+      'Error: ERR_PNPM_PACKAGE_MANAGER_ADD_RESOLVE_GIT',
+      '  × adding a new package',
+      '  ├─▶ Failed to resolve git dependency "github:nexu-io/open-design#c5ae629&path:packages/dsh-runtime"',
+      '  ├─▶ error decoding response body',
+      '  ├─▶ request or response body error',
+      '  ╰─▶ operation timed out',
+      'dsh: pnpm failed in profile directory /Users/admin/.dsh/profiles/web',
+    ]
+    const detail = installFailureDetail('web', log)
+    expect(detail).toContain('ERR_PNPM_PACKAGE_MANAGER_ADD_RESOLVE_GIT')
+    expect(detail, 'the reason the user needs is the chain\'s last link').toContain('operation timed out')
+    // Still one line: the intermediate links are not piled on.
+    expect(detail).not.toContain('error decoding response body')
+    expect(detail.split('\n')).toHaveLength(1)
+  })
+
+  it('adds nothing when the picked line has no causal chain under it', () => {
+    // The common case must not grow a trailing colon or a duplicated clause.
+    const detail = installFailureDetail('web', ['[ERR_PNPM_FETCH_404] GET https://registry.npmjs.org/dsh-nope: Not Found - 404'])
+    expect(detail).toBe(
+      'pnpm failed in the profile. Run: dsh plugin --profile web install'
+      + ' — [ERR_PNPM_FETCH_404] GET https://registry.npmjs.org/dsh-nope: Not Found - 404',
+    )
+  })
+
   it('picks the LAST pnpm error code when a failed install emits several', () => {
     // "Scanning from the end" is the documented rule, and with two codes it is
     // the only thing that decides which one a user reads. Both existing

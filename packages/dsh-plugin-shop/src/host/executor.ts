@@ -130,6 +130,22 @@ export function installFailureDetail(profile: string, log: readonly string[]): s
     ?? reversed.find(line => /(?:^|\s)\w*Error:/.test(line))
     ?? usable[usable.length - 1]
   if (pick === undefined) return `${hint}.`
+  // pnpm prints a code line and then a causal chain beneath it: `├─▶` for each
+  // intermediate link, `╰─▶` for the innermost reason. Only the code line
+  // carries an ERR_, so the picker above always takes it — and on its own it
+  // names a failure CLASS and nothing about why. Reported 2026-09-06: a user
+  // read `ERR_PNPM_PACKAGE_MANAGER_ADD_RESOLVE_GIT` and could not tell that
+  // their network had timed out fetching a 151 MB repository tarball.
+  //
+  // Only the LAST link is appended. The intermediates restate the same failure
+  // at widening scope ("error decoding response body", "request or response
+  // body error"), so piling them on would bury the one line that answers the
+  // question. Skipped when the picked line already says it, which is what
+  // keeps a single-line pnpm failure — the common case — unchanged.
+  const cause = reversed
+    .map(line => /^\s*╰─▶\s*(\S.*)$/.exec(line)?.[1])
+    .find((text): text is string => text !== undefined)
+  const because = cause !== undefined && !pick.includes(cause) ? `: ${cause}` : ''
   // pnpm blocks build scripts by default and the shop never passes
   // `allowBuilds` — that stays the user's explicit decision in the CLI
   // (§7.2). So the detail names the approval step rather than a flag we
@@ -140,7 +156,7 @@ export function installFailureDetail(profile: string, log: readonly string[]): s
     ? ' A dependency wants to run a build script, which pnpm blocks by default:'
       + ' run `pnpm approve-builds` in the profile directory to allow it, then retry.'
     : ''
-  return `${hint} — ${pick}${approve}`
+  return `${hint} — ${pick}${because}${approve}`
 }
 
 /**

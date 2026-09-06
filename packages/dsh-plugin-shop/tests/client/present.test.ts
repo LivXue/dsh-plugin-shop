@@ -98,6 +98,21 @@ describe('starsOf against a prototype-bearing map (G-8)', () => {
 })
 
 describe('reduceInstall', () => {
+  it('keeps the log when the install finishes, not only when it fails', () => {
+    // Reported 2026-09-06: the log a user is reading during an install
+    // vanishes the moment it succeeds. `failed` carried the log and `done`
+    // did not, so the outcome that leaves something to inspect — what was
+    // installed, what pnpm did — was the one that showed nothing, while the
+    // outcome that failed kept its evidence.
+    const running = { kind: 'running' as const, installId: 'i1', log: ['+ dsh-x 1.0.0'] }
+    const done = reduceInstall(running, {
+      type: 'status',
+      status: { found: true, state: 'done', log: ['+ dsh-x 1.0.0', 'Done in 1.2s'], needsRestart: false },
+    })
+    expect(done.kind).toBe('done')
+    expect(done).toHaveProperty('log', ['+ dsh-x 1.0.0', 'Done in 1.2s'])
+  })
+
   it('starts from idle into running with the install id', () => {
     const next = reduceInstall({ kind: 'idle' }, { type: 'started', installId: 'abc' })
     expect(next).toEqual({ kind: 'running', installId: 'abc', log: [] })
@@ -112,7 +127,7 @@ describe('reduceInstall', () => {
   it('reaches done with needsRestart', () => {
     const running = reduceInstall({ kind: 'idle' }, { type: 'started', installId: 'abc' })
     const next = reduceInstall(running, { type: 'status', status: { found: true, state: 'done', log: ['a'], needsRestart: true } })
-    expect(next).toEqual({ kind: 'done', needsRestart: true })
+    expect(next).toEqual({ kind: 'done', needsRestart: true, log: ['a'] })
     // Without a host reason the done view keeps the old shape: no
     // restartReason key at all (toEqual would ignore an undefined one).
     expect('restartReason' in next).toBe(false)
@@ -121,7 +136,7 @@ describe('reduceInstall', () => {
   it('reaches done carrying the host restart reason code when the hot mount failed', () => {
     const running = reduceInstall({ kind: 'idle' }, { type: 'started', installId: 'abc' })
     const next = reduceInstall(running, { type: 'status', status: { found: true, state: 'done', log: ['a'], needsRestart: true, restartReason: 'mount-failed' } })
-    expect(next).toEqual({ kind: 'done', needsRestart: true, restartReason: 'mount-failed' })
+    expect(next).toEqual({ kind: 'done', needsRestart: true, log: ['a'], restartReason: 'mount-failed' })
   })
 
   it('reaches done with needsRestart false when the host reports the live outcome', () => {
@@ -129,7 +144,7 @@ describe('reduceInstall', () => {
     // view says so and the panels branch on it.
     const running = reduceInstall({ kind: 'idle' }, { type: 'started', installId: 'abc' })
     const next = reduceInstall(running, { type: 'status', status: { found: true, state: 'done', log: ['a'], needsRestart: false } })
-    expect(next).toEqual({ kind: 'done', needsRestart: false })
+    expect(next).toEqual({ kind: 'done', needsRestart: false, log: ['a'] })
   })
 
   it('reaches failed with the host detail and the log', () => {
