@@ -3502,6 +3502,8 @@
   added: 2026-09-01
 - name: "@hanchn/dsh-multimodal-router"
   added: 2026-09-01
+- name: "@hanphone/dsh-a2a"
+  added: 2026-09-06
 - name: "@hanxu131/dsh-autotitle"
   added: 2026-08-25
 - name: "@hanxu131/dshacp"
@@ -5922,6 +5924,8 @@
   added: 2026-09-05
 - name: "@softspark/dsh-orchestrator"
   added: 2026-08-27
+- name: "@softspark/dsh-process-console"
+  added: 2026-09-06
 - name: "@solarise94/histopilot-dsh"
   added: 2026-09-04
 - name: "@soli/dsh-dlc"
@@ -6518,6 +6522,8 @@
   added: 2026-09-04
 - name: "@wasd258/dsh-prompt-inject"
   added: 2026-09-04
+- name: "@waterwx/dsh-novel-forge"
+  added: 2026-09-06
 - name: "@wayneyu430227/dsh-voice-agent"
   added: 2026-09-04
 - name: "@wbj0256/dsh-agent-handoff-deliberation"
@@ -7040,6 +7046,8 @@
   added: 2026-08-28
 - name: "@yuanyang749/dsh-model-pk"
   added: 2026-09-01
+- name: "@yueliudan/lclone-memory-dsh"
+  added: 2026-09-06
 - name: "@yugasun/dsh-web-search"
   added: 2026-08-25
 - name: "@yukari316/dsh-toolcall-compat"
@@ -15978,6 +15986,8 @@
   added: 2026-09-04
 - name: "dsh-glass-care"
   added: 2026-09-01
+- name: "dsh-glass-theme"
+  added: 2026-09-06
 - name: "dsh-glass-tty"
   added: 2026-09-04
 - name: "dsh-glass-ui"
@@ -18496,6 +18506,8 @@
   added: 2026-09-02
 - name: "dsh-megamesh"
   added: 2026-09-04
+- name: "dsh-meili-search"
+  added: 2026-09-06
 - name: "dsh-mem"
   added: 2026-09-04
 - name: "dsh-mem0"
@@ -27030,6 +27042,8 @@
   added: 2026-09-01
 - name: "dsh-version-inspector"
   added: 2026-08-31
+- name: "dsh-version-inventory"
+  added: 2026-09-06
 - name: "dsh-version-plugin"
   added: 2026-09-02
 - name: "dsh-version-update"
@@ -29244,6 +29258,8 @@
   added: 2026-09-05
 - name: "gavinqier/dsh-cmdwatch"
   added: 2026-08-31
+- name: "gbdjxb/dsh-workspace-presets"
+  added: 2026-09-06
 - name: "gbeta/dsh-token-speed"
   added: 2026-09-03
 - name: "gcry13067381632-jpg/dsh-qqbot"
@@ -30352,6 +30368,8 @@
   added: 2026-08-31
 - name: "jansen-66/dsh-guandan-panel"
   added: 2026-09-01
+- name: "januory/dsh-remote-workspaces"
+  added: 2026-09-06
 - name: "jarszmlovesai/dsh_upload_file"
   added: 2026-08-31
 - name: "jarvis"
@@ -30760,6 +30778,8 @@
   added: 2026-08-31
 - name: "jypjypjypjyp/dsh-notifier"
   added: 2026-09-01
+- name: "k12u/dsh-ios-pwa"
+  added: 2026-09-06
 - name: "kaaaaahn/dsh-vision"
   added: 2026-09-01
 - name: "kaalia0912/dsh-whale-musume-persona"
@@ -31758,6 +31778,8 @@
   added: 2026-09-01
 - name: "lunarcache/dsh-kimi-webbridge"
   added: 2026-08-31
+- name: "lundly/dsh-shutdown"
+  added: 2026-09-06
 - name: "lunheng-article-pipeline"
   added: 2026-08-28
 - name: "luniteglaze/dsh-plugin-catalog"
@@ -31774,6 +31796,8 @@
   added: 2026-09-05
 - name: "luoxunhao/dsh-codex-project"
   added: 2026-09-04
+- name: "luoxunhao/dsh-quote"
+  added: 2026-09-06
 - name: "luoyuejun9/dsh-plugin-forge"
   added: 2026-09-01
 - name: "luoyuejun9/dsh-stock-research"
