@@ -8416,6 +8416,8 @@
   added: 2026-09-01
 - name: "canadaeee/dsh-feishu"
   added: 2026-09-01
+- name: "canary-builds/dhs-connect"
+  added: 2026-09-06
 - name: "cangeng/yolo-mode"
   added: 2026-08-31
 - name: "canson666/dsh-finish-reason-patch"
