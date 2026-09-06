@@ -37,6 +37,29 @@ describe('the catalog harvest is serialised across refs', () => {
   })
 })
 
+describe('the pipeline\'s own commits do not re-trigger the pipeline', () => {
+  it('marks every commit the workflow pushes with [skip ci]', () => {
+    // The build pushes with REGISTRY_PUSH_TOKEN, and a PAT push DOES start
+    // workflows where the checkout-persisted GITHUB_TOKEN it replaced did not.
+    // `push.paths` is `registry/**`, which is exactly what these commits touch,
+    // so each successful run triggered the next one. It never converged either:
+    // repo-state.json re-fetches a rotating REPO_BACKFILL_BUDGET slice, so
+    // every run produces a diff and publish-catalog's "catalog unchanged"
+    // skip can never fire. Measured on 2026-09-06: 28 catalog versions
+    // published across two days at ~31-minute intervals, against 2 a day
+    // before — each one a full live harvest, an npm publish and a Pages
+    // deploy. d0cfff7 introduced it; the security property it was written for
+    // is unaffected by this marker.
+    const workflow = read('.github/workflows/daily.yml')
+    const commits = [...workflow.matchAll(/git commit -m "([^"]*)"/g)].map(m => m[1] ?? '')
+    // The rule cannot pass by matching nothing.
+    expect(commits.length, 'no `git commit -m` in daily.yml — has the push moved?').toBeGreaterThan(0)
+    for (const message of commits) {
+      expect(message, `"${message}" would re-trigger the workflow that wrote it`).toContain('[skip ci]')
+    }
+  })
+})
+
 describe('what CI publishes to Pages', () => {
   it('uploads the staged directory, never dist itself', () => {
     // `path: dist` published /v1/harvest.json, /v1/report.md and

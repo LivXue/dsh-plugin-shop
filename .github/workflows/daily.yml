@@ -307,7 +307,13 @@ jobs:
           }
           git add registry/categories.yml registry/markets.yml
           git diff --cached --quiet && exit 0
-          git commit -m "chore(registry): llm classifier update"
+          # [skip ci]: this push carries REGISTRY_PUSH_TOKEN, and a PAT push
+          # STARTS workflows where the checkout-persisted GITHUB_TOKEN it
+          # replaced did not. `push.paths` is registry/**, which is exactly
+          # what this commit touches, so without the marker every successful
+          # run triggers the next one — and it never converges, because
+          # repo-state.json re-fetches a rotating slice and always differs.
+          git commit -m "chore(registry): llm classifier update [skip ci]"
           push_with_rebase "the classifier's output"
       - name: Commit the snapshot
         # push included: the repo-state.json backfill memory must persist
@@ -416,7 +422,7 @@ jobs:
           }
           git add registry/snapshots/manifest.lock registry/repo-state.json registry/first-seen.yml
           git diff --cached --quiet && exit 0
-          git commit -m "chore(registry): daily catalog snapshot"
+          git commit -m "chore(registry): daily catalog snapshot [skip ci]"
           push_with_rebase "the daily snapshot"
 
   publish:
