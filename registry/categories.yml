@@ -2007,6 +2007,8 @@
   category: tool
 - name: "@huxy/dsh-proxy"
   category: tool
+- name: "@hy-sde-org/dsh-av"
+  category: provider
 - name: "@hy-sde-org/dsh-browser"
   category: tool
 - name: "@hy-sde-org/dsh-code-runtime-kernels"
@@ -2017,14 +2019,22 @@
   category: tool
 - name: "@hy-sde-org/dsh-memory"
   category: tool
+- name: "@hy-sde-org/dsh-session-url"
+  category: tool
 - name: "@hy-sde-org/dsh-stream-rules"
   category: tool
 - name: "@hy-sde-org/dsh-tool-ast"
+  category: tool
+- name: "@hy-sde-org/dsh-tool-codebase-memory"
   category: tool
 - name: "@hy-sde-org/dsh-tool-debug"
   category: tool
 - name: "@hy-sde-org/dsh-tool-edit"
   category: tool
+- name: "@hy-sde-org/dsh-tool-subagent-report"
+  category: tool
+- name: "@hy-sde-org/dsh-vcs"
+  category: provider
 - name: "@hy-sde-org/dsh-web-search-public"
   category: provider
 - name: "@hydrogenoxide18/dsh-plugin-market"
