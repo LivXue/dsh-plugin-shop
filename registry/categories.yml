@@ -2265,8 +2265,6 @@
   category: tool
 - name: "@kiwifruit/dsh-scientific-computing"
   category: tool
-- name: "@kiwifruit/dsh-syntax-checker"
-  category: tool
 - name: "@kkabuka/dsh-session-nav"
   category: ui
 - name: "@kkabuka/dsh-side-chat"
@@ -12679,6 +12677,8 @@
   category: integration
 - name: "dsh-plugin-mobile-gateway"
   category: other
+- name: "dsh-plugin-mobile-pwa"
+  category: ui
 - name: "dsh-plugin-mobile-shell"
   category: ui
 - name: "dsh-plugin-model-capability"
@@ -13813,6 +13813,8 @@
   category: tool
 - name: "dsh-remote-workspace"
   category: tool
+- name: "dsh-remote-workspaces"
+  category: provider
 - name: "dsh-remotion"
   category: integration
 - name: "dsh-rename"
@@ -17503,6 +17505,8 @@
   category: ui
 - name: "dsh-workspace-plugin"
   category: tool
+- name: "dsh-workspace-presets"
+  category: workflow
 - name: "dsh-workspace-prompts"
   category: tool
 - name: "dsh-workspace-scope"
