@@ -1295,8 +1295,6 @@
   category: ui
 - name: "@dsh-local/locale-ru"
   category: ui
-- name: "@dsh-local/session-manager-custom"
-  category: tool
 - name: "@dsh-login-gate/auth-gate"
   category: provider
 - name: "@dsh-market/plugin"
