@@ -344,6 +344,28 @@ describe('activationFailureDetail', () => {
     expect(detail).toContain('neither dsh.profile.bundles nor')
     expect(detail).toContain('the catalog may be behind')
   })
+
+  // `constructor` is a legal npm name, and `dependencies` is parsed from the
+  // profile manifest, so it carries Object.prototype: an index read answers
+  // with a function for a package that never landed. The dependency branch
+  // must be decided by own-property presence, not by `!== undefined`.
+  it('does not mistake an inherited Object.prototype key for a dependency', () => {
+    for (const inherited of ['constructor', 'valueof', 'isprototypeof']) {
+      const detail = activationFailureDetail({
+        ...base,
+        expectedName: inherited,
+        dependencies: { 'unrelated-plugin': '2.0.0' },
+      })
+      expect(detail).toContain('neither dsh.profile.bundles nor')
+      expect(detail).not.toContain('declares no dsh.bundle')
+    }
+    // The same name, actually present, still takes the dependency branch.
+    expect(activationFailureDetail({
+      ...base,
+      expectedName: 'constructor',
+      dependencies: { constructor: '1.0.0' },
+    })).toContain('declares no dsh.bundle')
+  })
 })
 
 describe('startInstall afterDone seam', () => {

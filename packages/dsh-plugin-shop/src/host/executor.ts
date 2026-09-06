@@ -83,7 +83,14 @@ export function activationFailureDetail(args: {
   platform: NodeJS.Platform
 }): string {
   const { expectedName, dependencies, subdir, platform } = args
-  if (dependencies[expectedName] !== undefined) {
+  // `Object.hasOwn`, not an index read: `dependencies` is parsed from the
+  // profile manifest and carries Object.prototype, so `dependencies.constructor`
+  // answers with a function for a package that is not installed. `constructor`
+  // is a legal npm name — the grammar is `[a-z0-9][a-z0-9._-]*` — so an index
+  // read reports "installed, but declares no dsh.bundle" about a package that
+  // never landed, which is the misattribution this whole function exists to
+  // stop.
+  if (Object.hasOwn(dependencies, expectedName)) {
     return `${expectedName} installed, but it declares no dsh.bundle — dsh added it as a plain`
       + ' dependency rather than a profile layer, so the shop has nothing to activate.'
   }

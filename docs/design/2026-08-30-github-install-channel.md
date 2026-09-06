@@ -182,9 +182,13 @@ a commit, never a raw spec":
   is the author-readable path this pre-flight was reaching for.
 - **Post-flight:** the existing bundle-activation confirmation (`dsh plugin
   list` after zero exit) stays. If the repo changed its manifest between
-  snapshot and install (rare), the no-bundle warning becomes the existing
-  honest `installed, but the profile did not change` failure instead of a
-  silent no-op.
+  snapshot and install (rare), the no-bundle warning becomes a failure
+  instead of a silent no-op — and the failure names which of §10's three
+  cases it is, read from the profile manifest. For this channel that matters
+  twice over: a repo whose manifest lost its `dsh.bundle` lands as case (a),
+  and a `subdir` entry whose `&path:` was eaten before pnpm saw it lands as
+  case (b), which is what installing the monorepo ROOT looks like from here.
+  Neither is a stale catalog and neither may say it is.
 - **Update semantics:** a newer commit at harvest → the existing update button,
   driving `installStart` with the new commit. Uninstall takes
   `{ name: 'owner/slug' }` and validates against the manifest exactly like npm
