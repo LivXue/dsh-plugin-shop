@@ -243,6 +243,8 @@
   category: tool
 - name: "@anonyjcy/dsh-plugin-mobile-touch"
   category: ui
+- name: "@anpiluo/dsh-proxy"
+  category: tool
 - name: "@anspire-ai/ai-search-dsh-plugin"
   category: provider
 - name: "@anweat/dsh-browser"
@@ -1171,6 +1173,8 @@
   category: tool
 - name: "@dsh-external/dsh-schedule"
   category: workflow
+- name: "@dsh-external/dsh-session-cleanup"
+  category: tool
 - name: "@dsh-external/dsh-session-management"
   category: tool
 - name: "@dsh-external/dsh-session-manager"
@@ -2989,6 +2993,8 @@
   category: ui
 - name: "@opendsh/dsh-plugin-pin-sessions"
   category: ui
+- name: "@openguardrails/dsh"
+  category: other
 - name: "@openguardrails/dsh-auto-mode"
   category: integration
 - name: "@openllmsh/dsh"
@@ -6381,6 +6387,8 @@
   category: integration
 - name: "dsh-claude-move"
   category: tool
+- name: "dsh-claude-oauth"
+  category: provider
 - name: "dsh-claude-plugin-loader"
   category: tool
 - name: "dsh-claude-skills"
@@ -7697,6 +7705,8 @@
   category: tool
 - name: "dsh-developer"
   category: tool
+- name: "dsh-devforge"
+  category: other
 - name: "dsh-devices"
   category: tool
 - name: "dsh-devlaunch"
@@ -9217,6 +9227,8 @@
   category: ui
 - name: "dsh-her-eyes"
   category: tool
+- name: "dsh-herald"
+  category: tool
 - name: "dsh-herb-warn"
   category: tool
 - name: "dsh-herdr-site"
@@ -9272,6 +9284,8 @@
 - name: "dsh-hiyuki-frost-sakura"
   category: theme
 - name: "dsh-hmac"
+  category: tool
+- name: "dsh-hmos-emulator"
   category: tool
 - name: "dsh-hmos-sidebar"
   category: tool
@@ -15379,6 +15393,8 @@
   category: integration
 - name: "dsh-subagent-profile"
   category: tool
+- name: "dsh-subagent-response-promoter"
+  category: workflow
 - name: "dsh-subagent-route-badges"
   category: ui
 - name: "dsh-subagent-router"
@@ -15523,6 +15539,8 @@
   category: tool
 - name: "dsh-tank-setup"
   category: tool
+- name: "dsh-tap"
+  category: provider
 - name: "dsh-task-alerts"
   category: ui
 - name: "dsh-task-board"
@@ -16094,6 +16112,8 @@
 - name: "dsh-tool-see-image"
   category: tool
 - name: "dsh-tool-squeeze"
+  category: tool
+- name: "dsh-tool-ssh"
   category: tool
 - name: "dsh-tool-surface-proof"
   category: tool
@@ -16970,6 +16990,8 @@
 - name: "dsh-web-attention-badge"
   category: ui
 - name: "dsh-web-auto-open"
+  category: tool
+- name: "dsh-web-automation"
   category: tool
 - name: "dsh-web-billing"
   category: tool
