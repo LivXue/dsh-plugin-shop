@@ -14627,6 +14627,8 @@
   category: tool
 - name: "dsh-shell-wsl"
   category: tool
+- name: "dsh-shengwang-voice-bridge"
+  category: integration
 - name: "dsh-shield"
   category: tool
 - name: "dsh-shikitor"
