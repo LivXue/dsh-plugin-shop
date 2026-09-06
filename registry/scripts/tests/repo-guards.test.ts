@@ -85,6 +85,59 @@ describe('a path-filtered workflow watches its own file', () => {
   })
 })
 
+describe('the artifact round-trip is exercised where a dry run can see it', () => {
+  const buildSteps = (): { name?: string; uses?: string; if?: string; with?: Record<string, string> }[] => {
+    const workflow = parse(read('.github/workflows/daily.yml')) as {
+      jobs: { build: { steps: { name?: string; uses?: string; if?: string; with?: Record<string, string> }[] } }
+    }
+    return workflow.jobs.build.steps
+  }
+
+  it('downloads an artifact back inside the build job, on pull requests', () => {
+    // download-artifact reaches production only in `publish`, which is
+    // main-only — so a dry run never runs it, and an upload/download pair that
+    // has drifted apart is invisible until it breaks publishing on main with
+    // nothing red beforehand. That is the failure dependabot.yml's
+    // artifact-transfer group exists to prevent and could not prove.
+    //
+    // This is a PROXY: it round-trips catalog-report, not the catalog-dist-v1
+    // that `publish` actually consumes, because uploading the whole dist on a
+    // PR would pay for storage no PR consumer reads. It establishes that the
+    // two action versions interoperate, not that the exact publish payload
+    // survives.
+    const downloads = buildSteps().filter(step => (step.uses ?? '').startsWith('actions/download-artifact@'))
+    expect(downloads, 'the build job downloads nothing back').toHaveLength(1)
+    const step = downloads[0]
+    // Defaulted rather than passed through: `toContain` on undefined reports
+    // an argument-type complaint instead of the missing condition.
+    expect(step?.if ?? '(the step declares no if: condition)',
+      'the round-trip must run where publish cannot: on a pull request')
+      .toContain("github.event_name == 'pull_request'")
+    expect(step?.with?.name, 'it must fetch an artifact this job actually uploaded').toBe('catalog-report')
+  })
+
+  it('keeps every repeated action on ONE pin within a workflow', () => {
+    // Two copies of download-artifact now exist — the publish job's and the
+    // round-trip above. Dependabot edits every occurrence together, but a hand
+    // edit can move one and leave the other, which would make the round-trip
+    // prove a pair that production does not use.
+    for (const file of ['daily.yml', 'plugin.yml']) {
+      const pins = new Map<string, Set<string>>()
+      for (const [, action, sha] of read(`.github/workflows/${file}`)
+        .matchAll(/uses: ([\w.-]+\/[\w.-]+)@([0-9a-f]{40})/g)) {
+        if (action === undefined || sha === undefined) continue
+        const seen = pins.get(action) ?? new Set<string>()
+        seen.add(sha)
+        pins.set(action, seen)
+      }
+      expect(pins.size, `${file} declares no pinned actions`).toBeGreaterThan(0)
+      for (const [action, shas] of pins) {
+        expect([...shas], `${file} pins ${action} to ${shas.size} different commits`).toHaveLength(1)
+      }
+    }
+  })
+})
+
 describe('what CI publishes to Pages', () => {
   it('uploads the staged directory, never dist itself', () => {
     // `path: dist` published /v1/harvest.json, /v1/report.md and

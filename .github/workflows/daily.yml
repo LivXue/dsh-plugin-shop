@@ -148,6 +148,32 @@ jobs:
           path: |
             dist/v1/report.md
             dist/v1/classification-report.md
+      - name: Round-trip the report artifact, where publish cannot
+        # download-artifact reaches production only in `publish`, which is
+        # main-only — so a dry run never runs it, and an upload/download pair
+        # that has drifted apart stays invisible until it breaks publishing on
+        # main with nothing red beforehand. That is exactly what
+        # dependabot.yml's artifact-transfer group was written to prevent and
+        # had no way to prove. Running the download HERE, on the one event that
+        # skips publish, makes the pair provable on the PR that bumps it.
+        #
+        # A proxy, deliberately: this round-trips catalog-report and not the
+        # catalog-dist-v1 that publish consumes, because uploading the whole
+        # dist on a pull request would pay for storage no PR consumer reads. It
+        # proves the two action versions interoperate, not that the exact
+        # publish payload survives.
+        if: github.event_name == 'pull_request'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: catalog-report
+          path: artifact-round-trip
+      - name: The round-trip carried the files
+        if: github.event_name == 'pull_request'
+        # -s, not -f: an empty file would mean the transfer "succeeded" while
+        # losing the content, which is the failure worth catching.
+        run: |
+          test -s artifact-round-trip/report.md
+          test -s artifact-round-trip/classification-report.md
       - name: Upload catalog dist for the publish job
         # dist/ is git-ignored and does not survive between jobs. The publish
         # job needs the exact bytes this run built, never a rebuild — a
