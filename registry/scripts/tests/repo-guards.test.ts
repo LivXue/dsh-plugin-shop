@@ -50,6 +50,9 @@ describe('the pipeline\'s own commits do not re-trigger the pipeline', () => {
     // before — each one a full live harvest, an npm publish and a Pages
     // deploy. d0cfff7 introduced it; the security property it was written for
     // is unaffected by this marker.
+    // The marker matches ANYWHERE in a commit message, body included — the
+    // commit that introduced this guard quoted it in its own prose and so
+    // skipped its own CI run. Spell it "skip-ci" when writing about it.
     const workflow = read('.github/workflows/daily.yml')
     const commits = [...workflow.matchAll(/git commit -m "([^"]*)"/g)].map(m => m[1] ?? '')
     // The rule cannot pass by matching nothing.
