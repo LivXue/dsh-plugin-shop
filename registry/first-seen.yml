@@ -5712,6 +5712,8 @@
   added: 2026-09-01
 - name: "@sai/dsh-pet"
   added: 2026-09-01
+- name: "@saidouahdachi/dsh-tool-fs-search-native"
+  added: 2026-09-06
 - name: "@sakikotgw/pack-agent"
   added: 2026-08-25
 - name: "@sakikotgw/pack-agent-dsh"
@@ -28982,6 +28984,8 @@
   added: 2026-09-01
 - name: "firestige/wsr-dsh"
   added: 2026-09-01
+- name: "fisfzy/dsh-ego-browser"
+  added: 2026-09-06
 - name: "fish121380/auto-mouse"
   added: 2026-08-31
 - name: "fishbottle7/opencode2dsh"
@@ -29250,6 +29254,8 @@
   added: 2026-08-31
 - name: "geekyfoxlab/dsh-subagents"
   added: 2026-09-01
+- name: "gengwg/dsh-kubectl-guard"
+  added: 2026-09-06
 - name: "genusamblyrhynchusbrunooftoul602/dsh-attachment-formats"
   added: 2026-09-01
 - name: "geoharness"
@@ -39736,6 +39742,8 @@
   added: 2026-09-02
 - name: "yexi-by/dsh-unrestricted"
   added: 2026-08-31
+- name: "yeyeyeyeshifu/dsh-split-screen"
+  added: 2026-09-06
 - name: "ygcdsj/dsh-home-migrate"
   added: 2026-09-02
 - name: "yh01010/dsh-mcp-matlab"
@@ -40064,6 +40072,8 @@
   added: 2026-09-02
 - name: "zachary7456/dsh-voice-mic"
   added: 2026-09-01
+- name: "zaimokuza-yoshiteru/dsh-plugin-hub"
+  added: 2026-09-06
 - name: "zaiwenj/dsh-cdp-browser"
   added: 2026-09-02
 - name: "zalpha263/dsh-archived-sessions"
