@@ -1695,6 +1695,8 @@
   category: ui
 - name: "@funcodingdev/dsh-pluginhub"
   category: tool
+- name: "@furayoshi/dsh-ui-models-invert-selection"
+  category: ui
 - name: "@furayoshi/dsh-widechat"
   category: ui
 - name: "@furongjun1999/dsh-memory"
@@ -6797,6 +6799,8 @@
   category: provider
 - name: "dsh-commandcode-usage"
   category: ui
+- name: "dsh-commandcode-usage-inline"
+  category: ui
 - name: "dsh-commercial-ui-ux"
   category: tool
 - name: "dsh-commit-review"
@@ -10347,6 +10351,8 @@
   category: tool
 - name: "dsh-local-skills"
   category: ui
+- name: "dsh-local-telemetry"
+  category: tool
 - name: "dsh-local-vector-memory"
   category: tool
 - name: "dsh-local-vision"
@@ -11052,6 +11058,8 @@
 - name: "dsh-model-groups"
   category: provider
 - name: "dsh-model-headers"
+  category: tool
+- name: "dsh-model-info-fill"
   category: tool
 - name: "dsh-model-jury"
   category: workflow
@@ -11963,6 +11971,8 @@
   category: tool
 - name: "dsh-pentester"
   category: tool
+- name: "dsh-per"
+  category: workflow
 - name: "dsh-percent-encode"
   category: tool
 - name: "dsh-percentage"
@@ -14549,6 +14559,8 @@
   category: workflow
 - name: "dsh-session-surgeon"
   category: tool
+- name: "dsh-session-sweeper"
+  category: tool
 - name: "dsh-session-sync"
   category: tool
 - name: "dsh-session-tags"
@@ -17124,6 +17136,8 @@
 - name: "dsh-webfile"
   category: tool
 - name: "dsh-webgate"
+  category: tool
+- name: "dsh-webgis"
   category: tool
 - name: "dsh-webhook-notifier"
   category: integration
