@@ -2777,6 +2777,8 @@
   category: tool
 - name: "@milkuovo/dsh-computer-use"
   category: tool
+- name: "@mill413/dsh-session-resume"
+  category: workflow
 - name: "@mimateinn/dsh-i18n"
   category: ui
 - name: "@mimichunterz/agent-compact"
@@ -3181,6 +3183,8 @@
   category: other
 - name: "@sai/dsh-pet"
   category: other
+- name: "@saidouahdachi/dsh-tool-fs-search-native"
+  category: tool
 - name: "@sakikotgw/pack-agent"
   category: tool
 - name: "@sakikotgw/pack-agent-dsh"
@@ -8409,6 +8413,8 @@
   category: ui
 - name: "dsh-filesnap"
   category: tool
+- name: "dsh-filetransfer"
+  category: ui
 - name: "dsh-filetree"
   category: ui
 - name: "dsh-fileview"
@@ -17179,6 +17185,8 @@
   category: tool
 - name: "dsh-weixin"
   category: integration
+- name: "dsh-wellness"
+  category: other
 - name: "dsh-wending-ssh-manager"
   category: tool
 - name: "dsh-weneed"
