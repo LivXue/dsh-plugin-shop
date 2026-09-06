@@ -163,7 +163,12 @@ export function reduceInstall(state: InstallView, event: InstallEvent): InstallV
         // host sent one, so a plain restart keeps the old shape.
         return {
           kind: 'done',
-          needsRestart: !!status.needsRestart,
+          // `?? true`, not `!!`. The host's own default is `true`
+          // (`executor.ts` `needsRestartOnDone`), and the no-restart notice
+          // now ASSERTS the plugin is live rather than hedging — so coercing
+          // an absent field to `false` would publish a success claim the host
+          // never made.
+          needsRestart: status.needsRestart ?? true,
           // The log rides the terminal state, exactly as it does on `failed`.
           // Without it the log a user was reading vanished the instant the
           // install succeeded — the one outcome that leaves something worth

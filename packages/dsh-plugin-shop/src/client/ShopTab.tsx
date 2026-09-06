@@ -358,8 +358,8 @@ function InstallPanel({ target, tier, missing, missingStated = false, variant = 
               code, localized here so it reads in the dsh language the person
               set — the host bakes no copy. A restart without a reason keeps
               the generic notice. needsRestart=false is the hot mount having
-              SUCCEEDED (`hot.mount` returned ok, index.ts installs's
-              afterDone) — the plugin is live, and the notice says so. It
+              SUCCEEDED (`hot.mount` returned ok, in `install`'s afterDone in
+              index.ts) — the plugin is live, and the notice says so. It
               used to read as a stale-catalog anomaly, describing a state
               this branch has not carried since a failed confirm became
               `failed`: it told a user whose install had just gone live that

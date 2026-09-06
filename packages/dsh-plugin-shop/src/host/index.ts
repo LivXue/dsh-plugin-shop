@@ -542,7 +542,7 @@ export class ShopGateway extends TypertRemoteService {
     // than the list the user clicked is what let the shop show a toggle and
     // then deny the package existed.
     const manifest = readProfileManifest('dsh-plugin-shop', profileDir)
-    if ((manifest.dependencies ?? {})[args.name] === undefined) {
+    if (!Object.hasOwn(manifest.dependencies ?? {}, args.name)) {
       return { ok: false, detail: `dsh-plugin-shop: ${args.name} is not installed` }
     }
     // A malformed or unreadable bundle patch must reach the person as a
@@ -778,7 +778,11 @@ export class ShopGateway extends TypertRemoteService {
     // provision (see liveDisableIds). The profile manifest's dependencies are
     // the install's own record — the shop's managed bundle list.
     const manifest = readProfileManifest('dsh-plugin-shop', this.profileDirResolved())
-    const isUpdate = (manifest.dependencies ?? {})[args.name] !== undefined
+    // `Object.hasOwn`, not an index read: the manifest is untrusted JSON and
+    // carries Object.prototype, so `deps.constructor` answers for a package
+    // that was never installed. Here the cost is behavioural, not cosmetic —
+    // a phantom `isUpdate` runs `liveDisableIds` against something absent.
+    const isUpdate = Object.hasOwn(manifest.dependencies ?? {}, args.name)
     // Resolve the OLD version's entry ids now: `afterDone` runs once the new
     // tarball has already overwritten the package's bundle patch on disk.
     // Best-effort: the update must not fail because the version being
@@ -790,11 +794,12 @@ export class ShopGateway extends TypertRemoteService {
       spec,
       dshBin: this.dshBin,
       // §7.2 step 6: exit 0 must be confirmed against the profile manifest —
-      // a bundle that did not land is not a done install. The entry's own
-      // `subdir` goes with it so the confirm can name a subpackage that never
-      // reached pnpm, rather than blaming the catalog for every miss.
+      // a bundle that did not land is not a done install. The dependency map
+      // as it stands BEFORE the spawn goes with it, so a miss reports the
+      // difference and can name what actually landed, rather than inferring
+      // why the entry did not.
       expectedName: args.name,
-      subdir: entry.subdir,
+      dependenciesBefore: manifest.dependencies ?? {},
       // After the bundle lands, bring it up hot — unless this is an update,
       // whose old instance must be down first (see liveDisableIds). A failed
       // mount falls back to restart activation, never to a silent half-state.
