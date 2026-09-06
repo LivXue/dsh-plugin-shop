@@ -4,5 +4,5 @@
     "noEmit": true,
     "rootDir": "."
   },
-  "include": ["src", "tests"]
+  "include": ["src", "tests", "scripts"]
 }

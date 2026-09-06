@@ -33,7 +33,11 @@ pnpm test           # vitest
 pnpm typecheck      # tsc --noEmit
 pnpm emit:schema    # regenerate registry/schema/plugin-entry.schema.json
 pnpm build:catalog  # thousands of live network requests, several minutes — see below
+
+pnpm -C packages/dsh-plugin-shop shoot:screenshots   # reshoot docs/images/ — needs a real dsh and a playwright chromium
 ```
+
+**The README screenshots are generated, not hand-captured.** `packages/dsh-plugin-shop/scripts/shoot-readme-screenshots.ts` boots a real `dsh --profile web` against a temporary `DSH_HOME`, installs the shop at the version the READMEs pin, and captures all six against the LIVE catalog. Reshoot all six, never a subset: the images carry a package count and a build date, so a partial reshoot puts two different catalogs side by side in one table. It seeds `settings.yaml` to suppress the onboarding dialogs rather than clicking through them — clicking is per page load, so a reload for the next theme brings the API-key modal back, and three unusable images were committed that way — and it refuses to write a file while any dialog but Settings is visible.
 
 **`build:catalog` makes thousands of live network requests and takes minutes.** The npm half fetches one packument per harvested name — the deduplicated union of the two keywords, 5,658 on 2026-09-04 — plus about forty paged searches. The two keywords' own totals are deliberately not restated here: `PARTITION_KEYWORDS`'s comment in `registry/scripts/src/npm-client.ts` is the one place that measures and keeps them, because its partition arithmetic is counted against them, and three copies of that figure had already drifted apart on the same date. The GitHub half re-fetches up to `REPO_BACKFILL_BUDGET` (2,000 by default) of the 14,740 repositories in `repo-state.json`, several requests each. The figure this replaced was one keyword's size in August 2026 quoted as if it were the whole run; it predated both the second keyword and the GitHub half. The figure tracks the ecosystem, so re-measure it with one `size=1` search per keyword rather than trusting the number written here. Do not run the build to check that a change compiles; the tests cover every policy decision without a network. Run it when you have changed the fetching or writing layer and need to see it work end to end.
 

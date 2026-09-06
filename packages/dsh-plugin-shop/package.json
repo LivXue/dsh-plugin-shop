@@ -76,7 +76,8 @@
     "prepublishOnly": "pnpm build",
     "build": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\" && tsdown && tsc && tsdown -c tsdown.client.config.ts",
     "test": "tsdown && tsdown -c tsdown.client.config.ts && vitest run",
-    "typecheck": "tsdown && tsc --noEmit && tsc -p tsconfig.test.json"
+    "typecheck": "tsdown && tsc --noEmit && tsc -p tsconfig.test.json",
+    "shoot:screenshots": "node --experimental-strip-types scripts/shoot-readme-screenshots.ts"
   },
   "dependencies": {
     "js-yaml": "^4.2.0",
