@@ -395,6 +395,8 @@
   category: tool
 - name: "@cabeta/dsh-image-theme"
   category: theme
+- name: "@canary-builds/dsh-connect"
+  category: integration
 - name: "@canonmsg/deepseek-harness-plugin"
   category: integration
 - name: "@caob23/dsh-browser-control"
