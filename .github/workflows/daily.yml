@@ -512,7 +512,7 @@ jobs:
       url: https://LivXue.github.io/dsh-plugin-shop
     # `build` and `publish` carried bounds and this job did not, so a stuck
     # deploy ran to the six-hour platform default. Its one step is
-    # `actions/deploy-pages@v4`, which requests the deployment and then POLLS
+    # `actions/deploy-pages`, which requests the deployment and then POLLS
     # the Pages API until it goes live; that poll has its own `timeout` input,
     # 600000 ms by default. Fifteen sits just above it so the action's own
     # message is what a stalled deployment reports, while anything that hangs
