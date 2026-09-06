@@ -3736,6 +3736,8 @@
   added: 2026-08-25
 - name: "@huyang2024/dsh-openai-api"
   added: 2026-09-04
+- name: "@hy-sde-org/dsh-av"
+  added: 2026-09-06
 - name: "@hy-sde-org/dsh-browser"
   added: 2026-08-26
 - name: "@hy-sde-org/dsh-code-runtime-kernels"
@@ -3750,12 +3752,16 @@
   added: 2026-08-26
 - name: "@hy-sde-org/dsh-memory"
   added: 2026-08-26
+- name: "@hy-sde-org/dsh-session-url"
+  added: 2026-09-06
 - name: "@hy-sde-org/dsh-stream-rules"
   added: 2026-08-25
 - name: "@hy-sde-org/dsh-tool-ast"
   added: 2026-08-25
 - name: "@hy-sde-org/dsh-tool-browser"
   added: 2026-09-04
+- name: "@hy-sde-org/dsh-tool-codebase-memory"
+  added: 2026-09-06
 - name: "@hy-sde-org/dsh-tool-debug"
   added: 2026-08-25
 - name: "@hy-sde-org/dsh-tool-edit"
@@ -3768,6 +3774,10 @@
   added: 2026-09-04
 - name: "@hy-sde-org/dsh-tool-memory"
   added: 2026-09-04
+- name: "@hy-sde-org/dsh-tool-subagent-report"
+  added: 2026-09-06
+- name: "@hy-sde-org/dsh-vcs"
+  added: 2026-09-06
 - name: "@hy-sde-org/dsh-web-search-public"
   added: 2026-08-25
 - name: "@hy-sde-org/dsh-zstd-frame"
