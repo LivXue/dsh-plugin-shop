@@ -12,6 +12,12 @@ on:
       - 'pnpm-workspace.yaml'
       - 'README.md'
       - 'README.zh.md'
+      # This file, because its own action pins are part of what runs the
+      # tests. Without it a workflow-only PR never runs this workflow: #8, #11
+      # and #16 each moved a pin here and were covered only because their
+      # diffs still carried packages/** files from a base that had not merged
+      # yet — a property of the base, not of the change.
+      - '.github/workflows/plugin.yml'
   pull_request:
     paths: *plugin-inputs
   workflow_dispatch:

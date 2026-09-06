@@ -63,6 +63,28 @@ describe('the pipeline\'s own commits do not re-trigger the pipeline', () => {
   })
 })
 
+describe('a path-filtered workflow watches its own file', () => {
+  it('lists itself in push.paths, so a workflow-only change still runs it', () => {
+    // Measured 2026-09-06: plugin.yml filtered on packages/**, README* and
+    // pnpm-workspace.yaml but not on itself, so #8, #11 and #16 each changed
+    // plugin.yml's own action pins without plugin.yml ever running. They were
+    // covered only by accident — before plan E merged, those PRs' diffs still
+    // carried packages/** files, which is a property of the BASE and not of
+    // the change. daily.yml already lists itself; this makes that symmetric.
+    for (const file of ['daily.yml', 'plugin.yml']) {
+      const on = (parse(read(`.github/workflows/${file}`)) as {
+        on?: { push?: { paths?: string[] } }
+        true?: { push?: { paths?: string[] } }
+      })
+      // YAML 1.1 reads a bare `on:` key as the boolean true, which is why the
+      // parsed object is checked under both spellings rather than one.
+      const paths = on.on?.push?.paths ?? on.true?.push?.paths
+      expect(paths, `${file} declares no push.paths`).toBeDefined()
+      expect(paths, `${file} does not watch itself`).toContain(`.github/workflows/${file}`)
+    }
+  })
+})
+
 describe('what CI publishes to Pages', () => {
   it('uploads the staged directory, never dist itself', () => {
     // `path: dist` published /v1/harvest.json, /v1/report.md and
