@@ -8409,8 +8409,6 @@
   category: ui
 - name: "dsh-filesnap"
   category: tool
-- name: "dsh-filetransfer"
-  category: ui
 - name: "dsh-filetree"
   category: ui
 - name: "dsh-fileview"
