@@ -29016,6 +29016,8 @@
   added: 2026-09-04
 - name: "focal-dsh"
   added: 2026-08-31
+- name: "foggy-projects/foggy-deepseek-harness-plugin"
+  added: 2026-09-06
 - name: "folder-tree-sh"
   added: 2026-08-31
 - name: "foliotemp/dsh-claude-antidote"
@@ -39944,6 +39946,8 @@
   added: 2026-09-01
 - name: "yunfei07/dsh-song-ui"
   added: 2026-09-02
+- name: "yunmin311/dsh-universal-palette"
+  added: 2026-09-06
 - name: "yunniees/dsh-plugin-manager"
   added: 2026-09-02
 - name: "yunxiiqwq/drool-whale-pet-for-dsh"
