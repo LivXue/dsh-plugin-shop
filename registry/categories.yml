@@ -397,6 +397,8 @@
   category: theme
 - name: "@canary-builds/dsh-connect"
   category: integration
+- name: "@canary-builds/dsh-mobile-ui"
+  category: ui
 - name: "@canonmsg/deepseek-harness-plugin"
   category: integration
 - name: "@caob23/dsh-browser-control"
@@ -4327,6 +4329,8 @@
   category: workflow
 - name: "cleverer-dsh"
   category: tool
+- name: "cloudflare-dsh"
+  category: integration
 - name: "cmp-skill-index"
   category: tool
 - name: "cn-intel-mcp-dsh"
@@ -14623,8 +14627,6 @@
   category: tool
 - name: "dsh-shell-wsl"
   category: tool
-- name: "dsh-shengwang-voice-bridge"
-  category: integration
 - name: "dsh-shield"
   category: tool
 - name: "dsh-shikitor"
