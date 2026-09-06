@@ -17223,6 +17223,8 @@
   category: ui
 - name: "dsh-whale-musume-persona"
   category: other
+- name: "dsh-whale-particles"
+  category: ui
 - name: "dsh-whale-pet"
   category: ui
 - name: "dsh-whale-pet-plugin"
