@@ -32118,6 +32118,8 @@
   added: 2026-09-01
 - name: "milbaxter/dsh-critique-loop"
   added: 2026-09-01
+- name: "mill413/dsh-session-resume"
+  added: 2026-09-06
 - name: "mimi-desktop-pet"
   added: 2026-09-03
 - name: "mimichunterz/dsh-agent-compact"
@@ -34284,6 +34286,8 @@
   added: 2026-09-01
 - name: "silk-background"
   added: 2026-09-02
+- name: "silktex/dsh-team"
+  added: 2026-09-06
 - name: "silverhand-dsh-pet"
   added: 2026-08-31
 - name: "simon-world/dsh-eco-indicator"
@@ -40498,6 +40502,8 @@
   added: 2026-09-02
 - name: "zsagi1368/dsh-webstack"
   added: 2026-09-02
+- name: "zscdumin/dsh-wellness"
+  added: 2026-09-06
 - name: "zseven-w/dsh-android"
   added: 2026-08-31
 - name: "zseven-w/dsh-ios"
