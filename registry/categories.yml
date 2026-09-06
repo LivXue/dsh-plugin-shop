@@ -1845,6 +1845,8 @@
   category: tool
 - name: "@hanchn/dsh-multimodal-router"
   category: tool
+- name: "@hanphone/dsh-a2a"
+  category: integration
 - name: "@hanxu131/dsh-autotitle"
   category: tool
 - name: "@hanxu131/dshacp"
@@ -2827,8 +2829,6 @@
   category: ui
 - name: "@mnemon-dev/dsh-mnemon"
   category: tool
-- name: "@modusensus/dsh-mneme"
-  category: tool
 - name: "@mofeng2223/dsh-claude-provider"
   category: provider
 - name: "@moguiyu/dsh-tavily"
@@ -3295,6 +3295,8 @@
   category: ui
 - name: "@softspark/dsh-orchestrator"
   category: integration
+- name: "@softspark/dsh-process-console"
+  category: ui
 - name: "@spechenxin/jimu"
   category: workflow
 - name: "@specsrelay/dsh-deepseek"
@@ -4017,6 +4019,8 @@
   category: integration
 - name: "@yuanyang749/dsh-model-pk"
   category: tool
+- name: "@yueliudan/lclone-memory-dsh"
+  category: integration
 - name: "@yugasun/dsh-web-search"
   category: tool
 - name: "@yulee-314/dsh-vision-bridge"
@@ -6975,6 +6979,8 @@
   category: tool
 - name: "dsh-context-engineering"
   category: tool
+- name: "dsh-context-enhancement"
+  category: workflow
 - name: "dsh-context-graph"
   category: tool
 - name: "dsh-context-guard"
@@ -8905,6 +8911,8 @@
   category: ui
 - name: "dsh-glass-care"
   category: tool
+- name: "dsh-glass-theme"
+  category: theme
 - name: "dsh-glass-ui-theme"
   category: theme
 - name: "dsh-glm-usage"
@@ -10675,6 +10683,8 @@
   category: tool
 - name: "dsh-meeting-talk"
   category: tool
+- name: "dsh-meili-search"
+  category: integration
 - name: "dsh-mem0"
   category: integration
 - name: "dsh-mem0-plugins"
@@ -13292,8 +13302,6 @@
 - name: "dsh-programming-mode"
   category: tool
 - name: "dsh-progress-reporter"
-  category: tool
-- name: "dsh-progress-target"
   category: tool
 - name: "dsh-progress-widget"
   category: ui
@@ -16337,8 +16345,6 @@
   category: ui
 - name: "dsh-ui-mobile-layout"
   category: ui
-- name: "dsh-ui-models-invert-selection"
-  category: ui
 - name: "dsh-ui-notify"
   category: ui
 - name: "dsh-ui-outline"
@@ -16638,6 +16644,8 @@
 - name: "dsh-version-badge"
   category: ui
 - name: "dsh-version-inspector"
+  category: ui
+- name: "dsh-version-inventory"
   category: ui
 - name: "dsh-version-plugin"
   category: ui
