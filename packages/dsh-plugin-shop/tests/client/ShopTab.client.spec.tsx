@@ -222,6 +222,50 @@ describe('ShopTab', () => {
     expect(installStatus).toHaveBeenCalledWith({ installId: 'i1' })
   })
 
+  it('badges an entry whose name a DIFFERENT installed plugin already holds', async () => {
+    // Two same-named bundles cannot both load: they declare the same loader
+    // entry id and dsh refuses the whole tree ("duplicate loader entry id"),
+    // so the shop replaces instead — which silently removes a plugin the user
+    // chose. The install gate refuses this, but the reader should see it on
+    // the card BEFORE clicking, and the reason has to be the real one rather
+    // than the missing-components copy.
+    const catalog = snapshot({
+      name: 'dsh-skill-manager', source: 'github', repo: 'Mvyvn/dsh-skill-manager',
+      version: 'a'.repeat(40), repository: 'https://github.com/Mvyvn/dsh-skill-manager',
+    })
+    const { injected } = bench(catalog, [{
+      name: 'dsh-skill-manager', source: 'github', repo: 'CLAPEILL/dsh-skill-manager',
+      installed: 'b'.repeat(40), latest: 'b'.repeat(40), outdated: false, enabled: true,
+    }])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-skill-manager')).toBeTruthy())
+    await waitFor(() => expect(container.querySelector('[data-shop-entry="dsh-skill-manager"] [data-shop-incompatible]')).toBeTruthy())
+    // The reason names the plugin that holds the name — not "missing
+    // components", which is a different problem with a different remedy.
+    const detail = container.querySelector('[data-shop-entry="dsh-skill-manager"] [data-shop-incompatible-detail]')
+    expect(detail?.textContent ?? '').toContain('CLAPEILL/dsh-skill-manager')
+    expect(detail?.textContent ?? '').not.toContain('Missing components')
+  })
+
+  it('does not badge the SAME plugin that is already installed', async () => {
+    // The boundary: an installed entry is its own row, not a name conflict.
+    const catalog = snapshot({
+      name: 'dsh-skill-manager', source: 'github', repo: 'CLAPEILL/dsh-skill-manager',
+      version: 'b'.repeat(40), repository: 'https://github.com/CLAPEILL/dsh-skill-manager',
+    })
+    const { injected } = bench(catalog, [{
+      name: 'dsh-skill-manager', source: 'github', repo: 'CLAPEILL/dsh-skill-manager',
+      installed: 'b'.repeat(40), latest: 'b'.repeat(40), outdated: false, enabled: true,
+    }])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-skill-manager')).toBeTruthy())
+    expect(container.querySelector('[data-shop-entry="dsh-skill-manager"] [data-shop-incompatible]')).toBeNull()
+    // The detail line, not just the badge: an installed card renders no
+    // install button, so its badge never sees `nameTakenBy` and asserting on
+    // the badge alone would pass even with the identity comparison deleted.
+    expect(container.querySelector('[data-shop-entry="dsh-skill-manager"] [data-shop-incompatible-detail]')).toBeNull()
+  })
+
   it('keeps the install log visible after the install succeeds', async () => {
     // Reported 2026-09-06 and measured through a real dsh: the log had 8 lines
     // at t+2.0s and 0 at t+2.4s, the moment the install reached done. `failed`

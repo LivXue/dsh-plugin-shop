@@ -7,7 +7,7 @@
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
-import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Category, authorOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatStars, hasGithubHome, identityKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, rejectionCodeKey, restartReasonKey, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
+import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Category, authorOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatStars, hasGithubHome, identityKey, installHolder, isCustomLicense, isShopLike, missingPeersOf, nameHolder, nextVisibleCount, npmPageUrl, rejectionCodeKey, restartReasonKey, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
 import { useInstallFlows, type InstallFlow } from './useInstall.ts'
 import { useUninstall } from './useUninstall.ts'
 import { useUpdateSelf } from './useUpdateSelf.ts'
@@ -72,11 +72,15 @@ function ChevronIcon({ open }: { open: boolean }): ReactNode {
  * install controls. An installed plugin's card carries its installed row:
  * current → the non-interactive installed label, behind → the update button;
  * uninstalled → the install button. */
-const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, t, flowFor, installStatus, uninstall, restart, restartSupported, setEnabled, onSettled }: {
+const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, nameTakenBy, t, flowFor, installStatus, uninstall, restart, restartSupported, setEnabled, onSettled }: {
   entry: CatalogEntry
   stars: number | undefined
   installed: ShopInstalledEntry | undefined
   missing: string[]
+  /** The repository (or npm package) whose plugin already holds this bundle
+   * name. Undefined on the `installed !== undefined` branch by construction:
+   * that branch means THIS identity is the one installed. */
+  nameTakenBy: string | undefined
   t: ShopTabProps['t']
   flowFor: (key: string) => InstallFlow
   installStatus: ShopTabInjected['installStatus']
@@ -170,9 +174,13 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, t,
         {summary?.zh !== undefined && (
           <p className={open ? `${css.summaryZh} ${css.summaryZhExpanded}` : css.summaryZh}>{summary.zh}</p>
         )}
-        {missing.length > 0 && (
-          <p className={css.incompatibleDetail} data-shop-incompatible-detail>{t('incompatibleDetail', { modules: missing.join(', ') })}</p>
-        )}
+        {/* Every reason this entry cannot be installed as it stands, one
+          * paragraph each: the name conflict first, because it is about a
+          * plugin the reader chose and would lose, and the missing modules
+          * second. */}
+        {incompatibleReasons(missing, nameTakenBy, t).map(reason => (
+          <p className={css.incompatibleDetail} data-shop-incompatible-detail key={reason}>{reason}</p>
+        ))}
         {open && entry.catalog !== undefined && entry.catalog.capabilities.length > 0 && (
           <div className={css.capabilitiesBlock}>
             <p className={css.capabilitiesNote}>{t('capabilitiesNote')}</p>
@@ -240,7 +248,7 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, t,
        * width below them, where it has room. */}
       <div className={css.cardActions} data-shop-actions>
         {installed === undefined ? (
-          <InstallPanel target={installTarget} tier={entry.tier} missing={missing} missingStated flow={flow} t={t} restart={restart} restartSupported={restartSupported} />
+          <InstallPanel target={installTarget} tier={entry.tier} missing={missing} nameTakenBy={nameTakenBy} missingStated flow={flow} t={t} restart={restart} restartSupported={restartSupported} />
         ) : (
           <>
             {installed.outdated || flow.view.kind !== 'idle' ? (
@@ -275,18 +283,37 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, t,
   )
 })
 
+/**
+ * Every reason this entry cannot be installed as it stands, already localized.
+ *
+ * Two, and they are independent: the harness may be missing components the
+ * plugin declares, and a DIFFERENT plugin may already hold this bundle name.
+ * The second is not a version problem — two plugins of one name declare the
+ * same loader entry id, dsh refuses the whole tree, and the shop therefore
+ * replaces rather than adds. Both can be true at once, so this returns a list
+ * and every renderer joins it the same way.
+ */
+function incompatibleReasons(missing: string[], nameTakenBy: string | undefined, t: ShopTabProps['t']): string[] {
+  const reasons: string[] = []
+  if (nameTakenBy !== undefined) reasons.push(t('nameTakenDetail', { holder: nameTakenBy }))
+  if (missing.length > 0) reasons.push(t('incompatibleDetail', { modules: missing.join(', ') }))
+  return reasons
+}
+
 /** The harness-compatibility verdict, rendered beside the control it
  * qualifies. It answers "what happens if I press this", not "what is this",
  * so it belongs to the action row and not among the identity badges in the
  * header — where it also sat inside a <button>, competing with that button's
  * own hit area for the tooltip. Renders nothing when the harness provides
  * everything. */
-function IncompatibleBadge({ missing, t }: {
+function IncompatibleBadge({ missing, nameTakenBy, t }: {
   missing: string[]
+  /** The repository whose plugin already holds this bundle name, if one does. */
+  nameTakenBy?: string
   t: ShopTabProps['t']
 }): ReactNode {
-  if (missing.length === 0) return null
-  const detail = t('incompatibleDetail', { modules: missing.join(', ') })
+  const detail = incompatibleReasons(missing, nameTakenBy, t).join('\n')
+  if (detail === '') return null
   return (
     // role="img" + aria-label is this file's own idiom for naming an
     // otherwise-generic element for assistive tech (see .starsBadge above):
@@ -307,11 +334,14 @@ function IncompatibleBadge({ missing, t }: {
  * failure detail, rejection detail — driven by `useInstall`. Shared by the
  * catalog cards (`variant: 'install'`) and the outdated rows' update button
  * (`variant: 'update'`, which drives the same install flow for `name@latest`). */
-function InstallPanel({ target, tier, missing, missingStated = false, variant = 'install', flow, t, restart, restartSupported }: {
+function InstallPanel({ target, tier, missing, nameTakenBy, missingStated = false, variant = 'install', flow, t, restart, restartSupported }: {
   /** The install request this panel drives, identity included. */
   target: InstallArgs
   tier: CatalogEntry['tier']
   missing: string[]
+  /** The plugin already holding this bundle name, if a different one does.
+   * Never set on an outdated row: that row IS the installed plugin. */
+  nameTakenBy?: string
   /** The surface around this panel already states what is missing, so the
    * gate must not repeat it. True on a catalog card, which renders the detail
    * whenever anything is missing; false on an outdated row, which carries the
@@ -450,7 +480,7 @@ function InstallPanel({ target, tier, missing, missingStated = false, variant = 
           that actually runs is the INSTALLED one and it is the update that
           wants the missing module — the copy's "may be" carries that
           imprecision deliberately rather than splitting the string. */}
-      <IncompatibleBadge missing={missing} t={t} />
+      <IncompatibleBadge missing={missing} nameTakenBy={nameTakenBy} t={t} />
     </>
   )
 }
@@ -1045,6 +1075,20 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     return map
   }, [catalogState])
 
+  // Which catalog entries a DIFFERENT installed plugin has already taken the
+  // name of — the host refuses those installs, and the card says why before
+  // the click. Computed here for the same reason as `missingByKey`: once per
+  // load, so EntryCard's memo is not handed a fresh value per keystroke.
+  const nameTakenByKey = useMemo(() => {
+    const map = new Map<string, string>()
+    if (catalogState.kind !== 'ready' || installedState.kind !== 'ready') return map
+    for (const entry of catalogState.result.plugins) {
+      const holder = nameHolder(entry, installedState.entries)
+      if (holder !== undefined) map.set(entryKey(entry), installHolder(holder))
+    }
+    return map
+  }, [catalogState, installedState])
+
   if (catalogState.kind === 'loading') {
     return (
       <div className={css.panel} data-shop-tab aria-busy="true">
@@ -1273,7 +1317,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
               * orphaned in the DOM when the filter changed. */}
             {visible.map(entry => (
               <li key={entryKey(entry)}>
-                <EntryCard entry={entry} stars={starsOf(entry, stars)} installed={installedByKey.get(entryKey(entry))} missing={missingByKey.get(entryKey(entry)) ?? []} t={t} flowFor={flows.flowFor} installStatus={installStatus} uninstall={uninstall} restart={restart} restartSupported={restartSupported} setEnabled={setEnabled} onSettled={noteMutation} />
+                <EntryCard entry={entry} stars={starsOf(entry, stars)} installed={installedByKey.get(entryKey(entry))} missing={missingByKey.get(entryKey(entry)) ?? []} nameTakenBy={nameTakenByKey.get(entryKey(entry))} t={t} flowFor={flows.flowFor} installStatus={installStatus} uninstall={uninstall} restart={restart} restartSupported={restartSupported} setEnabled={setEnabled} onSettled={noteMutation} />
               </li>
             ))}
             {incremental && visibleCount < filtered.length && (

@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
   ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, categoryKey, displayVersion, entryKey, formatStars,
-  authorOf, hasGithubHome, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl,
+  authorOf, hasGithubHome, installHolder, isCustomLicense, isShopLike, missingPeersOf, nameHolder,
+  nextVisibleCount, npmPageUrl,
   reduceInstall,
   reviewHashPin, sortByStars, starsOf, tierKey,
 } from '../../src/client/present.ts'
-import type { CatalogEntry } from '../../src/host/index.ts'
+import type { CatalogEntry, ShopInstalledEntry } from '../../src/host/index.ts'
 
 const entry: CatalogEntry = {
   name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null,
@@ -508,5 +509,65 @@ describe('hasGithubHome', () => {
     // Substring matching would accept this; parsing the host does not.
     expect(hasGithubHome({ ...entry, repository: 'https://evil-github.com/you/x' })).toBe(false)
     expect(hasGithubHome({ ...entry, repository: 'https://github.com.evil.test/you/x' })).toBe(false)
+  })
+})
+
+describe('nameHolder', () => {
+  const installedNpm: ShopInstalledEntry = {
+    name: 'dsh-hello-plugin', source: 'npm',
+    installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true,
+  }
+  const installedRepo: ShopInstalledEntry = {
+    ...installedNpm, source: 'github', repo: 'CLAPEILL/dsh-hello-plugin',
+    installed: 'b'.repeat(40), latest: 'b'.repeat(40),
+  }
+  const repoEntry: CatalogEntry = {
+    ...entry, source: 'github', repo: 'Mvyvn/dsh-hello-plugin', version: 'a'.repeat(40),
+  }
+
+  it('finds the installed plugin holding this name from another repository', () => {
+    expect(nameHolder(repoEntry, [installedRepo])).toBe(installedRepo)
+  })
+
+  it('finds nothing when the installed plugin IS this entry', () => {
+    expect(nameHolder(repoEntry, [{ ...installedRepo, repo: 'Mvyvn/dsh-hello-plugin' }])).toBeUndefined()
+    expect(nameHolder(entry, [installedNpm])).toBeUndefined()
+  })
+
+  it('ignores installed plugins under other names', () => {
+    expect(nameHolder(repoEntry, [{ ...installedRepo, name: 'dsh-other' }])).toBeUndefined()
+  })
+
+  it('sees an npm install holding the name a github entry wants, and the reverse', () => {
+    expect(nameHolder(repoEntry, [installedNpm])).toBe(installedNpm)
+    expect(nameHolder(entry, [installedRepo])).toBe(installedRepo)
+  })
+
+  it('finds nothing in an empty installed list', () => {
+    expect(nameHolder(repoEntry, [])).toBeUndefined()
+  })
+})
+
+describe('installHolder', () => {
+  const row: ShopInstalledEntry = {
+    name: 'dsh-hello-plugin', source: 'github', repo: 'CLAPEILL/dsh-hello-plugin',
+    installed: 'b'.repeat(40), latest: 'b'.repeat(40), outdated: false, enabled: true,
+  }
+
+  it('names a github install by its repository, case as GitHub spells it', () => {
+    // The repository IS the distinguishing fact here: the name is the thing
+    // both plugins share, so repeating it would say nothing.
+    expect(installHolder(row)).toBe('CLAPEILL/dsh-hello-plugin')
+  })
+
+  it('names an npm install as an npm package, since it has nothing else', () => {
+    expect(installHolder({ ...row, source: 'npm', repo: undefined })).toBe('npm: dsh-hello-plugin')
+  })
+
+  it('falls back to the bare name for a github row carrying no repo', () => {
+    // A malformed row must still produce a readable holder rather than
+    // rendering "undefined" into the card — and must not call it an npm
+    // package, which is the one thing it is known not to be.
+    expect(installHolder({ ...row, repo: undefined })).toBe('dsh-hello-plugin')
   })
 })

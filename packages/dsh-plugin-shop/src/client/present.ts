@@ -3,10 +3,10 @@
  * drive all of it. */
 
 export { isShopLike } from '../shared/shop-like.ts'
-export { identityKey, installedSpecMatches, parseRepoSpec, type EntryIdentity } from '../shared/identity.ts'
-import { identityKey } from '../shared/identity.ts'
+export { identityKey, installedSpecMatches, parseRepoSpec, sameInstall, type EntryIdentity } from '../shared/identity.ts'
+import { identityKey, sameInstall, type EntryIdentity } from '../shared/identity.ts'
 import type { ShopLocaleKey } from './locales.ts'
-import type { CatalogEntry, HotRestartReason, InstallRejectionCode } from '../host/index.ts'
+import type { CatalogEntry, HotRestartReason, InstallRejectionCode, ShopInstalledEntry } from '../host/index.ts'
 
 /** Hot-mount reason code → locale key, so the notice reads in the language
  * the person set in dsh. An absent (or unrecognized) reason keeps the generic
@@ -37,6 +37,34 @@ export function tierKey(tier: CatalogEntry['tier']): ShopLocaleKey {
  * never by name, because two entries can share a name. */
 export function missingPeersOf(incompatible: Record<string, string[]>, key: string): string[] {
   return incompatible[key] ?? []
+}
+
+/**
+ * The installed plugin already holding this entry's bundle name, if a
+ * DIFFERENT one does.
+ *
+ * Two plugins of one name declare the same loader entry id, and dsh refuses
+ * the whole tree rather than pick one, so they cannot coexist — which is why
+ * the host refuses such an install outright (`name-taken`) instead of
+ * replacing. The card says so before the click, and says it with `sameInstall`
+ * so the badge and the refusal are one rule.
+ */
+export function nameHolder(
+  entry: EntryIdentity,
+  installed: readonly ShopInstalledEntry[],
+): ShopInstalledEntry | undefined {
+  return installed.find(row => row.name === entry.name && !sameInstall(entry, row))
+}
+
+/** How to name the plugin holding a name, for someone deciding what to do
+ * about it. A github install is named by its repository — the only thing that
+ * tells it apart from the entry it is blocking; an npm install has nothing but
+ * its registry name, so it is named as one. A github row with no repository
+ * falls back to the bare name rather than the npm spelling: saying `npm:` of
+ * something installed from a repository would be worse than saying less. */
+export function installHolder(row: ShopInstalledEntry): string {
+  if (row.source === 'github') return row.repo ?? row.name
+  return `npm: ${row.name}`
 }
 
 /** Spec §9.3 verbatim — the community-tier acknowledgement. The zh dictionary

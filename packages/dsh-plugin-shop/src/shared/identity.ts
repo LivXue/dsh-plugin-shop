@@ -63,10 +63,27 @@ export function displayRepoSpec(spec: string): string | null {
   return null
 }
 
-/** Whether an installed dependency spec names this catalog entry. */
+/**
+ * Whether two identities of the SAME bundle name are the same install.
+ *
+ * Deliberately coarser than `identityKey`: a profile records a dependency
+ * spec, which carries the repository but not the subdirectory, so this is the
+ * finest distinction the installed state can actually support. It ignores
+ * `name` — every caller has already matched on it — and answers only "is the
+ * thing under that name this one, or a different one?".
+ */
+export function sameInstall(a: EntryIdentity, b: EntryIdentity): boolean {
+  if (a.source !== b.source) return false
+  if (a.source === 'npm') return true
+  return a.repo !== undefined && a.repo.toLowerCase() === b.repo?.toLowerCase()
+}
+
+/** Whether an installed dependency spec names this catalog entry. The
+ * spec-string form of `sameInstall`, so the host's refusal and the client's
+ * badge can never disagree about what counts as a different plugin. */
 export function installedSpecMatches(entry: EntryIdentity, spec: string): boolean {
   const repo = parseRepoSpec(spec)
-  if (entry.source === 'npm') return repo === null
-  if (entry.repo === undefined) return false
-  return repo === entry.repo.toLowerCase()
+  return sameInstall(entry, repo === null
+    ? { source: 'npm', name: entry.name }
+    : { source: 'github', name: entry.name, repo })
 }

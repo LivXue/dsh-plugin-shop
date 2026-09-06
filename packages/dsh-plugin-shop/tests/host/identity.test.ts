@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { identityKey, installedSpecMatches, parseRepoSpec } from '../../src/shared/identity.ts'
+import { identityKey, installedSpecMatches, parseRepoSpec, sameInstall } from '../../src/shared/identity.ts'
 import type { CatalogEntry } from '../../src/host/types.ts'
 
 const npmEntry: CatalogEntry = {
@@ -70,5 +70,44 @@ describe('installedSpecMatches', () => {
 
   it('never matches a github entry carrying no repo', () => {
     expect(installedSpecMatches({ ...repoEntry, repo: undefined }, 'github:alice/dsh-foo')).toBe(false)
+  })
+})
+
+describe('sameInstall', () => {
+  // The rule behind both the host's `name-taken` refusal and the client's
+  // badge. Callers have already matched on the bundle name, so this answers
+  // only whether the thing under that name is this entry or another one.
+  it('is true for two npm installs, whatever their versions', () => {
+    const newer: CatalogEntry = { ...npmEntry, version: '9.9.9' }
+    expect(sameInstall(npmEntry, newer)).toBe(true)
+  })
+
+  it('separates an npm install from a github one of the same name', () => {
+    expect(sameInstall(npmEntry, repoEntry)).toBe(false)
+    expect(sameInstall(repoEntry, npmEntry)).toBe(false)
+  })
+
+  it('separates two repositories publishing one bundle name', () => {
+    // 83 live bundle names are claimed by both a fork and an original; this
+    // is the comparison that keeps them apart.
+    expect(sameInstall(repoEntry, { ...repoEntry, repo: 'bob/dsh-foo' })).toBe(false)
+  })
+
+  it('ignores repository case, which GitHub does not preserve for comparison', () => {
+    expect(sameInstall(repoEntry, { ...repoEntry, repo: 'Alice/DSH-Foo' })).toBe(true)
+  })
+
+  it('is false when either side carries no repo, rather than collapsing them', () => {
+    // Two unknowns are not a match: treating them as one would silently let a
+    // malformed entry claim any name.
+    expect(sameInstall({ ...repoEntry, repo: undefined }, repoEntry)).toBe(false)
+    expect(sameInstall(repoEntry, { ...repoEntry, repo: undefined })).toBe(false)
+    expect(sameInstall({ ...repoEntry, repo: undefined }, { ...repoEntry, repo: undefined })).toBe(false)
+  })
+
+  it('ignores subdir, which a dependency spec does not record', () => {
+    // Coarser than identityKey on purpose: the installed state cannot tell
+    // two subdirectories of one repository apart, so neither may this.
+    expect(sameInstall(repoEntry, { ...repoEntry, subdir: 'packages/a' })).toBe(true)
   })
 })
