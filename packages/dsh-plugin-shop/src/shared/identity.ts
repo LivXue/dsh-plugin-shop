@@ -48,6 +48,21 @@ export function parseRepoSpec(spec: string): string | null {
   return null
 }
 
+/**
+ * The `owner/slug` a spec names, spelled as the spec spells it.
+ *
+ * `parseRepoSpec` lowercases because it exists to COMPARE. This one exists to
+ * be READ: a rejection detail sends someone to look at that repository, and
+ * `CLAPEILL` rendered as `clapeill` is a repository they then have to guess at.
+ */
+export function displayRepoSpec(spec: string): string | null {
+  const shorthand = GITHUB_SHORTHAND.exec(spec)
+  if (shorthand?.[1] !== undefined && shorthand[2] !== undefined) return `${shorthand[1]}/${shorthand[2]}`
+  const url = GITHUB_URL.exec(spec)
+  if (url?.[1] !== undefined && url[2] !== undefined) return `${url[1]}/${url[2]}`
+  return null
+}
+
 /** Whether an installed dependency spec names this catalog entry. */
 export function installedSpecMatches(entry: EntryIdentity, spec: string): boolean {
   const repo = parseRepoSpec(spec)

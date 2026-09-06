@@ -18,6 +18,64 @@ function snapshot(overrides: Partial<CatalogSnapshot['entries'][number]> = {}): 
 }
 
 describe('validateInstall', () => {
+  const repoEntry = (repo: string) => ({
+    name: 'dsh-skill-manager', version: 'a'.repeat(40), integrity: null, publishedAt: null,
+    repository: `https://github.com/${repo}`, license: 'MIT', tier: 'community' as const,
+    metadata: 'derived' as const, source: 'github' as const, repo, added: '2026-08-25',
+  })
+  const twoRepos = (): CatalogSnapshot => ({
+    schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', denied: [], stars: {},
+    entries: [repoEntry('CLAPEILL/dsh-skill-manager'), repoEntry('Mvyvn/dsh-skill-manager')],
+  })
+
+  it('refuses to replace a DIFFERENT plugin that happens to share the name', () => {
+    // Two same-named bundles cannot coexist: both declare the same loader
+    // entry id in their own patch, and dsh then refuses to load the tree at
+    // all ("duplicate loader entry id: skill-manager" — measured, the profile
+    // does not boot). Through the shop the manifest keys by bundle name, so
+    // the second install overwrites the first instead, silently, measured on
+    // 0.8.0-beta.1. Either way the plugin the user chose is gone. 177 live
+    // catalog names are claimed by more than one entry; dsh-skill-manager
+    // alone is claimed by 14.
+    const installed = 'github:CLAPEILL/dsh-skill-manager#3c32e1030a2a862a686928a6fbbf81c0a4056ad2'
+    const result = validateInstall(twoRepos(), {
+      name: 'dsh-skill-manager', version: 'a'.repeat(40),
+      source: 'github', repo: 'Mvyvn/dsh-skill-manager', acknowledged: true,
+    }, installed)
+    expect(result).toMatchObject({ ok: false, code: 'name-taken' })
+    // The detail names WHICH plugin holds the name, or the reader cannot act.
+    if (!result.ok) {
+      expect(result.detail).toContain('CLAPEILL/dsh-skill-manager')
+      expect(result.detail).toContain('dsh-skill-manager')
+    }
+  })
+
+  it('still allows updating the SAME plugin to a newer commit', () => {
+    // The boundary this must not cross: a same-identity update is the normal
+    // path and shares the manifest key by design.
+    const installed = 'github:CLAPEILL/dsh-skill-manager#0000000000000000000000000000000000000000'
+    const result = validateInstall(twoRepos(), {
+      name: 'dsh-skill-manager', version: 'a'.repeat(40),
+      source: 'github', repo: 'CLAPEILL/dsh-skill-manager', acknowledged: true,
+    }, installed)
+    expect(result.ok, result.ok ? '' : result.detail).toBe(true)
+  })
+
+  it('still allows updating an npm entry to a newer version', () => {
+    const result = validateInstall(snapshot(), { name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true }, '1.1.0')
+    expect(result.ok, result.ok ? '' : result.detail).toBe(true)
+  })
+
+  it('refuses a github entry whose name an npm package already holds', () => {
+    // The two keyspaces collide in one manifest key. Installing across sources
+    // is still a replacement of someone else's plugin.
+    const result = validateInstall(twoRepos(), {
+      name: 'dsh-skill-manager', version: 'a'.repeat(40),
+      source: 'github', repo: 'Mvyvn/dsh-skill-manager', acknowledged: true,
+    }, '2.0.0')
+    expect(result).toMatchObject({ ok: false, code: 'name-taken' })
+  })
+
   it('rejects a name absent from the snapshot as not-in-catalog', () => {
     const result = validateInstall(snapshot(), { name: 'dsh-unknown', version: '1.0.0' })
     expect(result).toMatchObject({ ok: false, code: 'not-in-catalog' })

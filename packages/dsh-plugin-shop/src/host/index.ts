@@ -725,7 +725,11 @@ export class ShopGateway extends TypertRemoteService {
   @Remote('installStart')
   async install(args: InstallArgs): Promise<ShopInstallResult> {
     const snapshot = await this.snapshotNow()
-    const verdict = validateInstall(snapshot, args)
+    // The manifest's dependency for this name, when it has one: the gate needs
+    // it to tell an update of THIS plugin from a replacement of a different one
+    // that shares the name.
+    const installedSpec = (readProfileManifest('dsh-plugin-shop', this.profileDirResolved()).dependencies ?? {})[args.name]
+    const verdict = validateInstall(snapshot, args, installedSpec)
     if (!verdict.ok) return { ok: false, code: verdict.code, detail: verdict.detail }
     // The validator resolved the row by identity. Re-finding it by name is
     // what installed another repository's commit when names collided.
