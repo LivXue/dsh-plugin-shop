@@ -30,6 +30,7 @@ dsh-plugin-shop supplies those three.
 - **No defense against a compromised npm.**
 - **No download counts, ratings, or reviews.** Those need a server and an anti-abuse program, which is pure liability below roughly a thousand plugins.
 - **No install-from-arbitrary-URL.** That capability stays in the CLI; see §5.3.
+- **No listing of plugins that ship with the harness.** The shelf is for third-party plugins; the ones dsh brings with it are already in its built-in plugin list. `@deepseek-ai/cordis-plugin-group`, `-include`, `-timer`, `-loader` and `-hmr` all sit in a `@deepseek-ai/dsh@0.1.2-rc.1` install's own `node_modules` (`-timer` and `-include` as direct dependencies of the CLI package, measured 2026-09-07), so a row for one would advertise software every dsh user already has, behind an install button that changes nothing. The line is **ships with dsh**, not **published under `@deepseek-ai`**: an official plugin released from its own repository is an ordinary candidate and is listed like any other. This non-goal needs no mechanism of its own and has none — the bundled packages declare no npm `keywords` at all, so the keyword harvest never sees them, and one that copies the host project's repository boilerplate is refused as `harness-repository` (§7.1). Recorded here because it was read as a coverage gap in upstream discussion #5867 — the official scope's naming convention is not missing from the harvest key, it is outside the shelf's scope — and because the same policy already shows up at runtime: the shop refuses to toggle a `@deepseek-ai/*` bundle as part of the harness chain (§7.3, hub borrowings B).
 
 ## 3. Terminology
 
@@ -320,7 +321,7 @@ harvest -> fetch manifest -> classify -> gate -> tier -> emit -> commit snapshot
    - Listed in `denied.yml`. Rejected.
    - Marked deprecated on npm. Rejected.
    - No license or no repository. Rejected. This is not fastidiousness: without a repository the package cannot be audited, and a plugin that wants to be listed has no reason to hide its source.
-   - A repository naming `deepseek-ai/deepseek-harness` itself. Rejected as `harness-repository`. The host project's repository holds none of the plugin's source, so it audits nothing; the author has copied boilerplate and must declare the plugin's own repository.
+   - A repository naming `deepseek-ai/deepseek-harness` itself. Rejected as `harness-repository`. The host project's repository holds none of the plugin's source, so it audits nothing; the author has copied boilerplate and must declare the plugin's own repository. It is also what would keep a harness-bundled plugin off the shelf if one ever declared a harvest keyword (§2); the packages that ship with dsh today declare none, so they are never harvested and this rule never sees them.
    - Levenshtein distance to any name in `verified.yml` is between 1 and 2 inclusive — **held for human adjudication** (into `denied.yml`, or cleared into `allowed-similar.yml`), never auto-listed. This is the typosquatting gate. The threshold of 2 is a starting point tunable against the observed false-positive rate; changing it touches a constant and its test, not the process.
 5. **Tier** — intersect with `verified.yml`.
 
