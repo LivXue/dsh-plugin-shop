@@ -19,6 +19,7 @@ import { basename, join } from 'node:path'
 import { mergeCategoryRows, serializeCategoryRows } from './categories.ts'
 import { selectPending } from './classify-select.ts'
 import { loadRegistryConfig } from './config.ts'
+import { escapeCell } from './emit.ts'
 import { classifyPackages } from './llm-client.ts'
 import { judgeMarkets, type MarketItem } from './market-judge.ts'
 import { selectMarketPending } from './market-select.ts'
@@ -188,7 +189,7 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
     '',
     '| Package | Reason |',
     '|---|---|',
-    ...sortedDiscards.map(d => `| ${d.name} | ${d.reason.replace(/\|/g, '\\|').replace(/\r\n|\r|\n/g, ' ')} |`),
+    ...sortedDiscards.map(d => `| ${escapeCell(d.name)} | ${escapeCell(d.reason)} |`),
   ]
   writeFileSync(join(OUT_DIR, 'classification-report.md'), `${reportLines.join('\n')}\n`)
   process.stderr.write(`classify: ${merged.size} rows, ${sortedDiscards.length} discarded\n`)

@@ -92,11 +92,18 @@ export interface Artifacts {
  * in the run-artifact viewer, and escaping brackets would mangle the zod paths
  * our own details carry (`dsh.catalog.capabilities[0]`).
  *
+ * Exported because there are two markdown report emitters, not one: the
+ * classification report (`classify.ts`) hand-rolled a weaker version of this
+ * — a `|` escape and a newline collapse on the reason, nothing at all on the
+ * package name — which stopped being merely untidy when both reports became
+ * published artifacts (`pages-artifacts.ts`, 2026-09-07). One rule, one
+ * place, one set of tests.
+ *
  * Every affected code point is written as a `\u` escape here and in the tests:
  * a literal U+202E in a source file is invisible to a reviewer, which is the
  * problem being fixed.
  */
-function escapeCell(value: string): string {
+export function escapeCell(value: string): string {
   return value
     .replace(/\|/g, '\\|')
     .replace(/\r\n|\r|\n|\t/g, ' ')
