@@ -45,14 +45,32 @@ function tar(files: Record<string, string>): Buffer {
 }
 
 
-/** A gzipped tarball declaring `name`, with a `dsh.bundle` so it passes as a
- * plugin. `extra` overlays or adds manifest fields. */
-export function packedTarball(name: string, extra: Record<string, unknown> = {}): Uint8Array {
+/**
+ * A gzipped tarball of a COMPLETE packed plugin: `name`, a `dsh.bundle`, and
+ * the patch file that bundle points at.
+ *
+ * The patch member is not decoration — `verifyReleaseAsset` requires the
+ * declared `dsh.bundle.patch` to be in the archive, which is the only
+ * checkable form of "this asset is prebuilt". A manifest-only fixture is an
+ * INCOMPLETE pack and is refused, so build one with `rawTarball` when that is
+ * the case under test.
+ *
+ * `extra` overlays manifest fields; `files` adds or replaces members.
+ */
+export function packedTarball(
+  name: string,
+  extra: Record<string, unknown> = {},
+  files: Record<string, string> = {},
+): Uint8Array {
   const manifest = { name, version: '1.0.0', dsh: { bundle: { patch: './cordis.patch.yml' } }, ...extra }
   // Delegates, so a gzip level for stable digests, an `mtime`, or a second
   // member is applied in ONE place. Two spellings of `gzipSync(tar(...))` is
   // how a fixture this subtle drifts.
-  return rawTarball({ 'package/package.json': JSON.stringify(manifest) })
+  return rawTarball({
+    'package/package.json': JSON.stringify(manifest),
+    'package/cordis.patch.yml': '- insert: []\n',
+    ...files,
+  })
 }
 
 /** A gzipped tarball of arbitrary members — for the archives that are not

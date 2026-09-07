@@ -85,12 +85,18 @@ describe('verifyReleaseAsset', () => {
     // The rule is "exactly one root", not "a root named package": the
     // component is stripped, so its name never reaches disk.
     const manifest = JSON.stringify({ name: 'dsh-foo', version: '1.0.0', dsh: { bundle: { patch: './p.yml' } } })
-    expect(verifyReleaseAsset(rawTarball({ 'dsh-foo-1.0.0/package.json': manifest }), 'dsh-foo')).toEqual({ ok: true })
+    expect(verifyReleaseAsset(rawTarball({
+      'dsh-foo-1.0.0/package.json': manifest,
+      'dsh-foo-1.0.0/p.yml': '- insert: []\n',
+    }), 'dsh-foo')).toEqual({ ok: true })
   })
 
   it('accepts the ./ prefix that tar czf ./package emits', () => {
     const manifest = JSON.stringify({ name: 'dsh-foo', version: '1.0.0', dsh: { bundle: { patch: './p.yml' } } })
-    expect(verifyReleaseAsset(rawTarball({ './package/package.json': manifest }), 'dsh-foo')).toEqual({ ok: true })
+    expect(verifyReleaseAsset(rawTarball({
+      './package/package.json': manifest,
+      './package/p.yml': '- insert: []\n',
+    }), 'dsh-foo')).toEqual({ ok: true })
   })
 
   it('refuses a root-level manifest with the reason that is actually true', () => {
@@ -108,7 +114,10 @@ describe('verifyReleaseAsset', () => {
     // parser's strictness as the author's defect, for an asset pnpm installs
     // without complaint.
     const manifest = `\ufeff${JSON.stringify({ name: 'dsh-foo', version: '1.0.0', dsh: { bundle: { patch: './p.yml' } } })}`
-    expect(verifyReleaseAsset(rawTarball({ 'package/package.json': manifest }), 'dsh-foo')).toEqual({ ok: true })
+    expect(verifyReleaseAsset(rawTarball({
+      'package/package.json': manifest,
+      'package/p.yml': '- insert: []\n',
+    }), 'dsh-foo')).toEqual({ ok: true })
   })
 
   it.each([false, 0, '', null, [], 'yes'])('refuses dsh.bundle: %o, which registers no plugin', (bundle) => {
@@ -121,18 +130,58 @@ describe('verifyReleaseAsset', () => {
     if (!verdict.ok) expect(verdict.detail).toContain('dsh.bundle object')
   })
 
-  it.each([
-    ['a prepare script', { scripts: { prepare: 'tsc' } }, 'prepare script'],
-    ['a prepack script', { scripts: { prepack: 'npm run build' } }, 'prepack script'],
-    ['unresolved workspace: deps', { dependencies: { a: 'workspace:*' } }, 'workspace:-protocol'],
-  ])('refuses an asset that is a source tree, not a prebuilt package — %s', (_label, extra, expected) => {
-    // The third claim the rescue carries. The waiver of
-    // requires-build/workspace-deps is granted ONLY because a release asset
-    // is presumed prebuilt; a plain `tar czf` of a source tree earned it and
-    // landed unbuilt, with its dsh.bundle.patch target absent.
-    const verdict = verifyReleaseAsset(packedTarball('dsh-foo', extra), 'dsh-foo')
+  it('refuses an asset whose declared dsh.bundle.patch is not in the archive', () => {
+    // The third claim, tested by the only thing that can answer it: the
+    // waiver is granted because the asset is presumed PREBUILT, so what has
+    // to hold is that the file dsh is pointed at actually ships.
+    const verdict = verifyReleaseAsset(rawTarball({
+      'package/package.json': JSON.stringify({ name: 'dsh-foo', version: '1.0.0', dsh: { bundle: { patch: './cordis.patch.yml' } } }),
+    }), 'dsh-foo')
     expect(verdict.ok).toBe(false)
-    if (!verdict.ok) expect(verdict.detail).toContain(expected)
+    if (!verdict.ok) expect(verdict.detail).toContain('does not contain it')
+  })
+
+  it('accepts an asset that ships the patch it declares', () => {
+    expect(verifyReleaseAsset(rawTarball({
+      'package/package.json': JSON.stringify({ name: 'dsh-foo', version: '1.0.0', dsh: { bundle: { patch: './cordis.patch.yml' } } }),
+      'package/cordis.patch.yml': '- insert:\n    - id: foo\n      name: dsh-foo/host\n',
+    }), 'dsh-foo')).toEqual({ ok: true })
+  })
+
+  it('does NOT refuse an asset merely for declaring a prepare or prepack script', () => {
+    // The correction that matters most in this file. `npm pack` RUNS those
+    // scripts, ships the built output, and leaves the scripts in the
+    // manifest — so nearly every correctly packed package still declares
+    // one, and pnpm does not run them for a tarball install. Refusing on
+    // their presence delisted 90 working entries in a dry run against the
+    // live catalog, every one of which ships compiled output beside the
+    // script. Do not reintroduce it.
+    for (const scripts of [{ prepare: 'tsc' }, { prepack: 'npm run build' }]) {
+      expect(verifyReleaseAsset(rawTarball({
+        'package/package.json': JSON.stringify({
+          name: 'dsh-foo', version: '1.0.0', scripts,
+          dsh: { bundle: { patch: './cordis.patch.yml' } },
+        }),
+        'package/cordis.patch.yml': '- insert: []\n',
+        'package/lib/index.js': 'export const x = 1',
+      }), 'dsh-foo')).toEqual({ ok: true })
+    }
+  })
+
+  it('refuses unresolved workspace: specifiers, which pnpm pack would have rewritten', () => {
+    // Unlike the script field, this one IS evidence: `pnpm pack` rewrites
+    // `workspace:` into resolved ranges, so a tarball still carrying them was
+    // not packed that way and cannot resolve outside its own workspace.
+    // It fired on none of the live entries.
+    const verdict = verifyReleaseAsset(rawTarball({
+      'package/package.json': JSON.stringify({
+        name: 'dsh-foo', version: '1.0.0', dependencies: { a: 'workspace:*' },
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      }),
+      'package/cordis.patch.yml': '- insert: []\n',
+    }), 'dsh-foo')
+    expect(verdict.ok).toBe(false)
+    if (!verdict.ok) expect(verdict.detail).toContain('workspace:-protocol')
   })
 
   it('refuses an array manifest with a reason about the manifest, not the packing', () => {

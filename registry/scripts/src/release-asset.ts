@@ -14,11 +14,15 @@
  *  1. the bundle NAME it installs under,
  *  2. the `dsh.bundle` that makes it a plugin rather than a plain dependency,
  *  3. the `requires-build` / `workspace-deps` waiver, which the rescue grants
- *     only because a release asset is presumed PREBUILT — so an asset still
- *     carrying `prepare`/`prepack` or unresolved `workspace:` specifiers is
- *     refused. Without (3) a plain `tar czf` of a source tree earned the
- *     waiver and landed unbuilt, which is the exact failure `requires-build`
- *     exists to prevent.
+ *     only because a release asset is presumed PREBUILT — so the patch the
+ *     manifest points dsh at must be IN the archive, and `workspace:`
+ *     specifiers must already be resolved. Without (3) a `tar czf` of a bare
+ *     manifest earned the waiver and landed with nothing to load.
+ *
+ *     Note what (3) does NOT test: the presence of a `prepare`/`prepack`
+ *     script. `npm pack` runs those, ships the output, and leaves the scripts
+ *     in the manifest, so nearly every correct package still declares one —
+ *     refusing on that delisted 90 working entries in a live dry run.
  *
  * Measured on the 2026-09-06 catalog, 7 of 176 rescued entries broke (1) or
  * (2), and every one was unusable: the install put a different package in the
@@ -136,7 +140,7 @@ export function verifyReleaseAsset(bytes: Uint8Array, bundleName: string): Relea
   if (raw === undefined) {
     return { ok: false, detail: `the release asset's ${echo(rooted.root)} directory carries no package.json, so it is not a packed npm package` }
   }
-  let manifest: { name?: unknown; dsh?: unknown; scripts?: unknown }
+  let manifest: { name?: unknown; dsh?: unknown }
   try {
     // npm's own reader strips a UTF-8 BOM, so a manifest carrying one installs
     // fine; refusing it here — and calling the archive unreadable — would
@@ -173,14 +177,28 @@ export function verifyReleaseAsset(bytes: Uint8Array, bundleName: string): Relea
         + ' rather than a plugin. The repository root declares one; the packed tarball must too.',
     }
   }
-  // Claim (3). The waiver exists because a release asset is presumed prebuilt.
-  const scripts = manifest.scripts as Record<string, unknown> | null | undefined
-  const buildScript = ['prepare', 'prepack'].find(key => typeof scripts?.[key] === 'string')
-  if (buildScript !== undefined) {
-    return {
-      ok: false,
-      detail: `the release asset still declares a ${buildScript} script, so it is a source tree rather than a prebuilt package.`
-        + ' pnpm blocks build scripts and the shop never enables them, so it would land unbuilt and its dsh.bundle.patch target would be absent.',
+  // Claim (3): the waiver is granted because a release asset is presumed
+  // PREBUILT, so the thing that has to be true is that what it ships is
+  // usable — the patch the manifest points dsh at must be IN the archive.
+  //
+  // The script field cannot answer this and must not be used to. `npm pack`
+  // runs `prepare`/`prepack`, includes the built output, and leaves the
+  // scripts intact, so essentially every correctly packed package still
+  // declares one; and pnpm does not run them for a tarball install anyway.
+  // Refusing on their presence delisted 90 working entries in a dry run
+  // against the live catalog, all of which ship compiled output next to the
+  // script. The patch-target rule refuses the incomplete pack it was aimed at
+  // and delists none of the 169 the other rules accept (measured).
+  const patch = (bundle as { patch?: unknown }).patch
+  if (typeof patch === 'string') {
+    const target = normalize(`${rooted.root}/${patch.replace(/^\.\//, '')}`)
+    if (!paths.includes(target)) {
+      return {
+        ok: false,
+        detail: `the release asset declares dsh.bundle.patch ${echo(patch)} but the archive does not contain it,`
+          + ' so this is a source tree or an incomplete pack rather than an installable package.'
+          + ' `npm pack` from a built checkout includes it.',
+      }
     }
   }
   if (hasWorkspaceDeps(manifest)) {
