@@ -161,14 +161,76 @@ export interface KeywordShortfall {
  * OTHER harvest keyword, where `keywords:dsh-plugin,deepseek-harness` is a
  * real cell, and it is skipped as self on this one.
  *
- * None of this has run in production yet: partitioning starts above
- * SEARCH_WINDOW, and on 2026-09-04 `keywords:deepseek-harness` measured 5,132
- * and `keywords:dsh-plugin` 3,731. That leaves 118 names of headroom, growing
- * about thirty a day, so the first crossing is days away and it is what will
- * re-derive every number here. Adding a keyword is the documented response to
- * that throw; a cell is always `keywords:<harvest-keyword>,<refinement>`, so a
- * refinement can only narrow the net a listing sees, never widen it — an
- * addition is a coverage decision, not a policy one.
+ * IT HAS NOW RUN IN PRODUCTION. `keywords:deepseek-harness` crossed
+ * SEARCH_WINDOW between 2026-09-04 (5,132) and 2026-09-07, and the daily
+ * build went red on every tree — `enumerated 5373 of 5380` at 11:19 UTC, then
+ * `5391 of 5398` four hours later. Two numbers above are corrected by that
+ * crossing.
+ *
+ * The growth rate was understated. "About thirty a day" was measured over one
+ * interval; 5,132 on 2026-09-04 to 5,380 on 2026-09-07 is 248 names in three
+ * days, ABOUT EIGHTY-THREE A DAY. Since the overshoot is what the refinements
+ * are responsible for, the residual grows at that rate times the uncovered
+ * fraction, not at thirty times it.
+ *
+ * And uncovered-ness DOES track score, which is the opposite of what the
+ * paragraph above concluded from the 2026-09-04 gap. Sampled live 2026-09-07,
+ * reading each package's own `keywords` from its packument, against the
+ * refinement list MINUS `deepseek-harness` itself (which every result carries
+ * by definition and which {@link partitionKeyword} self-skips, so counting it
+ * as coverage measures nothing — the first pass at this measurement did, and
+ * reported a tautological 500 of 500 covered):
+ *   ranks 5,000-5,250, the bottom of the window: 7 of 250 uncovered (2.8%)
+ *   ranks 2,500-2,750, mid-ranking:              0 of 250 uncovered (0.0%)
+ * The 2026-09-04 reading ("NOT ONE was in the worst 250") was taken over a
+ * DIFFERENT missing set — the cells alone, before the window cell existed — so
+ * both measurements can be true of their own populations. The operative one is
+ * this one: the residual concentrates exactly where the unreachable names are,
+ * which is why a residual exists at all.
+ *
+ * WHAT THE FULL UNION ACTUALLY REACHED, paged live 2026-09-07 against
+ * `keywords:deepseek-harness` total 5,401 (window 5,250, so 151 names beyond
+ * any single query's reach) — window cell first, then every cell, marginal:
+ *   window cell alone   5,250
+ *   dsh                  +123
+ *   dsh-plugin            +20
+ *   memory                 +1
+ *   the other 22 cells      +0
+ *   => 5,394 of 5,401, SHORTFALL 7, which is the throw CI hit.
+ * Twenty-two of the twenty-five refinements contribute NOTHING beyond the
+ * window: they are wholly redundant with the window cell. `dsh` and
+ * `dsh-plugin` recover the tail. Do not read the cell-total list above as a
+ * measure of usefulness — a big cell mostly re-enumerates the window.
+ *
+ * The seven were one publisher's scoped family, published at once and ranking
+ * together at the bottom, carrying `[deepwatch, deepseek-harness, watch-skill,
+ * ...]` and no refinement. So one entry closes it, and this is the measured
+ * marginal contribution, not a cell total:
+ *   deepwatch -> @deepwatch/dsh-core-bridge, @deepwatch/dsh-contracts,
+ *     @deepwatch/dsh-technology, @deepwatch/dsh-adapters,
+ *     @deepwatch/dsh-trajectory, @deepwatch/dsh-library
+ * Verified live by re-running the whole union with it: 5,400 of 5,401,
+ * shortfall 1, inside {@link MAX_SEARCH_SHORTFALL} — and that last one is the
+ * total having climbed during the run, which the `Math.min` floor absorbs.
+ *
+ * `watch-skill` is deliberately NOT shipped. Its cell is the same 20 names as
+ * `deepwatch`'s (both measured 20), so its marginal contribution over
+ * `deepwatch` is zero, measured. A second entry for one family would cost a
+ * probe and a page every run and buy nothing — the mistake this comment's own
+ * history is made of, in the other direction.
+ *
+ * Adding a keyword is the documented response to that throw; a cell is always
+ * `keywords:<harvest-keyword>,<refinement>`, so a refinement can only narrow
+ * the net a listing sees, never widen it — an addition is a coverage decision,
+ * not a policy one. But note what the arithmetic above implies: this closes a
+ * gap of six against an overshoot growing eighty-three names a day, and the
+ * next family to publish at the bottom of the ranking with its own private tag
+ * reopens it. A list a human extends per incident is not a fix for a residual
+ * that grows daily, and the structural options (scaling the tolerance to the
+ * measured overshoot, deriving the vocabulary from harvested packuments, or
+ * dropping the over-window keyword) all change what the shop publishes or how
+ * loudly it fails, so they are policy and belong in the design doc rather than
+ * in this constant.
  */
 export const PARTITION_KEYWORDS: readonly string[] = [
   'dsh', 'dsh-plugin', 'deepseek-harness', 'plugin', 'deepseek',
@@ -176,7 +238,7 @@ export const PARTITION_KEYWORDS: readonly string[] = [
   'cordis', 'codex', 'claude-code', 'desktop-pet',
   'hesi', 'memory', 'pi-extension', 'academic-writing', 'agent-virtualization',
   'agents', 'ai-review', 'approval', 'client-plugin', 'embedding',
-  'remote', 'statistics',
+  'remote', 'statistics', 'deepwatch',
 ]
 
 /** One query's `text` value: the keyword, plus any refinements ANDed on. */

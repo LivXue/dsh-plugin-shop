@@ -565,8 +565,11 @@ describe('PARTITION_KEYWORDS', () => {
       .map(match => match[1])
       .filter((keyword): keyword is string => keyword !== undefined)
     // The scan's own positive control: with no claims found it would pass by
-    // checking nothing.
-    expect(credited).toHaveLength(12)
+    // checking nothing. Deliberately an exact count and not a lower bound, so
+    // growing the note is a decision somebody makes rather than something that
+    // slides. 12 for the 2026-09-04 round, plus `deepwatch` for the 2026-09-07
+    // window crossing.
+    expect(credited).toHaveLength(13)
     for (const keyword of credited) {
       expect(
         PARTITION_KEYWORDS,

@@ -434,6 +434,26 @@ Implementation decisions:
 
 **Amendment (2026-08-31, market borrowings C-1): `shop/version` gains `restartSupported`, and `shop/restart` gains a supervisor refusal.** `restartSupported` is false when a systemd unit owns this process — detection requires both signals: `INVOCATION_ID` or `JOURNAL_STREAM` present, and ppid 1, since the markers alone are inherited by every descendant of a unit, an ordinary terminal included — and the shop row config sets no `allowRestart: true` override. The client hides the restart offer on false and keeps the pending-change notice, naming the manual restart. `shop/restart` refuses in the same typed `{ ok: false, detail }` shape as the `--port 0` refusal, before anything is torn down: under a systemd unit the two-phase handoff kills itself — the main process exiting also kills the unit's cgroup, taking the detached helper with it, and the service never comes back.
 
+**Amendment (2026-09-08): `keywords:deepseek-harness` has outgrown npm's search window, and the refinement list is no longer a fix — only a delay.**
+
+The npm search API reaches 5,250 names per query (`from` capped at 5,000; re-verified live 2026-09-07 — `from=5000` serves a distinct tail, `from=5100` and above return page 0). `keywords:deepseek-harness` measured 5,401 on 2026-09-07, so **151 names sit beyond any single query's reach**, and the daily `build` job went red on every tree, `main` included, because the harvest refuses to publish a silently-short catalog.
+
+Three axes were probed for a covering alternative and none exists:
+
+- **Ranking weights are inert.** `quality`/`popularity`/`maintenance` leave the result identical at every position, head and tail (250/250 same-position, three weightings). They cannot re-slice what is reachable.
+- **No negation qualifier.** `keywords:a,b` is an intersection and the only filter the API honors, so a cell's complement cannot be expressed and a refinement partition is never covering by construction.
+- **No unwindowed index.** The CouchDB `byKeyword` view is gone (404), npms.io is dead, and ecosyste.ms ignores its own `keyword=` parameter (returns packages carrying none of it).
+
+The immediate residual was closed the documented way — one refinement keyword, `deepwatch`, verified live to take the union from 5,394 to 5,400 of 5,401. **But the arithmetic says this is a treadmill.** The overshoot grows about eighty-three names a day (5,132 → 5,380 over three days), three times the rate the code previously recorded, and the residual is the uncovered fraction of it. Uncovered-ness concentrates exactly where the unreachable names are: sampled 2026-09-07, 2.8% of ranks 5,000–5,250 carry no refinement against 0.0% mid-ranking. The seven that broke this build were one publisher's scoped family, published together, ranking together at the bottom, carrying a private tag. The next such family reopens the gap, and a human extending a list per incident does not keep up with a daily residual.
+
+The structural options each change what the shop publishes or how loudly it fails, which is why they are recorded here rather than decided in a constant's comment:
+
+1. **Scale the tolerance to the measured overshoot.** The harvest can prove that `total − SEARCH_WINDOW` names are unreachable by any query and that the cells recovered all but *r* of them. Tolerating a small *r* — reported by name-count in the build report — is honest about a limit of the API rather than a defect in the partition, and it cannot hide a partition collapse, since that would crash the recovery rate. It does mean **knowingly publishing a catalog a few packages short**, which is a change to the "throws rather than truncating" invariant and needs to be stated as one.
+2. **Derive the refinement vocabulary from harvested packuments.** The harvest already reads every candidate's `keywords`; persisting that vocabulary and using the most-covering tags as cells makes the list self-maintaining. It shrinks the residual without a human in the loop but is still not covering: a package whose only tag is the harvest keyword, ranking beyond the window, is unreachable by any AND.
+3. **Drop `deepseek-harness` from `HARVEST_KEYWORDS`.** Keeps the invariant exactly, at the cost of every listing that carries only that tag.
+
+Until one is chosen, each crossing costs a red build and a hand-measured refinement.
+
 **Amendment (2026-09-07): entries carry `unpackedSize`, the shelf prints it, the category tabs take their category's hue, and the bar gains an incompatible filter.**
 
 *`unpackedSize`.* npm entries carry the packument's `dist.unpackedSize` — the bytes an install puts on disk. Additive and optional, so it rides every `schemaVersion` (a consumer's non-strict zod strips a key it does not know; bumping the version NUMBER is the change that breaks a capped client, §6.2). The registry bounds it at harvest and DROPS anything that is not a safe non-negative integer, rather than rejecting the package: a size is a decoration, so a broken one costs the size and not the listing. Measured 2026-09-07, 250 of 250 live `dsh-plugin` packages carry one (min 25 kB, median 847 kB, max 180 MB), so the absent branch is for publishes older than npm 5.6.
