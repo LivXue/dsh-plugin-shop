@@ -187,73 +187,128 @@ function patchInsertNames(text: string): string[] {
 }
 
 /**
- * The conditions this rule follows into an `exports` value, in scan order.
- *
- * `types` is absent by design. A pack that omits its `.d.ts` still loads, so
- * refusing over one would repeat the prepare/prepack mistake in a new place:
- * a true statement about the archive that is not a reason the plugin cannot
- * run. Only one target is followed, not every arm — a dual package whose
- * `require` arm is packed differently from its `import` arm is not something
- * this rule claims to judge, and the case it IS aimed at has every arm
- * missing at once.
+ * How many targets one subpath may contribute. A conditions object is
+ * author-controlled and nests, so the collection is bounded like everything
+ * else that reads hostile input here.
  */
-const RUNTIME_CONDITIONS = ['default', 'node', 'import', 'require'] as const
+const MAX_TARGETS = 24
 
-/** Follow a conditions object down to its first runtime string target.
- * Depth-bounded rather than recursive-until-done: the value is hostile. */
-function conditionTarget(value: unknown, depth = 0): string | null {
-  if (typeof value === 'string') return value
-  if (depth >= 4 || value === null || typeof value !== 'object' || Array.isArray(value)) return null
-  for (const condition of RUNTIME_CONDITIONS) {
-    if (!Object.hasOwn(value, condition)) continue
-    const found = conditionTarget((value as Record<string, unknown>)[condition], depth + 1)
-    if (found !== null) return found
+/**
+ * Every target a conditions value could resolve to, in declaration order.
+ *
+ * A SET, not a pick, and that is the correction the PR review forced. Node
+ * matches conditions in the object's own declaration order, so
+ * `{ node: './dist/node.js', default: './dist/browser.js' }` loads
+ * `dist/node.js` — while a fixed `default`-first scan read `dist/browser.js`,
+ * found it absent, and refused a package that imports successfully. Modelling
+ * Node's algorithm exactly would mean deciding whether this install resolves
+ * as ESM or CJS, which the archive does not say. Collecting every reachable
+ * arm and refusing only when NONE of them ships is strictly weaker than that
+ * algorithm and errs the one safe way: it can miss a defect, never invent one.
+ *
+ * `types`/`typings` are skipped because a type declaration is not something
+ * the loader can run — without that, a `.d.ts` alone would excuse a missing
+ * runtime module under the "any arm ships" rule.
+ */
+function conditionTargets(value: unknown, depth = 0, out: string[] = []): string[] {
+  if (out.length >= MAX_TARGETS) return out
+  if (typeof value === 'string') {
+    out.push(value)
+    return out
   }
-  return null
+  if (depth >= 4 || value === null || typeof value !== 'object' || Array.isArray(value)) return out
+  // Declaration order, and every condition rather than a known list: an arm
+  // we do not recognise is one Node might still select, and including it can
+  // only make this rule accept more.
+  for (const key of Object.keys(value)) {
+    if (key === 'types' || key === 'typings') continue
+    conditionTargets((value as Record<string, unknown>)[key], depth + 1, out)
+    if (out.length >= MAX_TARGETS) break
+  }
+  return out
 }
 
 /**
- * Where the manifest says a subpath of ITSELF lives, or null when this rule
+ * What the manifest declares for a subpath of ITSELF, or null when this rule
  * cannot say.
  *
- * Null is the important half. A wildcard pattern, a subpath an `exports` map
- * does not list, a deep subpath with no map to resolve it, a `..` segment —
- * each is a shape this does not model, and refusing on an unmodelled shape is
- * a guess. The one guess this file already made in the confident direction
- * delisted 90 working entries.
+ * `legacy` marks a `main` value, which is resolved differently from an
+ * `exports` target: `main` is a file path subject to extension and
+ * directory-index lookup, while an `exports` target is an exact relative URL.
  */
-function ownSubpathTarget(manifest: { exports?: unknown; main?: unknown }, subpath: string): string | null {
-  const target = declaredTarget(manifest, subpath)
-  // ONE exit for every branch above. Applying these per-branch is how the
-  // first draft let a `main` of `./dist/*.js` or `./../outside.js` through
-  // unguarded while the `exports` arm refused the same shapes — a mutation
-  // that survived because the only test for either reached the object arm.
-  if (target === null || target.includes('*')) return null
-  return target.split('/').includes('..') ? null : target
-}
-
-/** The literal target string the manifest declares for one of its own
- * subpaths, before the shapes {@link ownSubpathTarget} refuses to resolve. */
-function declaredTarget(manifest: { exports?: unknown; main?: unknown }, subpath: string): string | null {
+function declaredTargets(
+  manifest: { exports?: unknown; main?: unknown },
+  subpath: string,
+): { targets: string[]; legacy: boolean } | null {
   const { exports } = manifest
   if (exports === undefined || exports === null) {
     // No map: only the package's own entry point is answerable. A deeper
     // subpath falls to legacy directory resolution, which has too many shapes
     // to call a miss. `main` absent is not defaulted to `index.js` either —
     // this refuses only what the author DECLARED and did not ship.
-    return subpath === '.' && typeof manifest.main === 'string' ? manifest.main : null
+    if (subpath !== '.') return null
+    return typeof manifest.main === 'string' ? { targets: [manifest.main], legacy: true } : null
   }
-  if (typeof exports === 'string') return subpath === '.' ? exports : null
+  if (typeof exports === 'string') return subpath === '.' ? { targets: [exports], legacy: false } : null
   if (typeof exports !== 'object' || Array.isArray(exports)) return null
   // A map keyed by subpaths, or a bare conditions object standing for `.`.
-  return Object.keys(exports).some(key => key.startsWith('.'))
-    ? (Object.hasOwn(exports, subpath) ? conditionTarget((exports as Record<string, unknown>)[subpath]) : null)
-    : (subpath === '.' ? conditionTarget(exports) : null)
+  if (Object.keys(exports).some(key => key.startsWith('.'))) {
+    if (!Object.hasOwn(exports, subpath)) return null
+    return { targets: conditionTargets((exports as Record<string, unknown>)[subpath]), legacy: false }
+  }
+  return subpath === '.' ? { targets: conditionTargets(exports), legacy: false } : null
+}
+
+/**
+ * The lookups Node performs for a `main` path, in order. The empty suffix is
+ * the literal value; the rest are the extension and directory-index forms
+ * that made `main: './dist/index'` and `main: './dist'` — both of which
+ * import fine against a shipped `dist/index.js` — read as missing output.
+ */
+const LEGACY_SUFFIXES = ['', '.js', '.json', '.node', '/index.js', '/index.json', '/index.node'] as const
+
+/**
+ * Archive member paths any declared target could resolve to, or null when
+ * none of them is resolvable.
+ *
+ * Percent-escapes are decoded for an `exports` target because such a target
+ * is a relative URL: `./dist/my%20plugin.js` IS the shipped
+ * `dist/my plugin.js`, and comparing the raw string called a present file
+ * missing. The containment check runs on the DECODED path, or `%2e%2e` would
+ * walk straight through the guard it replaced.
+ */
+function archiveCandidates(
+  declared: { targets: string[]; legacy: boolean },
+  root: string,
+): string[] | null {
+  const candidates: string[] = []
+  for (const target of declared.targets) {
+    // A pattern is not a literal path; nothing here can say which file it
+    // would expand to.
+    if (target.includes('*')) continue
+    let path = target
+    if (!declared.legacy) {
+      try {
+        path = decodeURIComponent(target)
+      } catch {
+        // A malformed escape (`%zz`) is a target this rule cannot resolve,
+        // which is never a refusal.
+        continue
+      }
+    }
+    const relative = path.replace(/^\.\//, '')
+    if (relative.split('/').includes('..')) continue
+    for (const suffix of declared.legacy ? LEGACY_SUFFIXES : ['']) {
+      candidates.push(normalize(`${root}/${relative}${suffix}`))
+    }
+  }
+  return candidates.length > 0 ? candidates : null
 }
 
 /**
  * The first module an `insert` row names, resolves into THIS package, and the
- * archive does not carry — or null when every such name checks out.
+ * archive cannot supply under ANY resolution — or null when every such name
+ * checks out.
  *
  * This is the claim the patch-target check above cannot make. That one proves
  * the patch file ships; this one proves the files the patch points dsh at
@@ -286,10 +341,14 @@ function missingInsertTarget(
     if (name === bundleName) subpath = '.'
     else if (name.startsWith(`${bundleName}/`)) subpath = `./${name.slice(bundleName.length + 1)}`
     else continue
-    const target = ownSubpathTarget(manifest, subpath)
-    if (target === null) continue
-    const relative = target.replace(/^\.\//, '')
-    if (!present.has(normalize(`${root}/${relative}`))) return { name, path: relative }
+    const declared = declaredTargets(manifest, subpath)
+    if (declared === null) continue
+    const candidates = archiveCandidates(declared, root)
+    if (candidates === null) continue
+    if (candidates.some(candidate => present.has(candidate))) continue
+    const [first] = candidates
+    if (first === undefined) continue
+    return { name, path: first.slice(root.length + 1) }
   }
   return null
 }

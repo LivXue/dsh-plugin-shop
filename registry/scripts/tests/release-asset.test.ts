@@ -302,6 +302,123 @@ describe('verifyReleaseAsset', () => {
     }
   })
 
+  // ── what the LOADER would select, not what we scan first ─────────────────
+  // Review findings on PR #22, all three reproduced by importing the same
+  // package contents in real Node: this rule refused four assets that load.
+  // The correction is one idea — refuse only when NOTHING the loader could
+  // possibly select is in the archive — rather than three special cases.
+
+  it('accepts a conditions object whose selected arm ships, whatever the scan order', () => {
+    // Node matches conditions in the object's DECLARATION order, so `node`
+    // wins here and dist/node.js is what loads. A fixed default-first scan
+    // read dist/browser.js, found it absent, and refused a working package.
+    expect(verifyReleaseAsset(rawTarball({
+      'package/package.json': JSON.stringify({
+        name: 'dsh-foo', version: '1.0.0',
+        exports: { node: './dist/node.js', default: './dist/browser.js' },
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      }),
+      'package/cordis.patch.yml': '- insert:\n    - id: a\n      name: dsh-foo\n',
+      'package/dist/node.js': 'exports.ok=true',
+    }), 'dsh-foo')).toEqual({ ok: true })
+  })
+
+  it('still refuses a conditions object when no arm at all ships', () => {
+    // The other side of the same rule: "any reachable arm present" must not
+    // become "any conditions object is excused".
+    const verdict = verifyReleaseAsset(rawTarball({
+      'package/package.json': JSON.stringify({
+        name: 'dsh-foo', version: '1.0.0',
+        exports: { node: './dist/node.js', default: './dist/browser.js' },
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      }),
+      'package/cordis.patch.yml': '- insert:\n    - id: a\n      name: dsh-foo\n',
+    }), 'dsh-foo')
+    expect(verdict.ok).toBe(false)
+  })
+
+  it('accepts a legacy main that resolves by extension or directory index', () => {
+    // `main` is not an exact path: Node tries `<main>`, `<main>.js`, and
+    // `<main>/index.js`. Both layouts import successfully in real Node, and
+    // comparing the literal string refused both.
+    for (const main of ['./dist/index', './dist']) {
+      expect(verifyReleaseAsset(rawTarball({
+        'package/package.json': JSON.stringify({
+          name: 'dsh-foo', version: '1.0.0', main,
+          dsh: { bundle: { patch: './cordis.patch.yml' } },
+        }),
+        'package/cordis.patch.yml': '- insert:\n    - id: a\n      name: dsh-foo\n',
+        'package/dist/index.js': 'exports.ok=true',
+      }), 'dsh-foo')).toEqual({ ok: true })
+    }
+  })
+
+  it('still refuses a legacy main when no lookup candidate ships', () => {
+    const verdict = verifyReleaseAsset(rawTarball({
+      'package/package.json': JSON.stringify({
+        name: 'dsh-foo', version: '1.0.0', main: './dist/index',
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      }),
+      'package/cordis.patch.yml': '- insert:\n    - id: a\n      name: dsh-foo\n',
+    }), 'dsh-foo')
+    expect(verdict.ok).toBe(false)
+  })
+
+  it('resolves percent-escapes in an exports target before comparing members', () => {
+    // An `exports` target is a relative URL, so `%20` is a space on disk.
+    // Stripping only the leading `./` searched for a member that cannot
+    // exist and called a shipped file missing build output.
+    expect(verifyReleaseAsset(rawTarball({
+      'package/package.json': JSON.stringify({
+        name: 'dsh-foo', version: '1.0.0', exports: './dist/my%20plugin.js',
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      }),
+      'package/cordis.patch.yml': '- insert:\n    - id: a\n      name: dsh-foo\n',
+      'package/dist/my plugin.js': 'exports.ok=true',
+    }), 'dsh-foo')).toEqual({ ok: true })
+  })
+
+  it('refuses a pack that ships only its type declarations', () => {
+    // What skipping `types` is FOR, now that "any reachable arm present"
+    // would otherwise let a .d.ts excuse a missing runtime module. A types
+    // arm is not something the loader can run.
+    const verdict = verifyReleaseAsset(rawTarball({
+      'package/package.json': JSON.stringify({
+        name: 'dsh-foo', version: '1.0.0',
+        exports: { '.': { types: './dist/index.d.ts', default: './dist/index.js' } },
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      }),
+      'package/cordis.patch.yml': '- insert:\n    - id: a\n      name: dsh-foo\n',
+      'package/dist/index.d.ts': 'export const ok: boolean',
+    }), 'dsh-foo')
+    expect(verdict.ok).toBe(false)
+    if (!verdict.ok) expect(verdict.detail).toContain('dist/index.js')
+  })
+
+  it('does not refuse a target whose percent-escape cannot be decoded', () => {
+    // `decodeURIComponent('%zz')` throws. An undecodable target is a shape
+    // this rule cannot resolve, which is never a refusal.
+    expect(verifyReleaseAsset(rawTarball({
+      'package/package.json': JSON.stringify({
+        name: 'dsh-foo', version: '1.0.0', exports: './dist/%zz.js',
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      }),
+      'package/cordis.patch.yml': '- insert:\n    - id: a\n      name: dsh-foo\n',
+    }), 'dsh-foo')).toEqual({ ok: true })
+  })
+
+  it('still refuses an escape that only appears after decoding', () => {
+    // `%2e%2e` decodes to `..`, so the containment check has to run on the
+    // DECODED path or the decode step reopens what it guarded.
+    expect(verifyReleaseAsset(rawTarball({
+      'package/package.json': JSON.stringify({
+        name: 'dsh-foo', version: '1.0.0', exports: './%2e%2e/outside.js',
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      }),
+      'package/cordis.patch.yml': '- insert:\n    - id: a\n      name: dsh-foo\n',
+    }), 'dsh-foo')).toEqual({ ok: true })
+  })
+
   it('does not treat a non-string insert name as a module name', () => {
     // A YAML list coerces to exactly the bundle name (`String(['dsh-foo'])`
     // is `'dsh-foo'`), so a rule that coerced instead of shape-checking would
