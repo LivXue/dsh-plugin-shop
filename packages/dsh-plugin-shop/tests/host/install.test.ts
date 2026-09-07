@@ -29,14 +29,14 @@ describe('validateInstall', () => {
   })
 
   it('refuses to replace a DIFFERENT plugin that happens to share the name', () => {
-    // Two same-named bundles cannot coexist: both declare the same loader
-    // entry id in their own patch, and dsh then refuses to load the tree at
-    // all ("duplicate loader entry id: skill-manager" — measured, the profile
-    // does not boot). Through the shop the manifest keys by bundle name, so
-    // the second install overwrites the first instead, silently, measured on
-    // 0.8.0-beta.1. Either way the plugin the user chose is gone. 177 live
-    // catalog names are claimed by more than one entry; dsh-skill-manager
-    // alone is claimed by 14.
+    // A profile holds one dependency per name, so the second install
+    // overwrites the first and the plugin the user chose is gone — silently,
+    // measured on 0.8.0-beta.1. 177 live catalog names are claimed by more
+    // than one entry; dsh-skill-manager alone is claimed by 14.
+    //
+    // NOT because they share a loader entry id: same-named forks often do not
+    // (see validateInstall's docstring for two measured counterexamples), and
+    // that is a different collision this gate cannot see.
     const installed = 'github:CLAPEILL/dsh-skill-manager#3c32e1030a2a862a686928a6fbbf81c0a4056ad2'
     const result = validateInstall(twoRepos(), {
       name: 'dsh-skill-manager', version: 'a'.repeat(40),
@@ -74,6 +74,44 @@ describe('validateInstall', () => {
       source: 'github', repo: 'Mvyvn/dsh-skill-manager', acknowledged: true,
     }, '2.0.0')
     expect(result).toMatchObject({ ok: false, code: 'name-taken' })
+  })
+
+  it.each([
+    ['git+ssh://git@github.com/CLAPEILL/dsh-skill-manager.git', 'a git remote'],
+    ['git@github.com:CLAPEILL/dsh-skill-manager.git', 'an ssh shorthand'],
+    ['file:/home/me/dev/dsh-skill-manager', 'a local checkout'],
+    ['link:../dsh-skill-manager', 'a linked checkout'],
+    ['workspace:*', 'a workspace link'],
+    ['npm:some-other-plugin@^2.0.0', 'an alias to another package'],
+  ])('refuses to overwrite %s it cannot identify', (installed) => {
+    // Every one of these read as npm before, and `sameInstall` short-circuits
+    // true for npm-vs-npm — so the gate PASSED them and pnpm overwrote a git
+    // remote, someone's working checkout, or an alias to a different package
+    // entirely. Refusing is the point of the gate; guessing npm defeated it.
+    const result = validateInstall(snapshot({ name: 'dsh-skill-manager', version: '2.0.0' }), {
+      name: 'dsh-skill-manager', version: '2.0.0',
+      source: 'npm', acknowledged: true,
+    }, installed)
+    expect(result).toMatchObject({ ok: false, code: 'name-taken' })
+    if (!result.ok) {
+      // The reader is told which string is in the way, and is NOT told it is
+      // the npm package of this name — the one thing it is known not to be.
+      // (`npm:some-other-plugin` may well appear: that is the spec, quoted.)
+      expect(result.detail).toContain(installed)
+      expect(result.detail).toContain('cannot identify')
+      expect(result.detail).not.toContain('npm:dsh-skill-manager')
+    }
+  })
+
+  it('names an npm holder with the same token the card uses', () => {
+    // One holder function for both halves, so the badge and the refusal can
+    // never spell one plugin two ways.
+    const result = validateInstall(twoRepos(), {
+      name: 'dsh-skill-manager', version: 'a'.repeat(40),
+      source: 'github', repo: 'Mvyvn/dsh-skill-manager', acknowledged: true,
+    }, '2.0.0')
+    expect(result).toMatchObject({ ok: false, code: 'name-taken' })
+    if (!result.ok) expect(result.detail).toContain('npm:dsh-skill-manager')
   })
 
   it('rejects a name absent from the snapshot as not-in-catalog', () => {

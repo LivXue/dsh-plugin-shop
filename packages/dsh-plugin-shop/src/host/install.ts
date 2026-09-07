@@ -2,7 +2,7 @@
 
 import type { CatalogSnapshot } from './catalog.ts'
 import type { CatalogEntry } from './types.ts'
-import { displayRepoSpec, identityKey, installedSpecMatches } from '../shared/identity.ts'
+import { holderLabel, identityKey, specVerdict } from '../shared/identity.ts'
 
 export type InstallRejectionCode =
   | 'not-in-catalog'
@@ -34,20 +34,33 @@ export type ValidateResult =
  * `installedSpec` is the profile manifest's dependency for `args.name`, when
  * it has one.
  *
- * Two same-named bundles CANNOT coexist, and the binding constraint is not the
- * manifest key — pnpm holds both fine under an alias, measured. It is the
- * loader entry id the bundle declares in its own patch: two copies of
- * `dsh-skill-manager` both declare `id: skill-manager`, and dsh then refuses
- * to load the tree at all —
+ * What this refuses is REPLACEMENT, and the mechanism is the manifest key: a
+ * profile holds one dependency per name, the shop writes `dependencies[name]`,
+ * so installing a second plugin of that name overwrites the first and a plugin
+ * the user chose is gone with no notice. 177 of the live catalog's names are
+ * claimed by more than one entry, `dsh-skill-manager` alone by 14.
+ *
+ * That is the whole of what the name buys. It is NOT the same rule as the
+ * loader's, and the two must not be confused — an earlier version of this
+ * comment and of the published detail said "they declare the same loader entry
+ * id", which is false for a measurable share of the pairs refused here:
+ * `Anyway-one/dsh-balance` declares `id: balance` while `ZHIZHU4410/deepseek-
+ * balance`, also bundle-named `dsh-balance`, declares `id: dsh-balance`. Those
+ * two would load side by side happily if a profile could hold both.
+ *
+ * The loader's own rule cuts the other way and this gate does not reach it:
+ * two DIFFERENTLY-named bundles declaring one entry id make dsh refuse the
+ * whole tree —
  *
  *   Error: dsh: plugin tree failed to load: failed to apply loader entry
- *   include (cordis:include): duplicate loader entry id: skill-manager
+ *   include (cordis:include): duplicate loader entry id: plugin-manager
  *
- * — so the profile does not boot until one is removed. Through the shop the
- * outcome is milder and quieter: the manifest keys by bundle name, so the
- * second install overwrites the first, and a plugin the user chose is gone
- * with no notice. 177 of the live catalog's names are claimed by more than one
- * entry and `dsh-skill-manager` alone by 14.
+ * — and the profile does not boot at all. `2768651338/dsh-plugin-manager` and
+ * `Dingpenghui-good/dsh-plugin-manager` carry different bundle names and both
+ * declare `id: plugin-manager`, so this gate passes them. A candidate's entry
+ * ids are not knowable before its files are on disk, which is why the check
+ * for that lives after the install lands rather than here (see
+ * `collidingEntryId` in index.ts).
  *
  * Passing the spec in rather than reading the manifest here keeps the whole
  * gate a pure function driven by fixtures.
@@ -89,18 +102,31 @@ export function validateInstall(
   if (entry.version !== args.version) {
     return { ok: false, code: 'version-mismatch', detail: `dsh-plugin-shop: ${args.name}@${args.version} is not the cataloged version (${entry.version})` }
   }
-  // Last, so the acknowledgement gate is not spent on a request that cannot
-  // proceed: the name belongs to a DIFFERENT plugin that is already installed.
-  // A same-identity request is the ordinary update path and passes here — the
-  // manifest key it shares is its own.
-  if (installedSpec !== undefined && !installedSpecMatches(entry, installedSpec)) {
-    const holder = displayRepoSpec(installedSpec) ?? `the npm package ${args.name}`
-    return {
-      ok: false,
-      code: 'name-taken',
-      detail: `dsh-plugin-shop: ${args.name} is already installed from ${holder}.`
-        + ' Two plugins of the same name cannot both be loaded — they declare the same loader entry id —'
-        + ' so installing this one would replace it. Uninstall the one you have first if you mean to switch.',
+  // Ahead of the acknowledgement gate, so a request that cannot proceed never
+  // asks the reader to accept a plugin's privileges first. The shipped client
+  // opens its own §9.3 dialog before it calls, so this ordering is what any
+  // OTHER caller of the RPC gets; the client closes its own gate on the same
+  // verdict (see ShopTab's nameTakenBy).
+  //
+  // A same-identity request is the ordinary update path and passes — the
+  // manifest key it would overwrite is its own.
+  if (installedSpec !== undefined) {
+    const verdict = specVerdict(entry, installedSpec)
+    if (verdict !== 'same') {
+      const holder = holderLabel(installedSpec, args.name)
+      // `unknown` is a spec the grammar does not cover — a git remote, a
+      // `file:` checkout, an `npm:` alias. Refusing it is the point: the shop
+      // must not overwrite something it cannot identify, and saying which
+      // string is in the way is the only honest thing left to say about it.
+      const what = verdict === 'unknown'
+        ? `dsh-plugin-shop: ${args.name} is already installed from ${holder}, which the shop cannot identify as any catalog entry.`
+        : `dsh-plugin-shop: ${args.name} is already installed from ${holder}.`
+      return {
+        ok: false,
+        code: 'name-taken',
+        detail: `${what} A profile holds one dependency per name, so installing this one would overwrite it`
+          + ' and the plugin you have would be gone. Uninstall it first if you mean to switch.',
+      }
     }
   }
   if (entry.tier !== 'verified' && !args.acknowledged) {
