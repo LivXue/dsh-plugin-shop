@@ -665,6 +665,51 @@ describe('peers (schemaVersion 6)', () => {
   })
 })
 
+describe('unpackedSize', () => {
+  const baseEntry = {
+    name: 'dsh-timeline', version: '0.1.4', integrity: 'sha512-x', publishedAt: null,
+    repository: null, license: 'MIT', tier: 'community', metadata: 'derived',
+  }
+
+  /** One catalog load whose data file holds `entries`, at `schemaVersion`. */
+  async function load(entries: unknown[], schemaVersion: number) {
+    const data = dataJson(entries, [], schemaVersion)
+    const { pointer } = pointerFor(data, '2026-09-01T00:00:00Z', undefined, schemaVersion)
+    const fetchImpl = (async (input: string | URL) => new Response(
+      String(input).endsWith('/index.json') ? pointer : data, { status: 200 },
+    )) as unknown as typeof fetch
+    return loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() })
+  }
+
+  it('carries the size through to the entry the client renders', async () => {
+    // Additive and optional, so it rides EVERY schemaVersion — including the
+    // live 5. That is the whole point: this schema strips a key it does not
+    // know, so one catalog serves old and new hosts, while bumping the version
+    // NUMBER is what makes a capped client refuse the catalog outright.
+    const result = await load([{ ...baseEntry, unpackedSize: 847407 }], 5)
+    expect(result.snapshot.entries[0]?.unpackedSize).toBe(847407)
+  })
+
+  it('parses an entry that carries no size at all', async () => {
+    // Every github entry, and any npm publish predating npm 5.6. Absent must
+    // stay parseable — a required field here is the 0.5.0 regression.
+    const result = await load([baseEntry], 5)
+    expect(result.snapshot.entries[0]?.unpackedSize).toBeUndefined()
+    expect(result.snapshot.entries).toHaveLength(1)
+  })
+
+  it('refuses a catalog whose size is not a non-negative integer', async () => {
+    // Our own artifact, so a violation is our build having written something
+    // it cannot write — and this project stops rather than render a size label
+    // reading "-1.0 kB" or "NaN kB". The registry drops such a value at
+    // harvest, so nothing legitimate reaches this.
+    for (const bad of [-1, 1.5, '847407', null]) {
+      await expect(load([{ ...baseEntry, unpackedSize: bad }], 5), `${JSON.stringify(bad)} was accepted`)
+        .rejects.toThrow()
+    }
+  })
+})
+
 describe('origin racing', () => {
   const entry = {
     name: 'dsh-hello-plugin', version: '1.2.0', integrity: 'sha512-i', publishedAt: null,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, categoryKey, displayVersion, entryKey, formatStars,
+  ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, categoryKey, displayVersion, entryKey, formatSize, formatStars,
   authorOf, hasGithubHome, heldBy, isCustomLicense, isShopLike, missingPeersOf,
   nextVisibleCount, npmPageUrl,
   reduceInstall,
@@ -409,6 +409,38 @@ describe('formatStars', () => {
     expect(formatStars(1234)).toBe('1.2k')
     expect(formatStars(1500)).toBe('1.5k')
     expect(formatStars(99999)).toBe('100k')
+  })
+})
+
+describe('formatSize', () => {
+  it('formats the magnitude boundaries in decimal units', () => {
+    // Decimal kB/MB, matching npmjs.com's own package page: the figure IS
+    // npm's `dist.unpackedSize`, and a reader who checks the shelf against
+    // npm must not find two different numbers for one package. 1024-based
+    // units would show 653.6 kB where npm shows 667 kB.
+    expect(formatSize(0)).toBe('0 B')
+    expect(formatSize(1)).toBe('1 B')
+    expect(formatSize(999)).toBe('999 B')
+    expect(formatSize(1000)).toBe('1.0 kB')
+    // Real figures measured against the live registry on 2026-09-07: the
+    // smallest, the median and the largest of 250 `dsh-plugin` packages.
+    expect(formatSize(25283)).toBe('25.3 kB')
+    expect(formatSize(847407)).toBe('847.4 kB')
+    expect(formatSize(179562863)).toBe('179.6 MB')
+    expect(formatSize(999999)).toBe('1000.0 kB')
+    expect(formatSize(1000000)).toBe('1.0 MB')
+    // The GB rung exists so a gigabyte package does not read "1000.0 MB".
+    expect(formatSize(1000000000)).toBe('1.0 GB')
+    expect(formatSize(2500000000)).toBe('2.5 GB')
+    // Past the last rung the unit stops climbing rather than inventing one.
+    expect(formatSize(5000000000000)).toBe('5000.0 GB')
+  })
+
+  it('answers nothing for an entry that carries no size', () => {
+    // A github entry has no honest figure and an npm publish older than npm
+    // 5.6 recorded none. Undefined in, undefined out — so the card renders no
+    // label instead of a "0 B" that would claim the package is empty.
+    expect(formatSize(undefined)).toBeUndefined()
   })
 })
 

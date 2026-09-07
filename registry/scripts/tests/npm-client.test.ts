@@ -299,6 +299,58 @@ describe('toCandidate', () => {
     expect(toCandidate(packument)?.peers).toEqual([])
   })
 
+  it('reads dist.unpackedSize as the entry size', () => {
+    // The figure npm computed at publish time. Measured 2026-09-07, all 250
+    // live `dsh-plugin` packages carry one, so this is the ordinary path.
+    const sized = {
+      ...packument,
+      versions: {
+        '1.2.0': { ...packument.versions['1.2.0'], dist: { integrity: 'sha512-hello', unpackedSize: 847407 } },
+      },
+    }
+    expect(toCandidate(sized)?.unpackedSize).toBe(847407)
+  })
+
+  it('carries no size when the packument records none', () => {
+    // npm has recorded unpackedSize since npm 5.6 (2017); a version published
+    // before that has none. Absent stays absent — a 0 would tell every reader
+    // the package is empty.
+    expect(toCandidate(packument)?.unpackedSize).toBeUndefined()
+    expect('unpackedSize' in (toCandidate(packument) ?? {})).toBe(false)
+  })
+
+  it('drops an unpackedSize that is not a safe non-negative integer, and keeps the listing', () => {
+    // Hostile or broken npm metadata. Each of these would reach a published
+    // artifact and then a size label on the shelf: a string renders as
+    // "NaN kB" or worse, a negative as "-1.0 kB", a fraction as a size no
+    // package can have, and a value past 2^53 cannot round-trip through JSON.
+    // The size is a decoration, so a bad one costs the size and NOT the
+    // listing — every case below still yields a candidate.
+    for (const bad of ['847407', -1, 1.5, Number.MAX_SAFE_INTEGER + 2, null, {}, [], true]) {
+      const hostile = {
+        ...packument,
+        versions: {
+          '1.2.0': { ...packument.versions['1.2.0'], dist: { integrity: 'sha512-hello', unpackedSize: bad } },
+        },
+      }
+      const candidate = toCandidate(hostile)
+      expect(candidate, `${JSON.stringify(bad)} took the whole candidate down`).not.toBeNull()
+      expect(candidate?.unpackedSize, `${JSON.stringify(bad)} reached the candidate`).toBeUndefined()
+      // The rest of the manifest is unaffected: the size is read beside
+      // `integrity`, and a bad one must not cost the entry its hash.
+      expect(candidate?.integrity).toBe('sha512-hello')
+    }
+    // Zero is a legal answer and NOT dropped: npm really does report 0 for an
+    // empty tarball, and that is a fact about the package worth showing.
+    const empty = {
+      ...packument,
+      versions: {
+        '1.2.0': { ...packument.versions['1.2.0'], dist: { integrity: 'sha512-hello', unpackedSize: 0 } },
+      },
+    }
+    expect(toCandidate(empty)?.unpackedSize).toBe(0)
+  })
+
   it('reads no peers when peerDependencies is not an object', () => {
     const hostile = {
       ...packument,

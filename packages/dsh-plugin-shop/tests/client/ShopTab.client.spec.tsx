@@ -134,6 +134,70 @@ describe('ShopTab', () => {
     expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-npm] [data-shop-author]')).toBeNull()
   })
 
+  it('shows the unpacked size left of the author, without expanding the card', async () => {
+    // Both are collapsed-card facts, and the order is deliberate: size is a
+    // property of the artifact, author of its origin. A reader scanning the
+    // shelf compares sizes down a column, so the size must be the inner of
+    // the two — the author's width varies and would ragged the column.
+    const { injected } = bench(snapshot({ publisher: 'realauthor', unpackedSize: 847407 }))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const card = container.querySelector('[data-shop-entry="dsh-hello-plugin"]')!
+    const size = card.querySelector('[data-shop-size]')
+    expect(size?.textContent).toBe('847.4 kB')
+    // On the action row, collapsed — not in the expanded detail.
+    expect(size?.closest('[data-shop-actions]')).toBeTruthy()
+    // Left of the author, in document order.
+    const meta = [...card.querySelectorAll('[data-shop-size], [data-shop-author]')]
+      .map(node => (node.hasAttribute('data-shop-size') ? 'size' : 'author'))
+    expect(meta).toEqual(['size', 'author'])
+  })
+
+  it('says WHICH size it is showing, for the reader and for assistive tech', async () => {
+    // Unpacked and download differ by the compression ratio. The visible text
+    // is the bare figure — the row is tight — so the word that disambiguates
+    // it rides the accessible name and the tooltip, the same idiom the stars
+    // badge uses. Without it the shop quietly misinforms anyone comparing
+    // this against a download size.
+    const { injected } = bench(snapshot({ unpackedSize: 847407 }))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const size = container.querySelector('[data-shop-size]')!
+    expect(size.getAttribute('aria-label')).toBe('847.4 kB unpacked')
+    expect(size.getAttribute('title')).toBe('847.4 kB unpacked')
+    expect(zh.sizeLabel).toContain('解包后')
+  })
+
+  it('shows no size for an entry the catalog gives none', async () => {
+    // Every github entry, and any npm publish older than npm 5.6. The label
+    // is absent rather than "0 B", which would claim the package is empty.
+    const { injected } = bench(snapshot({ publisher: 'realauthor' }))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(container.querySelector('[data-shop-size]')).toBeNull()
+    // The author still sits flush at the right edge with the size absent,
+    // which is why `margin-left: auto` lives on the wrapper and not on either
+    // label. The wrapper is the author's parent in that arrangement.
+    const author = container.querySelector('[data-shop-author]')
+    expect(author).toBeTruthy()
+    expect(author?.parentElement?.className).toMatch(/cardMeta/)
+  })
+
+  it('renders no meta wrapper at all when the entry has neither size nor author', async () => {
+    // Not a corner case: a github entry has no size, and the live catalog
+    // carries no `publisher` for most entries until the daily build that
+    // first harvested it — so this is the ordinary card today. The wrapper
+    // must not render empty, because `.cardActions` is a gapped flex row and
+    // a zero-width item still costs 8px after the last button.
+    const { injected } = bench(snapshot())
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const actions = container.querySelector('[data-shop-actions]')!
+    expect(actions.querySelector('[class*="cardMeta"]')).toBeNull()
+    // The action row still holds the install button — the card is intact.
+    expect(actions.querySelector('[data-shop-install]')).toBeTruthy()
+  })
+
   it('shows the repository owner as the author of a github entry', async () => {
     // A github entry has no npm publisher; its identity is `owner/slug`, so
     // the owner is the answer. Both sources must name someone.
@@ -1233,6 +1297,82 @@ describe('ShopTab', () => {
     expect(container.querySelector('[data-shop-blocker]')).toBeNull()
   })
 
+  it('leaves incompatible entries out of the shelf while the filter is on, and brings them back', async () => {
+    const result = snapshot()
+    result.plugins = [
+      { ...result.plugins[0]!, name: 'dsh-works-here' },
+      { ...result.plugins[0]!, name: 'dsh-missing-peer' },
+    ]
+    result.incompatible = { 'npm:dsh-missing-peer': ['@deepseek-ai/dsh-client-store'] }
+    const { injected } = bench(result)
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-works-here')).toBeTruthy())
+    expect(screen.getByText('dsh-missing-peer')).toBeTruthy()
+
+    const filter = container.querySelector('[data-shop-hide-incompatible]') as HTMLElement
+    // The count is over the browsable shelf, so it says how many exist rather
+    // than how many the current filter happens to show.
+    expect(filter.textContent).toContain('Hide incompatible 1')
+    expect(filter.getAttribute('aria-pressed')).toBe('false')
+
+    fireEvent.click(filter)
+    expect(screen.queryByText('dsh-missing-peer')).toBeNull()
+    expect(screen.getByText('dsh-works-here')).toBeTruthy()
+    // The label now offers the way back, and the count is unchanged: it
+    // counts the hidden set, which is exactly what a reader is deciding about.
+    expect(filter.textContent).toContain('Show incompatible 1')
+    expect(filter.getAttribute('aria-pressed')).toBe('true')
+
+    fireEvent.click(filter)
+    expect(screen.getByText('dsh-missing-peer')).toBeTruthy()
+  })
+
+  it('subtracts from the category filter rather than replacing it', async () => {
+    // The two are different kinds of control: the categories choose what to
+    // show and this one takes away from whatever they chose. So the filter
+    // must survive a category switch, and combine with it as AND.
+    const result = snapshot()
+    result.plugins = [
+      { ...result.plugins[0]!, name: 'dsh-tool-ok', catalog: { category: 'tool', summary: { en: 'a tool' }, capabilities: [] } },
+      { ...result.plugins[0]!, name: 'dsh-tool-broken', catalog: { category: 'tool', summary: { en: 'a tool' }, capabilities: [] } },
+      { ...result.plugins[0]!, name: 'dsh-ui-broken', catalog: { category: 'ui', summary: { en: 'a ui' }, capabilities: [] } },
+    ]
+    result.incompatible = {
+      'npm:dsh-tool-broken': ['@deepseek-ai/dsh-client-store'],
+      'npm:dsh-ui-broken': ['@deepseek-ai/dsh-client-store'],
+    }
+    const { injected } = bench(result)
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-tool-ok')).toBeTruthy())
+
+    fireEvent.click(container.querySelector('[data-shop-hide-incompatible]') as HTMLElement)
+    fireEvent.click(screen.getByRole('button', { name: /^Tool \d+$/ }))
+    expect(screen.getByText('dsh-tool-ok')).toBeTruthy()
+    expect(screen.queryByText('dsh-tool-broken')).toBeNull()
+    expect(screen.queryByText('dsh-ui-broken')).toBeNull()
+    // Still on, after the category changed under it.
+    expect(container.querySelector('[data-shop-hide-incompatible]')?.getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('hides only what it would have badged, never a name conflict', async () => {
+    // The button says "incompatible", which in this UI is the missing-
+    // components badge. A taken name wears a different badge and names a
+    // different remedy — and its card is the only place that explains why the
+    // install is refused, so the incompatible filter must not take it away.
+    const { injected } = bench(
+      snapshot({ name: 'dsh-hello-plugin', tier: 'community' }),
+      [],
+      { 'dsh-hello-plugin': 'github:someone/else' },
+    )
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(container.querySelector('[data-shop-blocker="name-taken"]')).toBeTruthy()
+    expect(container.querySelector('[data-shop-hide-incompatible]')?.textContent).toContain('Hide incompatible 0')
+
+    fireEvent.click(container.querySelector('[data-shop-hide-incompatible]') as HTMLElement)
+    expect(screen.getByText('dsh-hello-plugin')).toBeTruthy()
+  })
+
   it('badges the installed-list row for an outdated install whose peer the harness does not provide', async () => {
     const { injected } = bench(
       { ...snapshot({ tier: 'community' }), incompatible: { 'npm:dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] } },
@@ -1468,7 +1608,12 @@ describe('ShopTab incremental rendering', () => {
     vi.stubGlobal('IntersectionObserver', StubIntersectionObserver)
   })
 
-  const cardCount = (): number => document.querySelectorAll('[data-category]').length
+  // `[data-shop-entry]`, not `[data-category]`: the category tabs carry
+  // `data-category` too now (it is what the stylesheet reads to paint a
+  // pressed tab in its category's hue), so the old selector counted seven
+  // tabs as seven cards and every batch assertion was off by seven. The
+  // per-card hook is one node per card by construction.
+  const cardCount = (): number => document.querySelectorAll('[data-shop-entry]').length
 
   it('renders only the first batch of a large catalog, with a "showing" line and a sentinel', async () => {
     const { injected } = bench(manyPlugins(100))

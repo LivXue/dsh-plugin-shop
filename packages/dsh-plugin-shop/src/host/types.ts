@@ -51,6 +51,12 @@ export interface CatalogEntry {
   added?: string
   /** The package's declared peer dependency names (schemaVersion 6). */
   peers?: string[]
+  /** What installing this puts on disk, in bytes — npm's own
+   * `dist.unpackedSize`. npm entries only, and only where the packument
+   * carried one; a github entry has no honest figure and therefore no field
+   * (registry `Entry.unpackedSize`). Additive and optional, so it rides every
+   * schemaVersion. */
+  unpackedSize?: number
 }
 
 export interface DeniedEntry { name: string; detail: string; replacement?: string }

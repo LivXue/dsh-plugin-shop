@@ -16,7 +16,10 @@
  * falls back to a restart, and the peer fixture declares `peers:
  * ["@deepseek-ai/dsh-client-store"]` — a module this test's profile never
  * installs — so the harness-compatibility badge and install-gate warning
- * have a genuinely-missing peer to report against a real host resolver.
+ * have a genuinely-missing peer to report against a real host resolver. That
+ * one missing peer is also the incompatible FILTER's subject: it makes the
+ * shelf hold exactly one incompatible entry, so the filter's count and the
+ * card it removes are both determinate.
  *
  * Port 0 → the OS assigns an ephemeral port; the caller reads `baseUrl` and
  * closes the server in teardown. The fixtures live here, not in the test, so
@@ -52,6 +55,12 @@ const FIXTURE_ENTRIES = [
     // in a real browser and not only in jsdom. The other two entries carry
     // none, which is also the live catalog's state until the next daily build.
     publisher: 'octocat',
+    // npm's `dist.unpackedSize`, so the size label is proven through the real
+    // wire → host zod → client format path. 847407 is the MEDIAN of the 250
+    // live `dsh-plugin` packages measured on 2026-09-07, and it renders
+    // "847.4 kB". The other three entries carry none, which is what the live
+    // catalog looks like until the daily build that first harvests this field.
+    unpackedSize: 847407,
   },
   {
     name: 'dsh-shop-e2e-live',

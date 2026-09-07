@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   ENTRY_PAYLOAD_MAX_BYTES, INTEGRITY_MAX_LENGTH, NAME_MAX_LENGTH, PUBLISHED_AT_MAX_LENGTH,
-  PUBLISHER_MAX_LENGTH, VERSION_MAX_LENGTH, gate,
+  PUBLISHER_MAX_LENGTH, VERSION_MAX_LENGTH, entryPayloadBytes, gate,
 } from '../src/gate.ts'
 import { parseRegistryConfig } from '../src/config.ts'
 import type { Candidate } from '../src/types.ts'
@@ -537,6 +537,39 @@ describe('the per-entry size budget', () => {
       },
     }), config)
     expect(result.ok).toBe(true)
+  })
+
+  it('counts the unpacked size against the budget, because emit writes it', () => {
+    // The budget's whole claim is that "the measured bytes are the bytes
+    // `emit` will write" (see entryPayloadBytes). Every field `assignTier`
+    // puts on the entry must therefore be handed to the measurement — a field
+    // that reaches the artifact without being counted makes the number a
+    // guess, and a guess is what the per-entry budget exists to replace.
+    const withSize = candidate({ unpackedSize: 179562863 })
+    const measured = entryPayloadBytes({
+      name: withSize.name,
+      version: withSize.version,
+      integrity: withSize.integrity,
+      publishedAt: withSize.publishedAt,
+      repository: withSize.repository,
+      license: withSize.license,
+      catalog: withSize.catalog,
+      unpackedSize: withSize.unpackedSize,
+    })
+    const withoutSize = entryPayloadBytes({
+      name: withSize.name,
+      version: withSize.version,
+      integrity: withSize.integrity,
+      publishedAt: withSize.publishedAt,
+      repository: withSize.repository,
+      license: withSize.license,
+      catalog: withSize.catalog,
+    })
+    // `,\n      "unpackedSize": 179562863` at the entry's indentation.
+    expect(measured - withoutSize).toBe('\n      "unpackedSize": 179562863,'.length)
+    // And a size alone never pushes a real entry over: the largest live
+    // listing measured 179 MB on 2026-09-07, which is 30 bytes of JSON.
+    expect(gate(withSize, config).ok).toBe(true)
   })
 
   it('reports the size only after every reason that names a field', () => {

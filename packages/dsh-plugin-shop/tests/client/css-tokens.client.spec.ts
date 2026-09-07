@@ -108,23 +108,34 @@ describe('summary clamp', () => {
   })
 })
 
-describe('category spine hues', () => {
+describe('category hues', () => {
   // One hue per category, in display order; theme joined in v5 (market
   // borrowings §3.4) as the pink between integration and other.
   const SEVEN_HUES = ['#4C8DFF', '#A78BFA', '#2DD4BF', '#F59E0B', '#34D399', '#F472B6', '#8B8E96']
+  const CATEGORIES = ['tool', 'provider', 'ui', 'workflow', 'integration', 'theme', 'other']
+
+  /** The rule whose selector list contains `sel`, whatever else it contains.
+   * The hue table is written as one rule per hue covering BOTH the card and
+   * the category tab, so an exact-selector lookup no longer finds it. */
+  function ruleContaining(sel: string): string | undefined {
+    for (const [head, body] of rules) {
+      if (head.split(',').some(part => part.trim() === sel)) return body
+    }
+    return undefined
+  }
 
   it('assigns each category a distinct hue', () => {
-    for (const cat of ['tool', 'provider', 'ui', 'workflow', 'integration', 'theme', 'other']) {
-      const rule = rules.get(`.card[data-category='${cat}']`)
+    for (const cat of CATEGORIES) {
+      const rule = ruleContaining(`.card[data-category='${cat}']`)
       expect(rule, `no hue rule for ${cat}`).toBeDefined()
-      expect(rule).toMatch(/--spine-hue:\s*(#[0-9A-Fa-f]{6})/)
+      expect(rule).toMatch(/--category-hue:\s*(#[0-9A-Fa-f]{6})/)
     }
   })
 
   it('uses seven distinct hues, one per category', () => {
-    const hues = [...rules.entries()]
-      .filter(([sel]) => sel.startsWith('.card[data-category='))
-      .map(([, body]) => body.match(/--spine-hue:\s*(#[0-9A-Fa-f]{6})/)?.[1])
+    const hues = CATEGORIES
+      .map(cat => ruleContaining(`.card[data-category='${cat}']`) ?? '')
+      .map(body => body.match(/--category-hue:\s*(#[0-9A-Fa-f]{6})/)?.[1])
     expect(hues.every(Boolean)).toBe(true)
     expect(new Set(hues).size).toBe(7)
     for (const hue of SEVEN_HUES) expect(hues).toContain(hue)
@@ -135,10 +146,79 @@ describe('category spine hues', () => {
     // the six-opacity spine read as six shades of gray ("只有黑白灰").
     // The cover block is gone — the single-line card carries the category
     // in the badge row instead — but the same hue contract holds.
-    expect(rules.get('.cardSpine')).toMatch(/var\(--spine-hue/)
+    expect(rules.get('.cardSpine')).toMatch(/var\(--category-hue/)
     expect(rules.get('.cardSpine')).not.toMatch(/brand-primary/)
-    expect(rules.get('.categoryBadge')).toMatch(/var\(--spine-hue/)
+    expect(rules.get('.categoryBadge')).toMatch(/var\(--category-hue/)
     expect(rules.get('.categoryBadge')).not.toMatch(/brand-primary/)
+  })
+
+  it('gives every category tab the SAME hue as the cards it filters to', () => {
+    // The stylesheet writes one rule per hue covering both selectors, so this
+    // holds by construction — but it is asserted on the resolved VALUES,
+    // because the failure mode is silent: a blue Tool tab over green tool
+    // cards is exactly as functional and tells the reader the wrong thing.
+    const hueOf = (sel: string): string | undefined =>
+      (ruleContaining(sel) ?? '').match(/--category-hue:\s*(#[0-9A-Fa-f]{6})/)?.[1]
+    for (const cat of CATEGORIES) {
+      const tab = hueOf(`.categoryButton[data-category='${cat}']`)
+      expect(tab, `no tab hue for ${cat}`).toBeDefined()
+      expect(tab, `tab and card disagree about ${cat}`).toBe(hueOf(`.card[data-category='${cat}']`))
+    }
+  })
+
+  it('paints the pressed tab in the hue, not the brand token', () => {
+    // The point of the change: a pressed Tool tab must read as "tool", which
+    // means the hue var and nothing else decides its colour.
+    const on = rules.get('.categoryButtonOn')
+    expect(on, 'no .categoryButtonOn rule').toBeDefined()
+    expect(on).toMatch(/var\(--category-hue\)/)
+    expect(on).not.toMatch(/brand-primary/)
+    // The fallback for All/Installed, which have no category and no hue.
+    expect(rules.get('.categoryButton')).toMatch(/--category-hue:\s*var\(--dsw-alias-brand-primary\)/)
+  })
+})
+
+describe('a pressed tab occupies the same box as an unpressed one', () => {
+  /** Properties whose value resolves to a LENGTH the box model reads. A
+   * pressed-state rule declaring one of these reflows the category bar: with
+   * nine pills on a wrapping row, one that grows can push the rest to another
+   * line and move the tab out from under the pointer that just clicked it.
+   *
+   * `font-weight` is on the list and is the reason the list exists — bold
+   * metrics are wider than regular, so `font-weight: 600` on the pressed
+   * state visibly widened whichever tab was selected. jsdom applies no
+   * layout and the component tests stub this module, so the declaration is
+   * the only place a test can see this. */
+  const CHANGES_GEOMETRY = [
+    'font-weight', 'font-size', 'font-family', 'font-stretch', 'letter-spacing', 'word-spacing',
+    'padding', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
+    'margin', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
+    'border', 'border-width', 'border-style', 'border-radius',
+    'width', 'min-width', 'max-width', 'height', 'min-height', 'max-height',
+    'transform', 'scale', 'zoom', 'text-transform', 'line-height', 'inset', 'gap',
+  ]
+
+  for (const selector of ['.categoryButtonOn', '.incompatibleFilterOn']) {
+    it(`${selector} declares colour only`, () => {
+      const body = rules.get(selector)
+      expect(body, `no rule for ${selector}`).toBeDefined()
+      // Declared property names only — `border-color` must stay legal, so a
+      // prefix match on `border` would be wrong; this compares whole names.
+      const declared = [...(body ?? '').matchAll(/(^|;)\s*([a-z-]+)\s*:/g)].map(m => m[2])
+      expect(declared.filter(prop => prop !== undefined && CHANGES_GEOMETRY.includes(prop))).toEqual([])
+    })
+  }
+
+  it('keeps the two states on the same padding and border width', () => {
+    // The other half of the same guarantee: equal geometry means the BASE
+    // rule carries it and the pressed rule adds none, so the two must not
+    // drift apart through the base either.
+    for (const [base, on] of [['.categoryButton', '.categoryButtonOn'], ['.incompatibleFilter', '.incompatibleFilterOn']]) {
+      const baseBody = rules.get(base ?? '') ?? ''
+      expect(baseBody, `no rule for ${base}`).not.toBe('')
+      expect(baseBody, `${base} must own the padding, so ${on} need not restate it`).toMatch(/padding:\s*3px 10px/)
+      expect(baseBody).toMatch(/border:\s*1px solid/)
+    }
   })
 })
 
@@ -224,7 +304,11 @@ describe('incompatibility reads as an error, not a warning', () => {
   // modules are absent will not load at all, so it must not sit in the same
   // colour as "we have not reviewed this". jsdom composites no colours, so the
   // token CHOICE is the only layer where this is visible to a test.
-  for (const selector of ['.incompatibleBadge', '.incompatibleDetail', '.gateWarning']) {
+  // `.incompatibleFilterOn` is the category bar's filter in its active state.
+  // It is a control rather than a statement about one plugin, but it names
+  // exactly this set, so it takes the same token — a filter tinted amber over
+  // cards tinted red would read as two different conditions.
+  for (const selector of ['.incompatibleBadge', '.incompatibleDetail', '.gateWarning', '.incompatibleFilterOn']) {
     it(`${selector} draws from the error token, not the warn token`, () => {
       const body = rules.get(selector)
       expect(body, `no rule for ${selector}`).toBeDefined()

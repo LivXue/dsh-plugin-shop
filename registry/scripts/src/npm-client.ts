@@ -777,7 +777,7 @@ export function toCandidate(packument: unknown): Candidate | null {
     maintainers?: unknown
     time?: Record<string, unknown>
     versions?: Record<string, {
-      dist?: { integrity?: unknown }
+      dist?: { integrity?: unknown; unpackedSize?: unknown }
       license?: unknown
       licenses?: unknown
       repository?: unknown
@@ -828,6 +828,20 @@ export function toCandidate(packument: unknown): Candidate | null {
         .filter(peer => peer.length > 0 && peer.length <= PEER_NAME_MAX_LENGTH)
         .slice(0, PEERS_MAX_COUNT)
       : [],
+    // Bounded HERE rather than at the gate, and dropped rather than rejected:
+    // the shelf shows this figure and nothing decides on it, so a packument
+    // carrying `"unpackedSize": "big"`, a fraction, or a negative loses its
+    // size label and keeps its listing. `Number.isSafeInteger` is the whole
+    // bound — it refuses NaN, Infinity, fractions and anything past 2^53,
+    // which is every value that could reach the artifact as a number JSON
+    // cannot round-trip. Measured 2026-09-07: 250 of 250 live `dsh-plugin`
+    // packages carry one, so the absent branch is for old publishes, not for
+    // the common case.
+    ...(typeof manifest.dist?.unpackedSize === 'number'
+      && Number.isSafeInteger(manifest.dist.unpackedSize)
+      && manifest.dist.unpackedSize >= 0
+      ? { unpackedSize: manifest.dist.unpackedSize }
+      : {}),
   }
 }
 

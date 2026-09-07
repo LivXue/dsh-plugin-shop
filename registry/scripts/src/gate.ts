@@ -398,6 +398,7 @@ export function gate(
     catalog,
     ...(candidate.publisher !== undefined ? { publisher: candidate.publisher } : {}),
     ...(candidate.peers.length > 0 ? { peers: candidate.peers } : {}),
+    ...(candidate.unpackedSize !== undefined ? { unpackedSize: candidate.unpackedSize } : {}),
   })
   if (payloadBytes > ENTRY_PAYLOAD_MAX_BYTES) {
     return reject(name, 'no-manifest',

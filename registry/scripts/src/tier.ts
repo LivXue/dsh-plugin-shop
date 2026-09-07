@@ -53,9 +53,11 @@ export function assignTier(accepted: Accepted, config: RegistryConfig): Entry {
     source: 'npm' as const,
     added: firstSeenOf(config, candidate.name),
     // Absent stays absent: a packument that named no account must not gain
-    // an empty one in the catalog.
+    // an empty one in the catalog. Same for the size — a zero would read as
+    // "this package is empty", which is a claim npm never made.
     ...(candidate.publisher !== undefined ? { publisher: candidate.publisher } : {}),
     ...(candidate.peers.length > 0 ? { peers: candidate.peers } : {}),
+    ...(candidate.unpackedSize !== undefined ? { unpackedSize: candidate.unpackedSize } : {}),
   }
   // Defence in depth: a github review is keyed by its repository now, so it
   // can no longer be reached by an npm name at all (config.ts). If one ever

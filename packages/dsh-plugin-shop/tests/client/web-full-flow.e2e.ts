@@ -387,6 +387,66 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         expect(authorBox.x).toBeGreaterThan(installBox.x + installBox.width)
       }
 
+      // The unpacked size, left of the author on the same collapsed row. Only
+      // this lane proves the whole chain: the catalog server serves
+      // `unpackedSize: 847407`, the host's zod has to keep the key rather than
+      // strip it (a non-strict schema strips what it does not declare — the
+      // silent failure mode for a new field), and the client has to format it
+      // decimally. jsdom sees the format; nothing but a browser sees the other
+      // two links of that chain.
+      const size = card.locator('[data-shop-size]')
+      await size.waitFor({ state: 'visible', timeout: 10_000 })
+      expect(await size.textContent()).toBe('847.4 kB')
+      // Left of the author, on one row — the geometry, not just the DOM order,
+      // because `.cardMeta` owns the `margin-left: auto` that puts the pair at
+      // the row's right end and a wrapping flex is free to break it.
+      const sizeBox = await size.boundingBox()
+      if (sizeBox !== null && authorBox !== null) {
+        expect(Math.abs((sizeBox.y + sizeBox.height / 2) - (authorBox.y + authorBox.height / 2))).toBeLessThan(6)
+        expect(sizeBox.x + sizeBox.width).toBeLessThanOrEqual(authorBox.x + 1)
+      }
+      // And it says WHICH size, for anyone who might read it as the download.
+      expect(await size.getAttribute('title')).toBe('解包后 847.4 kB')
+
+      // The category bar: clicking a tab must not change its box, and must
+      // paint it in that category's own hue. Both are invisible to every
+      // other lane — jsdom applies no layout and composites no colours — and
+      // the box is the load-bearing half: these tabs sit on a WRAPPING row,
+      // so one that grows on selection can push its neighbours to the next
+      // line and slide out from under the pointer that just clicked it. That
+      // is what `font-weight: 600` on the pressed state did.
+      const toolTab = dialog.locator('[data-category="tool"]')
+      await toolTab.waitFor({ state: 'visible', timeout: 10_000 })
+      const before = await toolTab.evaluate(el => ({
+        rect: el.getBoundingClientRect().width,
+        colour: getComputedStyle(el).color,
+      }))
+      await toolTab.click()
+      expect(await toolTab.getAttribute('aria-pressed')).toBe('true')
+      const after = await toolTab.evaluate(el => ({
+        rect: el.getBoundingClientRect().width,
+        colour: getComputedStyle(el).color,
+      }))
+      // EXACT equality, not a tolerance. The pressed rule declares colour
+      // only, so the layout engine is handed nothing new to measure and its
+      // answer is identical to the last bit — and this is a comparison of one
+      // element against itself, so it says nothing about the font and holds
+      // on any platform.
+      //
+      // A tolerance was tried first and was useless: measured here against
+      // real chromium, `font-weight: 600` on the pressed state moves this tab
+      // from 55.765625px to 55.984375px — 0.22px, because the zh labels are
+      // CJK (full-width glyphs, whose advance does not change with weight) and
+      // only the Latin count digits move. Any tolerance loose enough to feel
+      // safe is loose enough to pass the defect.
+      expect(after.rect, 'the pressed tab changed width').toBe(before.rect)
+      // #4C8DFF — the same hue a tool card's spine takes, read out of the
+      // bundled stylesheet by the browser that composited it.
+      expect(after.colour).toBe('rgb(76, 141, 255)')
+      expect(after.colour).not.toBe(before.colour)
+      // Restore All, so the walk-through below starts from the same shelf.
+      await dialog.locator('[data-shop-category-all]').click()
+
       // The expanded detail's npm row: the link to the package's own npm page,
       // the other half of that same comparison.
       await card.locator('button[aria-expanded]').click()
@@ -649,6 +709,31 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       const shape = await detail.evaluate(el => ({ text: el.textContent ?? '', whiteSpace: getComputedStyle(el).whiteSpace }))
       expect(shape.text, 'the harness i18n dropped the newline the copy carries').toContain('\n')
       expect(shape.whiteSpace, 'pre-line did not survive into the bundled stylesheet').toBe('pre-line')
+
+      // The incompatible filter, against a genuinely-missing peer the HOST
+      // decided about: its count comes from the host's own resolver run, not
+      // from a fixture that asserts the answer, and this fixture profile makes
+      // exactly one of the four shelf entries incompatible.
+      const filter = dialog.locator('[data-shop-hide-incompatible]')
+      await filter.waitFor({ state: 'visible', timeout: 10_000 })
+      expect(await filter.textContent()).toBe(zh.hideIncompatible.replace('{count}', '1'))
+      // It sits at the far edge of the category bar, past every tab: the
+      // stylesheet's `margin-left: auto` is what puts it there, and only a
+      // browser lays that out.
+      const filterBox = await filter.boundingBox()
+      const lastTab = await dialog.locator('[data-shop-category-installed]').boundingBox()
+      if (filterBox !== null && lastTab !== null) {
+        expect(filterBox.x).toBeGreaterThan(lastTab.x + lastTab.width)
+      }
+
+      await filter.click()
+      // The card is gone from the shelf, and the button now offers it back.
+      await card.waitFor({ state: 'detached', timeout: 10_000 })
+      expect(await filter.textContent()).toBe(zh.showIncompatible.replace('{count}', '1'))
+      // The compatible fixtures stayed.
+      expect(await dialog.locator('[data-shop-entry="dsh-shop-e2e-live"]').count()).toBe(1)
+      await filter.click()
+      await card.waitFor({ state: 'visible', timeout: 10_000 })
 
       // Install → the community-tier gate opens and shows the
       // incompatibility warning alongside the §9.3 acknowledgement.

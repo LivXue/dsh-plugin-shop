@@ -7,7 +7,7 @@
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
-import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Category, authorOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatStars, hasGithubHome, heldBy, identityKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, rejectionCodeKey, restartReasonKey, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
+import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Category, authorOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatSize, formatStars, hasGithubHome, heldBy, identityKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, rejectionCodeKey, restartReasonKey, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
 import { useInstallFlows, type InstallFlow } from './useInstall.ts'
 import { useUninstall } from './useUninstall.ts'
 import { useUpdateSelf } from './useUpdateSelf.ts'
@@ -101,6 +101,9 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, na
   // Null for a github entry, and for any name outside npm's own grammar.
   const npmUrl = npmPageUrl(entry)
   const author = authorOf(entry)
+  // Undefined for a github entry and for an npm publish predating npm 5.6;
+  // the label is simply not rendered then.
+  const size = formatSize(entry.unpackedSize)
   const category = entry.catalog?.category ?? 'other'
   const installTarget: InstallArgs = {
     name: entry.name,
@@ -276,12 +279,41 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, na
             <UninstallPanel name={entry.name} t={t} uninstall={uninstall} installStatus={installStatus} restart={restart} restartSupported={restartSupported} onSettled={uninstallSettled} />
           </>
         )}
-        {/* Who put this here, pushed to the right edge of the action row. A
-         * collapsed-card fact on purpose: comparing two same-looking listings
-         * should not require opening each one. An active install flow takes
-         * the full row width, so this drops below it until the flow settles. */}
-        {author !== null && (
-          <span className={css.author} data-shop-author>{t('authorLine', { author })}</span>
+        {/* How big it is and who put it here, pushed to the right edge of the
+         * action row. Collapsed-card facts on purpose: comparing two
+         * same-looking listings should not require opening each one, and the
+         * size is what separates a 25 kB wrapper from a 180 MB one at a
+         * glance. An active install flow takes the full row width, so this
+         * group drops below it until the flow settles.
+         *
+         * The size reads left of the author because it is a property of the
+         * artifact and the author is a property of its origin — and because
+         * `size` is absent on every github entry, so putting it at the outer
+         * edge would leave a ragged right margin down the shelf.
+         *
+         * The wrapper renders only when it has something to hold. An empty one
+         * is not free: `.cardActions` is a flex row with `gap: 8px`, so a
+         * zero-width item still adds 8px after the last button — and "neither"
+         * is a common state rather than a corner, since a github entry has no
+         * size and the live catalog carries no `publisher` for most entries
+         * until the daily build that first harvested it. */}
+        {(size !== undefined || author !== null) && (
+          <span className={css.cardMeta}>
+            {size !== undefined && (
+              // role="img" + aria-label is this file's idiom for naming an
+              // otherwise-generic element (see .starsBadge): the visible text
+              // is the bare figure, while the accessible name and the tooltip
+              // say WHICH size it is. Unpacked and download differ by the
+              // compression ratio, and a reader who takes this for the
+              // download has been misinformed by us.
+              <span className={css.size} data-shop-size role="img" aria-label={t('sizeLabel', { size })} title={t('sizeLabel', { size })}>
+                {size}
+              </span>
+            )}
+            {author !== null && (
+              <span className={css.author} data-shop-author>{t('authorLine', { author })}</span>
+            )}
+          </span>
         )}
       </div>
     </div>
@@ -895,6 +927,12 @@ export function ShopTab(props: ShopTabProps): ReactNode {
   // `installed` is a filter mode alongside the six catalog categories, not a
   // seventh category: it selects by installed state, not by `catalog.category`.
   const [category, setCategory] = useState<Category | 'installed' | null>(null)
+  // Whether the shelf leaves out entries the Host reported missing components
+  // for. Off by default: a filter nobody asked for must not hide listings on
+  // first open, and the count on the button is what tells a reader there is
+  // anything to hide. Independent of `category`, because it subtracts from
+  // whatever the categories selected rather than competing with them.
+  const [hideIncompatible, setHideIncompatible] = useState(false)
 
   // The shelf renders in batches (§A1): ~1900 cards in one commit is ~28k
   // DOM nodes. `incremental` stays off where IntersectionObserver does not
@@ -1045,6 +1083,27 @@ export function ShopTab(props: ShopTabProps): ReactNode {
   )
   const sortedBrowsable = useMemo(() => sortByStars(browsable, stars), [browsable, stars])
 
+  // Each card's incompatibility badge, looked up once per catalog load
+  // instead of computed inline in the render: missingPeersOf hands back a
+  // fresh `[]` for every package the host did not flag, and doing that in
+  // the JSX below would hand EntryCard's memo a new array on every
+  // unrelated re-render (a keystroke, a poll tick), forcing every visible
+  // card to re-render regardless of whether anything about it changed.
+  //
+  // Declared above `filtered` because that filter reads it: a `const` is in
+  // its temporal dead zone until its own line runs, so a useMemo callback
+  // that closes over one declared later throws on the first render rather
+  // than on some later edge.
+  const missingByKey = useMemo(() => {
+    const map = new Map<string, string[]>()
+    if (catalogState.kind === 'ready') {
+      for (const entry of catalogState.result.plugins) {
+        map.set(entryKey(entry), missingPeersOf(catalogState.result.incompatible, entryKey(entry)))
+      }
+    }
+    return map
+  }, [catalogState])
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     return sortedBrowsable.filter(entry => {
@@ -1053,6 +1112,10 @@ export function ShopTab(props: ShopTabProps): ReactNode {
       } else if (category !== null && categoryKey(entry) !== categoryLocaleKey(category)) {
         return false
       }
+      // The same list the card's badge and detail paragraphs read, so the
+      // filter can only ever hide an entry the shelf WOULD have marked
+      // incompatible — a second rule here could hide one that shows no badge.
+      if (hideIncompatible && (missingByKey.get(entryKey(entry)) ?? []).length > 0) return false
       if (q === '') return true
       const summaryEn = entry.catalog?.summary.en ?? ''
       const summaryZh = entry.catalog?.summary.zh ?? ''
@@ -1060,7 +1123,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
         || summaryEn.toLowerCase().includes(q)
         || summaryZh.toLowerCase().includes(q)
     })
-  }, [sortedBrowsable, query, category, installedByKey])
+  }, [sortedBrowsable, query, category, installedByKey, hideIncompatible, missingByKey])
   filteredLenRef.current = filtered.length
 
   // The sentinel that grows the shelf: when the last rendered card's footer
@@ -1102,27 +1165,22 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     return installedState.entries.filter(entry => !isShopLike(entry.name)).length
   }, [installedState])
 
+  // How many browsable entries the Host reported missing components for —
+  // the number the filter button carries. Over `browsable`, like every
+  // category count: a count over `filtered` would change as the reader typed
+  // and would read as "how many are hidden right now", which is not what the
+  // button offers to do.
+  const incompatibleCount = useMemo(
+    () => browsable.filter(entry => (missingByKey.get(entryKey(entry)) ?? []).length > 0).length,
+    [browsable, missingByKey],
+  )
+
   // The outdated rows' update gate and source display both come from the
   // catalog entry, looked up by install identity.
   const entriesByKey = useMemo(() => {
     const map = new Map<string, CatalogEntry>()
     if (catalogState.kind === 'ready') {
       for (const entry of catalogState.result.plugins) map.set(entryKey(entry), entry)
-    }
-    return map
-  }, [catalogState])
-  // Each card's incompatibility badge, looked up once per catalog load
-  // instead of computed inline in the render: missingPeersOf hands back a
-  // fresh `[]` for every package the host did not flag, and doing that in
-  // the JSX below would hand EntryCard's memo a new array on every
-  // unrelated re-render (a keystroke, a poll tick), forcing every visible
-  // card to re-render regardless of whether anything about it changed.
-  const missingByKey = useMemo(() => {
-    const map = new Map<string, string[]>()
-    if (catalogState.kind === 'ready') {
-      for (const entry of catalogState.result.plugins) {
-        map.set(entryKey(entry), missingPeersOf(catalogState.result.incompatible, entryKey(entry)))
-      }
     }
     return map
   }, [catalogState])
@@ -1332,18 +1390,45 @@ export function ShopTab(props: ShopTabProps): ReactNode {
             type="button"
             className={category === key ? `${css.categoryButton} ${css.categoryButtonOn}` : css.categoryButton}
             aria-pressed={category === key}
+            /* The hue the pressed state paints with, read from the same table
+             * the cards' spines and badges read (`ShopTab.module.css`). It
+             * rides the DOM rather than an inline style so the two surfaces
+             * cannot drift: there is one table, and a tab is the colour of the
+             * cards it filters to. */
+            data-category={key}
             onClick={() => { setCategory(key); setVisibleCount(SHOP_VISIBLE_BATCH) }}
           >
             {t(categoryLocaleKey(key))} {categoryCounts.get(key) ?? 0}
           </button>
         ))}
+        {/* No `data-category`: Installed selects by installed state, not by
+          * `catalog.category`, so it has no hue of its own and keeps the brand
+          * token `.categoryButton` sets as the fallback. Same for All. */}
         <button
           type="button"
           className={category === 'installed' ? `${css.categoryButton} ${css.categoryButtonOn}` : css.categoryButton}
           aria-pressed={category === 'installed'}
+          data-shop-category-installed
           onClick={() => { setCategory('installed'); setVisibleCount(SHOP_VISIBLE_BATCH) }}
         >
           {t('installed')} {installedCount}
+        </button>
+        {/* The incompatible filter, at the far edge of the bar (the stylesheet
+          * pushes it there). A MODIFIER, not a ninth category: the categories
+          * choose what to show and this subtracts from whatever they chose, so
+          * it does not participate in `category` state and its own state
+          * survives a category switch. The count is over `browsable` like the
+          * category counts, so it says how many entries the shelf holds with
+          * something missing — not how many the current filter shows. */}
+        <button
+          type="button"
+          className={hideIncompatible ? `${css.incompatibleFilter} ${css.incompatibleFilterOn}` : css.incompatibleFilter}
+          aria-pressed={hideIncompatible}
+          title={t('incompatibleFilterTitle')}
+          data-shop-hide-incompatible
+          onClick={() => { setHideIncompatible(current => !current); setVisibleCount(SHOP_VISIBLE_BATCH) }}
+        >
+          {t(hideIncompatible ? 'showIncompatible' : 'hideIncompatible', { count: incompatibleCount })}
         </button>
       </div>
       <div className={css.catalogStatsRow}>

@@ -51,6 +51,13 @@ export const zh = {
   repository: '仓库',
   npmPage: 'npm 页面',
   authorLine: '作者：{author}',
+  /** The accessible name and tooltip of the size label; the label itself shows
+   * the bare figure. "解包后" is the load-bearing word — the number is npm's
+   * unpacked size, not the download. */
+  sizeLabel: '解包后 {size}',
+  hideIncompatible: '隐藏不兼容 {count}',
+  showIncompatible: '显示不兼容 {count}',
+  incompatibleFilterTitle: '不显示缺少组件的插件',
   license: '许可',
   customLicense: '自定义许可',
   reviewedVersionLine: '已审核 v{reviewed} / 当前 v{current} 未审核',
@@ -148,6 +155,10 @@ export const en = {
   repository: 'Repository',
   npmPage: 'npm page',
   authorLine: 'Author: {author}',
+  sizeLabel: '{size} unpacked',
+  hideIncompatible: 'Hide incompatible {count}',
+  showIncompatible: 'Show incompatible {count}',
+  incompatibleFilterTitle: 'Leave out plugins whose components are missing',
   license: 'License',
   customLicense: 'Custom license',
   reviewedVersionLine: 'reviewed v{reviewed} / current v{current} unreviewed',

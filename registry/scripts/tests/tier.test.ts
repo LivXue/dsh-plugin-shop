@@ -92,6 +92,20 @@ describe('assignTier', () => {
     expect('publisher' in assignTier(accepted('dsh-other-plugin', '1.0.0'), config)).toBe(false)
   })
 
+  it('carries the unpacked size onto the entry, and omits it when there is none', () => {
+    // The shelf prints this beside the author so a reader can tell a 25 kB
+    // wrapper from a 180 MB one without installing either. Absent stays
+    // absent for the same reason as the publisher: a 0 is a claim npm never
+    // made, and the client renders no label at all rather than "0 B".
+    const sized = accepted('dsh-other-plugin', '1.0.0')
+    sized.candidate.unpackedSize = 847407
+    expect(assignTier(sized, config).unpackedSize).toBe(847407)
+
+    const plain = assignTier(accepted('dsh-other-plugin', '1.0.0'), config)
+    expect(plain.unpackedSize).toBeUndefined()
+    expect('unpackedSize' in plain).toBe(false)
+  })
+
   it('marks an unlisted package community and attaches no review', () => {
     const entry = assignTier(accepted('dsh-other-plugin', '1.0.0'), config)
     expect(entry.tier).toBe('community')

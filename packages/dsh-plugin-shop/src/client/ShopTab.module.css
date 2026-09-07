@@ -315,11 +315,17 @@
 .categoryBar {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
   margin-top: 6px;
 }
 
 .categoryButton {
+  /* The hue this button carries when selected. `All` and `Installed` select by
+   * something other than a category and keep the brand token; the six category
+   * buttons override it from the shared hue table below, so a pressed Tool tab
+   * turns the same blue as a tool card's spine. */
+  --category-hue: var(--dsw-alias-brand-primary);
   padding: 3px 10px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 999px;
@@ -330,18 +336,61 @@
 }
 
 .categoryButton:hover {
-  border-color: color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, var(--dsw-alias-border-l2));
-  color: var(--dsw-alias-brand-primary);
+  border-color: color-mix(in srgb, var(--category-hue) 45%, var(--dsw-alias-border-l2));
+  color: var(--category-hue);
 }
 
+/* Selected. EVERY declaration here is a colour: a pressed tab must occupy the
+ * exactly same box as an unpressed one, so the bar does not reflow — and with
+ * ~9 pills on a wrapping row, one that grows can push the rest onto another
+ * line and move the tab out from under the pointer that just clicked it. That
+ * is what `font-weight: 600` did (bold metrics are wider than regular), and it
+ * is why nothing may be added here that resolves to a length: no padding, no
+ * border-width, no font-size, no letter-spacing, no transform.
+ * `css-tokens.client.spec.ts` fails the build on one. */
 .categoryButtonOn {
-  border-color: var(--dsw-alias-brand-primary);
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, transparent);
-  color: var(--dsw-alias-brand-primary);
-  font-weight: 600;
+  border-color: var(--category-hue);
+  background: color-mix(in srgb, var(--category-hue) 14%, transparent);
+  color: var(--category-hue);
 }
 
 .categoryButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+
+/* The incompatible filter, at the right edge of the category bar: `margin-left:
+ * auto` pushes it past the pills, and the bar wraps, so on a narrow panel it
+ * drops to its own line rather than squeezing them. It is a MODIFIER, not a
+ * ninth category — the categories select what to show and this one subtracts
+ * from whatever they selected — so it takes the error hue it filters on rather
+ * than joining the hue table.
+ *
+ * Same geometry rule as the pills, for the same reason: nothing that resolves
+ * to a length changes between the two states. */
+.incompatibleFilter {
+  margin-left: auto;
+  padding: 3px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.incompatibleFilter:hover {
+  border-color: color-mix(in srgb, var(--dsw-alias-state-error-primary) 45%, var(--dsw-alias-border-l2));
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.incompatibleFilterOn {
+  border-color: var(--dsw-alias-state-error-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 14%, transparent);
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.incompatibleFilter:focus-visible {
   outline: 2px solid var(--dsw-alias-brand-primary);
   outline-offset: 1px;
 }
@@ -483,29 +532,35 @@
   bottom: 0;
   left: 0;
   width: 3px;
-  background: var(--spine-hue, #8B8E96);
+  background: var(--category-hue, #8B8E96);
 }
 
-.card[data-category='tool'] { --spine-hue: #4C8DFF; }
-.card[data-category='provider'] { --spine-hue: #A78BFA; }
-.card[data-category='ui'] { --spine-hue: #2DD4BF; }
-.card[data-category='workflow'] { --spine-hue: #F59E0B; }
-.card[data-category='integration'] { --spine-hue: #34D399; }
-.card[data-category='theme'] { --spine-hue: #F472B6; }
-.card[data-category='other'] { --spine-hue: #8B8E96; }
+/* The hue table, keyed by `data-category` and read by BOTH surfaces that
+ * speak in category colour: a card's spine and badge, and the category bar's
+ * own tab. One table, so a tab can never disagree with the cards it filters to
+ * — which is the whole point of colouring the tab. `.categoryButton` sets the
+ * brand fallback for `All`/`Installed`; these attribute selectors are one
+ * specificity step above it and win wherever the attribute is present. */
+.card[data-category='tool'], .categoryButton[data-category='tool'] { --category-hue: #4C8DFF; }
+.card[data-category='provider'], .categoryButton[data-category='provider'] { --category-hue: #A78BFA; }
+.card[data-category='ui'], .categoryButton[data-category='ui'] { --category-hue: #2DD4BF; }
+.card[data-category='workflow'], .categoryButton[data-category='workflow'] { --category-hue: #F59E0B; }
+.card[data-category='integration'], .categoryButton[data-category='integration'] { --category-hue: #34D399; }
+.card[data-category='theme'], .categoryButton[data-category='theme'] { --category-hue: #F472B6; }
+.card[data-category='other'], .categoryButton[data-category='other'] { --category-hue: #8B8E96; }
 
 /* The category sits in the badge row as a quiet chip in the category's own
  * hue — the border carries it where the light theme's white layers cannot
  * (the same lesson as the check button). */
 .categoryBadge {
   padding: 1px 7px;
-  border: 1px solid color-mix(in srgb, var(--spine-hue, #8B8E96) 45%, transparent);
+  border: 1px solid color-mix(in srgb, var(--category-hue, #8B8E96) 45%, transparent);
   border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--spine-hue, #8B8E96);
+  color: var(--category-hue, #8B8E96);
   white-space: nowrap;
 }
 
@@ -763,15 +818,37 @@
   outline-offset: 1px;
 }
 
+/* What the entry IS rather than what you can do with it — how big it is and
+ * who published it — at the right edge of the action row. `margin-left: auto`
+ * is what pushes it there, and it lives on this wrapper rather than on either
+ * label so the group stays flush right when only one of the two has a value:
+ * a github entry has no npm size, and a packument that named no account has no
+ * author. The row is a wrapping flex, so an active install flow (which claims
+ * the full width) drops the whole group to the next line rather than squeezing
+ * it. */
+.cardMeta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  min-width: 0;
+}
+
+/* The unpacked size, left of the author. Mono, because a column of sizes is
+ * read by comparing them and proportional digits make that harder; secondary
+ * colour, because it qualifies the entry rather than announcing it. */
+.size {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-secondary);
+}
+
 /* The publishing account, beside the npm link. Secondary label colour and a
  * middot separator carry the distinction — never a background fill, which is
  * invisible in the light theme where every bg-layer token is the same white. */
-/* Who published the entry, at the right edge of the action row. `margin-left:
- * auto` is what pushes it there; the row is a wrapping flex, so an active
- * install flow (which claims the full width) drops this to the next line
- * rather than squeezing it. */
 .author {
-  margin-left: auto;
   color: var(--dsw-alias-label-secondary);
   font-size: 12px;
 }

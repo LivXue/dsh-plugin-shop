@@ -130,6 +130,18 @@ const entrySchema = z.object({
   // carries no such field, and making `added` required is exactly what made
   // 0.5.0 refuse the published catalog for every user.
   peers: z.array(z.string()).optional(),
+  // npm's `dist.unpackedSize`, additive and optional for the same reason as
+  // `publisher` — this schema strips a key it does not know, so old and new
+  // hosts share one catalog, while bumping the version NUMBER would make
+  // every capped client refuse it outright.
+  //
+  // Typed rather than waved through: the client formats this into a size
+  // label, and a fraction or a negative would render as one. The registry
+  // already drops anything that is not a safe non-negative integer
+  // (`npm-client.ts`), so a value arriving here that fails this is our own
+  // build having written something it cannot write — which is exactly the
+  // class of thing this project stops for.
+  unpackedSize: z.number().int().nonnegative().optional(),
 }).superRefine((entry, ctx) => {
   // The install spec differs by source, so the grammar does too. Refusing at
   // this boundary prevents catalog bytes from reaching the process layer.
