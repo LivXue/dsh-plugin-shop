@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { gunzipSync } from 'node:zlib'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { readTar } from '../../src/host/tar.ts'
+import { readTar } from '../../src/shared/tar.ts'
 
 const FIXTURE = join(import.meta.dirname, '../fixtures/catalog-package.tgz')
 

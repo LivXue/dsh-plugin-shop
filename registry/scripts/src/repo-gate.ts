@@ -18,6 +18,22 @@ export interface RepoAccepted {
 }
 
 /** Build one rejection. */
+/**
+ * The sentence a rejected rescue adds to the reason standing in its place.
+ *
+ * Both rejections below tell the author to "attach a packed release tarball"
+ * or to drop a build script. When they DID attach one and it was refused, that
+ * advice is misattributed — they would go and remove a working build script
+ * while the real problem sat in their release. Empty when no asset was
+ * refused, so the two reasons read exactly as before for every repository that
+ * never had one.
+ */
+function rescueNote(candidate: RepoCandidate): string {
+  return candidate.releaseRejected === undefined
+    ? ''
+    : ` A release tarball WAS found and refused: ${candidate.releaseRejected}`
+}
+
 function reject(
   name: string,
   code: Rejection['code'],
@@ -90,7 +106,8 @@ export function gateRepo(
   }
   if (candidate.requiresBuild && candidate.release === undefined) {
     return reject(unit, 'requires-build',
-      'Declares a prepare/prepack build script, which a git install requires and pnpm blocks by default; the shop never enables build scripts, so the repository could not install. Publish to npm, or drop the script, and it can be listed.')
+      'Declares a prepare/prepack build script, which a git install requires and pnpm blocks by default; the shop never enables build scripts, so the repository could not install. Publish to npm, or drop the script, and it can be listed.'
+      + rescueNote(candidate))
   }
   // Only for a GIT install, which is what the reason describes. A
   // release-rescued entry installs the release tarball, and `pnpm pack`
@@ -103,7 +120,8 @@ export function gateRepo(
   // design §4 already accepts for transitive postinstall scripts.
   if (candidate.hasWorkspaceDeps && candidate.release === undefined) {
     return reject(unit, 'workspace-deps',
-      'Declares workspace:-protocol dependencies, which resolve only inside the repository\'s own workspace; a git install from outside it cannot succeed. Publish the package to npm, attach a packed release tarball, or drop the workspace: specifiers, and it can be listed.')
+      'Declares workspace:-protocol dependencies, which resolve only inside the repository\'s own workspace; a git install from outside it cannot succeed. Publish the package to npm, attach a packed release tarball, or drop the workspace: specifiers, and it can be listed.'
+      + rescueNote(candidate))
   }
   if (candidate.license === null || candidate.license === '') {
     return reject(unit, 'no-license', 'The repository declares no license.')

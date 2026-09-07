@@ -108,7 +108,33 @@ export interface RepoCandidate {
    * `requiresBuild` repo. Its presence turns the entry into a
    * release-pinned entry: `version` = the tag, `integrity` = the tarball
    * sha256. */
-  release?: { tag: string; url: string; sha256: string }
+  release?: {
+    tag: string
+    url: string
+    sha256: string
+    /**
+     * That `verifyReleaseAsset` opened this asset and accepted it.
+     *
+     * Persisted so the record says which RULES produced it. Absent means the
+     * rescue predates the check — taken on release metadata alone — and
+     * `diffRepoState` queues that repo for one re-probe rather than trusting
+     * it, because `pushedAt` alone would let an unverified rescue stand
+     * forever on a repo that never pushes again.
+     */
+    assetVerified?: true
+  }
+  /**
+   * Why a release asset that DID exist was refused as a rescue — it packs a
+   * different package, declares no `dsh.bundle`, or could not be read
+   * (`verifyReleaseAsset`).
+   *
+   * Present only alongside an absent `release`, and only so the rejection can
+   * say why the rescue did not apply. Without it the author reads the plain
+   * `requires-build` reason and is told to drop a build script, when what is
+   * actually wrong is the tarball they attached — a misattributed reason, and
+   * those are defects here rather than wording nits.
+   */
+  releaseRejected?: string
   /** The raw `dsh.catalog` value from the repo's manifest; unvalidated until the gate runs. */
   catalog: unknown
   /** The GitHub repo `description`, used to derive a listing when `catalog` is absent. */

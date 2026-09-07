@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { packedTarball, rawTarball } from './packed-tarball.ts'
+import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -8,7 +9,7 @@ import { parseRepoState, serializeRepoState } from '../src/repo-state.ts'
 import type { RepoState } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
 import { FetchTimeoutError } from '../src/npm-client.ts'
-import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody, slowBodyBytes } from './stalling-fetch.ts'
+import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
 
 const sleep = async (_ms: number) => {}
 const commit = 'b'.repeat(40)
@@ -1029,7 +1030,11 @@ describe('only a 404 is a verdict about the repository', () => {
 describe('release-tarball rescue probe', () => {
   const meta = { fullName: 'someone/dsh-repo-plugin', defaultBranch: 'main', description: 'A repo plugin.', license: 'MIT', pushedAt: '2026-08-01T00:00:00Z', stars: null as number | null }
   const assetUrl = 'https://github.com/someone/dsh-repo-plugin/releases/download/v1.0.0/dsh-repo-plugin.tgz'
-  const tarballBytes = new TextEncoder().encode('fake tarball bytes')
+  // A REAL packed tarball for the package the manifest below declares. A
+  // placeholder body used to do, and since `verifyReleaseAsset` it would
+  // exercise the refusal path instead of the rescue path — the rescue now
+  // requires the asset to BE this package.
+  const tarballBytes = packedTarball('dsh-repo-plugin')
   const expectedSha256 = createHash('sha256').update(tarballBytes).digest('hex')
   const buildManifest = JSON.stringify({
     name: 'dsh-repo-plugin',
@@ -1057,8 +1062,42 @@ describe('release-tarball rescue probe', () => {
     if (result.ok) {
       const candidate = result.candidates[0]
       expect(candidate?.requiresBuild).toBe(true)
-      expect(candidate?.release).toEqual({ tag: 'v1.0.0', url: assetUrl, sha256: expectedSha256 })
+      expect(candidate?.release).toEqual({ tag: 'v1.0.0', url: assetUrl, sha256: expectedSha256, assetVerified: true })
       expect(expectedSha256).toMatch(/^[0-9a-f]{64}$/)
+    }
+  })
+
+  it.each([
+    ['packs a different package', () => packedTarball('dsh-something-else'), 'packs \"dsh-something-else\"'],
+    ['declares no dsh.bundle', () => packedTarball('dsh-repo-plugin', { dsh: undefined }), 'no dsh.bundle object'],
+    ['carries no root package.json', () => rawTarball({ 'sdist-1.0/PKG-INFO': 'x' }), 'no package.json'],
+  ])('refuses a rescue whose asset %s, and says so in the rejection', async (_label, bytes, expected) => {
+    // Every rescued entry measured against the 2026-09-06 catalog that broke
+    // the premise was in one of these three states, and every one of them was
+    // unusable — the install put a different package in the profile (or none),
+    // the declared bundle never landed, and the post-install confirm failed.
+    // The count lives in `release-asset.ts`'s header; three states, not three
+    // entries, is what fixes this table's arity.
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(buildManifest, { status: 200 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': headResponse(),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/releases/latest': new Response(JSON.stringify({
+        tag_name: 'v1.0.0',
+        assets: [{ browser_download_url: assetUrl }],
+      }), { status: 200 }),
+      [assetUrl]: new Response(bytes(), { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      const candidate = result.candidates[0]
+      // No rescue — so the repo keeps the requires-build class it came with.
+      expect(candidate?.release).toBeUndefined()
+      expect(candidate?.requiresBuild).toBe(true)
+      // And the reason the rescue did not apply is carried, so the standing
+      // rejection does not tell the author to drop a build script that is not
+      // what is wrong.
+      expect(candidate?.releaseRejected ?? '').toContain(expected)
     }
   })
 
@@ -1129,7 +1168,7 @@ describe('release-tarball rescue probe', () => {
     const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
     expect(result.ok).toBe(true)
     if (result.ok) {
-      expect(result.candidates[0]?.release).toEqual({ tag: 'v1.0.0', url: upperAssetUrl, sha256: expectedSha256 })
+      expect(result.candidates[0]?.release).toEqual({ tag: 'v1.0.0', url: upperAssetUrl, sha256: expectedSha256, assetVerified: true })
     }
   })
 
@@ -1204,7 +1243,7 @@ describe('release-tarball rescue probe', () => {
     const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
     expect(result.ok).toBe(true)
     if (result.ok) {
-      expect(result.candidates[0]?.release).toEqual({ tag: 'v1.0.0', url: assetUrl, sha256: expectedSha256 })
+      expect(result.candidates[0]?.release).toEqual({ tag: 'v1.0.0', url: assetUrl, sha256: expectedSha256, assetVerified: true })
     }
   })
 
@@ -2401,8 +2440,10 @@ describe('a subpackage path is bounded before it is published', () => {
 // it, rather than quietly covering a line it was never reasoned about.
 // ---------------------------------------------------------------------------
 
+const SRC_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'src')
+
 function srcOf(file: string): string {
-  return readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', file), 'utf8')
+  return readFileSync(join(SRC_DIR, file), 'utf8')
 }
 
 const githubClientSource = srcOf('github-client.ts')
@@ -2515,6 +2556,41 @@ function findBodyReads(source: string): LogicalLine[] {
     .filter(line => /\.\s*(?:json|text|arrayBuffer|blob|bytes|formData|getReader)\s*\(\s*\)/.test(line.text))
 }
 
+/**
+ * The whole call that starts on `lines[index]`: following lines are folded in
+ * while the parentheses it opened are still unclosed, so an options object
+ * written across several lines is one region to scan rather than a bound the
+ * guard cannot see. Capped so a malformed source cannot run away.
+ */
+function callStartingAt(lines: readonly string[], index: number): string {
+  const parts: string[] = []
+  let depth = 0
+  for (let i = index; i < lines.length && i < index + 12; i++) {
+    const line = lines[i] ?? ''
+    parts.push(line.trim())
+    for (const character of line) {
+      if (character === '(') depth++
+      else if (character === ')') depth--
+    }
+    if (depth <= 0) break
+  }
+  return parts.join(' ')
+}
+
+/**
+ * Decompression sites whose bound is not on the call itself, each with the
+ * reason that is safe — for a stream whose ceiling is enforced by whatever it
+ * is piped into rather than by a zlib option.
+ *
+ * Empty today: the one inflate in the registry sources is bounded inline. It
+ * exists so that a legitimate exception is written down and reasoned about,
+ * rather than met by widening the guard back to a file-wide search. Keyed by
+ * SNIPPET, not line number, the same way {@link EXCUSED_BODY_READS} is: an
+ * edit that rewrites the call stops matching and turns this red until a human
+ * re-confirms it.
+ */
+const EXCUSED_INFLATES: readonly { snippet: string; reason: string }[] = []
+
 describe('every response body read in a network client is capped or excused', () => {
   const region = functionRegion(httpBodySource, 'readCappedBody')
   const inReader = (file: string, lineNumber: number) =>
@@ -2535,6 +2611,43 @@ describe('every response body read in a network client is capped or excused', ()
       .filter(s => s.file !== 'http-body.ts')
       .flatMap(s => findBodyReads(s.source))
     expect(clientReads.length).toBeGreaterThanOrEqual(EXCUSED_BODY_READS.length)
+  })
+
+  it('every decompression in the registry sources is bounded', () => {
+    // The body-cap guard above cannot see this class: it matches `Response`
+    // methods, and an inflate takes bytes we ALREADY hold. `readTarballBody`
+    // caps the compressed asset at 32 MB, which bounds nothing afterwards —
+    // gzip of zeros reaches about 1029:1, so an accepted asset can demand
+    // ~33 GB. An OOM kill is not catchable, so it takes the daily build down
+    // with no report at all, past every catch in the pipeline.
+    //
+    // `release-asset.ts` went in with an uncapped `gunzipSync` and every
+    // assertion in this file stayed green, which is what made a second guard
+    // worth having rather than a wider comment on the first.
+    //
+    // The bound is required on the CALL, not merely somewhere in the file. A
+    // file-wide search passes a module holding one capped inflate and one
+    // uncapped one, which is the exact shape the body guard above was bitten
+    // by four times: the fix gets written for the site someone happened to be
+    // looking at, and the twin survives a few lines away. A call whose ceiling
+    // genuinely lives elsewhere takes an entry in EXCUSED_INFLATES.
+    const inflaters = /\b(?:gunzipSync|inflateSync|brotliDecompressSync|createGunzip|createInflate)\s*\(/
+    const offenders: string[] = []
+    for (const file of readdirSync(SRC_DIR).filter(name => name.endsWith('.ts'))) {
+      const lines = srcOf(file).split('\n')
+      for (const [index, line] of lines.entries()) {
+        // A comment is not a call site: the prose explaining these bounds
+        // names the functions it is about.
+        const opener = line.trim()
+        if (opener.startsWith('*') || opener.startsWith('//') || opener.startsWith('/*')) continue
+        if (!inflaters.test(line)) continue
+        const call = callStartingAt(lines, index)
+        if (/maxOutputLength/.test(call)) continue
+        if (EXCUSED_INFLATES.some(e => call.includes(e.snippet.replace(/\s+/g, ' ')))) continue
+        offenders.push(`${file}:${index + 1}: ${opener}`)
+      }
+    }
+    expect(offenders).toEqual([])
   })
 
   it('is inside readCappedBody, or an excused read, for every one of them', () => {
@@ -2721,13 +2834,18 @@ describe('body deadlines', () => {
     // release rides through the state file rather than being re-probed daily.
     const CHUNKS = 5
     const GAP_MS = 10
-    const fetchImpl = routeBody(assetUrl, headersThenSlowBody(CHUNKS, GAP_MS), releaseRoutes())
+    // A real packed tarball, trickled: the assertion below is that the read
+    // COMPLETED, and since `verifyReleaseAsset` that can only be shown with an
+    // asset the rescue would accept. Zeros would now be refused on content,
+    // which is indistinguishable from a read that was killed.
+    const payload = packedTarball('dsh-repo-plugin')
+    const fetchImpl = routeBody(assetUrl, headersThenSlowBody(CHUNKS, GAP_MS, payload), releaseRoutes())
     const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token', true, 2000, 400)
     expect(result.ok).toBe(true)
     if (result.ok) {
       expect(result.candidates[0]?.release?.tag).toBe('v1.0.0')
       expect(result.candidates[0]?.release?.sha256)
-        .toBe(createHash('sha256').update(slowBodyBytes(CHUNKS)).digest('hex'))
+        .toBe(createHash('sha256').update(payload).digest('hex'))
     }
   })
 

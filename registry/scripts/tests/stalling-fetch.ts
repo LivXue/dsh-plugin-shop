@@ -53,9 +53,22 @@ export function headersThenStalledBody(): typeof fetch {
   )) as unknown as typeof fetch
 }
 
-/** Answers 200 and then trickles `chunks` kilobytes out, `gapMs` apart, before
- * closing cleanly — a large body that is slow but perfectly healthy. */
-export function headersThenSlowBody(chunks: number, gapMs: number): typeof fetch {
+/**
+ * Answers 200 and then trickles the body out in `chunks` pieces, `gapMs`
+ * apart, before closing cleanly — a large body that is slow but perfectly
+ * healthy.
+ *
+ * `payload` is sliced into those pieces when given; without it each piece is a
+ * kilobyte of zeros, which is all a reader that only measures TIME needs. A
+ * reader that also parses what arrived needs real bytes, hence the option.
+ */
+export function headersThenSlowBody(chunks: number, gapMs: number, payload?: Uint8Array): typeof fetch {
+  const pieces: Uint8Array[] = payload === undefined
+    ? Array.from({ length: chunks }, () => new Uint8Array(CHUNK_BYTES))
+    : Array.from({ length: chunks }, (_unused, i) => payload.subarray(
+        Math.ceil((payload.length / chunks) * i),
+        Math.ceil((payload.length / chunks) * (i + 1)),
+      ))
   return (async (_input: string | URL, init?: RequestInit) => {
     let remaining = chunks
     return new Response(
@@ -64,8 +77,8 @@ export function headersThenSlowBody(chunks: number, gapMs: number): typeof fetch
         pull: controller => new Promise<void>(resolve => {
           setTimeout(() => {
             if (remaining > 0) {
+              controller.enqueue(pieces[chunks - remaining] ?? new Uint8Array(0))
               remaining -= 1
-              controller.enqueue(new Uint8Array(CHUNK_BYTES))
             } else {
               controller.close()
             }
@@ -76,12 +89,6 @@ export function headersThenSlowBody(chunks: number, gapMs: number): typeof fetch
       { status: 200 },
     )
   }) as unknown as typeof fetch
-}
-
-/** The bytes {@link headersThenSlowBody} produces for `chunks`, so a test can
- * state the digest it expects without restating the fixture's internals. */
-export function slowBodyBytes(chunks: number): Uint8Array {
-  return new Uint8Array(chunks * CHUNK_BYTES)
 }
 
 /**

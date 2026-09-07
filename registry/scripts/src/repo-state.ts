@@ -145,10 +145,38 @@ export function diffRepoState(state: RepoState, seen: RepoSeen[]): { toFetch: Re
   const toFetch: RepoSeen[] = []
   for (const [repo, entry] of seenByName) {
     const recorded = state[repo]
-    if (recorded === undefined || recorded.pushedAt !== entry.pushedAt) toFetch.push(entry)
+    if (recorded === undefined || recorded.pushedAt !== entry.pushedAt || hasUnverifiedRelease(recorded)) {
+      toFetch.push(entry)
+    }
   }
   const gone = Object.keys(state).filter(repo => !seenByName.has(repo))
   return { toFetch, gone }
+}
+
+/**
+ * Whether a recorded repo carries a release the CURRENT rules never checked.
+ *
+ * A rescue recorded before `verifyReleaseAsset` was never opened: it was taken
+ * on the release metadata alone. Those records are not evidence, and nothing
+ * would ever re-examine them — `pushedAt` gates the re-fetch, so an unchanged
+ * repo keeps its unverified rescue forever. Two of the bad ones measured on
+ * 2026-09-06 had been quiet since 2026-08-22 and 2026-08-24, so "it will sort
+ * itself out on the next push" is not true in any useful sense.
+ *
+ * `assetVerified` is the marker the probe now writes. Its ABSENCE queues the
+ * repo for one re-probe, after which the flag is present either way and the
+ * repo returns to being re-fetched only when it changes. This is the same
+ * shape as {@link staleFailureRepos}: state recorded under a rule that has
+ * since changed is invalidated once, deliberately, rather than trusted.
+ *
+ * Clearing the recorded `release` instead would have been wrong — the
+ * candidate is REUSED verbatim for an unchanged repo, so it would delist all
+ * 328 rescued entries, the ~321 legitimate ones included, until each happened
+ * to push again.
+ */
+function hasUnverifiedRelease(recorded: RepoState[string]): boolean {
+  return (recorded.candidates ?? []).some(candidate =>
+    candidate.release !== undefined && candidate.release.assetVerified !== true)
 }
 
 /**

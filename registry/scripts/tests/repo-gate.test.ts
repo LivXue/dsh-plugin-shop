@@ -68,6 +68,66 @@ describe('gateRepo', () => {
     }
   })
 
+  it('names the refused rescue in the requires-build reason, not just the build script', () => {
+    // The author DID attach a tarball. Told only "drop the build script" they
+    // would go and remove a working one while the real problem — an asset
+    // packing a different package — sat untouched in their release. A
+    // misattributed reason is a defect here, and this one is published.
+    const result = gateRepo(repo({
+      requiresBuild: true,
+      releaseRejected: 'the release asset packs dsh-other, not dsh-repo-plugin',
+    }), config)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      // The standing reason is unchanged — the repo really does require a
+      // build, and the rescue is what would have saved it.
+      expect(result.rejection.code).toBe('requires-build')
+      expect(result.rejection.detail).toContain('prepare/prepack build script')
+      // Plus what actually happened to the rescue.
+      expect(result.rejection.detail).toContain('A release tarball WAS found and refused')
+      expect(result.rejection.detail).toContain('packs dsh-other')
+    }
+  })
+
+  it('says nothing about a rescue for a repository that never had a release', () => {
+    // The note must not appear for the ordinary case, or every requires-build
+    // author reads about a tarball they never attached.
+    const result = gateRepo(repo({ requiresBuild: true }), config)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.rejection.detail).not.toContain('release tarball WAS found')
+  })
+
+  it('names the refused rescue in the workspace-deps reason too', () => {
+    // That reason literally advises "attach a packed release tarball", so it
+    // is the one where silence about a refused attachment reads worst — and
+    // until the probe was widened to `requiresBuild || hasWorkspaceDeps`, a
+    // repo in this state was never probed, so this combination could not be
+    // produced and the note here was unreachable.
+    const result = gateRepo(repo({
+      hasWorkspaceDeps: true,
+      releaseRejected: 'the release asset declares no dsh.bundle',
+    }), config)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.rejection.code).toBe('workspace-deps')
+      expect(result.rejection.detail).toContain('A release tarball WAS found and refused')
+      expect(result.rejection.detail).toContain('no dsh.bundle')
+    }
+  })
+
+  it('rescues a workspace-deps repository whose tarball holds up', () => {
+    // The other half of widening the probe: the advice is now followable.
+    const result = gateRepo(repo({
+      hasWorkspaceDeps: true,
+      release: {
+        tag: 'v1.0.0',
+        url: 'https://github.com/someone/dsh-repo-plugin/releases/download/v1.0.0/plugin.tgz',
+        sha256: 'a'.repeat(64),
+      },
+    }), config)
+    expect(result.ok).toBe(true)
+  })
+
   it('accepts a requires-build repository rescued by a release tarball', () => {
     const result = gateRepo(repo({
       requiresBuild: true,
