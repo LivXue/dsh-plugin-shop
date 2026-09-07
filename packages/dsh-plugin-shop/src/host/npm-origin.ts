@@ -8,7 +8,7 @@
 import { createHash } from 'node:crypto'
 import { gunzipSync } from 'node:zlib'
 import { z } from 'zod'
-import { readTar } from './tar.ts'
+import { readTar } from '../shared/tar.ts'
 import { MAX_BODY_BYTES, readCappedBytes, type CatalogOrigin, type OriginHandle, TransportError } from './origin.ts'
 
 /** The abbreviated `latest` manifest. Non-strict: a registry may add keys,

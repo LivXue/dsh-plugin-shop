@@ -109,6 +109,18 @@ export interface RepoCandidate {
    * release-pinned entry: `version` = the tag, `integrity` = the tarball
    * sha256. */
   release?: { tag: string; url: string; sha256: string }
+  /**
+   * Why a release asset that DID exist was refused as a rescue — it packs a
+   * different package, declares no `dsh.bundle`, or could not be read
+   * (`verifyReleaseAsset`).
+   *
+   * Present only alongside an absent `release`, and only so the rejection can
+   * say why the rescue did not apply. Without it the author reads the plain
+   * `requires-build` reason and is told to drop a build script, when what is
+   * actually wrong is the tarball they attached — a misattributed reason, and
+   * those are defects here rather than wording nits.
+   */
+  releaseRejected?: string
   /** The raw `dsh.catalog` value from the repo's manifest; unvalidated until the gate runs. */
   catalog: unknown
   /** The GitHub repo `description`, used to derive a listing when `catalog` is absent. */

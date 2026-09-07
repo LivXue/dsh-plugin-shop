@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { packedTarball, rawTarball } from './packed-tarball.ts'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -1029,7 +1030,11 @@ describe('only a 404 is a verdict about the repository', () => {
 describe('release-tarball rescue probe', () => {
   const meta = { fullName: 'someone/dsh-repo-plugin', defaultBranch: 'main', description: 'A repo plugin.', license: 'MIT', pushedAt: '2026-08-01T00:00:00Z', stars: null as number | null }
   const assetUrl = 'https://github.com/someone/dsh-repo-plugin/releases/download/v1.0.0/dsh-repo-plugin.tgz'
-  const tarballBytes = new TextEncoder().encode('fake tarball bytes')
+  // A REAL packed tarball for the package the manifest below declares. A
+  // placeholder body used to do, and since `verifyReleaseAsset` it would
+  // exercise the refusal path instead of the rescue path — the rescue now
+  // requires the asset to BE this package.
+  const tarballBytes = packedTarball('dsh-repo-plugin')
   const expectedSha256 = createHash('sha256').update(tarballBytes).digest('hex')
   const buildManifest = JSON.stringify({
     name: 'dsh-repo-plugin',
@@ -1059,6 +1064,38 @@ describe('release-tarball rescue probe', () => {
       expect(candidate?.requiresBuild).toBe(true)
       expect(candidate?.release).toEqual({ tag: 'v1.0.0', url: assetUrl, sha256: expectedSha256 })
       expect(expectedSha256).toMatch(/^[0-9a-f]{64}$/)
+    }
+  })
+
+  it.each([
+    ['packs a different package', () => packedTarball('dsh-something-else'), 'packs dsh-something-else'],
+    ['declares no dsh.bundle', () => packedTarball('dsh-repo-plugin', { dsh: undefined }), 'no dsh.bundle'],
+    ['carries no root package.json', () => rawTarball({ 'sdist-1.0/PKG-INFO': 'x' }), 'no package.json'],
+  ])('refuses a rescue whose asset %s, and says so in the rejection', async (_label, bytes, expected) => {
+    // Measured on the 2026-09-06 catalog: 7 of 176 rescued entries were in one
+    // of these three states, and every one of them was unusable — the install
+    // put a different package in the profile (or none), the declared bundle
+    // never landed, and the post-install confirm failed.
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(buildManifest, { status: 200 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': headResponse(),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/releases/latest': new Response(JSON.stringify({
+        tag_name: 'v1.0.0',
+        assets: [{ browser_download_url: assetUrl }],
+      }), { status: 200 }),
+      [assetUrl]: new Response(bytes(), { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      const candidate = result.candidates[0]
+      // No rescue — so the repo keeps the requires-build class it came with.
+      expect(candidate?.release).toBeUndefined()
+      expect(candidate?.requiresBuild).toBe(true)
+      // And the reason the rescue did not apply is carried, so the standing
+      // rejection does not tell the author to drop a build script that is not
+      // what is wrong.
+      expect(candidate?.releaseRejected ?? '').toContain(expected)
     }
   })
 
@@ -2721,13 +2758,18 @@ describe('body deadlines', () => {
     // release rides through the state file rather than being re-probed daily.
     const CHUNKS = 5
     const GAP_MS = 10
-    const fetchImpl = routeBody(assetUrl, headersThenSlowBody(CHUNKS, GAP_MS), releaseRoutes())
+    // A real packed tarball, trickled: the assertion below is that the read
+    // COMPLETED, and since `verifyReleaseAsset` that can only be shown with an
+    // asset the rescue would accept. Zeros would now be refused on content,
+    // which is indistinguishable from a read that was killed.
+    const payload = packedTarball('dsh-repo-plugin')
+    const fetchImpl = routeBody(assetUrl, headersThenSlowBody(CHUNKS, GAP_MS, payload), releaseRoutes())
     const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token', true, 2000, 400)
     expect(result.ok).toBe(true)
     if (result.ok) {
       expect(result.candidates[0]?.release?.tag).toBe('v1.0.0')
       expect(result.candidates[0]?.release?.sha256)
-        .toBe(createHash('sha256').update(slowBodyBytes(CHUNKS)).digest('hex'))
+        .toBe(createHash('sha256').update(payload).digest('hex'))
     }
   })
 

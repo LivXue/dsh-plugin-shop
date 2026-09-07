@@ -21,6 +21,7 @@ import { diffRepoState, nextRepoState, type RepoSeen, type RepoState } from './r
 import { hasWorkspaceDeps, monorepoSignal, selectSubpackagePaths } from './subpackage-select.ts'
 import type { RepoCandidate } from './types.ts'
 import { readCappedBody } from './http-body.ts'
+import { verifyReleaseAsset } from './release-asset.ts'
 
 const GITHUB_API = 'https://api.github.com'
 const RAW_GITHUB = 'https://raw.githubusercontent.com'
@@ -641,12 +642,19 @@ async function fetchHeadCommit(
 async function fetchLatestReleaseTarball(
   owner: string,
   slug: string,
+  bundleName: string,
   fetchImpl: typeof fetch,
   sleep: (ms: number) => Promise<void>,
   token: string | undefined,
   timeoutMs: number = GITHUB_REQUEST_TIMEOUT_MS,
   tarballTimeoutMs: number = TARBALL_REQUEST_TIMEOUT_MS,
-): Promise<{ tag: string; url: string; sha256: string } | null> {
+): Promise<
+  | { ok: true; tag: string; url: string; sha256: string }
+  /** An asset existed and was refused; the detail reaches the author. */
+  | { ok: false; detail: string }
+  /** Nothing to rescue with, and nothing to say about it. */
+  | null
+> {
   // The whole probe is advisory, so no failure inside it may crash the
   // harvest: every transport or read failure degrades to null, the
   // stars-sidecar rule ("any failure publishes without stars; the step
@@ -689,8 +697,13 @@ async function fetchLatestReleaseTarball(
     if (!assetResponse.ok) return null
     const bytes = await readTarballBody(assetResponse)
     if (bytes === null) return null
+    // The bytes are already in hand for the hash, so verifying that they ARE
+    // this package costs nothing more. Until this check the rescue carried the
+    // repo tree's name onto an asset nobody had opened.
+    const verdict = verifyReleaseAsset(bytes, bundleName)
+    if (!verdict.ok) return { ok: false, detail: verdict.detail }
     const sha256 = createHash('sha256').update(bytes).digest('hex')
-    return { tag: body.tag_name, url: asset, sha256 }
+    return { ok: true, tag: body.tag_name, url: asset, sha256 }
   } catch {
     // Swallows the transport failures every null-returning path above leaves
     // open: the releases call, and the asset download — the largest body read
@@ -1125,8 +1138,15 @@ export async function fetchRepoCandidate(
   // is probed. The release rides the candidate through the state file, so a
   // repo with no release does not re-consume this budget daily.
   if (root !== null && root.requiresBuild) {
-    const release = await fetchLatestReleaseTarball(owner, slug, fetchImpl, sleep, token, timeoutMs, tarballTimeoutMs)
-    if (release !== null) root.release = release
+    const release = await fetchLatestReleaseTarball(owner, slug, root.name, fetchImpl, sleep, token, timeoutMs, tarballTimeoutMs)
+    if (release?.ok === true) {
+      root.release = { tag: release.tag, url: release.url, sha256: release.sha256 }
+    } else if (release?.ok === false) {
+      // An asset was there and did not hold up. The rescue does not apply, and
+      // the standing rejection has to say that rather than blame the build
+      // script the author would otherwise go and remove for nothing.
+      root.releaseRejected = release.detail
+    }
   }
   if (root !== null && root.hasBundle) {
     return { ok: true, candidates: [root] }
