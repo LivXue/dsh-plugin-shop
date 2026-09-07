@@ -25,8 +25,6 @@
   category: ui
 - name: "@MarvekG/dsh-plugins"
   category: other
-- name: "@Six6stRINgs/dsh-client-ui-thinking-stats"
-  category: ui
 - name: "@Wodexinhaoleng-Kasssa/dsh-reader"
   category: ui
 - name: "@a1soyo0/dsh-autostart"
@@ -5891,8 +5889,6 @@
   category: tool
 - name: "dsh-browser-bridge"
   category: tool
-- name: "dsh-browser-bsk"
-  category: tool
 - name: "dsh-browser-companion"
   category: tool
 - name: "dsh-browser-control"
@@ -9005,8 +9001,6 @@
   category: tool
 - name: "dsh-gpu-pulse"
   category: ui
-- name: "dsh-graceful-restart"
-  category: workflow
 - name: "dsh-gradient"
   category: tool
 - name: "dsh-graduate-exam"
@@ -10149,6 +10143,8 @@
   category: ui
 - name: "dsh-liquid-glass-ui"
   category: ui
+- name: "dsh-listen-npm"
+  category: tool
 - name: "dsh-listing-price"
   category: tool
 - name: "dsh-lit-search"
@@ -10191,8 +10187,12 @@
   category: tool
 - name: "dsh-livermorium"
   category: tool
+- name: "dsh-living-memory"
+  category: tool
 - name: "dsh-liya-archives"
   category: ui
+- name: "dsh-llama-cpp-sampling-params"
+  category: tool
 - name: "dsh-llama-responses"
   category: provider
 - name: "dsh-llamacpp"
@@ -11025,6 +11025,8 @@
   category: ui
 - name: "dsh-mobile-xc"
   category: ui
+- name: "dsh-mobilecode"
+  category: tool
 - name: "dsh-mobius"
   category: tool
 - name: "dsh-modal-enhancer"
@@ -12457,6 +12459,8 @@
   category: ui
 - name: "dsh-plugin-desktop-installer"
   category: tool
+- name: "dsh-plugin-desktop-notice"
+  category: ui
 - name: "dsh-plugin-dev-kb"
   category: other
 - name: "dsh-plugin-devecocli"
@@ -13006,6 +13010,8 @@
 - name: "dsh-plugin-user-research"
   category: tool
 - name: "dsh-plugin-vajraclaw"
+  category: tool
+- name: "dsh-plugin-vault-memory"
   category: tool
 - name: "dsh-plugin-verdict-guard"
   category: tool
@@ -13631,6 +13637,8 @@
   category: ui
 - name: "dsh-quote"
   category: ui
+- name: "dsh-quote-followup"
+  category: tool
 - name: "dsh-quote-panel"
   category: ui
 - name: "dsh-quote-selection"
@@ -14555,6 +14563,8 @@
   category: tool
 - name: "dsh-session-review"
   category: ui
+- name: "dsh-session-robustness"
+  category: tool
 - name: "dsh-session-scope"
   category: tool
 - name: "dsh-session-search"
@@ -15423,6 +15433,8 @@
   category: integration
 - name: "dsh-subscriptions"
   category: provider
+- name: "dsh-subvision"
+  category: tool
 - name: "dsh-sugar-convert"
   category: tool
 - name: "dsh-suggest"
@@ -15447,6 +15459,8 @@
   category: tool
 - name: "dsh-super-subscriptions"
   category: provider
+- name: "dsh-supermemory"
+  category: tool
 - name: "dsh-superpower"
   category: other
 - name: "dsh-superpowers"
@@ -15905,6 +15919,8 @@
   category: tool
 - name: "dsh-tinyfish-search"
   category: provider
+- name: "dsh-tinyfish-websearch"
+  category: provider
 - name: "dsh-tip-calc"
   category: tool
 - name: "dsh-tip-jar"
@@ -15972,6 +15988,8 @@
 - name: "dsh-token-data"
   category: ui
 - name: "dsh-token-heatmap-wyz"
+  category: ui
+- name: "dsh-token-hud"
   category: ui
 - name: "dsh-token-ledger-pro"
   category: ui
@@ -17949,6 +17967,8 @@
   category: integration
 - name: "huayu-yuandian-legal-data"
   category: integration
+- name: "humanizer-ru"
+  category: tool
 - name: "ikun-theme-skin"
   category: theme
 - name: "imemory"
@@ -18020,6 +18040,8 @@
 - name: "loongport"
   category: integration
 - name: "lt-dsh-skill-manager"
+  category: tool
+- name: "lume-dsh-plugin"
   category: tool
 - name: "lunheng-article-pipeline"
   category: workflow
@@ -18378,6 +18400,8 @@
 - name: "stock-watch"
   category: ui
 - name: "stratagate-dsh"
+  category: tool
+- name: "stupid-comments"
   category: tool
 - name: "suanzhang-dsh"
   category: ui
