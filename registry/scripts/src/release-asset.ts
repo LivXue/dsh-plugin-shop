@@ -15,9 +15,15 @@
  *  2. the `dsh.bundle` that makes it a plugin rather than a plain dependency,
  *  3. the `requires-build` / `workspace-deps` waiver, which the rescue grants
  *     only because a release asset is presumed PREBUILT — so the patch the
- *     manifest points dsh at must be IN the archive, and `workspace:`
- *     specifiers must already be resolved. Without (3) a `tar czf` of a bare
- *     manifest earned the waiver and landed with nothing to load.
+ *     manifest points dsh at must be IN the archive, the modules that patch
+ *     INSERTS must be in it too, and `workspace:` specifiers must already be
+ *     resolved. Without (3) a `tar czf` of a bare manifest earned the waiver
+ *     and landed with nothing to load.
+ *
+ *     The patch file and the modules it names are two claims, not one: a
+ *     committed `cordis.patch.yml` beside a gitignored `dist/` satisfies the
+ *     first and fails the second, which is `@open-design/dsh-runtime`'s exact
+ *     shape. See {@link missingInsertTarget}.
  *
  *     Note what (3) does NOT test: the presence of a `prepare`/`prepack`
  *     script. `npm pack` runs those, ships the output, and leaves the scripts
@@ -38,6 +44,7 @@
  */
 
 import { gunzipSync } from 'node:zlib'
+import { parse } from 'yaml'
 import { readTar } from '../../../packages/dsh-plugin-shop/src/shared/tar.ts'
 import { hasWorkspaceDeps } from './subpackage-select.ts'
 
@@ -116,6 +123,236 @@ function singleRoot(paths: readonly string[]): { root: string } | { detail: stri
   }
 }
 
+/**
+ * How much of a patch file is parsed. The archive is already bounded at
+ * {@link MAX_INFLATED_BYTES}, which leaves 64 MB of YAML reachable by this
+ * parser; a cordis patch is a config file — the one that prompted this rule
+ * is 649 bytes. Past the cap the patch is not read and NOTHING is refused:
+ * an unread patch is an unanswered question, not a defect. Same figure and
+ * same reasoning as `MAX_MANIFEST_BYTES`, kept local so this module keeps no
+ * edge to the impure half.
+ */
+const MAX_PATCH_BYTES = 1024 * 1024
+
+/**
+ * Every module name an `insert` row registers, in reading order.
+ *
+ * Deliberately NOT `parseSimplePatch`, the shop's patch reader. That one
+ * answers "can a hot tree replicate this?" and returns null for a row
+ * carrying config, a bare targeting row, or a key beyond the id/name pair —
+ * all three of which appear in the very patch this rule was written for. A
+ * conservative null there is correct for hot mounting and useless here, so
+ * this reads the same file for a different question and tolerates everything
+ * that question does not depend on.
+ *
+ * Shallow on purpose: top-level list → each row's `insert` → each item's
+ * string `name`. A YAML alias can make the parsed value CYCLIC (`- insert:
+ * &a [*a]` parses into an array holding itself), so anything that walked the
+ * tree hunting for a `name` would not return. Nothing here recurses, and the
+ * parser's own `maxAliasCount` bounds the expansion before we see it.
+ */
+function patchInsertNames(text: string): string[] {
+  let parsed: unknown
+  try {
+    // `logLevel: 'silent'` because the loader's own dialect is not this
+    // parser's: a `!!js` scalar is a legal patch value and `yaml` warns on
+    // every one it cannot resolve. Measured against the 176 live rescued
+    // assets that is 33 warnings a build, on stderr, about nothing actionable
+    // — and the unresolved scalar still arrives as its raw string, which
+    // cannot match a bundle name and is skipped exactly as it should be.
+    parsed = parse(text, { logLevel: 'silent' })
+  } catch {
+    // Unreadable YAML says nothing about whether the package was built, and
+    // reporting our parser's limits as the author's defect is the mistake
+    // this file's tar `catch` already names. The rule simply does not apply.
+    return []
+  }
+  if (!Array.isArray(parsed)) return []
+  const names: string[] = []
+  for (const row of parsed) {
+    if (row === null || typeof row !== 'object' || Array.isArray(row)) continue
+    // hasOwn, not an index read: the patch is hostile input and `constructor`
+    // is a legal YAML key, which would otherwise hand back a function.
+    if (!Object.hasOwn(row, 'insert')) continue
+    const inserted = (row as { insert?: unknown }).insert
+    if (!Array.isArray(inserted)) continue
+    for (const item of inserted) {
+      if (item === null || typeof item !== 'object' || Array.isArray(item)) continue
+      if (!Object.hasOwn(item, 'name')) continue
+      const name = (item as { name?: unknown }).name
+      if (typeof name === 'string') names.push(name)
+    }
+  }
+  return names
+}
+
+/**
+ * How many targets one subpath may contribute. A conditions object is
+ * author-controlled and nests, so the collection is bounded like everything
+ * else that reads hostile input here.
+ */
+const MAX_TARGETS = 24
+
+/**
+ * Every target a conditions value could resolve to, in declaration order.
+ *
+ * A SET, not a pick, and that is the correction the PR review forced. Node
+ * matches conditions in the object's own declaration order, so
+ * `{ node: './dist/node.js', default: './dist/browser.js' }` loads
+ * `dist/node.js` — while a fixed `default`-first scan read `dist/browser.js`,
+ * found it absent, and refused a package that imports successfully. Modelling
+ * Node's algorithm exactly would mean deciding whether this install resolves
+ * as ESM or CJS, which the archive does not say. Collecting every reachable
+ * arm and refusing only when NONE of them ships is strictly weaker than that
+ * algorithm and errs the one safe way: it can miss a defect, never invent one.
+ *
+ * `types`/`typings` are skipped because a type declaration is not something
+ * the loader can run — without that, a `.d.ts` alone would excuse a missing
+ * runtime module under the "any arm ships" rule.
+ */
+function conditionTargets(value: unknown, depth = 0, out: string[] = []): string[] {
+  if (out.length >= MAX_TARGETS) return out
+  if (typeof value === 'string') {
+    out.push(value)
+    return out
+  }
+  if (depth >= 4 || value === null || typeof value !== 'object' || Array.isArray(value)) return out
+  // Declaration order, and every condition rather than a known list: an arm
+  // we do not recognise is one Node might still select, and including it can
+  // only make this rule accept more.
+  for (const key of Object.keys(value)) {
+    if (key === 'types' || key === 'typings') continue
+    conditionTargets((value as Record<string, unknown>)[key], depth + 1, out)
+    if (out.length >= MAX_TARGETS) break
+  }
+  return out
+}
+
+/**
+ * What the manifest declares for a subpath of ITSELF, or null when this rule
+ * cannot say.
+ *
+ * `legacy` marks a `main` value, which is resolved differently from an
+ * `exports` target: `main` is a file path subject to extension and
+ * directory-index lookup, while an `exports` target is an exact relative URL.
+ */
+function declaredTargets(
+  manifest: { exports?: unknown; main?: unknown },
+  subpath: string,
+): { targets: string[]; legacy: boolean } | null {
+  const { exports } = manifest
+  if (exports === undefined || exports === null) {
+    // No map: only the package's own entry point is answerable. A deeper
+    // subpath falls to legacy directory resolution, which has too many shapes
+    // to call a miss. `main` absent is not defaulted to `index.js` either —
+    // this refuses only what the author DECLARED and did not ship.
+    if (subpath !== '.') return null
+    return typeof manifest.main === 'string' ? { targets: [manifest.main], legacy: true } : null
+  }
+  if (typeof exports === 'string') return subpath === '.' ? { targets: [exports], legacy: false } : null
+  if (typeof exports !== 'object' || Array.isArray(exports)) return null
+  // A map keyed by subpaths, or a bare conditions object standing for `.`.
+  if (Object.keys(exports).some(key => key.startsWith('.'))) {
+    if (!Object.hasOwn(exports, subpath)) return null
+    return { targets: conditionTargets((exports as Record<string, unknown>)[subpath]), legacy: false }
+  }
+  return subpath === '.' ? { targets: conditionTargets(exports), legacy: false } : null
+}
+
+/**
+ * The lookups Node performs for a `main` path, in order. The empty suffix is
+ * the literal value; the rest are the extension and directory-index forms
+ * that made `main: './dist/index'` and `main: './dist'` — both of which
+ * import fine against a shipped `dist/index.js` — read as missing output.
+ */
+const LEGACY_SUFFIXES = ['', '.js', '.json', '.node', '/index.js', '/index.json', '/index.node'] as const
+
+/**
+ * Archive member paths any declared target could resolve to, or null when
+ * none of them is resolvable.
+ *
+ * Percent-escapes are decoded for an `exports` target because such a target
+ * is a relative URL: `./dist/my%20plugin.js` IS the shipped
+ * `dist/my plugin.js`, and comparing the raw string called a present file
+ * missing. The containment check runs on the DECODED path, or `%2e%2e` would
+ * walk straight through the guard it replaced.
+ */
+function archiveCandidates(
+  declared: { targets: string[]; legacy: boolean },
+  root: string,
+): string[] | null {
+  const candidates: string[] = []
+  for (const target of declared.targets) {
+    // A pattern is not a literal path; nothing here can say which file it
+    // would expand to.
+    if (target.includes('*')) continue
+    let path = target
+    if (!declared.legacy) {
+      try {
+        path = decodeURIComponent(target)
+      } catch {
+        // A malformed escape (`%zz`) is a target this rule cannot resolve,
+        // which is never a refusal.
+        continue
+      }
+    }
+    const relative = path.replace(/^\.\//, '')
+    if (relative.split('/').includes('..')) continue
+    for (const suffix of declared.legacy ? LEGACY_SUFFIXES : ['']) {
+      candidates.push(normalize(`${root}/${relative}${suffix}`))
+    }
+  }
+  return candidates.length > 0 ? candidates : null
+}
+
+/**
+ * The first module an `insert` row names, resolves into THIS package, and the
+ * archive cannot supply under ANY resolution — or null when every such name
+ * checks out.
+ *
+ * This is the claim the patch-target check above cannot make. That one proves
+ * the patch file ships; this one proves the files the patch points dsh at
+ * ship. `@open-design/dsh-runtime` passes the first and fails this: it
+ * committed cordis.patch.yml, gitignored `dist/`, and declared no
+ * prepare/prepack, so both entries it inserted resolved through `exports`
+ * onto files no install could contain.
+ *
+ * A name belonging to any OTHER package is skipped, never required: a patch
+ * legitimately inserts its peers' modules, and demanding those be in this
+ * archive would refuse every real plugin.
+ *
+ * Live impact, measured 2026-09-07 by running this verifier over all 176
+ * rescued assets of the 2026.906.18 catalog: it delists NONE of them. The
+ * refusal set is unchanged at 8, every one on an older rule. So this is a
+ * guard against a shape that demonstrably exists in the wild and does not
+ * currently reach THIS channel — `@open-design/dsh-runtime` is a
+ * commit-pinned entry with no release asset, so nothing here sees it. Stated
+ * plainly because "the rule that fixed the bug" would be the wrong summary.
+ */
+function missingInsertTarget(
+  patchText: string,
+  manifest: { name?: unknown; exports?: unknown; main?: unknown },
+  bundleName: string,
+  root: string,
+  present: ReadonlySet<string>,
+): { name: string; path: string } | null {
+  for (const name of patchInsertNames(patchText)) {
+    let subpath: string
+    if (name === bundleName) subpath = '.'
+    else if (name.startsWith(`${bundleName}/`)) subpath = `./${name.slice(bundleName.length + 1)}`
+    else continue
+    const declared = declaredTargets(manifest, subpath)
+    if (declared === null) continue
+    const candidates = archiveCandidates(declared, root)
+    if (candidates === null) continue
+    if (candidates.some(candidate => present.has(candidate))) continue
+    const [first] = candidates
+    if (first === undefined) continue
+    return { name, path: first.slice(root.length + 1) }
+  }
+  return null
+}
+
 export function verifyReleaseAsset(bytes: Uint8Array, bundleName: string): ReleaseAssetVerdict {
   let files: Map<string, Uint8Array>
   try {
@@ -140,7 +377,7 @@ export function verifyReleaseAsset(bytes: Uint8Array, bundleName: string): Relea
   if (raw === undefined) {
     return { ok: false, detail: `the release asset's ${echo(rooted.root)} directory carries no package.json, so it is not a packed npm package` }
   }
-  let manifest: { name?: unknown; dsh?: unknown }
+  let manifest: { name?: unknown; dsh?: unknown; exports?: unknown; main?: unknown }
   try {
     // npm's own reader strips a UTF-8 BOM, so a manifest carrying one installs
     // fine; refusing it here — and calling the archive unreadable — would
@@ -198,6 +435,25 @@ export function verifyReleaseAsset(bytes: Uint8Array, bundleName: string): Relea
         detail: `the release asset declares dsh.bundle.patch ${echo(patch)} but the archive does not contain it,`
           + ' so this is a source tree or an incomplete pack rather than an installable package.'
           + ' `npm pack` from a built checkout includes it.',
+      }
+    }
+    // The patch file shipping and the modules it INSERTS shipping are two
+    // claims, and the first does not imply the second — see
+    // {@link missingInsertTarget}. Read from the archive we already hold, so
+    // this costs no request and stays as pure as the rest of the file.
+    const patchBytes = [...files.entries()].find(([path]) => normalize(path) === target)?.[1]
+    if (patchBytes !== undefined && patchBytes.byteLength <= MAX_PATCH_BYTES) {
+      const missing = missingInsertTarget(
+        Buffer.from(patchBytes).toString('utf8').replace(/^\ufeff/, ''),
+        manifest, bundleName, rooted.root, new Set(paths),
+      )
+      if (missing !== null) {
+        return {
+          ok: false,
+          detail: `the release asset's patch inserts ${echo(missing.name)}, which its own package.json resolves to`
+            + ` ${echo(missing.path)} — and the archive does not contain that file, so the entry would fail to load.`
+            + ' The build output is missing from the pack; `npm pack` from a built checkout includes it.',
+        }
       }
     }
   }

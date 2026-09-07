@@ -148,6 +148,303 @@ describe('verifyReleaseAsset', () => {
     }), 'dsh-foo')).toEqual({ ok: true })
   })
 
+  // ── what the patch NAMES, not just the patch file ────────────────────────
+  // The patch file shipping and the modules it inserts shipping are two
+  // different claims, and the first does not imply the second.
+  // `@open-design/dsh-runtime` committed cordis.patch.yml and gitignored
+  // `dist/` (root .gitignore:2), so both entries it inserted resolved,
+  // through `exports`, onto files no install could ever contain. It declared
+  // no prepare/prepack either, so nothing would build them: the archive is
+  // complete by every other rule here and still loads nothing.
+
+  it('refuses an asset whose patch names a module the archive does not ship', () => {
+    const verdict = verifyReleaseAsset(rawTarball({
+      'package/package.json': JSON.stringify({
+        name: 'dsh-foo', version: '1.0.0',
+        exports: { '.': { types: './dist/types/index.d.ts', default: './dist/index.js' } },
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      }),
+      'package/cordis.patch.yml': '- insert:\n    - id: foo\n      name: dsh-foo\n',
+    }), 'dsh-foo')
+    expect(verdict.ok).toBe(false)
+    // Names the file, or the author cannot tell which build step never ran.
+    if (!verdict.ok) expect(verdict.detail).toContain('dist/index.js')
+  })
+
+  it('accepts the same asset once it ships the module it names', () => {
+    expect(verifyReleaseAsset(rawTarball({
+      'package/package.json': JSON.stringify({
+        name: 'dsh-foo', version: '1.0.0',
+        exports: { '.': { types: './dist/types/index.d.ts', default: './dist/index.js' } },
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      }),
+      'package/cordis.patch.yml': '- insert:\n    - id: foo\n      name: dsh-foo\n',
+      'package/dist/index.js': 'export const x = 1',
+    }), 'dsh-foo')).toEqual({ ok: true })
+  })
+
+  it('reads insert rows the hot-mount parser deliberately rejects', () => {
+    // The real @open-design/dsh-runtime patch, reduced. `parseSimplePatch`
+    // returns null for it twice over — a leading `config` row is not an
+    // `insert` key, and `inject` is a key beyond the id/name pair it allows —
+    // because it answers "can a hot tree replicate this?". That is a
+    // different question from "which modules does this name?", so this rule
+    // may not borrow that parser's answer.
+    const verdict = verifyReleaseAsset(rawTarball({
+      'package/package.json': JSON.stringify({
+        name: 'dsh-foo', version: '1.0.0',
+        exports: {
+          '.': { default: './dist/index.js' },
+          './startup': { default: './dist/startup.js' },
+        },
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      }),
+      'package/cordis.patch.yml': [
+        '# a comment',
+        '- id: system-prompt',
+        '  config:',
+        '    persona: >-',
+        '      multi line scalar',
+        '- id: hmr',
+        '  disabled: true',
+        '- insert:',
+        '    - id: foo-startup',
+        "      name: 'dsh-foo/startup'",
+        '    - id: foo-runtime',
+        "      name: 'dsh-foo'",
+        '      inject: [fooStartup]',
+        '',
+      ].join('\n'),
+      'package/dist/index.js': 'export const x = 1',
+    }), 'dsh-foo')
+    expect(verdict.ok).toBe(false)
+    // dist/index.js ships; dist/startup.js does not.
+    if (!verdict.ok) expect(verdict.detail).toContain('dist/startup.js')
+  })
+
+  it('does not refuse over a module belonging to another package', () => {
+    // A patch legitimately inserts entries from its peers — the harness's own
+    // agent, llm and session modules. Those are never in this archive and
+    // requiring them here would refuse every real plugin.
+    expect(verifyReleaseAsset(rawTarball({
+      'package/package.json': JSON.stringify({
+        // An unshipped `main`, so mistaking a foreign name for ours REFUSES.
+        // Without it this asserted nothing: nothing resolved either way.
+        name: 'dsh-foo', version: '1.0.0', main: './dist/index.js',
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      }),
+      'package/cordis.patch.yml': '- insert:\n    - id: a\n      name: "@deepseek-ai/dsh-agent"\n    - id: b\n      name: dsh-foo-other/x\n',
+    }), 'dsh-foo')).toEqual({ ok: true })
+  })
+
+  it('falls back to main for the bare bundle name', () => {
+    const verdict = verifyReleaseAsset(rawTarball({
+      'package/package.json': JSON.stringify({
+        name: 'dsh-foo', version: '1.0.0', main: 'lib/index.js',
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      }),
+      'package/cordis.patch.yml': '- insert:\n    - id: foo\n      name: dsh-foo\n',
+    }), 'dsh-foo')
+    expect(verdict.ok).toBe(false)
+    if (!verdict.ok) expect(verdict.detail).toContain('lib/index.js')
+  })
+
+  it('ignores the types condition, whose absence breaks no install', () => {
+    // A pack that omits its .d.ts still loads. Refusing on it would be the
+    // prepare/prepack mistake again: a true statement about the archive that
+    // is not a reason the plugin cannot run.
+    expect(verifyReleaseAsset(rawTarball({
+      'package/package.json': JSON.stringify({
+        name: 'dsh-foo', version: '1.0.0',
+        exports: { '.': { types: './dist/index.d.ts', default: './dist/index.js' } },
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      }),
+      'package/cordis.patch.yml': '- insert:\n    - id: foo\n      name: dsh-foo\n',
+      'package/dist/index.js': 'export const x = 1',
+    }), 'dsh-foo')).toEqual({ ok: true })
+  })
+
+  it('does not refuse what it cannot resolve', () => {
+    // Every arm here is a shape this rule does not model: a wildcard target,
+    // a subpath with no exports map to resolve it, a subpath the map does not
+    // list, and an unparseable patch. Refusing on any of them would be a
+    // guess, and a guess in the confident direction is what delisted 90
+    // working entries once already.
+    for (const [manifest, patch] of [
+      [{ exports: { './*': './dist/*.js' } }, '- insert:\n    - id: a\n      name: dsh-foo/x\n'],
+      // Through `main`, not `exports`: the guards are shared, and the arm
+      // above never reaches them — an unlisted subpath returns null first.
+      [{ main: './dist/*.js' }, '- insert:\n    - id: a\n      name: dsh-foo\n'],
+      [{ main: './../outside.js' }, '- insert:\n    - id: a\n      name: dsh-foo\n'],
+      [{}, '- insert:\n    - id: a\n      name: dsh-foo/deep/x\n'],
+      // Neither exports nor main: Node would try `index.js`, but the author
+      // declared nothing, and this rule refuses only a declaration the pack
+      // does not honour.
+      [{}, '- insert:\n    - id: a\n      name: dsh-foo\n'],
+      [{ exports: { '.': './dist/index.js' } }, '- insert:\n    - id: a\n      name: dsh-foo/unlisted\n'],
+      [{ main: './dist/index.js' }, '- insert:\n  - id: a\n   name: broken indent\n'],
+      [{ main: './dist/index.js' }, 'insert: not-a-list\n'],
+      // A `..` segment is invalid in an exports target, so the package is
+      // broken either way — but "the archive does not contain it" would be
+      // the wrong reason, and a wrong reason is a defect here, not a nit.
+      [{ exports: { '.': './../outside.js' } }, '- insert:\n    - id: a\n      name: dsh-foo\n'],
+      // Past MAX_PATCH_BYTES the patch is not read. An unread patch is an
+      // unanswered question, not a proven defect.
+      [{ main: './dist/index.js' }, `- insert:\n    - id: a\n      name: dsh-foo\n${'#'.repeat(1024 * 1024)}\n`],
+    ] as const) {
+      expect(verifyReleaseAsset(rawTarball({
+        'package/package.json': JSON.stringify({
+          name: 'dsh-foo', version: '1.0.0', ...manifest,
+          dsh: { bundle: { patch: './cordis.patch.yml' } },
+        }),
+        'package/cordis.patch.yml': patch,
+      }), 'dsh-foo')).toEqual({ ok: true })
+    }
+  })
+
+  // ── what the LOADER would select, not what we scan first ─────────────────
+  // Review findings on PR #22, all three reproduced by importing the same
+  // package contents in real Node: this rule refused four assets that load.
+  // The correction is one idea — refuse only when NOTHING the loader could
+  // possibly select is in the archive — rather than three special cases.
+
+  it('accepts a conditions object whose selected arm ships, whatever the scan order', () => {
+    // Node matches conditions in the object's DECLARATION order, so `node`
+    // wins here and dist/node.js is what loads. A fixed default-first scan
+    // read dist/browser.js, found it absent, and refused a working package.
+    expect(verifyReleaseAsset(rawTarball({
+      'package/package.json': JSON.stringify({
+        name: 'dsh-foo', version: '1.0.0',
+        exports: { node: './dist/node.js', default: './dist/browser.js' },
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      }),
+      'package/cordis.patch.yml': '- insert:\n    - id: a\n      name: dsh-foo\n',
+      'package/dist/node.js': 'exports.ok=true',
+    }), 'dsh-foo')).toEqual({ ok: true })
+  })
+
+  it('still refuses a conditions object when no arm at all ships', () => {
+    // The other side of the same rule: "any reachable arm present" must not
+    // become "any conditions object is excused".
+    const verdict = verifyReleaseAsset(rawTarball({
+      'package/package.json': JSON.stringify({
+        name: 'dsh-foo', version: '1.0.0',
+        exports: { node: './dist/node.js', default: './dist/browser.js' },
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      }),
+      'package/cordis.patch.yml': '- insert:\n    - id: a\n      name: dsh-foo\n',
+    }), 'dsh-foo')
+    expect(verdict.ok).toBe(false)
+  })
+
+  it('accepts a legacy main that resolves by extension or directory index', () => {
+    // `main` is not an exact path: Node tries `<main>`, `<main>.js`, and
+    // `<main>/index.js`. Both layouts import successfully in real Node, and
+    // comparing the literal string refused both.
+    for (const main of ['./dist/index', './dist']) {
+      expect(verifyReleaseAsset(rawTarball({
+        'package/package.json': JSON.stringify({
+          name: 'dsh-foo', version: '1.0.0', main,
+          dsh: { bundle: { patch: './cordis.patch.yml' } },
+        }),
+        'package/cordis.patch.yml': '- insert:\n    - id: a\n      name: dsh-foo\n',
+        'package/dist/index.js': 'exports.ok=true',
+      }), 'dsh-foo')).toEqual({ ok: true })
+    }
+  })
+
+  it('still refuses a legacy main when no lookup candidate ships', () => {
+    const verdict = verifyReleaseAsset(rawTarball({
+      'package/package.json': JSON.stringify({
+        name: 'dsh-foo', version: '1.0.0', main: './dist/index',
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      }),
+      'package/cordis.patch.yml': '- insert:\n    - id: a\n      name: dsh-foo\n',
+    }), 'dsh-foo')
+    expect(verdict.ok).toBe(false)
+  })
+
+  it('resolves percent-escapes in an exports target before comparing members', () => {
+    // An `exports` target is a relative URL, so `%20` is a space on disk.
+    // Stripping only the leading `./` searched for a member that cannot
+    // exist and called a shipped file missing build output.
+    expect(verifyReleaseAsset(rawTarball({
+      'package/package.json': JSON.stringify({
+        name: 'dsh-foo', version: '1.0.0', exports: './dist/my%20plugin.js',
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      }),
+      'package/cordis.patch.yml': '- insert:\n    - id: a\n      name: dsh-foo\n',
+      'package/dist/my plugin.js': 'exports.ok=true',
+    }), 'dsh-foo')).toEqual({ ok: true })
+  })
+
+  it('refuses a pack that ships only its type declarations', () => {
+    // What skipping `types` is FOR, now that "any reachable arm present"
+    // would otherwise let a .d.ts excuse a missing runtime module. A types
+    // arm is not something the loader can run.
+    const verdict = verifyReleaseAsset(rawTarball({
+      'package/package.json': JSON.stringify({
+        name: 'dsh-foo', version: '1.0.0',
+        exports: { '.': { types: './dist/index.d.ts', default: './dist/index.js' } },
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      }),
+      'package/cordis.patch.yml': '- insert:\n    - id: a\n      name: dsh-foo\n',
+      'package/dist/index.d.ts': 'export const ok: boolean',
+    }), 'dsh-foo')
+    expect(verdict.ok).toBe(false)
+    if (!verdict.ok) expect(verdict.detail).toContain('dist/index.js')
+  })
+
+  it('does not refuse a target whose percent-escape cannot be decoded', () => {
+    // `decodeURIComponent('%zz')` throws. An undecodable target is a shape
+    // this rule cannot resolve, which is never a refusal.
+    expect(verifyReleaseAsset(rawTarball({
+      'package/package.json': JSON.stringify({
+        name: 'dsh-foo', version: '1.0.0', exports: './dist/%zz.js',
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      }),
+      'package/cordis.patch.yml': '- insert:\n    - id: a\n      name: dsh-foo\n',
+    }), 'dsh-foo')).toEqual({ ok: true })
+  })
+
+  it('still refuses an escape that only appears after decoding', () => {
+    // `%2e%2e` decodes to `..`, so the containment check has to run on the
+    // DECODED path or the decode step reopens what it guarded.
+    expect(verifyReleaseAsset(rawTarball({
+      'package/package.json': JSON.stringify({
+        name: 'dsh-foo', version: '1.0.0', exports: './%2e%2e/outside.js',
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      }),
+      'package/cordis.patch.yml': '- insert:\n    - id: a\n      name: dsh-foo\n',
+    }), 'dsh-foo')).toEqual({ ok: true })
+  })
+
+  it('does not treat a non-string insert name as a module name', () => {
+    // A YAML list coerces to exactly the bundle name (`String(['dsh-foo'])`
+    // is `'dsh-foo'`), so a rule that coerced instead of shape-checking would
+    // resolve it and refuse. The loader takes only a string `name`, so this
+    // row registers nothing and the archive's contents are not the defect.
+    expect(verifyReleaseAsset(rawTarball({
+      'package/package.json': JSON.stringify({
+        name: 'dsh-foo', version: '1.0.0', main: './dist/index.js',
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      }),
+      'package/cordis.patch.yml': '- insert:\n    - id: a\n      name: [dsh-foo]\n',
+    }), 'dsh-foo')).toEqual({ ok: true })
+  })
+
+  it('survives a patch whose aliases make a cyclic structure', () => {
+    // `- insert: &a [*a]` parses into an array containing itself. Anything
+    // that walked the parsed tree looking for a `name` would not return.
+    expect(() => verifyReleaseAsset(rawTarball({
+      'package/package.json': JSON.stringify({
+        name: 'dsh-foo', version: '1.0.0', main: './dist/index.js',
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      }),
+      'package/cordis.patch.yml': '- insert: &a [*a]\n',
+    }), 'dsh-foo')).not.toThrow()
+  })
+
   it('does NOT refuse an asset merely for declaring a prepare or prepack script', () => {
     // The correction that matters most in this file. `npm pack` RUNS those
     // scripts, ships the built output, and leaves the scripts in the
@@ -172,7 +469,10 @@ describe('verifyReleaseAsset', () => {
     // Unlike the script field, this one IS evidence: `pnpm pack` rewrites
     // `workspace:` into resolved ranges, so a tarball still carrying them was
     // not packed that way and cannot resolve outside its own workspace.
-    // It fired on none of the live entries.
+    // Re-measured 2026-09-07 against the 176 rescued assets of the
+    // 2026.906.18 catalog: it fires on ONE, dsh-yizi-themes. The comment here
+    // said "none" — true when written, false now, and a stale measurement in
+    // a committed comment is the drift CLAUDE.md warns about.
     const verdict = verifyReleaseAsset(rawTarball({
       'package/package.json': JSON.stringify({
         name: 'dsh-foo', version: '1.0.0', dependencies: { a: 'workspace:*' },
