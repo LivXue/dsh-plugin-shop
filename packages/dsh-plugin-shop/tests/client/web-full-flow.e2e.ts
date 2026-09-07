@@ -82,6 +82,7 @@ import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { chromium, type Browser, type Locator, type Page } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { dshCommand, resolveDshScript } from '../../src/host/dsh-cli.ts'
 import { startInstall } from '../../src/host/executor.ts'
 
 /** Expand the 插件列表 tab's 全局插件 section, which holds the Loader entries.
@@ -120,11 +121,33 @@ import { startLocalRegistry, type LocalRegistry } from '../fixtures/local-regist
 // CI installs both (the dsh CLI in the workflow, chromium by the
 // `playwright install chromium` step); the skip fires only on machines that
 // never set them up, so the P2 exit criterion still gates the CI run.
+// The probe goes through the SAME resolution the executor uses rather than
+// `spawnSync('dsh', …)` directly — the identical correction `real-install.ts`
+// already carries, which this file was missed by. npm installs the CLI as
+// `dsh`, `dsh.cmd` and `dsh.ps1` with no `.exe`, and libuv resolves a bare
+// name against `.com`/`.exe` only, so `spawnSync('dsh', …)` is ENOENT on every
+// Windows machine. Measured 2026-09-07 on Windows 11 with a working
+// `dsh 0.1.2-rc.1`: the bare form reports `status: null, error: ENOENT` while
+// the resolved form reports `status: 0`. `hasDsh` was therefore false there
+// and the P2 exit criterion — the one test that walks the real shop UI —
+// skipped itself on the only platform whose bugs CI cannot see.
 const hasDsh = (() => {
+  const { command, args } = dshCommand({
+    dshBin: 'dsh',
+    args: ['--version'],
+    platform: process.platform,
+    execPath: process.execPath,
+    script: resolveDshScript(
+      { exists: path => existsSync(path), read: path => readFileSync(path, 'utf8') },
+      { argv1: process.argv[1], path: process.env.PATH },
+    ),
+  })
   try {
-    const probe = spawnSync('dsh', ['--version'], { stdio: 'ignore' })
-    return probe.status === 0
+    return spawnSync(command, args, { stdio: 'ignore' }).status === 0
   } catch {
+    // spawnSync throws rather than reporting when the binary cannot be started
+    // at all (a Windows .cmd shim throws EINVAL); either way the CLI is
+    // unusable from here and the case skips.
     return false
   }
 })()
@@ -232,7 +255,19 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
     // the OS pick the port; dsh prints the BOUND port in `dsh web: <url>`
     // once the Loader tree settles (the web-app bundle announces readiness),
     // so the URL is parsed from stdout rather than guessed.
-    dshProcess = spawn('dsh', ['--profile', 'web', '--no-open', '--port', '0'], {
+    // Through the same resolution as `hasDsh` above: a bare `dsh` is ENOENT on
+    // Windows, and this spawn is what boots the harness the whole flow drives.
+    const web = dshCommand({
+      dshBin: 'dsh',
+      args: ['--profile', 'web', '--no-open', '--port', '0'],
+      platform: process.platform,
+      execPath: process.execPath,
+      script: resolveDshScript(
+        { exists: path => existsSync(path), read: path => readFileSync(path, 'utf8') },
+        { argv1: process.argv[1], path: process.env.PATH },
+      ),
+    })
+    dshProcess = spawn(web.command, web.args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...localRegistryEnv(), DSH_HOME: tmpHome, DSH_SHOP_CATALOG_URL: catalogServer.baseUrl },
       detached: true, // its own process group, so teardown kills the whole tree
@@ -542,9 +577,19 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await notice.waitFor({ state: 'visible', timeout: 60_000 })
       expect(await notice.textContent()).toContain('该插件的补丁包含无法热挂载的配置；重启 dsh 后生效')
       // The §8 restart offer renders for a restart-required install on a
-      // restart-capable host (this composition: spawned by vitest, no
-      // systemd markers in the env).
-      await card.locator('[data-shop-restart]').waitFor({ state: 'visible', timeout: 10_000 })
+      // restart-capable host (this composition: spawned by vitest, no systemd
+      // markers in the env) — and Windows is NOT one: `restartPlatformSupported`
+      // is `platform !== 'win32'`, because the two-phase handoff helper is a
+      // POSIX `sh` one-liner with no Windows equivalent. There the client
+      // renders the disabled notice instead, so assert the platform's actual
+      // contract rather than the POSIX one; hard-coding the offer is what made
+      // this case unpassable on Windows once the suite could run there at all.
+      if (process.platform === 'win32') {
+        await card.locator('[data-shop-restart-disabled]').waitFor({ state: 'visible', timeout: 10_000 })
+        expect(await card.locator('[data-shop-restart]').count()).toBe(0)
+      } else {
+        await card.locator('[data-shop-restart]').waitFor({ state: 'visible', timeout: 10_000 })
+      }
 
       // Nothing is live: a fresh settings mount takes a fresh inventory
       // snapshot, and the config fixture has no hot entry in it.
