@@ -50,24 +50,116 @@ function chain<T>(profile: string, task: () => Promise<T>): Promise<T> {
   return next
 }
 
+/**
+ * Why a zero-exit install left `dsh.profile.bundles` without the entry.
+ *
+ * This reports EVIDENCE, never a cause. "the catalog may be stale; refresh
+ * it" used to be the whole message on every branch, and on the failure that
+ * prompted the rewrite it was flatly wrong — the catalog had been fetched
+ * minutes earlier and was correct. The first attempt at a replacement
+ * inferred the opposite cause instead, reading "the entry has a `subdir` and
+ * its name is absent" as "the spec's `&path:` was eaten". That predicate does
+ * not entail that cause: `install()` builds three spec forms and only one
+ * carries `&path:` at all, so a tarball-rescued or npm entry could be told
+ * its path had been eaten from a spec that never had one. A guess in the
+ * confident direction is still a guess.
+ *
+ * So: the profile manifest is read before and after, and only the difference
+ * is reported.
+ *   - the name IS an own dependency, but not a bundle — a fact, stated
+ *     without a claim about why dsh did not list it;
+ *   - the name is absent and something else was added — name what was added.
+ *     That is the culprit, and naming it is what lets a user clean up; the
+ *     package that lands here is by construction NOT a catalog entry, so the
+ *     shop's own uninstall cannot reach it and a CLI line is the only usable
+ *     instruction;
+ *   - the name is absent and nothing was added — nothing installed under
+ *     this name, and a catalog behind the registry IS a real candidate here.
+ *
+ * `before` is `null` when the manifest existed but could not be read, and
+ * the diff branches are then withheld. Collapsing that into an empty map is
+ * not a smaller lie than the inferred cause it replaced: every pre-existing
+ * dependency reads as newly added, so the second branch names an innocent
+ * package and puts it in a `dsh plugin remove` line. An ABSENT manifest is
+ * still `{}` — nothing WAS installed, which is the truth for a first install
+ * into a fresh profile, and the branch that names what landed has to keep
+ * working there. Same rule the harvest applies to `no-manifest` versus
+ * `fetch-failed`: "could not read it" is never "it was not there".
+ *
+ * `Object.hasOwn` throughout, never an index read: these records are parsed
+ * from the profile manifest and carry Object.prototype, so `deps.constructor`
+ * answers with a function for a package that is not installed — and
+ * `constructor` is a legal npm name (`[a-z0-9][a-z0-9._-]*`).
+ *
+ * Pure: every input is a value, so each branch is driven by a fixture.
+ */
+export function activationFailureDetail(args: {
+  expectedName: string
+  profile: string
+  before: Readonly<Record<string, string>> | null
+  after: Readonly<Record<string, string>>
+}): string {
+  const { expectedName, profile, before, after } = args
+  if (Object.hasOwn(after, expectedName)) {
+    return `${expectedName} is a dependency of the profile but is not in dsh.profile.bundles, so dsh`
+      + ' did not activate it as a profile layer and the shop has nothing to mount.'
+  }
+  // Both remaining branches are claims about what CHANGED, and neither can be
+  // made without the prior state. Reported before the diff so an unreadable
+  // manifest never borrows the wording of a readable one.
+  if (before === null) {
+    return `${expectedName} is in neither dsh.profile.bundles nor the profile's dependencies, and the`
+      + ' profile manifest could not be read before the install, so what the install changed is'
+      + ' unknown — compare the profile\'s package.json against what you expected before retrying.'
+  }
+  const added = Object.keys(after).filter(name => !Object.hasOwn(before, name)).sort()
+  if (added.length > 0) {
+    const names = added.join(', ')
+    return `${expectedName} is not in the profile's dependencies — the install added ${names} instead.`
+      + ` Remove it with: dsh plugin --profile ${profile} remove ${added[0]}`
+  }
+  return `${expectedName} is in neither dsh.profile.bundles nor the profile's dependencies, and the`
+    + ' install added nothing — if the entry is new the catalog may be behind; refresh it and retry.'
+}
+
 /** The §7.2 step-6 confirm: after a zero exit, re-read the profile manifest and
  * verify the bundle actually landed in `dsh.profile.bundles`. Exit 0 alone is
- * not success — a library-that-looked-like-a-plugin, or a stale catalog,
- * exits 0 while changing nothing (§10). The shop cannot force a client
- * refresh in P1, so the detail carries the signal. A manifest that cannot be
- * read or parsed is the same outcome, naming the file: the install's result
- * is then unknown, and a bare `done` would be plausible-but-wrong. `home` is
+ * not success — a library-that-looked-like-a-plugin, a subpackage entry whose
+ * path was eaten, or a stale catalog all exit 0 while changing nothing (§10).
+ * The shop cannot force a client refresh in P1, so the detail carries the
+ * signal — see `activationFailureDetail` for which signal. A manifest that
+ * cannot be read or parsed names the file instead: the install's result is
+ * then unknown, and a bare `done` would be plausible-but-wrong. `home` is
  * the DSH_HOME the child was spawned with — the parent's own DSH_HOME may
  * differ when `env` pinned it.
  */
-function confirmBundleActivation(profile: string, home: string | undefined, expectedName: string): string | null {
+function confirmBundleActivation(
+  profile: string,
+  home: string | undefined,
+  expectedName: string,
+  before: Readonly<Record<string, string>> | null,
+): string | null {
   const profileDir = resolveProfileDir(profile, home)
   try {
     const manifest = readProfileManifest('dsh-plugin-shop', profileDir)
-    if (manifest.dsh?.profile?.bundles?.includes(expectedName)) return null
-    return 'installed but dsh.profile.bundles did not change — the catalog may be stale; refresh it'
+    const after = manifest.dependencies ?? {}
+    // Two conditions, not one. `bundles.includes` alone reports MEMBERSHIP,
+    // and this install has to establish CHANGE: a bundle row left over from a
+    // previous install passes a membership check while this attempt put a
+    // different package on disk, and the caller then hot-mounts the OLD tree
+    // and publishes "running now, no restart needed" over an install that
+    // did nothing. Requiring the name to be an own dependency too closes it.
+    //
+    // `Array.isArray` is load-bearing: `readProfileManifest` validates only
+    // that the document is an object, so `"bundles": "dsh-plugin-shop-extras"`
+    // is a string whose `.includes('dsh-plugin-shop')` is true.
+    const bundles = manifest.dsh?.profile?.bundles
+    const listed = Array.isArray(bundles) && bundles.includes(expectedName)
+    if (listed && Object.hasOwn(after, expectedName)) return null
+    return activationFailureDetail({ expectedName, profile, before, after })
   } catch {
-    return `installed but the profile manifest could not be read (${join(profileDir, 'package.json')}) — the catalog may be stale; refresh it`
+    return `installed but the profile manifest could not be read (${join(profileDir, 'package.json')})`
+      + ' — the install\'s result is unknown; check that file.'
   }
 }
 
@@ -273,8 +365,49 @@ function dshScript(): string | null {
  * The downstream dsh invokes pnpm with shell mode on Windows, where these
  * characters alter the command line. `&` is intentionally allowed here: the
  * legitimate monorepo spec uses it as `&path:<subdir>`, and catalog.ts
- * validates each component before it reaches this layer. */
+ * validates each component before it reaches this layer. `"` is NOT allowed,
+ * and `shellSafeTarget` below leans on that: the only quote that can appear in
+ * the spawned command line is the one we add ourselves, after this gate. */
 const UNSAFE_TARGET = /[\s"'`|<>^$();\\{}]|[\u0000-\u001f\u007f]/
+
+/**
+ * The operand as the downstream dsh must receive it for pnpm to see it whole.
+ *
+ * dsh spawns pnpm with `shell: process.platform === 'win32'`
+ * (`apps/cli/src/plugin.ts:137` at tag `dsh-v0.1.3-alpha.1`), and Node does
+ * not escape under `shell: true` — it concatenates argv into one string for
+ * cmd.exe. `&` is a cmd command separator, so a subpackage spec
+ * `github:owner/repo#<sha>&path:<subdir>` is cut in half before pnpm sees it:
+ * pnpm installs the repository ROOT and the tail runs as its own command. It
+ * is silent because `path` happens to be a cmd builtin that succeeds and
+ * prints nothing, so the chain still exits 0 and the install reports success
+ * over a foreign package.
+ *
+ * Measured 2026-09-06, Windows 11, dsh 0.1.2-rc.1, pnpm 11.25.0, against
+ * `nexu-io/open-design#c5ae629&path:packages/dsh-runtime`:
+ *
+ *   bare    -> `+ open-design github:nexu-io/open-design#c5ae629` (the ROOT), exit 0
+ *   `^&`    -> the ROOT again; cmd consumes the caret before it re-parses
+ *   `"..."` -> `+ @open-design/dsh-runtime ...&path:packages/dsh-runtime`, exit 0,
+ *              and the name lands in dsh.profile.bundles
+ *
+ * So the quotes go on. Two constraints on doing it here:
+ *
+ *  - AFTER the `UNSAFE_TARGET` gate, never before. That gate refuses `"` in
+ *    the operand, so every quote in the spawned command line is provably ours
+ *    and catalog data cannot close one and append a command of its own.
+ *  - Windows only, and only when the spec actually contains `&`. Off Windows
+ *    dsh spawns pnpm with no shell, where a quote would be a literal character
+ *    in the spec and would break an install that works today. Scoping to `&`
+ *    holds the blast radius to exactly the specs that are broken now — and if
+ *    dsh stops shelling its argv, those specs fail loudly at pnpm rather than
+ *    silently installing a repository root. Reported upstream as
+ *    deepseek-ai/deepseek-harness discussion #5815.
+ */
+export function shellSafeTarget(target: string, platform: NodeJS.Platform): string {
+  if (platform !== 'win32' || !target.includes('&')) return target
+  return `"${target}"`
+}
 
 /** Run one `dsh plugin --profile <profile> <verb> <target>` and track it.
  * Never rolls back; a failure surfaces stderr verbatim plus the recovery hint
@@ -295,12 +428,23 @@ function spawnPluginCli(options: {
   argv: string[]
   dshBin: string
   env?: NodeJS.ProcessEnv
+  /** Injected so the win32 branches are reachable from a test on any host —
+   * this file's own convention (`spawnFailureDetail`, `killTree`). Reading
+   * `process.platform` inline is what left `shellSafeTarget`'s Windows arm
+   * unexercisable on an ubuntu CI. */
+  platform?: NodeJS.Platform
+  /** Run inside the chained task immediately before the spawn, with the same
+   * DSH_HOME the child gets — the confirm compares against what this saw. */
+  beforeSpawn?: (home: string | undefined) => void
   confirm?: (home: string | undefined) => string | null
   afterDone?: (home: string | undefined) => Promise<{ needsRestart: boolean; restartReason?: HotRestartReason } | void>
   onStatus?: (status: InstallStatus) => void
   timeoutMs?: number
 }): RunningInstall {
-  const { profile, argv, dshBin, env, confirm, afterDone, onStatus, timeoutMs = INSTALL_TIMEOUT_MS } = options
+  const {
+    profile, argv, dshBin, env, platform = process.platform,
+    beforeSpawn, confirm, afterDone, onStatus, timeoutMs = INSTALL_TIMEOUT_MS,
+  } = options
   // Argv smuggling guard: an operand that begins with `-` would be parsed as
   // a flag by the CLI. A legitimate target — a catalog name for remove, a
   // `name@version` spec for add — never begins with `-`, so refusing here
@@ -313,6 +457,10 @@ function spawnPluginCli(options: {
   if (UNSAFE_TARGET.test(target)) {
     throw new Error(`dsh-plugin-shop: refusing to spawn with an unsafe operand: ${JSON.stringify(target)}`)
   }
+  // Only now, once the operand has passed the gate above, is it quoted for
+  // the shell dsh puts it through on Windows. See `shellSafeTarget`.
+  const spawnArgv = [...argv]
+  spawnArgv[1] = shellSafeTarget(target, platform)
   const installId = randomUUID()
   const log: string[] = []
   let logBytes = 0
@@ -345,16 +493,17 @@ function spawnPluginCli(options: {
 
   const failToStart = (error: NodeJS.ErrnoException): InstallStatus => {
     state = 'failed'
-    detail = spawnFailureDetail(error.code, error.message, dshBin, process.platform)
+    detail = spawnFailureDetail(error.code, error.message, dshBin, platform)
     onStatus?.(status())
     return status()
   }
 
   const finished = chain(profile, () => new Promise<InstallStatus>((resolve) => {
+    beforeSpawn?.(env?.DSH_HOME)
     const { command, args } = dshCommand({
       dshBin,
-      args: ['plugin', '--profile', profile, ...argv],
-      platform: process.platform,
+      args: ['plugin', '--profile', profile, ...spawnArgv],
+      platform,
       execPath: process.execPath,
       script: dshScript(),
     })
@@ -367,7 +516,7 @@ function spawnPluginCli(options: {
         // narrower env explicitly; guessing an allowlist here would break
         // valid installs and process.env carries no variable provenance.
         env: env ?? process.env,
-        detached: process.platform !== 'win32',
+        detached: platform !== 'win32',
       })
     } catch (error) {
       resolve(failToStart(error as NodeJS.ErrnoException))
@@ -451,7 +600,7 @@ function spawnPluginCli(options: {
     deadlineTimer = setTimeout(() => {
       if (state !== 'running') return
       timedOut = true
-      killTree(child.pid, process.platform)
+      killTree(child.pid, platform)
       drainThenSettle()
     }, timeoutMs)
   }))
@@ -462,15 +611,20 @@ function spawnPluginCli(options: {
 /**
  * Run one `dsh plugin --profile <profile> add <spec>` and track it.
  * When `expectedName` is given, a zero exit is confirmed against the profile
- * manifest (§7.2 step 6) before the install reports `done`; `alsoConfirm` adds
- * a second post-exit check after it. When `afterDone` is given, the terminal
- * `done` waits for it to settle (§D hot mount).
+ * manifest (§7.2 step 6) before the install reports `done`.
+ * The confirm compares the profile's dependencies before and after the spawn,
+ * so a miss can name what actually landed instead of guessing at a cause; the
+ * executor takes both snapshots itself. `alsoConfirm` adds a second post-exit
+ * check, run only once that one has passed.
+ * When `afterDone` is given, the terminal `done` waits for it to settle
+ * (§D hot mount).
  */
 export function startInstall(options: {
   profile: string
   spec: string
   dshBin?: string
   env?: NodeJS.ProcessEnv
+  platform?: NodeJS.Platform
   expectedName?: string
   /** A further post-exit check, run only once the bundle-activation confirm
    * has passed. Returning a detail fails the install with it. The package is
@@ -481,21 +635,67 @@ export function startInstall(options: {
   onStatus?: (status: InstallStatus) => void
   timeoutMs?: number
 }): RunningInstall {
-  const { profile, spec, dshBin = 'dsh', env, expectedName, alsoConfirm, afterDone, onStatus, timeoutMs } = options
+  const {
+    profile, spec, dshBin = 'dsh', env, platform, expectedName,
+    alsoConfirm, afterDone, onStatus, timeoutMs,
+  } = options
+  // The `before` snapshot is taken by the executor, not by the caller, and
+  // through the SAME resolution the confirm uses. A caller-supplied map would
+  // couple the diff to the caller's idea of where the profile lives — and if
+  // that ever diverged from `resolveProfileDir`, `before` and `after` would
+  // come from two different files and the difference would be noise. It is
+  // read inside the chained task, immediately before the spawn, so a command
+  // waiting behind another install in the same profile still sees the state
+  // the one ahead of it left.
+  let before: Readonly<Record<string, string>> | null = null
   return spawnPluginCli({
     profile,
     argv: ['add', spec],
     dshBin,
     env,
+    platform,
+    beforeSpawn: expectedName !== undefined
+      ? (home) => { before = readProfileDependencies(profile, home) }
+      : undefined,
     // `??` chains on null, and a returned detail is a non-empty string, so
-    // the activation confirm still speaks first when both would fail.
+    // the activation confirm — which can now name what actually landed —
+    // still speaks first when both would fail.
     confirm: expectedName !== undefined
-      ? home => confirmBundleActivation(profile, home, expectedName) ?? alsoConfirm?.(home) ?? null
+      ? home => confirmBundleActivation(profile, home, expectedName, before) ?? alsoConfirm?.(home) ?? null
       : alsoConfirm,
     afterDone,
     onStatus,
     timeoutMs,
   })
+}
+
+/** The profile's dependency map as it stood before the spawn: `{}` when the
+ * manifest is absent — the profile-not-initialized case, which `dsh plugin`
+ * resolves by creating it — and `null` when it exists but could not be read
+ * or parsed. Neither is worth failing the spawn over; they differ only in
+ * what the confirm may then say.
+ *
+ * `activationFailureDetail` withholds both of its diff branches on `null`,
+ * because an unreadable manifest read as empty makes every pre-existing
+ * dependency look newly added — and the detail then tells the reader to
+ * remove one of their own working plugins.
+ *
+ * The existence check is what separates the two: `readProfileManifest` wraps
+ * its read error in a plain `Error`, so ENOENT arrives with no `code` to
+ * branch on. Both directions of the race between the check and the read are
+ * safe — a file that appears is read normally, and one that disappears
+ * throws and reports the state as unknown, which it is. */
+function readProfileDependencies(
+  profile: string,
+  home: string | undefined,
+): Readonly<Record<string, string>> | null {
+  const profileDir = resolveProfileDir(profile, home)
+  if (!existsSync(join(profileDir, 'package.json'))) return {}
+  try {
+    return readProfileManifest('dsh-plugin-shop', profileDir).dependencies ?? {}
+  } catch {
+    return null
+  }
 }
 
 /**

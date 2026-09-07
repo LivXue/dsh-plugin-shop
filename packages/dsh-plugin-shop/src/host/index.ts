@@ -274,6 +274,23 @@ export interface ShopCatalogResult {
   incompatible: Record<string, string[]>
 }
 
+/** An own-property read of a dependency map parsed from the profile manifest.
+ * A bare index read answers for `Object.prototype`, and `constructor` is a
+ * legal npm name (`[a-z0-9][a-z0-9._-]*`), so `dependencies['constructor']`
+ * hands back a function for a package that is not installed. The
+ * `spec === undefined` guard then passes, and `installedSpecMatches` returns
+ * TRUE for an npm entry — `parseRepoSpec` coerces the function to a string
+ * that matches no `github:` shorthand and answers `null`, which is exactly
+ * what an npm entry expects. So the entry reads as installed when it is not.
+ * `Object.hasOwn` is the same fix already applied at the two membership
+ * checks above; these two sites need the VALUE, hence a helper. */
+function ownDependencySpec(
+  dependencies: Readonly<Record<string, string>>,
+  name: string,
+): string | undefined {
+  return Object.hasOwn(dependencies, name) ? dependencies[name] : undefined
+}
+
 /** Remote-only service exposing the shop Remote methods of §7.3.
  *
  * @typert service shop */
@@ -515,6 +532,21 @@ export class ShopGateway extends TypertRemoteService {
     }
   }
 
+  /**
+   * The profile manifest's spec for one name, or undefined when the manifest
+   * holds no such name — or could not be read at all.
+   *
+   * Through `ownDependencySpec` for the reason spelled out there: a bare index
+   * read answers for `Object.prototype`, and `constructor` is a legal npm
+   * name. The cost on this path is behavioural twice over — the gate would
+   * weigh a function as the installed spec, and a phantom `isUpdate` would run
+   * `liveDisableIds` against something absent.
+   */
+  private installedSpecOf(name: string): string | undefined {
+    const dependencies = this.profileDependenciesOrNone()
+    return dependencies === undefined ? undefined : ownDependencySpec(dependencies, name)
+  }
+
   private ownedEntryIdsOrNone(packageName: string): string[] {
     try {
       return ownedEntryIds({ profileDir: this.profileDirResolved(), packageName })
@@ -565,7 +597,7 @@ export class ShopGateway extends TypertRemoteService {
     // than the list the user clicked is what let the shop show a toggle and
     // then deny the package existed.
     const manifest = readProfileManifest('dsh-plugin-shop', profileDir)
-    if ((manifest.dependencies ?? {})[args.name] === undefined) {
+    if (!Object.hasOwn(manifest.dependencies ?? {}, args.name)) {
       return { ok: false, detail: `dsh-plugin-shop: ${args.name} is not installed` }
     }
     // A malformed or unreadable bundle patch must reach the person as a
@@ -752,7 +784,7 @@ export class ShopGateway extends TypertRemoteService {
     // it to tell an update of THIS plugin from a replacement of a different one
     // that shares the name. Read once, here, and reused for `isUpdate` below —
     // two reads straddling the tarball fetch could see two different manifests.
-    const installedSpec = this.profileDependenciesOrNone()?.[args.name]
+    const installedSpec = this.installedSpecOf(args.name)
     const verdict = validateInstall(snapshot, args, installedSpec)
     if (!verdict.ok) return { ok: false, code: verdict.code, detail: verdict.detail }
     // The validator resolved the row by identity. Re-finding it by name is
@@ -807,7 +839,9 @@ export class ShopGateway extends TypertRemoteService {
     // the install's own record — the shop's managed bundle list.
     // Exactly what the gate above already resolved: a defined spec that got
     // this far has been proven to name this very install, so "the name is
-    // present" and "this is an update" are one fact, read once.
+    // present" and "this is an update" are one fact, read once. The
+    // own-property discipline that used to live on this line now lives in
+    // `installedSpecOf`, which is where the read happens.
     const isUpdate = installedSpec !== undefined
     // Resolve the OLD version's entry ids now: `afterDone` runs once the new
     // tarball has already overwritten the package's bundle patch on disk.
@@ -820,7 +854,10 @@ export class ShopGateway extends TypertRemoteService {
       spec,
       dshBin: this.dshBin,
       // §7.2 step 6: exit 0 must be confirmed against the profile manifest —
-      // a bundle that did not land is a stale catalog, not a done install.
+      // a bundle that did not land is not a done install. The executor takes
+      // its own before/after snapshots of the profile's dependencies, through
+      // the same resolution the confirm uses, so a miss reports the difference
+      // and can name what actually landed.
       expectedName: args.name,
       // And, now that the files are on disk, the one collision the name gate
       // cannot see. Reporting it beats a done install that kills the next
@@ -963,7 +1000,7 @@ export class ShopGateway extends TypertRemoteService {
     }
     const installed: ShopInstalledEntry[] = []
     for (const entry of snapshot.entries) {
-      const spec = dependencies[entry.name]
+      const spec = ownDependencySpec(dependencies, entry.name)
       if (spec === undefined) continue
       // A profile has one dependency per name, so the spec is the only way
       // to choose among same-named catalog entries.
@@ -1027,7 +1064,7 @@ export class ShopGateway extends TypertRemoteService {
     }
     const manifest = readProfileManifest('dsh-plugin-shop', this.profileDirResolved())
     const dependencies = manifest.dependencies ?? {}
-    const spec = dependencies[args.name]
+    const spec = ownDependencySpec(dependencies, args.name)
     if (spec === undefined) {
       return { ok: false, detail: `dsh-plugin-shop: ${args.name} is not installed` }
     }

@@ -15,13 +15,23 @@ const TEMP_ROOT = fileTempRoot('index')
 // The install tests drive the full §7.2 path including the post-install
 // confirm, which re-reads the profile manifest through app-boot's
 // resolveProfileDir honoring DSH_HOME. Pin it to a fixture home whose `web`
-// profile manifest already lists the bundle the install tests install, so the
-// exit-0 fixture dsh passes the confirm without any dsh reconcile. Each test
-// file runs in its own vitest worker, so the pin never leaves this file.
+// profile manifest already looks like the installs succeeded, so the exit-0
+// fixture dsh passes the confirm without any dsh reconcile. Each test file
+// runs in its own vitest worker, so the pin never leaves this file.
+//
+// BOTH halves are required, because the confirm now establishes change and
+// not just membership: a real `dsh plugin add X` writes `dependencies[X]` AND
+// appends to `dsh.profile.bundles`, so a fixture carrying only the bundle row
+// models an install that never happened. It used to pass anyway, which is
+// how a stricter confirm could not be told from a broken one.
+const INSTALLED_BY_FIXTURE = ['dsh-hello-plugin', 'dsh-repo-plugin', 'sub-plugin', 'dsh-rescued', 'dsh-plugin-shop']
 const shopHome = mkdtempSync(join(TEMP_ROOT, 'dsh-gateway-home-'))
 process.env.DSH_HOME = shopHome
 mkdirSync(join(shopHome, 'profiles', 'web'), { recursive: true })
-writeFileSync(join(shopHome, 'profiles', 'web', 'package.json'), JSON.stringify({ dsh: { profile: { bundles: ['dsh-hello-plugin', 'dsh-repo-plugin', 'sub-plugin', 'dsh-rescued', 'dsh-plugin-shop'] } } }))
+writeFileSync(join(shopHome, 'profiles', 'web', 'package.json'), JSON.stringify({
+  dependencies: Object.fromEntries(INSTALLED_BY_FIXTURE.map(name => [name, '1.0.0'])),
+  dsh: { profile: { bundles: INSTALLED_BY_FIXTURE } },
+}))
 
 afterAll(() => {
   delete process.env.DSH_HOME
@@ -653,6 +663,23 @@ describe('ShopGateway.installed', () => {
     })
   }
 
+  // The mirror of the uninstall case below: an entry named for an inherited
+  // key must not be reported as installed when the profile does not have it.
+  it('omits an entry named for an Object.prototype key that is not installed', async () => {
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-installed-proto-'))
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({
+      name: 'dsh-profile-web', dsh: { profile: { bundles: [] } },
+      dependencies: { 'dsh-one': '^1.0.0' },
+    }))
+    const proto = { ...entries[0]!, name: 'constructor' }
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries: [proto], denied: [], stars: {} }, stale: false }) as CatalogResult,
+    })
+    await gateway.catalog({})
+    expect(await gateway.installed()).toEqual([])
+  })
+
   it('carries the inventory enabled state onto the installed rows', async () => {
     const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-installed-inv-'))
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: { 'dsh-one': '^1.0.0' } }))
@@ -793,6 +820,29 @@ describe('ShopGateway.uninstall', () => {
     await gateway.catalog({})
     expect(await gateway.uninstall({ name: 'dsh-one' })).toEqual({
       ok: false, detail: 'dsh-plugin-shop: dsh-one is not installed',
+    })
+  })
+
+  // `constructor` is a legal npm name, and the manifest's `dependencies` is
+  // parsed JSON carrying Object.prototype — so an index read hands back a
+  // function, the `spec === undefined` guard passes, and `installedSpecMatches`
+  // answers TRUE for an npm entry because `parseRepoSpec` coerces the function
+  // to a string that matches no `github:` shorthand. The uninstall then spawns
+  // a removal for a package that was never installed.
+  it('rejects an entry named for an Object.prototype key that is not installed', async () => {
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-uninstall-proto-'))
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({
+      name: 'dsh-profile-web', dsh: { profile: { bundles: [] } },
+      dependencies: { 'dsh-one': '^2.0.0' },
+    }))
+    const proto = { ...entries[0]!, name: 'constructor' }
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries: [proto], denied: [], stars: {} }, stale: false }) as CatalogResult,
+    })
+    await gateway.catalog({})
+    expect(await gateway.uninstall({ name: 'constructor' })).toEqual({
+      ok: false, detail: 'dsh-plugin-shop: constructor is not installed',
     })
   })
 

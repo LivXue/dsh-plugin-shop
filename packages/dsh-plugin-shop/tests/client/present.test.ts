@@ -540,6 +540,15 @@ describe('heldBy', () => {
     expect(heldBy(entry, { 'dsh-other': '^1.0.0' })).toBeUndefined()
   })
 
+  it('reads own properties only, so a plugin named constructor is not held', () => {
+    // The map is the profile manifest's dependencies carried over the wire,
+    // it carries Object.prototype, and `constructor` is a legal npm name — an
+    // index read hands back a function for a package nobody installed.
+    const named: CatalogEntry = { ...entry, name: 'constructor' }
+    expect(heldBy(named, {})).toBeUndefined()
+    expect(heldBy({ ...named, source: 'github', repo: 'a/b' }, {})).toBeUndefined()
+  })
+
   it('makes no claim when the host could not read the manifest', () => {
     // undefined is "cannot say", never "nothing is installed": promising a
     // clean install it could not check is the one answer it must not give.

@@ -63,7 +63,14 @@ export function heldBy(
   entry: EntryIdentity,
   specs: Readonly<Record<string, string>> | undefined,
 ): string | undefined {
-  const spec = specs?.[entry.name]
+  // `Object.hasOwn`, not an index read, for the reason host/index.ts's
+  // `ownDependencySpec` spells out: this map is the profile manifest's
+  // dependencies carried over the wire, it carries Object.prototype, and
+  // `constructor` is a legal npm name — so an index read hands back a
+  // function for a package nobody installed, and the card would badge a name
+  // conflict against it.
+  if (specs === undefined || !Object.hasOwn(specs, entry.name)) return undefined
+  const spec = specs[entry.name]
   if (spec === undefined) return undefined
   return specVerdict(entry, spec) === 'same' ? undefined : holderLabel(spec, entry.name)
 }
@@ -193,7 +200,12 @@ export function reduceInstall(state: InstallView, event: InstallEvent): InstallV
         // host sent one, so a plain restart keeps the old shape.
         return {
           kind: 'done',
-          needsRestart: !!status.needsRestart,
+          // `?? true`, not `!!`. The host's own default is `true`
+          // (`executor.ts` `needsRestartOnDone`), and the no-restart notice
+          // now ASSERTS the plugin is live rather than hedging — so coercing
+          // an absent field to `false` would publish a success claim the host
+          // never made.
+          needsRestart: status.needsRestart ?? true,
           // The log rides the terminal state, exactly as it does on `failed`.
           // Without it the log a user was reading vanished the instant the
           // install succeeded — the one outcome that leaves something worth
