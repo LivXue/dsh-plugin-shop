@@ -353,6 +353,77 @@ describe('startInstall post-install confirm (§7.2 step 6)', () => {
       + ' — the install\'s result is unknown; check that file.',
     )
   })
+
+  // The mirror of the case above, on the BEFORE read. A manifest that cannot
+  // be read before the spawn used to be reported as an empty prior state, so
+  // every dependency the profile already had came back as something this
+  // install added — and the detail told the reader to remove one of their own
+  // working plugins. The prior state must be reported as unknown instead.
+  it('does not name pre-existing dependencies as added when the before-read failed', async () => {
+    const home = mkdtempSync(join(TEMP_ROOT, 'dsh-confirm-before-'))
+    const profileDir = join(home, 'profiles', 'web')
+    mkdirSync(profileDir, { recursive: true })
+    const manifestPath = join(profileDir, 'package.json')
+    // Present but unparseable at before-time; the fixture dsh then replaces it
+    // wholesale with a valid manifest that lacks the expected bundle, so the
+    // AFTER read succeeds and only the prior state is missing.
+    writeFileSync(manifestPath, '{ not json')
+    const after = { 'dsh-hello-plugin': '1.0.0', 'dsh-memory': '2.1.0' }
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-fixture-replace-'))
+    const bin = join(dir, 'dsh')
+    writeFileSync(bin, [
+      '#!/bin/sh',
+      'echo "installing..."',
+      `printf '%s' '${JSON.stringify({ dependencies: after, dsh: { profile: { bundles: [] } } })}'`
+      + ` > "${manifestPath}"`,
+      'exit 0',
+      '',
+    ].join('\n'))
+    chmodSync(bin, 0o755)
+    const status = await startInstall({
+      profile: 'web',
+      spec: '@acme/plugin@1.0.0',
+      dshBin: bin,
+      env: { ...process.env, DSH_HOME: home },
+      expectedName: '@acme/plugin',
+    }).finished
+    expect(status.state).toBe('failed')
+    expect(status.detail).toContain('could not be read before the install')
+    for (const name of Object.keys(after)) expect(status.detail).not.toContain(name)
+    expect(status.detail).not.toContain('remove')
+  })
+
+  // And the legitimate empty prior state still names what landed: an ABSENT
+  // manifest means nothing was installed, which is a first install into a
+  // fresh profile, not a lost read.
+  it('names what landed through a real spawn into a profile with no manifest', async () => {
+    const home = mkdtempSync(join(TEMP_ROOT, 'dsh-confirm-fresh-'))
+    const profileDir = join(home, 'profiles', 'web')
+    mkdirSync(profileDir, { recursive: true })
+    const manifestPath = join(profileDir, 'package.json')
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-fixture-fresh-'))
+    const bin = join(dir, 'dsh')
+    writeFileSync(bin, [
+      '#!/bin/sh',
+      `printf '%s' '${JSON.stringify({
+        dependencies: { 'some-monorepo-root': 'github:acme/mono#0123456789abcdef' },
+        dsh: { profile: { bundles: [] } },
+      })}' > "${manifestPath}"`,
+      'exit 0',
+      '',
+    ].join('\n'))
+    chmodSync(bin, 0o755)
+    const status = await startInstall({
+      profile: 'web',
+      spec: '@acme/plugin@1.0.0',
+      dshBin: bin,
+      env: { ...process.env, DSH_HOME: home },
+      expectedName: '@acme/plugin',
+    }).finished
+    expect(status.state).toBe('failed')
+    expect(status.detail).toContain('the install added some-monorepo-root instead')
+    expect(status.detail).toContain('dsh plugin --profile web remove some-monorepo-root')
+  })
 })
 
 /**
@@ -454,7 +525,7 @@ describe('activationFailureDetail', () => {
     expect(detail).toContain('the catalog may be behind')
   })
 
-  //  is a legal npm name, and both records are parsed from the
+  // `constructor` is a legal npm name, and both records are parsed from the
   // profile manifest, so they carry Object.prototype: an index read answers
   // with a function for a package that never landed. Both the presence check
   // and the added-set diff must use own-property tests.
@@ -477,6 +548,47 @@ describe('activationFailureDetail', () => {
     expect(activationFailureDetail({
       ...base, before: {}, after: {},
     })).toContain('install added nothing')
+  })
+
+  // An ABSENT manifest is an empty prior state, and that is the truth for a
+  // first install into a fresh profile — the branch that names what landed
+  // has to keep working there, so `{}` must NOT be read as "unknown".
+  it('names what landed when the profile had no manifest before the install', () => {
+    const detail = activationFailureDetail({
+      ...base,
+      before: {},
+      after: { 'some-monorepo-root': 'github:acme/mono#0123456789abcdef' },
+    })
+    expect(detail).toContain('the install added some-monorepo-root instead')
+    expect(detail).toContain('dsh plugin --profile web remove some-monorepo-root')
+  })
+
+  // `null` is a manifest that EXISTED and could not be read. Both remaining
+  // branches are claims about what changed, and neither survives without the
+  // prior state: read as `{}`, every pre-existing dependency looks newly
+  // added, so the detail would name an innocent plugin and put it in a
+  // `dsh plugin remove` line.
+  it('withholds both diff branches when the prior state could not be read', () => {
+    const installed = { 'dsh-hello-plugin': '1.0.0', 'dsh-memory': '2.1.0', 'another-plugin': '0.4.0' }
+    const detail = activationFailureDetail({ ...base, before: null, after: installed })
+    expect(detail).toContain('could not be read before the install')
+    expect(detail).toContain('unknown')
+    for (const name of Object.keys(installed)) expect(detail).not.toContain(name)
+    expect(detail).not.toContain('remove')
+    // Nor may it borrow the wording of a readable manifest at either end.
+    expect(detail).not.toContain('the install added')
+    expect(detail).not.toContain('install added nothing')
+    expect(detail).not.toMatch(/catalog/i)
+  })
+
+  // The dependency branch reads `after` alone, so an unreadable prior state
+  // does not suppress the one fact that is still established.
+  it('still states the dependency fact when the prior state is unknown', () => {
+    const detail = activationFailureDetail({
+      ...base, before: null, after: { '@acme/plugin': '1.2.3' },
+    })
+    expect(detail).toContain('is not in dsh.profile.bundles')
+    expect(detail).not.toContain('could not be read')
   })
 })
 
