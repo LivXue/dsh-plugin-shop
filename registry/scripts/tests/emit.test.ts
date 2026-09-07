@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto'
+import { readFileSync, readdirSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { CATALOG_SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION, emit, SCHEMA_VERSION } from '../src/emit.ts'
+import { CATALOG_SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION, emit, escapeCell, SCHEMA_VERSION } from '../src/emit.ts'
 import type { Entry } from '../src/types.ts'
 
 function entry(name: string, version = '1.0.0'): Entry {
@@ -511,3 +514,43 @@ describe('the index and the data file describe the same catalog', () => {
   })
 })
 
+describe('escapeCell is the only markdown-cell escape', () => {
+  // Two modules emit a markdown table, not one, and the second hand-rolled its
+  // own: `classify.ts` escaped `|` and collapsed newlines on a discard reason
+  // and did nothing at all to the package name beside it — no control
+  // characters, no bidi marks, no tab. That was survivable while the
+  // classification report was a zipped run artifact and stopped being so the
+  // day both reports became published artifacts (pages-artifacts.ts,
+  // 2026-09-07). Every assertion in this file stayed green throughout, because
+  // they all go through `emit`.
+  //
+  // The signature is one regex — a literal pipe escape — which is the same
+  // trade `cwd-independence.test.ts` makes: cheaper than running two emitters
+  // against hostile fixtures, and it fails the next hand-rolled copy rather
+  // than the one that has already been fixed.
+  const SRC_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'src')
+  const PIPE_ESCAPE = /\.replace\(\s*\/\\\|\//
+
+  it('is where the pipe escape lives, and no other source hand-rolls one', () => {
+    const offenders: string[] = []
+    for (const file of readdirSync(SRC_DIR).filter(name => name.endsWith('.ts'))) {
+      // emit.ts DEFINES the rule, so its own body is the one place the literal
+      // belongs. Every other module imports it.
+      if (file === 'emit.ts') continue
+      const lines = readFileSync(join(SRC_DIR, file), 'utf8').split('\n')
+      for (const [index, line] of lines.entries()) {
+        const opener = line.trim()
+        if (opener.startsWith('*') || opener.startsWith('//') || opener.startsWith('/*')) continue
+        if (PIPE_ESCAPE.test(line)) offenders.push(`${file}:${index + 1}: ${opener}`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('neutralises a hostile package name, which is what the hand-rolled copy did not', () => {
+    // The exact gap: `classify.ts` passed `d.name` through untouched. A name is
+    // npm-grammar-constrained today, so this is the rule holding rather than a
+    // live exploit — the point is that one call site cannot be the safe one.
+    expect(escapeCell('dsh-\u202eevil | forged')).toBe('dsh-\ufffdevil \\| forged')
+  })
+})
