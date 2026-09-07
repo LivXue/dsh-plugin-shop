@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { discoverProfile, ownedEntryIds, ownsEntryId, setUserLayerRow, setUserLayerRows } from '../../src/host/profile.ts'
+import { collidingEntryId, discoverProfile, ownedEntryIds, ownsEntryId, setUserLayerRow, setUserLayerRows } from '../../src/host/profile.ts'
 import { fileTempRoot } from './temp-root.ts'
 
 const TEMP_ROOT = fileTempRoot('profile')
@@ -235,5 +235,79 @@ describe('ownsEntryId', () => {
     // entry literally named `mkt-foo` would be handed to whoever owns `foo` —
     // one package's toggle silently disabling another package's live entry.
     expect(ownsEntryId(owned, 'mkt-foo')).toBe(false)
+  })
+})
+
+describe('collidingEntryId', () => {
+  // The real shape, measured from the live catalog: two repositories under
+  // DIFFERENT bundle names that both declare `id: plugin-manager`. The name
+  // gate passes them — they share no manifest key — and dsh then refuses to
+  // load the tree at all, so the profile does not boot.
+  const insert = (id: string): string => `- insert:\n    - id: ${id}\n      name: dsh-x/host\n`
+
+  it('finds the id a differently-named package already declares', () => {
+    const dir = fixtureProfile()
+    fixturePackage(dir, '@2768651338/dsh-plugin-manager', insert('plugin-manager'))
+    fixturePackage(dir, '@dsh-plugin/plugin-manager', insert('plugin-manager'))
+    expect(collidingEntryId({
+      profileDir: dir,
+      packageName: '@dsh-plugin/plugin-manager',
+      dependencies: ['@2768651338/dsh-plugin-manager', '@dsh-plugin/plugin-manager'],
+    })).toEqual({ id: 'plugin-manager', holder: '@2768651338/dsh-plugin-manager' })
+  })
+
+  it('finds nothing when two same-named forks declare different ids', () => {
+    // The converse, also measured: Anyway-one/dsh-balance declares
+    // `id: balance` and ZHIZHU4410/deepseek-balance declares `id: dsh-balance`,
+    // both bundle-named dsh-balance. The loader would hold them both happily —
+    // which is why the name gate's reason is the manifest key, not this.
+    const dir = fixtureProfile()
+    fixturePackage(dir, 'dsh-balance', insert('balance'))
+    fixturePackage(dir, 'dsh-balance-fork', insert('dsh-balance'))
+    expect(collidingEntryId({
+      profileDir: dir, packageName: 'dsh-balance-fork',
+      dependencies: ['dsh-balance', 'dsh-balance-fork'],
+    })).toBeNull()
+  })
+
+  it('never collides a package with itself', () => {
+    const dir = fixtureProfile()
+    fixturePackage(dir, 'dsh-solo', insert('solo'))
+    expect(collidingEntryId({
+      profileDir: dir, packageName: 'dsh-solo', dependencies: ['dsh-solo'],
+    })).toBeNull()
+  })
+
+  it('is null for a package that declares no ids at all', () => {
+    // A package with no bundle patch inserts nothing and can collide with
+    // nothing; it must not be reported against an installed package's ids.
+    const dir = fixtureProfile()
+    fixturePackage(dir, 'dsh-plain', null)
+    fixturePackage(dir, 'dsh-other', insert('other'))
+    expect(collidingEntryId({
+      profileDir: dir, packageName: 'dsh-plain', dependencies: ['dsh-plain', 'dsh-other'],
+    })).toBeNull()
+  })
+
+  it('treats an unreadable patch in ANOTHER package as owning nothing', () => {
+    // Best-effort, the same rule the installed list uses: one malformed
+    // package must not fail the install of an unrelated one.
+    const dir = fixtureProfile()
+    fixturePackage(dir, 'dsh-broken', ': not: yaml: [')
+    fixturePackage(dir, 'dsh-new', insert('new-id'))
+    expect(collidingEntryId({
+      profileDir: dir, packageName: 'dsh-new', dependencies: ['dsh-broken', 'dsh-new'],
+    })).toBeNull()
+  })
+
+  it('finds a collision inside an inserted group, which owns its children', () => {
+    const dir = fixtureProfile()
+    fixturePackage(dir, 'dsh-grouper',
+      '- insert:\n    - id: g-root\n      name: cordis/group\n      group: true\n      config:\n        - id: g-child\n          name: dsh-grouper/child\n')
+    fixturePackage(dir, 'dsh-child-clash', insert('g-child'))
+    expect(collidingEntryId({
+      profileDir: dir, packageName: 'dsh-child-clash',
+      dependencies: ['dsh-grouper', 'dsh-child-clash'],
+    })).toEqual({ id: 'g-child', holder: 'dsh-grouper' })
   })
 })

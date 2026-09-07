@@ -614,7 +614,8 @@ function spawnPluginCli(options: {
  * manifest (§7.2 step 6) before the install reports `done`.
  * The confirm compares the profile's dependencies before and after the spawn,
  * so a miss can name what actually landed instead of guessing at a cause; the
- * executor takes both snapshots itself.
+ * executor takes both snapshots itself. `alsoConfirm` adds a second post-exit
+ * check, run only once that one has passed.
  * When `afterDone` is given, the terminal `done` waits for it to settle
  * (§D hot mount).
  */
@@ -625,13 +626,18 @@ export function startInstall(options: {
   env?: NodeJS.ProcessEnv
   platform?: NodeJS.Platform
   expectedName?: string
+  /** A further post-exit check, run only once the bundle-activation confirm
+   * has passed. Returning a detail fails the install with it. The package is
+   * on disk by then, so this is for facts that are unreadable until it is —
+   * see `collidingEntryId`. */
+  alsoConfirm?: (home: string | undefined) => string | null
   afterDone?: (home: string | undefined) => Promise<{ needsRestart: boolean; restartReason?: HotRestartReason } | void>
   onStatus?: (status: InstallStatus) => void
   timeoutMs?: number
 }): RunningInstall {
   const {
     profile, spec, dshBin = 'dsh', env, platform, expectedName,
-    afterDone, onStatus, timeoutMs,
+    alsoConfirm, afterDone, onStatus, timeoutMs,
   } = options
   // The `before` snapshot is taken by the executor, not by the caller, and
   // through the SAME resolution the confirm uses. A caller-supplied map would
@@ -651,9 +657,12 @@ export function startInstall(options: {
     beforeSpawn: expectedName !== undefined
       ? (home) => { before = readProfileDependencies(profile, home) }
       : undefined,
+    // `??` chains on null, and a returned detail is a non-empty string, so
+    // the activation confirm — which can now name what actually landed —
+    // still speaks first when both would fail.
     confirm: expectedName !== undefined
-      ? home => confirmBundleActivation(profile, home, expectedName, before)
-      : undefined,
+      ? home => confirmBundleActivation(profile, home, expectedName, before) ?? alsoConfirm?.(home) ?? null
+      : alsoConfirm,
     afterDone,
     onStatus,
     timeoutMs,

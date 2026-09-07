@@ -3,8 +3,12 @@
  * drive all of it. */
 
 export { isShopLike } from '../shared/shop-like.ts'
-export { identityKey, installedSpecMatches, parseRepoSpec, type EntryIdentity } from '../shared/identity.ts'
-import { identityKey } from '../shared/identity.ts'
+// Only what the client half actually uses. The identity primitives it does
+// not (`parseRepoSpec`, `installedSpecMatches`, `sameInstall`) were re-exported
+// here too, which advertised them as part of the presentation API and gave a
+// reader tracing their dependents a false hit through a barrel.
+export { identityKey, type EntryIdentity } from '../shared/identity.ts'
+import { holderLabel, identityKey, specVerdict, type EntryIdentity } from '../shared/identity.ts'
 import type { ShopLocaleKey } from './locales.ts'
 import type { CatalogEntry, HotRestartReason, InstallRejectionCode } from '../host/index.ts'
 
@@ -39,6 +43,38 @@ export function missingPeersOf(incompatible: Record<string, string[]>, key: stri
   return incompatible[key] ?? []
 }
 
+/**
+ * The plugin already holding this entry's bundle name, if a DIFFERENT one is,
+ * named the way the host's refusal names it.
+ *
+ * `specs` is the profile manifest's dependencies exactly as the install gate
+ * reads them (`installedSpecs`), and the verdict is the gate's own function.
+ * One rule on one input, so the badge and the refusal cannot disagree. The
+ * first version of this derived the answer from `installed()`, which drops
+ * every dependency no catalog entry matches — so a fork, a hand install or a
+ * delisted holder was invisible here while the host still refused, and the
+ * card showed a plain Install button for an install that could not proceed.
+ *
+ * `undefined` specs means the host could not read the manifest. The answer is
+ * undefined there too: the card makes no claim rather than promising a clean
+ * install it cannot vouch for.
+ */
+export function heldBy(
+  entry: EntryIdentity,
+  specs: Readonly<Record<string, string>> | undefined,
+): string | undefined {
+  // `Object.hasOwn`, not an index read, for the reason host/index.ts's
+  // `ownDependencySpec` spells out: this map is the profile manifest's
+  // dependencies carried over the wire, it carries Object.prototype, and
+  // `constructor` is a legal npm name — so an index read hands back a
+  // function for a package nobody installed, and the card would badge a name
+  // conflict against it.
+  if (specs === undefined || !Object.hasOwn(specs, entry.name)) return undefined
+  const spec = specs[entry.name]
+  if (spec === undefined) return undefined
+  return specVerdict(entry, spec) === 'same' ? undefined : holderLabel(spec, entry.name)
+}
+
 /** Spec §9.3 verbatim — the community-tier acknowledgement. The zh dictionary
  * states the same facts in its own register; never soften this wording. */
 export const ACKNOWLEDGEMENT_EN =
@@ -58,6 +94,7 @@ export function rejectionCodeKey(code: InstallRejectionCode): ShopLocaleKey {
     case 'needs-acknowledgement': return 'needsAcknowledgementCode'
     case 'tarball-integrity': return 'tarballIntegrityCode'
     case 'ambiguous-identity': return 'ambiguousIdentityCode'
+    case 'name-taken': return 'nameTakenCode'
   }
 }
 
@@ -296,9 +333,10 @@ export function npmPageUrl(entry: CatalogEntry): string | null {
  * identity (registry `emit.ts` assertCatalogInvariants): `npm:<name>` for an
  * npm entry, `github:<repo>#<subdir>` for a repo one — so two GitHub
  * repositories publishing the same `package.json` name are two legitimate
- * entries under one name, as are two subpackages of one monorepo. The live
- * catalog holds 151 such names over 243 entries, five of them cookiecutter
- * templates that all name themselves `{{PKG_NAME}}`.
+ * entries under one name, as are two subpackages of one monorepo. How many
+ * such names the catalog holds is kept in ONE place — `validateInstall`'s
+ * docstring in host/install.ts, with the way to re-derive it — because the
+ * copy that stood here had drifted to less than half the real figure.
  *
  * Keying the shelf by name handed React duplicate keys, and React could then
  * no longer match a card to its DOM node: changing the filter left every

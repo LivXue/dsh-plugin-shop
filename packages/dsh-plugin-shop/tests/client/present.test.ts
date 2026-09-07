@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, categoryKey, displayVersion, entryKey, formatStars,
-  authorOf, hasGithubHome, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl,
+  authorOf, hasGithubHome, heldBy, isCustomLicense, isShopLike, missingPeersOf,
+  nextVisibleCount, npmPageUrl,
   reduceInstall,
   reviewHashPin, sortByStars, starsOf, tierKey,
 } from '../../src/client/present.ts'
@@ -508,5 +509,53 @@ describe('hasGithubHome', () => {
     // Substring matching would accept this; parsing the host does not.
     expect(hasGithubHome({ ...entry, repository: 'https://evil-github.com/you/x' })).toBe(false)
     expect(hasGithubHome({ ...entry, repository: 'https://github.com.evil.test/you/x' })).toBe(false)
+  })
+})
+
+describe('heldBy', () => {
+  const repoEntry: CatalogEntry = {
+    ...entry, source: 'github', repo: 'Mvyvn/dsh-hello-plugin', version: 'a'.repeat(40),
+  }
+
+  it('names the repository holding this name, in the spec own spelling', () => {
+    expect(heldBy(repoEntry, { 'dsh-hello-plugin': 'github:CLAPEILL/dsh-hello-plugin' }))
+      .toBe('CLAPEILL/dsh-hello-plugin')
+  })
+
+  it('sees a holder no catalog entry matches — the case installed() drops', () => {
+    // The gap that made the badge absent exactly where the host refuses: a
+    // fork, a hand install, or an entry the catalog has since dropped never
+    // appears in `installed()`, but the manifest still holds the name.
+    expect(heldBy(entry, { 'dsh-hello-plugin': 'file:/home/me/dev/dsh-hello-plugin' }))
+      .toBe('file:/home/me/dev/dsh-hello-plugin')
+  })
+
+  it('is silent when the spec names this very install', () => {
+    expect(heldBy(entry, { 'dsh-hello-plugin': '^1.0.0' })).toBeUndefined()
+    expect(heldBy(repoEntry, { 'dsh-hello-plugin': 'github:Mvyvn/dsh-hello-plugin' })).toBeUndefined()
+  })
+
+  it('is silent for a name the profile does not hold at all', () => {
+    expect(heldBy(entry, {})).toBeUndefined()
+    expect(heldBy(entry, { 'dsh-other': '^1.0.0' })).toBeUndefined()
+  })
+
+  it('reads own properties only, so a plugin named constructor is not held', () => {
+    // The map is the profile manifest's dependencies carried over the wire,
+    // it carries Object.prototype, and `constructor` is a legal npm name — an
+    // index read hands back a function for a package nobody installed.
+    const named: CatalogEntry = { ...entry, name: 'constructor' }
+    expect(heldBy(named, {})).toBeUndefined()
+    expect(heldBy({ ...named, source: 'github', repo: 'a/b' }, {})).toBeUndefined()
+  })
+
+  it('makes no claim when the host could not read the manifest', () => {
+    // undefined is "cannot say", never "nothing is installed": promising a
+    // clean install it could not check is the one answer it must not give.
+    expect(heldBy(repoEntry, undefined)).toBeUndefined()
+  })
+
+  it('names an npm holder with the token the host refusal uses', () => {
+    expect(heldBy(repoEntry, { 'dsh-hello-plugin': '^2.0.0' })).toBe('npm:dsh-hello-plugin')
   })
 })

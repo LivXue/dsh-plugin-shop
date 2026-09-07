@@ -125,6 +125,7 @@ export async function apply(ctx: ClientContext): Promise<void> {
     installStatus: async args => unwrap(await ns.installStatus(args)),
     setEnabled: async args => unwrap(await ns.setEnabled(args)),
     installed: async () => unwrap(await ns.installed()),
+    installedSpecs: async () => unwrap(await ns.installedSpecs()),
     uninstall: async args => unwrap(await ns.uninstallStart(args)),
     restart: async () => unwrap(await ns.restart()),
     version: async () => unwrap(await ns.version()),

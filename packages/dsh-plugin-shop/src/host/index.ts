@@ -22,7 +22,7 @@ import { restartCommand, startRestart, type RestartOutcome } from './restart.ts'
 import { fetchLatestVersion } from './self-update.ts'
 import { detectSupervisor } from './supervisor.ts'
 import { readRepoPins, writeRepoPins, type RepoPinFs } from './repo-pins.ts'
-import { discoverProfile, ownedEntryIds, ownsEntryId, setUserLayerRow, setUserLayerRows } from './profile.ts'
+import { collidingEntryId, discoverProfile, ownedEntryIds, ownsEntryId, setUserLayerRow, setUserLayerRows } from './profile.ts'
 import { identityKey, installedSpecMatches } from '../shared/identity.ts'
 import {
   createPeerVersionCheck,
@@ -509,6 +509,44 @@ export class ShopGateway extends TypertRemoteService {
    * read. For the paths where a live disable is an optimization and the
    * operation must succeed regardless; `setEnabled` reports the failure
    * instead, because there the patch IS the answer being asked for. */
+  /**
+   * The profile manifest's dependencies, or undefined when it cannot be read.
+   *
+   * `readProfileManifest` throws on an unreadable file and lets `JSON.parse`
+   * throw on a malformed one, and `profileDirResolved` can throw out of
+   * `discoverProfile`. An escaped exception crosses the RPC as a bare
+   * transport failure and the client can only render "please retry" (the same
+   * hazard `setEnabled` catches), so a profile caught mid-write would turn
+   * every published rejection detail on the install path — denied,
+   * not-in-catalog, version-mismatch — into that one line.
+   *
+   * Undefined is "cannot say", which the caller must not read as "nothing is
+   * installed": it means the install proceeds ungated rather than being
+   * refused over a read that did not happen.
+   */
+  private profileDependenciesOrNone(): Record<string, string> | undefined {
+    try {
+      return readProfileManifest('dsh-plugin-shop', this.profileDirResolved()).dependencies ?? {}
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * The profile manifest's spec for one name, or undefined when the manifest
+   * holds no such name — or could not be read at all.
+   *
+   * Through `ownDependencySpec` for the reason spelled out there: a bare index
+   * read answers for `Object.prototype`, and `constructor` is a legal npm
+   * name. The cost on this path is behavioural twice over — the gate would
+   * weigh a function as the installed spec, and a phantom `isUpdate` would run
+   * `liveDisableIds` against something absent.
+   */
+  private installedSpecOf(name: string): string | undefined {
+    const dependencies = this.profileDependenciesOrNone()
+    return dependencies === undefined ? undefined : ownDependencySpec(dependencies, name)
+  }
+
   private ownedEntryIdsOrNone(packageName: string): string[] {
     try {
       return ownedEntryIds({ profileDir: this.profileDirResolved(), packageName })
@@ -742,7 +780,12 @@ export class ShopGateway extends TypertRemoteService {
   @Remote('installStart')
   async install(args: InstallArgs): Promise<ShopInstallResult> {
     const snapshot = await this.snapshotNow()
-    const verdict = validateInstall(snapshot, args)
+    // The manifest's dependency for this name, when it has one: the gate needs
+    // it to tell an update of THIS plugin from a replacement of a different one
+    // that shares the name. Read once, here, and reused for `isUpdate` below —
+    // two reads straddling the tarball fetch could see two different manifests.
+    const installedSpec = this.installedSpecOf(args.name)
+    const verdict = validateInstall(snapshot, args, installedSpec)
     if (!verdict.ok) return { ok: false, code: verdict.code, detail: verdict.detail }
     // The validator resolved the row by identity. Re-finding it by name is
     // what installed another repository's commit when names collided.
@@ -794,12 +837,12 @@ export class ShopGateway extends TypertRemoteService {
     // two live instances of a service-providing plugin would collide at
     // provision (see liveDisableIds). The profile manifest's dependencies are
     // the install's own record — the shop's managed bundle list.
-    const manifest = readProfileManifest('dsh-plugin-shop', this.profileDirResolved())
-    // `Object.hasOwn`, not an index read: the manifest is untrusted JSON and
-    // carries Object.prototype, so `deps.constructor` answers for a package
-    // that was never installed. Here the cost is behavioural, not cosmetic —
-    // a phantom `isUpdate` runs `liveDisableIds` against something absent.
-    const isUpdate = Object.hasOwn(manifest.dependencies ?? {}, args.name)
+    // Exactly what the gate above already resolved: a defined spec that got
+    // this far has been proven to name this very install, so "the name is
+    // present" and "this is an update" are one fact, read once. The
+    // own-property discipline that used to live on this line now lives in
+    // `installedSpecOf`, which is where the read happens.
+    const isUpdate = installedSpec !== undefined
     // Resolve the OLD version's entry ids now: `afterDone` runs once the new
     // tarball has already overwritten the package's bundle patch on disk.
     // Best-effort: the update must not fail because the version being
@@ -816,6 +859,20 @@ export class ShopGateway extends TypertRemoteService {
       // the same resolution the confirm uses, so a miss reports the difference
       // and can name what actually landed.
       expectedName: args.name,
+      // And, now that the files are on disk, the one collision the name gate
+      // cannot see. Reporting it beats a done install that kills the next
+      // boot; the package stays on disk, so the detail says how to undo it.
+      alsoConfirm: () => {
+        const clash = collidingEntryId({
+          profileDir: this.profileDirResolved(),
+          packageName: args.name,
+          dependencies: Object.keys(this.profileDependenciesOrNone() ?? {}),
+        })
+        if (clash === null) return null
+        return `dsh-plugin-shop: ${args.name} declares the loader entry id "${clash.id}", which ${clash.holder} already declares.`
+          + ' dsh refuses to load a plugin tree holding a duplicate entry id, so the profile would not start.'
+          + ` It is on disk: run \`dsh plugin --profile ${this.profile} remove ${args.name}\` to undo this install.`
+      },
       // After the bundle lands, bring it up hot — unless this is an update,
       // whose old instance must be down first (see liveDisableIds). A failed
       // mount falls back to restart activation, never to a silent half-state.
@@ -877,6 +934,28 @@ export class ShopGateway extends TypertRemoteService {
     const running = this.installs.get(args.installId)
     if (running === undefined) return { found: false, state: 'failed', log: [], detail: `unknown installId: ${args.installId}` }
     return { found: true, ...running.status() }
+  }
+
+  /**
+   * The profile manifest's dependency spec for every name it holds — exactly
+   * what the install gate reads, unfiltered.
+   *
+   * The client cannot derive this from `installed()`. That list drops any
+   * dependency no catalog entry matches, so a fork, a hand `dsh plugin add`,
+   * or an entry the catalog has since dropped is invisible to it — while the
+   * gate, which reads the raw manifest, still refuses over it. That gap is
+   * what made the card show a plain Install button for a name the host was
+   * about to refuse. Shipping the gate's own input is what makes the badge
+   * and the refusal one rule rather than two implementations that agree
+   * until they do not.
+   *
+   * `null` is "cannot say" — an unreadable manifest — and is deliberately
+   * distinct from `{}`, "nothing is installed": the client must not read a
+   * failed read as a clean bill of health.
+   */
+  @Remote('installedSpecs')
+  async installedSpecs(): Promise<Record<string, string> | null> {
+    return this.profileDependenciesOrNone() ?? null
   }
 
   /** Installed catalog plugins (§7.3): every entry of the snapshot the profile
