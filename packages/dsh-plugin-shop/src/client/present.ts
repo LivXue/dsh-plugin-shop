@@ -421,10 +421,17 @@ export function formatSize(bytes: number | undefined): string | undefined {
   // GB is here for the tail, not for show: the largest live listing measured
   // 179 MB on 2026-09-07, and without this rung a gigabyte package would read
   // "1000.0 MB" — a number a reader has to divide in their head.
+  //
+  // The climb tests the ROUNDED value, not the raw one, because one fractional
+  // digit is what the reader sees: 999_999 B is 999.999 kB, which `toFixed(1)`
+  // renders "1000.0". Testing the raw value let that mantissa carry across the
+  // boundary without the unit following, so every count in [999_950_000,
+  // 1_000_000_000) printed the exact "1000.0 MB" this rung was added to
+  // prevent — the rung could not help, because the carry happens below it.
   let value = bytes
   let unit = 'B'
   for (const next of ['kB', 'MB', 'GB']) {
-    if (value < 1000) break
+    if (Number(value.toFixed(1)) < 1000) break
     value /= 1000
     unit = next
   }

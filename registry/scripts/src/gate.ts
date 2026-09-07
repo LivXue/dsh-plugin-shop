@@ -139,10 +139,11 @@ export const PUBLISHER_MAX_LENGTH = 128
  * number and not by the peer bounds — at 63 MiB, not 186.
  *
  * 12 KiB is chosen against measurement. The worst entry the live data COULD
- * hold — every maximum observed on 2026-09-04 in one entry, which is a
- * ceiling and not a real package: name 214, repository 108, license 37, both
- * summaries 200 CJK characters (599 UTF-8 bytes each), 20 capabilities of 14,
- * 58 peers of 50 — measures 6,261 bytes. So the budget is 1.96x anything
+ * hold — every maximum observed in one entry, which is a ceiling and not a
+ * real package: name 214, repository 108, license 37, both summaries 200 CJK
+ * characters (599 UTF-8 bytes each), 20 capabilities of 14, 58 peers of 50
+ * (all 2026-09-04) and the largest unpacked size, 179,562,863 (2026-09-07)
+ * — measures 6,294 bytes. So the budget is 1.95x anything
  * listed today and drops none of it, while taking the per-entry ceiling from
  * 47.9 KiB to 12.1 KiB (the payload plus the 109 bytes of trusted keys below)
  * and the aggregate from ~186 MiB to ~63 MiB.

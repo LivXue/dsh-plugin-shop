@@ -427,13 +427,29 @@ describe('formatSize', () => {
     expect(formatSize(25283)).toBe('25.3 kB')
     expect(formatSize(847407)).toBe('847.4 kB')
     expect(formatSize(179562863)).toBe('179.6 MB')
-    expect(formatSize(999999)).toBe('1000.0 kB')
     expect(formatSize(1000000)).toBe('1.0 MB')
     // The GB rung exists so a gigabyte package does not read "1000.0 MB".
     expect(formatSize(1000000000)).toBe('1.0 GB')
     expect(formatSize(2500000000)).toBe('2.5 GB')
     // Past the last rung the unit stops climbing rather than inventing one.
     expect(formatSize(5000000000000)).toBe('5000.0 GB')
+  })
+
+  it('carries a value that rounds to 1000 up to the next unit', () => {
+    // The unit is chosen AFTER rounding, because `toFixed(1)` is what the
+    // reader sees. Choosing first let the mantissa carry across the boundary:
+    // every count in [999_950, 1_000_000) printed "1000.0 kB" and every count
+    // in [999_950_000, 1_000_000_000) printed "1000.0 MB" — the second being
+    // verbatim the string the GB rung's own comment says it exists to prevent,
+    // which it could not, because the carry happens one rung below it.
+    // `formatSize(999999) === '1000.0 kB'` was asserted here as correct.
+    expect(formatSize(999_950)).toBe('1.0 MB')
+    expect(formatSize(999_999)).toBe('1.0 MB')
+    expect(formatSize(999_949)).toBe('999.9 kB')
+    expect(formatSize(999_999_999)).toBe('1.0 GB')
+    expect(formatSize(999_949_999)).toBe('999.9 MB')
+    // The last rung has no next unit to carry into, so it keeps the reading.
+    expect(formatSize(999_999_999_999)).toBe('1000.0 GB')
   })
 
   it('answers nothing for an entry that carries no size', () => {

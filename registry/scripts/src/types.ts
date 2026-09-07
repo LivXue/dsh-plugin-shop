@@ -255,7 +255,14 @@ export interface Entry {
    * declares any. The Host resolves them against the running installation to
    * tell the reader whether the plugin can run there; the catalog records the
    * requirement, never a verdict, because compatibility depends on who is
-   * reading. Emitted only at schemaVersion 6 and above.
+   * reading.
+   *
+   * Additive and optional, so it rides every schemaVersion — see
+   * {@link Entry.unpackedSize} for the reasoning. This said "Emitted only at
+   * schemaVersion 6 and above" long after that gate came off in `emit.ts`,
+   * which is how the gate sat unopened and the compatibility badges never
+   * shipped; a stale version claim here is what the next additive field will
+   * copy.
    */
   peers?: string[]
   /**

@@ -1104,7 +1104,43 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     return map
   }, [catalogState])
 
-  const filtered = useMemo(() => {
+  // Which catalog entries a DIFFERENT plugin has already taken the name of.
+  // Declared above `filtered` for the same temporal-dead-zone reason as
+  // `missingByKey`: the filter below reads it.
+  // `specs` is keyed by name, so this is one map lookup per entry — the first
+  // version scanned the whole installed list per entry, ~9,300 linear searches
+  // rebuilt on every install, uninstall and enable toggle.
+  //
+  // Memoized for CPU, not for reference identity: unlike `missingByKey`, whose
+  // values are fresh arrays that would break EntryCard's memo, these are
+  // strings and compare by value.
+  const nameTakenByKey = useMemo(() => {
+    const map = new Map<string, string>()
+    if (catalogState.kind !== 'ready') return map
+    for (const entry of catalogState.result.plugins) {
+      const holder = heldBy(entry, specs)
+      if (holder !== undefined) map.set(entryKey(entry), holder)
+    }
+    return map
+  }, [catalogState, specs])
+
+  // The set the filter offers to take away: exactly the entries whose badge
+  // READS "Incompatible". `BlockerBadge` lets a taken name decide the visible
+  // word when both blockers hold, so testing the peer list alone would hide a
+  // card that never mentioned compatibility — and that card is the only
+  // surface explaining why its install is refused. One predicate, so the
+  // count on the button and the set it subtracts can never disagree.
+  const badgedIncompatible = useCallback(
+    (key: string) => (missingByKey.get(key) ?? []).length > 0 && !nameTakenByKey.has(key),
+    [missingByKey, nameTakenByKey],
+  )
+
+  // What the category and the search box select, BEFORE the incompatible
+  // modifier subtracts from it. Kept separate for two reasons: the empty shelf
+  // below has to say which control emptied it, and this is the only honest way
+  // to know — `matched` non-empty with `filtered` empty means the modifier did
+  // it, with no second copy of the filter chain to drift.
+  const matched = useMemo(() => {
     const q = query.trim().toLowerCase()
     return sortedBrowsable.filter(entry => {
       if (category === 'installed') {
@@ -1112,10 +1148,6 @@ export function ShopTab(props: ShopTabProps): ReactNode {
       } else if (category !== null && categoryKey(entry) !== categoryLocaleKey(category)) {
         return false
       }
-      // The same list the card's badge and detail paragraphs read, so the
-      // filter can only ever hide an entry the shelf WOULD have marked
-      // incompatible — a second rule here could hide one that shows no badge.
-      if (hideIncompatible && (missingByKey.get(entryKey(entry)) ?? []).length > 0) return false
       if (q === '') return true
       const summaryEn = entry.catalog?.summary.en ?? ''
       const summaryZh = entry.catalog?.summary.zh ?? ''
@@ -1123,7 +1155,27 @@ export function ShopTab(props: ShopTabProps): ReactNode {
         || summaryEn.toLowerCase().includes(q)
         || summaryZh.toLowerCase().includes(q)
     })
-  }, [sortedBrowsable, query, category, installedByKey, hideIncompatible, missingByKey])
+  }, [sortedBrowsable, query, category, installedByKey])
+
+  // Never in the Installed view. That view is management, not shelf: an
+  // installed plugin that is up to date appears in exactly one place — its
+  // card, which carries the enable switch and the uninstall button, since
+  // `OutdatedSection` renders only rows whose `outdated` is true. Subtracting
+  // there would leave no way to remove the broken install the reader came to
+  // fix. Same distinction the shop-like names already make: not advertised is
+  // not hidden.
+  //
+  // Applied to the survivors rather than inside the pass above: this is the
+  // most expensive predicate on the shelf (a key string, a map lookup) and the
+  // least selective — the host flags a handful out of thousands — so running
+  // it after the search narrows ~9,300 entries to a few is the same answer for
+  // a fraction of the work on every keystroke.
+  const filtered = useMemo(
+    () => (hideIncompatible && category !== 'installed'
+      ? matched.filter(entry => !badgedIncompatible(entryKey(entry)))
+      : matched),
+    [matched, hideIncompatible, category, badgedIncompatible],
+  )
   filteredLenRef.current = filtered.length
 
   // The sentinel that grows the shelf: when the last rendered card's footer
@@ -1171,8 +1223,8 @@ export function ShopTab(props: ShopTabProps): ReactNode {
   // and would read as "how many are hidden right now", which is not what the
   // button offers to do.
   const incompatibleCount = useMemo(
-    () => browsable.filter(entry => (missingByKey.get(entryKey(entry)) ?? []).length > 0).length,
-    [browsable, missingByKey],
+    () => browsable.filter(entry => badgedIncompatible(entryKey(entry))).length,
+    [browsable, badgedIncompatible],
   )
 
   // The outdated rows' update gate and source display both come from the
@@ -1184,24 +1236,6 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     }
     return map
   }, [catalogState])
-
-  // Which catalog entries a DIFFERENT plugin has already taken the name of.
-  // `specs` is keyed by name, so this is one map lookup per entry — the first
-  // version scanned the whole installed list per entry, ~9,300 linear searches
-  // rebuilt on every install, uninstall and enable toggle.
-  //
-  // Memoized for CPU, not for reference identity: unlike `missingByKey`, whose
-  // values are fresh arrays that would break EntryCard's memo, these are
-  // strings and compare by value.
-  const nameTakenByKey = useMemo(() => {
-    const map = new Map<string, string>()
-    if (catalogState.kind !== 'ready') return map
-    for (const entry of catalogState.result.plugins) {
-      const holder = heldBy(entry, specs)
-      if (holder !== undefined) map.set(entryKey(entry), holder)
-    }
-    return map
-  }, [catalogState, specs])
 
   if (catalogState.kind === 'loading') {
     return (
@@ -1394,8 +1428,16 @@ export function ShopTab(props: ShopTabProps): ReactNode {
              * the cards' spines and badges read (`ShopTab.module.css`). It
              * rides the DOM rather than an inline style so the two surfaces
              * cannot drift: there is one table, and a tab is the colour of the
-             * cards it filters to. */
+             * cards it filters to.
+             *
+             * It is a STYLING attribute and never a test hook: every card
+             * carries `data-category` too, so `[data-category="tool"]` names a
+             * tab and a card at once. That collision already made a spec count
+             * seven tabs as seven cards; `data-shop-category-tab` is the hook,
+             * matching the `data-shop-category-all` / `-installed` idiom on
+             * either side of this loop. */
             data-category={key}
+            data-shop-category-tab={key}
             onClick={() => { setCategory(key); setVisibleCount(SHOP_VISIBLE_BATCH) }}
           >
             {t(categoryLocaleKey(key))} {categoryCounts.get(key) ?? 0}
@@ -1419,17 +1461,31 @@ export function ShopTab(props: ShopTabProps): ReactNode {
           * it does not participate in `category` state and its own state
           * survives a category switch. The count is over `browsable` like the
           * category counts, so it says how many entries the shelf holds with
-          * something missing — not how many the current filter shows. */}
-        <button
-          type="button"
-          className={hideIncompatible ? `${css.incompatibleFilter} ${css.incompatibleFilterOn}` : css.incompatibleFilter}
-          aria-pressed={hideIncompatible}
-          title={t('incompatibleFilterTitle')}
-          data-shop-hide-incompatible
-          onClick={() => { setHideIncompatible(current => !current); setVisibleCount(SHOP_VISIBLE_BATCH) }}
-        >
-          {t(hideIncompatible ? 'showIncompatible' : 'hideIncompatible', { count: incompatibleCount })}
-        </button>
+          * something missing — not how many the current filter shows.
+          *
+          * Absent in the Installed view, where the modifier does not apply:
+          * that view is the only place a broken install can be disabled or
+          * removed, so nothing is subtracted from it, and offering a control
+          * that changes nothing would be a claim the view cannot honour. The
+          * state itself survives — switching back brings it and its pill back.
+          *
+          * The label carries the ACTION and the state rides with it, so there
+          * is no `aria-pressed`: pairing a flipping label with a pressed state
+          * announces "Show incompatible 1, pressed" while they are hidden,
+          * which is the inverse of the truth. The category tabs opposite make
+          * the other choice — a fixed label, with `aria-pressed` carrying the
+          * state alone — and either is coherent; mixing them is not. */}
+        {category !== 'installed' && (
+          <button
+            type="button"
+            className={hideIncompatible ? `${css.categoryButton} ${css.incompatibleFilter} ${css.categoryButtonOn}` : `${css.categoryButton} ${css.incompatibleFilter}`}
+            title={t(hideIncompatible ? 'showIncompatibleTitle' : 'incompatibleFilterTitle')}
+            data-shop-hide-incompatible
+            onClick={() => { setHideIncompatible(current => !current); setVisibleCount(SHOP_VISIBLE_BATCH) }}
+          >
+            {t(hideIncompatible ? 'showIncompatible' : 'hideIncompatible', { count: incompatibleCount })}
+          </button>
+        )}
       </div>
       <div className={css.catalogStatsRow}>
         <p className={css.catalogStats} data-shop-catalog-stats>{t('catalogStats', { count: String(browsable.length), date: result.builtAt.slice(0, 10) })}</p>
@@ -1447,7 +1503,16 @@ export function ShopTab(props: ShopTabProps): ReactNode {
       {result.plugins.length === 0 ? (
         <p className={css.emptyLine}>{t('empty')}</p>
       ) : filtered.length === 0 ? (
-        <p className={css.emptyLine}>{t('emptySearch')}</p>
+        /* Which control emptied the shelf. `matched` is what the category and
+         * the search box selected, so a non-empty `matched` with an empty
+         * `filtered` says the incompatible modifier took the rest — and the
+         * reader has to be told, because the search box they would look at is
+         * empty and the modifier's own state survives category switches. The
+         * generic search-miss line said "No matching plugins" over a shelf
+         * their own toggle had cleared. */
+        <p className={css.emptyLine} data-shop-empty>
+          {matched.length > 0 ? t('emptyIncompatibleFiltered') : t('emptySearch')}
+        </p>
       ) : (
         <>
           <ul className={css.cards}>

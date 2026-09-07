@@ -218,21 +218,23 @@ The pointer carries `count` and `rejected` — the listed and the filtered total
       "integrity": "sha512-...",
       "publishedAt": "2026-08-01T12:00:00Z",
       "repository": "https://github.com/you/hello-plugin",
+      "license": "MIT",
+      "metadata": "declared",
+      "catalog": {
+        "category": "tool",
+        "summary": { "en": "...", "zh": "..." },
+        "capabilities": ["fs", "shell"]
+      },
+      "source": "npm",
+      "added": "2026-08-01",
       "publisher": "someone",
       "unpackedSize": 847407,
-      "license": "MIT",
       "tier": "verified",
-      "metadata": "declared",
       "review": {
         "reviewedVersion": "1.2.0",
         "reviewer": "github:someone",
         "reviewCommit": "abc1234",
         "notes": "..."
-      },
-      "catalog": {
-        "category": "tool",
-        "summary": { "en": "...", "zh": "..." },
-        "capabilities": ["fs", "shell"]
       }
     }
   ],
@@ -241,6 +243,16 @@ The pointer carries `count` and `rejected` — the listed and the filtered total
   ]
 }
 ```
+
+**The key order above is the emitted order, not a presentation choice.**
+`JSON.stringify` preserves insertion order, that order is what the content
+hash is taken over, and `assignTier` is where it is decided (pinned by
+`tier.test.ts`). A sample in a different order invites someone to reconcile
+code to spec in the direction this document normally prescribes — which would
+rewrite every entry in `plugins.json` and invalidate every CDN cache for a
+build with no data change, the harm the `builtAt` invariant exists to prevent.
+The optional npm fields (`publisher`, `unpackedSize`) sit after `added` and
+before `tier`; `peers` sits between them when present.
 
 `publisher` is the npm account behind the package — npm entries only, absent
 when npm names no maintainer. The shop renders it beside a link to the
@@ -462,13 +474,30 @@ Until one is chosen, each crossing costs a red build and a hand-measured refinem
 
 The label is decimal (`kB`/`MB`/`GB`, not `KiB`), because the figure IS npm's own and npmjs.com shows it decimal — a reader checking the shelf against the package page must not find two different numbers. It is locale-free by construction (`toFixed`, never `toLocaleString`): a decimal comma in one language reads as a thousands separator in the other. The visible text is the bare figure; the accessible name and tooltip say **unpacked**, since unpacked and download differ by the compression ratio.
 
-*Card layout.* The size sits at the right end of the action row immediately LEFT of the author, both inside one wrapper that owns the `margin-left: auto`. The wrapper is what makes the group stay flush right when only one of the two has a value — and size is absent on every github entry, so an outer-edge size would ragged the right margin down the shelf.
+*Card layout.* The size sits at the right end of the action row immediately LEFT of the author, both inside one wrapper that owns the `margin-left: auto`. Note what that ordering costs: the author's width varies and is absent entirely on many entries, so a size's horizontal position moves from row to row and the figures do not form a column. The size is mono and `tabular-nums` for per-figure legibility, which is the honest reason; an earlier draft of this amendment justified the monospace by a column this layout cannot produce. The wrapper is what makes the group stay flush right when only one of the two has a value — and size is absent on every github entry, so an outer-edge size would ragged the right margin down the shelf.
 
 *Category tab colour and geometry.* A selected category tab paints in that category's own hue, read from the SAME table the card spine and category chip read (`--category-hue`, keyed by `data-category`) — one table, so a tab can never disagree with the cards it filters to, which is the whole point of colouring it. `All` and `Installed` select by something other than a category and keep the brand token.
 
-**The pressed rule declares colour only, and that is a hard constraint, not a preference.** The tabs sit on a wrapping row; a tab that grows on selection can push its neighbours to the next line and slide out from under the pointer that just clicked it. `font-weight: 600` did this — bold metrics are wider than regular. Nothing that resolves to a length may join that rule: no padding, no border-width, no font-size, no letter-spacing, no transform. Two lanes hold it: `css-tokens.client.spec.ts` fails on such a declaration, and the web e2e measures one tab's `getBoundingClientRect().width` before and after the click and requires EXACT equality. The tolerance the e2e first used was useless — measured against real chromium, `font-weight: 600` moves a zh tab by 0.22px, because CJK glyphs are full-width and weight-invariant and only the Latin count digits move — so any tolerance loose enough to feel safe passes the defect.
+**The pressed rule declares colour only, and that is a hard constraint, not a preference.** The tabs sit on a wrapping row; a tab that grows on selection can push its neighbours to the next line and slide out from under the pointer that just clicked it. `font-weight: 600` did this — bold metrics are wider than regular. Nothing that resolves to a length may join that rule: no padding, no border-width, no font-size, no letter-spacing. Two lanes hold it: `css-tokens.client.spec.ts` fails on such a declaration, and the web e2e measures one tab's `getBoundingClientRect().width` before and after the click and requires EXACT equality. The tolerance the e2e first used was useless — measured against real chromium, `font-weight: 600` moves a zh tab by 0.22px, because CJK glyphs are full-width and weight-invariant and only the Latin count digits move — so any tolerance loose enough to feel safe passes the defect.
 
-*The incompatible filter.* At the far edge of the category bar sits a toggle that leaves out entries the Host reported missing components for, carrying the count of them across the browsable shelf. It is a MODIFIER, not a ninth category: the categories choose what to show and this subtracts from whatever they chose, so it keeps its own state across a category switch and combines as AND. It is OFF by default — a filter nobody asked for must not hide listings on first open, and the count is what tells a reader there is anything to hide. It reads the same missing-peer list the card's badge and detail paragraphs read, so it can only ever hide an entry the shelf WOULD have marked incompatible. A `name-taken` entry is NOT hidden: that badge names a different condition and a different remedy, and its card is the only surface that explains why the install is refused.
+**Corrections (2026-09-07, review of this amendment).** Three things the paragraphs above got wrong in their first form, each of which shipped and was caught by review rather than by a lane:
+
+- *The pressed rule has to outrank hover, and specificity decides that — not source order.* Written as a bare `.categoryButtonOn` it is one compound unit against `.categoryButton:hover`'s two, so a selected tab under the pointer painted the hover rule's 45% border mix instead of the solid hue, for exactly as long as the pointer stayed where the click left it. It is written `.categoryButton.categoryButtonOn` and declared after the hover rule. The guard now asserts the two-class form exists, the bare form does not, and the pressed rule comes later.
+- *Colour alone is not a sufficient affordance, so the constraint is "colour or shadow", not "colour".* Removing `font-weight: 600` removed the only pressed signal that hover could not defeat and that forced colours could not flatten — and the `other` tab's hue IS the neutral gray this UI uses for "no category", so on the light theme its pressed state differed from its unpressed state by almost nothing. The pressed rule carries `box-shadow: inset 0 0 0 1px var(--category-hue)`, a second ring that paints OUTSIDE the layout box and so costs the pill no metrics, plus a `forced-colors` outline. `box-shadow` is the one non-colour property the guard admits, for that reason.
+- *The geometry guard is an allowlist.* It was a denylist of ~30 property names, which fails open: `font` (the shorthand that sets weight and size at once), `padding-inline`, `border-left-width` and `font-variant-numeric` all passed it, and the last is the natural thing to reach for on labels that end in a digit count. The rule the stylesheet states is "every declaration here is a colour", which is six names and stable, so the guard now asserts that and refuses everything else. It covers the `:hover` rules too: they reflow the same row and fire on mere pointer movement, which is strictly worse than on a click.
+
+The filter is a pill and now says so by wearing `.categoryButton`, stating only its hue and its `margin-left: auto`. It had been a verbatim clone of all four pill rules, so the geometry constraint above was enforced against two copies that could drift; `--category-hue` is the knob this amendment introduced and is what makes the clone unnecessary.
+
+*The incompatible filter.* At the far edge of the category bar sits a toggle that leaves out entries the Host reported missing components for, carrying the count of them across the browsable shelf. It is a MODIFIER, not a ninth category: the categories choose what to show and this subtracts from whatever they chose, so it keeps its own state across a category switch and combines as AND. It is OFF by default — a filter nobody asked for must not hide listings on first open, and the count is what tells a reader there is anything to hide. It hides exactly the entries whose badge READS "Incompatible", which is a stronger statement than "whose missing-peer list is non-empty" and the reason the two must be one predicate rather than two spellings. A `name-taken` entry is NOT hidden: that badge names a different condition and a different remedy, and its card is the only surface that explains why the install is refused.
+
+**Corrections (2026-09-07, review of this amendment).** The first implementation tested the missing-peer list directly, which broke the rule above in two ways that both reached the reader:
+
+- *An entry can carry BOTH blockers.* `BlockerBadge` lets a taken name decide the visible word when both hold, so such a card reads "Name taken" — and testing the peer list hid it anyway, taking away the only surface explaining the refusal, which is the very carve-out the paragraph above states. The filter and its count both ask one predicate: missing peers AND no name holder.
+- *The modifier does not apply to the Installed view.* That view is management, not shelf. An installed plugin that is up to date appears in exactly one place — its card, which carries the enable switch and the uninstall button, since the installed section lists only rows whose `outdated` is true — so subtracting there left a reader no way to disable or remove the broken install they had come to fix, above a tab still counting it. The filter is skipped for that view and its control is not rendered there; the state survives, so switching back restores both.
+
+**The control carries the action in its label and therefore no `aria-pressed`.** The two encodings are each coherent and must not be mixed: the category tabs keep a fixed label and let `aria-pressed` carry the state; this button's label flips between "Hide incompatible N" and "Show incompatible N". With both, a screen reader announced "Show incompatible 1, pressed" while they were hidden — the inverse of the truth. The `title` tracks the state for the same reason.
+
+**An empty shelf says which control emptied it.** The filter is persistent and its search box is empty, so the generic "No matching plugins" line misattributed the cause to a search the reader had not made. The client keeps what the category and search selected separately from what the modifier left, so a non-empty former with an empty latter is the modifier, stated as such — and no second copy of the filter chain exists to drift from the first.
 
 **Amendment (2026-08-27, follow-up): boot-time warm.** The client bundle warms `shop/catalog` (plus the small `installed` and `version` reads) when its apply runs at web boot, so the shop's first open consumes the boot-time fetch instead of waiting on it — the host's slow network fetch happens while nobody is looking at the shop. The tab's plain open consumes the stashed promise (the host's snapshot is the same one a fresh call would serve, so §10 freshness semantics are unchanged); a refresh always goes to the wire, and a failed warm falls back to a fresh call. Each boot starts its own warm fetch.
 

@@ -206,10 +206,14 @@ export function emit(
   // boundary — the classifier and the config keep `theme`, so flipping
   // SHOP_CATALOG_V5 at release time restores it without re-reviewing anything
   // (design §3.5). The additive fields (`added`, `tarball`, `replacement`,
-  // `peers`) ride EVERY version: an old client's zod strips a key it does not
-  // know (consumer-side zod is non-strict by design), so none of them needs a
-  // gate. `peers` had one anyway, on size rather than safety; see the note on
-  // it above for why it came off instead of being opened.
+  // `peers`, `publisher`, `unpackedSize`) ride EVERY version: an old client's
+  // zod strips a key it does not know (consumer-side zod is non-strict by
+  // design), so none of them needs a gate. Keep this list whole — it is the
+  // one place the "does a new field need a version gate?" decision is
+  // recorded, and a reader who finds their field missing cannot tell a
+  // deliberate gate from an omission. `peers` had one anyway, on size rather
+  // than safety; see the note on it above for why it came off instead of
+  // being opened.
   let themeDowngraded = 0
   const emitted = entries.map(entry => {
     // Well-formed FIRST, and over the whole entry, because plugins.json is not

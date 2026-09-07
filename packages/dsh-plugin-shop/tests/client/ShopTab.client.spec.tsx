@@ -1313,7 +1313,10 @@ describe('ShopTab', () => {
     // The count is over the browsable shelf, so it says how many exist rather
     // than how many the current filter happens to show.
     expect(filter.textContent).toContain('Hide incompatible 1')
-    expect(filter.getAttribute('aria-pressed')).toBe('false')
+    // The label IS the state. It used to carry `aria-pressed` as well, which
+    // announced "Show incompatible 1, pressed" while they were hidden — the
+    // inverse of the truth — so the attribute went and the action label stayed.
+    expect(filter.getAttribute('aria-pressed')).toBeNull()
 
     fireEvent.click(filter)
     expect(screen.queryByText('dsh-missing-peer')).toBeNull()
@@ -1321,7 +1324,7 @@ describe('ShopTab', () => {
     // The label now offers the way back, and the count is unchanged: it
     // counts the hidden set, which is exactly what a reader is deciding about.
     expect(filter.textContent).toContain('Show incompatible 1')
-    expect(filter.getAttribute('aria-pressed')).toBe('true')
+    expect(filter.getAttribute('aria-pressed')).toBeNull()
 
     fireEvent.click(filter)
     expect(screen.getByText('dsh-missing-peer')).toBeTruthy()
@@ -1350,8 +1353,9 @@ describe('ShopTab', () => {
     expect(screen.getByText('dsh-tool-ok')).toBeTruthy()
     expect(screen.queryByText('dsh-tool-broken')).toBeNull()
     expect(screen.queryByText('dsh-ui-broken')).toBeNull()
-    // Still on, after the category changed under it.
-    expect(container.querySelector('[data-shop-hide-incompatible]')?.getAttribute('aria-pressed')).toBe('true')
+    // Still on, after the category changed under it — the label offers the
+    // way back, which is what says the filter is applied.
+    expect(container.querySelector('[data-shop-hide-incompatible]')?.textContent).toContain('Show incompatible')
   })
 
   it('hides only what it would have badged, never a name conflict', async () => {
@@ -1371,6 +1375,54 @@ describe('ShopTab', () => {
 
     fireEvent.click(container.querySelector('[data-shop-hide-incompatible]') as HTMLElement)
     expect(screen.getByText('dsh-hello-plugin')).toBeTruthy()
+  })
+
+  it('keeps a name conflict on the shelf when its peers are missing too', async () => {
+    // Both blockers hold at once. `BlockerBadge` shows the more serious one,
+    // so this card reads "Name taken" — and the filter offers to hide what the
+    // shelf BADGED as incompatible, which this card is not. Reading the peer
+    // list alone hides a card whose visible word never mentioned compatibility,
+    // taking away the only surface that explains why the install is refused.
+    const { injected } = bench(
+      {
+        ...snapshot({ name: 'dsh-hello-plugin', tier: 'community' }),
+        incompatible: { 'npm:dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] },
+      },
+      [],
+      { 'dsh-hello-plugin': 'github:someone/else' },
+    )
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(container.querySelector('[data-shop-blocker]')?.getAttribute('data-shop-blocker')).toBe('name-taken')
+    // Uncounted as well as unhidden: the count states the size of the set the
+    // button would take away, so counting one it must keep would overstate it.
+    expect(container.querySelector('[data-shop-hide-incompatible]')?.textContent).toContain('Hide incompatible 0')
+
+    fireEvent.click(container.querySelector('[data-shop-hide-incompatible]') as HTMLElement)
+    expect(screen.getByText('dsh-hello-plugin')).toBeTruthy()
+  })
+
+  it('does not subtract from the Installed view, the only surface a broken install can be removed from', async () => {
+    // An installed, up-to-date, incompatible plugin appears in exactly one
+    // place: its shelf card, which carries the enable switch and the uninstall
+    // button. `OutdatedSection` renders only rows whose `outdated` is true, so
+    // subtracting this entry from the Installed view would leave the reader no
+    // way to disable or remove the very plugin they came to fix.
+    const { injected } = bench(
+      { ...snapshot({ tier: 'community' }), incompatible: { 'npm:dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] } },
+      [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }],
+    )
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+
+    fireEvent.click(container.querySelector('[data-shop-hide-incompatible]') as HTMLElement)
+    expect(screen.queryByText('dsh-hello-plugin')).toBeNull()
+
+    fireEvent.click(container.querySelector('[data-shop-category-installed]') as HTMLElement)
+    expect(screen.getByText('dsh-hello-plugin')).toBeTruthy()
+    // The modifier does not apply here, so it is not offered here either: a
+    // pressed control that changes nothing is a claim the view cannot honour.
+    expect(container.querySelector('[data-shop-hide-incompatible]')).toBeNull()
   })
 
   it('badges the installed-list row for an outdated install whose peer the harness does not provide', async () => {

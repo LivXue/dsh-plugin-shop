@@ -698,15 +698,48 @@ describe('unpackedSize', () => {
     expect(result.snapshot.entries).toHaveLength(1)
   })
 
-  it('refuses a catalog whose size is not a non-negative integer', async () => {
-    // Our own artifact, so a violation is our build having written something
-    // it cannot write — and this project stops rather than render a size label
-    // reading "-1.0 kB" or "NaN kB". The registry drops such a value at
-    // harvest, so nothing legitimate reaches this.
-    for (const bad of [-1, 1.5, '847407', null]) {
-      await expect(load([{ ...baseEntry, unpackedSize: bad }], 5), `${JSON.stringify(bad)} was accepted`)
-        .rejects.toThrow()
-    }
+  // Our own artifact, so a violation is our build having written something it
+  // cannot write — and this project stops rather than render a size label
+  // reading "-1.0 kB" or "NaN kB". The registry drops such a value at harvest,
+  // so nothing legitimate reaches this.
+  //
+  // `it.each` rather than a loop over the cases: vitest discards the message
+  // passed alongside a `.rejects` assertion, so a loop reported only "promise
+  // resolved instead of rejecting" and named no case — and its `await` meant
+  // the first hole hid every case after it.
+  it.each([
+    -1,
+    1.5,
+    '847407',
+    null,
+    // Past 2^53, which JSON cannot round-trip. zod 4's `.int()` caps at
+    // MAX_SAFE_INTEGER on its own, so these two need no extra refinement —
+    // they are here to PIN that, because the claim "the host's bound matches
+    // the registry's `Number.isSafeInteger`" is a property of the zod version
+    // and nothing else would notice it relaxing. The registry's own list
+    // carries the same case.
+    Number.MAX_SAFE_INTEGER + 2,
+    1e21,
+  ])('refuses a catalog whose size is not a safe non-negative integer: %j', async (bad) => {
+    await expect(load([{ ...baseEntry, unpackedSize: bad }], 5)).rejects.toThrow()
+  })
+
+  it('refuses a size on a github entry, which measures the repository and not the install', async () => {
+    // The design says a github entry gets none: GitHub reports the repo's own
+    // disk usage including history, which is not what installing puts on disk
+    // and for a monorepo subpackage is not close. Until this rule had a
+    // boundary that could refuse one, it held only because `assignRepoTier`
+    // happens not to write it — and the client renders the field with no
+    // source check, so an approximation would show under an "unpacked" label.
+    await expect(load([{
+      ...baseEntry, version: 'a'.repeat(40), source: 'github', repo: 'someone/thing', unpackedSize: 847407,
+    }], 5)).rejects.toThrow()
+    // The same entry without it is fine, so the rule refuses the size and not
+    // the listing.
+    const ok = await load([{
+      ...baseEntry, version: 'a'.repeat(40), source: 'github', repo: 'someone/thing',
+    }], 5)
+    expect(ok.snapshot.entries).toHaveLength(1)
   })
 })
 

@@ -169,8 +169,8 @@ describe('category hues', () => {
   it('paints the pressed tab in the hue, not the brand token', () => {
     // The point of the change: a pressed Tool tab must read as "tool", which
     // means the hue var and nothing else decides its colour.
-    const on = rules.get('.categoryButtonOn')
-    expect(on, 'no .categoryButtonOn rule').toBeDefined()
+    const on = rules.get('.categoryButton.categoryButtonOn')
+    expect(on, 'no .categoryButton.categoryButtonOn rule').toBeDefined()
     expect(on).toMatch(/var\(--category-hue\)/)
     expect(on).not.toMatch(/brand-primary/)
     // The fallback for All/Installed, which have no category and no hue.
@@ -179,46 +179,88 @@ describe('category hues', () => {
 })
 
 describe('a pressed tab occupies the same box as an unpressed one', () => {
-  /** Properties whose value resolves to a LENGTH the box model reads. A
-   * pressed-state rule declaring one of these reflows the category bar: with
-   * nine pills on a wrapping row, one that grows can push the rest to another
-   * line and move the tab out from under the pointer that just clicked it.
+  /** The ONLY properties a pill's state rules may declare. An ALLOWLIST, not a
+   * list of what is banned: the stylesheet's contract is "every declaration
+   * here is a colour", which is six names and stable, while the set of
+   * properties that resolve to a length is open-ended and grows with CSS. As a
+   * denylist this guard failed open — it named `border-width` but not
+   * `border-left-width`, `padding` but not `padding-inline`, `font-weight` but
+   * not the `font` shorthand that sets weight AND size, and nothing at all for
+   * `font-variant-numeric`, whose tabular digits change the advance of labels
+   * that all end in a count. Every one of those reflows the bar and passed.
    *
-   * `font-weight` is on the list and is the reason the list exists — bold
-   * metrics are wider than regular, so `font-weight: 600` on the pressed
-   * state visibly widened whichever tab was selected. jsdom applies no
-   * layout and the component tests stub this module, so the declaration is
-   * the only place a test can see this. */
-  const CHANGES_GEOMETRY = [
-    'font-weight', 'font-size', 'font-family', 'font-stretch', 'letter-spacing', 'word-spacing',
-    'padding', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
-    'margin', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
-    'border', 'border-width', 'border-style', 'border-radius',
-    'width', 'min-width', 'max-width', 'height', 'min-height', 'max-height',
-    'transform', 'scale', 'zoom', 'text-transform', 'line-height', 'inset', 'gap',
+   * `box-shadow` is in because it paints outside the layout box: an inset ring
+   * is the pressed state's non-colour affordance and costs the pill no
+   * metrics. `font-weight` is the reason the guard exists — bold metrics are
+   * wider than regular, so `font-weight: 600` visibly widened whichever tab was
+   * selected. jsdom applies no layout and the component tests stub this
+   * module, so the declaration is the only place a test can see this. */
+  const COLOUR_ONLY = [
+    'color', 'background', 'background-color', 'background-image',
+    'border-color', 'outline-color', 'box-shadow', 'opacity',
   ]
 
-  for (const selector of ['.categoryButtonOn', '.incompatibleFilterOn']) {
+  /** Every state a pill can be in that the base rule does not also apply.
+   * The `:hover` rules belong here as much as the pressed ones: they reflow
+   * the same wrapping row, and they fire on mere pointer movement, so a
+   * geometry declaration there is strictly worse than one on a click. */
+  for (const selector of [
+    '.categoryButton.categoryButtonOn',
+    '.categoryButton:hover',
+  ]) {
     it(`${selector} declares colour only`, () => {
       const body = rules.get(selector)
       expect(body, `no rule for ${selector}`).toBeDefined()
       // Declared property names only — `border-color` must stay legal, so a
       // prefix match on `border` would be wrong; this compares whole names.
       const declared = [...(body ?? '').matchAll(/(^|;)\s*([a-z-]+)\s*:/g)].map(m => m[2])
-      expect(declared.filter(prop => prop !== undefined && CHANGES_GEOMETRY.includes(prop))).toEqual([])
+      expect(declared.filter(prop => prop !== undefined && !COLOUR_ONLY.includes(prop))).toEqual([])
     })
   }
 
-  it('keeps the two states on the same padding and border width', () => {
-    // The other half of the same guarantee: equal geometry means the BASE
-    // rule carries it and the pressed rule adds none, so the two must not
-    // drift apart through the base either.
-    for (const [base, on] of [['.categoryButton', '.categoryButtonOn'], ['.incompatibleFilter', '.incompatibleFilterOn']]) {
-      const baseBody = rules.get(base ?? '') ?? ''
-      expect(baseBody, `no rule for ${base}`).not.toBe('')
-      expect(baseBody, `${base} must own the padding, so ${on} need not restate it`).toMatch(/padding:\s*3px 10px/)
-      expect(baseBody).toMatch(/border:\s*1px solid/)
-    }
+  it('lets the pressed rule outrank hover, so a tab under the pointer still reads as selected', () => {
+    // Both rules set `border-color` and `color`. `.categoryButton:hover` is
+    // two compound units, so a bare `.categoryButtonOn` lost to it for as long
+    // as the pointer stayed on the tab that had just been clicked — the
+    // pressed border was never visible at the moment it was earned. Matching
+    // the specificity and coming later is what fixes it, so both halves are
+    // asserted: the two-class form exists, the bare form does not, and the
+    // pressed rule is declared after the hover rule.
+    const heads = [...rules.keys()]
+    expect(heads).toContain('.categoryButton.categoryButtonOn')
+    expect(heads, 'a bare .categoryButtonOn would lose to .categoryButton:hover again').not.toContain('.categoryButtonOn')
+    expect(heads.indexOf('.categoryButton.categoryButtonOn')).toBeGreaterThan(heads.indexOf('.categoryButton:hover'))
+  })
+
+  it('gives the pressed state a signal that is not a colour', () => {
+    // Colour alone is not enough, and this bar proves it twice over: `other`'s
+    // hue IS the neutral gray used for "no category", so on the light theme a
+    // pressed Other tab differs from an unpressed one by almost nothing; and
+    // under forced colours the system palette replaces every colour here. The
+    // repo's own recorded lesson — a layer fill can never be an element's only
+    // affordance — is what `font-weight: 600` used to satisfy before it was
+    // removed for reflowing the bar.
+    expect(rules.get('.categoryButton.categoryButtonOn')).toMatch(/box-shadow:\s*inset/)
+    expect(css, 'no forced-colors fallback for the pressed pill').toMatch(/forced-colors/)
+  })
+
+  it('keeps every pill on one geometry, stated once', () => {
+    // Equal geometry means the BASE rule carries it and no state rule adds
+    // any. The filter is a pill too and now says so by wearing
+    // `.categoryButton`, which is what makes this a single assertion rather
+    // than the same two literals checked against two copied rule sets — the
+    // copy could drift while both halves stayed green.
+    const base = rules.get('.categoryButton') ?? ''
+    expect(base, 'no .categoryButton rule').not.toBe('')
+    expect(base, '.categoryButton must own the padding, so no state rule restates it').toMatch(/padding:\s*3px 10px/)
+    expect(base).toMatch(/border:\s*1px solid/)
+    // The filter states only its two differences: the hue it filters on and
+    // the margin that pushes it to the bar's edge.
+    const filter = rules.get('.incompatibleFilter') ?? ''
+    expect(filter, 'no .incompatibleFilter rule').not.toBe('')
+    expect(filter).toMatch(/--category-hue:\s*var\(--dsw-alias-state-error-primary\)/)
+    expect(filter).toMatch(/margin-left:\s*auto/)
+    expect(filter, 'the filter must not restate the pill geometry').not.toMatch(/padding|border-radius|font-size/)
   })
 })
 
@@ -304,11 +346,13 @@ describe('incompatibility reads as an error, not a warning', () => {
   // modules are absent will not load at all, so it must not sit in the same
   // colour as "we have not reviewed this". jsdom composites no colours, so the
   // token CHOICE is the only layer where this is visible to a test.
-  // `.incompatibleFilterOn` is the category bar's filter in its active state.
-  // It is a control rather than a statement about one plugin, but it names
-  // exactly this set, so it takes the same token — a filter tinted amber over
-  // cards tinted red would read as two different conditions.
-  for (const selector of ['.incompatibleBadge', '.incompatibleDetail', '.gateWarning', '.incompatibleFilterOn']) {
+  // `.incompatibleFilter` is the category bar's filter. It is a control rather
+  // than a statement about one plugin, but it names exactly this set, so it
+  // takes the same token — a filter tinted amber over cards tinted red would
+  // read as two different conditions. It carries the token on `--category-hue`
+  // rather than on a colour directly: the filter is a pill, so every state it
+  // has is painted by the shared `.categoryButton` rules reading that var.
+  for (const selector of ['.incompatibleBadge', '.incompatibleDetail', '.gateWarning', '.incompatibleFilter']) {
     it(`${selector} draws from the error token, not the warn token`, () => {
       const body = rules.get(selector)
       expect(body, `no rule for ${selector}`).toBeDefined()

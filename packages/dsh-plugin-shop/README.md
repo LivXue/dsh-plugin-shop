@@ -121,6 +121,8 @@ bundle is not.
 | **Install** | One confirmation. An unreviewed plugin requires an explicit acknowledgement first — an installed plugin holds the same privileges as a built-in one |
 | **Enable / disable** | Applies to an installed plugin without a restart |
 | **Installed state** | An installed plugin shows an Installed label on its card — or an Update button when the catalog has a newer version — plus an Uninstall button; the Installed filter in the category bar shows only installed plugins |
+| **Size & author** | Each card shows what installing the plugin puts on disk, next to the account that published it — npm's own unpacked figure, so it matches the package's npm page |
+| **Leave out what cannot run** | A plugin whose declared components your installation does not provide is badged incompatible; the filter at the end of the category bar takes those off the shelf. It never hides a plugin whose name is already taken by another install, and never subtracts from the Installed view — those cards are the only place the problem is explained or can be undone |
 | **Restart** | After an install, update, or uninstall, the shop offers to restart dsh — stating the cost first: the page disconnects and in-flight work is interrupted |
 | **Self-update** | The shop shows its own version next to the search box, checks npm for a newer release, and updates itself with the pinned version — then the usual restart |
 

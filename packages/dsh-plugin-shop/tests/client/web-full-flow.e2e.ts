@@ -415,7 +415,12 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // so one that grows on selection can push its neighbours to the next
       // line and slide out from under the pointer that just clicked it. That
       // is what `font-weight: 600` on the pressed state did.
-      const toolTab = dialog.locator('[data-category="tool"]')
+      //
+      // Located by `data-shop-category-tab`, never by `data-category`: the
+      // cards carry that one too, so `[data-category="tool"]` is ambiguous the
+      // moment any fixture declares a category, and Playwright's strict mode
+      // would fail here rather than where the fixture changed.
+      const toolTab = dialog.locator('[data-shop-category-tab="tool"]')
       await toolTab.waitFor({ state: 'visible', timeout: 10_000 })
       const before = await toolTab.evaluate(el => ({
         rect: el.getBoundingClientRect().width,
@@ -423,9 +428,18 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       }))
       await toolTab.click()
       expect(await toolTab.getAttribute('aria-pressed')).toBe('true')
+      // The pointer has to LEAVE the tab before the colour is read. `click()`
+      // moves the mouse to the element's centre and leaves it there, and
+      // `.categoryButton:hover` paints the same `var(--category-hue)` — so
+      // measuring here asserted the hover rule and not the pressed one, and
+      // stayed green with the pressed colour deleted outright. Moving to the
+      // origin puts the pointer over the page, not the pill.
+      await app.mouse.move(0, 0)
       const after = await toolTab.evaluate(el => ({
         rect: el.getBoundingClientRect().width,
         colour: getComputedStyle(el).color,
+        border: getComputedStyle(el).borderTopColor,
+        ring: getComputedStyle(el).boxShadow,
       }))
       // EXACT equality, not a tolerance. The pressed rule declares colour
       // only, so the layout engine is handed nothing new to measure and its
@@ -444,6 +458,15 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // bundled stylesheet by the browser that composited it.
       expect(after.colour).toBe('rgb(76, 141, 255)')
       expect(after.colour).not.toBe(before.colour)
+      // The border is what SEPARATES the two rules, and so the half that
+      // actually proves the pressed rule won: `.categoryButton:hover` paints a
+      // 45% mix of the hue with the neutral border token, the pressed rule
+      // paints the hue solid. Equal to the hue means hover did not decide it.
+      expect(after.border, 'the hover rule outranked the pressed rule').toBe('rgb(76, 141, 255)')
+      // The affordance that is not a colour, and the one `font-weight: 600`
+      // used to be: an inset ring, which paints outside the layout box and so
+      // costs the pill none of the width asserted above.
+      expect(after.ring).toContain('inset')
       // Restore All, so the walk-through below starts from the same shelf.
       await dialog.locator('[data-shop-category-all]').click()
 

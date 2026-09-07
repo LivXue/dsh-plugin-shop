@@ -141,6 +141,13 @@ const entrySchema = z.object({
   // (`npm-client.ts`), so a value arriving here that fails this is our own
   // build having written something it cannot write — which is exactly the
   // class of thing this project stops for.
+  //
+  // `.int()` carries the safe-integer bound itself — zod 4 caps it at
+  // MAX_SAFE_INTEGER, so 2^53 and 1e21 are refused here and this matches the
+  // registry's `Number.isSafeInteger` guard exactly rather than merely
+  // resembling it. Measured, not assumed, and pinned by the cases in
+  // `catalog.test.ts`: a zod change that relaxed it would otherwise let
+  // through an integer JSON cannot round-trip.
   unpackedSize: z.number().int().nonnegative().optional(),
 }).superRefine((entry, ctx) => {
   // The install spec differs by source, so the grammar does too. Refusing at
@@ -156,6 +163,16 @@ const entrySchema = z.object({
   }
   if (entry.repo === undefined) {
     ctx.addIssue({ code: 'custom', path: ['repo'], message: 'a github entry must carry its repo — it is the entry\'s identity and the spec is built from it' })
+  }
+  // A github entry gets no size, deliberately: GitHub reports the repository's
+  // own disk usage including history, which is not what installing the plugin
+  // puts on disk, and for a monorepo subpackage is not even close. The design
+  // states that rule; without this it was stated nowhere that could refuse a
+  // violation, and `assignRepoTier` merely happens not to write one today.
+  // The client reads `unpackedSize` with no source check of its own, so an
+  // approximation attached here would render under a label saying "unpacked".
+  if (entry.unpackedSize !== undefined) {
+    ctx.addIssue({ code: 'custom', path: ['unpackedSize'], message: 'a github entry carries no unpacked size — GitHub measures the repository, not the install' })
   }
   // GitHub entries use either a commit pin or a release tag. A tag may exist
   // without a tarball; install() will report that missing rescue explicitly.
