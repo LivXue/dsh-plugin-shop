@@ -108,7 +108,21 @@ export interface RepoCandidate {
    * `requiresBuild` repo. Its presence turns the entry into a
    * release-pinned entry: `version` = the tag, `integrity` = the tarball
    * sha256. */
-  release?: { tag: string; url: string; sha256: string }
+  release?: {
+    tag: string
+    url: string
+    sha256: string
+    /**
+     * That `verifyReleaseAsset` opened this asset and accepted it.
+     *
+     * Persisted so the record says which RULES produced it. Absent means the
+     * rescue predates the check — taken on release metadata alone — and
+     * `diffRepoState` queues that repo for one re-probe rather than trusting
+     * it, because `pushedAt` alone would let an unverified rescue stand
+     * forever on a repo that never pushes again.
+     */
+    assetVerified?: true
+  }
   /**
    * Why a release asset that DID exist was refused as a rescue — it packs a
    * different package, declares no `dsh.bundle`, or could not be read

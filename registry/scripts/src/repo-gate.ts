@@ -18,6 +18,22 @@ export interface RepoAccepted {
 }
 
 /** Build one rejection. */
+/**
+ * The sentence a rejected rescue adds to the reason standing in its place.
+ *
+ * Both rejections below tell the author to "attach a packed release tarball"
+ * or to drop a build script. When they DID attach one and it was refused, that
+ * advice is misattributed — they would go and remove a working build script
+ * while the real problem sat in their release. Empty when no asset was
+ * refused, so the two reasons read exactly as before for every repository that
+ * never had one.
+ */
+function rescueNote(candidate: RepoCandidate): string {
+  return candidate.releaseRejected === undefined
+    ? ''
+    : ` A release tarball WAS found and refused: ${candidate.releaseRejected}`
+}
+
 function reject(
   name: string,
   code: Rejection['code'],
@@ -77,22 +93,6 @@ export function gateRepo(
       'This is the shop\'s own repository, so it is not listed on its own shelf; install it with dsh plugin add.')
   }
 
-
-/**
- * The sentence a rejected rescue adds to the reason standing in its place.
- *
- * Both rejections below tell the author to "attach a packed release tarball"
- * or to drop a build script. When they DID attach one and it was refused, that
- * advice is misattributed — they would go and remove a working build script
- * while the real problem sat in their release. Empty when no asset was
- * refused, so the two reasons read exactly as before for every repository that
- * never had one.
- */
-function rescueNote(candidate: RepoCandidate): string {
-  return candidate.releaseRejected === undefined
-    ? ''
-    : ` A release tarball WAS found and refused: ${candidate.releaseRejected}`
-}
 
   if (!candidate.hasBundle) {
     // Same code either way — the repository is not installable as a plugin —

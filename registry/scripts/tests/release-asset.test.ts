@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { gzipSync } from 'node:zlib'
-import { verifyReleaseAsset } from '../src/release-asset.ts'
+import { MAX_INFLATED_BYTES, verifyReleaseAsset } from '../src/release-asset.ts'
 import { packedTarball, rawTarball } from './packed-tarball.ts'
 
 
@@ -61,6 +61,108 @@ describe('verifyReleaseAsset', () => {
   it('refuses an asset whose manifest is not readable JSON', () => {
     const bytes = rawTarball({ 'package/package.json': '{ this is not json' })
     expect(verifyReleaseAsset(bytes, 'dsh-foo').ok).toBe(false)
+  })
+
+  it('refuses a decoy root instead of trusting archive order', () => {
+    // The bypass this rule exists for. npm and pnpm extract with `strip: 1`,
+    // so `aaa/package.json` and `package/package.json` BOTH become
+    // `package.json` on disk and the LAST one written wins — reading the first
+    // depth-2 manifest verified one package while pnpm installed the other,
+    // and the sha256 is over these exact bytes so the host's integrity gate
+    // passed by construction.
+    const good = JSON.stringify({ name: 'dsh-good', version: '1.0.0', dsh: { bundle: { patch: './p.yml' } } })
+    const evil = JSON.stringify({ name: 'evil-pkg', version: '9.9.9' })
+    const verdict = verifyReleaseAsset(rawTarball({
+      'aaa/package.json': good,
+      'package/package.json': evil,
+      'package/payload.js': 'globalThis.pwned = true',
+    }), 'dsh-good')
+    expect(verdict.ok).toBe(false)
+    if (!verdict.ok) expect(verdict.detail).toContain('top-level directories')
+  })
+
+  it('accepts the one-root layout npm pack actually emits, whatever the root is called', () => {
+    // The rule is "exactly one root", not "a root named package": the
+    // component is stripped, so its name never reaches disk.
+    const manifest = JSON.stringify({ name: 'dsh-foo', version: '1.0.0', dsh: { bundle: { patch: './p.yml' } } })
+    expect(verifyReleaseAsset(rawTarball({ 'dsh-foo-1.0.0/package.json': manifest }), 'dsh-foo')).toEqual({ ok: true })
+  })
+
+  it('accepts the ./ prefix that tar czf ./package emits', () => {
+    const manifest = JSON.stringify({ name: 'dsh-foo', version: '1.0.0', dsh: { bundle: { patch: './p.yml' } } })
+    expect(verifyReleaseAsset(rawTarball({ './package/package.json': manifest }), 'dsh-foo')).toEqual({ ok: true })
+  })
+
+  it('refuses a root-level manifest with the reason that is actually true', () => {
+    // `{'package.json': …}` IS at the root, so "carries no package.json at
+    // its root" was false. Under strip:1 it has no component left and would
+    // land nowhere.
+    const manifest = JSON.stringify({ name: 'dsh-foo', version: '1.0.0', dsh: { bundle: { patch: './p.yml' } } })
+    const verdict = verifyReleaseAsset(rawTarball({ 'package.json': manifest }), 'dsh-foo')
+    expect(verdict.ok).toBe(false)
+    if (!verdict.ok) expect(verdict.detail).toContain('no top-level directory')
+  })
+
+  it('reads a manifest saved with a UTF-8 BOM, which npm itself tolerates', () => {
+    // Refusing it — and calling the archive unreadable — would report our
+    // parser's strictness as the author's defect, for an asset pnpm installs
+    // without complaint.
+    const manifest = `\ufeff${JSON.stringify({ name: 'dsh-foo', version: '1.0.0', dsh: { bundle: { patch: './p.yml' } } })}`
+    expect(verifyReleaseAsset(rawTarball({ 'package/package.json': manifest }), 'dsh-foo')).toEqual({ ok: true })
+  })
+
+  it.each([false, 0, '', null, [], 'yes'])('refuses dsh.bundle: %o, which registers no plugin', (bundle) => {
+    // `!== undefined` admitted every one of these. None registers a plugin,
+    // so the rescue would have re-admitted the silent no-op install that
+    // `no-bundle` exists to kill — one JSON literal from the get-fable case.
+    const bytes = packedTarball('dsh-foo', { dsh: { bundle } })
+    const verdict = verifyReleaseAsset(bytes, 'dsh-foo')
+    expect(verdict.ok).toBe(false)
+    if (!verdict.ok) expect(verdict.detail).toContain('dsh.bundle object')
+  })
+
+  it.each([
+    ['a prepare script', { scripts: { prepare: 'tsc' } }, 'prepare script'],
+    ['a prepack script', { scripts: { prepack: 'npm run build' } }, 'prepack script'],
+    ['unresolved workspace: deps', { dependencies: { a: 'workspace:*' } }, 'workspace:-protocol'],
+  ])('refuses an asset that is a source tree, not a prebuilt package — %s', (_label, extra, expected) => {
+    // The third claim the rescue carries. The waiver of
+    // requires-build/workspace-deps is granted ONLY because a release asset
+    // is presumed prebuilt; a plain `tar czf` of a source tree earned it and
+    // landed unbuilt, with its dsh.bundle.patch target absent.
+    const verdict = verifyReleaseAsset(packedTarball('dsh-foo', extra), 'dsh-foo')
+    expect(verdict.ok).toBe(false)
+    if (!verdict.ok) expect(verdict.detail).toContain(expected)
+  })
+
+  it('refuses an array manifest with a reason about the manifest, not the packing', () => {
+    const verdict = verifyReleaseAsset(rawTarball({ 'package/package.json': '[1,2,3]' }), 'dsh-foo')
+    expect(verdict.ok).toBe(false)
+    if (!verdict.ok) {
+      expect(verdict.detail).toContain('not a JSON object')
+      // "packs (unnamed)" told the author to re-pack when the fix is to
+      // repair an invalid package.json.
+      expect(verdict.detail).not.toContain('unnamed')
+    }
+  })
+
+  it('bounds a hostile name instead of echoing a megabyte into a committed file', () => {
+    // This detail becomes `releaseRejected`, which the daily workflow commits
+    // into repo-state.json verbatim and appends to the published reason.
+    const verdict = verifyReleaseAsset(packedTarball('x'.repeat(200_000)), 'dsh-foo')
+    expect(verdict.ok).toBe(false)
+    if (!verdict.ok) expect(verdict.detail.length).toBeLessThan(400)
+  })
+
+  it('refuses a compressed bomb instead of being OOM-killed by it', () => {
+    // The one input class that can take the daily build down: an OOM kill is
+    // not catchable, so no `catch` here or in the probe could degrade it to
+    // the requires-build fallback, and the build would publish no report at
+    // all. `not.toThrow()` can never observe that, which is why this asserts
+    // the verdict.
+    const verdict = verifyReleaseAsset(gzipSync(Buffer.alloc(MAX_INFLATED_BYTES + 1)), 'dsh-foo')
+    expect(verdict.ok).toBe(false)
+    if (!verdict.ok) expect(verdict.detail).toContain('inflates past')
   })
 
   it('never throws, whatever the bytes are', () => {

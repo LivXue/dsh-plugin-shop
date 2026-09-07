@@ -91,12 +91,6 @@ export function headersThenSlowBody(chunks: number, gapMs: number, payload?: Uin
   }) as unknown as typeof fetch
 }
 
-/** The bytes {@link headersThenSlowBody} produces for `chunks`, so a test can
- * state the digest it expects without restating the fixture's internals. */
-export function slowBodyBytes(chunks: number): Uint8Array {
-  return new Uint8Array(chunks * CHUNK_BYTES)
-}
-
 /**
  * Answers 200 and then fails the body with `error` — exactly what
  * {@link withTimeout} produces when its deadline lands mid-body, which is its

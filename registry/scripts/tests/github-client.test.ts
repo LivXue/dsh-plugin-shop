@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { packedTarball, rawTarball } from './packed-tarball.ts'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -9,7 +9,7 @@ import { parseRepoState, serializeRepoState } from '../src/repo-state.ts'
 import type { RepoState } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
 import { FetchTimeoutError } from '../src/npm-client.ts'
-import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody, slowBodyBytes } from './stalling-fetch.ts'
+import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
 
 const sleep = async (_ms: number) => {}
 const commit = 'b'.repeat(40)
@@ -1062,14 +1062,14 @@ describe('release-tarball rescue probe', () => {
     if (result.ok) {
       const candidate = result.candidates[0]
       expect(candidate?.requiresBuild).toBe(true)
-      expect(candidate?.release).toEqual({ tag: 'v1.0.0', url: assetUrl, sha256: expectedSha256 })
+      expect(candidate?.release).toEqual({ tag: 'v1.0.0', url: assetUrl, sha256: expectedSha256, assetVerified: true })
       expect(expectedSha256).toMatch(/^[0-9a-f]{64}$/)
     }
   })
 
   it.each([
-    ['packs a different package', () => packedTarball('dsh-something-else'), 'packs dsh-something-else'],
-    ['declares no dsh.bundle', () => packedTarball('dsh-repo-plugin', { dsh: undefined }), 'no dsh.bundle'],
+    ['packs a different package', () => packedTarball('dsh-something-else'), 'packs \"dsh-something-else\"'],
+    ['declares no dsh.bundle', () => packedTarball('dsh-repo-plugin', { dsh: undefined }), 'no dsh.bundle object'],
     ['carries no root package.json', () => rawTarball({ 'sdist-1.0/PKG-INFO': 'x' }), 'no package.json'],
   ])('refuses a rescue whose asset %s, and says so in the rejection', async (_label, bytes, expected) => {
     // Measured on the 2026-09-06 catalog: 7 of 176 rescued entries were in one
@@ -1166,7 +1166,7 @@ describe('release-tarball rescue probe', () => {
     const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
     expect(result.ok).toBe(true)
     if (result.ok) {
-      expect(result.candidates[0]?.release).toEqual({ tag: 'v1.0.0', url: upperAssetUrl, sha256: expectedSha256 })
+      expect(result.candidates[0]?.release).toEqual({ tag: 'v1.0.0', url: upperAssetUrl, sha256: expectedSha256, assetVerified: true })
     }
   })
 
@@ -1241,7 +1241,7 @@ describe('release-tarball rescue probe', () => {
     const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
     expect(result.ok).toBe(true)
     if (result.ok) {
-      expect(result.candidates[0]?.release).toEqual({ tag: 'v1.0.0', url: assetUrl, sha256: expectedSha256 })
+      expect(result.candidates[0]?.release).toEqual({ tag: 'v1.0.0', url: assetUrl, sha256: expectedSha256, assetVerified: true })
     }
   })
 
@@ -2438,8 +2438,10 @@ describe('a subpackage path is bounded before it is published', () => {
 // it, rather than quietly covering a line it was never reasoned about.
 // ---------------------------------------------------------------------------
 
+const SRC_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'src')
+
 function srcOf(file: string): string {
-  return readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', file), 'utf8')
+  return readFileSync(join(SRC_DIR, file), 'utf8')
 }
 
 const githubClientSource = srcOf('github-client.ts')
@@ -2572,6 +2574,31 @@ describe('every response body read in a network client is capped or excused', ()
       .filter(s => s.file !== 'http-body.ts')
       .flatMap(s => findBodyReads(s.source))
     expect(clientReads.length).toBeGreaterThanOrEqual(EXCUSED_BODY_READS.length)
+  })
+
+  it('every decompression in the registry sources is bounded', () => {
+    // The body-cap guard above cannot see this class: it matches `Response`
+    // methods, and an inflate takes bytes we ALREADY hold. `readTarballBody`
+    // caps the compressed asset at 32 MB, which bounds nothing afterwards —
+    // gzip of zeros reaches about 1029:1, so an accepted asset can demand
+    // ~33 GB. An OOM kill is not catchable, so it takes the daily build down
+    // with no report at all, past every catch in the pipeline.
+    //
+    // `release-asset.ts` went in with an uncapped `gunzipSync` and every
+    // assertion in this file stayed green, which is what made a second guard
+    // worth having rather than a wider comment on the first.
+    const inflaters = /\b(?:gunzipSync|inflateSync|brotliDecompressSync|createGunzip|createInflate)\s*\(/
+    const offenders: string[] = []
+    for (const file of readdirSync(SRC_DIR).filter(name => name.endsWith('.ts'))) {
+      const source = srcOf(file)
+      for (const line of source.split('\n')) {
+        if (!inflaters.test(line)) continue
+        // The bound may sit on the call itself or, for a stream, be applied
+        // to the source it is piped from; both spell `maxOutputLength`.
+        if (!/maxOutputLength/.test(source)) offenders.push(`${file}: ${line.trim()}`)
+      }
+    }
+    expect(offenders).toEqual([])
   })
 
   it('is inside readCappedBody, or an excused read, for every one of them', () => {

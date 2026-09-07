@@ -635,9 +635,15 @@ async function fetchHeadCommit(
  * immutable per URL (re-upload = new asset = new URL), so URL + sha256 is the
  * audit story. The probe is advisory — its fallback, the unchanged
  * `requires-build` rejection, is complete — so it returns null on any
- * failure and never throws. Returns null when there is no release, no
- * tarball asset, the probe could not be read, or the tarball exceeds
- * {@link MAX_TARBALL_BYTES}.
+ * failure and never throws.
+ *
+ * Three answers, not two. `null` is "nothing to rescue with and nothing to
+ * say": no release, no tarball asset, a transport failure, or a body over
+ * {@link MAX_TARBALL_BYTES}. `{ ok: false, detail }` is an asset that WAS
+ * there and did not hold up under {@link verifyReleaseAsset} — that detail is
+ * published to the author and persisted, so the rejection standing in the
+ * rescue's place can say why rather than blaming a build script. `{ ok: true }`
+ * carries the pin.
  */
 async function fetchLatestReleaseTarball(
   owner: string,
@@ -1137,10 +1143,15 @@ export async function fetchRepoCandidate(
   // The rescue probe: only a `requires-build` root can be rescued, so only it
   // is probed. The release rides the candidate through the state file, so a
   // repo with no release does not re-consume this budget daily.
-  if (root !== null && root.requiresBuild) {
+  // Probed for EITHER objection the rescue can answer, not just the build
+  // script. `workspace-deps` literally advises "attach a packed release
+  // tarball", and a repo with `workspace:` deps and no prepare/prepack was
+  // never probed at all — so an author who followed that advice and attached
+  // a perfect tarball got no rescue and no explanation, permanently.
+  if (root !== null && (root.requiresBuild || root.hasWorkspaceDeps)) {
     const release = await fetchLatestReleaseTarball(owner, slug, root.name, fetchImpl, sleep, token, timeoutMs, tarballTimeoutMs)
     if (release?.ok === true) {
-      root.release = { tag: release.tag, url: release.url, sha256: release.sha256 }
+      root.release = { tag: release.tag, url: release.url, sha256: release.sha256, assetVerified: true }
     } else if (release?.ok === false) {
       // An asset was there and did not hold up. The rescue does not apply, and
       // the standing rejection has to say that rather than blame the build

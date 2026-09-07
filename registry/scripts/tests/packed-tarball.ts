@@ -15,6 +15,13 @@ function tar(files: Record<string, string>): Buffer {
   const blocks: Buffer[] = []
   for (const [path, body] of Object.entries(files)) {
     const header = Buffer.alloc(512)
+    // ustar holds a longer path in the `prefix` field at offset 345, which
+    // this writer leaves zeroed — so a longer path would be TRUNCATED to a
+    // 100-byte stub and the fixture would silently exercise a different
+    // branch than it claims to. Refusing loudly is the tar reader's own habit.
+    if (Buffer.byteLength(path) > 100) {
+      throw new Error(`packed-tarball: member path exceeds ustar's 100-byte name field: ${path}`)
+    }
     header.write(path, 0, 100, 'utf8')
     header.write('0000644\0', 100, 8, 'ascii')
     header.write('0000000\0', 108, 8, 'ascii')
@@ -42,7 +49,10 @@ function tar(files: Record<string, string>): Buffer {
  * plugin. `extra` overlays or adds manifest fields. */
 export function packedTarball(name: string, extra: Record<string, unknown> = {}): Uint8Array {
   const manifest = { name, version: '1.0.0', dsh: { bundle: { patch: './cordis.patch.yml' } }, ...extra }
-  return gzipSync(tar({ 'package/package.json': JSON.stringify(manifest) }))
+  // Delegates, so a gzip level for stable digests, an `mtime`, or a second
+  // member is applied in ONE place. Two spellings of `gzipSync(tar(...))` is
+  // how a fixture this subtle drifts.
+  return rawTarball({ 'package/package.json': JSON.stringify(manifest) })
 }
 
 /** A gzipped tarball of arbitrary members — for the archives that are not

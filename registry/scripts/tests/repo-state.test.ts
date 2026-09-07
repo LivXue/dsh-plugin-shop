@@ -49,6 +49,38 @@ describe('repo-state', () => {
     expect(gone).toEqual([])
   })
 
+  it('diff: an unchanged repo whose release predates the asset check is re-probed once', () => {
+    // The retroactivity hole. `pushedAt` alone let an unverified rescue stand
+    // forever: two of the bad ones measured on 2026-09-06 had been quiet
+    // since 2026-08-22 and 2026-08-24, so "the next push fixes it" is not
+    // true in any useful sense. Absence of `assetVerified` means the record
+    // was taken on release metadata alone.
+    const unverified: RepoState = {
+      'a/one': {
+        pushedAt: '2026-08-01T00:00:00Z',
+        commit,
+        candidates: [{ ...candidate('a/one'), release: { tag: 'v1', url: 'https://x/y.tgz', sha256: 'a'.repeat(64) } }],
+      },
+    }
+    const { toFetch } = diffRepoState(unverified, [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }])
+    expect(toFetch.map(e => e.repo)).toEqual(['a/one'])
+  })
+
+  it('diff: a verified release is left alone, so the re-probe is once and not daily', () => {
+    const verified: RepoState = {
+      'a/one': {
+        pushedAt: '2026-08-01T00:00:00Z',
+        commit,
+        candidates: [{
+          ...candidate('a/one'),
+          release: { tag: 'v1', url: 'https://x/y.tgz', sha256: 'a'.repeat(64), assetVerified: true },
+        }],
+      },
+    }
+    const { toFetch } = diffRepoState(verified, [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }])
+    expect(toFetch).toEqual([])
+  })
+
   it('diff: recorded repos absent from the search are gone', () => {
     const { toFetch, gone } = diffRepoState(state, [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }])
     expect(toFetch).toEqual([])
