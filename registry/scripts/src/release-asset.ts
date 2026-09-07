@@ -167,8 +167,8 @@ export function verifyReleaseAsset(bytes: Uint8Array, bundleName: string): Relea
   // A NON-NULL OBJECT is what the rule means. `!== undefined` admitted
   // `false`, `0`, `''` and `null`, none of which registers a plugin, so the
   // rescue would have re-admitted exactly the silent no-op install that
-  // `no-bundle` exists to kill — one JSON literal away from the `get-fable`
-  // case that motivated this check.
+  // `no-bundle` exists to kill — one JSON literal away from
+  // `dsh-message-finder`, which the live harvest refuses on exactly this rule.
   const bundle = (manifest.dsh as { bundle?: unknown } | null | undefined)?.bundle
   if (typeof bundle !== 'object' || bundle === null || Array.isArray(bundle)) {
     return {
