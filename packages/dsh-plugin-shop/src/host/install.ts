@@ -37,8 +37,17 @@ export type ValidateResult =
  * What this refuses is REPLACEMENT, and the mechanism is the manifest key: a
  * profile holds one dependency per name, the shop writes `dependencies[name]`,
  * so installing a second plugin of that name overwrites the first and a plugin
- * the user chose is gone with no notice. 177 of the live catalog's names are
- * claimed by more than one entry, `dsh-skill-manager` alone by 14.
+ * the user chose is gone with no notice.
+ *
+ * 177 of the catalog's names are claimed by more than one entry, over 461
+ * entries, `dsh-skill-manager` alone by 14 (2026-09-06). This comment is the
+ * ONE place that figure is kept, because three copies of it had already
+ * drifted apart — the design doc said 172/451 and present.ts said 151/243.
+ * It tracks the ecosystem, so re-derive rather than trust it: group
+ * `registry/snapshots/manifest.lock` by bundle name, which is field 0 on an
+ * npm row (`<name> <version> sha512-…`) and field 1 on every github one
+ * (`<owner/slug> <bundle name> <commit|tag>`) — reading field 1 for all of
+ * them undercounts by the 176 release-rescued rows.
  *
  * That is the whole of what the name buys. It is NOT the same rule as the
  * loader's, and the two must not be confused — an earlier version of this

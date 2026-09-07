@@ -899,6 +899,28 @@ export class ShopGateway extends TypertRemoteService {
     return { found: true, ...running.status() }
   }
 
+  /**
+   * The profile manifest's dependency spec for every name it holds — exactly
+   * what the install gate reads, unfiltered.
+   *
+   * The client cannot derive this from `installed()`. That list drops any
+   * dependency no catalog entry matches, so a fork, a hand `dsh plugin add`,
+   * or an entry the catalog has since dropped is invisible to it — while the
+   * gate, which reads the raw manifest, still refuses over it. That gap is
+   * what made the card show a plain Install button for a name the host was
+   * about to refuse. Shipping the gate's own input is what makes the badge
+   * and the refusal one rule rather than two implementations that agree
+   * until they do not.
+   *
+   * `null` is "cannot say" — an unreadable manifest — and is deliberately
+   * distinct from `{}`, "nothing is installed": the client must not read a
+   * failed read as a clean bill of health.
+   */
+  @Remote('installedSpecs')
+  async installedSpecs(): Promise<Record<string, string> | null> {
+    return this.profileDependenciesOrNone() ?? null
+  }
+
   /** Installed catalog plugins (§7.3): every entry of the snapshot the profile
    * manifest declares as a dependency, with the Host's `outdated` verdict
    * attached. The tab's shelf cards and its installed section both derive

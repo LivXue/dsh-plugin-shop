@@ -331,7 +331,7 @@ harvest -> fetch manifest -> classify -> gate -> tier -> emit -> commit snapshot
 6. **Stars** — GitHub GraphQL fetches star counts for github.com repositories into `dist/v1/stars.<sha>.json`; failures publish without stars and retry next build (`github-stars.ts`, shell). **Amendment (2026-08-31):** repo star counts ride the topic search — every enumerated item carries `stargazers_count`, and the daily run pages the entire pool regardless of the fetch budget, so repo entries (and any npm entry whose repo the search saw) take the search count and cost no GraphQL quota; GraphQL covers only the repos the search did not see, which keeps it inside the PAT's 5,000-point hourly quota. Search-derived counts still land in the daily sidecar, never in the committed harvest memory (`repo-state.json`), and they survive a GraphQL failure — partial stars beat none. An npm entry whose repository names the harness itself gets no count at all: the harness's own stars are never attributed to a plugin that merely copied the host project's repository boilerplate.
 7. **Emit** — sort by package name for determinism, breaking ties on the rest of the install identity (`source`, `repo`, `subdir`) so the output can never depend on the order npm or GitHub answered in; rejections sort by `(name, code, detail)` for the same reason. Produce `plugins.<sha256>.json` and `index.json`, with the build report as a CI artifact.
 
-   **Amendment (2026-09-03, audit C-2 / C-6):** the name alone is not a key. 172 live bundle names over 451 entries are claimed by several repositories (`dsh-skill-manager` by 14), and a name-only sort left those ties to input order — reversing the repository harvest changed the content hash, `manifest.lock` and `index.json`. A shadowed repository is likewise reported by its `owner/slug#subdir` unit, matching the repo gate, so a monorepo's shadowed subpackages are distinguishable rows.
+   **Amendment (2026-09-03, audit C-2 / C-6):** the name alone is not a key. 172 live bundle names over 451 entries were claimed by several repositories on the day this was written (`dsh-skill-manager` by 14; 177 over 461 on 2026-09-06 — the figure is kept and re-derived in `validateInstall`'s docstring, not here), and a name-only sort left those ties to input order — reversing the repository harvest changed the content hash, `manifest.lock` and `index.json`. A shadowed repository is likewise reported by its `owner/slug#subdir` unit, matching the repo gate, so a monorepo's shadowed subpackages are distinguishable rows.
 8. **Commit the snapshot** — write `manifest.lock` (name -> version -> integrity) back into `registry/snapshots/`.
 
    **This step is the entire value of this approach over a server.** Without it, the design degrades into an opaque service that happens to run on CI.
@@ -346,16 +346,27 @@ Browser                     Host (ShopGateway)                  Subprocess
   |                              |    absent           -> not-in-catalog
   |                              |    denied           -> denied
   |                              |    version mismatch -> version-mismatch
-  |                              | 2. tier != verified and !acknowledged
+  |                              | 2. the profile already holds this NAME,
+  |                              |    from something else -> name-taken
+  |                              | 3. tier != verified and !acknowledged
   |                              |                     -> needs-acknowledgement
-  |                              | 3. spec = `${name}@${version}` (pinned)
-  |                              | 4. take the per-profile mutex
-  |<---- { installId } ----------| 5. spawn dsh plugin --profile <p> add <spec>
+  |                              | 4. spec = `${name}@${version}` (pinned)
+  |                              | 5. take the per-profile mutex
+  |<---- { installId } ----------| 6. spawn dsh plugin --profile <p> add <spec>
   |                              |--------------------------------->|
   |  poll shop/installStatus -->|<-------- stdout/stderr ----------|
-  |<---- { state, log[] } -------| 6. exit 0 -> re-read the manifest, confirm
-  |<---- { done, needsRestart } -|         dsh.profile.bundles changed
+  |<---- { state, log[] } -------| 7. exit 0 -> re-read the manifest, confirm
+  |                              |         dsh.profile.bundles changed, and
+  |<---- { done, needsRestart } -|         no loader entry id now collides
 ```
+
+**Amendment (2026-09-07, name-taken): a profile holds one plugin per name, and the gate says so before the acknowledgement.** Step 2 is new. The shop writes `dependencies[name]`, so installing a second plugin of a name overwrites the first and the plugin the user chose is gone with no notice — 177 live catalog names are claimed by more than one entry, `dsh-skill-manager` by 14. The gate refuses unless the manifest's spec names this very install; a same-identity request is the ordinary update path. It sits ahead of step 3 so a request that cannot proceed never asks the reader to accept a plugin's privileges first.
+
+The spec is attributed positively — a version or range is npm, the two GitHub forms are a repository — and **a spec the grammar does not cover is a third answer, never npm.** Reading `git+ssh://`, `file:`, `link:`, `workspace:*` or `npm:other@1` as npm made the gate pass them (an npm-vs-npm comparison is unconditionally "same"), so pnpm overwrote git remotes, working checkouts and aliases to other packages entirely; and read the other way it published "already installed from the npm package X" about a local directory. Those are refused now, quoting the spec.
+
+The client refuses in the same breath, on the same input: `shop/installedSpecs` returns the manifest's dependency map — the gate's own argument — and the card runs the same `specVerdict`. It cannot be derived from `shop/installed`, which drops any dependency no catalog entry matches; a fork, a hand `dsh plugin add`, or a delisted holder is invisible there while the gate still refuses over it.
+
+**This is NOT the loader's rule, and the two must not be conflated.** Same-named forks frequently declare different entry ids and would coexist fine — `Anyway-one/dsh-balance` declares `id: balance`, `ZHIZHU4410/deepseek-balance` declares `id: dsh-balance`. The loader's own constraint cuts the other way: two DIFFERENTLY-named bundles declaring one entry id make dsh refuse the whole tree ("duplicate loader entry id") and the profile does not boot — `2768651338/dsh-plugin-manager` and `Dingpenghui-good/dsh-plugin-manager` both declare `id: plugin-manager`, share no manifest key, and pass step 2. A candidate's ids are unreadable until its files are on disk, so that check moved to step 7, where it fails the install with the id, the package holding it, and the command to undo. It has to be caught there or not at all: `hotMount` prefixes its rows `mkt-`, so a colliding install reports done, works for the whole session, and kills the next boot with nothing connecting the two events.
 
 Implementation decisions:
 
@@ -381,6 +392,7 @@ Implementation decisions:
 | `shop/version` | none | `{ installed, latest, outdated, restartSupported }` |
 | `shop/updateStart` | `{ version }` | `{ installId }` |
 | `shop/installed` | none | `{ name, installed, latest, outdated }[]` |
+| `shop/installedSpecs` | none | `Record<name, spec>` or `null` |
 
 **Amendment (2026-08-25): the install method is `shop/installStart`, not `shop/install`.** The web full-flow e2e against the real composition exposed that the client api's `RemoteNamespaceService` owns a method named `install` (its internal mount primitive), so a Remote namespace cannot expose one: mounting `shop/install` throws "method \"shop/install\" conflicts with its namespace service". The wire method is renamed to `shop/installStart` (pairing with `shop/installStatus`); the client-visible injected face keeps the name `install`, and the host-side code method is unchanged — only the wire name differs.
 

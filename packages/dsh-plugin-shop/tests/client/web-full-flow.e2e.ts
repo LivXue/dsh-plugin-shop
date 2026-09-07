@@ -54,7 +54,7 @@
  * - shop panel + entry: `[data-shop-tab]`, `[data-shop-entry=<name>]`
  * - install gate: `[data-shop-confirm]`; failure view: 安装失败 + the detail
  *   paragraph; state lines are plain text (no data attributes)
- * - harness compatibility: `[data-shop-incompatible]` (badge, on both the
+ * - harness compatibility: `[data-shop-blocker]` (badge, on both the
  *   catalog card and the installed row) and `[data-shop-incompatible-detail]`
  *   (gate warning line) — both render only when the entry has a declared
  *   peer this host cannot resolve; there is no `[data-shop-install-done]` —
@@ -588,9 +588,9 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // it unresolvable and the badge renders — its raw name lands in the
       // card's visible text via the always-rendered incompatibleDetail line,
       // not just the badge's title attribute.
-      await card.locator('[data-shop-incompatible]').waitFor({ state: 'visible', timeout: 15_000 })
+      await card.locator('[data-shop-blocker]').waitFor({ state: 'visible', timeout: 15_000 })
       expect(await card.textContent()).toContain('@deepseek-ai/dsh-client-store')
-      expect(await card.locator('[data-shop-incompatible]').textContent()).toBe(zh.incompatibleBadge)
+      expect(await card.locator('[data-shop-blocker]').textContent()).toBe(zh.incompatibleBadge)
 
       // The copy is two sentences separated by a `\n` it carries itself, and
       // NOTHING else in this suite can prove that renders. The component tests

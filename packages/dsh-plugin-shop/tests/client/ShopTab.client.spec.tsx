@@ -38,19 +38,37 @@ type InstalledFixture =
   Omit<ShopInstalledEntry, 'source' | 'repo' | 'subdir'>
   & Partial<Pick<ShopInstalledEntry, 'source' | 'repo' | 'subdir'>>
 
-function bench(catalogResult: ShopCatalogResult, installedEntries: InstalledFixture[] = []) {
+/**
+ * @param specs the profile manifest's dependency specs the host would report.
+ *   Omitted, they are DERIVED from the installed rows, which is what a real
+ *   profile looks like. Passed explicitly for the cases the rows cannot
+ *   express — a holder no catalog entry matches, which `installed()` drops and
+ *   the gate still sees. `null` is the host saying it could not read the
+ *   manifest.
+ */
+function bench(
+  catalogResult: ShopCatalogResult,
+  installedEntries: InstalledFixture[] = [],
+  specs?: Record<string, string> | null,
+) {
   const catalog = vi.fn<ShopTabInjected['catalog']>().mockResolvedValue(catalogResult)
   const install = vi.fn<ShopTabInjected['install']>().mockResolvedValue({ ok: true, installId: 'i1' })
   const installStatus = vi.fn<ShopTabInjected['installStatus']>().mockResolvedValue({ found: true, state: 'done', log: [], needsRestart: true })
   const setEnabled = vi.fn<ShopTabInjected['setEnabled']>().mockResolvedValue({ ok: true })
   const rows: ShopInstalledEntry[] = installedEntries.map(row => ({ source: 'npm', ...row }))
   const installed = vi.fn<ShopTabInjected['installed']>().mockResolvedValue(rows)
+  const derived: Record<string, string> = {}
+  for (const row of rows) {
+    derived[row.name] = row.source === 'github' && row.repo !== undefined ? `github:${row.repo}` : row.installed
+  }
+  const installedSpecs = vi.fn<ShopTabInjected['installedSpecs']>()
+    .mockResolvedValue(specs === undefined ? derived : specs)
   const uninstall = vi.fn<ShopTabInjected['uninstall']>().mockResolvedValue({ ok: true, installId: 'u1' })
   const restart = vi.fn<ShopTabInjected['restart']>().mockResolvedValue({ ok: true })
   const version = vi.fn<ShopTabInjected['version']>().mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartSupported: true })
   const updateStart = vi.fn<ShopTabInjected['updateStart']>().mockResolvedValue({ ok: true, installId: 's1' })
-  const injected: ShopTabInjected = { catalog, install, installStatus, setEnabled, installed, uninstall, restart, version, updateStart }
-  return { catalog, install, installStatus, setEnabled, installed, uninstall, restart, version, updateStart, injected }
+  const injected: ShopTabInjected = { catalog, install, installStatus, setEnabled, installed, installedSpecs, uninstall, restart, version, updateStart }
+  return { catalog, install, installStatus, setEnabled, installed, installedSpecs, uninstall, restart, version, updateStart, injected }
 }
 
 function renderTab(injected: ShopTabInjected) {
@@ -203,6 +221,7 @@ describe('ShopTab', () => {
     ['version-mismatch', 'dsh-plugin-shop: catalog version 1.2.0, requested 9.9.9'],
     ['needs-acknowledgement', 'dsh-plugin-shop: dsh-risky is community-tier; installation requires acknowledgement'],
     ['tarball-integrity', 'dsh-plugin-shop: the release tarball failed sha256 verification against the catalog record; refusing to install'],
+    ['name-taken', 'dsh-plugin-shop: dsh-hello-plugin is already installed from CLAPEILL/dsh-hello-plugin.'],
   ] as const)('renders the %s rejection detail verbatim', async (code, detail) => {
     const { injected, install } = bench(snapshot({ tier: 'verified' }))
     install.mockResolvedValue({ ok: false, code, detail })
@@ -233,13 +252,14 @@ describe('ShopTab', () => {
       name: 'dsh-skill-manager', source: 'github', repo: 'Mvyvn/dsh-skill-manager',
       version: 'a'.repeat(40), repository: 'https://github.com/Mvyvn/dsh-skill-manager',
     })
-    const { injected } = bench(catalog, [{
-      name: 'dsh-skill-manager', source: 'github', repo: 'CLAPEILL/dsh-skill-manager',
-      installed: 'b'.repeat(40), latest: 'b'.repeat(40), outdated: false, enabled: true,
-    }])
+    // The holder is NOT a catalog row, and that is the common case, not an
+    // edge one: a fork, a hand `dsh plugin add`, or an entry the catalog has
+    // since dropped. `installed()` omits all of those, which is why the badge
+    // reads the gate's own input instead.
+    const { injected } = bench(catalog, [], { 'dsh-skill-manager': 'github:CLAPEILL/dsh-skill-manager' })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-skill-manager')).toBeTruthy())
-    await waitFor(() => expect(container.querySelector('[data-shop-entry="dsh-skill-manager"] [data-shop-incompatible]')).toBeTruthy())
+    await waitFor(() => expect(container.querySelector('[data-shop-entry="dsh-skill-manager"] [data-shop-blocker]')).toBeTruthy())
     // The reason names the plugin that holds the name — not "missing
     // components", which is a different problem with a different remedy.
     const detail = container.querySelector('[data-shop-entry="dsh-skill-manager"] [data-shop-incompatible-detail]')
@@ -257,10 +277,7 @@ describe('ShopTab', () => {
       version: 'a'.repeat(40), repository: 'https://github.com/Mvyvn/dsh-skill-manager',
     })
     catalog.incompatible = { 'github:Mvyvn/dsh-skill-manager#': ['@deepseek-ai/dsh-client-ui-slots'] }
-    const { injected } = bench(catalog, [{
-      name: 'dsh-skill-manager', source: 'github', repo: 'CLAPEILL/dsh-skill-manager',
-      installed: 'b'.repeat(40), latest: 'b'.repeat(40), outdated: false, enabled: true,
-    }])
+    const { injected } = bench(catalog, [], { 'dsh-skill-manager': 'github:CLAPEILL/dsh-skill-manager' })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-skill-manager')).toBeTruthy())
     await waitFor(() => expect(
@@ -271,9 +288,69 @@ describe('ShopTab', () => {
     expect(details[1]?.textContent ?? '').toContain('@deepseek-ai/dsh-client-ui-slots')
     // The badge's accessible name carries both, since it is the only place a
     // screen reader meets them on a row that prints no detail line.
-    const badge = container.querySelector('[data-shop-entry="dsh-skill-manager"] [data-shop-incompatible]')
+    const badge = container.querySelector('[data-shop-entry="dsh-skill-manager"] [data-shop-blocker]')
     expect(badge?.getAttribute('aria-label') ?? '').toContain('CLAPEILL/dsh-skill-manager')
     expect(badge?.getAttribute('aria-label') ?? '').toContain('@deepseek-ai/dsh-client-ui-slots')
+  })
+
+  it('blocks the install button for a taken name instead of opening the §9.3 gate', async () => {
+    // The gate asks the reader to accept a plugin's privileges. Spending it on
+    // an install the host will refuse — and then landing them on a rejected
+    // card with no retry — is the worst order to do these things in, and every
+    // live catalog entry is community-tier, so that gate always opens.
+    const catalog = snapshot({
+      name: 'dsh-skill-manager', source: 'github', repo: 'Mvyvn/dsh-skill-manager',
+      version: 'a'.repeat(40), repository: 'https://github.com/Mvyvn/dsh-skill-manager',
+    })
+    const { injected, install } = bench(catalog, [], { 'dsh-skill-manager': 'github:CLAPEILL/dsh-skill-manager' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-skill-manager')).toBeTruthy())
+    const button = container.querySelector('[data-shop-entry="dsh-skill-manager"] [data-shop-install]') as HTMLButtonElement
+    expect(button.disabled).toBe(true)
+    fireEvent.click(button)
+    expect(screen.queryByText(en.acknowledgementTitle)).toBeNull()
+    expect(install).not.toHaveBeenCalled()
+  })
+
+  it('calls a taken name what it is, not "Incompatible"', async () => {
+    // The plugin is perfectly compatible with this harness; a different plugin
+    // is in the way, and the remedy is uninstalling it rather than upgrading
+    // dsh. The badge is the only glanceable token, so it must not say the
+    // wrong one.
+    const catalog = snapshot({
+      name: 'dsh-skill-manager', source: 'github', repo: 'Mvyvn/dsh-skill-manager',
+      version: 'a'.repeat(40), repository: 'https://github.com/Mvyvn/dsh-skill-manager',
+    })
+    const { injected } = bench(catalog, [], { 'dsh-skill-manager': 'github:CLAPEILL/dsh-skill-manager' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-skill-manager')).toBeTruthy())
+    const badge = await waitFor(() => {
+      const found = container.querySelector('[data-shop-entry="dsh-skill-manager"] [data-shop-blocker]')
+      expect(found).toBeTruthy()
+      return found as HTMLElement
+    })
+    expect(badge.textContent).toBe(en.nameTakenBadge)
+    expect(badge.getAttribute('data-shop-blocker')).toBe('name-taken')
+  })
+
+  it('makes no claim about a name conflict when the host cannot read the manifest', async () => {
+    // The badge is absent because nothing is KNOWN, not because nothing is
+    // wrong. What this pins is that the button stays usable, so a check the
+    // client could not make never blocks an install the host would allow —
+    // and when the host would refuse, its own rejection still lands on the
+    // card. `undefined` and `{}` render alike by construction; they are kept
+    // apart in the types so a later change can tell "cannot say" from
+    // "nothing is installed", which is a distinction this view cannot show.
+    const catalog = snapshot({
+      name: 'dsh-skill-manager', source: 'github', repo: 'Mvyvn/dsh-skill-manager',
+      version: 'a'.repeat(40), repository: 'https://github.com/Mvyvn/dsh-skill-manager',
+    })
+    const { injected } = bench(catalog, [], null)
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-skill-manager')).toBeTruthy())
+    expect(container.querySelector('[data-shop-entry="dsh-skill-manager"] [data-shop-blocker]')).toBeNull()
+    const button = container.querySelector('[data-shop-entry="dsh-skill-manager"] [data-shop-install]') as HTMLButtonElement
+    expect(button.disabled).toBe(false)
   })
 
   it('does not badge the SAME plugin that is already installed', async () => {
@@ -288,7 +365,7 @@ describe('ShopTab', () => {
     }])
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-skill-manager')).toBeTruthy())
-    expect(container.querySelector('[data-shop-entry="dsh-skill-manager"] [data-shop-incompatible]')).toBeNull()
+    expect(container.querySelector('[data-shop-entry="dsh-skill-manager"] [data-shop-blocker]')).toBeNull()
     // The detail line, not just the badge: an installed card renders no
     // install button, so its badge never sees `nameTakenBy` and asserting on
     // the badge alone would pass even with the identity comparison deleted.
@@ -1000,8 +1077,8 @@ describe('ShopTab', () => {
     const label = card.querySelector('[data-shop-installed]') as HTMLElement
     expect(label.textContent).toBe(en.installed)
     // No button on this branch, so the badge follows the label instead.
-    expect(label.nextElementSibling?.hasAttribute('data-shop-incompatible'), 'immediately after the installed label').toBe(true)
-    expect(card.querySelectorAll('[data-shop-incompatible]').length, 'exactly one badge per card').toBe(1)
+    expect(label.nextElementSibling?.hasAttribute('data-shop-blocker'), 'immediately after the installed label').toBe(true)
+    expect(card.querySelectorAll('[data-shop-blocker]').length, 'exactly one badge per card').toBe(1)
   })
 
   it('shows the update button instead of an install button on the card of an install behind the catalog', async () => {
@@ -1127,7 +1204,7 @@ describe('ShopTab', () => {
     const { injected } = bench({ ...snapshot({ tier: 'community' }), incompatible: {} })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
-    expect(container.querySelector('[data-shop-incompatible]')).toBeNull()
+    expect(container.querySelector('[data-shop-blocker]')).toBeNull()
   })
 
   it('badges the installed-list row for an outdated install whose peer the harness does not provide', async () => {
@@ -1137,7 +1214,7 @@ describe('ShopTab', () => {
     )
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText(en.installedSection)).toBeTruthy())
-    expect(container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-incompatible]')).toBeTruthy()
+    expect(container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-blocker]')).toBeTruthy()
   })
 
   it('gives the outdated row the same incompatibility wording as a catalog card', async () => {
@@ -1158,7 +1235,7 @@ describe('ShopTab', () => {
     )
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText(en.installedSection)).toBeTruthy())
-    const badge = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-incompatible]')
+    const badge = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-blocker]')
     const detail = en.incompatibleDetail.replace('{modules}', '@deepseek-ai/dsh-client-store')
     expect(badge?.getAttribute('title')).toBe(detail)
     expect(badge?.textContent).toBe(en.incompatibleBadge)
@@ -1180,7 +1257,7 @@ describe('ShopTab', () => {
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText(en.installedSection)).toBeTruthy())
     const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]') as HTMLElement
-    const badge = row.querySelector('[data-shop-incompatible]') as HTMLElement
+    const badge = row.querySelector('[data-shop-blocker]') as HTMLElement
     const detail = en.incompatibleDetail.replace('{modules}', '@deepseek-ai/dsh-client-store')
     expect(badge.getAttribute('role')).toBe('img')
     expect(badge.getAttribute('aria-label')).toBe(detail)
@@ -1199,10 +1276,10 @@ describe('ShopTab', () => {
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     const card = container.querySelector('[data-shop-entry="dsh-hello-plugin"]') as HTMLElement
-    expect(card.querySelector('button[aria-expanded] [data-shop-incompatible]'), 'no longer in the header').toBeNull()
+    expect(card.querySelector('button[aria-expanded] [data-shop-blocker]'), 'no longer in the header').toBeNull()
     const button = card.querySelector('[data-shop-install]') as HTMLElement
-    expect(button.nextElementSibling?.hasAttribute('data-shop-incompatible'), 'immediately right of Install').toBe(true)
-    expect(card.querySelectorAll('[data-shop-incompatible]').length, 'exactly one badge per card').toBe(1)
+    expect(button.nextElementSibling?.hasAttribute('data-shop-blocker'), 'immediately right of Install').toBe(true)
+    expect(card.querySelectorAll('[data-shop-blocker]').length, 'exactly one badge per card').toBe(1)
   })
 
   it('sits the badge to the right of the Update button on the installed-list row', async () => {
@@ -1214,8 +1291,8 @@ describe('ShopTab', () => {
     await waitFor(() => expect(screen.getByText(en.installedSection)).toBeTruthy())
     const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]') as HTMLElement
     const button = row.querySelector('[data-shop-update]') as HTMLElement
-    expect(button.nextElementSibling?.hasAttribute('data-shop-incompatible'), 'immediately right of Update').toBe(true)
-    expect(row.querySelectorAll('[data-shop-incompatible]').length).toBe(1)
+    expect(button.nextElementSibling?.hasAttribute('data-shop-blocker'), 'immediately right of Update').toBe(true)
+    expect(row.querySelectorAll('[data-shop-blocker]').length).toBe(1)
   })
 
   it('names the missing modules and the version caveat on two lines', async () => {
@@ -1588,7 +1665,7 @@ describe('ShopTab duplicate catalog names', () => {
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText(en.installedSection)).toBeTruthy())
     expect(container.querySelectorAll('[data-shop-outdated-entry]')).toHaveLength(1)
-    expect(container.querySelectorAll('[data-shop-outdated-entry] [data-shop-incompatible]')).toHaveLength(1)
+    expect(container.querySelectorAll('[data-shop-outdated-entry] [data-shop-blocker]')).toHaveLength(1)
     expect(container.querySelectorAll('[data-shop-entry="dsh-foo"]')).toHaveLength(2)
     expect(container.querySelectorAll('[data-shop-install]')).toHaveLength(1)
 
