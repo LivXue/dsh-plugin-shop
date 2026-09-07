@@ -308,10 +308,14 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   const PAGES_DIR = 'dist/pages'
   rmSync(PAGES_DIR, { recursive: true, force: true })
   mkdirSync(join(PAGES_DIR, 'v1'), { recursive: true })
+  // The classification report comes from `classify.ts`, which the daily
+  // workflow runs before this and a local build does not run at all. Asking
+  // the disk is the only honest answer: a name in the returned list that is
+  // not there is a `copyFileSync` that throws and takes the build with it.
   const pagesFiles = pagesArtifactNames({
     plugins: { url: artifacts.pluginsFileName },
     ...(starsInfo === null ? {} : { stars: { url: starsInfo.url } }),
-  })
+  }, { classificationReport: existsSync(join(OUT_DIR, 'classification-report.md')) })
   for (const name of pagesFiles) copyFileSync(join(OUT_DIR, name), join(PAGES_DIR, 'v1', name))
   process.stderr.write(`staged ${pagesFiles.length} file(s) for Pages: ${pagesFiles.join(', ')}\n`)
 
