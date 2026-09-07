@@ -219,6 +219,56 @@ describe('startInstall post-install confirm (§7.2 step 6)', () => {
     expect(status.log.join('\n')).toContain('installing...')
   })
 
+  it('runs alsoConfirm after the activation confirm passes, and fails with its detail', async () => {
+    // The channel the entry-id collision check rides. `afterDone` cannot fail
+    // an install by contract ("the package IS installed"), so a fact that is
+    // only readable once the files are on disk needs a check that can.
+    const home = confirmHome(['dsh-hello-fixture'])
+    const install = startInstall({
+      profile: 'web',
+      spec: 'dsh-hello-fixture@1.0.0',
+      dshBin: fixtureDsh(0),
+      env: { ...process.env, DSH_HOME: home },
+      expectedName: 'dsh-hello-fixture',
+      alsoConfirm: () => 'dsh-plugin-shop: declares the loader entry id "shop", which dsh-plugin-shop already declares',
+    })
+    const status = await install.finished
+    expect(status.state).toBe('failed')
+    expect(status.detail).toContain('loader entry id "shop"')
+  })
+
+  it('reports done when alsoConfirm finds nothing', async () => {
+    const home = confirmHome(['dsh-hello-fixture'])
+    const install = startInstall({
+      profile: 'web',
+      spec: 'dsh-hello-fixture@1.0.0',
+      dshBin: fixtureDsh(0),
+      env: { ...process.env, DSH_HOME: home },
+      expectedName: 'dsh-hello-fixture',
+      alsoConfirm: () => null,
+    })
+    expect((await install.finished).state).toBe('done')
+  })
+
+  it('lets the activation confirm speak first when both would fail', async () => {
+    // A bundle that did not land is the more fundamental failure, and the
+    // collision check would be reading a package that is not there.
+    const home = confirmHome(['dsh-something-else'])
+    let ran = false
+    const install = startInstall({
+      profile: 'web',
+      spec: 'dsh-hello-fixture@1.0.0',
+      dshBin: fixtureDsh(0),
+      env: { ...process.env, DSH_HOME: home },
+      expectedName: 'dsh-hello-fixture',
+      alsoConfirm: () => { ran = true; return 'the second check' },
+    })
+    const status = await install.finished
+    expect(status.state).toBe('failed')
+    expect(status.detail).toMatch(/dsh.profile.bundles did not change/)
+    expect(ran).toBe(false)
+  })
+
   it('reports failed with the stale-catalog detail when bundles did not change', async () => {
     const home = confirmHome(['dsh-something-else'])
     const install = startInstall({

@@ -22,7 +22,7 @@ import { restartCommand, startRestart, type RestartOutcome } from './restart.ts'
 import { fetchLatestVersion } from './self-update.ts'
 import { detectSupervisor } from './supervisor.ts'
 import { readRepoPins, writeRepoPins, type RepoPinFs } from './repo-pins.ts'
-import { discoverProfile, ownedEntryIds, ownsEntryId, setUserLayerRow, setUserLayerRows } from './profile.ts'
+import { collidingEntryId, discoverProfile, ownedEntryIds, ownsEntryId, setUserLayerRow, setUserLayerRows } from './profile.ts'
 import { identityKey, installedSpecMatches } from '../shared/identity.ts'
 import {
   createPeerVersionCheck,
@@ -492,6 +492,29 @@ export class ShopGateway extends TypertRemoteService {
    * read. For the paths where a live disable is an optimization and the
    * operation must succeed regardless; `setEnabled` reports the failure
    * instead, because there the patch IS the answer being asked for. */
+  /**
+   * The profile manifest's dependencies, or undefined when it cannot be read.
+   *
+   * `readProfileManifest` throws on an unreadable file and lets `JSON.parse`
+   * throw on a malformed one, and `profileDirResolved` can throw out of
+   * `discoverProfile`. An escaped exception crosses the RPC as a bare
+   * transport failure and the client can only render "please retry" (the same
+   * hazard `setEnabled` catches), so a profile caught mid-write would turn
+   * every published rejection detail on the install path — denied,
+   * not-in-catalog, version-mismatch — into that one line.
+   *
+   * Undefined is "cannot say", which the caller must not read as "nothing is
+   * installed": it means the install proceeds ungated rather than being
+   * refused over a read that did not happen.
+   */
+  private profileDependenciesOrNone(): Record<string, string> | undefined {
+    try {
+      return readProfileManifest('dsh-plugin-shop', this.profileDirResolved()).dependencies ?? {}
+    } catch {
+      return undefined
+    }
+  }
+
   private ownedEntryIdsOrNone(packageName: string): string[] {
     try {
       return ownedEntryIds({ profileDir: this.profileDirResolved(), packageName })
@@ -727,8 +750,9 @@ export class ShopGateway extends TypertRemoteService {
     const snapshot = await this.snapshotNow()
     // The manifest's dependency for this name, when it has one: the gate needs
     // it to tell an update of THIS plugin from a replacement of a different one
-    // that shares the name.
-    const installedSpec = (readProfileManifest('dsh-plugin-shop', this.profileDirResolved()).dependencies ?? {})[args.name]
+    // that shares the name. Read once, here, and reused for `isUpdate` below —
+    // two reads straddling the tarball fetch could see two different manifests.
+    const installedSpec = this.profileDependenciesOrNone()?.[args.name]
     const verdict = validateInstall(snapshot, args, installedSpec)
     if (!verdict.ok) return { ok: false, code: verdict.code, detail: verdict.detail }
     // The validator resolved the row by identity. Re-finding it by name is
@@ -781,8 +805,10 @@ export class ShopGateway extends TypertRemoteService {
     // two live instances of a service-providing plugin would collide at
     // provision (see liveDisableIds). The profile manifest's dependencies are
     // the install's own record — the shop's managed bundle list.
-    const manifest = readProfileManifest('dsh-plugin-shop', this.profileDirResolved())
-    const isUpdate = (manifest.dependencies ?? {})[args.name] !== undefined
+    // Exactly what the gate above already resolved: a defined spec that got
+    // this far has been proven to name this very install, so "the name is
+    // present" and "this is an update" are one fact, read once.
+    const isUpdate = installedSpec !== undefined
     // Resolve the OLD version's entry ids now: `afterDone` runs once the new
     // tarball has already overwritten the package's bundle patch on disk.
     // Best-effort: the update must not fail because the version being
@@ -796,6 +822,20 @@ export class ShopGateway extends TypertRemoteService {
       // §7.2 step 6: exit 0 must be confirmed against the profile manifest —
       // a bundle that did not land is a stale catalog, not a done install.
       expectedName: args.name,
+      // And, now that the files are on disk, the one collision the name gate
+      // cannot see. Reporting it beats a done install that kills the next
+      // boot; the package stays on disk, so the detail says how to undo it.
+      alsoConfirm: () => {
+        const clash = collidingEntryId({
+          profileDir: this.profileDirResolved(),
+          packageName: args.name,
+          dependencies: Object.keys(this.profileDependenciesOrNone() ?? {}),
+        })
+        if (clash === null) return null
+        return `dsh-plugin-shop: ${args.name} declares the loader entry id "${clash.id}", which ${clash.holder} already declares.`
+          + ' dsh refuses to load a plugin tree holding a duplicate entry id, so the profile would not start.'
+          + ` It is on disk: run \`dsh plugin --profile ${this.profile} remove ${args.name}\` to undo this install.`
+      },
       // After the bundle lands, bring it up hot — unless this is an update,
       // whose old instance must be down first (see liveDisableIds). A failed
       // mount falls back to restart activation, never to a silent half-state.

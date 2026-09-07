@@ -462,8 +462,9 @@ function spawnPluginCli(options: {
 /**
  * Run one `dsh plugin --profile <profile> add <spec>` and track it.
  * When `expectedName` is given, a zero exit is confirmed against the profile
- * manifest (§7.2 step 6) before the install reports `done`. When `afterDone`
- * is given, the terminal `done` waits for it to settle (§D hot mount).
+ * manifest (§7.2 step 6) before the install reports `done`; `alsoConfirm` adds
+ * a second post-exit check after it. When `afterDone` is given, the terminal
+ * `done` waits for it to settle (§D hot mount).
  */
 export function startInstall(options: {
   profile: string
@@ -471,17 +472,26 @@ export function startInstall(options: {
   dshBin?: string
   env?: NodeJS.ProcessEnv
   expectedName?: string
+  /** A further post-exit check, run only once the bundle-activation confirm
+   * has passed. Returning a detail fails the install with it. The package is
+   * on disk by then, so this is for facts that are unreadable until it is —
+   * see `collidingEntryId`. */
+  alsoConfirm?: (home: string | undefined) => string | null
   afterDone?: (home: string | undefined) => Promise<{ needsRestart: boolean; restartReason?: HotRestartReason } | void>
   onStatus?: (status: InstallStatus) => void
   timeoutMs?: number
 }): RunningInstall {
-  const { profile, spec, dshBin = 'dsh', env, expectedName, afterDone, onStatus, timeoutMs } = options
+  const { profile, spec, dshBin = 'dsh', env, expectedName, alsoConfirm, afterDone, onStatus, timeoutMs } = options
   return spawnPluginCli({
     profile,
     argv: ['add', spec],
     dshBin,
     env,
-    confirm: expectedName !== undefined ? home => confirmBundleActivation(profile, home, expectedName) : undefined,
+    // `??` chains on null, and a returned detail is a non-empty string, so
+    // the activation confirm still speaks first when both would fail.
+    confirm: expectedName !== undefined
+      ? home => confirmBundleActivation(profile, home, expectedName) ?? alsoConfirm?.(home) ?? null
+      : alsoConfirm,
     afterDone,
     onStatus,
     timeoutMs,

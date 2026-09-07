@@ -433,6 +433,60 @@ describe('ShopGateway.install — the four rejection paths, through the executor
     expect(existsSync(callsLog)).toBe(false)
   })
 
+  it('rejects name-taken through the executor, without spawning', async () => {
+    // The gate's one impure input — the profile manifest's dependency for this
+    // name — is wired in `install()`, and every other test of it drives the
+    // pure `validateInstall` with a hand-written spec. Without this, a wrong
+    // manifest key or a wrong profile dir leaves `installedSpec` permanently
+    // undefined, the branch becomes a no-op, and the suite stays green.
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-name-taken-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
+      name: 'dsh-profile-web', dsh: { profile: { bundles: [] } },
+      dependencies: { 'dsh-hello-plugin': 'github:someone-else/dsh-hello-plugin' },
+    }))
+    const { gateway, callsLog } = gatewayWithSnapshot(
+      { schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} },
+      { profileDir },
+    )
+    const result = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
+    expect(result).toMatchObject({ ok: false, code: 'name-taken' })
+    if (!result.ok) expect(result.detail).toContain('someone-else/dsh-hello-plugin')
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(existsSync(callsLog)).toBe(false)
+  })
+
+  it('still installs when the manifest names this very plugin', async () => {
+    // The boundary the wiring must not cross: an update of the same install
+    // shares the manifest key by design.
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-name-taken-same-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
+      name: 'dsh-profile-web', dsh: { profile: { bundles: [] } },
+      dependencies: { 'dsh-hello-plugin': '^1.0.0' },
+    }))
+    const { gateway } = gatewayWithSnapshot(
+      { schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} },
+      { profileDir },
+    )
+    const result = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
+    expect(result.ok).toBe(true)
+  })
+
+  it('keeps a published rejection detail when the profile manifest is unreadable', async () => {
+    // The manifest read runs ahead of every gate rejection. It throws on a
+    // malformed file, and an escaped exception crosses the RPC as a bare
+    // transport failure — so a profile caught mid-write would replace every
+    // author-readable reason on this path with "please retry".
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-broken-manifest-'))
+    writeFileSync(join(profileDir, 'package.json'), '{ this is not json')
+    const { gateway } = gatewayWithSnapshot(
+      { schemaVersion: 2, builtAt: '', entries: [], denied: [{ name: 'dsh-blocked', detail: 'matched the denylist' }], stars: {} },
+      { profileDir },
+    )
+    const result = await gateway.install({ name: 'dsh-blocked', version: '1.0.0' })
+    expect(result).toMatchObject({ ok: false, code: 'denied' })
+    if (!result.ok) expect(result.detail).toContain('matched the denylist')
+  })
+
   it('spawns only for an acknowledged install and reports progress', async () => {
     const { gateway, callsLog } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} })
     const result = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })

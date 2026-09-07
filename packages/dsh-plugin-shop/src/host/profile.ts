@@ -215,3 +215,44 @@ export function ownsEntryId(owned: ReadonlySet<string>, entryId: string): boolea
   if (owned.has(tail)) return true
   return tail.startsWith('mkt-') && owned.has(tail.slice('mkt-'.length))
 }
+
+/**
+ * The loader entry id `packageName` shares with another installed package, or
+ * null when it collides with nothing.
+ *
+ * The collision a bundle-name check cannot see. A bundle name and a loader
+ * entry id are independent: two DIFFERENTLY-named bundles may both declare
+ * `id: plugin-manager` — measured on `2768651338/dsh-plugin-manager` and
+ * `Dingpenghui-good/dsh-plugin-manager` — and dsh then refuses to load the
+ * whole tree ("duplicate loader entry id"), so the profile does not boot.
+ * Conversely two SAME-named plugins often declare different ids and would
+ * coexist fine, which is why the name gate is about overwriting a manifest
+ * key and this is about the loader.
+ *
+ * Best-effort per package, the same rule the installed list uses: an
+ * unreadable patch in some OTHER package owns nothing here rather than
+ * failing the caller. A package declaring no ids collides with nothing.
+ */
+export function collidingEntryId(options: {
+  profileDir: string
+  packageName: string
+  /** Every installed package name, `packageName` included or not. */
+  dependencies: readonly string[]
+}): { id: string; holder: string } | null {
+  const idsOrNone = (packageName: string): string[] => {
+    try {
+      return ownedEntryIds({ profileDir: options.profileDir, packageName })
+    } catch {
+      return []
+    }
+  }
+  const mine = new Set(idsOrNone(options.packageName))
+  if (mine.size === 0) return null
+  for (const holder of options.dependencies) {
+    if (holder === options.packageName) continue
+    for (const id of idsOrNone(holder)) {
+      if (mine.has(id)) return { id, holder }
+    }
+  }
+  return null
+}
