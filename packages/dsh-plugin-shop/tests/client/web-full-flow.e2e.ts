@@ -717,13 +717,27 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       const filter = dialog.locator('[data-shop-hide-incompatible]')
       await filter.waitFor({ state: 'visible', timeout: 10_000 })
       expect(await filter.textContent()).toBe(zh.hideIncompatible.replace('{count}', '1'))
-      // It sits at the far edge of the category bar, past every tab: the
-      // stylesheet's `margin-left: auto` is what puts it there, and only a
-      // browser lays that out.
+      // It sits at the far edge of the category bar: its RIGHT edge is the
+      // bar's right edge, which is what `margin-left: auto` guarantees and
+      // only a browser lays out.
+      //
+      // Stated as edge alignment rather than "further right than the last
+      // tab" because the bar WRAPS. That first form passed on Windows, where
+      // the nine pills fit one line, and failed on CI's font metrics, where
+      // they do not: the filter had wrapped to a line of its own — still
+      // flush right, still correct — and a same-line comparison read that as
+      // the control being in the wrong place. Edge alignment holds in both
+      // layouts, which is why it is the property and the other was an
+      // accident of how one machine broke the line.
       const filterBox = await filter.boundingBox()
-      const lastTab = await dialog.locator('[data-shop-category-installed]').boundingBox()
-      if (filterBox !== null && lastTab !== null) {
-        expect(filterBox.x).toBeGreaterThan(lastTab.x + lastTab.width)
+      const barBox = await dialog.locator('[class*="categoryBar"]').boundingBox()
+      expect(filterBox).not.toBeNull()
+      expect(barBox).not.toBeNull()
+      if (filterBox !== null && barBox !== null) {
+        expect(
+          Math.abs((filterBox.x + filterBox.width) - (barBox.x + barBox.width)),
+          'the filter is not flush with the right edge of the category bar',
+        ).toBeLessThan(2)
       }
 
       await filter.click()
