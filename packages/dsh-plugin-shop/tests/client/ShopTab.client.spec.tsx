@@ -255,6 +255,32 @@ describe('ShopTab', () => {
     expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-restart-disabled]')).toBeNull()
   })
 
+  // What the notice above must SAY, in both locales. Keying the assertions on
+  // `en.installedNoRestartNotice` alone passes for any text at all, which is
+  // how this string sat wrong: `needsRestart === false` is the hot mount
+  // having SUCCEEDED, and it read "installed, but the profile did not change
+  // — the catalog may be stale; refresh and try again". Every clause was
+  // false, and it sent a user whose plugin was already live to retry.
+  // Per locale, and case-insensitively. The first version of this test looped
+  // both strings over one alternation — `/no restart needed|无需重启/` — so the
+  // English text satisfied it through the English arm and the Chinese through
+  // the Chinese one, and swapping zh for the English string still passed. The
+  // negatives had no `/i`, and the house style capitalises exactly the words
+  // they forbid (`retry: 'Retry'`, `catalog: 'Plugin catalog'`), so appending
+  // ". Retry if it does not appear." — verbatim the thing this test exists to
+  // forbid — also passed. Both mutations were confirmed green before the fix.
+  it.each([
+    ['en', en.installedNoRestartNotice, /no restart needed/i],
+    ['zh', zh.installedNoRestartNotice, /无需重启/],
+  ])('states in %s that the plugin is live, and asks for nothing', (_locale, notice, says) => {
+    expect(notice).toMatch(says)
+    // The three things a success notice must not do: blame the catalog, claim
+    // nothing happened, or ask for another attempt.
+    expect(notice).not.toMatch(/catalog|目录/i)
+    expect(notice).not.toMatch(/did ?n[o']t change|未变化/i)
+    expect(notice).not.toMatch(/try again|retry|重试/i)
+  })
+
   it('renders the hot-mount reason in the reader\'s own language, from the code alone', async () => {
     // The host publishes a CODE, and the client renders the dictionary entry
     // for it — so the notice follows the dsh language setting instead of the

@@ -15,13 +15,23 @@ const TEMP_ROOT = fileTempRoot('index')
 // The install tests drive the full §7.2 path including the post-install
 // confirm, which re-reads the profile manifest through app-boot's
 // resolveProfileDir honoring DSH_HOME. Pin it to a fixture home whose `web`
-// profile manifest already lists the bundle the install tests install, so the
-// exit-0 fixture dsh passes the confirm without any dsh reconcile. Each test
-// file runs in its own vitest worker, so the pin never leaves this file.
+// profile manifest already looks like the installs succeeded, so the exit-0
+// fixture dsh passes the confirm without any dsh reconcile. Each test file
+// runs in its own vitest worker, so the pin never leaves this file.
+//
+// BOTH halves are required, because the confirm now establishes change and
+// not just membership: a real `dsh plugin add X` writes `dependencies[X]` AND
+// appends to `dsh.profile.bundles`, so a fixture carrying only the bundle row
+// models an install that never happened. It used to pass anyway, which is
+// how a stricter confirm could not be told from a broken one.
+const INSTALLED_BY_FIXTURE = ['dsh-hello-plugin', 'dsh-repo-plugin', 'sub-plugin', 'dsh-rescued', 'dsh-plugin-shop']
 const shopHome = mkdtempSync(join(TEMP_ROOT, 'dsh-gateway-home-'))
 process.env.DSH_HOME = shopHome
 mkdirSync(join(shopHome, 'profiles', 'web'), { recursive: true })
-writeFileSync(join(shopHome, 'profiles', 'web', 'package.json'), JSON.stringify({ dsh: { profile: { bundles: ['dsh-hello-plugin', 'dsh-repo-plugin', 'sub-plugin', 'dsh-rescued', 'dsh-plugin-shop'] } } }))
+writeFileSync(join(shopHome, 'profiles', 'web', 'package.json'), JSON.stringify({
+  dependencies: Object.fromEntries(INSTALLED_BY_FIXTURE.map(name => [name, '1.0.0'])),
+  dsh: { profile: { bundles: INSTALLED_BY_FIXTURE } },
+}))
 
 afterAll(() => {
   delete process.env.DSH_HOME

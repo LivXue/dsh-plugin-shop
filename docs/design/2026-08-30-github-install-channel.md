@@ -182,9 +182,25 @@ a commit, never a raw spec":
   is the author-readable path this pre-flight was reaching for.
 - **Post-flight:** the existing bundle-activation confirmation (`dsh plugin
   list` after zero exit) stays. If the repo changed its manifest between
-  snapshot and install (rare), the no-bundle warning becomes the existing
-  honest `installed, but the profile did not change` failure instead of a
-  silent no-op.
+  snapshot and install (rare), the no-bundle warning becomes a failure
+  instead of a silent no-op — and the failure reports which of §10's three
+  shapes the profile manifest shows, as evidence. Neither is a stale catalog
+  and neither may say it is.
+- **Subpackage specs and the Windows shell:** `&path:<subdir>` is the only
+  spec form this channel emits that contains a shell metacharacter, and dsh
+  spawns pnpm through `cmd.exe` on Windows (`shell: process.platform ===
+  'win32'`, `apps/cli/src/plugin.ts:137` at `dsh-v0.1.3-alpha.1`). `&` is a
+  cmd command separator, so an unquoted subpackage spec is cut in half: pnpm
+  installs the repository ROOT and the chain still exits 0, because `path`
+  is a cmd builtin that succeeds silently. Measured 2026-09-06 on Windows 11
+  with dsh 0.1.2-rc.1 and pnpm 11.25.0. **The operand is therefore quoted for
+  Windows, after the `UNSAFE_TARGET` gate and never before** — the gate
+  refuses `"`, which is what makes every quote in the spawned command line
+  provably ours rather than the catalog's. Quoting is scoped to specs that
+  actually contain `&`, so if dsh stops shelling its argv those specs fail
+  loudly at pnpm instead of silently installing a foreign root. Reported
+  upstream as `deepseek-ai/deepseek-harness` discussion #5815; the
+  workaround stays until that lands.
 - **Update semantics:** a newer commit at harvest → the existing update button,
   driving `installStart` with the new commit. Uninstall takes
   `{ name: 'owner/slug' }` and validates against the manifest exactly like npm

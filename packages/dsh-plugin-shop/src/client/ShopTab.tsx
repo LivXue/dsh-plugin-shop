@@ -357,8 +357,13 @@ function InstallPanel({ target, tier, missing, missingStated = false, variant = 
           {/* The done notice: a hot-mount failure names WHY through a reason
               code, localized here so it reads in the dsh language the person
               set — the host bakes no copy. A restart without a reason keeps
-              the generic notice; the needsRestart=false notice is the
-              stale-catalog anomaly, where a restart would change nothing. */}
+              the generic notice. needsRestart=false is the hot mount having
+              SUCCEEDED (`hot.mount` returned ok, in `install`'s afterDone in
+              index.ts) — the plugin is live, and the notice says so. It
+              used to read as a stale-catalog anomaly, describing a state
+              this branch has not carried since a failed confirm became
+              `failed`: it told a user whose install had just gone live that
+              nothing had changed and to try again. */}
           {view.needsRestart
             ? t(restartReasonKey(view.restartReason))
             : t('installedNoRestartNotice')}

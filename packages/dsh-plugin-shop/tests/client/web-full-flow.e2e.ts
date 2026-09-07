@@ -427,7 +427,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // would surface the host's localized reason here instead, failing this.
       const notice = card.locator('[data-shop-restart-notice]')
       await notice.waitFor({ state: 'visible', timeout: 60_000 })
-      expect(await notice.textContent()).toContain('已安装，但 profile 未变化')
+      expect(await notice.textContent()).toContain('已安装并热挂载')
       expect(await card.locator('[data-shop-restart]').count()).toBe(0)
 
       // Liveness through the loader inventory — the strict read of what is
