@@ -89,7 +89,14 @@ Competing marketplaces whose names escape the keyword patterns are named
 explicitly in the filter (2026-08-27: `dsh-plugin`, the npm package of
 `github.com/dshplugin/dsh-plugin-hub`; 2026-08-28, when the
 `deepseek-harness` harvest keyword brought the app-store packages in:
-`dsh-plugin-hub`, `@lanbaolu/dsh-plugin-hub`, `@mutocenew/dsh-plugin-catalog`).
+`dsh-plugin-hub`, `@lanbaolu/dsh-plugin-hub`, `@mutocenew/dsh-plugin-catalog`;
+2026-09-07: `@dsheval/dsh-top100-plugin`, dsheval.ai's Top100 rankings market,
+whose own README calls the settings panel a plugin market and which browses,
+installs, updates and uninstalls from that index).
+A name can advertise a market without carrying a market word — a ranking, a
+leaderboard, an index — so this list grows only when someone reads a package,
+and each addition is recorded in `markets.yml` as `by: human` so the daily
+classifier neither re-asks it nor can clear it back onto the shelf.
 
 **R — `registry/` (data only, no runtime code)**
 

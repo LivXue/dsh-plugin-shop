@@ -231,9 +231,11 @@ describe('isShopLike', () => {
     expect(isShopLike('dsh-plugin-hub')).toBe(true)
     expect(isShopLike('@lanbaolu/dsh-plugin-hub')).toBe(true)
     expect(isShopLike('@mutocenew/dsh-plugin-catalog')).toBe(true)
+    expect(isShopLike('@dsheval/dsh-top100-plugin')).toBe(true)
     // Not on the list: other scopes, other spellings, and hub-flavored
     // tools that manage content rather than markets.
     expect(isShopLike('@dshplugin/dsh-plugin')).toBe(false)
+    expect(isShopLike('dsh-top100-plugin')).toBe(false)
     expect(isShopLike('dsh-plugin-tools')).toBe(false)
     expect(isShopLike('@lcthe/dsh-skills-hub')).toBe(false)
     expect(isShopLike('dsh-extension-hub')).toBe(false)

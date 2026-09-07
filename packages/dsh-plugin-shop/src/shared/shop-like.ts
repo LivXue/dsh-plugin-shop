@@ -27,10 +27,24 @@ const SHOP_KEYWORDS = ['store', 'market', 'mall', 'shop', 'marketplace'] as cons
  * package that presents its own catalog of dsh plugins inside the Harness:
  * `dsh-plugin` is the npm package of github.com/dshplugin/dsh-plugin-hub,
  * `dsh-plugin-hub` and `@lanbaolu/dsh-plugin-hub` are app-store packages,
- * and `@mutocenew/dsh-plugin-catalog` ships a plugin directory with agent
- * query tools. Exact names only — nothing here is a pattern.
+ * `@mutocenew/dsh-plugin-catalog` ships a plugin directory with agent
+ * query tools, and `@dsheval/dsh-top100-plugin` is dsheval.ai's rankings
+ * market: "Discover, install and manage DSH-Eval Top100 plugins and Skills
+ * in DeepSeek Harness", a Settings panel its own README heads "plugin
+ * market" and which installs, updates and uninstalls from that index.
+ *
+ * A market can be named after anything, so this list only ever grows by
+ * someone reading a package: a ranking, a leaderboard, a digest and an
+ * index are all shopfronts, and none of those words is a store keyword.
+ * Exact names only — nothing here is a pattern.
  */
-const SHOP_LIKE_NAMES = ['dsh-plugin', 'dsh-plugin-hub', '@lanbaolu/dsh-plugin-hub', '@mutocenew/dsh-plugin-catalog'] as const
+const SHOP_LIKE_NAMES = [
+  'dsh-plugin',
+  'dsh-plugin-hub',
+  '@lanbaolu/dsh-plugin-hub',
+  '@mutocenew/dsh-plugin-catalog',
+  '@dsheval/dsh-top100-plugin',
+] as const
 
 /**
  * Whether a package name reads as a plugin shop (a marketplace for dsh

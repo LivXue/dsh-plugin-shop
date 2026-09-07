@@ -84,6 +84,11 @@
   by: llm
   reason: "Judged a dsh plugin market from: Model-facing market analysis tools (list_symbols, get_ohlcv) over the @dsh-trading/market-data seam"
 
+- name: "@dsheval/dsh-top100-plugin"
+  market: true
+  by: human
+  reason: "DSH-Eval Top100 插件市场：设置页内浏览综合热度榜/新锐榜/Stars 总榜，中文搜索与分类筛选，并直接安装、更新、启停和卸载插件。Discover, install and manage DSH-Eval Top100 plugins and Skills in DeepSeek Harness"
+
 - name: "@dshindex/dsh-plugin-marketplace"
   market: true
   by: llm
