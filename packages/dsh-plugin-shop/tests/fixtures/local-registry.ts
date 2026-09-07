@@ -22,10 +22,10 @@
 
 import { spawnSync } from 'node:child_process'
 import { createServer, type Server } from 'node:http'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 export interface LocalRegistry {
   /** Registry base, e.g. `http://127.0.0.1:<port>/` — pnpm appends the
@@ -43,13 +43,34 @@ interface PackedFixture {
   tarball: Buffer
 }
 
+/** `npm pack` as something spawnable on every platform.
+ *
+ * `spawnSync('npm', …)` is ENOENT on Windows for the same reason `spawn('dsh')`
+ * is (see `src/host/dsh-cli.ts`): npm installs as `npm`, `npm.cmd` and
+ * `npm.ps1` with no `.exe`, and libuv resolves a bare name against `.com` and
+ * `.exe` only. Running npm's own JS entry through the current node keeps the
+ * shell out of it, so a `--pack-destination` containing a space stays one
+ * argument. The bare name remains the POSIX path and the Windows fallback. */
+function npmCommand(args: readonly string[]): { command: string; args: string[] } {
+  if (process.platform === 'win32') {
+    const cli = join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')
+    if (existsSync(cli)) return { command: process.execPath, args: [cli, ...args] }
+  }
+  return { command: 'npm', args: [...args] }
+}
+
 function packFixture(root: string, dir: string): PackedFixture {
-  const result = spawnSync('npm', ['pack', '--json', '--pack-destination', root, dir], {
+  const { command, args } = npmCommand(['pack', '--json', '--pack-destination', root, dir])
+  const result = spawnSync(command, args, {
     stdio: 'pipe',
     encoding: 'utf8',
   })
   if (result.status !== 0) {
-    throw new Error(`npm pack failed for ${dir}:\n${result.stderr ?? result.stdout}`)
+    // `result.error` is the only populated field when the binary never
+    // started — the previous message read `undefined` in exactly that case,
+    // which is the one where the reason matters most.
+    const why = result.error?.message ?? result.stderr ?? result.stdout ?? '(no output)'
+    throw new Error(`npm pack failed for ${dir} (${command}):\n${why}`)
   }
   const [summary] = JSON.parse(result.stdout) as Array<{
     name: string
