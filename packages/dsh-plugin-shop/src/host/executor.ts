@@ -76,6 +76,16 @@ function chain<T>(profile: string, task: () => Promise<T>): Promise<T> {
  *   - the name is absent and nothing was added — nothing installed under
  *     this name, and a catalog behind the registry IS a real candidate here.
  *
+ * `before` is `null` when the manifest existed but could not be read, and
+ * the diff branches are then withheld. Collapsing that into an empty map is
+ * not a smaller lie than the inferred cause it replaced: every pre-existing
+ * dependency reads as newly added, so the second branch names an innocent
+ * package and puts it in a `dsh plugin remove` line. An ABSENT manifest is
+ * still `{}` — nothing WAS installed, which is the truth for a first install
+ * into a fresh profile, and the branch that names what landed has to keep
+ * working there. Same rule the harvest applies to `no-manifest` versus
+ * `fetch-failed`: "could not read it" is never "it was not there".
+ *
  * `Object.hasOwn` throughout, never an index read: these records are parsed
  * from the profile manifest and carry Object.prototype, so `deps.constructor`
  * answers with a function for a package that is not installed — and
@@ -86,13 +96,21 @@ function chain<T>(profile: string, task: () => Promise<T>): Promise<T> {
 export function activationFailureDetail(args: {
   expectedName: string
   profile: string
-  before: Readonly<Record<string, string>>
+  before: Readonly<Record<string, string>> | null
   after: Readonly<Record<string, string>>
 }): string {
   const { expectedName, profile, before, after } = args
   if (Object.hasOwn(after, expectedName)) {
     return `${expectedName} is a dependency of the profile but is not in dsh.profile.bundles, so dsh`
       + ' did not activate it as a profile layer and the shop has nothing to mount.'
+  }
+  // Both remaining branches are claims about what CHANGED, and neither can be
+  // made without the prior state. Reported before the diff so an unreadable
+  // manifest never borrows the wording of a readable one.
+  if (before === null) {
+    return `${expectedName} is in neither dsh.profile.bundles nor the profile's dependencies, and the`
+      + ' profile manifest could not be read before the install, so what the install changed is'
+      + ' unknown — compare the profile\'s package.json against what you expected before retrying.'
   }
   const added = Object.keys(after).filter(name => !Object.hasOwn(before, name)).sort()
   if (added.length > 0) {
@@ -119,7 +137,7 @@ function confirmBundleActivation(
   profile: string,
   home: string | undefined,
   expectedName: string,
-  before: Readonly<Record<string, string>>,
+  before: Readonly<Record<string, string>> | null,
 ): string | null {
   const profileDir = resolveProfileDir(profile, home)
   try {
@@ -623,7 +641,7 @@ export function startInstall(options: {
   // read inside the chained task, immediately before the spawn, so a command
   // waiting behind another install in the same profile still sees the state
   // the one ahead of it left.
-  let before: Readonly<Record<string, string>> = {}
+  let before: Readonly<Record<string, string>> | null = null
   return spawnPluginCli({
     profile,
     argv: ['add', spec],
@@ -642,15 +660,32 @@ export function startInstall(options: {
   })
 }
 
-/** The profile's declared dependencies, or `{}` when the manifest is absent
- * or unreadable. A missing manifest is the profile-not-initialized case —
- * `dsh plugin` creates it — and an unreadable one is reported by the confirm,
- * which names the file; neither is worth failing the spawn over. */
-function readProfileDependencies(profile: string, home: string | undefined): Readonly<Record<string, string>> {
+/** The profile's dependency map as it stood before the spawn: `{}` when the
+ * manifest is absent — the profile-not-initialized case, which `dsh plugin`
+ * resolves by creating it — and `null` when it exists but could not be read
+ * or parsed. Neither is worth failing the spawn over; they differ only in
+ * what the confirm may then say.
+ *
+ * `activationFailureDetail` withholds both of its diff branches on `null`,
+ * because an unreadable manifest read as empty makes every pre-existing
+ * dependency look newly added — and the detail then tells the reader to
+ * remove one of their own working plugins.
+ *
+ * The existence check is what separates the two: `readProfileManifest` wraps
+ * its read error in a plain `Error`, so ENOENT arrives with no `code` to
+ * branch on. Both directions of the race between the check and the read are
+ * safe — a file that appears is read normally, and one that disappears
+ * throws and reports the state as unknown, which it is. */
+function readProfileDependencies(
+  profile: string,
+  home: string | undefined,
+): Readonly<Record<string, string>> | null {
+  const profileDir = resolveProfileDir(profile, home)
+  if (!existsSync(join(profileDir, 'package.json'))) return {}
   try {
-    return readProfileManifest('dsh-plugin-shop', resolveProfileDir(profile, home)).dependencies ?? {}
+    return readProfileManifest('dsh-plugin-shop', profileDir).dependencies ?? {}
   } catch {
-    return {}
+    return null
   }
 }
 

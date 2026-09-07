@@ -274,6 +274,23 @@ export interface ShopCatalogResult {
   incompatible: Record<string, string[]>
 }
 
+/** An own-property read of a dependency map parsed from the profile manifest.
+ * A bare index read answers for `Object.prototype`, and `constructor` is a
+ * legal npm name (`[a-z0-9][a-z0-9._-]*`), so `dependencies['constructor']`
+ * hands back a function for a package that is not installed. The
+ * `spec === undefined` guard then passes, and `installedSpecMatches` returns
+ * TRUE for an npm entry — `parseRepoSpec` coerces the function to a string
+ * that matches no `github:` shorthand and answers `null`, which is exactly
+ * what an npm entry expects. So the entry reads as installed when it is not.
+ * `Object.hasOwn` is the same fix already applied at the two membership
+ * checks above; these two sites need the VALUE, hence a helper. */
+function ownDependencySpec(
+  dependencies: Readonly<Record<string, string>>,
+  name: string,
+): string | undefined {
+  return Object.hasOwn(dependencies, name) ? dependencies[name] : undefined
+}
+
 /** Remote-only service exposing the shop Remote methods of §7.3.
  *
  * @typert service shop */
@@ -904,7 +921,7 @@ export class ShopGateway extends TypertRemoteService {
     }
     const installed: ShopInstalledEntry[] = []
     for (const entry of snapshot.entries) {
-      const spec = dependencies[entry.name]
+      const spec = ownDependencySpec(dependencies, entry.name)
       if (spec === undefined) continue
       // A profile has one dependency per name, so the spec is the only way
       // to choose among same-named catalog entries.
@@ -968,7 +985,7 @@ export class ShopGateway extends TypertRemoteService {
     }
     const manifest = readProfileManifest('dsh-plugin-shop', this.profileDirResolved())
     const dependencies = manifest.dependencies ?? {}
-    const spec = dependencies[args.name]
+    const spec = ownDependencySpec(dependencies, args.name)
     if (spec === undefined) {
       return { ok: false, detail: `dsh-plugin-shop: ${args.name} is not installed` }
     }

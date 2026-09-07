@@ -609,6 +609,23 @@ describe('ShopGateway.installed', () => {
     })
   }
 
+  // The mirror of the uninstall case below: an entry named for an inherited
+  // key must not be reported as installed when the profile does not have it.
+  it('omits an entry named for an Object.prototype key that is not installed', async () => {
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-installed-proto-'))
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({
+      name: 'dsh-profile-web', dsh: { profile: { bundles: [] } },
+      dependencies: { 'dsh-one': '^1.0.0' },
+    }))
+    const proto = { ...entries[0]!, name: 'constructor' }
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries: [proto], denied: [], stars: {} }, stale: false }) as CatalogResult,
+    })
+    await gateway.catalog({})
+    expect(await gateway.installed()).toEqual([])
+  })
+
   it('carries the inventory enabled state onto the installed rows', async () => {
     const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-installed-inv-'))
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: { 'dsh-one': '^1.0.0' } }))
@@ -749,6 +766,29 @@ describe('ShopGateway.uninstall', () => {
     await gateway.catalog({})
     expect(await gateway.uninstall({ name: 'dsh-one' })).toEqual({
       ok: false, detail: 'dsh-plugin-shop: dsh-one is not installed',
+    })
+  })
+
+  // `constructor` is a legal npm name, and the manifest's `dependencies` is
+  // parsed JSON carrying Object.prototype — so an index read hands back a
+  // function, the `spec === undefined` guard passes, and `installedSpecMatches`
+  // answers TRUE for an npm entry because `parseRepoSpec` coerces the function
+  // to a string that matches no `github:` shorthand. The uninstall then spawns
+  // a removal for a package that was never installed.
+  it('rejects an entry named for an Object.prototype key that is not installed', async () => {
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-uninstall-proto-'))
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({
+      name: 'dsh-profile-web', dsh: { profile: { bundles: [] } },
+      dependencies: { 'dsh-one': '^2.0.0' },
+    }))
+    const proto = { ...entries[0]!, name: 'constructor' }
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries: [proto], denied: [], stars: {} }, stale: false }) as CatalogResult,
+    })
+    await gateway.catalog({})
+    expect(await gateway.uninstall({ name: 'constructor' })).toEqual({
+      ok: false, detail: 'dsh-plugin-shop: constructor is not installed',
     })
   })
 

@@ -183,9 +183,11 @@ a commit, never a raw spec":
 - **Post-flight:** the existing bundle-activation confirmation (`dsh plugin
   list` after zero exit) stays. If the repo changed its manifest between
   snapshot and install (rare), the no-bundle warning becomes a failure
-  instead of a silent no-op — and the failure reports which of §10's three
-  shapes the profile manifest shows, as evidence. Neither is a stale catalog
-  and neither may say it is.
+  instead of a silent no-op — and the failure reports which of §10's four
+  shapes the profile manifest shows, as evidence. For this channel the
+  reachable ones are (a), a repo whose manifest lost its `dsh.bundle` between
+  snapshot and install, and (b), a spec that installed something else under
+  its own name. Neither of those is a stale catalog and neither may say it is.
 - **Subpackage specs and the Windows shell:** `&path:<subdir>` is the only
   spec form this channel emits that contains a shell metacharacter, and dsh
   spawns pnpm through `cmd.exe` on Windows (`shell: process.platform ===
