@@ -265,6 +265,28 @@ describe('assignRepoTier', () => {
     expect(assignRepoTier(repoAccepted('dsh-repo-plugin'), config).added).toBe('2026-08-13')
   })
 
+  it('pins the emitted key order of a github entry, every optional slot filled', () => {
+    // There was no such pin at all: the only Object.keys assertions on an
+    // entry were the npm case above and pipeline.test.ts's `dsh-fs-tool`,
+    // also npm. So a reorder of this literal churned the content hash and
+    // invalidated every CDN cache with the whole suite green — the gap
+    // pipeline.test.ts's own determinism guard was written after.
+    //
+    // `installSize` sits last, after `added`: the placement §7.1 prescribes
+    // and the one the npm path uses. Inserted beside `subdir` it also moved
+    // `tarball` and `added` in every github entry that gains a size, for no
+    // gain — a new key at the END rewrites every entry once, which a new
+    // field must, and nothing more.
+    const full = repoAccepted('dsh-repo-plugin', { tag: 'v1.0.0', url: 'https://example.com/a.tgz', sha256: 'a'.repeat(64) })
+    full.repo.subdir = 'packages/plugin'
+    full.repo.installSize = 43_859
+    expect(Object.keys(assignRepoTier(full, config))).toEqual([
+      'name', 'version', 'integrity', 'publishedAt', 'repository', 'license',
+      'metadata', 'catalog', 'source', 'repo', 'subdir', 'tarball', 'added',
+      'installSize', 'tier',
+    ])
+  })
+
   it('throws, naming the repository, when a repo identity has no first-seen row', () => {
     // The loud failure stays: `assignRepoTier` must never invent a date. The
     // pipeline resolves a first appearance before it gets here (B-9), so this

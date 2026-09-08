@@ -1706,11 +1706,17 @@ describe('harvestRepos', () => {
           : []))(text) as Response
       }
       if (text.includes('/git/trees/')) {
-        // The DISCOVERY probe only, which is pinned to the default branch.
-        // The sizing read hits the same endpoint pinned to the COMMIT and
-        // fires for every repository whatever `probeSubpackages` says, so
+        // The DISCOVERY probe only. The sizing read hits the same endpoint
+        // pinned to the COMMIT and fires whatever `probeSubpackages` says, so
         // counting both would stop measuring the option under test.
-        if (text.includes('/git/trees/main')) trees += 1
+        //
+        // Excluded by the SHA rather than matched on the branch name: a
+        // counter keyed to the literal 'main' returns 0 unconditionally if
+        // `repoItem`'s default_branch ever changes, and the only assertion on
+        // it was `toBe(0)` — so it would have passed vacuously and stopped
+        // seeing the regression it exists for. The companion assertion below
+        // pins it non-zero, which is what makes either spelling honest.
+        if (!text.includes(`/git/trees/${commit}`)) trees += 1
         return new Response(JSON.stringify({ tree: [{ path: 'packages/a/package.json', type: 'blob' }] }), { status: 200 })
       }
       if (text.startsWith('https://raw.githubusercontent.com/m/mono/main/package.json')) {
@@ -1754,6 +1760,22 @@ describe('harvestRepos', () => {
     // the tree probe fires if and only if `probeSubpackages` is on.
     expect(treeProbes()).toBe(0)
     expect(result.candidates.every(c => c.subdir === undefined)).toBe(true)
+  })
+
+  it('counts the discovery probe when it IS on, so the zero above means something', async () => {
+    // Without this the counter could match nothing at all and the assertion
+    // above would hold unconditionally — leaving undetected the regression it
+    // exists for: build.ts's whole-harvest retry rebuilt the options object
+    // and dropped `probeSubpackages`, shipping `subdir` entries to v3 clients
+    // that silently install the monorepo ROOT.
+    const { fetchImpl, treeProbes } = flakyMonorepoHarvest(1)
+    const result = await harvestRepos({
+      state: {}, budget: 5, fetchImpl, sleep, token: 't',
+      probeSubpackages: true, retryAfterMs: 1,
+    })
+    expect(treeProbes()).toBeGreaterThan(0)
+    // And the probe did what being on means: the subpackage became the entry.
+    expect(result.candidates.map(c => c.subdir)).toEqual(['packages/a'])
   })
 
   it('does not retry unless asked, so a unit test cannot mask a failure by accident', async () => {

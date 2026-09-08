@@ -119,12 +119,19 @@ export function assignRepoTier(accepted: RepoAccepted, config: RegistryConfig): 
     source: 'github' as const,
     repo: repo.repo,
     ...(repo.subdir !== undefined ? { subdir: repo.subdir } : {}),
+    ...(release !== undefined ? { tarball: { url: release.url, sha256: release.sha256 } } : {}),
+    added: firstSeenOf(config, firstSeenKey({ source: 'github', name: repo.name, repo: repo.repo })),
+    // Last, after `added` — the same placement the npm path uses and the one
+    // §7.1 prescribes ("the optional fields sit after `added` and before
+    // `tier`"). A new key at the end rewrites every entry once, which a new
+    // field must; inserted beside `subdir` it also moved `tarball` and
+    // `added` in every github entry that gains a size, widening the
+    // content-hash delta past what the field itself requires.
+    //
     // Never `unpackedSize`: an installed client raises an issue on a github
     // entry carrying that key, and the data file is parsed with a throw, so
     // one such row costs every reader the WHOLE catalog.
     ...(repo.installSize !== undefined ? { installSize: repo.installSize } : {}),
-    ...(release !== undefined ? { tarball: { url: release.url, sha256: release.sha256 } } : {}),
-    added: firstSeenOf(config, firstSeenKey({ source: 'github', name: repo.name, repo: repo.repo })),
   }
   // A release-pinned entry is reviewed by its tarball sha256: the tag is
   // display only — a mutable ref an author can re-point at different content

@@ -229,6 +229,7 @@ The pointer carries `count` and `rejected` — the listed and the filtered total
       "added": "2026-08-01",
       "publisher": "someone",
       "unpackedSize": 847407,
+      "installSize": 847407,
       "tier": "verified",
       "review": {
         "reviewedVersion": "1.2.0",
@@ -251,8 +252,14 @@ hash is taken over, and `assignTier` is where it is decided (pinned by
 code to spec in the direction this document normally prescribes — which would
 rewrite every entry in `plugins.json` and invalidate every CDN cache for a
 build with no data change, the harm the `builtAt` invariant exists to prevent.
-The optional npm fields (`publisher`, `unpackedSize`) sit after `added` and
-before `tier`; `peers` sits between them when present.
+The optional npm fields (`publisher`, `unpackedSize`, `installSize`) sit after
+`added` and before `tier`; `peers` sits between `publisher` and the sizes when
+present. A github entry follows the same rule with its own optional set —
+`repo`, `subdir` and `tarball` before `added`, then `installSize`, then `tier`
+— and both are pinned by `tier.test.ts`. The rule that decides where a NEW
+optional key goes is "at the end, after `added`": a new key rewrites every
+entry once, which it must, while inserting one earlier also moves every key
+after it and widens the content-hash delta for nothing.
 
 `publisher` is the npm account behind the package — npm entries only, absent
 when npm names no maintainer. The shop renders it beside a link to the
