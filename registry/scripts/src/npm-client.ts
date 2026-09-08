@@ -464,9 +464,20 @@ export function parseKeywordShortfall(value: unknown, where: string): KeywordSho
  * `dsh-plugin` and, in most cases, nothing else — there is no second tag to
  * intersect on, so the mechanism this constant IS has no move to make.
  *
- * The publisher axis does: the 81 names have only 31 distinct publishers, and
- * SEVEN of them own 57 of the 81 (70%). `huanlin` alone owns 21, and
- * `keywords:dsh-plugin maintainer:huanlin` probes to 26. That axis was
+ * The publisher axis does, and EVERY ONE of the 81 is reachable by it: each
+ * carries at least one maintainer username inside the grammar, so against
+ * this axis the uncovered set has no residue at all — 0 of 81, against 81 of
+ * 81 unreachable by refinement. Concentration then decides the cost: 38
+ * distinct maintainers own them, the seven largest cells reach 51 (63%), and
+ * a full cover is 37 cells. `huanlin` alone owns 21, and
+ * `keywords:dsh-plugin maintainer:huanlin` probes to 26.
+ *
+ * Read the maintainer off `maintainers[].username`, NEVER off
+ * `publisher.username`. The latter is the last publishING identity and can be
+ * a CI bot's display name — `GitHub Actions` for 12 of these 81 — which is
+ * not an npm account and which `maintainer:GitHub Actions` answers 0 for. A
+ * first pass at this measurement read that field and reported 31 owners with
+ * a 70% top-seven; both figures were artefacts of it. That axis was
  * planned for the family-event case above (docs/plans/2026-09-08-publisher-
  * partition.md); this measurement makes it the structural answer to a dated
  * problem rather than insurance against an occasional one.
