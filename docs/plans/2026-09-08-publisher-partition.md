@@ -4,13 +4,24 @@
 
 **Goal:** Give the npm harvest a second partition axis keyed on `maintainer:`, seeded from every search result it already reads and persisted across runs, so a publisher releasing a family of packages past the search window is recovered without a human noticing a shared tag.
 
-**Architecture:** npm's search API caps `from` at 5,000, so ranks past 5,250 are unaddressable by any query for a keyword. The shipped answer is a hand-maintained refinement list (`PARTITION_KEYWORDS`) whose cells are `keywords:<harvest>,<refinement>` — a different query, in which a name ranked 5,300 lands at rank 5 and becomes addressable. That axis has a permanent blind spot: a package carrying only the harvest keyword falls in no cell. `maintainer:` is a filter the API honours (measured) and every package has one, so a `keywords:<harvest> maintainer:<user>` cell has no such blind spot — but it can only be built for a maintainer already SEEN, which is why it supplements the refinement list rather than replacing it. The vocabulary is free (search responses already carry `maintainers`) and is persisted like `repo-state.json` so coverage accumulates monotonically instead of being re-derived each run from a window that is a shrinking fraction of the whole.
+**Architecture:** npm's search API caps `from` at 5,000, so ranks past 5,250 are unaddressable by any query for a keyword. The shipped answer is a hand-maintained refinement list (`PARTITION_KEYWORDS`) whose cells are `keywords:<harvest>,<refinement>` — a different query, in which a name ranked 5,300 lands at rank 5 and becomes addressable. That axis has a permanent blind spot: a package carrying only the harvest keyword falls in no cell. The blind spot is permanent but NARROW — measured 2026-09-08, one name in the window's 5,250 sits in it — so the case for a second axis rests on a burst, not on a backlog; see the reading of the 60.5% below. `maintainer:` is a filter the API honours (measured) and every package has one, so a `keywords:<harvest> maintainer:<user>` cell has no such blind spot — but it can only be built for a maintainer already SEEN, which is why it supplements the refinement list rather than replacing it. The vocabulary is free (search responses already carry `maintainers`) and is persisted like `repo-state.json` so coverage accumulates monotonically instead of being re-derived each run from a window that is a shrinking fraction of the whole.
 
 **Tech Stack:** TypeScript (ESM, `.ts` extensions in local relative imports), Node ≥ 20 built-in `fetch`, vitest.
 
 **Spec:** `docs/design/2026-08-18-dsh-plugin-shop-design.md` — the **Amendment (2026-09-08)** and its **Amendment (2026-09-08, follow-up)**. Read both before starting; every number this plan quotes is recorded there with the measurement that produced it.
 
-**Base:** branch `fix/harvest-shortfall-split` / PR #26, which split the single shortfall bound into `MAX_SEARCH_SHORTFALL`, `MIN_UNREACHABLE_RECOVERY` and `MAX_UNREACHABLE_RESIDUAL`, and gave `KeywordShortfall` its `unreachable` / `recovered` fields. **Do not start this plan until PR #26 is merged** — Task 5 changes the very arithmetic that PR introduced, and rebasing that change is worse than waiting.
+**Base:** `main` at or after `4df49bb` (PR #26, merged 2026-09-08). **The gate this section used to carry is lifted**; what follows is what that PR left behind, because Task 5's fixtures are written against it.
+
+PR #26 split the single shortfall bound into `MAX_SEARCH_SHORTFALL`, `MIN_UNREACHABLE_RECOVERY` and `MAX_UNREACHABLE_RESIDUAL`, then went through two further rounds that changed the arithmetic again. As merged:
+
+- `KeywordShortfall` carries **four** derived fields, not two: `unreachable`, `recovered`, `windowShortfall`, `tailShortfall`. The last two sum to `required - enumerated` exactly, and a test pins that identity.
+- `recovered` is `max(0, enumerated - SEARCH_WINDOW)` — measured against what the window can ADDRESS, never against the sweep's own contribution. Read the comment above it before touching it: measuring against the sweep credits the cells for in-window names the sweep missed, which is a defect that shipped and was reverted.
+- The window term and the tail term **share one per-keyword allowance** (`88e2329`). Applying `MAX_SEARCH_SHORTFALL` to each independently lets three missing on each side pass as six.
+- `describeShortfall` and `parseKeywordShortfall` are exported from `npm-client.ts` and used by BOTH `build.ts` and `classify.ts`. Tasks 4 and 6 touch that handoff; a message added to only one of them is a message CI never prints, because CI runs classify's harvest and hands it to build via `--harvest-from`.
+
+The earlier gate said "Task 5 changes the very arithmetic that PR introduced". **That was wrong** — Task 5 adds cells to `partitionKeyword` and two parameters to `searchByKeywords`; it FEEDS the coverage arithmetic and does not change it. Waiting for the merge was still the right call for a different reason: the arithmetic moved three times, and Task 5's fixtures would have been rebased through every one. Verified against merged `main`: Task 5's `familyPastWindow(5410, 160)` still rejects with `/under the 0.9 floor/`, exactly as Step 2 predicts, so its Step 1 and Step 2 need no edit.
+
+**Leave that fixture's numbers alone.** 5,410 / 160 is not a live reading and is not meant to match the table below — it is a fixture whose two halves must satisfy `total - SEARCH_WINDOW == family`, and 5,410 - 5,250 = 160 does. "Align it with the measured total" is the tempting edit that breaks it: 5,407 with 160 describes a 157-name tail whose family is 160, and the stub would serve names the tail does not contain.
 
 ## Global Constraints
 
@@ -23,7 +34,9 @@
 
 ## Measured facts this plan is sized against
 
-The follow-up amendment in `docs/design/2026-08-18-dsh-plugin-shop-design.md` is the authority for every figure below; this table is a convenience copy and must not disagree with it. Re-measure rather than trusting either if more than a week has passed — `PARTITION_KEYWORDS`' comment in `registry/scripts/src/npm-client.ts` owns the keyword totals and the tail, per `CLAUDE.md`.
+The follow-up amendment in `docs/design/2026-08-18-dsh-plugin-shop-design.md` is the authority for every figure below; this table is a convenience copy and must not disagree with it. `PARTITION_KEYWORDS`' comment in `registry/scripts/src/npm-client.ts` owns the keyword totals and the tail, per `CLAUDE.md`.
+
+**Every row is a POINT-IN-TIME reading, and the live source is the build log.** The total moves ~3.5 names an hour, so a dated figure here is stale within a day by construction and chasing it just re-creates the drift this table already had once. Every harvest re-measures it: `classify:` prints the enumerated/required pair and both shortfall terms on each run. Read that before sizing anything; the table is for orientation. Four consecutive readings: 5,401 (2026-09-07, `PARTITION_KEYWORDS`' own measurement), then 5,407, 5,414 and 5,418 over the course of 2026-09-08.
 
 | | |
 |---|---|
@@ -37,7 +50,12 @@ The follow-up amendment in `docs/design/2026-08-18-dsh-plugin-shop-design.md` is
 
 An earlier draft of this table read 5,410 / 160 / "159 of 160" / 3,042 while citing the amendment's 5,407 / 157 / "156 of 157" / 3,041 as its source, and measured the publisher row against 157 in the same table. Both ratios round to 99.4%, which is how it went unnoticed. Keep the numbers identical to the amendment's or drop the table.
 
-**Read that 60.5% correctly.** Publisher cells recover *less* than the refinement list, and this plan does not claim otherwise. Their value is the failure mode refinements cannot reach: the `sayedev` event was 20 packages released together, 7 of them past the window with no shared refinement, and 14 of them already visible — so `maintainer:sayedev` was derivable from what the harvest had already read and its cell recovers all 20. A refinement list reaches that family only if a human adds the tag after the build has gone red.
+**Read that 60.5% correctly, and read what it does NOT mean.** Publisher cells recover *less* than the refinement list, and this plan does not claim otherwise. The 95 names are a **subset** of the 156 the refinement cells already reach, so landing this axis adds **zero** to `recovered` in the steady state — `recovered` counts names in the union past the window, and a cell re-supplying a name the union already holds does not move it. Two measurements taken 2026-09-08 say how small the steady-state gap is:
+
+- Of the 5,250 names inside the window, exactly **one** carries `deepseek-harness` and none of the 27 refinement keywords (`dsh-deckseek`) — and that one is inside the window, so it is covered anyway. The refinement list tag-covers 5,249 of 5,250.
+- A miniature version of Task 5 — 115 `maintainer:` cells seeded from the publishers of every recovered tail name — found **zero** names outside the shipped union. The residual stayed at exactly 1 across all four of those readings — a span of +17 names.
+
+Neither result argues against this plan; its value was never the steady state. They do fix what "working" looks like, which is why the verification section below does not ask for `recovered` to rise. Their value is the failure mode refinements cannot reach: the `sayedev` event was 20 packages released together, 7 of them past the window with no shared refinement, and 14 of them already visible — so `maintainer:sayedev` was derivable from what the harvest had already read and its cell recovers all 20. A refinement list reaches that family only if a human adds the tag after the build has gone red.
 
 ---
 
@@ -909,4 +927,9 @@ Recorded so a later reader does not mistake an omission for an oversight.
 - `pnpm typecheck` — clean.
 - The PR's `build` job completes its handoff build and writes a non-empty `registry/publisher-state.json`; the log shows `publisher vocabulary 0 -> N` with N in the thousands for the initial empty state.
 - After merge, the first successful `main` run commits that non-empty file. The next run reads it and probes publisher cells; a PR dry run does not exercise the guarded snapshot push.
-- The build report's npm line still distinguishes the two shortfall causes (PR #26's `describeShortfall`), and `recovered` has risen against the same `unreachable`.
+- The build report's npm line still carries both shortfall counts (`describeShortfall`'s window term and tail term). Note the wording: the two terms are two COUNTS, not two causes — since `88e2329` they share one per-keyword allowance, and which of them a given missing name belongs to is not always observable.
+
+**Do NOT accept on `recovered` having risen.** An earlier draft of this section did, and it is the wrong test: `recovered` is `max(0, enumerated - SEARCH_WINDOW)`, so a publisher cell moves it only by contributing a name the union does not already hold — i.e. only by finding the residual itself. Measured 2026-09-08, the residual is 1, a 115-cell publisher probe found none of it, and it may not be a package at all (npm's `total` counting one document search will never serve is not excluded). A correct implementation of this plan will leave `recovered` unchanged on an ordinary day. What it buys is the day it is not ordinary:
+
+- The `recovers a publisher family the refinement cells cannot reach` regression from Task 5 passes, and still fails with the vocabulary empty. That test IS the deliverable — it encodes the `sayedev` shape, which is the only shape that has broken a build.
+- `registry/publisher-state.json` is committed non-empty after the first live `main` run, and the vocabulary count rises on the run after that. Monotonic accumulation is the second deliverable; a run that re-derives the seed each time is the failure this plan exists to avoid.
