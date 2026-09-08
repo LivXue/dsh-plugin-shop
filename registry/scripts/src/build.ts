@@ -19,7 +19,7 @@ import { fetchStarCounts } from './github-stars.ts'
 import { HARVEST_TOPICS, REPO_BACKFILL_BUDGET_DEFAULT, harvestRepos, parseHarvestBudget } from './github-client.ts'
 import { parseRepoState, repoGoneDetail, serializeRepoState } from './repo-state.ts'
 import { githubOwnerName } from './github-repo.ts'
-import { fetchCandidates, searchByKeywords, SEARCH_WINDOW, type KeywordShortfall } from './npm-client.ts'
+import { fetchCandidates, searchByKeywords, MAX_SEARCH_SHORTFALL, SEARCH_WINDOW, type KeywordShortfall } from './npm-client.ts'
 import { pagesArtifactNames } from './pages-artifacts.ts'
 import { runPipeline, selectEntries } from './pipeline.ts'
 import { CATALOG_SCHEMA_VERSION, SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION } from './emit.ts'
@@ -27,18 +27,14 @@ import { assembleStarsForEntries, serializeStars } from './stars-assemble.ts'
 import type { Candidate, Rejection, RepoCandidate } from './types.ts'
 
 /**
- * One keyword's tolerated shortfall, phrased by CAUSE. The two are different
- * facts and a reader acts on them differently: names past the window are npm
- * declining to serve ranks beyond its `from` cap — no partition can fix that,
- * and the count grows with the keyword — while a shortfall INSIDE the window
- * is the registry answering a total it could not serve, which is noise. One
- * number for both is what made the red build unreadable; see the 2026-09-08
- * follow-up amendment.
+ * State which allowance accepted the shortfall. Count/paging noise can occur
+ * on either side of the window; larger accepted gaps need healthy combined
+ * coverage from the refinement cells and the retried window.
  */
 function describeShortfall(s: KeywordShortfall): string {
-  return s.unreachable === 0
-    ? `keywords:${s.keyword} enumerated ${s.enumerated} of ${s.required} (registry served short inside its own window)`
-    : `keywords:${s.keyword} enumerated ${s.enumerated} of ${s.required}; ${s.unreachable} sit past the ${SEARCH_WINDOW} names one query can reach and the partition recovered ${s.recovered}`
+  return s.required - s.enumerated <= MAX_SEARCH_SHORTFALL
+    ? `keywords:${s.keyword} enumerated ${s.enumerated} of ${s.required} (within the registry count/paging noise allowance)`
+    : `keywords:${s.keyword} enumerated ${s.enumerated} of ${s.required}; the reported total exceeds the ${SEARCH_WINDOW}-name query window by ${s.unreachable}, and the combined searches recovered ${s.recovered}`
 }
 
 // Real work — network fetches, and filesystem writes that overwrite

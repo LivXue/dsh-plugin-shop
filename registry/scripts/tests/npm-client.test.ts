@@ -1302,29 +1302,30 @@ describe('searchByKeywords', () => {
       expect(seen).toEqual([])
     })
 
-  describe('a shortfall the API provably cannot serve', () => {
+  describe('a shortfall beyond one search window', () => {
     // The two quantities MAX_SEARCH_SHORTFALL used to carry alone. They have
     // opposite properties and one bound cannot hold both:
     //
     //   race / overstatement   1-3, no growth, a re-page may close it
     //   unreachable            total - SEARCH_WINDOW, grows with the keyword,
-    //                          PROVABLE arithmetic, no re-page ever closes it
+    //                          reported tail beyond ONE search window
     //
     // Live on 2026-09-07 the second was 151 names against a bound of 3, so the
     // daily build went red on every tree. Sizing the bound for that would put
     // it far above the FIFTEEN-name partition gap this repo has actually seen,
     // which is exactly what MAX_SEARCH_SHORTFALL's own comment refuses.
     //
-    // `total` is what makes the split possible: it is the one honest thing the
-    // API says about names it will not serve, so the harvest can PROVE how
-    // many are out of reach rather than guessing.
+    // Counts can still be noisy above the window, and rankings can change
+    // between passes. Both regressions are exercised below.
 
     /** A keyword past the window: `total` names exist, the window serves the
      * first SEARCH_WINDOW of them, and one refinement cell serves `recovered`
      * of the rest. Mirrors the live shape — a window cell that stops at the
      * window, plus cells that reach past it. */
-    const pastWindow = (total: number, recovered: number) => {
+    const pastWindow = (total: number, recovered: number, movedOnRetry = 0) => {
       const beyond = Array.from({ length: total - SEARCH_WINDOW }, (_, i) => `beyond${i}`)
+      const window = Array.from({ length: SEARCH_WINDOW }, (_, i) => `w${i}`)
+      let windowPass = 0
       // The cell always carries one IN-window name on top of what it recovers.
       // A cell whose total is 0 is dropped by `partitionKeyword` before the
       // coverage check ever sees it, so `recovered: 0` has to mean "a live
@@ -1336,7 +1337,13 @@ describe('searchByKeywords', () => {
           : 0),
         (query, from) => {
           if (query === 'keywords:deepseek-harness') {
-            return from > MAX_SEARCH_FROM ? [] : Array.from({ length: 250 }, (_, i) => `w${from + i}`)
+            if (from === 0) windowPass += 1
+            // Ranking can change without the total changing. The retry moves
+            // already recovered tail names into a still-full window.
+            const ranked = windowPass > 1 && movedOnRetry > 0
+              ? [...window.slice(0, -movedOnRetry), ...beyond.slice(0, movedOnRetry)]
+              : window
+            return from > MAX_SEARCH_FROM ? [] : ranked.slice(from, from + 250)
           }
           if (query === 'keywords:deepseek-harness,dsh') return cell.slice(from, from + 250)
           return []
@@ -1354,6 +1361,57 @@ describe('searchByKeywords', () => {
       ).resolves.toHaveLength(SEARCH_WINDOW + 150)
       expect(seen).toHaveLength(1)
       expect(seen[0]).toMatchObject({ keyword: 'deepseek-harness', unreachable: 157, recovered: 150 })
+    })
+
+    it.each([0, 20])('keeps coverage when %i recovered names move into the retry window', async (moved) => {
+      // The union is 5400 in both runs. Moving 20 names merely grows the
+      // two-window union to 5270; it must not change recovery from 150/157
+      // to 130/157. Seven missing names keeps this outside the noise branch,
+      // so restoring the noise allowance alone cannot make this test pass.
+      const seen: KeywordShortfall[] = []
+      const names = await searchByKeywords(
+        pastWindow(5407, 150, moved), undefined, undefined, undefined, undefined, s => seen.push(s),
+      )
+      expect(names).toHaveLength(5400)
+      expect(names).toContain('w5249') // displaced in the retry, retained from pass one
+      expect(names).toContain('beyond149')
+      expect(names).not.toContain('beyond150')
+      expect(seen).toEqual([{
+        keyword: 'deepseek-harness', enumerated: 5400, required: 5407, unreachable: 157, recovered: 150,
+      }])
+    })
+
+    it.each([1, 3])('tolerates a total overstated by %i across the window boundary', async (overstatement) => {
+      // Exactly 5250 real names: both the window and its refinement serve
+      // all of them. Only the parent query's reported total is inflated.
+      const { fetchImpl } = stubSearch(
+        { 'keywords:deepseek-harness': 5250 + overstatement, 'keywords:deepseek-harness,dsh': 5250 },
+        (query, from) => query === 'keywords:deepseek-harness' || query === 'keywords:deepseek-harness,dsh'
+          ? Array.from({ length: Math.max(0, Math.min(250, 5250 - from)) }, (_, i) => `real${from + i}`)
+          : [],
+      )
+      const seen: KeywordShortfall[] = []
+      const names = await searchByKeywords(fetchImpl, undefined, undefined, undefined, undefined, s => seen.push(s))
+      expect(names).toHaveLength(5250)
+      expect(seen).toEqual([{
+        keyword: 'deepseek-harness', enumerated: 5250, required: 5250 + overstatement,
+        unreachable: overstatement, recovered: 0,
+      }])
+    })
+
+    it('still requires recovery for a four-name tail, past the noise allowance', async () => {
+      await expect(searchByKeywords(pastWindow(5254, 0))).rejects.toThrow(/recovered 0 of 4/)
+    })
+
+    it('accepts the recovery floor and rejects a single name below it', async () => {
+      // 135/150 = 90%; 134/150 < 90%. Both residuals fit the 25-name cap.
+      await expect(searchByKeywords(pastWindow(5400, 135))).resolves.toHaveLength(5385)
+      await expect(searchByKeywords(pastWindow(5400, 134))).rejects.toThrow(/under the 0\.9 floor/)
+    })
+
+    it('accepts the residual cap exactly', async () => {
+      // 725/750 is healthy and leaves exactly 25 names missing.
+      await expect(searchByKeywords(pastWindow(6000, 725))).resolves.toHaveLength(5975)
     })
 
     it('refuses when the partition collapses, however small the keyword', async () => {
@@ -1392,8 +1450,8 @@ describe('searchByKeywords', () => {
 
     it('bounds each constant by the magnitudes this repo has measured', () => {
       // The rate floor has to catch a single cell dying. `dsh` alone recovers
-      // 123 of 157 live, so losing it takes the rate to about 22% — a floor
-      // anywhere near 0.9 catches that, and one at 0.5 would not.
+      // 123 of 157 live, so losing it takes the rate to about 22%, safely
+      // below the 0.9 floor.
       expect(MIN_UNREACHABLE_RECOVERY).toBeGreaterThanOrEqual(0.75)
       expect(MIN_UNREACHABLE_RECOVERY).toBeLessThan(1)
       // The absolute cap has to absorb one publisher family — the `sayedev`
