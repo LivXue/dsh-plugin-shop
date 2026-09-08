@@ -109,6 +109,19 @@ export interface RepoCandidate {
    */
   subdir?: string
   /**
+   * The bytes this candidate puts on disk, measured from the repository's git
+   * tree (or the release tarball, for a rescued one) — see
+   * {@link Entry.installSize}. Absent when it could not be measured honestly,
+   * which includes every transport failure: the read is best-effort, because a
+   * size is a decoration and must not cost a listing.
+   *
+   * Persisted, because it rides {@link RepoStateEntry.candidates} into
+   * `repo-state.json`. That is the whole caching story: the figure is a
+   * property of the pinned commit, so it is measured once and carried until
+   * `pushedAt` changes, and the daily run pays for churned repositories only.
+   */
+  installSize?: number
+  /**
    * How many subpackage manifests the harvest probed for this root, when it
    * probed any and none declared a bundle. Present only on a bundle-less
    * monorepo root, and only to make its rejection truthful: without it the
@@ -280,6 +293,63 @@ export interface Entry {
    * predates it strips the key (consumer zod is non-strict by design), and
    * bumping the version NUMBER is the change that breaks old clients. Same
    * reasoning as `publisher` and `peers`.
+   *
+   * Superseded for new readers by {@link Entry.installSize}, which carries the
+   * same quantity for every source. This key stays npm-only and keeps every
+   * word above: an installed client REFUSES a github entry that carries it.
    */
   unpackedSize?: number
+  /**
+   * What installing this entry puts on disk, in bytes — the same quantity as
+   * {@link Entry.unpackedSize}, for EVERY source.
+   *
+   * Per source: an npm entry repeats the packument's `dist.unpackedSize`; a
+   * commit-pinned github entry sums its git tree's blobs, scoped to `subdir`
+   * when it has one; a release-rescued entry sums the tarball it already
+   * inflated to verify. Absent whenever the measurement could not be made
+   * honestly — see {@link treeInstallSize} for each way that happens. A size
+   * is a decoration, so a missing one costs the size and never the listing.
+   *
+   * WHY A SECOND KEY, when `unpackedSize` already names this quantity: the
+   * consumer's entry schema does not merely ignore a github `unpackedSize`,
+   * it raises an issue on one (`host/catalog.ts` superRefine), and the data
+   * file is read with a throwing `parse`. So one github entry carrying that
+   * key makes the WHOLE catalog fail to load for every already-installed
+   * shop — all entries, not the one. An UNKNOWN key is stripped instead, so
+   * a new key ships on the next daily build with no client coordination at
+   * all, while filling the old one could not ship until every installed
+   * client had updated, which is not observable. `unpackedSize` keeps being
+   * emitted for npm so old clients keep showing npm sizes, and is retired
+   * once the client floor has moved.
+   *
+   * Comparable across sources, with a measured caveat. ONE sample of 69
+   * tag-matched npm packages, partitioned by whether the repository holds one
+   * package or several: a single-package tree sum runs a median 1.48x of the
+   * same package's npm figure (n=58, p75 2.78x, max 14.2x, 37 within 2x),
+   * while a monorepo charged whole runs 6.37x (n=11, p75 19.3x, max 35.4x).
+   * That gap is why `subdir` scoping is not optional.
+   *
+   * The residual on the single-package side is real content rather than
+   * error: a repository holds the tests, docs and screenshots npm's `files`
+   * whitelist omits, and a repo install genuinely puts all of it on disk.
+   *
+   * Do not pin the median tighter than the sampling supports. A separate
+   * sample read 1.22x where this one reads 1.48x, so it sits somewhere near
+   * 1.2-1.5x and what the figure has to carry is a magnitude — the same
+   * order, not the same number — rather than its digits.
+   *
+   * An earlier version of this comment quoted 1.22x against a 1.67x "naive"
+   * median and charged the whole difference to the monorepo confound. Those
+   * came from two samples with different seeds and sizes, so the difference
+   * was not attributable to anything; the confound is real, but only the
+   * partition above measures it. Two figures over different populations do
+   * not make a ratio — the same correction `PARTITION_KEYWORDS`' comment
+   * carries about the two keywords' uncovered rates.
+   *
+   * NOT the download. Both differ from the bytes on the wire by a ratio that
+   * is itself unstable — npm unpacked/download measured a median 2.88x over
+   * 16 packages but ranged 1.01x to 5.91x — so neither figure converts into
+   * the other, and a reader is owed the label it was measured under.
+   */
+  installSize?: number
 }

@@ -230,6 +230,7 @@ export function gateRepo(
     catalog,
     repo: candidate.repo,
     ...(candidate.subdir !== undefined ? { subdir: candidate.subdir } : {}),
+    ...(candidate.installSize !== undefined ? { installSize: candidate.installSize } : {}),
     ...(release !== undefined ? { tarball: { url: release.url, sha256: release.sha256 } } : {}),
   })
   if (payloadBytes > ENTRY_PAYLOAD_MAX_BYTES) {

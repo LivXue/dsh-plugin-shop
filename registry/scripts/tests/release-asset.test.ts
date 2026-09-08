@@ -5,9 +5,38 @@ import { packedTarball, rawTarball } from './packed-tarball.ts'
 
 
 describe('verifyReleaseAsset', () => {
+  // The acceptance cases below assert `toMatchObject({ ok: true })` rather than
+  // an exact verdict: an accepted verdict also carries `installSize`, measured
+  // from the members it just inflated, and every one of these cases is about
+  // ACCEPTANCE and not about the figure. The two tests that are about the
+  // figure assert it directly.
   it('accepts an asset that IS the package the entry declares', () => {
     const bytes = packedTarball('dsh-foo')
-    expect(verifyReleaseAsset(bytes, 'dsh-foo')).toEqual({ ok: true })
+    // `installSize` rides the verdict: the archive is already inflated here to
+    // verify it, so the figure costs nothing and is the ONLY honest one for a
+    // release-pinned entry — the tarball is what installs, not the repository
+    // tree at that commit.
+    const verdict = verifyReleaseAsset(bytes, 'dsh-foo')
+    expect(verdict.ok).toBe(true)
+    if (verdict.ok) expect(verdict.installSize).toBeGreaterThan(0)
+  })
+
+  it('measures the archive members, not the compressed asset', () => {
+    // Differential, so the assertion cannot drift with whatever the fixture
+    // happens to pack: one added member of known length must move the figure
+    // by exactly its length. Asserting a total here would restate
+    // `packedTarball`'s internals and break whenever it gains a member.
+    //
+    // It also pins UNPACKED rather than compressed. The two differ by the
+    // compression ratio — measured across 16 npm packages at a median 2.88x
+    // but ranging 1.01x to 5.91x — so a compressed figure under this label
+    // would be wrong by up to 6x, and differently wrong per package.
+    const base = verifyReleaseAsset(packedTarball('dsh-foo'), 'dsh-foo')
+    const padded = verifyReleaseAsset(
+      packedTarball('dsh-foo', {}, { 'package/extra.txt': 'x'.repeat(5000) }), 'dsh-foo',
+    )
+    expect(base.ok && padded.ok).toBe(true)
+    if (base.ok && padded.ok) expect(padded.installSize - base.installSize).toBe(5000)
   })
 
   it('refuses an asset packing a DIFFERENT package', () => {
@@ -88,7 +117,7 @@ describe('verifyReleaseAsset', () => {
     expect(verifyReleaseAsset(rawTarball({
       'dsh-foo-1.0.0/package.json': manifest,
       'dsh-foo-1.0.0/p.yml': '- insert: []\n',
-    }), 'dsh-foo')).toEqual({ ok: true })
+    }), 'dsh-foo')).toMatchObject({ ok: true })
   })
 
   it('accepts the ./ prefix that tar czf ./package emits', () => {
@@ -96,7 +125,7 @@ describe('verifyReleaseAsset', () => {
     expect(verifyReleaseAsset(rawTarball({
       './package/package.json': manifest,
       './package/p.yml': '- insert: []\n',
-    }), 'dsh-foo')).toEqual({ ok: true })
+    }), 'dsh-foo')).toMatchObject({ ok: true })
   })
 
   it('refuses a root-level manifest with the reason that is actually true', () => {
@@ -117,7 +146,7 @@ describe('verifyReleaseAsset', () => {
     expect(verifyReleaseAsset(rawTarball({
       'package/package.json': manifest,
       'package/p.yml': '- insert: []\n',
-    }), 'dsh-foo')).toEqual({ ok: true })
+    }), 'dsh-foo')).toMatchObject({ ok: true })
   })
 
   it.each([false, 0, '', null, [], 'yes'])('refuses dsh.bundle: %o, which registers no plugin', (bundle) => {
@@ -145,7 +174,7 @@ describe('verifyReleaseAsset', () => {
     expect(verifyReleaseAsset(rawTarball({
       'package/package.json': JSON.stringify({ name: 'dsh-foo', version: '1.0.0', dsh: { bundle: { patch: './cordis.patch.yml' } } }),
       'package/cordis.patch.yml': '- insert:\n    - id: foo\n      name: dsh-foo/host\n',
-    }), 'dsh-foo')).toEqual({ ok: true })
+    }), 'dsh-foo')).toMatchObject({ ok: true })
   })
 
   // ── what the patch NAMES, not just the patch file ────────────────────────
@@ -180,7 +209,7 @@ describe('verifyReleaseAsset', () => {
       }),
       'package/cordis.patch.yml': '- insert:\n    - id: foo\n      name: dsh-foo\n',
       'package/dist/index.js': 'export const x = 1',
-    }), 'dsh-foo')).toEqual({ ok: true })
+    }), 'dsh-foo')).toMatchObject({ ok: true })
   })
 
   it('reads insert rows the hot-mount parser deliberately rejects', () => {
@@ -234,7 +263,7 @@ describe('verifyReleaseAsset', () => {
         dsh: { bundle: { patch: './cordis.patch.yml' } },
       }),
       'package/cordis.patch.yml': '- insert:\n    - id: a\n      name: "@deepseek-ai/dsh-agent"\n    - id: b\n      name: dsh-foo-other/x\n',
-    }), 'dsh-foo')).toEqual({ ok: true })
+    }), 'dsh-foo')).toMatchObject({ ok: true })
   })
 
   it('falls back to main for the bare bundle name', () => {
@@ -261,7 +290,7 @@ describe('verifyReleaseAsset', () => {
       }),
       'package/cordis.patch.yml': '- insert:\n    - id: foo\n      name: dsh-foo\n',
       'package/dist/index.js': 'export const x = 1',
-    }), 'dsh-foo')).toEqual({ ok: true })
+    }), 'dsh-foo')).toMatchObject({ ok: true })
   })
 
   it('does not refuse what it cannot resolve', () => {
@@ -298,7 +327,7 @@ describe('verifyReleaseAsset', () => {
           dsh: { bundle: { patch: './cordis.patch.yml' } },
         }),
         'package/cordis.patch.yml': patch,
-      }), 'dsh-foo')).toEqual({ ok: true })
+      }), 'dsh-foo')).toMatchObject({ ok: true })
     }
   })
 
@@ -320,7 +349,7 @@ describe('verifyReleaseAsset', () => {
       }),
       'package/cordis.patch.yml': '- insert:\n    - id: a\n      name: dsh-foo\n',
       'package/dist/node.js': 'exports.ok=true',
-    }), 'dsh-foo')).toEqual({ ok: true })
+    }), 'dsh-foo')).toMatchObject({ ok: true })
   })
 
   it('still refuses a conditions object when no arm at all ships', () => {
@@ -349,7 +378,7 @@ describe('verifyReleaseAsset', () => {
         }),
         'package/cordis.patch.yml': '- insert:\n    - id: a\n      name: dsh-foo\n',
         'package/dist/index.js': 'exports.ok=true',
-      }), 'dsh-foo')).toEqual({ ok: true })
+      }), 'dsh-foo')).toMatchObject({ ok: true })
     }
   })
 
@@ -375,7 +404,7 @@ describe('verifyReleaseAsset', () => {
       }),
       'package/cordis.patch.yml': '- insert:\n    - id: a\n      name: dsh-foo\n',
       'package/dist/my plugin.js': 'exports.ok=true',
-    }), 'dsh-foo')).toEqual({ ok: true })
+    }), 'dsh-foo')).toMatchObject({ ok: true })
   })
 
   it('refuses a pack that ships only its type declarations', () => {
@@ -404,7 +433,7 @@ describe('verifyReleaseAsset', () => {
         dsh: { bundle: { patch: './cordis.patch.yml' } },
       }),
       'package/cordis.patch.yml': '- insert:\n    - id: a\n      name: dsh-foo\n',
-    }), 'dsh-foo')).toEqual({ ok: true })
+    }), 'dsh-foo')).toMatchObject({ ok: true })
   })
 
   it('still refuses an escape that only appears after decoding', () => {
@@ -416,7 +445,7 @@ describe('verifyReleaseAsset', () => {
         dsh: { bundle: { patch: './cordis.patch.yml' } },
       }),
       'package/cordis.patch.yml': '- insert:\n    - id: a\n      name: dsh-foo\n',
-    }), 'dsh-foo')).toEqual({ ok: true })
+    }), 'dsh-foo')).toMatchObject({ ok: true })
   })
 
   it('does not treat a non-string insert name as a module name', () => {
@@ -430,7 +459,7 @@ describe('verifyReleaseAsset', () => {
         dsh: { bundle: { patch: './cordis.patch.yml' } },
       }),
       'package/cordis.patch.yml': '- insert:\n    - id: a\n      name: [dsh-foo]\n',
-    }), 'dsh-foo')).toEqual({ ok: true })
+    }), 'dsh-foo')).toMatchObject({ ok: true })
   })
 
   it('survives a patch whose aliases make a cyclic structure', () => {
@@ -461,7 +490,7 @@ describe('verifyReleaseAsset', () => {
         }),
         'package/cordis.patch.yml': '- insert: []\n',
         'package/lib/index.js': 'export const x = 1',
-      }), 'dsh-foo')).toEqual({ ok: true })
+      }), 'dsh-foo')).toMatchObject({ ok: true })
     }
   })
 

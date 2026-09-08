@@ -61,6 +61,12 @@ export function assignTier(accepted: Accepted, config: RegistryConfig): Entry {
     ...(candidate.publisher !== undefined ? { publisher: candidate.publisher } : {}),
     ...(candidate.peers.length > 0 ? { peers: candidate.peers } : {}),
     ...(candidate.unpackedSize !== undefined ? { unpackedSize: candidate.unpackedSize } : {}),
+    // The same number under the cross-source key. Both are emitted on purpose
+    // while old clients live: an installed shop refuses a github
+    // `unpackedSize` outright, so that key can never carry every source, and
+    // dropping it here would blank the size for every client that predates
+    // `installSize`. See Entry.installSize for the retirement path.
+    ...(candidate.unpackedSize !== undefined ? { installSize: candidate.unpackedSize } : {}),
   }
   // Defence in depth: a github review is keyed by its repository now, so it
   // can no longer be reached by an npm name at all (config.ts). If one ever
@@ -113,6 +119,10 @@ export function assignRepoTier(accepted: RepoAccepted, config: RegistryConfig): 
     source: 'github' as const,
     repo: repo.repo,
     ...(repo.subdir !== undefined ? { subdir: repo.subdir } : {}),
+    // Never `unpackedSize`: an installed client raises an issue on a github
+    // entry carrying that key, and the data file is parsed with a throw, so
+    // one such row costs every reader the WHOLE catalog.
+    ...(repo.installSize !== undefined ? { installSize: repo.installSize } : {}),
     ...(release !== undefined ? { tarball: { url: release.url, sha256: release.sha256 } } : {}),
     added: firstSeenOf(config, firstSeenKey({ source: 'github', name: repo.name, repo: repo.repo })),
   }

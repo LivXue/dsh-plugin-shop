@@ -21,6 +21,7 @@ import { diffRepoState, nextRepoState, type RepoSeen, type RepoState } from './r
 import { hasWorkspaceDeps, monorepoSignal, selectSubpackagePaths } from './subpackage-select.ts'
 import type { RepoCandidate } from './types.ts'
 import { readCappedBody } from './http-body.ts'
+import { treeInstallSize } from './tree-size.ts'
 import { verifyReleaseAsset } from './release-asset.ts'
 
 const GITHUB_API = 'https://api.github.com'
@@ -50,6 +51,22 @@ export const MAX_TARBALL_BYTES = 32 * 1024 * 1024
  * candidate. The largest real dsh manifest observed is about 100 KB.
  */
 export const MAX_MANIFEST_BYTES = 1024 * 1024
+
+/**
+ * The largest git-tree JSON the sizing read will hold in memory.
+ *
+ * Bounded by GitHub's own truncation rather than by hope: a `recursive=1`
+ * tree stops at 100,000 entries, and an entry serializes to roughly 200 bytes
+ * of `path`/`mode`/`type`/`sha`/`size`/`url`, so a truncated-at-the-limit tree
+ * lands near 20 MB. This sits above that and below the tarball reader's 32 MB,
+ * and an over-cap body costs the size only — the entry still lists.
+ *
+ * Measured for scale, not for the cap: across 60 sampled repositories the
+ * median tree held 62.7 kB of blobs and the largest 303 MB of blobs, but blob
+ * BYTES are not body bytes — the body carries metadata per entry, and the
+ * 303 MB repository held only 187 blobs.
+ */
+export const MAX_TREE_BYTES = 24 * 1024 * 1024
 
 /**
  * Per-attempt bound on a GitHub request (API or raw). Matches npm-client's: a
@@ -655,7 +672,7 @@ async function fetchLatestReleaseTarball(
   timeoutMs: number = GITHUB_REQUEST_TIMEOUT_MS,
   tarballTimeoutMs: number = TARBALL_REQUEST_TIMEOUT_MS,
 ): Promise<
-  | { ok: true; tag: string; url: string; sha256: string }
+  | { ok: true; tag: string; url: string; sha256: string; installSize: number }
   /** An asset existed and was refused; the detail reaches the author. */
   | { ok: false; detail: string }
   /** Nothing to rescue with, and nothing to say about it. */
@@ -709,7 +726,7 @@ async function fetchLatestReleaseTarball(
     const verdict = verifyReleaseAsset(bytes, bundleName)
     if (!verdict.ok) return { ok: false, detail: verdict.detail }
     const sha256 = createHash('sha256').update(bytes).digest('hex')
-    return { ok: true, tag: body.tag_name, url: asset, sha256 }
+    return { ok: true, tag: body.tag_name, url: asset, sha256, installSize: verdict.installSize }
   } catch {
     // Swallows the transport failures every null-returning path above leaves
     // open: the releases call, and the asset download — the largest body read
@@ -1066,6 +1083,97 @@ async function probeSubpackageCandidates(
 }
 
 /**
+ * One repository's git tree at `sha`, parsed, or `undefined` when it cannot
+ * be read. Feeds {@link treeInstallSize} and nothing else.
+ *
+ * Pinned to the commit, never to `meta.defaultBranch`: the branch can move
+ * between the commit read and this one, and the published figure has to
+ * describe the commit the entry installs. It is also what makes the number
+ * cacheable — keyed to a commit, it stays valid until `pushedAt` changes, so
+ * the daily run measures churned repositories only.
+ */
+async function readSizingTree(
+  fullName: string,
+  sha: string,
+  fetchImpl: typeof fetch,
+  sleep: (ms: number) => Promise<void>,
+  token: string | undefined,
+  timeoutMs: number,
+): Promise<unknown> {
+  try {
+    const response = await fetchRobust(
+      `${GITHUB_API}/repos/${fullName}/git/trees/${sha}?recursive=1`, fetchImpl, sleep, token, timeoutMs,
+    )
+    if (!response.ok) return undefined
+    const bytes = await readCappedBody(response, MAX_TREE_BYTES)
+    if (bytes === null) return undefined
+    return JSON.parse(new TextDecoder().decode(bytes)) as unknown
+  } catch {
+    // Swallows every way this read can fail — a deadline, a rate-limit 403, a
+    // 5xx, a body that is not JSON. Named per the empty-catch rule: what is
+    // lost is one entry's size, and nothing else can reach here, because the
+    // candidates are already decided by the time this runs and the caller
+    // returns them unchanged on this path.
+    //
+    // Deliberately NOT the failure policy of the subpackage-discovery tree
+    // read, which throws on any non-404: there, a swallowed error makes a
+    // monorepo look like it has no subpackages and earns its root a durable,
+    // PUBLISHED "declares no name and no installable subpackage" that is
+    // false. Here the same swallow costs a decoration. Propagating instead
+    // would turn a rate-limited sizing read into a `fetch-failed` for a
+    // repository whose manifest was read successfully — inventing a harvest
+    // failure out of a missing nicety.
+    return undefined
+  }
+}
+
+/**
+ * Fetch one repository's candidates and attach each one's measured on-disk
+ * size ({@link Entry.installSize}).
+ *
+ * The sizing read is a separate, best-effort request rather than a reuse of
+ * the discovery tree, for two reasons that both matter: the discovery tree is
+ * fetched at the BRANCH and only for a monorepo signal — a root that declares
+ * its own bundle returns before it — and its failure policy is to throw.
+ *
+ * One tree sizes every candidate the repository produced: they all share the
+ * pinned commit, and each is scoped by its own `subdir`.
+ */
+export async function fetchRepoCandidate(
+  meta: RepoMeta,
+  fetchImpl: typeof fetch = fetch,
+  sleep: (ms: number) => Promise<void> = async (ms: number) => { await new Promise(resolve => setTimeout(resolve, ms)) },
+  token: string | undefined = undefined,
+  probeSubpackages = true,
+  timeoutMs: number = GITHUB_REQUEST_TIMEOUT_MS,
+  tarballTimeoutMs: number = TARBALL_REQUEST_TIMEOUT_MS,
+): Promise<RepoFetchResult> {
+  const result = await projectRepoCandidates(
+    meta, fetchImpl, sleep, token, probeSubpackages, timeoutMs, tarballTimeoutMs,
+  )
+  if (!result.ok) return result
+  // A release-rescued candidate installs the TARBALL, not the repository at
+  // this commit, so sizing it from the tree would measure a different
+  // artifact than the one the entry installs — often a very different one,
+  // since the archive holds what the author packed and the tree holds the
+  // whole repository. Its figure comes from the archive `release-asset.ts`
+  // already inflated to verify it.
+  const sizeable = result.candidates.filter(candidate => candidate.release === undefined)
+  const first = sizeable[0]
+  if (first === undefined) return result
+  const body = await readSizingTree(meta.fullName, first.commit, fetchImpl, sleep, token, timeoutMs)
+  if (body === undefined) return result
+  return {
+    ...result,
+    candidates: result.candidates.map(candidate => {
+      if (candidate.release !== undefined) return candidate
+      const installSize = treeInstallSize(body, candidate.subdir)
+      return installSize === undefined ? candidate : { ...candidate, installSize }
+    }),
+  }
+}
+
+/**
  * Fetch one repository's manifest — and, for a monorepo root without a
  * bundle, its subpackage manifests — and project them into candidates.
  * @returns the candidates, or a code + author-readable reason.
@@ -1076,14 +1184,14 @@ async function probeSubpackageCandidates(
  *   systematic-failure bound. Returning those as `no-manifest` instead is what
  *   let one blocked host write off every repository new to the state file.
  */
-export async function fetchRepoCandidate(
+async function projectRepoCandidates(
   meta: RepoMeta,
-  fetchImpl: typeof fetch = fetch,
-  sleep: (ms: number) => Promise<void> = async (ms: number) => { await new Promise(resolve => setTimeout(resolve, ms)) },
-  token: string | undefined = undefined,
-  probeSubpackages = true,
-  timeoutMs: number = GITHUB_REQUEST_TIMEOUT_MS,
-  tarballTimeoutMs: number = TARBALL_REQUEST_TIMEOUT_MS,
+  fetchImpl: typeof fetch,
+  sleep: (ms: number) => Promise<void>,
+  token: string | undefined,
+  probeSubpackages: boolean,
+  timeoutMs: number,
+  tarballTimeoutMs: number,
 ): Promise<RepoFetchResult> {
   const [owner, slug] = meta.fullName.split('/')
   if (owner === undefined || slug === undefined) {
@@ -1152,6 +1260,11 @@ export async function fetchRepoCandidate(
     const release = await fetchLatestReleaseTarball(owner, slug, root.name, fetchImpl, sleep, token, timeoutMs, tarballTimeoutMs)
     if (release?.ok === true) {
       root.release = { tag: release.tag, url: release.url, sha256: release.sha256, assetVerified: true }
+      // Measured from the archive the probe just inflated, and the reason the
+      // sizing tree read skips a release candidate: this entry installs the
+      // TARBALL, so the repository tree at this commit is a different
+      // artifact — it holds everything the author did not pack.
+      root.installSize = release.installSize
     } else if (release?.ok === false) {
       // An asset was there and did not hold up. The rescue does not apply, and
       // the standing rejection has to say that rather than blame the build

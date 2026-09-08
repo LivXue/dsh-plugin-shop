@@ -563,6 +563,33 @@ The filter was made a pill too, wearing `.categoryButton` and stating only its h
 
 **The control carried the action in its label and therefore no `aria-pressed`.** The two encodings are each coherent and must not be mixed: the category tabs keep a fixed label and let `aria-pressed` carry the state; this button's label flipped between "Hide incompatible N" and "Show incompatible N". With both, a screen reader announced "Show incompatible 1, pressed" while they were hidden — the inverse of the truth. Superseded by the amendment below, which takes the other branch of that same choice.
 
+**Amendment (2026-09-08): every entry carries `installSize`, the on-disk figure for all three sources.**
+
+*What changed, and what did not.* **A github entry gets no size, deliberately** (2026-09-07 amendment, above) stands as written: a github entry still gets no `unpackedSize`, and both numbers it rejects are still rejected — the repo `size` GitHub reports (disk usage *including history*, which is not the plugin) and the release asset's `size` (the *compressed* artifact, which is not npm's quantity). What it did not weigh is a third measurement that is neither: the **git tree's blob sum**, which excludes history by construction, and the **release archive's inflated members**. Those measure exactly what a repo install puts on disk, so `installSize` carries them alongside npm's figure.
+
+*Per source.* An npm entry repeats `dist.unpackedSize`. A commit-pinned github entry sums its git tree's blobs, scoped to `subdir` when it has one. A release-rescued entry sums the archive `verifyReleaseAsset` already inflated to check what it packs — free, and the only honest figure there, because a release-pinned entry installs the tarball rather than the repository at that commit.
+
+*Why a second key rather than filling `unpackedSize`.* Not taste — the obvious version cannot ship at all. The consumer does not merely ignore a github `unpackedSize`; its entry schema raises an issue on one, and the data file is read with a throwing `parse`. One such row therefore costs every already-installed shop the **whole catalog**, all entries at once, which is the `0.5.x` failure mode (§6.2) with the largest possible blast radius. A key the old schema has never heard of is stripped instead, so `installSize` lands on the next daily build with no client coordination, while filling the old key could not land until every installed client had updated — a condition nobody can observe. `unpackedSize` keeps being emitted for npm so old clients keep showing npm sizes, and is retired once the client floor has moved.
+
+*Accuracy, measured.* One sample of 69 tag-matched npm packages, partitioned by whether the repository holds one package or several — the partition matters more than either number, because it is what makes the difference attributable:
+
+| group | n | median tree/npm | p75 | max | within 2x |
+|---|---|---|---|---|---|
+| single-package | 58 | **1.48x** | 2.78x | 14.2x | 37 |
+| monorepo, charged whole | 11 | **6.37x** | 19.3x | 35.4x | 3 |
+
+That gap is why `subdir` scoping is not optional. The residual on the single-package side is real content rather than error: a repository holds the tests, docs and screenshots npm's `files` whitelist omits, and a repo install genuinely puts all of it on disk — `webkubor/dsh-bloom-theme` carries 9.2 MB of PNG and 1.1 MB of JPG against 274 kB on npm.
+
+Do not pin the median tighter than the sampling supports: a separate sample read 1.22x where this one reads 1.48x, so it sits near 1.2–1.5x and the figure has to carry a magnitude rather than its digits. **A correction worth recording, because the first version of this amendment shipped the error:** it quoted that 1.22x against a 1.67x "naive" median and charged the whole difference to the monorepo confound — but those were two samples with different seeds and sizes, so the difference was not attributable to anything. The confound is real; only the partition above measures it. Two figures over different populations do not make a ratio, which is the same correction `PARTITION_KEYWORDS`' comment carries about the two keywords' uncovered rates.
+
+*Cost.* One extra `git/trees/<sha>?recursive=1` per repository, pinned to the commit rather than the branch so the figure describes what installs and stays valid until `pushedAt` changes — it rides `repo-state.json`, so a daily run measures churned repositories only. Sampled over 60 repositories: 60 of 60 answered, **0 truncated**, median latency 699 ms. The published artifact grows about **3.2% gzipped**.
+
+*Failure is silence, by design.* Every way the measurement can be wrong yields no figure rather than a low one: a truncated tree, a blob size that is not a safe non-negative integer, a `subdir` matching nothing, and every transport failure — the sizing read is best-effort and never costs a listing. That is deliberately **not** the subpackage-discovery tree read's policy, which throws on any non-404, because a swallowed error there makes a monorepo look like it has no subpackages and earns its root a durable, published `no-manifest` that is false.
+
+*Still not the download.* `installSize` is what lands on disk, never the bytes on the wire, and neither converts into the other: npm unpacked/download measured a median 2.88x over 16 packages but ranged 1.01x–5.91x, and a github tree/download median of 1.86x ranged 1.28x–3.69x. The download is also not cheaply knowable on the github side — `codeload.github.com` declares no `content-length` and ignores a Range request (200, not 206, reproduced 3/3), so it is measurable only by fetching the whole archive. npm's is one Range probe (`content-range: bytes 0-0/N`, one byte of body) should it ever be wanted.
+
+*Client follow-up.* The registry half ships alone; the shelf does not render `installSize` until a client release accepts the key and prefers it over `unpackedSize`. That release changes what the host reads, so it goes through `beta` first (§ release channels).
+
 **Amendment (2026-09-08): the incompatible filter is a switch, not a pill.**
 
 Wearing `.categoryButton` put a boolean modifier in the same shape, the same row and the same size as the eight category tabs, differing only in being red — so it read as a ninth tab that happened to be red, which is the one thing the paragraphs above insist it is not. The tabs are choose-one; this is on or off. Nothing about a pill says which of those it is, and the reasoning that shared the pill rules was about avoiding a stylesheet clone, never about the two controls meaning the same thing.

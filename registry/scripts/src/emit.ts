@@ -206,14 +206,25 @@ export function emit(
   // boundary — the classifier and the config keep `theme`, so flipping
   // SHOP_CATALOG_V5 at release time restores it without re-reviewing anything
   // (design §3.5). The additive fields (`added`, `tarball`, `replacement`,
-  // `peers`, `publisher`, `unpackedSize`) ride EVERY version: an old client's
-  // zod strips a key it does not know (consumer-side zod is non-strict by
-  // design), so none of them needs a gate. Keep this list whole — it is the
-  // one place the "does a new field need a version gate?" decision is
-  // recorded, and a reader who finds their field missing cannot tell a
-  // deliberate gate from an omission. `peers` had one anyway, on size rather
-  // than safety; see the note on it above for why it came off instead of
-  // being opened.
+  // `peers`, `publisher`, `unpackedSize`, `installSize`) ride EVERY version:
+  // an old client's zod strips a key it does not know (consumer-side zod is
+  // non-strict by design), so none of them needs a gate. Keep this list whole
+  // — it is the one place the "does a new field need a version gate?"
+  // decision is recorded, and a reader who finds their field missing cannot
+  // tell a deliberate gate from an omission. `peers` had one anyway, on size
+  // rather than safety; see the note on it above for why it came off instead
+  // of being opened.
+  //
+  // `installSize` is why "unknown key" is the load-bearing half of that rule
+  // rather than "additive". It carries the on-disk figure for EVERY source,
+  // and the obvious implementation — filling `unpackedSize` for github
+  // entries too — is not gateable at all: the consumer does not ignore a
+  // github `unpackedSize`, it raises an issue on one, and the data file is
+  // read with a throwing `parse`. One such row therefore costs every
+  // already-installed shop the WHOLE catalog, not the entry. A key the old
+  // schema has never heard of is stripped instead, so this ships on the next
+  // daily build with no client coordination; `unpackedSize` keeps being
+  // emitted for npm so old clients keep showing npm sizes.
   let themeDowngraded = 0
   const emitted = entries.map(entry => {
     // Well-formed FIRST, and over the whole entry, because plugins.json is not

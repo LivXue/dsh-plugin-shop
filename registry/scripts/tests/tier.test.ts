@@ -116,16 +116,22 @@ describe('assignTier', () => {
     // every CDN cache for a build with no data change — the harm the `builtAt`
     // invariant exists to prevent.
     //
-    // The pipeline fixture carries none of the three optional npm fields, so
-    // its key-order guard cannot see their slots; this is where the order is
-    // decided, so this is where they are pinned.
+    // The pipeline fixture carries none of the optional npm fields, so its
+    // key-order guard cannot see their slots; this is where the order is
+    // decided, so this is where they are pinned. Deliberately not stated as a
+    // count — the set grows, and a number here goes quietly false.
+    //
+    // `installSize` was appended after `unpackedSize` rather than inserted
+    // beside it: a new key at the END of the optional block rewrites every
+    // entry once, which a new field must; putting it earlier would also move
+    // the keys after it, for no gain.
     const full = accepted('dsh-other-plugin', '1.0.0', 'declared', 'realauthor')
     full.candidate.peers = ['@deepseek-ai/dsh-client-store']
     full.candidate.unpackedSize = 847407
     expect(Object.keys(assignTier(full, config))).toEqual([
       'name', 'version', 'integrity', 'publishedAt', 'repository', 'license',
       'metadata', 'catalog', 'source', 'added', 'publisher', 'peers',
-      'unpackedSize', 'tier',
+      'unpackedSize', 'installSize', 'tier',
     ])
   })
 
@@ -352,5 +358,41 @@ describe('assignRepoTier', () => {
     const base = repoAccepted('dsh-commit-pinned')
     const cased = { ...base, repo: { ...base.repo, repo: 'Someone/dsh-commit-pinned' } }
     expect(assignRepoTier(cased, config).tier).toBe('verified')
+  })
+
+  it('carries the measured on-disk size onto a repo entry', () => {
+    const base = repoAccepted('dsh-repo-plugin')
+    const sized = { ...base, repo: { ...base.repo, installSize: 48501 } }
+    expect(assignRepoTier(sized, config).installSize).toBe(48501)
+  })
+
+  it('leaves installSize absent when the harvest measured none', () => {
+    // A tree that was truncated, unreachable, or refused yields no figure.
+    // Absence stays absence: the shelf shows no size rather than a zero.
+    expect(assignRepoTier(repoAccepted('dsh-repo-plugin'), config).installSize).toBeUndefined()
+  })
+})
+
+describe('installSize on npm entries', () => {
+  // `unpackedSize` stays npm-only and keeps its meaning — an installed client
+  // REFUSES a github entry carrying it (`host/catalog.ts` superRefine), so
+  // the cross-source figure needed a key of its own. npm's value is the same
+  // number under both keys until the old one is retired.
+  it('mirrors the packument size under the cross-source key', () => {
+    const a = accepted('dsh-other-plugin', '1.0.0')
+    const sized = { ...a, candidate: { ...a.candidate, unpackedSize: 667331 } }
+    const entry = assignTier(sized, config)
+    expect(entry.installSize).toBe(667331)
+    expect(entry.unpackedSize).toBe(667331)
+  })
+
+  it('carries a zero, because npm really does report it for an empty tarball', () => {
+    const a = accepted('dsh-other-plugin', '1.0.0')
+    const sized = { ...a, candidate: { ...a.candidate, unpackedSize: 0 } }
+    expect(assignTier(sized, config).installSize).toBe(0)
+  })
+
+  it('leaves installSize absent when the packument carried no size', () => {
+    expect(assignTier(accepted('dsh-other-plugin', '1.0.0'), config).installSize).toBeUndefined()
   })
 })

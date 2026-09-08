@@ -9,6 +9,7 @@ import { parseRepoState, serializeRepoState } from '../src/repo-state.ts'
 import type { RepoState } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
 import { FetchTimeoutError } from '../src/npm-client.ts'
+import { verifyReleaseAsset } from '../src/release-asset.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
 
 const sleep = async (_ms: number) => {}
@@ -476,6 +477,64 @@ describe('fetchRepoCandidate', () => {
       expect(result.candidates[0]?.repo).toBe('someone/dsh-repo-plugin')
       expect(result.candidates[0]?.commit).toBe(commit)
       expect(result.candidates[0]?.requiresBuild).toBe(false)
+    }
+  })
+
+  /**
+   * The manifest and head a plain single-bundle repo answers with.
+   *
+   * A FUNCTION, not a shared object: a `Response` body reads once, so two
+   * tests sharing one instance leave the second with a consumed manifest —
+   * which surfaces as `no-manifest`, not as anything about the test's subject.
+   */
+  const plainRepoRoutes = (): Record<string, Response> => ({
+    'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(JSON.stringify({
+      name: 'dsh-repo-plugin',
+      dsh: { bundle: { patch: './cordis.patch.yml' }, catalog: { category: 'tool', summary: { en: 'x' }, capabilities: [] } },
+    }), { status: 200 }),
+    'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': new Response(JSON.stringify({
+      sha: commit,
+      commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+    }), { status: 200 }),
+  })
+
+  it('measures the on-disk size from the tree at the PINNED commit', async () => {
+    // The pin, not the branch: the branch can move between the commit read
+    // and this one, and the published figure has to describe the commit the
+    // entry actually installs. It is also what makes the figure cacheable —
+    // a size keyed to a commit stays valid until `pushedAt` changes.
+    const fetchImpl = stubFetch({
+      ...plainRepoRoutes(),
+      [`https://api.github.com/repos/someone/dsh-repo-plugin/git/trees/${commit}?recursive=1`]: new Response(JSON.stringify({
+        truncated: false,
+        tree: [
+          { path: 'package.json', type: 'blob', size: 348 },
+          { path: 'client.js', type: 'blob', size: 43511 },
+          { path: 'src', type: 'tree' },
+        ],
+      }), { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.candidates[0]?.installSize).toBe(43859)
+  })
+
+  it('still lists the entry, with no size, when the sizing tree cannot be read', async () => {
+    // Best-effort by design: a size is a decoration, so a failed read costs
+    // the size and never the listing. This is deliberately NOT the failure
+    // policy of the subpackage-discovery tree read, which throws — there, a
+    // swallowed error makes a monorepo look like it has no subpackages and
+    // earns the root a durable, false `no-manifest`.
+    const fetchImpl = stubFetch({
+      ...plainRepoRoutes(),
+      [`https://api.github.com/repos/someone/dsh-repo-plugin/git/trees/${commit}?recursive=1`]:
+        new Response('upstream error', { status: 500 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.candidates[0]?.name).toBe('dsh-repo-plugin')
+      expect(result.candidates[0]?.installSize).toBeUndefined()
     }
   })
 
@@ -1067,6 +1126,34 @@ describe('release-tarball rescue probe', () => {
     }
   })
 
+  it('sizes a release-rescued candidate from the tarball, never from the tree', async () => {
+    // A release-pinned entry installs the ARCHIVE, so the repository tree at
+    // that commit measures a different artifact — usually a larger one, since
+    // the tree holds everything the author did not pack. Note the routes
+    // below stub no tree at all: sizing one of these must not even ask.
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(buildManifest, { status: 200 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': headResponse(),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/releases/latest': new Response(JSON.stringify({
+        tag_name: 'v1.0.0',
+        assets: [{ browser_download_url: assetUrl }],
+      }), { status: 200 }),
+      [assetUrl]: new Response(tarballBytes, { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    // The oracle is the verdict for the same bytes, computed here the way
+    // `expectedSha256` is: this test is about the plumbing carrying the
+    // figure, and release-asset.test.ts is about the figure being right.
+    const verdict = verifyReleaseAsset(tarballBytes, 'dsh-repo-plugin')
+    expect(result.ok && verdict.ok).toBe(true)
+    if (result.ok && verdict.ok) {
+      expect(result.candidates[0]?.installSize).toBe(verdict.installSize)
+      // Unpacked, not the compressed asset — which this fixture proves are
+      // different numbers rather than coincidentally equal.
+      expect(verdict.installSize).not.toBe(tarballBytes.byteLength)
+    }
+  })
+
   it.each([
     ['packs a different package', () => packedTarball('dsh-something-else'), 'packs \"dsh-something-else\"'],
     ['declares no dsh.bundle', () => packedTarball('dsh-repo-plugin', { dsh: undefined }), 'no dsh.bundle object'],
@@ -1385,7 +1472,11 @@ describe('harvestRepos', () => {
           : []))(text) as Response
       }
       if (text.includes('/git/trees/')) {
-        trees += 1
+        // The DISCOVERY probe only, which is pinned to the default branch.
+        // The sizing read hits the same endpoint pinned to the COMMIT and
+        // fires for every repository whatever `probeSubpackages` says, so
+        // counting both would stop measuring the option under test.
+        if (text.includes('/git/trees/main')) trees += 1
         return new Response(JSON.stringify({ tree: [{ path: 'packages/a/package.json', type: 'blob' }] }), { status: 200 })
       }
       if (text.startsWith('https://raw.githubusercontent.com/m/mono/main/package.json')) {
