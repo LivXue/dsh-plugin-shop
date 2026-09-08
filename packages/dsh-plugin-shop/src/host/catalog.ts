@@ -2,7 +2,7 @@
 
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { basename, dirname, join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { z } from 'zod'
 import { type CatalogOrigin, type OriginHandle, TransportError, httpOrigin } from './origin.ts'
 import { normalizeRegistryUrl, npmOrigin } from './npm-origin.ts'
@@ -73,6 +73,46 @@ const REPO_FULL_NAME = /^[\w.-]+\/[\w.-]+$/
 /** Records when the loader itself wrote the cache; the pointer's `builtAt` is
  * the catalog's build time, not the cache's fetch time. */
 const META_FILE = 'index.meta.json'
+
+/**
+ * The grammar a pointer's file url must satisfy to name a cache file.
+ *
+ * `basename()` was the derivation and cannot be: the url is untrusted wire
+ * data, and on untrusted input `basename` is neither confining nor
+ * platform-independent.
+ *
+ *  - `basename('.')` is `.`, and `join(cacheDir, '.')` collapses to `cacheDir`
+ *    itself — so the data-file write landed on the cache DIRECTORY and
+ *    `writeFileSync` answered EISDIR. `resolveDataUrl` admits the url (`new
+ *    URL('.', base)` IS `base`, so the origin check passes), which is how a
+ *    pointer reached it.
+ *  - `win32.basename('a\\b.json')` is `b.json` while `posix.basename` of the
+ *    same string is the whole string, so the cache file one pointer names
+ *    differed per platform for a url the WHATWG parser normalises the same way
+ *    everywhere. Two hosts sharing a cacheDir disagreed about what was cached.
+ *
+ * So: a plain file name, tested rather than derived, and deliberately narrow —
+ * no separator in either spelling, no leading dot (which excludes `.` and
+ * `..`), no colon, no percent. Every catalog this project publishes names
+ * `plugins.<sha256>.json` and `stars.<sha256>.json`, and `npmOrigin.file()`
+ * has always refused anything else outright. This is the http transport
+ * adopting the npm transport's rule, not a new one — before it the two
+ * disagreed about the same pointer, which design §2 ("one build, two
+ * transports, one snapshot") does not allow.
+ */
+const POINTER_FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+
+/** The cache file a pointer url names — one derivation for all four sites, so
+ * the path a load WRITES and the path the next boot READS cannot drift apart.
+ * Throws on a url outside the grammar; the caller decides whether that is
+ * loud (the plugins url, which is pointer interpretation) or advisory (the
+ * stars sidecar, spec §5). */
+function cachePath(cacheDir: string, url: string, what: string): string {
+  if (!POINTER_FILE_NAME.test(url)) {
+    throw new Error(`catalog ${what} url ${JSON.stringify(url)} must be a plain file name`)
+  }
+  return join(cacheDir, url)
+}
 
 const entrySchema = z.object({
   // Bounded and control-character-free for every source. GitHub names can
@@ -355,7 +395,7 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
       if (pointer.schemaVersion > SUPPORTED_SCHEMA_VERSION) throw new Error(
         `catalog schemaVersion ${pointer.schemaVersion} is newer than this build supports (${SUPPORTED_SCHEMA_VERSION})`,
       )
-      const dataPath = join(cacheDir, basename(pointer.plugins.url))
+      const dataPath = cachePath(cacheDir, pointer.plugins.url, 'data')
       const dataText = fsImpl.read(dataPath)
       // The cached bytes must still bind to the pointer's sha: installed
       // plugins hold full fs access and could rewrite the cache, so a file
@@ -381,7 +421,7 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
     let stars: Record<string, number> = {}
     if (pointer.stars !== undefined) {
       try {
-        const starsText = fsImpl.read(join(cacheDir, basename(pointer.stars.url)))
+        const starsText = fsImpl.read(cachePath(cacheDir, pointer.stars.url, 'stars'))
         const starsActual = createHash('sha256').update(starsText).digest('hex')
         if (starsActual === pointer.stars.sha256) stars = parseStarsText(starsText)
       } catch {
@@ -456,6 +496,12 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
     )
   }
 
+  // Derived here, before the fetch, and loudly: the data url has to name a
+  // cache file, and deciding that is pointer INTERPRETATION like the
+  // schemaVersion check above — so it throws rather than degrading, and a url
+  // that could never be cached does not cost a download first.
+  const dataCachePath = cachePath(cacheDir, pointer.plugins.url, 'data')
+
   // handle.file resolves (and refuses absolute/cross-origin) URLs internally
   // now, so a refused URL surfaces as a plain Error, never a TransportError —
   // the instanceof guard below is what keeps that refusal a loud throw like
@@ -492,10 +538,12 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
   if (pointer.stars !== undefined) {
     const sidecar = pointer.stars
     try {
-      // Resolution sits inside the advisory catch: a refused (absolute or
-      // cross-origin) stars url must degrade to no stars like any other
-      // sidecar failure — it still prevents the fetch, but never throws the
-      // loader out of a catalog whose data fetched fine (spec §5, §9.2).
+      // Both the cache path and the fetch resolution sit inside the advisory
+      // catch: a stars url that is refused — absolute, cross-origin, or not a
+      // plain file name — must degrade to no stars like any other sidecar
+      // failure. It still prevents the fetch, but never throws the loader out
+      // of a catalog whose data fetched fine (spec §5, §9.2).
+      const starsCachePath = cachePath(cacheDir, sidecar.url, 'stars')
       const starsText = await withCommitBudget(
         handle.id,
         `serve ${sidecar.url}`,
@@ -504,7 +552,7 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
       const starsActual = createHash('sha256').update(starsText).digest('hex')
       if (starsActual === sidecar.sha256) {
         stars = parseStarsText(starsText)
-        fsImpl.write(join(cacheDir, basename(sidecar.url)), starsText)
+        fsImpl.write(starsCachePath, starsText)
       }
     } catch {
       // Advisory: an unreachable or refused sidecar means no stars this run
@@ -520,9 +568,30 @@ export async function loadCatalog(options: LoadCatalogOptions): Promise<CatalogR
     notAShop: data.notAShop,
     stars,
   }
-  fsImpl.write(indexPath, JSON.stringify(pointer))
-  fsImpl.write(join(cacheDir, basename(pointer.plugins.url)), dataText)
-  fsImpl.write(metaPath, JSON.stringify({ fetchedAt: now().toISOString() }))
+  // Order is the invariant: a file becomes reachable only once whatever it
+  // names is already on disk. The data file first, then the pointer that
+  // names it, then the freshness note that declares that pointer current.
+  //
+  // Reversed — as this was — a failure after `index.json` lands leaves the
+  // pointer naming a file that was never written, and `readCached` then reads
+  // the whole cache as ABSENT. So a write that fails here did not merely fail
+  // to cache the new catalog: it unbound the good one already on disk, and
+  // the next offline boot threw instead of degrading (§10).
+  //
+  // And a cache write failure is not a load failure. `snapshot` is already
+  // fetched and verified; a read-only cacheDir, a full disk, or another dsh
+  // holding `index.json` open costs offline degradation on the NEXT boot and
+  // nothing on this one, so throwing here would take a working catalog down
+  // over an optimisation.
+  try {
+    fsImpl.write(dataCachePath, dataText)
+    fsImpl.write(indexPath, JSON.stringify(pointer))
+    fsImpl.write(metaPath, JSON.stringify({ fetchedAt: now().toISOString() }))
+  } catch {
+    // Nothing to add and nothing else to try: the snapshot is returned either
+    // way, and the ordering above means a partial write leaves the previous
+    // cache readable rather than half-rebound.
+  }
   return { snapshot, stale: false }
 }
 

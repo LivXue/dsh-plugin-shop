@@ -69,12 +69,51 @@
 
 import { spawnSync } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 const srcDir = join(repoRoot, 'registry', 'scripts', 'src')
+
+/**
+ * One entry point's `import()` argument, ready to interpolate into the `-e`
+ * source: a file URL href, quoted as a JS string literal.
+ *
+ * A URL and never the bare absolute path. Node's ESM loader parses its
+ * specifier as a URL first, so a Windows path's drive letter reads as a
+ * scheme — `import("D:\\…\\build.ts")` is refused with
+ * `ERR_UNSUPPORTED_ESM_URL_SCHEME … Received protocol 'd:'`. On Windows that
+ * took down the ten cases in the two describes below that actually spawn a
+ * child, five entry points each, while CI stayed green: a POSIX absolute path
+ * has no scheme to mistake and happens to work bare. The other ten cases here
+ * only read source and never reach an `import()`, so they were unaffected.
+ *
+ * It also percent-encodes what a bare specifier would read as syntax rather
+ * than as path, and those characters do not fail alike:
+ *
+ *  - `#` and `?` TRUNCATE. Measured, `D:\a#b\src\build.ts` parsed bare gives
+ *    pathname `\a` and hash `#b\src\build.ts`; `?` splits into a query the
+ *    same way. Not Windows-specific — a POSIX path is cut at a `#` just as
+ *    readily.
+ *  - `%` DECODES, silently, which is worse than truncating: a checkout under
+ *    `a%41b` parsed bare resolves to `a\aAb\…`, a different directory that
+ *    may or may not exist, and `a%2Fb` is refused outright with
+ *    `ERR_INVALID_FILE_URL_PATH`. `pathToFileURL` escapes the percent itself
+ *    (`a%2541b`), so the path round-trips.
+ *
+ * A space needs no rescue: it survives a bare specifier and only gains its
+ * `%20` here.
+ *
+ * @param dir - the directory holding `file`, defaulted to the real `srcDir`.
+ * A parameter because the encoding contract above cannot be exercised against
+ * a checkout that happens to contain none of those characters, and an
+ * unexercised contract is how a simplification back to a bare path stays
+ * green on the only platform CI runs.
+ */
+function importSpecifier(file: string, dir: string = srcDir): string {
+  return JSON.stringify(pathToFileURL(join(dir, file)).href)
+}
 
 /** The importing child's own exit status and stdout marker. Neither is
  * reachable from the imported module: `0` is what the guard this replaced
@@ -186,30 +225,63 @@ describe('the entry-point list is derived, not maintained by hand', () => {
       expect(srcFiles(), `${file} is invoked under the flag but does not exist in ${srcDir}`).toContain(file)
     }
   })
+
+  it('addresses a module by URL, and by one that survives the characters a bare specifier reads as syntax', () => {
+    // The third helper's discrimination case, which `invokedFiles` and
+    // `guardedName` each already had. Without it, simplifying
+    // `importSpecifier` back to `JSON.stringify(join(srcDir, file))` — or to
+    // a hand-built `'file://' + join(srcDir, file)`, which is a valid href
+    // for a POSIX path — leaves all twenty cases green on ubuntu and every
+    // spawning case red on Windows. That is the exact "CI stayed green"
+    // failure this file exists to close, reintroduced in its own fix.
+    const spec = importSpecifier('build.ts')
+    expect(spec.startsWith('"file://')).toBe(true)
+    expect(new URL(JSON.parse(spec) as string).protocol).toBe('file:')
+
+    // Synthetic roots, because the real checkout holds none of these. Each
+    // must address the file WHOLE: no hash, no query, and a round trip back
+    // to the path that went in. A bare path is not a URL at all here (`new
+    // URL` throws); `'file://' + path` keeps the `#` as a fragment and
+    // decodes the `%`, so both go red on either platform.
+    //
+    // Compared against `resolve`, not `join`: a URL is absolute by
+    // construction, so `pathToFileURL` resolves a drive-less Windows path
+    // against the current drive first — the same distinction that put this
+    // fixture family's seeds and lookups on different keys.
+    for (const dir of ['/repo/a#b/src', '/repo/a?b/src', '/repo/a%41b/src', '/repo/a b/src']) {
+      const url = new URL(JSON.parse(importSpecifier('build.ts', dir)) as string)
+      expect(url.hash, dir).toBe('')
+      expect(url.search, dir).toBe('')
+      expect(fileURLToPath(url), dir).toBe(resolve(dir, 'build.ts'))
+    }
+  })
 })
 
 describe('entry points survive --experimental-strip-types', () => {
   for (const file of ENTRY_POINTS) {
     it(`imports ${file} cleanly, without running its module-scope work`, () => {
-      const target = join(srcDir, file)
       // `process.execPath`: the same node binary running this test, so the
       // check is against the interpreter actually in use, not a `node` on
       // PATH that might resolve to a different (or absent) version.
-      // `JSON.stringify(target)` quotes the absolute path as a JS string
-      // literal for the `-e` source; `timeout`+`killSignal` are the backstop
+      // `importSpecifier` quotes the module's file URL as a JS string literal
+      // for the `-e` source; `timeout`+`killSignal` are the backstop
       // if a guard regresses and the child starts the real, network-bound
       // work instead of exiting immediately — this fails fast in seconds
       // rather than hanging the suite for the several minutes a real harvest
       // takes (CLAUDE.md).
       const result = spawnSync(
         process.execPath,
-        ['--experimental-strip-types', '--input-type=module', '-e', `import(${JSON.stringify(target)})`],
+        ['--experimental-strip-types', '--input-type=module', '-e', `import(${importSpecifier(file)})`],
         { encoding: 'utf8', timeout: 15_000, killSignal: 'SIGKILL' },
       )
+      // `stderr` is UNDEFINED when the child never started (measured: so are
+      // `stdout` and `status`), so a plain `.trim()` throws a bare TypeError
+      // on the one path this detail exists to diagnose — discarding the
+      // `spawn error:` line, the only one naming a cause.
       const detail = [
         `${file}: exit ${String(result.status)}, signal ${String(result.signal)}`,
         result.error ? `spawn error: ${result.error.message}` : null,
-        result.stderr.trim() === '' ? null : `stderr:\n${result.stderr}`,
+        (result.stderr?.trim() ?? '') === '' ? null : `stderr:\n${result.stderr}`,
       ].filter((line): line is string => line !== null).join('\n')
       expect(result.status, detail).toBe(0)
     })
@@ -219,14 +291,13 @@ describe('entry points survive --experimental-strip-types', () => {
 describe('importing an entry point never terminates the importing process', () => {
   for (const file of ENTRY_POINTS) {
     it(`leaves the importer alive and in control after importing ${file}`, () => {
-      const target = join(srcDir, file)
       // The importer awaits the import, then marks stdout and exits with a
       // status the module itself cannot produce. A module-scope
       // `process.exit(0)` — the guard form this replaced — pre-empts both:
       // the child exits 0 with an empty stdout, and every future unit test
       // that so much as imports a helper from here dies the same way, having
       // reported success.
-      const importer = `await import(${JSON.stringify(target)})\n`
+      const importer = `await import(${importSpecifier(file)})\n`
         + `process.stdout.write(${JSON.stringify(IMPORTER_MARK)})\n`
         + `process.exit(${String(IMPORTER_STATUS)})\n`
       const result = spawnSync(
@@ -234,11 +305,12 @@ describe('importing an entry point never terminates the importing process', () =
         ['--experimental-strip-types', '--input-type=module', '-e', importer],
         { encoding: 'utf8', timeout: 15_000, killSignal: 'SIGKILL' },
       )
+      // Same undefined-on-start-failure guard as the describe above.
       const detail = [
         `${file}: exit ${String(result.status)}, signal ${String(result.signal)}`,
         result.error ? `spawn error: ${result.error.message}` : null,
         `stdout: ${JSON.stringify(result.stdout)}`,
-        result.stderr.trim() === '' ? null : `stderr:\n${result.stderr}`,
+        (result.stderr?.trim() ?? '') === '' ? null : `stderr:\n${result.stderr}`,
       ].filter((line): line is string => line !== null).join('\n')
       expect(result.stdout, detail).toContain(IMPORTER_MARK)
       expect(result.status, detail).toBe(IMPORTER_STATUS)

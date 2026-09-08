@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
   cleanHotDir, hotMount, hotUnmount, listHotMounts, parseSimplePatch, renderRows,
   type HotFs,
 } from '../../src/host/hot.ts'
 import { JSON_SCHEMA, load } from 'js-yaml'
+import { memHotFs } from './mem-fs.ts'
 import { fileTempRoot } from './temp-root.ts'
 
 const TEMP_ROOT = fileTempRoot('hot')
@@ -87,40 +88,27 @@ const PROFILE = '/home/user/.dsh'
 const PKG_DIR = join(PROFILE, 'node_modules', 'dsh-hello-plugin')
 const HOT_DIR = join(PROFILE, '.dsh-shop')
 
-/** An in-memory stand-in for the node:fs surface hot.ts uses (like
- * catalog.test.ts's memFs): reads and lists throw ENOENT on missing paths,
- * writes register their parent directory. */
-function memFs(): HotFs & { files: Map<string, string> } {
-  const files = new Map<string, string>()
-  const dirs = new Set<string>()
-  return {
-    files,
-    read: p => {
-      const value = files.get(p)
-      if (value === undefined) throw new Error(`ENOENT: ${p}`)
-      return value
-    },
-    write: (p, data) => {
-      dirs.add(dirname(p))
-      files.set(p, data)
-    },
-    list: p => {
-      if (!dirs.has(p)) throw new Error(`ENOENT: ${p}`)
-      const prefix = p.endsWith('/') ? p : p + '/'
-      return [...files.keys()].filter(k => k.startsWith(prefix)).map(k => k.slice(prefix.length))
-    },
-  }
-}
+/** The shared in-memory HotFs. It keys on the RESOLVED path, which is what
+ * makes the POSIX literal above meet `hot.ts`'s own addressing: the seeds
+ * here are built with `join(PROFILE, …)` while `hotMount` reaches its patch
+ * through `resolve(packageDir, …)`, and on Windows `resolve` prepends the
+ * current drive where `join` does not. Keyed on the raw string, every read
+ * missed, the catch in `hotMount` turned that into `no-patch`, and this
+ * file's nine timeout/mount-failed/host-unsupported cases reported the wrong
+ * reason code while two others — the `no-patch` fallback and the F-10 escape
+ * case — passed because `no-patch` had become what EVERY path returned.
+ * See `mem-fs.ts`. */
+const memFs = memHotFs
 
 /** Seed an installed package: its package.json dsh field and one plain
  * patch file. */
-function seedPackage(fs: { files: Map<string, string> }, patch: string): void {
-  fs.files.set(join(PKG_DIR, 'package.json'), JSON.stringify({
+function seedPackage(fs: HotFs, patch: string): void {
+  fs.write(join(PKG_DIR, 'package.json'), JSON.stringify({
     name: 'dsh-hello-plugin',
     version: '1.0.0',
     dsh: { bundle: { patch: './cordis.patch.yml' } },
   }))
-  fs.files.set(join(PKG_DIR, 'cordis.patch.yml'), patch)
+  fs.write(join(PKG_DIR, 'cordis.patch.yml'), patch)
 }
 
 function testCtx(handle: { await(): Promise<unknown>; dispose(): Promise<unknown> | void }) {
@@ -153,7 +141,7 @@ describe('hotMount / hotUnmount', () => {
     // the tree was created against its file URL. It is an ENTRY list (the
     // Include tree reads entries), not a patch list — so it is asserted as
     // written, not round-tripped through the patch parser.
-    expect(fs.files.get(join(HOT_DIR, 'hot-1.yml'))).toBe('- id: mkt-hello\n  name: dsh-hello-plugin\n')
+    expect(fs.read(join(HOT_DIR, 'hot-1.yml'))).toBe('- id: mkt-hello\n  name: dsh-hello-plugin\n')
     expect(FakeHotTree.lastInstance?.path).toBe(pathToFileURL(join(HOT_DIR, 'hot-1.yml')).href)
     expect(listHotMounts()).toContain('dsh-hello-plugin')
 
@@ -169,7 +157,7 @@ describe('hotMount / hotUnmount', () => {
     const ctx = testCtx({ await: async () => {}, dispose: async () => {} })
     const result = await hotMount(ctx, PROFILE, 'dsh-hello-plugin', { hotTreeClass: FakeHotTree, fs, dir: HOT_DIR, timeoutMs: 1000 })
     expect(result).toEqual({ ok: true, reason: null })
-    expect(fs.files.get(join(HOT_DIR, 'hot-1.yml'))).toBe("- id: mkt-archify\n  name: '@tt-a1i/archify-dsh'\n")
+    expect(fs.read(join(HOT_DIR, 'hot-1.yml'))).toBe("- id: mkt-archify\n  name: '@tt-a1i/archify-dsh'\n")
   })
 
   it('numbers a second mount in the same session hot-2.yml', async () => {
@@ -180,8 +168,8 @@ describe('hotMount / hotUnmount', () => {
     await hotMount(ctx, PROFILE, 'dsh-hello-plugin', { hotTreeClass: FakeHotTree, fs, dir: HOT_DIR, timeoutMs: 1000 })
     await hotMount(ctx, PROFILE, 'dsh-hello-plugin', { hotTreeClass: FakeHotTree, fs, dir: HOT_DIR, timeoutMs: 1000 })
 
-    expect(fs.files.get(join(HOT_DIR, 'hot-1.yml'))).not.toBeUndefined()
-    expect(fs.files.get(join(HOT_DIR, 'hot-2.yml'))).not.toBeUndefined()
+    expect(fs.exists(join(HOT_DIR, 'hot-1.yml'))).toBe(true)
+    expect(fs.exists(join(HOT_DIR, 'hot-2.yml'))).toBe(true)
   })
 
   it('disposes the previous handle before activating a re-mount of the same package', async () => {
@@ -254,7 +242,7 @@ describe('hotMount / hotUnmount', () => {
 
     expect(result.ok).toBe(false)
     expect(result.reason).toBe('host-unsupported')
-    expect(fs.files.has(join(HOT_DIR, 'hot-1.yml'))).toBe(false)
+    expect(fs.exists(join(HOT_DIR, 'hot-1.yml'))).toBe(false)
   })
 
   it('degrades to restart activation when the tree class is not a constructor', async () => {
@@ -274,15 +262,34 @@ describe('hotMount / hotUnmount', () => {
 
   it('falls back with the no-patch reason code when the package has no patch file', async () => {
     const fs = memFs()
+    const reads: string[] = []
+    const watched: HotFs = {
+      read: path => { reads.push(path); return fs.read(path) },
+      write: fs.write,
+      list: fs.list,
+    }
 
     const result = await hotMount(
       { plugin: () => { throw new Error('must not be called') }, logger: { info: () => {}, warn: () => {} } },
-      PROFILE, 'dsh-hello-plugin', { hotTreeClass: FakeHotTree, fs, dir: HOT_DIR, timeoutMs: 1000 },
+      PROFILE, 'dsh-hello-plugin', { hotTreeClass: FakeHotTree, fs: watched, dir: HOT_DIR, timeoutMs: 1000 },
     )
 
     expect(result.ok).toBe(false)
     expect(result.reason).toBe('no-patch')
-    expect(fs.files.has(join(HOT_DIR, 'hot-1.yml'))).toBe(false)
+    expect(fs.exists(join(HOT_DIR, 'hot-1.yml'))).toBe(false)
+    // `no-patch` is also what hotMount answers when the fake cannot find
+    // ANYTHING, so the code alone stops discriminating the moment the fixture
+    // stops answering — which is exactly what a raw-string key did to this
+    // file on Windows, leaving this case green while nine of its siblings
+    // went red. Pin it to the reads that produced it: the manifest through
+    // `join(packageDir, …)`, then the default patch name through
+    // `resolve(packageDir, …)`, whose ENOENT is the fallback's actual cause.
+    // (hot.ts addresses those two with different primitives; the fixture keys
+    // both the same way, which is the point of keying on the resolved path.)
+    expect(reads).toEqual([
+      join(PKG_DIR, 'package.json'),
+      resolve(PKG_DIR, 'cordis.patch.yml'),
+    ])
   })
 
   it('refuses a bundle patch path that escapes the package directory (F-10)', async () => {
@@ -293,25 +300,36 @@ describe('hotMount / hotUnmount', () => {
       write: fs.write,
       list: fs.list,
     }
-    fs.files.set(join(PKG_DIR, 'package.json'), JSON.stringify({
+    // Seeded and asserted at the RESOLVED path. `hot.ts` reaches the declared
+    // patch through `resolve(packageDir, …)`, which on Windows lands on
+    // `D:\etc\hostile.yml` — so a literal `'/etc/hostile.yml'` seeded nothing
+    // a broken guard could have found and denied nothing the assertion could
+    // have caught, leaving both halves vacuous on the platform this file is
+    // developed on.
+    const hostile = resolve(PKG_DIR, '../../../../../etc/hostile.yml')
+    fs.write(join(PKG_DIR, 'package.json'), JSON.stringify({
       name: 'dsh-hello-plugin', version: '1.0.0',
       dsh: { bundle: { patch: '../../../../../etc/hostile.yml' } },
     }))
-    fs.files.set('/etc/hostile.yml', '- insert:\n    - id: pwned\n      name: hostile\n')
+    fs.write(hostile, '- insert:\n    - id: pwned\n      name: hostile\n')
     const ctx = testCtx({ await: async () => {}, dispose: async () => {} })
     const result = await hotMount(ctx, PROFILE, 'dsh-hello-plugin', { hotTreeClass: FakeHotTree, fs: watched, dir: HOT_DIR, timeoutMs: 1000 })
     expect(result).toEqual({ ok: false, reason: 'no-patch' })
-    expect(reads).not.toContain('/etc/hostile.yml')
-    expect(fs.files.get(join(HOT_DIR, 'hot-1.yml'))).toBeUndefined()
+    // The seed above is readable and parses into a mountable row, so dropping
+    // the containment check turns this case into `{ ok: true }` rather than
+    // into another `no-patch`.
+    expect(fs.exists(hostile)).toBe(true)
+    expect(reads).not.toContain(hostile)
+    expect(fs.exists(join(HOT_DIR, 'hot-1.yml'))).toBe(false)
   })
 
   it('still reads a patch in a subdirectory of the package', async () => {
     const fs = memFs()
-    fs.files.set(join(PKG_DIR, 'package.json'), JSON.stringify({
+    fs.write(join(PKG_DIR, 'package.json'), JSON.stringify({
       name: 'dsh-hello-plugin', version: '1.0.0',
       dsh: { bundle: { patch: './dsh/cordis.patch.yml' } },
     }))
-    fs.files.set(join(PKG_DIR, 'dsh', 'cordis.patch.yml'), '- insert:\n    - id: hello\n      name: dsh-hello-plugin\n')
+    fs.write(join(PKG_DIR, 'dsh', 'cordis.patch.yml'), '- insert:\n    - id: hello\n      name: dsh-hello-plugin\n')
     const ctx = testCtx({ await: async () => {}, dispose: async () => {} })
     const result = await hotMount(ctx, PROFILE, 'dsh-hello-plugin', { hotTreeClass: FakeHotTree, fs, dir: HOT_DIR, timeoutMs: 1000 })
     expect(result).toEqual({ ok: true, reason: null })

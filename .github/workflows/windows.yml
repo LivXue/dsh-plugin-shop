@@ -1,0 +1,81 @@
+name: windows
+
+# Windows is where this project is developed and, until now, the only platform
+# nothing verified: all four `runs-on:` in this directory were ubuntu-latest.
+# Two POSIX path assumptions therefore lived in the test suite for months and
+# survived into v0.8.0 with CI green the whole way — `import()` handed a bare
+# absolute path, which a drive letter turns into an unsupported URL scheme, and
+# a fixture keyed on a path string the product spells three different ways
+# there. Between them they hid 24 results, some red and some passing while
+# proving nothing.
+#
+# So this leg exists to make that class fail somewhere. It is deliberately
+# narrow — see the job comment for what it does NOT cover and why.
+
+on:
+  push:
+    # Source and tests, not data: the daily snapshot commits under
+    # registry/snapshots/ carry `[skip ci]`, but a registry/** filter would
+    # still queue this run for every other data-only change.
+    paths: &windows-inputs
+      - 'registry/scripts/**'
+      - 'packages/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.github/workflows/windows.yml'
+  pull_request:
+    paths: *windows-inputs
+  workflow_dispatch:
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  suites:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with: { node-version: 24, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      # The root suite (registry/scripts/tests/**) in full. Measured green on
+      # Windows, and it is where the `import()` specifier bug lived.
+      - run: pnpm test
+      # The package's own `test` script is `tsdown && tsdown -c
+      # tsdown.client.config.ts && vitest run`, so it BUILDS first, and two
+      # cases depend on that: `apply.client.spec.tsx` imports
+      # `dsh-plugin-shop/remote`, a self-referential export resolving into
+      # `lib/`, and `own-version.test.ts` asserts `lib/index.js` exists. The
+      # step below cannot use the script — the exclusions have to reach vitest,
+      # and `pnpm test -- --exclude …` does not deliver them (measured: the
+      # full 30 files ran) — so the two builds are spelled out here instead.
+      # Their absence is what made this leg's first run red while it was green
+      # on a working tree that already had a `lib/`.
+      - run: pnpm -C packages/dsh-plugin-shop exec tsdown
+      - run: pnpm -C packages/dsh-plugin-shop exec tsdown -c tsdown.client.config.ts
+      # The package suite MINUS four files. They fake the `dsh` CLI with a
+      # `#!/bin/sh` script and spawn it by bare name, or assert on a symlink,
+      # so 55 of their cases fail on Windows for one shared reason that has
+      # nothing to do with what this leg is guarding. Measured, not guessed:
+      # executor 34, index 18, restart 2, profile 1.
+      #
+      # An exclusion list rather than an allowlist, deliberately: a NEW test
+      # file is covered by default, so the next Windows regression fails here
+      # instead of being quietly outside the net. Removing an entry is the
+      # work of teaching those fakes to write a `.cmd` shim (or to spawn a
+      # node script) the way `src/host/dsh-cli.ts` already resolves one.
+      #
+      # `tests/client/web-full-flow.e2e.ts` is in scope but self-skips:
+      # `describe.skipIf(!hasDsh || !hasChromium)`, and this leg deliberately
+      # installs neither, nor does it set DSH_SHOP_REQUIRE_E2E. plugin.yml is
+      # where that criterion runs, against a pinned harness.
+      - run: >
+          pnpm -C packages/dsh-plugin-shop exec vitest run
+          --exclude tests/host/executor.test.ts
+          --exclude tests/host/index.test.ts
+          --exclude tests/host/restart.test.ts
+          --exclude tests/host/profile.test.ts
+          --exclude '**/node_modules/**'

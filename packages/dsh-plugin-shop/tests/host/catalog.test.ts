@@ -1,10 +1,19 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { gzipSync } from 'node:zlib'
-import { DEFAULT_CATALOG_URL, catalogOrigins, loadCatalog, type CatalogFs } from '../../src/host/catalog.ts'
+import { DEFAULT_CATALOG_URL, catalogOrigins, loadCatalog } from '../../src/host/catalog.ts'
 import { TransportError, type CatalogOrigin, type OriginHandle } from '../../src/host/origin.ts'
 import { npmOrigin } from '../../src/host/npm-origin.ts'
 import { npmrcRegistry } from '../../src/host/npmrc.ts'
+// The shared in-memory CatalogFs. Aliased to the name 58 cases below already
+// call, so the import is the only line that has to say where it comes from;
+// `mem-fs.ts` carries the keying rationale and `mem-fs.test.ts` pins it.
+import { memCatalogFs as memFs, memKey } from './mem-fs.ts'
+import { fileTempRoot } from './temp-root.ts'
+
+const TEMP_ROOT = fileTempRoot('catalog')
 
 function dataJson(plugins: unknown[] = [], denied: unknown[] = [], schemaVersion = 2): string {
   return JSON.stringify({ schemaVersion, plugins, denied })
@@ -30,16 +39,6 @@ function starsFile(stars: Record<string, number>): { url: string; sha256: string
   const text = JSON.stringify({ stars })
   const sha256 = createHash('sha256').update(text).digest('hex')
   return { url: `stars.${sha256}.json`, sha256, text }
-}
-
-function memFs(): CatalogFs & { files: Map<string, string> } {
-  const files = new Map<string, string>()
-  return {
-    files,
-    exists: p => files.has(p),
-    read: p => files.get(p) ?? '',
-    write: (p, data) => { files.set(p, data) },
-  }
 }
 
 describe('loadCatalog', () => {
@@ -296,14 +295,24 @@ describe('loadCatalog', () => {
       return new Response(data, { status: 200 })
     }) as unknown as typeof fetch
 
+    // Refused by the pointer's own file-name grammar, which now runs before
+    // any origin is asked to resolve anything — so this reports "must be a
+    // plain file name" rather than resolution's "must be relative to the
+    // catalog base". Strictly earlier and strictly stricter, and the property
+    // this case exists for is the line below it: nothing fetched 169.254.
+    // `resolveDataUrl`'s own cross-origin refusal is still covered directly,
+    // in `origin.test.ts`.
     await expect(loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() }))
-      .rejects.toThrow(/must be relative/)
+      .rejects.toThrow(/must be a plain file name/)
     expect(dataCalls).toBe(0)
   })
 
   it('refuses a data url whose leading whitespace hides an absolute fetch', async () => {
     // WHATWG URL normalization strips the leading space before the raw string
-    // could be inspected; the origin comparison must catch it.
+    // could be inspected, so no spelling of an absolute url may be admitted
+    // by inspecting it for a scheme. The file-name grammar refuses this for
+    // the space alone, and resolution's origin comparison — asserted in
+    // `origin.test.ts` — would refuse it for the host.
     const data = dataJson([entry])
     const sha = createHash('sha256').update(data).digest('hex')
     const pointer = JSON.stringify({
@@ -317,7 +326,7 @@ describe('loadCatalog', () => {
     }) as unknown as typeof fetch
 
     await expect(loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() }))
-      .rejects.toThrow(/must be relative/)
+      .rejects.toThrow(/must be a plain file name/)
     expect(fetched.filter(h => h.includes('169.254.169.254'))).toHaveLength(0)
   })
 
@@ -865,8 +874,8 @@ describe('origin racing', () => {
     const data = dataJson([entry])
     const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
     const fs = memFs()
-    fs.files.set('/cache/index.json', pointer)
-    fs.files.set(`/cache/${url}`, data)
+    fs.write('/cache/index.json', pointer)
+    fs.write(`/cache/${url}`, data)
     const result = await loadCatalog({
       cacheDir: '/cache', fsImpl: fs,
       now: () => new Date('2026-09-01T00:00:00Z'),
@@ -885,8 +894,8 @@ describe('origin racing', () => {
     // of this test is that correct code throws even though a stale answer is
     // sitting right there, not merely that it throws when nothing else exists.
     const fs = memFs()
-    fs.files.set('/cache/index.json', pointer)
-    fs.files.set(`/cache/${url}`, data)
+    fs.write('/cache/index.json', pointer)
+    fs.write(`/cache/${url}`, data)
     await expect(loadCatalog({
       cacheDir: '/cache', fsImpl: fs,
       now: () => new Date('2026-09-01T00:00:00Z'),
@@ -935,8 +944,8 @@ describe('origin racing', () => {
     const data = dataJson([entry])
     const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
     const fs = memFs()
-    fs.files.set('/cache/index.json', pointer)
-    fs.files.set(`/cache/${url}`, data)
+    fs.write('/cache/index.json', pointer)
+    fs.write(`/cache/${url}`, data)
     const result = await loadCatalog({
       cacheDir: '/cache', fsImpl: fs,
       now: () => new Date('2026-09-01T00:00:00Z'),
@@ -950,8 +959,8 @@ describe('origin racing', () => {
     const data = dataJson([entry])
     const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
     const fs = memFs()
-    fs.files.set('/cache/index.json', pointer)
-    fs.files.set(`/cache/${url}`, data)
+    fs.write('/cache/index.json', pointer)
+    fs.write(`/cache/${url}`, data)
     await expect(loadCatalog({
       cacheDir: '/cache', fsImpl: fs,
       now: () => new Date('2026-09-01T00:00:00Z'),
@@ -965,8 +974,8 @@ describe('origin racing', () => {
         const data = dataJson([entry])
         const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
         const fs = memFs()
-        fs.files.set('/cache/index.json', pointer)
-        fs.files.set(`/cache/${url}`, data)
+        fs.write('/cache/index.json', pointer)
+        fs.write(`/cache/${url}`, data)
         const pending = loadCatalog({
           cacheDir: '/cache', fsImpl: fs,
           now: () => new Date('2026-09-01T00:00:00Z'),
@@ -1474,5 +1483,271 @@ describe('catalogOrigins', () => {
       'npm:https://registry.npmjs.org/',
       `http:${DEFAULT_CATALOG_URL}`,
     ])
+  })
+})
+
+describe('the disk cache is committed in dependency order', () => {
+  const entry = {
+    name: 'dsh-hello-plugin', version: '1.2.0', integrity: 'sha512-i', publishedAt: null,
+    repository: null, license: 'MIT', tier: 'community', metadata: 'derived',
+    added: '2026-08-25',
+  }
+
+  /** An origin serving one pointer and a set of files, recording which files
+   * it was asked for — so "refused BEFORE the fetch" is asserted rather than
+   * assumed. */
+  function servingOrigin(pointer: string, files: Record<string, string>): {
+    origin: CatalogOrigin
+    reads: string[]
+  } {
+    const reads: string[] = []
+    return {
+      reads,
+      origin: {
+        id: 'fake',
+        probe: async () => ({
+          id: 'fake',
+          pointer: async () => pointer,
+          file: async (url: string) => {
+            reads.push(url)
+            const body = files[url]
+            if (body === undefined) throw new TransportError(`fake: no ${url}`)
+            return body
+          },
+        }),
+      },
+    }
+  }
+
+  it('writes the data file, then the pointer naming it, then the freshness note', async () => {
+    const data = dataJson([entry])
+    const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
+    const fs = memFs()
+    const { origin } = servingOrigin(pointer, { [url]: data })
+
+    await loadCatalog({ cacheDir: '/cache', fsImpl: fs, origins: [origin] })
+
+    // The order IS the property: a file becomes reachable only once whatever
+    // it names is on disk. Reversed, a failure between two writes leaves
+    // `index.json` naming a data file that was never written.
+    expect(fs.written()).toEqual([
+      memKey(`/cache/${url}`),
+      memKey('/cache/index.json'),
+      memKey('/cache/index.meta.json'),
+    ])
+  })
+
+  it('serves the verified snapshot even when the cache cannot be written at all', async () => {
+    const data = dataJson([entry])
+    const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
+    // A read-only cacheDir, a full disk, or another dsh holding the file
+    // open. The bytes in hand are already fetched and verified, so refusing
+    // to serve them would take a working catalog down over an optimisation.
+    const fs = memFs(() => 'EACCES: permission denied')
+    const { origin } = servingOrigin(pointer, { [url]: data })
+
+    const result = await loadCatalog({ cacheDir: '/cache', fsImpl: fs, origins: [origin] })
+
+    expect(result.stale).toBe(false)
+    expect(result.snapshot.entries).toHaveLength(1)
+  })
+
+  it('leaves the previous cache readable whichever write fails mid-commit', async () => {
+    // The regression the ordering exists for, and the reason BOTH failure
+    // points are exercised rather than one: which of them is dangerous
+    // depends on the order.
+    //
+    // With the data file written first, a failure at either point leaves the
+    // previous pointer and its previous data file both on disk and still
+    // bound to each other. Written the other way round — as this was — a
+    // failure on the DATA write comes after `index.json` has already landed,
+    // so the pointer names a file that was never written, `readCached` reads
+    // the whole cache as absent, and the next offline boot throws instead of
+    // degrading: the failed write did not merely fail to cache the new
+    // catalog, it unbound the good one already there. A case that only fails
+    // the POINTER write cannot see that at all — under the old order the
+    // pointer is the first write, so it fails before anything has changed.
+    const oldData = dataJson([entry])
+    const old = pointerFor(oldData, '2026-08-01T00:00:00Z')
+    const newData = dataJson([entry, { ...entry, name: 'dsh-second-plugin' }])
+    const fresh = pointerFor(newData, '2026-09-01T00:00:00Z')
+
+    for (const [what, doomed] of [['the pointer', 'index.json'], ['the data file', fresh.url]] as const) {
+      // Armed after seeding, so the healthy cache this case is about actually
+      // lands: a predicate refusing from the start would test a profile that
+      // never had a cache.
+      let armed = false
+      const fs = memFs(path => (armed && path.endsWith(doomed) ? 'EACCES: permission denied' : null))
+      fs.write('/cache/index.json', old.pointer)
+      fs.write(`/cache/${old.url}`, oldData)
+      armed = true
+      const { origin } = servingOrigin(fresh.pointer, { [fresh.url]: newData })
+
+      const served = await loadCatalog({
+        cacheDir: '/cache', fsImpl: fs, origins: [origin],
+        now: () => new Date('2026-09-01T00:00:00Z'),
+      })
+      expect(served.snapshot.entries, what).toHaveLength(2)
+
+      const offline = await loadCatalog({
+        cacheDir: '/cache', fsImpl: fs,
+        origins: [{ id: 'dead', probe: async () => { throw new TransportError('offline') } }],
+        now: () => new Date('2026-09-01T00:00:00Z'),
+      })
+      expect(offline.stale, what).toBe(true)
+      expect(offline.snapshot.builtAt, what).toBe('2026-08-01T00:00:00Z')
+      expect(offline.snapshot.entries, what).toHaveLength(1)
+    }
+  })
+
+  it('refuses a data url that is not a plain file name, before fetching it', async () => {
+    // `.` is the one that reached a real filesystem: `resolveDataUrl` admits
+    // it (`new URL('.', base)` IS `base`, so the origin check passes), and
+    // the derivation this replaced — `join(cacheDir, basename(url))` —
+    // collapsed to the cacheDir ITSELF, so `writeFileSync` was handed a
+    // directory and answered EISDIR out of `loadCatalog`. A separator is the
+    // other half: `basename` reads a backslash as one on Windows and as a
+    // filename character on POSIX, so the cache file one pointer named
+    // differed per platform.
+    for (const url of ['.', '..', './plugins.json', 'sub/plugins.json', 'a\\b.json', '', '.hidden.json']) {
+      const pointer = JSON.stringify({
+        schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', count: 0,
+        plugins: { url, sha256: 'a'.repeat(64) },
+      })
+      const fs = memFs()
+      const { origin, reads } = servingOrigin(pointer, {})
+      await expect(
+        loadCatalog({ cacheDir: '/cache', fsImpl: fs, origins: [origin] }),
+        `url ${JSON.stringify(url)}`,
+      ).rejects.toThrow(/must be a plain file name/)
+      // Refused as pointer interpretation, so it costs no download…
+      expect(reads, `url ${JSON.stringify(url)}`).toEqual([])
+      // …and writes nothing, so a poisoned pointer cannot unbind a cache.
+      expect(fs.written(), `url ${JSON.stringify(url)}`).toEqual([])
+    }
+  })
+
+  it('accepts the plain content-addressed names every catalog it publishes uses', async () => {
+    // The negative case above would pass just as well if the grammar refused
+    // real catalogs too, and both live names carry the dots and the hex this
+    // has to admit.
+    const data = dataJson([entry])
+    const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
+    expect(url).toMatch(/^plugins\.[0-9a-f]{64}\.json$/)
+    const fs = memFs()
+    const { origin } = servingOrigin(pointer, { [url]: data })
+    const result = await loadCatalog({ cacheDir: '/cache', fsImpl: fs, origins: [origin] })
+    expect(result.snapshot.entries).toHaveLength(1)
+    expect(fs.exists(`/cache/${url}`)).toBe(true)
+  })
+
+  it('degrades to no stars — never a throw — for a stars url that is not a plain file name', async () => {
+    // The sidecar is advisory (spec §5), so the same refusal that throws for
+    // the data url may only cost the stars here.
+    const data = dataJson([entry])
+    const { sha } = pointerFor(data, '2026-08-25T00:00:00Z')
+    const pointer = JSON.stringify({
+      schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', count: 0,
+      plugins: { url: `plugins.${sha}.json`, sha256: sha },
+      stars: { url: '../stars.json', sha256: 'b'.repeat(64) },
+    })
+    const fs = memFs()
+    const { origin, reads } = servingOrigin(pointer, { [`plugins.${sha}.json`]: data })
+
+    const result = await loadCatalog({ cacheDir: '/cache', fsImpl: fs, origins: [origin] })
+
+    expect(result.stale).toBe(false)
+    expect(result.snapshot.stars).toEqual({})
+    expect(reads).toEqual([`plugins.${sha}.json`])
+  })
+
+  it('creates a cacheDir whose parent does not exist (real filesystem)', async () => {
+    // Every other case here injects a fake, so nothing exercises the real
+    // `nodeFs`: replace its recursive `mkdirSync` with a plain one and this
+    // whole file stays green while a first boot into a fresh profile takes
+    // ENOENT on the very first cache write.
+    const data = dataJson([entry])
+    const { pointer, url } = pointerFor(data, '2026-08-25T00:00:00Z')
+    const cacheDir = join(mkdtempSync(join(TEMP_ROOT, 'dsh-cache-')), 'nested', 'catalog')
+    expect(existsSync(cacheDir)).toBe(false)
+    const { origin } = servingOrigin(pointer, { [url]: data })
+
+    const result = await loadCatalog({ cacheDir, origins: [origin] })
+
+    expect(result.snapshot.entries).toHaveLength(1)
+    expect(readFileSync(join(cacheDir, 'index.json'), 'utf8')).toBe(pointer)
+    expect(readFileSync(join(cacheDir, url), 'utf8')).toBe(data)
+  })
+})
+
+describe('refresh', () => {
+  const entry = {
+    name: 'dsh-hello-plugin', version: '1.2.0', integrity: 'sha512-i', publishedAt: null,
+    repository: null, license: 'MIT', tier: 'community', metadata: 'derived',
+    added: '2026-08-25',
+  }
+
+  /** A cache written by a load two minutes ago — inside the five-minute
+   * freshness window, so the default path serves it without a fetch. */
+  function freshCache(): { fs: ReturnType<typeof memFs>; now: () => Date } {
+    const data = dataJson([entry])
+    const { pointer, url } = pointerFor(data, '2026-09-01T00:00:00Z')
+    const fs = memFs()
+    fs.write('/cache/index.json', pointer)
+    fs.write(`/cache/${url}`, data)
+    fs.write('/cache/index.meta.json', JSON.stringify({ fetchedAt: '2026-09-01T00:00:00Z' }))
+    return { fs, now: () => new Date('2026-09-01T00:02:00Z') }
+  }
+
+  it('serves a fresh cache without a fetch when refresh is not asked for', async () => {
+    const { fs, now } = freshCache()
+    let calls = 0
+    const fetchImpl = (async () => { calls += 1; throw new Error('must not fetch') }) as unknown as typeof fetch
+
+    const result = await loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs, now })
+
+    expect(calls).toBe(0)
+    expect(result.stale).toBe(false)
+    expect(result.snapshot.entries).toHaveLength(1)
+  })
+
+  it('goes to the network even when the cache is fresh', async () => {
+    // The Refresh button's whole job, and nothing named `refresh` in this
+    // file: deleting `!refresh &&` from the freshness guard left all 79 cases
+    // green, and the two cases in `index.test.ts` only assert that the flag
+    // was FORWARDED, against a stub loader that never reads it.
+    const { fs, now } = freshCache()
+    const newData = dataJson([entry, { ...entry, name: 'dsh-second-plugin' }])
+    const fresh = pointerFor(newData, '2026-09-01T00:01:00Z')
+    let calls = 0
+    const fetchImpl = (async (input: string | URL) => {
+      calls += 1
+      return new Response(String(input).endsWith('/index.json') ? fresh.pointer : newData, { status: 200 })
+    }) as unknown as typeof fetch
+
+    const result = await loadCatalog({
+      baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs, now, refresh: true,
+    })
+
+    expect(calls).toBeGreaterThan(0)
+    expect(result.stale).toBe(false)
+    // The served snapshot is the FETCHED one — a refresh that fetched and
+    // then returned the cache anyway would satisfy `calls` alone.
+    expect(result.snapshot.entries.map(e => e.name)).toEqual(['dsh-hello-plugin', 'dsh-second-plugin'])
+    expect(result.snapshot.builtAt).toBe('2026-09-01T00:01:00Z')
+  })
+
+  it('still degrades to the fresh cache when a refresh cannot reach the network', async () => {
+    // Refresh forgoes the shortcut, not the fallback: offline, the user gets
+    // the cache back labelled stale rather than an error.
+    const { fs, now } = freshCache()
+    const fetchImpl = (async () => { throw new Error('offline') }) as unknown as typeof fetch
+
+    const result = await loadCatalog({
+      baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: fs, now, refresh: true,
+    })
+
+    expect(result.stale).toBe(true)
+    expect(result.snapshot.entries).toHaveLength(1)
   })
 })

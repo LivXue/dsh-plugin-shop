@@ -1,15 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { readRepoPins, writeRepoPins, type RepoPinFs } from '../../src/host/repo-pins.ts'
-
-function memFs(): RepoPinFs & { files: Map<string, string> } {
-  const files = new Map<string, string>()
-  return {
-    files,
-    exists: path => files.has(path),
-    read: path => files.get(path) ?? '',
-    write: (path, data) => { files.set(path, data) },
-  }
-}
+import { readRepoPins, writeRepoPins } from '../../src/host/repo-pins.ts'
+// `RepoPinFs` is `CatalogFs`'s shape, so the shared fixture serves it. It was
+// the fourth hand-rolled copy in this directory and carried the same two
+// weaknesses as the others — a raw-string key and a `read` that answers `''`
+// where the real one throws — dormant only because `repo-pins.ts` never
+// builds a path of its own. See `mem-fs.ts`.
+import { memCatalogFs as memFs } from './mem-fs.ts'
 
 describe('readRepoPins', () => {
   const commit = 'a'.repeat(40)
@@ -31,7 +27,7 @@ describe('readRepoPins', () => {
 
   it('still drops a value that is neither a commit nor a tag', () => {
     const fs = memFs()
-    fs.files.set('/pins.json', JSON.stringify({
+    fs.write('/pins.json', JSON.stringify({
       good: commit,
       spaced: 'v1.0.0 & calc.exe',
       empty: '',
@@ -50,7 +46,7 @@ describe('readRepoPins', () => {
     // function as the installed commit, with outdated: true, for a package
     // that was never installed.
     const fs = memFs()
-    fs.files.set('/pins.json', JSON.stringify({ 'dsh-real': commit }))
+    fs.write('/pins.json', JSON.stringify({ 'dsh-real': commit }))
     const pins = readRepoPins(fs, '/pins.json')
     for (const inherited of ['constructor', 'toString', 'valueOf', 'hasOwnProperty', '__proto__']) {
       expect(pins[inherited], `${inherited} answered a lookup`).toBeUndefined()
@@ -61,9 +57,9 @@ describe('readRepoPins', () => {
   it('reads a missing or corrupt file as no memory', () => {
     const fs = memFs()
     expect(readRepoPins(fs, '/pins.json')).toEqual({})
-    fs.files.set('/pins.json', 'not json')
+    fs.write('/pins.json', 'not json')
     expect(readRepoPins(fs, '/pins.json')).toEqual({})
-    fs.files.set('/pins.json', '[1,2,3]')
+    fs.write('/pins.json', '[1,2,3]')
     expect(readRepoPins(fs, '/pins.json')).toEqual({})
   })
 })
