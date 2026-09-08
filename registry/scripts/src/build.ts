@@ -98,10 +98,10 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     // A tolerated shortfall does not stop the harvest, but it does mean this
     // build is missing that many packages, and nothing here can name them.
     // Collected so the published report says so — the count is the only
-    // honest thing available. Two allowances can tolerate one: registry
-    // count/paging noise inside the addressable window, and the API's own
-    // ceiling beyond it, bounded by MAX_UNREACHABLE_RESIDUAL. The record
-    // carries both terms so nothing here has to guess which applied.
+    // honest thing available. One count/paging noise allowance covers the
+    // whole keyword. Larger gaps require healthy recovery beyond one window
+    // and must fit MAX_UNREACHABLE_RESIDUAL. The record carries both terms
+    // for the report without claiming the missing names' cause is known.
     const shortfalls: KeywordShortfall[] = []
     const names = await searchByKeywords(fetch, undefined, npmToken, undefined, undefined, s => shortfalls.push(s))
     for (const s of shortfalls) {

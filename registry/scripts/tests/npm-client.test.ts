@@ -1614,16 +1614,39 @@ describe('searchByKeywords', () => {
         .rejects.toThrow(/recovered 26 of 30 .* under the 0\.9 floor/)
     })
 
-    it('bounds the window term at MAX_SEARCH_SHORTFALL, on its own', async () => {
-      // A one-name tail keeps the tail term inside the noise allowance, so
-      // the window bound is the only thing deciding. Exactly at the bound the
-      // build publishes; one name past it, it throws naming the window.
-      // Without an exact boundary here the comparison could be loosened to
-      // any value below SEARCH_WINDOW and every test would stay green.
-      const atBound = shortWindow(5251, SEARCH_WINDOW - MAX_SEARCH_SHORTFALL, 0, 0)
-      await expect(searchByKeywords(atBound)).resolves.toHaveLength(SEARCH_WINDOW - MAX_SEARCH_SHORTFALL)
+    it('names the window when it alone exceeds the noise allowance', async () => {
+      // The old boundary assertion accepted three window misses plus one
+      // tail miss. That spent the per-keyword noise allowance twice. A
+      // window term above the bound still names the window in its error.
       await expect(searchByKeywords(shortWindow(5251, SEARCH_WINDOW - MAX_SEARCH_SHORTFALL - 1, 0, 0)))
         .rejects.toThrow(/names its own window can address .* no partition can explain it/)
+    })
+
+    it.each([1, 2, 3])('requires recovery when three window misses accompany %i tail miss(es)', async (tailMissing) => {
+      // Four to six names are missing in total, with no tail recovered. Each
+      // term separately fits the three-name allowance, but their sum does
+      // not: these must take the recovery check, not publish as count noise.
+      const seen: KeywordShortfall[] = []
+      await expect(searchByKeywords(
+        shortWindow(5250 + tailMissing, 5247, 0, 0),
+        undefined, undefined, undefined, undefined, s => seen.push(s),
+      )).rejects.toThrow(new RegExp(`recovered 0 of ${tailMissing} .* under the 0\\.9 floor`))
+      expect(seen).toEqual([])
+    })
+
+    it.each([1, 2])('shares the three-name noise allowance with %i tail miss(es)', async (tailMissing) => {
+      const windowMissing = 3 - tailMissing
+      const seen: KeywordShortfall[] = []
+      const names = await searchByKeywords(
+        shortWindow(5250 + tailMissing, 5250 - windowMissing, 0, 0),
+        undefined, undefined, undefined, undefined, s => seen.push(s),
+      )
+      expect(names).toHaveLength(5250 - windowMissing)
+      expect(seen).toEqual([{
+        keyword: 'deepseek-harness', enumerated: 5250 - windowMissing,
+        required: 5250 + tailMissing, unreachable: tailMissing, recovered: 0,
+        windowShortfall: windowMissing, tailShortfall: tailMissing,
+      }])
     })
 
     it('names the window AND the cells when a partitioned keyword re-probes back inside', async () => {
@@ -1654,10 +1677,10 @@ describe('searchByKeywords', () => {
       const seen: KeywordShortfall[] = []
       const push = (s: KeywordShortfall) => seen.push(s)
       // A tail-only miss, a tail miss inside the noise allowance, a window
-      // miss with no tail at all, and a keyword that never left the window.
+      // and tail miss sharing the noise allowance, and an in-window keyword.
       await searchByKeywords(pastWindow(5407, 150), undefined, undefined, undefined, undefined, push)
       await searchByKeywords(pastWindow(5253, 0), undefined, undefined, undefined, undefined, push)
-      await searchByKeywords(shortWindow(5251, SEARCH_WINDOW - MAX_SEARCH_SHORTFALL, 0, 0), undefined, undefined, undefined, undefined, push)
+      await searchByKeywords(shortWindow(5251, 5248, 0, 0), undefined, undefined, undefined, undefined, push)
       await searchByKeywords(
         stubSearch({ 'keywords:dsh-plugin': 10, 'keywords:deepseek-harness': 0 },
           (query, from) => (query === 'keywords:dsh-plugin' && from === 0
@@ -1667,7 +1690,7 @@ describe('searchByKeywords', () => {
       )
       expect(seen).toHaveLength(4)
       expect(seen.map(s => [s.windowShortfall, s.tailShortfall])).toEqual([
-        [0, 7], [0, 3], [MAX_SEARCH_SHORTFALL, 1], [1, 0],
+        [0, 7], [0, 3], [2, 1], [1, 0],
       ])
       for (const s of seen) {
         expect(s.windowShortfall + s.tailShortfall).toBe(s.required - s.enumerated)

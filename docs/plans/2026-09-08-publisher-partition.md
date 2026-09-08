@@ -48,8 +48,11 @@ An earlier draft of this table read 5,410 / 160 / "159 of 160" / 3,042 while cit
 - **`registry/scripts/src/npm-client.ts`** (modify) — search pages surface `maintainers`; cells become query descriptors; publisher cells join the partition under a probe budget.
 - **`registry/scripts/tests/npm-client.test.ts`** (modify) — cell-descriptor and publisher-cell behaviour.
 - **`registry/scripts/src/build.ts`** (modify) — read and write `registry/publisher-state.json`. `existsSync`, `readFileSync` and `writeFileSync` are already imported there (line 15); no import change needed.
-- **`registry/scripts/src/classify.ts`** (modify) — same file, read side only, so the handoff run partitions identically.
+- **`registry/scripts/src/classify.ts`** (modify) — read prior publishers and carry newly observed usernames in `dist/harvest.json` for the build to persist.
 - **`registry/publisher-state.json`** (new, committed daily) — the vocabulary itself.
+- **`.github/workflows/daily.yml`** (modify) — stage the publisher vocabulary in the snapshot commit after the build writes it.
+- **`registry/scripts/tests/publisher-handoff.test.ts`** (new) — exercise both entry points and the next run's use of the persisted vocabulary with fixture fetches.
+- **`registry/scripts/tests/workflow.test.ts`**, **`registry/scripts/tests/repo-guards.test.ts`** (modify) — cover the new registry write and extended handoff.
 - **`docs/design/2026-08-18-dsh-plugin-shop-design.md`** (modify, Task 6 only) — the amendment recording what shipped.
 
 ---
@@ -755,36 +758,38 @@ tag, which is the only shape that has broken a build."
 
 ### Task 6: The pipeline persists the vocabulary
 
-Wire the file in, so the vocabulary survives the run that discovered it.
+Wire the file through both entry points and the snapshot commit, so the vocabulary survives the run that discovered it. CI runs `classify.ts` followed by `build.ts --harvest-from dist/harvest.json`; the build's direct npm-search branch does not execute there. The handoff must therefore carry publisher observations, and the writer must run after either branch.
 
 **Files:**
-- Modify: `registry/scripts/src/build.ts` (beside the npm search call, ~line 98)
-- Modify: `registry/scripts/src/classify.ts` (read side, beside its `repo-state.json` read at ~line 112)
+- Modify: `registry/scripts/src/build.ts` (read before the harvest branch; merge and write in the common artifact block)
+- Modify: `registry/scripts/src/classify.ts` (read prior state, collect observations and serialize them in the handoff)
+- Modify: `.github/workflows/daily.yml` (the snapshot commit's staged files)
 - Create: `registry/publisher-state.json`
 - Modify: `docs/design/2026-08-18-dsh-plugin-shop-design.md`
-- Test: `registry/scripts/tests/publisher-state.test.ts`
+- Create: `registry/scripts/tests/publisher-handoff.test.ts`
+- Modify: `registry/scripts/tests/workflow.test.ts`, `registry/scripts/tests/repo-guards.test.ts`
 
 **Interfaces:**
 - Consumes: `parsePublisherState`, `serializePublisherState`, `mergePublishers` (Task 1); `onPublishers` (Task 4); `publishers` (Task 5).
-- Produces: nothing later tasks read.
+- Produces: the handoff field `publishers: string[]`, containing sorted, unique usernames observed in this harvest, plus the merged `registry/publisher-state.json` that the next run reads.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write integration tests for the actual CI path**
 
-```ts
-it('starts from an empty vocabulary without special-casing the first run', () => {
-  // build.ts falls back to this shape when the file does not exist yet, so
-  // the first run must be an ordinary merge and not a branch.
-  const empty = { publishers: [] }
-  expect(serializePublisherState(empty)).toBe('{\n  "publishers": []\n}\n')
-  expect(mergePublishers(empty, ['alice']).publishers).toEqual(['alice'])
-  expect(parsePublisherState(serializePublisherState(empty)).publishers).toEqual([])
-})
-```
+Use a temporary registry and the existing subprocess-test patterns from `config.test.ts` and `strip-types.test.ts`. Run the real entry points with a fetch fixture loaded before the entry point using Node's `--import`; reject every unexpected URL. Disable LLM classification and GitHub harvesting through their existing configuration, with no live credentials or requests. Assert the files the entry points write, rather than mocking their modules or checking only source strings.
+
+- Start with an empty vocabulary. Give classifier search responses maintainers `bob`, `alice`, `bob`. Run `classify.ts` and assert `dist/harvest.json.publishers` is `['alice', 'bob']`, while the persistent vocabulary is still empty.
+- Feed that exact handoff to `build.ts --harvest-from`. Reject every npm fetch in the build fixture, proving that the handoff path ran. Assert the persistent vocabulary is now `['alice', 'bob']` and the log reports `publisher vocabulary 0 -> 2`.
+- Run the classifier again from that persisted state with an over-window keyword fixture and no new username observations. Assert it probes the seeded `maintainer:alice` and `maintainer:bob` cells. Pass its handoff through the build and assert neither old username is lost.
+- As a control, run the build's direct harvest from the same initial state and search fixtures. Its persisted vocabulary must match the classifier/handoff path byte for byte.
+- An older handoff with no `publishers` field preserves prior state. A present field that is `null`, a string, or an array containing an invalid username throws before any registry artifact is written.
+- Extend the workflow test so the new write is discovered and staged in **Commit the snapshot**, after `build:catalog`. Include the publisher file in the existing local Git fixture to verify its changed bytes reach the snapshot commit.
+
+The empty-state parse/merge test from Task 1 remains useful, but it cannot establish any of these entry-point or persistence properties.
 
 - [ ] **Step 2: Run it to make sure it fails**
 
-Run: `pnpm exec vitest run registry/scripts/tests/publisher-state.test.ts -t "empty vocabulary"`
-Expected: PASS already, since Task 1 built it this way. If it FAILS on the serialized form, fix `serializePublisherState` — an empty array must render `[]` on one line, which is what `JSON.stringify(…, null, 2)` does.
+Run: `NODE_DISABLE_COMPILE_CACHE=1 pnpm exec vitest run registry/scripts/tests/publisher-handoff.test.ts registry/scripts/tests/workflow.test.ts --no-cache`
+Expected: FAIL — the classifier drops its observations, the handoff build has no publisher writer, and the snapshot does not stage the file. A test that only round-trips an empty `PublisherState` will already pass and is insufficient here.
 
 - [ ] **Step 3: Write the wiring**
 
@@ -796,33 +801,64 @@ Create `registry/publisher-state.json`:
 }
 ```
 
-In `build.ts`, replace the npm search call with:
+In `build.ts`, read state and initialize observations **before** `if (harvestFrom === undefined)`, so both branches share them:
 
 ```ts
-    const publisherStatePath = join(REGISTRY_DIR, 'publisher-state.json')
-    const priorPublishers = existsSync(publisherStatePath)
-      ? parsePublisherState(readFileSync(publisherStatePath, 'utf8'))
-      : { publishers: [] }
-    const sawPublishers = new Set<string>()
-    const names = await searchByKeywords(
-      fetch, undefined, npmToken, undefined, undefined,
-      s => shortfalls.push(s),
-      users => { for (const u of users) sawPublishers.add(u) },
-      priorPublishers.publishers,
-    )
-    const nextPublishers = mergePublishers(priorPublishers, sawPublishers)
-    writeFileSync(publisherStatePath, serializePublisherState(nextPublishers))
-    process.stderr.write(
-      `npm: publisher vocabulary ${priorPublishers.publishers.length} -> ${nextPublishers.publishers.length}\n`)
+const publisherStatePath = join(REGISTRY_DIR, 'publisher-state.json')
+const priorPublishers = existsSync(publisherStatePath)
+  ? parsePublisherState(readFileSync(publisherStatePath, 'utf8'))
+  : { publishers: [] }
+const sawPublishers = new Set<string>()
 ```
 
-Add the import beside the other registry-state one:
+The direct-harvest branch passes its observations and seed into the search:
 
 ```ts
-import { mergePublishers, parsePublisherState, serializePublisherState } from './publisher-state.ts'
+const names = await searchByKeywords(
+  fetch, undefined, npmToken, undefined, undefined,
+  s => shortfalls.push(s),
+  users => { for (const u of users) sawPublishers.add(u) },
+  priorPublishers.publishers,
+)
 ```
 
-In `classify.ts`, read the same file and pass `publishers` to its own `searchByKeywords` call so the handoff run partitions identically. It does **not** write — `build.ts` owns the file, exactly as it owns `repo-state.json`.
+In the handoff branch, add `publishers?: unknown` to the parsed shape and validate a present field with the same parser used for persisted state. Absence supports older handoffs and means there are no new observations; a malformed present value must not silently become an empty list:
+
+```ts
+if (parsed.publishers !== undefined) {
+  const observed = parsePublisherState(JSON.stringify({ publishers: parsed.publishers }))
+  for (const username of observed.publishers) sawPublishers.add(username)
+}
+```
+
+In the **common successful artifact block**, beside the `first-seen.yml` write, merge and persist once. Keep this outside both harvest branches:
+
+```ts
+const nextPublishers = mergePublishers(priorPublishers, sawPublishers)
+writeFileSync(publisherStatePath, serializePublisherState(nextPublishers))
+process.stderr.write(
+  `npm: publisher vocabulary ${priorPublishers.publishers.length} -> ${nextPublishers.publishers.length}\n`)
+```
+
+Import `mergePublishers`, `parsePublisherState` and `serializePublisherState` into `build.ts` from `./publisher-state.ts`.
+
+In `classify.ts`, import `parsePublisherState`, read the same prior state and collect `sawPublishers` with the search call above. It owns the observations in the handoff; `build.ts` owns the persistent file. Extend the existing handoff write, retaining candidates, rejections and shortfalls:
+
+```ts
+const publishers = [...sawPublishers].sort()
+writeFileSync(join(DIST_DIR, 'harvest.json'),
+  `${JSON.stringify({ candidates, rejections, shortfalls, publishers })}\n`)
+```
+
+Update the existing handoff assertion in `repo-guards.test.ts` for the extended payload, retaining its check that shortfalls survive. The integration tests above must verify both shortfalls and publishers in the real handoff and build output.
+
+Finally, add `registry/publisher-state.json` to **Commit the snapshot** in `.github/workflows/daily.yml`:
+
+```bash
+git add registry/snapshots/manifest.lock registry/repo-state.json registry/first-seen.yml registry/publisher-state.json
+```
+
+Keep the existing event/ref guard, step ordering, scoped credentials and rebase conflict checks. The classifier commit must leave the publisher file for the snapshot commit, just as it leaves `first-seen.yml`. Ensure `workflow.test.ts` discovers the new `publisherStatePath` write; if its source parser does not recognize this shape, extend the parser and its fixture rather than exempting the file. A PR run proves the handoff and file write; persistence across GitHub runs is verified after merge, when the existing snapshot step is allowed to commit to `main`.
 
 Add the amendment to the design doc, after the 2026-09-08 follow-up:
 
@@ -832,24 +868,28 @@ Add the amendment to the design doc, after the 2026-09-08 follow-up:
 A `keywords:<harvest>,<refinement>` cell cannot reach a package carrying only the harvest keyword; `keywords:<harvest> maintainer:<user>` has no such blind spot, because every package has a maintainer. It has a different limitation — a cell can only be built for a publisher already SEEN — so it is a supplement, and the measurement says so: window-seeded publisher cells recover 95 of 157 where the refinement list recovers 156 of 157. What they uniquely reach is the family event: one publisher releasing together, ranking together at the bottom, sharing no tag. The `sayedev` incident was exactly that, and 14 of its 20 packages were already visible, so the cell was derivable from what the harvest had already read.
 
 The vocabulary is free (search responses carry `maintainers`), collected from EVERY cell rather than only the over-window one (`keywords:dsh-plugin` is fully enumerable today and adds 349 maintainers the harness window never shows), and persisted in `registry/publisher-state.json` — a committed, sorted, deterministic build input in the shape of `repo-state.json`, monotonic because the window that discovers a publisher is a shrinking fraction of the keyword. Probes are bounded by `PUBLISHER_PROBE_BUDGET_DEFAULT`; a run that hits the ceiling is partial, not wrong, and the 2026-09-08 coverage arithmetic still decides whether it may publish.
+
+CI carries observed usernames in the classifier's `dist/harvest.json`. The build merges them with prior state after either its direct harvest or the handoff branch, and the snapshot commit stages the vocabulary after the build writes it. Thus the next run receives the publishers discovered by the previous one even though CI never executes the build's direct npm search.
 ```
 
 - [ ] **Step 4: Run the tests and make sure they pass**
 
-Run: `pnpm exec vitest run && pnpm typecheck`
-Expected: PASS, whole registry suite. Do **not** run `pnpm build:catalog` — the PR's own `build` job is the live dry run and is the real check.
+Run: `NODE_DISABLE_COMPILE_CACHE=1 pnpm exec vitest run --no-cache` and `pnpm typecheck`.
+Expected: PASS, whole registry suite. Mutation-check the handoff field, the common writer placement and the workflow staging independently: dropping the field, moving the writer into the direct-harvest branch, or removing the staged path must fail the corresponding test. Save the working source before each mutation and restore those exact bytes in a `finally` block; do not restore from HEAD while the implementation is uncommitted. Keep Vitest and Node compile caches disabled, clear any experiment cache, and restore before the next run. Do **not** run `pnpm build:catalog` locally — the PR's `build` job provides the live dry run.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add registry/scripts/src/build.ts registry/scripts/src/classify.ts \
-        registry/publisher-state.json registry/scripts/tests/publisher-state.test.ts \
+        registry/publisher-state.json registry/scripts/tests/publisher-handoff.test.ts \
+        registry/scripts/tests/workflow.test.ts registry/scripts/tests/repo-guards.test.ts \
+        .github/workflows/daily.yml \
         docs/design/2026-08-18-dsh-plugin-shop-design.md
 git commit -m "feat(harvest): persist the publisher vocabulary across runs
 
-build.ts owns the file, classify.ts reads it — the same ownership
-repo-state.json has. Monotonic: a publisher discovered while 14 of their
-20 packages sat inside the window keeps working when all 20 fall outside."
+classify.ts carries publisher observations in the harvest handoff. build.ts
+merges and writes them after either harvest path, and the snapshot commit
+records the vocabulary for the next run."
 ```
 
 ---
@@ -867,6 +907,6 @@ Recorded so a later reader does not mistake an omission for an oversight.
 
 - `pnpm exec vitest run` — registry suite green.
 - `pnpm typecheck` — clean.
-- The PR's `build` job (live zero-write dry run) publishes, and its log shows `publisher vocabulary 0 -> N` with N in the thousands.
-- `registry/publisher-state.json` is committed and non-empty after the first live run.
+- The PR's `build` job completes its handoff build and writes a non-empty `registry/publisher-state.json`; the log shows `publisher vocabulary 0 -> N` with N in the thousands for the initial empty state.
+- After merge, the first successful `main` run commits that non-empty file. The next run reads it and probes publisher cells; a PR dry run does not exercise the guarded snapshot push.
 - The build report's npm line still distinguishes the two shortfall causes (PR #26's `describeShortfall`), and `recovered` has risen against the same `unreachable`.

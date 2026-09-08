@@ -89,11 +89,10 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
 
   const config = loadRegistryConfig(REGISTRY_DIR)
   // A tolerated shortfall publishes rather than stopping the build, but it
-  // means this harvest is missing that many packages. Two allowances can
-  // tolerate one and they have very different sizes — registry count/paging
-  // noise inside the addressable window (MAX_SEARCH_SHORTFALL), and the API's
-  // own ceiling beyond it (MAX_UNREACHABLE_RESIDUAL, eight times larger) — so
-  // the log names both terms via the shared describeShortfall. It is
+  // means this harvest is missing that many packages. MAX_SEARCH_SHORTFALL
+  // applies once to the whole keyword; larger gaps require healthy recovery
+  // beyond one window and must fit MAX_UNREACHABLE_RESIDUAL. The log names
+  // both terms via the shared describeShortfall. It is
   // collected here rather than only in build.ts because CI reuses THIS harvest
   // (`--harvest-from`), so build.ts's own search never runs there — which is
   // also why a message that lived only in build.ts was a message the daily run
