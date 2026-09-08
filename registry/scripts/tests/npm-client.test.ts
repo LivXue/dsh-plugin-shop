@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
+import { FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describeShortfall, parseKeywordShortfall, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
 import { ENTRY_PAYLOAD_MAX_BYTES, entryPayloadBytes } from '../src/gate.ts'
 import { MAX_TARBALL_BYTES } from '../src/github-client.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
@@ -639,6 +639,97 @@ describe('partitionKeyword', () => {
     // costs no request either.
     expect(probed).toContain('keywords:deepseek-harness,dsh,plugin')
     expect(probed).not.toContain('keywords:deepseek-harness,plugin,dsh')
+  })
+})
+
+describe('describeShortfall', () => {
+  /** A record whose two terms sum to the deficit, as the harvest emits them. */
+  const record = (over: Partial<KeywordShortfall> = {}): KeywordShortfall => ({
+    keyword: 'deepseek-harness',
+    enumerated: 5400,
+    required: 5407,
+    unreachable: 157,
+    recovered: 150,
+    windowShortfall: 0,
+    tailShortfall: 7,
+    ...over,
+  })
+
+  it('names the tail term with the counts that bound it', () => {
+    expect(describeShortfall(record())).toBe(
+      'keywords:deepseek-harness enumerated 5400 of 5407, missing 7 of the 157 names'
+      + ' the reported total puts beyond that window, of which the combined searches recovered 150',
+    )
+  })
+
+  it('names the window term against the window it could have addressed', () => {
+    expect(describeShortfall(record({
+      enumerated: 5248, required: 5251, unreachable: 0, recovered: 0, windowShortfall: 3, tailShortfall: 0,
+    }))).toBe(
+      `keywords:deepseek-harness enumerated 5248 of 5251, missing 3 inside the ${SEARCH_WINDOW}-name`
+      + ' query window, where every rank is addressable',
+    )
+  })
+
+  it('separates the two terms so neither reads as a clause of the other', () => {
+    // Both terms end in a subordinate clause ("where every rank is
+    // addressable", "of which the combined searches recovered 0"), so joining
+    // them with a bare `and` makes the second read as a continuation of the
+    // first's clause rather than as a second count. This shape is live:
+    // `emits one shortfall record per keyword` pins a [2, 1] split.
+    const both = describeShortfall(record({
+      enumerated: 5248, required: 5251, unreachable: 1, recovered: 0, windowShortfall: 2, tailShortfall: 1,
+    }))
+    expect(both).toBe(
+      `keywords:deepseek-harness enumerated 5248 of 5251, missing 2 inside the ${SEARCH_WINDOW}-name`
+      + ' query window, where every rank is addressable; 1 of the 1 names the reported total puts'
+      + ' beyond that window, of which the combined searches recovered 0',
+    )
+    expect(both).not.toContain('addressable and')
+  })
+})
+
+describe('parseKeywordShortfall', () => {
+  const handoff = {
+    keyword: 'deepseek-harness',
+    enumerated: 5400,
+    required: 5407,
+    unreachable: 157,
+    recovered: 150,
+    windowShortfall: 0,
+    tailShortfall: 7,
+  }
+
+  it('round-trips the record the harvest writes', () => {
+    expect(parseKeywordShortfall(handoff, 'handoff.json')).toEqual(handoff)
+  })
+
+  it('refuses a record missing any count, naming the field and the remedy', () => {
+    for (const field of ['enumerated', 'required', 'unreachable', 'recovered', 'windowShortfall', 'tailShortfall']) {
+      const { [field]: _dropped, ...rest } = handoff as Record<string, unknown>
+      expect(() => parseKeywordShortfall(rest, 'handoff.json'))
+        .toThrow(new RegExp(`no integer \\\`${field}\\\`; re-run the harvest`))
+    }
+    expect(() => parseKeywordShortfall({ ...handoff, keyword: 7 }, 'handoff.json'))
+      .toThrow(/no `keyword`/)
+  })
+
+  it('refuses a record whose terms do not sum to its own deficit', () => {
+    // The identity {@link KeywordShortfall} documents. Without it a handoff
+    // can carry two terms that describe a different gap than the
+    // enumerated/required pair printed beside them in the same sentence.
+    expect(() => parseKeywordShortfall({ ...handoff, tailShortfall: 6 }, 'handoff.json'))
+      .toThrow(/window and tail terms sum to 6, not the 7 names/)
+  })
+
+  it('refuses a record that describes no shortfall at all', () => {
+    // Both terms zero renders a sentence ending in a dangling "missing ".
+    // `onShortfall` cannot emit one, so only a hand-written or truncated
+    // handoff reaches here — which is the case this parser exists for.
+    expect(() => parseKeywordShortfall(
+      { ...handoff, enumerated: 10, required: 10, unreachable: 0, recovered: 0, windowShortfall: 0, tailShortfall: 0 },
+      'handoff.json',
+    )).toThrow(/enumerated 10 of 10, so it records no shortfall to describe/)
   })
 })
 
@@ -1491,11 +1582,14 @@ describe('searchByKeywords', () => {
       // The rate floor passes it (142/157 = 0.9045, above 0.9), so at the
       // former cap of 25 this published fifteen names short in silence. The
       // cap is what refuses it, and the message names the tail term.
+      // The cap is interpolated, not spelled: the sibling bound test admits
+      // any value in [9, 15), and at 12 this gap is still correctly refused,
+      // so a literal would redden this test for a reason it does not assert.
       await expect(searchByKeywords(pastWindow(5407, 142)))
-        .rejects.toThrow(/a tail shortfall of 15, past the 10 names a build may publish short/)
-      // And the family event it must still absorb: the `sayedev` shape took
-      // the residual to 7, which publishes.
-      await expect(searchByKeywords(pastWindow(5407, 150))).resolves.toHaveLength(5400)
+        .rejects.toThrow(new RegExp(`a tail shortfall of 15, past the ${MAX_UNREACHABLE_RESIDUAL} names a build may publish short`))
+      // The family event it must still absorb is `publishes when the
+      // partition recovers nearly all of what is out of reach`, which runs
+      // this same fixture and additionally asserts the shortfall record.
     })
 
     it('refuses when the residual outgrows what may be published short', async () => {
@@ -1532,16 +1626,45 @@ describe('searchByKeywords', () => {
       expect(MIN_UNREACHABLE_RECOVERY).toBeLessThan(1)
       // The cap is bracketed by two magnitudes this repo has actually
       // measured, and both bounds are load-bearing:
-      //   >= 7   the `sayedev` family took the residual from 1 to 7, and a
-      //          family event must be absorbed rather than redden the build.
+      //   >= 9   the `sayedev` family must be absorbed rather than redden the
+      //          build. Its residual read 7 on the day, but that 7 was SIX
+      //          family names past the window plus one name of the total
+      //          climbing mid-run; past the window `windowShortfall` is 0, so
+      //          that noise is charged to this cap. The same family on a full
+      //          MAX_SEARCH_SHORTFALL allowance is 6 + 3.
       //   < 15   PARTITION_KEYWORDS was measured FIFTEEN names short, and
       //          MAX_SEARCH_SHORTFALL's comment refuses any bound at or above
       //          that because it absorbs a real partition gap silently.
       // An earlier 25 sat outside the upper bound, on the reasoning that the
-      // family needed 20-plus of headroom — it needed 7. The two magnitudes
+      // family needed 20-plus of headroom — it needed 9. The two magnitudes
       // are compatible, so assert the window rather than a loose range.
-      expect(MAX_UNREACHABLE_RESIDUAL).toBeGreaterThanOrEqual(7)
+      expect(MAX_UNREACHABLE_RESIDUAL).toBeGreaterThanOrEqual(6 + MAX_SEARCH_SHORTFALL)
       expect(MAX_UNREACHABLE_RESIDUAL).toBeLessThan(15)
+    })
+
+    it('keeps the prose copies of the cap in step with the constant', () => {
+      // Hand-maintained copies of this bracket live in CLAUDE.md and in the
+      // spec, and nothing pinned either to the code: the value, the floor and
+      // the ceiling were all prose. That is how one cap value went stale in
+      // two documents at once and had to be corrected by hand. The repo
+      // already couples a doc to a decision this way — readme-pins.test.ts
+      // pins the README versions to package.json, and repo-guards.test.ts
+      // pins CLAUDE.md's release command to the workspace specifier.
+      const root = join(srcDir, '..', '..', '..')
+      const claude = readFileSync(join(root, 'CLAUDE.md'), 'utf8')
+      const spec = readFileSync(join(root, 'docs', 'design', '2026-08-18-dsh-plugin-shop-design.md'), 'utf8')
+      // Positive controls first, so a renamed heading or a moved paragraph
+      // cannot let this pass by scanning text that no longer discusses the cap.
+      expect(claude, 'CLAUDE.md no longer names the cap').toContain('MAX_UNREACHABLE_RESIDUAL')
+      expect(spec, 'the spec no longer states the residual bound').toMatch(/a residual of at most \d+ names/)
+      expect(claude).toContain(`\`MAX_UNREACHABLE_RESIDUAL\` (${MAX_UNREACHABLE_RESIDUAL})`)
+      expect(spec).toContain(`a residual of at most ${MAX_UNREACHABLE_RESIDUAL} names`)
+      // The BRACKET, not just the value. A copy that keeps the number while
+      // losing the magnitudes that bound it is how 25 passed review once.
+      for (const [name, doc] of [['CLAUDE.md', claude], ['the spec', spec]] as const) {
+        expect(doc, `${name} lost the bracket floor`).toMatch(new RegExp(`at least \\*{0,2}${6 + MAX_SEARCH_SHORTFALL}\\b`))
+        expect(doc, `${name} lost the bracket ceiling`).toMatch(/under \*{0,2}15\b/)
+      }
     })
 
     it('divides the labour: the rate cannot catch a partition gap, the cap can', () => {
@@ -1549,16 +1672,29 @@ describe('searchByKeywords', () => {
       // it — so above this crossover every rate violation is already a cap
       // violation and the rate decides nothing but which message prints.
       const crossover = MAX_UNREACHABLE_RESIDUAL / (1 - MIN_UNREACHABLE_RECOVERY)
-      expect(crossover).toBeCloseTo(100, 6)
-      // The live tail is already past it (168 on 2026-09-08), so the cap is
-      // what actually governs, and it must be sized for that job.
-      expect(168).toBeGreaterThan(crossover)
-      // The case that settles the sizing: the FIFTEEN-name partition gap this
-      // repo measured, against the live tail. The rate waves it through —
-      // 15 of 157 is 9.6% missing, inside the 10% a 0.9 floor allows — so the
-      // cap is the only thing that can refuse it, and it does.
-      expect(15 / 157).toBeLessThan(1 - MIN_UNREACHABLE_RECOVERY)
-      expect(15).toBeGreaterThan(MAX_UNREACHABLE_RESIDUAL)
+      // The tail from which the FIFTEEN-name partition gap first clears the
+      // floor, derived rather than dated: a 0.9 floor permits a tenth of the
+      // tail, so 150. `Math.round` and not `Math.ceil` — `1 - 0.9` is
+      // 0.09999999999999998, which puts the quotient a hair above 150 and
+      // would make a ceiling answer 151.
+      const gap = 15
+      const clearsFloorFrom = Math.round(gap / (1 - MIN_UNREACHABLE_RECOVERY))
+      expect(clearsFloorFrom).toBe(150)
+      // THE DIVISION OF LABOUR: that tail is past the crossover, so by the
+      // time a gap this size can satisfy the rate, the rate was already inert
+      // and the cap is the only bound left holding it. Asserted as a relation
+      // and not as `crossover === 100`, which would pin the cap to exactly 10
+      // and make the sibling test's deliberately loose bracket unreachable —
+      // the relation holds across all of [9, 15).
+      expect(clearsFloorFrom).toBeGreaterThan(crossover)
+      // And the rate really does wave it through there. Written the way
+      // production writes it, `rate < floor`, because the complementary form
+      // `missing / tail < 1 - floor` disagrees at EVERY exact-90% tail:
+      // `1 - 0.9` is strictly below a tenth, so it reports a refusal where
+      // searchByKeywords accepts. Which bound then refuses the gap is the
+      // sibling test's `< 15`; the behaviour is `refuses the fifteen-name
+      // partition gap at the live tail size`.
+      expect((clearsFloorFrom - gap) / clearsFloorFrom).not.toBeLessThan(MIN_UNREACHABLE_RECOVERY)
     })
 
     /** A partitioned keyword whose WINDOW comes up short while its cell
