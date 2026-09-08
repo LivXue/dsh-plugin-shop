@@ -2585,6 +2585,8 @@
   category: integration
 - name: "@ljwei-stak/dsh-approval-gate"
   category: workflow
+- name: "@ljwei-stak/ppt-master-for-mgr"
+  category: tool
 - name: "@lk251066/dsh-tui"
   category: ui
 - name: "@lmber/dsh-token-usage-stats"
@@ -3285,6 +3287,8 @@
   category: tool
 - name: "@shatyuka/dsh-llm-codebuddy"
   category: integration
+- name: "@shawnkung/dsh-balance-monitor"
+  category: ui
 - name: "@sheep233_/dsh-web-search-free"
   category: provider
 - name: "@shelken/dsh-co-authored-by"
@@ -3797,6 +3801,8 @@
   category: integration
 - name: "@wenqi_bian/dsh-dashboard"
   category: ui
+- name: "@wenqi_bian/dsh-deepseek-balance"
+  category: ui
 - name: "@wenqi_bian/dsh-web-search-anysearch"
   category: provider
 - name: "@wesley168/dsh-weather"
@@ -3939,6 +3945,8 @@
   category: tool
 - name: "@xiaoso/dsh-turn-navigator"
   category: ui
+- name: "@xiaoxia/dsh-soul-memory"
+  category: tool
 - name: "@xiaoxin/dsh-rewind"
   category: tool
 - name: "@xiaoyao-ai/dsh-client-ui-skin-black-whale"
@@ -6323,6 +6331,8 @@
   category: tool
 - name: "dsh-chat-nav"
   category: ui
+- name: "dsh-chat-navigator"
+  category: ui
 - name: "dsh-chat-outline"
   category: ui
 - name: "dsh-chat-rail"
@@ -7881,6 +7891,8 @@
   category: tool
 - name: "dsh-dictation"
   category: tool
+- name: "dsh-diff-card"
+  category: ui
 - name: "dsh-diff-stat"
   category: tool
 - name: "dsh-diff-view"
@@ -8125,6 +8137,8 @@
   category: tool
 - name: "dsh-duobaxian"
   category: theme
+- name: "dsh-dupguard"
+  category: tool
 - name: "dsh-duration"
   category: tool
 - name: "dsh-duty-separation-proof"
@@ -11077,8 +11091,6 @@
   category: tool
 - name: "dsh-mimo-agent-tools"
   category: tool
-- name: "dsh-mimo-link"
-  category: ui
 - name: "dsh-mimo-memory"
   category: workflow
 - name: "dsh-mimo-vision-hint"
@@ -11197,6 +11209,8 @@
   category: ui
 - name: "dsh-mobile-gate"
   category: tool
+- name: "dsh-mobile-gateway"
+  category: integration
 - name: "dsh-mobile-gui-agent"
   category: tool
 - name: "dsh-mobile-hanui"
@@ -13873,6 +13887,8 @@
   category: ui
 - name: "dsh-quota-dashboard"
   category: ui
+- name: "dsh-quota-hub"
+  category: ui
 - name: "dsh-quota-meter"
   category: ui
 - name: "dsh-quota-monitor"
@@ -14450,6 +14466,8 @@
 - name: "dsh-sandbox-allowlist"
   category: tool
 - name: "dsh-sandbox-escalation-fix"
+  category: tool
+- name: "dsh-sandbox-guide"
   category: tool
 - name: "dsh-sandbox-permissions-not-strictly-wider-justification-empty-fix"
   category: tool
@@ -15065,6 +15083,8 @@
   category: tool
 - name: "dsh-sign"
   category: tool
+- name: "dsh-signal"
+  category: ui
 - name: "dsh-silent-pwsh"
   category: tool
 - name: "dsh-siliconflow-vision"
@@ -15417,6 +15437,8 @@
   category: workflow
 - name: "dsh-specline"
   category: other
+- name: "dsh-speech"
+  category: tool
 - name: "dsh-speech-input"
   category: ui
 - name: "dsh-speech-plugin"
@@ -17896,6 +17918,8 @@
 - name: "dsh-write-create-only"
   category: tool
 - name: "dsh-write-gate"
+  category: tool
+- name: "dsh-write-protect"
   category: tool
 - name: "dsh-write-rule-guard"
   category: tool
