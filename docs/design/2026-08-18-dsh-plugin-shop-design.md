@@ -466,6 +466,53 @@ The structural options each change what the shop publishes or how loudly it fail
 
 Until one is chosen, each crossing costs a red build and a hand-measured refinement.
 
+**Amendment (2026-09-08, follow-up): the wall measured, and two of the premises above corrected.**
+
+The amendment above was written from the failure. This one is written from probing the API directly, and it moves two facts.
+
+*Corrections.*
+
+- **`maintainer:` IS a filter, and it composes with `keywords:`.** "The only filter the API honors" is wrong. Measured live: `keywords:deepseek-harness maintainer:<nonexistent>` returns **0**, not the unfiltered total, and `maintainer:bowenliang123` returns 2 alone and 2 intersected with the keyword. What genuinely is NOT honored — every one of these returns the unfiltered 5,407, i.e. no filtering at all — is `is:unstable`, `not:unstable`, `is:insecure`, `not:insecure`, `is:deprecated`, `not:deprecated` and `scope:`. So the "no negation" half stands, and "keywords is the only filter" does not.
+
+  **What this does NOT buy, stated because the obvious inference is wrong.** Every package has a maintainer and not every package has a second keyword, so a publisher partition has no *structural* blind spot where a refinement partition does. That argues it should cover more. **Measured, it covers less**: seeded from the window's own 3,041 maintainers, publisher cells recover **95 of the 157** unreachable names (60.5%), against the shipped refinement list's **156 of 157** (99.4%). The structural advantage is real and the discovery constraint dominates it — a cell can only be queried for a maintainer already SEEN, and a single fat refinement (`keywords:deepseek-harness,dsh` alone recovers 123) reaches far more of the tail than the straddling condition a publisher cell needs. Publisher partitioning is therefore a **supplement aimed at a specific failure mode, never a replacement**; see the step-function note below for the mode it is aimed at.
+- **The CouchDB replication database is alive.** `https://replicate.npmjs.com/` answers 200 with `doc_count: 4369123` and a working `_changes` feed. What 404s is the `byKeyword` *view*, which is a different object. The feed carries **165,689 changes/day** (measured over 91s of `update_seq` movement), so a provably-complete index is a real option with a real price, not an absent one — and that price is two orders of magnitude above the ~5,700 packument fetches an npm-side run costs today.
+
+*What the wall actually is.* Not missing data. npm counts the unreachable names in the `total` it answers and simply will not address them: `from` is capped at 5,000 and `size` at 250, so only ranks 0–5,249 can be asked for. Worse than an error — **the API silently wraps**: `from=5100` and `from=5250` both return the FIRST page of the result set (verified: both answer `dsh-context`, rank 0). A harvester without the `from > MAX_SEARCH_FROM` throw would re-read one page forever and report success.
+
+*The truncation is not random — it is biased against exactly what the shelf exists to surface.* npm ranks by score, so the tail is the lowest-scoring, which is the newest. Sampled 250 per position:
+
+| ranks | median age | ≤7 days | >60 days |
+|---|---|---|---|
+| 0–249 | 5 d | 157/250 | 0/250 |
+| 2500–2749 | 19 d | 27/250 | 0/250 |
+| **5000–5249** | **3 d** | **222/250** | 0/250 |
+
+Confirmed against `time.created` rather than the search `date` (which is last-publish): the tail sample was **created** 1–9 days ago, so these are genuinely new packages and not old ones recently touched. Nothing in 750 sampled packages was updated more than 60 days ago, so the whole keyword population is younger than two months and has grown at a roughly constant ~83–90 names/day since it existed.
+
+*The residual is a step function, not a drift.* The obvious model — residual grows at the growth rate times the uncovered fraction — is wrong, and the live runs disprove it: total went 5,401 → 5,407 in a day while the union went 5,400 → 5,406, so the cells absorbed every one of the six new names and **the residual stayed at 1**. New packages mostly carry `dsh` or `dsh-plugin`, which existing cells already reach. What actually breaks the build is a *cluster*: one publisher releasing a family at once, ranking together at the bottom, sharing no refinement tag. That is the `sayedev` family of 20 (`keywords:deepseek-harness,deepwatch` is 20 names, all of them that one maintainer) which took the residual from 1 to 7 in a single day. **A tag-shaped recovery against a publisher-shaped risk is a category error**, and `deepwatch` closed the incident only because that family happened to share a private tag. The next one need not.
+
+This is the whole case for publisher cells, and it is a narrow one: 14 of that family's 20 were already visible, so `maintainer:sayedev` was derivable from what the harvest had ALREADY read and its cell recovers all 20 — no human noticing a private tag, no list to extend. A refinement list cannot reach that family by construction unless someone adds the tag after the build has already gone red. So the two axes divide by what they are good at rather than competing: refinements carry the ordinary tail at 99.4%, publisher cells absorb the discrete family events that take the residual past any tolerance. The seed for the publisher axis should be every search result the harvest reads, not just the over-window keyword's window — `keywords:dsh-plugin` is fully enumerable today and contributes **349 maintainers the harness window never shows** (3,390 combined against 3,041) — and it should be PERSISTED across runs the way `repo-state.json` already persists repositories, so coverage accumulates monotonically instead of being re-derived each run from a window that is a shrinking fraction of the whole.
+
+*The second keyword has about three weeks left.* `keywords:dsh-plugin` measured 3,731 on 2026-09-04 (recorded in D7) and **3,952 on 2026-09-08** — about 55 names/day against 1,298 of headroom, so it crosses `SEARCH_WINDOW` in **late September or early October 2026**. That is not merely a second keyword to partition: `dsh-plugin` is fully enumerable today and therefore contributes **349 maintainers the `deepseek-harness` window never shows** (2,256 of its own against 3,041 from the harness window; 3,390 combined). When it crosses, that free seed shrinks — at the moment it is most needed.
+
+**Root cause of the red build, stated separately from the fix: one constant carries two quantities that have opposite properties.** {@link MAX_SEARCH_SHORTFALL} was reasoned about, correctly, as a bound on npm answering a `total` it cannot serve — an overstated count, a 249-object page — and its own comment explains why it is 3 and not 15: "A partition gap is hundreds of names", so a looser bound would absorb a real gap silently. It now also has to absorb *unreachability*, which is a different animal:
+
+| | race / overstatement | unreachable |
+|---|---|---|
+| magnitude | 1–3 | `total − SEARCH_WINDOW`; 157 today |
+| growth | none | tracks the keyword, ~83/day |
+| nature | noise; a re-page may close it | reported tail beyond one query's window |
+| evidence | seen live: a window paged 5,247 of 5,250 mid-run | seen live: `enumerated 5406 of 5407` |
+
+A bound sized for the first cannot hold the second, and a bound sized for the second hides a partition collapse — precisely what the existing comment refuses to allow. **So the two are separated before any partition work is done**, because every option in the amendment above needs the distinction and none of them supplies it. The harvest computes `max(0, required − SEARCH_WINDOW)` from the minimum of the probed totals, reports recovery against this single-window tail, and requires both a recovery rate of at least 90% and a residual of at most 25 names for gaps larger than the noise allowance. Every tolerated shortfall is reported.
+
+Two boundary conditions apply to that calculation. **Count/paging noise is independent of the window:** an aggregate shortfall of at most `MAX_SEARCH_SHORTFALL` (3) remains tolerated and reported on either side. A total of 5,251 can be an overstatement of 5,250 real names, so treating it as a proven one-name tail would falsely diagnose a 0% recovery. The allowance applies once per keyword, to the sum of its window and tail deficits. For example, enumerating 5,247 of 5,253 leaves three names on each term, six missing overall, and zero tail recovery; it must fail the recovery floor. Larger aggregate gaps must satisfy the window bound, the rate floor and the residual cap.
+
+**The retry window is a union of two observations, not one fixed ranking.** Its distinct-name count can exceed 5,250. Recovery is `max(0, enumerated − SEARCH_WINDOW)`, counting the combined searches' union beyond one window's capacity. Subtracting a smaller measured sweep would credit the refinements with in-window names that the sweep omitted, so the capacity remains the reference even when the sweep serves short. Conversely, moving 20 already recovered names into the retry window at a total of 5,407 and a union of 5,400 must leave recovery at 150/157; subtracting all 5,270 window names would incorrectly lower it to 130/157. `windowShortfall` is the union's deficit below `min(required, SEARCH_WINDOW)`; `tailShortfall` is the remaining deficit. They are conservative count bounds, not observed ranks, and sum exactly to the aggregate shortfall. The build report carries both terms; a window-bound error also includes the sweep's measured count for diagnosis.
+
+This does mean the catalog can be **knowingly published a few names short**, which is a change to "throws rather than truncating" and is stated here as one. The invariant it preserves is the one that matters: nothing is ever *silently* short. `total` is what makes that possible, and it is why no design here may stop comparing against it.
+
+
 **Amendment (2026-09-07): entries carry `unpackedSize`, the shelf prints it, the category tabs take their category's hue, and the bar gains an incompatible filter.**
 
 *`unpackedSize`.* npm entries carry the packument's `dist.unpackedSize` — the bytes an install puts on disk. Additive and optional, so it rides every `schemaVersion` (a consumer's non-strict zod strips a key it does not know; bumping the version NUMBER is the change that breaks a capped client, §6.2). The registry bounds it at harvest and DROPS anything that is not a safe non-negative integer, rather than rejecting the package: a size is a decoration, so a broken one costs the size and not the listing. Measured 2026-09-07, 250 of 250 live `dsh-plugin` packages carry one (min 25 kB, median 847 kB, max 180 MB), so the absent branch is for publishes older than npm 5.6.

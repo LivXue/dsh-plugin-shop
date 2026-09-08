@@ -19,7 +19,7 @@ import { fetchStarCounts } from './github-stars.ts'
 import { HARVEST_TOPICS, REPO_BACKFILL_BUDGET_DEFAULT, harvestRepos, parseHarvestBudget } from './github-client.ts'
 import { parseRepoState, repoGoneDetail, serializeRepoState } from './repo-state.ts'
 import { githubOwnerName } from './github-repo.ts'
-import { fetchCandidates, searchByKeywords, type KeywordShortfall } from './npm-client.ts'
+import { fetchCandidates, searchByKeywords, describeShortfall, parseKeywordShortfall, type KeywordShortfall } from './npm-client.ts'
 import { pagesArtifactNames } from './pages-artifacts.ts'
 import { runPipeline, selectEntries } from './pipeline.ts'
 import { CATALOG_SCHEMA_VERSION, SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION } from './emit.ts'
@@ -80,8 +80,12 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   const config = loadRegistryConfig(REGISTRY_DIR)
   let candidates: Candidate[]
   let rejections: Rejection[]
-  /** Tolerated npm search shortfalls, for the published report. */
-  let npmNote = ''
+  /** Tolerated npm search shortfalls, one entry per keyword, for the
+   * published report. An array rather than a string built with an inline
+   * separator sentinel: each entry now spans two clauses of its own, so a
+   * hand-rolled `'; '` between them read as a delimiter at two nesting
+   * levels once both harvest keywords were past the window. */
+  const npmParts: string[] = []
   if (harvestFrom === undefined) {
     // registry.npmmirror.com does not implement the `keywords:` qualifier this
     // search depends on — measured 2026-09-03, it answers
@@ -91,15 +95,18 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     // a stalled or 5xx npmjs search would publish a zero-name harvest with a
     // green build rather than failing loud. The search below therefore takes
     // no backup argument; classify.ts's harvest call carries the same fix.
-    // A shortfall inside MAX_SEARCH_SHORTFALL does not stop the harvest, but it
-    // does mean this build is missing that many packages, and nothing here can
-    // name them. Collected so the published report says so — the count is the
-    // only honest thing available.
+    // A tolerated shortfall does not stop the harvest, but it does mean this
+    // build is missing that many packages, and nothing here can name them.
+    // Collected so the published report says so — the count is the only
+    // honest thing available. One count/paging noise allowance covers the
+    // whole keyword. Larger gaps require healthy recovery beyond one window
+    // and must fit MAX_UNREACHABLE_RESIDUAL. The record carries both terms
+    // for the report without claiming the missing names' cause is known.
     const shortfalls: KeywordShortfall[] = []
     const names = await searchByKeywords(fetch, undefined, npmToken, undefined, undefined, s => shortfalls.push(s))
     for (const s of shortfalls) {
-      npmNote += `${npmNote === '' ? '' : '; '}keywords:${s.keyword} enumerated ${s.enumerated} of ${s.required}`
-      process.stderr.write(`npm: keywords:${s.keyword} enumerated ${s.enumerated} of ${s.required} names, within the tolerated shortfall\n`)
+      npmParts.push(describeShortfall(s))
+      process.stderr.write(`npm: ${describeShortfall(s)}\n`)
     }
     process.stderr.write(`harvested ${names.length} npm candidate(s)\n`)
     const harvested = await fetchCandidates(names, fetch, npmToken, npmBackupRegistry)
@@ -114,10 +121,13 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     }
     candidates = parsed.candidates as Candidate[]
     rejections = parsed.rejections as Rejection[]
-    // Optional: a handoff written before this field existed simply carries
-    // none, and an older build reading a newer handoff ignores it.
-    for (const s of Array.isArray(parsed.shortfalls) ? parsed.shortfalls as KeywordShortfall[] : []) {
-      npmNote += `${npmNote === '' ? '' : '; '}keywords:${s.keyword} enumerated ${s.enumerated} of ${s.required}`
+    // Optional as a WHOLE — a handoff that recorded no shortfall carries no
+    // array — but each record present is validated, because its fields are
+    // interpolated into a published report. The cast this replaced rendered
+    // `undefined` into dist/v1/report.md from any handoff missing a field,
+    // under a comment claiming such a handoff was ignored. Nothing ignored it.
+    for (const raw of Array.isArray(parsed.shortfalls) ? parsed.shortfalls : []) {
+      npmParts.push(describeShortfall(parseKeywordShortfall(raw, `--harvest-from ${harvestFrom}`)))
     }
     process.stderr.write(`reusing harvest: ${candidates.length} npm candidate(s)\n`)
   }
@@ -296,7 +306,7 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   writeFileSync(join(OUT_DIR, 'badge.json'), artifacts.badgeJson)
   writeFileSync(join(REGISTRY_DIR, 'snapshots/manifest.lock'), artifacts.manifestLock)
   writeFileSync(join(REGISTRY_DIR, 'first-seen.yml'), serializeFirstSeen(artifacts.firstSeen))
-  const npmLine = npmNote === '' ? '' : `\nnpm search shortfall (tolerated, packages missing from this build): ${npmNote}\n`
+  const npmLine = npmParts.length === 0 ? '' : `\nnpm search shortfall (tolerated, packages missing from this build):\n${npmParts.map(part => `- ${part}\n`).join('')}`
   const repoLine = repoNote === '' ? '' : `\nGitHub: ${repoNote}\n`
   writeFileSync(join(OUT_DIR, 'report.md'), `${artifacts.report}\nStars: ${starsNote}\n${npmLine}${repoLine}`)
 

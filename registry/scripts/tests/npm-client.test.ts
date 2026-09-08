@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
+import { FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
 import { ENTRY_PAYLOAD_MAX_BYTES, entryPayloadBytes } from '../src/gate.ts'
 import { MAX_TARBALL_BYTES } from '../src/github-client.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
@@ -1032,10 +1032,17 @@ describe('searchByKeywords', () => {
     )
   })
 
-  it('throws when the refinement cells do not cover the keyword', async () => {
-    // No negation qualifier exists, so a partition is never covering by
-    // construction — the shortfall must be measured and refused, never
-    // published as a short harvest.
+  it('throws, naming the WINDOW, when the addressable range itself came up short', async () => {
+    // Renamed against what this fixture actually builds. Its window cell
+    // serves nothing at all — `pages` answers `[]` for `keywords:dsh-plugin` —
+    // so 5,240 of the 5,290 missing names are at ranks the registry WILL
+    // serve, and the fault is the window, not the cells. The old single
+    // message said "the refinement keywords do not cover the keyword", which
+    // was the only thing it could say and was the wrong half.
+    //
+    // The genuine uncovered-tail case now has its own test: see 'refuses when
+    // the partition collapses' below, where the window is healthy and the
+    // cells reach nothing past it.
     const totals: Record<string, number> = {
       'keywords:dsh-plugin': 5300,
       'keywords:dsh-plugin,dsh': 10,
@@ -1045,8 +1052,13 @@ describe('searchByKeywords', () => {
       query === 'keywords:dsh-plugin,dsh' && from === 0
         ? Array.from({ length: 10 }, (_, i) => `n${i}`)
         : [])
+    // "reached only 10" is the UNION's in-window coverage, not the sweep's:
+    // the sweep served nothing and the cell's 10 names are charged to the
+    // window, because a cell name that cannot be proved to lie past the
+    // window must not be credited as tail recovery. The sweep's own figure is
+    // in the parenthetical, which is where the two halves are told apart.
     await expect(searchByKeywords(fetchImpl)).rejects.toThrow(
-      /npm search for keywords:dsh-plugin enumerated 10 of 5300 names across 1 partition cell\(s\) plus the keyword's own reachable window, and a second full pass found no more; the refinement keywords do not cover the keyword/,
+      /reached only 10 of the 5250 names its own window can address \(its window sweep served 0, beside 1 refinement cell\(s\)\).*inside the reachable range, so no partition can explain it/,
     )
   })
 
@@ -1241,7 +1253,36 @@ describe('searchByKeywords', () => {
     const seen: KeywordShortfall[] = []
     const names = await searchByKeywords(fetchImpl, undefined, undefined, undefined, undefined, s => seen.push(s))
     expect(names).toEqual(['dsh-real'])
-    expect(seen).toEqual([{ keyword: 'dsh-plugin', enumerated: 1, required: 2 }])
+    expect(seen).toEqual([{ keyword: 'dsh-plugin', enumerated: 1, required: 2, unreachable: 0, recovered: 0, windowShortfall: 1, tailShortfall: 0 }])
+  })
+
+  it('does not blame a partition for a short final page at exactly the window', async () => {
+    // Pre-existing, and the mirror of the overstated total this harvest
+    // already tolerates: a keyword whose total is EXACTLY SEARCH_WINDOW is
+    // not partitioned at all (partitionKeyword returns `[[keyword]]` for any
+    // total that fits), so its one cell is paged with pastWindow: 'throw'.
+    // Let the last page serve 249 of 250 — the registry anomaly this module
+    // cites twice — and `from` advances to 5250, past the cap, and the build
+    // died with "the partition is wrong" naming a partition that does not
+    // exist. A cell whose own answered total fits the window can never need
+    // a page past the cap, so reaching there is count/paging noise for the
+    // shortfall bounds to measure.
+    const { fetchImpl } = stubSearch(
+      { 'keywords:dsh-plugin': SEARCH_WINDOW, 'keywords:deepseek-harness': 0 },
+      (query, from) => {
+        if (query !== 'keywords:dsh-plugin') return []
+        // 250 per page except the last, which is one object short.
+        const size = from === MAX_SEARCH_FROM ? 249 : 250
+        return Array.from({ length: size }, (_, i) => `p${from + i}`)
+      },
+    )
+    const seen: KeywordShortfall[] = []
+    await expect(searchByKeywords(fetchImpl, undefined, undefined, undefined, undefined, s => seen.push(s)))
+      .resolves.toHaveLength(SEARCH_WINDOW - 1)
+    expect(seen).toEqual([{
+      keyword: 'dsh-plugin', enumerated: SEARCH_WINDOW - 1, required: SEARCH_WINDOW,
+      unreachable: 0, recovered: 0, windowShortfall: 1, tailShortfall: 0,
+    }])
   })
 
   describe('a shortfall small enough to be registry noise', () => {
@@ -1271,13 +1312,19 @@ describe('searchByKeywords', () => {
     ).fetchImpl
 
     it('publishes, and reports the shortfall instead of swallowing it', async () => {
-      const seen: { keyword: string; enumerated: number; required: number }[] = []
+      const seen: KeywordShortfall[] = []
       const names = await searchByKeywords(shortBy(9), undefined, undefined, undefined, undefined, (s: KeywordShortfall) => seen.push(s))
       expect(names).toHaveLength(9)
       // Not silent: the caller gets the numbers so the build report can carry
       // them. Nothing else can name the missing package — that is the whole
       // difficulty — so the count is the honest thing to publish.
-      expect(seen).toEqual([{ keyword: 'dsh-plugin', enumerated: 9, required: 10 }])
+      // `unreachable: 0` is the point: this keyword fits the window, so its
+      // shortfall is registry noise and not the API's ceiling. The two are
+      // now distinguishable in the build report.
+      expect(seen).toEqual([{
+        keyword: 'dsh-plugin', enumerated: 9, required: 10,
+        unreachable: 0, recovered: 0, windowShortfall: 1, tailShortfall: 0,
+      }])
     })
 
     it('tolerates a shortfall exactly at the bound and refuses one past it', async () => {
@@ -1302,6 +1349,353 @@ describe('searchByKeywords', () => {
       // And large enough for the mechanisms it exists for: npm overstating a
       // total by one, plus a page or two serving 249 objects of 250.
       expect(MAX_SEARCH_SHORTFALL).toBeGreaterThanOrEqual(1)
+    })
+  })
+
+  describe('a shortfall beyond one search window', () => {
+    // The two quantities MAX_SEARCH_SHORTFALL used to carry alone. They have
+    // opposite properties and one bound cannot hold both:
+    //
+    //   race / overstatement   1-3, no growth, a re-page may close it
+    //   unreachable            total - SEARCH_WINDOW, grows with the keyword,
+    //                          reported tail beyond ONE search window
+    //
+    // Live on 2026-09-07 the second was 151 names against a bound of 3, so the
+    // daily build went red on every tree. Sizing the bound for that would put
+    // it far above the FIFTEEN-name partition gap this repo has actually seen,
+    // which is exactly what MAX_SEARCH_SHORTFALL's own comment refuses.
+    //
+    // Counts can still be noisy above the window, and rankings can change
+    // between passes. Both regressions are exercised below.
+
+    /** A keyword past the window: `total` names exist, the window serves the
+     * first SEARCH_WINDOW of them, and one refinement cell serves `recovered`
+     * of the rest. Mirrors the live shape — a window cell that stops at the
+     * window, plus cells that reach past it. */
+    const pastWindow = (total: number, recovered: number, movedOnRetry = 0) => {
+      const beyond = Array.from({ length: total - SEARCH_WINDOW }, (_, i) => `beyond${i}`)
+      const window = Array.from({ length: SEARCH_WINDOW }, (_, i) => `w${i}`)
+      let windowPass = 0
+      // The cell always carries one IN-window name on top of what it recovers.
+      // A cell whose total is 0 is dropped by `partitionKeyword` before the
+      // coverage check ever sees it, so `recovered: 0` has to mean "a live
+      // cell that reaches nothing new", not "no cell".
+      const cell = ['w0', ...beyond.slice(0, recovered)]
+      return stubSearch(
+        query => (query === 'keywords:deepseek-harness' ? total
+          : query === 'keywords:deepseek-harness,dsh' ? cell.length
+          : 0),
+        (query, from) => {
+          if (query === 'keywords:deepseek-harness') {
+            if (from === 0) windowPass += 1
+            // Ranking can change without the total changing. The retry moves
+            // already recovered tail names into a still-full window.
+            const ranked = windowPass > 1 && movedOnRetry > 0
+              ? [...window.slice(0, -movedOnRetry), ...beyond.slice(0, movedOnRetry)]
+              : window
+            return from > MAX_SEARCH_FROM ? [] : ranked.slice(from, from + 250)
+          }
+          if (query === 'keywords:deepseek-harness,dsh') return cell.slice(from, from + 250)
+          return []
+        },
+      ).fetchImpl
+    }
+
+    it('publishes when the partition recovers nearly all of what is out of reach', async () => {
+      // 5407 names, 157 past the window, cells recover 150 of them. The
+      // residual of 7 is far past MAX_SEARCH_SHORTFALL and is NOT a defect:
+      // it is the API's own limit, measured. This is the case that was red.
+      const seen: KeywordShortfall[] = []
+      await expect(
+        searchByKeywords(pastWindow(5407, 150), undefined, undefined, undefined, undefined, s => seen.push(s)),
+      ).resolves.toHaveLength(SEARCH_WINDOW + 150)
+      expect(seen).toHaveLength(1)
+      expect(seen[0]).toMatchObject({ keyword: 'deepseek-harness', unreachable: 157, recovered: 150 })
+    })
+
+    it.each([0, 20])('keeps coverage when %i recovered names move into the retry window', async (moved) => {
+      // The union is 5400 in both runs. Moving 20 names merely grows the
+      // two-window union to 5270; it must not change recovery from 150/157
+      // to 130/157. Seven missing names keeps this outside the noise branch,
+      // so restoring the noise allowance alone cannot make this test pass.
+      const seen: KeywordShortfall[] = []
+      const names = await searchByKeywords(
+        pastWindow(5407, 150, moved), undefined, undefined, undefined, undefined, s => seen.push(s),
+      )
+      expect(names).toHaveLength(5400)
+      expect(names).toContain('w5249') // displaced in the retry, retained from pass one
+      expect(names).toContain('beyond149')
+      expect(names).not.toContain('beyond150')
+      expect(seen).toEqual([{
+        keyword: 'deepseek-harness', enumerated: 5400, required: 5407, unreachable: 157, recovered: 150,
+        // The whole shortfall is charged to the tail: the window served every
+        // rank it can address in both runs, so moving 20 names between passes
+        // must not book itself as an in-window miss.
+        windowShortfall: 0, tailShortfall: 7,
+      }])
+    })
+
+    it.each([1, 3])('tolerates a total overstated by %i across the window boundary', async (overstatement) => {
+      // Exactly 5250 real names: both the window and its refinement serve
+      // all of them. Only the parent query's reported total is inflated.
+      const { fetchImpl } = stubSearch(
+        { 'keywords:deepseek-harness': 5250 + overstatement, 'keywords:deepseek-harness,dsh': 5250 },
+        (query, from) => query === 'keywords:deepseek-harness' || query === 'keywords:deepseek-harness,dsh'
+          ? Array.from({ length: Math.max(0, Math.min(250, 5250 - from)) }, (_, i) => `real${from + i}`)
+          : [],
+      )
+      const seen: KeywordShortfall[] = []
+      const names = await searchByKeywords(fetchImpl, undefined, undefined, undefined, undefined, s => seen.push(s))
+      expect(names).toHaveLength(5250)
+      expect(seen).toEqual([{
+        keyword: 'deepseek-harness', enumerated: 5250, required: 5250 + overstatement,
+        unreachable: overstatement, recovered: 0,
+        // An overstated total invents names PAST the window, so the phantom
+        // lands on the tail term — and the tail carries the same bounded
+        // noise allowance as the window, which is why it publishes.
+        windowShortfall: 0, tailShortfall: overstatement,
+      }])
+    })
+
+    it('still requires recovery for a four-name tail, past the noise allowance', async () => {
+      await expect(searchByKeywords(pastWindow(5254, 0))).rejects.toThrow(/recovered 0 of 4/)
+    })
+
+    it('accepts the recovery floor and rejects a single name below it', async () => {
+      // 135/150 = 90%; 134/150 < 90%. Both residuals fit the 25-name cap.
+      await expect(searchByKeywords(pastWindow(5400, 135))).resolves.toHaveLength(5385)
+      await expect(searchByKeywords(pastWindow(5400, 134))).rejects.toThrow(/under the 0\.9 floor/)
+    })
+
+    it('accepts the residual cap exactly', async () => {
+      // 725/750 is healthy and leaves exactly 25 names missing.
+      await expect(searchByKeywords(pastWindow(6000, 725))).resolves.toHaveLength(5975)
+    })
+
+    it('refuses when the partition collapses, however small the keyword', async () => {
+      // Same 157 out of reach, cells recover NOTHING. An absolute-residual
+      // bound loose enough to pass the case above would pass this one too;
+      // a recovery RATE cannot, which is the whole point of the split.
+      await expect(searchByKeywords(pastWindow(5407, 0)))
+        .rejects.toThrow(/recovered 0 of 157/)
+    })
+
+    it('refuses when the residual outgrows what may be published short', async () => {
+      // A high rate is not sufficient on its own: at 15% window coverage the
+      // same rate leaves thousands missing. The absolute cap is what says how
+      // many names the catalog may knowingly omit, and crossing it is the
+      // signal that the partition has to get better — not that the bound
+      // should get looser.
+      const beyond = 6000 - SEARCH_WINDOW
+      await expect(searchByKeywords(pastWindow(6000, beyond - MAX_UNREACHABLE_RESIDUAL - 1)))
+        .rejects.toThrow(/past the .* names a build may publish short/)
+    })
+
+    it('keeps the race bound exactly as it was for a keyword inside the window', async () => {
+      // Nothing is unreachable here, so a shortfall is registry noise and the
+      // old bound governs unchanged — the split must not loosen this half.
+      const inWindow = (served: number) => stubSearch(
+        { 'keywords:dsh-plugin': 10, 'keywords:deepseek-harness': 0 },
+        (query, from) => (query === 'keywords:dsh-plugin' && from === 0
+          ? Array.from({ length: served }, (_, i) => `p${i}`)
+          : []),
+      ).fetchImpl
+      await expect(searchByKeywords(inWindow(10 - MAX_SEARCH_SHORTFALL)))
+        .resolves.toHaveLength(10 - MAX_SEARCH_SHORTFALL)
+      await expect(searchByKeywords(inWindow(10 - MAX_SEARCH_SHORTFALL - 1)))
+        .rejects.toThrow(/enumerated \d+ of 10 names/)
+    })
+
+    it('bounds each constant by the magnitudes this repo has measured', () => {
+      // The rate floor has to catch a single cell dying. `dsh` alone recovers
+      // 123 of a 157-name tail live, so losing it takes the rate far below
+      // the floor. A floor under 0.5 could not do that.
+      expect(MIN_UNREACHABLE_RECOVERY).toBeGreaterThanOrEqual(0.75)
+      expect(MIN_UNREACHABLE_RECOVERY).toBeLessThan(1)
+      // The absolute cap has to absorb one publisher family — the `sayedev`
+      // event was 20 names, 7 of which were missing. The upper bound is the
+      // one that matters and the loose `< 100` this replaced expressed
+      // nothing: it admitted 99, while the sibling test three describes up
+      // asserts MAX_SEARCH_SHORTFALL < 15 precisely because a bound at or
+      // above the FIFTEEN-name partition gap absorbs it silently. This cap
+      // cannot be under 15 and still hold the family, so bound it at twice
+      // that gap — enough for the family, and far enough from a hundred that
+      // raising it is a deliberate act with a test to change.
+      expect(MAX_UNREACHABLE_RESIDUAL).toBeGreaterThanOrEqual(7)
+      expect(MAX_UNREACHABLE_RESIDUAL).toBeLessThanOrEqual(30)
+    })
+
+    it('states, rather than implies, that the cap outruns the rate floor', () => {
+      // The property the constants' comments used to get backwards. A rate
+      // floor's strictness decays with the tail: above this crossover every
+      // rate violation is already a cap violation, so the floor decides
+      // nothing but which message prints, and the cap alone says how many
+      // names may go missing. `deepseek-harness` passes 250 within days of
+      // this landing, so the regime below is the one it will run in.
+      const crossover = MAX_UNREACHABLE_RESIDUAL / (1 - MIN_UNREACHABLE_RECOVERY)
+      expect(crossover).toBeCloseTo(250, 6)
+      // And the honest consequence, asserted so a future edit cannot quietly
+      // restore the claim that the rate covers the fifteen-name gap: at the
+      // live 157-name tail it does not.
+      expect(15 / 157).toBeLessThan(1 - MIN_UNREACHABLE_RECOVERY)
+      expect(15).toBeLessThanOrEqual(MAX_UNREACHABLE_RESIDUAL)
+    })
+
+    /** A partitioned keyword whose WINDOW comes up short while its cell
+     * carries some of the very names the window missed. `inWindowFromCell`
+     * names are ranked inside the window but served only by the cell. */
+    const shortWindow = (total: number, served: number, inWindowFromCell: number, tailFromCell: number) => {
+      const beyond = Array.from({ length: total - SEARCH_WINDOW }, (_, i) => `beyond${i}`)
+      const window = Array.from({ length: SEARCH_WINDOW }, (_, i) => `w${i}`)
+      // The sweep serves the first `served` ranks; the cell carries the next
+      // `inWindowFromCell` of them plus `tailFromCell` names past the window.
+      // `w0` rides along so a cell that adds nothing is still LIVE — a cell
+      // whose total is 0 is dropped by partitionKeyword before the coverage
+      // check sees it, and the sweep already served w0, so the union is
+      // unchanged by it.
+      const cell = [
+        'w0',
+        ...window.slice(served, served + inWindowFromCell),
+        ...beyond.slice(0, tailFromCell),
+      ]
+      return stubSearch(
+        query => (query === 'keywords:deepseek-harness' ? total
+          : query === 'keywords:deepseek-harness,dsh' ? cell.length
+          : 0),
+        (query, from) => {
+          if (query === 'keywords:deepseek-harness') {
+            return from > MAX_SEARCH_FROM ? [] : window.slice(0, served).slice(from, from + 250)
+          }
+          if (query === 'keywords:deepseek-harness,dsh') return cell.slice(from, from + 250)
+          return []
+        },
+      ).fetchImpl
+    }
+
+    it('never credits an in-window name a cell supplied as tail recovery', async () => {
+      // The defect this pins. Tail of 30, the cells genuinely reach 26 of it
+      // (86.7%, under the floor), and the window sweep is 3 names short —
+      // inside its own allowance, so nothing else refuses this build.
+      // Measuring recovery against the sweep's CONTRIBUTION books those 3
+      // window misses as tail finds, reports 29 of 30 (96.7%) and publishes.
+      // Measuring against what the window can ADDRESS reports 26 and throws.
+      await expect(searchByKeywords(shortWindow(5280, 5247, 3, 26)))
+        .rejects.toThrow(/recovered 26 of 30 .* under the 0\.9 floor/)
+      // Control, holding true tail coverage fixed and healing the window: the
+      // verdict must not depend on which half produced an in-window name.
+      await expect(searchByKeywords(shortWindow(5280, 5250, 0, 26)))
+        .rejects.toThrow(/recovered 26 of 30 .* under the 0\.9 floor/)
+    })
+
+    it('charges a window miss the cells covered to the tail, and says so', async () => {
+      // The documented COST of charging every ambiguous name to the window.
+      // A cell answers with names and no ranks, so this run — sweep 4 short,
+      // cells returning 157 names — is byte-identical to one where the sweep
+      // was whole and the cells missed 4 tail names. The arithmetic cannot
+      // separate them, so it picks the reading that cannot be used to pay for
+      // a partition gap, and the 4 names land on the tail term under the
+      // tail's larger allowance rather than throwing at the window's 3.
+      //
+      // Pinned because it looks like a bug and is not: the alternative is
+      // measuring recovery against the sweep, which is what let a 26-of-30
+      // tail publish as 29 of 30 in the test above.
+      const seen: KeywordShortfall[] = []
+      await expect(
+        searchByKeywords(shortWindow(5407, 5246, 0, 157), undefined, undefined, undefined, undefined, s => seen.push(s)),
+      ).resolves.toHaveLength(5403)
+      expect(seen).toEqual([{
+        keyword: 'deepseek-harness', enumerated: 5403, required: 5407,
+        unreachable: 157, recovered: 153, windowShortfall: 0, tailShortfall: 4,
+      }])
+      // And the same four names with a tail too small to absorb them still
+      // fail loudly — the tolerance comes from the tail's size, not from the
+      // ambiguity.
+      await expect(searchByKeywords(shortWindow(5280, 5246, 0, 30)))
+        .rejects.toThrow(/recovered 26 of 30 .* under the 0\.9 floor/)
+    })
+
+    it('names the window when it alone exceeds the noise allowance', async () => {
+      // The old boundary assertion accepted three window misses plus one
+      // tail miss. That spent the per-keyword noise allowance twice. A
+      // window term above the bound still names the window in its error.
+      await expect(searchByKeywords(shortWindow(5251, SEARCH_WINDOW - MAX_SEARCH_SHORTFALL - 1, 0, 0)))
+        .rejects.toThrow(/names its own window can address .* no partition can explain it/)
+    })
+
+    it.each([1, 2, 3])('requires recovery when three window misses accompany %i tail miss(es)', async (tailMissing) => {
+      // Four to six names are missing in total, with no tail recovered. Each
+      // term separately fits the three-name allowance, but their sum does
+      // not: these must take the recovery check, not publish as count noise.
+      const seen: KeywordShortfall[] = []
+      await expect(searchByKeywords(
+        shortWindow(5250 + tailMissing, 5247, 0, 0),
+        undefined, undefined, undefined, undefined, s => seen.push(s),
+      )).rejects.toThrow(new RegExp(`recovered 0 of ${tailMissing} .* under the 0\\.9 floor`))
+      expect(seen).toEqual([])
+    })
+
+    it.each([1, 2])('shares the three-name noise allowance with %i tail miss(es)', async (tailMissing) => {
+      const windowMissing = 3 - tailMissing
+      const seen: KeywordShortfall[] = []
+      const names = await searchByKeywords(
+        shortWindow(5250 + tailMissing, 5250 - windowMissing, 0, 0),
+        undefined, undefined, undefined, undefined, s => seen.push(s),
+      )
+      expect(names).toHaveLength(5250 - windowMissing)
+      expect(seen).toEqual([{
+        keyword: 'deepseek-harness', enumerated: 5250 - windowMissing,
+        required: 5250 + tailMissing, unreachable: tailMissing, recovered: 0,
+        windowShortfall: windowMissing, tailShortfall: tailMissing,
+      }])
+    })
+
+    it('names the window AND the cells when a partitioned keyword re-probes back inside', async () => {
+      // `partitioned` is decided on the FIRST probe and `required` on the
+      // last, so a keyword hovering at the boundary partitions and then
+      // re-probes to a total that fits. Branching the message on `unreachable`
+      // instead of `partitioned` sent this case to the text written for a
+      // keyword that never partitioned — naming neither half, which is the
+      // fault the split exists to remove.
+      let probes = 0
+      const { fetchImpl } = stubSearch(
+        query => (query === 'keywords:deepseek-harness'
+          // 5300 on the first probe, 5240 on every later one.
+          ? (probes++ === 0 ? 5300 : 5240)
+          : query === 'keywords:deepseek-harness,dsh' ? 10 : 0),
+        (query, from) => (query === 'keywords:deepseek-harness,dsh' && from === 0
+          ? Array.from({ length: 10 }, (_, i) => `n${i}`)
+          : []),
+      )
+      await expect(searchByKeywords(fetchImpl))
+        .rejects.toThrow(/its own window can address \(its window sweep served 0, beside 1 refinement cell\(s\)\)/)
+    })
+
+    it('keeps the two terms summing to the shortfall on every reported record', async () => {
+      // The identity the split rests on. If it ever fails, one of the two
+      // bounds is being applied to a quantity that is not what it names, and
+      // the report's arithmetic stops adding up for a reader.
+      const seen: KeywordShortfall[] = []
+      const push = (s: KeywordShortfall) => seen.push(s)
+      // A tail-only miss, a tail miss inside the noise allowance, a window
+      // and tail miss sharing the noise allowance, and an in-window keyword.
+      await searchByKeywords(pastWindow(5407, 150), undefined, undefined, undefined, undefined, push)
+      await searchByKeywords(pastWindow(5253, 0), undefined, undefined, undefined, undefined, push)
+      await searchByKeywords(shortWindow(5251, 5248, 0, 0), undefined, undefined, undefined, undefined, push)
+      await searchByKeywords(
+        stubSearch({ 'keywords:dsh-plugin': 10, 'keywords:deepseek-harness': 0 },
+          (query, from) => (query === 'keywords:dsh-plugin' && from === 0
+            ? Array.from({ length: 9 }, (_, i) => `p${i}`)
+            : [])).fetchImpl,
+        undefined, undefined, undefined, undefined, push,
+      )
+      expect(seen).toHaveLength(4)
+      expect(seen.map(s => [s.windowShortfall, s.tailShortfall])).toEqual([
+        [0, 7], [0, 3], [2, 1], [1, 0],
+      ])
+      for (const s of seen) {
+        expect(s.windowShortfall + s.tailShortfall).toBe(s.required - s.enumerated)
+        expect(s.recovered + s.tailShortfall).toBe(s.unreachable)
+      }
     })
   })
 
