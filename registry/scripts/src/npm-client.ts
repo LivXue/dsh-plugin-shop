@@ -81,10 +81,11 @@ export const MAX_SEARCH_SHORTFALL = 3
  * partition that breaks takes the rate to near zero and still fails loudly;
  * the API's own ceiling leaves a small residual with the rate high. Note the
  * strictness DECAYS as the tail grows — a 0.9 floor permits 10% of it — so
- * above a tail of {@link MAX_UNREACHABLE_RESIDUAL} / (1 - this floor) = 250
+ * above a tail of {@link MAX_UNREACHABLE_RESIDUAL} / (1 - this floor) = 100
  * names every rate violation already violates that cap and the rate decides
- * nothing but which message prints. The keyword this was written for passes
- * 250 within days. The floor is kept because below that size it is the
+ * nothing but which message prints. The keyword this was written for is
+ * ALREADY past that crossover (a 168-name tail on 2026-09-08), so the cap is
+ * what governs today. The floor is kept because below that size it is the
  * STRICTER of the two and refuses gaps the cap would wave through; it is not
  * kept because it adds coverage above it.
  */
@@ -101,26 +102,39 @@ export const MIN_UNREACHABLE_RECOVERY = 0.9
  * of what may be omitted, and crossing it means the PARTITION has to improve;
  * it is not a number to raise.
  *
- * 25 absorbs one publisher family: the `sayedev` event was 20 packages
- * released together, 7 of which fell past the window with no shared
- * refinement. It cannot also stay under the fifteen-name partition gap this
- * repo has measured, and it errs toward the family.
+ * TWO MEASURED MAGNITUDES BRACKET IT, and the value is not free to sit
+ * outside them:
  *
- * Say plainly what that costs, because the arithmetic is not obvious and an
- * earlier draft of this comment got it backwards: {@link
- * MIN_UNREACHABLE_RECOVERY} does NOT catch the fifteen-name gap at the tail
- * sizes this keyword now has. 15 missing of a 157-name tail is a rate of
- * 0.904 — above the 0.9 floor — and a residual of 15, under this cap. Both
- * bounds pass and the build publishes fifteen names short. The rate only
- * refuses a fifteen-name gap while the tail is under 150. Closing that means
- * a smaller cap, a higher floor, or a partition axis that shrinks the tail
- * itself; it is a policy call, and it is recorded here rather than implied.
+ *   floor   a publisher family must be absorbed. The `sayedev` event took the
+ *           residual from 1 to **7** in a day — 20 packages released
+ *           together, 7 of which fell past the window sharing no refinement.
+ *           So the headroom a family needs is 7, not 20.
+ *   ceiling a real partition gap must NOT be absorbed. PARTITION_KEYWORDS was
+ *           measured **15** names short the day after it was documented as
+ *           complete, and {@link MAX_SEARCH_SHORTFALL}'s comment refuses a
+ *           bound at or above 15 for exactly that reason.
+ *
+ * 7 <= this < 15, and 10 sits in the middle with margin on both sides.
+ *
+ * An earlier value of 25 read the family as needing 20-plus of headroom and
+ * concluded the two magnitudes could not both be honoured — "it errs toward
+ * the family". They can: the family's cost is a residual of 7. 25 was above
+ * the one threshold this repo says must never be crossed, and it leaned on
+ * {@link MIN_UNREACHABLE_RECOVERY} to catch the gap instead. That does not
+ * work at the tail sizes this keyword now has: 15 missing of a 157-name tail
+ * is a rate of 0.904, above the 0.9 floor, so both bounds passed and a build
+ * fifteen names short would have published. At 10 the cap refuses it.
+ *
+ * Headroom against the live shape, so lowering this is not a red build: the
+ * residual has been exactly 1 across four consecutive readings while the
+ * total moved 5,401 -> 5,418 (2026-09-07/08). A family event would take it to
+ * about 7. Both are inside 10.
  *
  * A tolerated residual is never silent — {@link searchByKeywords} reports the
  * numbers to its caller, and {@link describeShortfall} puts both the window
  * and the tail term in the build report and the CI log.
  */
-export const MAX_UNREACHABLE_RESIDUAL = 25
+export const MAX_UNREACHABLE_RESIDUAL = 10
 
 /** One keyword that enumerated fewer names than its own total promised. */
 export interface KeywordShortfall {
@@ -164,7 +178,7 @@ export interface KeywordShortfall {
 export function describeShortfall(s: KeywordShortfall): string {
   const parts: string[] = []
   if (s.windowShortfall > 0) {
-    parts.push(`${s.windowShortfall} inside the ${SEARCH_WINDOW}-name query window, where every rank is addressable (registry count/paging noise allowance)`)
+    parts.push(`${s.windowShortfall} inside the ${SEARCH_WINDOW}-name query window, where every rank is addressable`)
   }
   if (s.tailShortfall > 0) {
     parts.push(`${s.tailShortfall} of the ${s.unreachable} names the reported total puts beyond that window, of which the combined searches recovered ${s.recovered}`)

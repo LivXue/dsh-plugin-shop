@@ -1462,14 +1462,18 @@ describe('searchByKeywords', () => {
     })
 
     it('accepts the recovery floor and rejects a single name below it', async () => {
-      // 135/150 = 90%; 134/150 < 90%. Both residuals fit the 25-name cap.
-      await expect(searchByKeywords(pastWindow(5400, 135))).resolves.toHaveLength(5385)
-      await expect(searchByKeywords(pastWindow(5400, 134))).rejects.toThrow(/under the 0\.9 floor/)
+      // 45/50 = 90%; 44/50 < 90%. The tail is deliberately SMALL: it has to
+      // leave the rate as the only thing deciding, and a 150-name tail at the
+      // floor leaves 15 missing, which MAX_UNREACHABLE_RESIDUAL now refuses
+      // on its own. Both residuals here (5 and 6) are inside that cap.
+      await expect(searchByKeywords(pastWindow(5300, 45))).resolves.toHaveLength(5295)
+      await expect(searchByKeywords(pastWindow(5300, 44))).rejects.toThrow(/under the 0\.9 floor/)
     })
 
     it('accepts the residual cap exactly', async () => {
-      // 725/750 is healthy and leaves exactly 25 names missing.
-      await expect(searchByKeywords(pastWindow(6000, 725))).resolves.toHaveLength(5975)
+      // 740/750 is healthy and leaves exactly MAX_UNREACHABLE_RESIDUAL missing.
+      await expect(searchByKeywords(pastWindow(6000, 750 - MAX_UNREACHABLE_RESIDUAL)))
+        .resolves.toHaveLength(SEARCH_WINDOW + 750 - MAX_UNREACHABLE_RESIDUAL)
     })
 
     it('refuses when the partition collapses, however small the keyword', async () => {
@@ -1478,6 +1482,20 @@ describe('searchByKeywords', () => {
       // a recovery RATE cannot, which is the whole point of the split.
       await expect(searchByKeywords(pastWindow(5407, 0)))
         .rejects.toThrow(/recovered 0 of 157/)
+    })
+
+    it('refuses the fifteen-name partition gap at the live tail size', async () => {
+      // THE case the cap was re-sized for, as behaviour rather than as a
+      // bound on a constant. 157 out of reach, cells recover 142 — the shape
+      // PARTITION_KEYWORDS took the day after it was documented as complete.
+      // The rate floor passes it (142/157 = 0.9045, above 0.9), so at the
+      // former cap of 25 this published fifteen names short in silence. The
+      // cap is what refuses it, and the message names the tail term.
+      await expect(searchByKeywords(pastWindow(5407, 142)))
+        .rejects.toThrow(/a tail shortfall of 15, past the 10 names a build may publish short/)
+      // And the family event it must still absorb: the `sayedev` shape took
+      // the residual to 7, which publishes.
+      await expect(searchByKeywords(pastWindow(5407, 150))).resolves.toHaveLength(5400)
     })
 
     it('refuses when the residual outgrows what may be published short', async () => {
@@ -1512,33 +1530,35 @@ describe('searchByKeywords', () => {
       // the floor. A floor under 0.5 could not do that.
       expect(MIN_UNREACHABLE_RECOVERY).toBeGreaterThanOrEqual(0.75)
       expect(MIN_UNREACHABLE_RECOVERY).toBeLessThan(1)
-      // The absolute cap has to absorb one publisher family — the `sayedev`
-      // event was 20 names, 7 of which were missing. The upper bound is the
-      // one that matters and the loose `< 100` this replaced expressed
-      // nothing: it admitted 99, while the sibling test three describes up
-      // asserts MAX_SEARCH_SHORTFALL < 15 precisely because a bound at or
-      // above the FIFTEEN-name partition gap absorbs it silently. This cap
-      // cannot be under 15 and still hold the family, so bound it at twice
-      // that gap — enough for the family, and far enough from a hundred that
-      // raising it is a deliberate act with a test to change.
+      // The cap is bracketed by two magnitudes this repo has actually
+      // measured, and both bounds are load-bearing:
+      //   >= 7   the `sayedev` family took the residual from 1 to 7, and a
+      //          family event must be absorbed rather than redden the build.
+      //   < 15   PARTITION_KEYWORDS was measured FIFTEEN names short, and
+      //          MAX_SEARCH_SHORTFALL's comment refuses any bound at or above
+      //          that because it absorbs a real partition gap silently.
+      // An earlier 25 sat outside the upper bound, on the reasoning that the
+      // family needed 20-plus of headroom — it needed 7. The two magnitudes
+      // are compatible, so assert the window rather than a loose range.
       expect(MAX_UNREACHABLE_RESIDUAL).toBeGreaterThanOrEqual(7)
-      expect(MAX_UNREACHABLE_RESIDUAL).toBeLessThanOrEqual(30)
+      expect(MAX_UNREACHABLE_RESIDUAL).toBeLessThan(15)
     })
 
-    it('states, rather than implies, that the cap outruns the rate floor', () => {
-      // The property the constants' comments used to get backwards. A rate
-      // floor's strictness decays with the tail: above this crossover every
-      // rate violation is already a cap violation, so the floor decides
-      // nothing but which message prints, and the cap alone says how many
-      // names may go missing. `deepseek-harness` passes 250 within days of
-      // this landing, so the regime below is the one it will run in.
+    it('divides the labour: the rate cannot catch a partition gap, the cap can', () => {
+      // A rate floor's strictness DECAYS with the tail — 0.9 permits 10% of
+      // it — so above this crossover every rate violation is already a cap
+      // violation and the rate decides nothing but which message prints.
       const crossover = MAX_UNREACHABLE_RESIDUAL / (1 - MIN_UNREACHABLE_RECOVERY)
-      expect(crossover).toBeCloseTo(250, 6)
-      // And the honest consequence, asserted so a future edit cannot quietly
-      // restore the claim that the rate covers the fifteen-name gap: at the
-      // live 157-name tail it does not.
+      expect(crossover).toBeCloseTo(100, 6)
+      // The live tail is already past it (168 on 2026-09-08), so the cap is
+      // what actually governs, and it must be sized for that job.
+      expect(168).toBeGreaterThan(crossover)
+      // The case that settles the sizing: the FIFTEEN-name partition gap this
+      // repo measured, against the live tail. The rate waves it through —
+      // 15 of 157 is 9.6% missing, inside the 10% a 0.9 floor allows — so the
+      // cap is the only thing that can refuse it, and it does.
       expect(15 / 157).toBeLessThan(1 - MIN_UNREACHABLE_RECOVERY)
-      expect(15).toBeLessThanOrEqual(MAX_UNREACHABLE_RESIDUAL)
+      expect(15).toBeGreaterThan(MAX_UNREACHABLE_RESIDUAL)
     })
 
     /** A partitioned keyword whose WINDOW comes up short while its cell
