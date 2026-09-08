@@ -149,6 +149,16 @@ export const MIN_UNREACHABLE_RECOVERY = 0.9
  * {@link PARTITION_KEYWORDS} carries the readings and their dates. A family
  * event takes the residual to 9. Both are inside 10.
  *
+ * A THIRD magnitude is coming and the bracket has no room for it. The two
+ * above are both `keywords:deepseek-harness`, whose uncovered set is one
+ * name; `keywords:dsh-plugin` crosses the window about 2026-09-29 with
+ * 4.4% of its bottom band carrying no refinement, and its 81 uncovered
+ * names sit under one owner holding 21 — twice this cap, in a single
+ * family. Read {@link PARTITION_KEYWORDS}' second-keyword section before
+ * touching this value: the answer is not a larger number here, because
+ * raising it walks toward the gap the ceiling refuses, and the structural
+ * options are policy and live in the design doc.
+ *
  * A tolerated residual is never silent — {@link searchByKeywords} reports the
  * numbers to its caller, and {@link describeShortfall} puts both the window
  * and the tail term in the build report and the CI log.
@@ -477,9 +487,29 @@ export function parseKeywordShortfall(value: unknown, where: string): KeywordSho
  * bands (21, 22, 17 and 21 per thousand ranks) but the bottom 250 — which is
  * what the first tail page will be made of — runs 11 of 250, 4.4%.
  *
- * At 4.4% of the tail the residual reaches {@link MAX_UNREACHABLE_RESIDUAL}
- * at a tail of about 227 names, four days past the crossing at 55 a day; a
- * 250-name sample puts the rate between 1.9% and 6.9%, so three to ten days.
+ * DO NOT turn that 4.4% into a date by multiplying it against the tail.
+ * That is the drift model the paragraph above measured and REFUTED, and
+ * the counter-evidence is in this comment: `deepseek-harness`'s tail went
+ * 151 -> 183 while the residual held at exactly 1, where 2.8% x 183
+ * predicts 5. The residual is a step function, and the 81 are shaped like
+ * one — 38 owners, `huanlin` alone holding 21, TWICE the cap. So the
+ * mechanism is not accumulation: the first uncovered family to land past
+ * the window together breaches {@link MAX_UNREACHABLE_RESIDUAL} on the day
+ * it lands, exactly as `sayedev` did, and no amount of headroom in the cap
+ * changes that. What the 4.4% does bound is the RATE at which uncovered
+ * names enter the tail, which is what makes the unit days rather than
+ * months: taken as if it drifted — an ordering estimate, not a forecast —
+ * the first red build (the throw is `>`, so eleven names, not ten) needs a
+ * 250-name tail, about four days past the crossing at 60 a day, and two to
+ * seven on the sample's interval. Use Wilson for that interval, 2.5%-7.7%
+ * at 11 of 250; the Wald form, 1.9%-6.9%, under-covers at that count and
+ * its low end is what sets the far edge of the estimate.
+ *
+ * Note which guard fires. At 4.4% the refinement list still RECOVERS 95.6%
+ * of the tail, above {@link MIN_UNREACHABLE_RECOVERY}, so what reddens the
+ * build is the absolute cap and not the rate floor — the crossover that
+ * constant's own comment puts at a 100-name tail.
+ *
  * **A refinement cannot close this one.** Those 81 packages carry
  * `dsh-plugin` and, in most cases, nothing else — there is no second tag to
  * intersect on, so the mechanism this constant IS has no move to make.
