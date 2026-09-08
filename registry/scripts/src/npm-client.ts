@@ -437,6 +437,44 @@ export function parseKeywordShortfall(value: unknown, where: string): KeywordSho
  * probe and a page every run and buy nothing — the mistake this comment's own
  * history is made of, in the other direction.
  *
+ * THE SECOND HARVEST KEYWORD IS A DIFFERENT PROBLEM, and this list is far
+ * weaker against it. Everything above is measured against
+ * `keywords:deepseek-harness`. `keywords:dsh-plugin` has NOT crossed the
+ * window yet — 3,973 against {@link SEARCH_WINDOW} at 2026-09-08, growing
+ * about 55 names a day, so late September or early October 2026 — and it is
+ * therefore still fully enumerable, which is the only window in which this
+ * can be measured for the price of one paged search. Measured there:
+ *
+ *   81 of its 3,973 names (2.04%) carry NO refinement from this list other
+ *   than `dsh-plugin` itself. The same figure for `deepseek-harness` is ONE
+ *   name in 5,250 (0.019%). This list's blind spot is a hundred times wider
+ *   on the second keyword.
+ *
+ * The cause is a tag habit, not a coverage accident: `deepseek-harness` is
+ * almost always published alongside `dsh` or `dsh-plugin`, while `dsh-plugin`
+ * is the conventional "this is a dsh plugin" tag and is frequently the ONLY
+ * one a package carries at all. Uncovered-ness is roughly flat across rank
+ * bands (21, 22, 17 and 21 per thousand ranks) but the bottom 250 — which is
+ * what the first tail page will be made of — runs 11 of 250, 4.4%.
+ *
+ * At 4.4% of the tail the residual reaches {@link MAX_UNREACHABLE_RESIDUAL}
+ * at a tail of about 227 names, four days past the crossing at 55 a day; a
+ * 250-name sample puts the rate between 1.9% and 6.9%, so three to ten days.
+ * **A refinement cannot close this one.** Those 81 packages carry
+ * `dsh-plugin` and, in most cases, nothing else — there is no second tag to
+ * intersect on, so the mechanism this constant IS has no move to make.
+ *
+ * The publisher axis does: the 81 names have only 31 distinct publishers, and
+ * SEVEN of them own 57 of the 81 (70%). `huanlin` alone owns 21, and
+ * `keywords:dsh-plugin maintainer:huanlin` probes to 26. That axis was
+ * planned for the family-event case above (docs/plans/2026-09-08-publisher-
+ * partition.md); this measurement makes it the structural answer to a dated
+ * problem rather than insurance against an occasional one.
+ *
+ * The partition MECHANISM is healthy here — 22 of the 26 refinements are
+ * non-empty against this keyword, the largest being `deepseek-harness` 3,395
+ * and `dsh` 3,096. It is the residue that is different, not the machinery.
+ *
  * Adding a keyword is the documented response to that throw; a cell is always
  * `keywords:<harvest-keyword>,<refinement>`, so a refinement can only narrow
  * the net a listing sees, never widen it — an addition is a coverage decision,
