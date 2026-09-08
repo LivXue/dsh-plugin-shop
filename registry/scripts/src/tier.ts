@@ -53,9 +53,14 @@ export function assignTier(accepted: Accepted, config: RegistryConfig): Entry {
     source: 'npm' as const,
     added: firstSeenOf(config, candidate.name),
     // Absent stays absent: a packument that named no account must not gain
-    // an empty one in the catalog.
+    // an empty one in the catalog, and a package npm recorded no size for must
+    // not gain a figure. Note the size's rule is ABSENCE, not falsiness: a
+    // zero IS carried, because npm really does report 0 for an empty tarball
+    // and that is a fact about the package (`npm-client.ts` keeps it
+    // deliberately, and the shelf renders it "0 B").
     ...(candidate.publisher !== undefined ? { publisher: candidate.publisher } : {}),
     ...(candidate.peers.length > 0 ? { peers: candidate.peers } : {}),
+    ...(candidate.unpackedSize !== undefined ? { unpackedSize: candidate.unpackedSize } : {}),
   }
   // Defence in depth: a github review is keyed by its repository now, so it
   // can no longer be reached by an npm name at all (config.ts). If one ever

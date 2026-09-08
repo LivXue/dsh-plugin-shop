@@ -315,11 +315,17 @@
 .categoryBar {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
   margin-top: 6px;
 }
 
 .categoryButton {
+  /* The hue this button carries when selected. `All` and `Installed` select by
+   * something other than a category and keep the brand token; the six category
+   * buttons override it from the shared hue table below, so a pressed Tool tab
+   * turns the same blue as a tool card's spine. */
+  --category-hue: var(--dsw-alias-brand-primary);
   padding: 3px 10px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 999px;
@@ -329,21 +335,76 @@
   cursor: pointer;
 }
 
+/* Blend text with the theme foreground: darker on light backgrounds, lighter
+ * on dark ones. The unblended category hue belongs on the border and fill. */
 .categoryButton:hover {
-  border-color: color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, var(--dsw-alias-border-l2));
-  color: var(--dsw-alias-brand-primary);
+  border-color: color-mix(in srgb, var(--category-hue) 45%, var(--dsw-alias-border-l2));
+  color: color-mix(in srgb, var(--category-hue) 45%, var(--dsw-alias-label-primary) 55%);
 }
 
-.categoryButtonOn {
-  border-color: var(--dsw-alias-brand-primary);
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, transparent);
-  color: var(--dsw-alias-brand-primary);
-  font-weight: 600;
+/* Selected. Written `.categoryButton.categoryButtonOn` — TWO classes — so it
+ * matches `.categoryButton:hover`'s specificity and, coming after it, wins.
+ * As a bare `.categoryButtonOn` it lost both `border-color` and `color` to the
+ * hover rule for as long as the pointer stayed on the tab that had just been
+ * clicked, which is precisely when a reader looks for confirmation.
+ *
+ * EVERY declaration here is a colour or a shadow: a pressed tab must occupy
+ * exactly the same box as an unpressed one, so the bar does not reflow — and
+ * with ~9 pills on a wrapping row, one that grows can push the rest onto
+ * another line and move the tab out from under the pointer that just clicked
+ * it. That is what `font-weight: 600` did (bold metrics are wider than
+ * regular), and it is why nothing may be added here that resolves to a length:
+ * no padding, no border-width, no font-size, no letter-spacing.
+ * `css-tokens.client.spec.ts` fails the build on one.
+ *
+ * `box-shadow` is the exception that earns its place: it paints outside the
+ * layout box, so an inset ring doubles the border's weight at zero cost to the
+ * metrics. It is what `font-weight: 600` used to be — a second, thickness-
+ * based signal that hover does not also produce — and the `other` tab needs it
+ * most: its hue IS the neutral gray this file uses for "no category", so on
+ * the light theme hue alone barely separates pressed from unpressed. */
+.categoryButton.categoryButtonOn {
+  border-color: var(--category-hue);
+  background: color-mix(in srgb, var(--category-hue) 14%, transparent);
+  color: color-mix(in srgb, var(--category-hue) 45%, var(--dsw-alias-label-primary) 55%);
+  box-shadow: inset 0 0 0 1px var(--category-hue);
+}
+
+/* Forced colours replace every colour above with the system palette, which
+ * would leave the three colour declarations saying nothing and the pressed tab
+ * indistinguishable from its neighbours. `box-shadow` is dropped in this mode
+ * too, so the ring has to come back as an outline. */
+@media (forced-colors: active) {
+  .categoryButton.categoryButtonOn {
+    outline: 2px solid ButtonText;
+    outline-offset: -4px;
+  }
 }
 
 .categoryButton:focus-visible {
   outline: 2px solid var(--dsw-alias-brand-primary);
   outline-offset: 1px;
+}
+
+/* The incompatible filter, at the right edge of the category bar: `margin-left:
+ * auto` pushes it past the pills, and the bar wraps, so on a narrow panel it
+ * drops to its own line rather than squeezing them. It is a MODIFIER, not a
+ * ninth category — the categories select what to show and this one subtracts
+ * from whatever they selected — so it takes the error hue it filters on rather
+ * than joining the hue table.
+ *
+ * It IS a pill, so it wears `.categoryButton` and states only its two
+ * differences. The geometry rule the pills follow then covers it by
+ * construction rather than by a second copy that has to be kept in step: this
+ * rule was a verbatim clone of the four `.categoryButton` rules, and every
+ * padding or border change to the bar had to be made twice or the two silently
+ * drifted. `--category-hue` is the knob that makes the clone unnecessary —
+ * declared here at the same specificity as `.categoryButton`'s fallback and
+ * after it, so it wins; the button carries no `data-category`, so the hue
+ * table below cannot reach it. */
+.incompatibleFilter {
+  --category-hue: var(--dsw-alias-state-error-primary);
+  margin-left: auto;
 }
 
 .catalogHeading {
@@ -483,29 +544,35 @@
   bottom: 0;
   left: 0;
   width: 3px;
-  background: var(--spine-hue, #8B8E96);
+  background: var(--category-hue, #8B8E96);
 }
 
-.card[data-category='tool'] { --spine-hue: #4C8DFF; }
-.card[data-category='provider'] { --spine-hue: #A78BFA; }
-.card[data-category='ui'] { --spine-hue: #2DD4BF; }
-.card[data-category='workflow'] { --spine-hue: #F59E0B; }
-.card[data-category='integration'] { --spine-hue: #34D399; }
-.card[data-category='theme'] { --spine-hue: #F472B6; }
-.card[data-category='other'] { --spine-hue: #8B8E96; }
+/* The hue table, keyed by `data-category` and read by BOTH surfaces that
+ * speak in category colour: a card's spine and badge, and the category bar's
+ * own tab. One table, so a tab can never disagree with the cards it filters to
+ * — which is the whole point of colouring the tab. `.categoryButton` sets the
+ * brand fallback for `All`/`Installed`; these attribute selectors are one
+ * specificity step above it and win wherever the attribute is present. */
+.card[data-category='tool'], .categoryButton[data-category='tool'] { --category-hue: #4C8DFF; }
+.card[data-category='provider'], .categoryButton[data-category='provider'] { --category-hue: #A78BFA; }
+.card[data-category='ui'], .categoryButton[data-category='ui'] { --category-hue: #2DD4BF; }
+.card[data-category='workflow'], .categoryButton[data-category='workflow'] { --category-hue: #F59E0B; }
+.card[data-category='integration'], .categoryButton[data-category='integration'] { --category-hue: #34D399; }
+.card[data-category='theme'], .categoryButton[data-category='theme'] { --category-hue: #F472B6; }
+.card[data-category='other'], .categoryButton[data-category='other'] { --category-hue: #8B8E96; }
 
 /* The category sits in the badge row as a quiet chip in the category's own
  * hue — the border carries it where the light theme's white layers cannot
  * (the same lesson as the check button). */
 .categoryBadge {
   padding: 1px 7px;
-  border: 1px solid color-mix(in srgb, var(--spine-hue, #8B8E96) 45%, transparent);
+  border: 1px solid color-mix(in srgb, var(--category-hue, #8B8E96) 45%, transparent);
   border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--spine-hue, #8B8E96);
+  color: var(--category-hue, #8B8E96);
   white-space: nowrap;
 }
 
@@ -763,15 +830,52 @@
   outline-offset: 1px;
 }
 
-/* The publishing account, beside the npm link. Secondary label colour and a
- * middot separator carry the distinction — never a background fill, which is
- * invisible in the light theme where every bg-layer token is the same white. */
-/* Who published the entry, at the right edge of the action row. `margin-left:
- * auto` is what pushes it there; the row is a wrapping flex, so an active
- * install flow (which claims the full width) drops this to the next line
- * rather than squeezing it. */
-.author {
+/* What the entry IS rather than what you can do with it — how big it is and
+ * who published it — at the right edge of the action row. `margin-left: auto`
+ * is what pushes it there, and it lives on this wrapper rather than on either
+ * label so the group stays flush right when only one of the two has a value:
+ * a github entry has no npm size, and a packument that named no account has no
+ * author. The row is a wrapping flex, so an active install flow (which claims
+ * the full width) drops the whole group to the next line rather than squeezing
+ * it. */
+.cardMeta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   margin-left: auto;
+  min-width: 0;
+}
+
+/* The unpacked size, left of the author. Mono and tabular so the digits of one
+ * figure line up with the digits of another WHEREVER the two land: `.cardMeta`
+ * is flush right and the author sits outside the size, so a size's x position
+ * moves with the author's width and is different again on the many entries
+ * that carry no author at all. There is no column to align to, which is why
+ * the reason given here is per-figure legibility rather than the column the
+ * first version of this comment claimed. Secondary colour, because it
+ * qualifies the entry rather than announcing it.
+ *
+ * `font-variant-numeric` is safe HERE and would not be on a pill: this element
+ * has no state rules, so nothing it does can reflow a wrapping row. */
+.size {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* The publishing account, at the outer end of `.cardMeta` on the action row —
+ * NOT beside the npm link in the expanded detail, which is where it used to
+ * live and what this comment described until the accurate half was deleted
+ * with the `margin-left: auto` that moved to `.cardMeta`. There is no middot:
+ * `.cardMeta`'s 8px gap separates it from the size.
+ *
+ * Secondary label colour carries the distinction — never a background fill,
+ * which is invisible in the light theme where every bg-layer token is the
+ * same white. */
+.author {
   color: var(--dsw-alias-label-secondary);
   font-size: 12px;
 }

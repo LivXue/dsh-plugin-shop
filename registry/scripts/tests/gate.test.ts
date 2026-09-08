@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   ENTRY_PAYLOAD_MAX_BYTES, INTEGRITY_MAX_LENGTH, NAME_MAX_LENGTH, PUBLISHED_AT_MAX_LENGTH,
-  PUBLISHER_MAX_LENGTH, VERSION_MAX_LENGTH, gate,
+  PUBLISHER_MAX_LENGTH, VERSION_MAX_LENGTH, entryPayloadBytes, gate,
 } from '../src/gate.ts'
 import { parseRegistryConfig } from '../src/config.ts'
 import type { Candidate } from '../src/types.ts'
@@ -510,16 +510,22 @@ describe('the per-entry size budget', () => {
   })
 
   it('accepts the worst entry the live catalog could hold', () => {
-    // Every maximum measured against the live published catalog on 2026-09-04,
-    // all in ONE entry — they are independent observations, so this entry
-    // almost certainly does not exist, and it is the ceiling of what the data
-    // could hold. It measures 6,261 bytes against a 12,288-byte budget, so
-    // the budget drops nothing that is listed today.
+    // Every maximum measured against the live published catalog, all in ONE
+    // entry — they are independent observations, so this entry almost
+    // certainly does not exist, and it is the ceiling of what the data could
+    // hold. It measures 6,294 bytes against a 12,288-byte budget, so the
+    // budget drops nothing that is listed today.
     //
     // capability item 14, license 37, repository 108, summary.en 200 code
-    // units / 599 UTF-8 bytes, peer name 50, peers count 58. The summaries are
+    // units / 599 UTF-8 bytes, peer name 50, peers count 58 (2026-09-04), and
+    // the largest unpacked size, 179,562,863 (2026-09-07). The summaries are
     // CJK, which is where the 599 bytes come from: the budget counts UTF-8
     // bytes, because that is what a reader downloads.
+    //
+    // The byte count is ASSERTED, not just described: it is quoted in
+    // `gate.ts`, in `docs/schema.md` and in its Chinese half, and it lived in
+    // a comment while `unpackedSize` was added to the measured payload — so
+    // the one number four places agree on went stale with nothing failing.
     const summary = `${'中'.repeat(199)}x`
     const result = gate(candidate({
       name: 'd'.repeat(214),
@@ -535,8 +541,65 @@ describe('the per-entry size budget', () => {
         summary: { en: summary, zh: summary },
         capabilities: Array.from({ length: 20 }, () => 'c'.repeat(14)),
       },
+      unpackedSize: 179562863,
     }), config)
     expect(result.ok).toBe(true)
+    expect(entryPayloadBytes({
+      name: 'd'.repeat(214),
+      version: '1.0.0-rc.1+build.20260904',
+      integrity: `sha512-${'A'.repeat(88)}`,
+      publishedAt: '2026-09-04T12:00:00.000Z',
+      repository: `https://github.com/an-organization/${'r'.repeat(73)}`,
+      license: 'l'.repeat(37),
+      catalog: {
+        category: 'tool',
+        summary: { en: summary, zh: summary },
+        capabilities: Array.from({ length: 20 }, () => 'c'.repeat(14)),
+      },
+      publisher: 'p'.repeat(50),
+      peers: peers(58, 50),
+      unpackedSize: 179562863,
+    })).toBe(6294)
+  })
+
+  it('counts the unpacked size against the budget, because emit writes it', () => {
+    // The budget bounds the UNTRUSTED half of an entry: every field whose
+    // bytes an author controls must be handed to the measurement, because a
+    // field that reaches the artifact uncounted makes the number a guess, and
+    // a guess is what the per-entry budget exists to replace. `unpackedSize`
+    // is npm's figure for the author's own tarball, so it is counted.
+    //
+    // Not "every field `assignTier` emits": `metadata`, `source`, `added`,
+    // `tier` and `review` are ours and are deliberately excluded (see the note
+    // on ENTRY_PAYLOAD_MAX_BYTES). Reading the rule that way and "completing"
+    // the measurement would tighten the budget by the 109 bytes those four
+    // cost, let a human-written `verified.yml` block push an entry over, and
+    // reject listings that are legal today under a reason blaming the author.
+    const withSize = candidate({ unpackedSize: 179562863 })
+    const measured = entryPayloadBytes({
+      name: withSize.name,
+      version: withSize.version,
+      integrity: withSize.integrity,
+      publishedAt: withSize.publishedAt,
+      repository: withSize.repository,
+      license: withSize.license,
+      catalog: withSize.catalog,
+      unpackedSize: withSize.unpackedSize,
+    })
+    const withoutSize = entryPayloadBytes({
+      name: withSize.name,
+      version: withSize.version,
+      integrity: withSize.integrity,
+      publishedAt: withSize.publishedAt,
+      repository: withSize.repository,
+      license: withSize.license,
+      catalog: withSize.catalog,
+    })
+    // `,\n      "unpackedSize": 179562863` at the entry's indentation.
+    expect(measured - withoutSize).toBe('\n      "unpackedSize": 179562863,'.length)
+    // And a size alone never pushes a real entry over: the largest live
+    // listing measured 179 MB on 2026-09-07, which is 30 bytes of JSON.
+    expect(gate(withSize, config).ok).toBe(true)
   })
 
   it('reports the size only after every reason that names a field', () => {

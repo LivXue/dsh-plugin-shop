@@ -394,3 +394,46 @@ export function formatStars(n: number): string {
   if (n < 1000) return String(n)
   return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`
 }
+
+/**
+ * One entry's unpacked size as a label: 0 → "0 B", 812 → "812 B",
+ * 25283 → "25.3 kB", 847407 → "847.4 kB", 179562863 → "179.6 MB".
+ *
+ * Decimal kB/MB, not KiB/MiB, because the number itself is npm's
+ * `dist.unpackedSize` and npm's own package page shows it decimal — a reader
+ * comparing the shelf against npmjs.com must not find two different figures
+ * for one package. One fractional digit at every magnitude above a kilobyte,
+ * the same rule `formatStars` follows: a column of sizes is read by comparing
+ * them down the shelf, and switching precision by magnitude makes that column
+ * ragged for no gain.
+ *
+ * Locale-free by construction (`toFixed`, not `toLocaleString`): the shelf's
+ * two languages must not disagree about what a size is, and a decimal comma
+ * in one of them would read as a thousands separator in the other.
+ *
+ * Undefined in, undefined out — a github entry and an old npm publish both
+ * have no figure, and the card renders no label rather than a guess. The
+ * caller need not check first.
+ */
+export function formatSize(bytes: number | undefined): string | undefined {
+  if (bytes === undefined) return undefined
+  if (bytes < 1000) return `${bytes} B`
+  // GB is here for the tail, not for show: the largest live listing measured
+  // 179 MB on 2026-09-07, and without this rung a gigabyte package would read
+  // "1000.0 MB" — a number a reader has to divide in their head.
+  //
+  // The climb tests the ROUNDED value, not the raw one, because one fractional
+  // digit is what the reader sees: 999_999 B is 999.999 kB, which `toFixed(1)`
+  // renders "1000.0". Testing the raw value let that mantissa carry across the
+  // boundary without the unit following, so every count in [999_950_000,
+  // 1_000_000_000) printed the exact "1000.0 MB" this rung was added to
+  // prevent — the rung could not help, because the carry happens below it.
+  let value = bytes
+  let unit = 'B'
+  for (const next of ['kB', 'MB', 'GB']) {
+    if (Number(value.toFixed(1)) < 1000) break
+    value /= 1000
+    unit = next
+  }
+  return `${value.toFixed(1)} ${unit}`
+}

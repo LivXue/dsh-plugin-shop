@@ -117,6 +117,115 @@ import { zh } from '../../src/client/locales.ts'
 import { startCatalogServer, type CatalogServer } from '../fixtures/catalog-server.ts'
 import { startLocalRegistry, type LocalRegistry } from '../fixtures/local-registry.ts'
 
+/** Read the browser's colours, including colour-mix and translucent ancestor
+ * backgrounds. These controls use solid fills; stop at the first opaque one. */
+async function readPill(pill: Locator) {
+  return pill.evaluate(el => {
+    type Rgba = [number, number, number, number]
+    const canvas = document.createElement('canvas')
+    canvas.width = canvas.height = 1
+    const context = canvas.getContext('2d')
+    if (context === null) throw new Error('Canvas is required to resolve CSS colours')
+    const rgba = (value: string): Rgba => {
+      if (!CSS.supports('color', value)) throw new Error(`Unresolved colour: ${value}`)
+      context.clearRect(0, 0, 1, 1)
+      context.fillStyle = value
+      context.fillRect(0, 0, 1, 1)
+      const [r, g, b, a] = context.getImageData(0, 0, 1, 1).data
+      if (r === undefined || g === undefined || b === undefined || a === undefined) throw new Error('Missing pixel')
+      return [r / 255, g / 255, b / 255, a / 255]
+    }
+    const over = (fg: Rgba, bg: Rgba): Rgba => [
+      fg[0] * fg[3] + bg[0] * (1 - fg[3]),
+      fg[1] * fg[3] + bg[1] * (1 - fg[3]),
+      fg[2] * fg[3] + bg[2] * (1 - fg[3]), 1,
+    ]
+    const luminance = ([r, g, b]: Rgba): number => {
+      const linear = (v: number): number => v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4
+      return linear(r) * 0.2126 + linear(g) * 0.7152 + linear(b) * 0.0722
+    }
+    const layers: Rgba[] = []
+    for (let node: Element | null = el; node !== null; node = node.parentElement) {
+      const style = getComputedStyle(node)
+      if (style.backgroundImage !== 'none') throw new Error('Contrast measurement requires a solid background')
+      const colour = rgba(style.backgroundColor)
+      layers.push(colour)
+      if (colour[3] === 1) break
+    }
+    let background: Rgba = [1, 1, 1, 1]
+    for (const layer of layers.reverse()) background = over(layer, background)
+    const style = getComputedStyle(el)
+    const fg = luminance(over(rgba(style.color), background))
+    const bg = luminance(background)
+    return {
+      contrast: (Math.max(fg, bg) + 0.05) / (Math.min(fg, bg) + 0.05),
+      width: el.getBoundingClientRect().width,
+      border: rgba(style.borderTopColor),
+      hue: rgba(style.getPropertyValue('--category-hue').trim()),
+      ring: style.boxShadow,
+    }
+  })
+}
+
+/** Exercise real hover/click states under both harness theme palettes. */
+async function checkCategoryBar(app: Page, dialog: Locator): Promise<void> {
+  const all = dialog.locator('[data-shop-category-all]')
+  const tool = dialog.locator('[data-shop-category-tab="tool"]')
+  const categories = ['tool', 'provider', 'ui', 'workflow', 'integration', 'theme', 'other']
+  const tabs = [
+    { name: 'all', locator: all },
+    ...categories.map(name => ({ name, locator: dialog.locator(`[data-shop-category-tab="${name}"]`) })),
+    { name: 'installed', locator: dialog.locator('[data-shop-category-installed]') },
+  ]
+  const originalTheme = await app.evaluate(() => document.body.getAttribute('data-ds-dark-theme'))
+  const check = async (pill: Locator, label: string, selected: boolean, width?: number): Promise<void> => {
+    const measured = await readPill(pill)
+    expect(measured.contrast, `${label}: text contrast`).toBeGreaterThanOrEqual(4.5)
+    if (width !== undefined) expect(measured.width, `${label}: width changed`).toBe(width)
+    if (selected) {
+      // The border carries category identity; text may blend with the theme.
+      expect(measured.border, `${label}: selected border lost its hue`).toEqual(measured.hue)
+      expect(measured.ring, `${label}: selected ring missing`).toContain('inset')
+    }
+  }
+  try {
+    for (const theme of ['light', 'dark']) {
+      await app.evaluate(dark => document.body.toggleAttribute('data-ds-dark-theme', dark), theme === 'dark')
+      for (const { name, locator } of tabs) {
+        await (name === 'all' ? tool : all).click()
+        await app.mouse.move(0, 0)
+        const { width } = await readPill(locator)
+        await locator.hover()
+        await check(locator, `${theme}/${name}/hover`, false, width)
+        await locator.click()
+        expect(await locator.getAttribute('aria-pressed')).toBe('true')
+        await check(locator, `${theme}/${name}/selected-hover`, true, width)
+        await app.mouse.move(0, 0)
+        await check(locator, `${theme}/${name}/selected`, true, width)
+      }
+      // Installed intentionally omits this modifier. Return to the shelf and
+      // restore its off state afterwards; its action label changes on click,
+      // so unlike category labels its text can legitimately change width.
+      await all.click()
+      const filter = dialog.locator('[data-shop-hide-incompatible]')
+      await filter.hover()
+      await check(filter, `${theme}/filter/hover`, false)
+      await filter.click()
+      await check(filter, `${theme}/filter/selected-hover`, true)
+      await app.mouse.move(0, 0)
+      await check(filter, `${theme}/filter/selected`, true)
+      await filter.click()
+    }
+  } finally {
+    await app.evaluate(value => {
+      if (value === null) document.body.removeAttribute('data-ds-dark-theme')
+      else document.body.setAttribute('data-ds-dark-theme', value)
+    }, originalTheme)
+    await all.click()
+    await app.mouse.move(0, 0)
+  }
+}
+
 // The test needs the real dsh executable on PATH and a playwright chromium.
 // CI installs both (the dsh CLI in the workflow, chromium by the
 // `playwright install chromium` step); the skip fires only on machines that
@@ -387,6 +496,31 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         expect(authorBox.x).toBeGreaterThan(installBox.x + installBox.width)
       }
 
+      // The unpacked size, left of the author on the same collapsed row. Only
+      // this lane proves the whole chain: the catalog server serves
+      // `unpackedSize: 847407`, the host's zod has to keep the key rather than
+      // strip it (a non-strict schema strips what it does not declare — the
+      // silent failure mode for a new field), and the client has to format it
+      // decimally. jsdom sees the format; nothing but a browser sees the other
+      // two links of that chain.
+      const size = card.locator('[data-shop-size]')
+      await size.waitFor({ state: 'visible', timeout: 10_000 })
+      expect(await size.textContent()).toBe('847.4 kB')
+      // Left of the author, on one row — the geometry, not just the DOM order,
+      // because `.cardMeta` owns the `margin-left: auto` that puts the pair at
+      // the row's right end and a wrapping flex is free to break it.
+      const sizeBox = await size.boundingBox()
+      if (sizeBox !== null && authorBox !== null) {
+        expect(Math.abs((sizeBox.y + sizeBox.height / 2) - (authorBox.y + authorBox.height / 2))).toBeLessThan(6)
+        expect(sizeBox.x + sizeBox.width).toBeLessThanOrEqual(authorBox.x + 1)
+      }
+      // And it says WHICH size, for anyone who might read it as the download.
+      expect(await size.getAttribute('title')).toBe('解包后 847.4 kB')
+
+      // Both themes and all three active states: readable text, the shared
+      // category hue on the selected border, and exact category-tab widths.
+      await checkCategoryBar(app, dialog)
+
       // The expanded detail's npm row: the link to the package's own npm page,
       // the other half of that same comparison.
       await card.locator('button[aria-expanded]').click()
@@ -649,6 +783,45 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       const shape = await detail.evaluate(el => ({ text: el.textContent ?? '', whiteSpace: getComputedStyle(el).whiteSpace }))
       expect(shape.text, 'the harness i18n dropped the newline the copy carries').toContain('\n')
       expect(shape.whiteSpace, 'pre-line did not survive into the bundled stylesheet').toBe('pre-line')
+
+      // The incompatible filter, against a genuinely-missing peer the HOST
+      // decided about: its count comes from the host's own resolver run, not
+      // from a fixture that asserts the answer, and this fixture profile makes
+      // exactly one of the four shelf entries incompatible.
+      const filter = dialog.locator('[data-shop-hide-incompatible]')
+      await filter.waitFor({ state: 'visible', timeout: 10_000 })
+      expect(await filter.textContent()).toBe(zh.hideIncompatible.replace('{count}', '1'))
+      // It sits at the far edge of the category bar: its RIGHT edge is the
+      // bar's right edge, which is what `margin-left: auto` guarantees and
+      // only a browser lays out.
+      //
+      // Stated as edge alignment rather than "further right than the last
+      // tab" because the bar WRAPS. That first form passed on Windows, where
+      // the nine pills fit one line, and failed on CI's font metrics, where
+      // they do not: the filter had wrapped to a line of its own — still
+      // flush right, still correct — and a same-line comparison read that as
+      // the control being in the wrong place. Edge alignment holds in both
+      // layouts, which is why it is the property and the other was an
+      // accident of how one machine broke the line.
+      const filterBox = await filter.boundingBox()
+      const barBox = await dialog.locator('[class*="categoryBar"]').boundingBox()
+      expect(filterBox).not.toBeNull()
+      expect(barBox).not.toBeNull()
+      if (filterBox !== null && barBox !== null) {
+        expect(
+          Math.abs((filterBox.x + filterBox.width) - (barBox.x + barBox.width)),
+          'the filter is not flush with the right edge of the category bar',
+        ).toBeLessThan(2)
+      }
+
+      await filter.click()
+      // The card is gone from the shelf, and the button now offers it back.
+      await card.waitFor({ state: 'detached', timeout: 10_000 })
+      expect(await filter.textContent()).toBe(zh.showIncompatible.replace('{count}', '1'))
+      // The compatible fixtures stayed.
+      expect(await dialog.locator('[data-shop-entry="dsh-shop-e2e-live"]').count()).toBe(1)
+      await filter.click()
+      await card.waitFor({ state: 'visible', timeout: 10_000 })
 
       // Install → the community-tier gate opens and shows the
       // incompatibility warning alongside the §9.3 acknowledgement.

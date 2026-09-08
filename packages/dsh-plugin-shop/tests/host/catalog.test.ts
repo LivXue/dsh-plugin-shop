@@ -665,6 +665,84 @@ describe('peers (schemaVersion 6)', () => {
   })
 })
 
+describe('unpackedSize', () => {
+  const baseEntry = {
+    name: 'dsh-timeline', version: '0.1.4', integrity: 'sha512-x', publishedAt: null,
+    repository: null, license: 'MIT', tier: 'community', metadata: 'derived',
+  }
+
+  /** One catalog load whose data file holds `entries`, at `schemaVersion`. */
+  async function load(entries: unknown[], schemaVersion: number) {
+    const data = dataJson(entries, [], schemaVersion)
+    const { pointer } = pointerFor(data, '2026-09-01T00:00:00Z', undefined, schemaVersion)
+    const fetchImpl = (async (input: string | URL) => new Response(
+      String(input).endsWith('/index.json') ? pointer : data, { status: 200 },
+    )) as unknown as typeof fetch
+    return loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() })
+  }
+
+  it('carries the size through to the entry the client renders', async () => {
+    // Additive and optional, so it rides EVERY schemaVersion — including the
+    // live 5. That is the whole point: this schema strips a key it does not
+    // know, so one catalog serves old and new hosts, while bumping the version
+    // NUMBER is what makes a capped client refuse the catalog outright.
+    const result = await load([{ ...baseEntry, unpackedSize: 847407 }], 5)
+    expect(result.snapshot.entries[0]?.unpackedSize).toBe(847407)
+  })
+
+  it('parses an entry that carries no size at all', async () => {
+    // Every github entry, and any npm publish predating npm 5.6. Absent must
+    // stay parseable — a required field here is the 0.5.0 regression.
+    const result = await load([baseEntry], 5)
+    expect(result.snapshot.entries[0]?.unpackedSize).toBeUndefined()
+    expect(result.snapshot.entries).toHaveLength(1)
+  })
+
+  // Our own artifact, so a violation is our build having written something it
+  // cannot write — and this project stops rather than render a size label
+  // reading "-1.0 kB" or "NaN kB". The registry drops such a value at harvest,
+  // so nothing legitimate reaches this.
+  //
+  // `it.each` rather than a loop over the cases: vitest discards the message
+  // passed alongside a `.rejects` assertion, so a loop reported only "promise
+  // resolved instead of rejecting" and named no case — and its `await` meant
+  // the first hole hid every case after it.
+  it.each([
+    -1,
+    1.5,
+    '847407',
+    null,
+    // Past 2^53, which JSON cannot round-trip. zod 4's `.int()` caps at
+    // MAX_SAFE_INTEGER on its own, so these two need no extra refinement —
+    // they are here to PIN that, because the claim "the host's bound matches
+    // the registry's `Number.isSafeInteger`" is a property of the zod version
+    // and nothing else would notice it relaxing. The registry's own list
+    // carries the same case.
+    Number.MAX_SAFE_INTEGER + 2,
+    1e21,
+  ])('refuses a catalog whose size is not a safe non-negative integer: %j', async (bad) => {
+    await expect(load([{ ...baseEntry, unpackedSize: bad }], 5)).rejects.toThrow()
+  })
+
+  it('refuses a size on a github entry, which measures the repository and not the install', async () => {
+    // The design says a github entry gets none: GitHub reports the repo's own
+    // disk usage including history, which is not what installing puts on disk
+    // and for a monorepo subpackage is not close. Until this rule had a
+    // boundary that could refuse one, it held only because `assignRepoTier`
+    // happens not to write it — and the client renders the field with no
+    // source check, so an approximation would show under an "unpacked" label.
+    await expect(load([{
+      ...baseEntry, version: 'a'.repeat(40), source: 'github', repo: 'someone/thing', unpackedSize: 847407,
+    }], 5)).rejects.toThrow()
+    // The same entry without it is fine, so the rule refuses the size and not
+    // the listing.
+    const ok = await load([{
+      ...baseEntry, version: 'a'.repeat(40), source: 'github', repo: 'someone/thing',
+    }], 5)
+    expect(ok.snapshot.entries).toHaveLength(1)
+  })
+})
+
 describe('origin racing', () => {
   const entry = {
     name: 'dsh-hello-plugin', version: '1.2.0', integrity: 'sha512-i', publishedAt: null,

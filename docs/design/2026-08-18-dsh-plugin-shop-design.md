@@ -218,20 +218,23 @@ The pointer carries `count` and `rejected` — the listed and the filtered total
       "integrity": "sha512-...",
       "publishedAt": "2026-08-01T12:00:00Z",
       "repository": "https://github.com/you/hello-plugin",
-      "publisher": "someone",
       "license": "MIT",
-      "tier": "verified",
       "metadata": "declared",
+      "catalog": {
+        "category": "tool",
+        "summary": { "en": "...", "zh": "..." },
+        "capabilities": ["fs", "shell"]
+      },
+      "source": "npm",
+      "added": "2026-08-01",
+      "publisher": "someone",
+      "unpackedSize": 847407,
+      "tier": "verified",
       "review": {
         "reviewedVersion": "1.2.0",
         "reviewer": "github:someone",
         "reviewCommit": "abc1234",
         "notes": "..."
-      },
-      "catalog": {
-        "category": "tool",
-        "summary": { "en": "...", "zh": "..." },
-        "capabilities": ["fs", "shell"]
       }
     }
   ],
@@ -240,6 +243,16 @@ The pointer carries `count` and `rejected` — the listed and the filtered total
   ]
 }
 ```
+
+**The key order above is the emitted order, not a presentation choice.**
+`JSON.stringify` preserves insertion order, that order is what the content
+hash is taken over, and `assignTier` is where it is decided (pinned by
+`tier.test.ts`). A sample in a different order invites someone to reconcile
+code to spec in the direction this document normally prescribes — which would
+rewrite every entry in `plugins.json` and invalidate every CDN cache for a
+build with no data change, the harm the `builtAt` invariant exists to prevent.
+The optional npm fields (`publisher`, `unpackedSize`) sit after `added` and
+before `tier`; `peers` sits between them when present.
 
 `publisher` is the npm account behind the package — npm entries only, absent
 when npm names no maintainer. The shop renders it beside a link to the
@@ -288,6 +301,12 @@ same number. Provenance attestations cover only 30% of the population and a
 fork can carry a perfectly valid one for its own fork. A registry that guessed
 would delist real authors; publishing the two facts a person needs — which npm
 package this is, and who published it — costs nothing and cannot be wrong.
+
+`unpackedSize` is npm's `dist.unpackedSize` — the bytes an install puts on
+disk. npm entries only, and only where the packument carried one; see the
+2026-09-07 amendment for why a github entry gets none rather than an
+approximation, and for the display rules (§7.3's amendment list). Additive and optional on the same
+terms as `publisher` above: `schemaVersion` does not move for it.
 
 `denied` carries every denylisted package with its author-readable reason; the Host consults it for the `shop/installStart` gate (§7.2). Rejections that are not denials stay in the build report.
 
@@ -426,6 +445,61 @@ Implementation decisions:
 **Amendment (2026-08-31, follow-up): the hub borrowings** (design: 2026-08-31-hub-borrowings.md — A/B/C adopted, D dropped). (A) **Monorepo subpackage expansion**: a repo whose root manifest declares no bundle but signals a monorepo (`private: true` or a `workspaces` declaration) is probed once — tree listing, then up to eight subpackage manifests — and bundle-carrying subpackages become entries with a `subdir` field; the install spec becomes `github:owner/slug#commit&path:<subdir>` (pnpm-verified; dsh passes specs verbatim), and a subpackage with `workspace:`-protocol dependencies is rejected with `workspace-deps` (measured: it cannot resolve outside its own workspace). Rejections for subpackages name `owner/slug#subdir` — the unit an author fixes. `schemaVersion` bumps 3→4 behind `SHOP_HARVEST_SUBPACKAGES`, flipped in the release commit that ships the v4 client, so a v3 client (which would misinstall the monorepo root) never meets a `subdir` entry. The harvest memory's shape moves from a singular `candidate` to a `candidates` array plus an optional recorded `failure` for deterministic `no-manifest` outcomes — known dead ends stop re-consuming the per-run fetch budget (measured: they re-fetched forever, and the probe would have multiplied the cost); the old shape still parses. (B) **Installed-plugin toggle**: `shop/setEnabled` writes the user patch layer through the framework's own parser (whole-row-list rewrite via `loadOptionalPatches` + dump); `shop/installed` carries the inventory's `enabled` per row (absent service ⇒ enabled); the switch renders on every installed row, initialized from the real state; the shop's own row and `@deepseek-ai/*` bundles are never toggleable. (C) **Registry failover**: the harvest's npm fetches fall back to a backup registry (default `registry.npmmirror.com`, `NPM_BACKUP_REGISTRY` to override) on network throw, per-attempt timeout (AbortSignal), and 5xx — never on a 404 (authoritative) or an exhausted 429; when the backup also fails, the primary's failure is what propagates (**amended 2026-09-03**: scoped to the packument fetch only — registry.npmmirror.com does not implement the `keywords:` qualifier the harvest's search depends on, measured 2026-09-03 as `{"objects":[],"total":0}` for both harvest keywords, so the search never receives a backup argument; `searchByKeywords` still accepts one, unused by both production call sites). Fetch-only: installs keep running through the user's own pnpm and registry config, and the integrity pinning makes a mirror answer interchangeable.
 
 **Amendment (2026-08-31, market borrowings C-1): `shop/version` gains `restartSupported`, and `shop/restart` gains a supervisor refusal.** `restartSupported` is false when a systemd unit owns this process — detection requires both signals: `INVOCATION_ID` or `JOURNAL_STREAM` present, and ppid 1, since the markers alone are inherited by every descendant of a unit, an ordinary terminal included — and the shop row config sets no `allowRestart: true` override. The client hides the restart offer on false and keeps the pending-change notice, naming the manual restart. `shop/restart` refuses in the same typed `{ ok: false, detail }` shape as the `--port 0` refusal, before anything is torn down: under a systemd unit the two-phase handoff kills itself — the main process exiting also kills the unit's cgroup, taking the detached helper with it, and the service never comes back.
+
+**Amendment (2026-09-08): `keywords:deepseek-harness` has outgrown npm's search window, and the refinement list is no longer a fix — only a delay.**
+
+The npm search API reaches 5,250 names per query (`from` capped at 5,000; re-verified live 2026-09-07 — `from=5000` serves a distinct tail, `from=5100` and above return page 0). `keywords:deepseek-harness` measured 5,401 on 2026-09-07, so **151 names sit beyond any single query's reach**, and the daily `build` job went red on every tree, `main` included, because the harvest refuses to publish a silently-short catalog.
+
+Three axes were probed for a covering alternative and none exists:
+
+- **Ranking weights are inert.** `quality`/`popularity`/`maintenance` leave the result identical at every position, head and tail (250/250 same-position, three weightings). They cannot re-slice what is reachable.
+- **No negation qualifier.** `keywords:a,b` is an intersection and the only filter the API honors, so a cell's complement cannot be expressed and a refinement partition is never covering by construction.
+- **No unwindowed index.** The CouchDB `byKeyword` view is gone (404), npms.io is dead, and ecosyste.ms ignores its own `keyword=` parameter (returns packages carrying none of it).
+
+The immediate residual was closed the documented way — one refinement keyword, `deepwatch`, verified live to take the union from 5,394 to 5,400 of 5,401. **But the arithmetic says this is a treadmill.** The overshoot grows about eighty-three names a day (5,132 → 5,380 over three days), three times the rate the code previously recorded, and the residual is the uncovered fraction of it. Uncovered-ness concentrates exactly where the unreachable names are: sampled 2026-09-07, 2.8% of ranks 5,000–5,250 carry no refinement against 0.0% mid-ranking. The seven that broke this build were one publisher's scoped family, published together, ranking together at the bottom, carrying a private tag. The next such family reopens the gap, and a human extending a list per incident does not keep up with a daily residual.
+
+The structural options each change what the shop publishes or how loudly it fails, which is why they are recorded here rather than decided in a constant's comment:
+
+1. **Scale the tolerance to the measured overshoot.** The harvest can prove that `total − SEARCH_WINDOW` names are unreachable by any query and that the cells recovered all but *r* of them. Tolerating a small *r* — reported by name-count in the build report — is honest about a limit of the API rather than a defect in the partition, and it cannot hide a partition collapse, since that would crash the recovery rate. It does mean **knowingly publishing a catalog a few packages short**, which is a change to the "throws rather than truncating" invariant and needs to be stated as one.
+2. **Derive the refinement vocabulary from harvested packuments.** The harvest already reads every candidate's `keywords`; persisting that vocabulary and using the most-covering tags as cells makes the list self-maintaining. It shrinks the residual without a human in the loop but is still not covering: a package whose only tag is the harvest keyword, ranking beyond the window, is unreachable by any AND.
+3. **Drop `deepseek-harness` from `HARVEST_KEYWORDS`.** Keeps the invariant exactly, at the cost of every listing that carries only that tag.
+
+Until one is chosen, each crossing costs a red build and a hand-measured refinement.
+
+**Amendment (2026-09-07): entries carry `unpackedSize`, the shelf prints it, the category tabs take their category's hue, and the bar gains an incompatible filter.**
+
+*`unpackedSize`.* npm entries carry the packument's `dist.unpackedSize` — the bytes an install puts on disk. Additive and optional, so it rides every `schemaVersion` (a consumer's non-strict zod strips a key it does not know; bumping the version NUMBER is the change that breaks a capped client, §6.2). The registry bounds it at harvest and DROPS anything that is not a safe non-negative integer, rather than rejecting the package: a size is a decoration, so a broken one costs the size and not the listing. Measured 2026-09-07, 250 of 250 live `dsh-plugin` packages carry one (min 25 kB, median 847 kB, max 180 MB), so the absent branch is for publishes older than npm 5.6.
+
+**A github entry gets no size, deliberately.** GitHub's repo `size` is the repository's own disk usage including history, which is not the plugin — and for a monorepo subpackage it is not close. The rescued-release tarball's size is the COMPRESSED artifact, which is a different quantity from npm's unpacked figure and would put two incomparable numbers under one label. A number that measures something other than what its label says is the class of plausible-and-wrong this project stops for, so those entries print nothing. The client's `formatSize` is `undefined`-in/`undefined`-out for exactly that.
+
+The label is decimal (`kB`/`MB`/`GB`, not `KiB`), because the figure IS npm's own and npmjs.com shows it decimal — a reader checking the shelf against the package page must not find two different numbers. It is locale-free by construction (`toFixed`, never `toLocaleString`): a decimal comma in one language reads as a thousands separator in the other. The visible text is the bare figure; the accessible name and tooltip say **unpacked**, since unpacked and download differ by the compression ratio.
+
+*Card layout.* The size sits at the right end of the action row immediately LEFT of the author, both inside one wrapper that owns the `margin-left: auto`. Note what that ordering costs: the author's width varies and is absent entirely on many entries, so a size's horizontal position moves from row to row and the figures do not form a column. The size is mono and `tabular-nums` for per-figure legibility, which is the honest reason; an earlier draft of this amendment justified the monospace by a column this layout cannot produce. The wrapper is what makes the group stay flush right when only one of the two has a value — and size is absent on every github entry, so an outer-edge size would ragged the right margin down the shelf.
+
+*Category tab colour and geometry.* A selected category tab's border, 14% background fill and inset ring use that category's own hue, read from the SAME table the card spine and category chip read (`--category-hue`, keyed by `data-category`). `All` and `Installed` select by something other than a category and keep the brand token.
+
+**Text contrast (2026-09-08).** Hovered and selected labels mix 45% of the category hue with 55% of `--dsw-alias-label-primary`: the theme foreground darkens the text in the light theme and lightens it in the dark theme. The original unblended hue left all seven selected category labels below 3:1 on the light background, despite their inset rings. Chromium measurements against the current harness themes put the mixed text at a minimum of 5.87:1 in light and 8.75:1 in dark across the seven categories, All, Installed and the incompatible filter. These are observations, not a guarantee for future theme palettes: the web e2e requires at least 4.5:1 in hover, selected and selected-hover states in both themes. It checks category identity on the selected border rather than requiring the text to equal the raw hue, and retains exact width equality when selecting category tabs.
+
+**The pressed rule declares colour only, and that is a hard constraint, not a preference.** The tabs sit on a wrapping row; a tab that grows on selection can push its neighbours to the next line and slide out from under the pointer that just clicked it. `font-weight: 600` did this — bold metrics are wider than regular. Nothing that resolves to a length may join that rule: no padding, no border-width, no font-size, no letter-spacing. Two lanes hold it: `css-tokens.client.spec.ts` fails on such a declaration, and the web e2e measures one tab's `getBoundingClientRect().width` before and after the click and requires EXACT equality. The tolerance the e2e first used was useless — measured against real chromium, `font-weight: 600` moves a zh tab by 0.22px, because CJK glyphs are full-width and weight-invariant and only the Latin count digits move — so any tolerance loose enough to feel safe passes the defect.
+
+**Corrections (2026-09-07, review of this amendment).** Three things the paragraphs above got wrong in their first form, each of which shipped and was caught by review rather than by a lane:
+
+- *The pressed rule has to outrank hover, and specificity decides that — not source order.* Written as a bare `.categoryButtonOn` it is one compound unit against `.categoryButton:hover`'s two, so a selected tab under the pointer painted the hover rule's 45% border mix instead of the solid hue, for exactly as long as the pointer stayed where the click left it. It is written `.categoryButton.categoryButtonOn` and declared after the hover rule. The guard now asserts the two-class form exists, the bare form does not, and the pressed rule comes later.
+- *Colour alone is not a sufficient affordance, so the constraint is "colour or shadow", not "colour".* Removing `font-weight: 600` removed the only pressed signal that hover could not defeat and that forced colours could not flatten — and the `other` tab's hue IS the neutral gray this UI uses for "no category", so on the light theme its pressed state differed from its unpressed state by almost nothing. The pressed rule carries `box-shadow: inset 0 0 0 1px var(--category-hue)`, a second ring that paints OUTSIDE the layout box and so costs the pill no metrics, plus a `forced-colors` outline. `box-shadow` is the one non-colour property the guard admits, for that reason.
+- *The geometry guard is an allowlist.* It was a denylist of ~30 property names, which fails open: `font` (the shorthand that sets weight and size at once), `padding-inline`, `border-left-width` and `font-variant-numeric` all passed it, and the last is the natural thing to reach for on labels that end in a digit count. The rule the stylesheet states is "every declaration here is a colour", which is six names and stable, so the guard now asserts that and refuses everything else. It covers the `:hover` rules too: they reflow the same row and fire on mere pointer movement, which is strictly worse than on a click.
+
+The filter is a pill and now says so by wearing `.categoryButton`, stating only its hue and its `margin-left: auto`. It had been a verbatim clone of all four pill rules, so the geometry constraint above was enforced against two copies that could drift; `--category-hue` is the knob this amendment introduced and is what makes the clone unnecessary.
+
+*The incompatible filter.* At the far edge of the category bar sits a toggle that leaves out entries the Host reported missing components for, carrying the count of them across the browsable shelf. It is a MODIFIER, not a ninth category: the categories choose what to show and this subtracts from whatever they chose, so it keeps its own state across a category switch and combines as AND. It is OFF by default — a filter nobody asked for must not hide listings on first open, and the count is what tells a reader there is anything to hide. It hides exactly the entries whose badge READS "Incompatible", which is a stronger statement than "whose missing-peer list is non-empty" and the reason the two must be one predicate rather than two spellings. A `name-taken` entry is NOT hidden: that badge names a different condition and a different remedy, and its card is the only surface that explains why the install is refused.
+
+**Corrections (2026-09-07, review of this amendment).** The first implementation tested the missing-peer list directly, which broke the rule above in two ways that both reached the reader:
+
+- *An entry can carry BOTH blockers.* `BlockerBadge` lets a taken name decide the visible word when both hold, so such a card reads "Name taken" — and testing the peer list hid it anyway, taking away the only surface explaining the refusal, which is the very carve-out the paragraph above states. The filter and its count both ask one predicate: missing peers AND no name holder.
+- *The modifier does not apply to the Installed view.* That view is management, not shelf. An installed plugin that is up to date appears in exactly one place — its card, which carries the enable switch and the uninstall button, since the installed section lists only rows whose `outdated` is true — so subtracting there left a reader no way to disable or remove the broken install they had come to fix, above a tab still counting it. The filter is skipped for that view and its control is not rendered there; the state survives, so switching back restores both.
+
+**The control carries the action in its label and therefore no `aria-pressed`.** The two encodings are each coherent and must not be mixed: the category tabs keep a fixed label and let `aria-pressed` carry the state; this button's label flips between "Hide incompatible N" and "Show incompatible N". With both, a screen reader announced "Show incompatible 1, pressed" while they were hidden — the inverse of the truth. The `title` tracks the state for the same reason.
+
+**An empty shelf says which control emptied it.** The filter is persistent and its search box is empty, so the generic "No matching plugins" line misattributed the cause to a search the reader had not made. The client keeps what the category and search selected separately from what the modifier left, so a non-empty former with an empty latter is the modifier, stated as such — and no second copy of the filter chain exists to drift from the first.
 
 **Amendment (2026-08-27, follow-up): boot-time warm.** The client bundle warms `shop/catalog` (plus the small `installed` and `version` reads) when its apply runs at web boot, so the shop's first open consumes the boot-time fetch instead of waiting on it — the host's slow network fetch happens while nobody is looking at the shop. The tab's plain open consumes the stashed promise (the host's snapshot is the same one a fresh call would serve, so §10 freshness semantics are unchanged); a refresh always goes to the wire, and a failed warm falls back to a fresh call. Each boot starts its own warm fetch.
 

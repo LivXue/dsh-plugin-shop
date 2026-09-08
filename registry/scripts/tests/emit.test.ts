@@ -54,6 +54,28 @@ describe('emit publisher', () => {
     const { pluginsJson } = emit([entry('dsh-a'), repoEntry('dsh-b', 'you/dsh-b')], [], '2026-08-26T00:00:00.000Z')
     expect(pluginsJson).not.toContain('publisher')
   })
+
+  it('carries the unpacked size into plugins.json at every emitted schema version', () => {
+    // Same additive-field reasoning as `publisher` above, and asserted for the
+    // same reason: `emit` is the only module that treats entries differently
+    // per schemaVersion, so it is the only place a gate can strand a field —
+    // which is what happened to `peers`, whose v6 gate shipped and was never
+    // opened, so the compatibility badges never reached a reader. The gate and
+    // tier suites cover the field's policy; neither can see the published
+    // bytes.
+    const withSize = { ...entry('dsh-a'), unpackedSize: 847407 }
+    for (const version of [SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION, CATALOG_SCHEMA_VERSION]) {
+      const { pluginsJson } = emit([withSize], [], '2026-08-26T00:00:00.000Z', null, version)
+      const parsed = JSON.parse(pluginsJson) as { schemaVersion: number; plugins: { unpackedSize?: number }[] }
+      expect(parsed.schemaVersion).toBe(version)
+      expect(parsed.plugins[0]?.unpackedSize).toBe(847407)
+    }
+  })
+
+  it('emits no unpackedSize key for an entry without one', () => {
+    const { pluginsJson } = emit([entry('dsh-a'), repoEntry('dsh-b', 'you/dsh-b')], [], '2026-08-26T00:00:00.000Z')
+    expect(pluginsJson).not.toContain('unpackedSize')
+  })
 })
 
 describe('emit', () => {

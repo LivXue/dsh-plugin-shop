@@ -53,6 +53,18 @@ export interface Candidate {
    * ordinary ranges, so checking them would accuse working plugins.
    */
   peers: string[]
+  /**
+   * `dist.unpackedSize` — the total UNPACKED bytes of the published tarball,
+   * as npm computed it at publish time. Absent when the packument does not
+   * carry one: npm has recorded it since npm 5.6 (2017), so a version
+   * published before that, or by a client that did not report it, simply has
+   * no figure and the shelf shows none.
+   *
+   * Unpacked and not the download: those differ by roughly the compression
+   * ratio, and the number a reader cares about is what lands in the profile.
+   * Every consumer of this must say which one it is showing.
+   */
+  unpackedSize?: number
 }
 
 /**
@@ -243,7 +255,31 @@ export interface Entry {
    * declares any. The Host resolves them against the running installation to
    * tell the reader whether the plugin can run there; the catalog records the
    * requirement, never a verdict, because compatibility depends on who is
-   * reading. Emitted only at schemaVersion 6 and above.
+   * reading.
+   *
+   * Additive and optional, so it rides every schemaVersion — see
+   * {@link Entry.unpackedSize} for the reasoning. This said "Emitted only at
+   * schemaVersion 6 and above" long after that gate came off in `emit.ts`,
+   * which is how the gate sat unopened and the compatibility badges never
+   * shipped; a stale version claim here is what the next additive field will
+   * copy.
    */
   peers?: string[]
+  /**
+   * The entry's unpacked size in bytes — what installing it puts on disk.
+   *
+   * npm entries only, and only when the packument carried one (see
+   * {@link Candidate.unpackedSize}). A github entry has none and gets none:
+   * GitHub's repo `size` is the repository's own disk usage including history,
+   * which is not this plugin — and for a monorepo subpackage it is not even
+   * close. A number labelled "size" that measures something else is the kind
+   * of plausible-and-wrong this project would rather not publish, so those
+   * entries show no size at all.
+   *
+   * Additive and optional, so it rides every schemaVersion: a client that
+   * predates it strips the key (consumer zod is non-strict by design), and
+   * bumping the version NUMBER is the change that breaks old clients. Same
+   * reasoning as `publisher` and `peers`.
+   */
+  unpackedSize?: number
 }

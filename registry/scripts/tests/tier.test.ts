@@ -92,6 +92,43 @@ describe('assignTier', () => {
     expect('publisher' in assignTier(accepted('dsh-other-plugin', '1.0.0'), config)).toBe(false)
   })
 
+  it('carries the unpacked size onto the entry, and omits it when there is none', () => {
+    // The shelf prints this beside the author so a reader can tell a 25 kB
+    // wrapper from a 180 MB one without installing either. Absent stays absent
+    // for the same reason as the publisher — a package npm recorded no size
+    // for must not gain a figure — but the test is ABSENCE, not falsiness: a 0
+    // is carried, because npm really does report 0 for an empty tarball
+    // (`npm-client.ts` keeps it deliberately) and the shelf renders "0 B".
+    const sized = accepted('dsh-other-plugin', '1.0.0')
+    sized.candidate.unpackedSize = 847407
+    expect(assignTier(sized, config).unpackedSize).toBe(847407)
+
+    const plain = assignTier(accepted('dsh-other-plugin', '1.0.0'), config)
+    expect(plain.unpackedSize).toBeUndefined()
+    expect('unpackedSize' in plain).toBe(false)
+  })
+
+  it('puts the optional npm fields in a fixed place in the entry', () => {
+    // Key order IS the published byte order: `JSON.stringify` preserves
+    // insertion order, `emit`'s well-formedness pass preserves whatever it is
+    // handed (pipeline.test.ts), and the result feeds the content hash. So
+    // moving a key here rewrites every entry in plugins.json and invalidates
+    // every CDN cache for a build with no data change — the harm the `builtAt`
+    // invariant exists to prevent.
+    //
+    // The pipeline fixture carries none of the three optional npm fields, so
+    // its key-order guard cannot see their slots; this is where the order is
+    // decided, so this is where they are pinned.
+    const full = accepted('dsh-other-plugin', '1.0.0', 'declared', 'realauthor')
+    full.candidate.peers = ['@deepseek-ai/dsh-client-store']
+    full.candidate.unpackedSize = 847407
+    expect(Object.keys(assignTier(full, config))).toEqual([
+      'name', 'version', 'integrity', 'publishedAt', 'repository', 'license',
+      'metadata', 'catalog', 'source', 'added', 'publisher', 'peers',
+      'unpackedSize', 'tier',
+    ])
+  })
+
   it('marks an unlisted package community and attaches no review', () => {
     const entry = assignTier(accepted('dsh-other-plugin', '1.0.0'), config)
     expect(entry.tier).toBe('community')
