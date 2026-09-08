@@ -112,6 +112,8 @@
   added: 2026-08-31
 - name: "1624318455/dsh-plugin-tts"
   added: 2026-08-31
+- name: "16512354554/dsh-chat-navigator"
+  added: 2026-09-08
 - name: "166767/dsh-error-audit"
   added: 2026-08-31
 - name: "1710782766/dsh-browser-verify"
@@ -8106,6 +8108,8 @@
   added: 2026-09-08
 - name: "azazo1/dsh-think-window"
   added: 2026-09-08
+- name: "azazo1/dsh-write-protect"
+  added: 2026-09-08
 - name: "azhe411/dsh-download-progress"
   added: 2026-09-01
 - name: "azhe411/dsh-voice-assistant"
@@ -15444,6 +15448,8 @@
   added: 2026-09-01
 - name: "dsh-file-review-tab"
   added: 2026-08-25
+- name: "dsh-file-review-tab-012a1"
+  added: 2026-09-08
 - name: "dsh-file-tree-panel"
   added: 2026-09-04
 - name: "dsh-file-upload"
@@ -29032,6 +29038,10 @@
   added: 2026-08-31
 - name: "elonnzhang/dsh-system-prompt"
   added: 2026-09-01
+- name: "elskly-cmyk/dsh-mobile-gateway"
+  added: 2026-09-08
+- name: "elskly-cmyk/dsh-speech"
+  added: 2026-09-08
 - name: "embedded-deepseek-harness-for-vs-code"
   added: 2026-09-04
 - name: "emeryxu1-blip/dsh-process-guardian"
@@ -31084,6 +31094,8 @@
   added: 2026-08-31
 - name: "kalifun/dsh-cwl"
   added: 2026-09-03
+- name: "kalospacer/dsh-model-capabilities"
+  added: 2026-09-08
 - name: "kam74515-boop/dsh-show-me-how-much"
   added: 2026-09-01
 - name: "kanonouta/dsh-captain"
@@ -39884,6 +39896,8 @@
   added: 2026-09-02
 - name: "xiaxingtianxia2-glitch/dsh-auto-exit"
   added: 2026-09-02
+- name: "xiazhenxin314-cpu/dsh-soul-memory"
+  added: 2026-09-08
 - name: "xichun123/dsh-relay-models"
   added: 2026-09-01
 - name: "xie-tj/dsh-subagent"

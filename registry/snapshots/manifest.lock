@@ -75,7 +75,7 @@ yuhui-sama/dsh-agentsoul @agentsoul/dsh-agentsoul 9cea3cfabeb9bfe2d9595c72020dea
 @aiwayds/dsh-mcp-adapter 0.4.1 sha512-Q+7QX/vmqQ0nUqTWCerggnK7325Pg3+Yx32dYfdmM/gOFOzqAM6T3eUDHc5vRc8fqIqIcL/bvxtUR3tTR+B5UQ==
 @aiwayds/dsh-model-sync 0.3.1 sha512-P9e1p0U3pi0XCt5gRgT7mVo/hdUej7wDWEXIv++Gr6YQ6GepMQ+1785YmcmCwyLeVWfLgvFpcSRNHS08kWR+xg==
 @aiwayds/dsh-subagent-registry 0.8.5 sha512-LNTsVmp/jGYbJY7PdmFIcK0UzjfIwbBITZ9LbjUXHHeZ/6Z1aoqhFWntN637VhRahz3jVSynsPT4sfQK5zwjhA==
-@aiwayds/dsh-topics-memory 0.9.0 sha512-uwor03Og9xNRbQnHaSx7oAxyd604Um50NloVIYnYNY3VrG6k4T560CT1i4S0q5zbG6+8tIl2EWglg3EjV+C52Q==
+@aiwayds/dsh-topics-memory 0.10.0 sha512-6Ru/1WL3OSskCPQBFADJCe/ffv89ck2OMHPJCOJeoZOuJH/2vvsl1sHjra6UyM2OJsnK4+gpOE8ah7InstsAaQ==
 @aiwayds/dsh-tui-pi 2.8.2 sha512-EisYCZoVB5mw659ApcBN+axcm9VMsCd2IQR5YN7L0unX4Who7zNmhL56WWHqBcEIYFSTCLAbQWMi/xB3+Wrmuw==
 @aiwayds/dsh-vault 0.3.1 sha512-Zdw8JLpnVNcp8JVyVGyNyovSzTG4ScvGFHSLtn3pL3sYUZr38zfWbX5vr3Q/hXadTnyXZXB1h6fELBln0XlD9A==
 @aiwayds/dsh-web-search-anysearch 0.3.1 sha512-g1V0TqzIdeJ1CJ6x8ApKcJJCG/YZYOaNcLvJA69YrvCTjJa7CpTOMDEaU1Nvp8dyh8ZnQKw/uSAcQ5V7MGD+wA==
@@ -254,7 +254,7 @@ chenjie1129/deepseek-harness-activity-inbox @chenjie1129/dsh-activity-inbox-plug
 chenjie1129/deepseek-harness-reliability-governor @chenjie1129/dsh-reliability-governor-plugin v0.6.0
 @chenjie1129/dsh-remotion-video-plugin 0.4.0 sha512-Me+1QtSsCHPESdVADZy/J62FIhqRP0MDiG/R/ZgpMy0PyGDER8lGu+rZ0Rx7Q6fP+182tEHym1l3c46F+SppTw==
 @chenkai114/dsh-daemon 0.1.21 sha512-SCnmkFtFUURam8TLoJQ4vphCdFYcUk/TTkrqwBPJGBjULjty/ZekyJZHLUiWdfqv+7kc8FUtVcK/H4XkaSYuCA==
-chenqiuyushuang/dsh-nexus @chenqiuyushuang/dsh-nexus f369ad2477e603738164d4bd129c6fffa246f928
+chenqiuyushuang/dsh-nexus @chenqiuyushuang/dsh-nexus 74a00678ef21a1b7b6b04f40a397f7bf8569bcf8
 Chi-hong22/dsh-latexcp @chi-hong22/dsh-latexcp 8e4fabe22dd4721062edb06cc6ebf0477fd2d824
 Chi-hong22/dsh-mdbox @chi-hong22/dsh-mdbox 4723fd2f42617056017a97d761dfa3159b8e19d5
 @chivaskong96/dsh-trafficlight 0.2.1 sha512-9u0AiHOVxjRk0hEO7bAj5GLZ2tzAjrw7Izvm3yL6V+oJ+ANRfDht81qqzA3Spvh0QspZ1QGwKBKFqLizU8tQCA==
@@ -310,7 +310,7 @@ cyber-moshen/dsh-plugin-market @cyber-moshen/dsh-plugin-market 39c395832fccd2f00
 @cyrilmarin/dsh-opencode-go-usage 0.0.10 sha512-wpEnK1iUTOLwauIeM9toJugncnWBMEW3b+n3W+B2QgJvxd9k84ef7mZ1oR83oRirhcFbz24wyq25kuTge8T3rQ==
 @cziyi/dsh-mnemosyne 0.2.1 sha512-a3hs8PTOwWZf9mjnt9Nzbv/1jf2FgtOIpQKa3rnmn71Dt8dVfxTIugP44OIFu7LmBc3J7moMLFL4c1ivPlUyrA==
 @czj-git/dsh-plugin-hub 0.4.1 sha512-SXQb+xcvrpzWHGmaqNoI8fONzRvt0P7soOskoudkZeJVI1PYmi7+pzpwn+FXEyu5FyqKsLnR6bktSQ67ZU51hQ==
-d86e/dsh-doctor @d86e/dsh-doctor 2a6f6a4ed2676081e5f8cf82abda44295fdc3d50
+d86e/dsh-doctor @d86e/dsh-doctor 3d337e8a07d5470c4911e0eefb59da1cec7c1df3
 @dabouben/dsh-daily-tasks 0.1.0 sha512-ZgmlyVxVkWrA2PwxkoTHIeW+ET6gRNX+EYNLF+KFB7kOi3dRxM+grMc3mBtBekyNzDHgV9I5oqZ4wjeqrLiXvQ==
 @danglong0313/dsh-history-sync 0.2.1 sha512-x1Pq/ohB315KKcMYufvBISTYSx53pEiUq4uWBbACcmmprb3uJ2TTcIZhfXy4fZLYAL41+ExrKBHjOxKwZ5kUxQ==
 ph4310822/dsh-x402-wallet @danielng23/dsh-x402-wallet f113a6663079c1a966a61abd79f0dbcfb954562d
@@ -624,11 +624,11 @@ dargonburn337845818/dsh-skill-router @dsh-external/dsh-skill-router 27025663fc0e
 chen-zz20/dsh-skill-stats @dsh-external/dsh-skill-stats dad71d1b838f99eb93b918d9858732f8ecd0914d
 omdsh-dev/dsh-skill-stats @dsh-external/dsh-skill-stats dad71d1b838f99eb93b918d9858732f8ecd0914d
 dargonburn337845818/skill-group @dsh-external/dsh-skill-vault 7d444cc3e2797b5b5e89a4d69adea4da544c92da
-TT-Wang/dsh-slice-agent-loop @dsh-external/dsh-slice-agent-loop 3b0a681e59bfa69005e1e63ca6e362256d5d12aa
+TT-Wang/dsh-slice-agent-loop @dsh-external/dsh-slice-agent-loop c6de4e189b0c187354d717df4bbf6e5688be8c64
 sixtysevenlf/dsh-sound-alerts @dsh-external/dsh-sound-alerts a9b794fa3a7c872e97f28ae374964d37d132d60f
 Nixz0824/dsh-sound-cue @dsh-external/dsh-sound-cue 02c80d2c4836585e893c044530255fdb7de8f3ba
 berserk0501/dsh-soundscape @dsh-external/dsh-soundscape 9e1c9589eefcd125e34c6e25f15e5c636e32cf26
-lehhair/dsh-split-panes @dsh-external/dsh-split-panes 4a88d4cb4135b5d3ba9249a1ed3bdbc09006c2c7
+lehhair/dsh-split-panes @dsh-external/dsh-split-panes 65f24c08241a25610ff5b1334cab034549cf7511
 pipipigu/dsh-ssh-control @dsh-external/dsh-ssh-control ec5eed2a76e15be763b5f95e35f72197e4e55184
 ZEM17/dsh-subagent-agy @dsh-external/dsh-subagent-antigravity d520b9f690dbba9f8dafac09ebc79a5e1c5a8c8e
 cczzyy-cn/subagent-model-picker @dsh-external/dsh-subagent-model-picker a26ea20f9d76734d0b83d31a7b82cb8345b3f0ba
@@ -744,8 +744,8 @@ futrime/webdsh @dsh-web/machine 18906346882dad3a0e80203383fe871ec261ce53
 futrime/webdsh @dsh-web/network 18906346882dad3a0e80203383fe871ec261ce53
 futrime/webdsh @dsh-web/plugin-install 18906346882dad3a0e80203383fe871ec261ce53
 futrime/webdsh @dsh-web/star 18906346882dad3a0e80203383fe871ec261ce53
-zxheyi/dsh-work @dsh-work/lifecycle 6979cd50a0bef2f5205f6961a4bfc1213a2b88d8
-zxheyi/dsh-work @dsh-work/work 6979cd50a0bef2f5205f6961a4bfc1213a2b88d8
+zxheyi/dsh-work @dsh-work/lifecycle 0225fa98651460e14dfe495842173937dabb661b
+zxheyi/dsh-work @dsh-work/work 0225fa98651460e14dfe495842173937dabb661b
 @dsh-xhl/dsh-file-review 0.4.0 sha512-rWdJKAAHFM9rpjBx1DrcNfWaUtRztAyv7lDB3c4EKWnDYMuN7gJMdg0f5Nv7Bdid1nPGRMC1Um8JjWxEFBIetA==
 @dsh-xhl/dsh-plugin-terminal 0.2.7 sha512-ohENqb7UFe/qwWppX/WdbQPa5pZEV6L4XYxNAsbFjq+lbKBQrm03RLLihGR7i8SV8jlGGUGT8HaTbO2lPwjT/Q==
 @dsh-xhl/workspace-groups 0.1.1 sha512-T/cJ0FxmC7bVYdGr6I/RRuPeB7HoVkAY5wqwFH7eRO7MbLyB4KAmn/sbC8JQjBXrCZ9SJdCnhF5Ax/y1RpMJFg==
@@ -878,7 +878,7 @@ xiangrui979/foresight @foresight/memory ebd642b6b63623d512eb029700409842125a1399
 Frog755/dsh-hybrid-memory @frog755/dsh-hybrid-memory b13d0fc69924f13b59ebd4720fba83e580039bba
 @frog755/dsh-prompt-vault 1.0.1 sha512-voh7IIFfq+pQzXzOtMZiIRlRCqsis7vUPy1l7xh2ZHf8gBdZ2lkMfDng/Ng34FrJRo8iiQEUbFs/CCpXvHFQ6g==
 @frog755/dsh-wallpaper 0.4.0 sha512-2wyrt8ATiaYgn5OsiV48IPCivsb7+69TS3Vdpb5gbo+lbn4aOxmv/i2ZVPuweaSvdKurCSCp8jPXprE2ojQkow==
-FTShare-Lab/dsh_kline @ftshare-lab/dsh-kline 1e3886644a31578de434f4ec79360678ea11ac0b
+FTShare-Lab/dsh_kline @ftshare-lab/dsh-kline 155a0760dbfeeb7d8ecf05549229e5be05d4d490
 @fufuf-c/dsh-token 0.3.1 sha512-ELccjYgRSPy9i9K8E2AjlI4eUZnsSGAw0OgaIjZX4wLf3PuBBz3tbB7wufRgFfxWNQFLdx4JP8ie5DGthfGofQ==
 @funcodingdev/dsh-pluginhub 0.1.0 sha512-la8ZdaRFJdeqDmfqNgPTz3CNuwnjqXTZB4pERSZPtm4J2umhaeIIjXEUUb4VQSsYf9C5dAttLlUP50o7d4AImA==
 @furayoshi/dsh-ui-models-invert-selection 1.0.0 sha512-0+Y5kkLlp5JcgPfiwSO1RkUaRwHlKD7b0SWVJz2wVqGsXOzDhDkoZXHkIJClr+SFa6ASOdBeEyrLO6PczdT/zQ==
@@ -921,17 +921,17 @@ GooDAnDReaDY/dsh-dsml-artifact-guard @goodandready/dsh-dsml-artifact-guard f0b3b
 @goodandready/dsh-grok-xsearch 0.3.7 sha512-qAEaMdsrxHf9b9QPO1NYN0x3u6icWzsrPDZMbUL+IQwXlNlIMuhvW9lRzGrC/R9CtTU55EQE9T9b8g4NN9u6fQ==
 GooDAnDReaDY/dsh-im-hub-media @goodandready/dsh-im-hub-media 2b2427847bca22ae4ef57eb150d0730d791661cd
 @goodandready/dsh-image-gen 0.10.10 sha512-syYxgvHCdrkVhEA6sjHYZ0yp9DsNq8IJ9HmvUzqJxcJ8SJFpmlm/I5+3z3j8s8rziGouINDihFDgS00VWPpNnQ==
-@goodandready/dsh-kanban 0.1.29 sha512-WGNCydDX2fmRviV6PEz/RqxUKQQG2ahoAe6y835cI4uGX5GwKIukv/qcFp/03Drzqy12sEVfVidJvhIMkuixEg==
-@goodandready/dsh-key-rotation 0.7.36 sha512-bRwMLiczkN85bmbqwtoixInXP1FFNVpTbghGxjp36OALqTHYwiRwXM8F9e99Gz55/JQwGKEXNFrzVYHGyxlNuw==
+@goodandready/dsh-kanban 0.1.31 sha512-FQSVPo1/AkDzWG8Wojzdub+D6HawX5uPKbi4PwxjUZZAIJ90IC+u4Rmm1FullNgbRjb2SKZGLJFoxxrM+hhbgQ==
+@goodandready/dsh-key-rotation 0.7.37 sha512-GwRxbzbI8yqtZvEuoWMyDHyHLYqjeLChCrt+jUz4BFppD/slG7euQtFiGV49vlsWBoGK8SI7jLZAEfUmx9Lc/A==
 @goodandready/dsh-lanmode 0.7.9 sha512-UDisc/FgdCE7gmsaXx8bZsw2U1YA3EhaCGLBoA29VL5qJWuQ5fHIxdPqMtnuebJkSMlhhVTXx0PNIGsH/1Yr6A==
 @goodandready/dsh-live-canvas 0.2.7 sha512-oLGH993RoOL3LmYnPV5EsxxRn/mmDYt2R3H5uAo8fqWvnMIq7YXV4p3ypb7y29z8I6M99eZ0ZWks60jiPESMcA==
 @goodandready/dsh-messenger-gateway 0.3.14 sha512-qb5+G34JViGsrPC8twzasIfoK+8DDLvMsM9Olc/x2yndoYK682gv6yWiMMiA9/6bR9Qx8FLBhMOqaupe8s/4sg==
-@goodandready/dsh-moa 0.2.7 sha512-9fl5MUTDXNnHmoQJWufM7Ie80uBGGcxTT8vrUTWrNgDzVm1YHNVgvVPgCKubQkJ+MVbtX+9iNZeTfHUdvcY+0g==
-@goodandready/dsh-model-sync 0.3.9 sha512-maEGkpkv+emUgWFT5I6vekUvgmlUjmIdfHn56+eSbZ5cufT0CzO2kjoGn5FzMMqCZHlXQqhXlj087Dqxo2FRNQ==
+@goodandready/dsh-moa 0.2.8 sha512-FkTwR4zOeTTbR8m2E4TgoeHI8fFVZRubbFedaJysu/zMuN4WHIdUMHFgbgVXVLP4EByc8bBZtEQdRnaUECibZw==
+@goodandready/dsh-model-sync 0.3.10 sha512-34k0fb+O3XPKPXlCLL2GVDYXk4UuNCBy8ngfK7E7nBK0L44jCbilFit/OsjJTPBauQvvClNVx87dtpfIYXhpHA==
 @goodandready/dsh-russian-lang 0.2.6 sha512-Olo53NKnBxrnipEVZskuHFwSrh3i7ydvr56IM4l41MqPlSC7O8H1zhV3r8RgJL1mdX1FIrZBdku++Nq08tHqkA==
 GooDAnDReaDY/dsh-session-control @goodandready/dsh-session-control 88fb33c37d210f1d7e654cbc24ea980829eafb32
 @goodandready/dsh-shadow-auditor 0.2.4 sha512-19so+mOY7eGiaa1hLeIiYGaiG9sz6NLOilmmMprQ72aQOLpsnubXFJkvi8tZlKYv09tu0MCOf5ZCseucnaJbRA==
-@goodandready/dsh-subscriptions 0.5.30 sha512-jhW6n0IShxvt3wmEpGOXYInkuNwCvL2m0sfL0VHAv52pP0t8bRAqsLEcoCTwe9cZOkUqE+TqsalxwOTWrR62mA==
+@goodandready/dsh-subscriptions 0.5.32 sha512-vRbBKWx7+3fBCJbxzMkXD0hQNikdAPPJi8Mv9LN/NfgeteeEqoQDny3B27kSkFumR3eIBBbnjQF/B+OP92GEOA==
 @goodandready/dsh-time-machine 0.1.9 sha512-JrrOw2ibDhY78eWPFfess8IGpVMKIsZgrciXXnWy/DGz+4KIf8fYyz2wNYXSJZISnKXkv3ovDy+y6xO/0TR7JA==
 @goodandready/dsh-tts 0.3.23 sha512-KUDINtxdGauIwZ7QZ1ng+2HVulMqPen1SnQgki6OhvGqC3QDvQE5MmTLCqg/MF+OACF0+NrvETuBsyUhLKrzzg==
 @goodandready/dsh-usage-guard 0.1.2 sha512-nf4UKhMMnzbF4KCjB9qzIz/LJfVKsoS1chXqec6qjX0Vzof3R7pgoNGGPjpIVCf3jcSNm6zvmTdDnPgduE6pzA==
@@ -1122,7 +1122,7 @@ Jonah-Wu23/dsh-bg-carousel @jonahwu/dsh-bg-carousel 7cc1407252fe1fb9b78261ab1e60
 @jorinyang/dsh-doctor 0.3.2 sha512-mJXZEHJ9trypj631Yex3B9IHbtft77FGioLqTpenBSNbPHKBp5v78eoZunFRC2VqzLT18yT7KpY/PX0tOmCu7w==
 joshryandavis/dsh-llm-aws-kiro @joshryandavis/dsh-llm-kiro ce13195bc5f40e75cb9dcebaf3a361222ba5052e
 JPA957/dsh-web-search-anysearch @jpa957/dsh-web-search-anysearch 0f6e443a1cbf40810f319f710c2953b0c6fe6963
-Js2Hou/dsh-mcp-manager @js2hou/dsh-mcp-manager a9cb509c55d94de57b864e41b2f3bebae785c883
+Js2Hou/dsh-mcp-manager @js2hou/dsh-mcp-manager 314e9a6d5a40489f3f6e4ed8a84a8b3063be9fef
 @jumpserver-east/jumpserver-dsh 0.1.2 sha512-k6czjcRbbWSn9BB5nSau+mvowud138lwJjuOAwX+/xaPKnxvExkHDZ5DbbZNujkWS86PsOHZ1tIhe9bNksGZGQ==
 junjiangao/dsh-web-search-tavily @junjiangao/dsh-web-search-tavily 5f4587dc25e11a69525733c61bb11c9e5dd8eb33
 @junma11/dsh-scholar-lab 0.1.4 sha512-e+HjUS/VMEv0WBhnkS+7yk5R4NvBG8u8ujd0p0tJ6hzFCD1MczRTcO3endT8J/8H6f+HbcoKewRCd1XogbtXXw==
@@ -1387,7 +1387,7 @@ maiziman/cedardsh-model-probe @maiziman/dsh-model-capabilities 89bfe7c5a875f793b
 @mamdouh-aboammar/dsh-codex-subscription 1.0.1 sha512-Ht8WQYjddjjqhmGCHj5j9BqToQTX7RlUWRBRcNolei+586HclTh1M0ZCKQZzIrLq5K49fBaZKz1lsUknQWAuzA==
 marlonLau/dsh-wallpaper-engine @marlonlau/dsh-wallpaper-engine e05c7a922af0f039263077e31b3fea7ba1ca97d9
 @mars-sea/dsh-commandcode-provider 0.10.2 sha512-cD0jSBqLDZ1OE//PPEpWz0RVlM+J6VlXJMYKUiv7qCnbTc/XQ6xjVt5TsY5zyBnwwz3jtEqoYwniiB9ob2zx5A==
-@mars.liu/dsh-rich-editor 0.3.1 sha512-ioLYCctzLp73yD83O5aJRKUSXjb70AtNOaIayl39P6i/WYMuOlzfzxwZY5sA9Mvlnswz+LnQ4TpwFkbhXHLtHQ==
+@mars.liu/dsh-rich-editor 0.4.0 sha512-irJNh1ca2TrqAQkQfpmsaC+/uj1Cz4yqwXZ1mKqJvw3WvTcnGsFUQl3Xv/GmZ+stroDkTW3mI4noWDmBOvm1bg==
 @mastergo/dsh-canvas 0.1.6 sha512-jyJeACM8UZqUvi+TC2yzZuGZP/0NFkLhOQmEPJrc2Kte30Unm0vMWZcZOFxcWcxVkyXf8DtnvCNiATJZ7pnbNw==
 omdsh-dev/7d7d @mattheliu/7d7d 1c8ea4981fcfdb58e8f9726058b950aaf8cc9404
 omdsh-dev/session-teleport @mattheliu/session-teleport 0640ca9ccd1b9ac12709b74aecf2a0e75c8bb4b1
@@ -1421,7 +1421,7 @@ MichengAI/dsh-agency-agents @michengai/dsh-agency-agents 72b88e53533bfe3b382d36e
 @michengai/dsh-archive-manager 0.1.32 sha512-0Xd8JPI8Mjl5TPG5Rat/w7JIfQ1LJ6pDKi31elasA5vzZ7MxBUlZ4ZcQFbjQyU7S7PNMDw9Bshj7kT5sSOHAZg==
 @michengai/dsh-automation 0.1.34 sha512-Q5AbaOT+rPBSw4kWraZzfBX6CCo6S/vBUkfuyrQ5q1vM2cQ2XZFJ+/Jt8SBQrhfz231AxY+7GVsHCPFWP9JQAA==
 MichengAI/dsh-btw @michengai/dsh-btw v0.1.4
-MichengAI/dsh-codex-ui @michengai/dsh-codex-ui dae2b1d5a4db5037e1df52237fd8d61381e2e16c
+MichengAI/dsh-codex-ui @michengai/dsh-codex-ui b6ca379c94cb2a5cf74a31ad2aff608cd6605cb6
 MichengAI/dsh-im-connect @michengai/dsh-im-connect 5cc08d7acb5c0c133093dd08f435496de2203002
 MichengAI/dsh-simplify @michengai/dsh-simplify v0.1.2
 @michengai/dsh-skills-manager 0.1.43 sha512-KcmSUtOH+bAvHM0uIgHmsMXNwvAUPVTw5RPhvyFGOt/oxH8hSp9/IcDaUtAIg1jSMtBDKvKjNJs08hLXb1OmAA==
@@ -1457,7 +1457,7 @@ mnemon-dev/mnemon @mnemon-dev/dsh-mnemon 9c8e760e0143f5d66b5d57609a60e1c4e620da9
 @moguiyu/dsh-tavily-backend 0.2.2 sha512-r9c+4TlVlouvM9dHgk82swGoAvRQTAxupDghnT5y+vVgo1Ke31dHIlXfJw/kdECOAytD0zbK3wquH0FR6uxs+A==
 @moguiyu/dsh-tool-tavily-search 0.2.2 sha512-PY8vAiMXMZEpzWIGzh1FUvv5dg+cSZOnp56SCj0v2maeQlziavzndGCdtZEIBJE7qMapAVKlUJkq/wTCYmasgQ==
 @mojiexuan/dsh-git 0.2.1 sha512-OccBRIAjJZKkcLWSgLu2AEyJ+mGME8n36tdgEQL1klf2CN5LU0fsPlm9/aCw4+2n0C+OQzEGXhgik7i9RccxWA==
-@mokuyoaxis/dsh-iris 0.1.2 sha512-jjR41JA5udw75BdyXef3bW+ILMR7i0ZjnuP/hDmQplFnrIVGHypqGph/7Rehf1gC/jlcj+863up2LQyZvB0+bQ==
+@mokuyoaxis/dsh-iris 0.1.3 sha512-dnzJ8WglvNaL3U3q10yMDW2BB1nz3q3+gsMyQz/RVx87Cdj+JwWj7h4WI9Pc3DSchhIKObGvCFL8nIRH5EAF9A==
 moon16u/dsh-pouch @moon16u/dsh-pouch aaaa3d511126b2f87e7d5fd22caaab0a0db4f92e
 @morehao/dsh-commands 0.1.0 sha512-m3a61yrlxqfS0dP3/QA5KakRoAD+HCnIwavrvXUZk0xpXOjG65fg5Wzi+EyQEEt1KCUT73+1OIZd4oC4hHY6ow==
 moreWax/dsh-prime-agent @morewax/dsh-prime-memory ef5367e167287789ba0d5c922736bf1e249ebc2e
@@ -1531,7 +1531,7 @@ userInner/dsh-academic-research @onpeople/dsh-academic-research 41650f0b52c59386
 @opdsh/unity-plugin 0.1.5 sha512-w8EG244rWqsAXqKl+aMadKBiW9ZINqVjHtj3kW8Mg/PIdj9KzDU103aPy6D8GBCK1VQvuOyWwSNnYKOTr0R8ww==
 @open-agfs/dsh-agfs 0.1.9 sha512-Jg8U7SnWwqGV1WosXDdZJf6cCdFUWQbR5aXFOxf3+A4N1ssUvThYHGWbNz0XtElHM7TcKljWMxXbXN2Wm3KRIg==
 @open-aiden/dsh-lark-bridge 0.0.8 sha512-oxdok+kO+y5hPP8gKlx6pM5RsqEi9cIwyIb0mMITFbOAj3cj9RY1g+BKzDIHUtokfYZegFuUHYCyXydc00xmOg==
-nexu-io/open-design @open-design/dsh-runtime 92f27d1fc1bf1b4f1789e00ea1a1ad23bc8348d9
+nexu-io/open-design @open-design/dsh-runtime 5a7bbe5b104a0d7786c281cea384d5e73a77ffa9
 @openagentnetwork/dsh-plugin 0.1.5 sha512-bPOqrrykvPN+Ui/FCYXE8aOd6oZ1x7W4NPGPEE1ykGhFRoZaRmfaU7nwtfwyPICyJMcv0fD+VeyMjDLuKTMOHg==
 rocklau/dsh-rss-reader @openbook/dsh-rss-reader 87ba913307826f2e4e387287d3e3955ab92063d8
 @opencode2dsh/dsh-plugin 0.2.7 sha512-Q495ISXK0qUskUh8+56n+M9tOw47rN6Jqsm6VxPgc0Ul95ZoqSblXsPwMhZ/c0IXxRIngHASxM07AFL4kM89Gw==
@@ -1665,7 +1665,7 @@ shlouai/dsh-debate @shlouai/dsh-debate ff853a95211a44c019536b3ac49e1727282bd034
 Short-Arm-Ape/dsh-intranet-browser @short-arm-ape/dsh-intranet-browser d3f63d4765647dacca829dc7edc6c8b43b4fd39e
 shuaihaoV/dsh-TheWanderingEarthII @shuaihaov/dsh-theme-wandering-earth-2 48cccf4ad21f594d1e308df5d82cdd5759c02506
 @shuind/dsh-codex 0.1.6 sha512-/R6vReOYCtFPydlXvGs/Zx/LrgeaRyhoXDPYzBBOWf4GqTHXAgvuTSdxuJ8gquH5oCCG93Yq/qtRJDpp3L2ISg==
-@shuind/dsh-codex-harness 0.2.6 sha512-fwBU+PbRSa1xRv2VK0BKiQ7SX0mb+eM6SneS8rtZsHgT3RgmYCMQ7oPEU6Fbt/D9b7JTmQoaERtgjnCJhuyalg==
+@shuind/dsh-codex-harness 0.2.8 sha512-7Dnu7GJTotoPiOZv2tJDGdKbOTaAFzbaSS3z+JJqa11oP00ll8lEpJus0feKv7BVprOGxrJOPPVLhH7rU8ojIA==
 @shuji0o0/plugin-scaffold 1.0.0 sha512-N93xOzX5KV/IuGbCe/WKF0AJVSeddDh7JyLu7lFDFAZ8BEVbqO3afuMQWnJZWJvDkkWllRNQ5HkRHKukNUBtqg==
 @sidleo3/agent-instructions-plus 0.2.6 sha512-g2ESJ0Lg11D05Oqj5Jqa1UdFAF2oPEUrBhizE1SnRfpRXUsROL083PVCjDlj4Mn94Wi78ayAY8cI8NLSpjpkXw==
 Signalight/codex-to-dsh-pet @signalight/dsh-codex-pet b8d2de30255488d3fc497d7d667b1d828910a3e3
@@ -1789,7 +1789,7 @@ welay21312312321/dsh-design-feishu-docs @tezign/dsh-design-feishu-docs 94ca160a0
 welay21312312321/dsh-pitch-doc-generator @tezign/dsh-pitch-doc-generator c6b2db73e673a7e0ecdf0c2703ec4e25022e9ead
 welay21312312321/dsh-quote-sheet-generator @tezign/dsh-quote-sheet-generator 6ebe4edaf1edaa58fa5f6ab2ecc4f313365e3e4b
 welay21312312321/dsh-write-feishu-docs @tezign/dsh-write-feishu-docs 299f224cca2d992744e53a9539b4197c0c0db479
-TheHeartFickle/dsh-conversation-folding @the-heart-fickle/dsh-conversation-folding e6393112d929daf09497003576f17480c30335f0
+TheHeartFickle/dsh-conversation-folding @the-heart-fickle/dsh-conversation-folding 24f3e74b5df675a94a45ab6ffe42295becd968b9
 TheHeartFickle/dsh-one-dark-pro @the-heart-fickle/dsh-one-dark-pro 992a966b3cf37ea240379b152557800f662d8a5a
 TheHeartFickle/dsh-session-manager @the-heart-fickle/dsh-session-manager 864b4b40d29aeb6efc44b8ce6729fe6c6dea291c
 TheHeartFickle/dsh-skill-creator @the-heart-fickle/dsh-skill-creator 582870d1148529d166fd2177f685b3aa45f4f654
@@ -1902,7 +1902,7 @@ wanyexin1998/dsh-workbench @wanyexin1998/dsh-workbench 19b25de9b5163cfbc04c9f7a4
 @weibaohui/experts-management 0.5.0 sha512-CFzpa2sa2RiW+Ts0dm6qyyX+p7H/da14zIftoVZm2p5SzqoPNQkezwige9BK0sRmqkvLd9PP1CmpBtq2bOLFPQ==
 @weibaohui/hermes-loop 0.1.7 sha512-3QIZoxlJEjUb+ZqYyCVzwaA7g6UI+SKxHyo+MMcIqOv4ar9AVn0n6PKK+DTx2pUY/dbipa+VMVTYlyC99CElwA==
 @weibaohui/skills-management 0.6.1 sha512-dSQhXPk7CmSHupiopfNt1NeUGCLfYZMkpeqUu0bKWTF2Vb1BQxVHnFuAx0rRZDSm3IH4KxVbmvLwPJ9IdJe1cA==
-@weibaohui/user-management 0.7.0 sha512-G71kkDNQjZyfCHzr/Et+FnwLQEvYZzkfnzGYVYJ/LSqVPjY8XOe7I4LR/xeMhS6tH7gooyE99q3qwX9y5ZNq1w==
+@weibaohui/user-management 0.8.0 sha512-LM+T+mEjIaBC5WQw8OdNgjdjnT6k0EFmgM8Hg/uLqWjlJYHdw5hvGDi9+wbbgDq4lLwfttkphZTv8fOiXct5Wg==
 wellorbetter/dsh-input-history @wellorbetter/dsh-input-history 4c72e15180b238884125a5c1d3095d437ef3e9a8
 wellorbetter/dsh-plugin-window-stats @wellorbetter/dsh-plugin-window-stats 970f068b3a5db45081c258c69aa70cf25fcaee12
 wellorbetter/dsh-product-delivery-workflow @wellorbetter/dsh-product-delivery-workflow b58546acd53c16985eb099a3a49961a9a8f8b776
@@ -1983,6 +1983,7 @@ Xiamu-ssr/dsh-wind-aifin @xiamu-ssr/dsh-wind-aifin 0a05c84b8d631d3672e1857dd8076
 @xiaoso/dsh-run-config 0.1.4-rc.1 sha512-v3iyGtv8st1hmzdNVgXRH5bIJq0oXtfva1CgBUoxTQ6V+KxwmjLE4zWgPAT74EWZ5VBApKJo74+b1wn4WGBJ/Q==
 @xiaoso/dsh-tool-plus 0.1.4 sha512-GcFnbChra/NDyTRTyoSzBYmGZqUiiZu9nySMyuu2BiCMa34moLChfiSIk0LwpbjDqpUzDG7fj4S7aJ837xR/Fw==
 @xiaoso/dsh-turn-navigator 0.2.0 sha512-TgaCa7n4DqvAlymUPt9iwRRYMHl67RvYO+07KCFcfiuzCttJA/58vSU2PJSVKBXsgUPfDgxBWUXUEyCVKQzetA==
+xiazhenxin314-cpu/dsh-soul-memory @xiaoxia/dsh-soul-memory df3239aa1ab00c35d81eb4cc8862084771eb4be6
 2501136589/dsh-rewind @xiaoxin/dsh-rewind 3212cddd3001af0d023df4e1080a5efba32bc9ba
 147228/dsh-black-whale @xiaoyao-ai/dsh-client-ui-skin-black-whale 4f7816e6f24a76f8e99eb0c23686eaf1a34d0862
 147228/dsh-xiaoyao-skins @xiaoyao-ai/dsh-client-ui-skin-black-whale 174f65d9135e932383a8f3a19fa522f16875a139
@@ -2248,7 +2249,7 @@ wingoo/codex-plugin-dsh codex-plugin-dsh 79fe7503390d641680bad8efade52782a3c31ce
 askdkc/dsh-codex codex-subscription-oauth-plugin c35eb212bf55428c02bbc81975c8b75af3a20e4b
 codex2dsh 0.1.4 sha512-aaqvZ/DHHzcI2nr8c2DmKJUa4hY28465gG+6FasLxjkE4kmjufcpQtQjUrTAfmFHk2S/E/VlE00vMUwPvUF+kg==
 coding-coach 1.0.2 sha512-rmPi4xPpQqEg0o5d9GeSG/UEN34Sx9K180sXktg5ketxfbt30iCUU9z+z4lGlsd9kJU2YhcomCi1iTtUoeeEvA==
-Blackman99/codsh codsh-bundle 1050a18df16f0a83952d2eaed878b69fde51d289
+Blackman99/codsh codsh-bundle 0d076403eb68513f0f53a1a58095f4ce1ffa55c4
 hanshanxue83/collaborative-emergent-intelligence collaborative-emergent-intelligence 0436074cadab58a53c6d70f868197fc6cd9e9733
 hatanokokosa/dsh-colorschemes color-schemes e7edea386d322d2c025b22637422f807b5daa35d
 gonegirl07/commandcode-go-for-dsh commandcode-go-for-dsh facf1fca2ef347c53b7949a235a8ba1fade3615c
@@ -3203,6 +3204,7 @@ dsh-chat-index-rail 0.1.1 sha512-vZdYzeyxvQCoYbVOhiLcMBzMBRjSJqKxywnb3ZtE7qLfZ0C
 dsh-chat-log 0.1.1 sha512-vkCAJAOeOF/6D9TuFYOjM7zL1HMyUuPX+vkIdkx+FtYR1x/qcn/WzzPqopSorfF9x4UQHFVaCFEuEGp15ZadSw==
 dsh-chat-manager 1.3.1 sha512-1MkqOEIgLd2lSy+irn1ORVFHsQRZTeAKMYAegReEeeJHWoXbd5dQlqIdUWcddpoQnQHHkdtqxZnIThhf3Ma2xA==
 dsh-chat-nav 1.0.1 sha512-OgszGmHQjeJalT8+mxrlCiLqroKT2mup1vpc3piEgRyiP/sP4g7nbqsg5TAgehJ3Imd2BxPqPM9wlp2kQV04Vg==
+16512354554/dsh-chat-navigator dsh-chat-navigator 2e5f6771aef8d7d606bd4f596ab9993c94ff930d
 dsh-chat-outline 0.1.10 sha512-D+OaWvbVjXud5/B4lI+6L6Z9r/VuTTsbhHsPDxXSVJX5U6CGFNrqiLFPT7RycnXX94m+GrLnHha5trS9phpNrw==
 shao-01-test/dsh-chat-rail dsh-chat-rail 919148e4d6613ea3d59466ba43ab4220f6358985
 dsh-chat-scroll-nav 0.1.1 sha512-17+wewu0K6pcqsPmcK0f2WU8mmw6cqCzFkV/OFLtrEpPmM+bcRDdtCNQN9a2tsvel1hOMmaREg9pZ49+LEp4yA==
@@ -3459,7 +3461,7 @@ dsh-codex-relay 0.1.0 sha512-zf9sSvBn13koe5THCfmxghNypqO39BNyr2LhXdk3gUuvP4rs9of
 dsh-codex-select 0.1.1 sha512-+hqvIaPhf5SGResOnktrmhyrcP65wP8PKNfkRXGdc2R6sqXAtkibwK3nWc+Z+4Uucbwzqe1F1cpI6tHJl4TWJg==
 502399493zjw-lgtm/dsh-codex-shared-pool dsh-codex-shared-pool v0.1.6
 EnkiduGilgamesh/dsh-codex-side-outline dsh-codex-side-outline 2e923efab570557d056ba8cbbb915f55ff878ff7
-dsh-codex-subscription 1.14.3 sha512-9ZMFp2fVRY7CVDuB/SArHwXIA014x2T8M8s8mXwc4/yRmJW8/qWfbtHfCOBHEBEvKuvkpI3dPdJzkrENZW8fZQ==
+dsh-codex-subscription 1.14.4 sha512-Ocw4xu8uija/R2NavyLUAuE11vMAu9ro7pAm3vgGiqY67rgWWv8ibmSZqTlH40wYRdoypDgMSZUKPfnzuPUiMg==
 dsh-codex-subscription-en 1.0.0 sha512-qrG/vVAWpIE3V2NaBifxBglvL3qQng6KR9zIYmbUNYec4ukBnLNuBFFWnCTejtqGxlhAUiEe4SI7JLCvFhiRVg==
 dsh-codex-switch 0.1.0-alpha.8 sha512-2Ygufo77hdDVeN6+xFke2ds6PfLRCxm0+floq3jjXG/UegoSkPVjShRf5BiCYKYzPhrjav/c0jvS8+SrNVKE9g==
 dsh-codex-sync 1.6.1 sha512-dJ5UhA/8SSKr4EaFQlVGUd1bKg7mIzOHRZ/cZn5viOpINve7aFxbBCsBspxMnDZ2WV7Sp/CkQ2EY3vDZMPTx/A==
@@ -3833,11 +3835,11 @@ dsh-daoing-memory 0.1.20 sha512-dGmwBEq7ZxJp02ZjRg65FjxmynmqhydmzlhWZEC567c14QyY
 benzhoupo/dsh-dardar dsh-dardar cc77e4c7abbba4295133c6149330c78a7bda4050
 keman-ai/dsh-skin-pack dsh-dark-xianxia 5f52f39641b50614eb7e2cbeb134316119a8c9e2
 uckkk/dsh-darmstadtium dsh-darmstadtium f1231a6c776d80e6d2140d108d70c7371355d7e5
-dsh-daruma 0.1.3 sha512-YQTyjwGPQOLk2eYOxMWgtNMDqouyX2bEdUH9Sm2BVO9pAu4TGh+nHhf0EIfoujLxMR5fiDFG+FUlR+qs85BkSw==
+dsh-daruma 0.1.4 sha512-HZ86daPtKQYg8tqk1yWUlTECKagZQWum4CGGDx0fSt2omvgF4h/cQMZUGf5PQaHWe87bFs0isVi1MjfZPBlbFw==
 dsh-darwin-forge 0.1.1 sha512-b3DXWfvOWwnn3fsgeomb2LDwLyIWUfktAueUUD90pgTJAoxrLCt4CZiQi+bdENVXHxUvzVELPhqzVsOJ/cWTyw==
 dsh-darwin-sentinel 0.1.1 sha512-Ux6jZRDQ4RTGyXKjCL8TvRERmbgiGyxpMLQxB5vxaN9hH/XNwYaFpiuFiYhqTdN7YEbW/Z/BckFqZeYV4DBh1g==
 dsh-dashboard 0.7.0 sha512-R1unDSTs+PhKhjqHEPaWFRWnLNwPiokEL3uXzekYrN20G4CooDzHg+tZqGGWngibP7zHyGJPnEjYQez8hEJbRg==
-dsh-data-cleaning-agent 0.8.16 sha512-lAZwQ+MlWssGl1mjfzqYucoVxhidsIG1iiar8erFm8Bh85WOscK2FL6tNIvJyd8836QqO5sPtT+GisJDXjrX2A==
+dsh-data-cleaning-agent 0.8.17 sha512-y/tx3JQFuChoVWlkP4Yv7DaB/EaxagqEhdTK5HfqA6B9uSzoWS+lToTtvfRAFk5nLOksPc9eRwJKZIkEl07Djg==
 dsh-data-insight 0.1.3 sha512-QFP3QmbPl0NyyBu9yubpmrneD8v6zFFecUPfYBQZLuMPddPk7PRjGojSoLv4IZcUix2qvJgfYOZO8XeFBdcXlg==
 Niuniu-Sir/dsh-data-ledger dsh-data-ledger 6e1496d75f23699386793aaa6ce8324ba3cd7a17
 dsh-data-quality 0.3.7 sha512-lyY33GEYoQzOAvwdIDT/2zqE62mJnOFkL8pxA8dz+aOeJw4Ry+eyblj4dwg/4Z16c0uBsnkw8k3iDDz3Vihi1w==
@@ -3864,7 +3866,7 @@ dongsheng123132/dsh-decision-effect-proof dsh-decision-effect-proof 3c06abfe04ca
 yuyolin/dsh-decision-log dsh-decision-log cb81668adfe1065c9f3a43160e8b9c0708757665
 Scitiger-AI/dsh-decision-map dsh-decision-map 43a12576c89a98df5e0a4d806311d47167726ebf
 dsh-decision-split 0.2.2 sha512-mYMh0AZfzF5hE97iw8POOOSJ/LhTnClXAtDqT72A/vI0XQfq5au+mQ7mgQbPfTIynlNkNQZfpOFDDLUHWTajoA==
-dsh-deckseek 0.5.0 sha512-hPDHV1qiXqUDJWwJVqqAM/ZbmRnIRv0jzMzw/rlQwxzLy6DV8XGX+Bv+UjWkjMN1Z7EhNnGxlky9yN5JWs/8AA==
+dsh-deckseek 0.6.0 sha512-vIII1yV7Avs6R/hoSz2/BnLB4onr+F7LH6Wpe/FYbxWgBPTJuNhJAIszLukpyjQuVZ5vjUqgscROXoPpyBPdBg==
 uckkk/dsh-declutter-decide dsh-declutter-decide ad1b6ad2f327b8e8d33bca00c2e9b1a9991f8a2e
 uckkk/dsh-decor-palette dsh-decor-palette 804377a4dbf767c44b3affef1a88b82b724603d1
 uckkk/dsh-deed-tax dsh-deed-tax dadb180eb3333435c7d2452a712b5eb84e0f31be
@@ -3926,7 +3928,7 @@ keyiadiannao/dsh-delay-tools dsh-delay-tools 28b310173831e1fea9a911ef3d248546562
 dsh-delegate-router 0.4.0 sha512-t3eg4JGaK+COB9UOplYR8oiW57aw3/Q4seZ0Dl7/oAn04A1U8oOUW4UyQFab5aFC5iff8x1QaAmjz1v58zy9Vg==
 wenheguo2/dsh-delegation-suite dsh-delegation-suite 430a594defbf992750c92deffcc03d88544fe196
 Wh1stle05/dsh-delegation-workflow dsh-delegation-workflow decdb287cf6ec7471d87f2b267db29e62d62542a
-dsh-delete-message 0.2.1 sha512-vW9q6gQas0Tth59jmNHWI86OALniQbGv4V3Jk5H5IDxIAGDy1V3MUf8TQ8XHw0cniozm4aXesbj67f/ayBsgEQ==
+dsh-delete-message 0.2.2 sha512-MLSDAjdT4pU4TIhmMJ8JkUoaKvIGFbfXMrOemSqq/bHed2/+Ja1Yehvn1LiScCAILL0MZoGItC+gtdWXcjfBSw==
 SMWHff/dsh-delete-session dsh-delete-session a39b42ea48bddd96f6db4cb7b4c4489b17fc644d
 uckkk/dsh-delhi-city dsh-delhi-city 7b9da56c6489c15e907252b6e960ed5191e07b24
 dsh-deliberation 0.1.0 sha512-VgdSFzZnH9docaUwaisi+DYUGSFJwMz24F/rWmiWLg43J9LnKkTgb30PUkXIR9BXuBkPX20f9dbX9FOb9FfUlg==
@@ -3975,7 +3977,7 @@ dsh-desktop-safe-market 0.4.3 sha512-ZMYP6PFt4HsuHq1R1Q7FhvtAiJHl0JUvwNBc4oYPIVD
 Funnyvalentine00/dsh-desktop-shell dsh-desktop-shell 6267efab332652c96a698833f016d228df732c46
 ikashana/dsh-desktop-shell dsh-desktop-shell c1ca9c5b2d53f438789eac21e76431b513a9dfa8
 fuyue521/dsh-desktop-shortcut dsh-desktop-shortcut 6bd601ca32a6faba617fc57b34c77892138a5279
-hyperion2144/dsh-desktop-tauriapp dsh-desktop-tauriapp 28550baf0d4fa9b6edf4ea2ab03ba94d2cfd00b0
+hyperion2144/dsh-desktop-tauriapp dsh-desktop-tauriapp c59de1ca358c6eab490be67921078b7e53d67d2c
 wodongx123/dsh-desktop-tray dsh-desktop-tray 8f25fd2b600948b028733ef7f8e95f3dc5d74208
 dsh-desktop-windows-launcher 0.1.0 sha512-5oe9UFGTbe14FH6ebmUZmkooairhrYlr0Io4I1e0ZHVJmjB0ae1IOwafcWZq2CIUhAGlKsiTgX0eHvJdpgl6jA==
 uckkk/dsh-dest-check dsh-dest-check 7bb0ba315aa9b0b6e9207a628f4c7b84057bbe17
@@ -4368,6 +4370,7 @@ dsh-file-resource 0.4.9 sha512-sSNZwc3GSY4H9wlGrFk9MSw8VVeztXJ5mWxGIOpoZ/4eZo2Iw
 dsh-file-review 0.6.0 sha512-ugxry0d8hPHYykAXggNipOqOB3jFjQMxaFVydo0Ebe997bFsycU8mstDWl6jfLsx4jgr327Kw49MQLL4RTRySQ==
 dsh-file-review-kcoder 1.0.2 sha512-0kHYhNuEdesPkURiSjO4jCoAbqnz/AQwMOfm1KW3YOqktfJ4IC4VrYsNZEe/uhR5hXkCvw0D5TLcx0K1ffdt/A==
 dsh-file-review-tab 0.4.1 sha512-QBrQkw/gAhfznuTcTJ9vg5B5cAkxRl22aucpXew2f6rPHA8JIiJ//Fj0B/VBYNFfTSSSZv4bx7cSpk4yBZby4A==
+dsh-file-review-tab-012a1 0.4.2-alpha.2 sha512-7kGguLHcR9fpiT8ieDWxe/r3PqYaMiqm3kjZFeTNjEgvZaXELQqFp2tq56vSxEBcJK3+glCZROzUwG4I43lXew==
 666emmm/dsh-file-upload dsh-file-upload 6e44bcfbe36a961549fbf418a5dcba2be19d517d
 GLFzr/dsh-file-upload dsh-file-upload dc23ac42271fd93814924cd5822992501f7fb654
 HongMing-Huang/dsh-file-upload dsh-file-upload ce4ca943da592be36a784a5648d36a600aeda136
@@ -4714,7 +4717,7 @@ uckkk/dsh-grout-calc dsh-grout-calc 9f0bcb78197268ea10689aa86d8b72d635df95ba
 iaitechltd/dsh-grox dsh-grox bfe8a3ebb9f147e811b30f6c5b3c480eeb78a304
 dsh-gsap-skills 0.1.0 sha512-cvjREz2e+e8xuyVmQHZYLXYFwErj/AgiAfYQtYZnj7hnXec5JIPbJsI4q2XTkV1Cx7AtYHIHY6zAkl/fdnIIMQ==
 dsh-gsv-tts 4.1.0 sha512-y3Kusx24omGT/v679iwf/ZG1ooHMpJB7gAU+83FHXMejE7dlcM6X3gi+1cdn2E0PnADHyo3CsA/u5m0G9RC3aQ==
-jansen-66/dsh-guandan-panel dsh-guandan 4b035656a311904cc59aa5b3d87e25c8b9f7f28b
+jansen-66/dsh-guandan-panel dsh-guandan fe9c78928d129933393c6654d6d1932a6eb8514c
 uckkk/dsh-guangzhou-city dsh-guangzhou-city ff0b64da323f0382d00c9aee9bd2badd7204f0f8
 x2802490130-prog/dsh-guard dsh-guard 71396827781c2579ebf48a8d29da484942364032
 dsh-guard-hooks 0.2.0 sha512-Gv2OmdcIFLbw+WHwahz+VRwtnGi9pIcj/CXjz9SxbWG4OgGvjaafcWN723onVaw13NKKJiuHm68gdST/bYaY1g==
@@ -4914,7 +4917,7 @@ Henryang777/dsh-illustrated-teaching dsh-illustrated-teaching d0de8e322217c30a44
 dsh-im 1.0.5 sha512-yD1imWhv9A0gEp4B713rScB8TtZhV9LrZZMuO12eBU4BR/TxmtQKOUYwQ4hgKA4r/fwMmybALtkX+/RyIzRn6w==
 shaobeichen/dsh-im-bridge dsh-im-bridge ef7332e79ff9431845dc4877e79927c9f161fc64
 dsh-im-channel 0.2.1 sha512-nKJvw2Qz3P1ZuXE1KCzHi1SPZ37aj6NefBVnWeUy/iDf/7SEvRBibGS4iVy/SujhTMMCO3DeugkHMf+hfjBElw==
-dsh-im-companion 0.1.2 sha512-eaU3/BtajfMIAdd1haTwxCZVrBwVUNsCmfO8xURTw7rINTUlSXDbqpoedNXQwR9Dhzh7ymfBhlyMDaebiT32Vw==
+dsh-im-companion 0.1.3 sha512-ffG0mx8us2DzW7qllCUiV8fZ6vC2ThXlIcn96Tp5A2YPFLf2BLoO/vHdHOxzn4mtzFAIPuJ/UHw44Dw1wx6ETg==
 dsh-im-feishu 1.0.5 sha512-xk3m7ouBd7e9BGXkyfWw+MAbhPJT5Ix2aMNFo+EC+zj/Bu5/zQfESaxFf4qdpitEb4bv/SqAwuZN42ES26eL5w==
 jelech/dsh-im-gateway dsh-im-gateway 684a93961c7fbedf10b787b48e44190a074da967
 dsh-im-hub 0.2.3 sha512-9J3lyUYDGn4icujaFLzFXQHmEMxO2Vew8lV2vhCew7n5qp71AzynRlOWsF5NAW5mHN7QE/tc1MYdhrItlcgLBg==
@@ -4930,7 +4933,7 @@ haitang1/dsh-image-bridge dsh-image-bridge 838fb3ee4a70d34a7a4ee5c8967e9ff57268c
 aa2246740/dsh-image-conatiner dsh-image-conatiner a94b5e1e217e374d5861b2e72f27b9c47c50fbf1
 dsh-image-creator 0.4.0 sha512-ag4xkd0pVMbz1KYzH7cjG64bh4OFIvNHEPbHO6hsYYXTqWVxu3gPsaxq2r5AD315XmZ+9Lfa+CfmoCULs2Tvjw==
 shuxu-zhao/dsh-image-dscriber dsh-image-describer 2b56a15394546d3c15f322a8e6c266420c9b376d
-dsh-image-gen 0.5.0 sha512-J1fz6cOxRVgzUBQFgkve0qFInseg5jzZ9jtHXjM0WCVsTrguU6ctEdIvf3mBalAOUdiDpFz4tJJwhglcYSu8eQ==
+dsh-image-gen 0.5.1 sha512-FN+2pZ4FrkYjEMrg/uKhLYtxzsfyven/42C7AcAZIRVWfXhmwfzNxDZM6fBEqgYsl5hEOYZcTbxGsOcZ6S+Y/Q==
 fengs2021/dsh-image-mmx dsh-image-mmx 569cc5e00bf420e4623d8810459d55ed631cf457
 dsh-image-pathify 0.1.8 sha512-MPhEVzwmYSSi5LspA1yZnHHY5ZOO353PIabuJdBXA/LFZP4bmBdqVCICjBMpcQJtQGGt4/tFA7HXybtCyZoNwg==
 liujia-io/dsh-image-picker dsh-image-picker eb45eaa71cb107f8ad6d814e56acaff631ab4bd9
@@ -5105,7 +5108,7 @@ shyboy/dsh-k12-lesson-builder dsh-k12-lesson-builder 7fd5963491f2f986385f38cfa4e
 qiuyiwu1989-star/dsh-k12-substrate dsh-k12-substrate 33df173b534e002d6de0f86aa50676e38eb68433
 WODE25500/dsh-k6 dsh-k6 979c8ce347385344b01ae37eab98afad3afd9770
 MrYangyt/dsh-k8s dsh-k8s-manager b3df45f350c67e80cb2b06a22c7c64fb2567b8b7
-dsh-kanban 0.2.5 sha512-T0O0i7eApwUNbdkEQZGn/BWL6rH2L2+7JAPUJkNJTJ6Kl9vSsDrjqboggakg95gJrFpi89FxjmyjE80I4Obd5g==
+dsh-kanban 0.2.6 sha512-p4cyim0TZRvQgaCSuDbuP65My80oRwUnpbObxMYsThpw7F0ZkPxomENebDJaMOFVhYyFVfEDu6RUQeAFUPETKQ==
 dsh-kanban-flow 0.2.0 sha512-KSHkzn7XgXwZuHFJVVRhex6bL3y+O6r6rST5B8ArHTGc43ewhw6eITC609ti+AcO3D8ndu+QNa4b2U4lXN2sTw==
 dsh-karpathy-methodology 0.1.0 sha512-hhsP5MPO0gBweMrAW6Yra9Whya+oxVmBNotH4gvz0f8oSF4uZ7hHj5I0kfXXUwvZKTMWcY9XWXzySHlwBKGbeQ==
 uckkk/dsh-kazakhstan dsh-kazakhstan 69dea587cde13a66e99d12734cd13751134de0c2
@@ -5300,7 +5303,7 @@ hacxy/dsh-live2d dsh-live2d 91ec64940e5799ab4c8b419e1b654677e9d7354b
 Tisitan/dsh-live2d-companion dsh-live2d-companion 72342d40871b00da66ce5ffbac28af4d5d022069
 uckkk/dsh-liver-func dsh-liver-func ceb0438b11a390746cf6b4c3822be69355066b4f
 uckkk/dsh-livermorium dsh-livermorium 477930c376d0bf00397dfef43d2574860ebcf4e4
-dsh-living-memory 0.1.4 sha512-oF/5Qd9OHCU8NDaA4lidJUg8UTS6Lg4SsZQlMSHbEBjdLt1yWuCt02ZiaPa8xiiQdRu4wUs+2Ty+5ru7NvuroQ==
+dsh-living-memory 0.1.5 sha512-o4TmnTS2kxSs98vBDQ7hF4uYgvUccU0m1J9g8Dh7wrb4fVcOpdf8tb48LccjilYQEi7f6a+ne0OS3UV0TqHUJg==
 feverZHONG/dsh-liya-archives dsh-liya-archives d17178e757c93b7941a8f1abb42c1c53ed5785af
 dsh-llama-cpp-sampling-params 0.1.1 sha512-S9fQmulLrlBDJCg+pXAzMCVp+Cnyhqqk/DpnEDtGUUJ6oPOxH92IO4O16TJnPnf2dBDfkLAe2Vg6fUiVr/1XSw==
 SnowRikka/dsh-llama-responses dsh-llama-responses 9645dea817514bc63b38f06faa41d446b49b9111
@@ -5726,12 +5729,13 @@ dsh-mobile 0.3.12 sha512-edgsFP2JMnV2pzGg8mqdxlJ2RuGobBz99pewZDdckDaqXJyVhc7Xxof
 TongaiLinC/dsh-mobile-access dsh-mobile-access baae3fb0eb40acdf7e470430faa51182953e6198
 YiYan129600/dsh-mobile-access dsh-mobile-access 15812c8ad76b675c8e10d1ef20910179a79486fe
 huanlanmie/dsh-mobile-access dsh-mobile-access 4a4085fca1f098e15ef039ccabb9605cf520387a
-dphmoblie/deepseek-harness-android dsh-mobile-compat 45aa46fefbc5cfa8a0abe6a9466cb84b7783fe67
+dphmoblie/deepseek-harness-android dsh-mobile-compat 0209c86e5d8f0e75fa63fb9e77059a38d67b7f79
 PangYiMing/dsh-mobile-control dsh-mobile-control 4d9a2bb828166d14ecf19d0246699ccc5d601739
 ook826092-cloud/dsh-mobile-css dsh-mobile-css 6f4f27aa99a9c041812c87ec9cc1d464a35ed541
 C3H3-AI/dsh-mobile-fix dsh-mobile-fix c73370cecb46a2cef54ba2f9e800974fd6563756
 dsh-mobile-flow 0.4.1 sha512-nGsTBSKt40uGMsLuVDi1zKoo8C2ScT2M2PFbooPWii+6MdAr6pZbC5wzyP9O6G9wqWkfOQlFlHJfMFUlJFwDXw==
 Bernardxu123/dsh-mobile-gate dsh-mobile-gate 06e0ea87101d1330c573cb01acecd67e36764413
+elskly-cmyk/dsh-mobile-gateway dsh-mobile-gateway v0.4.0
 kunjinkao-os/dsh-mobile-gui-agent dsh-mobile-gui-agent v0.2.0
 Z-6354/dsh-mobile-hanui dsh-mobile-hanui 27f11e7b7925fafcd63926dfefde11cfc1197cf3
 crwsr124/dsh-mobile-layout dsh-mobile-layout f23bf82cc07cf610fdfacab1c5fc5b546da0fa64
@@ -5760,6 +5764,7 @@ SHUJILAI/dsh-model-auto-hot-switch dsh-model-auto-hot-switch 2a3a3ff90046fcd45ac
 dsh-model-autoconfig 0.11.0 sha512-wJlVSrcMiL4ulqja3VGWFWM6q2J43ct0QBJX2Dv/CCPduzIB7aT/8gWkxaoSOlPjrN5z14nzID7TOC6jy3tNQQ==
 dsh-model-balance 0.1.2 sha512-pyW1Pyh15Ptkv0Rsl9RRbRe6NMU7hvOyX4TBVfk14i0Eb+xZjeGIsc0FhY/aGLiZHTTZpxVDnlRwWiE2lu1sCg==
 dsh-model-by-preset 0.1.1 sha512-z1rdgsD2O5AVD9UQsG/D6/s5zD92aWcDYfx1eVejSfT9q5cHUt7KXD05vUR1sgDpeodLdFWGeR5FsdD88MJFlg==
+Kalospacer/dsh-model-capabilities dsh-model-capabilities 0b323ebd097000fdef3fb0a090669c68827e10e9
 fuzz1og/dsh-model-capabilities dsh-model-capabilities fc784727f6c2ddb89ae9c27aa25894ab7e042f78
 lylarcher/dsh-model-capabilities dsh-model-capabilities 7c8f2f69f383f3d207080e2711b6d53a194fdf85
 dsh-model-capability 1.0.1 sha512-G5413jd85ELcdpu3+3PQQrzVOBKywj3lasETq3RWqDFgdTVn4w21AP5psGv+evLIL6CegXG1vbuiVJyHVKHIcQ==
@@ -6400,7 +6405,7 @@ dsh-plugin-academic-writing 0.2.0 sha512-OQEZdcJPWHUlVxxFKi4rS2T1WCbOdGkfiujra7M
 academica-sh/academica-mcp dsh-plugin-academica c6d5c9152fd9b9c8d81724d7d2c0fd1e3d2dc74c
 dsh-plugin-adaptive-agent-policy 0.1.0-rc.3 sha512-KA+cJ1iezfUF2FW2G3FanRnadDoq+5iUkmJOsCqZkmo7oJRNiICEnKtzf6PUUMRU33RKUXOCNKKGzghRy5gTzw==
 dsh-plugin-admin 0.8.4 sha512-UvuZVeokS8DlL6KLRSaJIbrTCqmB1OjK1hzxNX2nom2tBSVF5A6Juc0Tl7divLb9eBb6s3ky1/BN5fAazbgsxg==
-ChengxiuCDP/dsh-plugin-advisor dsh-plugin-advisor bfbb686f51e1e26311d14863f701210f00f4097a
+ChengxiuCDP/dsh-plugin-advisor dsh-plugin-advisor dacdb2c3dba0352c44498796a029b2297de8e2ea
 haveanote06/dsh-plugin-advisor dsh-plugin-advisor cd6382a1e0d389f4be9eeaaecdfcc1b58e892da3
 dsh-plugin-agent-dashboard 0.1.1 sha512-PW5+wP9QCZvCxNN6afBPXkl+C2ZuBMmZaccMh9em7KXiErm7yq4zhj5PWlS84qFfw6+9Fp6lzcdDMbCxt1FOug==
 Cocowwy/dsh-plugin-agents-memory dsh-plugin-agents-memory 594e4eb965f689e088bdf3f4475e09b678ece548
@@ -6474,7 +6479,7 @@ dsh-plugin-codex-bridge 0.1.1 sha512-aCjVAAWvURXZ8cgS7YTiAjNJzIF9Mv8hlDaLSrDpYh7
 dsh-plugin-collapsible-steps 0.1.1 sha512-55Q9Vbs07ZM1Hsdi3KW586JLI5TxxTIUJBtt69THHMCSrD5w3ctZCLpWGyuuA+tYxy2OFA+y3NcJavgjnztQ4A==
 mitian233/dsh-plugin-commandcode-provider dsh-plugin-commandcode-provider 4e3d8a8d2d9ed0f1bcdc477bf6d5319e78c7a396
 dsh-plugin-commands 0.1.4 sha512-pUNkVaUgzBlZFBHiwJKVadSdnFs3BNw+1ffePg37AYCusXRhowQ6ZvE004IdTFjUrehUy9baONigD646/oAEUA==
-dsh-plugin-compare 0.1.0-alpha.1 sha512-op26/rC3YPPvFVFYaflle90+BYlC23HKEN66hQt9U0cWWHC9hW8vDmPMDL7mo4d4maxcIZsytw2OrETE2cYrRg==
+dsh-plugin-compare 0.1.0 sha512-meUKVdrtV19TsyFnBKh6u8HnogEs0wnTtgHSm1qykyHj2AWBhRinAeQJ7iy3nwR0gli3gNCURisRDVYI5LihSg==
 yinren112/dsh-plugin-connection-banner dsh-plugin-connection-banner 9be1394fa21ede8abe6e4f629bbf546bc6987a2d
 dsh-plugin-console 0.3.2 sha512-3fiIBQaWngUw/lq98nWRPwxUsVsk+rWfuxY+jN77pqQCa+cPfVo4vztvihkqC/AMpjArIL/LRsI1FKtzuDBmtQ==
 dsh-plugin-context-compressor 0.1.1 sha512-vXMQHruc6L/3Kd0OXufyNEuVoZaDVO4ddXmPtHVP0nuOSOMOrHGtaf2rjN9kfOVoF3Khy/HS0PkUBMEPMKwwEg==
@@ -6631,7 +6636,7 @@ dsh-plugin-mission-control 0.2.1 sha512-bjw79GBSvZQG/sQ41u0KgHQ3irdrA8KguLKVfNm6
 initial-d/dsh-plugin-mlquant-benchmark dsh-plugin-mlquant-benchmark 3468ab731c561c1fad8344e4981a0d3b3addff1e
 Elohia/dsh-plugin-mm-vision dsh-plugin-mm-vision b69fa6ec8018e10b017645d5232f480f0f8354f3
 dsh-plugin-mobile-bridge 0.1.0 sha512-n8Aj2HHMeR3awNHLc4bNDEaVEQriVzmaJhw2bb3y86dkxLEbKsIgGm2Yt4waUgVn7pIH8xh1GC/RpIRhc6ZmsA==
-Clarklevis1995/dsh-plugin-mobile-gateway dsh-plugin-mobile-gateway 4b09e081d7ba1adcc8977f29acb204551fb35f7d
+Clarklevis1995/dsh-plugin-mobile-gateway dsh-plugin-mobile-gateway 0128ece31e6492cae26be5433cf3d218263d4d7c
 k12u/dsh-ios-pwa dsh-plugin-mobile-pwa 11be6430774bac4bd5989488436a22f27ad4f173
 ghbhiee/dsh-plugin-mobile-shell dsh-plugin-mobile-shell a03ada8eceadedfab22b34ad5da6e05c07183d43
 dsh-plugin-model-capability 1.1.3 sha512-E2w6Oeu1Ho8/44OIaA74SjdNDA1T6MjQ+lXKkqmHW4GurRPzM8I9/7ghrXc8NWmcUjoLJIW75+GAsZEGjnRlZA==
@@ -6790,7 +6795,7 @@ Biobuilder-ai/dsh-plugin-ui-toggle dsh-plugin-ui-toggle 138664e8b2b0a5ed363b7873
 dsh-plugin-uisfx 0.1.1 sha512-xODTvOVU2XxN0cFsNjHcjdsaK6JZhQcK2qUG7H8f+sI+yYlm0UkuZL/vtTr3IU9Oalva5Faoq+hTqavbUdnApw==
 hyqhyq3/dsh-plugin-updater dsh-plugin-updater 231ea808abae4e9ac3ff3cb0966a200ef04229e4
 dsh-plugin-usage 0.2.0 sha512-eAIEojCGeEB2m/Xf1i1V6FdO7CJIzGEyddNURRn+/NDGvw0L1DWy6DrhP6GGk4NAqPxhGCbSiufSAIwefFelQg==
-xie-tj/dsh-token-usage-ledger dsh-plugin-usage-ledger cd7ff4b30a9701388e9a5a3b52b2209f864bcd07
+xie-tj/dsh-token-usage-ledger dsh-plugin-usage-ledger 2bc5d7b20e777e41e05a675f1402f38018ce43e4
 dsh-plugin-usage-meter 1.8.4 sha512-e+dzvLsZAcCGAfYa08HdJ+q8aF09XRzDE/ovwNqdLA8kaY89Kxq+nqLHwRcRcr9CB9trp3K1nMQLtbLge1pdzQ==
 nsdmgt/dsh-plugin-user-research dsh-plugin-user-research f94db4928ae713ed8a12b4eb4b8548bd85e48219
 dsh-plugin-vajraclaw 2.1.0 sha512-uNqLpdHwdN6Yzf4aB9YyowroRgBwxsmXxSsVLJ1mUcBZWVkkzVFqvndLE+88XQuytvQTb27PJh5ShvtvCUTx8g==
@@ -6980,7 +6985,7 @@ dsh-projects 0.4.0 sha512-Rkku2CT5gqNezwvi9R44Yx38L41+eR0+D5CSj9KXJRv6n1i1HGDUrV
 BertramWang12399/dsh-projects-mode dsh-projects-mode 1bf2083b01564f09a665d06b7e74003b1f2c1029
 ycr40/dsh-prolong-memory dsh-prolong-memory 40d8085b08d043c856ae4e62b7dd309e5abb798d
 dsh-prometheus 0.1.0 sha512-/svdchsy4VpGzveGCvVQ0E+z5rilDwzc0b/Dgi/xyBwxXjPhApfH6LkRmzIWE+f2O3AjS2HwIQhhzPOr3U2XhA==
-FeatherHunter/dsh-prompt dsh-prompt 8ae48ccfbce925b3da323bab1796b3493a06ac3f
+FeatherHunter/dsh-prompt dsh-prompt c43b085da8a96671d09ebcbc49807cd6411ffc28
 QinpanWan/dsh-prompt-antivirus dsh-prompt-antivirus 4c823d4f3f942a45f375422d40375bb8b980c1cf
 060625dfy/dsh-prompt-boost dsh-prompt-boost 5978f9f248b47d24ffb0dc5859e302acbbbce4a8
 dsh-prompt-enhance 0.1.9 sha512-kLUKe/DaE9nLaOlkavLKBAgfPhZImbMnR/AyavnUTcAUqRciuWyqtalFbm+NcKV5/rNOzodRjNEcIXDFwAOVPg==
@@ -7021,7 +7026,7 @@ dsh-provider-model-select 2.3.0 sha512-znjV4iePp8g5K5H9b4CXwO9JdzCs1x+8fDjz0QXLC
 dsh-provider-passport 0.1.0-preview.1 sha512-zJpy0PWIrxxOGg8uRLPpmtc1jyuWasH45QUvLRiRR17x+8985ysn/UfZx5zEMwpkHsi2hmqryNtn9uh/2DdH+Q==
 Wanbinyu/dsh-provider-probe dsh-provider-probe 66ded55cce7a5d73bddd555f5c3c0b59c7885ed1
 stayhpjinng/dsh-provider-proxy dsh-provider-proxy 7da2ef0923017223f0cf4c88822ca6d55b9c2e2f
-minglu6/dsh-provider-qoder dsh-provider-qoder 69e6b6e4e22a37cc2b2e81d59a5f51588309eb7c
+dsh-provider-qoder 0.1.0 sha512-g6aPT0/QQEN3qwCzQLQj/aS4V5jOHBJ3aCKGr+Zv04mrWvgcDjC28eheRucwXm0bXzSkStjhJ8bGVyifaR0XJQ==
 jyao-SUSE-power-group/dsh-provider-rate-limit dsh-provider-rate-limit 3de070c3a8258b8cecffc148f125ddc466480e74
 zuojinxin/dsh-provider-switch dsh-provider-switch b2aab473444bebb06bacc3c67904ef15f197b9bb
 dsh-provider-usage 0.3.12 sha512-NNt2Z1fAFAJ6hR/Ub4TAIPS9bOuUHLujhX8qtwdOFAjZaCiRnKNUGOhADVc3rlo89JBS/B195kk9BQ0r3Q/itg==
@@ -7930,6 +7935,7 @@ boomzikazita/dsh-spec-gate dsh-spec-gate ef846ce7b53cd81d0c9c54eedf3dd6f4a991e87
 zhangkkkai/dsh-spec-panel dsh-spec-panel c89825fb1d36748c89b76edc94fb8b1fd6f8132e
 dsh-specflow 0.1.4 sha512-gV7TBm9Xf1eFaxvRj1UkWrGqh5Pj7sYDXbjhAs/VBEhx4wZP3/xhOnV1XK66Qbb66Se+pWYWl77TUgGSkxK2FQ==
 dsh-specline 0.1.0 sha512-z3k5bwqn0U3tTDrOR8ZJA2lzQsE+KPdkW76ZEIInAGPYvmxDqna0WsOQUjyyGA0JYsxdPsCGJE5q2HjvmAglQA==
+elskly-cmyk/dsh-speech dsh-speech v0.4.0
 dsh-speech-input 0.2.3 sha512-aSobsKKuHZIXyRGGlPzU9SG6hex6WpdHd3v2uAXH0zBsiEiY7Un/bUoHDDq7Adj/x5HNpSHJ/2ylTU4eZ1+SOg==
 dsh-speech-plugin 0.1.1 sha512-wRapvcIVEwt4hAUaY+tcfRIUGXxyu1EpMt3SBz4Ldep4WlPPwqn+4pNXE+vtkK1XzECB2yusiUob4XmzcKqbcQ==
 dsh-spend 0.6.3 sha512-VT18s/aY8RlMJpxsJaSfLurQbvqurxIPz6qvYUGZXf4jsUFynTgKwPf3mm0Uv/CnRkWqrqkaKrnWFN8PTQydPw==
@@ -8016,7 +8022,7 @@ uckkk/dsh-storage-plan dsh-storage-plan 14d5d1e87224155e2e9524fab2004c63a0db32c5
 dsh-store 0.5.2 sha512-hag43sNlFmXts0jwWlO5UYlMDY9CIuAVTggQKkFVjDQe/HSd+keCkztoAGaAHfsrQOfHGQwwXQscZpaEC/+iOw==
 hajimilvdou/dsh-storecloud dsh-storecloud 90c670794bd45bf8a4cc4b49a941157bbd55699d
 uckkk/dsh-storyboard dsh-storyboard d067be667d3ddb6c69f9650ffadf908486ce5d15
-dsh-strata 0.9.0 sha512-mCQJU7YRXperDxK56WzAursk50nm/MICqdB/UJEo7OE7Y8IM40S7vYeeqTTxqzXfcNdnGprgi+sn84LBdJPCPw==
+dsh-strata 0.10.0 sha512-gxS05+dmeL4pY1V0pbKq4KbAHTXhQ7zOq0F31E2ynpXJOdnJ1z11Udkx/EtDmBbNx6Wcd6i7lfrlXD2q6MGFJg==
 Minglink/dsh-stream-market dsh-stream-market 7e75e928d331cfbaede2d5d8947b98a8d20ccdfa
 dsh-stream-upload 0.4.0 sha512-9vISxTa7F1mqOrdIK9i6EQlBbkZDHDRWNUuX2PNyJ5HYFYWmsn087/Pr1pDtLGu+OHLlcfJbQDzHLuoyLmaexA==
 dsh-streaming-mcp-bridge 0.1.1 sha512-MJ6uSwgOBIp7bL9mQOXE4TRJ+dlchWiG+j0ChjnDC9aobq9EFRtOWg1Nc2B8kVK7GaiM3RstVz9m/IF7d8jKTg==
@@ -8235,7 +8241,7 @@ WorldPea/dsh-test-assistant dsh-test-assistant 5d779271b4d394a82f9c2c63cf0a0e62f
 uckkk/dsh-test-coverage dsh-test-coverage a4d90387696bbe25376c92237054e8da552316b1
 dsh-test-drive 0.3.8 sha512-APdPUcknQwm5dbiZmxGkF3fYhALF18Xh1AAbAO4Epy/OGuhJh7F2Fc0YC0pWepIsqS9CMpDXPVaP5zKsWPsO9A==
 suimi8/dsh-test-runner dsh-test-runner 89f89ed8d50c94c73adb7d818988cdab74c5acde
-dsh-testkit 0.4.1 sha512-TmltTUQSCp+AjlBSnJCRA6hpUPwRGmV0LagqUtFE6JMvQ/UmKi94T2FyunBnrDj2/SeR7lNKuh7U01KNM4psLg==
+dsh-testkit 0.4.2 sha512-/bP4ecXFc0/6B/mhkjFWXVEIAWCrOEFCbGwOCa09FBOlRJ7UJC6SRNwwSMPIv59yezcX6MggkgPK4cQboEJFhg==
 zhuyoujie-2025/dsh-text-appearance dsh-text-appearance b4c1bd120675a002ac237a0f641fae896b76b2b0
 uckkk/dsh-text-diff dsh-text-diff cf766cd9d37df1aca0037553c85eec6a2d717579
 uckkk/dsh-text-lines dsh-text-lines bc37bf490596f3cefb0602edc6fd66848b3ef7e5
@@ -8379,7 +8385,7 @@ firekula/dsh-token-meter-mood dsh-token-meter-mood 38207aea02212c2f53d6fab61a54f
 dsh-token-monitor 1.0.3 sha512-r8TggV84LZdd/3mCH43zasVZ47FePzUTbv0jHgeY2jf/DbywS4F0p+Q4wG2lESG0nE+tK08D/KGuD7RVYv7IAQ==
 dsh-token-optimizer 0.2.0 sha512-8n+BHqQgho9Kjza9xRJvRX1cqA33iSVNMkFS5Io5LG8V3IxMWOR3B8zSjXISEGIQpxPya/B6nn3WhGtKFd1I6Q==
 dsh-token-pet 0.1.1 sha512-rNv7+7RC7bWIPHtzraf7FVDd4TWlvZ4HJxYjiVcYwzFW4YM8xxPKRswRl/3WQhwe1ZT6JNf2IYf61hCuIYT/iA==
-dsh-token-plan-quota 0.4.2 sha512-kxfsnAAL1cRt4Mryf15TpBDa2zeObsxHxgApHOfhAmrPw4c/Aen4zgQOK1i4EkBVPxTe8G0A3M18fHZmF7s0Zg==
+dsh-token-plan-quota 0.4.6 sha512-5GDu7bmpcmfSueJ1yWqlNwQr+SuQhKFz2J5xxSGvR0zGmnn78ykQjrjKfF0pj7RoGf+dNg/mybm90ReS8ZfC+A==
 dsh-token-poker 0.1.1 sha512-lkq3HlKxErh5rkMidCSXTZnktT7UITwEpjKa4FGooMod0G5KZWjPPRWaOVXCkQg3vWYzbSsWCOFvC404A/NQew==
 LightClear/dsh-token-pricing dsh-token-pricing 6061598579236f056c1b484ce1d7d5fbb174dbd3
 Hou-DL/dsh-token-pulse dsh-token-pulse 2a0ed754ff5d64ee0aed164aa323cd5a97bd8ff7
@@ -8723,7 +8729,7 @@ victor10035445/dsh-v-skill-links dsh-v-skill-links fb17718cb82b560c4f5b65016721a
 victor10035445/dsh-v-theme dsh-v-theme d7187202bb15c7912bfb1837a56ec104690277c5
 victor10035445/dsh-v-token-insight dsh-v-token-insight cb273bd414042e5d23fbb5ba89162f04c541f3d8
 dsh-v4-anchor 0.1.0 sha512-/mlJYZZwQpW2W1qZapi4c41IPaCIzFZ0S0R6MS/6gPY/4GUFlzk3N4/fR5IVzie+79HXqcco/ZPjKho2fkrg0Q==
-doublehappy123/dsh-v4flash-tiler dsh-v4flash-tiler df4d5aad549846d7bf1e6aea23bb895d2692105e
+doublehappy123/dsh-v4flash-tiler dsh-v4flash-tiler c7a974ae2c7a39bad4b8323a72ff3258df015110
 uckkk/dsh-vaccine dsh-vaccine 667e585116eed5a072b069287b71f5eeee292ff6
 uckkk/dsh-vaccine-boost dsh-vaccine-boost 036fcad43fc96a92e815cbf5f27768512d32e7be
 uckkk/dsh-vaccine-schedule dsh-vaccine-schedule 825d2eb1d1c9484eb915bbbcdbd7d4982280e3cb
@@ -8961,7 +8967,7 @@ zeroUsr0721/dsh-web-polysearch dsh-web-polysearch f0b56f07babd4b33798fe266c6fb02
 zoumutou/dsh-web-preview dsh-web-preview-panel ed42a7a871686eb6e7bd94201756ff38799bc247
 wangfujian762/dsh-web-quota-meter dsh-web-quota-meter 2dd0d76f081b085dce6da1d915b2b7f15ab652f6
 sherconan/dsh-web-recon dsh-web-recon 27a0a3ac201fe127bc7533fa0d928e45c48077f7
-kakajun/dsh-web-recorder dsh-web-recorder 139721a6b8ccd69d5dd45eeeb8acb20d5a6ff0e7
+kakajun/dsh-web-recorder dsh-web-recorder e935c6b44b9fe835879d841a2a27859530eaeb84
 victormshan/dsh-web-relay dsh-web-relay 0b27a797a9ba14fdc7716fd26a8d7a3abe9263ca
 godchen520/dsh-web-remote dsh-web-remote 85c46f1d7cc769ec9b9ed3db098ef9ee10aef86d
 dsh-web-remote-frp 1.10.3 sha512-cHjH6AG04vmkrT3WcPOws/XXVwTUGgQSMJgklLBJ9IXIRrO2eZvC1sxyVSemhjxvzyUgJG45djZTXNpW+sy4Jg==
@@ -9162,7 +9168,7 @@ uckkk/dsh-work-format dsh-work-format c089dc607d5634ffeee2e5bd254db0a493955951
 uckkk/dsh-work-injury-allowance dsh-work-injury-allowance 0ee5b12820039b9c8e6becf241591f32d278bf6b
 dsh-work-report 0.1.0 sha512-Mv28GhyZgtLEHcMtGypgjEd4YYt2jA/7OBwnCODe1dMvHFJ0+F5eqdGhSqFTvXH155xa+w1YklOt86TVPfUBDg==
 dsh-work-x 0.4.0 sha512-yHW2Rx5Jn0BgOsYdufmT4F1K35dgf8JLhTzCvjr8oP7Ic1zAwjWgT5Lnb3HQmZvEjhJ/dyhv4VbeN92AyU1BbA==
-dsh-workbench 0.15.1 sha512-p4HGPTlYWMvkV50/Paxo1otpQ9ZKDN6Uy1LVgCg57BXxDpdhqCmlQnb+GO4+e0EJhuJmbxX3aGRtn68FBlXgHA==
+dsh-workbench 0.15.2 sha512-aLazsyql5DDX8Qa5GqOpWq4q4scaUdhW84ZI5PWwcq5iB0Gu3pAG1Hzhvqm8SF67E7TEgKhpHRHekbjZDAMb0w==
 dsh-workbench-ecs 0.3.6 sha512-1qCNO9Dh/eXWPmF9elVlSONWE3VMde7lA1Q+tKRuGnwETRRKL2KVX19jpb0Us1jTGMhQ/0K7WO5omYEwucQ2SA==
 loadingvx/deepseek-harness-workbench-plugin dsh-workbench-plugin 960b9d4725a0b7174110426f75cce02ef05213ff
 seedaylight/dsh-workbench-ui dsh-workbench-ui b019192ffe252ecc4a6d91b7deb5dcdc0d4674bc
@@ -9237,6 +9243,7 @@ dsh-wps-plugin 0.2.1 sha512-U085y2pHpAumTrRXV1iDt/bHtf9TL4do4oomtGFIk+4IKG/HwSz6
 rand0wn/dsh-wrapped dsh-wrapped aa4a3d1de500827b96373f653452d39c101e565a
 dsh-write-create-only 0.1.0 sha512-cjlEu5tOvewyS7mKZMIayqiRCD8BKhPFYkvC7pbSIj/FHTslnOtL8cqJhafy7z5702PZEsGcuHc4EfjT+ylCyw==
 dsh-write-gate 0.1.1 sha512-djO6QWSOYJdI7pmbbftgQctFtUX4U8OOQVQ98yh9GkwgjfUx8Q65V6x11v+P+mP4aG+v9Y1dMVgceidX65dsYQ==
+azazo1/dsh-write-protect dsh-write-protect 537f186af2b572fcd58f8f6487fb8793d1b1ad1f
 dsh-write-rule-guard 0.2.2 sha512-jbP0s/yHwOH97584vKOgGd7zVvFoTUwf0Uif1KYk22xRb7+TKorbXjYjenB7BEm7fVxyaJR06lQFbK9cb4r2Sg==
 dsh-writing-desk 0.1.0 sha512-7VC6BzCc9gVvugqLdlitAusKTa2M+TbPbweg/gjTWwju4qbRSVgMEoJvDgMZI7ux1f+Bss8c8bMCHuleN8SySQ==
 dsh-writing-remote 0.6.2 sha512-rN01JmA6mmgQ586tU25WyzNC/rv6zTOTQCO+TN6h1NVGysd9qt24JGK9QogIjL5oG8mZUCkZGQdc9Ob1sUFs3A==
@@ -9314,7 +9321,7 @@ dsh-zai-coding-models 0.1.0 sha512-4Jd8ynwbkblwcinMu0/ZsEvefk9PY6tWybXv2wIAenktr
 dsh-zcode-persona 0.1.0 sha512-Dymg5DY08r091jy3+zd5VD0n63e32kTamBg5OHSd4jgi2Y89BWnDO18B0/SqcVwZncHCbB/V5IzG3p2mFfSA/A==
 dsh-zego-assistant 1.2.21 sha512-dlZbtabeXo1AgbklBhmq5KhcmQ2Cy2ML/PNGcawl8m6OXwdIyfz2qDMcw7c2fFhntGfHtaK+NCzu67kaHv+V+w==
 dsh-zen-remote 1.1.13 sha512-tziXALS0kN/ey4wzjuPUZ4EMbF2fQCgKT/s8W51SnXCy+KH3BKP96Wc5W8IuadrtmL8OOJL3j6L/mUjKnWO+rw==
-dsh-zentao-mark-effort 0.2.3 sha512-5V+lIdBechMQWqs28UD7p2FuIj2jSuX5Mw71xE0mewcmGcV5OscNfaZo+SAQ0vr/YGaB60aQ3e5OO8/KTwdW9Q==
+dsh-zentao-mark-effort 0.2.6 sha512-yc1ky4dDM0gZOxFiQrW5bwoyIQK0b7LysGRB1h9c2lfg/ULVw2bacNisgKPdl7j20SeE+HtVSVqfEuTOYscgjA==
 zukunftsholz/dsh-zgit dsh-zgit be2d3a31ee58a0fe58a3a2063ac81c2dcff7ad89
 dsh-zh 0.1.0 sha512-nC8Ba9qSsN7KNUcEVgHD4rSA3Oj56ViFHfRyje3r9jtFr3UwAH+X9ok4TwUg7FGL6jA6LZMCQY5eJ8iH1+rSxw==
 ngk3pori/dsh-zh-cn-ui dsh-zh-cn-ui ea388ec1ba8a19973ee6f38c6ce309d0d11f6d94
@@ -9575,7 +9582,7 @@ Lstalu/dsh-quota-meter-plus quota-meter 315d905d2cfc177885117d5187b8587bdc2b2f3f
 reasoning-slider 0.0.6 sha512-YNnJ8Apa4V0ezHpIYZGiyYPWDfP6PZv8wegdIcyjC7u/iVK4CFu5AX+490hRVAfR2fVicyh2zYaLmhRYznJguA==
 recowork-dsh 0.3.0 sha512-rmwCPHFbz+9c68qhTDE3xQlyZKUI0SDqOY/kw9G66xAGff31UBX4kIDltBcwewSCbF1FKgQiWgD7P8LGFUJXPA==
 Viy1204/recruiting-copilot recruiting-copilot e99b4f7d654d4acbdc7451e3294ab7036345e9c6
-redfox-data/redfox-community-dsh redfox-community-dsh e5c9a7f28f6320b66244ce56186678746c898264
+redfox-data/redfox-community-dsh redfox-community-dsh 421ac42ed13b1732bbb46c588b24a30442957a66
 redfox-data/redfox-skill-gallery redfox-skill-gallery 6d93a165d51cbc8df3f5e05e7f9080e04227e9fc
 peng2048/rein-scene-forge-dsh-plugin rein-scene-forge-dsh-plugin c3f51b7c608e950b38d382d5b50fe9cc33bd7aa0
 relay-dsh-plugin-claude 0.2.2 sha512-ed+o1UxexXnnibMvX7G8NZ6geD6PjdxIbLpYnMLGZFbGEsWZF9s0vUQxF8fFgHn60jDN2eNp+JIa8xCfEECGKA==
@@ -9688,7 +9695,7 @@ UnforgetMemory/um-dsh-websearch um-dsh-websearch 7af8982ca83dacf7f16776e145ffbe3
 ztyhehe/unipet-dsh unipet-dsh 78cbff959fba4b2582d53276cc2fbf035d64fb97
 Ultmebius/universal-plugin-hub universal-plugin-hub acfa5ad942198afe82a2e8a34f7f6053b9649888
 untr-dsh-marketplace 0.1.4 sha512-IAoZvIGn17RROkcw7iXQVb8emJ1HfK5TWvXa8+T5kFLgOmq7F50N66jkBspGIygVmRvrFVcnc9QB8qpRoGqF1A==
-upstash/skills upstash-skills 800b0017d1508bc8ffad5025034aad86c6b94c42
+upstash/skills upstash-skills fb20d82669cb3df267be735af7b0c8734c98556a
 upstream-radar 0.45.0 sha512-c/4LSkYO73KcZ1ZMjpt6kvBxuVLGYQs8/oDfheKVqgt1YamwnidamFQm5vAJRUcRP8LaFAPfSxCk/132I2nw2Q==
 Payel-git-ol/use-opencode-local-provider use-opencode-local-provider c7f1e780bc04d6495895605a3ad3cf1ada26ce6b
 useful-dsh-plugin-manager 0.2.0 sha512-JFpXLDQySmp1g4HOztuqh1IqdkynvZonvgiIFWT4l/8mQu+8qy5/ILXaQ11YvfXKFROSazeBRpjMOJOaPMjWqQ==
