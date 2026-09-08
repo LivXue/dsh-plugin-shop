@@ -81,10 +81,13 @@ export const MAX_SEARCH_SHORTFALL = 3
  * partition that breaks takes the rate to near zero and still fails loudly;
  * the API's own ceiling leaves a small residual with the rate high. Note the
  * strictness DECAYS as the tail grows — a 0.9 floor permits 10% of it — so
- * above a tail of {@link MAX_UNREACHABLE_RESIDUAL} / (1 - this floor) = 250
+ * above a tail of {@link MAX_UNREACHABLE_RESIDUAL} / (1 - this floor) = 100
  * names every rate violation already violates that cap and the rate decides
- * nothing but which message prints. The keyword this was written for passes
- * 250 within days. The floor is kept because below that size it is the
+ * nothing but which message prints. The keyword this was written for is
+ * ALREADY past that crossover — {@link PARTITION_KEYWORDS} carries the
+ * reading, and it moves within a day, so it is not restated here — which
+ * means the cap is what governs today. The floor is kept because below that
+ * size it is the
  * STRICTER of the two and refuses gaps the cap would wave through; it is not
  * kept because it adds coverage above it.
  */
@@ -101,26 +104,56 @@ export const MIN_UNREACHABLE_RECOVERY = 0.9
  * of what may be omitted, and crossing it means the PARTITION has to improve;
  * it is not a number to raise.
  *
- * 25 absorbs one publisher family: the `sayedev` event was 20 packages
- * released together, 7 of which fell past the window with no shared
- * refinement. It cannot also stay under the fifteen-name partition gap this
- * repo has measured, and it errs toward the family.
+ * TWO MEASURED MAGNITUDES BRACKET IT, and the value is not free to sit
+ * outside them:
  *
- * Say plainly what that costs, because the arithmetic is not obvious and an
- * earlier draft of this comment got it backwards: {@link
- * MIN_UNREACHABLE_RECOVERY} does NOT catch the fifteen-name gap at the tail
- * sizes this keyword now has. 15 missing of a 157-name tail is a rate of
- * 0.904 — above the 0.9 floor — and a residual of 15, under this cap. Both
- * bounds pass and the build publishes fifteen names short. The rate only
- * refuses a fifteen-name gap while the tail is under 150. Closing that means
- * a smaller cap, a higher floor, or a partition axis that shrinks the tail
- * itself; it is a policy call, and it is recorded here rather than implied.
+ *   floor   a publisher family must be absorbed. The `sayedev` event took the
+ *           residual from 1 to 7 in a day, and that 7 DECOMPOSES: 20 packages
+ *           released together, **SIX** of them past the window sharing no
+ *           refinement (this file names those six under `deepwatch`), and the
+ *           seventh name was the total climbing mid-run — count noise, not
+ *           the family. Past the window `windowShortfall` is identically 0,
+ *           so that noise is charged to THIS cap rather than spending
+ *           {@link MAX_SEARCH_SHORTFALL}'s own allowance. Reconstruct the
+ *           same family on a full noise allowance and it is 6 + 3 = **9**.
+ *           So the headroom a family needs is 9 — not the 7 one reading of
+ *           that day gives, and not the 20 an earlier draft read off the
+ *           family's size.
+ *   ceiling a real partition gap must NOT be absorbed. PARTITION_KEYWORDS was
+ *           measured **15** names short the day after it was documented as
+ *           complete, and {@link MAX_SEARCH_SHORTFALL}'s comment refuses a
+ *           bound at or above 15 for exactly that reason.
+ *
+ * 9 <= this < 15, so 10 is the SMALLEST value that honours both and the
+ * margin is asymmetric: one name below, four above. Worth knowing before
+ * moving it — there is no room to lower it, and raising it walks toward the
+ * gap the ceiling refuses.
+ *
+ * An earlier value of 25 read the family as needing 20-plus of headroom and
+ * concluded the two magnitudes could not both be honoured — "it errs toward
+ * the family". They can: the family's cost is a residual of 9. 25 was above
+ * the one threshold this repo says must never be crossed, and it leaned on
+ * {@link MIN_UNREACHABLE_RECOVERY} to catch the gap instead. That does not
+ * work at the tail sizes this keyword now has, and the threshold is
+ * derivable rather than dated: a 0.9 floor permits a tenth of the tail, so a
+ * fifteen-name gap clears it from a tail of 150 up. This keyword is well past
+ * that, so both bounds passed and a build fifteen names short would have
+ * published. At 10 the cap refuses it.
+ *
+ * Headroom against the live shape, so lowering this is not a red build: the
+ * residual has held at exactly 1 across every reading since this keyword
+ * crossed the window, while the total climbed by tens of names a day. That
+ * is the STEP-FUNCTION behaviour the design doc's 2026-09-08 follow-up
+ * measured, not a drift — new packages carry tags the cells already reach,
+ * and what moves the residual is a publisher family arriving at once.
+ * {@link PARTITION_KEYWORDS} carries the readings and their dates. A family
+ * event takes the residual to 9. Both are inside 10.
  *
  * A tolerated residual is never silent — {@link searchByKeywords} reports the
  * numbers to its caller, and {@link describeShortfall} puts both the window
  * and the tail term in the build report and the CI log.
  */
-export const MAX_UNREACHABLE_RESIDUAL = 25
+export const MAX_UNREACHABLE_RESIDUAL = 10
 
 /** One keyword that enumerated fewer names than its own total promised. */
 export interface KeywordShortfall {
@@ -160,16 +193,21 @@ export interface KeywordShortfall {
  *
  * It names both count bounds; why a name was missing is not knowable here.
  * An above-window total can be overstated just as an in-window total can.
+ *
+ * Both terms end in a subordinate clause, so they are joined with `;` and
+ * never with `and`: a bare conjunction reads as continuing the first term's
+ * clause instead of introducing a second count, and the two-term shape is
+ * live — `emits one shortfall record per keyword` pins a [2, 1] split.
  */
 export function describeShortfall(s: KeywordShortfall): string {
   const parts: string[] = []
   if (s.windowShortfall > 0) {
-    parts.push(`${s.windowShortfall} inside the ${SEARCH_WINDOW}-name query window, where every rank is addressable (registry count/paging noise allowance)`)
+    parts.push(`${s.windowShortfall} inside the ${SEARCH_WINDOW}-name query window, where every rank is addressable`)
   }
   if (s.tailShortfall > 0) {
     parts.push(`${s.tailShortfall} of the ${s.unreachable} names the reported total puts beyond that window, of which the combined searches recovered ${s.recovered}`)
   }
-  return `${keywordQuery([s.keyword])} enumerated ${s.enumerated} of ${s.required}, missing ${parts.join(' and ')}`
+  return `${keywordQuery([s.keyword])} enumerated ${s.enumerated} of ${s.required}, missing ${parts.join('; ')}`
 }
 
 /**
@@ -190,14 +228,32 @@ export function parseKeywordShortfall(value: unknown, where: string): KeywordSho
   if (typeof s?.keyword !== 'string') {
     throw new Error(`${where}: shortfall record has no \`keyword\`; re-run the harvest that wrote it`)
   }
+  const enumerated = count('enumerated')
+  const required = count('required')
+  const windowShortfall = count('windowShortfall')
+  const tailShortfall = count('tailShortfall')
+  // The identity {@link KeywordShortfall} documents, checked because a
+  // handoff is the one path that does not come from `onShortfall`. Without
+  // it a record can state a deficit in its enumerated/required pair and a
+  // different one in its two terms, and {@link describeShortfall} publishes
+  // both halves of that contradiction in a single sentence. Requiring a real
+  // deficit is also what keeps that sentence from ending in a dangling
+  // "missing ": with `required > enumerated` the identity forces at least
+  // one term above zero, so the formatter always has something to name.
+  if (required <= enumerated) {
+    throw new Error(`${where}: shortfall record for \`${s.keyword}\` enumerated ${enumerated} of ${required}, so it records no shortfall to describe; re-run the harvest that wrote it`)
+  }
+  if (windowShortfall + tailShortfall !== required - enumerated) {
+    throw new Error(`${where}: shortfall record for \`${s.keyword}\`: window and tail terms sum to ${windowShortfall + tailShortfall}, not the ${required - enumerated} names between its enumerated and required counts; re-run the harvest that wrote it`)
+  }
   return {
     keyword: s.keyword,
-    enumerated: count('enumerated'),
-    required: count('required'),
+    enumerated,
+    required,
     unreachable: count('unreachable'),
     recovered: count('recovered'),
-    windowShortfall: count('windowShortfall'),
-    tailShortfall: count('tailShortfall'),
+    windowShortfall,
+    tailShortfall,
   }
 }
 
@@ -316,9 +372,14 @@ export function parseKeywordShortfall(value: unknown, where: string): KeywordSho
  *
  * The growth rate was understated. "About thirty a day" was measured over one
  * interval; 5,132 on 2026-09-04 to 5,380 on 2026-09-07 is 248 names in three
- * days, ABOUT EIGHTY-THREE A DAY. Since the overshoot is what the refinements
- * are responsible for, the residual grows at that rate times the uncovered
- * fraction, not at thirty times it.
+ * days, ABOUT EIGHTY-THREE A DAY. The obvious inference from that — that the
+ * residual grows at the same rate times the uncovered fraction — is WRONG,
+ * and the live runs disprove it: the total has since climbed by tens of names
+ * a day while the residual held at 1, because new packages mostly carry `dsh`
+ * or `dsh-plugin` and those cells already reach them. The residual is a STEP
+ * FUNCTION driven by publisher families, not a drift, and the design doc's
+ * 2026-09-08 follow-up records the measurement. What the understated rate
+ * does bear on is how fast the TAIL grows, which is a different quantity.
  *
  * And uncovered-ness DOES track score, which is the opposite of what the
  * paragraph above concluded from the 2026-09-04 gap. Sampled live 2026-09-07,
@@ -359,6 +420,16 @@ export function parseKeywordShortfall(value: unknown, where: string): KeywordSho
  * Verified live by re-running the whole union with it: 5,400 of 5,401,
  * shortfall 1, inside {@link MAX_SEARCH_SHORTFALL} — and that last one is the
  * total having climbed during the run, which the `Math.min` floor absorbs.
+ *
+ * SUBSEQUENT READINGS OF THAT TOTAL live here and nowhere else, because the
+ * figure moves within a day and three copies of it had already drifted apart
+ * on one date: 5,407, 5,414 and 5,418 across 2026-09-08, then 5,433 at
+ * 09:22Z the same day — about three and a half names an hour. The tail is
+ * that total less {@link SEARCH_WINDOW}, so 183 at the last reading, and the
+ * residual held at exactly 1 across all of them, which is the step-function
+ * evidence {@link MAX_UNREACHABLE_RESIDUAL} is sized against. Re-measure
+ * with one `size=1` search rather than trusting any figure here; the cell
+ * arithmetic above is dated to its own 5,401 and stays that way.
  *
  * `watch-skill` is deliberately NOT shipped. Its cell is the same 20 names as
  * `deepwatch`'s (both measured 20), so its marginal contribution over
