@@ -453,16 +453,20 @@ export function parseKeywordShortfall(value: unknown, where: string): KeywordSho
  *
  * THE OTHER HARVEST KEYWORD IS A DIFFERENT PROBLEM, and this list is far
  * weaker against it. Everything above is measured against
- * `keywords:deepseek-harness`. "The second keyword" below, and in the
- * design doc and the plan, means `dsh-plugin` — measured second, NOT
- * second in {@link HARVEST_KEYWORDS}, where it is the first entry and the
- * primary keyword. The ordinal is historical; do not resolve it against
- * the array. `keywords:dsh-plugin` has NOT crossed the
- * window yet — 3,973 against {@link SEARCH_WINDOW} at 2026-09-08, growing
- * about 60 names a day, so 1,277 of headroom is 21 days and it crosses about
- * 2026-09-29 — and it is
+ * `keywords:deepseek-harness`; this section is about `dsh-plugin`.
+ *
+ * ("The second keyword", here and in the design doc and the plan, means
+ * `dsh-plugin` — measured second, NOT second in {@link HARVEST_KEYWORDS},
+ * where it is the first entry and the primary keyword. The ordinal is
+ * historical; do not resolve it against the array.)
+ *
+ * `keywords:dsh-plugin` has NOT crossed the window yet: 3,973 against
+ * {@link SEARCH_WINDOW} at 2026-09-08, growing about 60 names a day, so
+ * 1,277 of headroom is 21 days and it crosses about 2026-09-29. It is
  * therefore still fully enumerable, which is the only window in which this
- * can be measured for the price of one paged search. Measured there:
+ * can be measured for the price of one paged search — the search response
+ * carries each name's `keywords` and `maintainers`, so sixteen pages
+ * answer the whole question. Measured there:
  *
  *   81 of its 3,973 names (2.04%) carry NO refinement from this list other
  *   than `dsh-plugin` itself, so the list tag-covers 3,892 of 3,973 (97.96%).
@@ -564,9 +568,13 @@ export function parseKeywordShortfall(value: unknown, where: string): KeywordSho
  * first pass at this measurement read that field and reported 31 owners with
  * a 70% top-seven; both figures were artefacts of it. That axis was planned
  * for the family-event case above, in
- * docs/plans/2026-09-08-publisher-partition.md; this measurement makes it
- * the structural answer to a dated problem rather than insurance against an
- * occasional one.
+ * docs/plans/2026-09-08-publisher-partition.md; this measurement gives that
+ * plan a date, because on this keyword it is the only one of the two axes
+ * with a move. It does not make it covering: a cell exists only for a
+ * publisher already SEEN, and every one of these 81 is in-window TODAY,
+ * which is precisely why all 38 owners are visible. The one measurement
+ * over a real past-window tail is still 60.5%. Neither axis escapes the
+ * `from` cap, because both are queries.
  *
  * The partition MECHANISM itself is intact here — probed by hand
  * 2026-09-08, 22 of the 26 refinements are non-empty against this keyword,
