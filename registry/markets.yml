@@ -59,6 +59,11 @@
   by: human
   reason: "DSH插件市场，自动更新，热重载插件，多种排序方案，快速管理和安装插件"
 
+- name: "@czf1995/dsh-waste-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: DSH Waste Market — A-share market dashboard for DeepSeek Harness: realtime indices & quotes, stock detail with K-line (adjusted), watchlist, screener (scoring + multi-strategy), 7x24 multi-source news, market sentiment thermometer (limit-up ladder / bread"
+
 - name: "@deepseek-ai/dsh-host-plugin-market"
   market: true
   by: human
