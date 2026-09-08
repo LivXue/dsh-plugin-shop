@@ -70,12 +70,14 @@ function reject(
  *
  * Exported because it is asked BEFORE the gate, by the sizing read in
  * `github-client.ts`. A size for a candidate that can never list buys a
- * request, a persisted figure and a `sizeProbed` marker for nothing: counted
- * over the committed `repo-state.json`, 4,562 of 13,440 sizeable candidates
- * (33.9%) are rejected here, and for 4,419 of 13,111 repositories (33.7%)
- * EVERY sizeable candidate is. That is ~674 wasted core calls per full
- * budget — spent, under a doubled per-repo cost, inside the same hourly
- * rate-limit window everything else competes for.
+ * request, a persisted figure and a `sizeProbed` marker for nothing. Counted
+ * over `repo-state.json` on 2026-09-08 — a snapshot, since the pool grows
+ * daily and only the PROPORTION is the argument: 4,567 of 13,460 sizeable
+ * candidates (33.9%) are rejected here, and for 4,424 of the 13,131
+ * repositories the read fires for (33.7%) EVERY sizeable candidate is. That
+ * is ~674 wasted core calls per full budget — spent, under a doubled per-repo
+ * cost, inside the same hourly rate-limit window everything else competes
+ * for.
  *
  * `repo-state.ts` asks it too, and that is what keeps the skip from becoming
  * a retroactivity hole: a candidate this refuses is neither measured nor
