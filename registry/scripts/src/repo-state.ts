@@ -255,7 +255,11 @@ export function diffRepoState(
  * Absence of `sizeProbed` queues the repo for ONE re-probe, after which the
  * marker is present either way and the repo returns to being re-fetched only
  * when it changes. The backfill is therefore bounded and self-terminating:
- * every recorded repo once, at REPO_BACKFILL_BUDGET a run, and then done.
+ * every recorded repo once, and then done. Not at REPO_BACKFILL_BUDGET a run,
+ * though — `harvestOnce` serves changed repos first and the backfill spends
+ * what they leave over, because 13,443 recorded repos against a budget of
+ * 2,000 is seven runs during which an undifferentiated name-sorted queue
+ * would have starved every alphabetically-late repo that actually changed.
  *
  * It deliberately does NOT test `installSize`. A tree can answer and yield no
  * figure — truncated, a hostile blob size, a `subdir` matching nothing — and
