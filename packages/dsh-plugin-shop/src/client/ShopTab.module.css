@@ -335,9 +335,11 @@
   cursor: pointer;
 }
 
+/* Blend text with the theme foreground: darker on light backgrounds, lighter
+ * on dark ones. The unblended category hue belongs on the border and fill. */
 .categoryButton:hover {
   border-color: color-mix(in srgb, var(--category-hue) 45%, var(--dsw-alias-border-l2));
-  color: var(--category-hue);
+  color: color-mix(in srgb, var(--category-hue) 45%, var(--dsw-alias-label-primary) 55%);
 }
 
 /* Selected. Written `.categoryButton.categoryButtonOn` — TWO classes — so it
@@ -364,7 +366,7 @@
 .categoryButton.categoryButtonOn {
   border-color: var(--category-hue);
   background: color-mix(in srgb, var(--category-hue) 14%, transparent);
-  color: var(--category-hue);
+  color: color-mix(in srgb, var(--category-hue) 45%, var(--dsw-alias-label-primary) 55%);
   box-shadow: inset 0 0 0 1px var(--category-hue);
 }
 

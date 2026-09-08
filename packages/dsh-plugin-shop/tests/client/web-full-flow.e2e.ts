@@ -117,6 +117,115 @@ import { zh } from '../../src/client/locales.ts'
 import { startCatalogServer, type CatalogServer } from '../fixtures/catalog-server.ts'
 import { startLocalRegistry, type LocalRegistry } from '../fixtures/local-registry.ts'
 
+/** Read the browser's colours, including colour-mix and translucent ancestor
+ * backgrounds. These controls use solid fills; stop at the first opaque one. */
+async function readPill(pill: Locator) {
+  return pill.evaluate(el => {
+    type Rgba = [number, number, number, number]
+    const canvas = document.createElement('canvas')
+    canvas.width = canvas.height = 1
+    const context = canvas.getContext('2d')
+    if (context === null) throw new Error('Canvas is required to resolve CSS colours')
+    const rgba = (value: string): Rgba => {
+      if (!CSS.supports('color', value)) throw new Error(`Unresolved colour: ${value}`)
+      context.clearRect(0, 0, 1, 1)
+      context.fillStyle = value
+      context.fillRect(0, 0, 1, 1)
+      const [r, g, b, a] = context.getImageData(0, 0, 1, 1).data
+      if (r === undefined || g === undefined || b === undefined || a === undefined) throw new Error('Missing pixel')
+      return [r / 255, g / 255, b / 255, a / 255]
+    }
+    const over = (fg: Rgba, bg: Rgba): Rgba => [
+      fg[0] * fg[3] + bg[0] * (1 - fg[3]),
+      fg[1] * fg[3] + bg[1] * (1 - fg[3]),
+      fg[2] * fg[3] + bg[2] * (1 - fg[3]), 1,
+    ]
+    const luminance = ([r, g, b]: Rgba): number => {
+      const linear = (v: number): number => v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4
+      return linear(r) * 0.2126 + linear(g) * 0.7152 + linear(b) * 0.0722
+    }
+    const layers: Rgba[] = []
+    for (let node: Element | null = el; node !== null; node = node.parentElement) {
+      const style = getComputedStyle(node)
+      if (style.backgroundImage !== 'none') throw new Error('Contrast measurement requires a solid background')
+      const colour = rgba(style.backgroundColor)
+      layers.push(colour)
+      if (colour[3] === 1) break
+    }
+    let background: Rgba = [1, 1, 1, 1]
+    for (const layer of layers.reverse()) background = over(layer, background)
+    const style = getComputedStyle(el)
+    const fg = luminance(over(rgba(style.color), background))
+    const bg = luminance(background)
+    return {
+      contrast: (Math.max(fg, bg) + 0.05) / (Math.min(fg, bg) + 0.05),
+      width: el.getBoundingClientRect().width,
+      border: rgba(style.borderTopColor),
+      hue: rgba(style.getPropertyValue('--category-hue').trim()),
+      ring: style.boxShadow,
+    }
+  })
+}
+
+/** Exercise real hover/click states under both harness theme palettes. */
+async function checkCategoryBar(app: Page, dialog: Locator): Promise<void> {
+  const all = dialog.locator('[data-shop-category-all]')
+  const tool = dialog.locator('[data-shop-category-tab="tool"]')
+  const categories = ['tool', 'provider', 'ui', 'workflow', 'integration', 'theme', 'other']
+  const tabs = [
+    { name: 'all', locator: all },
+    ...categories.map(name => ({ name, locator: dialog.locator(`[data-shop-category-tab="${name}"]`) })),
+    { name: 'installed', locator: dialog.locator('[data-shop-category-installed]') },
+  ]
+  const originalTheme = await app.evaluate(() => document.body.getAttribute('data-ds-dark-theme'))
+  const check = async (pill: Locator, label: string, selected: boolean, width?: number): Promise<void> => {
+    const measured = await readPill(pill)
+    expect(measured.contrast, `${label}: text contrast`).toBeGreaterThanOrEqual(4.5)
+    if (width !== undefined) expect(measured.width, `${label}: width changed`).toBe(width)
+    if (selected) {
+      // The border carries category identity; text may blend with the theme.
+      expect(measured.border, `${label}: selected border lost its hue`).toEqual(measured.hue)
+      expect(measured.ring, `${label}: selected ring missing`).toContain('inset')
+    }
+  }
+  try {
+    for (const theme of ['light', 'dark']) {
+      await app.evaluate(dark => document.body.toggleAttribute('data-ds-dark-theme', dark), theme === 'dark')
+      for (const { name, locator } of tabs) {
+        await (name === 'all' ? tool : all).click()
+        await app.mouse.move(0, 0)
+        const { width } = await readPill(locator)
+        await locator.hover()
+        await check(locator, `${theme}/${name}/hover`, false, width)
+        await locator.click()
+        expect(await locator.getAttribute('aria-pressed')).toBe('true')
+        await check(locator, `${theme}/${name}/selected-hover`, true, width)
+        await app.mouse.move(0, 0)
+        await check(locator, `${theme}/${name}/selected`, true, width)
+      }
+      // Installed intentionally omits this modifier. Return to the shelf and
+      // restore its off state afterwards; its action label changes on click,
+      // so unlike category labels its text can legitimately change width.
+      await all.click()
+      const filter = dialog.locator('[data-shop-hide-incompatible]')
+      await filter.hover()
+      await check(filter, `${theme}/filter/hover`, false)
+      await filter.click()
+      await check(filter, `${theme}/filter/selected-hover`, true)
+      await app.mouse.move(0, 0)
+      await check(filter, `${theme}/filter/selected`, true)
+      await filter.click()
+    }
+  } finally {
+    await app.evaluate(value => {
+      if (value === null) document.body.removeAttribute('data-ds-dark-theme')
+      else document.body.setAttribute('data-ds-dark-theme', value)
+    }, originalTheme)
+    await all.click()
+    await app.mouse.move(0, 0)
+  }
+}
+
 // The test needs the real dsh executable on PATH and a playwright chromium.
 // CI installs both (the dsh CLI in the workflow, chromium by the
 // `playwright install chromium` step); the skip fires only on machines that
@@ -408,67 +517,9 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // And it says WHICH size, for anyone who might read it as the download.
       expect(await size.getAttribute('title')).toBe('解包后 847.4 kB')
 
-      // The category bar: clicking a tab must not change its box, and must
-      // paint it in that category's own hue. Both are invisible to every
-      // other lane — jsdom applies no layout and composites no colours — and
-      // the box is the load-bearing half: these tabs sit on a WRAPPING row,
-      // so one that grows on selection can push its neighbours to the next
-      // line and slide out from under the pointer that just clicked it. That
-      // is what `font-weight: 600` on the pressed state did.
-      //
-      // Located by `data-shop-category-tab`, never by `data-category`: the
-      // cards carry that one too, so `[data-category="tool"]` is ambiguous the
-      // moment any fixture declares a category, and Playwright's strict mode
-      // would fail here rather than where the fixture changed.
-      const toolTab = dialog.locator('[data-shop-category-tab="tool"]')
-      await toolTab.waitFor({ state: 'visible', timeout: 10_000 })
-      const before = await toolTab.evaluate(el => ({
-        rect: el.getBoundingClientRect().width,
-        colour: getComputedStyle(el).color,
-      }))
-      await toolTab.click()
-      expect(await toolTab.getAttribute('aria-pressed')).toBe('true')
-      // The pointer has to LEAVE the tab before the colour is read. `click()`
-      // moves the mouse to the element's centre and leaves it there, and
-      // `.categoryButton:hover` paints the same `var(--category-hue)` — so
-      // measuring here asserted the hover rule and not the pressed one, and
-      // stayed green with the pressed colour deleted outright. Moving to the
-      // origin puts the pointer over the page, not the pill.
-      await app.mouse.move(0, 0)
-      const after = await toolTab.evaluate(el => ({
-        rect: el.getBoundingClientRect().width,
-        colour: getComputedStyle(el).color,
-        border: getComputedStyle(el).borderTopColor,
-        ring: getComputedStyle(el).boxShadow,
-      }))
-      // EXACT equality, not a tolerance. The pressed rule declares colour
-      // only, so the layout engine is handed nothing new to measure and its
-      // answer is identical to the last bit — and this is a comparison of one
-      // element against itself, so it says nothing about the font and holds
-      // on any platform.
-      //
-      // A tolerance was tried first and was useless: measured here against
-      // real chromium, `font-weight: 600` on the pressed state moves this tab
-      // from 55.765625px to 55.984375px — 0.22px, because the zh labels are
-      // CJK (full-width glyphs, whose advance does not change with weight) and
-      // only the Latin count digits move. Any tolerance loose enough to feel
-      // safe is loose enough to pass the defect.
-      expect(after.rect, 'the pressed tab changed width').toBe(before.rect)
-      // #4C8DFF — the same hue a tool card's spine takes, read out of the
-      // bundled stylesheet by the browser that composited it.
-      expect(after.colour).toBe('rgb(76, 141, 255)')
-      expect(after.colour).not.toBe(before.colour)
-      // The border is what SEPARATES the two rules, and so the half that
-      // actually proves the pressed rule won: `.categoryButton:hover` paints a
-      // 45% mix of the hue with the neutral border token, the pressed rule
-      // paints the hue solid. Equal to the hue means hover did not decide it.
-      expect(after.border, 'the hover rule outranked the pressed rule').toBe('rgb(76, 141, 255)')
-      // The affordance that is not a colour, and the one `font-weight: 600`
-      // used to be: an inset ring, which paints outside the layout box and so
-      // costs the pill none of the width asserted above.
-      expect(after.ring).toContain('inset')
-      // Restore All, so the walk-through below starts from the same shelf.
-      await dialog.locator('[data-shop-category-all]').click()
+      // Both themes and all three active states: readable text, the shared
+      // category hue on the selected border, and exact category-tab widths.
+      await checkCategoryBar(app, dialog)
 
       // The expanded detail's npm row: the link to the package's own npm page,
       // the other half of that same comparison.

@@ -166,12 +166,13 @@ describe('category hues', () => {
     }
   })
 
-  it('paints the pressed tab in the hue, not the brand token', () => {
-    // The point of the change: a pressed Tool tab must read as "tool", which
-    // means the hue var and nothing else decides its colour.
+  it('keeps the category hue on the pressed border and fill', () => {
+    // Category identity lives on the border and fill. Text blends that hue
+    // with the theme foreground so these 12px labels remain readable.
     const on = rules.get('.categoryButton.categoryButtonOn')
     expect(on, 'no .categoryButton.categoryButtonOn rule').toBeDefined()
-    expect(on).toMatch(/var\(--category-hue\)/)
+    expect(on).toMatch(/border-color:\s*var\(--category-hue\)/)
+    expect(on).toMatch(/background:\s*color-mix\(in srgb, var\(--category-hue\)/)
     expect(on).not.toMatch(/brand-primary/)
     // The fallback for All/Installed, which have no category and no hue.
     expect(rules.get('.categoryButton')).toMatch(/--category-hue:\s*var\(--dsw-alias-brand-primary\)/)
