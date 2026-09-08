@@ -19,12 +19,27 @@ import { fetchStarCounts } from './github-stars.ts'
 import { HARVEST_TOPICS, REPO_BACKFILL_BUDGET_DEFAULT, harvestRepos, parseHarvestBudget } from './github-client.ts'
 import { parseRepoState, repoGoneDetail, serializeRepoState } from './repo-state.ts'
 import { githubOwnerName } from './github-repo.ts'
-import { fetchCandidates, searchByKeywords, type KeywordShortfall } from './npm-client.ts'
+import { fetchCandidates, searchByKeywords, SEARCH_WINDOW, type KeywordShortfall } from './npm-client.ts'
 import { pagesArtifactNames } from './pages-artifacts.ts'
 import { runPipeline, selectEntries } from './pipeline.ts'
 import { CATALOG_SCHEMA_VERSION, SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION } from './emit.ts'
 import { assembleStarsForEntries, serializeStars } from './stars-assemble.ts'
 import type { Candidate, Rejection, RepoCandidate } from './types.ts'
+
+/**
+ * One keyword's tolerated shortfall, phrased by CAUSE. The two are different
+ * facts and a reader acts on them differently: names past the window are npm
+ * declining to serve ranks beyond its `from` cap — no partition can fix that,
+ * and the count grows with the keyword — while a shortfall INSIDE the window
+ * is the registry answering a total it could not serve, which is noise. One
+ * number for both is what made the red build unreadable; see the 2026-09-08
+ * follow-up amendment.
+ */
+function describeShortfall(s: KeywordShortfall): string {
+  return s.unreachable === 0
+    ? `keywords:${s.keyword} enumerated ${s.enumerated} of ${s.required} (registry served short inside its own window)`
+    : `keywords:${s.keyword} enumerated ${s.enumerated} of ${s.required}; ${s.unreachable} sit past the ${SEARCH_WINDOW} names one query can reach and the partition recovered ${s.recovered}`
+}
 
 // Real work — network fetches, and filesystem writes that overwrite
 // registry/snapshots/manifest.lock and registry/first-seen.yml — belongs to
@@ -98,8 +113,8 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     const shortfalls: KeywordShortfall[] = []
     const names = await searchByKeywords(fetch, undefined, npmToken, undefined, undefined, s => shortfalls.push(s))
     for (const s of shortfalls) {
-      npmNote += `${npmNote === '' ? '' : '; '}keywords:${s.keyword} enumerated ${s.enumerated} of ${s.required}`
-      process.stderr.write(`npm: keywords:${s.keyword} enumerated ${s.enumerated} of ${s.required} names, within the tolerated shortfall\n`)
+      npmNote += `${npmNote === '' ? '' : '; '}${describeShortfall(s)}`
+      process.stderr.write(`npm: ${describeShortfall(s)}, within the tolerated shortfall\n`)
     }
     process.stderr.write(`harvested ${names.length} npm candidate(s)\n`)
     const harvested = await fetchCandidates(names, fetch, npmToken, npmBackupRegistry)
@@ -117,7 +132,7 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     // Optional: a handoff written before this field existed simply carries
     // none, and an older build reading a newer handoff ignores it.
     for (const s of Array.isArray(parsed.shortfalls) ? parsed.shortfalls as KeywordShortfall[] : []) {
-      npmNote += `${npmNote === '' ? '' : '; '}keywords:${s.keyword} enumerated ${s.enumerated} of ${s.required}`
+      npmNote += `${npmNote === '' ? '' : '; '}${describeShortfall(s)}`
     }
     process.stderr.write(`reusing harvest: ${candidates.length} npm candidate(s)\n`)
   }
