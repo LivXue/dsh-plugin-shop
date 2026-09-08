@@ -514,10 +514,26 @@ export function parseKeywordShortfall(value: unknown, where: string): KeywordSho
  * `dsh-plugin` and, in most cases, nothing else — there is no second tag to
  * intersect on, so the mechanism this constant IS has no move to make.
  *
- * The publisher axis does, and EVERY ONE of the 81 is reachable by it: each
- * carries at least one maintainer username inside the grammar, so against
- * this axis the uncovered set has no residue at all — 0 of 81, against 81 of
- * 81 unreachable by refinement. Concentration then decides the cost: 38
+ * The publisher axis does have one, and it reaches every one of the 81:
+ * each carries at least one maintainer username that the grammar in Task 1
+ * of the plan accepts, so a cell can be built for all of them.
+ *
+ * Read that as REACHABILITY, not as a coverage win. "81 of 81 unreachable
+ * by refinement" is the set's own definition restated — the 81 ARE the
+ * names no refinement reaches — so scoring the two axes against it is
+ * tautological on one side, which is the error this comment already logs
+ * above: the first pass counted the self-cell and reported a meaningless
+ * 500 of 500 covered. Over the only population both axes can be measured
+ * on, this keyword's 3,973 names, refinements tag-cover 3,892 (97.96%) and
+ * publisher cells cover 3,973 (100%) — two points apart, not 81 to 0. The
+ * informative comparison needs a set defined by NEITHER axis, which is
+ * what the 60.5%-vs-99.4% pair had (npm's `from` cap defines those 157),
+ * and no such set exists here yet: `dsh-plugin` has no past-window names
+ * to measure over until it crosses.
+ *
+ * What the reachability result does establish is the thing the paragraph
+ * above needs: refinements have no move against these 81 and publisher
+ * cells have one. Concentration then decides the cost: 38
  * distinct maintainers own them, the seven largest cells reach 51 (63%), and
  * a full cover is 37 cells. `huanlin` alone owns 21, and
  * `keywords:dsh-plugin maintainer:huanlin` probes to 26.
