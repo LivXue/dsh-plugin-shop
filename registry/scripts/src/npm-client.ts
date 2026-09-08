@@ -415,8 +415,12 @@ export function parseKeywordShortfall(value: unknown, where: string): KeywordSho
  *   memory                 +1
  *   the other 22 cells      +0
  *   => 5,394 of 5,401, SHORTFALL 7, which is the throw CI hit.
- * Twenty-two of the twenty-five refinements contribute NOTHING beyond the
- * window: they are wholly redundant with the window cell. `dsh` and
+ * Twenty-two of the twenty-five refinements — the list as it stood on
+ * 2026-09-07, before `deepwatch` — contribute NOTHING beyond the window:
+ * they are wholly redundant with the window cell. Do not confuse that
+ * "twenty-two" with the one in the second-keyword section below, which is
+ * a count of NON-EMPTY cells against the other keyword: same numeral,
+ * opposite polarity, different list length. `dsh` and
  * `dsh-plugin` recover the tail. Do not read the cell-total list above as a
  * measure of usefulness — a big cell mostly re-enumerates the window.
  *
@@ -447,9 +451,13 @@ export function parseKeywordShortfall(value: unknown, where: string): KeywordSho
  * probe and a page every run and buy nothing — the mistake this comment's own
  * history is made of, in the other direction.
  *
- * THE SECOND HARVEST KEYWORD IS A DIFFERENT PROBLEM, and this list is far
+ * THE OTHER HARVEST KEYWORD IS A DIFFERENT PROBLEM, and this list is far
  * weaker against it. Everything above is measured against
- * `keywords:deepseek-harness`. `keywords:dsh-plugin` has NOT crossed the
+ * `keywords:deepseek-harness`. "The second keyword" below, and in the
+ * design doc and the plan, means `dsh-plugin` — measured second, NOT
+ * second in {@link HARVEST_KEYWORDS}, where it is the first entry and the
+ * primary keyword. The ordinal is historical; do not resolve it against
+ * the array. `keywords:dsh-plugin` has NOT crossed the
  * window yet — 3,973 against {@link SEARCH_WINDOW} at 2026-09-08, growing
  * about 60 names a day, so 1,277 of headroom is 21 days and it crosses about
  * 2026-09-29 — and it is
@@ -554,14 +562,23 @@ export function parseKeywordShortfall(value: unknown, where: string): KeywordSho
  * a CI bot's display name — `GitHub Actions` for 12 of these 81 — which is
  * not an npm account and which `maintainer:GitHub Actions` answers 0 for. A
  * first pass at this measurement read that field and reported 31 owners with
- * a 70% top-seven; both figures were artefacts of it. That axis was
- * planned for the family-event case above (docs/plans/2026-09-08-publisher-
- * partition.md); this measurement makes it the structural answer to a dated
- * problem rather than insurance against an occasional one.
+ * a 70% top-seven; both figures were artefacts of it. That axis was planned
+ * for the family-event case above, in
+ * docs/plans/2026-09-08-publisher-partition.md; this measurement makes it
+ * the structural answer to a dated problem rather than insurance against an
+ * occasional one.
  *
- * The partition MECHANISM is healthy here — 22 of the 26 refinements are
- * non-empty against this keyword, the largest being `deepseek-harness` 3,395
- * and `dsh` 3,096. It is the residue that is different, not the machinery.
+ * The partition MECHANISM itself is intact here — probed by hand
+ * 2026-09-08, 22 of the 26 refinements are non-empty against this keyword,
+ * the largest being `deepseek-harness` 3,395 and `dsh` 3,096. By hand
+ * because the build never builds these cells: {@link partitionKeyword}
+ * returns `[[keyword]]` for anything inside the window, so no `dsh-plugin`
+ * refinement cell has ever been probed by a run and none appears in any
+ * log. Non-emptiness is also NOT a usefulness measure — the paragraph
+ * above says why, and against a keyword inside the window every cell is
+ * redundant with the window cell by construction. It establishes only that
+ * the cells exist and answer: it is the residue that differs, not the
+ * machinery.
  *
  * Adding a keyword is the documented response to that throw; a cell is always
  * `keywords:<harvest-keyword>,<refinement>`, so a refinement can only narrow
