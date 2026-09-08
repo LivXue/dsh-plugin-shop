@@ -18,7 +18,7 @@ import { createHash } from 'node:crypto'
 import { truncateWholeCharacters } from './gate.ts'
 import { FetchTimeoutError, fetchWithRetry, withTimeout } from './npm-client.ts'
 import { canEverList } from './repo-gate.ts'
-import { diffRepoState, nextRepoState, type RepoSeen, type RepoState } from './repo-state.ts'
+import { diffRepoState, nextRepoState, type RepoSeen, type RepoState, type RepoToFetch } from './repo-state.ts'
 import { hasWorkspaceDeps, monorepoSignal, selectSubpackagePaths } from './subpackage-select.ts'
 import type { RepoCandidate } from './types.ts'
 import { readCappedBody } from './http-body.ts'
@@ -1548,8 +1548,29 @@ async function harvestOnce(options: RepoHarvestOptions): Promise<Omit<RepoHarves
     if (meta.stars !== null) searchStars.set(repo, meta.stars)
   }
   const { toFetch, gone } = diffRepoState(state, seen)
-  // Budget slice: sorted order keeps the deferral deterministic.
-  const queue = toFetch.sort((a, b) => (a.repo < b.repo ? -1 : a.repo > b.repo ? 1 : 0)).slice(0, budget)
+  // Budget slice: sorted order keeps the deferral deterministic, and CHANGED
+  // repositories are served before the backfill.
+  //
+  // Sorting the two together by name was safe only while a backfill was
+  // smaller than one run. `lacksSizeProbe` queued 13,443 recorded
+  // repositories at once against a budget of 2,000, so for about seven
+  // consecutive runs an alphabetically-late repository that published a fix,
+  // deleted its package.json or renamed its bundle would not have been
+  // fetched at all — displaced by unchanged repositories being re-measured
+  // for a decoration. The precedent this borrowed from is not comparable:
+  // `hasUnverifiedRelease` matched 332 candidates, which fits inside a single
+  // run; this was forty times that.
+  //
+  // Ordering rather than a second budget, deliberately: a separate cap would
+  // leave the backfill idle on a quiet day, and its own bound would have to
+  // be tuned against a queue that shrinks every run. Changed-first needs no
+  // tuning and cannot starve either side — the backfill spends exactly what
+  // the day's changes left over, and is still bounded and self-terminating.
+  const byName = (a: RepoToFetch, b: RepoToFetch) => (a.repo < b.repo ? -1 : a.repo > b.repo ? 1 : 0)
+  const queue = [
+    ...toFetch.filter(entry => !entry.backfillOnly).sort(byName),
+    ...toFetch.filter(entry => entry.backfillOnly).sort(byName),
+  ].slice(0, budget)
   const fresh = new Map<string, {
     candidates: RepoCandidate[]
     failure?: { code: 'no-manifest'; detail: string }

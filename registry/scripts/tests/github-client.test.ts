@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { BUNDLE_NAME_MAX_LENGTH, BUNDLE_NAME_RE, GITHUB_REQUEST_TIMEOUT_MS, MAX_MANIFEST_BYTES, MAX_TARBALL_BYTES, MAX_THROWN_FRACTION, MIN_THROWN_TO_BOUND, REPO_BACKFILL_BUDGET_DEFAULT, SUBDIR_MAX_LENGTH, TARBALL_REQUEST_TIMEOUT_MS, fetchRepoCandidate, harvestRepos, isBundleName, parseHarvestBudget, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
-import { parseRepoState, serializeRepoState } from '../src/repo-state.ts'
+import { diffRepoState, parseRepoState, serializeRepoState } from '../src/repo-state.ts'
 import type { RepoState } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
 import { FetchTimeoutError } from '../src/npm-client.ts'
@@ -1588,6 +1588,98 @@ describe('harvestRepos', () => {
     expect(result.candidates.map(c => c.repo).sort()).toEqual(['a/unchanged', 'b/changed', 'd/new'])
     expect(result.nextState['a/unchanged']?.candidates[0]?.repo).toBe('a/unchanged')
     expect(Object.keys(result.nextState).sort()).toEqual(['a/unchanged', 'b/changed', 'd/new'])
+  })
+
+  /** `candidateOf` minus the probe marker — a row recorded before the sizing
+   * read existed, which is what the one-time backfill queues. */
+  function unprobedEntryOf(repo: string): RepoState[string] {
+    const { sizeProbed: _unset, ...candidate } = candidateOf(repo)
+    return { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [candidate] }
+  }
+
+  /** Manifest + head commit + sizing tree for one repository. */
+  function repoRoutes(repo: string, pushedAt = '2026-08-02T00:00:00.000Z'): Record<string, Response> {
+    return {
+      [`https://raw.githubusercontent.com/${repo}/main/package.json`]:
+        new Response(JSON.stringify({ name: repo.split('/')[1], dsh: { bundle: {} } }), { status: 200 }),
+      [`https://api.github.com/repos/${repo}/commits/main`]:
+        new Response(JSON.stringify({ sha: commit, commit: { author: { date: pushedAt } } }), { status: 200 }),
+      [`https://api.github.com/repos/${repo}/git/trees/${commit}`]: new Response(JSON.stringify({
+        truncated: false,
+        tree: [{ path: 'index.js', type: 'blob', size: 4242 }],
+      }), { status: 200 }),
+    }
+  }
+
+  /** A harvest fetch stub: the search, then `routes`, then a throw. */
+  function harvestFetch(seen: { repo: string; pushedAt: string }[], routes: Record<string, Response>): typeof fetch {
+    return (async (url: string | URL) => {
+      const text = String(url)
+      const searched = searchResponder(q => (q.includes('topic:dsh-plugin')
+        ? seen.map(entry => repoItem(entry.repo, { pushed_at: entry.pushedAt }))
+        : []))(text)
+      if (searched !== undefined) return searched
+      for (const [prefix, response] of Object.entries(routes)) {
+        if (text.startsWith(prefix)) return response
+      }
+      throw new Error(`unrouted: ${text}`)
+    }) as unknown as typeof fetch
+  }
+
+  it('serves a changed repository before the size backfill, whatever the alphabet says', async () => {
+    // The backfill queued 13,443 recorded repositories at once against a
+    // budget of 2,000, and the queue was sorted by NAME alone. So for about
+    // seven consecutive runs, `z/changed` — which published a fix, or deleted
+    // its package.json, or renamed its bundle — lost its slot to unchanged
+    // repositories being re-measured for a decoration.
+    //
+    // Budget 1 makes the ordering the only thing under test: exactly one of
+    // the three can be fetched, and the two backfill repos have no routes, so
+    // fetching either would throw and show up as a failure row.
+    const state: RepoState = {
+      'a/unprobed': unprobedEntryOf('a/unprobed'),
+      'b/unprobed': unprobedEntryOf('b/unprobed'),
+      'z/changed': { ...entryOf('z/changed'), pushedAt: '2026-07-01T00:00:00Z' },
+    }
+    const seen = [
+      { repo: 'a/unprobed', pushedAt: '2026-08-01T00:00:00Z' },
+      { repo: 'b/unprobed', pushedAt: '2026-08-01T00:00:00Z' },
+      { repo: 'z/changed', pushedAt: '2026-08-02T00:00:00Z' },
+    ]
+    const result = await harvestRepos({
+      state, budget: 1, fetchImpl: harvestFetch(seen, repoRoutes('z/changed')), sleep, token: 't',
+    })
+    expect(result.failures).toEqual([])
+    expect(result.thrown).toBe(0)
+    expect(result.fetched).toBe(1)
+    expect(result.deferred).toBe(2)
+    // The changed repository's NEW head, not the recorded one.
+    expect(result.nextState['z/changed']?.pushedAt).toBe('2026-08-02T00:00:00Z')
+    // And the two deferred ones keep their recorded state, unprobed, for the
+    // next run's leftover budget.
+    expect(result.nextState['a/unprobed']?.candidates[0]?.sizeProbed).toBeUndefined()
+  })
+
+  it('persists the sizeProbed marker, so the backfill actually terminates', async () => {
+    // The gap this closes: `repo-state.test.ts` proves `diffRepoState` queues
+    // an unprobed repo, and `fetchRepoCandidate` proves the marker is attached
+    // to a candidate — but nothing joined the two, and every other fixture in
+    // this file pre-marks itself probed, which turns the backfill off. A
+    // change dropping the marker on the persistence path would leave 13,443
+    // repositories re-fetched at 2,000 a run forever with the suite green.
+    const state: RepoState = { 'a/unprobed': unprobedEntryOf('a/unprobed') }
+    // Unchanged head: the ONLY reason this repo is queued is the missing probe.
+    const seen = [{ repo: 'a/unprobed', pushedAt: '2026-08-01T00:00:00Z' }]
+    const result = await harvestRepos({
+      state, budget: 5, fetchImpl: harvestFetch(seen, repoRoutes('a/unprobed', '2026-08-01T00:00:00.000Z')), sleep, token: 't',
+    })
+    expect(result.fetched).toBe(1)
+    const persisted = result.nextState['a/unprobed']?.candidates[0]
+    expect(persisted?.sizeProbed).toBe(true)
+    expect(persisted?.installSize).toBe(4242)
+    // Self-terminating, asserted end to end: the state this run WROTE queues
+    // nothing on the next run's diff.
+    expect(diffRepoState(result.nextState, seen).toFetch).toEqual([])
   })
 
   /**

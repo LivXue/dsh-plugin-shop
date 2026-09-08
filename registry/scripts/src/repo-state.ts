@@ -56,6 +56,23 @@ export interface RepoSeen {
 }
 
 /**
+ * A repository {@link diffRepoState} wants fetched, and why.
+ *
+ * `backfillOnly` means nothing about the repository changed — it is queued to
+ * re-ask a question about the commit already recorded (an unverified release,
+ * a missing size probe). The distinction exists because the budget is smaller
+ * than the backlog: 13,443 recorded repositories entered the size backfill at
+ * once against a `REPO_BACKFILL_BUDGET` of 2,000, and an undifferentiated
+ * queue sorted by NAME served an unchanged repository being re-measured for a
+ * decoration ahead of a repository that had actually published a fix. For
+ * roughly seven consecutive runs, everything late in the alphabet would not
+ * have reached the catalog at all.
+ */
+export interface RepoToFetch extends RepoSeen {
+  backfillOnly: boolean
+}
+
+/**
  * Parse the committed state file; a malformed file throws (it is a build
  * input, and silently dropping it would schedule a fresh full sweep). The
  * pre-subpackage shape (`candidate`, singular) still parses — the committed
@@ -141,14 +158,18 @@ export function serializeRepoState(state: RepoState): string {
  *   recorded repos the search no longer returns (deleted, renamed, private —
  *   the catalog must drop them with the reason attached).
  */
-export function diffRepoState(state: RepoState, seen: RepoSeen[]): { toFetch: RepoSeen[]; gone: string[] } {
+export function diffRepoState(state: RepoState, seen: RepoSeen[]): { toFetch: RepoToFetch[]; gone: string[] } {
   const seenByName = new Map(seen.map(entry => [entry.repo, entry]))
-  const toFetch: RepoSeen[] = []
+  const toFetch: RepoToFetch[] = []
   for (const [repo, entry] of seenByName) {
     const recorded = state[repo]
-    if (recorded === undefined || recorded.pushedAt !== entry.pushedAt
-      || hasUnverifiedRelease(recorded) || lacksSizeProbe(recorded)) {
-      toFetch.push(entry)
+    // A repo the search has never recorded, or one whose head moved, has
+    // something NEW to say. The other two reasons re-ask a question about a
+    // commit already recorded — worth asking, but never at a changed repo's
+    // expense, which is what `backfillOnly` lets the caller enforce.
+    const changed = recorded === undefined || recorded.pushedAt !== entry.pushedAt
+    if (changed || hasUnverifiedRelease(recorded) || lacksSizeProbe(recorded)) {
+      toFetch.push({ ...entry, backfillOnly: !changed })
     }
   }
   const gone = Object.keys(state).filter(repo => !seenByName.has(repo))

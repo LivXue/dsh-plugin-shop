@@ -100,6 +100,31 @@ describe('repo-state', () => {
     }
     const { toFetch } = diffRepoState(unprobed, [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }])
     expect(toFetch.map(e => e.repo)).toEqual(['a/one'])
+    // Labelled, because the caller must be able to serve it AFTER anything
+    // that actually changed: nothing about this repository is new, it is
+    // queued to re-ask a question about the commit already recorded.
+    expect(toFetch[0]?.backfillOnly).toBe(true)
+  })
+
+  it('diff: a repo whose head moved is never labelled backfill, even if it also lacks a probe', () => {
+    // Both reasons at once is the common case during the one-time backfill:
+    // 13,443 recorded repositories lack a probe, and some of them pushed
+    // today. A repo with something NEW to say is served first — the label
+    // must follow the change, not the marker.
+    const both: RepoState = {
+      'a/one': {
+        pushedAt: '2026-07-01T00:00:00Z',
+        commit,
+        candidates: [{ ...candidate('a/one'), sizeProbed: undefined }],
+      },
+    }
+    const { toFetch } = diffRepoState(both, [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }])
+    expect(toFetch.map(e => e.backfillOnly)).toEqual([false])
+  })
+
+  it('diff: a repo the state has never seen is never labelled backfill', () => {
+    const { toFetch } = diffRepoState({}, [{ repo: 'a/new', pushedAt: '2026-08-01T00:00:00Z' }])
+    expect(toFetch.map(e => e.backfillOnly)).toEqual([false])
   })
 
   it('diff: a size-probed candidate with NO size is left alone, not re-asked daily', () => {
