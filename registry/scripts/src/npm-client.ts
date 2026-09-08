@@ -68,19 +68,25 @@ export const MAX_SEARCH_SHORTFALL = 3
  *
  * This is the half {@link MAX_SEARCH_SHORTFALL} could not carry. That bound is
  * for npm answering a total it cannot serve — 1 to 3 names, no growth, and a
- * re-page may close it. Unreachability is a different animal: 157 names on
- * 2026-09-07 against a bound of 3, growing with the keyword, and no amount of
- * re-reading closes it. Sizing one constant for both means either a red build
- * every time a keyword crosses the window, or a bound far above the FIFTEEN
- * names a real partition gap measured — which that constant's own comment
- * refuses, correctly.
+ * re-page may close it. Unreachability is a different animal: a tail of
+ * `total - `{@link SEARCH_WINDOW} that grows with the keyword and that no
+ * amount of re-reading closes. {@link PARTITION_KEYWORDS} measures and keeps
+ * that figure; it is not restated here, because three copies of it had already
+ * drifted apart on one date. Sizing one constant for both means either a red
+ * build every time a keyword crosses the window, or a bound far above the
+ * FIFTEEN names a real partition gap measured — which that constant's own
+ * comment refuses, correctly.
  *
- * A RATE is what separates the two failures. A partition that breaks takes the
- * rate to near zero and still fails loudly; the API's own ceiling leaves a
- * small residual with the rate high. Live 2026-09-08 the shipped refinement
- * list recovered 156 of 157 (99.4%); losing the single `dsh` cell, which
- * recovers 123 of them on its own, would drop it to about 22%, well below
- * the 0.9 floor.
+ * A RATE is what separates the two failures WHILE THE TAIL IS SMALL. A
+ * partition that breaks takes the rate to near zero and still fails loudly;
+ * the API's own ceiling leaves a small residual with the rate high. Note the
+ * strictness DECAYS as the tail grows — a 0.9 floor permits 10% of it — so
+ * above a tail of {@link MAX_UNREACHABLE_RESIDUAL} / (1 - this floor) = 250
+ * names every rate violation already violates that cap and the rate decides
+ * nothing but which message prints. The keyword this was written for passes
+ * 250 within days. The floor is kept because below that size it is the
+ * STRICTER of the two and refuses gaps the cap would wave through; it is not
+ * kept because it adds coverage above it.
  */
 export const MIN_UNREACHABLE_RECOVERY = 0.9
 
@@ -98,11 +104,21 @@ export const MIN_UNREACHABLE_RECOVERY = 0.9
  * 25 absorbs one publisher family: the `sayedev` event was 20 packages
  * released together, 7 of which fell past the window with no shared
  * refinement. It cannot also stay under the fifteen-name partition gap this
- * repo has measured, so it deliberately errs toward the family and leaves that
- * gap to {@link MIN_UNREACHABLE_RECOVERY}, which catches it by rate.
+ * repo has measured, and it errs toward the family.
+ *
+ * Say plainly what that costs, because the arithmetic is not obvious and an
+ * earlier draft of this comment got it backwards: {@link
+ * MIN_UNREACHABLE_RECOVERY} does NOT catch the fifteen-name gap at the tail
+ * sizes this keyword now has. 15 missing of a 157-name tail is a rate of
+ * 0.904 — above the 0.9 floor — and a residual of 15, under this cap. Both
+ * bounds pass and the build publishes fifteen names short. The rate only
+ * refuses a fifteen-name gap while the tail is under 150. Closing that means
+ * a smaller cap, a higher floor, or a partition axis that shrinks the tail
+ * itself; it is a policy call, and it is recorded here rather than implied.
  *
  * A tolerated residual is never silent — {@link searchByKeywords} reports the
- * numbers to its caller, and the build report carries them.
+ * numbers to its caller, and {@link describeShortfall} puts both the window
+ * and the tail term in the build report and the CI log.
  */
 export const MAX_UNREACHABLE_RESIDUAL = 25
 
@@ -116,21 +132,95 @@ export interface KeywordShortfall {
    * This is subject to the same count noise as a total inside the window.
    */
   unreachable: number
-  /** Additional names from the combined searches beyond the window's measured
-   * contribution, capped at SEARCH_WINDOW. Includes retry gains; 0 in-window. */
+  /**
+   * Names the union holds beyond one {@link SEARCH_WINDOW}'s worth — what the
+   * refinement cells and a changed retry ranking reached past the boundary.
+   * Measured against the window's ADDRESSABLE range, never against the sweep's
+   * own contribution, so an in-window name a cell supplied can never be
+   * counted as tail recovery. 0 for a keyword that fits the window.
+   */
   recovered: number
+  /**
+   * Names missing from inside the addressable window, and names missing from
+   * the tail beyond it. Every rank inside the window is reachable in one
+   * query, so the first is the registry serving short; the second is what no
+   * refinement cell reached. They sum to `required - enumerated` exactly, and
+   * each carries its own allowance — which is why they are recorded rather
+   * than re-derived by a reader who would have to guess which one applied.
+   */
+  windowShortfall: number
+  tailShortfall: number
+}
+
+/**
+ * State what a tolerated shortfall was missing and under which allowance, for
+ * a build report and a CI log. Both consumers of {@link KeywordShortfall} use
+ * this: the harvest that runs in CI is classify.ts's, not build.ts's, so a
+ * message that lives in only one of them is a message the daily run never
+ * prints.
+ *
+ * It names the two measured quantities and stops there. Which allowance
+ * covered a miss is recorded on the record itself; WHY a name was missing is
+ * not knowable here — claiming "registry count/paging noise" over a tail the
+ * cells never reached is the misattribution this replaced.
+ */
+export function describeShortfall(s: KeywordShortfall): string {
+  const parts: string[] = []
+  if (s.windowShortfall > 0) {
+    parts.push(`${s.windowShortfall} inside the ${SEARCH_WINDOW}-name query window, where every rank is addressable (registry count/paging noise allowance)`)
+  }
+  if (s.tailShortfall > 0) {
+    parts.push(`${s.tailShortfall} of the ${s.unreachable} names the reported total puts beyond that window, of which the combined searches recovered ${s.recovered}`)
+  }
+  return `${keywordQuery([s.keyword])} enumerated ${s.enumerated} of ${s.required}, missing ${parts.join(' and ')}`
+}
+
+/**
+ * Read one shortfall record back off a `--harvest-from` handoff. The fields
+ * are load-bearing — they are interpolated into a PUBLISHED build report — so
+ * a handoff that does not carry them throws rather than rendering `undefined`
+ * into an artifact a plugin author reads.
+ */
+export function parseKeywordShortfall(value: unknown, where: string): KeywordShortfall {
+  const s = value as Record<string, unknown> | null
+  const count = (field: string): number => {
+    const n = s?.[field]
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) {
+      throw new Error(`${where}: shortfall record has no integer \`${field}\`; re-run the harvest that wrote it`)
+    }
+    return n
+  }
+  if (typeof s?.keyword !== 'string') {
+    throw new Error(`${where}: shortfall record has no \`keyword\`; re-run the harvest that wrote it`)
+  }
+  return {
+    keyword: s.keyword,
+    enumerated: count('enumerated'),
+    required: count('required'),
+    unreachable: count('unreachable'),
+    recovered: count('recovered'),
+    windowShortfall: count('windowShortfall'),
+    tailShortfall: count('tailShortfall'),
+  }
 }
 
 /**
  * Refinement keywords the harvest ANDs onto an over-window keyword to split it
  * into reachable cells, most-covering first.
  *
- * `keywords:a,b` is an INTERSECTION on `/-/v1/search`, and it is the ONLY
- * filtering qualifier the API honors. Probed 2026-09-03 against
- * `keywords:deepseek-harness` (total 5,103): `scope:`, `author:`,
- * `maintainer:`, `not:unstable`, `is:unstable`, and the
+ * `keywords:a,b` is an INTERSECTION on `/-/v1/search`, and it is the only
+ * filtering qualifier that splits a keyword by SUBJECT. Probed 2026-09-03
+ * against `keywords:deepseek-harness` (total 5,103): `scope:`, `author:`,
+ * `not:unstable`, `is:unstable`, and the
  * `quality`/`popularity`/`maintenance` weights each left both the total and
  * the first page unchanged — none of them can split or re-slice the window.
+ * `maintainer:` was measured with them and recorded as inert; that
+ * measurement was WRONG. It is a filter and it composes with `keywords:` —
+ * `keywords:deepseek-harness maintainer:<nonexistent>` returns 0, not the
+ * unchanged total an ignored qualifier gives. See the 2026-09-08 follow-up
+ * amendment in docs/design/2026-08-18-dsh-plugin-shop-design.md; the
+ * publisher axis it opens is planned, not implemented, in
+ * docs/plans/2026-09-08-publisher-partition.md.
  * A bare text term (`keywords:deepseek-harness memory`) leaves the total
  * unchanged too, but re-ranks the page: only 138 of 250 names match at rank
  * 2,500 against the untermed query. It still cannot widen the reachable
@@ -206,9 +296,14 @@ export interface KeywordShortfall {
  * There is no negation qualifier (`keywords:a,-b` returns total 0), so a
  * cell's complement cannot be expressed and this partition is not covering by
  * construction. {@link searchByKeywords} therefore MEASURES its coverage
- * against the keyword's own total and throws on a shortfall: safe by check,
- * not by construction. The window cell shrinks the residual; it does not
- * retire the check.
+ * against the keyword's own total: safe by check, not by construction. The
+ * window cell shrinks the residual; it does not retire the check. The check
+ * is no longer "any shortfall throws" — a tail residual within {@link
+ * MAX_UNREACHABLE_RESIDUAL} and above the {@link MIN_UNREACHABLE_RECOVERY}
+ * rate is published short and reported, because the API's own ceiling is a
+ * shortfall no list of refinements can close. Extending this list therefore
+ * does NOT announce itself by turning the build red at the first uncovered
+ * name; read the build report's shortfall line for the tail term.
  *
  * Two entries above are not what a reader expects. `harness` (41) and `ai`
  * (31) were measured and never shipped. `deepseek-harness` cannot appear in a
@@ -970,7 +1065,10 @@ export function toCandidate(packument: unknown): Candidate | null {
  * {@link PARTITION_KEYWORDS}) PLUS the keyword's own reachable window, which
  * stops at the window instead of throwing. The union of the two is then
  * measured against the keyword's own total, re-paged once on a shortfall, and
- * checked against the noise allowance, recovery floor and residual cap.
+ * split into the two faults it can carry — names missing from INSIDE the
+ * addressable window, and names missing from the tail beyond it. The two sum
+ * to the shortfall exactly and each is bounded on its own: the noise
+ * allowance inside, the recovery floor and residual cap outside.
  *
  * Harvesting by keyword rather than by name pattern is deliberate: a name
  * pattern is trivially spoofed. A keyword search that cannot complete
@@ -996,8 +1094,13 @@ export function toCandidate(packument: unknown): Candidate | null {
  *   total is past {@link SEARCH_WINDOW} and no refinement keyword splits it;
  *   when a PARTITION CELL would need a `from` past {@link MAX_SEARCH_FROM}
  *   (the keyword's own window cell stops there instead — that one is expected
- *   not to fit); or when a keyword's remaining shortfall exceeds its coverage
- *   bounds after a second full pass.
+ *   not to fit); or, after a second full pass, when any of the THREE separate
+ *   shortfall bounds is crossed — more than {@link MAX_SEARCH_SHORTFALL}
+ *   names missing from inside the addressable window, a tail recovery rate
+ *   under {@link MIN_UNREACHABLE_RECOVERY}, or a tail shortfall past {@link
+ *   MAX_UNREACHABLE_RESIDUAL}. The window bound is independent: it throws on
+ *   a healthy rate and a healthy residual, because names inside the window
+ *   were never the partition's job.
  */
 export async function searchByKeywords(
   fetchImpl: typeof fetch = fetch,
@@ -1026,9 +1129,23 @@ export async function searchByKeywords(
     pastWindow: 'throw' | 'stop',
   ): Promise<void> => {
     const query = keywordQuery(cell)
+    // The last total this cell answered, so a `from` past the cap can tell a
+    // cell that genuinely needs a second window from one that merely served
+    // short of a total inside it. Unset until the first page arrives; a cell
+    // that fails before then has already thrown.
+    let answered = Number.POSITIVE_INFINITY
     for (let from = 0; ; from += PAGE_SIZE) {
       if (from > MAX_SEARCH_FROM) {
-        if (pastWindow === 'stop') return
+        // A cell whose OWN total fits inside the window cannot need a page
+        // past the cap. Arriving here means the registry served fewer objects
+        // than the total it answered — the 249-of-250 page this module
+        // documents twice — which is count/paging noise for the shortfall
+        // bounds to measure, NOT a partition that fails to split. The old
+        // form threw `the partition is wrong` at a keyword with no partition
+        // at all: total exactly SEARCH_WINDOW and a 249-object final page is
+        // enough, and it is the mirror of the overstated total this harvest
+        // already tolerates.
+        if (pastWindow === 'stop' || answered <= SEARCH_WINDOW) return
         throw new Error(
           `npm search for ${query} needs from=${from}, past the ${MAX_SEARCH_FROM} the registry honors (a larger from silently returns page 0); the partition is wrong`,
         )
@@ -1062,6 +1179,7 @@ export async function searchByKeywords(
       // window, never by a page it cannot judge, so this throw applies to it
       // exactly as it does to a partition cell.
       const cellTotal = readTotal(body, query, from, 'a truncated page cannot be told from a complete one')
+      answered = cellTotal
       if (objects.length === 0 || from + objects.length >= cellTotal) return
     }
   }
@@ -1126,54 +1244,88 @@ export async function searchByKeywords(
       required = Math.min(required, await probe([keyword]))
     }
     const shortfall = required - forKeyword.size
-    // The reported tail beyond a single window. The registry's count can be
-    // noisy on either side of that boundary, so a small aggregate shortfall
-    // is handled before deciding whether the tail coverage is healthy.
+    if (shortfall <= 0) continue // whole, even when the keyword is past the window
+    // The shortfall splits into the two faults it can carry, and the split
+    // holds as an identity on the union alone:
+    //
+    //   shortfall === windowShortfall + tailShortfall
+    //
+    // START FROM WHAT IS OBSERVABLE, because the obvious reading is not.
+    // A cell answers with names and no ranks, so a name a cell supplied and
+    // the window sweep did not CANNOT be placed on either side of the
+    // boundary: a sweep serving 5,246 of 5,250 while the cells return 157
+    // names produces the same union whether those 157 are all tail (window
+    // missed 4) or 4 in-window plus 153 tail (partition missed 4). The two
+    // are indistinguishable, and every attempt to tell them apart is a
+    // choice about which one to charge.
+    //
+    // `recovered` charges every ambiguous name to the WINDOW, by measuring
+    // against what the window can ADDRESS rather than against `windowNames`,
+    // the sweep's own contribution. That is the safe direction: it can only
+    // understate tail recovery, never overstate it, so the rate floor and the
+    // residual cap can never be paid with window noise. Subtracting the sweep
+    // instead credits the cells for in-window names the sweep missed — a
+    // window serving 5,247 of 5,250 while the cells reach 26 of a 30-name
+    // tail then reports 29 of 30 (96.7%) and publishes, where the true 86.7%
+    // is under the floor.
+    //
+    // The cost of that choice, stated so it is not rediscovered as a bug: an
+    // in-window miss the cells happened to cover is charged to the tail term
+    // and tolerated under the tail's larger allowance. Only a union that does
+    // not fill one window's worth is a DEFINITE in-window miss, and that is
+    // what `windowShortfall` counts and what the tight bound below gates on.
+    // `windowNames` is reported beside it so a maintainer can see which half
+    // fell behind even where the arithmetic cannot attribute it.
     const unreachable = Math.max(0, required - SEARCH_WINDOW)
-    // Both sides of the rate use ONE window. A retry can grow windowNames
-    // past SEARCH_WINDOW as rankings move; those extra names are recovered
-    // coverage too. Subtracting the uncapped two-pass set would lower the rate
-    // even when the final union stayed identical. Keep a short window's
-    // actual contribution so missing pages are still diagnosed separately.
-    const recovered = unreachable === 0 ? 0 : forKeyword.size - Math.min(windowNames.size, SEARCH_WINDOW)
-    // What the addressable range itself failed to serve. Kept separate so a
-    // registry serving short INSIDE the window is never reported as a
-    // partition that stopped covering the tail — two different faults with two
-    // different fixes.
-    const windowShortfall = partitioned ? Math.min(required, SEARCH_WINDOW) - windowNames.size : 0
-    if (shortfall <= 0) {
-      // Whole. Nothing to report even when the keyword is past the window:
-      // the cells reached everything out of reach.
-    } else if (shortfall <= MAX_SEARCH_SHORTFALL) {
-      // A count overstated by one can turn 5250 real names into a reported
-      // total of 5251. That is still noise, not a failed 0-of-1 tail recovery.
-      // Preserve the same bounded allowance above and below the window.
-      onShortfall({ keyword, enumerated: forKeyword.size, required, unreachable, recovered })
-    } else if (unreachable === 0) {
-      throw new Error(`npm search for ${keywordQuery([keyword])} enumerated ${forKeyword.size} of ${required} names, and a second full pass found no more; the search ended before reaching the answered total, so the harvest would be silently short`)
-    } else if (windowShortfall > MAX_SEARCH_SHORTFALL) {
-      // The window is the half that needs no partition at all: every one of
-      // its ranks is addressable, so coming up short there is the registry
-      // serving short, not the cells failing. Reported as its own fault with
-      // its own numbers.
-      throw new Error(`npm search for ${keywordQuery([keyword])} reached only ${windowNames.size} of the ${Math.min(required, SEARCH_WINDOW)} names its own window can address, and a second full pass found no more; that is inside the reachable range, so no partition can explain it`)
-    } else {
-      // Past the window. The partition's job is the unreachable tail, so it is
-      // judged on the RATE it recovers — a broken partition collapses that and
-      // still fails loudly, where an absolute bound loose enough to tolerate
-      // the API's ceiling would have let it through.
+    const recovered = Math.max(0, forKeyword.size - SEARCH_WINDOW)
+    // What the cells failed to reach past the window, and what the union
+    // failed to reach inside it. Neither is inferred from the other.
+    const tailShortfall = unreachable - recovered
+    const windowShortfall = shortfall - tailShortfall
+    // Inside the window every rank is addressable in one query, so a name
+    // definitely missing from here is the registry serving short — never a
+    // partition that stopped covering the tail. Gated on the UNION, not on
+    // the sweep: a sweep that came up short while a cell supplied the same
+    // names left nothing missing, and nothing missing is not a reason to
+    // fail a build. Gating on the sweep threw on a complete harvest.
+    if (windowShortfall > MAX_SEARCH_SHORTFALL) {
+      if (!partitioned) {
+        throw new Error(`npm search for ${keywordQuery([keyword])} enumerated ${forKeyword.size} of ${required} names, and a second full pass found no more; the search ended before reaching the answered total, so the harvest would be silently short`)
+      }
+      // Branching on `partitioned` and not on `unreachable`: a keyword that
+      // partitioned on its first probe and then re-probed back to or below
+      // the window still HAS a window sweep and cells, and blaming neither
+      // is how the message stopped naming the failing half.
+      throw new Error(`npm search for ${keywordQuery([keyword])} reached only ${Math.min(required, SEARCH_WINDOW) - windowShortfall} of the ${Math.min(required, SEARCH_WINDOW)} names its own window can address (its window sweep served ${windowNames.size}, beside ${cells.length} refinement cell(s)), and a second full pass found no more; that is inside the reachable range, so no partition can explain it`)
+    }
+    // Past the window. A count overstated by one turns 5250 real names into a
+    // reported total of 5251; that is noise, not a failed 0-of-1 tail
+    // recovery, so the same bounded allowance applies above the boundary as
+    // below it. Past the allowance the partition's job is judged on the RATE
+    // it recovers — a broken partition collapses that and still fails loudly,
+    // where an absolute bound loose enough to tolerate the API's ceiling
+    // would have let it through.
+    if (tailShortfall > MAX_SEARCH_SHORTFALL) {
       const rate = recovered / unreachable
       if (rate < MIN_UNREACHABLE_RECOVERY) {
-        throw new Error(`npm search for ${keywordQuery([keyword])} reaches ${SEARCH_WINDOW} of ${required} names in one query and the combined searches recovered ${recovered} of ${unreachable} beyond it across ${cells.length} cell(s) — under the ${MIN_UNREACHABLE_RECOVERY} floor, so the refinement coverage needs to improve`)
+        throw new Error(`npm search for ${keywordQuery([keyword])} reaches ${Math.min(required, SEARCH_WINDOW)} of ${required} names in one query and the combined searches recovered ${recovered} of ${unreachable} beyond it across ${cells.length} cell(s) — under the ${MIN_UNREACHABLE_RECOVERY} floor, so the refinement coverage needs to improve`)
       }
       // A healthy rate over a large enough tail still leaves too many names
-      // missing to publish quietly. Crossing this says the PARTITION must
-      // improve; it is not a bound to raise.
-      if (shortfall > MAX_UNREACHABLE_RESIDUAL) {
-        throw new Error(`npm search for ${keywordQuery([keyword])} enumerated ${forKeyword.size} of ${required} names, recovering ${recovered} of ${unreachable} reported beyond one window — a shortfall of ${shortfall}, past the ${MAX_UNREACHABLE_RESIDUAL} names a build may publish short`)
+      // missing to publish quietly. Bounded against the tail term rather than
+      // the aggregate: the form this replaced added the window's own noise
+      // into the same comparison, so a build 22 tail names short passed at
+      // the same "25" that refused one 26 tail names short. (With the
+      // arithmetic above the two now coincide wherever this line is reached —
+      // `windowShortfall` is 0 there, because a non-zero one forces
+      // `recovered` to 0 and the rate throws first — so this names the
+      // quantity the bound is ABOUT, and keeps naming it if the chain moves.)
+      // Crossing this says the PARTITION must improve; it is not a bound to
+      // raise.
+      if (tailShortfall > MAX_UNREACHABLE_RESIDUAL) {
+        throw new Error(`npm search for ${keywordQuery([keyword])} enumerated ${forKeyword.size} of ${required} names, recovering ${recovered} of ${unreachable} reported beyond one window — a tail shortfall of ${tailShortfall}, past the ${MAX_UNREACHABLE_RESIDUAL} names a build may publish short`)
       }
-      onShortfall({ keyword, enumerated: forKeyword.size, required, unreachable, recovered })
     }
+    onShortfall({ keyword, enumerated: forKeyword.size, required, unreachable, recovered, windowShortfall, tailShortfall })
   }
   return [...seen].sort()
 }
