@@ -247,21 +247,53 @@ describe('a pressed tab occupies the same box as an unpressed one', () => {
 
   it('keeps every pill on one geometry, stated once', () => {
     // Equal geometry means the BASE rule carries it and no state rule adds
-    // any. The filter is a pill too and now says so by wearing
-    // `.categoryButton`, which is what makes this a single assertion rather
-    // than the same two literals checked against two copied rule sets — the
-    // copy could drift while both halves stayed green.
+    // any. Only the eight tabs are pills now — the filter left the group when
+    // it became a switch — so this is about `.categoryButton` alone.
     const base = rules.get('.categoryButton') ?? ''
     expect(base, 'no .categoryButton rule').not.toBe('')
     expect(base, '.categoryButton must own the padding, so no state rule restates it').toMatch(/padding:\s*3px 10px/)
     expect(base).toMatch(/border:\s*1px solid/)
-    // The filter states only its two differences: the hue it filters on and
-    // the margin that pushes it to the bar's edge.
+  })
+
+  it('keeps the filter out of the pill group it is not a member of', () => {
+    // The filter wore `.categoryButton` and so rendered as a ninth tab that
+    // happened to be red — the tabs choose one of eight, this one is on or
+    // off, and only the shape said otherwise. What replaced it is a switch, so
+    // what this pins is that the filter carries no pill chrome of its own:
+    // reintroducing a border and a fill here is how it would drift back.
     const filter = rules.get('.incompatibleFilter') ?? ''
     expect(filter, 'no .incompatibleFilter rule').not.toBe('')
-    expect(filter).toMatch(/--category-hue:\s*var\(--dsw-alias-state-error-primary\)/)
     expect(filter).toMatch(/margin-left:\s*auto/)
-    expect(filter, 'the filter must not restate the pill geometry').not.toMatch(/padding|border-radius|font-size/)
+    expect(filter, 'the filter must not paint a pill').toMatch(/border:\s*0/)
+    expect(filter, 'the filter must not paint a pill').toMatch(/background:\s*none/)
+    // Its whole statement about the switch is the hue. A width or a height
+    // here is a second copy of a geometry `.switch` already owns, and the two
+    // would drift the way the pill clone before it did.
+    expect(filter).toMatch(/--switch-hue:\s*var\(--dsw-alias-state-error-primary\)/)
+    expect(filter, 'the filter must not restate the switch geometry').not.toMatch(/width|height|border-radius:/)
+  })
+
+  it('lets the switch take its hue from whoever wears it', () => {
+    // Two controls wear `.switch` and mean opposite things — enabled is green,
+    // the incompatible filter is red — so the hue has to come from the caller.
+    // It arrives by INHERITANCE, which is why the default is a `var()` fallback
+    // and not a declaration: an own-element declaration on `.switch` would
+    // shadow the value `.incompatibleFilter` sets on the ancestor, and the
+    // filter's track would have gone on painting green.
+    const track = rules.get('.switch') ?? ''
+    expect(track, 'no .switch rule').not.toBe('')
+    expect(track).toMatch(/--track-hue:\s*var\(--switch-hue,\s*var\(--dsw-alias-state-success-primary\)\)/)
+    expect(track, 'a --switch-hue declared on .switch would shadow the ancestor').not.toMatch(/^\s*--switch-hue:/m)
+    // The on state paints from the resolved hue, never from either literal.
+    const on = rules.get('.switchOn') ?? ''
+    expect(on, 'no .switchOn rule').not.toBe('')
+    expect(on).toMatch(/border-color:\s*var\(--track-hue\)/)
+    expect(on).toMatch(/background:\s*color-mix\([^;]*var\(--track-hue\)/)
+    expect(on, '.switchOn must not hardcode a hue').not.toMatch(/--dsw-alias-state-(success|error)-primary/)
+    // One geometry for both callers, and it only holds if the class states the
+    // box itself: a `<button>` gets UA padding a `<span>` does not.
+    expect(track).toMatch(/box-sizing:\s*border-box/)
+    expect(track).toMatch(/padding:\s*0/)
   })
 })
 
@@ -350,9 +382,9 @@ describe('incompatibility reads as an error, not a warning', () => {
   // `.incompatibleFilter` is the category bar's filter. It is a control rather
   // than a statement about one plugin, but it names exactly this set, so it
   // takes the same token — a filter tinted amber over cards tinted red would
-  // read as two different conditions. It carries the token on `--category-hue`
-  // rather than on a colour directly: the filter is a pill, so every state it
-  // has is painted by the shared `.categoryButton` rules reading that var.
+  // read as two different conditions. It carries the token on `--switch-hue`
+  // rather than on a colour directly: one declaration then reaches both the
+  // track, which inherits it, and the label, which blends it.
   for (const selector of ['.incompatibleBadge', '.incompatibleDetail', '.gateWarning', '.incompatibleFilter']) {
     it(`${selector} draws from the error token, not the warn token`, () => {
       const body = rules.get(selector)

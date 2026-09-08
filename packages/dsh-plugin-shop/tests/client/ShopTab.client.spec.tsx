@@ -1313,21 +1313,25 @@ describe('ShopTab', () => {
     // The count is over the browsable shelf, so it says how many exist rather
     // than how many the current filter happens to show.
     expect(filter.textContent).toContain('Hide incompatible 1')
-    // The label IS the state. It used to carry `aria-pressed` as well, which
-    // announced "Show incompatible 1, pressed" while they were hidden — the
-    // inverse of the truth — so the attribute went and the action label stayed.
-    expect(filter.getAttribute('aria-pressed')).toBeNull()
+    // A switch, so the SWITCH carries the state and the words never move. The
+    // label used to flip to "Show incompatible 1", which ruled out any state
+    // attribute — "Show incompatible 1, pressed" while they are hidden is the
+    // inverse of the truth — and made the control two widths in a bar that
+    // wraps. Fixed label, `aria-checked`, one width.
+    expect(filter.getAttribute('role')).toBe('switch')
+    expect(filter.getAttribute('aria-checked')).toBe('false')
 
     fireEvent.click(filter)
     expect(screen.queryByText('dsh-missing-peer')).toBeNull()
     expect(screen.getByText('dsh-works-here')).toBeTruthy()
-    // The label now offers the way back, and the count is unchanged: it
-    // counts the hidden set, which is exactly what a reader is deciding about.
-    expect(filter.textContent).toContain('Show incompatible 1')
-    expect(filter.getAttribute('aria-pressed')).toBeNull()
+    // Same words, same count — the count is the size of the hidden set, which
+    // is what a reader is deciding about either way — and the state is on.
+    expect(filter.textContent).toContain('Hide incompatible 1')
+    expect(filter.getAttribute('aria-checked')).toBe('true')
 
     fireEvent.click(filter)
     expect(screen.getByText('dsh-missing-peer')).toBeTruthy()
+    expect(filter.getAttribute('aria-checked')).toBe('false')
   })
 
   it('subtracts from the category filter rather than replacing it', async () => {
@@ -1353,9 +1357,8 @@ describe('ShopTab', () => {
     expect(screen.getByText('dsh-tool-ok')).toBeTruthy()
     expect(screen.queryByText('dsh-tool-broken')).toBeNull()
     expect(screen.queryByText('dsh-ui-broken')).toBeNull()
-    // Still on, after the category changed under it — the label offers the
-    // way back, which is what says the filter is applied.
-    expect(container.querySelector('[data-shop-hide-incompatible]')?.textContent).toContain('Show incompatible')
+    // Still on, after the category changed under it.
+    expect(container.querySelector('[data-shop-hide-incompatible]')?.getAttribute('aria-checked')).toBe('true')
   })
 
   it('hides only what it would have badged, never a name conflict', async () => {

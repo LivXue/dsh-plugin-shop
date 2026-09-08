@@ -55,8 +55,9 @@ export const zh = {
    * the bare figure. "解包后" is the load-bearing word — the number is npm's
    * unpacked size, not the download. */
   sizeLabel: '解包后 {size}',
+  /** The incompatible filter's label. FIXED — the switch beside it carries the
+   * state, so the words name what the switch does and never flip with it. */
   hideIncompatible: '隐藏不兼容 {count}',
-  showIncompatible: '显示不兼容 {count}',
   incompatibleFilterTitle: '不显示缺少组件的插件',
   showIncompatibleTitle: '把缺少组件的插件放回列表',
   emptyIncompatibleFiltered: '匹配的插件都缺少组件，已被「隐藏不兼容」筛掉。',
@@ -159,7 +160,6 @@ export const en = {
   authorLine: 'Author: {author}',
   sizeLabel: '{size} unpacked',
   hideIncompatible: 'Hide incompatible {count}',
-  showIncompatible: 'Show incompatible {count}',
   incompatibleFilterTitle: 'Leave out plugins whose components are missing',
   showIncompatibleTitle: 'Put plugins whose components are missing back on the shelf',
   emptyIncompatibleFiltered: 'Every matching plugin is missing components, and the incompatible filter is leaving them out.',

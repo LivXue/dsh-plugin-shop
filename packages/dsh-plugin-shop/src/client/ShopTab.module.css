@@ -393,18 +393,67 @@
  * from whatever they selected — so it takes the error hue it filters on rather
  * than joining the hue table.
  *
- * It IS a pill, so it wears `.categoryButton` and states only its two
- * differences. The geometry rule the pills follow then covers it by
- * construction rather than by a second copy that has to be kept in step: this
- * rule was a verbatim clone of the four `.categoryButton` rules, and every
- * padding or border change to the bar had to be made twice or the two silently
- * drifted. `--category-hue` is the knob that makes the clone unnecessary —
- * declared here at the same specificity as `.categoryButton`'s fallback and
- * after it, so it wins; the button carries no `data-category`, so the hue
- * table below cannot reach it. */
+ * And it is a SWITCH, which is the difference the shape now carries. It used
+ * to wear `.categoryButton`: same pill, same row, same size as the eight tabs,
+ * differing only in being red. That reads as a ninth tab, and it is not one —
+ * the tabs are choose-one and this is on-or-off. So it drops the pill chrome
+ * entirely (no border, no fill, nothing to compete with the row it sits
+ * beside) and puts the state in a track, the same one every installed card
+ * carries. Nothing here restates the switch geometry; `--switch-hue` is the
+ * whole of what this control says about it, and it reaches the label too, so
+ * one declaration keeps the word and the track the same colour. */
 .incompatibleFilter {
-  --category-hue: var(--dsw-alias-state-error-primary);
+  --switch-hue: var(--dsw-alias-state-error-primary);
   margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  /* Matches the pills' vertical padding so the bar keeps one line box whether
+   * this control wraps onto a row of its own or shares theirs. */
+  padding: 3px 0;
+  border: 0;
+  background: none;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* Hover lifts the word to full contrast and warms the track's border. Scoped
+ * to the OFF track: `.incompatibleFilter:hover .switch` outranks `.switchOn`
+ * by two classes, so unscoped it would strip the hue from the border at
+ * exactly the moment a reader has the pointer on it to check the state. */
+.incompatibleFilter:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+.incompatibleFilter:hover .switch:not(.switchOn) {
+  border-color: color-mix(in srgb, var(--switch-hue) 45%, var(--dsw-alias-border-l2));
+}
+
+/* On. Written with both classes for the reason `.categoryButton.categoryButtonOn`
+ * is: it has to match `:hover`'s specificity and come after it, or the colour
+ * reverts under a pointer that has not moved since the click. */
+.incompatibleFilter.incompatibleFilterOn {
+  color: color-mix(in srgb, var(--switch-hue) 45%, var(--dsw-alias-label-primary) 55%);
+}
+
+/* Off here means "nothing is being taken away" — the resting state — so the
+ * knob steps back to the secondary label. The enable switch keeps the full
+ * strength dot, where off means "this plugin is disabled" and is worth
+ * noticing. In this bar it would be the heaviest mark in a row of hairline
+ * pills, and on the light theme it is the WHOLE control: bg-layer-2 is the
+ * same white as the panel there, so an off track is a hairline outline with a
+ * near-black dot sitting in it. */
+.incompatibleFilter .switch:not(.switchOn) .switchKnob {
+  background: var(--dsw-alias-label-secondary);
+}
+
+/* The ring has no border to trace, so it takes an offset and the pill radius
+ * of the tabs it sits beside rather than hugging the text. */
+.incompatibleFilter:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+  border-radius: 999px;
 }
 
 .catalogHeading {
@@ -1189,11 +1238,31 @@
   gap: 10px;
 }
 
-/* The enable/disable switch. */
+/* The shop's one switch. It is worn by two controls that mean different
+ * things — the enable/disable toggle on an installed card, and the shelf's
+ * incompatible filter — so the geometry lives here once and each caller states
+ * only its hue.
+ *
+ * `--switch-hue` is that knob, and it is read from the ANCESTOR rather than
+ * declared per state: `.incompatibleFilter` sets it once and it reaches the
+ * track and the label together, which is what keeps a red switch from sitting
+ * under a neutral word. A declaration on `.switch` itself would shadow the
+ * inherited value (an element's own rule beats what it inherits), so the
+ * default rides in the `var()` fallback and is resolved once into
+ * `--track-hue` instead of being spelled out at each use.
+ *
+ * `box-sizing` and `padding` are stated because the two callers are different
+ * elements — a `<button>`, which the UA gives padding, and a `<span>`, which
+ * it does not. Without them the same class renders two sizes, and the knob
+ * sits 2px above centre in the taller one. */
 .switch {
+  --track-hue: var(--switch-hue, var(--dsw-alias-state-success-primary));
+  box-sizing: border-box;
+  display: inline-block;
   position: relative;
   width: 32px;
   height: 18px;
+  padding: 0;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 999px;
   background: var(--dsw-alias-bg-layer-2);
@@ -1201,9 +1270,12 @@
   transition: background 120ms ease, border-color 120ms ease;
 }
 
+/* The knob's POSITION is the state, which is the reason this control needs no
+ * `forced-colors` fallback the way the category pills do: a system palette
+ * replaces every colour below and moves nothing. */
 .switchOn {
-  border-color: var(--dsw-alias-state-success-primary);
-  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 55%, transparent);
+  border-color: var(--track-hue);
+  background: color-mix(in srgb, var(--track-hue) 55%, transparent);
 }
 
 .switchKnob {

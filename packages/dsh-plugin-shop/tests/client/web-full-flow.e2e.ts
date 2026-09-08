@@ -157,12 +157,34 @@ async function readPill(pill: Locator) {
     const style = getComputedStyle(el)
     const fg = luminance(over(rgba(style.color), background))
     const bg = luminance(background)
+    const read = (name: string): Rgba | null => {
+      const value = style.getPropertyValue(name).trim()
+      return value === '' ? null : rgba(value)
+    }
+    // The incompatible filter holds a switch track (and the track a knob);
+    // the eight pills hold neither. Found by structure rather than class:
+    // class names are content-hashed at bundle time.
+    const trackEl = el.firstElementChild
+    const knobEl = trackEl?.firstElementChild ?? null
+    const trackStyle = trackEl === null ? null : getComputedStyle(trackEl)
     return {
       contrast: (Math.max(fg, bg) + 0.05) / (Math.min(fg, bg) + 0.05),
       width: el.getBoundingClientRect().width,
       border: rgba(style.borderTopColor),
-      hue: rgba(style.getPropertyValue('--category-hue').trim()),
       ring: style.boxShadow,
+      // Each is null on the control that does not set it — the pills have no
+      // `--switch-hue`, the filter left the hue table when it stopped being a
+      // pill — and a custom property has no inherited value to fall back on
+      // here, so an unguarded read hands rgba() the empty string and throws.
+      hue: read('--category-hue'),
+      switchHue: read('--switch-hue'),
+      track: trackStyle === null ? null : {
+        border: rgba(trackStyle.borderTopColor),
+        width: trackEl?.getBoundingClientRect().width ?? 0,
+        height: trackEl?.getBoundingClientRect().height ?? 0,
+      },
+      // 'none' while off; a matrix once the knob has slid.
+      knob: knobEl === null ? null : getComputedStyle(knobEl).transform,
     }
   })
 }
@@ -204,16 +226,60 @@ async function checkCategoryBar(app: Page, dialog: Locator): Promise<void> {
         await check(locator, `${theme}/${name}/selected`, true, width)
       }
       // Installed intentionally omits this modifier. Return to the shelf and
-      // restore its off state afterwards; its action label changes on click,
-      // so unlike category labels its text can legitimately change width.
+      // restore its off state afterwards. This one is a switch, not a pill, so
+      // `check` does not apply: it has no border to carry a hue and no inset
+      // ring. What it has instead is a track, and a label that no longer
+      // changes — so width invariance becomes assertable here, where the old
+      // flipping label made it a documented exception.
       await all.click()
       const filter = dialog.locator('[data-shop-hide-incompatible]')
-      await filter.hover()
-      await check(filter, `${theme}/filter/hover`, false)
-      await filter.click()
-      await check(filter, `${theme}/filter/selected-hover`, true)
+      // `.switch` transitions its fill and border over 120ms and a click
+      // returns long before that lands, so a read taken at t=0 still carries
+      // the colour the track is LEAVING — for the on-hover read below, the
+      // hover mix, which is indistinguishable from the scoping defect that
+      // assertion exists to catch. Waiting on the animations themselves is
+      // exact where a slept millisecond count is a guess that gets loosened
+      // the first time CI is slow.
+      const settled = async () => {
+        await filter.evaluate(async el => {
+          await Promise.all(el.getAnimations({ subtree: true })
+            .map(animation => animation.finished.catch(() => undefined)))
+        })
+        return readPill(filter)
+      }
       await app.mouse.move(0, 0)
-      await check(filter, `${theme}/filter/selected`, true)
+      const off = await settled()
+      expect(off.contrast, `${theme}/filter/off: text contrast`).toBeGreaterThanOrEqual(4.5)
+      expect(off.knob, `${theme}/filter/off: knob has already slid`).toBe('none')
+      expect(off.track, `${theme}/filter: no switch track`).not.toBeNull()
+      expect(off.switchHue, `${theme}/filter: no --switch-hue`).not.toBeNull()
+      expect(off.track?.border, `${theme}/filter/off: an off track wearing the hue`).not.toEqual(off.switchHue)
+
+      await filter.hover()
+      const hovered = await settled()
+      expect(hovered.contrast, `${theme}/filter/hover: text contrast`).toBeGreaterThanOrEqual(4.5)
+      expect(hovered.width, `${theme}/filter/hover: width changed`).toBe(off.width)
+
+      await filter.click()
+      const onHovered = await settled()
+      expect(onHovered.contrast, `${theme}/filter/on-hover: text contrast`).toBeGreaterThanOrEqual(4.5)
+      expect(onHovered.width, `${theme}/filter/on-hover: width changed`).toBe(off.width)
+      // The pointer has not moved since the click, which is exactly when a
+      // reader looks for confirmation — and `:hover .switch` outranks
+      // `.switchOn` by a class, so an unscoped hover rule would take the hue
+      // straight back off the border at that moment.
+      expect(onHovered.track?.border, `${theme}/filter/on-hover: hover stripped the hue`).toEqual(onHovered.switchHue)
+
+      await app.mouse.move(0, 0)
+      const on = await settled()
+      expect(on.contrast, `${theme}/filter/on: text contrast`).toBeGreaterThanOrEqual(4.5)
+      expect(on.width, `${theme}/filter/on: width changed`).toBe(off.width)
+      expect(on.knob, `${theme}/filter/on: knob did not slide`).not.toBe('none')
+      expect(on.track?.border, `${theme}/filter/on: track lost its hue`).toEqual(on.switchHue)
+      // One geometry for both wearers of `.switch`, whatever element it is on.
+      expect(on.track?.width, `${theme}/filter/on: track width`).toBe(32)
+      expect(on.track?.height, `${theme}/filter/on: track height`).toBe(18)
+
       await filter.click()
     }
   } finally {
@@ -791,6 +857,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       const filter = dialog.locator('[data-shop-hide-incompatible]')
       await filter.waitFor({ state: 'visible', timeout: 10_000 })
       expect(await filter.textContent()).toBe(zh.hideIncompatible.replace('{count}', '1'))
+      expect(await filter.getAttribute('aria-checked')).toBe('false')
       // It sits at the far edge of the category bar: its RIGHT edge is the
       // bar's right edge, which is what `margin-left: auto` guarantees and
       // only a browser lays out.
@@ -815,9 +882,12 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       }
 
       await filter.click()
-      // The card is gone from the shelf, and the button now offers it back.
+      // The card is gone from the shelf, and the switch says so. The label is
+      // the same string it was — it names what the switch does, not which way
+      // it is thrown — so `aria-checked` is where the state is read.
       await card.waitFor({ state: 'detached', timeout: 10_000 })
-      expect(await filter.textContent()).toBe(zh.showIncompatible.replace('{count}', '1'))
+      expect(await filter.textContent()).toBe(zh.hideIncompatible.replace('{count}', '1'))
+      expect(await filter.getAttribute('aria-checked')).toBe('true')
       // The compatible fixtures stayed.
       expect(await dialog.locator('[data-shop-entry="dsh-shop-e2e-live"]').count()).toBe(1)
       await filter.click()

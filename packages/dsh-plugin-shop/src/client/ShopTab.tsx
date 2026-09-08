@@ -1463,27 +1463,48 @@ export function ShopTab(props: ShopTabProps): ReactNode {
           * category counts, so it says how many entries the shelf holds with
           * something missing — not how many the current filter shows.
           *
+          * So it is a SWITCH and not a pill. It wore `.categoryButton` and sat
+          * in the same row at the same size, which made a boolean modifier
+          * read as a ninth tab that happened to be red — the tabs are a
+          * choose-one group and this one is on or off, and nothing in the
+          * shape said so. The track is the shop's existing switch, the one
+          * every installed card carries, so there is one switch idiom here
+          * rather than two.
+          *
           * Absent in the Installed view, where the modifier does not apply:
           * that view is the only place a broken install can be disabled or
           * removed, so nothing is subtracted from it, and offering a control
           * that changes nothing would be a claim the view cannot honour. The
-          * state itself survives — switching back brings it and its pill back.
+          * state itself survives — switching back brings it and its switch
+          * back.
           *
-          * The label carries the ACTION and the state rides with it, so there
-          * is no `aria-pressed`: pairing a flipping label with a pressed state
+          * `role="switch"` with `aria-checked` is what a fixed label buys.
+          * The label used to flip between "Hide" and "Show", which ruled out
+          * any state attribute — pairing a flipping label with a pressed state
           * announces "Show incompatible 1, pressed" while they are hidden,
-          * which is the inverse of the truth. The category tabs opposite make
-          * the other choice — a fixed label, with `aria-pressed` carrying the
-          * state alone — and either is coherent; mixing them is not. */}
+          * the inverse of the truth — and cost a length: two labels are two
+          * widths, so the control resized under the pointer that had just
+          * clicked it, in a bar that wraps. The switch carries the state, the
+          * words name what it does, and the box never changes size. The action
+          * that a click performs now lives in the `title` alone, which is the
+          * one place a changing string costs no layout. */}
         {category !== 'installed' && (
           <button
             type="button"
-            className={hideIncompatible ? `${css.categoryButton} ${css.incompatibleFilter} ${css.categoryButtonOn}` : `${css.categoryButton} ${css.incompatibleFilter}`}
+            role="switch"
+            aria-checked={hideIncompatible}
+            className={hideIncompatible ? `${css.incompatibleFilter} ${css.incompatibleFilterOn}` : css.incompatibleFilter}
             title={t(hideIncompatible ? 'showIncompatibleTitle' : 'incompatibleFilterTitle')}
             data-shop-hide-incompatible
             onClick={() => { setHideIncompatible(current => !current); setVisibleCount(SHOP_VISIBLE_BATCH) }}
           >
-            {t(hideIncompatible ? 'showIncompatible' : 'hideIncompatible', { count: incompatibleCount })}
+            {/* Decoration, not content: the button already carries the name
+              * and `aria-checked` already carries the state, so an exposed
+              * track would announce a second, nameless switch inside it. */}
+            <span className={hideIncompatible ? `${css.switch} ${css.switchOn}` : css.switch} aria-hidden="true">
+              <span className={css.switchKnob} />
+            </span>
+            {t('hideIncompatible', { count: incompatibleCount })}
           </button>
         )}
       </div>
