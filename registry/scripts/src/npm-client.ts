@@ -149,6 +149,16 @@ export const MIN_UNREACHABLE_RECOVERY = 0.9
  * {@link PARTITION_KEYWORDS} carries the readings and their dates. A family
  * event takes the residual to 9. Both are inside 10.
  *
+ * A THIRD magnitude is coming and the bracket has no room for it. The two
+ * above are both `keywords:deepseek-harness`, whose uncovered set is one
+ * name; `keywords:dsh-plugin` crosses the window about 2026-09-29 with
+ * 4.4% of its bottom band carrying no refinement, and its 81 uncovered
+ * names sit under one owner holding 21 — twice this cap, in a single
+ * family. Read {@link PARTITION_KEYWORDS}' second-keyword section before
+ * touching this value: the answer is not a larger number here, because
+ * raising it walks toward the gap the ceiling refuses, and the structural
+ * options are policy and live in the design doc.
+ *
  * A tolerated residual is never silent — {@link searchByKeywords} reports the
  * numbers to its caller, and {@link describeShortfall} puts both the window
  * and the tail term in the build report and the CI log.
@@ -405,8 +415,12 @@ export function parseKeywordShortfall(value: unknown, where: string): KeywordSho
  *   memory                 +1
  *   the other 22 cells      +0
  *   => 5,394 of 5,401, SHORTFALL 7, which is the throw CI hit.
- * Twenty-two of the twenty-five refinements contribute NOTHING beyond the
- * window: they are wholly redundant with the window cell. `dsh` and
+ * Twenty-two of the twenty-five refinements — the list as it stood on
+ * 2026-09-07, before `deepwatch` — contribute NOTHING beyond the window:
+ * they are wholly redundant with the window cell. Do not confuse that
+ * "twenty-two" with the one in the second-keyword section below, which is
+ * a count of NON-EMPTY cells against the other keyword: same numeral,
+ * opposite polarity, different list length. `dsh` and
  * `dsh-plugin` recover the tail. Do not read the cell-total list above as a
  * measure of usefulness — a big cell mostly re-enumerates the window.
  *
@@ -436,6 +450,143 @@ export function parseKeywordShortfall(value: unknown, where: string): KeywordSho
  * `deepwatch` is zero, measured. A second entry for one family would cost a
  * probe and a page every run and buy nothing — the mistake this comment's own
  * history is made of, in the other direction.
+ *
+ * THE OTHER HARVEST KEYWORD IS A DIFFERENT PROBLEM, and this list is far
+ * weaker against it. Everything above is measured against
+ * `keywords:deepseek-harness`; this section is about `dsh-plugin`.
+ *
+ * ("The second keyword", here and in the design doc and the plan, means
+ * `dsh-plugin` — measured second, NOT second in {@link HARVEST_KEYWORDS},
+ * where it is the first entry and the primary keyword. The ordinal is
+ * historical; do not resolve it against the array.)
+ *
+ * `keywords:dsh-plugin` has NOT crossed the window yet: 3,973 against
+ * {@link SEARCH_WINDOW} at 2026-09-08, growing about 60 names a day, so
+ * 1,277 of headroom is 21 days and it crosses about 2026-09-29. It is
+ * therefore still fully enumerable, which is the only window in which this
+ * can be measured for the price of one paged search — the search response
+ * carries each name's `keywords` and `maintainers`, so sixteen pages
+ * answer the whole question. Measured there:
+ *
+ *   81 of its 3,973 names (2.04%) carry NO refinement from this list other
+ *   than `dsh-plugin` itself, so the list tag-covers 3,892 of 3,973 (97.96%).
+ *   The comparable figure for `deepseek-harness` is ONE name in the 5,250 it
+ *   can address (99.98% tag-covered).
+ *
+ * DO NOT read a ratio off those two. They are the same KIND of measurement
+ * over different populations: 3,973 is the whole keyword, bottom of the
+ * ranking included, while 5,250 is a window that deliberately excludes the
+ * 157-name tail — and the paragraph at the top of this comment says the
+ * uncovered names concentrate exactly there. The plan's own bullet refuses
+ * the same pairing in the other direction ("Do not combine that figure with
+ * the 2.8% uncovered at ranks 5,000-5,250 ... over different populations").
+ * The like-for-like pair this comment holds is bottom-250 against
+ * bottom-250: 2.8% for `deepseek-harness` (pre-`deepwatch`, above) against
+ * 4.4% here, a factor of about 1.6 — and those two are themselves not
+ * reconciled with the 1-of-5,250, so neither may be multiplied against the
+ * other keyword's figure.
+ *
+ * What survives without a ratio is the operative fact, and it is enough:
+ * two percent of this keyword's names are unreachable by any cell this
+ * constant can hold, against a fifth of one percent for the keyword the
+ * list was fitted to, and at the bottom of the ranking — which is what a
+ * tail is made of — it is 4.4%.
+ *
+ * The cause is a tag habit, not a coverage accident: `deepseek-harness` is
+ * almost always published alongside `dsh` or `dsh-plugin`, while `dsh-plugin`
+ * is the conventional "this is a dsh plugin" tag and is frequently the ONLY
+ * one a package carries at all. Uncovered-ness is roughly flat across rank
+ * bands (21, 22, 17 and 21 per thousand ranks) but the bottom 250 — which is
+ * what the first tail page will be made of — runs 11 of 250, 4.4%.
+ *
+ * DO NOT turn that 4.4% into a date by multiplying it against the tail.
+ * That is the drift model the paragraph above measured and REFUTED, and
+ * the counter-evidence is in this comment: `deepseek-harness`'s tail went
+ * 151 -> 183 while the residual held at exactly 1, where 2.8% x 183
+ * predicts 5. The residual is a step function, and the 81 are shaped like
+ * one — 38 owners, `huanlin` alone holding 21, TWICE the cap. So the
+ * mechanism is not accumulation: the first uncovered family to land past
+ * the window together breaches {@link MAX_UNREACHABLE_RESIDUAL} on the day
+ * it lands, exactly as `sayedev` did, and no amount of headroom in the cap
+ * changes that. What the 4.4% does bound is the RATE at which uncovered
+ * names enter the tail, which is what makes the unit days rather than
+ * months: taken as if it drifted — an ordering estimate, not a forecast —
+ * the first red build (the throw is `>`, so eleven names, not ten) needs a
+ * 250-name tail, about four days past the crossing at 60 a day, and two to
+ * seven on the sample's interval. Use Wilson for that interval, 2.5%-7.7%
+ * at 11 of 250; the Wald form, 1.9%-6.9%, under-covers at that count and
+ * its low end is what sets the far edge of the estimate.
+ *
+ * Note which guard fires. At 4.4% the refinement list still RECOVERS 95.6%
+ * of the tail, above {@link MIN_UNREACHABLE_RECOVERY}, so what reddens the
+ * build is the absolute cap and not the rate floor — the crossover that
+ * constant's own comment puts at a 100-name tail.
+ *
+ * **A refinement cannot close this one.** Those 81 packages carry
+ * `dsh-plugin` and, in most cases, nothing else — there is no second tag to
+ * intersect on, so the mechanism this constant IS has no move to make.
+ *
+ * The publisher axis does have one, and it reaches every one of the 81:
+ * each carries at least one maintainer username that the grammar in Task 1
+ * of the plan accepts, so a cell can be built for all of them.
+ *
+ * Read that as REACHABILITY, not as a coverage win. "81 of 81 unreachable
+ * by refinement" is the set's own definition restated — the 81 ARE the
+ * names no refinement reaches — so scoring the two axes against it is
+ * tautological on one side, which is the error this comment already logs
+ * above: the first pass counted the self-cell and reported a meaningless
+ * 500 of 500 covered. Over the only population both axes can be measured
+ * on, this keyword's 3,973 names, refinements tag-cover 3,892 (97.96%) and
+ * publisher cells cover 3,973 (100%) — two points apart, not 81 to 0. The
+ * informative comparison needs a set defined by NEITHER axis, which is
+ * what the 60.5%-vs-99.4% pair had (npm's `from` cap defines those 157),
+ * and no such set exists here yet: `dsh-plugin` has no past-window names
+ * to measure over until it crosses.
+ *
+ * What the reachability result does establish is the thing the paragraph
+ * above needs: refinements have no move against these 81 and publisher
+ * cells have one. Concentration describes that uncovered SET — 38 distinct
+ * maintainers own the 81, the seven largest cells reach 51 (63%), a
+ * minimum cover is 37 cells, and `huanlin` alone owns 21, whose
+ * `keywords:dsh-plugin maintainer:huanlin` probes to 26.
+ *
+ * None of that is the run cost, and the difference is two orders of
+ * magnitude. The 37 are oracle-selected: nothing in the mechanism can know
+ * which 37 of the vocabulary own the residue, so the plan probes one cell
+ * per KNOWN publisher — ~3,390 once this keyword is seeded, against a
+ * 4,000 budget — and pages every non-zero one, which nothing bounds at
+ * all. Its own Step 3 sizes that at roughly tripling the npm half of a
+ * run. Read the concentration figures as how much of the residue a few
+ * cells would carry IF they could be chosen, never as the price of the
+ * axis; the accounting elsewhere in this comment is per request, and this
+ * paragraph is not.
+ *
+ * Read the maintainer off `maintainers[].username`, NEVER off
+ * `publisher.username`. The latter is the last publishING identity and can be
+ * a CI bot's display name — `GitHub Actions` for 12 of these 81 — which is
+ * not an npm account and which `maintainer:GitHub Actions` answers 0 for. A
+ * first pass at this measurement read that field and reported 31 owners with
+ * a 70% top-seven; both figures were artefacts of it. That axis was planned
+ * for the family-event case above, in
+ * docs/plans/2026-09-08-publisher-partition.md; this measurement gives that
+ * plan a date, because on this keyword it is the only one of the two axes
+ * with a move. It does not make it covering: a cell exists only for a
+ * publisher already SEEN, and every one of these 81 is in-window TODAY,
+ * which is precisely why all 38 owners are visible. The one measurement
+ * over a real past-window tail is still 60.5%. Neither axis escapes the
+ * `from` cap, because both are queries.
+ *
+ * The partition MECHANISM itself is intact here — probed by hand
+ * 2026-09-08, 22 of the 26 refinements are non-empty against this keyword,
+ * the largest being `deepseek-harness` 3,395 and `dsh` 3,096. By hand
+ * because the build never builds these cells: {@link partitionKeyword}
+ * returns `[[keyword]]` for anything inside the window, so no `dsh-plugin`
+ * refinement cell has ever been probed by a run and none appears in any
+ * log. Non-emptiness is also NOT a usefulness measure — the paragraph
+ * above says why, and against a keyword inside the window every cell is
+ * redundant with the window cell by construction. It establishes only that
+ * the cells exist and answer: it is the residue that differs, not the
+ * machinery.
  *
  * Adding a keyword is the documented response to that throw; a cell is always
  * `keywords:<harvest-keyword>,<refinement>`, so a refinement can only narrow
