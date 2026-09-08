@@ -44,6 +44,18 @@ jobs:
       # The root suite (registry/scripts/tests/**) in full. Measured green on
       # Windows, and it is where the `import()` specifier bug lived.
       - run: pnpm test
+      # The package's own `test` script is `tsdown && tsdown -c
+      # tsdown.client.config.ts && vitest run`, so it BUILDS first, and two
+      # cases depend on that: `apply.client.spec.tsx` imports
+      # `dsh-plugin-shop/remote`, a self-referential export resolving into
+      # `lib/`, and `own-version.test.ts` asserts `lib/index.js` exists. The
+      # step below cannot use the script — the exclusions have to reach vitest,
+      # and `pnpm test -- --exclude …` does not deliver them (measured: the
+      # full 30 files ran) — so the two builds are spelled out here instead.
+      # Their absence is what made this leg's first run red while it was green
+      # on a working tree that already had a `lib/`.
+      - run: pnpm -C packages/dsh-plugin-shop exec tsdown
+      - run: pnpm -C packages/dsh-plugin-shop exec tsdown -c tsdown.client.config.ts
       # The package suite MINUS four files. They fake the `dsh` CLI with a
       # `#!/bin/sh` script and spawn it by bare name, or assert on a symlink,
       # so 55 of their cases fail on Windows for one shared reason that has
