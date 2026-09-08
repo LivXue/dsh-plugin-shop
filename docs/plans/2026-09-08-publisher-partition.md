@@ -14,34 +14,28 @@
 
 ## Global Constraints
 
-Copied verbatim from `CLAUDE.md`; every task's requirements implicitly include these.
+`CLAUDE.md`'s conventions and invariants apply in full and are not restated here — it is loaded for every agent working in this repo, and a second copy is a second authority that disagrees the first time one of them is amended. Only what is specific to THIS plan is below.
 
-- **A pure core, an impure shell.** `npm-client.ts` is shell (it reaches the network). `publisher-state.ts` is PURE — no clock, no network, no filesystem, no environment, no locale. **The dependency runs core ← shell and never the other way:** no pure module in this repo imports from an impure one (`repo-state.ts` imports only `types.ts`), which is why the username grammar lives in the pure module and `npm-client.ts` imports it, not the reverse.
-- **ESM everywhere** (`"type": "module"`); `.ts` extensions in local relative imports.
-- **`strict` and `noUncheckedIndexedAccess` are on.** Guard index access; never assert it away.
-- **Files end with exactly one trailing newline.**
-- **Everything from npm is hostile** — including maintainer usernames. Validate at the boundary; a username reaches a URL here.
-- **A malformed registry file throws.** Silently listing nothing is indistinguishable from an empty ecosystem.
-- **Tests describe behavior.** If a change makes a test obsolete, change it and say why — do not quietly edit an assertion to make a run green.
-- **Verify test-data arithmetic.** Fixtures asserting a count must actually have that property.
-- **Design documents and specs are English only.**
-- **An empty `catch` names what it swallows and why nothing else can reach it.**
+- **The dependency runs core ← shell and never the other way.** `npm-client.ts` is shell (it reaches the network); `publisher-state.ts` is PURE. No pure module in this repo imports from an impure one (`repo-state.ts` imports only `types.ts`), which is why the username grammar lives in the pure module and `npm-client.ts` imports it, not the reverse. `CLAUDE.md` states the pure/impure split but not this direction.
+- **A maintainer username reaches a URL here.** `CLAUDE.md`'s "everything from npm is hostile" therefore has a concrete boundary in this plan: validate the username against the grammar before it is interpolated into a search query.
 
 **Commands:** `pnpm exec vitest run registry/scripts/tests/<file>` for one suite, `pnpm exec vitest run` for the registry suite, `pnpm typecheck` for types. Never run `pnpm build:catalog` to check that a change compiles — it makes thousands of live requests.
 
 ## Measured facts this plan is sized against
 
-All from the follow-up amendment; re-measure rather than trusting these if more than a week has passed.
+The follow-up amendment in `docs/design/2026-08-18-dsh-plugin-shop-design.md` is the authority for every figure below; this table is a convenience copy and must not disagree with it. Re-measure rather than trusting either if more than a week has passed — `PARTITION_KEYWORDS`' comment in `registry/scripts/src/npm-client.ts` owns the keyword totals and the tail, per `CLAUDE.md`.
 
 | | |
 |---|---|
-| `keywords:deepseek-harness` total | 5,410 (2026-09-08), growing ~83/day |
-| Window (`MAX_SEARCH_FROM` + `PAGE_SIZE`) | 5,250 — so **160 names unreachable** |
-| Refinement cells recover | **159 of 160 (99.4%)** |
+| `keywords:deepseek-harness` total | 5,407 (2026-09-08), growing ~83/day |
+| Window (`MAX_SEARCH_FROM` + `PAGE_SIZE`) | 5,250 — so **157 names unreachable** |
+| Refinement cells recover | **156 of 157 (99.4%)** |
 | Publisher cells recover, window-seeded | **95 of 157 (60.5%)** — measured 2026-09-08 |
-| Distinct maintainers in the window | 3,042 |
+| Distinct maintainers in the window | 3,041 |
 | Maintainers `keywords:dsh-plugin` adds | **349** (it is fully enumerable today) |
 | `keywords:dsh-plugin` total | 3,952 — crosses the window ~2026-10-01 |
+
+An earlier draft of this table read 5,410 / 160 / "159 of 160" / 3,042 while citing the amendment's 5,407 / 157 / "156 of 157" / 3,041 as its source, and measured the publisher row against 157 in the same table. Both ratios round to 99.4%, which is how it went unnoticed. Keep the numbers identical to the amendment's or drop the table.
 
 **Read that 60.5% correctly.** Publisher cells recover *less* than the refinement list, and this plan does not claim otherwise. Their value is the failure mode refinements cannot reach: the `sayedev` event was 20 packages released together, 7 of them past the window with no shared refinement, and 14 of them already visible — so `maintainer:sayedev` was derivable from what the harvest had already read and its cell recovers all 20. A refinement list reaches that family only if a human adds the tag after the build has gone red.
 
@@ -649,8 +643,8 @@ Add the budget constant beside `PARTITION_KEYWORDS`:
 
 ```ts
 /**
- * How many publisher cells one run may probe. The vocabulary accumulates
- * forever and the probe cost must not: 3,042 maintainers were in the window on
+ * How many publisher cells one run may PROBE. The vocabulary accumulates
+ * forever and the probe cost must not: 3,041 maintainers were in the window on
  * 2026-09-08 and each costs one `size=1` request. Sized above today's
  * vocabulary so nothing is skipped yet, and bounded so a year of accumulation
  * cannot quietly turn one run into fifty thousand requests. Same posture as
@@ -662,6 +656,22 @@ Add the budget constant beside `PARTITION_KEYWORDS`:
  */
 export const PUBLISHER_PROBE_BUDGET_DEFAULT = 4000
 ```
+
+**This bounds the probes, not the run — size the paging half before shipping
+Step 3.** Every maintainer in the vocabulary was read out of a
+`keywords:<harvest>` result, so `keywords:<harvest> maintainer:<user>` is
+non-zero for very nearly all of them, and the loop below pushes every non-zero
+cell into `cells`. `searchByKeywords` then PAGES each cell, sequentially, and
+pages them all again whenever `enumerate()` retries — which the 2026-09-08
+split records as the steady state for `deepseek-harness`. At today's
+vocabulary that is ~3,041 probes plus ~3,041 page requests plus another
+~3,041 on the retry, roughly tripling the npm half of a run that `CLAUDE.md`
+sizes at ~5,975 packuments plus 26 cells. None of the four tests in this task
+observes it: the budget test's cells all probe 0, so none is ever paged.
+Either bound the cells that get PAGED (keep the highest-total cells, or only
+those whose probe suggests they straddle the window), or measure the run cost
+and raise the ceiling deliberately. Do not raise
+`PUBLISHER_PROBE_BUDGET_DEFAULT` believing it caps the run.
 
 In `partitionKeyword`, after the refinement-cell loop and before the `oversized` deepening loop:
 
