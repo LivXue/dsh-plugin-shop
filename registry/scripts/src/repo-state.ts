@@ -15,6 +15,7 @@
  * the harvest memory.
  */
 
+import { canEverList } from './repo-gate.ts'
 import type { RepoCandidate } from './types.ts'
 
 /** One repository's recorded state. Exactly one of the outcome fields is
@@ -187,7 +188,14 @@ export function diffRepoState(state: RepoState, seen: RepoSeen[]): { toFetch: Re
  * the failure mode is a slower backfill and not an unbounded run.
  */
 function lacksSizeProbe(recorded: RepoState[string]): boolean {
-  return (recorded.candidates ?? []).some(candidate => candidate.sizeProbed !== true)
+  // Only candidates that could actually list. One that cannot is never
+  // measured and never marked, so counting it here would queue its repository
+  // in every run forever — and skipping it unconditionally would leave it
+  // unmeasured if a gate rule later loosens. Asking the same predicate the
+  // skip asks makes the loosening re-queue exactly what it made listable.
+  return (recorded.candidates ?? []).some(
+    candidate => canEverList(candidate) && candidate.sizeProbed !== true,
+  )
 }
 
 /**

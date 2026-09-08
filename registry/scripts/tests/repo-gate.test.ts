@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { gateRepo } from '../src/repo-gate.ts'
+import { canEverList, gateRepo } from '../src/repo-gate.ts'
 import { ENTRY_PAYLOAD_MAX_BYTES, LICENSE_MAX_LENGTH, REPOSITORY_MAX_LENGTH, gate } from '../src/gate.ts'
 import { parseRegistryConfig } from '../src/config.ts'
 import type { RepoCandidate } from '../src/types.ts'
@@ -600,5 +600,53 @@ describe('workspace deps and the release rescue', () => {
       },
     }), config)
     expect(result.ok, result.ok ? '' : result.rejection.detail).toBe(true)
+  })
+})
+
+describe('canEverList agrees with the gate it is a shortcut for', () => {
+  // The predicate duplicates three of `gateRepo`'s rules so the sizing read
+  // can skip a candidate before the gate ever sees it. A duplication that
+  // drifts is the whole hazard: loosen a rule in `gateRepo` alone and the
+  // newly-listable candidates go unmeasured; tighten one and the sizing read
+  // keeps paying for candidates that can no longer list.
+  //
+  // Every combination of the three inputs it reads, against the real gate.
+  const RELEASE = { tag: 'v1.0.0', url: 'https://github.com/someone/dsh-repo-plugin/releases/download/v1.0.0/a.tgz', sha256: 'c'.repeat(64), assetVerified: true } as const
+  const combinations = [false, true].flatMap(hasBundle =>
+    [false, true].flatMap(requiresBuild =>
+      [false, true].flatMap(hasWorkspaceDeps =>
+        [undefined, RELEASE].map(release =>
+          ({ hasBundle, requiresBuild, hasWorkspaceDeps, release })))))
+
+  it.each(combinations)(
+    'refuses %o only when the gate does too',
+    (overrides) => {
+      const candidate = repo(overrides)
+      const gated = gateRepo(candidate, config)
+      if (!canEverList(candidate)) {
+        // The direction that matters: everything the shortcut skips must in
+        // fact be unlistable, or the skip silently drops a real entry's size.
+        expect(gated.ok).toBe(false)
+        if (!gated.ok) {
+          expect(['no-bundle', 'requires-build', 'workspace-deps']).toContain(gated.rejection.code)
+        }
+      } else {
+        // And the converse, weaker but still load-bearing: a candidate the
+        // shortcut admits is never rejected for one of the three reasons the
+        // shortcut claims to have already tested.
+        if (!gated.ok) {
+          expect(['no-bundle', 'requires-build', 'workspace-deps']).not.toContain(gated.rejection.code)
+        }
+      }
+    })
+
+  it('admits a release-rescued candidate that a git install could not have', () => {
+    // Both build-and-workspace rules are about a GIT install, and the release
+    // answers both — so this candidate CAN list, and its size comes from the
+    // archive rather than the tree. Pinned because reading `release` in the
+    // predicate is easy to drop when someone simplifies it to three flags.
+    const candidate = repo({ requiresBuild: true, hasWorkspaceDeps: true, release: RELEASE })
+    expect(canEverList(candidate)).toBe(true)
+    expect(gateRepo(candidate, config).ok).toBe(true)
   })
 })

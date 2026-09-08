@@ -17,6 +17,7 @@
 import { createHash } from 'node:crypto'
 import { truncateWholeCharacters } from './gate.ts'
 import { FetchTimeoutError, fetchWithRetry, withTimeout } from './npm-client.ts'
+import { canEverList } from './repo-gate.ts'
 import { diffRepoState, nextRepoState, type RepoSeen, type RepoState } from './repo-state.ts'
 import { hasWorkspaceDeps, monorepoSignal, selectSubpackagePaths } from './subpackage-select.ts'
 import type { RepoCandidate } from './types.ts'
@@ -622,7 +623,25 @@ export async function searchReposByTopic(
   return { seen, metas: byName, windowCount }
 }
 
-/** Fetch the default-branch head commit and its date for one repository. */
+/**
+ * Fetch the default-branch head commit and its date for one repository.
+ *
+ * `null` means the endpoint ANSWERED that there is no such commit — a 404 for
+ * a branch that moved or vanished, or a 200 carrying a body that is not a
+ * commit. Both are facts about this repository and become a `fetch-failed`
+ * row naming it.
+ *
+ * @throws on any other non-ok status, which is our transport failing and says
+ *   nothing about the repository. This is the manifest read's rule applied
+ *   one function over, and the reason is the one its comment already gives:
+ *   the systematic-failure bound counts THROWS alone, so a returned row is
+ *   invisible to it. Under an exhausted rate limit every repository in the
+ *   queue answers 403 here, and returning null published thousands of "Could
+ *   not resolve the head commit of <repo>" rows naming healthy repositories
+ *   while the build went green — the outcome that bound exists to prevent,
+ *   reached through the one path it could not observe. The sizing read made
+ *   that reachable in practice by roughly doubling the per-repo core cost.
+ */
 async function fetchHeadCommit(
   owner: string,
   slug: string,
@@ -634,7 +653,10 @@ async function fetchHeadCommit(
 ): Promise<{ sha: string; date: string } | null> {
   const url = `${GITHUB_API}/repos/${owner}/${slug}/commits/${branch}`
   const response = await fetchRobust(url, fetchImpl, sleep, token, timeoutMs)
-  if (!response.ok) return null
+  if (response.status === 404) return null
+  if (!response.ok) {
+    throw new Error(`github api returned ${response.status} resolving the head commit of ${owner}/${slug}`)
+  }
   const body = await response.json() as { sha?: unknown; commit?: { author?: { date?: unknown } } }
   if (typeof body.sha !== 'string' || !/^[0-9a-f]{40}$/.test(body.sha)) return null
   const date = body.commit?.author?.date
@@ -1176,7 +1198,14 @@ export async function fetchRepoCandidate(
   // since the archive holds what the author packed and the tree holds the
   // whole repository. Its figure comes from the archive `release-asset.ts`
   // already inflated to verify it.
-  const sizeable = result.candidates.filter(candidate => candidate.release === undefined)
+  // Also skipped: a candidate `repo-gate` rejects unconditionally. Its size
+  // could never reach an entry, and buying one costs a request, a persisted
+  // figure and a marker — a third of the sizeable candidates in the recorded
+  // state. `canEverList` is the shared predicate, and `lacksSizeProbe` asks
+  // it too, so a skipped candidate is re-queued if a rule ever loosens.
+  const sizeable = result.candidates.filter(
+    candidate => candidate.release === undefined && canEverList(candidate),
+  )
   const first = sizeable[0]
   if (first === undefined) return result
   const read = await readSizingTree(meta.fullName, first.commit, fetchImpl, sleep, token, timeoutMs)
@@ -1186,6 +1215,9 @@ export async function fetchRepoCandidate(
     candidates: result.candidates.map(candidate => {
       // Release candidates were marked where their archive was measured.
       if (candidate.release !== undefined) return candidate
+      // Neither measured nor marked, deliberately: see `canEverList`. The
+      // ABSENCE of the marker is what re-queues it should the gate loosen.
+      if (!canEverList(candidate)) return candidate
       const installSize = treeInstallSize(read.body, candidate.subdir)
       // `sizeProbed` whichever way it went. A tree that answered and yielded
       // nothing is settled for this commit, and leaving it unmarked would put
