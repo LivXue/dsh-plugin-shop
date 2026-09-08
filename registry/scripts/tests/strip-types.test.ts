@@ -70,11 +70,34 @@
 import { spawnSync } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 const srcDir = join(repoRoot, 'registry', 'scripts', 'src')
+
+/**
+ * One entry point's `import()` argument, ready to interpolate into the `-e`
+ * source: a file URL href, quoted as a JS string literal.
+ *
+ * A URL and never the bare absolute path. Node's ESM loader parses its
+ * specifier as a URL first, so a Windows path's drive letter reads as a
+ * scheme — `import("D:\\…\\build.ts")` is refused with
+ * `ERR_UNSUPPORTED_ESM_URL_SCHEME … Received protocol 'd:'`, and every case in
+ * this file failed that way on Windows while CI stayed green, because a POSIX
+ * absolute path has no scheme to mistake and happens to work bare.
+ *
+ * It also percent-encodes the two characters a bare specifier would read as
+ * delimiters rather than as path: measured, `D:\a#b\src\build.ts` parsed bare
+ * gives pathname `\a` and hash `#b\src\build.ts`, and `?` splits the same way
+ * into a query — so a checkout under a directory holding either is addressed
+ * whole instead of truncated at it. That half is not Windows-specific; a
+ * POSIX path is cut at a `#` just as readily. (A space needs no such rescue:
+ * it survives a bare specifier and only gains its `%20` here.)
+ */
+function importSpecifier(file: string): string {
+  return JSON.stringify(pathToFileURL(join(srcDir, file)).href)
+}
 
 /** The importing child's own exit status and stdout marker. Neither is
  * reachable from the imported module: `0` is what the guard this replaced
@@ -191,19 +214,18 @@ describe('the entry-point list is derived, not maintained by hand', () => {
 describe('entry points survive --experimental-strip-types', () => {
   for (const file of ENTRY_POINTS) {
     it(`imports ${file} cleanly, without running its module-scope work`, () => {
-      const target = join(srcDir, file)
       // `process.execPath`: the same node binary running this test, so the
       // check is against the interpreter actually in use, not a `node` on
       // PATH that might resolve to a different (or absent) version.
-      // `JSON.stringify(target)` quotes the absolute path as a JS string
-      // literal for the `-e` source; `timeout`+`killSignal` are the backstop
+      // `importSpecifier` quotes the module's file URL as a JS string literal
+      // for the `-e` source; `timeout`+`killSignal` are the backstop
       // if a guard regresses and the child starts the real, network-bound
       // work instead of exiting immediately — this fails fast in seconds
       // rather than hanging the suite for the several minutes a real harvest
       // takes (CLAUDE.md).
       const result = spawnSync(
         process.execPath,
-        ['--experimental-strip-types', '--input-type=module', '-e', `import(${JSON.stringify(target)})`],
+        ['--experimental-strip-types', '--input-type=module', '-e', `import(${importSpecifier(file)})`],
         { encoding: 'utf8', timeout: 15_000, killSignal: 'SIGKILL' },
       )
       const detail = [
@@ -219,14 +241,13 @@ describe('entry points survive --experimental-strip-types', () => {
 describe('importing an entry point never terminates the importing process', () => {
   for (const file of ENTRY_POINTS) {
     it(`leaves the importer alive and in control after importing ${file}`, () => {
-      const target = join(srcDir, file)
       // The importer awaits the import, then marks stdout and exits with a
       // status the module itself cannot produce. A module-scope
       // `process.exit(0)` — the guard form this replaced — pre-empts both:
       // the child exits 0 with an empty stdout, and every future unit test
       // that so much as imports a helper from here dies the same way, having
       // reported success.
-      const importer = `await import(${JSON.stringify(target)})\n`
+      const importer = `await import(${importSpecifier(file)})\n`
         + `process.stdout.write(${JSON.stringify(IMPORTER_MARK)})\n`
         + `process.exit(${String(IMPORTER_STATUS)})\n`
       const result = spawnSync(
