@@ -24,7 +24,7 @@ import { classifyPackages } from './llm-client.ts'
 import { judgeMarkets, type MarketItem } from './market-judge.ts'
 import { selectMarketPending } from './market-select.ts'
 import { mergeMarketRows, serializeMarketRows } from './markets.ts'
-import { fetchCandidates, searchByKeywords, type KeywordShortfall } from './npm-client.ts'
+import { fetchCandidates, searchByKeywords, describeShortfall, type KeywordShortfall } from './npm-client.ts'
 import { parseRepoState } from './repo-state.ts'
 import type { Category, RepoCandidate } from './types.ts'
 
@@ -88,15 +88,21 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
   const npmBackupRegistry = rawBackupRegistry ?? 'https://registry.npmmirror.com'
 
   const config = loadRegistryConfig(REGISTRY_DIR)
-  // A shortfall inside MAX_SEARCH_SHORTFALL publishes rather than stopping the
-  // build, but it means this harvest is missing that many packages. It is
+  // A tolerated shortfall publishes rather than stopping the build, but it
+  // means this harvest is missing that many packages. Two allowances can
+  // tolerate one and they have very different sizes — registry count/paging
+  // noise inside the addressable window (MAX_SEARCH_SHORTFALL), and the API's
+  // own ceiling beyond it (MAX_UNREACHABLE_RESIDUAL, eight times larger) — so
+  // the log names both terms via the shared describeShortfall. It is
   // collected here rather than only in build.ts because CI reuses THIS harvest
-  // (`--harvest-from`), so build.ts's own search never runs there — and this is
-  // the call that actually died on `3746 of 3747` on 2026-09-04.
+  // (`--harvest-from`), so build.ts's own search never runs there — which is
+  // also why a message that lived only in build.ts was a message the daily run
+  // never printed. This is the call that actually died on `3746 of 3747` on
+  // 2026-09-04.
   const shortfalls: KeywordShortfall[] = []
   const names = await searchByKeywords(fetch, undefined, npmToken, undefined, undefined, s => shortfalls.push(s))
   for (const s of shortfalls) {
-    process.stderr.write(`classify: keywords:${s.keyword} enumerated ${s.enumerated} of ${s.required} names, within the tolerated shortfall\n`)
+    process.stderr.write(`classify: ${describeShortfall(s)}\n`)
   }
   process.stderr.write(`classify: harvested ${names.length} candidate(s)\n`)
   const { candidates, rejections } = await fetchCandidates(names, fetch, npmToken, npmBackupRegistry)
