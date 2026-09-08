@@ -441,7 +441,8 @@ export function parseKeywordShortfall(value: unknown, where: string): KeywordSho
  * weaker against it. Everything above is measured against
  * `keywords:deepseek-harness`. `keywords:dsh-plugin` has NOT crossed the
  * window yet — 3,973 against {@link SEARCH_WINDOW} at 2026-09-08, growing
- * about 55 names a day, so late September or early October 2026 — and it is
+ * about 60 names a day, so 1,277 of headroom is 21 days and it crosses about
+ * 2026-09-29 — and it is
  * therefore still fully enumerable, which is the only window in which this
  * can be measured for the price of one paged search. Measured there:
  *

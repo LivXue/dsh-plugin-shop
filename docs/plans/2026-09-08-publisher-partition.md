@@ -46,7 +46,7 @@ The follow-up amendment in `docs/design/2026-08-18-dsh-plugin-shop-design.md` is
 | Publisher cells recover, window-seeded | **95 of 157 (60.5%)** — measured 2026-09-08 |
 | Distinct maintainers in the window | 3,041 |
 | Maintainers `keywords:dsh-plugin` adds | **349** (it is fully enumerable today) |
-| `keywords:dsh-plugin` total | 3,952 — crosses the window ~2026-10-01 |
+| `keywords:dsh-plugin` total | 3,973 — crosses the window ~2026-09-29 |
 
 An earlier draft of this table read 5,410 / 160 / "159 of 160" / 3,042 while citing the amendment's 5,407 / 157 / "156 of 157" / 3,041 as its source, and measured the publisher row against 157 in the same table. Both ratios round to 99.4%, which is how it went unnoticed. Keep the numbers identical to the amendment's or drop the table.
 
@@ -62,7 +62,7 @@ Neither result argues against this plan; against THIS keyword its value was neve
 
 Measured 2026-09-08 and owned by `PARTITION_KEYWORDS`' comment; re-measure rather than trusting it here.
 
-`keywords:dsh-plugin` is still fully enumerable — 3,973 against a 5,250 window, growing ~55/day, so it crosses in late September or early October 2026. Because it is enumerable *today*, its coverage could be measured cheaply before the fact, and it is much worse than the first keyword's:
+`keywords:dsh-plugin` is still fully enumerable — 3,973 against a 5,250 window, growing ~60/day, so it crosses about 2026-09-29 (1,277 of headroom, 21 days). Because it is enumerable *today*, its coverage could be measured cheaply before the fact, and it is much worse than the first keyword's:
 
 | | uncovered by the 26 non-self refinements |
 |---|---|
