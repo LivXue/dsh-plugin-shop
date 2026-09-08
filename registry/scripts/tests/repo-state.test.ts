@@ -302,3 +302,91 @@ describe('repoGoneDetail', () => {
     expect(repoGoneDetail(['only-one'])).toContain('its only-one topic was removed')
   })
 })
+
+describe('a carried installSize is re-bounded on the way in', () => {
+  // The npm half re-bounds `dist.unpackedSize` on EVERY run and its comment
+  // says why. The github figure was validated once, at the commit where it
+  // was measured, and `sizeProbed` then guaranteed it was never measured
+  // again — so a bad row in the 11.6 MB state file rode an unchecked cast all
+  // the way to `plugins.json`, where nothing re-tests it.
+  const rowWith = (extra: Record<string, unknown>): string => JSON.stringify({
+    'a/one': {
+      pushedAt: '2026-08-01T00:00:00Z',
+      commit,
+      candidates: [{ ...candidate('a/one'), sizeProbed: true, ...extra }],
+    },
+  })
+
+  it.each([
+    ['negative', -1],
+    ['fractional', 1.5],
+    ['a string', 'big'],
+    ['past the safe-integer range', 1e999],
+    ['null', null],
+  ])('drops a %s installSize, and the probe marker with it', (_label, installSize) => {
+    const parsed = parseRepoState(rowWith({ installSize }))
+    const carried = parsed['a/one']?.candidates[0]
+    expect(carried?.installSize).toBeUndefined()
+    // The marker goes too, so the repository is re-queued for one honest
+    // re-measurement. Dropping the size alone would leave it probed, and
+    // therefore sizeless for as long as the row survives.
+    expect(carried?.sizeProbed).toBeUndefined()
+    expect(diffRepoState(parsed, [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }]).toFetch)
+      .toHaveLength(1)
+  })
+
+  it('keeps a well-formed figure, zero included', () => {
+    // Zero is a fact, not a falsy absence — the same rule the npm side keeps
+    // for an empty tarball.
+    for (const size of [0, 4242, Number.MAX_SAFE_INTEGER]) {
+      const carried = parseRepoState(rowWith({ installSize: size }))['a/one']?.candidates[0]
+      expect(carried?.installSize).toBe(size)
+      expect(carried?.sizeProbed).toBe(true)
+    }
+  })
+
+  it('normalizes a sizeProbed this build never writes', () => {
+    // The type is `sizeProbed?: true`. A `false` already reads as unprobed,
+    // but round-tripping it would put a shape the writer cannot produce back
+    // into the committed file.
+    const carried = parseRepoState(rowWith({ sizeProbed: false }))['a/one']?.candidates[0]
+    expect(carried?.sizeProbed).toBeUndefined()
+  })
+})
+
+describe('a cap-refused sizing read is re-asked when the cap moves', () => {
+  const capped = (sizeCappedAt: number): RepoState => ({
+    'a/one': {
+      pushedAt: '2026-08-01T00:00:00Z',
+      commit,
+      candidates: [{ ...candidate('a/one'), sizeProbed: true, sizeCappedAt }],
+    },
+  })
+  const seen = [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }]
+
+  it('re-queues a candidate refused under a smaller cap than this build applies', () => {
+    // The hole this closes: `sizeProbed` recorded an over-cap refusal exactly
+    // as it records a 404, so raising MAX_TREE_BYTES would have re-measured
+    // none of the repositories the old cap excluded — the same retroactivity
+    // hole `hasUnverifiedRelease` and the probe marker itself were written to
+    // close, reintroduced one level down.
+    const { toFetch } = diffRepoState(capped(8 * 1024 * 1024), seen, 24 * 1024 * 1024)
+    expect(toFetch.map(e => e.repo)).toEqual(['a/one'])
+    // Still a backfill, not a change: it must not displace a repository that
+    // actually pushed.
+    expect(toFetch[0]?.backfillOnly).toBe(true)
+  })
+
+  it('leaves a candidate refused under the cap still in force', () => {
+    // Otherwise the re-probe is not one-shot: every run would re-read a body
+    // it already knows is too big.
+    expect(diffRepoState(capped(24 * 1024 * 1024), seen, 24 * 1024 * 1024).toFetch).toEqual([])
+  })
+
+  it('re-queues rather than going silent when the caller names no cap', () => {
+    // The default is Infinity on purpose. A caller that forgets spends one
+    // re-probe; the other default would leave those repositories sizeless
+    // forever, and this project prefers the failure it can see.
+    expect(diffRepoState(capped(24 * 1024 * 1024), seen).toFetch.map(e => e.repo)).toEqual(['a/one'])
+  })
+})

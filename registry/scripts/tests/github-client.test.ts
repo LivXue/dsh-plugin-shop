@@ -4,7 +4,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { BUNDLE_NAME_MAX_LENGTH, BUNDLE_NAME_RE, GITHUB_REQUEST_TIMEOUT_MS, MAX_MANIFEST_BYTES, MAX_TARBALL_BYTES, MAX_THROWN_FRACTION, MIN_THROWN_TO_BOUND, REPO_BACKFILL_BUDGET_DEFAULT, SUBDIR_MAX_LENGTH, TARBALL_REQUEST_TIMEOUT_MS, fetchRepoCandidate, harvestRepos, isBundleName, parseHarvestBudget, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
+import { BUNDLE_NAME_MAX_LENGTH, BUNDLE_NAME_RE, GITHUB_REQUEST_TIMEOUT_MS, MAX_MANIFEST_BYTES, MAX_TARBALL_BYTES, MAX_THROWN_FRACTION, MIN_THROWN_TO_BOUND, MAX_TREE_BYTES, REPO_BACKFILL_BUDGET_DEFAULT, SUBDIR_MAX_LENGTH, TARBALL_REQUEST_TIMEOUT_MS, TREE_REQUEST_TIMEOUT_MS, fetchRepoCandidate, harvestRepos, isBundleName, parseHarvestBudget, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
 import { diffRepoState, parseRepoState, serializeRepoState } from '../src/repo-state.ts'
 import type { RepoState } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
@@ -3324,5 +3324,87 @@ describe('parseHarvestBudget', () => {
     // build.ts is a top-level-await script with no test seam; a `?? '2000'`
     // there is a policy number nothing can read back.
     expect(REPO_BACKFILL_BUDGET_DEFAULT).toBe(2000)
+  })
+})
+
+describe('the sizing read is bounded like the other large body, not like metadata', () => {
+  const meta = { fullName: 'someone/dsh-repo-plugin', defaultBranch: 'main', description: 'A repo plugin.', license: 'MIT', pushedAt: '2026-08-01T00:00:00Z', stars: null as number | null }
+  const treeUrl = `https://api.github.com/repos/someone/dsh-repo-plugin/git/trees/${commit}`
+  const metadataRoutes = (): Record<string, Response> => ({
+    'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(JSON.stringify({
+      name: 'dsh-repo-plugin',
+      dsh: { bundle: { patch: './cordis.patch.yml' }, catalog: { category: 'tool', summary: { en: 'x' }, capabilities: [] } },
+    }), { status: 200 }),
+    'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': new Response(JSON.stringify({
+      sha: commit, commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+    }), { status: 200 }),
+  })
+  function routeTree(bodyImpl: typeof fetch): typeof fetch {
+    return (async (url: string | URL, init?: RequestInit) => {
+      const text = String(url)
+      if (text.startsWith(treeUrl)) return bodyImpl(text, init)
+      for (const [prefix, response] of Object.entries(metadataRoutes())) {
+        if (text.startsWith(prefix)) return response
+      }
+      throw new Error(`unrouted url: ${text}`)
+    }) as unknown as typeof fetch
+  }
+
+  it('gives the 24 MB tree read a deadline of its own, larger than the metadata one', () => {
+    // Literals on both, for the reason the tarball's twin gives: a test that
+    // computed one from the other could not see them collapse together.
+    expect(TREE_REQUEST_TIMEOUT_MS).toBe(225_000)
+    expect(MAX_TREE_BYTES).toBe(24 * 1024 * 1024)
+    expect(TREE_REQUEST_TIMEOUT_MS).toBeGreaterThan(GITHUB_REQUEST_TIMEOUT_MS)
+    // The throughput floor this bound buys is no stricter than the one the
+    // tarball path already accepted — which is the whole argument for the
+    // number. 24 MB on the shared 30s bound demanded 0.80 MB/s.
+    const treeFloor = MAX_TREE_BYTES / (TREE_REQUEST_TIMEOUT_MS / 1000)
+    const tarballFloor = MAX_TARBALL_BYTES / (TARBALL_REQUEST_TIMEOUT_MS / 1000)
+    expect(treeFloor).toBeLessThanOrEqual(tarballFloor)
+  })
+
+  it('bounds a tree that sends headers and then stalls its body, on its OWN deadline', async () => {
+    // 2000ms metadata bound, 60ms tree bound: a sizing read that fell back on
+    // the metadata deadline would still finish, just not this fast. Before
+    // the split there was no tree bound at all — a 24 MB body on 30s, inside
+    // the band the tarball comment computes as the failure case.
+    const fetchImpl = routeTree(headersThenStalledBody())
+    const started = Date.now()
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token', false, 2000, 300, 60)
+    expect(Date.now() - started).toBeLessThan(1500)
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.candidates[0]?.name).toBe('dsh-repo-plugin')
+      expect(result.candidates[0]?.installSize).toBeUndefined()
+      // Unmarked: a stalled read says nothing about the repository, so the
+      // next run must retry it.
+      expect(result.candidates[0]?.sizeProbed).toBeUndefined()
+    }
+  })
+
+  it('records the cap that refused an over-cap tree, so raising it re-measures', async () => {
+    // A chunked body past MAX_TREE_BYTES. The read stops at the cap rather
+    // than buffering it all, exactly as the tarball's over-cap test asserts.
+    const chunk = new Uint8Array(1024 * 1024)
+    const overCap = (async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let sent = 0; sent <= MAX_TREE_BYTES; sent += chunk.byteLength) controller.enqueue(chunk)
+        controller.close()
+      },
+    }), { status: 200 })) as unknown as typeof fetch
+    const result = await fetchRepoCandidate(meta, routeTree(overCap), sleep, 'token', false, 2000, 300, 5000)
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      const candidate = result.candidates[0]
+      expect(candidate?.installSize).toBeUndefined()
+      // Marked, so a 24 MB body is not re-read every single run...
+      expect(candidate?.sizeProbed).toBe(true)
+      // ...but the cap that refused it is recorded, because the refusal was
+      // OURS. A 404 and a truncated tree are facts about the commit; this is
+      // a fact about a constant, and marking them identically meant a later
+      // raise would re-measure none of the repositories the old cap excluded.
+      expect(candidate?.sizeCappedAt).toBe(MAX_TREE_BYTES)
+    }
   })
 })

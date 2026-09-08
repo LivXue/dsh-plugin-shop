@@ -82,9 +82,11 @@ export const GITHUB_REQUEST_TIMEOUT_MS = 30_000
  * Per-attempt bound on a release-tarball DOWNLOAD, as opposed to the metadata
  * requests around it.
  *
- * The deadline covers the body now (see withTimeout), and this is the only
- * path in the repo that reads a body up to {@link MAX_TARBALL_BYTES} — 32 MB,
- * or 32,768x a manifest's cap. On the shared 30s bound a healthy 32 MB asset
+ * The deadline covers the body now (see withTimeout). This is the only path
+ * that reads a body up to {@link MAX_TARBALL_BYTES} — 32 MB, or 32,768x a
+ * manifest's cap — but no longer the only one that needs a raised deadline:
+ * {@link TREE_REQUEST_TIMEOUT_MS} exists because the sizing read has the same
+ * problem one size down. On the shared 30s bound a healthy 32 MB asset
  * would have to sustain 1.07 MB/s (8.5 Mbit/s) or be killed. At 300s the floor
  * is 109 KB/s (0.87 Mbit/s), far below any plausible runner-to-GitHub-CDN
  * throughput. Being wrong the other way is cheap and self-correcting: the
@@ -93,6 +95,24 @@ export const GITHUB_REQUEST_TIMEOUT_MS = 30_000
  * repository is pushed to again.
  */
 export const TARBALL_REQUEST_TIMEOUT_MS = 300_000
+
+/**
+ * Per-attempt bound on the sizing tree read, for the same reason the tarball
+ * download has one: {@link MAX_TREE_BYTES} admits 24 MB, and on the shared 30s
+ * bound a healthy body that large would have to sustain 0.80 MB/s or be
+ * killed — squarely inside the band the tarball comment computes as the
+ * failure case. At 225s the floor is the same 109 KB/s that bound settled on
+ * (24 MB / 225 s), which is far below any plausible runner-to-GitHub
+ * throughput.
+ *
+ * Being wrong the cheap way here costs a decoration on one entry. Being wrong
+ * the other way costs more than the tarball's equivalent: an aborted read
+ * marks nothing, `fetchRobust` then retries four times with 2/4/8s backoff —
+ * about 134s of wall clock per repository per run at REPO_CONCURRENCY 4 — and
+ * `lacksSizeProbe` re-queues that repository on every future run, spending the
+ * backfill budget on a read that can never settle.
+ */
+export const TREE_REQUEST_TIMEOUT_MS = 225_000
 
 /**
  * The share of one run's fetch attempts that may throw before the harvest is
@@ -1123,6 +1143,13 @@ type SizingRead =
    */
   | { answered: true; body: unknown }
   /**
+   * The body was past {@link MAX_TREE_BYTES}. Settled for now, so the repo is
+   * marked and does not re-read a 24 MB body every run — but settled by OUR
+   * constant rather than by the commit, so the cap that refused it is recorded
+   * and a later raise re-queues exactly the repositories it had excluded.
+   */
+  | { answered: true; body: undefined; cappedAt: number }
+  /**
    * The read failed in a way that says nothing about the repository. Nothing
    * is marked, so the next run retries it — the same rule that keeps a
    * transport failure out of the durable `no-manifest` record.
@@ -1146,7 +1173,15 @@ async function readSizingTree(
     if (response.status === 404) return { answered: true, body: undefined }
     if (!response.ok) return { answered: false }
     const bytes = await readCappedBody(response, MAX_TREE_BYTES)
-    if (bytes === null) return { answered: true, body: undefined }
+    // NOT the same outcome as the 404 above, though both yield no size. A 404
+    // and a `truncated: true` are properties of this commit and will not
+    // change without a push; a body past the cap is a property of a constant
+    // we chose. Recording them identically reintroduced one level down the
+    // retroactivity hole `hasUnverifiedRelease` and `lacksSizeProbe` were
+    // both written to close — raising the cap would have re-measured none of
+    // the repositories it had excluded, and the only escape would have been
+    // yet another one-shot invalidation marker.
+    if (bytes === null) return { answered: true, body: undefined, cappedAt: MAX_TREE_BYTES }
     return { answered: true, body: JSON.parse(new TextDecoder().decode(bytes)) as unknown }
   } catch {
     // Swallows every way this read can fail — a deadline, a rate-limit 403, a
@@ -1187,6 +1222,7 @@ export async function fetchRepoCandidate(
   probeSubpackages = true,
   timeoutMs: number = GITHUB_REQUEST_TIMEOUT_MS,
   tarballTimeoutMs: number = TARBALL_REQUEST_TIMEOUT_MS,
+  treeTimeoutMs: number = TREE_REQUEST_TIMEOUT_MS,
 ): Promise<RepoFetchResult> {
   const result = await projectRepoCandidates(
     meta, fetchImpl, sleep, token, probeSubpackages, timeoutMs, tarballTimeoutMs,
@@ -1208,8 +1244,11 @@ export async function fetchRepoCandidate(
   )
   const first = sizeable[0]
   if (first === undefined) return result
-  const read = await readSizingTree(meta.fullName, first.commit, fetchImpl, sleep, token, timeoutMs)
+  // `treeTimeoutMs`, not `timeoutMs`: a 24 MB body cannot be read on the 30s
+  // bound the metadata requests share. See TREE_REQUEST_TIMEOUT_MS.
+  const read = await readSizingTree(meta.fullName, first.commit, fetchImpl, sleep, token, treeTimeoutMs)
   if (!read.answered) return result
+  const cappedAt = 'cappedAt' in read ? read.cappedAt : undefined
   return {
     ...result,
     candidates: result.candidates.map(candidate => {
@@ -1222,7 +1261,12 @@ export async function fetchRepoCandidate(
       // `sizeProbed` whichever way it went. A tree that answered and yielded
       // nothing is settled for this commit, and leaving it unmarked would put
       // the repository in every future run's backfill queue.
-      return { ...candidate, sizeProbed: true, ...(installSize !== undefined ? { installSize } : {}) }
+      return {
+        ...candidate,
+        sizeProbed: true,
+        ...(installSize !== undefined ? { installSize } : {}),
+        ...(cappedAt !== undefined ? { sizeCappedAt: cappedAt } : {}),
+      }
     }),
   }
 }
@@ -1547,7 +1591,7 @@ async function harvestOnce(options: RepoHarvestOptions): Promise<Omit<RepoHarves
   for (const [repo, meta] of metas) {
     if (meta.stars !== null) searchStars.set(repo, meta.stars)
   }
-  const { toFetch, gone } = diffRepoState(state, seen)
+  const { toFetch, gone } = diffRepoState(state, seen, MAX_TREE_BYTES)
   // Budget slice: sorted order keeps the deferral deterministic, and CHANGED
   // repositories are served before the backfill.
   //

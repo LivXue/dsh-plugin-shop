@@ -73,6 +73,57 @@ export interface RepoToFetch extends RepoSeen {
 }
 
 /**
+ * Re-bound the one figure a candidate carries forward without ever being
+ * re-derived.
+ *
+ * `installSize` passes {@link treeInstallSize}'s validation exactly once, at
+ * the commit where it was measured, and `sizeProbed` then guarantees it is
+ * never measured again — so without this it reaches `plugins.json` through an
+ * unchecked cast. The npm half does the opposite and says why in its own
+ * comment: `npm-client.ts` re-bounds `dist.unpackedSize` with the same two
+ * tests on EVERY run. The asymmetry mattered in proportion — the 2026-09-08
+ * dry run fetched 405 repositories and carried 15,063, so ~97% of github
+ * figures reached the emitter without passing a check again, and nothing
+ * downstream re-tests one: `repo-gate` and `tier` only ask `!== undefined`,
+ * and `toWellFormedEntry` repairs strings.
+ *
+ * The consequence a bad row buys is not local. `1e999` parses to Infinity and
+ * `JSON.stringify` emits `"installSize": null`; `-1`, `1.5` and `"big"` are
+ * republished verbatim. Once the client adds `z.number().int().nonnegative()`
+ * behind its throwing parse, one such row costs every installed shop the
+ * WHOLE catalog — the exact blast radius the second key was introduced to
+ * avoid (design § 2026-09-08).
+ *
+ * The marker goes with the figure, and that is the whole repair: dropping
+ * `installSize` alone would leave the row `sizeProbed` and therefore sizeless
+ * forever, while dropping both re-queues the repository for one honest
+ * re-measurement. Self-healing, so a corrupt row costs a decoration for one
+ * run instead of stopping a build over a number the next run can just take
+ * again.
+ */
+function reboundCarriedSize(candidate: RepoCandidate): RepoCandidate {
+  const { installSize, sizeProbed, sizeCappedAt } = candidate as {
+    installSize?: unknown
+    sizeProbed?: unknown
+    sizeCappedAt?: unknown
+  }
+  const sizeOk = installSize === undefined
+    || (typeof installSize === 'number' && Number.isSafeInteger(installSize) && installSize >= 0)
+  // Bounded like the figure: it is compared against the live cap to decide a
+  // re-probe, and a NaN or a string would make that comparison silently false
+  // — the one outcome this field exists to prevent.
+  const capOk = sizeCappedAt === undefined
+    || (typeof sizeCappedAt === 'number' && Number.isSafeInteger(sizeCappedAt) && sizeCappedAt >= 0)
+  // `sizeProbed?: true` in the type, so anything else is a shape this build
+  // never wrote. A falsy one already reads as unprobed; normalizing it away
+  // keeps it from being serialized back out.
+  const probeOk = sizeProbed === undefined || sizeProbed === true
+  if (sizeOk && probeOk && capOk) return candidate
+  const { installSize: _size, sizeProbed: _probe, sizeCappedAt: _cap, ...rest } = candidate
+  return rest
+}
+
+/**
  * Parse the committed state file; a malformed file throws (it is a build
  * input, and silently dropping it would schedule a fresh full sweep). The
  * pre-subpackage shape (`candidate`, singular) still parses — the committed
@@ -102,9 +153,9 @@ export function parseRepoState(text: string): RepoState {
     }
     let candidates: RepoCandidate[]
     if (Array.isArray(entry.candidates)) {
-      candidates = entry.candidates as RepoCandidate[]
+      candidates = (entry.candidates as RepoCandidate[]).map(reboundCarriedSize)
     } else if (typeof entry.candidate === 'object' && entry.candidate !== null) {
-      candidates = [entry.candidate as RepoCandidate]
+      candidates = [reboundCarriedSize(entry.candidate as RepoCandidate)]
     } else {
       throw new Error(`repo-state.json: ${repo} has neither candidates nor a candidate`)
     }
@@ -158,7 +209,21 @@ export function serializeRepoState(state: RepoState): string {
  *   recorded repos the search no longer returns (deleted, renamed, private —
  *   the catalog must drop them with the reason attached).
  */
-export function diffRepoState(state: RepoState, seen: RepoSeen[]): { toFetch: RepoToFetch[]; gone: string[] } {
+export function diffRepoState(
+  state: RepoState,
+  seen: RepoSeen[],
+  /**
+   * The tree body cap this build applies ({@link MAX_TREE_BYTES}). A candidate
+   * recorded as refused under a SMALLER cap is re-queued, so raising the cap
+   * re-measures what the old one excluded.
+   *
+   * Defaults to Infinity, which re-queues every cap-refused candidate. That is
+   * the wasteful direction on purpose: a caller that forgets spends one
+   * re-probe, where the other default would silently leave those repositories
+   * sizeless forever — and this project prefers the failure it can see.
+   */
+  treeCap: number = Number.POSITIVE_INFINITY,
+): { toFetch: RepoToFetch[]; gone: string[] } {
   const seenByName = new Map(seen.map(entry => [entry.repo, entry]))
   const toFetch: RepoToFetch[] = []
   for (const [repo, entry] of seenByName) {
@@ -168,7 +233,7 @@ export function diffRepoState(state: RepoState, seen: RepoSeen[]): { toFetch: Re
     // commit already recorded — worth asking, but never at a changed repo's
     // expense, which is what `backfillOnly` lets the caller enforce.
     const changed = recorded === undefined || recorded.pushedAt !== entry.pushedAt
-    if (changed || hasUnverifiedRelease(recorded) || lacksSizeProbe(recorded)) {
+    if (changed || hasUnverifiedRelease(recorded) || lacksSizeProbe(recorded, treeCap)) {
       toFetch.push({ ...entry, backfillOnly: !changed })
     }
   }
@@ -208,14 +273,18 @@ export function diffRepoState(state: RepoState, seen: RepoSeen[]): { toFetch: Re
  * re-fetching instead of advancing the backfill. Bounded by the budget, so
  * the failure mode is a slower backfill and not an unbounded run.
  */
-function lacksSizeProbe(recorded: RepoState[string]): boolean {
+function lacksSizeProbe(recorded: RepoState[string], treeCap: number): boolean {
   // Only candidates that could actually list. One that cannot is never
   // measured and never marked, so counting it here would queue its repository
   // in every run forever — and skipping it unconditionally would leave it
   // unmeasured if a gate rule later loosens. Asking the same predicate the
   // skip asks makes the loosening re-queue exactly what it made listable.
   return (recorded.candidates ?? []).some(
-    candidate => canEverList(candidate) && candidate.sizeProbed !== true,
+    candidate => canEverList(candidate)
+      && (candidate.sizeProbed !== true
+        // Refused by a cap smaller than the one this build applies, so the
+        // refusal was ours and is worth re-asking exactly once.
+        || (candidate.sizeCappedAt !== undefined && candidate.sizeCappedAt < treeCap)),
   )
 }
 

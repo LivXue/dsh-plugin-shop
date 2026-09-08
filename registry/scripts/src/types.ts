@@ -147,6 +147,20 @@ export interface RepoCandidate {
    */
   sizeProbed?: true
   /**
+   * The body cap that refused this candidate's sizing tree, when one did.
+   *
+   * `sizeProbed` alone cannot express this outcome honestly. A 404 and a
+   * `truncated: true` are facts about the commit and stay settled until it
+   * moves; a body past `MAX_TREE_BYTES` is a fact about a constant WE chose,
+   * so recording it as settled would mean a later raise re-measured none of
+   * the repositories the old cap had excluded. Storing the cap makes the
+   * invalidation automatic: `diffRepoState` re-queues a candidate whose
+   * recorded cap is below the one the current build applies, which is the
+   * same one-shot re-probe `assetVerified`'s absence buys, without a second
+   * marker to remember to add.
+   */
+  sizeCappedAt?: number
+  /**
    * How many subpackage manifests the harvest probed for this root, when it
    * probed any and none declared a bundle. Present only on a bundle-less
    * monorepo root, and only to make its rejection truthful: without it the
