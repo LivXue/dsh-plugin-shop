@@ -516,7 +516,33 @@ describe('fetchRepoCandidate', () => {
     })
     const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
     expect(result.ok).toBe(true)
-    if (result.ok) expect(result.candidates[0]?.installSize).toBe(43859)
+    if (result.ok) {
+      expect(result.candidates[0]?.installSize).toBe(43859)
+      expect(result.candidates[0]?.sizeProbed).toBe(true)
+    }
+  })
+
+  it('marks a tree that answered but yielded no size, so it is not re-asked daily', () => {
+    // A truncated tree is a deterministic no-size for this commit: it will not
+    // become measurable without a push. `sizeProbed` records that the probe
+    // RAN, which is what keeps `diffRepoState` from queueing this repository
+    // in every run forever — the reason the marker exists instead of testing
+    // `installSize` directly.
+    return (async () => {
+      const fetchImpl = stubFetch({
+        ...plainRepoRoutes(),
+        [`https://api.github.com/repos/someone/dsh-repo-plugin/git/trees/${commit}?recursive=1`]: new Response(JSON.stringify({
+          truncated: true,
+          tree: [{ path: 'a.js', type: 'blob', size: 10 }],
+        }), { status: 200 }),
+      })
+      const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+      expect(result.ok).toBe(true)
+      if (result.ok) {
+        expect(result.candidates[0]?.installSize).toBeUndefined()
+        expect(result.candidates[0]?.sizeProbed).toBe(true)
+      }
+    })()
   })
 
   it('still lists the entry, with no size, when the sizing tree cannot be read', async () => {
@@ -535,6 +561,11 @@ describe('fetchRepoCandidate', () => {
     if (result.ok) {
       expect(result.candidates[0]?.name).toBe('dsh-repo-plugin')
       expect(result.candidates[0]?.installSize).toBeUndefined()
+      // And NOT marked: a 5xx says nothing about the repository, so the next
+      // run must retry it. Marking here would deny this repo a size until it
+      // happened to push — the project's `fetch-failed`-versus-`no-manifest`
+      // rule, applied to the sizing read.
+      expect(result.candidates[0]?.sizeProbed).toBeUndefined()
     }
   })
 
@@ -1395,6 +1426,10 @@ describe('harvestRepos', () => {
       hasWorkspaceDeps: false,
       catalog: null,
       description: 'x',
+      // A normally recorded candidate has been through the sizing probe.
+      // Without this every fixture below would queue for the one-time
+      // backfill and stop testing the `pushedAt` carry it exists to test.
+      sizeProbed: true,
     }
   }
   function entryOf(repo: string): RepoState[string] {
@@ -1830,6 +1865,14 @@ describe('harvestRepos', () => {
       }
       if (text === 'https://api.github.com/repos/someone/monorepo/git/trees/main?recursive=1') {
         return new Response(JSON.stringify({ tree: [{ path: 'package.json' }, { path: 'packages/the-plugin/package.json' }] }), { status: 200 })
+      }
+      // The SIZING read, which is a second request at the pinned commit. Left
+      // unrouted it throws, the candidate is never marked `sizeProbed`, and
+      // the repo re-fetches every run — which is correct behaviour for a real
+      // transport failure and simply wrong for a fixture standing in for a
+      // healthy repository.
+      if (text === `https://api.github.com/repos/someone/monorepo/git/trees/${commit}?recursive=1`) {
+        return new Response(JSON.stringify({ truncated: false, tree: [{ path: 'package.json', type: 'blob', size: 120 }] }), { status: 200 })
       }
       if (text === 'https://raw.githubusercontent.com/someone/monorepo/main/packages/the-plugin/package.json') {
         return new Response(huge, { status: 200 })

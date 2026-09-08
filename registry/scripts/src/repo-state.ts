@@ -145,12 +145,49 @@ export function diffRepoState(state: RepoState, seen: RepoSeen[]): { toFetch: Re
   const toFetch: RepoSeen[] = []
   for (const [repo, entry] of seenByName) {
     const recorded = state[repo]
-    if (recorded === undefined || recorded.pushedAt !== entry.pushedAt || hasUnverifiedRelease(recorded)) {
+    if (recorded === undefined || recorded.pushedAt !== entry.pushedAt
+      || hasUnverifiedRelease(recorded) || lacksSizeProbe(recorded)) {
       toFetch.push(entry)
     }
   }
   const gone = Object.keys(state).filter(repo => !seenByName.has(repo))
   return { toFetch, gone }
+}
+
+/**
+ * Whether a recorded repo has candidates the sizing probe never reached.
+ *
+ * The same retroactivity hole as {@link hasUnverifiedRelease}, for the same
+ * reason: `pushedAt` gates the re-fetch, so every repository recorded before
+ * `installSize` existed would keep no size until it happened to push. That is
+ * not a theoretical wait — the 2026-09-08 dry run fetched 405 repositories and
+ * carried 15,063, so the field would arrive for a few percent and then trickle
+ * in behind whatever pushes happen to occur, which for a dormant repository is
+ * never.
+ *
+ * Absence of `sizeProbed` queues the repo for ONE re-probe, after which the
+ * marker is present either way and the repo returns to being re-fetched only
+ * when it changes. The backfill is therefore bounded and self-terminating:
+ * every recorded repo once, at REPO_BACKFILL_BUDGET a run, and then done.
+ *
+ * It deliberately does NOT test `installSize`. A tree can answer and yield no
+ * figure — truncated, a hostile blob size, a `subdir` matching nothing — and
+ * keying on the size would put those repositories in every run's queue
+ * forever, spending the backfill budget on repositories that can never
+ * satisfy it. The marker is the same device `assetVerified` is, for the same
+ * reason its comment gives.
+ *
+ * The cost this DOES accept, stated because it is a behaviour change for an
+ * unchanged repository: a sizing read that fails in transport marks nothing,
+ * so that repo is re-fetched on every run until one read answers. That is the
+ * `fetch-failed` rule — a transport failure says nothing about the repository
+ * and is never made durable — but it now spends a re-fetch rather than
+ * nothing, and a broadly failing tree endpoint would spend the whole budget
+ * re-fetching instead of advancing the backfill. Bounded by the budget, so
+ * the failure mode is a slower backfill and not an unbounded run.
+ */
+function lacksSizeProbe(recorded: RepoState[string]): boolean {
+  return (recorded.candidates ?? []).some(candidate => candidate.sizeProbed !== true)
 }
 
 /**

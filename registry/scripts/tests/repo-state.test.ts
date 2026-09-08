@@ -19,6 +19,10 @@ function candidate(repo: string): RepoCandidate {
     hasWorkspaceDeps: false,
     catalog: null,
     description: 'x',
+    // A normally recorded candidate has been through the sizing probe. Absent
+    // here, every fixture below would queue for a re-probe and the tests about
+    // `pushedAt` and `assetVerified` would stop testing those.
+    sizeProbed: true,
   }
 }
 
@@ -78,6 +82,41 @@ describe('repo-state', () => {
       },
     }
     const { toFetch } = diffRepoState(verified, [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }])
+    expect(toFetch).toEqual([])
+  })
+
+  it('diff: an unchanged repo whose candidates were never size-probed is re-probed once', () => {
+    // Same retroactivity hole as the release check above, for the same reason:
+    // `pushedAt` alone would leave every repo recorded before `installSize`
+    // existed without one forever. Measured on the 2026-09-08 dry run — 405
+    // repositories fetched against 15,063 carried, so waiting for pushes
+    // would populate the field for a few percent and trickle indefinitely.
+    const unprobed: RepoState = {
+      'a/one': {
+        pushedAt: '2026-08-01T00:00:00Z',
+        commit,
+        candidates: [{ ...candidate('a/one'), sizeProbed: undefined }],
+      },
+    }
+    const { toFetch } = diffRepoState(unprobed, [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }])
+    expect(toFetch.map(e => e.repo)).toEqual(['a/one'])
+  })
+
+  it('diff: a size-probed candidate with NO size is left alone, not re-asked daily', () => {
+    // The reason the marker exists at all rather than testing `installSize`
+    // directly. A tree can answer and still yield no figure — truncated, a
+    // hostile blob size, a subdir matching nothing — and keying the re-probe
+    // on the SIZE would put those repositories in every run's queue forever.
+    // `sizeProbed` is written whichever way the answer went, exactly as
+    // `assetVerified` is, so the re-probe happens once.
+    const probedNoSize: RepoState = {
+      'a/one': {
+        pushedAt: '2026-08-01T00:00:00Z',
+        commit,
+        candidates: [{ ...candidate('a/one'), sizeProbed: true }],
+      },
+    }
+    const { toFetch } = diffRepoState(probedNoSize, [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }])
     expect(toFetch).toEqual([])
   })
 

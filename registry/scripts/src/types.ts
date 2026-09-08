@@ -122,6 +122,31 @@ export interface RepoCandidate {
    */
   installSize?: number
   /**
+   * That the sizing probe ran for this candidate and got an ANSWER — whether
+   * or not an answer produced a figure.
+   *
+   * Its absence is what queues a recorded repository for one re-probe
+   * (`repo-state.ts`), so that repositories recorded before `installSize`
+   * existed do not wait for a push that may never come. Measured on the
+   * 2026-09-08 dry run: 405 repositories fetched against 15,063 carried, so
+   * without this the field would populate a few percent and then trickle.
+   *
+   * A separate marker rather than testing `installSize` itself, and this is
+   * the whole reason it exists: a tree can answer and still yield no figure —
+   * truncated, a hostile blob size, a `subdir` matching nothing — so keying
+   * the re-probe on the SIZE would put every unmeasurable repository in every
+   * run's queue forever. Same shape as `release.assetVerified`, whose comment
+   * makes the same point: the marker is present either way, so the re-probe
+   * happens once.
+   *
+   * Written only for an ANSWER, never for a transport failure. That is the
+   * project's `no-manifest`-versus-`fetch-failed` rule applied here: a
+   * deterministic no-size (this tree, this commit) will not change without a
+   * push and must not be re-asked, while a stalled or rate-limited read says
+   * nothing about the repository and must be.
+   */
+  sizeProbed?: true
+  /**
    * How many subpackage manifests the harvest probed for this root, when it
    * probed any and none declared a bundle. Present only on a bundle-less
    * monorepo root, and only to make its rejection truthful: without it the

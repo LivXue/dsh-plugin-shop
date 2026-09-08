@@ -304,11 +304,34 @@ export function emit(
   const manifestLock = sorted
     .map(e => e.source === 'github' ? `${e.repo ?? e.name} ${e.name} ${e.version}` : `${e.name} ${e.version} ${e.integrity}`)
     .join('\n') + (sorted.length > 0 ? '\n' : '')
+  // Counted over the EMITTED entries, so the number describes the artifact a
+  // reader can go and fetch rather than an intermediate the build discarded.
+  const noSize = sorted.reduce(
+    (acc, e) => e.installSize !== undefined
+      ? acc
+      : { total: acc.total + 1, github: acc.github + (e.source === 'github' ? 1 : 0), npm: acc.npm + (e.source === 'npm' ? 1 : 0) },
+    { total: 0, github: 0, npm: 0 },
+  )
   const lines = [
     '# Catalog build report',
     '',
     `Accepted: ${sorted.length}`,
     `Rejected: ${sortedRejections.length}`,
+    // Stated whether or not it is zero, unlike the conditional lines below it.
+    // The sizing read is best-effort by design — every failure yields no
+    // figure rather than a wrong one — so a rate-limited or broken sizing
+    // path produces a GREEN build carrying a catalog with no sizes at all,
+    // which is indistinguishable from an ecosystem that has none. Nothing
+    // else in the pipeline can tell those apart: the gate does not care, no
+    // test sees live data, and the entries are published either way. A
+    // maintainer reading this number is the detector, which is why suppressing
+    // it at zero would be exactly the wrong economy.
+    //
+    // Split by source because the two mean different things. A github entry
+    // without one is the one-time backfill still running (`repo-state.ts`) or
+    // a tree that could not be measured; an npm entry without one is a
+    // package published before npm 5.6 recorded the field at all.
+    `No install size: ${noSize.total} of ${sorted.length} (github ${noSize.github}, npm ${noSize.npm})`,
     ...(themeDowngraded > 0 ? [`Theme entries emitted as other (schemaVersion < 5): ${themeDowngraded}`] : []),
     // Diagnostics before the table, escaped like a cell: a note can quote a
     // package name, and an unescaped `|` or newline in one would corrupt the

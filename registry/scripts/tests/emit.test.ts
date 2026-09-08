@@ -98,6 +98,31 @@ describe('emit publisher', () => {
     }
   })
 
+  it('reports how many entries carry no install size, split by source', () => {
+    // The counter exists because the sizing read is best-effort: a
+    // rate-limited or broken sizing path produces a GREEN build and a catalog
+    // with no sizes, which is indistinguishable from an ecosystem that has
+    // none. A maintainer reading the report is the only thing that can tell
+    // those apart, so the count is stated whether or not it is zero.
+    //
+    // Split by source because the two mean different things: a github entry
+    // without one is the backfill still running, an npm entry without one is
+    // a package published before npm 5.6 recorded the field.
+    const { report } = emit([
+      { ...entry('dsh-a'), installSize: 100 },
+      entry('dsh-b'),
+      { ...repoEntry('dsh-c', 'you/dsh-c'), installSize: 200 },
+      repoEntry('dsh-d', 'you/dsh-d'),
+      repoEntry('dsh-e', 'you/dsh-e'),
+    ], [], '2026-08-26T00:00:00.000Z')
+    expect(report).toContain('No install size: 3 of 5 (github 2, npm 1)')
+  })
+
+  it('states a zero install-size count too, so silence is never ambiguous', () => {
+    const { report } = emit([{ ...entry('dsh-a'), installSize: 100 }], [], '2026-08-26T00:00:00.000Z')
+    expect(report).toContain('No install size: 0 of 1 (github 0, npm 0)')
+  })
+
   it('emits no installSize key for an entry without one', () => {
     const { pluginsJson } = emit([entry('dsh-a'), repoEntry('dsh-b', 'you/dsh-b')], [], '2026-08-26T00:00:00.000Z')
     expect(pluginsJson).not.toContain('installSize')

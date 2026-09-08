@@ -1092,6 +1092,21 @@ async function probeSubpackageCandidates(
  * cacheable — keyed to a commit, it stays valid until `pushedAt` changes, so
  * the daily run measures churned repositories only.
  */
+type SizingRead =
+  /**
+   * The endpoint ANSWERED: a tree, a 404 saying this commit has none, or a
+   * body past the cap. Whatever the body yields, the outcome is a property of
+   * this commit and will not change without a push — so the candidates are
+   * marked `sizeProbed` and never re-asked.
+   */
+  | { answered: true; body: unknown }
+  /**
+   * The read failed in a way that says nothing about the repository. Nothing
+   * is marked, so the next run retries it — the same rule that keeps a
+   * transport failure out of the durable `no-manifest` record.
+   */
+  | { answered: false }
+
 async function readSizingTree(
   fullName: string,
   sha: string,
@@ -1099,15 +1114,18 @@ async function readSizingTree(
   sleep: (ms: number) => Promise<void>,
   token: string | undefined,
   timeoutMs: number,
-): Promise<unknown> {
+): Promise<SizingRead> {
   try {
     const response = await fetchRobust(
       `${GITHUB_API}/repos/${fullName}/git/trees/${sha}?recursive=1`, fetchImpl, sleep, token, timeoutMs,
     )
-    if (!response.ok) return undefined
+    // A 404 is a fact about this commit; any other non-ok status is our
+    // transport failing, exactly as the discovery tree read reads them.
+    if (response.status === 404) return { answered: true, body: undefined }
+    if (!response.ok) return { answered: false }
     const bytes = await readCappedBody(response, MAX_TREE_BYTES)
-    if (bytes === null) return undefined
-    return JSON.parse(new TextDecoder().decode(bytes)) as unknown
+    if (bytes === null) return { answered: true, body: undefined }
+    return { answered: true, body: JSON.parse(new TextDecoder().decode(bytes)) as unknown }
   } catch {
     // Swallows every way this read can fail — a deadline, a rate-limit 403, a
     // 5xx, a body that is not JSON. Named per the empty-catch rule: what is
@@ -1123,7 +1141,7 @@ async function readSizingTree(
     // would turn a rate-limited sizing read into a `fetch-failed` for a
     // repository whose manifest was read successfully — inventing a harvest
     // failure out of a missing nicety.
-    return undefined
+    return { answered: false }
   }
 }
 
@@ -1161,14 +1179,18 @@ export async function fetchRepoCandidate(
   const sizeable = result.candidates.filter(candidate => candidate.release === undefined)
   const first = sizeable[0]
   if (first === undefined) return result
-  const body = await readSizingTree(meta.fullName, first.commit, fetchImpl, sleep, token, timeoutMs)
-  if (body === undefined) return result
+  const read = await readSizingTree(meta.fullName, first.commit, fetchImpl, sleep, token, timeoutMs)
+  if (!read.answered) return result
   return {
     ...result,
     candidates: result.candidates.map(candidate => {
+      // Release candidates were marked where their archive was measured.
       if (candidate.release !== undefined) return candidate
-      const installSize = treeInstallSize(body, candidate.subdir)
-      return installSize === undefined ? candidate : { ...candidate, installSize }
+      const installSize = treeInstallSize(read.body, candidate.subdir)
+      // `sizeProbed` whichever way it went. A tree that answered and yielded
+      // nothing is settled for this commit, and leaving it unmarked would put
+      // the repository in every future run's backfill queue.
+      return { ...candidate, sizeProbed: true, ...(installSize !== undefined ? { installSize } : {}) }
     }),
   }
 }
@@ -1265,6 +1287,10 @@ async function projectRepoCandidates(
       // TARBALL, so the repository tree at this commit is a different
       // artifact — it holds everything the author did not pack.
       root.installSize = release.installSize
+      // The archive IS this candidate's sizing probe — it never reaches the
+      // tree read below. Without the marker it would queue for a re-probe in
+      // every run, spending backfill budget on a repo already measured.
+      root.sizeProbed = true
     } else if (release?.ok === false) {
       // An asset was there and did not hold up. The rescue does not apply, and
       // the standing rejection has to say that rather than blame the build
