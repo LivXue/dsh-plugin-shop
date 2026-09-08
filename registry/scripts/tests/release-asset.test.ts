@@ -39,6 +39,59 @@ describe('verifyReleaseAsset', () => {
     if (base.ok && padded.ok) expect(padded.installSize - base.installSize).toBe(5000)
   })
 
+  it('counts a member shipped under two spellings once, as the copy that survives', () => {
+    // `readTar` keys by the RAW path, so `package/p.yml` and `./package/p.yml`
+    // are two Map entries; `singleRoot` normalizes, so both pass as one root.
+    // Summing the Map directly charged the entry for both copies while the
+    // install writes one — strip:1 collapses them and the last write wins,
+    // which `singleRoot`'s own comment already settles.
+    const manifest = JSON.stringify({ name: 'dsh-foo', version: '1.0.0', dsh: { bundle: { patch: './p.yml' } } })
+    const patch = '- insert: []\n'
+    const rewritten = `${patch}${'#'.repeat(1000)}`
+    const base = verifyReleaseAsset(rawTarball({
+      'package/package.json': manifest,
+      'package/p.yml': patch,
+    }), 'dsh-foo')
+    const duplicated = verifyReleaseAsset(rawTarball({
+      'package/package.json': manifest,
+      'package/p.yml': patch,
+      './package/p.yml': rewritten,
+    }), 'dsh-foo')
+    expect(base.ok && duplicated.ok).toBe(true)
+    // 1000, not 1013: the second spelling REPLACES the first on disk rather
+    // than adding to it. Summing the raw Map returned 1013 — a figure a
+    // hostile release inflates arbitrarily by re-shipping its own members.
+    if (base.ok && duplicated.ok) expect(duplicated.installSize - base.installSize).toBe(1000)
+  })
+
+  it('measures an archive whose root is not named package, and measures it unpacked', () => {
+    // The two figure tests both drove `packedTarball`, which always emits a
+    // `package/` root, so no rawTarball shape asserted the figure at all. The
+    // padding is 5000 highly compressible bytes: a figure derived from the
+    // COMPRESSED asset would move by a few dozen.
+    const manifest = JSON.stringify({ name: 'dsh-foo', version: '1.0.0', dsh: { bundle: { patch: './p.yml' } } })
+    const members = { 'dsh-foo-1.0.0/package.json': manifest, 'dsh-foo-1.0.0/p.yml': '- insert: []\n' }
+    const base = verifyReleaseAsset(rawTarball(members), 'dsh-foo')
+    const padded = verifyReleaseAsset(
+      rawTarball({ ...members, 'dsh-foo-1.0.0/extra.txt': 'x'.repeat(5000) }), 'dsh-foo',
+    )
+    expect(base.ok && padded.ok).toBe(true)
+    if (base.ok && padded.ok) {
+      expect(base.installSize).toBe(manifest.length + '- insert: []\n'.length)
+      expect(padded.installSize - base.installSize).toBe(5000)
+    }
+  })
+
+  it('carries nothing on an accepted verdict beyond ok and the figure', () => {
+    // The acceptance cases above moved from `toEqual` to `toMatchObject`, and
+    // `toMatchObject` accepts any extra key. This keeps the property `toEqual`
+    // used to carry — that an accepted verdict says exactly two things —
+    // without restating what the fixture happens to pack.
+    const verdict = verifyReleaseAsset(packedTarball('dsh-foo'), 'dsh-foo')
+    expect(verdict.ok).toBe(true)
+    expect(Object.keys(verdict).sort()).toEqual(['installSize', 'ok'])
+  })
+
   it('refuses an asset packing a DIFFERENT package', () => {
     // Measured on the live catalog: yjh051108/dsh-routing-suite declares
     // @dsh-external/dsh-super-injector at its root and its only release asset

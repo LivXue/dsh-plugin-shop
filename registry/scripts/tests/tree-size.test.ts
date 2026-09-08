@@ -83,6 +83,27 @@ describe('treeInstallSize', () => {
     expect(treeInstallSize({ tree: [{ path: 'a.js', type: 'blob', size: 10 }] })).toBe(10)
   })
 
+  it('withholds the size for a non-object tree element rather than throwing', () => {
+    // The element, not just the envelope. This threw a TypeError before the
+    // guard, and the measure runs outside `readSizingTree`'s catch, so the
+    // throw reached `harvestOnce` and turned a repository whose manifest read
+    // fine into a published "fault on our side" — re-thrown on every future
+    // run, because a fetch-failed is never persisted.
+    for (const element of [null, undefined, 'blob', 42]) {
+      expect(() => treeInstallSize({ truncated: false, tree: [element] })).not.toThrow()
+      expect(treeInstallSize({ truncated: false, tree: [element] })).toBeUndefined()
+    }
+  })
+
+  it('withholds the size when a bad element sits beside readable blobs', () => {
+    // Not skipped: an unreadable element may be a blob, so continuing would
+    // publish 10 for a tree that installs more than 10.
+    expect(treeInstallSize({
+      truncated: false,
+      tree: [{ path: 'a.js', type: 'blob', size: 10 }, null],
+    })).toBeUndefined()
+  })
+
   it('yields no size when the truncated flag itself is malformed', () => {
     // Absent means false, but a non-boolean is a shape we do not understand,
     // and guessing "not truncated" is the guess that publishes an undercount.

@@ -486,7 +486,18 @@ export function verifyReleaseAsset(bytes: Uint8Array, bundleName: string): Relea
   // Summed from the members already inflated above. Bounded by construction:
   // `MAX_INFLATED_BYTES` caps what `gunzipSync` produced, so the total cannot
   // reach the range where a JS number stops being exact.
+  //
+  // Keyed by the NORMALIZED path, because `readTar` keys by the raw one. An
+  // archive shipping a file as both `package/x` and `./package/x` holds two
+  // Map entries that both pass `singleRoot` (which normalizes to build its
+  // roots), and summing the Map directly charges the entry for both copies.
+  // The install writes one: npm and pnpm extract with `strip: 1`, and
+  // `singleRoot`'s own comment settles which — the last one written wins. So
+  // the last member under a normalized path is the one measured, matching
+  // what lands on disk rather than what the author packed.
+  const installed = new Map<string, number>()
+  for (const [path, member] of files) installed.set(normalize(path), member.byteLength)
   let installSize = 0
-  for (const member of files.values()) installSize += member.byteLength
+  for (const bytes of installed.values()) installSize += bytes
   return { ok: true, installSize }
 }

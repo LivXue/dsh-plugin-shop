@@ -34,7 +34,20 @@ export function treeInstallSize(body: unknown, subdir?: string): number | undefi
   const prefix = subdir === undefined ? undefined : `${subdir.replace(/\/+$/, '')}/`
   let total = 0
   let counted = 0
-  for (const entry of tree as { path?: unknown; type?: unknown; size?: unknown }[]) {
+  for (const element of tree as unknown[]) {
+    // The elements are untrusted too, not just the envelope around them. A
+    // `null` here used to throw out of this pure function, past the caller's
+    // try (the measure runs OUTSIDE `readSizingTree`'s catch), and land in
+    // `harvestOnce` as a durable "fault on our side" for a repository whose
+    // manifest read fine — the same shape as the public repo whose four-byte
+    // `null` manifest that catch's comment already records.
+    //
+    // Withheld rather than skipped, like the hostile-size branch below: an
+    // element we cannot read may be a blob, and skipping it would publish a
+    // sum that is short by its bytes. An undercount is a false statement
+    // under a label saying what installing costs; an absent size is not.
+    if (element === null || typeof element !== 'object') return undefined
+    const entry = element as { path?: unknown; type?: unknown; size?: unknown }
     // `tree` (a directory) and `commit` (a submodule) hold no bytes of their
     // own. A submodule's CONTENT is not in this tree and is not fetched by a
     // tarball install either, so it is absent from the figure and from disk.
