@@ -533,10 +533,21 @@ export function parseKeywordShortfall(value: unknown, where: string): KeywordSho
  *
  * What the reachability result does establish is the thing the paragraph
  * above needs: refinements have no move against these 81 and publisher
- * cells have one. Concentration then decides the cost: 38
- * distinct maintainers own them, the seven largest cells reach 51 (63%), and
- * a full cover is 37 cells. `huanlin` alone owns 21, and
+ * cells have one. Concentration describes that uncovered SET — 38 distinct
+ * maintainers own the 81, the seven largest cells reach 51 (63%), a
+ * minimum cover is 37 cells, and `huanlin` alone owns 21, whose
  * `keywords:dsh-plugin maintainer:huanlin` probes to 26.
+ *
+ * None of that is the run cost, and the difference is two orders of
+ * magnitude. The 37 are oracle-selected: nothing in the mechanism can know
+ * which 37 of the vocabulary own the residue, so the plan probes one cell
+ * per KNOWN publisher — ~3,390 once this keyword is seeded, against a
+ * 4,000 budget — and pages every non-zero one, which nothing bounds at
+ * all. Its own Step 3 sizes that at roughly tripling the npm half of a
+ * run. Read the concentration figures as how much of the residue a few
+ * cells would carry IF they could be chosen, never as the price of the
+ * axis; the accounting elsewhere in this comment is per request, and this
+ * paragraph is not.
  *
  * Read the maintainer off `maintainers[].username`, NEVER off
  * `publisher.username`. The latter is the last publishING identity and can be
