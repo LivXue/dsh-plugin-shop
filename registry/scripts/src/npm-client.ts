@@ -447,9 +447,28 @@ export function parseKeywordShortfall(value: unknown, where: string): KeywordSho
  * can be measured for the price of one paged search. Measured there:
  *
  *   81 of its 3,973 names (2.04%) carry NO refinement from this list other
- *   than `dsh-plugin` itself. The same figure for `deepseek-harness` is ONE
- *   name in 5,250 (0.019%). This list's blind spot is a hundred times wider
- *   on the second keyword.
+ *   than `dsh-plugin` itself, so the list tag-covers 3,892 of 3,973 (97.96%).
+ *   The comparable figure for `deepseek-harness` is ONE name in the 5,250 it
+ *   can address (99.98% tag-covered).
+ *
+ * DO NOT read a ratio off those two. They are the same KIND of measurement
+ * over different populations: 3,973 is the whole keyword, bottom of the
+ * ranking included, while 5,250 is a window that deliberately excludes the
+ * 157-name tail — and the paragraph at the top of this comment says the
+ * uncovered names concentrate exactly there. The plan's own bullet refuses
+ * the same pairing in the other direction ("Do not combine that figure with
+ * the 2.8% uncovered at ranks 5,000-5,250 ... over different populations").
+ * The like-for-like pair this comment holds is bottom-250 against
+ * bottom-250: 2.8% for `deepseek-harness` (pre-`deepwatch`, above) against
+ * 4.4% here, a factor of about 1.6 — and those two are themselves not
+ * reconciled with the 1-of-5,250, so neither may be multiplied against the
+ * other keyword's figure.
+ *
+ * What survives without a ratio is the operative fact, and it is enough:
+ * two percent of this keyword's names are unreachable by any cell this
+ * constant can hold, against a fifth of one percent for the keyword the
+ * list was fitted to, and at the bottom of the ranking — which is what a
+ * tail is made of — it is 4.4%.
  *
  * The cause is a tag habit, not a coverage accident: `deepseek-harness` is
  * almost always published alongside `dsh` or `dsh-plugin`, while `dsh-plugin`

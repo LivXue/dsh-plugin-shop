@@ -4,7 +4,7 @@
 
 **Goal:** Give the npm harvest a second partition axis keyed on `maintainer:`, seeded from every search result it already reads and persisted across runs, so a publisher releasing a family of packages past the search window is recovered without a human noticing a shared tag.
 
-**Architecture:** npm's search API caps `from` at 5,000, so ranks past 5,250 are unaddressable by any query for a keyword. The shipped answer is a hand-maintained refinement list (`PARTITION_KEYWORDS`) whose cells are `keywords:<harvest>,<refinement>` — a different query, in which a name ranked 5,300 lands at rank 5 and becomes addressable. That axis has a permanent blind spot: a package carrying only the harvest keyword falls in no cell. **How wide that blind spot is depends entirely on WHICH harvest keyword, and the two differ by two orders of magnitude** — measured 2026-09-08: one name in `keywords:deepseek-harness`'s 5,250 (0.019%), but 81 of `keywords:dsh-plugin`'s 3,973 (2.04%). See "the second keyword" below; `PARTITION_KEYWORDS`' comment owns both figures. `maintainer:` is a filter the API honours (measured) and every package has one, so a `keywords:<harvest> maintainer:<user>` cell has no such blind spot — but it can only be built for a maintainer already SEEN, which is why it supplements the refinement list rather than replacing it. The vocabulary is free (search responses already carry `maintainers`) and is persisted like `repo-state.json` so coverage accumulates monotonically instead of being re-derived each run from a window that is a shrinking fraction of the whole.
+**Architecture:** npm's search API caps `from` at 5,000, so ranks past 5,250 are unaddressable by any query for a keyword. The shipped answer is a hand-maintained refinement list (`PARTITION_KEYWORDS`) whose cells are `keywords:<harvest>,<refinement>` — a different query, in which a name ranked 5,300 lands at rank 5 and becomes addressable. That axis has a permanent blind spot: a package carrying only the harvest keyword falls in no cell. **How wide that blind spot is depends entirely on WHICH harvest keyword** — measured 2026-09-08: 81 of `keywords:dsh-plugin`'s 3,973 names (2.04%), against one name in the 5,250 `keywords:deepseek-harness` can address (0.019%). Those are different populations — the whole keyword against a window that excludes the tail — so do not take a ratio; two percent is enough to breach the residual cap and a fifth of one percent is not, which is the whole of what the comparison has to carry. See "the second keyword" below; `PARTITION_KEYWORDS`' comment owns both figures and says which pairings are licensed. `maintainer:` is a filter the API honours (measured) and every package has one, so a `keywords:<harvest> maintainer:<user>` cell has no such blind spot — but it can only be built for a maintainer already SEEN, which is why it supplements the refinement list rather than replacing it. The vocabulary is free (search responses already carry `maintainers`) and is persisted like `repo-state.json` so coverage accumulates monotonically instead of being re-derived each run from a window that is a shrinking fraction of the whole.
 
 **Tech Stack:** TypeScript (ESM, `.ts` extensions in local relative imports), Node ≥ 20 built-in `fetch`, vitest.
 
@@ -64,10 +64,12 @@ Measured 2026-09-08 and owned by `PARTITION_KEYWORDS`' comment; re-measure rathe
 
 `keywords:dsh-plugin` is still fully enumerable — 3,973 against a 5,250 window, growing ~60/day, so it crosses about 2026-09-29 (1,277 of headroom, 21 days). Because it is enumerable *today*, its coverage could be measured cheaply before the fact, and it is much worse than the first keyword's:
 
-| | uncovered by the 26 non-self refinements |
-|---|---|
-| `keywords:deepseek-harness` | **1** of 5,250 — 0.019% |
-| `keywords:dsh-plugin` | **81** of 3,973 — 2.04% |
+| | uncovered by the 26 non-self refinements | population |
+|---|---|---|
+| `keywords:deepseek-harness` | **1** of 5,250 — 0.019% | the window only; excludes its 157-name tail |
+| `keywords:dsh-plugin` | **81** of 3,973 — 2.04% | the whole keyword; nothing excluded |
+
+The populations differ, so the ratio between the two rates is not a measurement. The bottom-250 pair is the like-for-like one — 2.8% against 4.4%, a factor of ~1.6 — and it is itself unreconciled with the 1-of-5,250 (see the bullet above). What the table has to carry is a magnitude, not a ratio: two percent breaches `MAX_UNREACHABLE_RESIDUAL`, a fifth of one percent does not.
 
 The cause is a tag habit: `deepseek-harness` is almost always published alongside `dsh` or `dsh-plugin`, while `dsh-plugin` is the conventional "this is a dsh plugin" tag and is frequently the only one a package carries. Uncovered-ness is roughly flat by rank (21/22/17/21 per thousand) but the bottom 250 — the first tail page — runs 11 of 250, **4.4%**.
 
