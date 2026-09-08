@@ -32,13 +32,34 @@ function starsFile(stars: Record<string, number>): { url: string; sha256: string
   return { url: `stars.${sha256}.json`, sha256, text }
 }
 
+/**
+ * An in-memory {@link CatalogFs}, keyed on the path with its separators
+ * normalised to forward slashes.
+ *
+ * The normalisation is what lets the two sides of this fixture meet. Every
+ * cache file here is seeded as a POSIX literal — `fs.write('/cache/index.json',
+ * …)` and, lower down, `fs.files.set('/cache/…')` straight into the map —
+ * while `catalog.ts` addresses the same file through `join(cacheDir, …)`,
+ * which answers `\cache\index.json` on Windows. Keyed on the raw string,
+ * `exists` was then false for every seeded file, and the fourteen cases that
+ * assert a cache is served WITHOUT touching the network instead fell through
+ * to a fetch fixture whose entire job is to throw.
+ *
+ * A POSIX assumption in the FIXTURE and never in the product: `join` is the
+ * right way to address a real filesystem, and a real profile passes a real
+ * absolute path, so nothing here is a defect a user could reach. Normalising
+ * to forward slashes rather than to `join`'s own output is what keeps the
+ * direct `files.set` seeds and the `files` assertions below written the one
+ * way on both platforms.
+ */
 function memFs(): CatalogFs & { files: Map<string, string> } {
   const files = new Map<string, string>()
+  const key = (p: string): string => p.replaceAll('\\', '/')
   return {
     files,
-    exists: p => files.has(p),
-    read: p => files.get(p) ?? '',
-    write: (p, data) => { files.set(p, data) },
+    exists: p => files.has(key(p)),
+    read: p => files.get(key(p)) ?? '',
+    write: (p, data) => { files.set(key(p), data) },
   }
 }
 
