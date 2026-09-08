@@ -400,7 +400,21 @@ export function gate(
     ...(candidate.publisher !== undefined ? { publisher: candidate.publisher } : {}),
     ...(candidate.peers.length > 0 ? { peers: candidate.peers } : {}),
     ...(candidate.unpackedSize !== undefined ? { unpackedSize: candidate.unpackedSize } : {}),
-    ...(candidate.unpackedSize !== undefined ? { installSize: candidate.unpackedSize } : {}),
+    // `installSize` is emitted but deliberately NOT counted. It is a
+    // registry-attached duplicate of the line above — same number, ~30 bytes
+    // — so counting it would let a package that changed nothing be delisted
+    // today for a budget it met yesterday, under a `no-manifest` naming a
+    // bound crossed only because we attached a second copy of a figure the
+    // consumer already has. The design settles the direction: "a size is a
+    // decoration, so a broken one costs the size and not the listing" (§7,
+    // `unpackedSize`), and a listing is exactly what this would cost.
+    //
+    // So the published entry can exceed the budget by this key, and by
+    // nothing else: at most 39 bytes, fixed-width and registry-written, which
+    // no author can inflate — unlike every field this probe does count.
+    // `unpackedSize` stays counted because it predates this change; dropping
+    // it too would LOOSEN a bound that has been in force, which is a separate
+    // decision from not tightening one.
   })
   if (payloadBytes > ENTRY_PAYLOAD_MAX_BYTES) {
     return reject(name, 'no-manifest',

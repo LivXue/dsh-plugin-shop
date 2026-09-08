@@ -392,6 +392,33 @@ describe('the per-entry size budget on the github channel', () => {
     expect(result.rejection.name).toBe('someone/dsh-repo-plugin')
   })
 
+  it('does not spend a repo entry\'s budget on the size the registry measured', () => {
+    // Differential, for the reason gate.test.ts's twin gives: searching for
+    // the largest entry that still lists calibrates itself against whatever
+    // the probe counts and passes either way.
+    //
+    // Here the size is not a duplicate — a github entry carries no
+    // `unpackedSize` — but the doctrine is the same one: a size is a
+    // decoration and must not cost a listing. It is also measured from a
+    // repository's own tree, so counting it lets the CONTENT of a repo change
+    // whether its entry lists, for a number the author never wrote.
+    const reported = (extra: Partial<RepoCandidate>): number => {
+      const result = gateRepo(repo({
+        release: {
+          tag: 'v1.0.0',
+          url: `https://github.com/someone/dsh-repo-plugin/releases/download/v1.0.0/${'u'.repeat(20_000)}.tgz`,
+          sha256: 'a'.repeat(64),
+        },
+        requiresBuild: true,
+        ...extra,
+      }), config)
+      expect(result.ok).toBe(false)
+      if (result.ok) throw new Error('fixture must be over budget for the probe to report')
+      return Number(/Would publish (\d+) bytes/.exec(result.rejection.detail)?.[1])
+    }
+    expect(reported({ installSize: 4_242_424 })).toBe(reported({}))
+  })
+
   it('accepts the worst repo entry the live catalog could hold', () => {
     // Every maximum measured against the live catalog on 2026-09-04, in one
     // entry: repository 108, license 37, both summaries 200 CJK characters

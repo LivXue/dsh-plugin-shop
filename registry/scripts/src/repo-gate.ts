@@ -267,7 +267,9 @@ export function gateRepo(
     catalog,
     repo: candidate.repo,
     ...(candidate.subdir !== undefined ? { subdir: candidate.subdir } : {}),
-    ...(candidate.installSize !== undefined ? { installSize: candidate.installSize } : {}),
+    // Not counted, for the reason `gate.ts` gives at its own probe: a size is
+    // a decoration and must not cost a listing. Bounded overshoot, ~39 bytes.
+
     ...(release !== undefined ? { tarball: { url: release.url, sha256: release.sha256 } } : {}),
   })
   if (payloadBytes > ENTRY_PAYLOAD_MAX_BYTES) {
