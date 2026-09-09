@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, maintainersOf, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describeShortfall, parseKeywordShortfall, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
+import { type Cell, cellQuery, FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, maintainersOf, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describeShortfall, parseKeywordShortfall, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
 import { ENTRY_PAYLOAD_MAX_BYTES, entryPayloadBytes } from '../src/gate.ts'
 import { MAX_TARBALL_BYTES } from '../src/github-client.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
@@ -579,6 +579,21 @@ describe('PARTITION_KEYWORDS', () => {
   })
 })
 
+describe('cellQuery', () => {
+  it('renders a keyword-only cell exactly as keywordQuery did', () => {
+    // The published behaviour must not move: this is the query string the
+    // harvest has always sent, and every fixture assumes it.
+    expect(cellQuery({ keywords: ['dsh-plugin'] })).toBe('keywords:dsh-plugin')
+    expect(cellQuery({ keywords: ['deepseek-harness', 'dsh'] })).toBe('keywords:deepseek-harness,dsh')
+    expect(cellQuery({ keywords: ['dsh-plugin'] })).toBe(keywordQuery(['dsh-plugin']))
+  })
+
+  it('renders a publisher cell as the keyword ANDed with the maintainer', () => {
+    expect(cellQuery({ keywords: ['deepseek-harness'], maintainer: 'sayedev' }))
+      .toBe('keywords:deepseek-harness maintainer:sayedev')
+  })
+})
+
 describe('partitionKeyword', () => {
   it('never ANDs a harvest keyword onto itself', async () => {
     // PARTITION_KEYWORDS names `deepseek-harness`, which is also a harvest
@@ -593,8 +608,12 @@ describe('partitionKeyword', () => {
     // entries yield NINE cells against this keyword, which is what the
     // 5,059-of-5,103 coverage measurement was taken against.
     const probed: string[] = []
-    const probe = async (keywords: readonly string[]): Promise<number> => {
-      const query = keywordQuery(keywords)
+    // `cellQuery`, not `keywordQuery(cell.keywords)`: the stub renders through
+    // the same function the harvest does, so the byte-identical strings
+    // asserted below are evidence that a keyword-only cell still sends what it
+    // always sent, rather than an assumption restated.
+    const probe = async (cell: Cell): Promise<number> => {
+      const query = cellQuery(cell)
       probed.push(query)
       return query === 'keywords:deepseek-harness' ? SEARCH_WINDOW + 1 : 10
     }
@@ -603,17 +622,19 @@ describe('partitionKeyword', () => {
     expect(partitioned).toBe(true)
     expect(probed).not.toContain('keywords:deepseek-harness,deepseek-harness')
     expect(cells).toHaveLength(PARTITION_KEYWORDS.filter(k => k !== 'deepseek-harness').length)
-    expect(cells.every(cell => cell.filter(k => k === 'deepseek-harness').length === 1)).toBe(true)
+    expect(cells.every(cell => cell.keywords.filter(k => k === 'deepseek-harness').length === 1)).toBe(true)
   })
 
   it('keeps a refinement that merely resembles the keyword', async () => {
     // The skip is an equality, not a prefix or a substring test: `harness`
     // and `deepseek-harness` are different queries, and dropping either as
     // "close enough" would silently delete a cell from the partition.
-    const probe = async (keywords: readonly string[]): Promise<number> =>
-      keywords.length === 1 ? SEARCH_WINDOW + 1 : 10
+    const probe = async (cell: Cell): Promise<number> =>
+      cell.keywords.length === 1 ? SEARCH_WINDOW + 1 : 10
     const { cells } = await partitionKeyword('harness', probe)
-    expect(cells).toContainEqual(['harness', 'deepseek-harness'])
+    // The cell's REPRESENTATION moved to a descriptor; the query it renders to
+    // did not. `cellQuery` pins that separately.
+    expect(cells).toContainEqual({ keywords: ['harness', 'deepseek-harness'] })
     expect(cells).toHaveLength(PARTITION_KEYWORDS.length)
   })
 
@@ -625,15 +646,17 @@ describe('partitionKeyword', () => {
     // paging: one wasted probe and up to 21 wasted page fetches for a set of
     // names already enumerated.
     const probed: string[] = []
-    const probe = async (keywords: readonly string[]): Promise<number> => {
-      probed.push(keywordQuery(keywords))
-      if (keywords.length === 1) return SEARCH_WINDOW + 1
-      if (keywords.length === 2) return keywords[1] === 'dsh' || keywords[1] === 'plugin' ? SEARCH_WINDOW + 1 : 0
+    const probe = async (cell: Cell): Promise<number> => {
+      probed.push(cellQuery(cell))
+      if (cell.keywords.length === 1) return SEARCH_WINDOW + 1
+      if (cell.keywords.length === 2) {
+        return cell.keywords[1] === 'dsh' || cell.keywords[1] === 'plugin' ? SEARCH_WINDOW + 1 : 0
+      }
       return 10
     }
 
     const { cells } = await partitionKeyword('deepseek-harness', probe)
-    const intersections = cells.map(cell => [...cell].sort().join(','))
+    const intersections = cells.map(cell => [...cell.keywords].sort().join(','))
     expect(new Set(intersections).size).toBe(intersections.length)
     // Deduplicated on the SET and BEFORE the probe, so the second spelling
     // costs no request either.

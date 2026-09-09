@@ -617,6 +617,23 @@ export function keywordQuery(keywords: readonly string[]): string {
 }
 
 /**
+ * One query the harvest pages: `keywords:` plus, optionally, one
+ * `maintainer:` — the two qualifiers the API actually honours. Measured
+ * 2026-09-08: `is:`/`not:`/`scope:` are ignored entirely and return the
+ * unfiltered total, while a nonexistent maintainer returns 0.
+ */
+export interface Cell {
+  readonly keywords: readonly string[]
+  readonly maintainer?: string
+}
+
+/** The `text=` value for a cell. */
+export function cellQuery(cell: Cell): string {
+  const keywords = keywordQuery(cell.keywords)
+  return cell.maintainer === undefined ? keywords : `${keywords} maintainer:${cell.maintainer}`
+}
+
+/**
  * Split one harvest keyword into queries whose totals each fit
  * {@link SEARCH_WINDOW}.
  * @param keyword - the harvest keyword.
@@ -628,12 +645,12 @@ export function keywordQuery(keywords: readonly string[]): string {
  */
 export async function partitionKeyword(
   keyword: string,
-  probe: (keywords: readonly string[]) => Promise<number>,
-): Promise<{ cells: string[][]; total: number; partitioned: boolean }> {
-  const total = await probe([keyword])
-  if (total <= SEARCH_WINDOW) return { cells: [[keyword]], total, partitioned: false }
-  const cells: string[][] = []
-  const oversized: string[][] = []
+  probe: (cell: Cell) => Promise<number>,
+): Promise<{ cells: Cell[]; total: number; partitioned: boolean }> {
+  const total = await probe({ keywords: [keyword] })
+  if (total <= SEARCH_WINDOW) return { cells: [{ keywords: [keyword] }], total, partitioned: false }
+  const cells: Cell[] = []
+  const oversized: Cell[] = []
   for (const refinement of PARTITION_KEYWORDS) {
     // `keywords:X,X` is X: a cell that re-states the keyword partitions
     // nothing, and above the window — the only place this runs — it lands in
@@ -643,7 +660,7 @@ export async function partitionKeyword(
     // keyword itself, which is what the coverage arithmetic in that constant's
     // comment is counted against.
     if (refinement === keyword) continue
-    const cell = [keyword, refinement]
+    const cell: Cell = { keywords: [keyword, refinement] }
     const cellTotal = await probe(cell)
     if (cellTotal === 0) continue
     if (cellTotal <= SEARCH_WINDOW) cells.push(cell)
@@ -662,9 +679,9 @@ export async function partitionKeyword(
   for (const cell of oversized) {
     let split = false
     for (const refinement of PARTITION_KEYWORDS) {
-      if (cell.includes(refinement)) continue
-      const deeperCell = [...cell, refinement]
-      const intersection = [...deeperCell].sort().join(',')
+      if (cell.keywords.includes(refinement)) continue
+      const deeperCell: Cell = { keywords: [...cell.keywords, refinement] }
+      const intersection = [...deeperCell.keywords].sort().join(',')
       const known = deeper.get(intersection)
       if (known !== undefined) {
         split = split || known
@@ -679,7 +696,7 @@ export async function partitionKeyword(
     }
     if (!split) {
       throw new Error(
-        `npm search for ${keywordQuery(cell)} reports more than the ${SEARCH_WINDOW} names one query can reach (from is capped at ${MAX_SEARCH_FROM}) and no refinement keyword splits it; add one to PARTITION_KEYWORDS`,
+        `npm search for ${keywordQuery(cell.keywords)} reports more than the ${SEARCH_WINDOW} names one query can reach (from is capped at ${MAX_SEARCH_FROM}) and no refinement keyword splits it; add one to PARTITION_KEYWORDS`,
       )
     }
   }
@@ -841,14 +858,14 @@ function readTotal(body: SearchBody, query: string, from: number, stake: string)
  *   trust this number, and a silent 0 disables both, as does a negative one.
  */
 async function searchTotal(
-  keywords: readonly string[],
+  cell: Cell,
   fetchImpl: typeof fetch,
   sleep: (ms: number) => Promise<void>,
   token: string | undefined,
   backupRegistry: string | undefined,
   timeoutMs: number,
 ): Promise<number> {
-  const query = keywordQuery(keywords)
+  const query = cellQuery(cell)
   const path = `-/v1/search?text=${encodeURIComponent(query)}&size=1&from=0`
   const response = await fetchWithFailover(path, fetchImpl, sleep, token, backupRegistry, timeoutMs)
   if (!response.ok) throw new Error(`npm search for ${query} failed: ${response.status}`)
@@ -1347,8 +1364,8 @@ export async function searchByKeywords(
   onShortfall: (shortfall: KeywordShortfall) => void = () => {},
 ): Promise<string[]> {
   const seen = new Set<string>()
-  const probe = (keywords: readonly string[]): Promise<number> =>
-    searchTotal(keywords, fetchImpl, sleep, token, backupRegistry, timeoutMs)
+  const probe = (cell: Cell): Promise<number> =>
+    searchTotal(cell, fetchImpl, sleep, token, backupRegistry, timeoutMs)
   /**
    * Page one query to its answered total, into `into` and into the union.
    * @param pastWindow - what a `from` past {@link MAX_SEARCH_FROM} means here.
@@ -1360,11 +1377,11 @@ export async function searchByKeywords(
    *   truncation.
    */
   const pageCell = async (
-    cell: readonly string[],
+    cell: Cell,
     into: Set<string>,
     pastWindow: 'throw' | 'stop',
   ): Promise<void> => {
-    const query = keywordQuery(cell)
+    const query = cellQuery(cell)
     // The last total this cell answered, so a `from` past the cap can tell a
     // cell that genuinely needs a second window from one that merely served
     // short of a total inside it. Unset until the first page arrives; a cell
@@ -1441,7 +1458,7 @@ export async function searchByKeywords(
       // which is the half they measure well on. See PARTITION_KEYWORDS for
       // the ranks. It costs 21 requests and shrinks the residual to names
       // that are BOTH outside the window AND carry no refinement keyword.
-      if (partitioned) await pageCell([keyword], windowNames, 'stop')
+      if (partitioned) await pageCell({ keywords: [keyword] }, windowNames, 'stop')
       // The window's names belong to the union too; kept in their own set as
       // well so the coverage arithmetic can tell the two halves apart.
       // Idempotent, and `enumerate` runs twice on the retry path.
@@ -1461,7 +1478,7 @@ export async function searchByKeywords(
     // keyword; it also catches a mid-stream empty page: the `||` that ends
     // pageCell above returns on ANY empty page, even one arriving before the
     // cell's own total says the cell is exhausted.
-    let required = Math.min(total, await probe([keyword]))
+    let required = Math.min(total, await probe({ keywords: [keyword] }))
     if (forKeyword.size < required) {
       // ONE re-page before the throw. The floor is exact, and the anomaly
       // that motivated it does not survive it: npm served a 249-object page
@@ -1477,7 +1494,7 @@ export async function searchByKeywords(
       // and the floor takes the minimum across every total observed, so churn
       // during the retry is tolerated exactly as churn during the first pass.
       await enumerate()
-      required = Math.min(required, await probe([keyword]))
+      required = Math.min(required, await probe({ keywords: [keyword] }))
     }
     const shortfall = required - forKeyword.size
     if (shortfall <= 0) continue // whole, even when the keyword is past the window
