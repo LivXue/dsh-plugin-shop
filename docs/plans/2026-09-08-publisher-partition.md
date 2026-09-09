@@ -115,7 +115,21 @@ The username grammar is a policy decision, so it lives in the pure core and the 
   - `export interface PublisherState { readonly publishers: readonly string[] }`
   - `export function parsePublisherState(raw: string): PublisherState`
   - `export function serializePublisherState(state: PublisherState): string`
-  - `export function mergePublishers(state: PublisherState, seen: Iterable<string>): PublisherState`
+  - `export const MAX_PUBLISHERS = 20_000`
+  - `export function mergePublishers(state: PublisherState, seen: readonly string[]): PublisherState`
+
+  Amended in review. This task shipped `seen: Iterable<string>` with no
+  write-side validation and no count bound, and all three were closed on the
+  branch before merge: a bare `string` IS an `Iterable<string>`, so
+  `mergePublishers(state, 'sayedev')` type-checked and merged six
+  single-character publishers into a vocabulary documented as never removing;
+  `parsePublisherState` threw on a name the write path would happily commit, so
+  one unfiltered producer could write a file every subsequent build refused to
+  read; and `MAINTAINER_MAX_LENGTH` was the per-name half of a two-bound
+  convention every other npm-sourced list in this repo satisfies. Task 6's
+  wiring is unaffected — it passes an array — and `parsePublisherState` now
+  collapses a duplicate rather than round-tripping one, which the interface's
+  own "sorted, unique" already claimed.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -287,8 +301,9 @@ export function serializePublisherState(state: PublisherState): string {
 }
 
 /** The state plus everything in `seen`, unique and sorted. Never removes. */
-export function mergePublishers(state: PublisherState, seen: Iterable<string>): PublisherState {
-  return { publishers: [...new Set([...state.publishers, ...seen])].sort() }
+export function mergePublishers(state: PublisherState, seen: readonly string[]): PublisherState {
+  const kept = new Set([...state.publishers, ...seen].filter(isMaintainerName))
+  return { publishers: [...kept].sort(compareStrings).slice(0, MAX_PUBLISHERS) }
 }
 ```
 
@@ -483,7 +498,11 @@ Keep `keywordQuery` exported and unchanged — the `partitionKeyword` throw mess
 - [ ] **Step 4: Run the tests and make sure they pass**
 
 Run: `pnpm exec vitest run registry/scripts/tests/npm-client.test.ts && pnpm typecheck`
-Expected: PASS, **with no other test edited**. If a test needed changing, the refactor changed behaviour and is wrong — every keyword-only cell must send a byte-identical `text=`.
+Expected: PASS. **The gate is that no assertion about a query string moves** — every keyword-only cell must send a byte-identical `text=`.
+
+This step used to demand "no other test edited", which is not achievable and was corrected while executing it: Step 3 changes `probe`'s parameter type, so every probe stub in `describe('partitionKeyword')` is edited by construction, and `partitionKeyword` now answering `Cell[]` re-shapes the one assertion that names a cell literal (`toContainEqual(['harness', 'deepseek-harness'])` becomes `toContainEqual({ keywords: [...] })`). Neither is a behaviour change; a reviewer holding the literal wording would have to reject the signature change this task exists to make.
+
+What the gate buys is checkable, and the way to check it is to render the stub's query with `cellQuery(cell)` rather than `keywordQuery(cell.keywords)`. Then the three surviving `probed` assertions — `keywords:deepseek-harness,deepseek-harness` absent, `keywords:deepseek-harness,dsh,plugin` present, `keywords:deepseek-harness,plugin,dsh` absent — pass through the same renderer the harvest uses, and their being byte-identical is evidence rather than assumption. Measured on the real refactor: those three did not change, and the only assertions that did were the two naming a cell's shape.
 
 - [ ] **Step 5: Commit**
 

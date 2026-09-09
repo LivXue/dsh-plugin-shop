@@ -1,4 +1,6 @@
 import { readCappedBody } from './http-body.ts'
+import { compareStrings } from './identity.ts'
+import { isMaintainerName } from './publisher-state.ts'
 import type { Candidate, Rejection } from './types.ts'
 
 /**
@@ -580,9 +582,9 @@ export function parseKeywordShortfall(value: unknown, where: string): KeywordSho
  * 2026-09-08, 22 of the 26 refinements are non-empty against this keyword,
  * the largest being `deepseek-harness` 3,395 and `dsh` 3,096. By hand
  * because the build never builds these cells: {@link partitionKeyword}
- * returns `[[keyword]]` for anything inside the window, so no `dsh-plugin`
- * refinement cell has ever been probed by a run and none appears in any
- * log. Non-emptiness is also NOT a usefulness measure — the paragraph
+ * returns one `{ keywords: [keyword] }` cell for anything inside the window,
+ * so no `dsh-plugin` refinement cell has ever been probed by a run and none
+ * appears in any log. Non-emptiness is also NOT a usefulness measure — the paragraph
  * above says why, and against a keyword inside the window every cell is
  * redundant with the window cell by construction. It establishes only that
  * the cells exist and answer: it is the residue that differs, not the
@@ -616,6 +618,77 @@ export function keywordQuery(keywords: readonly string[]): string {
 }
 
 /**
+ * One query the harvest pages: `keywords:` plus, optionally, one
+ * `maintainer:` — the two qualifiers this partition is built on. Measured
+ * 2026-09-08: `is:`/`not:`/`scope:` are ignored entirely and return the
+ * unfiltered total, while a nonexistent maintainer returns 0.
+ *
+ * This said "the two qualifiers the API actually honours", which the
+ * measurement does not support: `author:` is honoured too and indexes a
+ * different field. The design doc's *Corrections* section owns which
+ * qualifiers filter and carries the numbers; they are not restated here.
+ *
+ * `keywords` is non-empty BY TYPE, which is load-bearing rather than tidy:
+ * {@link cellQuery} renders an empty one as the bare qualifier `keywords:`,
+ * and npm answers that with the whole registry — 4,072,027 on 2026-09-09, not
+ * an error. Beside a maintainer it is worse than useless: `keywords:
+ * maintainer:huanlin` answers 92, exactly what `maintainer:huanlin` answers
+ * alone, where `keywords:dsh-plugin maintainer:huanlin` answers 26. The
+ * keyword scope does not narrow, it VANISHES, and the cell then harvests
+ * every package that account ever published — against "harvest by keyword,
+ * never by name pattern", and blowing every coverage bound on the way.
+ */
+export interface Cell {
+  readonly keywords: readonly [string, ...string[]]
+  readonly maintainer?: string
+}
+
+/**
+ * The `text=` value for a cell.
+ *
+ * The one place a maintainer reaches a query, so the one place the grammar has
+ * to hold. `Cell.maintainer` is a plain `string` and `text=` is a query
+ * LANGUAGE rather than a value: `encodeURIComponent` turns `x keywords:evil`
+ * into a perfectly valid URL, and npm then reads three qualifiers where the
+ * caller wrote two, so the cell enumerates a set its own probed `total` was
+ * never measured against and the deficit is charged to the residual cap
+ * instead of reported as a bad query. Every producer validates today
+ * (`maintainersOf`, `parsePublisherState`), which is precisely why this THROWS
+ * rather than drops: arriving here unvalidated means our own plumbing lost the
+ * invariant, not that npm served something odd.
+ * @throws when `maintainer` is present and outside the grammar.
+ */
+export function cellQuery(cell: Cell): string {
+  const keywords = keywordQuery(cell.keywords)
+  if (cell.maintainer === undefined) return keywords
+  if (!isMaintainerName(cell.maintainer)) {
+    // The offending value is deliberately not echoed: it is unbounded and
+    // registry-shaped, and the cell it broke is what a reader needs.
+    throw new Error(`cell for ${keywords} carries a maintainer outside the username grammar`)
+  }
+  return `${keywords} maintainer:${cell.maintainer}`
+}
+
+/**
+ * A cell's identity as a SET, for de-duplication rather than for sending.
+ *
+ * Distinct from {@link cellQuery} in both directions, and both matter.
+ * `keywords:` is an INTERSECTION, so `a,b` and `b,a` are one cell and two
+ * parents reaching the same intersection from different directions have to
+ * share one memo entry — which `cellQuery` cannot give, because it preserves
+ * query order. And a key must read EVERY field: a `Cell` is a two-field
+ * descriptor, so keying on the keywords alone lets two cells differing only by
+ * maintainer collide, and the cost of that is not the wasted probe this memo
+ * exists to save. It is `split = split || known` crediting one parent with the
+ * other's measurement while the `cells.push` is skipped for it, so that
+ * parent's tail is never paged and nothing throws.
+ */
+export function cellKey(cell: Cell): string {
+  const keywords = [...cell.keywords].sort(compareStrings).join(',')
+  return cell.maintainer === undefined ? keywords : `${keywords} maintainer:${cell.maintainer}`
+}
+
+/**
  * Split one harvest keyword into queries whose totals each fit
  * {@link SEARCH_WINDOW}.
  * @param keyword - the harvest keyword.
@@ -627,12 +700,12 @@ export function keywordQuery(keywords: readonly string[]): string {
  */
 export async function partitionKeyword(
   keyword: string,
-  probe: (keywords: readonly string[]) => Promise<number>,
-): Promise<{ cells: string[][]; total: number; partitioned: boolean }> {
-  const total = await probe([keyword])
-  if (total <= SEARCH_WINDOW) return { cells: [[keyword]], total, partitioned: false }
-  const cells: string[][] = []
-  const oversized: string[][] = []
+  probe: (cell: Cell) => Promise<number>,
+): Promise<{ cells: Cell[]; total: number; partitioned: boolean }> {
+  const total = await probe({ keywords: [keyword] })
+  if (total <= SEARCH_WINDOW) return { cells: [{ keywords: [keyword] }], total, partitioned: false }
+  const cells: Cell[] = []
+  const oversized: Cell[] = []
   for (const refinement of PARTITION_KEYWORDS) {
     // `keywords:X,X` is X: a cell that re-states the keyword partitions
     // nothing, and above the window — the only place this runs — it lands in
@@ -642,7 +715,7 @@ export async function partitionKeyword(
     // keyword itself, which is what the coverage arithmetic in that constant's
     // comment is counted against.
     if (refinement === keyword) continue
-    const cell = [keyword, refinement]
+    const cell: Cell = { keywords: [keyword, refinement] }
     const cellTotal = await probe(cell)
     if (cellTotal === 0) continue
     if (cellTotal <= SEARCH_WINDOW) cells.push(cell)
@@ -661,9 +734,17 @@ export async function partitionKeyword(
   for (const cell of oversized) {
     let split = false
     for (const refinement of PARTITION_KEYWORDS) {
-      if (cell.includes(refinement)) continue
-      const deeperCell = [...cell, refinement]
-      const intersection = [...deeperCell].sort().join(',')
+      if (cell.keywords.includes(refinement)) continue
+      // Spread, not a fresh literal: a deeper cell that dropped the parent's
+      // `maintainer` would enumerate a strictly larger set than the parent
+      // whose overflow it was built to split. Untested by construction and
+      // said so rather than left implied — `partitionKeyword` seeds
+      // `{ keywords: [keyword] }` and only ever deepens what it built itself,
+      // so no caller can hand it a maintainer-bearing cell to drive this
+      // through. `cellKey`'s own tests cover the collision half; a test for
+      // this half needs a caller that can seed a cell.
+      const deeperCell: Cell = { ...cell, keywords: [...cell.keywords, refinement] }
+      const intersection = cellKey(deeperCell)
       const known = deeper.get(intersection)
       if (known !== undefined) {
         split = split || known
@@ -678,7 +759,7 @@ export async function partitionKeyword(
     }
     if (!split) {
       throw new Error(
-        `npm search for ${keywordQuery(cell)} reports more than the ${SEARCH_WINDOW} names one query can reach (from is capped at ${MAX_SEARCH_FROM}) and no refinement keyword splits it; add one to PARTITION_KEYWORDS`,
+        `npm search for ${cellQuery(cell)} reports more than the ${SEARCH_WINDOW} names one query can reach (from is capped at ${MAX_SEARCH_FROM}) and no refinement keyword splits it; add one to PARTITION_KEYWORDS`,
       )
     }
   }
@@ -751,8 +832,52 @@ async function readJsonCapped(
 }
 
 interface SearchBody {
-  objects?: ({ package?: { name?: unknown } | null } | null)[]
+  objects?: ({ package?: { name?: unknown; maintainers?: unknown } | null } | null)[]
   total?: unknown
+}
+
+/**
+ * Maximum maintainers read off one search object. The array is
+ * registry-controlled and every name in it that passes the grammar is
+ * committed to `publisher-state.json` permanently, so the COUNT needs a bound
+ * for the same reason {@link PEERS_MAX_COUNT} does: one page is capped only by
+ * {@link MAX_SEARCH_BODY_BYTES}, which admits on the order of 300,000
+ * usernames of a realistic length, and `mergePublishers` never removes.
+ *
+ * 128 is 11.6x the live maximum. Across 1,500 objects sampled over both
+ * harvest keywords on 2026-09-09 every one carried a `maintainers` array, the
+ * largest held 11, and 1,466 of them held exactly one. This bound exists to
+ * refuse a burst, not to trim a real list, so the tail it drops has never
+ * existed — and if one ever shows up, the loss is the tail of one package's
+ * owner list, silent for the same reason a dropped peer name is.
+ */
+export const MAINTAINERS_MAX_COUNT = 128
+
+/**
+ * The usernames one search object's `package` names, filtered to what may be
+ * put in a query. Dropping is right rather than throwing: a malformed
+ * maintainer costs one publisher cell, while the window and the refinement
+ * cells still enumerate the package itself.
+ *
+ * The argument is `object.package`, NOT the search object: a search object is
+ * `{ package, score, searchScore }` and holds no `maintainers` of its own, so
+ * handing one over answers `[]` with no error anywhere — a silently halved
+ * partition and a green build. Nor is it a packument, which spells the field
+ * `maintainers[].name`; that is why {@link publisherOf} reads a different key,
+ * and why swapping the two answers `[]` against real data with every test
+ * still passing.
+ */
+export function maintainersOf(pkg: unknown): string[] {
+  if (typeof pkg !== 'object' || pkg === null) return []
+  const raw = (pkg as { maintainers?: unknown }).maintainers
+  if (!Array.isArray(raw)) return []
+  const out = new Set<string>()
+  for (const entry of raw.slice(0, MAINTAINERS_MAX_COUNT)) {
+    if (typeof entry !== 'object' || entry === null) continue
+    const username = (entry as { username?: unknown }).username
+    if (isMaintainerName(username)) out.add(username)
+  }
+  return [...out]
 }
 
 /**
@@ -821,14 +946,14 @@ function readTotal(body: SearchBody, query: string, from: number, stake: string)
  *   trust this number, and a silent 0 disables both, as does a negative one.
  */
 async function searchTotal(
-  keywords: readonly string[],
+  cell: Cell,
   fetchImpl: typeof fetch,
   sleep: (ms: number) => Promise<void>,
   token: string | undefined,
   backupRegistry: string | undefined,
   timeoutMs: number,
 ): Promise<number> {
-  const query = keywordQuery(keywords)
+  const query = cellQuery(cell)
   const path = `-/v1/search?text=${encodeURIComponent(query)}&size=1&from=0`
   const response = await fetchWithFailover(path, fetchImpl, sleep, token, backupRegistry, timeoutMs)
   if (!response.ok) throw new Error(`npm search for ${query} failed: ${response.status}`)
@@ -1327,8 +1452,8 @@ export async function searchByKeywords(
   onShortfall: (shortfall: KeywordShortfall) => void = () => {},
 ): Promise<string[]> {
   const seen = new Set<string>()
-  const probe = (keywords: readonly string[]): Promise<number> =>
-    searchTotal(keywords, fetchImpl, sleep, token, backupRegistry, timeoutMs)
+  const probe = (cell: Cell): Promise<number> =>
+    searchTotal(cell, fetchImpl, sleep, token, backupRegistry, timeoutMs)
   /**
    * Page one query to its answered total, into `into` and into the union.
    * @param pastWindow - what a `from` past {@link MAX_SEARCH_FROM} means here.
@@ -1340,11 +1465,11 @@ export async function searchByKeywords(
    *   truncation.
    */
   const pageCell = async (
-    cell: readonly string[],
+    cell: Cell,
     into: Set<string>,
     pastWindow: 'throw' | 'stop',
   ): Promise<void> => {
-    const query = keywordQuery(cell)
+    const query = cellQuery(cell)
     // The last total this cell answered, so a `from` past the cap can tell a
     // cell that genuinely needs a second window from one that merely served
     // short of a total inside it. Unset until the first page arrives; a cell
@@ -1421,7 +1546,7 @@ export async function searchByKeywords(
       // which is the half they measure well on. See PARTITION_KEYWORDS for
       // the ranks. It costs 21 requests and shrinks the residual to names
       // that are BOTH outside the window AND carry no refinement keyword.
-      if (partitioned) await pageCell([keyword], windowNames, 'stop')
+      if (partitioned) await pageCell({ keywords: [keyword] }, windowNames, 'stop')
       // The window's names belong to the union too; kept in their own set as
       // well so the coverage arithmetic can tell the two halves apart.
       // Idempotent, and `enumerate` runs twice on the retry path.
@@ -1441,7 +1566,7 @@ export async function searchByKeywords(
     // keyword; it also catches a mid-stream empty page: the `||` that ends
     // pageCell above returns on ANY empty page, even one arriving before the
     // cell's own total says the cell is exhausted.
-    let required = Math.min(total, await probe([keyword]))
+    let required = Math.min(total, await probe({ keywords: [keyword] }))
     if (forKeyword.size < required) {
       // ONE re-page before the throw. The floor is exact, and the anomaly
       // that motivated it does not survive it: npm served a 249-object page
@@ -1457,7 +1582,7 @@ export async function searchByKeywords(
       // and the floor takes the minimum across every total observed, so churn
       // during the retry is tolerated exactly as churn during the first pass.
       await enumerate()
-      required = Math.min(required, await probe([keyword]))
+      required = Math.min(required, await probe({ keywords: [keyword] }))
     }
     const shortfall = required - forKeyword.size
     if (shortfall <= 0) continue // whole, even when the keyword is past the window
