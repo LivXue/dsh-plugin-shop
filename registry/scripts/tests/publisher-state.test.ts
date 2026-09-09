@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  MAINTAINER_MAX_LENGTH, MAX_PUBLISHERS, isMaintainerName, mergePublishers,
+  MAINTAINER_MAX_LENGTH, MAX_PUBLISHERS, isMaintainerName, mergePublishers, nextCursor,
   parsePublisherState, serializePublisherState,
 } from '../src/publisher-state.ts'
 
@@ -55,7 +55,7 @@ describe('publisher state', () => {
     const raw = serializePublisherState({ publishers: ['sayedev', 'bowenliang123'] })
     // Sorted by code unit, like every other artifact this repo writes, so the
     // committed file does not churn on the order npm happened to answer in.
-    expect(raw).toBe('{\n  "publishers": [\n    "bowenliang123",\n    "sayedev"\n  ]\n}\n')
+    expect(raw).toBe('{\n  "publishers": [\n    "bowenliang123",\n    "sayedev"\n  ],\n  "cursor": 0\n}\n')
     expect(parsePublisherState(raw).publishers).toEqual(['bowenliang123', 'sayedev'])
   })
 
@@ -116,7 +116,54 @@ describe('publisher state', () => {
     // repo-state.ts is a Record, where a repeated JSON key collapses too.
     expect(parsePublisherState('{"publishers":["b","a","a"]}').publishers).toEqual(['a', 'b'])
     expect(serializePublisherState(parsePublisherState('{"publishers":["a","a"]}')))
-      .toBe('{\n  "publishers": [\n    "a"\n  ]\n}\n')
+      .toBe('{\n  "publishers": [\n    "a"\n  ],\n  "cursor": 0\n}\n')
+  })
+
+  describe('the probe cursor', () => {
+    it('reads as zero when the file predates it', () => {
+      // Every file written before the cursor existed, and every hand-written
+      // one. Absent is not malformed; it means "start at the beginning".
+      expect(parsePublisherState('{"publishers":["a"]}').cursor).toBe(0)
+    })
+
+    it('round-trips a position', () => {
+      expect(parsePublisherState('{"publishers":["a","b"],"cursor":1}').cursor).toBe(1)
+      expect(serializePublisherState({ publishers: ['a'], cursor: 7 }))
+        .toBe('{\n  "publishers": [\n    "a"\n  ],\n  "cursor": 7\n}\n')
+    })
+
+    it('throws on a cursor that is not a count', () => {
+      // Same posture as every other field here: a malformed build INPUT stops
+      // the run rather than silently restarting the rotation at zero, which
+      // would starve the tail of the vocabulary and look like nothing at all.
+      expect(() => parsePublisherState('{"publishers":[],"cursor":-1}')).toThrow(/cursor/)
+      expect(() => parsePublisherState('{"publishers":[],"cursor":1.5}')).toThrow(/cursor/)
+      expect(() => parsePublisherState('{"publishers":[],"cursor":"3"}')).toThrow(/cursor/)
+    })
+
+    it('stays put while the whole vocabulary fits one run', () => {
+      // Rotating a list every run can already probe is churn in a committed
+      // file for nothing.
+      expect(nextCursor({ publishers: ['a', 'b', 'c'] }, 10)).toBe(0)
+      expect(nextCursor({ publishers: ['a', 'b', 'c'], cursor: 2 }, 3)).toBe(0)
+    })
+
+    it('advances by one budget and wraps, so no publisher is starved forever', () => {
+      // THE point of the cursor. `selectPublisherCells` walks the vocabulary in
+      // sorted order and stops at the budget, so without rotation the same
+      // prefix is probed every run and everything after it is never probed at
+      // all -- not a partial run, a permanently excluded tail. MAX_PUBLISHERS
+      // is 20,000 against a 4,000 default budget, so the shape is anticipated.
+      const ten = { publishers: Array.from({ length: 10 }, (_, i) => `u${i}`) }
+      expect(nextCursor(ten, 4)).toBe(4)
+      expect(nextCursor({ ...ten, cursor: 4 }, 4)).toBe(8)
+      expect(nextCursor({ ...ten, cursor: 8 }, 4)).toBe(2)
+    })
+
+    it('carries the cursor through a merge', () => {
+      // The merge grows the vocabulary; it does not restart the rotation.
+      expect(mergePublishers({ publishers: ['b'], cursor: 3 }, ['a']).cursor).toBe(3)
+    })
   })
 
   it('filters the write side to the same grammar the read side throws on', () => {

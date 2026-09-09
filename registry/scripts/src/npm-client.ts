@@ -1489,6 +1489,13 @@ export async function searchByKeywords(
    */
   publishers: readonly string[] = [],
   publisherProbeBudget: number = PUBLISHER_PROBE_BUDGET_DEFAULT,
+  /**
+   * Where in `publishers` this run starts spending its budget, wrapping at the
+   * end. The budget is a PREFIX of a sorted list, so a fixed start probes the
+   * same names on every run and never probes the rest — see
+   * `PublisherState.cursor`, which carries this across runs.
+   */
+  publisherProbeOffset: number = 0,
 ): Promise<string[]> {
   const seen = new Set<string>()
   const probe = (cell: Cell): Promise<number> =>
@@ -1635,11 +1642,24 @@ export async function searchByKeywords(
      */
     const selectPublisherCells = async (): Promise<Cell[]> => {
       const selected: Cell[] = []
+      // Indexed and wrapped rather than iterated, so the budget is a WINDOW on
+      // the vocabulary instead of a prefix of it. Modulo on the offset too: the
+      // cursor is read from a committed file whose vocabulary may have been
+      // capped at MAX_PUBLISHERS since it was written, so it can point past the
+      // end without the file being malformed.
+      const size = publishers.length
+      const start = size === 0 ? 0 : publisherProbeOffset % size
       let spent = 0
-      for (const maintainer of publishers) {
-        if (spent >= publisherProbeBudget) break
-        const cell: Cell = { keywords: [keyword], maintainer }
+      while (spent < publisherProbeBudget && spent < size) {
+        const maintainer = publishers[(start + spent) % size]
         spent++
+        // Unreachable — `start < size` and `spent < size` keep the index in
+        // range — but guarded rather than asserted away, per CLAUDE.md, and
+        // skipped rather than defaulted: an empty string is not a username and
+        // `cellQuery` throws on one, which would turn an impossible index into
+        // a failed build.
+        if (maintainer === undefined) continue
+        const cell: Cell = { keywords: [keyword], maintainer }
         const cellTotal = await probe(cell)
         if (cellTotal === 0) continue
         // A publisher cell is bounded by one account's output under one

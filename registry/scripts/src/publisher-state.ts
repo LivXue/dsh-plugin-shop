@@ -98,6 +98,21 @@ export function isMaintainerName(value: unknown): value is string {
 /** Every maintainer username the harvest has seen, sorted, unique. */
 export interface PublisherState {
   readonly publishers: readonly string[]
+  /**
+   * Where the next run starts spending its probe budget, as an index into
+   * `publishers`. Optional because a file written before this existed carries
+   * none, and absent means zero rather than malformed.
+   *
+   * It exists because the budget is a PREFIX, not a sample. `selectPublisherCells`
+   * walks the sorted vocabulary and stops at {@link
+   * PUBLISHER_PROBE_BUDGET_DEFAULT}, so with no rotation the same first N are
+   * probed on every run and everything sorted after them is never probed at
+   * all — deterministic starvation rather than a partial run, and invisible
+   * because a name that is never probed cannot be reported missing. {@link
+   * MAX_PUBLISHERS} is 20,000 against a 4,000 default budget, so the shape is
+   * anticipated by this module's own bounds.
+   */
+  readonly cursor?: number
 }
 
 /**
@@ -139,13 +154,34 @@ export function parsePublisherState(raw: string): PublisherState {
   // usernames carry no payload to pick between. Left in, a duplicate
   // round-trips forever and costs one wasted probe and one wasted paged sweep
   // on every build.
-  return { publishers: [...out].sort(compareStrings) }
+  const cursor = (parsed as { cursor?: unknown }).cursor
+  if (cursor !== undefined && (typeof cursor !== 'number' || !Number.isInteger(cursor) || cursor < 0)) {
+    // Stops the run rather than silently restarting the rotation at zero. A
+    // reset looks like nothing at all from the outside, and what it costs is
+    // the tail of the vocabulary never being probed again.
+    throw new Error('publisher-state.json: cursor must be a non-negative integer')
+  }
+  return { publishers: [...out].sort(compareStrings), cursor: cursor ?? 0 }
 }
 
 /** Serialize, sorted by code unit and newline-terminated. */
 export function serializePublisherState(state: PublisherState): string {
   const publishers = [...state.publishers].sort(compareStrings)
-  return `${JSON.stringify({ publishers }, null, 2)}\n`
+  return `${JSON.stringify({ publishers, cursor: state.cursor ?? 0 }, null, 2)}\n`
+}
+
+/**
+ * Where the next run should start, given what this one could afford.
+ *
+ * Zero while the whole vocabulary fits one budget: rotating a list that is
+ * probed in full every run is churn in a committed file for nothing. Past
+ * that it advances by exactly one budget and wraps, so a vocabulary of
+ * `MAX_PUBLISHERS` against the default budget is covered in five runs.
+ */
+export function nextCursor(state: PublisherState, budget: number): number {
+  const size = state.publishers.length
+  if (size <= budget || budget <= 0) return 0
+  return ((state.cursor ?? 0) + budget) % size
 }
 
 /**
@@ -166,5 +202,8 @@ export function serializePublisherState(state: PublisherState): string {
  */
 export function mergePublishers(state: PublisherState, seen: readonly string[]): PublisherState {
   const kept = new Set([...state.publishers, ...seen].filter(isMaintainerName))
-  return { publishers: [...kept].sort(compareStrings).slice(0, MAX_PUBLISHERS) }
+  // The cursor rides through: a merge grows the vocabulary, it does not restart
+  // the rotation. Advancing it is `nextCursor`'s job and the caller's decision,
+  // because only the caller knows what budget the run actually spent.
+  return { publishers: [...kept].sort(compareStrings).slice(0, MAX_PUBLISHERS), cursor: state.cursor ?? 0 }
 }

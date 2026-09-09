@@ -2074,6 +2074,31 @@ describe('searchByKeywords', () => {
       // whose residual sends it round again — which is the steady state.
     })
 
+    it('starts the budget at the offset, so the tail past it is not starved forever', async () => {
+      // The budget is a PREFIX of a sorted list, so without an offset the same
+      // first N are probed on every run and everything after them is probed on
+      // NO run — deterministic starvation, and silent, because a publisher who
+      // is never probed cannot be reported missing. `nextCursor` advances this
+      // across runs; here it just has to be honoured.
+      const { fetchImpl, urls } = stubSearch(
+        query => (query === 'keywords:deepseek-harness' ? 5410
+          : query === 'keywords:deepseek-harness,dsh' ? 1 : 0),
+        (query, from) => {
+          if (query === 'keywords:deepseek-harness,dsh') return ['w0'].slice(from, from + 250)
+          return query === 'keywords:deepseek-harness' && from <= MAX_SEARCH_FROM
+            ? Array.from({ length: 250 }, (_, i) => `w${from + i}`) : []
+        },
+      )
+      const many = Array.from({ length: 10 }, (_, i) => `u${i}`)
+      await expect(searchByKeywords(fetchImpl, undefined, undefined, undefined, undefined,
+        () => {}, () => {}, many, 4, 8)).rejects.toThrow()
+      const probed = urls.filter(u => u.includes('maintainer'))
+        .map(u => (/maintainer%3A(u\d+)/.exec(u) ?? [])[1])
+      // Offset 8, budget 4, ten publishers: it wraps rather than stopping at
+      // the end of the array, or the last run of every cycle would be short.
+      expect(probed).toEqual(['u8', 'u9', 'u0', 'u1'])
+    })
+
     it('pages only the publisher cells the window did not already serve whole', async () => {
       // The probe is the cheap half; PAGING every non-zero cell is what would
       // triple a run, because every maintainer in the vocabulary was read off a
