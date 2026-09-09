@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describeShortfall, parseKeywordShortfall, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
+import { FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, maintainersOf, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describeShortfall, parseKeywordShortfall, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
 import { ENTRY_PAYLOAD_MAX_BYTES, entryPayloadBytes } from '../src/gate.ts'
 import { MAX_TARBALL_BYTES } from '../src/github-client.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
@@ -730,6 +730,30 @@ describe('parseKeywordShortfall', () => {
       { ...handoff, enumerated: 10, required: 10, unreachable: 0, recovered: 0, windowShortfall: 0, tailShortfall: 0 },
       'handoff.json',
     )).toThrow(/enumerated 10 of 10, so it records no shortfall to describe/)
+  })
+})
+
+describe('maintainersOf', () => {
+  it('reads the usernames a search object carries', () => {
+    expect(maintainersOf({ maintainers: [{ username: 'sayedev', email: 'a@b.c' }] })).toEqual(['sayedev'])
+  })
+
+  it('answers empty for every shape npm can legally serve instead', () => {
+    // Hostile by default: this value reaches a URL. Anything that is not a
+    // string username in the grammar is not a username.
+    expect(maintainersOf(null)).toEqual([])
+    expect(maintainersOf({})).toEqual([])
+    expect(maintainersOf({ maintainers: 'sayedev' })).toEqual([])
+    expect(maintainersOf({ maintainers: [null, 7, { username: 3 }, { name: 'x' }] })).toEqual([])
+  })
+
+  it('drops a username outside the grammar rather than putting it in a query', () => {
+    expect(maintainersOf({ maintainers: [{ username: 'a b' }, { username: 'UPPER' }, { username: 'ok-name_1.2' }] }))
+      .toEqual(['ok-name_1.2'])
+  })
+
+  it('de-duplicates, because one object can name a maintainer twice', () => {
+    expect(maintainersOf({ maintainers: [{ username: 'a' }, { username: 'a' }] })).toEqual(['a'])
   })
 })
 

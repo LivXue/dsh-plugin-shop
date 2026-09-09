@@ -1,4 +1,5 @@
 import { readCappedBody } from './http-body.ts'
+import { isMaintainerName } from './publisher-state.ts'
 import type { Candidate, Rejection } from './types.ts'
 
 /**
@@ -751,8 +752,27 @@ async function readJsonCapped(
 }
 
 interface SearchBody {
-  objects?: ({ package?: { name?: unknown } | null } | null)[]
+  objects?: ({ package?: { name?: unknown; maintainers?: unknown } | null } | null)[]
   total?: unknown
+}
+
+/**
+ * The usernames one search object names, filtered to what may be put in a
+ * query. Dropping is right rather than throwing: a malformed maintainer costs
+ * one publisher cell, while the window and the refinement cells still
+ * enumerate the package itself.
+ */
+export function maintainersOf(pkg: unknown): string[] {
+  if (typeof pkg !== 'object' || pkg === null) return []
+  const raw = (pkg as { maintainers?: unknown }).maintainers
+  if (!Array.isArray(raw)) return []
+  const out = new Set<string>()
+  for (const entry of raw) {
+    if (typeof entry !== 'object' || entry === null) continue
+    const username = (entry as { username?: unknown }).username
+    if (isMaintainerName(username)) out.add(username)
+  }
+  return [...out]
 }
 
 /**
