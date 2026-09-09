@@ -20,11 +20,13 @@ import { mergeCategoryRows, serializeCategoryRows } from './categories.ts'
 import { selectPending } from './classify-select.ts'
 import { loadRegistryConfig } from './config.ts'
 import { escapeCell } from './emit.ts'
+import { compareStrings } from './identity.ts'
 import { classifyPackages } from './llm-client.ts'
 import { judgeMarkets, type MarketItem } from './market-judge.ts'
 import { selectMarketPending } from './market-select.ts'
 import { mergeMarketRows, serializeMarketRows } from './markets.ts'
-import { fetchCandidates, searchByKeywords, describeShortfall, type KeywordShortfall } from './npm-client.ts'
+import { fetchCandidates, searchByKeywords, describeShortfall, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall } from './npm-client.ts'
+import { parsePublisherState } from './publisher-state.ts'
 import { parseRepoState } from './repo-state.ts'
 import type { Category, RepoCandidate } from './types.ts'
 
@@ -99,7 +101,25 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
   // never printed. This is the call that actually died on `3746 of 3747` on
   // 2026-09-04.
   const shortfalls: KeywordShortfall[] = []
-  const names = await searchByKeywords(fetch, undefined, npmToken, undefined, undefined, s => shortfalls.push(s))
+  /**
+   * The publisher axis's vocabulary. This module READS it and never writes it:
+   * `build.ts` owns the file, and CI runs it after this step, so a write here
+   * would be overwritten one step later — and worse, would look like it worked.
+   * What this module owns is the observations, which ride the handoff.
+   */
+  const publisherStatePath = join(REGISTRY_DIR, 'publisher-state.json')
+  const priorPublishers = existsSync(publisherStatePath)
+    ? parsePublisherState(readFileSync(publisherStatePath, 'utf8'))
+    : { publishers: [] }
+  const sawPublishers = new Set<string>()
+  const names = await searchByKeywords(
+    fetch, undefined, npmToken, undefined, undefined,
+    s => shortfalls.push(s),
+    users => { for (const u of users) sawPublishers.add(u) },
+    priorPublishers.publishers,
+    PUBLISHER_PROBE_BUDGET_DEFAULT,
+    priorPublishers.cursor ?? 0,
+  )
   for (const s of shortfalls) {
     process.stderr.write(`classify: ${describeShortfall(s)}\n`)
   }
@@ -184,7 +204,13 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
   mkdirSync(DIST_DIR, { recursive: true })
   // `shortfalls` rides the handoff so the build REPORT can name them even
   // though build.ts did not run the search that found them.
-  writeFileSync(join(DIST_DIR, 'harvest.json'), `${JSON.stringify({ candidates, rejections, shortfalls })}\n`)
+  // `compareStrings`, not a bare `.sort()`: equivalent for these strings, but
+  // the repo has one comparator for every ordering that reaches a file and a
+  // second spelling is a second thing to check against CLAUDE.md's no-locale
+  // rule.
+  const publishers = [...sawPublishers].sort(compareStrings)
+  writeFileSync(join(DIST_DIR, 'harvest.json'),
+    `${JSON.stringify({ candidates, rejections, shortfalls, publishers })}\n`)
   const sortedDiscards = [...discarded].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
   const reportLines = [
     '# Classification report',

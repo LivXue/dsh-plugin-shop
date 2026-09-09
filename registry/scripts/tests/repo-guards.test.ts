@@ -157,10 +157,17 @@ describe('what CI publishes to Pages', () => {
     // rides the handoff the published report cannot say this build is missing
     // packages. The write and the read have to move together.
     expect(read('registry/scripts/src/classify.ts'))
-      .toContain('JSON.stringify({ candidates, rejections, shortfalls })')
+      .toContain('JSON.stringify({ candidates, rejections, shortfalls, publishers })')
     expect(read('registry/scripts/src/build.ts')).toContain('parsed.shortfalls')
     // And it reaches the artifact a reader actually sees.
     expect(read('registry/scripts/src/build.ts')).toContain('npm search shortfall')
+    // `publishers` rides the same handoff for the same reason, and is checked
+    // here only so this string assertion cannot drift out of step with the
+    // one above. What the field actually DOES is driven end to end by
+    // publisher-handoff.test.ts, which runs both entry points for real —
+    // a source-string match cannot tell a field that is written from one that
+    // is written and then ignored.
+    expect(read('registry/scripts/src/build.ts')).toContain('parsed.publishers')
   })
 
   it('hands the build the harvest path the classifier writes', () => {

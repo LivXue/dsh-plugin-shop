@@ -203,6 +203,14 @@ const EXCUSED_REGISTRY_DIR_USES: readonly ExcusedUse[] = [
     snippet: 'mkdirSync(join(REGISTRY_DIR)',
     reason: 'creates a directory; writes no file content',
   },
+  {
+    module: 'classify.ts',
+    snippet: "const publisherStatePath = join(REGISTRY_DIR, 'publisher-state.json')",
+    reason: 'classify.ts only reads publisher-state.json, to seed the publisher axis; '
+      + 'it carries what it OBSERVED in dist/harvest.json instead, and build.ts is the '
+      + 'sole writer, already covered by its own check above. A write here would be '
+      + 'overwritten by the build one step later and look like it had worked',
+  },
 ]
 
 function lineContaining(source: string, index: number): string {
@@ -328,7 +336,8 @@ describe('the daily workflow stages every registry file the build writes', () =>
   it('finds the writers, so the extraction itself is not silently empty', () => {
     // If a refactor changes how the writes are spelled, this fails rather than
     // letting the guards below pass vacuously.
-    expect(registryWrites(buildTs)).toEqual(['first-seen.yml', 'repo-state.json', 'snapshots/manifest.lock'])
+    expect(registryWrites(buildTs))
+      .toEqual(['first-seen.yml', 'publisher-state.json', 'repo-state.json', 'snapshots/manifest.lock'])
     expect(registryWrites(classifyTs)).toEqual(['categories.yml', 'markets.yml'])
   })
 
