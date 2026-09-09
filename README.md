@@ -271,6 +271,24 @@ network, so reach for it only when you have changed the fetching or writing laye
 Status and open work: [docs/plans/2026-08-18-remaining-work.md](docs/plans/2026-08-18-remaining-work.md).
 Specification: [docs/design/2026-08-18-dsh-plugin-shop-design.md](docs/design/2026-08-18-dsh-plugin-shop-design.md).
 
+## 🤝 Contributing
+
+Three ways in, cheapest first.
+
+- **Correct a verdict.** Categories and competing-market judgements are made by a
+  classifier, and the [build report](https://LivXue.github.io/dsh-plugin-shop/v1/report.md)
+  names every call it made with no human behind it. Fixing one is a single line of
+  YAML — no network, no TypeScript, no local build.
+- **Get a plugin listed.** Add a harvest keyword and publish. If the shelf still
+  does not show it, that same report says why, per package, in terms written for
+  the author.
+- **Change the pipeline.** [`docs/design/`](docs/design/) is the specification and
+  the authority; `CLAUDE.md` is the working agreement.
+
+All three in full: [CONTRIBUTING.md](CONTRIBUTING.md). Be decent to each other:
+[Code of Conduct](CODE_OF_CONDUCT.md). Vulnerabilities and malicious plugins go
+[privately](SECURITY.md), never to a public issue.
+
 ## 📄 License
 
 [Apache-2.0](LICENSE) © LivXue

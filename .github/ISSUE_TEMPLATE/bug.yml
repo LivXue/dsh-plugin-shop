@@ -1,0 +1,46 @@
+name: Bug report
+description: The pipeline, the catalog output, or the shop UI does something wrong.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: half
+    attributes:
+      label: Which part?
+      options:
+        - The shop UI (browsing, installing, updating)
+        - The catalog data (an entry is wrong, missing a field, out of date)
+        - The registry pipeline (harvest, gate, tier, emit)
+        - CI / release
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Shop version
+      description: "`npm view dsh-plugin-shop version` for the current release; the installed one is in your profile's plugin list."
+      placeholder: 0.8.0
+    validations:
+      required: true
+  - type: input
+    id: dsh
+    attributes:
+      label: dsh version and platform
+      placeholder: dsh 1.2.3, Windows 11
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: Exact commands. If it involves a specific catalog entry, name it.
+      render: shell
+    validations:
+      required: true
