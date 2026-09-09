@@ -4064,6 +4064,8 @@
   added: 2026-09-01
 - name: "@junma11/dsh-scholar-lab"
   added: 2026-08-28
+- name: "@just-ai/dsh-auto-update"
+  added: 2026-09-09
 - name: "@juuuw/autodsh"
   added: 2026-08-26
 - name: "@jw-king/dsh-plugin-parallel"
@@ -4798,6 +4800,8 @@
   added: 2026-08-31
 - name: "@lucasxingg/dsh-file-attach"
   added: 2026-08-25
+- name: "@luchenglong/dsh-session-cleaner"
+  added: 2026-09-09
 - name: "@luisarg/memory-auto"
   added: 2026-09-04
 - name: "@luisarg/memory-mcp"
@@ -7520,6 +7524,8 @@
   added: 2026-09-04
 - name: "acryl-dsh-editor-plugin"
   added: 2026-09-08
+- name: "acryldev/dsh-cordis"
+  added: 2026-09-09
 - name: "activeing123/dsh-forge"
   added: 2026-09-01
 - name: "adb-dsh-plugin"
@@ -12586,6 +12592,8 @@
   added: 2026-09-04
 - name: "dsh-claude-marketplace"
   added: 2026-08-25
+- name: "dsh-claude-memory"
+  added: 2026-09-09
 - name: "dsh-claude-migrator"
   added: 2026-09-01
 - name: "dsh-claude-move"
@@ -16042,6 +16050,8 @@
   added: 2026-09-01
 - name: "dsh-geography-terms"
   added: 2026-09-01
+- name: "dsh-geolibre"
+  added: 2026-09-09
 - name: "dsh-geometric-mean"
   added: 2026-09-01
 - name: "dsh-geometric-series"
@@ -17578,6 +17588,8 @@
   added: 2026-09-01
 - name: "dsh-kimino-theme"
   added: 2026-08-26
+- name: "dsh-kingdee"
+  added: 2026-09-09
 - name: "dsh-kingdom"
   added: 2026-08-25
 - name: "dsh-kiribati"
@@ -21190,6 +21202,8 @@
   added: 2026-09-04
 - name: "dsh-plugin-cron"
   added: 2026-08-28
+- name: "dsh-plugin-cron-scheduler"
+  added: 2026-09-09
 - name: "dsh-plugin-csv-report"
   added: 2026-09-04
 - name: "dsh-plugin-ctl"
@@ -21536,6 +21550,8 @@
   added: 2026-09-04
 - name: "dsh-plugin-local-vision"
   added: 2026-09-04
+- name: "dsh-plugin-log-forwarder"
+  added: 2026-09-09
 - name: "dsh-plugin-login-gate"
   added: 2026-09-01
 - name: "dsh-plugin-long-term-memory"
@@ -25518,6 +25534,8 @@
   added: 2026-09-04
 - name: "dsh-subagent-profile"
   added: 2026-08-28
+- name: "dsh-subagent-progress"
+  added: 2026-09-09
 - name: "dsh-subagent-qoder-cloud"
   added: 2026-09-04
 - name: "dsh-subagent-response-promoter"
@@ -30118,6 +30136,8 @@
   added: 2026-08-31
 - name: "harzva/dsh-session-folders"
   added: 2026-09-03
+- name: "harzva/dsh-terminal"
+  added: 2026-09-09
 - name: "harzva/dsh-uvm"
   added: 2026-08-31
 - name: "harzva/dsh-voice"
@@ -30488,6 +30508,8 @@
   added: 2026-09-01
 - name: "hufang360/dsh-sticky-notes"
   added: 2026-09-01
+- name: "hufangd-2019/dsh-latex2office"
+  added: 2026-09-09
 - name: "huhaodong/dsh-auto-driving"
   added: 2026-09-02
 - name: "huiliyi37/dsh-tianshu-tui"
@@ -30802,6 +30824,8 @@
   added: 2026-09-04
 - name: "jarvis-mission-control"
   added: 2026-09-04
+- name: "jarvislee90s-dot/dsh-foxbell-pet"
+  added: 2026-09-09
 - name: "jarvisluk/dsh-projectless-session"
   added: 2026-09-01
 - name: "jason-liao/dsh-memory-tdai"
@@ -31922,6 +31946,8 @@
   added: 2026-08-31
 - name: "lijx122/dsh-plugin-auth-guard"
   added: 2026-09-01
+- name: "likangame/dsh-custom-context-injector"
+  added: 2026-09-09
 - name: "lileikeji/dsh-auto-compact"
   added: 2026-09-01
 - name: "lileikeji/dsh-crosstalk"
@@ -32802,6 +32828,8 @@
   added: 2026-09-02
 - name: "mnemon-dev/mnemon"
   added: 2026-08-31
+- name: "mobfish-ai/cortex-harness-open"
+  added: 2026-09-09
 - name: "mobius/dsh-performance-slider"
   added: 2026-09-01
 - name: "mobius/dsh-pixel-liangzu"
@@ -33410,6 +33438,8 @@
   added: 2026-09-04
 - name: "omdsh-dev/7d7d"
   added: 2026-09-01
+- name: "omdsh-dev/dsh-better-workbench"
+  added: 2026-09-09
 - name: "omdsh-dev/dsh-custom-tool"
   added: 2026-08-31
 - name: "omdsh-dev/dsh-daily-progress"
@@ -39066,6 +39096,8 @@
   added: 2026-09-04
 - name: "winditer/dsh-elf"
   added: 2026-09-02
+- name: "winditer/dsh-temp-chat"
+  added: 2026-09-09
 - name: "windows-bash"
   added: 2026-08-25
 - name: "windrover/dsh-long-term-memory"
@@ -39096,6 +39128,8 @@
   added: 2026-09-04
 - name: "wiselfx/dsh-freeweb"
   added: 2026-09-01
+- name: "wisexin/dsh-antigravity"
+  added: 2026-09-09
 - name: "witchwarren2344/dsh-mnemosyne-memory"
   added: 2026-09-01
 - name: "witherwithwinter/deepseek-balance-whale-widget-bowl"
@@ -40380,6 +40414,8 @@
   added: 2026-08-31
 - name: "yangshen830-eng/dsh-editor"
   added: 2026-09-02
+- name: "yangwuan55/dsh-accounts"
+  added: 2026-09-09
 - name: "yangwuan55/dsh-feishu-integration"
   added: 2026-09-02
 - name: "yangyunsong023/dsh-sxs-anti-bot-http"
