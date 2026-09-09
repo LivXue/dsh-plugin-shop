@@ -31,6 +31,27 @@ export const DSH_PACKAGE = '@deepseek-ai/dsh'
  * also the unscoped name its plain-string `bin` form would take. */
 const DSH_BIN_NAME = 'dsh'
 
+/**
+ * A `dshBin` that names a JavaScript entry rather than a program.
+ *
+ * Such a file cannot be spawned anywhere: Windows needs a PE image, and POSIX
+ * needs a shebang plus the exec bit that an entry shipped inside a package
+ * does not reliably carry. The npm-installed CLI's real entry IS one of these
+ * — `bin: { dsh: 'lib/bin.js' }` — so a caller pinning a specific dsh
+ * installation has no other file to name, and {@link resolveDshScript} hands
+ * back exactly this shape for the branch below to run through node.
+ *
+ * Platform-independent on purpose. The `dsh` branch is a Windows workaround
+ * for PATH lookup; this is not a workaround at all but the only correct way
+ * to start a JS entry, and gating it on Windows would leave a POSIX caller
+ * with an ENOEXEC naming a file that is perfectly valid.
+ *
+ * The one thing it gives up is a `.js` entry whose shebang names some other
+ * interpreter. `dshBin` names the dsh CLI, which is a node program, so the
+ * trade is one hypothetical against a shape the CLI actually ships.
+ */
+const JS_ENTRY = /\.[cm]?js$/
+
 export interface DshCliFs {
   exists: (path: string) => boolean
   read: (path: string) => string
@@ -45,10 +66,13 @@ export interface DshCommand {
 /**
  * The command that starts the dsh CLI with `args`.
  *
- * The node route replaces exactly one thing: looking the bare name `dsh` up
- * on PATH, which on Windows can never succeed. A `dshBin` naming a specific
- * file is the caller's explicit choice and is spawned as given — honoring it
- * and reporting the real failure beats silently running something else.
+ * For the bare name the node route replaces exactly one thing: looking `dsh`
+ * up on PATH, which on Windows can never succeed. A `dshBin` naming a
+ * specific file is the caller's explicit choice and is spawned as given —
+ * honoring it and reporting the real failure beats silently running something
+ * else — with one exception, {@link JS_ENTRY}, where "as given" is not a
+ * runnable command on any platform and node is what the caller must have
+ * meant.
  */
 export function dshCommand(options: {
   dshBin: string
@@ -58,9 +82,11 @@ export function dshCommand(options: {
   script: string | null
 }): DshCommand {
   const { dshBin, args, platform, execPath, script } = options
-  if (platform === 'win32' && script !== null && dshBin === DSH_BIN_NAME) {
-    return { command: execPath, args: [script, ...args] }
+  if (dshBin === DSH_BIN_NAME) {
+    if (platform === 'win32' && script !== null) return { command: execPath, args: [script, ...args] }
+    return { command: dshBin, args: [...args] }
   }
+  if (JS_ENTRY.test(dshBin)) return { command: execPath, args: [dshBin, ...args] }
   return { command: dshBin, args: [...args] }
 }
 

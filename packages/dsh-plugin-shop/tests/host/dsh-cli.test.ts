@@ -61,9 +61,38 @@ describe('dshCommand', () => {
   it('spawns an explicitly named binary as given, rather than substituting the entry', () => {
     // The node route replaces PATH lookup of the bare name, nothing else. A
     // caller that named a file meant that file; the real-installation test
-    // and the fixture tests both depend on being spawned as written.
+    // depends on being spawned as written.
     expect(dshCommand({ dshBin: 'C:\\custom\\dsh.cmd', args, platform: 'win32', execPath: 'C:\\node\\node.exe', script: 'C:\\npm\\dsh\\lib\\bin.js' }))
       .toEqual({ command: 'C:\\custom\\dsh.cmd', args: [...args] })
+  })
+
+  it('runs an explicitly named JS entry through node, on every platform', () => {
+    // The one exception to the rule above, and not a Windows workaround: a
+    // `.js` file is not a runnable command anywhere. Windows refuses it for
+    // want of a PE image; POSIX needs a shebang and an exec bit that an entry
+    // shipped inside a package does not reliably carry. The CLI's own entry
+    // IS this shape — `bin: { dsh: 'lib/bin.js' }` — so it is what a caller
+    // pinning one installation has to name.
+    //
+    // `execPath` is asserted rather than the entry: substituting `script`
+    // here would silently run a DIFFERENT dsh than the one named, which is
+    // the failure the case above exists to prevent.
+    for (const platform of ['win32', 'linux', 'darwin'] as const) {
+      for (const bin of ['/opt/dsh/lib/bin.js', '/opt/dsh/lib/bin.mjs', '/opt/dsh/lib/bin.cjs']) {
+        expect(dshCommand({ dshBin: bin, args, platform, execPath: '/usr/bin/node', script: '/elsewhere/bin.js' }))
+          .toEqual({ command: '/usr/bin/node', args: [bin, ...args] })
+      }
+    }
+  })
+
+  it('leaves a program whose name merely contains js alone', () => {
+    // The rule is an EXTENSION, not a substring: `dsh-js` and `js` are
+    // ordinary executables, and running one through node would spawn node
+    // against a binary file.
+    for (const bin of ['/usr/local/bin/dsh-js', '/usr/local/bin/js', '/usr/local/bin/dsh.jsx']) {
+      expect(dshCommand({ dshBin: bin, args, platform: 'linux', execPath: '/usr/bin/node', script: null }))
+        .toEqual({ command: bin, args: [...args] })
+    }
   })
 
   it('does not alias the caller\'s args array', () => {

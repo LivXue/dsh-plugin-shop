@@ -24,7 +24,14 @@ describe('discoverProfile', () => {
   it('resolves symlinks in the start path back to the real profile directory', () => {
     const dir = fixtureProfile()
     const link = join(dirname(dir), 'web-link')
-    symlinkSync(dir, link)
+    // A junction on Windows, where a directory SYMLINK needs elevation or
+    // Developer Mode and `symlinkSync` answers EPERM without either — which
+    // is why this one case failed there while the rest of the file passed. A
+    // junction needs no privilege, takes the same absolute target, and
+    // `realpathSync` resolves it identically, so the claim under test is
+    // unchanged. It is also the shape that actually occurs: pnpm links a
+    // workspace dependency as a junction on Windows for the same reason.
+    symlinkSync(dir, link, process.platform === 'win32' ? 'junction' : undefined)
     expect(discoverProfile(join(link, 'node_modules', 'dsh-plugin-shop', 'lib', 'index.js'))).toEqual({ name: 'web', dir })
   })
 
