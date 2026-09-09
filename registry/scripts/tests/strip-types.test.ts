@@ -297,9 +297,26 @@ describe('importing an entry point never terminates the importing process', () =
       // the child exits 0 with an empty stdout, and every future unit test
       // that so much as imports a helper from here dies the same way, having
       // reported success.
+      //
+      // `process.exitCode`, never `process.exit()`: the status has to survive
+      // the child's own teardown, and on Windows it does not. `process.exit()`
+      // tears the loop down with libuv work still in flight, which aborts
+      // inside `uv_async_send` — `Assertion failed: !(handle->flags &
+      // UV_HANDLE_CLOSING), file src\win\async.c, line 94` — and replaces the
+      // status with 0xC0000409, Windows' fast-fail code. The mark still
+      // reached stdout, so the property asserted below held and only the
+      // child's way of REPORTING it broke. Measured on windows-latest, node
+      // v24.19.0: `emit-schema.ts` failed four runs of four at `2fbdb3b`
+      // while its parent commit passed twice on the same runner image and
+      // node build. It is the one that fails because its import graph is the
+      // lightest of the five, so it reaches the exit soonest and leaves that
+      // work the least time to drain — the other four are not safe, only
+      // slower. Assigning the status and returning lets the loop finish; a
+      // module-scope `process.exit(0)` still pre-empts the assignment, so the
+      // regression described above stays caught.
       const importer = `await import(${importSpecifier(file)})\n`
         + `process.stdout.write(${JSON.stringify(IMPORTER_MARK)})\n`
-        + `process.exit(${String(IMPORTER_STATUS)})\n`
+        + `process.exitCode = ${String(IMPORTER_STATUS)}\n`
       const result = spawnSync(
         process.execPath,
         ['--experimental-strip-types', '--input-type=module', '-e', importer],
