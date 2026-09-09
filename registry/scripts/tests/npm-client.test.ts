@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { type Cell, cellQuery, FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, maintainersOf, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describeShortfall, parseKeywordShortfall, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
+import { type Cell, cellKey, cellQuery, FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, maintainersOf, MAINTAINERS_MAX_COUNT, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describeShortfall, parseKeywordShortfall, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
 import { ENTRY_PAYLOAD_MAX_BYTES, entryPayloadBytes } from '../src/gate.ts'
 import { MAX_TARBALL_BYTES } from '../src/github-client.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
@@ -592,6 +592,59 @@ describe('cellQuery', () => {
     expect(cellQuery({ keywords: ['deepseek-harness'], maintainer: 'sayedev' }))
       .toBe('keywords:deepseek-harness maintainer:sayedev')
   })
+
+  it('refuses a maintainer outside the grammar instead of sending it', () => {
+    // `text=` is a query LANGUAGE, not a value. encodeURIComponent makes this
+    // a valid URL and npm then reads THREE qualifiers where the caller wrote
+    // two, so the cell enumerates a set its probed total never measured and
+    // the deficit lands on the residual cap instead of being reported. Every
+    // producer validates, so arriving here unvalidated is our own plumbing
+    // losing the invariant -- hence a throw rather than a drop.
+    expect(() => cellQuery({ keywords: ['dsh-plugin'], maintainer: 'x keywords:evil' }))
+      .toThrow(/maintainer outside the username grammar/)
+    expect(() => cellQuery({ keywords: ['dsh-plugin'], maintainer: '' }))
+      .toThrow(/maintainer outside the username grammar/)
+    // The cell is named, the offending bytes are not: the value is unbounded
+    // and registry-shaped, and what a reader needs is which cell broke.
+    expect(() => cellQuery({ keywords: ['dsh-plugin'], maintainer: 'a b' }))
+      .toThrow(/cell for keywords:dsh-plugin/)
+  })
+
+  it('cannot describe a cell with no keywords at all', () => {
+    // A bare `keywords:` is answered with the whole registry, and beside a
+    // maintainer the keyword scope does not narrow but VANISHES -- `Cell`'s
+    // own docblock owns those measurements. The type is the guard, so this
+    // assertion is checked by tsc rather than at runtime: if the empty literal
+    // ever becomes assignable the expected error disappears and typecheck
+    // fails.
+    // @ts-expect-error a cell must carry at least one keyword
+    const empty: Cell = { keywords: [] }
+    expect(cellQuery(empty)).toBe('keywords:')
+  })
+})
+
+describe('cellKey', () => {
+  it('is order-insensitive, because `keywords:` is an intersection', () => {
+    // `keywords:a,b` and `keywords:b,a` are one cell behind two `text` values,
+    // so two parents reaching the same intersection from different directions
+    // must share one memo entry. cellQuery cannot serve as this key for
+    // exactly that reason: it preserves query order, and keying on it pages
+    // the same intersection twice.
+    expect(cellKey({ keywords: ['b', 'a'] })).toBe(cellKey({ keywords: ['a', 'b'] }))
+    expect(cellKey({ keywords: ['a', 'b'] })).not.toBe(cellKey({ keywords: ['a', 'c'] }))
+  })
+
+  it('reads the maintainer too, so two cells cannot collide on their keywords', () => {
+    // A Cell is a two-field descriptor. A key that reads one field lets
+    // `keywords:X maintainer:alice` and `keywords:X maintainer:bob` collide,
+    // and the cost is not the probe the memo exists to save: `split` is
+    // credited from the other cell's measurement while the push is skipped, so
+    // one parent's tail is never paged and nothing throws.
+    const alice = cellKey({ keywords: ['dsh-plugin'], maintainer: 'alice' })
+    const bob = cellKey({ keywords: ['dsh-plugin'], maintainer: 'bob' })
+    expect(alice).not.toBe(bob)
+    expect(alice).not.toBe(cellKey({ keywords: ['dsh-plugin'] }))
+  })
 })
 
 describe('partitionKeyword', () => {
@@ -601,12 +654,15 @@ describe('partitionKeyword', () => {
     // above the window, the only place this code runs, it lands in `oversized`
     // and can throw "no refinement keyword splits it" for a keyword every
     // other cell splits fine. The skip had no test of its own: deleting it
-    // left all 506 green, because every fixture reaching this function drives
-    // it through searchByKeywords with static totals that hide the extra cell.
+    // left the whole suite green, because every fixture reaching this function
+    // drives it through searchByKeywords with static totals that hide the
+    // extra cell.
     //
-    // It is also the arithmetic in PARTITION_KEYWORDS' own comment: ten
-    // entries yield NINE cells against this keyword, which is what the
-    // 5,059-of-5,103 coverage measurement was taken against.
+    // It is also the arithmetic in PARTITION_KEYWORDS' own comment: the 27
+    // entries yield 26 cells against this keyword, because one of them IS this
+    // keyword. Counted, not restated: the assertion below derives it, and this
+    // comment read "ten entries yield NINE cells" beside an assertion
+    // computing 26.
     const probed: string[] = []
     // `cellQuery`, not `keywordQuery(cell.keywords)`: the stub renders through
     // the same function the harvest does, so the byte-identical strings
@@ -757,7 +813,7 @@ describe('parseKeywordShortfall', () => {
 })
 
 describe('maintainersOf', () => {
-  it('reads the usernames a search object carries', () => {
+  it("reads the usernames a search object's package carries", () => {
     expect(maintainersOf({ maintainers: [{ username: 'sayedev', email: 'a@b.c' }] })).toEqual(['sayedev'])
   })
 
@@ -777,6 +833,17 @@ describe('maintainersOf', () => {
 
   it('de-duplicates, because one object can name a maintainer twice', () => {
     expect(maintainersOf({ maintainers: [{ username: 'a' }, { username: 'a' }] })).toEqual(['a'])
+  })
+
+  it('bounds the count, because every name it keeps is committed forever', () => {
+    // The per-name grammar was the only bound here. The array is
+    // registry-controlled, one page is capped only by MAX_SEARCH_BODY_BYTES,
+    // and mergePublishers never removes -- so a burst of grammar-valid
+    // usernames would enter the committed vocabulary permanently and buy a
+    // live request on every run. The live maximum is 11 across 1,500 objects
+    // (2026-09-09), so the tail this drops has never existed.
+    const many = Array.from({ length: MAINTAINERS_MAX_COUNT + 5 }, (_, i) => ({ username: `u${i}` }))
+    expect(maintainersOf({ maintainers: many })).toHaveLength(MAINTAINERS_MAX_COUNT)
   })
 })
 
@@ -1397,8 +1464,9 @@ describe('searchByKeywords', () => {
   it('does not blame a partition for a short final page at exactly the window', async () => {
     // Pre-existing, and the mirror of the overstated total this harvest
     // already tolerates: a keyword whose total is EXACTLY SEARCH_WINDOW is
-    // not partitioned at all (partitionKeyword returns `[[keyword]]` for any
-    // total that fits), so its one cell is paged with pastWindow: 'throw'.
+    // not partitioned at all (partitionKeyword returns one
+    // `{ keywords: [keyword] }` cell for any total that fits), so its one cell
+    // is paged with pastWindow: 'throw'.
     // Let the last page serve 249 of 250 — the registry anomaly this module
     // cites twice — and `from` advances to 5250, past the cap, and the build
     // died with "the partition is wrong" naming a partition that does not
