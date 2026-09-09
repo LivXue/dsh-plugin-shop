@@ -593,6 +593,8 @@
   category: ui
 - name: "@crosery/dsh-viewer"
   category: tool
+- name: "@cup319/dsh-mmpl"
+  category: integration
 - name: "@custom/dsh-plugin-j-space"
   category: tool
 - name: "@cxxl/dsh-sqlite"
@@ -1301,6 +1303,8 @@
   category: integration
 - name: "@dsh-external/plugin-forge"
   category: tool
+- name: "@dsh-external/project-nav"
+  category: workflow
 - name: "@dsh-external/viewboost"
   category: ui
 - name: "@dsh-external/xiashuo"
@@ -2329,8 +2333,6 @@
   category: ui
 - name: "@kksw/dsh-my-files"
   category: ui
-- name: "@knyazevai/dsh"
-  category: provider
 - name: "@koanjan/dsh-plugin-boundary"
   category: tool
 - name: "@kobenfang/dsh-big8"
@@ -3563,6 +3565,8 @@
   category: tool
 - name: "@temotee2103/dsh-ci-co-pilot"
   category: integration
+- name: "@temsmie/dsh-tool-keymouse"
+  category: tool
 - name: "@tencent-connect/dsh-qqbot"
   category: integration
 - name: "@tengxiaohtx/dsh-plugin-hooks-ordering"
@@ -4899,6 +4903,8 @@
   category: workflow
 - name: "dsh-agent-outputs-reader"
   category: ui
+- name: "dsh-agent-pet"
+  category: ui
 - name: "dsh-agent-pill"
   category: ui
 - name: "dsh-agent-plugin-market"
@@ -5497,6 +5503,8 @@
   category: ui
 - name: "dsh-auto-preset-router"
   category: workflow
+- name: "dsh-auto-rename"
+  category: tool
 - name: "dsh-auto-review"
   category: workflow
 - name: "dsh-auto-scheduler"
@@ -5723,8 +5731,6 @@
   category: tool
 - name: "dsh-beforedone"
   category: workflow
-- name: "dsh-behavior-enhancer"
-  category: tool
 - name: "dsh-beige-theme"
   category: theme
 - name: "dsh-beijing-city"
@@ -6216,6 +6222,8 @@
 - name: "dsh-cap-profile"
   category: ui
 - name: "dsh-capability-discovery"
+  category: tool
+- name: "dsh-capability-facade"
   category: tool
 - name: "dsh-capability-index"
   category: tool
@@ -8107,6 +8115,8 @@
   category: ui
 - name: "dsh-dracula-theme"
   category: ui
+- name: "dsh-draft"
+  category: ui
 - name: "dsh-draft-sessions"
   category: ui
 - name: "dsh-drag-and-drop"
@@ -9633,6 +9643,8 @@
   category: tool
 - name: "dsh-hungary"
   category: tool
+- name: "dsh-hybrid-notify"
+  category: tool
 - name: "dsh-hydrogen"
   category: tool
 - name: "dsh-hydroponics"
@@ -10399,6 +10411,8 @@
   category: tool
 - name: "dsh-little-mouse-pointer"
   category: tool
+- name: "dsh-liuli-ui-enhance"
+  category: theme
 - name: "dsh-live"
   category: tool
 - name: "dsh-live-backdrop"
@@ -10686,6 +10700,8 @@
 - name: "dsh-lpr-convert"
   category: tool
 - name: "dsh-lsp-actions"
+  category: tool
+- name: "dsh-lsp-diagnostics"
   category: tool
 - name: "dsh-luggage-size"
   category: tool
@@ -12571,6 +12587,8 @@
   category: tool
 - name: "dsh-plugin-agent-dashboard"
   category: ui
+- name: "dsh-plugin-agent-insights"
+  category: tool
 - name: "dsh-plugin-agents-memory"
   category: ui
 - name: "dsh-plugin-ainfo"
@@ -14165,8 +14183,8 @@
   category: tool
 - name: "dsh-remote-tunnel-easy"
   category: tool
-- name: "dsh-remote-ui"
-  category: ui
+- name: "dsh-remote-web"
+  category: tool
 - name: "dsh-remote-web-gateway"
   category: tool
 - name: "dsh-remote-workspace"
@@ -14510,6 +14528,8 @@
 - name: "dsh-safemode-profile"
   category: tool
 - name: "dsh-safety-net"
+  category: tool
+- name: "dsh-saker"
   category: tool
 - name: "dsh-sakura-theme"
   category: theme
@@ -15873,6 +15893,8 @@
   category: tool
 - name: "dsh-sysmon"
   category: ui
+- name: "dsh-system-cleanup"
+  category: tool
 - name: "dsh-system-control"
   category: ui
 - name: "dsh-system-fonts"
@@ -16577,6 +16599,8 @@
   category: tool
 - name: "dsh-translator"
   category: ui
+- name: "dsh-translator-pro"
+  category: tool
 - name: "dsh-trapezoid"
   category: tool
 - name: "dsh-trash"
@@ -17477,6 +17501,8 @@
   category: provider
 - name: "dsh-web-search-brave"
   category: provider
+- name: "dsh-web-search-button"
+  category: tool
 - name: "dsh-web-search-codex"
   category: provider
 - name: "dsh-web-search-custom"
@@ -18194,6 +18220,8 @@
 - name: "dsh_center-column-shift"
   category: ui
 - name: "dsh_check_updates"
+  category: tool
+- name: "dsh_deepseekapi_quota"
   category: tool
 - name: "dsh_omnivision"
   category: tool
