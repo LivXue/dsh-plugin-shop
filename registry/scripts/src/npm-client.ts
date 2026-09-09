@@ -612,6 +612,32 @@ export const PARTITION_KEYWORDS: readonly string[] = [
   'remote', 'statistics', 'deepwatch',
 ]
 
+/**
+ * How many publisher cells one run may PROBE per over-window keyword. The
+ * vocabulary accumulates forever and the probe cost must not: 3,041
+ * maintainers were in the `deepseek-harness` window on 2026-09-08 and each
+ * costs one `size=1` request — about 3,390 once `dsh-plugin` is seeded too.
+ * Sized above today's vocabulary so nothing is skipped yet, and bounded so a
+ * year of accumulation cannot quietly turn one run into fifty thousand
+ * requests. Same posture as `REPO_BACKFILL_BUDGET` on the GitHub half.
+ *
+ * A run that hits this ceiling is partial, not wrong: the window and the
+ * refinement cells are unaffected, and the coverage arithmetic still decides
+ * whether the result may publish.
+ *
+ * **This bounds the probes. What bounds the PAGING is the redundancy filter
+ * in `searchByKeywords`**, and the distinction is the whole reason that filter
+ * exists. Every maintainer in the vocabulary was read out of a
+ * `keywords:<harvest>` result, so its cell answers non-zero for very nearly
+ * all of them; pushing every non-zero cell into the paging loop would page
+ * ~3,041 cells, twice, because the retry re-pages the whole partition and the
+ * residual sends `deepseek-harness` round again on EVERY run. Measured against
+ * a baseline of ~6,100 npm requests, that is ~2.5x today and ~4x once
+ * `dsh-plugin` crosses. The filter drops it to the cells that can actually
+ * supply something.
+ */
+export const PUBLISHER_PROBE_BUDGET_DEFAULT = 4000
+
 /** One query's `text` value: the keyword, plus any refinements ANDed on. */
 export function keywordQuery(keywords: readonly string[]): string {
   return `keywords:${keywords.join(',')}`
@@ -1456,6 +1482,13 @@ export async function searchByKeywords(
    * the only way it reaches `publisher-state.json`.
    */
   onPublishers: (usernames: readonly string[]) => void = () => {},
+  /**
+   * The maintainer usernames prior runs have seen, as the publisher axis's
+   * vocabulary. Empty means the axis is inert and the behaviour is exactly
+   * what it was before it existed — which is what makes it safe to land.
+   */
+  publishers: readonly string[] = [],
+  publisherProbeBudget: number = PUBLISHER_PROBE_BUDGET_DEFAULT,
 ): Promise<string[]> {
   const seen = new Set<string>()
   const probe = (cell: Cell): Promise<number> =>
@@ -1474,6 +1507,15 @@ export async function searchByKeywords(
     cell: Cell,
     into: Set<string>,
     pastWindow: 'throw' | 'stop',
+    /**
+     * Maintainer username to the DISTINCT package names seen carrying it. A
+     * name set, never a counter: the window sweep and a refinement cell serve
+     * many of the same names, so occurrences over-count and would let the
+     * redundancy filter below skip a cell that really does hold something new.
+     * Being a set also makes it idempotent, which matters because `enumerate`
+     * runs twice on the retry path.
+     */
+    tally?: Map<string, Set<string>>,
   ): Promise<void> => {
     const query = cellQuery(cell)
     // The last total this cell answered, so a `from` past the cap can tell a
@@ -1512,16 +1554,27 @@ export async function searchByKeywords(
       // `keywords:dsh-plugin` is fully enumerable today and contributes
       // maintainers the `deepseek-harness` window never shows — see the
       // second-keyword measurement in PARTITION_KEYWORDS' comment.
-      const publishers: string[] = []
+      const observed: string[] = []
       for (const object of objects) {
         const found = object?.package?.name
         if (typeof found === 'string') {
           seen.add(found)
           into.add(found)
         }
-        publishers.push(...maintainersOf(object?.package))
+        const owners = maintainersOf(object?.package)
+        observed.push(...owners)
+        if (tally !== undefined && typeof found === 'string') {
+          for (const owner of owners) {
+            let names = tally.get(owner)
+            if (names === undefined) {
+              names = new Set<string>()
+              tally.set(owner, names)
+            }
+            names.add(found)
+          }
+        }
       }
-      if (publishers.length > 0) onPublishers(publishers)
+      if (observed.length > 0) onPublishers(observed)
       // Stop on the total the registry answered, NEVER on a short page: npm
       // has served a 249-object page of a 600-name result set, and breaking
       // there dropped every later page of that keyword in silence. A
@@ -1547,6 +1600,59 @@ export async function searchByKeywords(
     // window that came up short was reported as a partition that failed to
     // cover the tail, blaming the wrong half.
     const windowNames = new Set<string>()
+    /** Maintainer to the distinct names the window and refinement cells served
+     * for it, which is what the publisher filter measures a cell against. */
+    const servedFor = new Map<string, Set<string>>()
+    /**
+     * The publisher cells worth paging, chosen ONCE. The probes that pick them
+     * are the axis's real cost, and `enumerate` runs twice whenever a keyword's
+     * residual sends it round again — which for `deepseek-harness` is every
+     * run. Re-probing there would double the cost of the axis to buy a second
+     * opinion on a question whose answer cannot have changed mid-run.
+     */
+    let publisherCells: Cell[] | undefined
+    /**
+     * Build a cell per known publisher, probe it, and keep only the ones that
+     * can supply something the union does not already hold.
+     *
+     * The filter is `cellTotal > served`, and it is the difference between an
+     * axis that costs a few thousand probes and one that also pages a few
+     * thousand cells twice. Every maintainer in the vocabulary was read off a
+     * `keywords:<harvest>` result, so nearly every cell answers non-zero —
+     * non-zero is therefore no evidence at all that a cell is worth paging.
+     * What IS evidence is the cell claiming more packages than we have already
+     * seen from that maintainer: the excess must be somewhere we have not
+     * looked, which past the window is exactly where this axis is aimed.
+     *
+     * It is also why this runs AFTER the window sweep rather than inside
+     * `partitionKeyword`, where the refinement cells are built: before the
+     * sweep there is nothing to compare a total against. One consequence is
+     * worth naming — the publisher axis can no longer rescue a keyword that
+     * NO refinement splits, because `partitionKeyword` throws on that before
+     * this runs. Both harvest keywords have twenty-odd non-empty refinement
+     * cells, so that path is hypothetical, and its message already names the
+     * true remedy: the refinement list is out of date.
+     */
+    const selectPublisherCells = async (): Promise<Cell[]> => {
+      const selected: Cell[] = []
+      let spent = 0
+      for (const maintainer of publishers) {
+        if (spent >= publisherProbeBudget) break
+        const cell: Cell = { keywords: [keyword], maintainer }
+        spent++
+        const cellTotal = await probe(cell)
+        if (cellTotal === 0) continue
+        // A publisher cell is bounded by one account's output under one
+        // keyword, so it fits the window in every case measured. One that does
+        // not is left to the refinement cells rather than throwing: an account
+        // with more than SEARCH_WINDOW packages is beyond this axis, not a
+        // partition failure.
+        if (cellTotal > SEARCH_WINDOW) continue
+        if (cellTotal <= (servedFor.get(maintainer)?.size ?? 0)) continue
+        selected.push(cell)
+      }
+      return selected
+    }
     const enumerate = async (): Promise<void> => {
       // The keyword's own reachable window, unioned in beside the refinement
       // cells and deliberately NON-COMPLETING. A refinement partition is not
@@ -1559,12 +1665,16 @@ export async function searchByKeywords(
       // which is the half they measure well on. See PARTITION_KEYWORDS for
       // the ranks. It costs 21 requests and shrinks the residual to names
       // that are BOTH outside the window AND carry no refinement keyword.
-      if (partitioned) await pageCell({ keywords: [keyword] }, windowNames, 'stop')
+      if (partitioned) await pageCell({ keywords: [keyword] }, windowNames, 'stop', servedFor)
       // The window's names belong to the union too; kept in their own set as
       // well so the coverage arithmetic can tell the two halves apart.
       // Idempotent, and `enumerate` runs twice on the retry path.
       for (const name of windowNames) forKeyword.add(name)
-      for (const cell of cells) await pageCell(cell, forKeyword, 'throw')
+      for (const cell of cells) await pageCell(cell, forKeyword, 'throw', servedFor)
+      if (partitioned) {
+        publisherCells ??= await selectPublisherCells()
+        for (const cell of publisherCells) await pageCell(cell, forKeyword, 'throw')
+      }
     }
     await enumerate()
     // The API has no complement operator, so a partition's coverage is

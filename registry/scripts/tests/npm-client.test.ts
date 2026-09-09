@@ -1037,6 +1037,10 @@ describe('searchByKeywords', () => {
     totals: Record<string, number> | ((query: string) => number),
     pages: (query: string, from: number) => string[],
     pagedTotals: Record<string, number> = {},
+    // Which maintainers each name's object carries. Optional because the
+    // publisher axis is the only thing that reads them, and every fixture
+    // predating it asserts on names alone.
+    maintainersFor: (name: string) => readonly string[] = () => [],
   ): { fetchImpl: typeof fetch; urls: string[] } {
     const urls: string[] = []
     // A function lets a fixture answer a different total on a later call —
@@ -1057,7 +1061,9 @@ describe('searchByKeywords', () => {
       const names = pages(query, from)
       return new Response(JSON.stringify({
         total: pagedTotals[query] ?? total,
-        objects: names.map(name => ({ package: { name } })),
+        objects: names.map(name => ({
+          package: { name, maintainers: maintainersFor(name).map(username => ({ username })) },
+        })),
       }), { status: 200 })
     }) as unknown as typeof fetch
     return { fetchImpl, urls }
@@ -1992,6 +1998,138 @@ describe('searchByKeywords', () => {
     // mergePublishers' job, and doing it here would make a page that carried
     // nothing indistinguishable from one that repeated a name.
     expect([...new Set(seen)].sort()).toEqual(['alice', 'bob'])
+  })
+
+  describe('publisher cells', () => {
+    /** A keyword past the window whose tail is one publisher's family, which no
+     * refinement cell reaches — the shape of the sayedev event. */
+    const familyPastWindow = (total: number, family: number) => stubSearch(
+      query => (query === 'keywords:deepseek-harness' ? total
+        : query === 'keywords:deepseek-harness maintainer:sayedev' ? family
+        : query === 'keywords:deepseek-harness,dsh' ? 1
+        : 0),
+      (query, from) => {
+        const beyond = Array.from({ length: total - SEARCH_WINDOW }, (_, i) => `beyond${i}`)
+        if (query === 'keywords:deepseek-harness') {
+          return from > MAX_SEARCH_FROM ? [] : Array.from({ length: 250 }, (_, i) => `w${from + i}`)
+        }
+        if (query === 'keywords:deepseek-harness maintainer:sayedev') {
+          return beyond.slice(0, family).slice(from, from + 250)
+        }
+        // A live refinement cell that reaches nothing past the window.
+        if (query === 'keywords:deepseek-harness,dsh') return ['w0'].slice(from, from + 250)
+        return []
+      },
+    ).fetchImpl
+
+    it('recovers a publisher family the refinement cells cannot reach', async () => {
+      // 5410 names, 160 past the window, all of them one publisher's. The
+      // refinement cell reaches none of them; maintainer:sayedev reaches all.
+      const names = await searchByKeywords(
+        familyPastWindow(5410, 160), undefined, undefined, undefined, undefined,
+        () => {}, () => {}, ['sayedev'])
+      expect(names).toHaveLength(5410)
+    })
+
+    it('fails exactly as before when the vocabulary is empty', async () => {
+      // The axis is a supplement. With no publishers known the shipped
+      // behaviour is unchanged, which is what makes this safe to land.
+      await expect(searchByKeywords(familyPastWindow(5410, 160)))
+        .rejects.toThrow(/under the 0\.9 floor/)
+    })
+
+    it('spends no probes on a keyword that fits the window', async () => {
+      // Thousands of probes is a real cost. A keyword inside the window needs
+      // no partition at all, so it must buy none.
+      const { fetchImpl, urls } = stubSearch(
+        { 'keywords:dsh-plugin': 10, 'keywords:deepseek-harness': 0 },
+        (query, from) => (query === 'keywords:dsh-plugin' && from === 0
+          ? Array.from({ length: 10 }, (_, i) => `p${i}`) : []),
+      )
+      await searchByKeywords(fetchImpl, undefined, undefined, undefined, undefined,
+        () => {}, () => {}, ['alice', 'bob'])
+      expect(urls.filter(u => u.includes('maintainer'))).toEqual([])
+    })
+
+    it('stops probing at the budget rather than spending the whole vocabulary', async () => {
+      // The vocabulary grows monotonically and forever; the per-run probe cost
+      // must not. Same posture as REPO_BACKFILL_BUDGET on the GitHub half.
+      const { fetchImpl, urls } = stubSearch(
+        // The refinement cell is here so `partitionKeyword` finds a split and
+        // the run reaches the publisher pass at all; it recovers nothing.
+        query => (query === 'keywords:deepseek-harness' ? 5410
+          : query === 'keywords:deepseek-harness,dsh' ? 1 : 0),
+        (query, from) => {
+          if (query === 'keywords:deepseek-harness,dsh') return ['w0'].slice(from, from + 250)
+          return query === 'keywords:deepseek-harness' && from <= MAX_SEARCH_FROM
+            ? Array.from({ length: 250 }, (_, i) => `w${from + i}`) : []
+        },
+      )
+      const many = Array.from({ length: 50 }, (_, i) => `u${i}`)
+      await expect(searchByKeywords(fetchImpl, undefined, undefined, undefined, undefined,
+        () => {}, () => {}, many, 10)).rejects.toThrow()
+      expect(urls.filter(u => u.includes('maintainer')).length).toBe(10)
+      // Probed ten times, not twenty: the retry re-PAGES the partition but must
+      // not re-PROBE the vocabulary, or the axis costs double on every keyword
+      // whose residual sends it round again — which is the steady state.
+    })
+
+    it('pages only the publisher cells the window did not already serve whole', async () => {
+      // The probe is the cheap half; PAGING every non-zero cell is what would
+      // triple a run, because every maintainer in the vocabulary was read off a
+      // `keywords:<harvest>` result and so answers non-zero for it. `alice` is
+      // that common case — the window already served all three of her packages,
+      // so her cell can only re-supply names the union holds. `sayedev` is the
+      // family: twenty packages, fourteen in the window and six past it, so her
+      // cell is the only thing that reaches those six.
+      const aliceNames = new Set(['w0', 'w1', 'w2'])
+      const sayedevNames = new Set([
+        ...Array.from({ length: 14 }, (_, i) => `w${10 + i}`),
+        ...Array.from({ length: 6 }, (_, i) => `beyond${i}`),
+      ])
+      const { fetchImpl, urls } = stubSearch(
+        query => (query === 'keywords:deepseek-harness' ? 5256
+          : query === 'keywords:deepseek-harness maintainer:alice' ? 3
+          : query === 'keywords:deepseek-harness maintainer:sayedev' ? 20
+          // A live refinement cell. It exists so `partitionKeyword` finds a
+          // split — the publisher axis runs after it and cannot rescue a
+          // keyword no refinement reaches at all — and it re-serves six names
+          // the window already served and `sayedev` owns. That is what makes
+          // this fixture distinguish a tally of DISTINCT NAMES from one of
+          // occurrences: counting occurrences scores her 14 + 6 = 20 against a
+          // cell total of 20, skips the cell, and loses the six names past the
+          // window; counting distinct names scores her 14, and 20 > 14 pages
+          // it. Both readings agree about `alice`, so she cannot show this.
+          : query === 'keywords:deepseek-harness,dsh' ? 6
+          : 0),
+        (query, from) => {
+          if (query === 'keywords:deepseek-harness') {
+            return from > MAX_SEARCH_FROM ? [] : Array.from({ length: 250 }, (_, i) => `w${from + i}`)
+          }
+          if (query === 'keywords:deepseek-harness,dsh') {
+            return Array.from({ length: 6 }, (_, i) => `w${10 + i}`).slice(from, from + 250)
+          }
+          if (query === 'keywords:deepseek-harness maintainer:alice') return [...aliceNames].slice(from, from + 250)
+          if (query === 'keywords:deepseek-harness maintainer:sayedev') return [...sayedevNames].slice(from, from + 250)
+          return []
+        },
+        {},
+        name => (aliceNames.has(name) ? ['alice'] : sayedevNames.has(name) ? ['sayedev'] : []),
+      )
+      const names = await searchByKeywords(fetchImpl, undefined, undefined, undefined, undefined,
+        () => {}, () => {}, ['alice', 'sayedev'])
+      // The six past the window are recovered, so the run publishes whole.
+      expect(names).toHaveLength(5256)
+      const probes = (user: string) => urls.filter(u => u.includes(`maintainer%3A${user}`) && u.includes('size=1'))
+      const pages = (user: string) => urls.filter(u => u.includes(`maintainer%3A${user}`) && !u.includes('size=1'))
+      // Both are probed — the filter cannot know a cell is redundant until it
+      // has the total to compare against what the window served.
+      expect(probes('alice')).toHaveLength(1)
+      expect(probes('sayedev')).toHaveLength(1)
+      // Only the one carrying names the union lacks is paged.
+      expect(pages('alice')).toEqual([])
+      expect(pages('sayedev').length).toBeGreaterThan(0)
+    })
   })
 
 })

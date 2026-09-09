@@ -723,6 +723,26 @@ Add the budget constant beside `PARTITION_KEYWORDS`:
 export const PUBLISHER_PROBE_BUDGET_DEFAULT = 4000
 ```
 
+> **DECIDED, and this task shipped differently from the code below.** The
+> warning that follows was right, the measurement held up against merged main,
+> and the answer taken was its first branch — bound the cells that get PAGED.
+> The rule is `cellTotal > (distinct names already served for that
+> maintainer)`, which needs the window's names and so moved the axis OUT of
+> `partitionKeyword` and into `searchByKeywords` after the sweep. Read the
+> comments on `PUBLISHER_PROBE_BUDGET_DEFAULT` and `selectPublisherCells` for
+> what shipped; the block below is kept as the reasoning that produced it.
+>
+> Two corrections to the warning's own suggestions, both found while
+> implementing. **"Keep the highest-total cells" is probably inverted** — npm
+> ranks by popularity, so the tail holds low-scoring packages and a publisher
+> with two hundred popular ones has them all inside the window, while
+> `sayedev` was twenty freshly published. And the tally must count **distinct
+> names, not object occurrences**: the window sweep and a refinement cell
+> re-serve many of the same names, so occurrences inflate and skip a cell that
+> really does hold something new. A mutation check caught the first version of
+> the new test failing to cover that, because over-counting only skips MORE
+> and the fixture's redundant publisher was already being skipped.
+
 **This bounds the probes, not the run — size the paging half before shipping
 Step 3.** Every maintainer in the vocabulary was read out of a
 `keywords:<harvest>` result, so `keywords:<harvest> maintainer:<user>` is
@@ -793,17 +813,40 @@ In `searchByKeywords`, add the two parameters after `onPublishers` and pass them
 Run: `pnpm exec vitest run && pnpm typecheck`
 Expected: PASS, whole registry suite. Then confirm the new rules bite — a guard that cannot fail is not a guard:
 
-```bash
-# Neuter the axis: the family test must go red.
-sed -i 's/if (spent >= budget) break/if (true) break/' registry/scripts/src/npm-client.ts
-pnpm exec vitest run registry/scripts/tests/npm-client.test.ts   # expect: failures
-git checkout registry/scripts/src/npm-client.ts
+**COMMIT FIRST — Step 5 before this, not after.** `git checkout <path>`
+restores from the INDEX, so running these with the task's work still unstaged
+DELETES it. That happened here: the whole Task 5 source change was wiped by
+the first restore and had to be rebuilt. The mutations are worth running; they
+are only safe once there is something to restore to.
 
-# Remove the budget: the budget test must go red.
-sed -i 's/if (spent >= budget) break/if (false) break/' registry/scripts/src/npm-client.ts
-pnpm exec vitest run registry/scripts/tests/npm-client.test.ts   # expect: failures
-git checkout registry/scripts/src/npm-client.ts
+Each mutation must turn a DIFFERENT test red. One that turns none red is a
+guard no test holds — strengthen the fixture rather than shrugging.
+
+```bash
+mutate () {  # sed-expr, then restore
+  sed -i "$1" registry/scripts/src/npm-client.ts
+  pnpm exec vitest run registry/scripts/tests/npm-client.test.ts -t "publisher cells"
+  git checkout registry/scripts/src/npm-client.ts
+}
+
+# Neuter the axis: family, budget and filter tests all go red.
+mutate 's/if (spent >= publisherProbeBudget) break/if (true) break/'
+# Remove the budget: only the budget test goes red (50 probes, not 10).
+mutate 's/if (spent >= publisherProbeBudget) break/if (false) break/'
+# Remove the redundancy filter: only the filter test goes red (alice is paged).
+mutate 's/if (cellTotal <= (servedFor.get(maintainer)?.size ?? 0)) continue//'
+# Break the memoization: only the budget test goes red (20 probes, not 10).
+mutate 's/publisherCells ??= await selectPublisherCells()/publisherCells = await selectPublisherCells()/'
+# Count occurrences, not distinct names: the filter test goes red because
+# sayedev is skipped and her six names past the window are lost.
+mutate 's/names.add(found)/names.add(`${found}:${String(Math.random())}`)/'
 ```
+
+That last one SURVIVED the first version of the filter test and is the reason
+the fixture's refinement cell re-serves six of `sayedev`'s in-window names
+rather than one of `alice`'s. Over-counting only makes the filter skip more,
+so a publisher who is correctly skipped cannot reveal it; only one who should
+be PAGED and is wrongly skipped can.
 
 - [ ] **Step 5: Commit**
 
