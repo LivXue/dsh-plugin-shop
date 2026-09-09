@@ -673,10 +673,6 @@
   category: integration
 - name: "@deepseek-ai/dsh-client-ui-prism"
   category: theme
-- name: "@deepseek-ai/dsh-client-ui-session-archive"
-  category: ui
-- name: "@deepseek-ai/dsh-client-ui-session-pin"
-  category: ui
 - name: "@deepseek-ai/dsh-client-ui-usage"
   category: ui
 - name: "@deepseek-ai/dsh-client-ui-vision"
@@ -717,10 +713,6 @@
   category: workflow
 - name: "@deepseek-ai/dsh-mind-garden"
   category: other
-- name: "@deepseek-ai/dsh-model-catalog-bigmodel"
-  category: provider
-- name: "@deepseek-ai/dsh-model-catalog-xai"
-  category: provider
 - name: "@deepseek-ai/dsh-ocr-vision"
   category: tool
 - name: "@deepseek-ai/dsh-paseo"
@@ -2163,6 +2155,8 @@
   category: provider
 - name: "@jcy2387/dsh-conversation-ui"
   category: ui
+- name: "@jcy2387/dsh-models-input-modalities"
+  category: ui
 - name: "@jcy2387/dsh-suite"
   category: other
 - name: "@jensentsts/dsh-completion-sound"
@@ -2971,22 +2965,6 @@
   category: provider
 - name: "@neevcloud/dsh-sandbox"
   category: provider
-- name: "@neplich/dsh-agent-imagevault"
-  category: tool
-- name: "@neplich/dsh-agent-presetdev"
-  category: tool
-- name: "@neplich/dsh-agent-webuse"
-  category: tool
-- name: "@neplich/dsh-chat-annotations"
-  category: ui
-- name: "@neplich/dsh-chat-autofold"
-  category: ui
-- name: "@neplich/dsh-chat-autoload"
-  category: ui
-- name: "@neplich/dsh-chat-filemention"
-  category: ui
-- name: "@neplich/dsh-chat-mermaid"
-  category: ui
 - name: "@nexlineai/dsh-tui"
   category: ui
 - name: "@nextnowlabs/dsh-ark-toolkit"
@@ -4465,8 +4443,6 @@
   category: ui
 - name: "chicheng-push"
   category: integration
-- name: "chiral-pulse"
-  category: theme
 - name: "chrome-faithful"
   category: tool
 - name: "claude-in-dsh"
@@ -4493,8 +4469,6 @@
   category: integration
 - name: "codereader"
   category: ui
-- name: "codex-harness-control"
-  category: integration
 - name: "codex-plugin-dsh"
   category: provider
 - name: "codex-subscription-oauth-plugin"
@@ -7195,6 +7169,8 @@
   category: tool
 - name: "dsh-context-triage"
   category: tool
+- name: "dsh-context-window"
+  category: workflow
 - name: "dsh-context7"
   category: provider
 - name: "dsh-continual-harness"
@@ -7842,6 +7818,8 @@
 - name: "dsh-desktop-companion"
   category: ui
 - name: "dsh-desktop-context-menu"
+  category: ui
+- name: "dsh-desktop-drop-path"
   category: ui
 - name: "dsh-desktop-launcher"
   category: tool
@@ -8742,6 +8720,8 @@
 - name: "dsh-flower-pick"
   category: other
 - name: "dsh-flowglass"
+  category: other
+- name: "dsh-flowtext"
   category: other
 - name: "dsh-fluid-width"
   category: ui
@@ -9971,6 +9951,8 @@
   category: ui
 - name: "dsh-ivory-coast"
   category: other
+- name: "dsh-iwiw-memory"
+  category: integration
 - name: "dsh-j-space"
   category: tool
 - name: "dsh-j-space-warm"
@@ -11383,6 +11365,8 @@
   category: ui
 - name: "dsh-model-jury"
   category: workflow
+- name: "dsh-model-list"
+  category: tool
 - name: "dsh-model-manager"
   category: tool
 - name: "dsh-model-memory"
@@ -11915,6 +11899,8 @@
   category: provider
 - name: "dsh-offpeak"
   category: workflow
+- name: "dsh-offpeak-queue"
+  category: workflow
 - name: "dsh-oh-my-theme"
   category: ui
 - name: "dsh-oh-my-ticket"
@@ -12127,6 +12113,8 @@
   category: theme
 - name: "dsh-outline-plugin"
   category: ui
+- name: "dsh-outlook"
+  category: integration
 - name: "dsh-output-custody-proof"
   category: tool
 - name: "dsh-output-style"
@@ -12471,8 +12459,6 @@
   category: tool
 - name: "dsh-pi-host"
   category: tool
-- name: "dsh-pi-kit"
-  category: ui
 - name: "dsh-pi-memory"
   category: tool
 - name: "dsh-pianpian-ui"
@@ -13947,6 +13933,8 @@
   category: ui
 - name: "dsh-queue-director"
   category: ui
+- name: "dsh-queue-first-enter"
+  category: ui
 - name: "dsh-queue-merge"
   category: tool
 - name: "dsh-queue-plus"
@@ -13963,11 +13951,15 @@
   category: ui
 - name: "dsh-quick-recipes"
   category: tool
+- name: "dsh-quick-replies"
+  category: ui
 - name: "dsh-quick-restart"
   category: tool
 - name: "dsh-quick-restart-desktop"
   category: tool
 - name: "dsh-quick-toc"
+  category: ui
+- name: "dsh-quick-window-launcher"
   category: ui
 - name: "dsh-quicklook"
   category: ui
@@ -14573,6 +14565,8 @@
   category: tool
 - name: "dsh-save-balance-monitor"
   category: ui
+- name: "dsh-save-session"
+  category: tool
 - name: "dsh-saving-goal"
   category: tool
 - name: "dsh-scaffold"
@@ -15365,6 +15359,8 @@
   category: theme
 - name: "dsh-skin-galactic-opera"
   category: theme
+- name: "dsh-skin-genshin-nicole"
+  category: theme
 - name: "dsh-skin-glass"
   category: theme
 - name: "dsh-skin-kamisato"
@@ -15770,8 +15766,6 @@
 - name: "dsh-subagent-default-model"
   category: tool
 - name: "dsh-subagent-error-details"
-  category: other
-- name: "dsh-subagent-flowtext"
   category: other
 - name: "dsh-subagent-grok"
   category: provider
@@ -16460,6 +16454,8 @@
 - name: "dsh-tool-accurate-vision"
   category: tool
 - name: "dsh-tool-adapt"
+  category: tool
+- name: "dsh-tool-advisor"
   category: tool
 - name: "dsh-tool-approval"
   category: tool
@@ -19032,8 +19028,6 @@
 - name: "workspace-files-explorer"
   category: tool
 - name: "worktree-mgr"
-  category: tool
-- name: "write-chinese-long-screenplay"
   category: tool
 - name: "ws-file-drawer"
   category: ui
