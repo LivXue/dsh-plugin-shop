@@ -1,28 +1,19 @@
 import { describe, expect, it, vi } from 'vitest'
-import { mkdirSync, mkdtempSync, writeFileSync, chmodSync, readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { activationFailureDetail, shellSafeTarget, installFailureDetail, installTimeoutDetail, killTree, lineSink, spawnFailureDetail, startInstall, startUninstall, type InstallStatus } from '../../src/host/executor.ts'
 import type { HotRestartReason } from '../../src/host/hot.ts'
+import { fakeDsh, fakeDshRecording } from '../fixtures/fake-dsh.ts'
 import { fileTempRoot } from './temp-root.ts'
 
 const TEMP_ROOT = fileTempRoot('executor')
 
 // A fixture `dsh` that records its full argv in a marker file and exits with
 // the requested code, proving the executor passes --profile and the pinned
-// spec through: `dsh plugin --profile <p> add <spec>` is `$1 $2 $3 $4 $5`.
+// spec through: `dsh plugin --profile <p> add <spec>` is `argv.slice(0, 5)`.
 function fixtureDsh(exitCode: number): string {
-  const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-fixture-'))
-  const bin = join(dir, 'dsh')
-  writeFileSync(bin, [
-    '#!/bin/sh',
-    `echo "$1 $2 $3 $4 $5" >> "${join(dir, 'calls.log')}"`,
-    'echo "installing..."',
-    `exit ${exitCode}`,
-    '',
-  ].join('\n'))
-  chmodSync(bin, 0o755)
-  return bin
+  return fakeDshRecording(mkdtempSync(join(TEMP_ROOT, 'dsh-fixture-')), exitCode)
 }
 
 // A fixture `dsh` that emits CRLF line endings, as every Windows console
@@ -30,17 +21,11 @@ function fixtureDsh(exitCode: number): string {
 // bytes come from the script, not the host, so this reproduces the Windows
 // stream shape while running on Linux or macOS.
 function fixtureDshCrlf(exitCode: number, lines: readonly string[]): string {
-  const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-fixture-crlf-'))
-  const bin = join(dir, 'dsh')
-  const payload = lines.map(line => `${line}\\r\\n`).join('')
-  writeFileSync(bin, [
-    '#!/bin/sh',
-    `printf '%b' '${payload}'`,
-    `exit ${exitCode}`,
-    '',
+  const payload = lines.map(line => `${line}\r\n`).join('')
+  return fakeDsh(mkdtempSync(join(TEMP_ROOT, 'dsh-fixture-crlf-')), [
+    `process.stdout.write(${JSON.stringify(payload)})`,
+    `process.exit(${exitCode})`,
   ].join('\n'))
-  chmodSync(bin, 0o755)
-  return bin
 }
 
 describe('startInstall', () => {
@@ -63,11 +48,13 @@ describe('startInstall', () => {
     expect(status.detail).toContain('dsh plugin --profile web install')
   })
 
-  // POSIX-only: the detail is platform-dependent by design, and on Windows a
-  // missing binary reports the entry-lookup failure instead (see
-  // `spawnFailureDetail`). Every other case in this file already depends on
-  // `#!/bin/sh` fixtures, so the file as a whole does not run on Windows; the
-  // Windows path is covered by dsh-cli.test.ts and real-install.test.ts.
+  // POSIX-only, and now the ONLY case in this file that is: the detail is
+  // platform-dependent by design, and on Windows a missing binary reports the
+  // entry-lookup failure instead (see `spawnFailureDetail`). The rest of the
+  // file used to be skipped WITH it, because every fixture was a `#!/bin/sh`
+  // script; they are node scripts now and run everywhere. The Windows arm of
+  // this particular message is asserted directly in `spawnFailureDetail`'s
+  // own cases below, which take the platform as an argument.
   it.skipIf(process.platform === 'win32')('reports failed with the CLI hint when dsh is not on PATH', async () => {
     const install = startInstall({ profile: 'web', spec: 'dsh-hello-plugin@1.2.0', dshBin: join(tmpdir(), 'no-such-dsh-bin') })
     const status = await install.finished
@@ -87,16 +74,14 @@ describe('startInstall', () => {
 
   it('serializes installs into one profile', async () => {
     const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-serialize-'))
-    const bin = join(dir, 'dsh')
-    writeFileSync(bin, [
-      '#!/bin/sh',
-      `echo "start $3" >> "${join(dir, 'events.log')}"`,
-      'sleep 0.2',
-      `echo "end $3" >> "${join(dir, 'events.log')}"`,
-      'exit 0',
-      '',
+    const eventsLog = JSON.stringify(join(dir, 'events.log'))
+    const bin = fakeDsh(dir, [
+      // `argv[2]` is the profile: what the shell fixture spelled `$3`.
+      `fs.appendFileSync(${eventsLog}, 'start ' + argv[2] + '\\n')`,
+      'await new Promise(resolve => setTimeout(resolve, 200))',
+      `fs.appendFileSync(${eventsLog}, 'end ' + argv[2] + '\\n')`,
+      'process.exit(0)',
     ].join('\n'))
-    chmodSync(bin, 0o755)
     const first = startInstall({ profile: 'web', spec: 'a@1.0.0', dshBin: bin })
     const second = startInstall({ profile: 'web', spec: 'b@1.0.0', dshBin: bin })
     const other = startInstall({ profile: 'tui', spec: 'c@1.0.0', dshBin: bin })
@@ -113,19 +98,10 @@ describe('startInstall', () => {
   })
 
   it('caps the log at 200 lines, dropping the oldest', async () => {
-    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-cap-'))
-    const bin = join(dir, 'dsh')
-    writeFileSync(bin, [
-      '#!/bin/sh',
-      'i=1',
-      'while [ $i -le 250 ]; do',
-      '  echo "line $i"',
-      '  i=$((i+1))',
-      'done',
-      'exit 0',
-      '',
+    const bin = fakeDsh(mkdtempSync(join(TEMP_ROOT, 'dsh-cap-')), [
+      'for (let i = 1; i <= 250; i += 1) out(`line ${i}`)',
+      'process.exit(0)',
     ].join('\n'))
-    chmodSync(bin, 0o755)
     const install = startInstall({ profile: 'web', spec: 'a@1.0.0', dshBin: bin })
     const status = await install.finished
     // 250 newline-terminated lines: the cap keeps exactly the newest 200,
@@ -135,16 +111,10 @@ describe('startInstall', () => {
   })
 
   it('surfaces stderr verbatim in the log with the recovery hint on failure', async () => {
-    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-stderr-'))
-    const bin = join(dir, 'dsh')
-    writeFileSync(bin, [
-      '#!/bin/sh',
-      'echo "boom one" >&2',
-      'echo "boom two" >&2',
-      'exit 1',
-      '',
+    const bin = fakeDsh(mkdtempSync(join(TEMP_ROOT, 'dsh-stderr-')), [
+      "process.stderr.write('boom one\\nboom two\\n')",
+      'process.exit(1)',
     ].join('\n'))
-    chmodSync(bin, 0o755)
     const install = startInstall({ profile: 'web', spec: 'a@1.0.0', dshBin: bin })
     const status = await install.finished
     expect(status.state).toBe('failed')
@@ -279,22 +249,15 @@ describe('startInstall post-install confirm (§7.2 step 6)', () => {
   // pre-seeded. An exit-0 stub that writes nothing can only ever model "the
   // install added nothing".
   function fixtureDshAdding(home: string, name: string, spec: string): string {
-    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-fixture-add-'))
-    const bin = join(dir, 'dsh')
-    const manifest = join(home, 'profiles', 'web', 'package.json')
-    writeFileSync(bin, [
-      '#!/bin/sh',
-      'echo "installing..."',
-      `node -e '`
-      + `const f=process.argv[1];const fs=require("fs");const m=JSON.parse(fs.readFileSync(f,"utf8"));`
-      + `m.dependencies=m.dependencies||{};m.dependencies[process.argv[2]]=process.argv[3];`
-      + `fs.writeFileSync(f,JSON.stringify(m));`
-      + `' "${manifest}" "${name}" "${spec}"`,
-      'exit 0',
-      '',
+    const manifest = JSON.stringify(join(home, 'profiles', 'web', 'package.json'))
+    return fakeDsh(mkdtempSync(join(TEMP_ROOT, 'dsh-fixture-add-')), [
+      "out('installing...')",
+      `const manifest = JSON.parse(fs.readFileSync(${manifest}, 'utf8'))`,
+      'manifest.dependencies = manifest.dependencies || {}',
+      `manifest.dependencies[${JSON.stringify(name)}] = ${JSON.stringify(spec)}`,
+      `fs.writeFileSync(${manifest}, JSON.stringify(manifest))`,
+      'process.exit(0)',
     ].join('\n'))
-    chmodSync(bin, 0o755)
-    return bin
   }
 
   it('refuses a leftover bundle row when this install added something else', async () => {
@@ -419,17 +382,13 @@ describe('startInstall post-install confirm (§7.2 step 6)', () => {
     // AFTER read succeeds and only the prior state is missing.
     writeFileSync(manifestPath, '{ not json')
     const after = { 'dsh-hello-plugin': '1.0.0', 'dsh-memory': '2.1.0' }
-    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-fixture-replace-'))
-    const bin = join(dir, 'dsh')
-    writeFileSync(bin, [
-      '#!/bin/sh',
-      'echo "installing..."',
-      `printf '%s' '${JSON.stringify({ dependencies: after, dsh: { profile: { bundles: [] } } })}'`
-      + ` > "${manifestPath}"`,
-      'exit 0',
-      '',
+    const bin = fakeDsh(mkdtempSync(join(TEMP_ROOT, 'dsh-fixture-replace-')), [
+      "out('installing...')",
+      `fs.writeFileSync(${JSON.stringify(manifestPath)}, ${JSON.stringify(
+        JSON.stringify({ dependencies: after, dsh: { profile: { bundles: [] } } }),
+      )})`,
+      'process.exit(0)',
     ].join('\n'))
-    chmodSync(bin, 0o755)
     const status = await startInstall({
       profile: 'web',
       spec: '@acme/plugin@1.0.0',
@@ -451,18 +410,13 @@ describe('startInstall post-install confirm (§7.2 step 6)', () => {
     const profileDir = join(home, 'profiles', 'web')
     mkdirSync(profileDir, { recursive: true })
     const manifestPath = join(profileDir, 'package.json')
-    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-fixture-fresh-'))
-    const bin = join(dir, 'dsh')
-    writeFileSync(bin, [
-      '#!/bin/sh',
-      `printf '%s' '${JSON.stringify({
+    const bin = fakeDsh(mkdtempSync(join(TEMP_ROOT, 'dsh-fixture-fresh-')), [
+      `fs.writeFileSync(${JSON.stringify(manifestPath)}, ${JSON.stringify(JSON.stringify({
         dependencies: { 'some-monorepo-root': 'github:acme/mono#0123456789abcdef' },
         dsh: { profile: { bundles: [] } },
-      })}' > "${manifestPath}"`,
-      'exit 0',
-      '',
+      }))})`,
+      'process.exit(0)',
     ].join('\n'))
-    chmodSync(bin, 0o755)
     const status = await startInstall({
       profile: 'web',
       spec: '@acme/plugin@1.0.0',
@@ -487,9 +441,11 @@ describe('startInstall post-install confirm (§7.2 step 6)', () => {
 describe('startInstall quotes a subpackage spec for the shell dsh uses on Windows', () => {
   function specSeenByDsh(platform: NodeJS.Platform, spec: string): Promise<string> {
     const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-argv-'))
-    const bin = join(dir, 'dsh')
-    writeFileSync(bin, ['#!/bin/sh', `printf '%s' "$5" > "${join(dir, 'spec.txt')}"`, 'exit 0', ''].join('\n'))
-    chmodSync(bin, 0o755)
+    // `argv[4]` is the spec: what the shell fixture spelled `$5`.
+    const bin = fakeDsh(dir, [
+      `fs.writeFileSync(${JSON.stringify(join(dir, 'spec.txt'))}, argv[4])`,
+      'process.exit(0)',
+    ].join('\n'))
     return startInstall({ profile: 'web', spec, dshBin: bin, platform }).finished
       .then(() => readFileSync(join(dir, 'spec.txt'), 'utf8'))
   }
@@ -954,19 +910,22 @@ describe('installFailureDetail', () => {
 })
 
 describe('the install deadline and the process group (F-1)', () => {
+  // The grandchild INHERITS stdout, which is the whole point: it holds the
+  // pipe open after its parent has exited, and the executor must settle on
+  // the exit rather than waiting for a stream nobody will close. `sleep &`
+  // did this in the shell version; a detached node timer does it here.
   function grandchildDsh(sleepSeconds: number): { bin: string; pidFile: string } {
     const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-grandchild-'))
     const pidFile = join(dir, 'grandchild.pid')
-    const bin = join(dir, 'dsh')
-    writeFileSync(bin, [
-      '#!/bin/sh',
-      'echo "installing..."',
-      `sleep ${sleepSeconds} &`,
-      `echo $! > "${pidFile}"`,
-      'exit 0',
-      '',
+    const bin = fakeDsh(dir, [
+      "const { spawn } = await import('node:child_process')",
+      "out('installing...')",
+      `const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, ${sleepSeconds * 1000})'],`
+      + " { stdio: ['ignore', 'inherit', 'inherit'], detached: true })",
+      'child.unref()',
+      `fs.writeFileSync(${JSON.stringify(pidFile)}, String(child.pid))`,
+      'process.exit(0)',
     ].join('\n'))
-    chmodSync(bin, 0o755)
     return { bin, pidFile }
   }
 
@@ -987,15 +946,18 @@ describe('the install deadline and the process group (F-1)', () => {
 
   it('stops a command that outlives its deadline and frees the profile queue', async () => {
     const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-deadline-'))
-    const hung = join(dir, 'dsh')
-    writeFileSync(hung, [
-      '#!/bin/sh',
-      'sleep 30 &',
-      `echo $! > "${join(dir, 'gpid')}"`,
-      'wait',
-      '',
+    // NOT detached, unlike the case above: this grandchild has to be inside
+    // whatever the deadline tears down — the process group on POSIX, the
+    // `taskkill /T` tree on Windows — because that is what the last
+    // assertion checks. Its parent then waits forever, so the only way out
+    // is the deadline.
+    const hung = fakeDsh(dir, [
+      "const { spawn } = await import('node:child_process')",
+      "const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'],"
+      + " { stdio: ['ignore', 'inherit', 'inherit'] })",
+      `fs.writeFileSync(${JSON.stringify(join(dir, 'gpid'))}, String(child.pid))`,
+      'await new Promise(() => {})',
     ].join('\n'))
-    chmodSync(hung, 0o755)
 
     const first = startInstall({ profile: 'deadline', spec: 'a@1.0.0', dshBin: hung, timeoutMs: 300 })
     const second = startInstall({ profile: 'deadline', spec: 'b@1.0.0', dshBin: fixtureDsh(0) })
@@ -1082,17 +1044,12 @@ describe('lineSink (F-6)', () => {
 
 describe('startInstall line assembly (F-6)', () => {
   it('reports the whole line when the stream splits it, not the fragment', async () => {
-    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-split-'))
-    const bin = join(dir, 'dsh')
-    writeFileSync(bin, [
-      '#!/bin/sh',
-      "printf '%s' ' ERR_PNPM_FE'",
-      'sleep 0.3',
-      "printf '%s\\n' 'TCH_404 GET https://r/x: Not Found - 404'",
-      'exit 1',
-      '',
+    const bin = fakeDsh(mkdtempSync(join(TEMP_ROOT, 'dsh-split-')), [
+      "process.stdout.write(' ERR_PNPM_FE')",
+      'await new Promise(resolve => setTimeout(resolve, 300))',
+      "process.stdout.write('TCH_404 GET https://r/x: Not Found - 404\\n')",
+      'process.exit(1)',
     ].join('\n'))
-    chmodSync(bin, 0o755)
     const status = await startInstall({ profile: 'split', spec: 'a@1.0.0', dshBin: bin }).finished
     expect(status.state).toBe('failed')
     expect(status.log).toEqual([' ERR_PNPM_FETCH_404 GET https://r/x: Not Found - 404'])
@@ -1100,10 +1057,10 @@ describe('startInstall line assembly (F-6)', () => {
   })
 
   it('keeps a final unterminated line in the log', async () => {
-    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-unterminated-'))
-    const bin = join(dir, 'dsh')
-    writeFileSync(bin, ['#!/bin/sh', "printf '%s' 'the bundle did not appear'", 'exit 1', ''].join('\n'))
-    chmodSync(bin, 0o755)
+    const bin = fakeDsh(mkdtempSync(join(TEMP_ROOT, 'dsh-unterminated-')), [
+      "process.stdout.write('the bundle did not appear')",
+      'process.exit(1)',
+    ].join('\n'))
     const status = await startInstall({ profile: 'unterminated', spec: 'a@1.0.0', dshBin: bin }).finished
     expect(status.log).toEqual(['the bundle did not appear'])
     expect(status.detail).toMatch(/did not appear/)
@@ -1167,11 +1124,17 @@ describe('spawnFailureDetail', () => {
 })
 
 describe('the child environment (F-12 residual)', () => {
+  /** Records what the child saw in `SHOP_F12_PROBE`, absent as the empty
+   * string — which is what `"$SHOP_F12_PROBE"` expanded to in the shell
+   * fixture, so both cases keep their original assertions. */
+  const envProbeDsh = (dir: string): string => fakeDsh(dir, [
+    `fs.writeFileSync(${JSON.stringify(join(dir, 'env.txt'))}, (process.env.SHOP_F12_PROBE ?? '') + '\\n')`,
+    'process.exit(0)',
+  ].join('\n'))
+
   it('passes the parent environment to the child, deliberately', async () => {
     const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-env-'))
-    const bin = join(dir, 'dsh')
-    writeFileSync(bin, ['#!/bin/sh', `printf '%s\n' "$SHOP_F12_PROBE" > "${join(dir, 'env.txt')}"`, 'exit 0', ''].join('\n'))
-    chmodSync(bin, 0o755)
+    const bin = envProbeDsh(dir)
     process.env.SHOP_F12_PROBE = 'inherited'
     try {
       await startInstall({ profile: 'env', spec: 'a@1.0.0', dshBin: bin }).finished
@@ -1183,9 +1146,7 @@ describe('the child environment (F-12 residual)', () => {
 
   it('uses only the given environment when one is passed', async () => {
     const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-env-pinned-'))
-    const bin = join(dir, 'dsh')
-    writeFileSync(bin, ['#!/bin/sh', `printf '%s\n' "$SHOP_F12_PROBE" > "${join(dir, 'env.txt')}"`, 'exit 0', ''].join('\n'))
-    chmodSync(bin, 0o755)
+    const bin = envProbeDsh(dir)
     process.env.SHOP_F12_PROBE = 'inherited'
     try {
       await startInstall({ profile: 'env-pinned', spec: 'a@1.0.0', dshBin: bin, env: { PATH: process.env.PATH ?? '' } }).finished

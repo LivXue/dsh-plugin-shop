@@ -11,6 +11,11 @@ const TEMP_ROOT = fileTempRoot('restart')
 // A fixture `dsh` that records its argv in a marker file when it finally
 // runs — the marker's appearance is the proof the helper waited for the
 // parent pid and then exec'd the command.
+//
+// Still a `#!/bin/sh` script, deliberately, unlike every other fixture in
+// this suite: it is `exec`'d by the POSIX helper, and the two cases that use
+// it are the two that cannot run on Windows at all (see their skip). A node
+// script here would suggest the helper had become portable.
 function fixtureDsh(marker: string): string {
   const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-restart-bin-'))
   const bin = join(dir, 'dsh')
@@ -25,6 +30,16 @@ function fixtureDsh(marker: string): string {
   return bin
 }
 
+/** The two cases that drive the handoff end to end. `startRestart` spawns
+ * `sh -c` with `kill -0`, `sleep` and `exec "$@"`, none of which Windows has
+ * — the gateway refuses a restart there before reaching this module at all
+ * (index.ts `restartPlatformSupported`, asserted in `index.test.ts`). So this
+ * is the product's own boundary rather than a fixture limitation, and the
+ * three cases below it DO run on Windows: the log-open refusal, the
+ * `restartCommand` arithmetic, and the helper-that-could-not-start log, which
+ * on Windows is not even hypothetical. */
+const posixHandoff = it.skipIf(process.platform === 'win32')
+
 async function until(predicate: () => boolean, timeoutMs: number): Promise<void> {
   const start = Date.now()
   while (!predicate()) {
@@ -33,15 +48,19 @@ async function until(predicate: () => boolean, timeoutMs: number): Promise<void>
   }
 }
 
-/** A pid that is already dead when the helper's first poll runs. */
+/** A pid that is already dead when the helper's first poll runs. The current
+ * node rather than `sh`: this is used by a case that DOES run on Windows,
+ * where a `spawn('sh', …)` resolves to a spawn failure whose pid is
+ * `undefined` — the case then passed while asserting nothing about a dead
+ * pid. */
 async function deadPid(): Promise<number> {
-  const gone = spawn('sh', ['-c', 'exit 0'])
+  const gone = spawn(process.execPath, ['-e', ''])
   await new Promise(resolve => gone.on('exit', resolve))
   return gone.pid!
 }
 
 describe('startRestart', () => {
-  it('execs the dsh command verbatim once the parent pid is gone, logging its output', async () => {
+  posixHandoff('execs the dsh command verbatim once the parent pid is gone, logging its output', async () => {
     const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-restart-case-'))
     const marker = join(dir, 'calls.log')
     const logFile = join(dir, 'restart.log')
@@ -58,7 +77,7 @@ describe('startRestart', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
-  it('holds the child back while the parent pid is alive', async () => {
+  posixHandoff('holds the child back while the parent pid is alive', async () => {
     const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-restart-case-'))
     const marker = join(dir, 'calls.log')
     const sleeper = spawn('sh', ['-c', 'exec sleep 10'])

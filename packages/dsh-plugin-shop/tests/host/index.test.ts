@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import ShopGateway, { verifyTarballSha256 } from '../../src/host/index.ts'
@@ -8,6 +8,7 @@ import type { InventoryEntry, LoaderEntryLike, ShopGatewayOptions, ShopInstallSt
 import type { HotMountResult } from '../../src/host/hot.ts'
 import type { CatalogResult, CatalogSnapshot, LoadCatalogOptions } from '../../src/host/catalog.ts'
 import type { CatalogEntry } from '../../src/host/types.ts'
+import { fakeDsh, fakeDshRecording } from '../fixtures/fake-dsh.ts'
 import { fileTempRoot } from './temp-root.ts'
 
 const TEMP_ROOT = fileTempRoot('index')
@@ -50,9 +51,7 @@ describe('two catalog entries share one name (G-1)', () => {
   const bob: CatalogEntry = { ...alice, version: bobCommit, integrity: bobCommit, repo: 'bob/dsh-foo' }
 
   function gatewayWithBoth(dir: string, dependencies: Record<string, string>): ShopGateway {
-    const bin = join(dir, 'fake-dsh')
-    writeFileSync(bin, ['#!/bin/sh', `echo "$1 $2 $3 $4 $5" >> "${join(dir, 'calls.log')}"`, 'exit 0', ''].join('\n'))
-    chmodSync(bin, 0o755)
+    const bin = fakeDshRecording(dir, 0, { silent: true })
     const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-dup-profile-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies }))
     return new ShopGateway(stubCtx(), {
@@ -381,14 +380,7 @@ describe('ShopGateway.catalog', () => {
 // a rejection's no-spawn property be proven by the file's absence.
 function gatewayWithSnapshot(snapshot: CatalogSnapshot, options: Partial<ShopGatewayOptions> = {}): { gateway: ShopGateway; callsLog: string } {
   const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-gateway-fixture-'))
-  const bin = join(dir, 'dsh')
-  writeFileSync(bin, [
-    '#!/bin/sh',
-    `echo "$1 $2 $3 $4 $5" >> "${join(dir, 'calls.log')}"`,
-    'exit 0',
-    '',
-  ].join('\n'))
-  chmodSync(bin, 0o755)
+  const bin = fakeDshRecording(dir, 0, { silent: true })
   // The install flow reads the running profile manifest before spawning (to
   // tell an update from a fresh install); the fixture supplies one.
   const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-gateway-profile-'))
@@ -864,9 +856,7 @@ describe('ShopGateway.restart', () => {
   // ever spawned by a test.
   function restartingGateway(options: { exit: ReturnType<typeof vi.fn>; cacheDir?: string; restartArgv?: string[] }): ShopGateway {
     const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-gateway-restart-'))
-    const bin = join(dir, 'dsh')
-    writeFileSync(bin, `#!/bin/sh\necho "$1 $2 $3" >> "${join(dir, 'calls.log')}"\nexit 0\n`)
-    chmodSync(bin, 0o755)
+    const bin = fakeDshRecording(dir, 0, { silent: true })
     return new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/',
       cacheDir: options.cacheDir ?? mkdtempSync(join(TEMP_ROOT, 'dsh-restart-cache-')),
@@ -922,7 +912,13 @@ describe('ShopGateway.restart', () => {
     expect(exit).not.toHaveBeenCalled()
   })
 
-  it("re-runs this process's own entry when dshBin is the bare default", async () => {
+  // POSIX-only, and the product is too: the two-phase handoff spawns `sh -c`
+  // with `kill -0`, `sleep` and `exec "$@"` (restart.ts), so this case cannot
+  // observe its marker on Windows however the platform option is set. The
+  // Windows behaviour is asserted rather than skipped — the two cases above
+  // pin `platform: 'win32'` and check the typed refusal and
+  // `restartSupported: false` — so nothing here is left uncovered by the skip.
+  it.skipIf(process.platform === 'win32')("re-runs this process's own entry when dshBin is the bare default", async () => {
     const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-restart-node-'))
     const marker = join(dir, 'ran.log')
     const script = join(dir, 'fake-bin.js')
@@ -948,9 +944,7 @@ describe('ShopGateway.restart', () => {
 // profile manifest, catalog fixture, and the hot/loader injections.
 function gatewayOptions() {
   const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-restart-guard-'))
-  const bin = join(dir, 'dsh')
-  writeFileSync(bin, `#!/bin/sh\necho "$1 $2 $3" >> "${join(dir, 'calls.log')}"\nexit 0\n`)
-  chmodSync(bin, 0o755)
+  const bin = fakeDshRecording(dir, 0, { silent: true })
   return {
     catalogUrl: 'https://shop.test/v1/',
     cacheDir: mkdtempSync(join(TEMP_ROOT, 'dsh-restart-guard-cache-')),
@@ -1076,14 +1070,7 @@ describe('ShopGateway.updateStart', () => {
       dsh: { profile: { bundles: ['dsh-plugin-shop'] } },
     }))
     const binDir = mkdtempSync(join(TEMP_ROOT, 'dsh-self-update-bin-'))
-    const bin = join(binDir, 'dsh')
-    writeFileSync(bin, [
-      '#!/bin/sh',
-      `echo "$1 $2 $3 $4 $5" >> "${join(binDir, 'calls.log')}"`,
-      'exit 0',
-      '',
-    ].join('\n'))
-    chmodSync(bin, 0o755)
+    const bin = fakeDshRecording(binDir, 0, { silent: true })
     const gateway = new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir, dshBin: bin,
     })
@@ -1114,14 +1101,7 @@ describe('ShopGateway github entries', () => {
   }
 
   function gatewayWithRepo(dir: string): ShopGateway {
-    const bin = join(dir, 'fake-dsh')
-    writeFileSync(bin, [
-      '#!/bin/sh',
-      `echo "$1 $2 $3 $4 $5" >> "${join(dir, 'calls.log')}"`,
-      'exit 0',
-      '',
-    ].join('\n'))
-    chmodSync(bin, 0o755)
+    const bin = fakeDshRecording(dir, 0, { silent: true })
     // The install flow reads the running profile manifest before spawning.
     const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-repo-profile-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
@@ -1193,14 +1173,7 @@ describe('subpackage install spec', () => {
   }
 
   function gatewayWithSub(dir: string): ShopGateway {
-    const bin = join(dir, 'fake-dsh')
-    writeFileSync(bin, [
-      '#!/bin/sh',
-      `echo "$1 $2 $3 $4 $5" >> "${join(dir, 'calls.log')}"`,
-      'exit 0',
-      '',
-    ].join('\n'))
-    chmodSync(bin, 0o755)
+    const bin = fakeDshRecording(dir, 0, { silent: true })
     // The install flow reads the running profile manifest before spawning.
     const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-sub-profile-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
@@ -1224,7 +1197,18 @@ describe('subpackage install spec', () => {
       terminal = gateway.installStatus({ installId: result.installId })
     }
     expect(terminal.state).toBe('done')
-    expect(readFileSync(join(dir, 'calls.log'), 'utf8')).toContain(`plugin --profile web add github:someone/monorepo#${commit}&path:packages/sub-plugin`)
+    // The spec, as the downstream dsh actually receives it — which on Windows
+    // is quoted, because that is the only spelling that survives the shell
+    // dsh puts it through there (`shellSafeTarget`). The quoting rule itself
+    // is pinned with literal expectations for both platforms in
+    // `executor.test.ts`; this case is about the spec being COMPOSED from the
+    // snapshot's repo, commit and subdir, so it states the platform's
+    // spelling rather than asserting the POSIX one everywhere. The install
+    // path reads `process.platform`, not the gateway's `platform` option —
+    // that one only feeds the restart gate — so there is nothing to pin.
+    const spec = `github:someone/monorepo#${commit}&path:packages/sub-plugin`
+    const asDshSawIt = process.platform === 'win32' ? `"${spec}"` : spec
+    expect(readFileSync(join(dir, 'calls.log'), 'utf8')).toContain(`plugin --profile web add ${asDshSawIt}`)
     expect(JSON.parse(readFileSync(join(dir, 'cache/github-pins.json'), 'utf8'))).toEqual({ 'github:someone/monorepo#packages/sub-plugin': commit })
   })
 })
@@ -1246,14 +1230,7 @@ describe('release-rescued tarball install', () => {
   }
 
   function gatewayWithTarball(dir: string, fetchTarball: (url: string) => Promise<Response>): ShopGateway {
-    const bin = join(dir, 'fake-dsh')
-    writeFileSync(bin, [
-      '#!/bin/sh',
-      `echo "$1 $2 $3 $4 $5" >> "${join(dir, 'calls.log')}"`,
-      'exit 0',
-      '',
-    ].join('\n'))
-    chmodSync(bin, 0o755)
+    const bin = fakeDshRecording(dir, 0, { silent: true })
     // The install flow reads the running profile manifest before spawning.
     const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-tarball-profile-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
@@ -1325,9 +1302,7 @@ describe('release-rescued tarball install', () => {
     // The npm path: the spec is `name@version`, no release asset involved.
     const npmEntry: CatalogEntry = { name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25' }
     const npmDir = mkdtempSync(join(TEMP_ROOT, 'dsh-npm-notarball-'))
-    const npmBin = join(npmDir, 'fake-dsh')
-    writeFileSync(npmBin, ['#!/bin/sh', `echo "$1 $2 $3 $4 $5" >> "${join(npmDir, 'calls.log')}"`, 'exit 0', ''].join('\n'))
-    chmodSync(npmBin, 0o755)
+    const npmBin = fakeDshRecording(npmDir, 0, { silent: true })
     const npmProfileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-npm-notarball-profile-'))
     writeFileSync(join(npmProfileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
     const npmGateway = new ShopGateway(stubCtx(), {
@@ -1348,9 +1323,7 @@ describe('release-rescued tarball install', () => {
       added: '2026-08-25',
     }
     const repoDir = mkdtempSync(join(TEMP_ROOT, 'dsh-github-notarball-'))
-    const repoBin = join(repoDir, 'fake-dsh')
-    writeFileSync(repoBin, ['#!/bin/sh', `echo "$1 $2 $3 $4 $5" >> "${join(repoDir, 'calls.log')}"`, 'exit 0', ''].join('\n'))
-    chmodSync(repoBin, 0o755)
+    const repoBin = fakeDshRecording(repoDir, 0, { silent: true })
     const repoProfileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-github-notarball-profile-'))
     writeFileSync(join(repoProfileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
     const repoGateway = new ShopGateway(stubCtx(), {
@@ -1915,9 +1888,10 @@ describe('restart while an install is running (F-5)', () => {
     // duration of the operation. Restart must leave both that child and the
     // serving process alone until it has settled.
     const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-restart-busy-'))
-    const slow = join(dir, 'dsh')
-    writeFileSync(slow, ['#!/bin/sh', 'sleep 2', 'exit 0', ''].join('\n'))
-    chmodSync(slow, 0o755)
+    const slow = fakeDsh(dir, [
+      'await new Promise(resolve => setTimeout(resolve, 2000))',
+      'process.exit(0)',
+    ].join('\n'))
     const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-restart-busy-profile-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
     const listed: CatalogEntry = {
@@ -1951,9 +1925,7 @@ describe('restart while an install is running (F-5)', () => {
 
   it('allows the restart once the install has settled', async () => {
     const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-restart-idle-'))
-    const quick = join(dir, 'dsh')
-    writeFileSync(quick, ['#!/bin/sh', 'exit 0', ''].join('\n'))
-    chmodSync(quick, 0o755)
+    const quick = fakeDsh(dir, 'process.exit(0)')
     const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-restart-idle-profile-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: ['dsh-hello-plugin'] } }, dependencies: {} }))
     const listed: CatalogEntry = {
@@ -1965,6 +1937,13 @@ describe('restart while an install is running (F-5)', () => {
       catalogUrl: 'https://shop.test/v1/', cacheDir: mkdtempSync(join(TEMP_ROOT, 'dsh-restart-idle-cache-')),
       profile: 'web', profileDir, dshBin: quick, exit, restartArgv: ['web'],
       restartExitDelayMs: 1, restartParentPid: 1,
+      // Pinned like the guard cases above it: this one is about the INSTALL
+      // gate releasing, and inheriting the host platform would have Windows'
+      // restart refusal answer first and hide whether the gate released at
+      // all. The helper's own POSIX-only spawn fails asynchronously, after
+      // `restart()` has returned, and lands in restart.log where the stubbed
+      // `exit` leaves it harmless.
+      platform: 'linux',
       loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [listed], denied: [], stars: {} }, stale: false }) as CatalogResult,
     })
     const started = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true, source: 'npm' })

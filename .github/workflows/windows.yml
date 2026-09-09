@@ -9,8 +9,10 @@ name: windows
 # there. Between them they hid 24 results, some red and some passing while
 # proving nothing.
 #
-# So this leg exists to make that class fail somewhere. It is deliberately
-# narrow — see the job comment for what it does NOT cover and why.
+# So this leg exists to make that class fail somewhere. It started deliberately
+# narrow, excluding four files whose fakes Windows could not spawn; it now runs
+# both suites whole — see the job comment for the three cases that still skip
+# themselves and why each is a product boundary rather than a gap.
 
 on:
   push:
@@ -44,38 +46,34 @@ jobs:
       # The root suite (registry/scripts/tests/**) in full. Measured green on
       # Windows, and it is where the `import()` specifier bug lived.
       - run: pnpm test
-      # The package's own `test` script is `tsdown && tsdown -c
-      # tsdown.client.config.ts && vitest run`, so it BUILDS first, and two
-      # cases depend on that: `apply.client.spec.tsx` imports
-      # `dsh-plugin-shop/remote`, a self-referential export resolving into
-      # `lib/`, and `own-version.test.ts` asserts `lib/index.js` exists. The
-      # step below cannot use the script — the exclusions have to reach vitest,
-      # and `pnpm test -- --exclude …` does not deliver them (measured: the
-      # full 30 files ran) — so the two builds are spelled out here instead.
+      # The package suite, whole, through the package's OWN `test` script —
+      # `tsdown && tsdown -c tsdown.client.config.ts && vitest run`. The two
+      # builds are load-bearing, not incidental: `apply.client.spec.tsx`
+      # imports `dsh-plugin-shop/remote`, a self-referential export resolving
+      # into `lib/`, and `own-version.test.ts` asserts `lib/index.js` exists.
       # Their absence is what made this leg's first run red while it was green
       # on a working tree that already had a `lib/`.
-      - run: pnpm -C packages/dsh-plugin-shop exec tsdown
-      - run: pnpm -C packages/dsh-plugin-shop exec tsdown -c tsdown.client.config.ts
-      # The package suite MINUS four files. They fake the `dsh` CLI with a
-      # `#!/bin/sh` script and spawn it by bare name, or assert on a symlink,
-      # so 55 of their cases fail on Windows for one shared reason that has
-      # nothing to do with what this leg is guarding. Measured, not guessed:
-      # executor 34, index 18, restart 2, profile 1.
       #
-      # An exclusion list rather than an allowlist, deliberately: a NEW test
-      # file is covered by default, so the next Windows regression fails here
-      # instead of being quietly outside the net. Removing an entry is the
-      # work of teaching those fakes to write a `.cmd` shim (or to spawn a
-      # node script) the way `src/host/dsh-cli.ts` already resolves one.
+      # This step used to spell the builds out and call vitest itself, because
+      # it had to reach vitest with four `--exclude` flags that `pnpm test --`
+      # would not deliver. It excluded executor, index, restart and profile,
+      # whose fakes were `#!/bin/sh` scripts spawned by bare name — which
+      # Windows cannot start at all: 55 cases failing for one reason that had
+      # nothing to do with what this leg guards. The fakes are node scripts
+      # now (`tests/fixtures/fake-dsh.ts`), so there is nothing left to
+      # exclude, no file outside the net, and no reason to diverge from what a
+      # developer runs.
+      #
+      # Four cases inside those files still skip themselves on Windows, and
+      # each names the product boundary it is standing at rather than a
+      # fixture that could be fixed: the POSIX-only restart handoff (three —
+      # two in restart, one in index) and the POSIX spelling of the
+      # missing-CLI advice (one, in executor). The Windows arms of both are
+      # asserted elsewhere in the same files. Measured on Windows 11 at this
+      # commit: 777 passed, 4 skipped, 0 failed across all 30 files.
       #
       # `tests/client/web-full-flow.e2e.ts` is in scope but self-skips:
       # `describe.skipIf(!hasDsh || !hasChromium)`, and this leg deliberately
       # installs neither, nor does it set DSH_SHOP_REQUIRE_E2E. plugin.yml is
       # where that criterion runs, against a pinned harness.
-      - run: >
-          pnpm -C packages/dsh-plugin-shop exec vitest run
-          --exclude tests/host/executor.test.ts
-          --exclude tests/host/index.test.ts
-          --exclude tests/host/restart.test.ts
-          --exclude tests/host/profile.test.ts
-          --exclude '**/node_modules/**'
+      - run: pnpm -C packages/dsh-plugin-shop test
