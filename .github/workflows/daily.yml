@@ -446,7 +446,7 @@ jobs:
             echo "::error::could not push $1 after two attempts; this run's changes were not recorded"
             return 1
           }
-          git add registry/snapshots/manifest.lock registry/repo-state.json registry/first-seen.yml
+          git add registry/snapshots/manifest.lock registry/repo-state.json registry/first-seen.yml registry/publisher-state.json
           git diff --cached --quiet && exit 0
           git commit -m "chore(registry): daily catalog snapshot [skip ci]"
           push_with_rebase "the daily snapshot"

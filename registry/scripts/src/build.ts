@@ -19,7 +19,8 @@ import { fetchStarCounts } from './github-stars.ts'
 import { HARVEST_TOPICS, REPO_BACKFILL_BUDGET_DEFAULT, harvestRepos, parseHarvestBudget } from './github-client.ts'
 import { parseRepoState, repoGoneDetail, serializeRepoState } from './repo-state.ts'
 import { githubOwnerName } from './github-repo.ts'
-import { fetchCandidates, searchByKeywords, describeShortfall, parseKeywordShortfall, type KeywordShortfall } from './npm-client.ts'
+import { fetchCandidates, searchByKeywords, describeShortfall, parseKeywordShortfall, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall } from './npm-client.ts'
+import { mergePublishers, nextCursor, parsePublisherState, serializePublisherState } from './publisher-state.ts'
 import { pagesArtifactNames } from './pages-artifacts.ts'
 import { runPipeline, selectEntries } from './pipeline.ts'
 import { CATALOG_SCHEMA_VERSION, SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION } from './emit.ts'
@@ -86,6 +87,17 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
    * hand-rolled `'; '` between them read as a delimiter at two nesting
    * levels once both harvest keywords were past the window. */
   const npmParts: string[] = []
+  /**
+   * The publisher axis's committed vocabulary, read BEFORE the branch so both
+   * halves share one seed and one observation set. The file is absent on a
+   * first run and that is a first run, not an error — the axis is inert with
+   * an empty vocabulary, which is what makes it safe to land.
+   */
+  const publisherStatePath = join(REGISTRY_DIR, 'publisher-state.json')
+  const priorPublishers = existsSync(publisherStatePath)
+    ? parsePublisherState(readFileSync(publisherStatePath, 'utf8'))
+    : { publishers: [] }
+  const sawPublishers = new Set<string>()
   if (harvestFrom === undefined) {
     // registry.npmmirror.com does not implement the `keywords:` qualifier this
     // search depends on — measured 2026-09-03, it answers
@@ -103,7 +115,14 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     // and must fit MAX_UNREACHABLE_RESIDUAL. The record carries both terms
     // for the report without claiming the missing names' cause is known.
     const shortfalls: KeywordShortfall[] = []
-    const names = await searchByKeywords(fetch, undefined, npmToken, undefined, undefined, s => shortfalls.push(s))
+    const names = await searchByKeywords(
+      fetch, undefined, npmToken, undefined, undefined,
+      s => shortfalls.push(s),
+      users => { for (const u of users) sawPublishers.add(u) },
+      priorPublishers.publishers,
+      PUBLISHER_PROBE_BUDGET_DEFAULT,
+      priorPublishers.cursor ?? 0,
+    )
     for (const s of shortfalls) {
       npmParts.push(describeShortfall(s))
       process.stderr.write(`npm: ${describeShortfall(s)}\n`)
@@ -114,7 +133,7 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     rejections = harvested.rejections
   } else {
     const parsed = JSON.parse(readFileSync(harvestFrom, 'utf8')) as {
-      candidates?: unknown; rejections?: unknown; shortfalls?: unknown
+      candidates?: unknown; rejections?: unknown; shortfalls?: unknown; publishers?: unknown
     }
     if (!Array.isArray(parsed.candidates) || !Array.isArray(parsed.rejections)) {
       throw new Error(`--harvest-from ${harvestFrom}: expected { candidates, rejections } arrays`)
@@ -128,6 +147,17 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     // under a comment claiming such a handoff was ignored. Nothing ignored it.
     for (const raw of Array.isArray(parsed.shortfalls) ? parsed.shortfalls : []) {
       npmParts.push(describeShortfall(parseKeywordShortfall(raw, `--harvest-from ${harvestFrom}`)))
+    }
+    // Optional as a whole for the same reason `shortfalls` is — an older
+    // classifier wrote no such field and its handoff must still build — but a
+    // field that IS present goes through the same parser the committed file
+    // does. Reusing `parsePublisherState` rather than a second validator is
+    // the point: the handoff is where a username enters this process, and the
+    // rule that rejects one has to be the rule that would reject it on read,
+    // or a build can persist a vocabulary the next build refuses to parse.
+    if (parsed.publishers !== undefined) {
+      const observed = parsePublisherState(JSON.stringify({ publishers: parsed.publishers }))
+      for (const username of observed.publishers) sawPublishers.add(username)
     }
     process.stderr.write(`reusing harvest: ${candidates.length} npm candidate(s)\n`)
   }
@@ -306,6 +336,23 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   writeFileSync(join(OUT_DIR, 'badge.json'), artifacts.badgeJson)
   writeFileSync(join(REGISTRY_DIR, 'snapshots/manifest.lock'), artifacts.manifestLock)
   writeFileSync(join(REGISTRY_DIR, 'first-seen.yml'), serializeFirstSeen(artifacts.firstSeen))
+  // The publisher vocabulary, written HERE rather than in either harvest
+  // branch. CI never executes the direct branch — it runs classify.ts and
+  // hands the result over — so a writer inside that branch is a writer the
+  // daily run never reaches, and the vocabulary would stay empty forever while
+  // every test that drives the direct branch passed.
+  //
+  // After the pipeline, so a build that throws on its own artifacts does not
+  // leave a vocabulary recording work it did not publish; and the cursor
+  // advances only on a run that got this far, so a failing run does not skip
+  // its slice of the vocabulary.
+  const nextPublishers = mergePublishers(priorPublishers, [...sawPublishers])
+  writeFileSync(publisherStatePath, serializePublisherState({
+    ...nextPublishers,
+    cursor: nextCursor(nextPublishers, PUBLISHER_PROBE_BUDGET_DEFAULT),
+  }))
+  process.stderr.write(
+    `npm: publisher vocabulary ${priorPublishers.publishers.length} -> ${nextPublishers.publishers.length}\n`)
   const npmLine = npmParts.length === 0 ? '' : `\nnpm search shortfall (tolerated, packages missing from this build):\n${npmParts.map(part => `- ${part}\n`).join('')}`
   const repoLine = repoNote === '' ? '' : `\nGitHub: ${repoNote}\n`
   writeFileSync(join(OUT_DIR, 'report.md'), `${artifacts.report}\nStars: ${starsNote}\n${npmLine}${repoLine}`)
