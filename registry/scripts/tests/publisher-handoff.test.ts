@@ -2,12 +2,19 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const testsDir = dirname(fileURLToPath(import.meta.url))
 const srcDir = join(testsDir, '..', 'src')
-const preload = join(testsDir, 'preload-fetch.ts')
+// A `file://` URL, NOT a bare absolute path. `--import` goes through the ESM
+// loader, and on Windows a bare `D:\…` reads its drive letter as a URL scheme:
+// `ERR_UNSUPPORTED_ESM_URL_SCHEME … Received protocol 'd:'`. This is the same
+// defect `importSpecifier` in strip-types.test.ts exists for, whose comment
+// names the trap exactly — "an unexercised contract is how a simplification
+// back to a bare path stays green on the only platform CI runs" — and it was
+// reintroduced here the same day, so the citation is the point.
+const preload = pathToFileURL(join(testsDir, 'preload-fetch.ts')).href
 
 /**
  * The variables that must not leak into a child, so a developer's live
@@ -185,6 +192,15 @@ describe('the publisher vocabulary survives the run that discovered it', () => {
           `{"candidates":[],"rejections":[],"shortfalls":[],"publishers":${value}}\n`)
         const run = runEntry(cwd, 'build.ts', ['--harvest-from', 'dist/harvest.json'], [])
         expect(run.status, `stderr:\n${run.stderr}`).not.toBe(0)
+        // A non-zero exit is not enough, and this is not a nit: every one of
+        // these three passed on Windows while the child was dying in the ESM
+        // loader before `build.ts` ran at all. `status !== 0` cannot tell a
+        // build that REFUSED the handoff from one that never started, so the
+        // reason is asserted too — and the loader's own error is named as the
+        // thing this must not be mistaken for.
+        expect(run.stderr, `stderr:\n${run.stderr}`).toContain('publisher-state.json')
+        expect(run.stderr).not.toContain('ERR_UNSUPPORTED_ESM_URL_SCHEME')
+        expect(run.stderr).not.toContain('preload-fetch:')
         expect(existsSync(join(cwd, 'registry', 'publisher-state.json'))).toBe(false)
         expect(existsSync(join(cwd, 'registry', 'first-seen.yml'))).toBe(false)
       } finally {
