@@ -1970,6 +1970,30 @@ describe('searchByKeywords', () => {
     })
   })
 
+  it('reports the maintainers every page carried, so the vocabulary can grow', async () => {
+    const fetchImpl = (async (url: string | URL) => {
+      const params = new URL(String(url)).searchParams
+      const query = params.get('text') ?? ''
+      if (!query.includes('dsh-plugin')) return new Response(JSON.stringify({ total: 0, objects: [] }), { status: 200 })
+      if (params.get('size') === '1') return new Response(JSON.stringify({ total: 2, objects: [] }), { status: 200 })
+      return new Response(JSON.stringify({
+        total: 2,
+        objects: [
+          { package: { name: 'dsh-a', maintainers: [{ username: 'alice' }] } },
+          { package: { name: 'dsh-b', maintainers: [{ username: 'alice' }, { username: 'bob' }] } },
+        ],
+      }), { status: 200 })
+    }) as unknown as typeof fetch
+    const seen: string[] = []
+    const names = await searchByKeywords(fetchImpl, undefined, undefined, undefined, undefined, () => {},
+      users => seen.push(...users))
+    expect(names).toEqual(['dsh-a', 'dsh-b'])
+    // Reported as observed, duplicates and all: de-duplication is
+    // mergePublishers' job, and doing it here would make a page that carried
+    // nothing indistinguishable from one that repeated a name.
+    expect([...new Set(seen)].sort()).toEqual(['alice', 'bob'])
+  })
+
 })
 
 describe('fetchCandidate', () => {

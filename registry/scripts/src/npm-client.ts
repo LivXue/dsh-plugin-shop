@@ -1450,6 +1450,12 @@ export async function searchByKeywords(
   backupRegistry: string | undefined = undefined,
   timeoutMs: number = REQUEST_TIMEOUT_MS,
   onShortfall: (shortfall: KeywordShortfall) => void = () => {},
+  /**
+   * Every maintainer username a page carried, called once per page that had
+   * any. The vocabulary is free — the response already holds it — and this is
+   * the only way it reaches `publisher-state.json`.
+   */
+  onPublishers: (usernames: readonly string[]) => void = () => {},
 ): Promise<string[]> {
   const seen = new Set<string>()
   const probe = (cell: Cell): Promise<number> =>
@@ -1502,13 +1508,20 @@ export async function searchByKeywords(
       // reason: `{"objects":[null]}` is legal JSON, and an entry naming no
       // package is not a package.
       const objects = Array.isArray(body.objects) ? body.objects : []
+      // Collected for EVERY cell, not only the over-window one:
+      // `keywords:dsh-plugin` is fully enumerable today and contributes
+      // maintainers the `deepseek-harness` window never shows — see the
+      // second-keyword measurement in PARTITION_KEYWORDS' comment.
+      const publishers: string[] = []
       for (const object of objects) {
         const found = object?.package?.name
         if (typeof found === 'string') {
           seen.add(found)
           into.add(found)
         }
+        publishers.push(...maintainersOf(object?.package))
       }
+      if (publishers.length > 0) onPublishers(publishers)
       // Stop on the total the registry answered, NEVER on a short page: npm
       // has served a 249-object page of a 600-name result set, and breaking
       // there dropped every later page of that keyword in silence. A
