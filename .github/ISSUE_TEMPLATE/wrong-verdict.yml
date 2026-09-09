@@ -1,0 +1,48 @@
+name: Wrong review verdict
+description: A listing sits in the wrong category, or a name is withheld from the shelf as a competing market when it is not one.
+title: "[verdict] "
+labels: ["good first issue", "help wanted"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        These are decided by a classifier, and correcting one is a **single line of YAML** — no TypeScript, no network, no local build. A pull request is more useful than an issue here: see [CONTRIBUTING.md](https://github.com/LivXue/dsh-plugin-shop/blob/main/CONTRIBUTING.md#1-correct-a-verdict).
+
+        Open this issue instead if you are sure the verdict is wrong but would rather someone else make the edit.
+  - type: input
+    id: name
+    attributes:
+      label: Package or repository name
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Which verdict is wrong?
+      options:
+        - Category (registry/categories.yml)
+        - Competing market (registry/markets.yml)
+        - Denial (registry/denied.yml)
+    validations:
+      required: true
+  - type: input
+    id: recorded
+    attributes:
+      label: What is recorded now
+      placeholder: 'category: tool'
+    validations:
+      required: true
+  - type: input
+    id: correct
+    attributes:
+      label: What it should be
+      placeholder: 'category: memory'
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: How you know
+      description: A recorded verdict is never re-asked, so the correction is permanent. Say what you checked — the plugin's own docs, its code, its declared capabilities.
+    validations:
+      required: true

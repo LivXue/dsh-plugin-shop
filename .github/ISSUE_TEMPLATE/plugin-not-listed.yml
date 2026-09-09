@@ -1,0 +1,55 @@
+name: Plugin not listed
+description: A published plugin is missing from the catalog, or its rejection reason is wrong about it.
+title: "[not listed] "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Check the published report first.** Every build publishes every rejection with a reason and a detail:
+
+        ```sh
+        curl -s https://LivXue.github.io/dsh-plugin-shop/v1/report.md | grep '| your-package-name |'
+        ```
+
+        The **Detail** column is the accurate half — the reason codes are few and knowingly broader than their names.
+  - type: input
+    id: name
+    attributes:
+      label: Package or repository name
+      description: Exactly as published — the npm name, or `owner/repo` for a GitHub listing.
+      placeholder: dsh-your-plugin
+    validations:
+      required: true
+  - type: dropdown
+    id: channel
+    attributes:
+      label: Where is it published?
+      options:
+        - npm
+        - GitHub repository only
+        - both
+    validations:
+      required: true
+  - type: input
+    id: keyword
+    attributes:
+      label: Which harvest keyword does it carry, and where?
+      description: "`dsh-plugin` or `deepseek-harness`, in package.json keywords or as a repository topic."
+      placeholder: dsh-plugin, in package.json keywords
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: What the report says
+      description: Paste the row you found. If the name appears nowhere in the report, say so — that is a different problem and worth knowing.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead, and why
+    validations:
+      required: true

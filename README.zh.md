@@ -247,6 +247,21 @@ pnpm typecheck
 状态与未完成工作：[docs/plans/2026-08-18-remaining-work.md](docs/plans/2026-08-18-remaining-work.md)。
 规格说明：[docs/design/2026-08-18-dsh-plugin-shop-design.md](docs/design/2026-08-18-dsh-plugin-shop-design.md)。
 
+## 🤝 参与进来
+
+三条路，从最便宜的开始。
+
+- **纠正一次判决。** 类目和「是不是竞品市场」都由分类器判定，而
+  [构建报告](https://LivXue.github.io/dsh-plugin-shop/v1/report.md)会点名每一个无人复核
+  的判定。改一条就是一行 YAML——不联网，不写 TypeScript，不跑本地构建。
+- **让插件上架。** 加上收割关键字再发布。货架上仍然没有，同一份报告会逐包说明原因，
+  而且是写给作者看的话。
+- **改流水线。** [`docs/design/`](docs/design/) 是规格，也是权威；`CLAUDE.md` 是工作约定。
+
+三条路的完整版：[CONTRIBUTING.zh.md](CONTRIBUTING.zh.md)。好好说话：
+[行为准则](CODE_OF_CONDUCT.zh.md)。漏洞和恶意插件走[私下渠道](SECURITY.zh.md)，
+永远不要开公开 issue。
+
 ## 📄 许可
 
 [Apache-2.0](LICENSE) © LivXue

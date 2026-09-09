@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Why is my plugin not listed?
+    url: https://LivXue.github.io/dsh-plugin-shop/v1/report.md
+    about: Every rejection is published with a reason and an author-readable detail. Search this table for your package name first — most questions are answered there.
+  - name: Report a vulnerability or a malicious plugin
+    url: https://github.com/LivXue/dsh-plugin-shop/security/advisories/new
+    about: Private disclosure. Never open a public issue for either of these.
+  - name: Catalog schema reference
+    url: https://github.com/LivXue/dsh-plugin-shop/blob/main/docs/schema.md
+    about: Every field the dsh.catalog section accepts, and what each one does.
