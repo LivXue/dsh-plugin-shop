@@ -63,6 +63,45 @@ function reject(
  * @param config - the human-authored registry files.
  * @returns the accepted candidate, or a rejection carrying an author-readable reason.
  */
+
+/**
+ * Whether a candidate could reach an entry AT ALL — the three {@link gateRepo}
+ * rejections that no review, no config and no later stage can loosen.
+ *
+ * Exported because it is asked BEFORE the gate, by the sizing read in
+ * `github-client.ts`. A size for a candidate that can never list buys a
+ * request, a persisted figure and a `sizeProbed` marker for nothing. Counted
+ * over `repo-state.json` on 2026-09-08 — a snapshot, since the pool grows
+ * daily and only the PROPORTION is the argument: 4,567 of 13,460 sizeable
+ * candidates (33.9%) are rejected here, and for 4,424 of the 13,131
+ * repositories the read fires for (33.7%) EVERY sizeable candidate is. That
+ * is ~674 wasted core calls per full budget — spent, under a doubled per-repo
+ * cost, inside the same hourly rate-limit window everything else competes
+ * for.
+ *
+ * `repo-state.ts` asks it too, and that is what keeps the skip from becoming
+ * a retroactivity hole: a candidate this refuses is neither measured nor
+ * marked, and `lacksSizeProbe` ignores it, so loosening a rule here re-queues
+ * exactly the candidates the loosening made listable. No one-shot
+ * invalidation marker is needed, because the absence of the marker IS the
+ * queue.
+ *
+ * Duplicating the three rules is what a guard test in `repo-gate.test.ts`
+ * refuses to let drift: it asserts that `gateRepo` rejects every candidate
+ * this returns false for. The rules stay as separate branches below because
+ * each owes the author a different sentence.
+ */
+export function canEverList(candidate: RepoCandidate): boolean {
+  if (!candidate.hasBundle) return false
+  // Both are about a GIT install, so both are answered by a release. Reading
+  // `release` here matches the branches below exactly, including the reason
+  // they check it: `pnpm pack` resolves workspace specifiers, and a release
+  // tarball needs no prepare script.
+  if (candidate.requiresBuild && candidate.release === undefined) return false
+  if (candidate.hasWorkspaceDeps && candidate.release === undefined) return false
+  return true
+}
+
 export function gateRepo(
   candidate: RepoCandidate,
   config: RegistryConfig,
@@ -230,6 +269,9 @@ export function gateRepo(
     catalog,
     repo: candidate.repo,
     ...(candidate.subdir !== undefined ? { subdir: candidate.subdir } : {}),
+    // Not counted, for the reason `gate.ts` gives at its own probe: a size is
+    // a decoration and must not cost a listing. Bounded overshoot, ~39 bytes.
+
     ...(release !== undefined ? { tarball: { url: release.url, sha256: release.sha256 } } : {}),
   })
   if (payloadBytes > ENTRY_PAYLOAD_MAX_BYTES) {

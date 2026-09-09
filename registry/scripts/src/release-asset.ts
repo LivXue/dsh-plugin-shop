@@ -49,7 +49,26 @@ import { readTar } from '../../../packages/dsh-plugin-shop/src/shared/tar.ts'
 import { hasWorkspaceDeps } from './subpackage-select.ts'
 
 export type ReleaseAssetVerdict =
-  | { ok: true }
+  | {
+    ok: true
+    /**
+     * The archive's members summed — what installing this entry puts on
+     * disk ({@link Entry.installSize}).
+     *
+     * Free: the asset is already inflated here to check what it packs, so
+     * the figure costs no request and no second decompression. It is also
+     * the only honest figure for a release-pinned entry — the TARBALL is
+     * what installs, so the repository's tree at that commit measures a
+     * different artifact, usually a larger one, since the tree holds
+     * everything the author did not pack.
+     *
+     * Unpacked, never the compressed asset the releases API reports as
+     * `size`: the two differ by the compression ratio, measured across 16
+     * npm packages at a median 2.88x but ranging 1.01x to 5.91x, so one
+     * cannot stand in for the other under a shared label.
+     */
+    installSize: number
+  }
   /** Why the rescue was refused, in the author's terms. It reaches a published
    * build-report row AND the committed `repo-state.json`, so every value
    * interpolated into it is bounded. */
@@ -464,5 +483,21 @@ export function verifyReleaseAsset(bytes: Uint8Array, bundleName: string): Relea
         + ' repository\'s own workspace. `pnpm pack` rewrites them into resolved ranges; this tarball was not packed that way.',
     }
   }
-  return { ok: true }
+  // Summed from the members already inflated above. Bounded by construction:
+  // `MAX_INFLATED_BYTES` caps what `gunzipSync` produced, so the total cannot
+  // reach the range where a JS number stops being exact.
+  //
+  // Keyed by the NORMALIZED path, because `readTar` keys by the raw one. An
+  // archive shipping a file as both `package/x` and `./package/x` holds two
+  // Map entries that both pass `singleRoot` (which normalizes to build its
+  // roots), and summing the Map directly charges the entry for both copies.
+  // The install writes one: npm and pnpm extract with `strip: 1`, and
+  // `singleRoot`'s own comment settles which — the last one written wins. So
+  // the last member under a normalized path is the one measured, matching
+  // what lands on disk rather than what the author packed.
+  const installed = new Map<string, number>()
+  for (const [path, member] of files) installed.set(normalize(path), member.byteLength)
+  let installSize = 0
+  for (const bytes of installed.values()) installSize += bytes
+  return { ok: true, installSize }
 }

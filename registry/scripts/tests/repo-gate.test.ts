@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { gateRepo } from '../src/repo-gate.ts'
+import { canEverList, gateRepo } from '../src/repo-gate.ts'
 import { ENTRY_PAYLOAD_MAX_BYTES, LICENSE_MAX_LENGTH, REPOSITORY_MAX_LENGTH, gate } from '../src/gate.ts'
 import { parseRegistryConfig } from '../src/config.ts'
 import type { RepoCandidate } from '../src/types.ts'
@@ -392,6 +392,33 @@ describe('the per-entry size budget on the github channel', () => {
     expect(result.rejection.name).toBe('someone/dsh-repo-plugin')
   })
 
+  it('does not spend a repo entry\'s budget on the size the registry measured', () => {
+    // Differential, for the reason gate.test.ts's twin gives: searching for
+    // the largest entry that still lists calibrates itself against whatever
+    // the probe counts and passes either way.
+    //
+    // Here the size is not a duplicate — a github entry carries no
+    // `unpackedSize` — but the doctrine is the same one: a size is a
+    // decoration and must not cost a listing. It is also measured from a
+    // repository's own tree, so counting it lets the CONTENT of a repo change
+    // whether its entry lists, for a number the author never wrote.
+    const reported = (extra: Partial<RepoCandidate>): number => {
+      const result = gateRepo(repo({
+        release: {
+          tag: 'v1.0.0',
+          url: `https://github.com/someone/dsh-repo-plugin/releases/download/v1.0.0/${'u'.repeat(20_000)}.tgz`,
+          sha256: 'a'.repeat(64),
+        },
+        requiresBuild: true,
+        ...extra,
+      }), config)
+      expect(result.ok).toBe(false)
+      if (result.ok) throw new Error('fixture must be over budget for the probe to report')
+      return Number(/Would publish (\d+) bytes/.exec(result.rejection.detail)?.[1])
+    }
+    expect(reported({ installSize: 4_242_424 })).toBe(reported({}))
+  })
+
   it('accepts the worst repo entry the live catalog could hold', () => {
     // Every maximum measured against the live catalog on 2026-09-04, in one
     // entry: repository 108, license 37, both summaries 200 CJK characters
@@ -600,5 +627,53 @@ describe('workspace deps and the release rescue', () => {
       },
     }), config)
     expect(result.ok, result.ok ? '' : result.rejection.detail).toBe(true)
+  })
+})
+
+describe('canEverList agrees with the gate it is a shortcut for', () => {
+  // The predicate duplicates three of `gateRepo`'s rules so the sizing read
+  // can skip a candidate before the gate ever sees it. A duplication that
+  // drifts is the whole hazard: loosen a rule in `gateRepo` alone and the
+  // newly-listable candidates go unmeasured; tighten one and the sizing read
+  // keeps paying for candidates that can no longer list.
+  //
+  // Every combination of the three inputs it reads, against the real gate.
+  const RELEASE = { tag: 'v1.0.0', url: 'https://github.com/someone/dsh-repo-plugin/releases/download/v1.0.0/a.tgz', sha256: 'c'.repeat(64), assetVerified: true } as const
+  const combinations = [false, true].flatMap(hasBundle =>
+    [false, true].flatMap(requiresBuild =>
+      [false, true].flatMap(hasWorkspaceDeps =>
+        [undefined, RELEASE].map(release =>
+          ({ hasBundle, requiresBuild, hasWorkspaceDeps, release })))))
+
+  it.each(combinations)(
+    'refuses %o only when the gate does too',
+    (overrides) => {
+      const candidate = repo(overrides)
+      const gated = gateRepo(candidate, config)
+      if (!canEverList(candidate)) {
+        // The direction that matters: everything the shortcut skips must in
+        // fact be unlistable, or the skip silently drops a real entry's size.
+        expect(gated.ok).toBe(false)
+        if (!gated.ok) {
+          expect(['no-bundle', 'requires-build', 'workspace-deps']).toContain(gated.rejection.code)
+        }
+      } else {
+        // And the converse, weaker but still load-bearing: a candidate the
+        // shortcut admits is never rejected for one of the three reasons the
+        // shortcut claims to have already tested.
+        if (!gated.ok) {
+          expect(['no-bundle', 'requires-build', 'workspace-deps']).not.toContain(gated.rejection.code)
+        }
+      }
+    })
+
+  it('admits a release-rescued candidate that a git install could not have', () => {
+    // Both build-and-workspace rules are about a GIT install, and the release
+    // answers both — so this candidate CAN list, and its size comes from the
+    // archive rather than the tree. Pinned because reading `release` in the
+    // predicate is easy to drop when someone simplifies it to three flags.
+    const candidate = repo({ requiresBuild: true, hasWorkspaceDeps: true, release: RELEASE })
+    expect(canEverList(candidate)).toBe(true)
+    expect(gateRepo(candidate, config).ok).toBe(true)
   })
 })

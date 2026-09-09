@@ -17,10 +17,12 @@
 import { createHash } from 'node:crypto'
 import { truncateWholeCharacters } from './gate.ts'
 import { FetchTimeoutError, fetchWithRetry, withTimeout } from './npm-client.ts'
-import { diffRepoState, nextRepoState, type RepoSeen, type RepoState } from './repo-state.ts'
+import { canEverList } from './repo-gate.ts'
+import { diffRepoState, nextRepoState, type RepoSeen, type RepoState, type RepoToFetch } from './repo-state.ts'
 import { hasWorkspaceDeps, monorepoSignal, selectSubpackagePaths } from './subpackage-select.ts'
 import type { RepoCandidate } from './types.ts'
 import { readCappedBody } from './http-body.ts'
+import { treeInstallSize } from './tree-size.ts'
 import { verifyReleaseAsset } from './release-asset.ts'
 
 const GITHUB_API = 'https://api.github.com'
@@ -52,6 +54,22 @@ export const MAX_TARBALL_BYTES = 32 * 1024 * 1024
 export const MAX_MANIFEST_BYTES = 1024 * 1024
 
 /**
+ * The largest git-tree JSON the sizing read will hold in memory.
+ *
+ * Bounded by GitHub's own truncation rather than by hope: a `recursive=1`
+ * tree stops at 100,000 entries, and an entry serializes to roughly 200 bytes
+ * of `path`/`mode`/`type`/`sha`/`size`/`url`, so a truncated-at-the-limit tree
+ * lands near 20 MB. This sits above that and below the tarball reader's 32 MB,
+ * and an over-cap body costs the size only — the entry still lists.
+ *
+ * Measured for scale, not for the cap: across 60 sampled repositories the
+ * median tree held 62.7 kB of blobs and the largest 303 MB of blobs, but blob
+ * BYTES are not body bytes — the body carries metadata per entry, and the
+ * 303 MB repository held only 187 blobs.
+ */
+export const MAX_TREE_BYTES = 24 * 1024 * 1024
+
+/**
  * Per-attempt bound on a GitHub request (API or raw). Matches npm-client's: a
  * run makes thousands of these, and a stalled one must not consume the job's
  * whole budget. Applied INSIDE {@link fetchRobust}'s retry ladder, so four
@@ -64,9 +82,11 @@ export const GITHUB_REQUEST_TIMEOUT_MS = 30_000
  * Per-attempt bound on a release-tarball DOWNLOAD, as opposed to the metadata
  * requests around it.
  *
- * The deadline covers the body now (see withTimeout), and this is the only
- * path in the repo that reads a body up to {@link MAX_TARBALL_BYTES} — 32 MB,
- * or 32,768x a manifest's cap. On the shared 30s bound a healthy 32 MB asset
+ * The deadline covers the body now (see withTimeout). This is the only path
+ * that reads a body up to {@link MAX_TARBALL_BYTES} — 32 MB, or 32,768x a
+ * manifest's cap — but no longer the only one that needs a raised deadline:
+ * {@link TREE_REQUEST_TIMEOUT_MS} exists because the sizing read has the same
+ * problem one size down. On the shared 30s bound a healthy 32 MB asset
  * would have to sustain 1.07 MB/s (8.5 Mbit/s) or be killed. At 300s the floor
  * is 109 KB/s (0.87 Mbit/s), far below any plausible runner-to-GitHub-CDN
  * throughput. Being wrong the other way is cheap and self-correcting: the
@@ -75,6 +95,24 @@ export const GITHUB_REQUEST_TIMEOUT_MS = 30_000
  * repository is pushed to again.
  */
 export const TARBALL_REQUEST_TIMEOUT_MS = 300_000
+
+/**
+ * Per-attempt bound on the sizing tree read, for the same reason the tarball
+ * download has one: {@link MAX_TREE_BYTES} admits 24 MB, and on the shared 30s
+ * bound a healthy body that large would have to sustain 0.80 MB/s or be
+ * killed — squarely inside the band the tarball comment computes as the
+ * failure case. At 225s the floor is the same 109 KB/s that bound settled on
+ * (24 MB / 225 s), which is far below any plausible runner-to-GitHub
+ * throughput.
+ *
+ * Being wrong the cheap way here costs a decoration on one entry. Being wrong
+ * the other way costs more than the tarball's equivalent: an aborted read
+ * marks nothing, `fetchRobust` then retries four times with 2/4/8s backoff —
+ * about 134s of wall clock per repository per run at REPO_CONCURRENCY 4 — and
+ * `lacksSizeProbe` re-queues that repository on every future run, spending the
+ * backfill budget on a read that can never settle.
+ */
+export const TREE_REQUEST_TIMEOUT_MS = 225_000
 
 /**
  * The share of one run's fetch attempts that may throw before the harvest is
@@ -605,7 +643,25 @@ export async function searchReposByTopic(
   return { seen, metas: byName, windowCount }
 }
 
-/** Fetch the default-branch head commit and its date for one repository. */
+/**
+ * Fetch the default-branch head commit and its date for one repository.
+ *
+ * `null` means the endpoint ANSWERED that there is no such commit — a 404 for
+ * a branch that moved or vanished, or a 200 carrying a body that is not a
+ * commit. Both are facts about this repository and become a `fetch-failed`
+ * row naming it.
+ *
+ * @throws on any other non-ok status, which is our transport failing and says
+ *   nothing about the repository. This is the manifest read's rule applied
+ *   one function over, and the reason is the one its comment already gives:
+ *   the systematic-failure bound counts THROWS alone, so a returned row is
+ *   invisible to it. Under an exhausted rate limit every repository in the
+ *   queue answers 403 here, and returning null published thousands of "Could
+ *   not resolve the head commit of <repo>" rows naming healthy repositories
+ *   while the build went green — the outcome that bound exists to prevent,
+ *   reached through the one path it could not observe. The sizing read made
+ *   that reachable in practice by roughly doubling the per-repo core cost.
+ */
 async function fetchHeadCommit(
   owner: string,
   slug: string,
@@ -617,7 +673,10 @@ async function fetchHeadCommit(
 ): Promise<{ sha: string; date: string } | null> {
   const url = `${GITHUB_API}/repos/${owner}/${slug}/commits/${branch}`
   const response = await fetchRobust(url, fetchImpl, sleep, token, timeoutMs)
-  if (!response.ok) return null
+  if (response.status === 404) return null
+  if (!response.ok) {
+    throw new Error(`github api returned ${response.status} resolving the head commit of ${owner}/${slug}`)
+  }
   const body = await response.json() as { sha?: unknown; commit?: { author?: { date?: unknown } } }
   if (typeof body.sha !== 'string' || !/^[0-9a-f]{40}$/.test(body.sha)) return null
   const date = body.commit?.author?.date
@@ -655,7 +714,7 @@ async function fetchLatestReleaseTarball(
   timeoutMs: number = GITHUB_REQUEST_TIMEOUT_MS,
   tarballTimeoutMs: number = TARBALL_REQUEST_TIMEOUT_MS,
 ): Promise<
-  | { ok: true; tag: string; url: string; sha256: string }
+  | { ok: true; tag: string; url: string; sha256: string; installSize: number }
   /** An asset existed and was refused; the detail reaches the author. */
   | { ok: false; detail: string }
   /** Nothing to rescue with, and nothing to say about it. */
@@ -709,7 +768,7 @@ async function fetchLatestReleaseTarball(
     const verdict = verifyReleaseAsset(bytes, bundleName)
     if (!verdict.ok) return { ok: false, detail: verdict.detail }
     const sha256 = createHash('sha256').update(bytes).digest('hex')
-    return { ok: true, tag: body.tag_name, url: asset, sha256 }
+    return { ok: true, tag: body.tag_name, url: asset, sha256, installSize: verdict.installSize }
   } catch {
     // Swallows the transport failures every null-returning path above leaves
     // open: the releases call, and the asset download — the largest body read
@@ -1066,6 +1125,153 @@ async function probeSubpackageCandidates(
 }
 
 /**
+ * One repository's git tree at `sha`, parsed, or `undefined` when it cannot
+ * be read. Feeds {@link treeInstallSize} and nothing else.
+ *
+ * Pinned to the commit, never to `meta.defaultBranch`: the branch can move
+ * between the commit read and this one, and the published figure has to
+ * describe the commit the entry installs. It is also what makes the number
+ * cacheable — keyed to a commit, it stays valid until `pushedAt` changes, so
+ * the daily run measures churned repositories only.
+ */
+type SizingRead =
+  /**
+   * The endpoint ANSWERED: a tree, a 404 saying this commit has none, or a
+   * body past the cap. Whatever the body yields, the outcome is a property of
+   * this commit and will not change without a push — so the candidates are
+   * marked `sizeProbed` and never re-asked.
+   */
+  | { answered: true; body: unknown }
+  /**
+   * The body was past {@link MAX_TREE_BYTES}. Settled for now, so the repo is
+   * marked and does not re-read a 24 MB body every run — but settled by OUR
+   * constant rather than by the commit, so the cap that refused it is recorded
+   * and a later raise re-queues exactly the repositories it had excluded.
+   */
+  | { answered: true; body: undefined; cappedAt: number }
+  /**
+   * The read failed in a way that says nothing about the repository. Nothing
+   * is marked, so the next run retries it — the same rule that keeps a
+   * transport failure out of the durable `no-manifest` record.
+   */
+  | { answered: false }
+
+async function readSizingTree(
+  fullName: string,
+  sha: string,
+  fetchImpl: typeof fetch,
+  sleep: (ms: number) => Promise<void>,
+  token: string | undefined,
+  timeoutMs: number,
+): Promise<SizingRead> {
+  try {
+    const response = await fetchRobust(
+      `${GITHUB_API}/repos/${fullName}/git/trees/${sha}?recursive=1`, fetchImpl, sleep, token, timeoutMs,
+    )
+    // A 404 is a fact about this commit; any other non-ok status is our
+    // transport failing, exactly as the discovery tree read reads them.
+    if (response.status === 404) return { answered: true, body: undefined }
+    if (!response.ok) return { answered: false }
+    const bytes = await readCappedBody(response, MAX_TREE_BYTES)
+    // NOT the same outcome as the 404 above, though both yield no size. A 404
+    // and a `truncated: true` are properties of this commit and will not
+    // change without a push; a body past the cap is a property of a constant
+    // we chose. Recording them identically reintroduced one level down the
+    // retroactivity hole `hasUnverifiedRelease` and `lacksSizeProbe` were
+    // both written to close — raising the cap would have re-measured none of
+    // the repositories it had excluded, and the only escape would have been
+    // yet another one-shot invalidation marker.
+    if (bytes === null) return { answered: true, body: undefined, cappedAt: MAX_TREE_BYTES }
+    return { answered: true, body: JSON.parse(new TextDecoder().decode(bytes)) as unknown }
+  } catch {
+    // Swallows every way this read can fail — a deadline, a rate-limit 403, a
+    // 5xx, a body that is not JSON. Named per the empty-catch rule: what is
+    // lost is one entry's size, and nothing else can reach here, because the
+    // candidates are already decided by the time this runs and the caller
+    // returns them unchanged on this path.
+    //
+    // Deliberately NOT the failure policy of the subpackage-discovery tree
+    // read, which throws on any non-404: there, a swallowed error makes a
+    // monorepo look like it has no subpackages and earns its root a durable,
+    // PUBLISHED "declares no name and no installable subpackage" that is
+    // false. Here the same swallow costs a decoration. Propagating instead
+    // would turn a rate-limited sizing read into a `fetch-failed` for a
+    // repository whose manifest was read successfully — inventing a harvest
+    // failure out of a missing nicety.
+    return { answered: false }
+  }
+}
+
+/**
+ * Fetch one repository's candidates and attach each one's measured on-disk
+ * size ({@link Entry.installSize}).
+ *
+ * The sizing read is a separate, best-effort request rather than a reuse of
+ * the discovery tree, for two reasons that both matter: the discovery tree is
+ * fetched at the BRANCH and only for a monorepo signal — a root that declares
+ * its own bundle returns before it — and its failure policy is to throw.
+ *
+ * One tree sizes every candidate the repository produced: they all share the
+ * pinned commit, and each is scoped by its own `subdir`.
+ */
+export async function fetchRepoCandidate(
+  meta: RepoMeta,
+  fetchImpl: typeof fetch = fetch,
+  sleep: (ms: number) => Promise<void> = async (ms: number) => { await new Promise(resolve => setTimeout(resolve, ms)) },
+  token: string | undefined = undefined,
+  probeSubpackages = true,
+  timeoutMs: number = GITHUB_REQUEST_TIMEOUT_MS,
+  tarballTimeoutMs: number = TARBALL_REQUEST_TIMEOUT_MS,
+  treeTimeoutMs: number = TREE_REQUEST_TIMEOUT_MS,
+): Promise<RepoFetchResult> {
+  const result = await projectRepoCandidates(
+    meta, fetchImpl, sleep, token, probeSubpackages, timeoutMs, tarballTimeoutMs,
+  )
+  if (!result.ok) return result
+  // A release-rescued candidate installs the TARBALL, not the repository at
+  // this commit, so sizing it from the tree would measure a different
+  // artifact than the one the entry installs — often a very different one,
+  // since the archive holds what the author packed and the tree holds the
+  // whole repository. Its figure comes from the archive `release-asset.ts`
+  // already inflated to verify it.
+  // Also skipped: a candidate `repo-gate` rejects unconditionally. Its size
+  // could never reach an entry, and buying one costs a request, a persisted
+  // figure and a marker — a third of the sizeable candidates in the recorded
+  // state. `canEverList` is the shared predicate, and `lacksSizeProbe` asks
+  // it too, so a skipped candidate is re-queued if a rule ever loosens.
+  const sizeable = result.candidates.filter(
+    candidate => candidate.release === undefined && canEverList(candidate),
+  )
+  const first = sizeable[0]
+  if (first === undefined) return result
+  // `treeTimeoutMs`, not `timeoutMs`: a 24 MB body cannot be read on the 30s
+  // bound the metadata requests share. See TREE_REQUEST_TIMEOUT_MS.
+  const read = await readSizingTree(meta.fullName, first.commit, fetchImpl, sleep, token, treeTimeoutMs)
+  if (!read.answered) return result
+  const cappedAt = 'cappedAt' in read ? read.cappedAt : undefined
+  return {
+    ...result,
+    candidates: result.candidates.map(candidate => {
+      // Release candidates were marked where their archive was measured.
+      if (candidate.release !== undefined) return candidate
+      // Neither measured nor marked, deliberately: see `canEverList`. The
+      // ABSENCE of the marker is what re-queues it should the gate loosen.
+      if (!canEverList(candidate)) return candidate
+      const installSize = treeInstallSize(read.body, candidate.subdir)
+      // `sizeProbed` whichever way it went. A tree that answered and yielded
+      // nothing is settled for this commit, and leaving it unmarked would put
+      // the repository in every future run's backfill queue.
+      return {
+        ...candidate,
+        sizeProbed: true,
+        ...(installSize !== undefined ? { installSize } : {}),
+        ...(cappedAt !== undefined ? { sizeCappedAt: cappedAt } : {}),
+      }
+    }),
+  }
+}
+
+/**
  * Fetch one repository's manifest — and, for a monorepo root without a
  * bundle, its subpackage manifests — and project them into candidates.
  * @returns the candidates, or a code + author-readable reason.
@@ -1076,14 +1282,14 @@ async function probeSubpackageCandidates(
  *   systematic-failure bound. Returning those as `no-manifest` instead is what
  *   let one blocked host write off every repository new to the state file.
  */
-export async function fetchRepoCandidate(
+async function projectRepoCandidates(
   meta: RepoMeta,
-  fetchImpl: typeof fetch = fetch,
-  sleep: (ms: number) => Promise<void> = async (ms: number) => { await new Promise(resolve => setTimeout(resolve, ms)) },
-  token: string | undefined = undefined,
-  probeSubpackages = true,
-  timeoutMs: number = GITHUB_REQUEST_TIMEOUT_MS,
-  tarballTimeoutMs: number = TARBALL_REQUEST_TIMEOUT_MS,
+  fetchImpl: typeof fetch,
+  sleep: (ms: number) => Promise<void>,
+  token: string | undefined,
+  probeSubpackages: boolean,
+  timeoutMs: number,
+  tarballTimeoutMs: number,
 ): Promise<RepoFetchResult> {
   const [owner, slug] = meta.fullName.split('/')
   if (owner === undefined || slug === undefined) {
@@ -1152,6 +1358,15 @@ export async function fetchRepoCandidate(
     const release = await fetchLatestReleaseTarball(owner, slug, root.name, fetchImpl, sleep, token, timeoutMs, tarballTimeoutMs)
     if (release?.ok === true) {
       root.release = { tag: release.tag, url: release.url, sha256: release.sha256, assetVerified: true }
+      // Measured from the archive the probe just inflated, and the reason the
+      // sizing tree read skips a release candidate: this entry installs the
+      // TARBALL, so the repository tree at this commit is a different
+      // artifact — it holds everything the author did not pack.
+      root.installSize = release.installSize
+      // The archive IS this candidate's sizing probe — it never reaches the
+      // tree read below. Without the marker it would queue for a re-probe in
+      // every run, spending backfill budget on a repo already measured.
+      root.sizeProbed = true
     } else if (release?.ok === false) {
       // An asset was there and did not hold up. The rescue does not apply, and
       // the standing rejection has to say that rather than blame the build
@@ -1376,9 +1591,30 @@ async function harvestOnce(options: RepoHarvestOptions): Promise<Omit<RepoHarves
   for (const [repo, meta] of metas) {
     if (meta.stars !== null) searchStars.set(repo, meta.stars)
   }
-  const { toFetch, gone } = diffRepoState(state, seen)
-  // Budget slice: sorted order keeps the deferral deterministic.
-  const queue = toFetch.sort((a, b) => (a.repo < b.repo ? -1 : a.repo > b.repo ? 1 : 0)).slice(0, budget)
+  const { toFetch, gone } = diffRepoState(state, seen, MAX_TREE_BYTES)
+  // Budget slice: sorted order keeps the deferral deterministic, and CHANGED
+  // repositories are served before the backfill.
+  //
+  // Sorting the two together by name was safe only while a backfill was
+  // smaller than one run. `lacksSizeProbe` queued 13,443 recorded
+  // repositories at once against a budget of 2,000, so for about seven
+  // consecutive runs an alphabetically-late repository that published a fix,
+  // deleted its package.json or renamed its bundle would not have been
+  // fetched at all — displaced by unchanged repositories being re-measured
+  // for a decoration. The precedent this borrowed from is not comparable:
+  // `hasUnverifiedRelease` matched 332 candidates, which fits inside a single
+  // run; this was forty times that.
+  //
+  // Ordering rather than a second budget, deliberately: a separate cap would
+  // leave the backfill idle on a quiet day, and its own bound would have to
+  // be tuned against a queue that shrinks every run. Changed-first needs no
+  // tuning and cannot starve either side — the backfill spends exactly what
+  // the day's changes left over, and is still bounded and self-terminating.
+  const byName = (a: RepoToFetch, b: RepoToFetch) => (a.repo < b.repo ? -1 : a.repo > b.repo ? 1 : 0)
+  const queue = [
+    ...toFetch.filter(entry => !entry.backfillOnly).sort(byName),
+    ...toFetch.filter(entry => entry.backfillOnly).sort(byName),
+  ].slice(0, budget)
   const fresh = new Map<string, {
     candidates: RepoCandidate[]
     failure?: { code: 'no-manifest'; detail: string }

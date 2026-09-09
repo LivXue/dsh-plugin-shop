@@ -229,6 +229,7 @@ The pointer carries `count` and `rejected` — the listed and the filtered total
       "added": "2026-08-01",
       "publisher": "someone",
       "unpackedSize": 847407,
+      "installSize": 847407,
       "tier": "verified",
       "review": {
         "reviewedVersion": "1.2.0",
@@ -251,8 +252,14 @@ hash is taken over, and `assignTier` is where it is decided (pinned by
 code to spec in the direction this document normally prescribes — which would
 rewrite every entry in `plugins.json` and invalidate every CDN cache for a
 build with no data change, the harm the `builtAt` invariant exists to prevent.
-The optional npm fields (`publisher`, `unpackedSize`) sit after `added` and
-before `tier`; `peers` sits between them when present.
+The optional npm fields (`publisher`, `unpackedSize`, `installSize`) sit after
+`added` and before `tier`; `peers` sits between `publisher` and the sizes when
+present. A github entry follows the same rule with its own optional set —
+`repo`, `subdir` and `tarball` before `added`, then `installSize`, then `tier`
+— and both are pinned by `tier.test.ts`. The rule that decides where a NEW
+optional key goes is "at the end, after `added`": a new key rewrites every
+entry once, which it must, while inserting one earlier also moves every key
+after it and widens the content-hash delta for nothing.
 
 `publisher` is the npm account behind the package — npm entries only, absent
 when npm names no maintainer. The shop renders it beside a link to the
@@ -562,6 +569,49 @@ The filter was made a pill too, wearing `.categoryButton` and stating only its h
 - *The modifier does not apply to the Installed view.* That view is management, not shelf. An installed plugin that is up to date appears in exactly one place — its card, which carries the enable switch and the uninstall button, since the installed section lists only rows whose `outdated` is true — so subtracting there left a reader no way to disable or remove the broken install they had come to fix, above a tab still counting it. The filter is skipped for that view and its control is not rendered there; the state survives, so switching back restores both.
 
 **The control carried the action in its label and therefore no `aria-pressed`.** The two encodings are each coherent and must not be mixed: the category tabs keep a fixed label and let `aria-pressed` carry the state; this button's label flipped between "Hide incompatible N" and "Show incompatible N". With both, a screen reader announced "Show incompatible 1, pressed" while they were hidden — the inverse of the truth. Superseded by the amendment below, which takes the other branch of that same choice.
+
+**Amendment (2026-09-08): every entry carries `installSize`, the on-disk figure for all three sources.**
+
+*What changed, and what did not.* **A github entry gets no size, deliberately** (2026-09-07 amendment, above) stands as written: a github entry still gets no `unpackedSize`, and both numbers it rejects are still rejected — the repo `size` GitHub reports (disk usage *including history*, which is not the plugin) and the release asset's `size` (the *compressed* artifact, which is not npm's quantity). What it did not weigh is a third measurement that is neither: the **git tree's blob sum**, which excludes history by construction, and the **release archive's inflated members**. Those measure exactly what a repo install puts on disk, so `installSize` carries them alongside npm's figure.
+
+*Per source.* An npm entry repeats `dist.unpackedSize`. A commit-pinned github entry sums its git tree's blobs, scoped to `subdir` when it has one. A release-rescued entry sums the archive `verifyReleaseAsset` already inflated to check what it packs — free, and the only honest figure there, because a release-pinned entry installs the tarball rather than the repository at that commit.
+
+*Why a second key rather than filling `unpackedSize`.* Not taste — the obvious version cannot ship at all. The consumer does not merely ignore a github `unpackedSize`; its entry schema raises an issue on one, and the data file is read with a throwing `parse`. One such row therefore costs every already-installed shop the **whole catalog**, all entries at once, which is the `0.5.x` failure mode (§6.2) with the largest possible blast radius. A key the old schema has never heard of is stripped instead, so `installSize` lands on the next daily build with no client coordination, while filling the old key could not land until every installed client had updated — a condition nobody can observe. `unpackedSize` keeps being emitted for npm so old clients keep showing npm sizes, and is retired once the client floor has moved.
+
+*Accuracy, measured.* One sample of 69 tag-matched npm packages, partitioned by whether the repository holds one package or several — the partition matters more than either number, because it is what makes the difference attributable:
+
+| group | n | median tree/npm | p75 | max | within 2x |
+|---|---|---|---|---|---|
+| single-package | 58 | **1.48x** | 2.78x | 14.2x | 37 |
+| monorepo, charged whole | 11 | **6.37x** | 19.3x | 35.4x | 3 |
+
+That gap is why `subdir` scoping is not optional. The residual on the single-package side is real content rather than error: a repository holds the tests, docs and screenshots npm's `files` whitelist omits, and a repo install genuinely puts all of it on disk — `webkubor/dsh-bloom-theme` carries 9.2 MB of PNG and 1.1 MB of JPG against 274 kB on npm.
+
+Do not pin the median tighter than the sampling supports: a separate sample read 1.22x where this one reads 1.48x, so it sits near 1.2–1.5x and the figure has to carry a magnitude rather than its digits. **A correction worth recording, because the first version of this amendment shipped the error:** it quoted that 1.22x against a 1.67x "naive" median and charged the whole difference to the monorepo confound — but those were two samples with different seeds and sizes, so the difference was not attributable to anything. The confound is real; only the partition above measures it. Two figures over different populations do not make a ratio, which is the same correction `PARTITION_KEYWORDS`' comment carries about the two keywords' uncovered rates.
+
+*Cost.* One extra `git/trees/<sha>?recursive=1` per repository, pinned to the commit rather than the branch so the figure describes what installs and stays valid until `pushedAt` changes — it rides `repo-state.json`, so a daily run measures churned repositories only. Sampled over 60 repositories: 60 of 60 answered, **0 truncated**, median latency 699 ms. The published artifact grows about **3.2% gzipped**. Measured again on the 2026-09-08 PR dry run, which is the only reading taken at full scale: `82 windows, 15468 repos seen, 405 fetched (0 threw)` — so the marginal cost is ~405 tree reads a run, not the ~2,000 the backfill budget allows, because most repositories are carried unchanged.
+
+*The one-time backfill, which that same measurement forced.* 405 fetched against 15,063 carried means a new field arrives for a few percent of entries and then trickles in behind whatever pushes happen to occur — and `repo-state.ts` has already ruled that "it will sort itself out on the next push" is not true in any useful sense for a dormant repository. So a candidate carries `sizeProbed`, and its ABSENCE queues its repository for one re-probe, exactly as a missing `assetVerified` does. Bounded and self-terminating: every recorded repository once, at `REPO_BACKFILL_BUDGET` a run, then back to `pushedAt` alone. The marker is separate from the size ON PURPOSE — a tree can answer and yield no figure, and keying the re-probe on `installSize` would queue every unmeasurable repository in every run forever. It is written for an ANSWER and never for a transport failure, which is the `no-manifest`-versus-`fetch-failed` rule applied here; the cost accepted is that a persistently failing sizing read re-fetches its repository each run until one answers.
+
+*Failure is silence, by design.* Every way the measurement can be wrong yields no figure rather than a low one: a truncated tree, a blob size that is not a safe non-negative integer, a `subdir` matching nothing, and every transport failure — the sizing read is best-effort and never costs a listing. That is deliberately **not** the subpackage-discovery tree read's policy, which throws on any non-404, because a swallowed error there makes a monorepo look like it has no subpackages and earns its root a durable, published `no-manifest` that is false.
+
+*The report counts what has no size, and states it at zero too.* Because every failure yields no figure rather than a wrong one, a rate-limited or broken sizing path produces a **green** build carrying a catalog with no sizes — indistinguishable from an ecosystem that has none, since the gate does not care, no test sees live data, and the entries publish either way. `report.md` therefore carries `No install size: N of M (github …, npm …)` unconditionally: a maintainer reading that number is the only detector this failure mode has, and suppressing the line at zero would remove the reading that proves the mechanism ran. The split matters because the two causes differ — a github entry without one is the backfill still running or a tree that could not be measured, an npm entry without one is a publish predating npm 5.6.
+
+**Review follow-up (2026-09-08, same day).** Five decisions the amendment above did not settle, each found by reviewing the change against the invariants it was built on.
+
+*The backfill yields to a changed repository.* "Every recorded repository once, at `REPO_BACKFILL_BUDGET` a run" understated the queue: `repo-state.json` on 2026-09-08 carries 13,464 repositories with candidates and **zero** with `sizeProbed`, so all of them entered one `toFetch` that `harvestOnce` sorted by NAME and sliced at 2,000. (Dated because the pool grows daily — about twenty repositories between the review and this paragraph. Nothing here turns on the digits; the argument is that the queue is several times the budget.) For about seven consecutive runs a repository late in the alphabet that had actually published a fix — or deleted its `package.json`, or renamed its bundle — would not have been fetched at all, displaced by unchanged repositories being re-measured for a decoration. The `hasUnverifiedRelease` precedent does not carry: it matched 332 candidates, which fits inside a single run. `diffRepoState` now reports whether a repository is queued because something CHANGED or only for the backfill, and changed ones are served first. Ordering rather than a second budget, because a separate cap sits idle on a quiet day and must be tuned against a queue that shrinks every run; the backfill now spends exactly what the day's changes leave over.
+
+*A size that could never list is not measured.* The read fired for every non-release candidate, including the ones `gateRepo` rejects unconditionally — 4,567 of 13,460 sizeable candidates (33.9%), and for 4,424 of the 13,131 repositories the read fires for, EVERY sizeable candidate (same snapshot). `canEverList` is the shared predicate, and `lacksSizeProbe` asks it too: a skipped candidate is neither measured nor marked, so loosening a gate rule re-queues exactly what the loosening made listable, with no invalidation marker to remember. A guard test drives every combination against the real gate.
+
+*An over-cap refusal is not a fact about the commit.* A body past `MAX_TREE_BYTES` was recorded as `answered`, marking `sizeProbed` permanently — but a 404 and a `truncated: true` are properties of the commit, while the cap is a constant we chose, so raising it would have re-measured none of the repositories it had excluded. That is the retroactivity hole `sizeProbed` itself exists to close, reintroduced one level down. The cap that refused a candidate is recorded, and a build applying a larger one re-queues it.
+
+*The sizing read has its own deadline.* `MAX_TREE_BYTES` admits 24 MB, which on the shared 30 s bound demands 0.80 MB/s — inside the band `TARBALL_REQUEST_TIMEOUT_MS` was introduced to escape at 32 MB, and that constant's claim to be the only path needing a raised deadline no longer held. `TREE_REQUEST_TIMEOUT_MS` is 225 s, the same 109 KB/s floor. The cost of getting it wrong is worse here than for the tarball: an aborted read marks nothing, so the repository re-queued on every future run and spent budget on a read that could never settle.
+
+*A size never costs a listing, including through the budget.* Both gates counted `installSize` toward `ENTRY_PAYLOAD_MAX_BYTES`. On the npm path it duplicates the `unpackedSize` already counted, so a package measured at 12,270 bytes yesterday was delisted today under a `no-manifest` naming a budget it crossed only because the registry attached a second copy of a figure the consumer already has — and that string is what an author reads to find out why their package vanished. It is excluded from the probe: the published entry may exceed the budget by this key and nothing else, at most 39 bytes, fixed-width and registry-written where every counted field is author-inflatable. Raising the cap would have loosened a bound in force, and dropping the key when it does not fit would make an entry near the boundary gain and lose its size as its catalog text changed, churning the content hash for no data change.
+
+*Still not the download.* `installSize` is what lands on disk, never the bytes on the wire, and neither converts into the other: npm unpacked/download measured a median 2.88x over 16 packages but ranged 1.01x–5.91x, and a github tree/download median of 1.86x ranged 1.28x–3.69x. The download is also not cheaply knowable on the github side — `codeload.github.com` declares no `content-length` and ignores a Range request (200, not 206, reproduced 3/3), so it is measurable only by fetching the whole archive. npm's is one Range probe (`content-range: bytes 0-0/N`, one byte of body) should it ever be wanted.
+
+*Client follow-up.* The registry half ships alone; the shelf does not render `installSize` until a client release accepts the key and prefers it over `unpackedSize`. That release changes what the host reads, so it goes through `beta` first (§ release channels).
 
 **Amendment (2026-09-08): the incompatible filter is a switch, not a pill.**
 

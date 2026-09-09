@@ -509,6 +509,43 @@ describe('the per-entry size budget', () => {
       'Would publish 45620 bytes of catalog entry, past the 12288-byte budget one entry may occupy in plugins.json.')
   })
 
+  it('does not spend the author\'s budget on the size the registry attaches', () => {
+    // A DIFFERENTIAL, because the obvious test cannot work: searching for the
+    // largest entry that still lists calibrates itself against whatever the
+    // probe currently counts, so it passes either way. This measures the
+    // probe's composition instead — the same candidate with and without a
+    // size must differ by exactly ONE size key.
+    //
+    // The entry emits `unpackedSize` and `installSize`, the same number twice
+    // while old clients live. Counting both charged an author ~29 bytes for a
+    // duplicate of a figure the consumer already has, which delists a package
+    // whose author changed nothing under a `no-manifest` — the string an
+    // author reads to find out why their package vanished. The design settles
+    // the direction: "a size is a decoration, so a broken one costs the size
+    // and not the listing" (§7, `unpackedSize`).
+    const reported = (extra: Parameters<typeof candidate>[0]): number => {
+      const result = gate(candidate({ peers: peers(200, 214), ...extra }), config)
+      expect(result.ok).toBe(false)
+      if (result.ok) throw new Error('fixture must be over budget for the probe to report')
+      return Number(/Would publish (\d+) bytes/.exec(result.rejection.detail)?.[1])
+    }
+    // Per key, because the two names differ by a character and the arithmetic
+    // has to be exact to tell one key from two.
+    const marginal = (key: string, size: number): number =>
+      entryPayloadBytes({ name: 'x', [key]: size }) - entryPayloadBytes({ name: 'x' })
+
+    const charged = reported({ unpackedSize: 847_407 }) - reported({})
+    // One key, not two: 30 bytes for `unpackedSize` alone. Counting the
+    // duplicate as well charged 59.
+    expect(charged).toBe(marginal('unpackedSize', 847_407))
+    expect(charged).toBeLessThan(marginal('unpackedSize', 847_407) + marginal('installSize', 847_407))
+    // The overshoot the exemption buys is bounded and registry-written: 39
+    // bytes at the widest safe integer, 29 at the live median size. No author
+    // can inflate it, unlike every field the probe does count.
+    expect(marginal('installSize', Number.MAX_SAFE_INTEGER)).toBe(39)
+    expect(marginal('installSize', 847_407)).toBe(29)
+  })
+
   it('accepts the worst entry the live catalog could hold', () => {
     // Every maximum measured against the live published catalog, all in ONE
     // entry — they are independent observations, so this entry almost

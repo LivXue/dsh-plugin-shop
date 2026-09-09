@@ -4,11 +4,12 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { BUNDLE_NAME_MAX_LENGTH, BUNDLE_NAME_RE, GITHUB_REQUEST_TIMEOUT_MS, MAX_MANIFEST_BYTES, MAX_TARBALL_BYTES, MAX_THROWN_FRACTION, MIN_THROWN_TO_BOUND, REPO_BACKFILL_BUDGET_DEFAULT, SUBDIR_MAX_LENGTH, TARBALL_REQUEST_TIMEOUT_MS, fetchRepoCandidate, harvestRepos, isBundleName, parseHarvestBudget, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
-import { parseRepoState, serializeRepoState } from '../src/repo-state.ts'
+import { BUNDLE_NAME_MAX_LENGTH, BUNDLE_NAME_RE, GITHUB_REQUEST_TIMEOUT_MS, MAX_MANIFEST_BYTES, MAX_TARBALL_BYTES, MAX_THROWN_FRACTION, MIN_THROWN_TO_BOUND, MAX_TREE_BYTES, REPO_BACKFILL_BUDGET_DEFAULT, SUBDIR_MAX_LENGTH, TARBALL_REQUEST_TIMEOUT_MS, TREE_REQUEST_TIMEOUT_MS, fetchRepoCandidate, harvestRepos, isBundleName, parseHarvestBudget, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
+import { diffRepoState, parseRepoState, serializeRepoState } from '../src/repo-state.ts'
 import type { RepoState } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
 import { FetchTimeoutError } from '../src/npm-client.ts'
+import { verifyReleaseAsset } from '../src/release-asset.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
 
 const sleep = async (_ms: number) => {}
@@ -479,6 +480,138 @@ describe('fetchRepoCandidate', () => {
     }
   })
 
+  /**
+   * The manifest and head a plain single-bundle repo answers with.
+   *
+   * A FUNCTION, not a shared object: a `Response` body reads once, so two
+   * tests sharing one instance leave the second with a consumed manifest —
+   * which surfaces as `no-manifest`, not as anything about the test's subject.
+   */
+  const plainRepoRoutes = (): Record<string, Response> => ({
+    'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(JSON.stringify({
+      name: 'dsh-repo-plugin',
+      dsh: { bundle: { patch: './cordis.patch.yml' }, catalog: { category: 'tool', summary: { en: 'x' }, capabilities: [] } },
+    }), { status: 200 }),
+    'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': new Response(JSON.stringify({
+      sha: commit,
+      commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+    }), { status: 200 }),
+  })
+
+  it('measures the on-disk size from the tree at the PINNED commit', async () => {
+    // The pin, not the branch: the branch can move between the commit read
+    // and this one, and the published figure has to describe the commit the
+    // entry actually installs. It is also what makes the figure cacheable —
+    // a size keyed to a commit stays valid until `pushedAt` changes.
+    const fetchImpl = stubFetch({
+      ...plainRepoRoutes(),
+      [`https://api.github.com/repos/someone/dsh-repo-plugin/git/trees/${commit}?recursive=1`]: new Response(JSON.stringify({
+        truncated: false,
+        tree: [
+          { path: 'package.json', type: 'blob', size: 348 },
+          { path: 'client.js', type: 'blob', size: 43511 },
+          { path: 'src', type: 'tree' },
+        ],
+      }), { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.candidates[0]?.installSize).toBe(43859)
+      expect(result.candidates[0]?.sizeProbed).toBe(true)
+    }
+  })
+
+  it('marks a tree that answered but yielded no size, so it is not re-asked daily', () => {
+    // A truncated tree is a deterministic no-size for this commit: it will not
+    // become measurable without a push. `sizeProbed` records that the probe
+    // RAN, which is what keeps `diffRepoState` from queueing this repository
+    // in every run forever — the reason the marker exists instead of testing
+    // `installSize` directly.
+    return (async () => {
+      const fetchImpl = stubFetch({
+        ...plainRepoRoutes(),
+        [`https://api.github.com/repos/someone/dsh-repo-plugin/git/trees/${commit}?recursive=1`]: new Response(JSON.stringify({
+          truncated: true,
+          tree: [{ path: 'a.js', type: 'blob', size: 10 }],
+        }), { status: 200 }),
+      })
+      const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+      expect(result.ok).toBe(true)
+      if (result.ok) {
+        expect(result.candidates[0]?.installSize).toBeUndefined()
+        expect(result.candidates[0]?.sizeProbed).toBe(true)
+      }
+    })()
+  })
+
+  it('still lists the entry, with no size, when the sizing tree cannot be read', async () => {
+    // Best-effort by design: a size is a decoration, so a failed read costs
+    // the size and never the listing. This is deliberately NOT the failure
+    // policy of the subpackage-discovery tree read, which throws — there, a
+    // swallowed error makes a monorepo look like it has no subpackages and
+    // earns the root a durable, false `no-manifest`.
+    const fetchImpl = stubFetch({
+      ...plainRepoRoutes(),
+      [`https://api.github.com/repos/someone/dsh-repo-plugin/git/trees/${commit}?recursive=1`]:
+        new Response('upstream error', { status: 500 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.candidates[0]?.name).toBe('dsh-repo-plugin')
+      expect(result.candidates[0]?.installSize).toBeUndefined()
+      // And NOT marked: a 5xx says nothing about the repository, so the next
+      // run must retry it. Marking here would deny this repo a size until it
+      // happened to push — the project's `fetch-failed`-versus-`no-manifest`
+      // rule, applied to the sizing read.
+      expect(result.candidates[0]?.sizeProbed).toBeUndefined()
+    }
+  })
+
+  it('buys no size for a candidate the gate rejects unconditionally', async () => {
+    // `requires-build` with no release is one of `gateRepo`'s three
+    // unconditional rejections, so this candidate's size could never reach an
+    // entry. Counted over the committed repo-state.json those three cover
+    // 4,562 of 13,440 sizeable candidates, and for a third of repositories
+    // EVERY sizeable candidate — the read was buying a request, a persisted
+    // figure and a marker for each of them.
+    let treeRequests = 0
+    const routed = stubFetch({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(JSON.stringify({
+        name: 'dsh-repo-plugin',
+        scripts: { prepare: 'npm run build' },
+        dsh: { bundle: { patch: './cordis.patch.yml' }, catalog: { category: 'tool', summary: { en: 'x' }, capabilities: [] } },
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': new Response(JSON.stringify({
+        sha: commit,
+        commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+      // No release to rescue it with, so `requires-build` stands.
+      'https://api.github.com/repos/someone/dsh-repo-plugin/releases/latest': new Response('404: Not Found', { status: 404 }),
+      [`https://api.github.com/repos/someone/dsh-repo-plugin/git/trees/${commit}`]: new Response(JSON.stringify({
+        truncated: false,
+        tree: [{ path: 'a.js', type: 'blob', size: 1234 }],
+      }), { status: 200 }),
+    })
+    const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+      if (String(url).includes('/git/trees/')) treeRequests += 1
+      return routed(url as string, init)
+    }) as unknown as typeof fetch
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    expect(treeRequests).toBe(0)
+    if (result.ok) {
+      expect(result.candidates[0]?.requiresBuild).toBe(true)
+      expect(result.candidates[0]?.installSize).toBeUndefined()
+      // And NOT marked. The absence is the queue: if the gate ever stops
+      // rejecting this class, `lacksSizeProbe` asks the same predicate and
+      // re-queues exactly the candidates the loosening made listable, with no
+      // one-shot invalidation marker to remember to add.
+      expect(result.candidates[0]?.sizeProbed).toBeUndefined()
+    }
+  })
+
   it('reports no-manifest when the repo has no package.json', async () => {
     const fetchImpl = stubFetch({
       'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response('404: Not Found', { status: 404 }),
@@ -888,6 +1021,45 @@ describe('only a 404 is a verdict about the repository', () => {
     await expect(fetchRepoCandidate(meta, fetchImpl, sleep, 'token')).rejects.toThrow(/500/)
   })
 
+  it('does not call a 403 on the head commit a fact about the repository', async () => {
+    // The same rule one function over, and the one the sizing read made
+    // reachable in practice by roughly doubling the per-repo core cost.
+    // `fetchHeadCommit` returned null on ANY non-ok status, so an exhausted
+    // rate limit — 403 for every repository in the queue at once — became a
+    // RETURNED `fetch-failed` row per repository. harvestOnce counts throws
+    // alone, so the systematic bound could not observe it: the build went
+    // green and published thousands of "Could not resolve the head commit of
+    // <repo>" rows naming perfectly healthy repositories.
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(JSON.stringify({
+        name: 'dsh-repo-plugin',
+        dsh: { bundle: { patch: './cordis.patch.yml' }, catalog: { category: 'tool', summary: { en: 'x' }, capabilities: [] } },
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': new Response('rate limit exceeded', { status: 403 }),
+    })
+    await expect(fetchRepoCandidate(meta, fetchImpl, sleep, 'token')).rejects.toThrow(/403/)
+  })
+
+  it('keeps a 404 on the head commit the returned verdict it always was', async () => {
+    // A branch that moved or vanished IS a fact about this repository, so it
+    // stays a row naming it rather than becoming a throw. The split is the
+    // whole point: only the statuses that say nothing about the repository
+    // move to the bound.
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(JSON.stringify({
+        name: 'dsh-repo-plugin',
+        dsh: { bundle: { patch: './cordis.patch.yml' }, catalog: { category: 'tool', summary: { en: 'x' }, capabilities: [] } },
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': new Response('404: Not Found', { status: 404 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.code).toBe('fetch-failed')
+      expect(result.detail).toContain('head commit')
+    }
+  })
+
   it('records nothing for a repository whose manifest 500d, so the next run retries it', async () => {
     const stderr: string[] = []
     const write = process.stderr.write.bind(process.stderr)
@@ -1064,6 +1236,59 @@ describe('release-tarball rescue probe', () => {
       expect(candidate?.requiresBuild).toBe(true)
       expect(candidate?.release).toEqual({ tag: 'v1.0.0', url: assetUrl, sha256: expectedSha256, assetVerified: true })
       expect(expectedSha256).toMatch(/^[0-9a-f]{64}$/)
+    }
+  })
+
+  it('sizes a release-rescued candidate from the tarball, never from the tree', async () => {
+    // A release-pinned entry installs the ARCHIVE, so the repository tree at
+    // that commit measures a different artifact — usually a larger one, since
+    // the tree holds everything the author did not pack.
+    //
+    // The tree IS routed, and to a sum nothing could confuse with the
+    // archive's. That is the half this test used to assert nothing about: it
+    // routed no tree at all, and `stubFetch` throws on an unrouted url, so
+    // deleting BOTH release carve-outs left it green — `readSizingTree`
+    // swallowed the throw, returned `answered: false`, and handed back the
+    // candidate unchanged with its archive figure intact. Two counters and a
+    // routed tree are what make the deletion visible.
+    const treeSum = 9_000_017
+    let treeRequests = 0
+    const routed = stubFetch({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(buildManifest, { status: 200 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': headResponse(),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/releases/latest': new Response(JSON.stringify({
+        tag_name: 'v1.0.0',
+        assets: [{ browser_download_url: assetUrl }],
+      }), { status: 200 }),
+      [assetUrl]: new Response(tarballBytes, { status: 200 }),
+      [`https://api.github.com/repos/someone/dsh-repo-plugin/git/trees/${commit}`]: new Response(JSON.stringify({
+        truncated: false,
+        tree: [{ path: 'everything.bin', type: 'blob', size: treeSum }],
+      }), { status: 200 }),
+    })
+    const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+      if (String(url).includes('/git/trees/')) treeRequests += 1
+      return routed(url as string, init)
+    }) as unknown as typeof fetch
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    // The oracle is the verdict for the same bytes, computed here the way
+    // `expectedSha256` is: this test is about the plumbing carrying the
+    // figure, and release-asset.test.ts is about the figure being right.
+    const verdict = verifyReleaseAsset(tarballBytes, 'dsh-repo-plugin')
+    expect(result.ok && verdict.ok).toBe(true)
+    // Not asked at all, so the carve-out saves the request and not merely the
+    // number. A tree read for a candidate whose figure is already settled is
+    // a core call spent inside the same rate-limit window everything else
+    // competes for.
+    expect(treeRequests).toBe(0)
+    if (result.ok && verdict.ok) {
+      expect(result.candidates[0]?.installSize).toBe(verdict.installSize)
+      // The tree was there to be read and says something else entirely.
+      // Without this the assertion above could not tell the two apart.
+      expect(result.candidates[0]?.installSize).not.toBe(treeSum)
+      // Unpacked, not the compressed asset — which this fixture proves are
+      // different numbers rather than coincidentally equal.
+      expect(verdict.installSize).not.toBe(tarballBytes.byteLength)
     }
   })
 
@@ -1308,6 +1533,10 @@ describe('harvestRepos', () => {
       hasWorkspaceDeps: false,
       catalog: null,
       description: 'x',
+      // A normally recorded candidate has been through the sizing probe.
+      // Without this every fixture below would queue for the one-time
+      // backfill and stop testing the `pushedAt` carry it exists to test.
+      sizeProbed: true,
     }
   }
   function entryOf(repo: string): RepoState[string] {
@@ -1361,6 +1590,98 @@ describe('harvestRepos', () => {
     expect(Object.keys(result.nextState).sort()).toEqual(['a/unchanged', 'b/changed', 'd/new'])
   })
 
+  /** `candidateOf` minus the probe marker — a row recorded before the sizing
+   * read existed, which is what the one-time backfill queues. */
+  function unprobedEntryOf(repo: string): RepoState[string] {
+    const { sizeProbed: _unset, ...candidate } = candidateOf(repo)
+    return { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [candidate] }
+  }
+
+  /** Manifest + head commit + sizing tree for one repository. */
+  function repoRoutes(repo: string, pushedAt = '2026-08-02T00:00:00.000Z'): Record<string, Response> {
+    return {
+      [`https://raw.githubusercontent.com/${repo}/main/package.json`]:
+        new Response(JSON.stringify({ name: repo.split('/')[1], dsh: { bundle: {} } }), { status: 200 }),
+      [`https://api.github.com/repos/${repo}/commits/main`]:
+        new Response(JSON.stringify({ sha: commit, commit: { author: { date: pushedAt } } }), { status: 200 }),
+      [`https://api.github.com/repos/${repo}/git/trees/${commit}`]: new Response(JSON.stringify({
+        truncated: false,
+        tree: [{ path: 'index.js', type: 'blob', size: 4242 }],
+      }), { status: 200 }),
+    }
+  }
+
+  /** A harvest fetch stub: the search, then `routes`, then a throw. */
+  function harvestFetch(seen: { repo: string; pushedAt: string }[], routes: Record<string, Response>): typeof fetch {
+    return (async (url: string | URL) => {
+      const text = String(url)
+      const searched = searchResponder(q => (q.includes('topic:dsh-plugin')
+        ? seen.map(entry => repoItem(entry.repo, { pushed_at: entry.pushedAt }))
+        : []))(text)
+      if (searched !== undefined) return searched
+      for (const [prefix, response] of Object.entries(routes)) {
+        if (text.startsWith(prefix)) return response
+      }
+      throw new Error(`unrouted: ${text}`)
+    }) as unknown as typeof fetch
+  }
+
+  it('serves a changed repository before the size backfill, whatever the alphabet says', async () => {
+    // The backfill queued 13,443 recorded repositories at once against a
+    // budget of 2,000, and the queue was sorted by NAME alone. So for about
+    // seven consecutive runs, `z/changed` — which published a fix, or deleted
+    // its package.json, or renamed its bundle — lost its slot to unchanged
+    // repositories being re-measured for a decoration.
+    //
+    // Budget 1 makes the ordering the only thing under test: exactly one of
+    // the three can be fetched, and the two backfill repos have no routes, so
+    // fetching either would throw and show up as a failure row.
+    const state: RepoState = {
+      'a/unprobed': unprobedEntryOf('a/unprobed'),
+      'b/unprobed': unprobedEntryOf('b/unprobed'),
+      'z/changed': { ...entryOf('z/changed'), pushedAt: '2026-07-01T00:00:00Z' },
+    }
+    const seen = [
+      { repo: 'a/unprobed', pushedAt: '2026-08-01T00:00:00Z' },
+      { repo: 'b/unprobed', pushedAt: '2026-08-01T00:00:00Z' },
+      { repo: 'z/changed', pushedAt: '2026-08-02T00:00:00Z' },
+    ]
+    const result = await harvestRepos({
+      state, budget: 1, fetchImpl: harvestFetch(seen, repoRoutes('z/changed')), sleep, token: 't',
+    })
+    expect(result.failures).toEqual([])
+    expect(result.thrown).toBe(0)
+    expect(result.fetched).toBe(1)
+    expect(result.deferred).toBe(2)
+    // The changed repository's NEW head, not the recorded one.
+    expect(result.nextState['z/changed']?.pushedAt).toBe('2026-08-02T00:00:00Z')
+    // And the two deferred ones keep their recorded state, unprobed, for the
+    // next run's leftover budget.
+    expect(result.nextState['a/unprobed']?.candidates[0]?.sizeProbed).toBeUndefined()
+  })
+
+  it('persists the sizeProbed marker, so the backfill actually terminates', async () => {
+    // The gap this closes: `repo-state.test.ts` proves `diffRepoState` queues
+    // an unprobed repo, and `fetchRepoCandidate` proves the marker is attached
+    // to a candidate — but nothing joined the two, and every other fixture in
+    // this file pre-marks itself probed, which turns the backfill off. A
+    // change dropping the marker on the persistence path would leave 13,443
+    // repositories re-fetched at 2,000 a run forever with the suite green.
+    const state: RepoState = { 'a/unprobed': unprobedEntryOf('a/unprobed') }
+    // Unchanged head: the ONLY reason this repo is queued is the missing probe.
+    const seen = [{ repo: 'a/unprobed', pushedAt: '2026-08-01T00:00:00Z' }]
+    const result = await harvestRepos({
+      state, budget: 5, fetchImpl: harvestFetch(seen, repoRoutes('a/unprobed', '2026-08-01T00:00:00.000Z')), sleep, token: 't',
+    })
+    expect(result.fetched).toBe(1)
+    const persisted = result.nextState['a/unprobed']?.candidates[0]
+    expect(persisted?.sizeProbed).toBe(true)
+    expect(persisted?.installSize).toBe(4242)
+    // Self-terminating, asserted end to end: the state this run WROTE queues
+    // nothing on the next run's diff.
+    expect(diffRepoState(result.nextState, seen).toFetch).toEqual([])
+  })
+
   /**
    * A harvest whose search fails `failures` times before answering, serving one
    * bundle-less monorepo root. The root carries `workspaces`, so it trips
@@ -1385,7 +1706,17 @@ describe('harvestRepos', () => {
           : []))(text) as Response
       }
       if (text.includes('/git/trees/')) {
-        trees += 1
+        // The DISCOVERY probe only. The sizing read hits the same endpoint
+        // pinned to the COMMIT and fires whatever `probeSubpackages` says, so
+        // counting both would stop measuring the option under test.
+        //
+        // Excluded by the SHA rather than matched on the branch name: a
+        // counter keyed to the literal 'main' returns 0 unconditionally if
+        // `repoItem`'s default_branch ever changes, and the only assertion on
+        // it was `toBe(0)` — so it would have passed vacuously and stopped
+        // seeing the regression it exists for. The companion assertion below
+        // pins it non-zero, which is what makes either spelling honest.
+        if (!text.includes(`/git/trees/${commit}`)) trees += 1
         return new Response(JSON.stringify({ tree: [{ path: 'packages/a/package.json', type: 'blob' }] }), { status: 200 })
       }
       if (text.startsWith('https://raw.githubusercontent.com/m/mono/main/package.json')) {
@@ -1429,6 +1760,22 @@ describe('harvestRepos', () => {
     // the tree probe fires if and only if `probeSubpackages` is on.
     expect(treeProbes()).toBe(0)
     expect(result.candidates.every(c => c.subdir === undefined)).toBe(true)
+  })
+
+  it('counts the discovery probe when it IS on, so the zero above means something', async () => {
+    // Without this the counter could match nothing at all and the assertion
+    // above would hold unconditionally — leaving undetected the regression it
+    // exists for: build.ts's whole-harvest retry rebuilt the options object
+    // and dropped `probeSubpackages`, shipping `subdir` entries to v3 clients
+    // that silently install the monorepo ROOT.
+    const { fetchImpl, treeProbes } = flakyMonorepoHarvest(1)
+    const result = await harvestRepos({
+      state: {}, budget: 5, fetchImpl, sleep, token: 't',
+      probeSubpackages: true, retryAfterMs: 1,
+    })
+    expect(treeProbes()).toBeGreaterThan(0)
+    // And the probe did what being on means: the subpackage became the entry.
+    expect(result.candidates.map(c => c.subdir)).toEqual(['packages/a'])
   })
 
   it('does not retry unless asked, so a unit test cannot mask a failure by accident', async () => {
@@ -1739,6 +2086,14 @@ describe('harvestRepos', () => {
       }
       if (text === 'https://api.github.com/repos/someone/monorepo/git/trees/main?recursive=1') {
         return new Response(JSON.stringify({ tree: [{ path: 'package.json' }, { path: 'packages/the-plugin/package.json' }] }), { status: 200 })
+      }
+      // The SIZING read, which is a second request at the pinned commit. Left
+      // unrouted it throws, the candidate is never marked `sizeProbed`, and
+      // the repo re-fetches every run — which is correct behaviour for a real
+      // transport failure and simply wrong for a fixture standing in for a
+      // healthy repository.
+      if (text === `https://api.github.com/repos/someone/monorepo/git/trees/${commit}?recursive=1`) {
+        return new Response(JSON.stringify({ truncated: false, tree: [{ path: 'package.json', type: 'blob', size: 120 }] }), { status: 200 })
       }
       if (text === 'https://raw.githubusercontent.com/someone/monorepo/main/packages/the-plugin/package.json') {
         return new Response(huge, { status: 200 })
@@ -2991,5 +3346,87 @@ describe('parseHarvestBudget', () => {
     // build.ts is a top-level-await script with no test seam; a `?? '2000'`
     // there is a policy number nothing can read back.
     expect(REPO_BACKFILL_BUDGET_DEFAULT).toBe(2000)
+  })
+})
+
+describe('the sizing read is bounded like the other large body, not like metadata', () => {
+  const meta = { fullName: 'someone/dsh-repo-plugin', defaultBranch: 'main', description: 'A repo plugin.', license: 'MIT', pushedAt: '2026-08-01T00:00:00Z', stars: null as number | null }
+  const treeUrl = `https://api.github.com/repos/someone/dsh-repo-plugin/git/trees/${commit}`
+  const metadataRoutes = (): Record<string, Response> => ({
+    'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(JSON.stringify({
+      name: 'dsh-repo-plugin',
+      dsh: { bundle: { patch: './cordis.patch.yml' }, catalog: { category: 'tool', summary: { en: 'x' }, capabilities: [] } },
+    }), { status: 200 }),
+    'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': new Response(JSON.stringify({
+      sha: commit, commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+    }), { status: 200 }),
+  })
+  function routeTree(bodyImpl: typeof fetch): typeof fetch {
+    return (async (url: string | URL, init?: RequestInit) => {
+      const text = String(url)
+      if (text.startsWith(treeUrl)) return bodyImpl(text, init)
+      for (const [prefix, response] of Object.entries(metadataRoutes())) {
+        if (text.startsWith(prefix)) return response
+      }
+      throw new Error(`unrouted url: ${text}`)
+    }) as unknown as typeof fetch
+  }
+
+  it('gives the 24 MB tree read a deadline of its own, larger than the metadata one', () => {
+    // Literals on both, for the reason the tarball's twin gives: a test that
+    // computed one from the other could not see them collapse together.
+    expect(TREE_REQUEST_TIMEOUT_MS).toBe(225_000)
+    expect(MAX_TREE_BYTES).toBe(24 * 1024 * 1024)
+    expect(TREE_REQUEST_TIMEOUT_MS).toBeGreaterThan(GITHUB_REQUEST_TIMEOUT_MS)
+    // The throughput floor this bound buys is no stricter than the one the
+    // tarball path already accepted — which is the whole argument for the
+    // number. 24 MB on the shared 30s bound demanded 0.80 MB/s.
+    const treeFloor = MAX_TREE_BYTES / (TREE_REQUEST_TIMEOUT_MS / 1000)
+    const tarballFloor = MAX_TARBALL_BYTES / (TARBALL_REQUEST_TIMEOUT_MS / 1000)
+    expect(treeFloor).toBeLessThanOrEqual(tarballFloor)
+  })
+
+  it('bounds a tree that sends headers and then stalls its body, on its OWN deadline', async () => {
+    // 2000ms metadata bound, 60ms tree bound: a sizing read that fell back on
+    // the metadata deadline would still finish, just not this fast. Before
+    // the split there was no tree bound at all — a 24 MB body on 30s, inside
+    // the band the tarball comment computes as the failure case.
+    const fetchImpl = routeTree(headersThenStalledBody())
+    const started = Date.now()
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token', false, 2000, 300, 60)
+    expect(Date.now() - started).toBeLessThan(1500)
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.candidates[0]?.name).toBe('dsh-repo-plugin')
+      expect(result.candidates[0]?.installSize).toBeUndefined()
+      // Unmarked: a stalled read says nothing about the repository, so the
+      // next run must retry it.
+      expect(result.candidates[0]?.sizeProbed).toBeUndefined()
+    }
+  })
+
+  it('records the cap that refused an over-cap tree, so raising it re-measures', async () => {
+    // A chunked body past MAX_TREE_BYTES. The read stops at the cap rather
+    // than buffering it all, exactly as the tarball's over-cap test asserts.
+    const chunk = new Uint8Array(1024 * 1024)
+    const overCap = (async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let sent = 0; sent <= MAX_TREE_BYTES; sent += chunk.byteLength) controller.enqueue(chunk)
+        controller.close()
+      },
+    }), { status: 200 })) as unknown as typeof fetch
+    const result = await fetchRepoCandidate(meta, routeTree(overCap), sleep, 'token', false, 2000, 300, 5000)
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      const candidate = result.candidates[0]
+      expect(candidate?.installSize).toBeUndefined()
+      // Marked, so a 24 MB body is not re-read every single run...
+      expect(candidate?.sizeProbed).toBe(true)
+      // ...but the cap that refused it is recorded, because the refusal was
+      // OURS. A 404 and a truncated tree are facts about the commit; this is
+      // a fact about a constant, and marking them identically meant a later
+      // raise would re-measure none of the repositories the old cap excluded.
+      expect(candidate?.sizeCappedAt).toBe(MAX_TREE_BYTES)
+    }
   })
 })

@@ -15,6 +15,7 @@
  * the harvest memory.
  */
 
+import { canEverList } from './repo-gate.ts'
 import type { RepoCandidate } from './types.ts'
 
 /** One repository's recorded state. Exactly one of the outcome fields is
@@ -55,6 +56,74 @@ export interface RepoSeen {
 }
 
 /**
+ * A repository {@link diffRepoState} wants fetched, and why.
+ *
+ * `backfillOnly` means nothing about the repository changed — it is queued to
+ * re-ask a question about the commit already recorded (an unverified release,
+ * a missing size probe). The distinction exists because the budget is smaller
+ * than the backlog: 13,443 recorded repositories entered the size backfill at
+ * once against a `REPO_BACKFILL_BUDGET` of 2,000, and an undifferentiated
+ * queue sorted by NAME served an unchanged repository being re-measured for a
+ * decoration ahead of a repository that had actually published a fix. For
+ * roughly seven consecutive runs, everything late in the alphabet would not
+ * have reached the catalog at all.
+ */
+export interface RepoToFetch extends RepoSeen {
+  backfillOnly: boolean
+}
+
+/**
+ * Re-bound the one figure a candidate carries forward without ever being
+ * re-derived.
+ *
+ * `installSize` passes {@link treeInstallSize}'s validation exactly once, at
+ * the commit where it was measured, and `sizeProbed` then guarantees it is
+ * never measured again — so without this it reaches `plugins.json` through an
+ * unchecked cast. The npm half does the opposite and says why in its own
+ * comment: `npm-client.ts` re-bounds `dist.unpackedSize` with the same two
+ * tests on EVERY run. The asymmetry mattered in proportion — the 2026-09-08
+ * dry run fetched 405 repositories and carried 15,063, so ~97% of github
+ * figures reached the emitter without passing a check again, and nothing
+ * downstream re-tests one: `repo-gate` and `tier` only ask `!== undefined`,
+ * and `toWellFormedEntry` repairs strings.
+ *
+ * The consequence a bad row buys is not local. `1e999` parses to Infinity and
+ * `JSON.stringify` emits `"installSize": null`; `-1`, `1.5` and `"big"` are
+ * republished verbatim. Once the client adds `z.number().int().nonnegative()`
+ * behind its throwing parse, one such row costs every installed shop the
+ * WHOLE catalog — the exact blast radius the second key was introduced to
+ * avoid (design § 2026-09-08).
+ *
+ * The marker goes with the figure, and that is the whole repair: dropping
+ * `installSize` alone would leave the row `sizeProbed` and therefore sizeless
+ * forever, while dropping both re-queues the repository for one honest
+ * re-measurement. Self-healing, so a corrupt row costs a decoration for one
+ * run instead of stopping a build over a number the next run can just take
+ * again.
+ */
+function reboundCarriedSize(candidate: RepoCandidate): RepoCandidate {
+  const { installSize, sizeProbed, sizeCappedAt } = candidate as {
+    installSize?: unknown
+    sizeProbed?: unknown
+    sizeCappedAt?: unknown
+  }
+  const sizeOk = installSize === undefined
+    || (typeof installSize === 'number' && Number.isSafeInteger(installSize) && installSize >= 0)
+  // Bounded like the figure: it is compared against the live cap to decide a
+  // re-probe, and a NaN or a string would make that comparison silently false
+  // — the one outcome this field exists to prevent.
+  const capOk = sizeCappedAt === undefined
+    || (typeof sizeCappedAt === 'number' && Number.isSafeInteger(sizeCappedAt) && sizeCappedAt >= 0)
+  // `sizeProbed?: true` in the type, so anything else is a shape this build
+  // never wrote. A falsy one already reads as unprobed; normalizing it away
+  // keeps it from being serialized back out.
+  const probeOk = sizeProbed === undefined || sizeProbed === true
+  if (sizeOk && probeOk && capOk) return candidate
+  const { installSize: _size, sizeProbed: _probe, sizeCappedAt: _cap, ...rest } = candidate
+  return rest
+}
+
+/**
  * Parse the committed state file; a malformed file throws (it is a build
  * input, and silently dropping it would schedule a fresh full sweep). The
  * pre-subpackage shape (`candidate`, singular) still parses — the committed
@@ -84,9 +153,9 @@ export function parseRepoState(text: string): RepoState {
     }
     let candidates: RepoCandidate[]
     if (Array.isArray(entry.candidates)) {
-      candidates = entry.candidates as RepoCandidate[]
+      candidates = (entry.candidates as RepoCandidate[]).map(reboundCarriedSize)
     } else if (typeof entry.candidate === 'object' && entry.candidate !== null) {
-      candidates = [entry.candidate as RepoCandidate]
+      candidates = [reboundCarriedSize(entry.candidate as RepoCandidate)]
     } else {
       throw new Error(`repo-state.json: ${repo} has neither candidates nor a candidate`)
     }
@@ -140,17 +209,87 @@ export function serializeRepoState(state: RepoState): string {
  *   recorded repos the search no longer returns (deleted, renamed, private —
  *   the catalog must drop them with the reason attached).
  */
-export function diffRepoState(state: RepoState, seen: RepoSeen[]): { toFetch: RepoSeen[]; gone: string[] } {
+export function diffRepoState(
+  state: RepoState,
+  seen: RepoSeen[],
+  /**
+   * The tree body cap this build applies ({@link MAX_TREE_BYTES}). A candidate
+   * recorded as refused under a SMALLER cap is re-queued, so raising the cap
+   * re-measures what the old one excluded.
+   *
+   * Defaults to Infinity, which re-queues every cap-refused candidate. That is
+   * the wasteful direction on purpose: a caller that forgets spends one
+   * re-probe, where the other default would silently leave those repositories
+   * sizeless forever — and this project prefers the failure it can see.
+   */
+  treeCap: number = Number.POSITIVE_INFINITY,
+): { toFetch: RepoToFetch[]; gone: string[] } {
   const seenByName = new Map(seen.map(entry => [entry.repo, entry]))
-  const toFetch: RepoSeen[] = []
+  const toFetch: RepoToFetch[] = []
   for (const [repo, entry] of seenByName) {
     const recorded = state[repo]
-    if (recorded === undefined || recorded.pushedAt !== entry.pushedAt || hasUnverifiedRelease(recorded)) {
-      toFetch.push(entry)
+    // A repo the search has never recorded, or one whose head moved, has
+    // something NEW to say. The other two reasons re-ask a question about a
+    // commit already recorded — worth asking, but never at a changed repo's
+    // expense, which is what `backfillOnly` lets the caller enforce.
+    const changed = recorded === undefined || recorded.pushedAt !== entry.pushedAt
+    if (changed || hasUnverifiedRelease(recorded) || lacksSizeProbe(recorded, treeCap)) {
+      toFetch.push({ ...entry, backfillOnly: !changed })
     }
   }
   const gone = Object.keys(state).filter(repo => !seenByName.has(repo))
   return { toFetch, gone }
+}
+
+/**
+ * Whether a recorded repo has candidates the sizing probe never reached.
+ *
+ * The same retroactivity hole as {@link hasUnverifiedRelease}, for the same
+ * reason: `pushedAt` gates the re-fetch, so every repository recorded before
+ * `installSize` existed would keep no size until it happened to push. That is
+ * not a theoretical wait — the 2026-09-08 dry run fetched 405 repositories and
+ * carried 15,063, so the field would arrive for a few percent and then trickle
+ * in behind whatever pushes happen to occur, which for a dormant repository is
+ * never.
+ *
+ * Absence of `sizeProbed` queues the repo for ONE re-probe, after which the
+ * marker is present either way and the repo returns to being re-fetched only
+ * when it changes. The backfill is therefore bounded and self-terminating:
+ * every recorded repo once, and then done. Not at REPO_BACKFILL_BUDGET a run,
+ * though — `harvestOnce` serves changed repos first and the backfill spends
+ * what they leave over, because 13,443 recorded repos against a budget of
+ * 2,000 is seven runs during which an undifferentiated name-sorted queue
+ * would have starved every alphabetically-late repo that actually changed.
+ *
+ * It deliberately does NOT test `installSize`. A tree can answer and yield no
+ * figure — truncated, a hostile blob size, a `subdir` matching nothing — and
+ * keying on the size would put those repositories in every run's queue
+ * forever, spending the backfill budget on repositories that can never
+ * satisfy it. The marker is the same device `assetVerified` is, for the same
+ * reason its comment gives.
+ *
+ * The cost this DOES accept, stated because it is a behaviour change for an
+ * unchanged repository: a sizing read that fails in transport marks nothing,
+ * so that repo is re-fetched on every run until one read answers. That is the
+ * `fetch-failed` rule — a transport failure says nothing about the repository
+ * and is never made durable — but it now spends a re-fetch rather than
+ * nothing, and a broadly failing tree endpoint would spend the whole budget
+ * re-fetching instead of advancing the backfill. Bounded by the budget, so
+ * the failure mode is a slower backfill and not an unbounded run.
+ */
+function lacksSizeProbe(recorded: RepoState[string], treeCap: number): boolean {
+  // Only candidates that could actually list. One that cannot is never
+  // measured and never marked, so counting it here would queue its repository
+  // in every run forever — and skipping it unconditionally would leave it
+  // unmeasured if a gate rule later loosens. Asking the same predicate the
+  // skip asks makes the loosening re-queue exactly what it made listable.
+  return (recorded.candidates ?? []).some(
+    candidate => canEverList(candidate)
+      && (candidate.sizeProbed !== true
+        // Refused by a cap smaller than the one this build applies, so the
+        // refusal was ours and is worth re-asking exactly once.
+        || (candidate.sizeCappedAt !== undefined && candidate.sizeCappedAt < treeCap)),
+  )
 }
 
 /**

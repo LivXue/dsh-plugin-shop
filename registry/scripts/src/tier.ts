@@ -61,6 +61,12 @@ export function assignTier(accepted: Accepted, config: RegistryConfig): Entry {
     ...(candidate.publisher !== undefined ? { publisher: candidate.publisher } : {}),
     ...(candidate.peers.length > 0 ? { peers: candidate.peers } : {}),
     ...(candidate.unpackedSize !== undefined ? { unpackedSize: candidate.unpackedSize } : {}),
+    // The same number under the cross-source key. Both are emitted on purpose
+    // while old clients live: an installed shop refuses a github
+    // `unpackedSize` outright, so that key can never carry every source, and
+    // dropping it here would blank the size for every client that predates
+    // `installSize`. See Entry.installSize for the retirement path.
+    ...(candidate.unpackedSize !== undefined ? { installSize: candidate.unpackedSize } : {}),
   }
   // Defence in depth: a github review is keyed by its repository now, so it
   // can no longer be reached by an npm name at all (config.ts). If one ever
@@ -115,6 +121,17 @@ export function assignRepoTier(accepted: RepoAccepted, config: RegistryConfig): 
     ...(repo.subdir !== undefined ? { subdir: repo.subdir } : {}),
     ...(release !== undefined ? { tarball: { url: release.url, sha256: release.sha256 } } : {}),
     added: firstSeenOf(config, firstSeenKey({ source: 'github', name: repo.name, repo: repo.repo })),
+    // Last, after `added` — the same placement the npm path uses and the one
+    // §7.1 prescribes ("the optional fields sit after `added` and before
+    // `tier`"). A new key at the end rewrites every entry once, which a new
+    // field must; inserted beside `subdir` it also moved `tarball` and
+    // `added` in every github entry that gains a size, widening the
+    // content-hash delta past what the field itself requires.
+    //
+    // Never `unpackedSize`: an installed client raises an issue on a github
+    // entry carrying that key, and the data file is parsed with a throw, so
+    // one such row costs every reader the WHOLE catalog.
+    ...(repo.installSize !== undefined ? { installSize: repo.installSize } : {}),
   }
   // A release-pinned entry is reviewed by its tarball sha256: the tag is
   // display only — a mutable ref an author can re-point at different content

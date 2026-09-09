@@ -19,6 +19,10 @@ function candidate(repo: string): RepoCandidate {
     hasWorkspaceDeps: false,
     catalog: null,
     description: 'x',
+    // A normally recorded candidate has been through the sizing probe. Absent
+    // here, every fixture below would queue for a re-probe and the tests about
+    // `pushedAt` and `assetVerified` would stop testing those.
+    sizeProbed: true,
   }
 }
 
@@ -78,6 +82,66 @@ describe('repo-state', () => {
       },
     }
     const { toFetch } = diffRepoState(verified, [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }])
+    expect(toFetch).toEqual([])
+  })
+
+  it('diff: an unchanged repo whose candidates were never size-probed is re-probed once', () => {
+    // Same retroactivity hole as the release check above, for the same reason:
+    // `pushedAt` alone would leave every repo recorded before `installSize`
+    // existed without one forever. Measured on the 2026-09-08 dry run — 405
+    // repositories fetched against 15,063 carried, so waiting for pushes
+    // would populate the field for a few percent and trickle indefinitely.
+    const unprobed: RepoState = {
+      'a/one': {
+        pushedAt: '2026-08-01T00:00:00Z',
+        commit,
+        candidates: [{ ...candidate('a/one'), sizeProbed: undefined }],
+      },
+    }
+    const { toFetch } = diffRepoState(unprobed, [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }])
+    expect(toFetch.map(e => e.repo)).toEqual(['a/one'])
+    // Labelled, because the caller must be able to serve it AFTER anything
+    // that actually changed: nothing about this repository is new, it is
+    // queued to re-ask a question about the commit already recorded.
+    expect(toFetch[0]?.backfillOnly).toBe(true)
+  })
+
+  it('diff: a repo whose head moved is never labelled backfill, even if it also lacks a probe', () => {
+    // Both reasons at once is the common case during the one-time backfill:
+    // 13,443 recorded repositories lack a probe, and some of them pushed
+    // today. A repo with something NEW to say is served first — the label
+    // must follow the change, not the marker.
+    const both: RepoState = {
+      'a/one': {
+        pushedAt: '2026-07-01T00:00:00Z',
+        commit,
+        candidates: [{ ...candidate('a/one'), sizeProbed: undefined }],
+      },
+    }
+    const { toFetch } = diffRepoState(both, [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }])
+    expect(toFetch.map(e => e.backfillOnly)).toEqual([false])
+  })
+
+  it('diff: a repo the state has never seen is never labelled backfill', () => {
+    const { toFetch } = diffRepoState({}, [{ repo: 'a/new', pushedAt: '2026-08-01T00:00:00Z' }])
+    expect(toFetch.map(e => e.backfillOnly)).toEqual([false])
+  })
+
+  it('diff: a size-probed candidate with NO size is left alone, not re-asked daily', () => {
+    // The reason the marker exists at all rather than testing `installSize`
+    // directly. A tree can answer and still yield no figure — truncated, a
+    // hostile blob size, a subdir matching nothing — and keying the re-probe
+    // on the SIZE would put those repositories in every run's queue forever.
+    // `sizeProbed` is written whichever way the answer went, exactly as
+    // `assetVerified` is, so the re-probe happens once.
+    const probedNoSize: RepoState = {
+      'a/one': {
+        pushedAt: '2026-08-01T00:00:00Z',
+        commit,
+        candidates: [{ ...candidate('a/one'), sizeProbed: true }],
+      },
+    }
+    const { toFetch } = diffRepoState(probedNoSize, [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }])
     expect(toFetch).toEqual([])
   })
 
@@ -236,5 +300,93 @@ describe('repoGoneDetail', () => {
     // repo-state.ts is pure — importing the list from the network module to
     // read it would be the wrong direction.
     expect(repoGoneDetail(['only-one'])).toContain('its only-one topic was removed')
+  })
+})
+
+describe('a carried installSize is re-bounded on the way in', () => {
+  // The npm half re-bounds `dist.unpackedSize` on EVERY run and its comment
+  // says why. The github figure was validated once, at the commit where it
+  // was measured, and `sizeProbed` then guaranteed it was never measured
+  // again — so a bad row in the 11.6 MB state file rode an unchecked cast all
+  // the way to `plugins.json`, where nothing re-tests it.
+  const rowWith = (extra: Record<string, unknown>): string => JSON.stringify({
+    'a/one': {
+      pushedAt: '2026-08-01T00:00:00Z',
+      commit,
+      candidates: [{ ...candidate('a/one'), sizeProbed: true, ...extra }],
+    },
+  })
+
+  it.each([
+    ['negative', -1],
+    ['fractional', 1.5],
+    ['a string', 'big'],
+    ['past the safe-integer range', 1e999],
+    ['null', null],
+  ])('drops a %s installSize, and the probe marker with it', (_label, installSize) => {
+    const parsed = parseRepoState(rowWith({ installSize }))
+    const carried = parsed['a/one']?.candidates[0]
+    expect(carried?.installSize).toBeUndefined()
+    // The marker goes too, so the repository is re-queued for one honest
+    // re-measurement. Dropping the size alone would leave it probed, and
+    // therefore sizeless for as long as the row survives.
+    expect(carried?.sizeProbed).toBeUndefined()
+    expect(diffRepoState(parsed, [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }]).toFetch)
+      .toHaveLength(1)
+  })
+
+  it('keeps a well-formed figure, zero included', () => {
+    // Zero is a fact, not a falsy absence — the same rule the npm side keeps
+    // for an empty tarball.
+    for (const size of [0, 4242, Number.MAX_SAFE_INTEGER]) {
+      const carried = parseRepoState(rowWith({ installSize: size }))['a/one']?.candidates[0]
+      expect(carried?.installSize).toBe(size)
+      expect(carried?.sizeProbed).toBe(true)
+    }
+  })
+
+  it('normalizes a sizeProbed this build never writes', () => {
+    // The type is `sizeProbed?: true`. A `false` already reads as unprobed,
+    // but round-tripping it would put a shape the writer cannot produce back
+    // into the committed file.
+    const carried = parseRepoState(rowWith({ sizeProbed: false }))['a/one']?.candidates[0]
+    expect(carried?.sizeProbed).toBeUndefined()
+  })
+})
+
+describe('a cap-refused sizing read is re-asked when the cap moves', () => {
+  const capped = (sizeCappedAt: number): RepoState => ({
+    'a/one': {
+      pushedAt: '2026-08-01T00:00:00Z',
+      commit,
+      candidates: [{ ...candidate('a/one'), sizeProbed: true, sizeCappedAt }],
+    },
+  })
+  const seen = [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }]
+
+  it('re-queues a candidate refused under a smaller cap than this build applies', () => {
+    // The hole this closes: `sizeProbed` recorded an over-cap refusal exactly
+    // as it records a 404, so raising MAX_TREE_BYTES would have re-measured
+    // none of the repositories the old cap excluded — the same retroactivity
+    // hole `hasUnverifiedRelease` and the probe marker itself were written to
+    // close, reintroduced one level down.
+    const { toFetch } = diffRepoState(capped(8 * 1024 * 1024), seen, 24 * 1024 * 1024)
+    expect(toFetch.map(e => e.repo)).toEqual(['a/one'])
+    // Still a backfill, not a change: it must not displace a repository that
+    // actually pushed.
+    expect(toFetch[0]?.backfillOnly).toBe(true)
+  })
+
+  it('leaves a candidate refused under the cap still in force', () => {
+    // Otherwise the re-probe is not one-shot: every run would re-read a body
+    // it already knows is too big.
+    expect(diffRepoState(capped(24 * 1024 * 1024), seen, 24 * 1024 * 1024).toFetch).toEqual([])
+  })
+
+  it('re-queues rather than going silent when the caller names no cap', () => {
+    // The default is Infinity on purpose. A caller that forgets spends one
+    // re-probe; the other default would leave those repositories sizeless
+    // forever, and this project prefers the failure it can see.
+    expect(diffRepoState(capped(24 * 1024 * 1024), seen).toFetch.map(e => e.repo)).toEqual(['a/one'])
   })
 })
