@@ -327,7 +327,33 @@ and at the two `started` dispatch sites (`:51` and `:123`) pass the state the ho
 
 Import `isTerminalInstallState` from `../shared/install-state.ts`.
 
-Apply the same two changes in `src/client/useUpdateSelf.ts:33` and `src/client/useUninstall.ts:34`, which build the same view shape.
+The other two hooks build the same view shape and are NOT symmetric — seed each
+according to what it can actually do:
+
+**`src/client/useUpdateSelf.ts:33` — seed from the host, like `useInstall`.** The
+self-update runs through `startInstall` (`index.ts:1213`), so it can be queued behind
+another install and prefetched like any other. `ShopUpdateResult` (`index.ts:170`) is
+therefore widened exactly as `ShopInstallResult` is:
+
+```ts
+export type ShopUpdateResult =
+  | { ok: true; installId: string; state: InstallState }
+  | { ok: false; detail: string }
+```
+
+with `updateStart`'s return (`index.ts:1222`) gaining `state: running.status().state`.
+Seeding it `'installing'` instead would make a queued self-update read
+Installing → Downloading → Installing: a backwards flicker, worse than the delay it
+saves.
+
+**`src/client/useUninstall.ts:34` — seed `phase: 'installing'`, unconditionally.** An
+uninstall has nothing to fetch. `ShopUninstallResult` (`index.ts:146`) carries no state
+and must not gain one, because an uninstall can never be in a download phase — see
+Task 5, which passes the prefetcher to `startInstall` only.
+
+```ts
+      setView({ kind: 'running', installId: result.installId, log: [], phase: 'installing' })
+```
 
 - [ ] **Step 5: Run the client suite**
 
@@ -1078,8 +1104,13 @@ import { isTerminalInstallState, type InstallState } from '../shared/install-sta
 import type { Prefetcher } from './prefetch.ts'
 ```
 
-Thread `prefetcher` through `startInstall`'s and `startUninstall`'s options into
-`spawnPluginCli`.
+Thread `prefetcher` through `startInstall`'s options into `spawnPluginCli`.
+
+**`startUninstall` does NOT take a prefetcher, and `index.ts` must not pass it one.** An
+uninstall has nothing to fetch, and `isPrefetchableSpec` would happily accept the bare
+plugin name it carries as its target — the shop would run `pnpm store add <name>` for a
+package it is about to remove. Leaving the option off `startUninstall` entirely makes
+that unrepresentable rather than merely unused.
 
 - [ ] **Step 5: Give the gateway one prefetcher and report the initial state**
 
