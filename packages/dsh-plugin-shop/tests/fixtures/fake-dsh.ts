@@ -50,6 +50,34 @@ export function fakeDsh(dir: string, body: string, name = 'dsh.mjs'): string {
   writeFileSync(bin, [
     "import * as fs from 'node:fs'",
     'const argv = process.argv.slice(2)',
+    // `process.exit()` RECORDS the code and lets the body end, rather than
+    // terminating on the spot.
+    //
+    // stdout is a PIPE here, so node's writes to it are ASYNCHRONOUS, and
+    // `process.exit()` is documented to exit "even if there are still
+    // asynchronous operations pending ... including I/O to process.stdout".
+    // A body's exit is its last statement, so every line it printed is exactly
+    // what is at risk. While a reader keeps the pipe empty each write finishes
+    // inside `uv_write`'s first `write(2)` and nothing is ever queued — which
+    // is why an idle machine never sees this — but under a full parallel suite
+    // the reader is starved, the pipe backs up, and the queue is dropped.
+    // Measured: 171, 181 and 201 lines of 250 arriving on three different
+    // runs. Varying counts are what a lost race looks like; a logic error
+    // gives the same wrong answer every time.
+    //
+    // Recording the code instead lets the process end normally, which flushes
+    // stdout first. Verified against every body this fixture has: all sixteen
+    // `process.exit(n)` call sites are the LAST line of their body, so nothing
+    // depends on it not returning, and the two that spawn a grandchild
+    // `unref()` it, so nothing holds the loop open either.
+    //
+    // The synchronous alternative — writing to fd 1 with `fs.writeSync` — was
+    // tried first and is a trap. Node sets the pipe non-blocking as soon as
+    // anything TOUCHES `process.stdout`, so the override needed to install it
+    // is what makes the write it installs throw `EAGAIN` under the very
+    // back-pressure it was meant to survive.
+    'const recordExit = code => { process.exitCode = code === undefined ? 0 : code }',
+    'process.exit = recordExit',
     "const out = line => process.stdout.write(line + '\\n')",
     body,
     '',
