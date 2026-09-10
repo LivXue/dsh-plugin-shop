@@ -903,9 +903,11 @@ git commit -m "feat(host): a batched prefetch pump, best-effort by construction"
 ### Task 5: Wire the pump to the queue, and let the mutex mark the phase
 
 **Files:**
-- Modify: `packages/dsh-plugin-shop/src/host/executor.ts:44-51` (the queue and a depth beside it), `:467` (initial state), `:501` (the chained task's first act)
+- Modify: `packages/dsh-plugin-shop/src/host/executor.ts:44-51` (the queue and a depth beside it), `:467` (initial state), `:481` (`append`'s guard), `:501` (the chained task's first act)
+- Modify: `packages/dsh-plugin-shop/src/host/index.ts` (the gateway's `prefetcher` field and the two `startInstall` call sites; `evictFinishedInstalls` at `:918` and `hasRunningCommand` at `:927`)
 - Modify: `docs/design/2026-08-18-dsh-plugin-shop-design.md` (§7.2 amendment)
-- Test: `packages/dsh-plugin-shop/tests/host/executor.test.ts`
+- Modify: `docs/design/2026-09-10-install-prefetch.md` (§5's table corrected to the full set of sites)
+- Test: `packages/dsh-plugin-shop/tests/host/executor.test.ts`, `packages/dsh-plugin-shop/tests/host/index.test.ts`
 
 **Interfaces:**
 - Consumes: `createPrefetcher`, `isPrefetchableSpec` (Task 4); `InstallState` (Task 1).
@@ -985,6 +987,63 @@ describe('the download phase in front of the queue', () => {
 ```
 
 Add to that file's imports: `existsSync` from `node:fs`, `fakePnpm` from `../fixtures/fake-pnpm.ts`, and `createPrefetcher` from `../../src/host/prefetch.ts`.
+
+And append to `packages/dsh-plugin-shop/tests/host/index.test.ts`, because two gateway
+methods decide "is this finished?" by exclusion and both are wrong once a second
+non-terminal state exists:
+
+```ts
+describe('a queued install is live, not finished', () => {
+  it('does not evict a queued install as though it had finished', async () => {
+    // `evictFinishedInstalls` counted anything not 'running' as finished and
+    // evictable. A queued install reports 'downloading', so once the retained
+    // records pass the 32 cap the OLDEST QUEUED one is deleted — and
+    // installStatus then answers found: false, which the client's reducer
+    // renders as "install record lost" on an install that is about to run.
+    // The existing 33-install eviction case cannot catch this: it awaits every
+    // install's completion before adding the one that triggers eviction, so no
+    // record is 'downloading' at that moment. This one never awaits.
+    const { gateway } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} })
+    const ids: string[] = []
+    for (let i = 0; i < 34; i += 1) {
+      const result = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
+      if (!result.ok) throw new Error('fixture install was rejected')
+      ids.push(result.installId)
+    }
+    const second = ids[1]
+    const last = ids[ids.length - 1]
+    if (second === undefined || last === undefined) throw new Error('no install ids collected')
+    // The first holds the queue; every later one is queued behind it.
+    expect(gateway.installStatus({ installId: second }).found).toBe(true)
+    // Drain, so the suite does not tear down with 34 children mid-flight.
+    const deadline = Date.now() + 20000
+    while (gateway.installStatus({ installId: last }).state === 'running' && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+  })
+
+  it('refuses a restart while an install is still queued', async () => {
+    // `hasRunningCommand` asked `state === 'running'`, so a queued install did
+    // not count and a restart was allowed to boot a new dsh against a profile
+    // with installs pending — the very case F-5 exists to refuse.
+    const { gateway } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} })
+    const first = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
+    const second = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
+    if (!first.ok || !second.ok) throw new Error('fixture install was rejected')
+    expect(second.state).toBe('downloading')
+    const restart = await gateway.restart()
+    expect(restart.ok).toBe(false)
+    const deadline = Date.now() + 20000
+    while (gateway.installStatus({ installId: second.installId }).state === 'running' && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+  })
+})
+```
+
+Check `restart()`'s actual result shape against the existing F-5 case in this file
+(`restart while an install is running (F-5)`) and match it — that case already asserts a
+refusal and is the reference for what a refusal looks like.
 
 - [ ] **Step 2: Run them and watch them fail**
 
@@ -1148,6 +1207,44 @@ because nothing produced anything else; after it, the same expression reports
 `state: running.status().state` and move on; re-adding it duplicates a property in one
 object literal.
 
+**Two gateway methods in the same file decide "finished" by exclusion and are wrong the
+moment a second non-terminal state exists.** Both are the same one-line change, and both
+are the difference between a feature and a defect:
+
+```ts
+  private evictFinishedInstalls(): void {
+    const finishedIds: string[] = []
+    for (const id of this.installOrder) {
+      const record = this.installs.get(id)
+      // Terminal, not "not running". A QUEUED install reports 'downloading',
+      // and counting it here evicts a live record: `installStatus` then answers
+      // found: false and the client renders "install record lost" for an
+      // install that is about to run. The comment above this method — running
+      // records are never evicted — is only true with this predicate.
+      if (record !== undefined && isTerminalInstallState(record.status().state)) finishedIds.push(id)
+    }
+```
+
+```ts
+  private hasRunningCommand(): boolean {
+    for (const record of this.installs.values()) {
+      // A queued install is a command this gateway started and has not
+      // finished. Asking `=== 'running'` would let a restart boot a new dsh
+      // against a profile with installs pending — what F-5 refuses.
+      if (!isTerminalInstallState(record.status().state)) return true
+    }
+    return false
+  }
+```
+
+Import the predicate in `index.ts`:
+
+```ts
+import { isTerminalInstallState, type InstallState } from '../shared/install-state.ts'
+```
+
+(`InstallState` is already imported there by Task 2; add the value import beside it.)
+
 - [ ] **Step 6: Run the host suite and fix what genuinely changed meaning**
 
 Run: `pnpm -C packages/dsh-plugin-shop exec vitest run tests/host/`
@@ -1159,6 +1256,27 @@ In `docs/design/2026-08-18-dsh-plugin-shop-design.md`, after the §7.2 flow diag
 
 ```markdown
 **Amendment (2026-09-10, the download phase): step 5 gains a phase in front of it.** An install that finds something already queued or running for its profile, and whose spec is not a raw https tarball URL, has its packages fetched into pnpm's content store by a batched `pnpm store add` running OUTSIDE the mutex — so its serial turn is a store hit. The mutex itself is unchanged and is the phase boundary: such an install reports `downloading` until it holds the queue and `running` after. The prefetch is best-effort and decides nothing: pnpm absent, a non-zero batch or a timeout leaves `dsh plugin add` to fetch what the store lacks. The raw-tarball exclusion is measured, not an oversight — see `docs/design/2026-09-10-install-prefetch.md` §3, which owns every figure behind this amendment.
+```
+
+Then correct §5's table in `docs/design/2026-09-10-install-prefetch.md` to the FULL set.
+The spec listed two sites, task 2's amendment raised it to four, and a grep of every
+`!== 'running'` / `=== 'running'` in `src/` found six — two of which are defects rather
+than labels. Replace that table with:
+
+```markdown
+| site | today | required |
+| --- | --- | --- |
+| `useInstall.ts:150` | `status.state !== 'running'` ends the poll | `isTerminalInstallState(status.state)` |
+| `present.ts:194` | `if (status.state === 'running')`, else fall through to done/failed | `if (!isTerminalInstallState(status.state))` |
+| `executor.ts:483` | `append` drops a line when `state !== 'running'` | `if (isTerminalInstallState(state)) return` — otherwise the download phase's own log lines are silently discarded |
+| `index.ts:918` | `evictFinishedInstalls` counts anything not `'running'` as finished | `isTerminalInstallState(...)` — otherwise a queued install is evicted as live, and `installStatus` answers `found: false` for an install about to run |
+| `index.ts:927` | `hasRunningCommand` asks `=== 'running'` | `!isTerminalInstallState(...)` — otherwise a restart is permitted against a profile with installs queued, which F-5 exists to refuse |
+| `executor.ts:538`, `:584`, `:602` | `settle`, the child's `error` handler and the deadline timer each return early on `state !== 'running'` | **no change.** All three are created inside the chained task, whose first statement is `state = 'running'`, so `'downloading'` is unobservable at any of them; they guard double-settle, not terminality |
+| `useInstall.ts:143` | collects installs to poll by `view.kind === 'running'` | **no change**, because the view keeps that kind and carries a `phase` — a new view *kind* would leave a downloading install unpolled forever |
+
+Adding a second non-terminal state to a union that had exactly one does not produce a
+type error at a single one of these sites. Two are labels, two are silent data loss, and
+three are already correct for a reason worth writing down rather than rediscovering.
 ```
 
 - [ ] **Step 8: Commit**
