@@ -53,9 +53,11 @@ export const MAINTAINER_MAX_LENGTH = 64
  * live request every run forever.
  *
  * 20,000 is 5.9x the ~3,390 usernames `PARTITION_KEYWORDS`' comment measures
- * the axis at, and 5x the 4,000-probe per-run budget the plan sizes the
- * consumer at — which does not exist yet, and is named as the anchor rather
- * than linked for that reason. The relation is what matters: the FILE must not
+ * the axis at, and a large multiple of the per-run probe budget — whose value
+ * and its own bracketing live in `PUBLISHER_PROBE_BUDGET_DEFAULT`'s comment in
+ * `npm-client.ts` and are deliberately not restated here, because that budget
+ * moved once already and a copy of it in this file went stale the same day.
+ * The relation is what matters: the FILE must not
  * truncate before the BUDGET does, because the vocabulary is meant to outlive
  * what one run can spend on it, which is the entire reason it is persisted
  * rather than re-derived. File size is not the constraint being defended: at
@@ -108,9 +110,14 @@ export interface PublisherState {
    * PUBLISHER_PROBE_BUDGET_DEFAULT}, so with no rotation the same first N are
    * probed on every run and everything sorted after them is never probed at
    * all — deterministic starvation rather than a partial run, and invisible
-   * because a name that is never probed cannot be reported missing. {@link
-   * MAX_PUBLISHERS} is 20,000 against a 4,000 default budget, so the shape is
-   * anticipated by this module's own bounds.
+   * because a name that is never probed cannot be reported missing.
+   *
+   * The inverse failure is just as silent and has already happened: {@link
+   * nextCursor} returns 0 while the whole vocabulary fits one budget, so a
+   * budget sized ABOVE the vocabulary leaves this field pinned at 0 and every
+   * run probes everything. {@link PUBLISHER_PROBE_BUDGET_DEFAULT}'s comment
+   * owns that incident and the bracket that now keeps the budget under the
+   * committed vocabulary.
    */
   readonly cursor?: number
 }

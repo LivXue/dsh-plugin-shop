@@ -614,30 +614,68 @@ export const PARTITION_KEYWORDS: readonly string[] = [
 ]
 
 /**
- * How many publisher cells one run may PROBE per over-window keyword. The
- * vocabulary accumulates forever and the probe cost must not: 3,041
- * maintainers were in the `deepseek-harness` window on 2026-09-08 and each
- * costs one `size=1` request — about 3,390 once `dsh-plugin` is seeded too.
- * Sized above today's vocabulary so nothing is skipped yet, and bounded so a
- * year of accumulation cannot quietly turn one run into fifty thousand
- * requests. Same posture as `REPO_BACKFILL_BUDGET` on the GitHub half.
+ * How many publisher cells one run may PROBE per over-window keyword.
  *
- * A run that hits this ceiling is partial, not wrong: the window and the
- * refinement cells are unaffected, and the coverage arithmetic still decides
- * whether the result may publish.
+ * **DELIBERATELY BELOW the committed vocabulary**, which is what makes
+ * `PublisherState.cursor` do anything: `nextCursor` returns 0 whenever
+ * `size <= budget`, so a budget at or above the vocabulary disables the
+ * rotation entirely and every run probes the whole thing in one sequential
+ * pass. This constant shipped at 4,000 against a vocabulary the same release
+ * committed EMPTY, so 0.8.1's CI only ever exercised the no-op path; the first
+ * green run wrote 3,474 publishers, and the next run — the first to probe them
+ * — spent 57m37s on 3,474 sequential `size=1` requests before npm answered 503
+ * and {@link searchTotal} threw. Nothing was published that day.
+ * `publisher-state.test.ts` now fails on a budget that would repeat it.
+ *
+ * WHAT A PARTIAL RUN COSTS, stated because it is easy to read this as
+ * accumulation and it is not: the vocabulary and the cursor persist across
+ * runs, the probe RESULTS do not. A run recovers only from the slice it
+ * probed. The rotation guarantees every publisher is eventually probed; it
+ * never guarantees one run sees all of them. That is the same
+ * "partial, not wrong" posture the coverage arithmetic already decides
+ * against — the window and the refinement cells are unaffected, and a run
+ * that cannot satisfy the arithmetic still fails rather than publishing
+ * short.
+ *
+ * BRACKETED BY THREE MEASURED MAGNITUDES, and not free to leave them:
+ *
+ *  - Under 3,474 — the vocabulary committed on 2026-09-10 — or the rotation is
+ *    dormant, which is the defect above. The vocabulary only grows
+ *    (`mergePublishers` never removes a name it keeps), so this end has margin
+ *    that widens on its own.
+ *  - Over 250. A probe costs ~1.0s measured end to end (3,474 of them in
+ *    57m37s, 429 backoffs included; one probe alone measured 1.2s), so the
+ *    phase costs about `budget` seconds and a cycle takes
+ *    `vocabulary / budget` runs. At 250 that is 14 runs — a fortnight at the
+ *    daily cadence — and `keywords:dsh-plugin` crosses `SEARCH_WINDOW` around
+ *    2026-09-29, when this axis stops being insurance and starts carrying the
+ *    81 names no refinement can reach. One cycle must finish well inside that
+ *    horizon, not at it.
+ *  - At or under 1,000, which still rotates (4 runs) but restores ~17 minutes
+ *    of sequential requests against a run that took ~71 minutes without any
+ *    probes at all. npm rate-limits this endpoint after about nine rapid
+ *    requests (measured 2026-09-10: nine 200s, then two 429s); the 429s are
+ *    retried by {@link fetchWithRetry}, which is why an hour of it survived as
+ *    long as it did, but sustained pressure is what escalated to the 503 that
+ *    is NOT retried. Exposure scales with this number, so buying cycle length
+ *    the horizon does not need buys risk instead.
+ *
+ * So 500: an ~8-minute phase, a full cycle every 7 runs, and about 2.7 cycles
+ * before the crossing. Same accumulate-over-days posture as
+ * `REPO_BACKFILL_BUDGET` on the GitHub half, with the one difference named
+ * above — that half persists its per-repository outcomes and this one does
+ * not.
  *
  * **This bounds the probes. What bounds the PAGING is the redundancy filter
  * in `searchByKeywords`**, and the distinction is the whole reason that filter
  * exists. Every maintainer in the vocabulary was read out of a
  * `keywords:<harvest>` result, so its cell answers non-zero for very nearly
  * all of them; pushing every non-zero cell into the paging loop would page
- * ~3,041 cells, twice, because the retry re-pages the whole partition and the
- * residual sends `deepseek-harness` round again on EVERY run. Measured against
- * a baseline of ~6,100 npm requests, that is ~2.5x today and ~4x once
- * `dsh-plugin` crosses. The filter drops it to the cells that can actually
- * supply something.
+ * every probed cell, twice, because the retry re-pages the whole partition and
+ * the residual sends `deepseek-harness` round again on EVERY run. The filter
+ * drops it to the cells that can actually supply something.
  */
-export const PUBLISHER_PROBE_BUDGET_DEFAULT = 4000
+export const PUBLISHER_PROBE_BUDGET_DEFAULT = 500
 
 /** One query's `text` value: the keyword, plus any refinements ANDed on. */
 export function keywordQuery(keywords: readonly string[]): string {

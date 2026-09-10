@@ -1,8 +1,42 @@
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
 import {
   MAINTAINER_MAX_LENGTH, MAX_PUBLISHERS, isMaintainerName, mergePublishers, nextCursor,
   parsePublisherState, serializePublisherState,
 } from '../src/publisher-state.ts'
+import { PUBLISHER_PROBE_BUDGET_DEFAULT } from '../src/npm-client.ts'
+
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
+
+describe('the shipped budget against the shipped vocabulary', () => {
+  it('is small enough that the rotation is live, not dormant', () => {
+    // `nextCursor` returns 0 whenever `size <= budget`, so a budget at or above
+    // the committed vocabulary disables the rotation ENTIRELY -- and silently,
+    // because a cursor that never moves looks exactly like a cursor that has
+    // nothing to do. Every run then probes the whole vocabulary, in one
+    // sequential pass.
+    //
+    // That is not hypothetical. 0.8.1 shipped the axis with a 4,000 budget
+    // against an EMPTY committed vocabulary, so its own CI proved only the
+    // no-op path; the first green run wrote 3,474 publishers, and the next run
+    // -- the first to probe them -- spent 57m37s on 3,474 sequential `size=1`
+    // requests (~1.0s each, 429 backoffs included) before npm answered 503 and
+    // `searchTotal` threw, on 2026-09-10. `deploy` and `publish` were skipped,
+    // so nothing was published for that day.
+    //
+    // Asserted as the PROPERTY rather than against a literal, because the
+    // vocabulary only grows (`mergePublishers` never removes a name it keeps),
+    // so it moves away from this boundary and never back toward it.
+    const state = parsePublisherState(readFileSync(join(repoRoot, 'registry', 'publisher-state.json'), 'utf8'))
+    expect(
+      PUBLISHER_PROBE_BUDGET_DEFAULT,
+      `a ${PUBLISHER_PROBE_BUDGET_DEFAULT} budget against ${state.publishers.length} committed publishers `
+      + 'leaves nextCursor pinned at 0: every run probes the whole vocabulary in one pass',
+    ).toBeLessThan(state.publishers.length)
+  })
+})
 
 describe('isMaintainerName', () => {
   it('accepts a subset of npm account grammar and nothing else', () => {
@@ -152,8 +186,9 @@ describe('publisher state', () => {
       // THE point of the cursor. `selectPublisherCells` walks the vocabulary in
       // sorted order and stops at the budget, so without rotation the same
       // prefix is probed every run and everything after it is never probed at
-      // all -- not a partial run, a permanently excluded tail. MAX_PUBLISHERS
-      // is 20,000 against a 4,000 default budget, so the shape is anticipated.
+      // all -- not a partial run, a permanently excluded tail. The shape is
+      // anticipated by this module's own bounds: MAX_PUBLISHERS is 20,000,
+      // several times whatever per-run budget npm-client ships.
       const ten = { publishers: Array.from({ length: 10 }, (_, i) => `u${i}`) }
       expect(nextCursor(ten, 4)).toBe(4)
       expect(nextCursor({ ...ten, cursor: 4 }, 4)).toBe(8)
