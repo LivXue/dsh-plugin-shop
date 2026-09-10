@@ -141,9 +141,11 @@ export function nodeVersionResolver(baseUrl: string): PeerVersionResolver {
  *
  * `includePrerelease` is load-bearing, not a convenience. The harness ships
  * nothing but `-rc` versions, so under strict semver `^0.1.1-rc.2` excludes
- * `0.1.2-rc.1` — the version that is installed and works — and every future
- * rc bump would raise a false alarm. With it on, the range still excludes an
- * older prerelease (`0.1.1-rc.1`) and a minor- or major-line move
+ * every later rc on the same 0.1 line — including whichever one is installed
+ * and working, named as a property because that version moves and a comment
+ * naming it goes stale in place — and every future rc bump would raise a
+ * false alarm. With it on, the range still excludes an older prerelease
+ * (`0.1.1-rc.1`) and a minor- or major-line move
  * (`0.2.0-rc.1`, `1.0.0`), which are the moves that actually break a plugin
  * path. Discrimination on both sides is the whole point: one false warning
  * teaches a reader to ignore every warning.

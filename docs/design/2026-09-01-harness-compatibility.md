@@ -272,13 +272,13 @@ satisfies(found, range, { includePrerelease: true })
 ```
 
 **`includePrerelease` is load-bearing.** The harness ships nothing but
-`-rc` versions, so strict semver rejects every one of them, including the
-version that is installed and works. Measured against `^0.1.1-rc.2`:
+`-rc` versions, so strict semver rejects every one of them, including
+whichever one is installed and working. Measured against `^0.1.1-rc.2`:
 
 | Version | strict | includePrerelease | What it is |
 |---|---|---|---|
-| `0.1.2-rc.1` | violates | satisfies | installed now, works fine |
-| `0.1.9-rc.3` | violates | satisfies | a later rc on the same minor line |
+| `0.1.5-rc.1` | violates | satisfies | the install — npm `latest`, measured 2026-09-10, works fine |
+| `0.1.9-rc.3` | violates | satisfies | hypothetical: a later rc on the same minor line. Published nowhere — it stands for whatever the next rc is, so this row survives a re-measurement of the one above |
 | `0.1.1-rc.1` | violates | violates | older than pinned |
 | `0.2.0-rc.1` | violates | violates | minor-line move — the real breaking change |
 | `1.0.0` | violates | violates | major-line move |

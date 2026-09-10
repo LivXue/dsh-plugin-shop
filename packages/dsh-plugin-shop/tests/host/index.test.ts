@@ -254,7 +254,9 @@ describe('ShopGateway', () => {
   })
 
   it('loads silently when the harness satisfies every declared peer range', async () => {
-    // 0.1.2-rc.1 against ^0.1.1-rc.2 is what is installed today: silence.
+    // 0.1.5-rc.1 against ^0.1.1-rc.2 is what is installed today: silence.
+    // peers.test.ts's INSTALLED table is where that shape is measured and
+    // kept; this case only needs one row of it to reach the load path.
     const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-peerversion-ok-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
     const warnings: string[] = []
@@ -262,7 +264,7 @@ describe('ShopGateway', () => {
     new ShopGateway(ctx, {
       profile: 'web', profileDir,
       peerRanges: { '@deepseek-ai/dsh-app-boot': '^0.1.1-rc.2' },
-      resolvePeerVersion: () => '0.1.2-rc.1',
+      resolvePeerVersion: () => '0.1.5-rc.1',
     })
     expect(warnings).toEqual([])
   })

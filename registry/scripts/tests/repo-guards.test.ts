@@ -458,6 +458,35 @@ describe('what git is allowed to pick up', () => {
   })
 })
 
+describe('the harness pin and the e2e contract move together', () => {
+  it('names one harness version in plugin.yml and in the e2e contract header', () => {
+    // The e2e drives the real `dsh` on PATH, so a harness release can break it
+    // with nothing changed in this repository — and it has, twice: 0.1.2-rc.1
+    // split 插件列表 and collapsed the Loader plane, 0.1.5-rc.1 moved the
+    // enabled tag and the phase dot onto shared primitives. Both times the
+    // coupling between the pin and the selectors was a sentence in a comment,
+    // and both times it was discovered as an opaque timeout instead.
+    // The selectors themselves now read the accessibility contract rather than
+    // the design system's private data-*, which is what stops the NEXT rename
+    // from mattering; this guard is what stops the two files from disagreeing
+    // about which harness that contract was measured against.
+    const workflow = parse(read('.github/workflows/plugin.yml')) as {
+      jobs: Record<string, { steps: { run?: string }[] }>
+    }
+    const runs = (workflow.jobs.test?.steps ?? []).map(step => step.run ?? '')
+    const pinned = runs
+      .map(run => /npm install -g @deepseek-ai\/dsh@(\S+)/.exec(run)?.[1])
+      .find(version => version !== undefined)
+    expect(pinned, 'plugin.yml installs no pinned @deepseek-ai/dsh').toBeDefined()
+
+    const e2e = read('packages/dsh-plugin-shop/tests/client/web-full-flow.e2e.ts')
+    const declared = /Written against harness (\S+?) —/.exec(e2e)?.[1]
+    expect(declared, 'web-full-flow.e2e.ts declares no harness version').toBeDefined()
+    expect(declared, `plugin.yml pins ${pinned}, the e2e contract is written against ${declared}`)
+      .toBe(pinned)
+  })
+})
+
 describe('the exit criteria cannot skip silently in CI', () => {
   it('tells the package suite that a skipped exit criterion is a failure', () => {
     // real-install.test.ts and web-full-flow.e2e.ts are the P1 and P2 exit

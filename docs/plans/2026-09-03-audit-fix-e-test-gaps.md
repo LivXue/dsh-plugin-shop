@@ -1802,6 +1802,8 @@ Closed by `2184265`: an `expandGlobalPlane` helper opens the 全局插件 disclo
 
 > **Reviewed 2026-09-05 — no work, as recorded.** Left as the standing hazard it describes: `plugin.yml`'s pin to `0.1.2-rc.1` and its measured contract table are still the only thing holding the e2e's selectors to a harness contract this repository does not own.
 
+> **Fired a second time, 2026-09-10 — PR #39.** `0.1.5-rc.1` refactored `StateTag`/`PhaseDot` onto the shared `Tag`/`StateDot` primitives; `[data-kind=enabled]` and `[data-phase=active]` both went to x0 and the same two cases timed out again. Two data points, not one, so the hazard is a rate rather than an incident, and the fix this time was structural rather than another rename: the selectors moved OFF the design system's private `data-*` and onto the accessibility contract (`role=img` named by the localized phase, the card button's `aria-label`), which the harness cannot churn without a user-visible change, and `repo-guards.test.ts` now fails when `plugin.yml`'s pin and the e2e's contract header name different harness versions. The pin is `0.1.5-rc.1`; the sentence above describes the state on 2026-09-05.
+
 ---
 
 ### Task 13: H-11 — the temp-home leak is in the host tests, not in the e2e file the finding names

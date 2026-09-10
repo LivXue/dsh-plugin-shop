@@ -40,6 +40,13 @@
  * Skipped unless the machine has both the real `dsh` CLI on PATH and a
  * playwright chromium installed (CI installs both; see .github/workflows).
  *
+ * Written against harness 0.1.5-rc.1 — the version `.github/workflows/plugin.yml`
+ * installs globally, and therefore the one every selector below was measured
+ * on. The two are held together mechanically: `repo-guards.test.ts` fails the
+ * build if this line and that pin name different versions — the pin has moved
+ * twice already, and both times the mismatch surfaced as an opaque timeout
+ * rather than as a diff someone could read.
+ *
  * Pinned selectors (all verified against the live app, zh-CN):
  * - the app root frame: `[class*="frame"]` — the frame class is CSS-module
  *   hashed, and the live app's root element carries a class containing `frame`
@@ -66,12 +73,32 @@
  * - uninstall: `[data-shop-uninstall]`; done view `[data-shop-uninstall-done]`
  * - loader inventory tab: `dialog.getByRole('tab', { name: '插件列表' })`, then
  *   `expandGlobalPlane` — the tab splits into 会话插件 (the selected agent
- *   preset's composition rows: bare ids, no phase dot) and 全局插件 (the Loader
- *   entries), and the second is COLLAPSED whenever a preset roster exists.
- *   A collapsed section renders no `<li>` at all, so every Loader selector is
- *   ABSENT rather than hidden. Each card is then
- *   `[data-plugin-entry=<entryId>]` with the enabled tag `[data-kind=enabled]`
- *   and the phase dot `[data-phase=active]`
+ *   preset's composition rows) and 全局插件 (the Loader entries), and the second
+ *   is COLLAPSED whenever a preset roster exists. The `include:` prefix on the
+ *   entry id is what separates the two planes, and it is the ONLY thing that
+ *   does: a preset row's id comes from `compositionInventory()` rather than
+ *   `pluginEntryId()`, but it renders the same card through the same
+ *   `PluginCard`, phase dot included once its roster is mounted. So a Loader
+ *   card is ABSENT rather than hidden while the plane is shut — but the preset
+ *   plane above it stays open, and its cards keep answering an unprefixed
+ *   `[data-plugin-entry]` and every dot selector.
+ *   Each Loader card is `[data-plugin-entry=<entryId>]`, and its enabled tag
+ *   and phase dot are read through the ACCESSIBILITY contract: the tag through
+ *   the card button's `aria-label` (`<title>, <entryId>, 已启用`) and the dot
+ *   through `role=img` named by the localized phase (运行中 for active; the
+ *   inner `StateDot` is `aria-hidden` and contributes nothing).
+ *   NOT through the tag's and dot's own data attributes. Those belong to the
+ *   design system rather than to the inventory, and they have now moved twice
+ *   underneath this file — `data-enabled=true`, then `data-kind=enabled` and
+ *   `data-phase=active` at 0.1.2-rc.1, then `data-tone=success` and
+ *   `data-state=done` at 0.1.5-rc.1, when `StateTag`/`PhaseDot` were refactored
+ *   onto the shared `Tag`/`StateDot` primitives — each move costing a debugging
+ *   round for a rename that changed nothing a user can see. The accessible
+ *   names are also the sharper read of the two: `PHASE_DOT_STATES` folds
+ *   `loading` and `unloading` onto one `data-state=ongoing`, and it is emitted
+ *   by a `StateDot` that eleven harness packages render (measured 2026-09-10,
+ *   this one among them), where the label is 1:1 with the phase and is the
+ *   inventory's own.
  * - settings modal close: `.VOzbGW_close` (visually-hidden label 关闭)
  */
 
@@ -89,11 +116,19 @@ import { startInstall } from '../../src/host/executor.ts'
  *
  * Harness 0.1.2-rc.1 split that tab in two — agent presets first, then the
  * global plane — and collapses the global plane whenever a preset roster is
- * composed, which the `web` profile always has. A collapsed section renders no
- * `<li>`, so `[data-plugin-entry]` and `[data-phase]` are absent, not hidden:
- * every assertion below this point either times out or, worse, passes
- * vacuously. The three `count()).toBe(0)` "nothing is live" checks are exactly
- * that hazard — an empty collapsed section satisfies them for free.
+ * composed, which the `web` profile always has. Both halves survive unchanged
+ * into 0.1.5-rc.1. A collapsed section renders no `<li>`, so a Loader card is
+ * absent rather than hidden: every assertion below this point either times out
+ * or, worse, passes vacuously. The two dialog-scoped `count()).toBe(0)`
+ * "nothing is live" checks are exactly that hazard — an empty collapsed
+ * section satisfies them for free. (The other `count()).toBe(0)` assertions in
+ * this file are scoped to a shop card, which this disclosure cannot empty.)
+ *
+ * What it must NOT be guarded with is a bare dot or entry selector: the preset
+ * plane is open by default and renders both, so `[data-plugin-entry]` and
+ * `[data-state]` are satisfied with the Loader plane still shut. Anything
+ * downstream that needs "the Loader snapshot rendered" already has it from
+ * this helper's postcondition and must not re-derive it more weakly.
  *
  * Expanded through its own disclosure and NOT the 搜索插件 box: search also
  * FILTERS the list, which would make those same "nothing is live" assertions
@@ -677,8 +712,8 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await expandGlobalPlane(dialog)
       const liveEntry = dialog.locator('[data-plugin-entry="include:typert-gateway:mkt-e2e-live"]')
       await liveEntry.waitFor({ state: 'visible', timeout: 15_000 })
-      await liveEntry.locator('[data-kind="enabled"]').waitFor({ state: 'visible' })
-      await liveEntry.locator('[data-phase="active"]').waitFor({ state: 'visible' })
+      await liveEntry.getByRole('button', { name: /已启用/ }).waitFor({ state: 'visible', timeout: 15_000 })
+      await liveEntry.getByRole('img', { name: '运行中' }).waitFor({ state: 'visible', timeout: 15_000 })
 
       // The settled mutation re-reads installed() in place. Switching back
       // to the already-mounted shop must expose the installed actions without
@@ -732,7 +767,9 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
 
       // The hot fiber is gone: a fresh settings mount takes a fresh inventory
       // snapshot (the tab's list() runs per mount), which no longer lists the
-      // entry. An anchor entry's phase dot proves the snapshot rendered.
+      // entry. What proves the snapshot rendered is `expandGlobalPlane`'s own
+      // postcondition, a visible card whose id carries the `include:` prefix,
+      // so the absence below is an absence and not an unrendered list.
       await dialog.locator('.VOzbGW_close').click()
       await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
       const dialog3 = app.getByRole('dialog', { name: '设置' })
@@ -740,7 +777,6 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await dialog3.getByRole('button', { name: '插件', exact: true }).click()
       await dialog3.getByRole('tab', { name: '插件列表' }).click()
       await expandGlobalPlane(dialog3)
-      await dialog3.locator('[data-phase]').first().waitFor({ state: 'visible', timeout: 15_000 })
       expect(await dialog3.locator('[data-plugin-entry="include:typert-gateway:mkt-e2e-live"]').count()).toBe(0)
     },
     120_000,
@@ -793,6 +829,8 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
 
       // Nothing is live: a fresh settings mount takes a fresh inventory
       // snapshot, and the config fixture has no hot entry in it.
+      // `expandGlobalPlane`'s postcondition is again what separates that from
+      // a Loader plane that simply has not rendered.
       await dialog.locator('.VOzbGW_close').click()
       await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
       const dialog2 = app.getByRole('dialog', { name: '设置' })
@@ -800,7 +838,6 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await dialog2.getByRole('button', { name: '插件', exact: true }).click()
       await dialog2.getByRole('tab', { name: '插件列表' }).click()
       await expandGlobalPlane(dialog2)
-      await dialog2.locator('[data-phase]').first().waitFor({ state: 'visible', timeout: 15_000 })
       expect(await dialog2.locator('[data-plugin-entry="include:typert-gateway:mkt-e2e-config"]').count()).toBe(0)
     },
     120_000,
