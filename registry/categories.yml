@@ -4281,8 +4281,6 @@
   category: ui
 - name: "@zhujunpeng12/dsh-memory-system"
   category: tool
-- name: "@zhuyh-sai7n/dsh-plugin-manager"
-  category: tool
 - name: "@zibokapi/dsh-codex-computer-use"
   category: tool
 - name: "@ziduup/dsh-programming-mode"
@@ -5732,6 +5730,8 @@
 - name: "dsh-base64url"
   category: tool
 - name: "dsh-baseboard"
+  category: tool
+- name: "dsh-bash-escalation-gate"
   category: tool
 - name: "dsh-bash-on-windows"
   category: tool
@@ -7279,6 +7279,8 @@
   category: ui
 - name: "dsh-conversation-folders"
   category: ui
+- name: "dsh-conversation-jump"
+  category: ui
 - name: "dsh-conversation-landmarks"
   category: ui
 - name: "dsh-conversation-manager"
@@ -8717,6 +8719,8 @@
   category: ui
 - name: "dsh-files-native"
   category: ui
+- name: "dsh-files-pane"
+  category: ui
 - name: "dsh-files-panel"
   category: ui
 - name: "dsh-filescope"
@@ -8943,6 +8947,8 @@
   category: other
 - name: "dsh-fuse"
   category: tool
+- name: "dsh-fuse-english"
+  category: theme
 - name: "dsh-fusion-pixel-font"
   category: theme
 - name: "dsh-fusion-pixel-ui-adapt"
@@ -10843,6 +10849,8 @@
   category: tool
 - name: "dsh-malware-audit"
   category: tool
+- name: "dsh-manage-hub"
+  category: ui
 - name: "dsh-managed-approval"
   category: workflow
 - name: "dsh-mandarin-grade"
@@ -12717,6 +12725,8 @@
   category: ui
 - name: "dsh-plugin-agent-insights"
   category: tool
+- name: "dsh-plugin-agent-monitor"
+  category: ui
 - name: "dsh-plugin-agents-memory"
   category: ui
 - name: "dsh-plugin-ainfo"
@@ -13243,6 +13253,8 @@
   category: ui
 - name: "dsh-plugin-question-navigator"
   category: ui
+- name: "dsh-plugin-quick-notes"
+  category: ui
 - name: "dsh-plugin-quota"
   category: ui
 - name: "dsh-plugin-quota-monitor"
@@ -13437,6 +13449,8 @@
   category: ui
 - name: "dsh-plugin-token-usage"
   category: ui
+- name: "dsh-plugin-tokensmarket"
+  category: provider
 - name: "dsh-plugin-tool-guard"
   category: tool
 - name: "dsh-plugin-tool-health"
@@ -16743,6 +16757,8 @@
   category: other
 - name: "dsh-toy-age"
   category: tool
+- name: "dsh-tps-meter"
+  category: ui
 - name: "dsh-trace-collapse"
   category: ui
 - name: "dsh-trace-narrator"
@@ -17064,6 +17080,8 @@
 - name: "dsh-update-notifier"
   category: tool
 - name: "dsh-update-radar"
+  category: tool
+- name: "dsh-update-status"
   category: tool
 - name: "dsh-updater"
   category: tool
@@ -17589,8 +17607,12 @@
   category: tool
 - name: "dsh-web-artifact-designer"
   category: tool
+- name: "dsh-web-artifact-designer-english"
+  category: tool
 - name: "dsh-web-attention-badge"
   category: ui
+- name: "dsh-web-auth"
+  category: tool
 - name: "dsh-web-auto-open"
   category: tool
 - name: "dsh-web-automation"
@@ -18741,6 +18763,8 @@
   category: tool
 - name: "modelspoke"
   category: provider
+- name: "moneypal-workspace"
+  category: tool
 - name: "mosaic-memory-compress"
   category: tool
 - name: "mtm-codebase-memory"
