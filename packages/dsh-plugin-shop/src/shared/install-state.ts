@@ -14,6 +14,6 @@ export type InstallState = 'downloading' | 'running' | 'done' | 'failed'
 
 /** Whether the host is done with this record: it will not change again, and a
  * poller may stop. */
-export function isTerminalInstallState(state: InstallState): boolean {
+export function isTerminalInstallState(state: InstallState): state is 'done' | 'failed' {
   return state === 'done' || state === 'failed'
 }

@@ -26,6 +26,7 @@ import { detectSupervisor } from './supervisor.ts'
 import { readRepoPins, writeRepoPins, type RepoPinFs } from './repo-pins.ts'
 import { collidingEntryId, discoverProfile, ownedEntryIds, ownsEntryId, setUserLayerRow, setUserLayerRows } from './profile.ts'
 import { identityKey, installedSpecMatches } from '../shared/identity.ts'
+import type { InstallState } from '../shared/install-state.ts'
 import {
   createPeerVersionCheck,
   incompatibilityMap,
@@ -141,7 +142,7 @@ export interface ShopGatewayOptions {
 /** `shop/installStart` result (§7.3): rejections are typed wire values with an
  * author-readable `detail`, not thrown RPC errors. */
 export type ShopInstallResult =
-  | { ok: true; installId: string }
+  | { ok: true; installId: string; state: InstallState }
   | { ok: false; code: InstallRejectionCode; detail: string }
 
 export interface ShopInstallStatusResult extends InstallStatus { found: boolean }
@@ -195,7 +196,7 @@ export interface ShopVersionResult {
 /** `shop/updateStart` result (§7.3): the self-update spawn, or a typed
  * refusal (a version that is not plain semver). */
 export type ShopUpdateResult =
-  | { ok: true; installId: string }
+  | { ok: true; installId: string; state: InstallState }
   | { ok: false; detail: string }
 
 /** `shop/installed` entry (§7.3): one installed catalog plugin. The identity
@@ -997,7 +998,7 @@ export class ShopGateway extends TypertRemoteService {
     this.installs.set(running.installId, running)
     this.installOrder.push(running.installId)
     this.evictFinishedInstalls()
-    return { ok: true, installId: running.installId }
+    return { ok: true, installId: running.installId, state: running.status().state }
   }
 
   /** Bound retained finished records at MAX_FINISHED_INSTALLS, evicting the
@@ -1325,7 +1326,7 @@ export class ShopGateway extends TypertRemoteService {
     this.installs.set(running.installId, running)
     this.installOrder.push(running.installId)
     this.evictFinishedInstalls()
-    return { ok: true, installId: running.installId }
+    return { ok: true, installId: running.installId, state: running.status().state }
   }
 }
 

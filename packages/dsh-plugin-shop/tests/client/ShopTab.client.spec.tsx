@@ -52,7 +52,7 @@ function bench(
   specs?: Record<string, string> | null,
 ) {
   const catalog = vi.fn<ShopTabInjected['catalog']>().mockResolvedValue(catalogResult)
-  const install = vi.fn<ShopTabInjected['install']>().mockResolvedValue({ ok: true, installId: 'i1' })
+  const install = vi.fn<ShopTabInjected['install']>().mockResolvedValue({ ok: true, installId: 'i1', state: 'running' })
   const installStatus = vi.fn<ShopTabInjected['installStatus']>().mockResolvedValue({ found: true, state: 'done', log: [], activation: 'restart' })
   const setEnabled = vi.fn<ShopTabInjected['setEnabled']>().mockResolvedValue({ ok: true, activation: 'live' })
   const rows: ShopInstalledEntry[] = installedEntries.map(row => ({ source: 'npm', ...row }))
@@ -66,7 +66,7 @@ function bench(
   const uninstall = vi.fn<ShopTabInjected['uninstall']>().mockResolvedValue({ ok: true, installId: 'u1' })
   const restart = vi.fn<ShopTabInjected['restart']>().mockResolvedValue({ ok: true })
   const version = vi.fn<ShopTabInjected['version']>().mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartSupported: true })
-  const updateStart = vi.fn<ShopTabInjected['updateStart']>().mockResolvedValue({ ok: true, installId: 's1' })
+  const updateStart = vi.fn<ShopTabInjected['updateStart']>().mockResolvedValue({ ok: true, installId: 's1', state: 'running' })
   const injected: ShopTabInjected = { catalog, install, installStatus, setEnabled, installed, installedSpecs, uninstall, restart, version, updateStart }
   return { catalog, install, installStatus, setEnabled, installed, installedSpecs, uninstall, restart, version, updateStart, injected }
 }

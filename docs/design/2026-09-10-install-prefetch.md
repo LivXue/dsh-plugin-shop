@@ -235,20 +235,17 @@ moving at that instant: a spec waiting for the next batch reports it too. A thir
 `queued` label would remove that imprecision and was declined in favour of two labels.
 The two excluded cases never enter the state at all, so for them the label is exact.
 
-### Two consumers test terminality by exclusion and must be changed
-
-The current union has exactly one non-terminal state, so "not `running`" is a safe
-synonym for "terminal". Adding a second non-terminal state breaks that equivalence
-**without a type error** — both sites below still typecheck:
+### Sites that test terminality by exclusion, and what each needs
 
 | site | today | required |
 | --- | --- | --- |
-| `useInstall.ts:150` | `status.state !== 'running'` ends the poll | test `'done'`/`'failed'` explicitly |
-| `present.ts:194` | `if (status.state === 'running')`, else fall through to done/failed | a `downloading` branch before them |
+| `useInstall.ts:150` | `status.state !== 'running'` ends the poll | `isTerminalInstallState(status.state)` |
+| `present.ts:194` | `if (status.state === 'running')`, else fall through to done/failed | `if (!isTerminalInstallState(status.state))` |
+| `executor.ts:481` | `append` drops a line when `state !== 'running'` | `if (isTerminalInstallState(state)) return` — otherwise the download phase's own log lines are silently discarded, and §7's whole visibility argument fails quietly |
+| `useInstall.ts:143` | collects installs to poll by `view.kind === 'running'` | unchanged, because the view keeps that kind and carries a `phase` — a new view *kind* would leave a downloading install unpolled forever |
 
-Left unchanged, a downloading install is read as finished: polling stops and the card
-reports success while the package is still being fetched. This is the one failure mode
-of this design that corrupts what the user is told rather than merely costing speed.
+Three of the four are the same mistake with different consequences: one stops the poll,
+one misreports the state, one throws away the evidence. None is a type error.
 
 ### One definition
 

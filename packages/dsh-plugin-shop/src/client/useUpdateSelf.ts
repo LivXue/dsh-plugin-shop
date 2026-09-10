@@ -30,7 +30,7 @@ export function useUpdateSelf(
         setView({ kind: 'failed', detail: result.detail, log: [] })
         return
       }
-      setView({ kind: 'running', installId: result.installId, log: [] })
+      setView({ kind: 'running', installId: result.installId, log: [], phase: result.state === 'downloading' ? 'downloading' : 'installing' })
     } catch {
       // Same transport-failure rule as useInstall/useUninstall: the thrown
       // wire detail (hosts and ports) is private and never rendered — the
