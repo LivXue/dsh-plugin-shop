@@ -907,8 +907,13 @@ describe('searchByKeywords', () => {
   })
 
   it('throws when the registry answers with an error status, naming the keyword', async () => {
+    // The no-op sleep is load-bearing now that a 5xx shares the 429 ladder:
+    // without it this spends the real ~62s budget and dies on the test
+    // timeout instead of on the assertion. What it covers is unchanged — the
+    // message still names the keyword and the status, after the retries are
+    // spent rather than on the first answer.
     const fetchImpl = (async () => new Response('nope', { status: 503 })) as unknown as typeof fetch
-    await expect(searchByKeywords(fetchImpl)).rejects.toThrow(/keywords:dsh-plugin.*503/)
+    await expect(searchByKeywords(fetchImpl, async () => {})).rejects.toThrow(/keywords:dsh-plugin.*503/)
   })
 
   it('aborts when a later keyword search fails, rather than harvesting a subset', async () => {
@@ -918,7 +923,8 @@ describe('searchByKeywords', () => {
       return new Response(JSON.stringify({ total: 1, objects: [{ package: { name: 'fine' } }] }), { status: 200 })
     }) as unknown as typeof fetch
 
-    await expect(searchByKeywords(fetchImpl)).rejects.toThrow(/keywords:deepseek-harness.*503/)
+    // No-op sleep for the reason the test above gives.
+    await expect(searchByKeywords(fetchImpl, async () => {})).rejects.toThrow(/keywords:deepseek-harness.*503/)
   })
 
   it('retries a rate-limited search and succeeds when the registry recovers', async () => {
@@ -988,6 +994,77 @@ describe('searchByKeywords', () => {
 
     await expect(searchByKeywords(fetchImpl, sleep)).rejects.toThrow(/429/)
     expect(delays.reduce((a, b) => a + b, 0)).toBe(62_000)
+  })
+
+  it('retries a 5xx and takes the answer that follows it', async () => {
+    // npm answers a throttled search with 429 OR 503, and only the 429 was
+    // retried. On 2026-09-10 the publisher probe loop rode out 429s for
+    // 57m37s and then met a 503 on `keywords:deepseek-harness
+    // maintainer:wulusai2333`; searchTotal threw, the build published nothing,
+    // and the live catalog stayed a day behind. A 5xx is the server saying it
+    // could not answer THIS TIME, and every request this module makes is a
+    // GET, so retrying is safe as well as correct.
+    //
+    // `github-stars.ts` has retried `429 || >= 500` on a verbatim copy of this
+    // ladder since it was written, and `llm-client.ts` retries the same set
+    // plus a timeout. This module was the odd one out.
+    const delays: number[] = []
+    const sleep = async (ms: number) => { delays.push(ms) }
+    let call = 0
+    const fetchImpl = (async () => {
+      call += 1
+      if (call < 6) return new Response('unavailable', { status: 503 })
+      return new Response(JSON.stringify({ total: 0, objects: [] }), { status: 200 })
+    }) as unknown as typeof fetch
+
+    await searchByKeywords(fetchImpl, sleep)
+    // The SAME ladder as a 429, not a second one: a 503 under sustained load
+    // means the same thing a 429 does and wants the same pause.
+    expect(delays).toEqual([2000, 4000, 8000, 16000, 32000])
+  })
+
+  it('honors Retry-After on a 5xx too', async () => {
+    const delays: number[] = []
+    const sleep = async (ms: number) => { delays.push(ms) }
+    let call = 0
+    const fetchImpl = (async () => {
+      call += 1
+      if (call === 1) return new Response('unavailable', { status: 503, headers: { 'Retry-After': '3' } })
+      return new Response(JSON.stringify({ total: 0, objects: [] }), { status: 200 })
+    }) as unknown as typeof fetch
+
+    await searchByKeywords(fetchImpl, sleep)
+    expect(delays).toEqual([3000])
+  })
+
+  it('still fails on a 5xx that outlives the budget, rather than swallowing it', async () => {
+    // The retry must not turn a registry that is genuinely down into a green
+    // build carrying a short catalog. Same total as the rate-limit budget,
+    // pinned so a change to either has to be deliberate.
+    const delays: number[] = []
+    const sleep = async (ms: number) => { delays.push(ms) }
+    const fetchImpl = (async () => new Response('unavailable', { status: 503 })) as unknown as typeof fetch
+
+    await expect(searchByKeywords(fetchImpl, sleep)).rejects.toThrow(/503/)
+    expect(delays.reduce((a, b) => a + b, 0)).toBe(62_000)
+  })
+
+  it('does not retry a 4xx that is not a rate limit', async () => {
+    // The widening is to 5xx and 429, not to "not ok". A 404 is an answer
+    // about the resource and a 403 is a decision about the caller; retrying
+    // either spends a minute to be told the same thing, and `github-client`'s
+    // manifest path depends on a non-429 4xx coming straight back.
+    const delays: number[] = []
+    const sleep = async (ms: number) => { delays.push(ms) }
+    let calls = 0
+    const fetchImpl = (async () => {
+      calls += 1
+      return new Response('forbidden', { status: 403 })
+    }) as unknown as typeof fetch
+
+    await expect(searchByKeywords(fetchImpl, sleep)).rejects.toThrow(/403/)
+    expect(delays).toEqual([])
+    expect(calls).toBe(1)
   })
 
   it('clamps an absurd Retry-After to the maximum delay', async () => {
@@ -2282,16 +2359,31 @@ describe('registry failover', () => {
     expect(urls[1]).toContain('registry.npmmirror.com')
   })
 
-  it('falls back on a primary 5xx', async () => {
-    let calls = 0
+  it('falls back on a primary 5xx, after the primary has spent its own retries', async () => {
+    // Counted per host rather than in total, because the interesting fact is
+    // the ORDER. `fetchWithRetry` retries a 5xx on the same ladder as a 429,
+    // so the primary is asked its full budget of six times before the backup
+    // is asked at all; this used to be one primary call and one backup call.
+    //
+    // That order is deliberate and not merely what fell out: a 503 means
+    // "slow down", so pausing and asking the primary again is what it
+    // requests, while switching mirrors on the first one abandons the
+    // authoritative registry over a blip. The failover it delays still
+    // happens, which is what this test exists to prove.
+    let primaryCalls = 0
+    let backupCalls = 0
     const fetchImpl = (async (url: string | URL) => {
-      calls += 1
-      if (String(url).startsWith('https://registry.npmjs.org')) return new Response('bad gateway', { status: 502 })
+      if (String(url).startsWith('https://registry.npmjs.org')) {
+        primaryCalls += 1
+        return new Response('bad gateway', { status: 502 })
+      }
+      backupCalls += 1
       return new Response(JSON.stringify(packument), { status: 200 })
     }) as unknown as typeof fetch
     const result = await fetchCandidate('dsh-failover', fetchImpl, noSleep, undefined, 'https://registry.npmmirror.com')
     expect(result.ok).toBe(true)
-    expect(calls).toBe(2)
+    expect(primaryCalls).toBe(6)
+    expect(backupCalls).toBe(1)
   })
 
   it('falls back on a stalled primary — the timeout bounds the hang', async () => {

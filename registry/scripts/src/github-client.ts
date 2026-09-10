@@ -200,7 +200,9 @@ export function isBundleName(value: unknown): value is string {
  * GitHub's API speaks HTTP/2 to undici, whose long-lived h2 connections can
  * die with a transient `UND_ERR_HEADERS_TIMEOUT` on the next request. A
  * bounded retry on network throws (4 attempts, doubling backoff 2/4/8s)
- * rides those out; 429s still go through fetchWithRetry's own budget.
+ * rides those out. This ladder is for THROWS only, so it does not compound
+ * with fetchWithRetry's, which owns the statuses — a 429 or any 5xx is
+ * returned rather than thrown, and is retried inside that call.
  */
 async function fetchRobust(
   url: string,
@@ -293,7 +295,9 @@ function parseRepoMeta(item: unknown): RepoMeta | null {
 /**
  * The search API meters at 30 requests/minute (PAT) and 403s bursts; pace
  * every search request by a 2s gap and retry a secondary-rate-limit 403 once
- * after a 30s pause. 429s keep fetchWithRetry's own budget.
+ * after a 30s pause. A 429 or a 5xx keeps fetchWithRetry's own budget; the
+ * 403 is here because that one is a decision about the caller, which
+ * fetchWithRetry deliberately does not retry.
  */
 async function searchRequest(
   url: string,
@@ -757,7 +761,8 @@ async function fetchLatestReleaseTarball(
     // bounded attempt costs at most 5 minutes, so the same total is ~58 --
     // still the largest single thing the harvest can spend on advisory data,
     // and the place to put an aggregate budget if it is ever seen for real.
-    // fetchWithRetry still absorbs a 429, which answers immediately.
+    // fetchWithRetry still absorbs a 429 or a 5xx, which answer immediately
+    // and then wait out its ladder rather than this deadline.
     const assetResponse = await fetchWithRetry(asset, withTimeout(fetchImpl, tarballTimeoutMs, 'github'), sleep, token)
     if (!assetResponse.ok) return null
     const bytes = await readTarballBody(assetResponse)
@@ -1314,10 +1319,14 @@ async function projectRepoCandidates(
     // failure of the transport this module owns — a 5xx, or the CI egress
     // allowlist that permits api.github.com and not raw.githubusercontent.com
     // that fetchLatestReleaseTarball's own catch names — and `no-manifest` was
-    // returned for all of them. fetchWithRetry retries only a 429, so a 500 or
-    // a 403 was RETURNED rather than thrown, harvestRepos PERSISTED it for
-    // every repository with no recorded entry, and each was written off with
-    // "No package.json at the repository root" until its `pushedAt` moved.
+    // returned for all of them. fetchWithRetry RETURNS rather than throws
+    // whatever it could not resolve, so a 500 or a 403 arrived here as an
+    // ordinary response, harvestRepos PERSISTED it for every repository with
+    // no recorded entry, and each was written off with "No package.json at
+    // the repository root" until its `pushedAt` moved. A 5xx now spends that
+    // function's retry ladder before it lands here, which makes this branch
+    // rarer; it does not make it unreachable, and a non-secondary 403 still
+    // arrives on the first answer.
     //
     // It throws for the reason the comment above gives for a deadline:
     // harvestRepos is the right handler. It publishes a reason we wrote,

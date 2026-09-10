@@ -993,8 +993,11 @@ describe('fetchRepoCandidate', () => {
 
 describe('only a 404 is a verdict about the repository', () => {
   // `no-manifest` was returned for ANY non-ok status, and fetchWithRetry
-  // retries only a 429 — so a 500, a 403 or a blocked host was RETURNED as a
-  // verdict rather than thrown. harvestRepos PERSISTS `no-manifest` for every
+  // RETURNS whatever it could not resolve — at the time it retried a 429 and
+  // nothing else, so a 500, a 403 or a blocked host arrived here as a verdict
+  // rather than a throw. A 5xx now spends that ladder first, which changes
+  // how OFTEN this branch is reached and not what it must do: the 403 and the
+  // blocked host still arrive on the first answer. harvestRepos PERSISTS `no-manifest` for every
   // repository with no recorded entry, and the systematic-failure bound counts
   // throws alone, so it never fired for a single one of them.
   //

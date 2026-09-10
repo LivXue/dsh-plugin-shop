@@ -1209,8 +1209,38 @@ function defaultSleep(ms: number): Promise<void> {
 }
 
 /**
- * Fetch one URL with bounded retries on HTTP 429, honoring a Retry-After
- * header when the registry sends one and backing off exponentially otherwise.
+ * Fetch one URL with bounded retries on HTTP 429 **and any 5xx**, honoring a
+ * Retry-After header when the registry sends one and backing off
+ * exponentially otherwise.
+ *
+ * WHY 5xx SHARES THE 429 LADDER. npm answers a throttled search with either
+ * status, and only the 429 was retried here. On 2026-09-10 the publisher probe
+ * loop rode out 429s for 57m37s and then met a 503; {@link searchTotal} threw,
+ * the catalog published nothing that day, and the one status that was NOT
+ * retried is the one that ended the build. A 5xx is the server saying it could
+ * not answer this time rather than a verdict about the request, the pause it
+ * wants is the pause a 429 wants, and every request this module makes is a
+ * GET — so one ladder, not two.
+ *
+ * This module was the odd one out: `github-stars.ts` has retried
+ * `429 || >= 500` on a verbatim copy of this ladder since it was written, and
+ * `llm-client.ts` retries the same pair plus a timeout.
+ *
+ * DELIBERATELY NOT "not ok". A 404 is an answer about the resource and a
+ * non-secondary 403 is a decision about the caller; retrying either spends a
+ * minute to be told the same thing, and `github-client.ts`'s manifest path
+ * reads a bare 404 as its own verdict. `searchRequest` there owns GitHub's
+ * secondary-rate-limit 403 separately, and `fetchRobust` retries THROWS — a
+ * 5xx is returned, not thrown, so this widening adds one ladder rather than
+ * multiplying two.
+ *
+ * The budget is per REQUEST, so a primary that is persistently 5xx makes every
+ * request pay the full ~62s — the same exposure the 429 ladder has always had,
+ * and the reason {@link fetchWithFailover} exists. That failover now engages
+ * after these retries instead of on the first 5xx, which is the right order
+ * for a 503: retrying the primary is what "slow down" asks for, and switching
+ * mirrors immediately is not.
+ *
  * @param url - the registry URL.
  * @param fetchImpl - the fetch implementation, injected for testing.
  * @param sleep - the delay implementation, injected so tests do not wait.
@@ -1218,7 +1248,8 @@ function defaultSleep(ms: number): Promise<void> {
  *   rate-limits by IP and a CI runner shares its egress IP, so an
  *   unauthenticated search can be throttled before the first request; a
  *   read-only token lifts the limit onto the token instead of the IP.
- * @returns the first non-429 response, or the final 429 after the retries.
+ * @returns the first response that is neither a 429 nor a 5xx, or the last one
+ *   received after the retries are spent.
  */
 export async function fetchWithRetry(
   url: string,
@@ -1228,7 +1259,11 @@ export async function fetchWithRetry(
 ): Promise<Response> {
   const init = token === undefined ? undefined : { headers: { Authorization: `Bearer ${token}` } }
   let response = await fetchImpl(url, init)
-  for (let attempt = 0; response.status === 429 && attempt < RETRY_LIMIT - 1; attempt += 1) {
+  for (
+    let attempt = 0;
+    (response.status === 429 || response.status >= 500) && attempt < RETRY_LIMIT - 1;
+    attempt += 1
+  ) {
     const retryAfter = Number(response.headers.get('retry-after'))
     const delay = Number.isFinite(retryAfter) && retryAfter > 0
       ? Math.min(retryAfter * 1000, RETRY_MAX_DELAY_MS)
