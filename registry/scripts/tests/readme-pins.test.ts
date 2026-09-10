@@ -87,9 +87,9 @@ describe('README install pins', () => {
     // ran on one: plugin.yml (which a release commit DOES trigger, because a
     // release moves packages/dsh-plugin-shop/package.json) ran only the
     // package suite, while daily.yml — the workflow that runs this file —
-    // filters on registry/** and the ROOT package.json, which a release
-    // commit does not touch. Drift was caught by the next scheduled build,
-    // after npm publish.
+    // filters on the catalog's inputs under registry/ and the ROOT
+    // package.json, which a release commit does not touch. Drift was
+    // caught by the next scheduled build, after npm publish.
     const plugin = readFileSync(join(repoRoot, '.github', 'workflows', 'plugin.yml'), 'utf8')
     expect(plugin, 'plugin.yml does not run the root suite').toMatch(/^\s+- run: pnpm test$/m)
     for (const readme of READMES) {

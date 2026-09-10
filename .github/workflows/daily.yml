@@ -11,13 +11,11 @@ on:
     # throttled the search endpoint, so the badge went red for reasons that
     # had nothing to do with the catalog. Only the inputs to the build
     # belong here — and the pipeline's own tests are not one of them.
-    # `registry/scripts/tests/**` sat inside `registry/**` and cost a full
-    # harvest on 2026-09-10, when a change to repo-guards.test.ts alone merged
-    # to main. Negations are read after the patterns above them, so the one
-    # below wins for that directory; repo-guards.test.ts keeps it pointed at
-    # whatever directory the root suite actually runs from, because a stale
-    # exclusion fails silently — it reverts to costing an hour per test edit
-    # rather than breaking anything a reader would notice.
+    # Negations are read after the patterns above them, so the one below wins
+    # for that directory. What it has to name, what it cost while it was
+    # missing, and how it fails once it goes stale are owned by
+    # repo-guards.test.ts, which folds this list the way GitHub does instead
+    # of looking a string up in it.
     paths: &catalog-inputs
       - 'registry/**'
       - '!registry/scripts/tests/**'
@@ -343,9 +341,9 @@ jobs:
           git diff --cached --quiet && exit 0
           # [skip ci]: this push carries REGISTRY_PUSH_TOKEN, and a PAT push
           # STARTS workflows where the checkout-persisted GITHUB_TOKEN it
-          # replaced did not. `push.paths` is registry/**, which is exactly
-          # what this commit touches, so without the marker every successful
-          # run triggers the next one — and it never converges, because
+          # replaced did not. `push.paths` covers the registry/ data this
+          # commit writes, so without the marker every successful run
+          # triggers the next one — and it never converges, because
           # repo-state.json re-fetches a rotating slice and always differs.
           git commit -m "chore(registry): llm classifier update [skip ci]"
           push_with_rebase "the classifier's output"

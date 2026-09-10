@@ -14,9 +14,20 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
+import vitestConfig from '../../../vitest.config.ts'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 const read = (relative: string): string => readFileSync(join(repoRoot, relative), 'utf8')
+
+/** The `paths:` filter of one trigger of one workflow.
+ *
+ * YAML 1.1 reads a bare `on:` key as the boolean true, which is why the parsed
+ * object is checked under both spellings rather than one. */
+type Triggers = { push?: { paths?: string[] }; pull_request?: { paths?: string[] } }
+const triggerPaths = (file: string, event: 'push' | 'pull_request'): string[] | undefined => {
+  const parsed = parse(read(`.github/workflows/${file}`)) as { on?: Triggers; true?: Triggers }
+  return (parsed.on ?? parsed.true)?.[event]?.paths
+}
 
 describe('the catalog harvest is serialised across refs', () => {
   it('puts every pull-request run in ONE concurrency group', () => {
@@ -41,8 +52,8 @@ describe('the pipeline\'s own commits do not re-trigger the pipeline', () => {
   it('marks every commit the workflow pushes with [skip ci]', () => {
     // The build pushes with REGISTRY_PUSH_TOKEN, and a PAT push DOES start
     // workflows where the checkout-persisted GITHUB_TOKEN it replaced did not.
-    // `push.paths` is `registry/**`, which is exactly what these commits touch,
-    // so each successful run triggered the next one. It never converged either:
+    // `push.paths` covers the `registry/` data these commits write, so each
+    // successful run triggered the next one. It never converged either:
     // repo-state.json re-fetches a rotating REPO_BACKFILL_BUDGET slice, so
     // every run produces a diff and publish-catalog's "catalog unchanged"
     // skip can never fire. Measured on 2026-09-06: 28 catalog versions
@@ -72,13 +83,7 @@ describe('a path-filtered workflow watches its own file', () => {
     // carried packages/** files, which is a property of the BASE and not of
     // the change. daily.yml already lists itself; this makes that symmetric.
     for (const file of ['daily.yml', 'plugin.yml']) {
-      const on = (parse(read(`.github/workflows/${file}`)) as {
-        on?: { push?: { paths?: string[] } }
-        true?: { push?: { paths?: string[] } }
-      })
-      // YAML 1.1 reads a bare `on:` key as the boolean true, which is why the
-      // parsed object is checked under both spellings rather than one.
-      const paths = on.on?.push?.paths ?? on.true?.push?.paths
+      const paths = triggerPaths(file, 'push')
       expect(paths, `${file} declares no push.paths`).toBeDefined()
       expect(paths, `${file} does not watch itself`).toContain(`.github/workflows/${file}`)
     }
@@ -86,35 +91,143 @@ describe('a path-filtered workflow watches its own file', () => {
 })
 
 describe('a test-only change does not buy a harvest', () => {
-  it('excludes exactly the directory the root suite runs from', () => {
-    // daily.yml's paths start with `registry/**`, and the pipeline's own tests
-    // live under it, so editing one of them cost a full fifty-minute live
-    // harvest. Measured 2026-09-10: the merge of #39 carried
-    // registry/scripts/tests/repo-guards.test.ts and nothing else under
-    // registry/, and that was enough to start one; #40, which touched only
-    // plugin.yml, started none.
-    //
-    // The exclusion is correct only while it names the directory the root
-    // suite actually reads, so both halves are read from their owners rather
-    // than restated here — vitest.config.ts owns the include, daily.yml owns
-    // the paths. A stale exclusion fails SILENTLY: nothing breaks, test edits
-    // merely start costing an hour again, which no reader would notice. That
-    // is the whole reason this is worth guarding.
-    const daily = parse(read('.github/workflows/daily.yml')) as {
-      on?: { push?: { paths?: string[] } }
-      true?: { push?: { paths?: string[] } }
+  // daily.yml's paths start with `registry/**`, and the pipeline's own tests
+  // live under it, so editing one of them cost a full fifty-minute live
+  // harvest. Measured 2026-09-10: merging #39 to main started one, and
+  // registry/scripts/tests/repo-guards.test.ts was the only file it carried
+  // under registry/. #40 is no counter-example — rebasing it onto that merge
+  // started a catalog run of its own, though its entire diff was one file
+  // that is not a catalog input; a PR's filter decides on more than the diff
+  // its author wrote.
+  //
+  // A stale exclusion fails SILENTLY: nothing breaks, test edits merely start
+  // costing an hour again, which no reader would notice. That is the whole
+  // reason this is worth guarding — and why the guard EVALUATES the filter
+  // rather than reading a string out of it. GitHub tests a paths list in
+  // order and lets the last pattern that matches decide, so the presence of
+  // the `!` line is not the property that matters: lift it above
+  // `registry/**`, or add any matching positive pattern below it, and the
+  // directory is included again with the string still sitting in the list.
+
+  /** The subset of GitHub's filter-pattern syntax these workflows use: `**`
+   * spans path segments, `*` stays inside one, everything else is literal. */
+  const matcher = (pattern: string): RegExp =>
+    new RegExp(
+      `^${pattern.replace(/\*\*|\*|[.+?^${}()|[\]\\]/g, token =>
+        token === '**' ? '.*' : token === '*' ? '[^/]*' : `\\${token}`,
+      )}$`,
+    )
+
+  /** Whether `file` starts a trigger carrying `paths`, folded the way GitHub
+   * folds it: every pattern is tested in order, the last match decides, and a
+   * `!` pattern decides against. */
+  const starts = (paths: string[], file: string): boolean => {
+    let included = false
+    for (const pattern of paths) {
+      const negated = pattern.startsWith('!')
+      if (matcher(negated ? pattern.slice(1) : pattern).test(file)) included = !negated
     }
-    const paths = daily.on?.push?.paths ?? daily.true?.push?.paths ?? []
-    const block = /include:\s*\[([^\]]*)\]/.exec(read('vitest.config.ts'))?.[1]
-    const include = block === undefined ? undefined : /['"]([^'"]+)['"]/.exec(block)?.[1]
-    expect(include, 'vitest.config.ts declares no include to read').toBeDefined()
-    // `registry/scripts/tests/**/*.test.ts` -> `registry/scripts/tests`.
-    const suiteDir = include!.replace(/\/\*\*.*$/, '')
-    expect(suiteDir.length, `could not read a directory out of ${include}`).toBeGreaterThan(0)
+    return included
+  }
+
+  // The directories vitest runs the root suite from, imported from the config
+  // that owns them rather than restated here or scraped back out of its text:
+  // `registry/scripts/tests/**/*.test.ts` -> `registry/scripts/tests`. Every
+  // entry is read, because `include` is a list and a second suite root added
+  // to it would otherwise go unguarded.
+  const suites = (vitestConfig.test?.include ?? []).map(glob => ({
+    glob,
+    dir: glob.replace(/\/?\*.*$/, ''),
+  }))
+
+  // Every path-filtered workflow in the repository, so that "runs somewhere"
+  // below is a question asked of all of them rather than of a favourite.
+  const WORKFLOWS = ['daily.yml', 'plugin.yml', 'windows.yml']
+
+  // Files the build genuinely reads: a review file, the pipeline's source, the
+  // root manifest, the workflow itself. They are asserted from the same fold,
+  // so a negation wide enough to swallow them — `!registry/**` typed for
+  // `!registry/scripts/tests/**` — fails here instead of silently degrading
+  // the catalog to cron-only.
+  const CATALOG_INPUTS = [
+    'registry/verified.yml',
+    'registry/scripts/src/gate.ts',
+    'package.json',
+    '.github/workflows/daily.yml',
+  ]
+
+  it('leaves the root suite out of the catalog build, on both triggers', () => {
+    expect(suites, 'vitest.config.ts declares no include to read').not.toHaveLength(0)
+    for (const { glob, dir } of suites) {
+      expect(dir, `could not read a directory out of ${glob}`).not.toBe('')
+    }
+    // push and pull_request share one anchor today, and a PR run is the whole
+    // harvest as a dry run, so the half that is read cannot be assumed.
+    for (const event of ['push', 'pull_request'] as const) {
+      const paths = triggerPaths('daily.yml', event)
+      if (paths === undefined) throw new Error(`daily.yml declares no ${event}.paths`)
+      for (const { dir } of suites) {
+        for (const file of [`${dir}/probe.test.ts`, `${dir}/nested/probe.test.ts`]) {
+          expect(
+            starts(paths, file),
+            `daily.yml's ${event} filter matches ${file}, so a test-only change costs a harvest`,
+          ).toBe(false)
+        }
+      }
+      for (const input of CATALOG_INPUTS) {
+        expect(
+          starts(paths, input),
+          `daily.yml's ${event} filter no longer matches ${input}, so the catalog stopped building on its own input`,
+        ).toBe(true)
+      }
+    }
+  })
+
+  it('keeps the suite, and the config that locates it, running somewhere', () => {
+    // The counterpart obligation: dropping a directory from the catalog build
+    // is only free while some workflow still runs it. windows.yml carries it
+    // through `registry/scripts/**` — and that workflow's own comment reasons
+    // about data-only churn under registry/, one narrowing away from leaving
+    // a test-only change with no CI at all. vitest.config.ts is here for the
+    // same reason one step out: this guard reads it, so the commit that moves
+    // the suite out from under the exclusion has to be one that runs it.
+    const watchedSomewhere = (file: string): boolean =>
+      WORKFLOWS.some(workflow => starts(triggerPaths(workflow, 'push') ?? [], file))
+    for (const { dir } of suites) {
+      expect(
+        watchedSomewhere(`${dir}/probe.test.ts`),
+        `no workflow runs on a change under ${dir}, so the suite guards nothing`,
+      ).toBe(true)
+    }
     expect(
-      paths,
-      `daily.yml does not exclude ${suiteDir}, so a test-only change costs a harvest`,
-    ).toContain(`!${suiteDir}/**`)
+      watchedSomewhere('vitest.config.ts'),
+      'no workflow runs on a change to vitest.config.ts, so this guard misses the commit that breaks it',
+    ).toBe(true)
+  })
+
+  it('still typechecks the suite it took out of the catalog build', () => {
+    // tsconfig.json's include is `registry/scripts/**/*.ts`, so the ROOT
+    // `tsc --noEmit` reads these tests — and it is the only thing that does:
+    // vitest strips types without checking them, and there is no hook, only a
+    // checkbox in the PR template. daily.yml ran that typecheck and no longer
+    // triggers here, so the leg that still triggers has to run it. Losing it
+    // fails the way this whole block is about: nothing goes red, a type error
+    // in a test file merges green, and the 03:17 cron dies on it before the
+    // harvest. The package's own `pnpm -C packages/... typecheck` is a
+    // different tsconfig and deliberately does not count.
+    const runsRootTypecheck = (workflow: string): boolean =>
+      /^\s+- run: pnpm typecheck$/m.test(read(`.github/workflows/${workflow}`))
+    for (const { dir } of suites) {
+      const covering = WORKFLOWS.filter(
+        workflow =>
+          starts(triggerPaths(workflow, 'push') ?? [], `${dir}/probe.test.ts`) &&
+          runsRootTypecheck(workflow),
+      )
+      expect(
+        covering,
+        `no workflow both triggers on ${dir} and runs the root typecheck`,
+      ).not.toHaveLength(0)
+    }
   })
 })
 
@@ -541,4 +654,3 @@ describe('the exit criteria cannot skip silently in CI', () => {
       .toBe('1')
   })
 })
-

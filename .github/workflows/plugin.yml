@@ -5,7 +5,8 @@ on:
     # The two root READMEs are here because a release commit moves all four
     # install pins together, and readme-pins.test.ts is the guard for exactly
     # that. Without them, a commit fixing only a root README triggers neither
-    # workflow: daily.yml filters on registry/** and the ROOT package.json.
+    # workflow: daily.yml filters on the catalog's inputs under registry/
+    # and the ROOT package.json.
     paths: &plugin-inputs
       - 'packages/dsh-plugin-shop/**'
       - 'packages/dsh-typert-protocol/**'
