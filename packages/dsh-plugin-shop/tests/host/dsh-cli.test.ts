@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { delimiter, join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { dshCommand, resolveDshScript, type DshCliFs } from '../../src/host/dsh-cli.ts'
+import { dshCommand, jsEntryCommand, resolveDshScript, type DshCliFs } from '../../src/host/dsh-cli.ts'
 import { fileTempRoot } from './temp-root.ts'
 
 const TEMP_ROOT = fileTempRoot('dsh-cli')
@@ -175,5 +175,21 @@ describe('resolveDshScript', () => {
     writeFileSync(join(broken, 'node_modules', '@deepseek-ai', 'dsh', 'package.json'), '{ not json')
     const { shimDir, entry } = npmGlobal()
     expect(resolveDshScript(realFs, { argv1: undefined, path: [broken, shimDir].join(delimiter) })).toBe(entry)
+  })
+})
+
+describe('jsEntryCommand', () => {
+  it('routes a .mjs, .cjs and .js entry through the given node', () => {
+    for (const bin of ['/tmp/fake.mjs', '/tmp/fake.cjs', '/tmp/fake.js']) {
+      expect(jsEntryCommand(bin, ['store', 'add', 'a@1'], '/usr/bin/node')).toEqual({
+        command: '/usr/bin/node',
+        args: [bin, 'store', 'add', 'a@1'],
+      })
+    }
+  })
+
+  it('answers null for a program, so the caller spawns it as given', () => {
+    expect(jsEntryCommand('pnpm', ['store', 'add', 'a@1'], '/usr/bin/node')).toBeNull()
+    expect(jsEntryCommand('/usr/local/bin/pnpm', [], '/usr/bin/node')).toBeNull()
   })
 })

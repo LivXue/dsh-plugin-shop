@@ -52,6 +52,25 @@ const DSH_BIN_NAME = 'dsh'
  */
 const JS_ENTRY = /\.[cm]?js$/
 
+/**
+ * The command that starts `bin` through `execPath` when `bin` names a
+ * JavaScript entry, or `null` when `bin` is a program to spawn as given.
+ *
+ * Extracted from {@link dshCommand} so `prefetch.ts` can reach the same
+ * decision for pnpm without a second copy of {@link JS_ENTRY}: both need it
+ * for the same two reasons — a packaged JS entry is what a caller pinning an
+ * installation can name, and a `.mjs` test fixture is the only fake CLI that
+ * can be spawned on Windows at all.
+ */
+export function jsEntryCommand(
+  bin: string,
+  args: readonly string[],
+  execPath: string,
+): DshCommand | null {
+  if (!JS_ENTRY.test(bin)) return null
+  return { command: execPath, args: [bin, ...args] }
+}
+
 export interface DshCliFs {
   exists: (path: string) => boolean
   read: (path: string) => string
@@ -86,8 +105,7 @@ export function dshCommand(options: {
     if (platform === 'win32' && script !== null) return { command: execPath, args: [script, ...args] }
     return { command: dshBin, args: [...args] }
   }
-  if (JS_ENTRY.test(dshBin)) return { command: execPath, args: [dshBin, ...args] }
-  return { command: dshBin, args: [...args] }
+  return jsEntryCommand(dshBin, args, execPath) ?? { command: dshBin, args: [...args] }
 }
 
 /** The dsh entry a package manifest declares, or null when this manifest is
