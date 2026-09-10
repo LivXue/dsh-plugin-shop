@@ -10,8 +10,10 @@
 // what the loader actually mounted — lists this entry (id
 // `include:typert-gateway:mkt-e2e-live`: the shop mounts the hot tree from
 // its own ctx, a subtree of the gateway include, and the `mkt-` row id
-// survives at the end of the chain) tagged `data-kind="enabled"` (it was
-// `data-enabled="true"` before harness 0.1.2-rc.1) and phase active while
-// the fiber runs, and drops it once the shop's hot uninstall disposes the
-// fiber. The e2e asserts exactly that.
+// survives at the end of the chain) as enabled, with its root fiber in the
+// active phase, while the fiber runs, and drops it once the shop's hot
+// uninstall disposes the fiber. The e2e asserts exactly those two facts.
+// HOW it reads them out of the DOM is deliberately not restated here: the
+// harness has renamed that markup twice, this comment carried the dead
+// spelling through both, and web-full-flow.e2e.ts's contract header owns it.
 module.exports = { apply() {} }
