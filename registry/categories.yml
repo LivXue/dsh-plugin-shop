@@ -3483,6 +3483,8 @@
   category: ui
 - name: "@sunjuntao/dsh-prompt-library"
   category: tool
+- name: "@sunjuntao/dsh-qqbot"
+  category: integration
 - name: "@supanexus/dsh-plugin-chat-enhance"
   category: other
 - name: "@supanexus/dsh-plugin-file-explorer"
@@ -3897,6 +3899,8 @@
   category: ui
 - name: "@wisdoverse/dsh-skills-manager"
   category: tool
+- name: "@wisexin/dsh-antigravity"
+  category: other
 - name: "@wishp3/dsh-friend-all"
   category: ui
 - name: "@wizzy-1547/dsh-updater"
@@ -4220,6 +4224,8 @@
 - name: "@zerro223/dsh-token-usage"
   category: ui
 - name: "@zgy666/godot-bridge"
+  category: integration
+- name: "@zhang-guo-wen/dsh-claude-compat"
   category: integration
 - name: "@zhang-zhengyuan/dsh-tool-memory-amem"
   category: tool
@@ -4755,6 +4761,8 @@
   category: integration
 - name: "dsh-a2a-server"
   category: tool
+- name: "dsh-a2a-trust"
+  category: tool
 - name: "dsh-ab-sample"
   category: tool
 - name: "dsh-about"
@@ -4883,6 +4891,8 @@
   category: ui
 - name: "dsh-agent-arena"
   category: workflow
+- name: "dsh-agent-bridge"
+  category: integration
 - name: "dsh-agent-browser"
   category: tool
 - name: "dsh-agent-bus"
@@ -4901,6 +4911,8 @@
   category: tool
 - name: "dsh-agent-group"
   category: other
+- name: "dsh-agent-group-panel"
+  category: integration
 - name: "dsh-agent-hub"
   category: workflow
 - name: "dsh-agent-identity"
@@ -4995,6 +5007,8 @@
   category: other
 - name: "dsh-agnes"
   category: tool
+- name: "dsh-agnes-media"
+  category: provider
 - name: "dsh-agnes-omni"
   category: provider
 - name: "dsh-agnes-paseo"
@@ -5993,6 +6007,8 @@
   category: tool
 - name: "dsh-bookmarks-dock"
   category: ui
+- name: "dsh-boolean"
+  category: tool
 - name: "dsh-boot-guard"
   category: tool
 - name: "dsh-boron"
@@ -6814,8 +6830,6 @@
 - name: "dsh-code-scan"
   category: tool
 - name: "dsh-code-security"
-  category: tool
-- name: "dsh-code-server-app"
   category: tool
 - name: "dsh-code-smell"
   category: tool
@@ -8811,8 +8825,6 @@
   category: tool
 - name: "dsh-fmt"
   category: tool
-- name: "dsh-focus"
-  category: other
 - name: "dsh-focus-overlay"
   category: ui
 - name: "dsh-fold"
@@ -9281,6 +9293,8 @@
   category: tool
 - name: "dsh-gpt-file-discipline"
   category: tool
+- name: "dsh-gpt-image"
+  category: integration
 - name: "dsh-gpt-quota-widget"
   category: ui
 - name: "dsh-gpt-tool-compat"
@@ -10411,6 +10425,8 @@
   category: tool
 - name: "dsh-lesson-outline"
   category: tool
+- name: "dsh-lexiforge"
+  category: tool
 - name: "dsh-liang-slider"
   category: ui
 - name: "dsh-liang-transformer-vote"
@@ -10464,6 +10480,8 @@
 - name: "dsh-linkdigest"
   category: integration
 - name: "dsh-links"
+  category: tool
+- name: "dsh-lint-loop"
   category: tool
 - name: "dsh-lip-pick"
   category: tool
@@ -10769,6 +10787,8 @@
   category: tool
 - name: "dsh-loop-brake"
   category: tool
+- name: "dsh-loop-continue"
+  category: tool
 - name: "dsh-loop-guard"
   category: tool
 - name: "dsh-loopback-bridge"
@@ -11073,6 +11093,8 @@
   category: tool
 - name: "dsh-memories"
   category: tool
+- name: "dsh-memorix-panel"
+  category: ui
 - name: "dsh-memory"
   category: tool
 - name: "dsh-memory-bridge"
@@ -11964,6 +11986,8 @@
 - name: "dsh-odette-skin"
   category: theme
 - name: "dsh-odoo"
+  category: integration
+- name: "dsh-odoo-sdd"
   category: integration
 - name: "dsh-odor-removal"
   category: tool
@@ -13177,6 +13201,8 @@
   category: integration
 - name: "dsh-plugin-opencode-go-quota"
   category: ui
+- name: "dsh-plugin-opencode-omo"
+  category: workflow
 - name: "dsh-plugin-opencode-usage"
   category: ui
 - name: "dsh-plugin-optimization"
@@ -13204,6 +13230,8 @@
 - name: "dsh-plugin-product-subagents"
   category: integration
 - name: "dsh-plugin-proxy"
+  category: tool
+- name: "dsh-plugin-proxy-env"
   category: tool
 - name: "dsh-plugin-publisher"
   category: workflow
@@ -14693,6 +14721,8 @@
   category: tool
 - name: "dsh-scan-mcp"
   category: tool
+- name: "dsh-scenery"
+  category: theme
 - name: "dsh-scenery-background"
   category: ui
 - name: "dsh-scent-pick"
@@ -15781,6 +15811,8 @@
   category: tool
 - name: "dsh-steam-mop"
   category: other
+- name: "dsh-steer"
+  category: tool
 - name: "dsh-step-goal"
   category: tool
 - name: "dsh-sticker-board"
@@ -16025,6 +16057,8 @@
   category: integration
 - name: "dsh-synomega"
   category: tool
+- name: "dsh-sysbrief"
+  category: workflow
 - name: "dsh-sysmon"
   category: ui
 - name: "dsh-system-cleanup"
@@ -16797,6 +16831,8 @@
   category: tool
 - name: "dsh-tsv"
   category: tool
+- name: "dsh-tts-flash"
+  category: provider
 - name: "dsh-tu4-inline-images"
   category: ui
 - name: "dsh-tu4-notification"
