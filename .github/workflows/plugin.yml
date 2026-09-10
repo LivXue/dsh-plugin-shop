@@ -73,6 +73,33 @@ jobs:
       # attributes at all — web-full-flow.e2e.ts's contract header owns that,
       # and repo-guards.test.ts fails the build if this pin and that header
       # name different harness versions.
+      #
+      # The other half of this arrangement is the workspace lockfile the first
+      # line above says this pin is NOT. It resolves the harness dev deps at
+      # 0.1.1-rc.2, and that is a FLOOR rather than a pin nobody got round to
+      # moving. semver admits a prerelease only against a comparator carrying
+      # its own [major.minor.patch], and every version the harness has published
+      # on the 0.1 line is a prerelease, so `^0.1.1-rc.2` is satisfied by
+      # 0.1.1-rc.2 and by nothing else — a range in spelling, a hard pin in
+      # effect. The build therefore compiles against the OLDEST harness the
+      # shipped peer range claims to support, which is what keeps it from
+      # reaching for an API that only a newer one has.
+      #
+      # So these two are a pair, and neither is the claim by itself: compile at
+      # the floor, run the e2e at the ceiling. At the ceiling only, nothing
+      # stops the package from requiring a version it never declared. At the
+      # floor only, a green typecheck says nothing about the harness users
+      # actually install — which is precisely how 0.1.5-rc.1 removed two
+      # attributes out from under this suite with `tsc --noEmit` green the whole
+      # way. That is also why the reads that replaced them moved onto the a11y
+      # contract instead of onto the next private attribute: a name the harness
+      # needs for its own screen readers is one it cannot rename silently.
+      #
+      # Recorded for the next reader: the floor is COMPILED against but no
+      # longer RUN against. This pin is the only harness the e2e ever sees, so
+      # the lower end of the peer range is asserted by the build rather than
+      # observed. That is a known gap, not an oversight — closing it means a
+      # second e2e job on the floor, which is a decision, not a comment.
       - run: npm install -g @deepseek-ai/dsh@0.1.5-rc.1
       - run: dsh --version
       # The web full-flow e2e (P2 exit criterion) needs a playwright browser;
