@@ -222,16 +222,24 @@ const versions = (table: Record<string, string>): PeerVersionResolver =>
   spec => table[spec] ?? null
 
 describe('peerVersionMismatches', () => {
-  it('is silent for the versions installed today: 0.1.2-rc.1 against ^0.1.1-rc.2', () => {
-    // The real shape. The harness ships nothing but -rc versions, so strict
+  it('is silent for the versions installed today: 0.1.5-rc.1 against ^0.1.1-rc.2', () => {
+    // The real shape, re-measured 2026-09-10 against the harness npm calls
+    // `latest` — a bare `require` of each package out of the dsh tree, not a
+    // reading of this repo's lockfile (which pins the dev deps a line behind,
+    // deliberately). The harness ships nothing but -rc versions, so strict
     // semver calls every one of these a violation and this test is what fails
     // if the comparison ever regresses to strict mode.
+    //
+    // Every version here exists. The typert-protocol entry carries the same
+    // job the invented `0.1.9-rc.3` used to: it is a patch ABOVE the range's
+    // own floor (0.1.1-rc.2) within the same 0.1 line, which is the case
+    // includePrerelease exists to admit.
     expect(peerVersionMismatches(DECLARED, versions({
-      '@deepseek-ai/cordis': '4.0.1',
-      '@deepseek-ai/cordis-plugin-include': '1.0.6',
-      '@deepseek-ai/dsh-app-boot': '0.1.2-rc.1',
-      '@deepseek-ai/dsh-home-paths': '0.1.2-rc.1',
-      '@deepseek-ai/dsh-typert-protocol': '0.1.9-rc.3',
+      '@deepseek-ai/cordis': '4.0.2',
+      '@deepseek-ai/cordis-plugin-include': '1.0.7',
+      '@deepseek-ai/dsh-app-boot': '0.1.5-rc.1',
+      '@deepseek-ai/dsh-home-paths': '0.1.5-rc.1',
+      '@deepseek-ai/dsh-typert-protocol': '0.1.5-rc.1',
     }))).toEqual([])
   })
 

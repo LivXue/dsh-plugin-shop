@@ -70,8 +70,13 @@
  *   entries), and the second is COLLAPSED whenever a preset roster exists.
  *   A collapsed section renders no `<li>` at all, so every Loader selector is
  *   ABSENT rather than hidden. Each card is then
- *   `[data-plugin-entry=<entryId>]` with the enabled tag `[data-kind=enabled]`
- *   and the phase dot `[data-phase=active]`
+ *   `[data-plugin-entry=<entryId>]` with the enabled tag `[data-tone=success]`
+ *   and the phase dot `[data-state=done]`. Both attribute names moved with
+ *   harness 0.1.5-rc.1, which refactored `StateTag`/`PhaseDot` onto the shared
+ *   `Tag`/`StateDot` primitives and dropped the `data-kind`/`data-phase` the
+ *   hand-rolled spans used to emit; the primitives carry the MAPPED value
+ *   instead (`TAG_TONES`, `PHASE_DOT_STATES`), so the assertion reads the same
+ *   fact through a different attribute rather than a weakened one.
  * - settings modal close: `.VOzbGW_close` (visually-hidden label 关闭)
  */
 
@@ -89,8 +94,10 @@ import { startInstall } from '../../src/host/executor.ts'
  *
  * Harness 0.1.2-rc.1 split that tab in two — agent presets first, then the
  * global plane — and collapses the global plane whenever a preset roster is
- * composed, which the `web` profile always has. A collapsed section renders no
- * `<li>`, so `[data-plugin-entry]` and `[data-phase]` are absent, not hidden:
+ * composed, which the `web` profile always has. Both halves of that survive
+ * unchanged into 0.1.5-rc.1, whose `data-plugin-entry` cards this waits on.
+ * A collapsed section renders no
+ * `<li>`, so `[data-plugin-entry]` and `[data-state]` are absent, not hidden:
  * every assertion below this point either times out or, worse, passes
  * vacuously. The three `count()).toBe(0)` "nothing is live" checks are exactly
  * that hazard — an empty collapsed section satisfies them for free.
@@ -677,8 +684,8 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await expandGlobalPlane(dialog)
       const liveEntry = dialog.locator('[data-plugin-entry="include:typert-gateway:mkt-e2e-live"]')
       await liveEntry.waitFor({ state: 'visible', timeout: 15_000 })
-      await liveEntry.locator('[data-kind="enabled"]').waitFor({ state: 'visible' })
-      await liveEntry.locator('[data-phase="active"]').waitFor({ state: 'visible' })
+      await liveEntry.locator('[data-tone="success"]').waitFor({ state: 'visible' })
+      await liveEntry.locator('[data-state="done"]').waitFor({ state: 'visible' })
 
       // The settled mutation re-reads installed() in place. Switching back
       // to the already-mounted shop must expose the installed actions without
@@ -740,7 +747,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await dialog3.getByRole('button', { name: '插件', exact: true }).click()
       await dialog3.getByRole('tab', { name: '插件列表' }).click()
       await expandGlobalPlane(dialog3)
-      await dialog3.locator('[data-phase]').first().waitFor({ state: 'visible', timeout: 15_000 })
+      await dialog3.locator('[data-state]').first().waitFor({ state: 'visible', timeout: 15_000 })
       expect(await dialog3.locator('[data-plugin-entry="include:typert-gateway:mkt-e2e-live"]').count()).toBe(0)
     },
     120_000,
@@ -800,7 +807,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await dialog2.getByRole('button', { name: '插件', exact: true }).click()
       await dialog2.getByRole('tab', { name: '插件列表' }).click()
       await expandGlobalPlane(dialog2)
-      await dialog2.locator('[data-phase]').first().waitFor({ state: 'visible', timeout: 15_000 })
+      await dialog2.locator('[data-state]').first().waitFor({ state: 'visible', timeout: 15_000 })
       expect(await dialog2.locator('[data-plugin-entry="include:typert-gateway:mkt-e2e-config"]').count()).toBe(0)
     },
     120_000,

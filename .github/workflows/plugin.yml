@@ -47,16 +47,28 @@ jobs:
       # Pinned to the harness the e2e's DOM contract is written against, NOT to
       # the workspace's own lockfile (which still resolves the harness dev deps
       # at 0.1.1-rc.2 — a separate, deliberate pin). This global install is what
-      # serves the web UI the e2e drives, and the two versions render mutually
-      # exclusive contracts. Measured 2026-09-04 in
+      # serves the web UI the e2e drives, and the versions render mutually
+      # exclusive contracts. Measured in
       # @deepseek-ai/dsh-client-ui-settings-plugin-inventory:
       #   0.1.1-rc.2  data-enabled x2, data-kind x0, no 全局插件 section
       #   0.1.2-rc.1  data-enabled x0, data-kind x5, 插件列表 split in two with
       #               the Loader plane COLLAPSED when a preset roster exists
-      # So a selector suite can satisfy one and only one of them. It is written
-      # against 0.1.2-rc.1 because that is what users install today; when this
-      # pin moves again, expect web-full-flow.e2e.ts to move with it.
-      - run: npm install -g @deepseek-ai/dsh@0.1.2-rc.1
+      #   0.1.5-rc.1  data-kind x0 AND data-phase x0 — the enabled tag and the
+      #               phase dot are now rendered by the shared primitives
+      #               (Tag, StateDot) as data-tone / data-state, and those live
+      #               in dsh-client-ui-primitives, which the web frontend
+      #               BUNDLES rather than installing as a package in the harness
+      #               tree. So a census of this package alone reads "the
+      #               instrument was deleted" while the DOM still carries it
+      #               under another name; the mapping is on the contract comment
+      #               at the top of web-full-flow.e2e.ts. The rest of the
+      #               attribute census is unchanged, and the entry card's own
+      #               attributes are byte-identical across the two.
+      # Names, not counts, are what a selector suite can satisfy one version of
+      # at a time. It is written against 0.1.5-rc.1 because that is what users
+      # install today; when this pin moves again, expect web-full-flow.e2e.ts
+      # to move with it.
+      - run: npm install -g @deepseek-ai/dsh@0.1.5-rc.1
       - run: dsh --version
       # The web full-flow e2e (P2 exit criterion) needs a playwright browser;
       # without --with-deps for now — the ubuntu-latest image already carries

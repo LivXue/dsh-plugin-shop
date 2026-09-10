@@ -277,7 +277,8 @@ version that is installed and works. Measured against `^0.1.1-rc.2`:
 
 | Version | strict | includePrerelease | What it is |
 |---|---|---|---|
-| `0.1.2-rc.1` | violates | satisfies | installed now, works fine |
+| `0.1.2-rc.1` | violates | satisfies | installed 2026-09-04, works fine |
+| `0.1.5-rc.1` | violates | satisfies | installed 2026-09-10 (npm `latest`), works fine |
 | `0.1.9-rc.3` | violates | satisfies | a later rc on the same minor line |
 | `0.1.1-rc.1` | violates | violates | older than pinned |
 | `0.2.0-rc.1` | violates | violates | minor-line move — the real breaking change |
