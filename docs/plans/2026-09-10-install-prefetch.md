@@ -891,14 +891,20 @@ Append to `packages/dsh-plugin-shop/tests/host/executor.test.ts`:
 
 ```ts
 describe('the download phase in front of the queue', () => {
+  // Every case here uses a profile name of its own. `profileQueues` and the
+  // new `profileDepth` are MODULE-level, and 33 cases in this file already
+  // share `profile: 'web'` — an install still in flight from any of them
+  // would make "nothing is ahead of me" read `downloading` and turn these
+  // into intermittent failures that look like a regression in the feature
+  // under test.
   it('reports downloading while queued, then running once it holds the queue', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'dsh-phase-'))
     const bin = fakeDsh(dir, 'setTimeout(() => process.exit(0), 120)')
     const prefetcher = createPrefetcher({ pnpmBin: fakePnpm(dir, { delayMs: 40 }) })
-    const first = startInstall({ profile: 'web', spec: 'a@1', dshBin: bin, prefetcher })
+    const first = startInstall({ profile: 'phase-queue', spec: 'a@1', dshBin: bin, prefetcher })
     // Nothing was ahead of the first, so it never enters the download phase.
     expect(first.status().state).toBe('running')
-    const second = startInstall({ profile: 'web', spec: 'b@1', dshBin: bin, prefetcher })
+    const second = startInstall({ profile: 'phase-queue', spec: 'b@1', dshBin: bin, prefetcher })
     expect(second.status().state).toBe('downloading')
     await first.finished
     await second.finished
@@ -909,8 +915,8 @@ describe('the download phase in front of the queue', () => {
     const dir = mkdtempSync(join(tmpdir(), 'dsh-phase-log-'))
     const bin = fakeDsh(dir, 'setTimeout(() => process.exit(0), 120)')
     const prefetcher = createPrefetcher({ pnpmBin: fakePnpm(dir, { delayMs: 20 }) })
-    const first = startInstall({ profile: 'web', spec: 'a@1', dshBin: bin, prefetcher })
-    const second = startInstall({ profile: 'web', spec: 'b@1', dshBin: bin, prefetcher })
+    const first = startInstall({ profile: 'phase-log', spec: 'a@1', dshBin: bin, prefetcher })
+    const second = startInstall({ profile: 'phase-log', spec: 'b@1', dshBin: bin, prefetcher })
     await first.finished
     await second.finished
     // `append` refuses a line only once the state is TERMINAL. Guarded by
@@ -923,9 +929,9 @@ describe('the download phase in front of the queue', () => {
     const dir = mkdtempSync(join(tmpdir(), 'dsh-phase-tb-'))
     const bin = fakeDsh(dir, 'setTimeout(() => process.exit(0), 80)')
     const prefetcher = createPrefetcher({ pnpmBin: fakePnpm(dir) })
-    const first = startInstall({ profile: 'web', spec: 'a@1', dshBin: bin, prefetcher })
+    const first = startInstall({ profile: 'phase-tarball', spec: 'a@1', dshBin: bin, prefetcher })
     const second = startInstall({
-      profile: 'web',
+      profile: 'phase-tarball',
       spec: 'https://github.com/o/s/releases/download/v1/a.tgz',
       dshBin: bin,
       prefetcher,
@@ -1096,18 +1102,20 @@ the self-update), adding one property to the existing options object:
       prefetcher: this.prefetcher,
 ```
 
-Return the state the executor started in, so the client's first frame carries the right
-phase rather than correcting itself one poll later (`INSTALL_POLL_MS` is 1000):
-
-```ts
-    return { ok: true, installId: running.installId, state: running.status().state }
-```
-
 Import both names:
 
 ```ts
 import { createPrefetcher, type Prefetcher } from './prefetch.ts'
 ```
+
+**Do not touch `install()`'s return statement.** Task 2 already widened
+`ShopInstallResult` and made it return `state: running.status().state` — that field is
+a client contract and Task 2 owns it, while the prefetcher is host plumbing and this
+task owns that. Until this task runs, the state it reports is always `'running'`
+because nothing produced anything else; after it, the same expression reports
+`'downloading'` for a queued install with no further edit. Verify it reads
+`state: running.status().state` and move on; re-adding it duplicates a property in one
+object literal.
 
 - [ ] **Step 6: Run the host suite and fix what genuinely changed meaning**
 
