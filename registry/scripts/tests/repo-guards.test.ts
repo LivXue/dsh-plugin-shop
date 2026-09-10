@@ -85,6 +85,39 @@ describe('a path-filtered workflow watches its own file', () => {
   })
 })
 
+describe('a test-only change does not buy a harvest', () => {
+  it('excludes exactly the directory the root suite runs from', () => {
+    // daily.yml's paths start with `registry/**`, and the pipeline's own tests
+    // live under it, so editing one of them cost a full fifty-minute live
+    // harvest. Measured 2026-09-10: the merge of #39 carried
+    // registry/scripts/tests/repo-guards.test.ts and nothing else under
+    // registry/, and that was enough to start one; #40, which touched only
+    // plugin.yml, started none.
+    //
+    // The exclusion is correct only while it names the directory the root
+    // suite actually reads, so both halves are read from their owners rather
+    // than restated here — vitest.config.ts owns the include, daily.yml owns
+    // the paths. A stale exclusion fails SILENTLY: nothing breaks, test edits
+    // merely start costing an hour again, which no reader would notice. That
+    // is the whole reason this is worth guarding.
+    const daily = parse(read('.github/workflows/daily.yml')) as {
+      on?: { push?: { paths?: string[] } }
+      true?: { push?: { paths?: string[] } }
+    }
+    const paths = daily.on?.push?.paths ?? daily.true?.push?.paths ?? []
+    const block = /include:\s*\[([^\]]*)\]/.exec(read('vitest.config.ts'))?.[1]
+    const include = block === undefined ? undefined : /['"]([^'"]+)['"]/.exec(block)?.[1]
+    expect(include, 'vitest.config.ts declares no include to read').toBeDefined()
+    // `registry/scripts/tests/**/*.test.ts` -> `registry/scripts/tests`.
+    const suiteDir = include!.replace(/\/\*\*.*$/, '')
+    expect(suiteDir.length, `could not read a directory out of ${include}`).toBeGreaterThan(0)
+    expect(
+      paths,
+      `daily.yml does not exclude ${suiteDir}, so a test-only change costs a harvest`,
+    ).toContain(`!${suiteDir}/**`)
+  })
+})
+
 describe('the artifact round-trip is exercised where a dry run can see it', () => {
   const buildSteps = (): { name?: string; uses?: string; if?: string; with?: Record<string, string> }[] => {
     const workflow = parse(read('.github/workflows/daily.yml')) as {
