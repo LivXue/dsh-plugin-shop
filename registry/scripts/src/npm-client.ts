@@ -660,11 +660,26 @@ export const PARTITION_KEYWORDS: readonly string[] = [
  *    is NOT retried. Exposure scales with this number, so buying cycle length
  *    the horizon does not need buys risk instead.
  *
- * So 500: an ~8-minute phase, a full cycle every 7 runs, and about 2.7 cycles
- * before the crossing. Same accumulate-over-days posture as
- * `REPO_BACKFILL_BUDGET` on the GitHub half, with the one difference named
- * above — that half persists its per-repository outcomes and this one does
- * not.
+ * So 500. MEASURED against the estimate above, on the two runs that followed
+ * this change: the `Classify new listings` step took 15m42s and 17m31s
+ * against a 6m23s control on the last run whose vocabulary was empty, so the
+ * probe phase is 9m19s and 11m08s — ~1.1-1.3s per probe, and the step
+ * completes and publishes where 3,474 probes reached 57m37s and threw. Same
+ * accumulate-over-days posture as `REPO_BACKFILL_BUDGET` on the GitHub half,
+ * with the one difference named above — that half persists its
+ * per-repository outcomes and this one does not.
+ *
+ * ONE CYCLE IS SEVEN *SNAPSHOTS*, NOT SEVEN RUNS, and the distinction is
+ * observable rather than pedantic: a run reads the cursor out of the tree it
+ * CHECKED OUT, and the snapshot commit lands on top of that tree afterwards.
+ * The two runs above were pushed from commits that both carried `cursor: 0`,
+ * so both probed the same first 500 names and both computed the same next
+ * cursor; only one snapshot commit resulted, because the second found no diff
+ * to commit. So the rotation advances once per snapshot — reliably on the
+ * scheduled run, which checks out the tip — and a push-triggered build from
+ * an older commit re-probes whatever slice its own tree names. Wasted
+ * requests, never wrong data, and the reason to count cycles in days rather
+ * than in builds.
  *
  * **This bounds the probes. What bounds the PAGING is the redundancy filter
  * in `searchByKeywords`**, and the distinction is the whole reason that filter
