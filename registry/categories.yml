@@ -1975,14 +1975,10 @@
   category: tool
 - name: "@hilariouhiss/dsh-colgrep"
   category: tool
-- name: "@hilariouhiss/dsh-openspec"
-  category: workflow
 - name: "@hilariouhiss/dsh-plan-doc"
   category: ui
 - name: "@hilariouhiss/dsh-ponytail"
   category: tool
-- name: "@hilariouhiss/dsh-superpowers"
-  category: workflow
 - name: "@hiro-nikaitou/dsh-ocg-billing"
   category: tool
 - name: "@hjbztlbr/dsh-client-ui-skin-verdandi"
@@ -3873,13 +3869,9 @@
   category: ui
 - name: "@windypro-rourou/dsh-logcat"
   category: tool
-- name: "@wingsky-1/dsh-codegraph"
-  category: tool
 - name: "@wingsky-1/dsh-lan-proxy"
   category: tool
 - name: "@wingsky-1/dsh-mcp-manager"
-  category: tool
-- name: "@wingsky-1/dsh-mem0"
   category: tool
 - name: "@wingsky-1/dsh-notifier"
   category: ui
@@ -6399,6 +6391,8 @@
   category: ui
 - name: "dsh-chat"
   category: ui
+- name: "dsh-chat-avatar"
+  category: ui
 - name: "dsh-chat-enhancer"
   category: ui
 - name: "dsh-chat-fold"
@@ -6943,8 +6937,6 @@
   category: provider
 - name: "dsh-codex-workflow"
   category: workflow
-- name: "dsh-coding-kit"
-  category: tool
 - name: "dsh-coding-plans"
   category: provider
 - name: "dsh-coding-remote-kit"
@@ -7252,8 +7244,6 @@
 - name: "dsh-continual-harness"
   category: tool
 - name: "dsh-continue"
-  category: workflow
-- name: "dsh-contract-drafting-agent"
   category: workflow
 - name: "dsh-contract-review"
   category: tool
@@ -9249,6 +9239,8 @@
   category: provider
 - name: "dsh-go-usage"
   category: tool
+- name: "dsh-goal-autopilot"
+  category: workflow
 - name: "dsh-goal-mode"
   category: ui
 - name: "dsh-goal-restart"
@@ -9493,6 +9485,8 @@
   category: tool
 - name: "dsh-harness-zh-cn"
   category: ui
+- name: "dsh-harvest"
+  category: workflow
 - name: "dsh-hashid"
   category: tool
 - name: "dsh-hashline-edittool"
@@ -10153,6 +10147,8 @@
   category: tool
 - name: "dsh-kanban-flow"
   category: tool
+- name: "dsh-kaomoji"
+  category: ui
 - name: "dsh-karpathy-methodology"
   category: tool
 - name: "dsh-kazakhstan"
@@ -12895,6 +12891,8 @@
   category: ui
 - name: "dsh-plugin-custom-provider-enhancer"
   category: tool
+- name: "dsh-plugin-cvescout"
+  category: tool
 - name: "dsh-plugin-dashboard"
   category: ui
 - name: "dsh-plugin-dedup"
@@ -13063,6 +13061,8 @@
   category: ui
 - name: "dsh-plugin-integration"
   category: tool
+- name: "dsh-plugin-internet-meme"
+  category: ui
 - name: "dsh-plugin-jinji"
   category: tool
 - name: "dsh-plugin-juan-pet"
@@ -13214,6 +13214,8 @@
 - name: "dsh-plugin-opencode-omo"
   category: workflow
 - name: "dsh-plugin-opencode-usage"
+  category: ui
+- name: "dsh-plugin-ops-bundle"
   category: ui
 - name: "dsh-plugin-optimization"
   category: tool
@@ -13482,6 +13484,8 @@
 - name: "dsh-plugin-updater"
   category: tool
 - name: "dsh-plugin-upgrade"
+  category: tool
+- name: "dsh-plugin-upgrade-rc1"
   category: tool
 - name: "dsh-plugin-usage"
   category: tool
@@ -14313,6 +14317,8 @@
   category: tool
 - name: "dsh-remote-dirpicker"
   category: ui
+- name: "dsh-remote-dsh"
+  category: ui
 - name: "dsh-remote-gpu-monitoring"
   category: ui
 - name: "dsh-remote-link"
@@ -14405,6 +14411,8 @@
   category: provider
 - name: "dsh-requirements-alignment"
   category: other
+- name: "dsh-rerun"
+  category: workflow
 - name: "dsh-rescue"
   category: tool
 - name: "dsh-rescue-tui"
@@ -16749,6 +16757,8 @@
   category: ui
 - name: "dsh-topbar-manager"
   category: ui
+- name: "dsh-totp"
+  category: tool
 - name: "dsh-tough-stain"
   category: tool
 - name: "dsh-toutiao-reader"
@@ -17341,8 +17351,6 @@
   category: tool
 - name: "dsh-vim"
   category: ui
-- name: "dsh-virtual-product-team"
-  category: workflow
 - name: "dsh-virtual-workspace"
   category: tool
 - name: "dsh-virtuoso"
@@ -17790,6 +17798,8 @@
 - name: "dsh-web-verify-panel"
   category: ui
 - name: "dsh-web-voice-input"
+  category: ui
+- name: "dsh-web-whale-maid"
   category: ui
 - name: "dsh-web-window-companion"
   category: ui
@@ -18415,13 +18425,13 @@
   category: integration
 - name: "dsh-zhipu-codingbar"
   category: ui
+- name: "dsh-zhouli"
+  category: tool
 - name: "dsh-zone-clean"
   category: tool
 - name: "dsh-zotero"
   category: integration
 - name: "dsh-zotero-local"
-  category: integration
-- name: "dsh-zotero-wiki"
   category: integration
 - name: "dsh1024"
   category: tool
@@ -19055,6 +19065,8 @@
   category: provider
 - name: "spatial-trajectory"
   category: ui
+- name: "spec-wave"
+  category: tool
 - name: "specworkflow"
   category: workflow
 - name: "start-dsh-plugin"
