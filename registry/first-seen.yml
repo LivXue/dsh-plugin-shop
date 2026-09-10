@@ -18038,6 +18038,8 @@
   added: 2026-08-28
 - name: "dsh-lint"
   added: 2026-09-04
+- name: "dsh-lint-loop"
+  added: 2026-09-10
 - name: "dsh-linux"
   added: 2026-09-04
 - name: "dsh-lip-pick"
@@ -21812,6 +21814,8 @@
   added: 2026-08-25
 - name: "dsh-plugin-opencode-go-quota"
   added: 2026-09-01
+- name: "dsh-plugin-opencode-omo"
+  added: 2026-09-10
 - name: "dsh-plugin-opencode-usage"
   added: 2026-09-01
 - name: "dsh-plugin-opencode-useragent"
@@ -27248,6 +27252,8 @@
   added: 2026-09-04
 - name: "dsh-update-radar"
   added: 2026-08-31
+- name: "dsh-update-status"
+  added: 2026-09-10
 - name: "dsh-updater"
   added: 2026-09-01
 - name: "dsh-updater-npm"
@@ -32294,6 +32300,8 @@
   added: 2026-09-10
 - name: "look-here"
   added: 2026-09-01
+- name: "looking321-rt/dsh-tps-meter"
+  added: 2026-09-10
 - name: "loommii/dsh-input-history"
   added: 2026-09-08
 - name: "loonai321/dsh-humanized-deepseek-maid"
@@ -38684,6 +38692,8 @@
   added: 2026-09-02
 - name: "ui-turnav"
   added: 2026-09-04
+- name: "uigdwunm/dsh-conversation-jump"
+  added: 2026-09-10
 - name: "uigdwunm/dsh-conversation-nav"
   added: 2026-09-02
 - name: "uigdwunm/dsh-process-fold"
