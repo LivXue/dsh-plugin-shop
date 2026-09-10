@@ -8432,6 +8432,8 @@
   added: 2026-08-31
 - name: "bing-web-search"
   added: 2026-09-01
+- name: "bingaha/dsh-live-mcp"
+  added: 2026-09-10
 - name: "bingfengaaaaa/dsh-jj-vcs"
   added: 2026-09-01
 - name: "bingoagenttouch/personal_mcp"
@@ -11536,6 +11538,8 @@
   added: 2026-09-01
 - name: "dsh-baseboard"
   added: 2026-09-01
+- name: "dsh-bash-escalation-gate"
+  added: 2026-09-10
 - name: "dsh-bash-on-windows"
   added: 2026-08-25
 - name: "dsh-bash-terminal"
@@ -15644,6 +15648,8 @@
   added: 2026-09-01
 - name: "dsh-files-native"
   added: 2026-08-30
+- name: "dsh-files-pane"
+  added: 2026-09-10
 - name: "dsh-files-panel"
   added: 2026-09-01
 - name: "dsh-files-tab"
@@ -15960,6 +15966,8 @@
   added: 2026-09-01
 - name: "dsh-fuse"
   added: 2026-08-31
+- name: "dsh-fuse-english"
+  added: 2026-09-10
 - name: "dsh-fusion-pixel-font"
   added: 2026-09-01
 - name: "dsh-fusion-pixel-ui-adapt"
@@ -21048,6 +21056,8 @@
   added: 2026-08-25
 - name: "dsh-plugin-agent-insights"
   added: 2026-09-09
+- name: "dsh-plugin-agent-monitor"
+  added: 2026-09-10
 - name: "dsh-plugin-agent-workflow"
   added: 2026-09-04
 - name: "dsh-plugin-agents-memory"
@@ -21892,6 +21902,8 @@
   added: 2026-08-31
 - name: "dsh-plugin-quick-draw-tool"
   added: 2026-09-04
+- name: "dsh-plugin-quick-notes"
+  added: 2026-09-10
 - name: "dsh-plugin-quota"
   added: 2026-08-31
 - name: "dsh-plugin-quota-monitor"
@@ -22186,6 +22198,8 @@
   added: 2026-09-04
 - name: "dsh-plugin-tokenmeter"
   added: 2026-09-04
+- name: "dsh-plugin-tokensmarket"
+  added: 2026-09-10
 - name: "dsh-plugin-tool-guard"
   added: 2026-09-08
 - name: "dsh-plugin-tool-health"
@@ -26764,6 +26778,8 @@
   added: 2026-09-04
 - name: "dsh-tps"
   added: 2026-09-04
+- name: "dsh-tps-meter"
+  added: 2026-09-10
 - name: "dsh-tps-mode"
   added: 2026-09-04
 - name: "dsh-trace"
@@ -27970,6 +27986,8 @@
   added: 2026-09-04
 - name: "dsh-web-artifact-designer"
   added: 2026-08-25
+- name: "dsh-web-artifact-designer-english"
+  added: 2026-09-10
 - name: "dsh-web-attention-badge"
   added: 2026-08-28
 - name: "dsh-web-auth"
@@ -30134,6 +30152,8 @@
   added: 2026-09-01
 - name: "hanlinlibham/dsh-native-tui"
   added: 2026-09-01
+- name: "hanmiao33/dsh-bubble-explain"
+  added: 2026-09-10
 - name: "hann428/dsh-usage-dashboard"
   added: 2026-08-31
 - name: "hanshanxue83/collaborative-emergent-intelligence"
@@ -34804,6 +34824,8 @@
   added: 2026-09-01
 - name: "scorpio69t/teach-math-with-manim"
   added: 2026-09-01
+- name: "scp-cn-1059/dsh-zhouli"
+  added: 2026-09-10
 - name: "scratch-plugin"
   added: 2026-09-04
 - name: "scubiry-glitch/dsh-plugin-feishu-chat"
@@ -35240,6 +35262,8 @@
   added: 2026-09-01
 - name: "socialist-sister/dsh-survival-mode"
   added: 2026-09-01
+- name: "sodazheng/dsh-totp"
+  added: 2026-09-10
 - name: "sodazilla-zzz/dsh-tide-ui"
   added: 2026-09-01
 - name: "sofagent-monorepo"
@@ -35960,6 +35984,8 @@
   added: 2026-09-01
 - name: "toukaiteio/dsh-plugin-installer"
   added: 2026-09-01
+- name: "toustifer/dsh-harvest"
+  added: 2026-09-10
 - name: "townrain/dsh-fetch-models-unselect-all"
   added: 2026-09-01
 - name: "townrain/dsh-model-vendor-badge"
