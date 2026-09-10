@@ -283,9 +283,10 @@ export function parseKeywordShortfall(value: unknown, where: string): KeywordSho
  * measurement was WRONG. It is a filter and it composes with `keywords:` —
  * `keywords:deepseek-harness maintainer:<nonexistent>` returns 0, not the
  * unchanged total an ignored qualifier gives. See the 2026-09-08 follow-up
- * amendment in docs/design/2026-08-18-dsh-plugin-shop-design.md; the
- * publisher axis it opens is planned, not implemented, in
- * docs/plans/2026-09-08-publisher-partition.md.
+ * amendment in docs/design/2026-08-18-dsh-plugin-shop-design.md. The publisher
+ * axis it opens is IMPLEMENTED — {@link PUBLISHER_PROBE_BUDGET_DEFAULT} below
+ * bounds its probes, `publisher-state.ts` owns the persisted vocabulary, and
+ * docs/plans/2026-09-08-publisher-partition.md is the plan it was built from.
  * A bare text term (`keywords:deepseek-harness memory`) leaves the total
  * unchanged too, but re-ranks the page: only 138 of 250 names match at rank
  * 2,500 against the untermed query. It still cannot widen the reachable
