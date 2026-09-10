@@ -12,6 +12,7 @@ import { holderLabel, identityKey, specVerdict, type EntryIdentity } from '../sh
 import type { ShopLocaleKey } from './locales.ts'
 import type { CatalogEntry, HotRestartReason, InstallRejectionCode } from '../host/index.ts'
 import type { Activation } from '../host/activation.ts'
+import type { InstallState } from '../shared/install-state.ts'
 
 // Re-exported so the client half has one import site for it.
 export type { Activation }
@@ -152,7 +153,7 @@ export function isCustomLicense(license: string | null): boolean {
 /** One polled install status (§7.3 wire data), structural. */
 export interface InstallStatusShape {
   found: boolean
-  state: 'running' | 'done' | 'failed'
+  state: InstallState
   log: string[]
   activation?: Activation
   restartReason?: HotRestartReason

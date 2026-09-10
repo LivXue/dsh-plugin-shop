@@ -13,8 +13,9 @@ import { readProfileManifest, resolveProfileDir } from '@deepseek-ai/dsh-app-boo
 import { dshCommand, resolveDshScript, DSH_PACKAGE, type DshCliFs } from './dsh-cli.ts'
 import type { HotRestartReason } from './hot.ts'
 import type { Activation } from './activation.ts'
+import { type InstallState } from '../shared/install-state.ts'
 
-export type InstallState = 'running' | 'done' | 'failed'
+export type { InstallState } from '../shared/install-state.ts'
 
 export interface InstallStatus {
   state: InstallState
