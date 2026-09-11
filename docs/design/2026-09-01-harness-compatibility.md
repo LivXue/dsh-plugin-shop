@@ -435,6 +435,16 @@ mismatch that presence cannot see, on a real listed package, on a real
 machine. §2's claim that presence-only misses nothing worth catching is
 now known to be false.
 
+The older argument against ranges is narrower than §2's and survives
+intact: `Candidate.peers` records that nearly every dsh plugin declares
+`"*"`, and that the harness's own prerelease versions do not satisfy
+ordinary ranges — so ranges would be inert for most entries and
+actively wrong for some. That bounds the BENEFIT; it does not restore
+the claim that there is none. Both belong in the measurement that
+decides this, and neither has been made: what share of declared ranges
+are `"*"`, and how many of the rest are prerelease false alarms, are
+unmeasured on this catalog.
+
 It stays out of this change on cost, not on principle — and the cost is
 stated as measured, because the obvious version of this sentence was
 wrong. `peers` is **not** the catalog's heaviest field. Measured over the
