@@ -25,6 +25,13 @@ on:
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
+      # The root suite's own config and the typecheck's. daily.yml no longer
+      # triggers on the tests directory, so this leg is where both run for a
+      # test-only change — and a commit that moved the suite out from under
+      # that exclusion, by editing vitest.config.ts alone, used to start no
+      # workflow at all and so never ran the guard that watches for it.
+      - 'tsconfig.json'
+      - 'vitest.config.ts'
       - '.github/workflows/windows.yml'
   pull_request:
     paths: *windows-inputs
@@ -46,6 +53,15 @@ jobs:
       # The root suite (registry/scripts/tests/**) in full. Measured green on
       # Windows, and it is where the `import()` specifier bug lived.
       - run: pnpm test
+      # The ROOT typecheck, here and not only in daily.yml. tsconfig.json's
+      # include is `registry/scripts/**/*.ts`, tests included, and daily.yml
+      # is filtered off that directory — so for a test-only change this is the
+      # only `tsc --noEmit` in CI. vitest strips types without checking them,
+      # so without this step a `noUncheckedIndexedAccess` violation in a test
+      # file merges green and first fails the 03:17 cron at daily.yml's own
+      # typecheck, which runs BEFORE the harvest: no catalog, no publish and
+      # no Pages deploy that day, on a run whose diff contains nothing.
+      - run: pnpm typecheck
       # The package suite, whole, through the package's OWN `test` script —
       # `tsdown && tsdown -c tsdown.client.config.ts && vitest run`. The two
       # builds are load-bearing, not incidental: `apply.client.spec.tsx`
