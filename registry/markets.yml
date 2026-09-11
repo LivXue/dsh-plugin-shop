@@ -354,6 +354,11 @@
   by: human
   reason: "Native DSH browser integration for the DSH Plugin Store"
 
+- name: "dsh-rerun-store"
+  market: false
+  by: llm
+  reason: "Judged NOT a dsh plugin market from: Content-addressed result store for dsh-rerun runs, attempts, and harvested artifacts"
+
 - name: "dsh-safe-plugin-manager"
   market: true
   by: human
