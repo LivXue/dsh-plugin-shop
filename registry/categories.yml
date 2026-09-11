@@ -647,8 +647,6 @@
   category: ui
 - name: "@deepseek-ai/dsh-a11y-announcer"
   category: ui
-- name: "@deepseek-ai/dsh-api-cost"
-  category: tool
 - name: "@deepseek-ai/dsh-balance-panel"
   category: ui
 - name: "@deepseek-ai/dsh-browser-slotpool"
@@ -1131,8 +1129,6 @@
   category: ui
 - name: "@dsh-external/dsh-neutrino"
   category: integration
-- name: "@dsh-external/dsh-night-greeting"
-  category: ui
 - name: "@dsh-external/dsh-notes"
   category: tool
 - name: "@dsh-external/dsh-novel-writer"
@@ -2103,6 +2099,8 @@
   category: tool
 - name: "@hyzyn/dsh-all"
   category: other
+- name: "@hyzyn/dsh-docker"
+  category: tool
 - name: "@hyzyn/dsh-plugin-kit"
   category: tool
 - name: "@hyzyn/dsh-tty"
@@ -2121,12 +2119,16 @@
   category: tool
 - name: "@icedcola/dsh-provider-veark"
   category: provider
+- name: "@icedrop-ai/dsh-plugins"
+  category: tool
 - name: "@icelily/dsh-all-gitbash"
   category: tool
 - name: "@icelily/dsh-gitbash-preset"
   category: tool
 - name: "@ikonon/dsh-trade-chart"
   category: tool
+- name: "@imnotndesh/dsh-peak-pricing-warning"
+  category: ui
 - name: "@imrascal/dsh-archive"
   category: tool
 - name: "@infinitepersistence/dsh-serial-console"
@@ -2475,6 +2477,8 @@
   category: tool
 - name: "@leechen298/code2skill"
   category: tool
+- name: "@leitaoy/dsh-archive-manager"
+  category: ui
 - name: "@lemoncat7/dsh-knowledge"
   category: tool
 - name: "@lemoncat7/dsh-partner"
@@ -2603,6 +2607,8 @@
   category: integration
 - name: "@ljwei-stak/dsh-approval-gate"
   category: workflow
+- name: "@ljwei-stak/dsh-watcher-for-mrg"
+  category: ui
 - name: "@ljwei-stak/ppt-master-for-mgr"
   category: tool
 - name: "@lk251066/dsh-tui"
@@ -2745,6 +2751,8 @@
   category: ui
 - name: "@lynn123411/dsh-qr-access"
   category: other
+- name: "@lynn123411/dsh-smooth-stream"
+  category: ui
 - name: "@lynn123411/dsh-workspace-tree"
   category: ui
 - name: "@lynsucceed/dsh-openclaw-persona"
@@ -2775,6 +2783,8 @@
   category: ui
 - name: "@mastergo/dsh-canvas"
   category: integration
+- name: "@mateobarbato/dsh-client-ui-peak-hour"
+  category: ui
 - name: "@mattheliu/7d7d"
   category: ui
 - name: "@mattheliu/session-teleport"
@@ -2941,6 +2951,8 @@
   category: integration
 - name: "@moyu-good/dsh-lark-bridge"
   category: integration
+- name: "@mrweicodes/dsh-permgate"
+  category: tool
 - name: "@mrwoov/dsh-agent-md"
   category: tool
 - name: "@mstar-harness/dsh"
@@ -2979,6 +2991,8 @@
   category: provider
 - name: "@neevcloud/dsh-sandbox"
   category: provider
+- name: "@neil-yu/dsh-remote-access"
+  category: tool
 - name: "@nexlineai/dsh-tui"
   category: ui
 - name: "@nextnowlabs/dsh-ark-toolkit"
@@ -3018,6 +3032,8 @@
 - name: "@ohmydsh/runtime"
   category: tool
 - name: "@oksure/dsh-client-ui-mobile-comfort"
+  category: ui
+- name: "@omdp/dsh-archived-sessions"
   category: ui
 - name: "@omdp/dsh-connector"
   category: tool
@@ -3353,6 +3369,8 @@
   category: tool
 - name: "@slhssb/dsh-advisor"
   category: workflow
+- name: "@smai-kit/dsh-smkit"
+  category: provider
 - name: "@smanx/dsh-conversation-indicator"
   category: ui
 - name: "@smelt-ai/dsh-acp-rich"
@@ -3627,8 +3645,6 @@
   category: provider
 - name: "@tokensapi/dsh-connect"
   category: integration
-- name: "@tokensapi/dsh-progressive-tools"
-  category: tool
 - name: "@tommyfang/gh-tea-npm-dsh"
   category: integration
 - name: "@tomowang/dsh-tui"
@@ -3691,6 +3707,8 @@
   category: ui
 - name: "@v3n0/dsh-tui"
   category: ui
+- name: "@v587d/capital-generation"
+  category: tool
 - name: "@valkia/dsh-plugin-computer-use"
   category: tool
 - name: "@valuz/dsh-valuz-genui"
@@ -3843,6 +3861,8 @@
   category: other
 - name: "@why913/dshx"
   category: tool
+- name: "@wig123/dsh-thread-tools"
+  category: tool
 - name: "@wildusk/dsh-backup"
   category: tool
 - name: "@william2000/dsh-nova-ui-all"
@@ -3919,8 +3939,6 @@
   category: other
 - name: "@wsgsety/dsh-plugin-manager"
   category: tool
-- name: "@wsxwj123/dsh-session-manager"
-  category: other
 - name: "@wszhoho/dsh-file-attachment"
   category: ui
 - name: "@wuxie233/dsh-agent-teams"
@@ -4085,6 +4103,8 @@
   category: ui
 - name: "@yaoyaoyu/dsh-calendar"
   category: ui
+- name: "@ybkk/gate-01"
+  category: ui
 - name: "@ychris12138/dsh-usage-stats"
   category: tool
 - name: "@ycp424c/dsh-auto-fold-turn"
@@ -4142,6 +4162,8 @@
 - name: "@yuanjun.p/dsh-feishu"
   category: integration
 - name: "@yuanyang749/dsh-model-pk"
+  category: tool
+- name: "@yueker/dsh-lan-access"
   category: tool
 - name: "@yueliudan/lclone-memory-dsh"
   category: integration
@@ -4531,6 +4553,8 @@
   category: theme
 - name: "colorguess-dsh-plugin"
   category: other
+- name: "commandcode-dash"
+  category: integration
 - name: "commandcode-go-for-dsh"
   category: provider
 - name: "computer-user"
@@ -4769,6 +4793,8 @@
   category: tool
 - name: "dsh-a2a-trust"
   category: tool
+- name: "dsh-aa-bridge"
+  category: integration
 - name: "dsh-ab-sample"
   category: tool
 - name: "dsh-about"
@@ -4881,6 +4907,8 @@
   category: other
 - name: "dsh-advisor"
   category: tool
+- name: "dsh-advisor-plugin"
+  category: workflow
 - name: "dsh-advisors"
   category: tool
 - name: "dsh-aemeath-pet"
@@ -5523,6 +5551,8 @@
   category: tool
 - name: "dsh-auto-approver"
   category: tool
+- name: "dsh-auto-archive"
+  category: workflow
 - name: "dsh-auto-chat-titles"
   category: ui
 - name: "dsh-auto-classifier"
@@ -6217,6 +6247,8 @@
   category: tool
 - name: "dsh-cad-review"
   category: tool
+- name: "dsh-cad-viewer"
+  category: ui
 - name: "dsh-cadmium"
   category: tool
 - name: "dsh-caesar"
@@ -6759,6 +6791,8 @@
   category: tool
 - name: "dsh-clipboard-history"
   category: tool
+- name: "dsh-clipboard-menu"
+  category: ui
 - name: "dsh-clipfile"
   category: tool
 - name: "dsh-cliproxy"
@@ -7113,6 +7147,8 @@
   category: ui
 - name: "dsh-composer-dynamic-island"
   category: ui
+- name: "dsh-composer-enter"
+  category: ui
 - name: "dsh-composer-expand"
   category: ui
 - name: "dsh-composer-fix"
@@ -7137,8 +7173,6 @@
   category: ui
 - name: "dsh-composer-tokens"
   category: ui
-- name: "dsh-composer-tools"
-  category: other
 - name: "dsh-composition"
   category: other
 - name: "dsh-compound-interest"
@@ -7343,6 +7377,8 @@
   category: other
 - name: "dsh-cookie"
   category: tool
+- name: "dsh-cool-terminal"
+  category: ui
 - name: "dsh-cool-theme"
   category: ui
 - name: "dsh-cooldown-retry"
@@ -8271,6 +8307,8 @@
   category: workflow
 - name: "dsh-ds-vpet"
   category: ui
+- name: "dsh-dsbal"
+  category: ui
 - name: "dsh-dseyes"
   category: tool
 - name: "dsh-dual-agent-presets"
@@ -8353,6 +8391,8 @@
   category: ui
 - name: "dsh-effort-config"
   category: tool
+- name: "dsh-effort-router"
+  category: workflow
 - name: "dsh-effort-slider"
   category: ui
 - name: "dsh-effort-tweak"
@@ -9175,8 +9215,6 @@
   category: tool
 - name: "dsh-git-proxy"
   category: tool
-- name: "dsh-git-rescue"
-  category: tool
 - name: "dsh-git-review"
   category: tool
 - name: "dsh-git-seam"
@@ -9889,6 +9927,8 @@
   category: tool
 - name: "dsh-imagegen-plugin"
   category: tool
+- name: "dsh-imagegen-zhenzhen"
+  category: provider
 - name: "dsh-imessage"
   category: integration
 - name: "dsh-img"
@@ -10199,6 +10239,8 @@
   category: theme
 - name: "dsh-kb-manager"
   category: tool
+- name: "dsh-kb-rag"
+  category: tool
 - name: "dsh-kdocs-connector"
   category: integration
 - name: "dsh-kebabcase"
@@ -10391,6 +10433,8 @@
   category: integration
 - name: "dsh-lark-claw"
   category: integration
+- name: "dsh-lark-link"
+  category: integration
 - name: "dsh-lark-meeting-notifier"
   category: integration
 - name: "dsh-latency-pct"
@@ -10581,6 +10625,8 @@
   category: ui
 - name: "dsh-live2d-companion"
   category: ui
+- name: "dsh-livebench-panel"
+  category: ui
 - name: "dsh-liver-func"
   category: tool
 - name: "dsh-livermorium"
@@ -10747,12 +10793,16 @@
   category: integration
 - name: "dsh-local-browser-search"
   category: tool
+- name: "dsh-local-dba"
+  category: tool
 - name: "dsh-local-file-upload"
   category: tool
 - name: "dsh-local-filetree"
   category: ui
 - name: "dsh-local-hanaccount"
   category: tool
+- name: "dsh-local-installer"
+  category: ui
 - name: "dsh-local-link"
   category: tool
 - name: "dsh-local-llm"
@@ -11042,6 +11092,8 @@
 - name: "dsh-mcp-skill-manager"
   category: ui
 - name: "dsh-mcp-skill-panel"
+  category: ui
+- name: "dsh-mcp-skills"
   category: ui
 - name: "dsh-mcp-sync"
   category: tool
@@ -11867,6 +11919,8 @@
   category: ui
 - name: "dsh-newborn-care"
   category: tool
+- name: "dsh-newwindows"
+  category: tool
 - name: "dsh-next-prime"
   category: tool
 - name: "dsh-nga-reader-plugin"
@@ -12221,6 +12275,8 @@
   category: theme
 - name: "dsh-opencode-provider"
   category: provider
+- name: "dsh-opencode-session"
+  category: integration
 - name: "dsh-opencode-session-header"
   category: tool
 - name: "dsh-opencode-status"
@@ -12973,6 +13029,8 @@
   category: ui
 - name: "dsh-plugin-design"
   category: tool
+- name: "dsh-plugin-desk"
+  category: ui
 - name: "dsh-plugin-desktop"
   category: ui
 - name: "dsh-plugin-desktop-installer"
@@ -13029,6 +13087,8 @@
   category: theme
 - name: "dsh-plugin-factory"
   category: other
+- name: "dsh-plugin-feishu"
+  category: integration
 - name: "dsh-plugin-feishu-bridge"
   category: integration
 - name: "dsh-plugin-file-explorer"
@@ -13319,6 +13379,8 @@
   category: ui
 - name: "dsh-plugin-question-navigator"
   category: ui
+- name: "dsh-plugin-quick-chat"
+  category: other
 - name: "dsh-plugin-quick-notes"
   category: ui
 - name: "dsh-plugin-quota"
@@ -13339,6 +13401,8 @@
   category: tool
 - name: "dsh-plugin-reasoning-effort"
   category: provider
+- name: "dsh-plugin-reasoning-efforts"
+  category: ui
 - name: "dsh-plugin-recall"
   category: tool
 - name: "dsh-plugin-recommend"
@@ -13397,6 +13461,8 @@
   category: tool
 - name: "dsh-plugin-session-archive"
   category: ui
+- name: "dsh-plugin-session-delete"
+  category: tool
 - name: "dsh-plugin-session-export"
   category: tool
 - name: "dsh-plugin-session-import"
@@ -13559,6 +13625,8 @@
   category: tool
 - name: "dsh-plugin-usage-meter"
   category: ui
+- name: "dsh-plugin-use-images"
+  category: provider
 - name: "dsh-plugin-user-research"
   category: tool
 - name: "dsh-plugin-vajraclaw"
@@ -13735,6 +13803,8 @@
   category: tool
 - name: "dsh-postgres-backends"
   category: tool
+- name: "dsh-postiz"
+  category: integration
 - name: "dsh-postman"
   category: tool
 - name: "dsh-posture"
@@ -14583,6 +14653,8 @@
   category: tool
 - name: "dsh-reveal-files"
   category: ui
+- name: "dsh-reveal-fix"
+  category: tool
 - name: "dsh-revenue-plan"
   category: tool
 - name: "dsh-reverse-proxy-xc"
@@ -14787,6 +14859,8 @@
   category: tool
 - name: "dsh-sakura-theme"
   category: theme
+- name: "dsh-sakurafrp"
+  category: integration
 - name: "dsh-salary-cat"
   category: ui
 - name: "dsh-salary-deduction-limit"
@@ -14963,6 +15037,8 @@
   category: other
 - name: "dsh-seedance2"
   category: provider
+- name: "dsh-select-quote"
+  category: tool
 - name: "dsh-selection-ask"
   category: ui
 - name: "dsh-selection-followup"
@@ -15223,6 +15299,8 @@
   category: tool
 - name: "dsh-session-sync"
   category: tool
+- name: "dsh-session-tabbar"
+  category: ui
 - name: "dsh-session-tags"
   category: ui
 - name: "dsh-session-theme"
@@ -15259,6 +15337,8 @@
   category: ui
 - name: "dsh-set-workspace"
   category: integration
+- name: "dsh-setting-manager"
+  category: ui
 - name: "dsh-setting-restart"
   category: tool
 - name: "dsh-settings-about"
@@ -15761,6 +15841,8 @@
   category: tool
 - name: "dsh-sop-agent-teams"
   category: workflow
+- name: "dsh-sophnet-balance"
+  category: tool
 - name: "dsh-sort"
   category: tool
 - name: "dsh-sort-unique"
@@ -16381,6 +16463,8 @@
   category: tool
 - name: "dsh-terminal"
   category: ui
+- name: "dsh-terminal-startup-bar"
+  category: ui
 - name: "dsh-terminal-tabs"
   category: ui
 - name: "dsh-terraform"
@@ -16713,6 +16797,8 @@
   category: tool
 - name: "dsh-token-usage-xc"
   category: ui
+- name: "dsh-token-use"
+  category: ui
 - name: "dsh-token-viewer"
   category: ui
 - name: "dsh-tokener"
@@ -17025,6 +17111,8 @@
   category: ui
 - name: "dsh-turn-review"
   category: ui
+- name: "dsh-turn-scratch"
+  category: tool
 - name: "dsh-turn-scrubber"
   category: other
 - name: "dsh-turn-status-phrases"
@@ -17597,6 +17685,8 @@
   category: tool
 - name: "dsh-voice-suite"
   category: tool
+- name: "dsh-voice-talk"
+  category: ui
 - name: "dsh-voice-webspeech"
   category: tool
 - name: "dsh-volcengine-usage"
@@ -17645,6 +17735,8 @@
   category: theme
 - name: "dsh-wallpaper-engine"
   category: theme
+- name: "dsh-wallpaper-position"
+  category: ui
 - name: "dsh-wallpaper-rotation"
   category: ui
 - name: "dsh-wallpaper-rotator"
@@ -17755,6 +17847,8 @@
   category: other
 - name: "dsh-web-launcher"
   category: tool
+- name: "dsh-web-lifecycle"
+  category: tool
 - name: "dsh-web-manager"
   category: tool
 - name: "dsh-web-mermaid"
@@ -17785,6 +17879,8 @@
   category: tool
 - name: "dsh-web-preview-panel"
   category: ui
+- name: "dsh-web-push-notification"
+  category: tool
 - name: "dsh-web-quota-meter"
   category: ui
 - name: "dsh-web-recon"
@@ -17843,6 +17939,8 @@
   category: provider
 - name: "dsh-web-search-openai"
   category: provider
+- name: "dsh-web-search-opencode-go"
+  category: tool
 - name: "dsh-web-search-plugin"
   category: tool
 - name: "dsh-web-search-pool"
@@ -18059,6 +18157,8 @@
   category: ui
 - name: "dsh-whale-report"
   category: tool
+- name: "dsh-whale-tools"
+  category: ui
 - name: "dsh-whale-tui"
   category: ui
 - name: "dsh-whale-usage"
@@ -18205,6 +18305,8 @@
   category: workflow
 - name: "dsh-workflow-groups"
   category: ui
+- name: "dsh-workflow-isolate"
+  category: workflow
 - name: "dsh-workflow-studio"
   category: workflow
 - name: "dsh-workflow-templates"
@@ -18501,8 +18603,6 @@
   category: tool
 - name: "dsh-zh"
   category: other
-- name: "dsh-zh-cn-ui"
-  category: other
 - name: "dsh-zh-hant-hk"
   category: ui
 - name: "dsh-zh-hant-tw"
@@ -18550,6 +18650,8 @@
 - name: "dsh_deepseekapi_quota"
   category: tool
 - name: "dsh_omnivision"
+  category: tool
+- name: "dsh_superpowers"
   category: tool
 - name: "dshbase-catalog"
   category: tool
@@ -18627,6 +18729,8 @@
   category: ui
 - name: "find-dsh-plugins"
   category: tool
+- name: "fitmeet-dsh-plugin"
+  category: integration
 - name: "flowctx-dsh"
   category: tool
 - name: "focal-dsh"
@@ -18825,6 +18929,8 @@
   category: ui
 - name: "luxueliu-usage-command"
   category: tool
+- name: "lx-music-for-dsh"
+  category: integration
 - name: "lynkr-dsh-plugin"
   category: provider
 - name: "maa-dsh-skill"
@@ -19031,8 +19137,12 @@
   category: tool
 - name: "qmd-autosearch"
   category: tool
+- name: "qp-exa-dynamic"
+  category: provider
 - name: "queue-steer-button"
   category: ui
+- name: "quick-research-campaign"
+  category: workflow
 - name: "quota-meter"
   category: ui
 - name: "reasoning-slider"
