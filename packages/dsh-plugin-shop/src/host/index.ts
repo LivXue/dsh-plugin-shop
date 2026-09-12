@@ -17,7 +17,9 @@ import { npmrcRegistry } from './npmrc.ts'
 import type { CatalogEntry, DeniedEntry } from './types.ts'
 import { validateInstall, type InstallArgs, type InstallRejectionCode } from './install.ts'
 import { startInstall, startUninstall, type InstallStatus } from './executor.ts'
-import { cleanHotDir, hotMount, hotUnmount } from './hot.ts'
+import { cleanHotDir, hotMount, hotUnmount, nodeHotFs, type HotFs } from './hot.ts'
+import { activationOf, type Activation } from './activation.ts'
+import { hasClientHalf } from './client-half.ts'
 import { restartCommand, startRestart, type RestartOutcome } from './restart.ts'
 import { fetchLatestVersion } from './self-update.ts'
 import { detectSupervisor } from './supervisor.ts'
@@ -79,6 +81,10 @@ export interface ShopGatewayOptions {
   /** Test-only injection: the hot-mount functions; production uses the real
    * hotMount/hotUnmount. */
   hot?: { mount: typeof hotMount; unmount: typeof hotUnmount }
+  /** Test-only injection: the filesystem `packageHasClientHalf` reads
+   * `dsh.client` through; the same seam `hot.ts` reads its patch through.
+   * Production uses `nodeHotFs`. */
+  hotFs?: HotFs
   /** Test-only injection: the Loader's boot-layer entries; production reads
    * them from `ctx.loader`. */
   loaderEntries?: () => Array<LoaderEntryLike>
@@ -137,8 +143,11 @@ export type ShopInstallResult =
 export interface ShopInstallStatusResult extends InstallStatus { found: boolean }
 
 /** `shop/setEnabled` result (§7.3): an unknown name is a typed wire value,
- * not a thrown RPC error. */
-export interface ShopSetEnabledResult { ok: boolean; detail?: string }
+ * not a thrown RPC error. `activation` is present exactly when `ok`, and
+ * says what the reader must do for the toggle to be visible — a toggled
+ * package with a browser half needs a reload, which this result used to be
+ * unable to say (design 2026-09-11-activation-model §6). */
+export interface ShopSetEnabledResult { ok: boolean; detail?: string; activation?: Activation }
 
 /** `shop/uninstallStart` result (§7.3): a name outside the catalog or not
  * installed is a typed wire value with an author-readable `detail`, not a
@@ -302,6 +311,7 @@ export class ShopGateway extends TypertRemoteService {
   private readonly profileDir?: string
   private readonly inventory?: ShopGatewayOptions['inventory']
   private readonly hot?: ShopGatewayOptions['hot']
+  private readonly hotFs?: ShopGatewayOptions['hotFs']
   private readonly loaderEntriesInjected?: ShopGatewayOptions['loaderEntries']
   private readonly dshBin: string
   /** The argv `shop/restart` re-spawns: the real process argv minus node and
@@ -330,7 +340,7 @@ export class ShopGateway extends TypertRemoteService {
   /** The install gate runs against the last loaded snapshot, never a fresh
    * fetch per request (§7.2: the Host's cached snapshot is the truth). */
   /** Finished install records retained, so a poll sees the true terminal
-   * state (§8: done / needsRestart / failure detail). Oldest evicted on add. */
+   * state (§8: done / activation / failure detail). Oldest evicted on add. */
   private static readonly MAX_FINISHED_INSTALLS = 32
 
   /** How long the gateway waits after a successful restart response before
@@ -370,6 +380,7 @@ export class ShopGateway extends TypertRemoteService {
     this.profileDir = options.profileDir
     this.inventory = options.inventory
     this.hot = options.hot
+    this.hotFs = options.hotFs
     this.loaderEntriesInjected = options.loaderEntries
     this.dshBin = options.dshBin ?? 'dsh'
     this.restartArgv = options.restartArgv ?? process.argv.slice(2)
@@ -557,6 +568,13 @@ export class ShopGateway extends TypertRemoteService {
     }
   }
 
+  /** Whether an installed package declares `dsh.client`. The `hotFs` option
+   * is the same seam `hot.ts` reads its patch through, so a fixture drives
+   * this without touching disk. */
+  private packageHasClientHalf(packageName: string): boolean {
+    return hasClientHalf(this.hotFs ?? nodeHotFs, this.profileDirResolved(), packageName)
+  }
+
   private async liveDisableIds(ids: readonly string[]): Promise<boolean> {
     if (ids.length === 0) return false
     const owned = new Set(ids)
@@ -630,7 +648,10 @@ export class ShopGateway extends TypertRemoteService {
     // Every entry the package owns toggles together: a package that inserts a
     // host row and a client row is one plugin to the person clicking.
     setUserLayerRows({ profileDir, rows: owned.map(id => ({ id, disabled: !args.enabled })) })
-    return { ok: true }
+    // The user layer is hot-reloaded by the harness, so the host half is
+    // already in its new state; a package with a browser half still needs
+    // the open tab to reload (design 2026-09-11-activation-model §3).
+    return { ok: true, activation: activationOf({ hostLive: true, hasClientHalf: this.packageHasClientHalf(args.name) }) }
   }
 
   private rowConfig(): { catalogUrl: string; cacheDir: string } {
@@ -889,8 +910,8 @@ export class ShopGateway extends TypertRemoteService {
           args.name,
         )
         return result.ok
-          ? { needsRestart: false }
-          : { needsRestart: true, restartReason: result.reason ?? undefined }
+          ? { activation: activationOf({ hostLive: true, hasClientHalf: this.packageHasClientHalf(args.name) }) }
+          : { activation: 'restart' as const, ...(result.reason !== null ? { restartReason: result.reason } : {}) }
       },
     })
     if (entry.source === 'github') {
@@ -1077,6 +1098,12 @@ export class ShopGateway extends TypertRemoteService {
     // Best-effort for the same reason as the update path: a package with an
     // unreadable patch must still be removable.
     const priorEntryIds = this.ownedEntryIdsOrNone(args.name)
+    // Read the browser half while the package is still on disk — `afterDone`
+    // runs after the uninstall deleted its manifest, and the conservative
+    // fallback would then answer `true` for every package, turning this
+    // verdict into a constant. Same ordering constraint, same reason, as
+    // `priorEntryIds` above.
+    const hadClientHalf = this.packageHasClientHalf(args.name)
     const running = startUninstall({
       profile: this.profile,
       name: args.name,
@@ -1093,7 +1120,7 @@ export class ShopGateway extends TypertRemoteService {
         const disabled = hotRemoved || await this.liveDisableIds(priorEntryIds)
         // Privilege is revoked the moment the fiber is gone; the boot
         // composition drops the entry row at next boot.
-        return { needsRestart: false }
+        return { activation: activationOf({ hostLive: true, hasClientHalf: hadClientHalf }) }
       },
     })
     // Forget the commit pin alongside the dependency; a stale pin would

@@ -530,7 +530,7 @@ describe('ShopGateway.install — the four rejection paths, through the executor
     }
     expect(status.found).toBe(true)
     expect(status.state).toBe('done')
-    expect(status.needsRestart).toBe(true)
+    expect(status.activation).toBe('restart')
   })
 
   it('retains at most 32 finished installs, evicting the oldest on the next add', async () => {
@@ -639,6 +639,30 @@ describe('ShopGateway.setEnabled', () => {
     const result = await gateway.setEnabled({ name: 'dsh-not-here', enabled: false })
     expect(result).toEqual({ ok: false, detail: 'dsh-plugin-shop: dsh-not-here is not installed' })
     expect(existsSync(join(profileDir, 'cordis.patch.yml'))).toBe(false)
+  })
+
+  it('reports activation reload from setEnabled when the toggled package has a browser half', async () => {
+    const profileDir = toggleProfile()
+    fixturePackage(profileDir, 'dsh-themer', "- insert:\n    - id: themer-row\n      name: 'dsh-themer/host'\n")
+    // fixturePackage cannot express `dsh.client`; add it to the manifest it
+    // already wrote, alongside the bundle patch ownedEntryIds needs.
+    writeFileSync(join(profileDir, 'node_modules', 'dsh-themer', 'package.json'), JSON.stringify({
+      name: 'dsh-themer',
+      dsh: { bundle: { patch: './cordis.patch.yml' }, client: { inject: [], platform: 'web' } },
+    }))
+    const gateway = new ShopGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: async () => ({ entries: [{ entryId: 'themer-row', moduleName: 'dsh-themer', enabled: true }] }) } })
+    const result = await gateway.setEnabled({ name: 'dsh-themer', enabled: false })
+    expect(result.ok).toBe(true)
+    expect(result.activation).toBe('reload')
+  })
+
+  it('reports activation live from setEnabled for a host-only package', async () => {
+    const profileDir = toggleProfile()
+    fixturePackage(profileDir, 'dsh-tooler', "- insert:\n    - id: tooler-row\n      name: 'dsh-tooler/host'\n")
+    const gateway = new ShopGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: async () => ({ entries: [{ entryId: 'tooler-row', moduleName: 'dsh-tooler', enabled: true }] }) } })
+    const result = await gateway.setEnabled({ name: 'dsh-tooler', enabled: false })
+    expect(result.ok).toBe(true)
+    expect(result.activation).toBe('live')
   })
 })
 
@@ -1451,7 +1475,7 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     return status
   }
 
-  it('install reports done with needsRestart false after a hot mount (fresh install)', async () => {
+  it('install reports activation reload when no manifest exists yet (the conservative fallback)', async () => {
     const { gateway, profileDir } = hotGateway({
       hot: { mount: hotMount, unmount: hotUnmount },
       loaderEntries: () => [],
@@ -1461,7 +1485,12 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     if (!started.ok) return
     const status = await pollTerminal(gateway, started.installId)
     expect(status.state).toBe('done')
-    expect(status.needsRestart).toBe(false)
+    // No node_modules/dsh-hello-plugin/package.json exists in this fixture —
+    // hasClientHalf's conservative fallback (unreadable manifest => assume a
+    // browser half) answers true, so this is 'reload', not 'live'. The
+    // dedicated reload/live/restart tests below pin each case down with an
+    // explicit manifest instead of relying on the fallback.
+    expect(status.activation).toBe('reload')
     expect(hotMount).toHaveBeenCalledTimes(1)
     expect(hotMount).toHaveBeenCalledWith(expect.anything(), profileDir, 'dsh-hello-plugin')
   })
@@ -1493,13 +1522,13 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     if (!started.ok) return
     const status = await pollTerminal(gateway, started.installId)
     expect(status.state).toBe('done')
-    expect(status.needsRestart).toBe(false)
+    expect(status.activation).toBe('live')
     expect(entry.update).toHaveBeenCalledTimes(3)
     expect(entry.update).toHaveBeenCalledWith({ disabled: true }, false, true)
     expect(order).toEqual(['disable', 'disable', 'disable', 'mount'])
   })
 
-  it('a failed hot mount reports done with needsRestart true and the restart reason', async () => {
+  it('a failed hot mount reports done with activation restart and the restart reason', async () => {
     hotMount.mockResolvedValueOnce({ ok: false, reason: 'not-simple' })
     const { gateway } = hotGateway({ hot: { mount: hotMount, unmount: hotUnmount }, loaderEntries: () => [] })
     const started = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
@@ -1507,7 +1536,7 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     if (!started.ok) return
     const status = await pollTerminal(gateway, started.installId)
     expect(status.state).toBe('done')
-    expect(status.needsRestart).toBe(true)
+    expect(status.activation).toBe('restart')
     expect(status.restartReason).toBe('not-simple')
   })
 
@@ -1524,7 +1553,7 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     if (!result.ok) return
     const status = await pollTerminal(gateway, result.installId)
     expect(status.state).toBe('done')
-    expect(status.needsRestart).toBe(false)
+    expect(status.activation).toBe('live')
     expect(unmount).toHaveBeenCalledWith('dsh-goodbye-plugin')
     expect(update).not.toHaveBeenCalled()
   })
@@ -1541,7 +1570,7 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     if (!result.ok) return
     const status = await pollTerminal(gateway, result.installId)
     expect(status.state).toBe('done')
-    expect(status.needsRestart).toBe(false)
+    expect(status.activation).toBe('live')
     expect(hotUnmount).toHaveBeenCalledWith('dsh-goodbye-plugin')
     expect(update).toHaveBeenCalledTimes(1)
     expect(update).toHaveBeenCalledWith({ disabled: true }, false, true)
@@ -1563,7 +1592,11 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     expect(status.state).toBe('done')
   })
 
-  it('uninstall of a plugin that never loaded still reports done without restart', async () => {
+  it('uninstall of a plugin that never loaded still reports activation live (host-only)', async () => {
+    // This doubles as "live after uninstalling a host-only package":
+    // fixturePackage's auto-seeded manifest here has a bundle patch and no
+    // dsh.client, which is exactly that shape — a separate test with the
+    // same setup and assertion would only restate this one.
     const { gateway } = hotGateway({
       dependencies: { 'dsh-goodbye-plugin': '1.0.0' },
       hot: { mount: hotMount, unmount: hotUnmount },
@@ -1574,19 +1607,93 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     if (!result.ok) return
     const status = await pollTerminal(gateway, result.installId)
     expect(status.state).toBe('done')
-    expect(status.needsRestart).toBe(false)
+    expect(status.activation).toBe('live')
   })
 
-  it('self-update still reports needsRestart true — no hot path is wired', async () => {
+  it('self-update still reports activation restart — no hot path is wired', async () => {
     const { gateway } = hotGateway({ hot: { mount: hotMount, unmount: hotUnmount } })
     const started = await gateway.updateStart({ version: '9.9.9' })
     expect(started.ok).toBe(true)
     if (!started.ok) return
     const status = await pollTerminal(gateway, started.installId)
     expect(status.state).toBe('done')
-    expect(status.needsRestart).toBe(true)
+    expect(status.activation).toBe('restart')
     expect(hotMount).not.toHaveBeenCalled()
     expect(hotUnmount).not.toHaveBeenCalled()
+  })
+
+  it('reports activation reload when a hot-mounted install has a browser half', async () => {
+    const { gateway, profileDir } = hotGateway({ hot: { mount: hotMount, unmount: hotUnmount }, loaderEntries: () => [] })
+    // fixturePackage cannot express `dsh.client`; write the manifest by hand
+    // before the install call, matching the shape a real client-half
+    // package declares.
+    mkdirSync(join(profileDir, 'node_modules', 'dsh-hello-plugin'), { recursive: true })
+    writeFileSync(join(profileDir, 'node_modules', 'dsh-hello-plugin', 'package.json'), JSON.stringify({
+      name: 'dsh-hello-plugin',
+      dsh: { client: { inject: [], platform: 'web' } },
+    }))
+    const started = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
+    expect(started.ok).toBe(true)
+    if (!started.ok) return
+    const status = await pollTerminal(gateway, started.installId)
+    expect(status.state).toBe('done')
+    expect(status.activation).toBe('reload')
+  })
+
+  it('reports activation live when a hot-mounted install is host-only', async () => {
+    const { gateway } = hotGateway({
+      dependencies: { 'dsh-hello-plugin': '1.2.0' },
+      hot: { mount: hotMount, unmount: hotUnmount },
+      loaderEntries: () => [],
+    })
+    const started = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
+    expect(started.ok).toBe(true)
+    if (!started.ok) return
+    const status = await pollTerminal(gateway, started.installId)
+    expect(status.state).toBe('done')
+    expect(status.activation).toBe('live')
+  })
+
+  it('reports activation restart when the hot mount fails, client half or not', async () => {
+    hotMount.mockResolvedValueOnce({ ok: false, reason: 'not-simple' })
+    const { gateway, profileDir } = hotGateway({ hot: { mount: hotMount, unmount: hotUnmount }, loaderEntries: () => [] })
+    // A manifest that WOULD read as a browser half if anyone looked: the
+    // mount failure short-circuits before packageHasClientHalf is even
+    // called, so this fixture proves restart wins regardless.
+    mkdirSync(join(profileDir, 'node_modules', 'dsh-hello-plugin'), { recursive: true })
+    writeFileSync(join(profileDir, 'node_modules', 'dsh-hello-plugin', 'package.json'), JSON.stringify({
+      name: 'dsh-hello-plugin',
+      dsh: { client: { inject: [], platform: 'web' } },
+    }))
+    const started = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
+    expect(started.ok).toBe(true)
+    if (!started.ok) return
+    const status = await pollTerminal(gateway, started.installId)
+    expect(status.state).toBe('done')
+    expect(status.activation).toBe('restart')
+    expect(status.restartReason).toBe('not-simple')
+  })
+
+  it('reports activation reload after uninstalling a hot-mounted package with a browser half', async () => {
+    const { gateway, profileDir } = hotGateway({
+      dependencies: { 'dsh-goodbye-plugin': '1.0.0' },
+      hot: { mount: hotMount, unmount: hotUnmount },
+      loaderEntries: () => [],
+    })
+    // Overwrite the auto-seeded host-only manifest with a client-half one —
+    // fixturePackage cannot express `dsh.client` — before calling uninstall:
+    // the read must happen while the package is still on disk, the same
+    // ordering constraint priorEntryIds already has.
+    writeFileSync(join(profileDir, 'node_modules', 'dsh-goodbye-plugin', 'package.json'), JSON.stringify({
+      name: 'dsh-goodbye-plugin',
+      dsh: { client: { inject: [], platform: 'web' } },
+    }))
+    const result = await gateway.uninstall({ name: 'dsh-goodbye-plugin' })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const status = await pollTerminal(gateway, result.installId)
+    expect(status.state).toBe('done')
+    expect(status.activation).toBe('reload')
   })
 })
 
@@ -1608,7 +1715,7 @@ describe('ShopGateway.setEnabled entry ownership', () => {
       ] }) },
     })
     const result = await gateway.setEnabled({ name: '@tt-a1i/archify-dsh', enabled: false })
-    expect(result).toEqual({ ok: true })
+    expect(result).toEqual({ ok: true, activation: 'live' })
     expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toContain('archify-skill-filesystem')
   })
 
@@ -1625,7 +1732,7 @@ describe('ShopGateway.setEnabled entry ownership', () => {
         { entryId: 'include:archify-skill-filesystem', moduleName: '@deepseek-ai/dsh-skill-filesystem', enabled: true },
       ] }) },
     })
-    expect(await gateway.setEnabled({ name: '@tt-a1i/archify-dsh', enabled: false })).toEqual({ ok: true })
+    expect(await gateway.setEnabled({ name: '@tt-a1i/archify-dsh', enabled: false })).toEqual({ ok: true, activation: 'live' })
     const written = readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')
     // The user layer is applied in the CONFIG id space: the harness's
     // applyEntryPatches looks each row's id up among the ids the bundle
@@ -1651,7 +1758,7 @@ describe('ShopGateway.setEnabled entry ownership', () => {
         { entryId: 'include:typert-gateway:mkt-fresh-entry', moduleName: 'dsh-fresh', enabled: true },
       ] }) },
     })
-    expect(await gateway.setEnabled({ name: 'dsh-fresh', enabled: false })).toEqual({ ok: true })
+    expect(await gateway.setEnabled({ name: 'dsh-fresh', enabled: false })).toEqual({ ok: true, activation: 'live' })
     const written = readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')
     expect(written).toContain('fresh-entry')
     expect(written).not.toContain('mkt-')
@@ -1667,7 +1774,7 @@ describe('ShopGateway.setEnabled entry ownership', () => {
         { entryId: 'archify-skill-filesystem', moduleName: '@deepseek-ai/dsh-skill-filesystem', enabled: false },
       ] }) },
     })
-    expect(await gateway.setEnabled({ name: '@tt-a1i/archify-dsh', enabled: true })).toEqual({ ok: true })
+    expect(await gateway.setEnabled({ name: '@tt-a1i/archify-dsh', enabled: true })).toEqual({ ok: true, activation: 'live' })
     expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).not.toContain('archify-skill-filesystem')
   })
 
@@ -1681,7 +1788,7 @@ describe('ShopGateway.setEnabled entry ownership', () => {
         { entryId: 'many-web', moduleName: 'dsh-many/web', enabled: true },
       ] }) },
     })
-    expect(await gateway.setEnabled({ name: 'dsh-many', enabled: false })).toEqual({ ok: true })
+    expect(await gateway.setEnabled({ name: 'dsh-many', enabled: false })).toEqual({ ok: true, activation: 'live' })
     const written = readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')
     expect(written).toContain('many-host')
     expect(written).toContain('many-web')

@@ -95,7 +95,7 @@ export interface HotFs {
   list: (path: string) => string[]
 }
 
-const nodeFs: HotFs = {
+export const nodeHotFs: HotFs = {
   read: path => readFileSync(path, 'utf8'),
   write: (path, data) => {
     mkdirSync(dirname(path), { recursive: true })
@@ -260,7 +260,7 @@ export async function hotMount(
   deps: HotDeps = {},
 ): Promise<HotMountResult> {
   const {
-    fs = nodeFs,
+    fs = nodeHotFs,
     dir = join(profileDir, HOT_DIR),
     timeoutMs = Number(process.env.DSH_SHOP_HOT_MOUNT_TIMEOUT_MS) || 10000,
     now = Date.now,
