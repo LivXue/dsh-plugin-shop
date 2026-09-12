@@ -19,7 +19,7 @@
 - **Warn, never block.** No compatibility fact may remove an entry from the catalog or refuse an install.
 - **No verdict when the fact is missing.** Absent, unparseable, or unresolvable each yield silence. One false warning teaches a reader to ignore every warning.
 - **`strict` and `noUncheckedIndexedAccess`**; ESM with `.ts` extensions; exactly one trailing newline.
-- Run `pnpm test` and `pnpm typecheck` from the repository root. **Never run `pnpm build:catalog` to check a change compiles** — it makes thousands of live requests and takes minutes; the fixtures cover every policy decision without a network.
+- **Two suites.** Tasks 1-5 are registry code: root `pnpm test` and `pnpm typecheck` cover them. Tasks 6-8 touch `packages/dsh-plugin-shop`, whose tests root `pnpm test` does NOT run — use `pnpm -C packages/dsh-plugin-shop test` (it builds first) and `pnpm -C packages/dsh-plugin-shop typecheck`. **Never run `pnpm build:catalog` to check a change compiles** — it makes thousands of live requests and takes minutes; the fixtures cover every policy decision without a network.
 
 ---
 
@@ -590,7 +590,7 @@ it('accepts an entry with neither', () => {
 
 - [ ] **Step 2: Run and watch it fail**
 
-Run: `pnpm vitest run packages/dsh-plugin-shop/tests/host/catalog.test.ts -t compatibility`
+Run: `pnpm -C packages/dsh-plugin-shop exec vitest run tests/host/catalog.test.ts -t compatibility`
 Expected: FAIL — zod strips `compatibility`, so it reads `undefined`.
 
 - [ ] **Step 3: Widen the schema and correct two stale comments**
@@ -622,7 +622,7 @@ Correct the same claim in `src/host/types.ts`, where `CatalogEntry.peers` is doc
 
 - [ ] **Step 4: Run and watch it pass**
 
-Run: `pnpm vitest run packages/dsh-plugin-shop/tests/host/catalog.test.ts`
+Run: `pnpm -C packages/dsh-plugin-shop exec vitest run tests/host/catalog.test.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -713,7 +713,7 @@ describe('compatibilityMap', () => {
 
 - [ ] **Step 2: Run and watch it fail**
 
-Run: `pnpm vitest run packages/dsh-plugin-shop/tests/host/peers.test.ts -t compatibilityMap`
+Run: `pnpm -C packages/dsh-plugin-shop exec vitest run tests/host/peers.test.ts -t compatibilityMap`
 Expected: FAIL — not exported.
 
 - [ ] **Step 3: Write it**
@@ -788,7 +788,7 @@ In `index.ts`, compute it beside `incompatible` (line ~741) and add `incompatibl
 
 - [ ] **Step 4: Run and watch it pass**
 
-Run: `pnpm vitest run packages/dsh-plugin-shop/tests/host/peers.test.ts packages/dsh-plugin-shop/tests/host/index.test.ts`
+Run: `pnpm -C packages/dsh-plugin-shop exec vitest run tests/host/peers.test.ts packages/dsh-plugin-shop/tests/host/index.test.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -847,7 +847,7 @@ it('says nothing for an entry with no verdict', () => {
 
 - [ ] **Step 2: Run and watch them fail**
 
-Run: `pnpm vitest run packages/dsh-plugin-shop/tests/client/ -t harness`
+Run: `pnpm -C packages/dsh-plugin-shop exec vitest run tests/client/ -t harness`
 Expected: FAIL.
 
 - [ ] **Step 3: Add the selector, the copy and the badge**
@@ -884,7 +884,7 @@ Render both beside the existing missing-peer warning in `ShopTab.tsx`, using the
 
 - [ ] **Step 4: Run and watch them pass**
 
-Run: `pnpm vitest run packages/dsh-plugin-shop/tests/client/`
+Run: `pnpm -C packages/dsh-plugin-shop exec vitest run tests/client/`
 Expected: PASS, including the zh/en key-parity test.
 
 - [ ] **Step 5: Commit**
@@ -933,8 +933,9 @@ Line 36 (English) and line 38 (Chinese) enumerate every bound the build applies 
 - [ ] **Step 4: Full verification**
 
 ```bash
-pnpm test > /tmp/compat-test.log 2>&1; echo "EXIT=$?"; tail -5 /tmp/compat-test.log
-pnpm typecheck
+pnpm test > /tmp/registry-test.log 2>&1; echo "REGISTRY EXIT=$?"; tail -5 /tmp/registry-test.log
+pnpm -C packages/dsh-plugin-shop test > /tmp/shop-test.log 2>&1; echo "SHOP EXIT=$?"; tail -3 /tmp/shop-test.log
+pnpm typecheck && pnpm -C packages/dsh-plugin-shop typecheck
 pnpm emit:schema && git diff --exit-code registry/schema/plugin-entry.schema.json && echo "generated schema unchanged, as intended"
 ```
 

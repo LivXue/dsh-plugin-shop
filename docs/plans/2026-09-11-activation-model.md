@@ -19,7 +19,8 @@
 - **Reason codes are codes, never copy.** The host bakes no user-facing English or Chinese; the client renders through the locale dictionaries.
 - **User-facing docs are bilingual**: `packages/dsh-plugin-shop/README.md` and `packages/dsh-plugin-shop/docs/README.zh.md` state the same facts, each in its own register — not a word-for-word translation.
 - **Tests describe behavior.** If a change makes a test obsolete, change it and say why in the commit; never edit an assertion just to make a run green.
-- Run `pnpm test` (vitest) and `pnpm typecheck` (tsc --noEmit) from the repository root.
+- **This repo has TWO test suites and the root one does not cover this work.** Root `pnpm test` includes only `registry/scripts/tests/**` (1,005 tests) — it runs none of the shop's. The shop's suite is `pnpm -C packages/dsh-plugin-shop test`, which BUILDS (`tsdown` twice) before running vitest; that build is not optional, because a stale or missing `lib/client.js` makes every e2e case time out at the shop tab. One file: `pnpm -C packages/dsh-plugin-shop exec vitest run tests/host/<file>` (no build — fine while iterating on host-only code).
+- Typecheck the shop with `pnpm -C packages/dsh-plugin-shop typecheck`; root `pnpm typecheck` does not reach it.
 
 ---
 
@@ -62,7 +63,7 @@ describe('activationOf', () => {
 
 - [ ] **Step 2: Run it and watch it fail**
 
-Run: `pnpm vitest run packages/dsh-plugin-shop/tests/host/activation.test.ts`
+Run: `pnpm -C packages/dsh-plugin-shop exec vitest run tests/host/activation.test.ts`
 Expected: FAIL — `Failed to resolve import "../../src/host/activation.ts"`.
 
 - [ ] **Step 3: Write the module**
@@ -111,7 +112,7 @@ export function activationOf(input: { hostLive: boolean; hasClientHalf: boolean 
 
 - [ ] **Step 4: Run it and watch it pass**
 
-Run: `pnpm vitest run packages/dsh-plugin-shop/tests/host/activation.test.ts`
+Run: `pnpm -C packages/dsh-plugin-shop exec vitest run tests/host/activation.test.ts`
 Expected: PASS, 3 tests.
 
 - [ ] **Step 5: Commit**
@@ -200,7 +201,7 @@ describe('hasClientHalf', () => {
 
 - [ ] **Step 2: Run it and watch it fail**
 
-Run: `pnpm vitest run packages/dsh-plugin-shop/tests/host/client-half.test.ts`
+Run: `pnpm -C packages/dsh-plugin-shop exec vitest run tests/host/client-half.test.ts`
 Expected: FAIL — cannot resolve `../../src/host/client-half.ts`.
 
 - [ ] **Step 3: Write the module**
@@ -262,7 +263,7 @@ export function hasClientHalf(fs: HotFs, profileDir: string, packageName: string
 
 - [ ] **Step 4: Run it and watch it pass**
 
-Run: `pnpm vitest run packages/dsh-plugin-shop/tests/host/client-half.test.ts`
+Run: `pnpm -C packages/dsh-plugin-shop exec vitest run tests/host/client-half.test.ts`
 Expected: PASS, 7 tests.
 
 - [ ] **Step 5: Commit**
@@ -325,7 +326,7 @@ Adapt `fakeDshBin` / the spawn harness to whatever the surrounding tests in this
 
 - [ ] **Step 2: Run and watch it fail**
 
-Run: `pnpm vitest run packages/dsh-plugin-shop/tests/host/executor.test.ts`
+Run: `pnpm -C packages/dsh-plugin-shop exec vitest run tests/host/executor.test.ts`
 Expected: FAIL — `status.activation` is `undefined`.
 
 - [ ] **Step 3: Change the executor**
@@ -392,7 +393,7 @@ Update the doc comment above `spawnPluginCli` (line ~422) so it names the new fi
 
 - [ ] **Step 4: Run and watch it pass**
 
-Run: `pnpm vitest run packages/dsh-plugin-shop/tests/host/executor.test.ts`
+Run: `pnpm -C packages/dsh-plugin-shop exec vitest run tests/host/executor.test.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -484,7 +485,7 @@ it('reports live from setEnabled for a host-only package', async () => {
 
 - [ ] **Step 2: Run and watch them fail**
 
-Run: `pnpm vitest run packages/dsh-plugin-shop/tests/host/index.test.ts -t activation`
+Run: `pnpm -C packages/dsh-plugin-shop exec vitest run tests/host/index.test.ts -t activation`
 Expected: FAIL — `activation` is `undefined` (install/uninstall) and absent from `setEnabled`'s result.
 
 - [ ] **Step 3: Wire the four flows**
@@ -557,7 +558,7 @@ If the gateway has no `hotFs` option yet, add one beside the existing `hot` inje
 
 - [ ] **Step 4: Run and watch them pass**
 
-Run: `pnpm vitest run packages/dsh-plugin-shop/tests/host/index.test.ts`
+Run: `pnpm -C packages/dsh-plugin-shop exec vitest run tests/host/index.test.ts`
 Expected: PASS (whole file — the change touches shared shapes).
 
 - [ ] **Step 5: Typecheck**
@@ -642,7 +643,7 @@ Add `activationNoticeKey` to the existing import from `../../src/client/present.
 
 - [ ] **Step 2: Run and watch them fail**
 
-Run: `pnpm vitest run packages/dsh-plugin-shop/tests/client/present.test.ts`
+Run: `pnpm -C packages/dsh-plugin-shop exec vitest run tests/client/present.test.ts`
 Expected: FAIL — `activationNoticeKey` is not exported.
 
 - [ ] **Step 3: Change present.ts**
@@ -729,7 +730,7 @@ Also correct the toggle note, which is the copy that made the disable case wrong
 
 - [ ] **Step 5: Run and watch them pass**
 
-Run: `pnpm vitest run packages/dsh-plugin-shop/tests/client/present.test.ts`
+Run: `pnpm -C packages/dsh-plugin-shop exec vitest run tests/client/present.test.ts`
 Expected: PASS. There is a locale-parity test in this suite that asserts `zh` and `en` have identical key sets — if it fails, a key was added to only one dictionary.
 
 - [ ] **Step 6: Commit**
@@ -810,7 +811,7 @@ it('shows only the applied note after a toggle whose package is host-only', asyn
 
 - [ ] **Step 2: Run and watch them fail**
 
-Run: `pnpm vitest run packages/dsh-plugin-shop/tests/client/ShopTab.client.spec.tsx`
+Run: `pnpm -C packages/dsh-plugin-shop exec vitest run tests/client/ShopTab.client.spec.tsx`
 Expected: FAIL — no reload control exists.
 
 - [ ] **Step 3: Add the panel and wire the three sites**
@@ -885,7 +886,7 @@ Add `.reloadPanel` and `.reloadButton` to the tab's CSS module, mirroring `.rest
 
 - [ ] **Step 5: Run and watch them pass**
 
-Run: `pnpm vitest run packages/dsh-plugin-shop/tests/client/`
+Run: `pnpm -C packages/dsh-plugin-shop exec vitest run tests/client/`
 Expected: PASS. The CSS token spec (`css-tokens.client.spec.ts`) will fail on a hardcoded colour — use tokens.
 
 - [ ] **Step 6: Commit**
@@ -1084,8 +1085,9 @@ These state the same facts in each language's own register; the Chinese is not a
 - [ ] **Step 3: Full verification**
 
 ```bash
-pnpm test > /tmp/activation-test.log 2>&1; echo "EXIT=$?"; tail -5 /tmp/activation-test.log
-pnpm typecheck
+pnpm -C packages/dsh-plugin-shop test > /tmp/shop-test.log 2>&1; echo "SHOP EXIT=$?"; tail -5 /tmp/shop-test.log
+pnpm test > /tmp/registry-test.log 2>&1; echo "REGISTRY EXIT=$?"; tail -3 /tmp/registry-test.log
+pnpm -C packages/dsh-plugin-shop typecheck
 grep -rn "needsRestart" packages/dsh-plugin-shop/src packages/dsh-plugin-shop/tests || echo "no needsRestart left"
 ```
 
