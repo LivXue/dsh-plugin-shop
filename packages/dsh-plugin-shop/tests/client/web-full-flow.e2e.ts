@@ -903,7 +903,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // The incompatible filter, against a genuinely-missing peer the HOST
       // decided about: its count comes from the host's own resolver run, not
       // from a fixture that asserts the answer, and this fixture profile makes
-      // exactly one of the four shelf entries incompatible.
+      // exactly one of the five shelf entries incompatible.
       const filter = dialog.locator('[data-shop-hide-incompatible]')
       await filter.waitFor({ state: 'visible', timeout: 10_000 })
       expect(await filter.textContent()).toBe(zh.hideIncompatible.replace('{count}', '1'))

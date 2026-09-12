@@ -393,7 +393,7 @@ Browser                     Host (ShopGateway)                  Subprocess
   |  poll shop/installStatus -->|<-------- stdout/stderr ----------|
   |<---- { state, log[] } -------| 7. exit 0 -> re-read the manifest, confirm
   |                              |         dsh.profile.bundles changed, and
-  |<---- { done, needsRestart } -|         no loader entry id now collides
+  |<---- { done, activation } ---|         no loader entry id now collides
 ```
 
 **Amendment (2026-09-07, name-taken): a profile holds one plugin per name, and the gate says so before the acknowledgement.** Step 2 is new. The shop writes `dependencies[name]`, so installing a second plugin of a name overwrites the first and the plugin the user chose is gone with no notice — 177 live catalog names are claimed by more than one entry, `dsh-skill-manager` by 14. The gate refuses unless the manifest's spec names this very install; a same-identity request is the ordinary update path. It sits ahead of step 3 so a request that cannot proceed never asks the reader to accept a plugin's privileges first.
@@ -424,8 +424,8 @@ Implementation decisions:
 |---|---|---|
 | `shop/catalog` | `{ refresh?: boolean }` | `{ schemaVersion, builtAt, stale, plugins[] }` |
 | `shop/installStart` | `{ name, version, acknowledged? }` | `{ installId }` |
-| `shop/installStatus` | `{ installId }` | `{ state, log[], needsRestart? }` |
-| `shop/setEnabled` | `{ name, enabled }` | `{ ok }` |
+| `shop/installStatus` | `{ installId }` | `{ state, log[], activation?, restartReason? }` |
+| `shop/setEnabled` | `{ name, enabled }` | `{ ok, activation? }` |
 | `shop/uninstallStart` | `{ name }` | `{ installId }` |
 | `shop/restart` | none | `{ ok }` |
 | `shop/version` | none | `{ installed, latest, outdated, restartSupported }` |

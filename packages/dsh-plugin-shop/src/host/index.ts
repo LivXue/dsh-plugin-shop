@@ -40,6 +40,10 @@ import {
 // cannot import from there.
 export type { InstallArgs, InstallRejectionCode } from './install.ts'
 export type { HotRestartReason } from './hot.ts'
+// Otherwise only reachable through a result field (e.g. ShopSetEnabledResult
+// ['activation']), which left `lib/index.d.ts` emitting it as module-local
+// and unnamed for a `dsh-plugin-shop/remote` consumer (M-5).
+export type { Activation } from './activation.ts'
 // The catalog entry shape reaches the client half through this same boundary.
 export type { CatalogEntry } from './types.ts'
 
