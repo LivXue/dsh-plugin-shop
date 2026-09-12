@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { activationFailureDetail, shellSafeTarget, installFailureDetail, installTimeoutDetail, killTree, lineSink, spawnFailureDetail, startInstall, startUninstall, type InstallStatus } from '../../src/host/executor.ts'
 import type { HotRestartReason } from '../../src/host/hot.ts'
+import type { Activation } from '../../src/host/activation.ts'
 import { fakeDsh, fakeDshRecording } from '../fixtures/fake-dsh.ts'
 import { fileTempRoot } from './temp-root.ts'
 
@@ -29,12 +30,12 @@ function fixtureDshCrlf(exitCode: number, lines: readonly string[]): string {
 }
 
 describe('startInstall', () => {
-  it('spawns dsh plugin with the pinned spec and reports done with needsRestart', async () => {
+  it('spawns dsh plugin with the pinned spec and reports done with activation restart', async () => {
     const bin = fixtureDsh(0)
     const install = startInstall({ profile: 'web', spec: 'dsh-hello-plugin@1.2.0', dshBin: bin })
     const status = await install.finished
     expect(status.state).toBe('done')
-    expect(status.needsRestart).toBe(true)
+    expect(status.activation).toBe('restart')
     expect(status.log.join('\n')).toContain('installing...')
     const calls = readFileSync(join(dirname(bin), 'calls.log'), 'utf8')
     expect(calls).toContain('plugin --profile web add dsh-hello-plugin@1.2.0')
@@ -185,7 +186,7 @@ describe('startInstall post-install confirm (§7.2 step 6)', () => {
     })
     const status = await install.finished
     expect(status.state).toBe('done')
-    expect(status.needsRestart).toBe(true)
+    expect(status.activation).toBe('restart')
     expect(status.log.join('\n')).toContain('installing...')
   })
 
@@ -428,6 +429,22 @@ describe('startInstall post-install confirm (§7.2 step 6)', () => {
     expect(status.detail).toContain('the install added some-monorepo-root instead')
     expect(status.detail).toContain('dsh plugin --profile web remove some-monorepo-root')
   })
+
+  // `updateStart` passes no afterDone, so this default IS the shop's
+  // self-update rule: a host half cannot swap itself live (§8).
+  it('defaults a done install with no afterDone to restart', async () => {
+    const home = confirmHome(['dsh-hello-fixture'], { 'dsh-hello-fixture': '1.0.0' })
+    const install = startInstall({
+      profile: 'web',
+      spec: 'dsh-hello-fixture@1.0.0',
+      dshBin: fixtureDsh(0),
+      env: { ...process.env, DSH_HOME: home },
+      expectedName: 'dsh-hello-fixture',
+    })
+    const status = await install.finished
+    expect(status.state).toBe('done')
+    expect(status.activation).toBe('restart')
+  })
 })
 
 /**
@@ -599,13 +616,13 @@ describe('activationFailureDetail', () => {
 })
 
 describe('startInstall afterDone seam', () => {
-  it('withholds done until afterDone settles and takes its needsRestart', async () => {
+  it('withholds done until afterDone settles and takes its activation', async () => {
     const bin = fixtureDsh(0)
-    let settle: (v: { needsRestart: boolean }) => void
+    let settle: (v: { activation: Activation }) => void
     let afterDoneCalls = 0
     const afterDone = () => {
       afterDoneCalls += 1
-      return new Promise<{ needsRestart: boolean }>(resolve => { settle = resolve })
+      return new Promise<{ activation: Activation }>(resolve => { settle = resolve })
     }
     const running = startInstall({ profile: 'p', spec: 'fixture@1.0.0', dshBin: bin, afterDone })
     // Wait for the child to exit and the close handler to invoke afterDone;
@@ -614,19 +631,19 @@ describe('startInstall afterDone seam', () => {
     // The child has exited and afterDone is pending — the terminal `done` is
     // withheld until it settles.
     expect(running.status().state).toBe('running')
-    settle!({ needsRestart: false })
+    settle!({ activation: 'live' })
     const status = await running.finished
     expect(status.state).toBe('done')
-    expect(status.needsRestart).toBe(false)
+    expect(status.activation).toBe('live')
   })
 
-  it('an afterDone failure still reports done, with needsRestart true and the fallback reason', async () => {
+  it('an afterDone failure still reports done, with activation restart and the fallback reason', async () => {
     const bin = fixtureDsh(0)
     const running = startInstall({ profile: 'p', spec: 'fixture@1.0.0', dshBin: bin,
       afterDone: async () => { throw new Error('boom') } })
     const status = await running.finished
     expect(status.state).toBe('done')
-    expect(status.needsRestart).toBe(true)
+    expect(status.activation).toBe('restart')
     expect(status.restartReason).toBe('mount-failed')
   })
 })
@@ -654,32 +671,32 @@ describe('startUninstall', () => {
     }
   })
 
-  it('spawns dsh plugin remove and reports done with needsRestart', async () => {
+  it('spawns dsh plugin remove and reports done with activation restart', async () => {
     const bin = fixtureDsh(0)
     const uninstall = startUninstall({ profile: 'web', name: 'dsh-hello-plugin', dshBin: bin })
     const status = await uninstall.finished
     expect(status.state).toBe('done')
-    expect(status.needsRestart).toBe(true)
+    expect(status.activation).toBe('restart')
     expect(status.log.join('\n')).toContain('installing...')
     const calls = readFileSync(join(dirname(bin), 'calls.log'), 'utf8')
     expect(calls).toContain('plugin --profile web remove dsh-hello-plugin')
   })
 
-  it('passes afterDone through: withholds done and takes its needsRestart and restartReason', async () => {
+  it('passes afterDone through: withholds done and takes its activation and restartReason', async () => {
     const bin = fixtureDsh(0)
-    let settle: (v: { needsRestart: boolean; restartReason?: HotRestartReason }) => void
+    let settle: (v: { activation: Activation; restartReason?: HotRestartReason }) => void
     let afterDoneCalls = 0
     const afterDone = () => {
       afterDoneCalls += 1
-      return new Promise<{ needsRestart: boolean; restartReason?: HotRestartReason }>(resolve => { settle = resolve })
+      return new Promise<{ activation: Activation; restartReason?: HotRestartReason }>(resolve => { settle = resolve })
     }
     const running = startUninstall({ profile: 'web', name: 'dsh-hello-plugin', dshBin: bin, afterDone })
     await vi.waitFor(() => expect(afterDoneCalls).toBe(1))
     expect(running.status().state).toBe('running')
-    settle!({ needsRestart: false, restartReason: 'mount-failed' })
+    settle!({ activation: 'live', restartReason: 'mount-failed' })
     const status = await running.finished
     expect(status.state).toBe('done')
-    expect(status.needsRestart).toBe(false)
+    expect(status.activation).toBe('live')
     expect(status.restartReason).toBe('mount-failed')
   })
 
@@ -714,7 +731,7 @@ describe('startUninstall post-remove confirm', () => {
     })
     const status = await uninstall.finished
     expect(status.state).toBe('done')
-    expect(status.needsRestart).toBe(true)
+    expect(status.activation).toBe('restart')
   })
 
   it('reports failed with the re-run detail when the bundle is still present', async () => {
