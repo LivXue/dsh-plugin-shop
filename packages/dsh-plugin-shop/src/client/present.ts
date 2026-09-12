@@ -11,12 +11,22 @@ export { identityKey, type EntryIdentity } from '../shared/identity.ts'
 import { holderLabel, identityKey, specVerdict, type EntryIdentity } from '../shared/identity.ts'
 import type { ShopLocaleKey } from './locales.ts'
 import type { CatalogEntry, HotRestartReason, InstallRejectionCode } from '../host/index.ts'
+import type { Activation } from '../host/activation.ts'
 
-/** Hot-mount reason code → locale key, so the notice reads in the language
- * the person set in dsh. An absent (or unrecognized) reason keeps the generic
- * restart line rather than showing a bare code. */
-export function restartReasonKey(reason: HotRestartReason | undefined): ShopLocaleKey {
-  switch (reason) {
+// Re-exported so the client half has one import site for it.
+export type { Activation }
+
+/** The done notice for one activation, as a locale key.
+ *
+ * A hot-mount reason code names WHY a restart is needed and is meaningful
+ * only under `restart`; `live` and `reload` ignore any reason riding along,
+ * because rendering one there would tell a reader their reload had failed.
+ * An absent or unrecognized reason keeps the generic restart line rather
+ * than showing a bare code. */
+export function activationNoticeKey(activation: Activation, restartReason: HotRestartReason | undefined): ShopLocaleKey {
+  if (activation === 'live') return 'installedNoRestartNotice'
+  if (activation === 'reload') return 'installedReloadNotice'
+  switch (restartReason) {
     case 'no-patch': return 'hotNoPatchNotice'
     case 'not-simple': return 'hotNotSimpleNotice'
     case 'host-unsupported': return 'hotHostUnsupportedNotice'
@@ -127,7 +137,7 @@ export interface InstallStatusShape {
   found: boolean
   state: 'running' | 'done' | 'failed'
   log: string[]
-  needsRestart?: boolean
+  activation?: Activation
   restartReason?: HotRestartReason
   detail?: string
 }
@@ -137,7 +147,7 @@ export type InstallView =
   | { kind: 'idle' }
   | { kind: 'rejected'; code: InstallRejectionCode; detail: string }
   | { kind: 'running'; installId: string; log: string[] }
-  | { kind: 'done'; needsRestart: boolean; log: string[]; restartReason?: HotRestartReason }
+  | { kind: 'done'; activation: Activation; log: string[]; restartReason?: HotRestartReason }
   | { kind: 'failed'; detail: string; log: string[] }
 
 /** One event the install view reacts to. */
@@ -200,12 +210,11 @@ export function reduceInstall(state: InstallView, event: InstallEvent): InstallV
         // host sent one, so a plain restart keeps the old shape.
         return {
           kind: 'done',
-          // `?? true`, not `!!`. The host's own default is `true`
-          // (`executor.ts` `needsRestartOnDone`), and the no-restart notice
-          // now ASSERTS the plugin is live rather than hedging — so coercing
-          // an absent field to `false` would publish a success claim the host
-          // never made.
-          needsRestart: status.needsRestart ?? true,
+          // `?? 'restart'`, matching the host's own default
+          // (`executor.ts` `activationOnDone`). An absent field must never
+          // be read as the cheaper outcome: that would publish a success
+          // claim the host never made.
+          activation: status.activation ?? 'restart',
           // The log rides the terminal state, exactly as it does on `failed`.
           // Without it the log a user was reading vanished the instant the
           // install succeeded — the one outcome that leaves something worth

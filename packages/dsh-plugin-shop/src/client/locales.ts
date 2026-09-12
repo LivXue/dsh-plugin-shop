@@ -41,6 +41,9 @@ export const zh = {
   hotTimeoutNotice: '热挂载超时；重启 dsh 后生效',
   hotMountFailedNotice: '热挂载失败；重启 dsh 后生效',
   installedNoRestartNotice: '已安装并热挂载；现在即可使用，无需重启',
+  installedReloadNotice: '已生效；刷新页面即可看到',
+  reload: '刷新页面',
+  reloadNote: '服务器已经是新状态，当前页面显示的还是刷新前的内容。',
   installFailed: '安装失败',
   installTransportFailed: '安装请求未能送达。请稍后重试。',
   refresh: '刷新',
@@ -103,7 +106,7 @@ export const zh = {
   github: 'GitHub',
   enabledSwitch: '启用',
   toggleFailed: '设置失败，请重试。',
-  hotApplyNote: '无需重启，立即生效',
+  hotApplyNote: '已生效，无需重启',
 } satisfies Record<string, string>
 
 /** Shop locale key union. */
@@ -148,6 +151,9 @@ export const en = {
   hotTimeoutNotice: 'hot-mount timed out; restart dsh to activate',
   hotMountFailedNotice: 'hot-mount failed; restart dsh to activate',
   installedNoRestartNotice: 'installed and hot-mounted; running now, no restart needed',
+  installedReloadNotice: 'already applied; reload the page to see it',
+  reload: 'Reload the page',
+  reloadNote: 'The server is already in the new state; this page is still showing what came before.',
   installFailed: 'Install failed',
   installTransportFailed: 'The install request could not be delivered. Please retry.',
   refresh: 'Refresh',
@@ -205,5 +211,5 @@ export const en = {
   github: 'GitHub',
   enabledSwitch: 'Enable',
   toggleFailed: 'Failed to update. Please retry.',
-  hotApplyNote: 'takes effect without a restart',
+  hotApplyNote: 'applied without a restart',
 } satisfies Record<ShopLocaleKey, string>

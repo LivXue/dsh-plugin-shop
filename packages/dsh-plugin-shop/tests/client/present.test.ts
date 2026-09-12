@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
-  ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, categoryKey, displayVersion, entryKey, formatSize, formatStars,
+  ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, activationNoticeKey, categoryKey, displayVersion, entryKey, formatSize, formatStars,
   authorOf, hasGithubHome, heldBy, isCustomLicense, isShopLike, missingPeersOf,
   nextVisibleCount, npmPageUrl,
-  reduceInstall,
+  reduceInstall, type InstallView,
   reviewHashPin, sortByStars, starsOf, tierKey,
 } from '../../src/client/present.ts'
 import type { CatalogEntry } from '../../src/host/index.ts'
@@ -108,7 +108,7 @@ describe('reduceInstall', () => {
     const running = { kind: 'running' as const, installId: 'i1', log: ['+ dsh-x 1.0.0'] }
     const done = reduceInstall(running, {
       type: 'status',
-      status: { found: true, state: 'done', log: ['+ dsh-x 1.0.0', 'Done in 1.2s'], needsRestart: false },
+      status: { found: true, state: 'done', log: ['+ dsh-x 1.0.0', 'Done in 1.2s'], activation: 'live' },
     })
     expect(done.kind).toBe('done')
     expect(done).toHaveProperty('log', ['+ dsh-x 1.0.0', 'Done in 1.2s'])
@@ -125,10 +125,10 @@ describe('reduceInstall', () => {
     expect(next).toEqual({ kind: 'running', installId: 'abc', log: ['a'] })
   })
 
-  it('reaches done with needsRestart', () => {
+  it('reaches done with a restart activation', () => {
     const running = reduceInstall({ kind: 'idle' }, { type: 'started', installId: 'abc' })
-    const next = reduceInstall(running, { type: 'status', status: { found: true, state: 'done', log: ['a'], needsRestart: true } })
-    expect(next).toEqual({ kind: 'done', needsRestart: true, log: ['a'] })
+    const next = reduceInstall(running, { type: 'status', status: { found: true, state: 'done', log: ['a'], activation: 'restart' } })
+    expect(next).toEqual({ kind: 'done', activation: 'restart', log: ['a'] })
     // Without a host reason the done view keeps the old shape: no
     // restartReason key at all (toEqual would ignore an undefined one).
     expect('restartReason' in next).toBe(false)
@@ -136,16 +136,16 @@ describe('reduceInstall', () => {
 
   it('reaches done carrying the host restart reason code when the hot mount failed', () => {
     const running = reduceInstall({ kind: 'idle' }, { type: 'started', installId: 'abc' })
-    const next = reduceInstall(running, { type: 'status', status: { found: true, state: 'done', log: ['a'], needsRestart: true, restartReason: 'mount-failed' } })
-    expect(next).toEqual({ kind: 'done', needsRestart: true, log: ['a'], restartReason: 'mount-failed' })
+    const next = reduceInstall(running, { type: 'status', status: { found: true, state: 'done', log: ['a'], activation: 'restart', restartReason: 'mount-failed' } })
+    expect(next).toEqual({ kind: 'done', activation: 'restart', log: ['a'], restartReason: 'mount-failed' })
   })
 
-  it('reaches done with needsRestart false when the host reports the live outcome', () => {
-    // The live install/uninstall outcome: nothing to restart, so the done
-    // view says so and the panels branch on it.
+  it('reaches done with a live activation when the host reports the live outcome', () => {
+    // The live install/uninstall outcome: nothing to restart or reload, so
+    // the done view says so and the panels branch on it.
     const running = reduceInstall({ kind: 'idle' }, { type: 'started', installId: 'abc' })
-    const next = reduceInstall(running, { type: 'status', status: { found: true, state: 'done', log: ['a'], needsRestart: false } })
-    expect(next).toEqual({ kind: 'done', needsRestart: false, log: ['a'] })
+    const next = reduceInstall(running, { type: 'status', status: { found: true, state: 'done', log: ['a'], activation: 'live' } })
+    expect(next).toEqual({ kind: 'done', activation: 'live', log: ['a'] })
   })
 
   it('reaches failed with the host detail and the log', () => {
@@ -167,6 +167,48 @@ describe('reduceInstall', () => {
 
   it('ignores unrelated events', () => {
     expect(reduceInstall({ kind: 'idle' }, { type: 'status', status: { found: true, state: 'running', log: [] } })).toEqual({ kind: 'idle' })
+  })
+})
+
+describe('activationNoticeKey', () => {
+  it('keeps the hot-mount reason codes on restart', () => {
+    expect(activationNoticeKey('restart', 'not-simple')).toBe('hotNotSimpleNotice')
+    expect(activationNoticeKey('restart', 'no-patch')).toBe('hotNoPatchNotice')
+  })
+
+  it('falls back to the generic restart line when no reason came with it', () => {
+    expect(activationNoticeKey('restart', undefined)).toBe('installedRestartNotice')
+  })
+
+  it('names the reload state, and ignores any reason riding along with it', () => {
+    // A reason is meaningful only under `restart`; rendering one here would
+    // tell a reader their reload failed.
+    expect(activationNoticeKey('reload', undefined)).toBe('installedReloadNotice')
+    expect(activationNoticeKey('reload', 'not-simple')).toBe('installedReloadNotice')
+  })
+
+  it('names the live state', () => {
+    expect(activationNoticeKey('live', undefined)).toBe('installedNoRestartNotice')
+  })
+})
+
+describe('reduceInstall on a done status', () => {
+  it('carries the activation the host sent', () => {
+    const before: InstallView = { kind: 'running', installId: 'i1', log: [] }
+    const after = reduceInstall(before, {
+      type: 'status',
+      status: { found: true, state: 'done', log: ['ok'], activation: 'reload' },
+    })
+    expect(after).toEqual({ kind: 'done', activation: 'reload', log: ['ok'] })
+  })
+
+  it('defaults a done status with no activation to restart', () => {
+    // The host's own default is `restart` (executor.ts). Coercing an absent
+    // field to anything cheaper would publish a success claim the host
+    // never made.
+    const before: InstallView = { kind: 'running', installId: 'i1', log: [] }
+    const after = reduceInstall(before, { type: 'status', status: { found: true, state: 'done', log: [] } })
+    expect(after).toMatchObject({ kind: 'done', activation: 'restart' })
   })
 })
 
