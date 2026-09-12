@@ -29,7 +29,7 @@
  * .npmrc points at the registry once the profile exists (pnpm, unlike npm,
  * never reads the registry from env vars), so gateway-spawned pnpm resolves
  * those installs locally while the beforeAll `file:` installs keep the real
- * registry. The live install must report done with `needsRestart === false`
+ * registry. The live install must report done with activation `live`
  * and the entry must appear in the loader inventory (the strict liveness
  * read — a route-based probe is unavailable, see the fixture's index.js
  * comment); the config install must report done with the localized restart
@@ -67,9 +67,9 @@
  *   peer this host cannot resolve; there is no `[data-shop-install-done]` —
  *   the done view below is the only terminal signal
  * - install done view: `[data-shop-restart-notice]` (the no-restart copy
- *   when needsRestart is false, the host's reason code localized otherwise) and
- *   the §8 offer `[data-shop-restart]` (only when needsRestart && the host
- *   can restart)
+ *   for activation `live`, the host's reason code localized under `restart`)
+ *   and the §8 offer `[data-shop-restart]` (only when activation is
+ *   `restart` && the host can restart)
  * - uninstall: `[data-shop-uninstall]`; done view `[data-shop-uninstall-done]`
  * - loader inventory tab: `dialog.getByRole('tab', { name: '插件列表' })`, then
  *   `expandGlobalPlane` — the tab splits into 会话插件 (the selected agent
@@ -692,9 +692,10 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await card.locator('[data-shop-confirm]').waitFor({ state: 'visible', timeout: 10_000 })
       await card.locator('[data-shop-confirm]').click()
 
-      // needsRestart === false: the done view renders the no-restart notice
+      // activation `live`: the done view renders the no-restart notice
       // (never a restart reason) and offers no restart. A hot-mount failure
-      // would surface the host's localized reason here instead, failing this.
+      // would surface the host's localized reason here instead (under
+      // activation `restart`), failing this.
       const notice = card.locator('[data-shop-restart-notice]')
       await notice.waitFor({ state: 'visible', timeout: 60_000 })
       expect(await notice.textContent()).toContain('已安装并热挂载')
@@ -803,7 +804,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
 
       // Install: the same gate and poll. The config-row patch is a valid
       // bundle-layer patch the hot tree cannot replicate, so the install
-      // reports done with needsRestart === true and the host's published
+      // reports done with activation `restart` and the host's published
       // localized reason (parseSimplePatch rejects the row; the reason
       // renders verbatim on the notice).
       await card.locator('[data-shop-install]').click()

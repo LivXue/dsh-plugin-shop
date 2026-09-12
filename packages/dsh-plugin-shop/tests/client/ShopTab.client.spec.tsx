@@ -53,7 +53,7 @@ function bench(
 ) {
   const catalog = vi.fn<ShopTabInjected['catalog']>().mockResolvedValue(catalogResult)
   const install = vi.fn<ShopTabInjected['install']>().mockResolvedValue({ ok: true, installId: 'i1' })
-  const installStatus = vi.fn<ShopTabInjected['installStatus']>().mockResolvedValue({ found: true, state: 'done', log: [], needsRestart: true })
+  const installStatus = vi.fn<ShopTabInjected['installStatus']>().mockResolvedValue({ found: true, state: 'done', log: [], activation: 'restart' })
   const setEnabled = vi.fn<ShopTabInjected['setEnabled']>().mockResolvedValue({ ok: true })
   const rows: ShopInstalledEntry[] = installedEntries.map(row => ({ source: 'npm', ...row }))
   const installed = vi.fn<ShopTabInjected['installed']>().mockResolvedValue(rows)
@@ -444,7 +444,7 @@ describe('ShopTab', () => {
     // it as the log having been lost.
     const { injected, installStatus } = bench(snapshot({ tier: 'verified' }))
     installStatus.mockResolvedValue({
-      found: true, state: 'done', needsRestart: false,
+      found: true, state: 'done', activation: 'live',
       log: ['+ dsh-hello-plugin 1.0.0', 'Done in 1.2s using pnpm v11.13.0'],
     })
     const { container } = renderTab(injected)
@@ -456,22 +456,46 @@ describe('ShopTab', () => {
       .toBe(2)
   })
 
-  it('shows the live-install notice and no restart offer when the install needs no restart', async () => {
+  it('offers neither a restart nor a reload control when an install reports live', async () => {
     const { injected, installStatus } = bench(snapshot({ tier: 'verified' }))
-    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], needsRestart: false })
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'live' })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     fireEvent.click(screen.getByText(en.install))
     await waitFor(() => expect(screen.getByText(en.installedNoRestartNotice)).toBeTruthy(), { timeout: 3000 })
-    // A restart would change nothing: neither the offer nor the disabled
-    // notice appears.
+    // Neither control would change anything: no restart offer, no disabled
+    // notice, no reload panel.
     expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-restart]')).toBeNull()
     expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-restart-disabled]')).toBeNull()
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-reload]')).toBeNull()
+  })
+
+  it('offers a reload, not a restart, when an install reports reload', async () => {
+    const { injected, installStatus } = bench(snapshot({ tier: 'verified' }))
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'reload' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText(en.install))
+    await waitFor(() => expect(screen.getByText(en.installedReloadNotice)).toBeTruthy(), { timeout: 3000 })
+    expect(screen.getByText(en.reload)).toBeTruthy()
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-restart]')).toBeNull()
+  })
+
+  it('reloads the page when the reload button is pressed', async () => {
+    const { injected, installStatus } = bench(snapshot({ tier: 'verified' }))
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'reload' })
+    const reload = vi.fn()
+    const { container } = renderTab({ ...injected, reload })
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText(en.install))
+    await waitFor(() => expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-reload]')).toBeTruthy(), { timeout: 3000 })
+    fireEvent.click(screen.getByText(en.reload))
+    expect(reload).toHaveBeenCalledTimes(1)
   })
 
   // What the notice above must SAY, in both locales. Keying the assertions on
   // `en.installedNoRestartNotice` alone passes for any text at all, which is
-  // how this string sat wrong: `needsRestart === false` is the hot mount
+  // how this string sat wrong: `activation === 'live'` is the hot mount
   // having SUCCEEDED, and it read "installed, but the profile did not change
   // — the catalog may be stale; refresh and try again". Every clause was
   // false, and it sent a user whose plugin was already live to retry.
@@ -501,13 +525,16 @@ describe('ShopTab', () => {
     // bilingual string the host used to bake in. It replaces the generic
     // notice, and the restart offer stays: the install still needs one.
     const { injected, installStatus } = bench(snapshot({ tier: 'verified' }))
-    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], needsRestart: true, restartReason: 'not-simple' })
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'restart', restartReason: 'not-simple' })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     fireEvent.click(screen.getByText(en.install))
     await waitFor(() => expect(screen.getByText(en.hotNotSimpleNotice)).toBeTruthy(), { timeout: 3000 })
     expect(screen.queryByText(en.installedRestartNotice)).toBeNull()
     expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-restart]')).toBeTruthy()
+    // Still offers the restart, not a reload: an activation of `restart`
+    // never renders the reload control alongside it.
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-reload]')).toBeNull()
   })
 
   it('falls back to the generic notice for a reason code it does not know', async () => {
@@ -516,7 +543,7 @@ describe('ShopTab', () => {
     // the generic restart line — never a bare identifier, and never
     // host-supplied text, which is what the old free-text reason risked.
     const { injected, installStatus } = bench(snapshot({ tier: 'verified' }))
-    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], needsRestart: true, restartReason: '<img src=x onerror=alert(1)>' as never })
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'restart', restartReason: '<img src=x onerror=alert(1)>' as never })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     fireEvent.click(screen.getByText(en.install))
@@ -526,12 +553,24 @@ describe('ShopTab', () => {
 
   it('shows the live-uninstall notice and no restart offer when the uninstall needs no restart', async () => {
     const { injected, installStatus } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }])
-    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], needsRestart: false })
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'live' })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-uninstall]')!)
     await waitFor(() => expect(screen.getByText(en.uninstalledLiveNotice)).toBeTruthy(), { timeout: 3000 })
     expect(screen.queryByText(en.uninstalledRestartNotice)).toBeNull()
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-restart]')).toBeNull()
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-reload]')).toBeNull()
+  })
+
+  it('offers a reload, not a restart, when an uninstall reports reload', async () => {
+    const { injected, installStatus } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }])
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'reload' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-uninstall]')!)
+    await waitFor(() => expect(screen.getByText(en.installedReloadNotice)).toBeTruthy(), { timeout: 3000 })
+    expect(screen.getByText(en.reload)).toBeTruthy()
     expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-restart]')).toBeNull()
   })
 
@@ -1105,6 +1144,30 @@ describe('ShopTab', () => {
     fireEvent.click(toggle)
     await waitFor(() => expect(setEnabled).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', enabled: false }))
     expect(container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-hot-apply]')).toBeTruthy()
+  })
+
+  it('shows the reload offer after a toggle whose package has a browser half', async () => {
+    const { injected, setEnabled } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
+    setEnabled.mockResolvedValue({ ok: true, activation: 'reload' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    const toggle = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-toggle]')!
+    fireEvent.click(toggle)
+    await waitFor(() => expect(setEnabled).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', enabled: false }))
+    expect(container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-hot-apply]')).toBeTruthy()
+    expect(container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-reload]')).toBeTruthy()
+  })
+
+  it('shows only the applied note after a toggle whose package is host-only', async () => {
+    const { injected, setEnabled } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
+    setEnabled.mockResolvedValue({ ok: true, activation: 'live' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    const toggle = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-toggle]')!
+    fireEvent.click(toggle)
+    await waitFor(() => expect(setEnabled).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', enabled: false }))
+    expect(container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-hot-apply]')).toBeTruthy()
+    expect(container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-reload]')).toBeNull()
   })
 
   it('renders a disabled installed plugin with its switch off', async () => {
