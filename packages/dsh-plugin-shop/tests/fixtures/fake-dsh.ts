@@ -100,3 +100,27 @@ export function fakeDshRecording(dir: string, exitCode: number, options: { silen
     `process.exit(${exitCode})`,
   ].join('\n'))
 }
+
+/**
+ * Like `fakeDshRecording`, but a `remove` invocation also deletes
+ * `<profileDir>/node_modules/<name>/package.json` first, the way a real
+ * `dsh plugin remove` does. `fakeDshRecording` never touches disk beyond
+ * `calls.log`, which is exactly why a test reading a package's manifest
+ * (`hasClientHalf`) cannot tell "read before the removal" from "read
+ * after" without this: the file is still there either way, so the read's
+ * position in the source never changes the answer. Opt into this variant
+ * only where that distinction has to matter; every other test should keep
+ * using `fakeDshRecording`.
+ *
+ * `argv[3]`/`argv[4]` are the verb and its target — `argv` here is
+ * `['plugin', '--profile', <profile>, 'remove', <name>]`, per `fakeDsh`'s
+ * own doc comment.
+ */
+export function fakeDshRemovingManifest(dir: string, profileDir: string, exitCode = 0): string {
+  return fakeDsh(dir, [
+    `fs.appendFileSync(${JSON.stringify(join(dir, 'calls.log'))}, argv.slice(0, 5).join(' ') + '\\n')`,
+    `if (argv[3] === 'remove') fs.rmSync(${JSON.stringify(join(profileDir, 'node_modules'))} + '/' + argv[4] + '/package.json', { force: true })`,
+    "out('installing...')",
+    `process.exit(${exitCode})`,
+  ].join('\n'))
+}

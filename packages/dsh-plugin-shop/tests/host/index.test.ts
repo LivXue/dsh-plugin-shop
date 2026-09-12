@@ -8,7 +8,7 @@ import type { InventoryEntry, LoaderEntryLike, ShopGatewayOptions, ShopInstallSt
 import type { HotMountResult } from '../../src/host/hot.ts'
 import type { CatalogResult, CatalogSnapshot, LoadCatalogOptions } from '../../src/host/catalog.ts'
 import type { CatalogEntry } from '../../src/host/types.ts'
-import { fakeDsh, fakeDshRecording } from '../fixtures/fake-dsh.ts'
+import { fakeDsh, fakeDshRecording, fakeDshRemovingManifest } from '../fixtures/fake-dsh.ts'
 import { fileTempRoot } from './temp-root.ts'
 
 const TEMP_ROOT = fileTempRoot('index')
@@ -1445,6 +1445,11 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     dependencies?: Record<string, string>
     hot?: ShopGatewayOptions['hot']
     loaderEntries?: ShopGatewayOptions['loaderEntries']
+    /** Test-only: build the fake dsh CLI from the profile dir this function
+     * is about to create, in place of the shared `gatewayOptions()` default.
+     * Exists for the one test that needs a `remove` invocation to actually
+     * delete the package's manifest — see `fakeDshRemovingManifest`. */
+    dshBin?: (profileDir: string) => string
   }): { gateway: ShopGateway; profileDir: string } {
     const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-hot-profile-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
@@ -1461,6 +1466,7 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
       loadCatalog: async () => ({ snapshot, stale: false }) as CatalogResult,
       hot: options.hot,
       loaderEntries: options.loaderEntries,
+      ...(options.dshBin !== undefined ? { dshBin: options.dshBin(profileDir) } : {}),
     })
     return { gateway, profileDir }
   }
@@ -1597,10 +1603,22 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     // fixturePackage's auto-seeded manifest here has a bundle patch and no
     // dsh.client, which is exactly that shape — a separate test with the
     // same setup and assertion would only restate this one.
+    //
+    // The fake dsh here is `fakeDshRemovingManifest`, not the usual
+    // `fakeDshRecording`: a real `dsh plugin remove` deletes the package's
+    // manifest, and without that this test cannot tell "hadClientHalf read
+    // before startUninstall" from "read inside afterDone" apart —
+    // hasClientHalf would see the same still-present, client-less manifest
+    // either way and answer `false` regardless of when it ran. Deleting it
+    // makes the two orderings diverge: a post-removal read hits the
+    // unreadable-manifest fallback (`true`, conservative) and reports
+    // `reload` instead of `live`.
+    const binDir = mkdtempSync(join(TEMP_ROOT, 'dsh-uninstall-removing-'))
     const { gateway } = hotGateway({
       dependencies: { 'dsh-goodbye-plugin': '1.0.0' },
       hot: { mount: hotMount, unmount: hotUnmount },
       loaderEntries: () => [],
+      dshBin: profileDir => fakeDshRemovingManifest(binDir, profileDir, 0),
     })
     const result = await gateway.uninstall({ name: 'dsh-goodbye-plugin' })
     expect(result.ok).toBe(true)
