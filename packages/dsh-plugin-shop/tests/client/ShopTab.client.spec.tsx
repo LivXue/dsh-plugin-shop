@@ -564,14 +564,25 @@ describe('ShopTab', () => {
   })
 
   it('offers a reload, not a restart, when an uninstall reports reload', async () => {
-    const { injected, installStatus } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }])
+    const { injected, installStatus, installed } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }])
     installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'reload' })
+    // The installed projection drops the row once the uninstall lands, exactly
+    // as a real host reports it gone (I-1): the done view — and its reload
+    // button — must stay mounted through that refresh instead of disappearing
+    // along with the row that no longer exists.
+    installed
+      .mockResolvedValueOnce([{ name: 'dsh-hello-plugin', source: 'npm', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }])
+      .mockResolvedValue([])
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-uninstall]')!)
-    await waitFor(() => expect(screen.getByText(en.installedReloadNotice)).toBeTruthy(), { timeout: 3000 })
+    await waitFor(() => expect(screen.getByText(en.uninstalledReloadNotice)).toBeTruthy(), { timeout: 3000 })
     expect(screen.getByText(en.reload)).toBeTruthy()
     expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-restart]')).toBeNull()
+    // The installed projection catches up (the row is gone) without erasing
+    // the uninstall outcome that is still on screen.
+    await waitFor(() => expect(installed).toHaveBeenCalledTimes(2), { timeout: 3000 })
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-reload]')).toBeTruthy()
   })
 
   it('offers the restart button after a successful install, gated by the cost notice', async () => {
@@ -2094,8 +2105,15 @@ describe('ShopTab mutation flows (G-9)', () => {
     expect(installed).toHaveBeenCalledTimes(1)
     fireEvent.click(container.querySelector('[data-shop-uninstall]')!)
     await waitFor(() => expect(installed).toHaveBeenCalledTimes(2), { timeout: 3000 })
+    // The row is gone, so the card offers a fresh install...
     await waitFor(() => expect(container.querySelector('[data-shop-install]')).toBeTruthy())
     expect(container.querySelector('[data-shop-uninstall]')).toBeNull()
+    // ...but catching up the installed projection must not erase the
+    // uninstall's terminal outcome (I-1): the done notice and the restart it
+    // offers stay mounted alongside that fresh install button, exactly like
+    // the install sibling test above keeps its restart notice.
+    expect(container.querySelector('[data-shop-uninstall-done]')).toBeTruthy()
+    expect(container.querySelector('[data-shop-restart]')).toBeTruthy()
   })
 
   it('shows one install flow on both panels of an outdated entry', async () => {

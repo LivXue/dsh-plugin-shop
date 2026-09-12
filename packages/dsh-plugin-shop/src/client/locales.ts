@@ -90,6 +90,10 @@ export const zh = {
   uninstallTransportFailed: '卸载请求未能送达。请稍后重试。',
   uninstalledLiveNotice: '已卸载并立即停止。profile 的启动组合将在下次重启时应用该移除。',
   uninstalledRestartNotice: '已卸载；重启 dsh 后生效',
+  // M-1: distinct from installedReloadNotice — that one tells the reader to
+  // reload to SEE a plugin they just installed; this one tells them to
+  // reload to see this one GONE. The server has already dropped it.
+  uninstalledReloadNotice: '已卸载；刷新页面即可看到它消失',
   restart: '重启 dsh',
   restartTitle: '确认重启 dsh',
   restartBody: '重启会断开当前页面与服务器的连接，正在进行的对话和任务会中断；浏览器会自动跳转到重启后的地址，稍等片刻即可继续使用。',
@@ -195,6 +199,7 @@ export const en = {
   uninstallTransportFailed: 'The uninstall request could not be delivered. Please retry.',
   uninstalledLiveNotice: 'Removed and stopped immediately. The profile\'s boot composition picks up the removal at the next restart.',
   uninstalledRestartNotice: 'uninstalled; restart dsh to activate',
+  uninstalledReloadNotice: 'removed; reload the page to see it gone',
   restart: 'Restart dsh',
   restartTitle: 'Restart dsh?',
   restartBody: 'Restarting disconnects this page and interrupts any conversation or task in progress; the browser will jump to the restarted address automatically, so give it a few seconds.',

@@ -9,7 +9,7 @@ import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-cli
 import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
 import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Activation, type Category, activationNoticeKey, authorOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatSize, formatStars, hasGithubHome, heldBy, identityKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, rejectionCodeKey, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
 import { useInstallFlows, type InstallFlow } from './useInstall.ts'
-import { useUninstall } from './useUninstall.ts'
+import { useUninstallFlows, type UninstallFlow } from './useUninstall.ts'
 import { useUpdateSelf } from './useUpdateSelf.ts'
 import css from './ShopTab.module.css'
 
@@ -80,7 +80,7 @@ function ChevronIcon({ open }: { open: boolean }): ReactNode {
  * install controls. An installed plugin's card carries its installed row:
  * current → the non-interactive installed label, behind → the update button;
  * uninstalled → the install button. */
-const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, nameTakenBy, t, flowFor, installStatus, uninstall, restart, restartSupported, reload, setEnabled, onSettled }: {
+const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, nameTakenBy, t, flowFor, uninstallFlowFor, restart, restartSupported, reload, setEnabled }: {
   entry: CatalogEntry
   stars: number | undefined
   installed: ShopInstalledEntry | undefined
@@ -91,13 +91,11 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, na
   nameTakenBy: string | undefined
   t: ShopTabProps['t']
   flowFor: (key: string) => InstallFlow
-  installStatus: ShopTabInjected['installStatus']
-  uninstall: ShopTabInjected['uninstall']
+  uninstallFlowFor: (key: string) => UninstallFlow
   restart: ShopTabInjected['restart']
   restartSupported: boolean
   reload: () => void
   setEnabled: ShopTabInjected['setEnabled']
-  onSettled: () => void
 }): ReactNode {
   const [open, setOpen] = useState(false)
   const blockers = blockersOf(missing, nameTakenBy, t)
@@ -118,12 +116,7 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, na
     subdir: entry.subdir,
   }
   const flow = flowFor(entryKey(entry))
-  const uninstallSettled = useCallback(() => {
-    // Once removal lands, an install/update result from the same session is
-    // stale. Clear it before the installed projection drops this row.
-    flow.reset()
-    onSettled()
-  }, [flow, onSettled])
+  const uninstallFlow = uninstallFlowFor(entryKey(entry))
   return (
     <div className={css.card} data-shop-entry={entry.name} data-category={category}>
       <span className={css.cardSpine} aria-hidden="true" />
@@ -261,7 +254,16 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, na
        * width below them, where it has room. */}
       <div className={css.cardActions} data-shop-actions>
         {installed === undefined ? (
-          <InstallPanel target={installTarget} tier={entry.tier} missing={missing} blockers={blockers} missingStated flow={flow} t={t} restart={restart} restartSupported={restartSupported} reload={reload} />
+          <>
+            <InstallPanel target={installTarget} tier={entry.tier} missing={missing} blockers={blockers} missingStated flow={flow} t={t} restart={restart} restartSupported={restartSupported} reload={reload} />
+            {uninstallFlow.view.kind !== 'idle' && (
+              // A completed uninstall stays mounted after installed() drops
+              // this row (I-1): the row saying so is gone, but the flow keyed
+              // by identity is not, so its outcome — and any reload/restart
+              // offer — remains on screen exactly like a completed install.
+              <UninstallPanel name={entry.name} t={t} restart={restart} restartSupported={restartSupported} reload={reload} flow={uninstallFlow} />
+            )}
+          </>
         ) : (
           <>
             {installed.outdated || flow.view.kind !== 'idle' ? (
@@ -281,7 +283,7 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, na
             {/* The hot enable/disable switch (§8) sits on every installed
              * row — current or outdated — and reads the inventory state. */}
             <EnabledSwitch row={installed} t={t} setEnabled={setEnabled} reload={reload} />
-            <UninstallPanel name={entry.name} t={t} uninstall={uninstall} installStatus={installStatus} restart={restart} restartSupported={restartSupported} reload={reload} onSettled={uninstallSettled} />
+            <UninstallPanel name={entry.name} t={t} restart={restart} restartSupported={restartSupported} reload={reload} flow={uninstallFlow} />
           </>
         )}
         {/* How big it is and who put it here, pushed to the right edge of the
@@ -570,22 +572,19 @@ function InstallPanel({ target, tier, missing, blockers, missingStated = false, 
  * §9.3 is about granting. A business failure (not in the catalog / not
  * installed) lands in the failed view with the host's published detail; a
  * transport failure carries the empty detail and the localized fallback. */
-function UninstallPanel({ name, t, uninstall, installStatus, restart, restartSupported, reload, onSettled }: {
+function UninstallPanel({ name, t, restart, restartSupported, reload, flow }: {
   name: string
   t: ShopTabProps['t']
-  uninstall: ShopTabInjected['uninstall']
-  installStatus: ShopTabInjected['installStatus']
   restart: ShopTabInjected['restart']
   restartSupported: boolean
   reload: () => void
-  onSettled: () => void
+  flow: UninstallFlow
 }): ReactNode {
-  const { view, start } = useUninstall(uninstall, installStatus)
-  const settled = useRef(onSettled)
-  settled.current = onSettled
-  useEffect(() => {
-    if (view.kind === 'done') settled.current()
-  }, [view.kind])
+  // The flow is lifted to the tab root (useUninstallFlows) and keyed by
+  // install identity, so its `done`/`failed` outcome survives this panel's
+  // own conditional mount — settling (reset + re-fetch) happens inside the
+  // hook's own poll effect, the same way useInstallFlows settles itself.
+  const { view, start } = flow
 
   if (view.kind === 'running') {
     return (
@@ -604,7 +603,7 @@ function UninstallPanel({ name, t, uninstall, installStatus, restart, restartSup
       <div className={css.installedActions}>
         <p className={css.notice} data-shop-uninstall-done>
           {view.activation === 'restart' ? t('uninstalledRestartNotice')
-            : view.activation === 'reload' ? t('installedReloadNotice')
+            : view.activation === 'reload' ? t('uninstalledReloadNotice')
             : t('uninstalledLiveNotice')}
         </p>
         {/* The §8 restart offer, which activates the uninstall: a live
@@ -956,6 +955,13 @@ export function ShopTab(props: ShopTabProps): ReactNode {
   const [mutations, setMutations] = useState(0)
   const noteMutation = useCallback(() => { setMutations(current => current + 1) }, [])
   const flows = useInstallFlows(install, installStatus, noteMutation)
+  const uninstallSettled = useCallback((key: string) => {
+    // Once removal lands, an install/update result from the same session is
+    // stale. Clear it before the installed projection drops this row.
+    flows.flowFor(key).reset()
+    noteMutation()
+  }, [flows, noteMutation])
+  const uninstallFlows = useUninstallFlows(uninstall, installStatus, uninstallSettled)
   // A refresh deliberately leaves the current shelf on screen (§10), so the
   // reload control carries the only sign that the click did anything.
   const [reloading, setReloading] = useState(false)
@@ -1585,7 +1591,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
               const key = entryKey(entry)
               return (
                 <li key={key}>
-                  <EntryCard entry={entry} stars={starsOf(entry, stars)} installed={installedByKey.get(key)} missing={missingByKey.get(key) ?? []} nameTakenBy={nameTakenByKey.get(key)} t={t} flowFor={flows.flowFor} installStatus={installStatus} uninstall={uninstall} restart={restart} restartSupported={restartSupported} reload={reload} setEnabled={setEnabled} onSettled={noteMutation} />
+                  <EntryCard entry={entry} stars={starsOf(entry, stars)} installed={installedByKey.get(key)} missing={missingByKey.get(key) ?? []} nameTakenBy={nameTakenByKey.get(key)} t={t} flowFor={flows.flowFor} uninstallFlowFor={uninstallFlows.flowFor} restart={restart} restartSupported={restartSupported} reload={reload} setEnabled={setEnabled} />
                 </li>
               )
             })}
