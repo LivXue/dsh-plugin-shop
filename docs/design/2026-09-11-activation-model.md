@@ -171,6 +171,43 @@ reload to see it". The reason codes stay where they are — on `restart`,
 where the reader genuinely has to choose between restarting and giving
 up.
 
+### 4.1 The receipt outlives the row (amended 2026-09-13)
+
+An uninstall removes the thing the notice is attached to. The reader's own
+row disappears from `installed()` within one RPC round-trip of the flow
+reaching `done` — so a cue rendered inside that row is gone before it can
+be read. This was shipped and had to be fixed three times, which is worth
+recording once rather than rediscovering:
+
+- **The card keeps a settled flow mounted.** `EntryCard` renders the
+  uninstall panel while its flow is not `idle`, independently of whether
+  the row is still installed. Without this the done view unmounts the
+  instant the projection refreshes.
+- **The Installed view keeps the entry matchable.** That guard only runs
+  if the card renders at all, and the Installed category filter's
+  membership test is the installed projection itself — so the same refresh
+  dropped the entry out of the filter before the card's guard applied.
+  Membership there is therefore "installed, OR its uninstall flow is still
+  showing an outcome".
+- **A kept row offers no Install.** Inside the Installed view the two rules
+  above make `installed === undefined` mean exactly one thing — an
+  uninstall that just settled — and that row must not offer to install the
+  package whose removal it is reporting. §7.3's "management, not shelf"
+  reading of that view is what this protects. Everywhere else the pairing
+  is correct and deliberate: on the open shelf a just-removed entry is
+  still browsable, and an Install button beside its receipt is the point.
+
+**The count is not a contradiction.** The Installed button reads 0 while a
+receipt is still on screen, and that is the honest pair: nothing is
+installed, and the card is a receipt for the operation just performed, not
+a listing. Making the count agree with the card would mean counting a
+package that is gone.
+
+**A receipt is sticky for the session.** Nothing resets an uninstall flow
+back to `idle`; only a reload clears it — which is what the notice is
+asking for. A reader who changes the filter instead sees the normal shelf
+immediately.
+
 ## 5. Testing
 
 **The gap that produced this design is a fixture gap.** All three of the
