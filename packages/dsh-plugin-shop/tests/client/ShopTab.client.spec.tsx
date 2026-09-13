@@ -619,6 +619,59 @@ describe('ShopTab', () => {
     expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-reload]')).toBeTruthy()
   })
 
+  it('suppresses the install control on a phantom row in the Installed view', async () => {
+    // Same repro as the test above, one step further. Wave 2 keeps this row
+    // in `matched` under the Installed filter once `installed()` drops it,
+    // as long as the uninstall flow is non-idle — so the row still reaches
+    // EntryCard. But `installed` is `undefined` there, so EntryCard takes
+    // its not-installed branch, which used to render InstallPanel
+    // unconditionally: a live Install button next to the uninstall receipt,
+    // inside a view whose own purpose is management, not a shelf to
+    // reinstall from. `inInstalledView` (ShopTab.tsx ~L262) suppresses the
+    // gate exactly here — see the control case below for where it must not.
+    const { injected, installStatus, installed } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }])
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'reload' })
+    installed
+      .mockResolvedValueOnce([{ name: 'dsh-hello-plugin', source: 'npm', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }])
+      .mockResolvedValue([])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+
+    fireEvent.click(container.querySelector('[data-shop-category-installed]') as HTMLElement)
+    expect(screen.getByText('dsh-hello-plugin')).toBeTruthy()
+
+    fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-uninstall]')!)
+    await waitFor(() => expect(screen.getByText(en.uninstalledReloadNotice)).toBeTruthy(), { timeout: 3000 })
+    await waitFor(() => expect(installed).toHaveBeenCalledTimes(2), { timeout: 3000 })
+    // The receipt (wave 2 + I-1) stays mounted...
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-reload]')).toBeTruthy()
+    // ...but the Installed view must not pair it with a live Install button.
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-install]')).toBeNull()
+  })
+
+  it('keeps the install control beside the reload cue outside the Installed view (I-1, unchanged)', async () => {
+    // Control case for the test above: the identical uninstall sequence with
+    // no category filter active, so `matched` keeps the row for the
+    // ordinary "browse everything" reason (category null), not wave 2's
+    // exception. This is I-1's shipped pairing on the default shelf and must
+    // not regress — a fix broad enough to suppress the Install gate
+    // everywhere would flip this from green to red, which is the signal
+    // that the guard reached further than the Installed view.
+    const { injected, installStatus, installed } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }])
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'reload' })
+    installed
+      .mockResolvedValueOnce([{ name: 'dsh-hello-plugin', source: 'npm', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }])
+      .mockResolvedValue([])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+
+    fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-uninstall]')!)
+    await waitFor(() => expect(screen.getByText(en.uninstalledReloadNotice)).toBeTruthy(), { timeout: 3000 })
+    await waitFor(() => expect(installed).toHaveBeenCalledTimes(2), { timeout: 3000 })
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-reload]')).toBeTruthy()
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-install]')).toBeTruthy()
+  })
+
   it('offers the restart button after a successful install, gated by the cost notice', async () => {
     const { injected } = bench(snapshot({ tier: 'verified' }))
     const { container } = renderTab(injected)

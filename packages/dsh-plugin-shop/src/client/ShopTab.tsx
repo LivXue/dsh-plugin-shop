@@ -80,7 +80,7 @@ function ChevronIcon({ open }: { open: boolean }): ReactNode {
  * install controls. An installed plugin's card carries its installed row:
  * current → the non-interactive installed label, behind → the update button;
  * uninstalled → the install button. */
-const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, nameTakenBy, t, flowFor, uninstallFlowFor, restart, restartSupported, reload, setEnabled }: {
+const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, nameTakenBy, t, flowFor, uninstallFlowFor, restart, restartSupported, reload, setEnabled, inInstalledView }: {
   entry: CatalogEntry
   stars: number | undefined
   installed: ShopInstalledEntry | undefined
@@ -96,6 +96,10 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, na
   restartSupported: boolean
   reload: () => void
   setEnabled: ShopTabInjected['setEnabled']
+  /** True when the Installed category filter is the active view, passed down
+   * from the same `category` state `matched` reads — so the card and the
+   * filter it renders under can never disagree about which view this is. */
+  inInstalledView: boolean
 }): ReactNode {
   const [open, setOpen] = useState(false)
   const blockers = blockersOf(missing, nameTakenBy, t)
@@ -255,7 +259,21 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, na
       <div className={css.cardActions} data-shop-actions>
         {installed === undefined ? (
           <>
-            <InstallPanel target={installTarget} tier={entry.tier} missing={missing} blockers={blockers} missingStated flow={flow} t={t} restart={restart} restartSupported={restartSupported} reload={reload} />
+            {/* Suppressed only in the Installed view. There, membership
+              * (wave 2, `matched`) requires `installedByKey.has(key) ||
+              * uninstallFlow.view.kind !== 'idle'` — so inside this view
+              * `installed === undefined` can ONLY mean a phantom row: an
+              * uninstall that just settled. That view is management, not
+              * shelf (see `filtered`'s "Never in the Installed view" comment
+              * below), so a phantom row there must not offer to install the
+              * thing whose removal it is reporting. Everywhere else
+              * `inInstalledView` is false and this is unconditional, exactly
+              * as I-1 shipped it: on the default shelf a just-removed entry
+              * is still browsable, and a live Install button beside its
+              * uninstall receipt is the intended pairing. */}
+            {!inInstalledView && (
+              <InstallPanel target={installTarget} tier={entry.tier} missing={missing} blockers={blockers} missingStated flow={flow} t={t} restart={restart} restartSupported={restartSupported} reload={reload} />
+            )}
             {uninstallFlow.view.kind !== 'idle' && (
               // A completed uninstall stays mounted after installed() drops
               // this row (I-1): the row saying so is gone, but the flow keyed
@@ -1606,7 +1624,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
               const key = entryKey(entry)
               return (
                 <li key={key}>
-                  <EntryCard entry={entry} stars={starsOf(entry, stars)} installed={installedByKey.get(key)} missing={missingByKey.get(key) ?? []} nameTakenBy={nameTakenByKey.get(key)} t={t} flowFor={flows.flowFor} uninstallFlowFor={uninstallFlows.flowFor} restart={restart} restartSupported={restartSupported} reload={reload} setEnabled={setEnabled} />
+                  <EntryCard entry={entry} stars={starsOf(entry, stars)} installed={installedByKey.get(key)} missing={missingByKey.get(key) ?? []} nameTakenBy={nameTakenByKey.get(key)} t={t} flowFor={flows.flowFor} uninstallFlowFor={uninstallFlows.flowFor} restart={restart} restartSupported={restartSupported} reload={reload} setEnabled={setEnabled} inInstalledView={category === 'installed'} />
                 </li>
               )
             })}
