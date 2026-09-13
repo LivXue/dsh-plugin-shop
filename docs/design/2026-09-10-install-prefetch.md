@@ -241,11 +241,15 @@ The two excluded cases never enter the state at all, so for them the label is ex
 | --- | --- | --- |
 | `useInstall.ts:150` | `status.state !== 'running'` ends the poll | `isTerminalInstallState(status.state)` |
 | `present.ts:194` | `if (status.state === 'running')`, else fall through to done/failed | `if (!isTerminalInstallState(status.state))` |
-| `executor.ts:481` | `append` drops a line when `state !== 'running'` | `if (isTerminalInstallState(state)) return` — otherwise the download phase's own log lines are silently discarded, and §7's whole visibility argument fails quietly |
-| `useInstall.ts:143` | collects installs to poll by `view.kind === 'running'` | unchanged, because the view keeps that kind and carries a `phase` — a new view *kind* would leave a downloading install unpolled forever |
+| `executor.ts:483` | `append` drops a line when `state !== 'running'` | `if (isTerminalInstallState(state)) return` — otherwise the download phase's own log lines are silently discarded |
+| `index.ts:918` | `evictFinishedInstalls` counts anything not `'running'` as finished | `isTerminalInstallState(...)` — otherwise a queued install is evicted as live, and `installStatus` answers `found: false` for an install about to run |
+| `index.ts:927` | `hasRunningCommand` asks `=== 'running'` | `!isTerminalInstallState(...)` — otherwise a restart is permitted against a profile with installs queued, which F-5 exists to refuse |
+| `executor.ts:538`, `:584`, `:602` | `settle`, the child's `error` handler and the deadline timer each return early on `state !== 'running'` | **no change.** All three are created inside the chained task, whose first statement is `state = 'running'`, so `'downloading'` is unobservable at any of them; they guard double-settle, not terminality |
+| `useInstall.ts:143` | collects installs to poll by `view.kind === 'running'` | **no change**, because the view keeps that kind and carries a `phase` — a new view *kind* would leave a downloading install unpolled forever |
 
-Three of the four are the same mistake with different consequences: one stops the poll,
-one misreports the state, one throws away the evidence. None is a type error.
+Adding a second non-terminal state to a union that had exactly one does not produce a
+type error at a single one of these sites. Two are labels, two are silent data loss, and
+three are already correct for a reason worth writing down rather than rediscovering.
 
 ### One definition
 
