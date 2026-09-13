@@ -1,6 +1,8 @@
 # Activation model — design
 
-Status: **designed (2026-09-11), not implemented.** The shop replaces its
+Status: **implemented (2026-09-13).** Amended 2026-09-13 (§4.1): the
+uninstall receipt outlives the row it is attached to, which took three
+fixes to get right and is recorded so it is not rediscovered. The shop replaces its
 two-valued `needsRestart` with a three-valued `activation`, because a dsh
 plugin has two halves that go live by different routes and the shop has
 only ever reported on one of them. The authority spec
