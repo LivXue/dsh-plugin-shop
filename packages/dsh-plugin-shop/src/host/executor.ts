@@ -13,7 +13,7 @@ import { readProfileManifest, resolveProfileDir } from '@deepseek-ai/dsh-app-boo
 import { dshCommand, resolveDshScript, DSH_PACKAGE, type DshCliFs } from './dsh-cli.ts'
 import type { HotRestartReason } from './hot.ts'
 import type { Activation } from './activation.ts'
-import type { Prefetcher } from './prefetch.ts'
+import type { Prefetcher, PrefetchRequest } from './prefetch.ts'
 import { isTerminalInstallState, type InstallState } from '../shared/install-state.ts'
 
 export type { InstallState } from '../shared/install-state.ts'
@@ -320,7 +320,11 @@ export interface KillFns {
   taskkill: (pid: number) => void
 }
 
-const nodeKills: KillFns = {
+/** The real kill. Exported for the tests that inject a RECORDING `KillFns`:
+ * a recorder that only records asserts that a kill was requested and leaves
+ * the child running, which for a `detached` fixture is an immortal node
+ * process per run — see `prefetch.test.ts`'s delegating recorder. */
+export const nodeKills: KillFns = {
   killGroup: pid => process.kill(-pid, 'SIGKILL'),
   killPid: pid => process.kill(pid, 'SIGKILL'),
   taskkill: pid => { spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' }) },
@@ -555,8 +559,24 @@ function spawnPluginCli(options: {
   // passes neither `onStatus` nor anything else that can fail, leaving a push
   // and a byte count. A caller that passed BOTH a `prefetcher` and a throwing
   // `onStatus` would reopen that hole.
-  const prefetch = ahead > 0 && prefetcher !== undefined
-    ? prefetcher.request({
+  //
+  // The `catch` is the whole of "best-effort" at this seam, and it is load-
+  // bearing rather than defensive. This block runs AFTER the queue slot was
+  // taken and BEFORE the chained task exists, so a synchronous throw here —
+  // `resolveProfileDir` refuses an invalid profile name, and the pump can
+  // throw on a call it cannot even build — would do two things this feature
+  // may never do: escape `spawnPluginCli` and fail an install the prefetch is
+  // not allowed to fail, and skip `chain` entirely, so `leaveQueue` would
+  // never run and this profile's depth would stay `+1` for the life of the
+  // process — every later install in it reading `ahead > 0`, earning a
+  // pointless prefetch and a `Downloading…` label that is simply false. The
+  // `catch` announces the failure in the install's own log rather than
+  // swallowing it, the same announcement the pump makes for a batch it could
+  // not start.
+  let prefetch: PrefetchRequest | null = null
+  if (ahead > 0 && prefetcher !== undefined) {
+    try {
+      prefetch = prefetcher.request({
         profile,
         spec: target,
         // The profile directory decides which store pnpm picks, so the batch
@@ -565,7 +585,10 @@ function spawnPluginCli(options: {
         env,
         log: append,
       })
-    : null
+    } catch (error) {
+      append(`dsh-plugin-shop: the download phase could not start — ${(error as Error).message}`)
+    }
+  }
   if (prefetch?.started === true) {
     state = 'downloading'
   } else if (prefetch !== null) {
@@ -686,14 +709,22 @@ function spawnPluginCli(options: {
   })).finally(() => {
     // The queue slot is released once the command has ENDED — not when the
     // caller stops awaiting. `.finally` passes the value through, so
-    // `finished` still resolves with the InstallStatus it always did, and the
-    // task itself never rejects, so no rejection path is introduced here.
+    // `finished` still resolves with the InstallStatus it always did.
     leaveQueue(profile)
     // The pump is told this install no longer needs its batch: with nothing
     // else waiting on it, an in-flight `pnpm store add` is killed rather than
     // left to run out its bound.
     prefetcher?.release(profile, target)
   })
+
+  // `.finally` DERIVES a new promise, and a derived promise carries the
+  // rejection with it. `chain` absorbs one only for the promise it stores in
+  // `profileQueues` (`next.catch(() => {})`); nothing in `src/` attaches a
+  // handler to THIS one, so a rejection here would reach node as an
+  // `unhandledRejection` — process death by default, taking every install in
+  // flight with it. The task can reject: `dshCommand` and `beforeSpawn` run
+  // inside the `new Promise` executor below, and a throw there rejects it.
+  void finished.catch(() => {})
 
   return { installId, status, finished }
 }

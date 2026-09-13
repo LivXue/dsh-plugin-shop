@@ -185,8 +185,18 @@ export type InstallEvent =
   | { type: 'started'; installId: string; state: InstallState }
   | { type: 'status'; status: InstallStatusShape }
 
-/** The phase a non-terminal state renders as. */
-function phaseOf(state: InstallState): 'downloading' | 'installing' {
+/** The phase a non-terminal state renders as: the WIRE state the host
+ * reported (`InstallState`) mapped onto the phase the view carries. Exported
+ * because every hook that turns a start or a poll result into a view spells
+ * this same mapping, and three hand-copied ternaries are three chances for
+ * one of them to drift.
+ *
+ * Not to be confused with `installPhaseKey`, which is the OTHER direction and
+ * a different pair of values: view phase → the locale key to render. They
+ * happen to share two spellings today and that is a coincidence of naming,
+ * not a reason to fuse them — the wire union and the locale key set are free
+ * to diverge. */
+export function phaseOf(state: InstallState): 'downloading' | 'installing' {
   return state === 'downloading' ? 'downloading' : 'installing'
 }
 

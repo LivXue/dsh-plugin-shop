@@ -6,7 +6,7 @@
 
 import { useCallback, useState } from 'react'
 import type { ShopInstallStatusResult, ShopUpdateResult } from '../host/index.ts'
-import type { InstallView } from './present.ts'
+import { phaseOf, type InstallView } from './present.ts'
 import { usePollStatus } from './useInstall.ts'
 
 export interface UseUpdateSelfResult {
@@ -30,7 +30,7 @@ export function useUpdateSelf(
         setView({ kind: 'failed', detail: result.detail, log: [] })
         return
       }
-      setView({ kind: 'running', installId: result.installId, log: [], phase: result.state === 'downloading' ? 'downloading' : 'installing' })
+      setView({ kind: 'running', installId: result.installId, log: [], phase: phaseOf(result.state) })
     } catch {
       // Same transport-failure rule as useInstall/useUninstall: the thrown
       // wire detail (hosts and ports) is private and never rendered — the

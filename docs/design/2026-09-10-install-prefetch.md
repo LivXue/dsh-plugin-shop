@@ -1,7 +1,7 @@
 # Parallel download, serial install — design
 
 Date: 2026-09-10
-Status: specifies unbuilt behaviour. No code implements it. §7.2 of the main design gains its amendment in the implementing change, not here — until then the mutex step described there is what ships.
+Status: implemented. `686586f` is the implementing change, and it is also where the main design's §7.2 gained its amendment rather than here — step 5 there now carries the download phase in front of the mutex. This document stays the owner of every measurement behind it.
 
 ## 1. The complaint, and what it actually was
 
@@ -237,15 +237,19 @@ The two excluded cases never enter the state at all, so for them the label is ex
 
 ### Sites that test terminality by exclusion, and what each needs
 
+The site anchors point at the tree this change landed on, which is also the code the
+`required` column describes. The `today` column quotes each site's code as it stood
+before it, and is deliberately not anchored — those lines no longer exist.
+
 | site | today | required |
 | --- | --- | --- |
-| `useInstall.ts:150` | `status.state !== 'running'` ends the poll | `isTerminalInstallState(status.state)` |
-| `present.ts:194` | `if (status.state === 'running')`, else fall through to done/failed | `if (!isTerminalInstallState(status.state))` |
-| `executor.ts:483` | `append` drops a line when `state !== 'running'` | `if (isTerminalInstallState(state)) return` — otherwise the download phase's own log lines are silently discarded |
-| `index.ts:918` | `evictFinishedInstalls` counts anything not `'running'` as finished | `isTerminalInstallState(...)` — otherwise a queued install is evicted as live, and `installStatus` answers `found: false` for an install about to run |
-| `index.ts:927` | `hasRunningCommand` asks `=== 'running'` | `!isTerminalInstallState(...)` — otherwise a restart is permitted against a profile with installs queued, which F-5 exists to refuse |
-| `executor.ts:538`, `:584`, `:602` | `settle`, the child's `error` handler and the deadline timer each return early on `state !== 'running'` | **no change.** All three are created inside the chained task, whose first statement is `state = 'running'`, so `'downloading'` is unobservable at any of them; they guard double-settle, not terminality |
-| `useInstall.ts:143` | collects installs to poll by `view.kind === 'running'` | **no change**, because the view keeps that kind and carries a `phase` — a new view *kind* would leave a downloading install unpolled forever |
+| `useInstall.ts:151` | `status.state !== 'running'` ends the poll | `isTerminalInstallState(status.state)` |
+| `present.ts:221` | `if (status.state === 'running')`, else fall through to done/failed | `if (!isTerminalInstallState(status.state))` |
+| `executor.ts:518` | `append` drops a line when `state !== 'running'` | `if (isTerminalInstallState(state)) return` — otherwise the download phase's own log lines are silently discarded |
+| `index.ts:938` | `evictFinishedInstalls` counts anything not `'running'` as finished | `isTerminalInstallState(...)` — otherwise a queued install is evicted as live, and `installStatus` answers `found: false` for an install about to run |
+| `index.ts:951` | `hasRunningCommand` asks `=== 'running'` | `!isTerminalInstallState(...)` — otherwise a restart is permitted against a profile with installs queued, which F-5 exists to refuse |
+| `executor.ts:633`, `:679`, `:697` | `settle`, the child's `error` handler and the deadline timer each return early on `state !== 'running'` | **no change.** All three are created inside the chained task, whose first statement is `state = 'running'`, so `'downloading'` is unobservable at any of them; they guard double-settle, not terminality |
+| `useInstall.ts:144` | collects installs to poll by `view.kind === 'running'` | **no change**, because the view keeps that kind and carries a `phase` — a new view *kind* would leave a downloading install unpolled forever |
 
 Adding a second non-terminal state to a union that had exactly one does not produce a
 type error at a single one of these sites. Two are labels, two are silent data loss, and
@@ -253,9 +257,10 @@ three are already correct for a reason worth writing down rather than rediscover
 
 ### One definition
 
-`InstallState` is currently declared twice — `executor.ts:16` and `present.ts:128`
-each spell the literal union, with nothing keeping them in agreement. Adding a variant
-is the moment to move it to `src/shared/` and have both read one definition.
+`InstallState` was declared twice — `executor.ts` and `present.ts` each spelled the
+literal union, with nothing keeping them in agreement. Adding a variant was the moment
+to move it to `src/shared/install-state.ts` and have both read one definition, which is
+what this change does.
 
 ## 6. Degradation
 

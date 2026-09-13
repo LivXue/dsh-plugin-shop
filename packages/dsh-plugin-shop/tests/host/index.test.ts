@@ -30,9 +30,10 @@ const TEMP_ROOT = fileTempRoot('index')
  * self-update cases. The profile those batches run in exists — the file pins
  * DSH_HOME to a fixture home — so nothing about this is inert.
  *
- * One binary for the file, one fresh pump per gateway: the pump batches per
- * profile inside itself, so sharing one instance across cases would let one
- * case's batch serve another's install.
+ * One fresh pump AND one fresh fixture binary per gateway, not one of either
+ * per file: the pump batches per profile inside itself, so sharing one
+ * instance across cases would let one case's batch serve another's install —
+ * and a shared binary would append every case's batch to one `pnpm.log`.
  */
 function fixturePnpmBin(): string {
   return fakePnpm(mkdtempSync(join(TEMP_ROOT, 'dsh-gateway-pnpm-')))

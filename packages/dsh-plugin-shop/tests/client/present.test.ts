@@ -4,11 +4,10 @@ import {
   uninstallActivationNoticeKey,
   authorOf, hasGithubHome, heldBy, isCustomLicense, isShopLike, missingPeersOf,
   nextVisibleCount, npmPageUrl,
-  reduceInstall, type InstallView,
+  installPhaseKey, reduceInstall, type InstallView,
   reviewHashPin, sortByStars, starsOf, tierKey,
 } from '../../src/client/present.ts'
 import { en, zh } from '../../src/client/locales.ts'
-import { installPhaseKey } from '../../src/client/present.ts'
 import type { CatalogEntry } from '../../src/host/index.ts'
 import type { InstallState } from '../../src/shared/install-state.ts'
 

@@ -2,6 +2,7 @@ import { spawn as nodeSpawn, type SpawnOptions } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
+import { nodeKills, type KillFns } from '../../src/host/executor.ts'
 import { createPrefetcher, isPrefetchableSpec, type SpawnFn } from '../../src/host/prefetch.ts'
 import { fakePnpm } from '../fixtures/fake-pnpm.ts'
 import { fileTempRoot } from './temp-root.ts'
@@ -41,6 +42,25 @@ const recording = (calls: Spawned[], run: SpawnFn = nodeSpawn): SpawnFn => (comm
  * the network, while a node that ends immediately still drives the pump's own
  * event path for real. */
 const standIn: SpawnFn = () => nodeSpawn(process.execPath, ['-e', ''], { stdio: 'ignore' })
+
+/** A `KillFns` that records the kill AND performs it.
+ *
+ * Recording alone is how the two hang cases below were written, and it leaks
+ * a process per run: the fixture child is spawned `detached` with
+ * `stdio: 'ignore'`, so one that is never really killed reparents to PID 1
+ * and outlives the run — and the vitest worker — indefinitely. Measured
+ * 2026-09-13: sixty of them alive at once on one machine, the oldest up 3d9h
+ * at 13-35 MB each, and a full-file run of this suite adds two more. The
+ * repository keeps a dedicated guard test for temp-directory leaks; a leaked
+ * process is the same class and, unlike a temp directory, nothing later
+ * reclaims it. So the recorder delegates to `nodeKills`, the real handler
+ * `killTree` defaults to, and the assertions that a kill was REQUESTED are
+ * unchanged. */
+const recordingKills = (killed: number[]): KillFns => ({
+  killGroup: pid => { killed.push(pid); nodeKills.killGroup(pid) },
+  killPid: pid => { killed.push(pid); nodeKills.killPid(pid) },
+  taskkill: pid => { killed.push(pid); nodeKills.taskkill(pid) },
+})
 
 describe('isPrefetchableSpec', () => {
   it('accepts the npm and github forms', () => {
@@ -183,7 +203,7 @@ describe('the prefetch pump', () => {
     const prefetcher = createPrefetcher({
       pnpmBin: fakePnpm(dir, { hang: true }),
       timeoutMs: 60,
-      kills: { killGroup: pid => killed.push(pid), killPid: pid => killed.push(pid), taskkill: pid => killed.push(pid) },
+      kills: recordingKills(killed),
     })
     prefetcher.request({ profile: 'web', spec: 'a@1', cwd: dir })
     // Polled for the same reason: the bound is what fires, and a sleep long
@@ -198,7 +218,7 @@ describe('the prefetch pump', () => {
     const prefetcher = createPrefetcher({
       pnpmBin: fakePnpm(dir, { hang: true }),
       spawn: recording(calls),
-      kills: { killGroup: pid => killed.push(pid), killPid: pid => killed.push(pid), taskkill: pid => killed.push(pid) },
+      kills: recordingKills(killed),
     })
     prefetcher.request({ profile: 'web', spec: 'a@1', cwd: dir })
     // The release has to land while the batch is running or it exercises a

@@ -1350,4 +1350,85 @@ describe('the download phase in front of the queue', () => {
     await first.finished
     await second.finished
   })
+
+  it('installs cold when the pump throws, and leaves the queue depth balanced', async () => {
+    // The strongest reading of "best-effort": a synchronous throw out of the
+    // pump is the one prefetch failure that can change whether an install
+    // succeeds. `request` is called AFTER the queue slot was taken and BEFORE
+    // the chained task exists, so an escaping throw does two things this
+    // feature may never do — fail an install the prefetch is not allowed to
+    // fail, and skip `chain`, so `leaveQueue` never runs and this profile's
+    // depth stays `+1` for the life of the process. Every later install in
+    // that profile then reads `ahead > 0`, earns a pointless prefetch and a
+    // `Downloading…` label that is simply false — exactly what the
+    // `profileDepth` comment exists to prevent.
+    //
+    // Injecting the pump rather than giving it a bad profile name is what
+    // isolates the prefetch: `resolveProfileDir` on an invalid name is the
+    // other way into this same throw, and it would take the spawn down with
+    // it, so the install's own fate could not be told from the pump's.
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-phase-throw-'))
+    const bin = fakeDsh(dir, 'process.exit(0)')
+    const env = { DSH_HOME: prefetchHome(dir, 'phase-throw') }
+    const holder = startInstall({ profile: 'phase-throw', spec: 'a@1', dshBin: bin, env })
+    const attempts: string[] = []
+    const throwing: Prefetcher = {
+      request: ({ spec }) => { attempts.push(spec); throw new Error('pump exploded') },
+      release: () => {},
+    }
+    // Reaching the next line at all is half the assertion: an escaping throw
+    // would end this case right here, with the pump's own error.
+    const second = startInstall({ profile: 'phase-throw', spec: 'b@1', dshBin: bin, prefetcher: throwing, env })
+    expect(attempts).toEqual(['b@1'])
+    // Reported rather than swallowed, in the install's own log.
+    expect(second.status().log.some(line => line.includes('the download phase could not start'))).toBe(true)
+    expect(second.status().log.some(line => line.includes('pump exploded'))).toBe(true)
+    expect(await second.finished).toMatchObject({ state: 'done' })
+    await holder.finished
+    // The depth went back to zero, so the next install into this profile has
+    // nothing to overlap and the pump is never asked. A leaked slot is
+    // invisible from the install's own status — this is the only place it
+    // shows.
+    const next: string[] = []
+    const third = startInstall({ profile: 'phase-throw', spec: 'c@1', dshBin: bin, prefetcher: recordingPrefetcher(next), env })
+    expect(next).toEqual([])
+    await third.finished
+  })
+})
+
+describe('a chained task that rejects', () => {
+  it('does not take the host process down with an unhandled rejection', async () => {
+    // `finished` is `chain(...).finally(...)`, and `.finally` DERIVES a new
+    // promise: `chain` absorbs a rejection only for the promise it stores in
+    // `profileQueues` (`next.catch(() => {})`), and nothing in `src/` attaches
+    // a handler to this one. A rejection that reaches node unhandled is an
+    // `unhandledRejection`, which by default kills the process — taking every
+    // install in flight with it, which is the one thing the prefetch may never
+    // do. The task CAN reject: `beforeSpawn` and `dshCommand` run inside the
+    // `new Promise` executor.
+    //
+    // An invalid profile name is the reachable path to it that needs no
+    // injection: `readProfileDependencies` calls `resolveProfileDir` outside
+    // its own try/catch, so `beforeSpawn` throws. The `expectedName` is what
+    // wires that callback.
+    //
+    // No handler is attached to `finished` here, deliberately: a test that
+    // awaited it with `.catch` would be attaching the very handler whose
+    // absence is the defect, and would pass either way.
+    const bin = fakeDsh(mkdtempSync(join(TEMP_ROOT, 'dsh-reject-')), 'process.exit(0)')
+    const seen: unknown[] = []
+    const onRejection = (reason: unknown): void => { seen.push(reason) }
+    process.on('unhandledRejection', onRejection)
+    try {
+      startInstall({ profile: '../escape', spec: 'a@1', dshBin: bin, expectedName: 'dsh-hello-plugin' })
+      // Long enough for the task to have run and for node to have reported a
+      // rejection it was never given a handler for. This waits on an ABSENCE,
+      // so a loaded machine running the timer late can only give the
+      // rejection more turns to surface, never fewer.
+      await new Promise(resolve => setTimeout(resolve, 100))
+      expect(seen).toEqual([])
+    } finally {
+      process.off('unhandledRejection', onRejection)
+    }
+  })
 })

@@ -1,10 +1,9 @@
 /** Install driving hooks: the shared poll loop, and the tab's keyed registry. */
 
 import { useCallback, useEffect, type Dispatch, type SetStateAction } from 'react'
-import { INSTALL_POLL_MS, reduceInstall, type InstallView } from './present.ts'
+import { INSTALL_POLL_MS, phaseOf, reduceInstall, type InstallView } from './present.ts'
 import { useKeyedFlows, type KeyedFlow, type UseKeyedFlows } from './useFlows.ts'
 import type { InstallArgs, ShopInstallResult, ShopInstallStatusResult } from '../host/index.ts'
-import { isTerminalInstallState } from '../shared/install-state.ts'
 
 /** The single-view poll loop: while the view is `running`, poll once per
  * second and fold each status through the reducer. A poll failure is
@@ -52,7 +51,7 @@ export function useInstallFlows(
     try {
       const result = await install(args)
       if (!result.ok) return { kind: 'rejected', code: result.code, detail: result.detail }
-      return { kind: 'running', installId: result.installId, log: [], phase: result.state === 'downloading' ? 'downloading' : 'installing' }
+      return { kind: 'running', installId: result.installId, log: [], phase: phaseOf(result.state) }
     } catch {
       // A thrown install is a TRANSPORT failure (the wire envelope rejected —
       // index.ts's unwrap throws the prefixed wire code and message), not a
