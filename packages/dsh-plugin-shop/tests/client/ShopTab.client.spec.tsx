@@ -585,6 +585,40 @@ describe('ShopTab', () => {
     expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-reload]')).toBeTruthy()
   })
 
+  it('keeps the reload cue mounted under the Installed filter after an uninstall drops the row', async () => {
+    // The same failure as the test above, one level up. I-1's fix keeps
+    // UninstallPanel mounted once EntryCard renders for this entry
+    // (ShopTab.tsx ~L259, `uninstallFlow.view.kind !== 'idle'`) — but that
+    // guard only runs if EntryCard renders AT ALL, and under the Installed
+    // filter `matched` used to decide that from `installedByKey` membership
+    // alone. The instant the post-uninstall refresh drops this row from the
+    // installed projection, the Installed filter dropped the entry from the
+    // shelf before I-1's guard ever got a chance to run — taking the card,
+    // the done view, and the reload button with it.
+    const { injected, installStatus, installed } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }])
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'reload' })
+    // Same drop-on-second-call shape as the test above: the installed
+    // projection reports the row gone once the uninstall lands.
+    installed
+      .mockResolvedValueOnce([{ name: 'dsh-hello-plugin', source: 'npm', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }])
+      .mockResolvedValue([])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+
+    // Step 1 of the repro: the reader filters to Installed BEFORE removing
+    // anything, a natural first move when cleaning plugins up.
+    fireEvent.click(container.querySelector('[data-shop-category-installed]') as HTMLElement)
+    expect(screen.getByText('dsh-hello-plugin')).toBeTruthy()
+
+    fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-uninstall]')!)
+    await waitFor(() => expect(screen.getByText(en.uninstalledReloadNotice)).toBeTruthy(), { timeout: 3000 })
+    // The installed projection catches up (the row is gone) without the
+    // Installed filter erasing the card — and the reload cue on it — that is
+    // still showing the uninstall's outcome.
+    await waitFor(() => expect(installed).toHaveBeenCalledTimes(2), { timeout: 3000 })
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-reload]')).toBeTruthy()
+  })
+
   it('offers the restart button after a successful install, gated by the cost notice', async () => {
     const { injected } = bench(snapshot({ tier: 'verified' }))
     const { container } = renderTab(injected)

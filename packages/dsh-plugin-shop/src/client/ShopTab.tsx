@@ -1187,7 +1187,18 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     const q = query.trim().toLowerCase()
     return sortedBrowsable.filter(entry => {
       if (category === 'installed') {
-        if (!installedByKey.has(entryKey(entry))) return false
+        // The Installed view's half of the same rule EntryCard already
+        // applies one level down (I-1: `uninstallFlow.view.kind !== 'idle'`
+        // keeps UninstallPanel mounted after `installed()` drops the row).
+        // That guard only runs if EntryCard renders at all, and membership
+        // here used to be `installedByKey` alone — so the same refresh that
+        // drops the row from the projection also dropped it from THIS
+        // filter, unmounting the card (and its done view, and any
+        // reload/restart cue) before I-1's guard ever got a chance to run.
+        // Keeping the entry while its uninstall flow is still showing an
+        // outcome closes that gap the same way I-1 did for the card itself.
+        const key = entryKey(entry)
+        if (!installedByKey.has(key) && uninstallFlows.flowFor(key).view.kind === 'idle') return false
       } else if (category !== null && categoryKey(entry) !== categoryLocaleKey(category)) {
         return false
       }
@@ -1198,7 +1209,11 @@ export function ShopTab(props: ShopTabProps): ReactNode {
         || summaryEn.toLowerCase().includes(q)
         || summaryZh.toLowerCase().includes(q)
     })
-  }, [sortedBrowsable, query, category, installedByKey])
+    // `uninstallFlows.flowFor` (not `uninstallFlows` itself) is the dependency:
+    // it is a `useCallback` whose own deps are `[views, start, reset]`, so its
+    // identity changes exactly when a flow's view changes — which is exactly
+    // when this memo needs to recompute to keep or drop a settled row.
+  }, [sortedBrowsable, query, category, installedByKey, uninstallFlows.flowFor])
 
   // Never in the Installed view. That view is management, not shelf: an
   // installed plugin that is up to date appears in exactly one place — its
