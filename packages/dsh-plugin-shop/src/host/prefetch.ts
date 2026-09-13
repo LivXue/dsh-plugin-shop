@@ -13,9 +13,9 @@
  * install SUCCEEDS may depend on this module.
  */
 
-import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process'
+import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import { jsEntryCommand } from './dsh-cli.ts'
-import { killTree, type KillFns } from './executor.ts'
+import { killTree, shellSafeTarget, type KillFns } from './executor.ts'
 
 /** How long one batch may run before it is killed. Far below
  * `INSTALL_TIMEOUT_MS`: a batch still running after this is no longer hiding
@@ -63,6 +63,17 @@ export interface Prefetcher {
 
 type Log = (line: string) => void
 
+/** The one call this module makes on `spawn`: the argv form, whose child
+ * carries the `error`/`exit` listeners `start` needs. `typeof nodeSpawn` is an
+ * overload set that also admits two-argument forms this module never builds a
+ * command line for, and a test's recording wrapper cannot satisfy those — so
+ * the seam is named, and a caller still passes `spawn` itself. */
+export type SpawnFn = (
+  command: string,
+  args: readonly string[],
+  options: SpawnOptions,
+) => ChildProcess
+
 interface Lane {
   /** Spec → the log of the install waiting on it, for specs not yet sent. */
   pending: Map<string, Log>
@@ -79,7 +90,7 @@ interface Lane {
 
 export function createPrefetcher(options: {
   pnpmBin?: string
-  spawn?: typeof nodeSpawn
+  spawn?: SpawnFn
   platform?: NodeJS.Platform
   execPath?: string
   timeoutMs?: number
@@ -130,17 +141,58 @@ export function createPrefetcher(options: {
     const argv = ['store', 'add', ...specs]
     // pnpm on Windows is a `.cmd` shim, and node has refused `.cmd` without a
     // shell since the 2024 batfile fix; dsh's own answer for the same problem
-    // is `shell: win32`. Every spec reaching that command line has already
-    // passed `executor.ts`'s UNSAFE_TARGET gate — which refuses `"` — before
-    // this module is called, so no quote here can be anything but ours.
+    // is `shell: true`, and the quoting below is what that shell makes
+    // necessary. Under a shell node does not escape argv — it joins the array
+    // into ONE cmd.exe command line — and `&`, which `executor.ts`'s
+    // UNSAFE_TARGET deliberately lets through for the legitimate
+    // `&#path:<subdir>` monorepo form, is a cmd separator. Unquoted, a
+    // `github:owner/slug#<sha>&path:<subdir>` spec reaches pnpm as the
+    // repository ROOT and warms that instead — silently, because the
+    // `&path:...` tail happens to be a cmd builtin that succeeds and prints
+    // nothing — while a spec shaped `evil&<command-on-PATH>` runs that command
+    // instead of the batch. So each spec gets the same quoting
+    // `executor.ts` applies to its own operand, under exactly the condition
+    // that creates the shell: off Windows, and for a JS entry routed through
+    // node, argv reaches the child verbatim and a quote would be a literal
+    // character in the spec.
+    //
+    // The design doc's §Windows asks for exactly this: "the existing
+    // UNSAFE_TARGET gate and shellSafeTarget() … apply unchanged and must be
+    // applied here too".
+    //
+    // What makes that quote safe is UNSAFE_TARGET's refusal of `"`, which is
+    // the caller's guarantee and not this module's: a spec has to have passed
+    // the gate before `request` sees it. This comment used to claim that
+    // guarantee for itself — "no quote here can be anything but ours" — while
+    // emitting no quote at all, which is how the bare `&` above got through.
     const routed = jsEntryCommand(pnpmBin, argv, execPath)
-    const child = spawn(routed?.command ?? pnpmBin, routed?.args ?? argv, {
-      cwd: current.cwd,
-      env: current.env,
-      stdio: 'ignore',
-      detached: platform !== 'win32',
-      shell: routed === null && platform === 'win32',
-    })
+    const shell = routed === null && platform === 'win32'
+    const args = shell ? argv.map(arg => shellSafeTarget(arg, platform)) : (routed?.args ?? argv)
+    let child: ChildProcess
+    try {
+      child = spawn(routed?.command ?? pnpmBin, args, {
+        cwd: current.cwd,
+        env: current.env,
+        stdio: 'ignore',
+        detached: platform !== 'win32',
+        shell,
+      })
+    } catch (error) {
+      // `spawn` throws synchronously only for a call it cannot even build (a
+      // NUL byte, an option it refuses) — a missing binary arrives as an async
+      // `error` instead. Nothing above can catch this one: `start` runs from
+      // `request`'s microtask or from a child's own event handler, so an
+      // escaping throw is an uncaughtException, and node's default handler for
+      // one takes down the host process and every install in flight with it.
+      // That is the one failure that CAN decide whether an install succeeds,
+      // which is the single thing this module may never do. So: the same
+      // announcement the `error` handler below makes for anything but ENOENT,
+      // then `finish`, which clears the batch and restarts the lane if specs
+      // queued behind it. `executor.ts` wraps its own spawn for this reason.
+      announce(current, `dsh-plugin-shop: the download phase could not start — ${(error as Error).message}`)
+      finish(profile, current)
+      return
+    }
     current.child = child
     // `killTree` takes effect asynchronously, and both the timeout path below
     // and `release` move on without waiting for the OS to reap the child —
