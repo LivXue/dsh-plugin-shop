@@ -7,7 +7,7 @@
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
-import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Activation, type Category, activationNoticeKey, uninstallActivationNoticeKey, authorOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatSize, formatStars, hasGithubHome, heldBy, identityKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, rejectionCodeKey, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
+import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Activation, type Category, activationNoticeKey, uninstallActivationNoticeKey, authorOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatSize, formatStars, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, rejectionCodeKey, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
 import { useInstallFlows, type InstallFlow } from './useInstall.ts'
 import { useUninstallFlows, type UninstallFlow } from './useUninstall.ts'
 import { useUpdateSelf } from './useUpdateSelf.ts'
@@ -447,7 +447,7 @@ function InstallPanel({ target, tier, missing, blockers, missingStated = false, 
   if (view.kind === 'running') {
     return (
       <div className={css.installPanel}>
-        <p className={css.installing}>{t('installing')}</p>
+        <p className={css.installing}>{t(installPhaseKey(view.phase))}</p>
         {view.log.length > 0 && (
           <div className={css.log}>
             {view.log.map((line, index) => <div key={index} className={css.logLine}>{line}</div>)}
@@ -1515,7 +1515,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
       </div>
       {selfUpdate.view.kind === 'running' && (
         <div className={css.selfUpdatePanel} data-shop-self-updating>
-          <p className={css.installing}>{t('installing')}</p>
+          <p className={css.installing}>{t(installPhaseKey(selfUpdate.view.phase))}</p>
           {selfUpdate.view.log.length > 0 && (
             <div className={css.log}>
               {selfUpdate.view.log.map((line, index) => <div key={index} className={css.logLine}>{line}</div>)}

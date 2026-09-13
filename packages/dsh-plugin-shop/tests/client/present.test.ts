@@ -7,6 +7,8 @@ import {
   reduceInstall, type InstallView,
   reviewHashPin, sortByStars, starsOf, tierKey,
 } from '../../src/client/present.ts'
+import { en, zh } from '../../src/client/locales.ts'
+import { installPhaseKey } from '../../src/client/present.ts'
 import type { CatalogEntry } from '../../src/host/index.ts'
 import type { InstallState } from '../../src/shared/install-state.ts'
 
@@ -716,5 +718,17 @@ describe('heldBy', () => {
 
   it('names an npm holder with the token the host refusal uses', () => {
     expect(heldBy(repoEntry, { 'dsh-hello-plugin': '^2.0.0' })).toBe('npm:dsh-hello-plugin')
+  })
+})
+
+describe('installPhaseKey', () => {
+  it('names a copy key for each phase, and both dictionaries carry it', () => {
+    expect(installPhaseKey('downloading')).toBe('downloading')
+    expect(installPhaseKey('installing')).toBe('installing')
+    for (const key of ['downloading', 'installing'] as const) {
+      expect(en[key]).toBeTruthy()
+      expect(zh[key]).toBeTruthy()
+      expect(en[key]).not.toBe(zh[key])
+    }
   })
 })

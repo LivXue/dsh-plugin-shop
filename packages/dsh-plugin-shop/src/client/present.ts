@@ -54,6 +54,13 @@ export function uninstallActivationNoticeKey(activation: Activation): ShopLocale
   return activation === 'reload' ? 'uninstalledReloadNotice' : 'uninstalledLiveNotice'
 }
 
+/** The copy key for one install phase. A function rather than an inline
+ * ternary in the JSX so it is unit-testable: the tab's only test seam is a
+ * whole-tab render driven by injected RPCs, which cannot be handed one view. */
+export function installPhaseKey(phase: 'downloading' | 'installing'): ShopLocaleKey {
+  return phase === 'downloading' ? 'downloading' : 'installing'
+}
+
 /** Tier → locale key, for the entry-card tier badge (§6.2). */
 export function tierKey(tier: CatalogEntry['tier']): ShopLocaleKey {
   switch (tier) {
