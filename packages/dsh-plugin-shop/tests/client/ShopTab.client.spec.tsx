@@ -54,7 +54,7 @@ function bench(
   const catalog = vi.fn<ShopTabInjected['catalog']>().mockResolvedValue(catalogResult)
   const install = vi.fn<ShopTabInjected['install']>().mockResolvedValue({ ok: true, installId: 'i1' })
   const installStatus = vi.fn<ShopTabInjected['installStatus']>().mockResolvedValue({ found: true, state: 'done', log: [], activation: 'restart' })
-  const setEnabled = vi.fn<ShopTabInjected['setEnabled']>().mockResolvedValue({ ok: true })
+  const setEnabled = vi.fn<ShopTabInjected['setEnabled']>().mockResolvedValue({ ok: true, activation: 'live' })
   const rows: ShopInstalledEntry[] = installedEntries.map(row => ({ source: 'npm', ...row }))
   const installed = vi.fn<ShopTabInjected['installed']>().mockResolvedValue(rows)
   const derived: Record<string, string> = {}
@@ -2369,6 +2369,26 @@ describe('ShopTab staleness cues', () => {
     // the state from before it. The second changed nothing, so the staleness
     // it did not cause must not be dismissed along with its error: "needs a
     // reload" is a sticky fact about the page, not a field of the last reply.
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-reload]')).toBeTruthy()
+  })
+
+  it('offers the reload when a toggle answers without an activation', async () => {
+    const { injected, setEnabled } = bench(snapshot(), [{
+      name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true,
+    }])
+    // The result type makes an absent `activation` unspellable — but the WIRE
+    // is not the type. A tab can outlive a shop self-update by one reload and
+    // then be talking to the OLD in-process host, which answers the old shape
+    // until dsh restarts. `present.ts` states the rule for installs: an absent
+    // field must never be read as the cheaper outcome, because that publishes
+    // a success claim the host never made. The toggle read it the other way —
+    // "applied without a restart", and no cue — which is the §0 incident.
+    setEnabled.mockResolvedValue({ ok: true } as never)
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+
+    fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-toggle]') as HTMLElement)
+    await waitFor(() => expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-hot-apply]')).toBeTruthy())
     expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-reload]')).toBeTruthy()
   })
 

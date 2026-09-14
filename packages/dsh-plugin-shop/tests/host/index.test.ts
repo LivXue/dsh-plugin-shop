@@ -10,6 +10,7 @@ import type { CatalogResult, CatalogSnapshot, LoadCatalogOptions } from '../../s
 import type { CatalogEntry } from '../../src/host/types.ts'
 import { fakeDsh, fakeDshRecording, fakeDshRemovingManifest } from '../fixtures/fake-dsh.ts'
 import { fileTempRoot } from './temp-root.ts'
+import { memHotFs } from './mem-fs.ts'
 
 const TEMP_ROOT = fileTempRoot('index')
 
@@ -1450,6 +1451,10 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
      * Exists for the one test that needs a `remove` invocation to actually
      * delete the package's manifest — see `fakeDshRemovingManifest`. */
     dshBin?: (profileDir: string) => string
+    /** The `hasClientHalf` read seam. Lets a test state what each VERSION of
+     * a package declares, which a real manifest on disk cannot express: the
+     * old one is overwritten by the time `afterDone` runs. */
+    hotFs?: ShopGatewayOptions['hotFs']
   }): { gateway: ShopGateway; profileDir: string } {
     const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-hot-profile-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
@@ -1466,6 +1471,7 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
       loadCatalog: async () => ({ snapshot, stale: false }) as CatalogResult,
       hot: options.hot,
       loaderEntries: options.loaderEntries,
+      hotFs: options.hotFs,
       ...(options.dshBin !== undefined ? { dshBin: options.dshBin(profileDir) } : {}),
     })
     return { gateway, profileDir }
@@ -1626,6 +1632,72 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     const status = await pollTerminal(gateway, result.installId)
     expect(status.state).toBe('done')
     expect(status.activation).toBe('live')
+  })
+
+  it('reports activation restart when the uninstalled plugin will not go down', async () => {
+    const entry: LoaderEntryLike = {
+      id: 'dsh-goodbye-plugin-row',
+      options: { name: 'dsh-goodbye-plugin/host' },
+      // Every update is accepted and the fiber never clears: the row is
+      // disabled in the user layer, but the instance is still running.
+      fiber: {},
+      update: vi.fn(async () => {}),
+    }
+    const { gateway } = hotGateway({
+      dependencies: { 'dsh-goodbye-plugin': '1.0.0' },
+      // `hotUnmount` resolves false: this plugin was composed at boot, not
+      // hot-mounted by the shop this session, so that arm removes nothing.
+      hot: { mount: hotMount, unmount: hotUnmount },
+      loaderEntries: () => [entry],
+    })
+    const result = await gateway.uninstall({ name: 'dsh-goodbye-plugin' })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const status = await pollTerminal(gateway, result.installId)
+    expect(status.state).toBe('done')
+    // The dependency is gone and nothing comes back at the next boot, but the
+    // fiber is up NOW — so "Removed and stopped immediately" is a false claim
+    // about privilege revocation, and a restart is the honest advice. The
+    // verdict that answers this was already computed here, and discarded.
+    expect(status.activation).toBe('restart')
+    expect(entry.update).toHaveBeenCalledTimes(3)
+  })
+
+  it('reports activation reload when an update removes the package browser half', async () => {
+    const hotFs = memHotFs()
+    const mount = vi.fn(async (_ctx: unknown, dir: string, name: string): Promise<HotMountResult> => {
+      // By the time the mount runs, the new tarball has overwritten the
+      // manifest — and this version declares no browser half any more.
+      hotFs.write(join(dir, 'node_modules', name, 'package.json'), JSON.stringify({ name }))
+      return { ok: true, reason: null }
+    })
+    const { gateway, profileDir } = hotGateway({
+      // Same spelling as the sibling update test: the fake CLI rewrites no
+      // manifest, and the post-install confirm reads DSH_HOME's fixture
+      // profile — which lists dsh-hello-plugin and not dsh-goodbye-plugin.
+      dependencies: { 'dsh-hello-plugin': '1.2.0' },
+      hot: { mount, unmount: hotUnmount },
+      loaderEntries: () => [],
+      hotFs,
+    })
+    // The version on disk when the update starts HAS a browser half, and
+    // the open tab is running that bundle right now.
+    hotFs.write(join(profileDir, 'node_modules', 'dsh-hello-plugin', 'package.json'), JSON.stringify({
+      name: 'dsh-hello-plugin',
+      dsh: { client: { inject: [], platform: 'web' } },
+    }))
+
+    const started = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
+    expect(started.ok).toBe(true)
+    if (!started.ok) return
+    const status = await pollTerminal(gateway, started.installId)
+    expect(status.state).toBe('done')
+    // Reading only in `afterDone` answers about the NEW version — `live`,
+    // "nothing to do" — while the tab still holds the old bundle and the
+    // served graph no longer does. That is the withheld reload this whole
+    // design exists to prevent, reached from the other direction.
+    expect(status.activation).toBe('reload')
+    expect(mount).toHaveBeenCalledTimes(1)
   })
 
   it('self-update still reports activation restart — no hot path is wired', async () => {

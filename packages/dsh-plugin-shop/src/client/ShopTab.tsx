@@ -7,7 +7,7 @@
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
-import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Activation, type Category, activationNoticeKey, authorOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatSize, formatStars, hasGithubHome, heldBy, identityKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, rejectionCodeKey, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
+import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Category, activationNoticeKey, authorOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatSize, formatStars, hasGithubHome, heldBy, identityKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, rejectionCodeKey, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
 import { useInstallFlows, type InstallFlow } from './useInstall.ts'
 import { useUninstallFlows, type UninstallFlow } from './useUninstall.ts'
 import { useUpdateSelf } from './useUpdateSelf.ts'
@@ -824,7 +824,7 @@ function EnabledSwitch({ row, t, setEnabled, reload }: {
   reload: () => void
 }): ReactNode {
   const [enabled, setEnabledState] = useState(row.enabled)
-  const [toggle, setToggle] = useState<{ kind: 'idle' } | { kind: 'saving' } | { kind: 'saved'; activation?: Activation } | { kind: 'error'; detail: string }>({ kind: 'idle' })
+  const [toggle, setToggle] = useState<{ kind: 'idle' } | { kind: 'saving' } | { kind: 'saved' } | { kind: 'error'; detail: string }>({ kind: 'idle' })
   // Whether THIS PAGE is now stale: sticky, and deliberately not a field of
   // `toggle`. A later toggle that FAILED changed nothing on the server, so it
   // must not dismiss a reload an earlier one made necessary — the tab is
@@ -839,13 +839,22 @@ function EnabledSwitch({ row, t, setEnabled, reload }: {
       const result = await setEnabled({ name: row.name, enabled: next })
       if (result.ok) {
         setEnabledState(next)
-        setToggle({ kind: 'saved', activation: result.activation })
-        if (result.activation === 'reload') setNeedsReload(true)
+        setToggle({ kind: 'saved' })
+        // Anything that is not a DEFINITE `live` offers the reload. The
+        // result type makes an absent activation unspellable, but the wire is
+        // not the type (see ShopSetEnabledResult), and `present.ts` states
+        // the rule this follows: an absent field must never be read as the
+        // cheaper outcome, because that publishes a success claim the host
+        // never made — here, "applied without a restart" over a tab that is
+        // still showing the plugin the toggle just turned off.
+        if (result.activation !== 'live') setNeedsReload(true)
       } else {
         // The host's business failure carries an author- and user-readable
         // detail (§7.3); surface it verbatim. A missing detail falls back to
         // the localized failure line, never hardcoded English.
-        setToggle({ kind: 'error', detail: result.detail ?? t('toggleFailed') })
+        // `detail` is required by the type; `||` also covers a wire answer
+        // that omits it, for the same older-host reason as `activation`.
+        setToggle({ kind: 'error', detail: result.detail || t('toggleFailed') })
       }
     } catch {
       // A thrown toggle is a TRANSPORT failure (index.ts's unwrap throws the
