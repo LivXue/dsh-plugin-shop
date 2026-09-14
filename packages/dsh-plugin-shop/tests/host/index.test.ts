@@ -659,6 +659,7 @@ describe('ShopGateway.setEnabled', () => {
     const gateway = new ShopGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: async () => ({ entries: [{ entryId: 'themer-row', moduleName: 'dsh-themer', enabled: true }] }) } })
     const result = await gateway.setEnabled({ name: 'dsh-themer', enabled: false })
     expect(result.ok).toBe(true)
+    if (!result.ok) return
     expect(result.activation).toBe('reload')
   })
 
@@ -668,6 +669,7 @@ describe('ShopGateway.setEnabled', () => {
     const gateway = new ShopGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: async () => ({ entries: [{ entryId: 'tooler-row', moduleName: 'dsh-tooler', enabled: true }] }) } })
     const result = await gateway.setEnabled({ name: 'dsh-tooler', enabled: false })
     expect(result.ok).toBe(true)
+    if (!result.ok) return
     expect(result.activation).toBe('live')
   })
 })
