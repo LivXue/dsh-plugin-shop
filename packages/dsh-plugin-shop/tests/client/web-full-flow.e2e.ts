@@ -73,9 +73,10 @@
  * Pinned selectors (all verified against the live app, zh-CN):
  * - the app root frame: `[class*="frame"]` — the frame class is CSS-module
  *   hashed, and the live app's root element carries a class containing `frame`
- * - first-run 内测声明 dialog → 继续; then the 添加一个 API Key 开始使用
- *   dialog → 稍后配置 (the keyless escape; the dialogs mask the page until
- *   dismissed)
+ * - the two first-run dialogs (内测声明, then 添加一个 API Key 开始使用) are NOT
+ *   selectors this suite uses any more: `seedOnboarding` turns both off before
+ *   dsh boots, because they mask the page until dismissed and dismissing them
+ *   is a race no timeout wins reliably. `expectNoDialog` is the tripwire.
  * - settings trigger: `page.getByRole('button', { name: '设置', exact: true })`
  * - settings modal: `page.getByRole('dialog', { name: '设置' })`
  * - plugins section: `dialog.getByRole('button', { name: '插件', exact: true })`
@@ -131,7 +132,7 @@
  */
 
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -180,6 +181,69 @@ async function expandGlobalPlane(dialog: Locator): Promise<void> {
 import { zh } from '../../src/client/locales.ts'
 import { startCatalogServer, type CatalogServer } from '../fixtures/catalog-server.ts'
 import { startLocalRegistry, type LocalRegistry } from '../fixtures/local-registry.ts'
+
+/**
+ * Turn both onboarding dialogs off before dsh boots, rather than clicking
+ * through them.
+ *
+ * The same recipe `scripts/shoot-readme-screenshots.ts` uses, and for a reason
+ * this file learned the hard way: a configured provider suppresses "add an API
+ * key to get started", and `welcomeNoticeVersion` suppresses the 内测声明
+ * notice. The key is an obvious placeholder — nothing here ever sends a model
+ * request, and the profile is a temp directory removed in `afterAll`.
+ *
+ * What this replaces is what made CI red on 2026-09-14 (run 34858951558, five
+ * of six cases): the first case used to dismiss the API-key dialog behind a 5s
+ * `waitFor` whose `catch` read a timeout as "the prompt is not present". That
+ * cannot be told apart from "the prompt has not rendered yet", and on a loaded
+ * runner it is the second: the escape hatch gives up, the mask arrives a moment
+ * later, and the next click on 设置 spends its full 15s being intercepted by an
+ * `aria-hidden` overlay. Every later case then fails too, because the dialog
+ * each one reopens was never opened. The screenshot script's docblock records
+ * the identical lesson from the identical mistake.
+ *
+ * 0600 and a chmod after the write, both load-bearing: dsh-credentials-local
+ * refuses to boot on a credentials file readable beyond its owner, and
+ * `writeFileSync`'s `mode` applies only when it CREATES the file.
+ */
+function seedOnboarding(home: string): void {
+  writeFileSync(join(home, 'settings.yaml'), [
+    'agent-default-model:',
+    '  provider: deepseek-official',
+    '  model: deepseek-v4-pro',
+    'ui-onboarding:',
+    '  welcomeNoticeVersion: 2026-08-13.1',
+    '',
+  ].join('\n'))
+  const credentials = join(home, '.credentials.yaml')
+  writeFileSync(credentials,
+    'version: 1\nrefs:\n  DEEPSEEK_API_KEY: sk-e2e-placeholder-not-a-key\n', { mode: 0o600 })
+  chmodSync(credentials, 0o600)
+}
+
+/**
+ * Refuse to continue while any dialog covers the page.
+ *
+ * The tripwire for `seedOnboarding`: a seed that stops working (a dsh release
+ * renaming a settings key, say) fails HERE, naming the dialog, instead of as an
+ * opaque click timeout in whichever case happens to run first. Checked once the
+ * app's own chrome is up, which is when a boot-raised dialog is up too.
+ *
+ * It is a tripwire and not a guarantee — a dialog raised after an async check
+ * could still arrive later — so the seed, not this, is what makes the suite
+ * deterministic. Nothing here dismisses anything: a dismissal is per page load
+ * and would quietly re-introduce the race it exists to remove.
+ */
+async function expectNoDialog(app: Page): Promise<void> {
+  const dialogs = app.locator('[role="dialog"]')
+  for (let i = 0; i < await dialogs.count(); i += 1) {
+    const one = dialogs.nth(i)
+    if (!await one.isVisible().catch(() => false)) continue
+    const label = (await one.getAttribute('aria-label'))
+      ?? ((await one.textContent().catch(() => '')) ?? '').replace(/\s+/g, ' ').slice(0, 80)
+    throw new Error(`a dialog is covering the page before the flow starts: ${JSON.stringify(label)}`)
+  }
+}
 
 /**
  * A port to boot the web profile on, held only long enough to learn its
@@ -564,6 +628,10 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       `registry=${localRegistry.baseUrl}\n`,
     )
 
+    // The other pre-boot seed: neither onboarding dialog is ever raised, so no
+    // case has to click one away and none can be blocked by one.
+    seedOnboarding(tmpHome)
+
     // Boot the real web profile against the fixture catalog on a port
     // reserved up front (see `reservePort`: `--port 0` is itself a restart
     // refusal the host advertises, and booting under it would cost this file
@@ -655,22 +723,13 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       expect(page).toBeDefined()
       const app = page!
 
-      // Onboarding: a fresh profile shows the 内测声明 notice, then the
-      // 添加一个 API Key 开始使用 dialog; the keyless escape is 稍后配置.
+      // Onboarding is seeded OFF rather than clicked through (`seedOnboarding`),
+      // so nothing is dismissed here — only checked.
       await app.goto(webUrl, { waitUntil: 'load' })
       await app.waitForSelector('[class*="frame"]', { timeout: 30_000 })
-      const notice = app.getByRole('dialog', { name: '内测声明' })
-      if (await notice.count() > 0) {
-        await notice.getByRole('button', { name: '继续' }).click()
-      }
-      const keyDialog = app.getByRole('dialog', { name: '添加一个 API Key 开始使用' })
-      try {
-        await keyDialog.waitFor({ state: 'visible', timeout: 5000 })
-        await keyDialog.getByRole('button', { name: '稍后配置' }).click()
-      } catch {
-        // The keyless prompt is only present when no key row exists; a boot
-        // that skips it must not fail the e2e.
-      }
+      await app.getByRole('button', { name: '设置', exact: true })
+        .waitFor({ state: 'visible', timeout: 30_000 })
+      await expectNoDialog(app)
 
       // Settings → 插件 → 插件商店: the pinned live-app selectors.
       await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
