@@ -249,10 +249,6 @@ export function createPrefetcher(options: {
     const isCurrent = () => current.child === child
     child.on('error', error => {
       if (!isCurrent()) return
-      // TEMPORARY DIAGNOSTIC — revert before merging. Whether Windows reports
-      // this failure as `error` or as `exit` is the open question; printing
-      // from both handlers answers it.
-      if (shell) console.error(`[prefetch-probe] error code=${JSON.stringify((error as NodeJS.ErrnoException).code)} message=${JSON.stringify(error.message)}`)
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         latchAbsent(current)
       } else {
@@ -262,11 +258,6 @@ export function createPrefetcher(options: {
     })
     child.on('exit', code => {
       if (!isCurrent()) return
-      // TEMPORARY DIAGNOSTIC — revert before merging. Gated on `shell`, which
-      // is true only for a batch node handed to cmd.exe, so the Windows runner
-      // is the only place this prints. The exit code that reaches here is what
-      // the `SHELL_COMMAND_NOT_FOUND` arm is guessing at.
-      if (shell) console.error(`[prefetch-probe] exit code=${JSON.stringify(code)} bin=${JSON.stringify(pnpmBin)}`)
       // Absence on the one path where `error` cannot report it. `shell` is
       // true only for a batch node handed to cmd.exe, which is the only place
       // 9009 means what it says — so the arm is gated on it rather than on the
