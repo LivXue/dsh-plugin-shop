@@ -36,6 +36,22 @@ export function activationNoticeKey(activation: Activation, restartReason: HotRe
   }
 }
 
+/** The same mapping for an UNINSTALL's done notice.
+ *
+ * A sibling rather than a `prefix` parameter on `activationNoticeKey`: the
+ * two key sets are not parallel — `installedNoRestartNotice` against
+ * `uninstalledLiveNotice` — so no prefix derives one from the other. It takes
+ * no reason code, because a hot-mount reason explains why a MOUNT could not
+ * happen and an uninstall mounts nothing.
+ *
+ * Here rather than in JSX because this is a pure Activation -> copy decision,
+ * and in a component no fixture can reach it: the install side was covered
+ * and this one was not, for the whole time both existed. */
+export function uninstallActivationNoticeKey(activation: Activation): ShopLocaleKey {
+  if (activation === 'restart') return 'uninstalledRestartNotice'
+  return activation === 'reload' ? 'uninstalledReloadNotice' : 'uninstalledLiveNotice'
+}
+
 /** Tier → locale key, for the entry-card tier badge (§6.2). */
 export function tierKey(tier: CatalogEntry['tier']): ShopLocaleKey {
   switch (tier) {

@@ -1,152 +1,46 @@
-/** Uninstall driving hook for one entry: start, poll to terminal, reset.
- * Mirrors useInstallFlows (useInstall.ts) exactly — the same lifted, keyed
- * registry and the same poll loop, because both drivers share InstallView /
- * InstallEvent and a completed uninstall must stay visible across the
- * installed-projection refresh the same way a completed install already
- * does (I-1, §7.2). The one difference from install is the start mapping:
- * an uninstall business failure (not in the catalog / not installed) lands
- * in the `failed` view with the host's published detail — never in the
- * install `rejected` codes, which belong to the install gate, and which
- * ShopUninstallResult's failure variant has no `code` field to populate. */
+/** Uninstall driving hook: the tab's keyed registry, one start mapping. */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback } from 'react'
 import type { ShopInstallStatusResult, ShopUninstallResult } from '../host/index.ts'
-import { INSTALL_POLL_MS, reduceInstall, type InstallEvent, type InstallView } from './present.ts'
+import type { InstallView } from './present.ts'
+import { useKeyedFlows, type KeyedFlow, type UseKeyedFlows } from './useFlows.ts'
 
 /** One entry's uninstall flow, as the tab hands it to a panel. */
-export interface UninstallFlow {
-  view: InstallView
-  start: (args: { name: string }) => Promise<void>
-  reset: () => void
-}
-
-export interface UseUninstallFlows {
-  /** Two panels asking for the same uninstall identity receive one flow. */
-  flowFor: (key: string) => UninstallFlow
-  /** Return one identity to `idle` without building a flow for it. Stable
-   * across renders (unlike `flowFor`, whose identity tracks `views`), so the
-   * install registry's settle callback can supersede a stale uninstall
-   * receipt without taking a dependency on this hook's output. */
-  resetFlow: (key: string) => void
-  /**
-   * The identities whose flow is not `idle` — asked by the shelf, which has
-   * to keep a settled uninstall's row in the Installed view after the
-   * installed projection drops it.
-   *
-   * A membership test rather than a flow, and its IDENTITY changes only when
-   * that membership does. Both matter to the same caller: `flowFor` builds a
-   * fresh object and two closures per call, so asking it inside a filter
-   * allocated three objects for every entry on the shelf; and it tracks
-   * `views`, which changes on every poll RESPONSE, because `reduceInstall`
-   * returns a new `running` view for each status. A filter depending on that
-   * re-ran over the whole catalog once a second for a log line nobody read.
-   */
-  pending: ReadonlySet<string>
-}
-
-/** Shared empty set, so an idle registry hands out one stable identity. */
-const NO_PENDING: ReadonlySet<string> = new Set()
+export type UninstallFlow = KeyedFlow<{ name: string }>
+export type UseUninstallFlows = UseKeyedFlows<{ name: string }>
 
 /**
  * Uninstall flows owned by the tab and keyed by install identity. Lifting the
  * state above individual cards is what lets a completed uninstall's outcome
  * survive the installed-projection refresh that follows it — the row backing
  * the card disappears, but the flow keyed by identity does not.
+ *
+ * The registry itself is `useKeyedFlows`; this supplies the one thing that is
+ * uninstall-specific — what the starting RPC's answer means. An uninstall
+ * business failure (not in the catalog / not installed) lands in the `failed`
+ * view with the host's published detail, never in the install `rejected`
+ * codes: those belong to the install gate, and `ShopUninstallResult`'s
+ * failure variant has no `code` field to populate.
  */
 export function useUninstallFlows(
   uninstall: (args: { name: string }) => Promise<ShopUninstallResult>,
   installStatus: (args: { installId: string }) => Promise<ShopInstallStatusResult>,
   onSettled?: (key: string, outcome: 'done' | 'failed') => void,
 ): UseUninstallFlows {
-  const [views, setViews] = useState<ReadonlyMap<string, InstallView>>(() => new Map())
-  const settled = useRef(onSettled)
-  settled.current = onSettled
-
-  const put = useCallback((key: string, view: InstallView): void => {
-    setViews(current => {
-      const next = new Map(current)
-      next.set(key, view)
-      return next
-    })
-  }, [])
-
-  const apply = useCallback((key: string, event: InstallEvent): void => {
-    setViews(current => {
-      const before = current.get(key) ?? { kind: 'idle' as const }
-      const after = reduceInstall(before, event)
-      if (after === before) return current
-      const next = new Map(current)
-      next.set(key, after)
-      return next
-    })
-  }, [])
-
-  const start = useCallback(async (key: string, args: { name: string }): Promise<void> => {
-    put(key, { kind: 'idle' })
+  const begin = useCallback(async (args: { name: string }): Promise<InstallView> => {
     try {
       const result = await uninstall(args)
-      if (!result.ok) {
-        put(key, { kind: 'failed', detail: result.detail, log: [] })
-        return
-      }
-      put(key, { kind: 'running', installId: result.installId, log: [] })
+      if (!result.ok) return { kind: 'failed', detail: result.detail, log: [] }
+      return { kind: 'running', installId: result.installId, log: [] }
     } catch {
-      // Same transport-failure rule as useInstallFlows: a thrown uninstall is
-      // the wire envelope rejecting, and its detail (hosts and ports) is
-      // private and never rendered — the empty detail falls back to the
-      // localized uninstall transport line. Nothing else can reach this catch.
-      put(key, { kind: 'failed', detail: '', log: [] })
+      // Same transport-failure rule as the install registry: a thrown
+      // uninstall is the wire envelope rejecting, and its detail (hosts and
+      // ports) is private and never rendered — the empty detail falls back to
+      // the localized uninstall transport line. Nothing else can reach this
+      // catch, because the business result is a resolved value, never a throw.
+      return { kind: 'failed', detail: '', log: [] }
     }
-  }, [uninstall, put])
+  }, [uninstall])
 
-  const reset = useCallback((key: string): void => {
-    setViews(current => {
-      if (!current.has(key)) return current
-      const next = new Map(current)
-      next.delete(key)
-      return next
-    })
-  }, [])
-
-  // One interval polls every running identity; duplicate panels never poll
-  // the same host record independently.
-  useEffect(() => {
-    const running: Array<[string, string]> = []
-    for (const [key, view] of views) {
-      if (view.kind === 'running') running.push([key, view.installId])
-    }
-    if (running.length === 0) return
-    const timer = setInterval(() => {
-      for (const [key, installId] of running) {
-        void installStatus({ installId }).then(status => {
-          apply(key, { type: 'status', status })
-          if (status.found && status.state !== 'running') settled.current?.(key, status.state)
-        }, () => {
-          // Poll failures are transient; the retained host record is retried.
-        })
-      }
-    }, INSTALL_POLL_MS)
-    return () => clearInterval(timer)
-  }, [views, installStatus, apply])
-
-  const pendingRef = useRef<ReadonlySet<string>>(NO_PENDING)
-  const pending = useMemo(() => {
-    const next = new Set<string>()
-    for (const [key, view] of views) if (view.kind !== 'idle') next.add(key)
-    // Keep the previous instance when the membership is unchanged: that is
-    // the whole point of this value, and a fresh Set per poll response would
-    // invalidate every memo depending on it exactly as `views` does.
-    const previous = pendingRef.current
-    if (previous.size === next.size && [...next].every(key => previous.has(key))) return previous
-    pendingRef.current = next
-    return next
-  }, [views])
-
-  const flowFor = useCallback((key: string): UninstallFlow => ({
-    view: views.get(key) ?? { kind: 'idle' },
-    start: args => start(key, args),
-    reset: () => reset(key),
-  }), [views, start, reset])
-
-  return { flowFor, resetFlow: reset, pending }
+  return useKeyedFlows(begin, installStatus, onSettled)
 }

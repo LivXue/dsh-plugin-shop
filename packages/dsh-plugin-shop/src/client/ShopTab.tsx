@@ -7,7 +7,7 @@
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
-import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Category, activationNoticeKey, authorOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatSize, formatStars, hasGithubHome, heldBy, identityKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, rejectionCodeKey, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
+import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Activation, type Category, activationNoticeKey, uninstallActivationNoticeKey, authorOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatSize, formatStars, hasGithubHome, heldBy, identityKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, rejectionCodeKey, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
 import { useInstallFlows, type InstallFlow } from './useInstall.ts'
 import { useUninstallFlows, type UninstallFlow } from './useUninstall.ts'
 import { useUpdateSelf } from './useUpdateSelf.ts'
@@ -415,7 +415,7 @@ function BlockerBadge({ blockers, t }: {
 
 /** One entry's install flow: the button, the §9.3 acknowledgement gate for
  * community-tier entries, and the live view — running log, restart notice,
- * failure detail, rejection detail — driven by `useInstall`. Shared by the
+ * failure detail, rejection detail — driven by `useInstallFlows`. Shared by the
  * catalog cards (`variant: 'install'`) and the outdated rows' update button
  * (`variant: 'update'`, which drives the same install flow for `name@latest`). */
 function InstallPanel({ target, tier, missing, blockers, missingStated = false, variant = 'install', flow, t, restart, restartSupported, reload }: {
@@ -482,16 +482,7 @@ function InstallPanel({ target, tier, missing, blockers, missingStated = false, 
               live that nothing had changed and to try again. */}
           {t(activationNoticeKey(view.activation, view.restartReason))}
         </p>
-        {/* The §4/§8 offer: a reload when the change is already live on the
-            server and only this page is stale, a restart when the host
-            actually needs one (and can restart at all, §C-1 — otherwise the
-            disabled notice says why), and neither when the install landed
-            without needing either. */}
-        {view.activation === 'reload' && <ReloadPanel t={t} reload={reload} where="install" />}
-        {view.activation === 'restart' && restartSupported && <RestartPanel t={t} restart={restart} />}
-        {view.activation === 'restart' && !restartSupported && (
-          <p className={css.notice} data-shop-restart-disabled>{t('restartDisabledNotice')}</p>
-        )}
+        <ActivationOffer activation={view.activation} t={t} restart={restart} restartSupported={restartSupported} reload={reload} where="install" />
       </div>
     )
   }
@@ -502,7 +493,8 @@ function InstallPanel({ target, tier, missing, blockers, missingStated = false, 
         <div className={css.log}>
           {view.log.map((line, index) => <div key={index} className={css.logLine}>{line}</div>)}
         </div>
-        {/* An empty detail marks a TRANSPORT failure (useInstall's start catch):
+        {/* An empty detail marks a TRANSPORT failure (the install registry's
+            start mapping):
             the wire detail is private and never rendered, so the localized line
             is its readable face. A non-empty detail is the host's published copy
             (§7.2 stderr plus the recovery hint) and renders verbatim. */}
@@ -622,23 +614,13 @@ function UninstallPanel({ name, t, restart, restartSupported, reload, flow }: {
   if (view.kind === 'done') {
     return (
       <div className={css.installedActions}>
-        <p className={css.notice} data-shop-uninstall-done>
-          {view.activation === 'restart' ? t('uninstalledRestartNotice')
-            : view.activation === 'reload' ? t('uninstalledReloadNotice')
-            : t('uninstalledLiveNotice')}
-        </p>
-        {/* The §8 restart offer, which activates the uninstall: a live
-            uninstall (activation `live`) is already done — the plugin
-            stopped immediately, and the boot composition picks up the
-            removal at the next restart on its own. A `reload` uninstall
-            stopped too, but this page still shows it as installed until
-            reloaded. Either way, the restart offer (or its disabled notice,
-            §C-1) renders only when the uninstall still needs one. */}
-        {view.activation === 'reload' && <ReloadPanel t={t} reload={reload} where="uninstall" />}
-        {view.activation === 'restart' && restartSupported && <RestartPanel t={t} restart={restart} />}
-        {view.activation === 'restart' && !restartSupported && (
-          <p className={css.notice} data-shop-restart-disabled>{t('restartDisabledNotice')}</p>
-        )}
+        <p className={css.notice} data-shop-uninstall-done>{t(uninstallActivationNoticeKey(view.activation))}</p>
+        {/* A `live` uninstall is already done — the plugin stopped
+            immediately and the boot composition picks the removal up at the
+            next restart on its own — so it offers nothing. A `reload`
+            uninstall stopped too, but this page still shows the plugin as
+            installed until reloaded. */}
+        <ActivationOffer activation={view.activation} t={t} restart={restart} restartSupported={restartSupported} reload={reload} where="uninstall" />
         {/* The way out of `done`. Without it the registry could enter this
             state and never leave: the receipt outlives the ROW it describes
             by design (I-1), but it also outlived the IDENTITY — a reinstall
@@ -795,6 +777,34 @@ function RestartPanel({ t, restart, gate }: {
       {t('restart')}
     </button>
   )
+}
+
+/**
+ * The §4/§8 offer under a settled install, update or uninstall: a reload
+ * when the change is already live on the server and only this page is
+ * stale, a restart when the host actually needs one — and can restart at
+ * all (§C-1), otherwise the disabled notice says why — and neither when the
+ * change landed needing neither.
+ *
+ * One component rather than the same three lines in each panel. The
+ * precedence between the three values is a single rule, and it was written
+ * out twice: two places to find when a fourth activation value arrives or
+ * the `restartSupported` gate changes, with nothing to make the second one
+ * fail if it were missed.
+ */
+function ActivationOffer({ activation, t, restart, restartSupported, reload, where }: {
+  activation: Activation
+  t: ShopTabProps['t']
+  restart: ShopTabInjected['restart']
+  restartSupported: boolean
+  reload: () => void
+  where: 'install' | 'uninstall'
+}): ReactNode {
+  if (activation === 'reload') return <ReloadPanel t={t} reload={reload} where={where} />
+  if (activation !== 'restart') return null
+  return restartSupported
+    ? <RestartPanel t={t} restart={restart} />
+    : <p className={css.notice} data-shop-restart-disabled>{t('restartDisabledNotice')}</p>
 }
 
 /** The §4 reload offer: the server already holds the new state and this tab

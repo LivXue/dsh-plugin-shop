@@ -1061,7 +1061,13 @@
   outline-offset: 1px;
 }
 
-.restartButton {
+/* The two activation offers share one recipe: a border in an alias token,
+ * never a `bg-layer` fill alone — all four bg-layer tokens collapse to the
+ * same white under `body` in the light theme, and a fill-only button would
+ * vanish there. Grouped rather than copied, because a copy is a rule that
+ * can be corrected on one button and left wrong on the other, silently. */
+.restartButton,
+.reloadButton {
   align-self: flex-start;
   padding: 5px 14px;
   border: 1px solid var(--dsw-alias-border-l2);
@@ -1072,11 +1078,13 @@
   cursor: pointer;
 }
 
-.restartButton:hover {
+.restartButton:hover,
+.reloadButton:hover {
   border-color: var(--dsw-alias-label-secondary);
 }
 
-.restartButton:focus-visible {
+.restartButton:focus-visible,
+.reloadButton:focus-visible {
   outline: 2px solid var(--dsw-alias-brand-primary);
   outline-offset: 1px;
 }
@@ -1091,28 +1099,6 @@
   gap: 6px;
 }
 
-/* Same recipe as `.restartButton`: a border in an alias token, never a
- * `bg-layer` fill alone — all four collapse to the same white under `body`
- * in the light theme, and a fill-only button would vanish there. */
-.reloadButton {
-  align-self: flex-start;
-  padding: 5px 14px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 6px;
-  background: var(--dsw-alias-bg-layer-2);
-  color: var(--dsw-alias-label-primary);
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.reloadButton:hover {
-  border-color: var(--dsw-alias-label-secondary);
-}
-
-.reloadButton:focus-visible {
-  outline: 2px solid var(--dsw-alias-brand-primary);
-  outline-offset: 1px;
-}
 
 .gate {
   display: flex;

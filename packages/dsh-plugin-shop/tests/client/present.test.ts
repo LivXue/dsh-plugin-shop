@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, activationNoticeKey, categoryKey, displayVersion, entryKey, formatSize, formatStars,
+  uninstallActivationNoticeKey,
   authorOf, hasGithubHome, heldBy, isCustomLicense, isShopLike, missingPeersOf,
   nextVisibleCount, npmPageUrl,
   reduceInstall, type InstallView,
@@ -189,6 +190,27 @@ describe('activationNoticeKey', () => {
 
   it('names the live state', () => {
     expect(activationNoticeKey('live', undefined)).toBe('installedNoRestartNotice')
+  })
+})
+
+describe('uninstallActivationNoticeKey', () => {
+  // The uninstall panel hand-rolled this mapping in JSX, where no fixture
+  // could reach it: `present.test.ts` covered the install side and the
+  // uninstall side not at all, against the repo's own pure-core rule. A
+  // sibling function rather than a prefix parameter on `activationNoticeKey`,
+  // because the two key sets are not parallel — `installedNoRestartNotice`
+  // against `uninstalledLiveNotice` — so no prefix can derive one from the
+  // other.
+  it('names the restart state', () => {
+    expect(uninstallActivationNoticeKey('restart')).toBe('uninstalledRestartNotice')
+  })
+
+  it('names the reload state', () => {
+    expect(uninstallActivationNoticeKey('reload')).toBe('uninstalledReloadNotice')
+  })
+
+  it('names the live state', () => {
+    expect(uninstallActivationNoticeKey('live')).toBe('uninstalledLiveNotice')
   })
 })
 
