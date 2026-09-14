@@ -23,6 +23,11 @@ export interface UninstallFlow {
 export interface UseUninstallFlows {
   /** Two panels asking for the same uninstall identity receive one flow. */
   flowFor: (key: string) => UninstallFlow
+  /** Return one identity to `idle` without building a flow for it. Stable
+   * across renders (unlike `flowFor`, whose identity tracks `views`), so the
+   * install registry's settle callback can supersede a stale uninstall
+   * receipt without taking a dependency on this hook's output. */
+  resetFlow: (key: string) => void
 }
 
 /**
@@ -34,7 +39,7 @@ export interface UseUninstallFlows {
 export function useUninstallFlows(
   uninstall: (args: { name: string }) => Promise<ShopUninstallResult>,
   installStatus: (args: { installId: string }) => Promise<ShopInstallStatusResult>,
-  onSettled?: (key: string) => void,
+  onSettled?: (key: string, outcome: 'done' | 'failed') => void,
 ): UseUninstallFlows {
   const [views, setViews] = useState<ReadonlyMap<string, InstallView>>(() => new Map())
   const settled = useRef(onSettled)
@@ -98,7 +103,7 @@ export function useUninstallFlows(
       for (const [key, installId] of running) {
         void installStatus({ installId }).then(status => {
           apply(key, { type: 'status', status })
-          if (status.found && status.state !== 'running') settled.current?.(key)
+          if (status.found && status.state !== 'running') settled.current?.(key, status.state)
         }, () => {
           // Poll failures are transient; the retained host record is retried.
         })
@@ -113,5 +118,5 @@ export function useUninstallFlows(
     reset: () => reset(key),
   }), [views, start, reset])
 
-  return { flowFor }
+  return { flowFor, resetFlow: reset }
 }

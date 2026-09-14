@@ -87,7 +87,7 @@ export interface UseInstallFlows {
 export function useInstallFlows(
   install: (args: InstallArgs) => Promise<ShopInstallResult>,
   installStatus: (args: { installId: string }) => Promise<ShopInstallStatusResult>,
-  onSettled?: (key: string) => void,
+  onSettled?: (key: string, outcome: 'done' | 'failed') => void,
 ): UseInstallFlows {
   const [views, setViews] = useState<ReadonlyMap<string, InstallView>>(() => new Map())
   const settled = useRef(onSettled)
@@ -147,7 +147,7 @@ export function useInstallFlows(
       for (const [key, installId] of running) {
         void installStatus({ installId }).then(status => {
           apply(key, { type: 'status', status })
-          if (status.found && status.state !== 'running') settled.current?.(key)
+          if (status.found && status.state !== 'running') settled.current?.(key, status.state)
         }, () => {
           // Poll failures are transient; the retained host record is retried.
         })

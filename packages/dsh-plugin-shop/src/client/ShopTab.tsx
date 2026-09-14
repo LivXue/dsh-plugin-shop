@@ -600,9 +600,12 @@ function UninstallPanel({ name, t, restart, restartSupported, reload, flow }: {
 }): ReactNode {
   // The flow is lifted to the tab root (useUninstallFlows) and keyed by
   // install identity, so its `done`/`failed` outcome survives this panel's
-  // own conditional mount — settling (reset + re-fetch) happens inside the
-  // hook's own poll effect, the same way useInstallFlows settles itself.
-  const { view, start } = flow
+  // own conditional mount — the re-fetch happens inside the hook's own poll
+  // effect, the same way useInstallFlows settles itself. Surviving the mount
+  // means the panel, not the mount, owns the way back to `idle`: `reset` is
+  // wired to the two terminal states below, and a settled install on the
+  // same identity supersedes a `done` receipt from the tab root.
+  const { view, start, reset } = flow
 
   if (view.kind === 'running') {
     return (
@@ -636,6 +639,16 @@ function UninstallPanel({ name, t, restart, restartSupported, reload, flow }: {
         {view.activation === 'restart' && !restartSupported && (
           <p className={css.notice} data-shop-restart-disabled>{t('restartDisabledNotice')}</p>
         )}
+        {/* The way out of `done`. Without it the registry could enter this
+            state and never leave: the receipt outlives the ROW it describes
+            by design (I-1), but it also outlived the IDENTITY — a reinstall
+            rendered "removed" over a freshly installed plugin, with no
+            Uninstall button under it, and under the Installed filter the
+            phantom row this receipt holds open stayed for the life of the
+            tab, counted as zero by the button above it. */}
+        <button type="button" className={css.cancelButton} data-shop-uninstall-dismiss onClick={reset}>
+          {t('dismiss')}
+        </button>
       </div>
     )
   }
@@ -651,6 +664,12 @@ function UninstallPanel({ name, t, restart, restartSupported, reload, flow }: {
             non-empty detail is the host's published copy and renders
             verbatim. */}
         <p className={css.failedDetail}>{view.detail === '' ? t('uninstallTransportFailed') : view.detail}</p>
+        {/* A refusal is recoverable — the package is still installed and the
+            reason may be transient — but `failed` renders no Uninstall
+            button, so before this the only way back was a full page load. */}
+        <button type="button" className={css.uninstallButton} data-shop-uninstall-retry onClick={() => void start({ name })}>
+          {t('retry')}
+        </button>
       </div>
     )
   }
@@ -806,6 +825,11 @@ function EnabledSwitch({ row, t, setEnabled, reload }: {
 }): ReactNode {
   const [enabled, setEnabledState] = useState(row.enabled)
   const [toggle, setToggle] = useState<{ kind: 'idle' } | { kind: 'saving' } | { kind: 'saved'; activation?: Activation } | { kind: 'error'; detail: string }>({ kind: 'idle' })
+  // Whether THIS PAGE is now stale: sticky, and deliberately not a field of
+  // `toggle`. A later toggle that FAILED changed nothing on the server, so it
+  // must not dismiss a reload an earlier one made necessary — the tab is
+  // still showing the state from before that first, successful toggle.
+  const [needsReload, setNeedsReload] = useState(false)
 
   const onToggle = async (): Promise<void> => {
     if (toggle.kind === 'saving') return
@@ -816,6 +840,7 @@ function EnabledSwitch({ row, t, setEnabled, reload }: {
       if (result.ok) {
         setEnabledState(next)
         setToggle({ kind: 'saved', activation: result.activation })
+        if (result.activation === 'reload') setNeedsReload(true)
       } else {
         // The host's business failure carries an author- and user-readable
         // detail (§7.3); surface it verbatim. A missing detail falls back to
@@ -844,12 +869,8 @@ function EnabledSwitch({ row, t, setEnabled, reload }: {
       >
         <span className={css.switchKnob} />
       </button>
-      {toggle.kind === 'saved' && (
-        <>
-          <p className={css.notice} data-shop-hot-apply>{t('hotApplyNote')}</p>
-          {toggle.activation === 'reload' && <ReloadPanel t={t} reload={reload} />}
-        </>
-      )}
+      {toggle.kind === 'saved' && <p className={css.notice} data-shop-hot-apply>{t('hotApplyNote')}</p>}
+      {needsReload && <ReloadPanel t={t} reload={reload} />}
       {toggle.kind === 'error' && <p className={css.failedDetail} data-shop-toggle-error>{toggle.detail}</p>}
     </div>
   )
@@ -961,7 +982,11 @@ export function ShopTab(props: ShopTabProps): ReactNode {
   const restartSupported = selfVersion?.restartSupported ?? true
   // The §4 reload trigger: a real page reload by default, so a test can
   // inject a spy instead — jsdom's own `location.reload` is not writable.
-  const reload = injectedReload ?? (() => { globalThis.location.reload() })
+  // Memoized because it is handed to every `memo(EntryCard)`: defaulted
+  // inline it was a fresh identity on every render, so the memo never held
+  // and one keystroke re-rendered every mounted card — the regression
+  // `missingByKey` below is commented to prevent, arriving by another prop.
+  const reload = useMemo(() => injectedReload ?? (() => { globalThis.location.reload() }), [injectedReload])
   // Lifted so the version row's Restart button and the confirmation below are
   // the same gate rather than two. Only the self-update path needs this; the
   // per-plugin panels keep RestartPanel's own state.
@@ -972,14 +997,32 @@ export function ShopTab(props: ShopTabProps): ReactNode {
   // screen and its network/cache policy remains driven by `request`.
   const [mutations, setMutations] = useState(0)
   const noteMutation = useCallback(() => { setMutations(current => current + 1) }, [])
-  const flows = useInstallFlows(install, installStatus, noteMutation)
-  const uninstallSettled = useCallback((key: string) => {
-    // Once removal lands, an install/update result from the same session is
-    // stale. Clear it before the installed projection drops this row.
+  // Install and uninstall are mutually exclusive answers about one identity,
+  // so each registry's settle supersedes the other's receipt for that key.
+  // The per-panel state these lifted registries replaced got that for free
+  // from unmounting; lifted, the loser has no way out unless given one. The
+  // ref breaks the cycle: the uninstall registry is built FROM
+  // `installSettled` and so cannot be named by it.
+  const uninstallResetRef = useRef<(key: string) => void>(() => {})
+  const installSettled = useCallback((key: string, outcome: 'done' | 'failed') => {
+    // Only a settled install supersedes. A FAILED one installed nothing, so
+    // a previous uninstall's receipt is still the truth about this identity.
+    if (outcome === 'done') uninstallResetRef.current(key)
+    noteMutation()
+  }, [noteMutation])
+  const flows = useInstallFlows(install, installStatus, installSettled)
+  const uninstallSettled = useCallback((key: string, outcome: 'done' | 'failed') => {
+    // Once removal LANDS, an install/update result from the same session is
+    // stale. Clear it before the installed projection drops this row. A
+    // FAILED uninstall removed nothing: the package is still installed and an
+    // update before it still owes its restart, so clearing here erased an
+    // outcome that is still true, over a rejection the reader did not cause.
+    if (outcome !== 'done') return
     flows.flowFor(key).reset()
     noteMutation()
   }, [flows, noteMutation])
   const uninstallFlows = useUninstallFlows(uninstall, installStatus, uninstallSettled)
+  uninstallResetRef.current = uninstallFlows.resetFlow
   // A refresh deliberately leaves the current shelf on screen (§10), so the
   // reload control carries the only sign that the click did anything.
   const [reloading, setReloading] = useState(false)

@@ -2236,3 +2236,176 @@ describe('ShopTab mutation flows (G-9)', () => {
     expect(screen.getByText(en.installing)).toBeTruthy()
   })
 })
+
+describe('ShopTab uninstall flow recovery', () => {
+  // Lifting the uninstall flow into a tab-level registry keyed by identity is
+  // what lets a settled uninstall's receipt survive the installed-projection
+  // refresh (I-1). It also made every terminal view PERMANENT: `reset` had no
+  // caller anywhere, so `done` and `failed` became states the tab could enter
+  // and never leave. The per-panel `useState` it replaced got its way back to
+  // `idle` for free, from the card unmounting — an accident these tests turn
+  // into three deliberate exits.
+
+  const installedRow: InstalledFixture = {
+    name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true,
+  }
+
+  it('clears the uninstall receipt when the same plugin is installed again', async () => {
+    const { injected, installStatus, installed } = bench(snapshot({ tier: 'verified' }), [installedRow])
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'live' })
+    installed
+      .mockResolvedValueOnce([{ ...installedRow, source: 'npm' }])
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([{ ...installedRow, source: 'npm' }])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+
+    fireEvent.click(container.querySelector('[data-shop-uninstall]')!)
+    await waitFor(() => expect(container.querySelector('[data-shop-uninstall-done]')).toBeTruthy(), { timeout: 3000 })
+    await waitFor(() => expect(installed).toHaveBeenCalledTimes(2), { timeout: 3000 })
+
+    // Reinstall from the same card — the pairing I-1 deliberately keeps on
+    // the default shelf (an Install button beside the uninstall receipt).
+    fireEvent.click(container.querySelector('[data-shop-install]')!)
+    await waitFor(() => expect(installed).toHaveBeenCalledTimes(3), { timeout: 4000 })
+    await waitFor(() => expect(container.querySelector('[data-shop-toggle]')).toBeTruthy(), { timeout: 4000 })
+
+    // The receipt describes the PREVIOUS operation on this identity. Left
+    // mounted, it tells the reader a freshly installed plugin was removed —
+    // and UninstallPanel renders no Uninstall button on `done`, so this
+    // plugin could never be removed again for the life of the tab.
+    expect(container.querySelector('[data-shop-uninstall-done]')).toBeNull()
+    expect(container.querySelector('[data-shop-uninstall]')).toBeTruthy()
+  })
+
+  it('offers a retry after a refused uninstall', async () => {
+    const { injected, uninstall } = bench(snapshot(), [installedRow])
+    uninstall.mockResolvedValue({ ok: false, detail: 'the bundle is still present' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+
+    fireEvent.click(container.querySelector('[data-shop-uninstall]')!)
+    await waitFor(() => expect(screen.getByText('the bundle is still present')).toBeTruthy())
+    expect(uninstall).toHaveBeenCalledTimes(1)
+
+    // A refused uninstall must be a state the reader can leave: the package
+    // is still installed, and the refusal may be transient. Before the flow
+    // was lifted, filtering the card out and back unmounted the panel and
+    // restored the button; lifted, nothing did.
+    fireEvent.click(container.querySelector('[data-shop-uninstall-retry]')!)
+    await waitFor(() => expect(uninstall).toHaveBeenCalledTimes(2))
+  })
+
+  it('dismisses a settled receipt, dropping the phantom row from the Installed view', async () => {
+    const { injected, installStatus, installed } = bench(snapshot(), [installedRow])
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'live' })
+    installed
+      .mockResolvedValueOnce([{ ...installedRow, source: 'npm' }])
+      .mockResolvedValue([])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-category-installed]') as HTMLElement)
+
+    fireEvent.click(container.querySelector('[data-shop-uninstall]')!)
+    await waitFor(() => expect(container.querySelector('[data-shop-uninstall-done]')).toBeTruthy(), { timeout: 3000 })
+    await waitFor(() => expect(installed).toHaveBeenCalledTimes(2), { timeout: 3000 })
+    // Wave 2 keeps the phantom row here while the flow is non-idle...
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"]')).toBeTruthy()
+
+    // ...and dismissing the receipt is what ENDS that. Without an exit the
+    // row is permanent: the Installed button reads 0 above a card still
+    // listed under it, for the rest of the session.
+    fireEvent.click(container.querySelector('[data-shop-uninstall-dismiss]')!)
+    await waitFor(() => expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"]')).toBeNull())
+  })
+
+  it('leaves a completed update on screen when a later uninstall fails', async () => {
+    const outdated: InstalledFixture = {
+      name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true,
+    }
+    const { injected, installStatus, installed } = bench(snapshot({ tier: 'verified' }), [outdated])
+    installStatus.mockImplementation(async ({ installId }) => (installId === 'u1'
+      ? { found: true, state: 'failed', log: [], detail: 'the bundle is still present' }
+      : { found: true, state: 'done', log: [], activation: 'restart' }))
+    installed
+      .mockResolvedValueOnce([{ ...outdated, source: 'npm' }])
+      .mockResolvedValue([{ ...outdated, source: 'npm', installed: '1.2.0', outdated: false }])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+
+    fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-update]')!)
+    await waitFor(() => expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-restart-notice]')).toBeTruthy(), { timeout: 3000 })
+
+    fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-uninstall]')!)
+    await waitFor(() => expect(screen.getByText(en.uninstallFailed)).toBeTruthy(), { timeout: 3000 })
+
+    // The uninstall did NOT land: the package is still installed and the
+    // update before it still owes a restart. Settling on ANY terminal state
+    // rather than on `done` cleared the update's flow from here, taking its
+    // notice and its restart offer with it — a rejection the reader did not
+    // cause, erasing an outcome that is still true.
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-restart-notice]')).toBeTruthy()
+  })
+})
+
+describe('ShopTab staleness cues', () => {
+  it('keeps the reload cue after a later toggle fails', async () => {
+    const { injected, setEnabled } = bench(snapshot(), [{
+      name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true,
+    }])
+    setEnabled
+      .mockResolvedValueOnce({ ok: true, activation: 'reload' })
+      .mockResolvedValue({ ok: false, detail: 'nope' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+
+    const toggle = container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-toggle]') as HTMLElement
+    fireEvent.click(toggle)
+    await waitFor(() => expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-reload]')).toBeTruthy())
+
+    fireEvent.click(toggle)
+    await waitFor(() => expect(screen.getByText('nope')).toBeTruthy())
+    // The FIRST toggle landed on the server, and this page is still showing
+    // the state from before it. The second changed nothing, so the staleness
+    // it did not cause must not be dismissed along with its error: "needs a
+    // reload" is a sticky fact about the page, not a field of the last reply.
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-reload]')).toBeTruthy()
+  })
+
+  it('does not re-render the whole shelf when the search box changes', async () => {
+    // `reload` is defaulted at the tab root and handed to every memo(EntryCard).
+    // Defaulted inline it was a fresh identity per render, so the memo never
+    // held and one keystroke re-rendered every mounted card — the regression
+    // `missingByKey`'s own comment exists to prevent, arriving by another
+    // prop. Rendered WITHOUT an injected reload on purpose: an injected one
+    // is stable and hides the defect entirely.
+    //
+    // Scale-free by construction: the assertion is that per-keystroke work
+    // does not GROW with the shelf, so it cannot be satisfied by a threshold
+    // that happens to fit today's card count.
+    const deltaFor = async (cards: number): Promise<number> => {
+      const result = snapshot({ tier: 'verified' })
+      const one = result.plugins[0]!
+      result.plugins = Array.from({ length: cards }, (_, index) => ({ ...one, name: `dsh-plugin-${index}` }))
+      const { injected } = bench(result)
+      let calls = 0
+      const t = ((key: ShopLocaleKey, params?: Record<string, unknown>): string => {
+        calls += 1
+        const template = en[key]
+        if (params === undefined) return template
+        return template.replace(/\{(\w+)\}/g, (match, name: string) => (name in params ? String(params[name]) : match))
+      }) as ShopTabProps['t']
+      render(<ShopTab {...({ t, ...injected } as unknown as ShopTabProps)} />)
+      await waitFor(() => expect(screen.getByText(`dsh-plugin-${cards - 1}`)).toBeTruthy())
+      const before = calls
+      // Matches every entry, so `visible` holds the same cards in the same
+      // order: nothing about any card changed, only the query string did.
+      fireEvent.change(screen.getByLabelText(en.search), { target: { value: 'dsh-plugin-' } })
+      await waitFor(() => expect(calls).toBeGreaterThan(before))
+      const delta = calls - before
+      cleanup()
+      return delta
+    }
+    expect(await deltaFor(8)).toBe(await deltaFor(2))
+  })
+})
