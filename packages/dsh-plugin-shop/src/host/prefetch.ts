@@ -14,6 +14,8 @@
  */
 
 import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { join, posix, win32 } from 'node:path'
 import { jsEntryCommand } from './dsh-cli.ts'
 import { killTree, shellSafeTarget, type KillFns } from './executor.ts'
 
@@ -105,19 +107,106 @@ interface Lane {
  * was serving, and refuses the next by name" sitting red for the full 10s of
  * its `vi.waitFor` because the line it filters for was never announced.
  *
- * **9009 itself is unverified on this machine and cannot be verified on it.**
- * Nothing reaches this constant without `platform === 'win32'`, so no local
- * run — including the test added for this branch, which drives the arm with
- * this constant and so pins the plumbing rather than the number — executes it.
- * CI's `windows` runner is the only oracle, and the case named above is the
- * assertion that decides it: green only if the number is right. Should it be
- * wrong, the fix is inert rather than harmful — the latch does not set and the
- * generic exit line stands, which is what Windows does today. A false positive
- * is bounded by this module's own contract: the worst a stray 9009 can do is
- * refuse the rest of the process's prefetches, a lost optimization and never a
- * failed, slower or altered install.
+ * **That arm did not turn the leg green, and this is why.** A temporary
+ * diagnostic, gated on `shell` so only the Windows runner printed it, came
+ * back with four exits, in test-file order:
+ *
+ *   exit code=1     bin="…\dsh-prefetch-*\definitely-not-here"
+ *   exit code=9009  bin="pnpm"
+ *   exit code=1     bin="pnpm"
+ *   exit code=0     bin="pnpm"
+ *
+ * The first line is the failing case's own bin, and it is the whole finding:
+ * that case passes a PATH, `cmd.exe` answers **1** for a path it cannot find,
+ * and 1 is also what a command that RAN and failed answers. The two things
+ * this latch must tell apart are the same number, so no value of this
+ * constant could have made the arm fire — it was gated on a signal that case
+ * does not produce. (The 9009 line is not evidence for the constant either.
+ * It is the second shell-gated exit the suite emits, and the only real
+ * `cmd.exe` child started before it is the one above: the cases that pass a
+ * bare `pnpm` inject a scripted child that emits its own code — this file's
+ * `scriptedSpawn` — so 9009 there is a fixture value echoed back, not a
+ * measurement of the shell.)
+ *
+ * Absence is therefore asked BEFORE the spawn now, by {@link resolvesBin},
+ * which is the primary mechanism. This arm stays as the one thing resolving
+ * cannot cover: a name that IS found and still cannot be run. Its number is
+ * `cmd.exe`'s long-standing answer for an unresolvable name and is unverified
+ * by this repo's own runs — nothing reaches it without `platform === 'win32'`,
+ * and nothing on the Windows runner has produced one. Should it be wrong the
+ * behaviour is what Windows had before the arm existed: the latch does not set
+ * and the generic exit line stands. A false positive is bounded by this
+ * module's own contract — the worst a stray 9009 can do is refuse the rest of
+ * the process's prefetches, a lost optimization and never a failed, slower or
+ * altered install.
  */
 const SHELL_COMMAND_NOT_FOUND = 9009
+
+/** What a bare name may be resolved AS on Windows, on top of the name itself.
+ *
+ * `cmd.exe` resolves a bare command through `PATHEXT`, and these are the two
+ * shapes an executor actually arrives in: `.cmd` is what npm's pnpm shim is,
+ * which is the reason this module passes `shell: true` there at all, and
+ * `.exe` is what a native install (a packed binary, a Node SEA) puts on PATH.
+ * The bare name is tried as well, which makes this a superset of what the
+ * shell resolves. That asymmetry is deliberate, because the two mistakes do
+ * not cost the same: a false PRESENT spends one doomed child, which
+ * {@link SHELL_COMMAND_NOT_FOUND} or `error` then latches a moment later,
+ * while a false ABSENT both disables the optimization for the rest of the
+ * process and tells the user pnpm is missing from a machine that has it. */
+const WIN32_SUFFIXES = ['', '.cmd', '.exe'] as const
+
+/**
+ * Whether `bin` names something a batch could actually start — asked of the
+ * filesystem before the spawn, because on Windows the failure cannot answer it
+ * (see {@link SHELL_COMMAND_NOT_FOUND}: a path that is not there and a command
+ * that ran and failed both exit 1).
+ *
+ * Pure path arithmetic over `existsSync`, which is what makes it testable on
+ * the Linux runners — the exit-code route was not, and that is why the Windows
+ * leg was the only place the defect could appear. No process is started to ask
+ * the question, so a bin that is not there is never spawned.
+ *
+ * `path` is the batch's OWN PATH, not the shop's: an install may carry a
+ * narrowed environment, the batch inherits exactly that, and the name has to
+ * resolve where the child will look for it. An absent `PATH` falls back to the
+ * process's, the same way the child's environment would.
+ *
+ * An empty PATH entry is skipped, as `dsh-cli.ts` skips it: it means "the
+ * current directory", which is not where a bare `pnpm` lives, and a relative
+ * `existsSync` here would be answering about the shop's cwd instead.
+ *
+ * A RELATIVE bin is looked up against the process's own cwd rather than the
+ * batch's, which is the one thing this questions less precisely than the OS
+ * will. No caller produces one today — production passes the bare name, and
+ * the fixtures pass absolute paths — and the backstop covers it if one ever
+ * does, since the child then simply fails where this said it would start.
+ */
+const resolvesBin = (bin: string, platform: NodeJS.Platform, path: string | undefined): boolean => {
+  // A separator makes it a path, and a path names one exact file: a caller
+  // pinning a pnpm installation has already decided which one, so "present" is
+  // "that file is there". Both separators on every platform, because
+  // `platform` says what the SHELL is, not what the string means — a Windows
+  // path reaching a POSIX run is still a path, and searching PATH for it could
+  // only ever be wrong.
+  if (bin.includes('/') || bin.includes('\\')) return existsSync(bin)
+  const win32Host = platform === 'win32'
+  // `posix.delimiter` is ':' and `win32.delimiter` is ';' — named rather than
+  // spelled, and chosen by `platform` rather than by `path.delimiter`, which
+  // is the HOST's and would split a Windows PATH on the Linux runner that
+  // drives this branch in a test.
+  const separator = win32Host ? win32.delimiter : posix.delimiter
+  // Off Windows an executor is the file itself or nothing: `execvp` appends no
+  // extension.
+  const suffixes: readonly string[] = win32Host ? WIN32_SUFFIXES : ['']
+  for (const dir of (path ?? '').split(separator)) {
+    if (dir === '') continue
+    for (const suffix of suffixes) {
+      if (existsSync(join(dir, bin + suffix))) return true
+    }
+  }
+  return false
+}
 
 export function createPrefetcher(options: {
   pnpmBin?: string
@@ -160,10 +249,11 @@ export function createPrefetcher(options: {
   /** pnpm is not on PATH: stop prefetching for the rest of this process, and
    * tell the installs the running batch served why.
    *
-   * Both ways absence arrives land here — node's ENOENT for a binary it could
-   * not start, and cmd.exe's {@link SHELL_COMMAND_NOT_FOUND} for a name it
-   * could not resolve — so the latch and the line a user reads cannot drift
-   * apart between them. */
+   * Three ways absence arrives land here — {@link resolvesBin}, which is the
+   * primary one and the only one that asks before spawning; node's ENOENT for
+   * a binary it could not start; and cmd.exe's {@link SHELL_COMMAND_NOT_FOUND}
+   * for a name it could not resolve — so the latch and the line a user reads
+   * cannot drift apart between them. */
   const latchAbsent = (current: Lane): void => {
     pnpmAbsent = true
     announce(current, 'dsh-plugin-shop: no download phase — pnpm not found on PATH')
@@ -181,6 +271,25 @@ export function createPrefetcher(options: {
     const specs = [...current.pending.keys()]
     for (const [spec, log] of current.pending) current.inFlight.set(spec, log)
     current.pending.clear()
+    // Absence, asked rather than inferred. Both signals a child can give are
+    // unreadable on Windows — a missing path and a failure that ran are the
+    // same exit 1 — so the one question that decides it is put to the
+    // filesystem while the batch is still nothing but a set of specs. The
+    // specs are in `inFlight` by this point, so `latchAbsent` announces to
+    // exactly the installs this batch would have served, and `finish` finds a
+    // lane with nothing pending: no second batch, and no child that was only
+    // ever going to fail.
+    //
+    // Probed per batch rather than once per process, which costs a few
+    // `existsSync` calls: pnpm installed (or removed) while the host runs is
+    // then answered by the next batch instead of by a latch that outlives the
+    // fact. `pnpmAbsent` still short-circuits `request`, so a latched pump
+    // never reaches here again.
+    if (!resolvesBin(pnpmBin, platform, current.env?.PATH ?? process.env.PATH)) {
+      latchAbsent(current)
+      finish(profile, current)
+      return
+    }
     const argv = ['store', 'add', ...specs]
     // pnpm on Windows is a `.cmd` shim, and node has refused `.cmd` without a
     // shell since the 2024 batfile fix; dsh's own answer for the same problem

@@ -1,6 +1,6 @@
 import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { nodeKills, type KillFns } from '../../src/host/executor.ts'
@@ -11,6 +11,21 @@ import { fileTempRoot } from './temp-root.ts'
 const TEMP_ROOT = fileTempRoot('prefetch')
 
 const temp = () => mkdtempSync(join(TEMP_ROOT, 'dsh-prefetch-'))
+
+/** A batch environment whose PATH is `dir`, holding stubs named `pnpm`.
+ *
+ * The pump resolves its bin before spawning, so a case that names the BARE
+ * `pnpm` needs a PATH that answers for it — and letting the probe read the
+ * runner's own PATH would make the case pass or fail by accident, since CI has
+ * pnpm on it and a container running this file may not. Nothing here is ever
+ * executed: every case that uses this injects its own `spawn`. Several
+ * spellings, because a case driving the win32 branch from a Linux runner looks
+ * for `.cmd` while the POSIX branch looks for the name itself. */
+const pathHoldingPnpm = (dir: string, suffixes: readonly string[] = ['', '.cmd']): NodeJS.ProcessEnv => {
+  for (const suffix of suffixes) writeFileSync(join(dir, `pnpm${suffix}`), '')
+  return { PATH: dir }
+}
+
 const batches = (dir: string): string[] => {
   const log = join(dir, 'pnpm.log')
   if (!existsSync(log)) return []
@@ -188,10 +203,14 @@ describe('the prefetch pump', () => {
     expect(prefetcher.request({ profile: 'web', spec: 'b@1', cwd: dir })).toEqual({
       started: false, reason: 'no-pnpm',
     })
-    // The refused install reached no child at all. A `batches(dir)` check
-    // cannot say that here — a pnpm that does not exist can never write the
-    // log, so it passes whatever the pump does.
-    expect(calls.map(call => call.command)).toEqual([missing])
+    // The refused install reached no child at all — and neither did the one
+    // being served. The bin is resolved before the batch is spawned, so a pnpm
+    // that is not there never becomes a child on any platform, which is what
+    // this case's Windows runs could not get from an exit code (see
+    // `SHELL_COMMAND_NOT_FOUND`). A `batches(dir)` check cannot say that here —
+    // a pnpm that does not exist can never write the log, so it passes whatever
+    // the pump does.
+    expect(calls).toEqual([])
   })
 
   // The other half of that case, and the one no run of this file on a Linux
@@ -204,13 +223,18 @@ describe('the prefetch pump', () => {
     const lines: string[] = []
     const calls: Spawned[] = []
     const scripted = scriptedSpawn()
+    // The batch PATH this case's `pnpm` resolves on. This arm is only reachable
+    // by a batch that IS started — the pump resolves the bin first, and a bare
+    // name the runner's PATH happened not to hold would latch absence before
+    // the scripted child ever existed.
+    const env = pathHoldingPnpm(dir)
     const prefetcher = createPrefetcher({
       pnpmBin: 'pnpm',
       platform: 'win32',
       spawn: recording(calls, scripted.spawn),
     })
     expect(prefetcher.request({
-      profile: 'web', spec: 'a@1', cwd: dir, log: line => lines.push(line),
+      profile: 'web', spec: 'a@1', cwd: dir, env, log: line => lines.push(line),
     })).toEqual({ started: true })
     // Deterministic end to end, so no poll is needed and none is written: the
     // batch is built from `request`'s microtask, the scripted child answers
@@ -248,12 +272,16 @@ describe('the prefetch pump', () => {
     const dir = temp()
     const lines: string[] = []
     const scripted = scriptedSpawn()
+    // Carried on BOTH requests: `request` replaces the lane's environment, so a
+    // second one that omitted it would put the probe back on the runner's own
+    // PATH.
+    const env = pathHoldingPnpm(dir)
     const prefetcher = createPrefetcher({
       pnpmBin: 'pnpm',
       platform: 'win32',
       spawn: scripted.spawn,
     })
-    expect(prefetcher.request({ profile: 'web', spec: 'a@1', cwd: dir, log: line => lines.push(line) }))
+    expect(prefetcher.request({ profile: 'web', spec: 'a@1', cwd: dir, env, log: line => lines.push(line) }))
       .toEqual({ started: true })
     await Promise.resolve()
     scripted.exitCurrent(1)
@@ -262,7 +290,7 @@ describe('the prefetch pump', () => {
     expect(lines.join('\n')).toContain('exit 1')
     expect(lines.join('\n')).not.toContain('pnpm not found')
     expect(prefetcher.request({
-      profile: 'web', spec: 'b@1', cwd: dir, log: line => lines.push(line),
+      profile: 'web', spec: 'b@1', cwd: dir, env, log: line => lines.push(line),
     })).toEqual({ started: true })
     // Settle the batch that request just started, so its bound is cleared
     // rather than left pending past the end of the case — and so the success
@@ -347,12 +375,135 @@ describe('the prefetch pump', () => {
   })
 })
 
+/**
+ * The question the pump now asks BEFORE spawning — can this bin be started at
+ * all — put to the filesystem instead of read off a failure afterwards.
+ *
+ * That is the half the Windows leg could not do (see `SHELL_COMMAND_NOT_FOUND`
+ * in `prefetch.ts`: a path that is not there and a command that ran and failed
+ * both exit 1), and it is why these cases can live here rather than only in
+ * CI: resolving a bin is a filesystem and PATH walk, so a Linux runner decides
+ * it exactly as a Windows runner does.
+ *
+ * The PRESENT cases are the ones the feature lives by. A probe that always
+ * answered "absent" would satisfy every other case in this file — nothing
+ * asserts on a batch that was never started — while silently refusing a pnpm
+ * that is right there.
+ */
+describe('the resolution probe', () => {
+  const ABSENT = 'dsh-plugin-shop: no download phase — pnpm not found on PATH'
+
+  it('reads a path-shaped bin off the filesystem, never off PATH', async () => {
+    const dir = temp()
+    const calls: Spawned[] = []
+    const lines: string[] = []
+    const prefetcher = createPrefetcher({
+      // A file that is not there, while a `pnpm` that IS there sits on the
+      // batch's PATH: a caller who pinned a path gets that path's answer, and
+      // a probe that fell back to PATH would start the wrong one.
+      pnpmBin: join(dir, 'pnpm-not-installed'),
+      spawn: recording(calls),
+    })
+    expect(prefetcher.request({
+      profile: 'web', spec: 'a@1', cwd: dir, env: pathHoldingPnpm(temp()), log: line => lines.push(line),
+    })).toEqual({ started: true })
+    // Nothing spawns, so one turn of the queue is every wait this case has:
+    // the announcement is made from `request`'s own microtask, and no process
+    // startup stands between the two.
+    await Promise.resolve()
+    expect(lines).toEqual([ABSENT])
+    expect(calls).toEqual([])
+  })
+
+  it('refuses a bare name the batch PATH does not hold, and refuses the next by name', async () => {
+    const dir = temp()
+    const calls: Spawned[] = []
+    const lines: string[] = []
+    const prefetcher = createPrefetcher({ pnpmBin: 'pnpm', spawn: recording(calls) })
+    expect(prefetcher.request({
+      profile: 'web',
+      spec: 'a@1',
+      cwd: dir,
+      // A PATH that exists but holds nothing — the fabricated environment is
+      // also what a REAL spawn here would inherit, so this case cannot reach a
+      // pnpm of the runner's even when the probe is removed to check that it
+      // is the probe doing the work.
+      env: { PATH: join(dir, 'nowhere') },
+      log: line => lines.push(line),
+    })).toEqual({ started: true })
+    await Promise.resolve()
+    expect(lines).toEqual([ABSENT])
+    expect(calls).toEqual([])
+    // And the latch is process-wide: the next install is refused by name,
+    // before a batch is even assembled.
+    expect(prefetcher.request({ profile: 'web', spec: 'b@1', cwd: dir })).toEqual({
+      started: false, reason: 'no-pnpm',
+    })
+  })
+
+  it('starts the batch a win32 name resolves through its .cmd suffix', async () => {
+    const dir = temp()
+    const lines: string[] = []
+    const calls: Spawned[] = []
+    const scripted = scriptedSpawn()
+    const prefetcher = createPrefetcher({
+      pnpmBin: 'pnpm',
+      platform: 'win32',
+      spawn: recording(calls, scripted.spawn),
+    })
+    expect(prefetcher.request({
+      profile: 'web',
+      spec: 'a@1',
+      cwd: dir,
+      // ONLY `pnpm.cmd`: that is the shim npm installs on Windows, and the
+      // reason this module passes `shell: true` there at all. A probe that
+      // looked for the bare name alone would answer "absent" on a Windows
+      // machine that has pnpm.
+      env: pathHoldingPnpm(dir, ['.cmd']),
+      log: line => lines.push(line),
+    })).toEqual({ started: true })
+    await Promise.resolve()
+    expect(calls.map(call => ({ command: call.command, args: call.args, shell: call.options.shell })))
+      .toEqual([{ command: 'pnpm', args: ['store', 'add', 'a@1'], shell: true }])
+    // A batch that really started, not one that was started and then latched:
+    // nothing was announced, and its exit reports the ordinary way.
+    scripted.exitCurrent(0)
+    expect(lines).toEqual(['dsh-plugin-shop: packages fetched ahead of the install'])
+  })
+
+  it('starts the batch a bare name on the batch PATH names', async () => {
+    const dir = temp()
+    const lines: string[] = []
+    const calls: Spawned[] = []
+    const scripted = scriptedSpawn()
+    // `platform` pinned to a POSIX one so the line asserted below is the same
+    // on either host — the bare name is what this case is about, and the
+    // win32 suffix walk is the case above.
+    const prefetcher = createPrefetcher({
+      pnpmBin: 'pnpm', platform: 'linux', spawn: recording(calls, scripted.spawn),
+    })
+    expect(prefetcher.request({
+      profile: 'web', spec: 'a@1', cwd: dir, env: pathHoldingPnpm(dir, ['']), log: line => lines.push(line),
+    })).toEqual({ started: true })
+    await Promise.resolve()
+    expect(calls.map(call => ({ command: call.command, args: call.args, shell: call.options.shell })))
+      .toEqual([{ command: 'pnpm', args: ['store', 'add', 'a@1'], shell: false }])
+    scripted.exitCurrent(0)
+    expect(lines).toEqual(['dsh-plugin-shop: packages fetched ahead of the install'])
+  })
+})
+
 describe('the command line a batch is started with', () => {
   const SPEC = 'github:owner/slug#0123456789abcdef0123456789abcdef01234567&path:packages/a'
 
   /** The command line the pump builds for one batch, as `{ command, args,
    * shell }`. The child that runs it is a stand-in: what these cases are about
-   * is the argv, and a real `pnpm store add` would reach the network. */
+   * is the argv, and a real `pnpm store add` would reach the network.
+   *
+   * Every case gets a PATH this file owns, holding a `pnpm` stub, because the
+   * pump resolves its bin before spawning: the bare-name cases below would
+   * otherwise be asserting that the RUNNER has pnpm rather than that the pump
+   * builds the right line. */
   const line = async (options: {
     pnpmBin?: string
     platform?: NodeJS.Platform
@@ -360,7 +511,7 @@ describe('the command line a batch is started with', () => {
   }) => {
     const calls: Spawned[] = []
     const prefetcher = createPrefetcher({ ...options, spawn: recording(calls, standIn) })
-    prefetcher.request({ profile: 'web', spec: SPEC, cwd: TEMP_ROOT })
+    prefetcher.request({ profile: 'web', spec: SPEC, cwd: TEMP_ROOT, env: pathHoldingPnpm(temp()) })
     await vi.waitFor(() => expect(calls).toHaveLength(1))
     return calls.map(call => ({ command: call.command, args: call.args, shell: call.options.shell }))
   }
