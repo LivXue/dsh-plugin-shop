@@ -157,6 +157,47 @@ const SHELL_COMMAND_NOT_FOUND = 9009
 const WIN32_SUFFIXES = ['', '.cmd', '.exe'] as const
 
 /**
+ * Every plausible reading of a PATH string, as the directories it could hold.
+ *
+ * Three readings, because the two ends of that string disagree about who
+ * decides the separator. `platform` says what the SHELL is — this module takes
+ * it as an argument, and the tests drive the win32 branch from a Linux runner
+ * with it — while the string itself was produced by the HOST that built the
+ * batch's environment. So whichever separator `platform` names, the string may
+ * have been joined with the other one, and BOTH mismatches are reachable; only
+ * one of them was guarded.
+ *
+ * The one that bit: a single-entry PATH whose entry is a Windows absolute path
+ * — `C:\Users\…\dsh-prefetch-X`, which is exactly what a test's temp directory
+ * is on the Windows runner — read with `platform: 'linux'` splits on ':' into
+ * `C` and `\Users\…`. Neither is the directory, so the pnpm that was right
+ * there was reported absent, and the latch that follows means it stays absent
+ * for the rest of the process. The string's own reading comes first for that
+ * shape: it IS one directory, and that is the most direct true answer there
+ * is. (A real PATH yields its real entries under one of the two splits; this
+ * reading costs a stat on a string that is not a directory, which is what a
+ * multi-entry PATH always is.)
+ *
+ * Trying all three costs an `existsSync` or two on a string none of them
+ * resolves, and it is the safe direction to err in — see `WIN32_SUFFIXES`: a
+ * false PRESENT spends one doomed child, while a false ABSENT both disables
+ * the optimization for the rest of the process and tells the user pnpm is
+ * missing from a machine that has it. The price is that a directory named
+ * exactly like a PATH string — legal, if perverse — is read as the entry it
+ * spells, and that lands on the cheap side of the same asymmetry.
+ *
+ * Order decides only how much work a MISS costs: a hit in any reading is
+ * present, so the list is a set and not a preference.
+ */
+const pathReadings = (path: string | undefined): string[] => {
+  const raw = path ?? ''
+  // Both delimiters, named rather than spelled. Neither is `path.delimiter`,
+  // which is the HOST's and would still be a bet: the string may have been
+  // joined somewhere other than where this code runs.
+  return [raw, ...raw.split(posix.delimiter), ...raw.split(win32.delimiter)]
+}
+
+/**
  * Whether `bin` names something a batch could actually start — asked of the
  * filesystem before the spawn, because on Windows the failure cannot answer it
  * (see {@link SHELL_COMMAND_NOT_FOUND}: a path that is not there and a command
@@ -170,7 +211,9 @@ const WIN32_SUFFIXES = ['', '.cmd', '.exe'] as const
  * `path` is the batch's OWN PATH, not the shop's: an install may carry a
  * narrowed environment, the batch inherits exactly that, and the name has to
  * resolve where the child will look for it. An absent `PATH` falls back to the
- * process's, the same way the child's environment would.
+ * process's, the same way the child's environment would. The string is read
+ * into entries by {@link pathReadings}, which tries every separator rather
+ * than betting on the one `platform` names.
  *
  * An empty PATH entry is skipped, as `dsh-cli.ts` skips it: it means "the
  * current directory", which is not where a bare `pnpm` lives, and a relative
@@ -191,15 +234,10 @@ const resolvesBin = (bin: string, platform: NodeJS.Platform, path: string | unde
   // only ever be wrong.
   if (bin.includes('/') || bin.includes('\\')) return existsSync(bin)
   const win32Host = platform === 'win32'
-  // `posix.delimiter` is ':' and `win32.delimiter` is ';' — named rather than
-  // spelled, and chosen by `platform` rather than by `path.delimiter`, which
-  // is the HOST's and would split a Windows PATH on the Linux runner that
-  // drives this branch in a test.
-  const separator = win32Host ? win32.delimiter : posix.delimiter
   // Off Windows an executor is the file itself or nothing: `execvp` appends no
   // extension.
   const suffixes: readonly string[] = win32Host ? WIN32_SUFFIXES : ['']
-  for (const dir of (path ?? '').split(separator)) {
+  for (const dir of pathReadings(path)) {
     if (dir === '') continue
     for (const suffix of suffixes) {
       if (existsSync(join(dir, bin + suffix))) return true

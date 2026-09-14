@@ -1,6 +1,6 @@
 import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { nodeKills, type KillFns } from '../../src/host/executor.ts'
@@ -20,10 +20,19 @@ const temp = () => mkdtempSync(join(TEMP_ROOT, 'dsh-prefetch-'))
  * pnpm on it and a container running this file may not. Nothing here is ever
  * executed: every case that uses this injects its own `spawn`. Several
  * spellings, because a case driving the win32 branch from a Linux runner looks
- * for `.cmd` while the POSIX branch looks for the name itself. */
-const pathHoldingPnpm = (dir: string, suffixes: readonly string[] = ['', '.cmd']): NodeJS.ProcessEnv => {
+ * for `.cmd` while the POSIX branch looks for the name itself.
+ *
+ * `path` replaces the string the probe is handed, for the cases about how a
+ * PATH STRING is read rather than about one directory: the stub still lands in
+ * `dir`, and the caller spells the string the way its case is about — several
+ * real entries joined by a separator the `platform` argument may not name. */
+const pathHoldingPnpm = (
+  dir: string,
+  suffixes: readonly string[] = ['', '.cmd'],
+  path: string = dir,
+): NodeJS.ProcessEnv => {
   for (const suffix of suffixes) writeFileSync(join(dir, `pnpm${suffix}`), '')
-  return { PATH: dir }
+  return { PATH: path }
 }
 
 const batches = (dir: string): string[] => {
@@ -484,6 +493,84 @@ describe('the resolution probe', () => {
     })
     expect(prefetcher.request({
       profile: 'web', spec: 'a@1', cwd: dir, env: pathHoldingPnpm(dir, ['']), log: line => lines.push(line),
+    })).toEqual({ started: true })
+    await Promise.resolve()
+    expect(calls.map(call => ({ command: call.command, args: call.args, shell: call.options.shell })))
+      .toEqual([{ command: 'pnpm', args: ['store', 'add', 'a@1'], shell: false }])
+    scripted.exitCurrent(0)
+    expect(lines).toEqual(['dsh-plugin-shop: packages fetched ahead of the install'])
+  })
+
+  // The collision the Windows runner hit, staged where it can be run.
+  //
+  // `platform: 'linux'` names the separator; the string handed to the probe
+  // was produced by the HOST. On the Windows runner the temp directory every
+  // case here starts from IS a colon-bearing path — `C:\Users\RUNNER~1\…\
+  // dsh-prefetch-X`, whose drive-letter colon a split on ':' cuts in two,
+  // leaving `C` and `\Users\…`, neither of them the directory that holds the
+  // pnpm the case had just written. That path has no `;` in it, and a name
+  // carrying ONE separator is still whole under a split on the other: the
+  // stage below folds a `;` in as well, which is what a Windows directory name
+  // may legally hold (a `:` it may not — NTFS forbids it, which is why this
+  // stage is a fabrication, skipped where it cannot be built). Both spelled
+  // inside the one entry, so BOTH splits cut it and neither puts it back
+  // together: the string read as the single directory it is is the only
+  // reading left, and the reading a bet on either separator alone would lose.
+  const colonPath = it.skipIf(process.platform === 'win32')
+  colonPath('starts the batch when a single PATH entry holds both separators in its name', async () => {
+    const dir = temp()
+    const lines: string[] = []
+    const calls: Spawned[] = []
+    const scripted = scriptedSpawn()
+    const holder = join(dir, 'dsh-prefetch:posix;win32')
+    mkdirSync(holder)
+    // The premise the case rests on, asserted rather than assumed: this ONE
+    // entry holds the pnpm and no fragment of either split does. (The
+    // separator-free fragments resolve against this file's cwd, which is why
+    // they are checked here rather than assumed away.)
+    expect(holder.split(':').map(fragment => existsSync(join(fragment, 'pnpm')))).toEqual([false, false])
+    expect(holder.split(';').map(fragment => existsSync(join(fragment, 'pnpm')))).toEqual([false, false])
+    const prefetcher = createPrefetcher({
+      pnpmBin: 'pnpm', platform: 'linux', spawn: recording(calls, scripted.spawn),
+    })
+    expect(prefetcher.request({
+      profile: 'web', spec: 'a@1', cwd: dir, env: pathHoldingPnpm(holder, ['']), log: line => lines.push(line),
+    })).toEqual({ started: true })
+    await Promise.resolve()
+    expect(calls.map(call => ({ command: call.command, args: call.args, shell: call.options.shell })))
+      .toEqual([{ command: 'pnpm', args: ['store', 'add', 'a@1'], shell: false }])
+    scripted.exitCurrent(0)
+    expect(lines).toEqual(['dsh-plugin-shop: packages fetched ahead of the install'])
+  })
+
+  // The same disagreement read the other way round, and the one a real Windows
+  // machine meets: a PATH of several entries joined with ';' reaching a batch
+  // whose `platform` says POSIX. Neither direction is decided by the string,
+  // so the probe may not bet on either — a bet that reads a ';'-joined PATH as
+  // one enormous directory name disables the optimization for every Windows
+  // user whose PATH holds more than one entry.
+  it.each([
+    { way: 'POSIX', separator: ':' },
+    { way: 'Windows', separator: ';' },
+  ])('starts the batch a PATH joined the $way way names', async ({ separator }) => {
+    const first = temp()
+    const second = temp()
+    const lines: string[] = []
+    const calls: Spawned[] = []
+    const scripted = scriptedSpawn()
+    const prefetcher = createPrefetcher({
+      pnpmBin: 'pnpm', platform: 'linux', spawn: recording(calls, scripted.spawn),
+    })
+    expect(prefetcher.request({
+      profile: 'web',
+      spec: 'a@1',
+      cwd: first,
+      // `first` is a real entry holding no pnpm, so finding one means the probe
+      // walked the list rather than landing on the first thing it looked at.
+      // The stub is written under `second`, and the string is the two joined
+      // this row's way.
+      env: pathHoldingPnpm(second, [''], `${first}${separator}${second}`),
+      log: line => lines.push(line),
     })).toEqual({ started: true })
     await Promise.resolve()
     expect(calls.map(call => ({ command: call.command, args: call.args, shell: call.options.shell })))
