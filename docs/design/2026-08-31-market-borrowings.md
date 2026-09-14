@@ -67,6 +67,11 @@ friction). Borrowings are adapted to that difference, not copied.
   existing `shop/version` result (`{ installed, latest, outdated,
   restartSupported }`), which the client already reads at boot and on
   refresh — no new RPC surface.
+  *(Superseded 2026-09-14: the boolean became `restartBlocked`, a typed
+  reason, because "says why" was not what shipped — one string served
+  every cause and it named systemd, so Windows readers were told to
+  restart a service they do not run. See the main design's §14
+  amendment.)*
 - Tests: a fixture matrix over `detectSupervisor` (INVOCATION_ID ×
   JOURNAL_STREAM × ppid), and the refusal tested through the executor,
   per the "test denial through the executor" rule.

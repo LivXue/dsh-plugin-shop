@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import ShopGateway, { verifyTarballSha256 } from '../../src/host/index.ts'
-import type { InventoryEntry, LoaderEntryLike, ShopGatewayOptions, ShopInstallStatusResult } from '../../src/host/index.ts'
+import type { InventoryEntry, LoaderEntryLike, RestartBlockedReason, ShopGatewayOptions, ShopInstallStatusResult } from '../../src/host/index.ts'
 import type { HotMountResult } from '../../src/host/hot.ts'
 import type { CatalogResult, CatalogSnapshot, LoadCatalogOptions } from '../../src/host/catalog.ts'
 import type { CatalogEntry } from '../../src/host/types.ts'
@@ -990,7 +990,7 @@ describe('ShopGateway.restart', () => {
   // observe its marker on Windows however the platform option is set. The
   // Windows behaviour is asserted rather than skipped — the two cases above
   // pin `platform: 'win32'` and check the typed refusal and
-  // `restartSupported: false` — so nothing here is left uncovered by the skip.
+  // `restartBlocked: 'windows'` — so nothing here is left uncovered by the skip.
   it.skipIf(process.platform === 'win32')("re-runs this process's own entry when dshBin is the bare default", async () => {
     const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-restart-node-'))
     const marker = join(dir, 'ran.log')
@@ -1030,6 +1030,12 @@ function gatewayOptions() {
     // must not change meaning with the host OS now that the platform is also
     // a restart gate. The Windows cases override it explicitly.
     platform: 'linux' as NodeJS.Platform,
+    // Pinned for the same reason, one layer down: `restartArgv` defaults to
+    // `process.argv.slice(2)`, which under vitest is the RUNNER's command
+    // line. Now that `--port 0` is a reason `version()` reports rather than
+    // only a refusal `restart()` raises, an unpinned argv would let the way
+    // the suite was invoked decide what these cases observe.
+    restartArgv: ['web'],
   }
 }
 
@@ -1049,16 +1055,60 @@ describe('restart guard (systemd)', () => {
     expect(result.ok).toBe(true)
   })
 
-  it('reports restartSupported: false under systemd without the override', async () => {
+  it("reports restartBlocked: 'systemd' under systemd without the override", async () => {
     const gateway = new ShopGateway(stubCtx(), { ...gatewayOptions(), env: { INVOCATION_ID: 'abc' }, ppid: 1, fetchLatestVersion: async () => '9.9.9' })
     const version = await gateway.version()
-    expect(version.restartSupported).toBe(false)
+    expect(version.restartBlocked).toBe('systemd')
   })
 
-  it('reports restartSupported: true outside a supervisor', async () => {
+  it('reports restartBlocked: null outside a supervisor', async () => {
     const gateway = new ShopGateway(stubCtx(), { ...gatewayOptions(), env: {}, ppid: 4321, fetchLatestVersion: async () => null })
     const version = await gateway.version()
-    expect(version.restartSupported).toBe(true)
+    expect(version.restartBlocked).toBe(null)
+  })
+
+  it("reports restartBlocked: 'port-zero' under --port 0, which restart() refused but version() used to hide", async () => {
+    // The gap this closes: `restart()` has always refused `--port 0`, but the
+    // boolean `version()` answered was computed from the platform and the
+    // supervisor alone. So a dsh launched with `--port 0` advertised a restart
+    // offer the host would refuse the instant it was pressed — including to
+    // this project's own web e2e, which boots exactly that way.
+    const gateway = new ShopGateway(stubCtx(), {
+      ...gatewayOptions(), env: {}, ppid: 4321, restartArgv: ['web', '--port', '0'], fetchLatestVersion: async () => null,
+    })
+    expect((await gateway.version()).restartBlocked).toBe('port-zero')
+  })
+
+  it('names Windows ahead of systemd, because the systemd copy sends the reader to an override Windows cannot use', async () => {
+    // Order, not just membership: both gates are shut here. `allowRestart:
+    // true` overrides the systemd gate and nothing overrides the platform
+    // one, so reporting 'systemd' would tell a Windows reader to set a config
+    // key that leaves them exactly where they were.
+    const gateway = new ShopGateway(stubCtx(), {
+      ...gatewayOptions(), platform: 'win32', env: { INVOCATION_ID: 'abc' }, ppid: 1, fetchLatestVersion: async () => null,
+    })
+    expect((await gateway.version()).restartBlocked).toBe('windows')
+  })
+
+  it('answers the same reason from version() that restart() refuses with, for every reason', async () => {
+    // The invariant the typed reason exists to create: what the card was told
+    // at mount and what a press actually gets are one decision, read twice.
+    // While `version()` answered a boolean it covered two of the three static
+    // refusals, and the client had one string for all of them.
+    // One shape for all three, so the array stays homogeneous and each case
+    // states every input the predicate reads rather than inheriting some.
+    const cases: Array<{ reason: RestartBlockedReason; detail: string; options: Partial<ShopGatewayOptions> }> = [
+      { reason: 'windows', detail: 'not supported on Windows', options: { platform: 'win32', env: {}, ppid: 4321, restartArgv: ['web'] } },
+      { reason: 'systemd', detail: 'systemd service', options: { platform: 'linux', env: { INVOCATION_ID: 'abc' }, ppid: 1, restartArgv: ['web'] } },
+      { reason: 'port-zero', detail: '--port 0', options: { platform: 'linux', env: {}, ppid: 4321, restartArgv: ['web', '--port', '0'] } },
+    ]
+    for (const { reason, detail, options } of cases) {
+      const gateway = new ShopGateway(stubCtx(), { ...gatewayOptions(), ...options, fetchLatestVersion: async () => null })
+      expect((await gateway.version()).restartBlocked).toBe(reason)
+      const result = await gateway.restart()
+      expect(result.ok).toBe(false)
+      if (!result.ok) expect(result.detail).toContain(detail)
+    }
   })
 })
 
@@ -1081,14 +1131,16 @@ describe('restart guard (Windows)', () => {
     expect(exit).not.toHaveBeenCalled()
   })
 
-  it('reports restartSupported: false on Windows so the client hides the offer', async () => {
-    // The client already has this path: it drops the restart button but keeps
-    // the pending-change notice (the systemd case), so no client change is
-    // needed for the offer to disappear.
+  it("reports restartBlocked: 'windows' so the client hides the offer and says why", async () => {
+    // The client drops the restart button and keeps the pending-change
+    // notice. What it says in the button's place is the reason's OWN copy:
+    // while this was a boolean the client had a single string for it, and
+    // that string named systemd — so this case passed while every Windows
+    // reader was told to restart a systemd unit.
     const gateway = new ShopGateway(stubCtx(), {
       ...gatewayOptions(), platform: 'win32', env: {}, ppid: 4321, fetchLatestVersion: async () => null,
     })
-    expect((await gateway.version()).restartSupported).toBe(false)
+    expect((await gateway.version()).restartBlocked).toBe('windows')
   })
 })
 

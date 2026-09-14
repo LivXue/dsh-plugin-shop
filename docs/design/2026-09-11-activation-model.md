@@ -208,7 +208,10 @@ this page is showing the state from before it, plus a **Reload** button
 that calls `location.reload()`.
 
 `restart` — unchanged: the localized hot-mount reason and the §8 restart
-offer, or the §C-1 disabled notice when a supervisor owns the process.
+offer, or the §C-1 disabled notice naming why the host cannot restart —
+Windows, a systemd unit without the override, or `--port 0` (amended
+2026-09-14; it read "when a supervisor owns the process", which was one
+of the three and the only one the copy named).
 
 **The page is never reloaded without being asked.** A reload discards
 whatever the reader was in the middle of — a conversation, a form, an
@@ -271,7 +274,15 @@ and asserts nothing whatsoever about the browser half, which is exactly
 the blind spot both incidents came through. A fourth fixture declaring
 `dsh.client` is part of this change, and the flow that installs it
 asserts `activation === 'restart'`, the `client-half` copy, and the
-restart gate — with no reload offered.
+restart activation's offer — with no reload offered.
+
+The offer half is read from the host rather than assumed (amended
+2026-09-14): `activation` is `restart` on every platform, but WHICH of
+the two the client may show is the host's `restartBlocked`, so the flow
+waits for the version check to resolve and then asserts the offer on a
+host that can restart and that reason's own notice on one that cannot.
+Asserting the POSIX outcome unconditionally is what left this case red
+for ten seconds on Windows, on a host behaving exactly as designed.
 
 That spec also carries the measurement the rule rests on, taken in the
 browser rather than quoted from §1: it reads `window.__DSH_BOOT__`

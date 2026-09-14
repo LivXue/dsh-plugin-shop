@@ -10,7 +10,7 @@ export { isShopLike } from '../shared/shop-like.ts'
 export { identityKey, type EntryIdentity } from '../shared/identity.ts'
 import { holderLabel, identityKey, specVerdict, type EntryIdentity } from '../shared/identity.ts'
 import type { ShopLocaleKey } from './locales.ts'
-import type { CatalogEntry, HotRestartReason, InstallRejectionCode } from '../host/index.ts'
+import type { CatalogEntry, HotRestartReason, InstallRejectionCode, RestartBlockedReason } from '../host/index.ts'
 import type { Activation } from '../host/activation.ts'
 import { isTerminalInstallState, type InstallState } from '../shared/install-state.ts'
 
@@ -59,6 +59,23 @@ export function uninstallActivationNoticeKey(activation: Activation): ShopLocale
  * whole-tab render driven by injected RPCs, which cannot be handed one view. */
 export function installPhaseKey(phase: 'downloading' | 'installing'): ShopLocaleKey {
   return phase === 'downloading' ? 'downloading' : 'installing'
+}
+
+/** Why the shop cannot restart dsh, as a locale key.
+ *
+ * A sibling of `activationNoticeKey` and exhaustive for the same reason: the
+ * switch has no default, so a fourth reason added to `RestartBlockedReason` is
+ * a type error here rather than a card that silently keeps the third one's
+ * copy. That is the whole point of the type — the single boolean this replaced
+ * had ONE string for three causes, and it named systemd, so a Windows reader
+ * was told to restart a service they do not run and to set an override that
+ * could not have helped. */
+export function restartBlockedNoticeKey(reason: RestartBlockedReason): ShopLocaleKey {
+  switch (reason) {
+    case 'windows': return 'restartBlockedWindowsNotice'
+    case 'systemd': return 'restartBlockedSystemdNotice'
+    case 'port-zero': return 'restartBlockedPortZeroNotice'
+  }
 }
 
 /** Tier → locale key, for the entry-card tier badge (§6.2). */
