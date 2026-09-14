@@ -78,6 +78,36 @@ this design unnecessary. It does not happen. Had this design been
 written from the declarations instead of the probe, it would have
 shipped the opposite rule.
 
+**Amendment (2026-09-14): the hot-mount row above does not reproduce
+through the shop's real install path, and the model changed because of
+it.** Re-measured against the same dsh 0.1.5-rc.1 from
+`web-full-flow.e2e.ts`, with one fixture and one variable — WHEN the
+package reached disk:
+
+| The package arrived | In the served `__DSH_BOOT__` |
+|---|---|
+| Before dsh booted (`dsh plugin add` in `beforeAll`) | **yes** — 55 entries, bundle URL `/plugins/??dsh-shop-e2e-client/client.js&rev=…` |
+| After dsh booted, hot-mounted by the shop | **no** — graph byte-identical across a reload, same `rev`, while the host half is live |
+
+Same fixture, same `dsh.client` declaration, same harness, same session
+shape. The declaration is therefore valid and the difference is the
+route: a package that was on disk at boot is in the composition the
+registry enumerates, and one that arrives afterwards is not, however
+successfully its host half hot-mounts.
+
+That is the material difference from the probe above, and the reason the
+falsification recorded there did not hold here. That probe's package was
+"present in `node_modules`" — present when dsh booted. Every install the
+shop actually performs downloads the package mid-session, which is the
+case that was never measured.
+
+**Consequence:** on the install and update paths a package with a browser
+half now reports `restart`, not `reload`. Offering a reload there is the
+same defect as the `live` claim it replaced — a step the reader is told
+will work, which provably changes nothing — just one step cheaper.
+Uninstall and enable/disable are unaffected: both move a row of the boot
+composition, which is the half of this section that did reproduce.
+
 **Side finding, not ours.** A `cordis.patch.yml` user layer containing
 only an `insert` row does not apply: polled 25 s, `rev` unchanged. The
 same insert applies immediately when a row targeting an existing entry
@@ -120,16 +150,37 @@ address.
 
 ## 3. Where each value comes from
 
-The decision is pure: `activationOf({ hostLive, hasClientHalf })` in a
-new `src/host/activation.ts`, fixture-driven like every other policy
-rule. Both inputs are gathered in the shell.
+The decision is pure: `activationOf({ hostLive, clientLive, hasClientHalf })`
+in a new `src/host/activation.ts`, fixture-driven like every other policy
+rule. All three inputs are gathered in the shell.
 
-| Flow | `hostLive` | `hasClientHalf` read |
-|---|---|---|
-| Install / update | the hot-mount result | after the install |
-| Uninstall | always true — the fiber is gone | **before** the uninstall |
-| Enable / disable | always true — the user layer is hot-reloaded | at the toggle |
-| Shop self-update | always false | not read |
+| Flow | `hostLive` | `clientLive` | `hasClientHalf` read |
+|---|---|---|---|
+| Install / update | the hot-mount result | **false** — a hot mount does not enter the registry's composition (§1 amendment) | **before and after**, unioned |
+| Uninstall | whether the fiber actually went away | true — a boot-composition row | **before** the uninstall |
+| Enable / disable | always true — the user layer is hot-reloaded | true — a boot-composition row | at the toggle |
+| Shop self-update | always false | not read | not read |
+
+**`hostLive` is measured, not assumed, on the uninstall path.** The hot
+unmount, or a live-disable that leaves every owned fiber gone, is what
+makes it true; an entry whose fiber outlives three disable attempts
+leaves the plugin RUNNING, and "removed and stopped immediately" is then
+a false statement about privilege rather than a cosmetic one.
+
+**The install read is a union of both versions.** `afterDone` runs once
+the new tarball has overwritten the manifest, so a read there answers
+about the new version alone — and an update REMOVING a browser half would
+report `live` while the open tab still runs the old one's bundle.
+`isUpdate` is what separates "no previous version" from `hasClientHalf`'s
+"could not tell", and is why both reads stay booleans.
+
+**A hot-mounted browser half cannot be reloaded into.** This is the §1
+amendment's consequence, and it is where it lands in the model: the
+install and update paths pass `clientLive: false`, so a package
+declaring `dsh.client` resolves to `restart` there. It carries the
+`client-half` reason, which is not a mount failure — the mount succeeded
+and the host half is running — and exists so the reader is not told
+"installed; restart dsh to activate" about a plugin they can already use.
 
 **The uninstall read must precede the uninstall.** The package's
 `package.json` is what declares `dsh.client`, and the uninstall deletes
@@ -219,8 +270,20 @@ e2e's live packages — `dsh-shop-e2e-live`, `dsh-shop-e2e-config`,
 and asserts nothing whatsoever about the browser half, which is exactly
 the blind spot both incidents came through. A fourth fixture declaring
 `dsh.client` is part of this change, and the flow that installs it
-asserts `activation === 'reload'` and the presence of the Reload
-control.
+asserts `activation === 'restart'`, the `client-half` copy, and the
+restart gate — with no reload offered.
+
+That spec also carries the measurement the rule rests on, taken in the
+browser rather than quoted from §1: it reads `window.__DSH_BOOT__`
+before and after a reload following the hot mount, and pins that the
+graph is byte-identical and the fixture absent from both, with the
+boot-composed shop present as the control that keeps those two lines
+from passing for the wrong reason. It is also the only thing in the
+suite that loads the fixture's browser half at all; without it the
+fixture's `client.js` and its `exports["./client"]` are executed by
+nothing, and the suite asserts only what the shop SAID. If those lines
+ever fail, the harness has begun composing hot mounts into the client
+registry, and the install path can go back to `reload`.
 
 `activationOf` is a three-row truth table and is tested as one.
 
@@ -251,8 +314,11 @@ that test states them through the `hotFs` read seam.
 ## 6. The wire change
 
 `ShopInstallStatusResult.needsRestart: boolean` becomes
-`activation: 'live' | 'reload' | 'restart'`. `restartReason` stays, and
-is meaningful only under `restart`. `ShopSetEnabledResult` gains
+`activation: 'live' | 'reload' | 'restart'`. `restartReason` stays, is
+meaningful only under `restart`, and gains a `client-half` member — the
+one value in that set which does not report a mount FAILURE: the mount
+succeeded, and the browser half simply cannot be served without a
+restart (§1 amendment). `ShopSetEnabledResult` gains
 `activation`; it currently returns `{ ok: true }` and the client renders
 a hardcoded note, which is why enable/disable was wrong in a way no
 amount of host-side correctness could have fixed.

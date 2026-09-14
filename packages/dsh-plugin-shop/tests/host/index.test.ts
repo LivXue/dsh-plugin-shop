@@ -1494,7 +1494,7 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     return status
   }
 
-  it('install reports activation reload when no manifest exists yet (the conservative fallback)', async () => {
+  it('install reports activation restart when no manifest exists yet (the conservative fallback)', async () => {
     const { gateway, profileDir } = hotGateway({
       hot: { mount: hotMount, unmount: hotUnmount },
       loaderEntries: () => [],
@@ -1506,10 +1506,14 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     expect(status.state).toBe('done')
     // No node_modules/dsh-hello-plugin/package.json exists in this fixture —
     // hasClientHalf's conservative fallback (unreadable manifest => assume a
-    // browser half) answers true, so this is 'reload', not 'live'. The
-    // dedicated reload/live/restart tests below pin each case down with an
-    // explicit manifest instead of relying on the fallback.
-    expect(status.activation).toBe('reload')
+    // browser half) answers true, so this is not 'live'. And on the hot-mount
+    // path a browser half means `restart`, never `reload`: the mount adds to
+    // the live loader entries without entering the composition the client
+    // registry enumerates, so a reload has nothing to fetch (activation.ts).
+    // The dedicated tests below pin each case with an explicit manifest
+    // instead of relying on the fallback.
+    expect(status.activation).toBe('restart')
+    expect(status.restartReason).toBe('client-half')
     expect(hotMount).toHaveBeenCalledTimes(1)
     expect(hotMount).toHaveBeenCalledWith(expect.anything(), profileDir, 'dsh-hello-plugin')
   })
@@ -1670,7 +1674,7 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     expect(entry.update).toHaveBeenCalledTimes(3)
   })
 
-  it('reports activation reload when an update removes the package browser half', async () => {
+  it('reports activation restart when an update removes the package browser half', async () => {
     const hotFs = memHotFs()
     const mount = vi.fn(async (_ctx: unknown, dir: string, name: string): Promise<HotMountResult> => {
       // By the time the mount runs, the new tarball has overwritten the
@@ -1700,10 +1704,18 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     const status = await pollTerminal(gateway, started.installId)
     expect(status.state).toBe('done')
     // Reading only in `afterDone` answers about the NEW version — `live`,
-    // "nothing to do" — while the tab still holds the old bundle and the
-    // served graph no longer does. That is the withheld reload this whole
-    // design exists to prevent, reached from the other direction.
-    expect(status.activation).toBe('reload')
+    // "nothing to do" — while the tab still holds the old bundle. The union
+    // of the two reads is what separates this from `live`, and it is still
+    // load-bearing after the hot-mount path moved from `reload` to
+    // `restart`: without it this case answers "nothing to do" about a tab
+    // that is showing a browser half the server no longer intends.
+    //
+    // `restart` rather than `reload` deliberately, and conservatively: a
+    // reload might well drop the old bundle here, but the only thing
+    // measured on this path is that a reload does NOT deliver a hot-mounted
+    // one (2026-09-14), so the step known to work is the one offered.
+    expect(status.activation).toBe('restart')
+    expect(status.restartReason).toBe('client-half')
     expect(mount).toHaveBeenCalledTimes(1)
   })
 
@@ -1719,7 +1731,7 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     expect(hotUnmount).not.toHaveBeenCalled()
   })
 
-  it('reports activation reload when a hot-mounted install has a browser half', async () => {
+  it('reports activation restart when a hot-mounted install has a browser half', async () => {
     const { gateway, profileDir } = hotGateway({ hot: { mount: hotMount, unmount: hotUnmount }, loaderEntries: () => [] })
     // fixturePackage cannot express `dsh.client`; write the manifest by hand
     // before the install call, matching the shape a real client-half
@@ -1734,7 +1746,12 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     if (!started.ok) return
     const status = await pollTerminal(gateway, started.installId)
     expect(status.state).toBe('done')
-    expect(status.activation).toBe('reload')
+    // The host half mounted and is running; its browser half is not in the
+    // graph a reloading tab is served, and cannot be put there without a
+    // restart. The reason distinguishes this from the four mount FAILURES,
+    // which would otherwise all read as one generic restart line.
+    expect(status.activation).toBe('restart')
+    expect(status.restartReason).toBe('client-half')
   })
 
   it('reports activation live when a hot-mounted install is host-only', async () => {

@@ -61,12 +61,22 @@ export interface PluginHandle {
 }
 
 /**
- * Why a hot mount could not activate — a stable code the client turns into
- * copy in the reader's own dsh language. It distinguishes "restart will fix
- * it" (`timeout`, `mount-failed`) from "this package can never hot-mount"
- * (`no-patch`, `not-simple`) and "this harness cannot" (`host-unsupported`).
+ * Why a restart is needed after the hot path ran — a stable code the client
+ * turns into copy in the reader's own dsh language.
+ *
+ * Four of the five say the MOUNT could not activate, and distinguish
+ * "restart will fix it" (`timeout`, `mount-failed`) from "this package can
+ * never hot-mount" (`no-patch`, `not-simple`) and "this harness cannot"
+ * (`host-unsupported`).
+ *
+ * `client-half` is the one that does not: the mount SUCCEEDED and the host
+ * half is running, but the package declares `dsh.client` and a hot mount does
+ * not enter the composition the client registry enumerates, so no reload can
+ * fetch its browser half (measured 2026-09-14 — see `activation.ts`). It
+ * exists so the reader is not told "installed; restart dsh to activate"
+ * about a plugin that is demonstrably already running.
  */
-export type HotRestartReason = 'no-patch' | 'not-simple' | 'host-unsupported' | 'timeout' | 'mount-failed'
+export type HotRestartReason = 'no-patch' | 'not-simple' | 'host-unsupported' | 'timeout' | 'mount-failed' | 'client-half'
 
 export interface HotMountResult {
   ok: boolean

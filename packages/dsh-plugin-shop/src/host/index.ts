@@ -695,7 +695,9 @@ export class ShopGateway extends TypertRemoteService {
     // The user layer is hot-reloaded by the harness, so the host half is
     // already in its new state; a package with a browser half still needs
     // the open tab to reload (design 2026-09-11-activation-model §3).
-    return { ok: true, activation: activationOf({ hostLive: true, hasClientHalf: this.packageHasClientHalf(args.name) }) }
+    // `clientLive: true` — a toggle moves a row the client registry already
+    // enumerates, and the served graph follows it (§2, measured 2026-09-11).
+    return { ok: true, activation: activationOf({ hostLive: true, clientLive: true, hasClientHalf: this.packageHasClientHalf(args.name) }) }
   }
 
   private rowConfig(): { catalogUrl: string; cacheDir: string } {
@@ -966,9 +968,22 @@ export class ShopGateway extends TypertRemoteService {
           this.profileDirResolved(),
           args.name,
         )
-        return result.ok
-          ? { activation: activationOf({ hostLive: true, hasClientHalf: priorClientHalf || this.packageHasClientHalf(args.name) }) }
-          : { activation: 'restart' as const, ...(result.reason !== null ? { restartReason: result.reason } : {}) }
+        if (!result.ok) {
+          return { activation: 'restart' as const, ...(result.reason !== null ? { restartReason: result.reason } : {}) }
+        }
+        // The mount SUCCEEDED, so the host half is live. Its browser half is
+        // not, and cannot be made so by a reload: a hot mount adds to the
+        // live loader entries without entering the composition the client
+        // registry enumerates (activation.ts, measured 2026-09-14). So
+        // `clientLive` is false here and a package with a browser half lands
+        // on `restart`, carrying the reason that says its host half is
+        // already running — the generic restart line would deny that.
+        const activation = activationOf({
+          hostLive: true,
+          clientLive: false,
+          hasClientHalf: priorClientHalf || this.packageHasClientHalf(args.name),
+        })
+        return activation === 'restart' ? { activation, restartReason: 'client-half' as const } : { activation }
       },
     })
     if (entry.source === 'github') {
@@ -1181,7 +1196,10 @@ export class ShopGateway extends TypertRemoteService {
         // still up: "Removed and stopped immediately" would then be a false
         // statement about privilege, and a restart is the honest advice.
         const stopped = hotRemoved || await this.liveEntriesDown(priorEntryIds)
-        return { activation: activationOf({ hostLive: stopped, hasClientHalf: hadClientHalf }) }
+        // `clientLive: true` for the same reason as the toggle: what an
+        // uninstall removes is a row of the boot composition, and dropping
+        // one from the served graph is the measured half of §2.
+        return { activation: activationOf({ hostLive: stopped, clientLive: true, hasClientHalf: hadClientHalf }) }
       },
     })
     // Forget the commit pin alongside the dependency; a stale pin would
