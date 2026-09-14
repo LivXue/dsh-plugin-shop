@@ -54,14 +54,12 @@
  * Skipped unless the machine has both the real `dsh` CLI on PATH and a
  * playwright chromium installed (CI installs both; see .github/workflows).
  *
- * KNOWN GAP: only `plugin.yml` installs them, and it runs on ubuntu. The
- * windows-latest leg (`windows.yml`) deliberately installs neither and sets no
- * `DSH_SHOP_REQUIRE_E2E`, so this file self-skips there. Every `win32` branch
- * below is therefore verified by hand, not by CI — measured 2026-09-14 on
- * Windows 11, dsh 0.1.5-rc.1 — and a Windows-only divergence can still merge
- * green. Closing it means a windows-latest leg that installs dsh and a
- * chromium; until then, re-run this file on Windows when touching the restart
- * contract.
+ * plugin.yml runs this on BOTH ubuntu-latest and windows-latest (its `test`
+ * job is a matrix over the two), with `DSH_SHOP_REQUIRE_E2E` set on each, so
+ * every platform branch below is executed by CI rather than by hand. It was
+ * not always: until 2026-09-14 the only automated leg was ubuntu, the win32
+ * arms were asserted by nothing, and the divergence they now pin was found
+ * as an opaque 10s timeout on a host behaving exactly as designed.
  *
  * Written against harness 0.1.5-rc.1 — the version `.github/workflows/plugin.yml`
  * installs globally, and therefore the one every selector below was measured
@@ -183,6 +181,41 @@ import { startCatalogServer, type CatalogServer } from '../fixtures/catalog-serv
 import { startLocalRegistry, type LocalRegistry } from '../fixtures/local-registry.ts'
 
 /**
+ * Stop dsh and everything it spawned.
+ *
+ * Two mechanisms, because a process group is a POSIX idea. On POSIX the spawn
+ * is `detached`, so a negative pid signals the whole group and the gateway's
+ * pnpm children go with it. Windows has no group to signal: `process.kill`
+ * with a negative pid throws there, and the fallback this used to carry —
+ * `child.kill()` — terminates dsh alone and orphans the node and pnpm
+ * processes it started. Those orphans hold handles under `tmpHome`, which is
+ * what turns the `rmSync` in `afterAll` into an EBUSY that fails a file whose
+ * every assertion passed. `taskkill /T` is the Windows spelling of "and its
+ * descendants", and `/F` because a console application that is not pumping
+ * messages will not answer the polite request.
+ *
+ * Neither call is allowed to throw: teardown runs after a failure too, and a
+ * dead pid must not replace the real failure with a confusing one.
+ */
+function stopProcessTree(pid: number): void {
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' })
+    return
+  }
+  try {
+    process.kill(-pid, 'SIGTERM') // the whole process group
+  } catch {
+    // No group (dsh already exited, or never started one): fall back to the
+    // process itself, and accept that it too may already be reaped.
+    try {
+      process.kill(pid, 'SIGTERM')
+    } catch {
+      // Already gone. Nothing to stop, and nothing to report.
+    }
+  }
+}
+
+/**
  * Turn both onboarding dialogs off before dsh boots, rather than clicking
  * through them.
  *
@@ -202,9 +235,24 @@ import { startLocalRegistry, type LocalRegistry } from '../fixtures/local-regist
  * each one reopens was never opened. The screenshot script's docblock records
  * the identical lesson from the identical mistake.
  *
- * 0600 and a chmod after the write, both load-bearing: dsh-credentials-local
- * refuses to boot on a credentials file readable beyond its owner, and
- * `writeFileSync`'s `mode` applies only when it CREATES the file.
+ * Both halves of this are load-bearing, and both were measured rather than
+ * assumed (2026-09-14, dsh 0.1.5-rc.1):
+ *
+ * - The credentials file is REQUIRED, not decoration. The screenshot script's
+ *   comment attributes the suppression to "a configured provider"; that is
+ *   incomplete. Removing this write and keeping `agent-default-model` raises
+ *   添加一个 API Key 开始使用 anyway — what suppresses the dialog is a provider
+ *   whose credential reference RESOLVES. `expectNoDialog` is how that was
+ *   measured: it named the dialog instead of leaving a timeout to interpret.
+ * - 0600, and a chmod AFTER the write, because `writeFileSync`'s `mode`
+ *   applies only when it CREATES the file. At 0644 dsh does not merely warn:
+ *   `assertOwnerOnly` fails the whole plugin tree — "credentials-local: … is
+ *   readable beyond its owner (mode 644)" — and nothing boots.
+ *
+ * On Windows the mode is moot and the chmod is a no-op there: dsh's own check
+ * opens with `if (process.platform === "win32") return`. Left unconditional
+ * anyway, because a POSIX-only `if` here would be a second platform branch
+ * guarding something Windows already ignores.
  */
 function seedOnboarding(home: string): void {
   writeFileSync(join(home, 'settings.yaml'), [
@@ -706,15 +754,17 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
   afterAll(async () => {
     await browser?.close().catch(() => {})
     if (dshProcess !== undefined && dshProcess.pid !== undefined) {
-      try {
-        process.kill(-dshProcess.pid, 'SIGTERM') // the whole process group
-      } catch {
-        dshProcess.kill()
-      }
+      stopProcessTree(dshProcess.pid)
     }
     await catalogServer?.close().catch(() => {})
     await localRegistry?.close().catch(() => {})
-    if (tmpHome !== '') rmSync(tmpHome, { recursive: true, force: true })
+    // `maxRetries`, not just `force`: `force` suppresses ENOENT and nothing
+    // else, and on Windows a file another process still holds cannot be
+    // unlinked at all. The gateway's pnpm children can outlive the kill above
+    // by a moment, and an EBUSY here fails the whole FILE after every
+    // assertion in it has passed — a red run that says nothing about the
+    // product.
+    if (tmpHome !== '') rmSync(tmpHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
   }, 30_000)
 
   it(
