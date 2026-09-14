@@ -199,6 +199,11 @@
   by: human
   reason: "Stores each project’s session logs under its own directory. \"store\" is the verb; npm keywords are session, project-local."
 
+- name: "aiko-dsh-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: Visual plugin market inside DeepSeek Harness — browse, search, and one-click install community plugins. · DSH 可视化插件市场：逛一逛，点一下，装好。"
+
 - name: "deepseek-plugin-store"
   market: true
   by: human
