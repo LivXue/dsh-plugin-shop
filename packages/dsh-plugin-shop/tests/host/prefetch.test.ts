@@ -543,16 +543,24 @@ describe('the resolution probe', () => {
     expect(lines).toEqual(['dsh-plugin-shop: packages fetched ahead of the install'])
   })
 
-  // The same disagreement read the other way round, and the one a real Windows
-  // machine meets: a PATH of several entries joined with ';' reaching a batch
-  // whose `platform` says POSIX. Neither direction is decided by the string,
-  // so the probe may not bet on either — a bet that reads a ';'-joined PATH as
-  // one enormous directory name disables the optimization for every Windows
-  // user whose PATH holds more than one entry.
-  it.each([
-    { way: 'POSIX', separator: ':' },
-    { way: 'Windows', separator: ';' },
-  ])('starts the batch a PATH joined the $way way names', async ({ separator }) => {
+  // The same disagreement read the other way round. Both joinings must reach
+  // the pnpm, because neither direction is decided by the string: the ';' row
+  // is the one a real Windows machine meets, and a bet that reads a ';'-joined
+  // PATH as one enormous directory name disables the optimization for every
+  // Windows user whose PATH holds more than one entry.
+  //
+  // The ':' row is a fabrication wherever an absolute path carries a colon of
+  // its own, and is skipped there rather than asserted. On the Windows runner
+  // the two entries are `C:\Users\RUNNER~1\…\dsh-prefetch-X`, so the string
+  // this row joins is `C:\…\first:C:\…\second`; splitting it on ':' yields
+  // `C` and `\…\first`, and a rooted-but-driveless fragment resolves against
+  // the CURRENT drive — the runner's temp is on C: and its checkout on D:, so
+  // it points at neither directory. No reading recovers the two, and none
+  // should have to: no host joins Windows absolute paths the POSIX way, which
+  // is what makes this a fixture that cannot be built rather than a probe that
+  // reads one wrongly. The predicate names that precondition — entries free of
+  // a colon — instead of the platform, so the row runs wherever it IS buildable.
+  const joined = (separator: string) => async () => {
     const first = temp()
     const second = temp()
     const lines: string[] = []
@@ -577,7 +585,11 @@ describe('the resolution probe', () => {
       .toEqual([{ command: 'pnpm', args: ['store', 'add', 'a@1'], shell: false }])
     scripted.exitCurrent(0)
     expect(lines).toEqual(['dsh-plugin-shop: packages fetched ahead of the install'])
-  })
+  }
+
+  it.skipIf(TEMP_ROOT.includes(':'))('starts the batch a PATH joined the POSIX way names', joined(':'))
+
+  it('starts the batch a PATH joined the Windows way names', joined(';'))
 })
 
 describe('the command line a batch is started with', () => {
