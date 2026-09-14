@@ -4,19 +4,23 @@
  * data file it names — with the sha256 computed at startup, the same binding
  * the real publishing pipeline makes between the two files.
  *
- * Four community-tier, derived (§6.1) fixture entries. The first,
+ * Five community-tier, derived (§6.1) fixture entries. The first,
  * `dsh-e2e-fixture-plugin@1.0.0`, is a name that does not exist on npm (and
  * that the hot-mount local registry does not serve) — the browser install of
  * it fails with REAL pnpm stderr, the failed view and its recovery hint being
  * part of what this e2e proves; a name that resolved would make the install
- * succeed and sidestep that surface entirely. The other three,
- * `dsh-shop-e2e-live`, `dsh-shop-e2e-config`, and `dsh-shop-e2e-peer`, ARE
- * served by the local registry (tests/fixtures/local-registry.ts): the
- * simple-patch fixture mounts without a restart, the config-row fixture
- * falls back to a restart, and the peer fixture declares `peers:
- * ["@deepseek-ai/dsh-client-store"]` — a module this test's profile never
- * installs — so the harness-compatibility badge and install-gate warning
- * have a genuinely-missing peer to report against a real host resolver. That
+ * succeed and sidestep that surface entirely. The other four,
+ * `dsh-shop-e2e-live`, `dsh-shop-e2e-config`, `dsh-shop-e2e-peer`, and
+ * `dsh-shop-e2e-client`, ARE served by the local registry
+ * (tests/fixtures/local-registry.ts): the simple-patch fixture mounts
+ * without a restart, the config-row fixture falls back to a restart, the
+ * peer fixture declares `peers: ["@deepseek-ai/dsh-client-store"]` — a
+ * module this test's profile never installs — so the harness-compatibility
+ * badge and install-gate warning have a genuinely-missing peer to report
+ * against a real host resolver, and the client fixture additionally declares
+ * `dsh.client` (activation-model design, §3) so a hot-mounted install has a
+ * browser half and reports `reload` rather than `live` — the other three
+ * live fixtures are host-only, so none of them can exercise that path. That
  * one missing peer is also the incompatible FILTER's subject: it makes the
  * shelf hold exactly one incompatible entry, so the filter's count and the
  * card it removes are both determinate.
@@ -37,7 +41,7 @@ export interface CatalogServer {
   close: () => Promise<void>
 }
 
-/** The four fixture entries. No `catalog` section: derived metadata, so the
+/** The five fixture entries. No `catalog` section: derived metadata, so the
  * shop presents each entry's derived summary (§6.1).
  * `publishedAt` stays fixed so the snapshot is deterministic per run. */
 const FIXTURE_ENTRIES = [
@@ -52,13 +56,15 @@ const FIXTURE_ENTRIES = [
     metadata: 'derived',
     added: '2026-08-25',
     // The npm publishing account, so the expanded detail's npm row is proven
-    // in a real browser and not only in jsdom. The other two entries carry
-    // none, which is also the live catalog's state until the next daily build.
+    // in a real browser and not only in jsdom. No other entry here carries
+    // one, which is also the live catalog's state until the next daily build.
+    // Stated without a count on purpose: "the other two" was written when
+    // there were three entries and was quietly false at four.
     publisher: 'octocat',
     // npm's `dist.unpackedSize`, so the size label is proven through the real
     // wire → host zod → client format path. 847407 is the MEDIAN of the 250
     // live `dsh-plugin` packages measured on 2026-09-07, and it renders
-    // "847.4 kB". The other three entries carry none, which is what the live
+    // "847.4 kB". No other entry here carries one, which is what the live
     // catalog looks like until the daily build that first harvests this field.
     unpackedSize: 847407,
   },
@@ -95,6 +101,17 @@ const FIXTURE_ENTRIES = [
     metadata: 'derived',
     added: '2026-08-31',
     peers: ['@deepseek-ai/dsh-client-store'],
+  },
+  {
+    name: 'dsh-shop-e2e-client',
+    version: '1.0.0',
+    integrity: null,
+    publishedAt: '2026-09-11T00:00:00.000Z',
+    repository: 'https://github.com/octocat/dsh-shop-e2e-client',
+    license: null,
+    tier: 'community',
+    metadata: 'derived',
+    added: '2026-09-11',
   },
 ] as const
 

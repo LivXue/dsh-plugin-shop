@@ -9,7 +9,11 @@ installing one. The authority spec
 English only, per convention. **Amended 2026-09-04 (§7): the shop's own
 declared peer RANGES are checked at load and warned about once** — the
 one package whose ranges this project holds, and the one case where the
-presence-only rule above leaves a real gap.
+presence-only rule above leaves a real gap. **Amended 2026-09-11 (§8),
+designed but not implemented: the record is extended to the github
+channel, which has carried none of it since that channel shipped — 61%
+of the catalog — and to `dsh.compatibility`, the author's own
+machine-readable declaration, which nothing in this repository reads.**
 
 ## 0. The incident
 
@@ -309,3 +313,151 @@ the filesystem, and both arrive through injection seams
 **Deliberately not built:** blocking the load, reporting the mismatch
 over the RPC or into the client UI, and checking ranges for catalog
 entries — the catalog has no ranges to check.
+
+## 8. Amendment (2026-09-11): the github channel, and the author's own declaration
+
+Two gaps, found while investigating a report that `@lanxing/dsh-galgame`
+"is incompatible but shows no warning". The report was right and the
+cause was neither of the ones §2 and §3 anticipated.
+
+### 8.1 The github channel carries no peers at all
+
+`@lanxing/dsh-galgame` is listed as a **github** entry — its catalog
+`version` is a commit sha and it carries `repo` — and §2's record is
+npm-only. `RepoCandidate` has no `peers` field, `repo-gate` notes the
+absence in the comment beside its payload budget, and
+`incompatibilityMap` skips any entry whose `peers` is undefined. So the
+warning was not weak: there was nothing to form it from.
+
+Measured against the live catalog of 2026-09-11 (`schemaVersion` 5,
+10,220 entries):
+
+| Channel | Entries | Carrying `peers` |
+|---|---|---|
+| github | 6,230 | **0** |
+| npm | 3,990 | 2,881 |
+
+**The check has been structurally blind to 61% of the catalog since it
+shipped, and the channel it misses was not a later arrival.** The github
+harvest landed on 2026-08-30 (663483d); `peers` first shipped on
+2026-09-01 (f7654d2), two days later. §2 above says "each **npm**
+catalog entry" in so many words, and §3's cost arithmetic follows suit —
+the record was scoped to one of two live channels at the moment it was
+designed, and nothing since has revisited it. This was a gap from the
+first commit, not drift.
+
+The data is already in hand. `github-client` fetches and parses each
+repo's root `package.json` (and a subpackage's, for monorepo
+candidates), which is where `peerDependencies` lives — it is read, then
+dropped. So the change is to carry it:
+
+- `RepoCandidate` gains `peers: string[]`, the same shape as the npm
+  candidate's: names only, bounded by the same `PEER_NAME_MAX_LENGTH`
+  (128) and `PEERS_MAX_COUNT` (128).
+- `repo-gate`'s per-entry payload budget counts it, and the comment
+  stating that a repo entry carries no peers — the written record of
+  this blind spot — goes with the change.
+
+**The fix arrives gradually, and that is safe.** `RepoCandidate` is
+persisted: it rides `RepoStateEntry.candidates` into `repo-state.json`,
+which held 15,748 repositories on 2026-09-11. Cached candidates have no
+`peers` until their repository is re-fetched, and the GitHub half
+re-fetches at most `REPO_BACKFILL_BUDGET_DEFAULT` (2,000) per build — so
+coverage fills in over roughly eight builds rather than one. §3's
+degradation rule is what makes the interim correct rather than merely
+tolerable: an entry with no `peers` carries **no verdict**, so a
+half-backfilled catalog warns about fewer entries, never about the wrong
+ones.
+
+Once the data lands, §3's existing presence check is sufficient for the
+reported case. Measured from the profile anchor on 2026-09-11, five of
+the eight peers `@lanxing/dsh-galgame@1.1.0` declares —
+`@deepseek-ai/dsh-client-runtime`,
+`@deepseek-ai/dsh-client-ui-primitives`,
+`@deepseek-ai/dsh-client-ui-slots`, `react` and `react-dom` — return
+`MODULE_NOT_FOUND`. No new verdict logic is required; the record was the
+whole gap.
+
+### 8.2 `dsh.compatibility` is declared by authors and read by nobody
+
+Some packages state their harness compatibility outright.
+`@xmanrui/dsh-im@4.19.2` declares:
+
+```json
+"compatibility": {
+  "dsh": "0.1.2-alpha.4 || 0.1.2-alpha.5 || 0.1.2-rc.1 || 0.1.3-alpha.1 || 0.1.5-alpha.1",
+  "profiles": ["web"]
+}
+```
+
+Nothing in this repository reads `dsh.compatibility` — not the harvest,
+not the gate, not the shop. Measured on 2026-09-11 against the running
+`@deepseek-ai/dsh@0.1.5-rc.1`, `semver.satisfies` returns **false** for
+that declaration: the author has published an exact, machine-readable
+statement that the plugin does not support this harness, and the shop
+lists it without comment.
+
+The entry gains an optional `compatibility: { dsh?: string; profiles?:
+string[] }`, harvested from both channels' manifests.
+
+**It does not move `schemaVersion`.** Additive and optional, so it rides
+every version — the reasoning `emit.ts` sets out for `peers` and
+`unpackedSize`, and the mistake `peers` itself made: a doc comment
+claiming "emitted only at schemaVersion 6 and above" outlived the gate
+coming off, and the compatibility badges never shipped because of it.
+The new field's comment states that it rides every version, in those
+words, because the next additive field will copy whatever this one says.
+
+**The verdict is formed on the reader's machine**, exactly as §2
+requires for `peers`: the catalog records the author's requirement, and
+the host compares it against the running harness. The version is read
+through the same anchor §3 already uses —
+`createRequire(profileBaseUrl).resolve('@deepseek-ai/dsh/package.json')`,
+measured to yield `0.1.5-rc.1` on the reporting machine — so this check
+and the peer check cannot drift onto different notions of "the running
+installation".
+
+**Warn, never block**, per §4, and **no verdict when the fact is
+missing**, per §3: no declaration, an unparseable range, an unresolvable
+harness version, or a `profiles` list that does not name this profile
+each yield silence rather than an accusation. A declaration naming
+profiles is a separate verdict from one naming versions, and an entry
+may fail either; the client names which.
+
+### 8.3 Ranges for catalog entries: still deferred, no longer for the same reason
+
+§2 declined ranges because "presence-only catches the class of failure
+that occurred and produces no false positives". That remains the
+strongest argument, but the evidence has moved: `@lanxing/dsh-galgame`
+declares `@deepseek-ai/dsh-client-locale@^0.1.0-rc.6`, the harness
+provides `0.1.5-rc.1`, and `semver.satisfies` returns **false** — a real
+mismatch that presence cannot see, on a real listed package, on a real
+machine. §2's claim that presence-only misses nothing worth catching is
+now known to be false.
+
+The older argument against ranges is narrower than §2's and survives
+intact: `Candidate.peers` records that nearly every dsh plugin declares
+`"*"`, and that the harness's own prerelease versions do not satisfy
+ordinary ranges — so ranges would be inert for most entries and
+actively wrong for some. That bounds the BENEFIT; it does not restore
+the claim that there is none. Both belong in the measurement that
+decides this, and neither has been made: what share of declared ranges
+are `"*"`, and how many of the rest are prerelease false alarms, are
+unmeasured on this catalog.
+
+It stays out of this change on cost, not on principle — and the cost is
+stated as measured, because the obvious version of this sentence was
+wrong. `peers` is **not** the catalog's heaviest field. Measured over the
+live `plugins.json` of 2026-09-11 (8,626,438 bytes): `catalog` 28.2%,
+`integrity` 9.2%, `repository` 7.3%, `peers` 5.5% (475,304 bytes, of
+which 395,682 are the names themselves). So ranges are not obviously
+unaffordable, and "it is already the biggest thing in there" is not an
+argument anyone may reuse.
+
+What makes the pricing premature is 8.1, not the present size: `peers`
+today covers 2,881 npm entries and no github entries at all, and 8.1
+opens it to a channel holding 6,230 more. Whatever ranges cost, they
+cost it against a field that is about to grow by an unmeasured factor,
+against a per-entry payload budget that is measured rather than nominal.
+Pricing them now would be pricing a record half the catalog does not yet
+have. Land 8.1, re-measure, then decide.

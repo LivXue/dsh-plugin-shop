@@ -1,0 +1,5 @@
+// Registers a factory and nothing else: the e2e asserts that the shop
+// reported `reload`, not that this component renders. Keeping it inert
+// means a harness change to the component contract cannot fail this suite
+// for an unrelated reason.
+window.__ModuleLoader__.load({ id: 'dsh-shop-e2e-client', factory: () => ({ apply() {} }) })

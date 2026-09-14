@@ -393,7 +393,7 @@ Browser                     Host (ShopGateway)                  Subprocess
   |  poll shop/installStatus -->|<-------- stdout/stderr ----------|
   |<---- { state, log[] } -------| 7. exit 0 -> re-read the manifest, confirm
   |                              |         dsh.profile.bundles changed, and
-  |<---- { done, needsRestart } -|         no loader entry id now collides
+  |<---- { done, activation } ---|         no loader entry id now collides
 ```
 
 **Amendment (2026-09-07, name-taken): a profile holds one plugin per name, and the gate says so before the acknowledgement.** Step 2 is new. The shop writes `dependencies[name]`, so installing a second plugin of a name overwrites the first and the plugin the user chose is gone with no notice — 177 live catalog names are claimed by more than one entry, `dsh-skill-manager` by 14. The gate refuses unless the manifest's spec names this very install; a same-identity request is the ordinary update path. It sits ahead of step 3 so a request that cannot proceed never asks the reader to accept a plugin's privileges first.
@@ -424,8 +424,8 @@ Implementation decisions:
 |---|---|---|
 | `shop/catalog` | `{ refresh?: boolean }` | `{ schemaVersion, builtAt, stale, plugins[] }` |
 | `shop/installStart` | `{ name, version, acknowledged? }` | `{ installId }` |
-| `shop/installStatus` | `{ installId }` | `{ state, log[], needsRestart? }` |
-| `shop/setEnabled` | `{ name, enabled }` | `{ ok }` |
+| `shop/installStatus` | `{ installId }` | `{ state, log[], activation?, restartReason? }` |
+| `shop/setEnabled` | `{ name, enabled }` | `{ ok, activation? }` |
 | `shop/uninstallStart` | `{ name }` | `{ installId }` |
 | `shop/restart` | none | `{ ok }` |
 | `shop/version` | none | `{ installed, latest, outdated, restartSupported }` |
@@ -666,6 +666,8 @@ The earlier ruling prescribed an opt-in flag, default off, loopback only. The au
 **Amendment (2026-08-31, market borrowings C-1): restart under a supervisor is refused by default.** When a systemd unit owns this process and the shop row config sets no `allowRestart: true`, `shop/restart` issues a typed refusal and the two-phase handoff never starts — the main process exiting also kills the unit's cgroup, which takes the detached helper with it, and the service would never come back. `shop/version` reports `restartSupported: false` and the client hides the restart offer while keeping the pending-change notice (§7.3).
 
 **Amendment (2026-08-31, design: 2026-08-31-market-borrowings.md §4, Phase D): the install/uninstall row gains the hot-mount exception.** The borrowings design decides that installs, uninstalls, and updates go live without a restart through a shop-owned ephemeral Include subtree — `hot-<n>.yml` inputs under `<profile>/.dsh-shop/`, wiped at boot, rows under `mkt-` ids (dsh-market's mechanism, ported in the borrowings plan's Phase D, pending at this amendment). The ruling above still holds: the ephemeral tree is never a `cordis.patch.yml` write, so the same rows cannot mount twice at next boot. The wire contract does not change — `shop/installStatus`'s `needsRestart` reports the outcome, false more often — and the shop's own self-update always keeps `needsRestart`, since a host half cannot swap itself live.
+
+**Amendment (2026-09-11, design: 2026-09-11-activation-model.md): this table answers for the HOST half only, and the shop now says so.** Every row above describes when the harness composes a plugin; none describes when the person looking at a browser tab can see it. Those are different questions, because a plugin's client half reaches the browser only through `window.__DSH_BOOT__`, which `dsh-client-modules` composes from the live loader entries and the webserver injects **on every index request** — so a page load serves the current graph, and a stale tab is stale by one reload, not by one restart. Measured 2026-09-11 against dsh 0.1.5-rc.1: a runtime disable and a runtime enable each changed the served graph within seconds, with the process never restarting. The hot-mount row of that measurement was **re-measured on 2026-09-14 and did not reproduce through the shop's real install path** — a package that reaches disk mid-session does not enter the composition the client registry enumerates, however successfully its host half mounts (2026-09-11-activation-model.md §1 amendment), so an install or update of a package with a browser half reports `restart`. `needsRestart` is therefore replaced by a three-valued `activation` (`live` / `reload` / `restart`) across install, update, uninstall and enable/disable; `restart` keeps the offer and the reason codes this section already defines, `reload` offers a reload button, and the shop's own self-update keeps `restart` unconditionally for the reason stated in the 2026-08-31 amendment above. The reload is always offered, never performed: it would discard whatever the reader had in flight.
 
 ## 9. Security model
 

@@ -110,7 +110,7 @@ export interface MemHotFs extends HotFs {
 /**
  * An in-memory {@link HotFs}: `read` and `list` throw ENOENT on a missing
  * path, and a write registers its parent directory, mirroring `hot.ts`'s
- * `nodeFs` (whose `write` is a recursive `mkdirSync` plus `writeFileSync`).
+ * `nodeHotFs` (whose `write` is a recursive `mkdirSync` plus `writeFileSync`).
  *
  * The throwing `list` is load-bearing rather than decorative:
  * `nextHotNumber` catches it to mean "no namespace directory yet, start at

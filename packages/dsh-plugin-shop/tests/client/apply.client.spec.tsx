@@ -4,7 +4,7 @@ import { loadModule } from './__loader__.ts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, renderHook } from '@testing-library/react'
 import { apply, inject, NS, WARM_TTL_MS } from '../../src/client/index.ts'
-import { useInstall } from '../../src/client/useInstall.ts'
+import { useInstallFlows } from '../../src/client/useInstall.ts'
 import type { ShopTabInjected } from '../../src/client/ShopTab.tsx'
 import type { InstallArgs, ShopInstallResult } from '../../src/host/index.ts'
 
@@ -110,16 +110,23 @@ describe('shop client apply', () => {
     // An envelope-level failure is a TRANSPORT failure: the real unwrap throws
     // the prefixed wire message, so injected.install rejects.
     await expect(injected.install(args)).rejects.toThrow('shop remote: WIRE: boom')
-    // And useInstall.start catches that throw into the failed view — the
-    // `rejected` state stays reserved for the host's business union (§7.2).
-    // The transport detail is private (it can name hosts and ports) and never
-    // rendered, so the failed view carries an EMPTY detail; ShopTab falls
-    // back to the localized installTransportFailed line (R-P2-15).
-    const { result } = renderHook(() => useInstall(injected.install, injected.installStatus))
+    // And the install registry's start mapping catches that throw into the
+    // failed view — the `rejected` state stays reserved for the host's
+    // business union (§7.2). The transport detail is private (it can name
+    // hosts and ports) and never rendered, so the failed view carries an
+    // EMPTY detail; ShopTab falls back to the localized
+    // installTransportFailed line (R-P2-15).
+    //
+    // Driven through `useInstallFlows`, which is the registry the shop
+    // actually ships. This used to drive `useInstall`, a single-view hook
+    // with no production caller left — so the assertion was made about a
+    // code path no reader could reach, while the shipped one implemented the
+    // same rule separately and uncovered.
+    const { result } = renderHook(() => useInstallFlows(injected.install, injected.installStatus))
     await act(async () => {
-      await result.current.start(args)
+      await result.current.flowFor('k').start(args)
     })
-    expect(result.current.view).toEqual({ kind: 'failed', detail: '', log: [] })
+    expect(result.current.flowFor('k').view).toEqual({ kind: 'failed', detail: '', log: [] })
   })
 })
 

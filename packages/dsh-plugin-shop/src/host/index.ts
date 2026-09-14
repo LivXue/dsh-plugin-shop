@@ -17,7 +17,9 @@ import { npmrcRegistry } from './npmrc.ts'
 import type { CatalogEntry, DeniedEntry } from './types.ts'
 import { validateInstall, type InstallArgs, type InstallRejectionCode } from './install.ts'
 import { startInstall, startUninstall, type InstallStatus } from './executor.ts'
-import { cleanHotDir, hotMount, hotUnmount } from './hot.ts'
+import { cleanHotDir, hotMount, hotUnmount, nodeHotFs, type HotFs } from './hot.ts'
+import { activationOf, type Activation } from './activation.ts'
+import { hasClientHalf } from './client-half.ts'
 import { restartCommand, startRestart, type RestartOutcome } from './restart.ts'
 import { fetchLatestVersion } from './self-update.ts'
 import { detectSupervisor } from './supervisor.ts'
@@ -38,6 +40,10 @@ import {
 // cannot import from there.
 export type { InstallArgs, InstallRejectionCode } from './install.ts'
 export type { HotRestartReason } from './hot.ts'
+// Otherwise only reachable through a result field (e.g. ShopSetEnabledResult
+// ['activation']), which left `lib/index.d.ts` emitting it as module-local
+// and unnamed for a `dsh-plugin-shop/remote` consumer (M-5).
+export type { Activation } from './activation.ts'
 // The catalog entry shape reaches the client half through this same boundary.
 export type { CatalogEntry } from './types.ts'
 
@@ -79,6 +85,10 @@ export interface ShopGatewayOptions {
   /** Test-only injection: the hot-mount functions; production uses the real
    * hotMount/hotUnmount. */
   hot?: { mount: typeof hotMount; unmount: typeof hotUnmount }
+  /** Test-only injection: the filesystem `packageHasClientHalf` reads
+   * `dsh.client` through; the same seam `hot.ts` reads its patch through.
+   * Production uses `nodeHotFs`. */
+  hotFs?: HotFs
   /** Test-only injection: the Loader's boot-layer entries; production reads
    * them from `ctx.loader`. */
   loaderEntries?: () => Array<LoaderEntryLike>
@@ -136,9 +146,26 @@ export type ShopInstallResult =
 
 export interface ShopInstallStatusResult extends InstallStatus { found: boolean }
 
-/** `shop/setEnabled` result (§7.3): an unknown name is a typed wire value,
- * not a thrown RPC error. */
-export interface ShopSetEnabledResult { ok: boolean; detail?: string }
+/**
+ * `shop/setEnabled` result (§7.3): an unknown name is a typed wire value, not
+ * a thrown RPC error.
+ *
+ * A union rather than one flat shape with two optional fields, so that
+ * "`activation` is present exactly when `ok`" is something the compiler
+ * holds instead of a sentence this comment asks every reader to hold. Every
+ * `ok` answer says what the reader must do for the toggle to be visible — a
+ * toggled package with a browser half needs a reload, which this result used
+ * to be unable to say (design 2026-09-11-activation-model §6) — and every
+ * refusal carries the detail that names why.
+ *
+ * The client still defaults an absent `activation` conservatively. This type
+ * binds the process it is compiled into; the WIRE outlives it, because a tab
+ * can reach an older in-process host for as long as one reload after a shop
+ * self-update lands on disk.
+ */
+export type ShopSetEnabledResult =
+  | { ok: true; activation: Activation }
+  | { ok: false; detail: string }
 
 /** `shop/uninstallStart` result (§7.3): a name outside the catalog or not
  * installed is a typed wire value with an author-readable `detail`, not a
@@ -302,6 +329,7 @@ export class ShopGateway extends TypertRemoteService {
   private readonly profileDir?: string
   private readonly inventory?: ShopGatewayOptions['inventory']
   private readonly hot?: ShopGatewayOptions['hot']
+  private readonly hotFs?: ShopGatewayOptions['hotFs']
   private readonly loaderEntriesInjected?: ShopGatewayOptions['loaderEntries']
   private readonly dshBin: string
   /** The argv `shop/restart` re-spawns: the real process argv minus node and
@@ -330,7 +358,7 @@ export class ShopGateway extends TypertRemoteService {
   /** The install gate runs against the last loaded snapshot, never a fresh
    * fetch per request (§7.2: the Host's cached snapshot is the truth). */
   /** Finished install records retained, so a poll sees the true terminal
-   * state (§8: done / needsRestart / failure detail). Oldest evicted on add. */
+   * state (§8: done / activation / failure detail). Oldest evicted on add. */
   private static readonly MAX_FINISHED_INSTALLS = 32
 
   /** How long the gateway waits after a successful restart response before
@@ -370,6 +398,7 @@ export class ShopGateway extends TypertRemoteService {
     this.profileDir = options.profileDir
     this.inventory = options.inventory
     this.hot = options.hot
+    this.hotFs = options.hotFs
     this.loaderEntriesInjected = options.loaderEntries
     this.dshBin = options.dshBin ?? 'dsh'
     this.restartArgv = options.restartArgv ?? process.argv.slice(2)
@@ -551,34 +580,67 @@ export class ShopGateway extends TypertRemoteService {
     try {
       return ownedEntryIds({ profileDir: this.profileDirResolved(), packageName })
     } catch {
-      // Unreadable patch: nothing to disable live, so the hot path falls back
-      // to restart activation exactly as it does for a package with no rows.
+      // Unreadable patch: no ids, so nothing gets disabled live. Read by
+      // `liveEntriesDown` as "no live entry of this package", the same as a
+      // package with no rows — the removal still stands at the next boot,
+      // and there is nothing this process can name to bring down.
       return []
     }
   }
 
-  private async liveDisableIds(ids: readonly string[]): Promise<boolean> {
-    if (ids.length === 0) return false
+  /** Whether an installed package declares `dsh.client`. Reads through the
+   * `hotFs` option — `HotFs` is `hot.ts`'s type, but this gateway forwards
+   * the option only HERE, never into `hotMount`, which takes its own `fs`
+   * from `HotDeps`. A fixture therefore drives this read alone, which is the
+   * point: it is the only way to state what a package declared BEFORE an
+   * update overwrote its manifest. */
+  private packageHasClientHalf(packageName: string): boolean {
+    return hasClientHalf(this.hotFs ?? nodeHotFs, this.profileDirResolved(), packageName)
+  }
+
+  /**
+   * Bring every live entry the package owns down, best effort, and report
+   * whether its host half is DOWN when this returns.
+   *
+   * "Nothing matched" is down: a package with no live entry is not running,
+   * which is the ordinary case for removing a plugin that never loaded this
+   * session. Only a matched entry whose fiber outlives the retries — or
+   * whose `update` throws — leaves the plugin UP, and that is the one case
+   * an uninstall must not describe as stopped.
+   *
+   * The old spelling answered "did any update succeed", which is a different
+   * question: `update` resolving says the row was accepted, not that the
+   * instance went away. The retry loop below exists precisely because those
+   * two come apart, so reading the first as the second threw away the answer
+   * the loop was computing.
+   */
+  private async liveEntriesDown(ids: readonly string[]): Promise<boolean> {
+    if (ids.length === 0) return true
     const owned = new Set(ids)
-    let found = false
+    let allDown = true
     for (const entry of this.loaderEntries()) {
       // Matched on the entry id, never the module name: a package's entry
       // may mount another package's module entirely (see ownedEntryIds), and
       // the name match silently found nothing for every such package.
       if (entry.id === undefined || !ownsEntryId(owned, entry.id)) continue
+      let down = false
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
           await entry.update({ disabled: true }, false, true)
-          found = true
         } catch {
-          // A failing update leaves the entry running — best-effort live-disable; the hot path falls back to restart.
+          // A failing update leaves the entry running — best-effort
+          // live-disable, and the caller reports the honest outcome.
           break
         }
-        if (entry.fiber === undefined) break
+        if (entry.fiber === undefined) {
+          down = true
+          break
+        }
         await new Promise(resolve => setTimeout(resolve, 200))
       }
+      if (!down) allDown = false
     }
-    return found
+    return allDown
   }
 
   /** Enable or disable one installed plugin, hot (§8): a disable writes the
@@ -630,7 +692,12 @@ export class ShopGateway extends TypertRemoteService {
     // Every entry the package owns toggles together: a package that inserts a
     // host row and a client row is one plugin to the person clicking.
     setUserLayerRows({ profileDir, rows: owned.map(id => ({ id, disabled: !args.enabled })) })
-    return { ok: true }
+    // The user layer is hot-reloaded by the harness, so the host half is
+    // already in its new state; a package with a browser half still needs
+    // the open tab to reload (design 2026-09-11-activation-model §3).
+    // `clientLive: true` — a toggle moves a row the client registry already
+    // enumerates, and the served graph follows it (§2, measured 2026-09-11).
+    return { ok: true, activation: activationOf({ hostLive: true, clientLive: true, hasClientHalf: this.packageHasClientHalf(args.name) }) }
   }
 
   private rowConfig(): { catalogUrl: string; cacheDir: string } {
@@ -849,6 +916,19 @@ export class ShopGateway extends TypertRemoteService {
     // REPLACED has an unreadable patch — no ids just means no live disable,
     // and the hot path already falls back to restart activation.
     const priorEntryIds = isUpdate ? this.ownedEntryIdsOrNone(args.name) : []
+    // And read the OLD version's browser half now, for exactly the same
+    // reason: `afterDone` runs once the new tarball has overwritten the
+    // manifest, so a read THERE answers about the new version alone. An
+    // update that REMOVES a client half would report `live` — nothing to do
+    // — while the open tab is still running the old one's bundle and the
+    // served graph no longer holds it. That is the withheld reload this
+    // design exists to prevent, reached from the other direction.
+    //
+    // A fresh install contributes nothing here: there is no previous version
+    // of this package in the open tab, so `isUpdate` is what separates "no
+    // old half" from `hasClientHalf`'s "could not tell", and is why the two
+    // reads can stay booleans rather than growing a third state.
+    const priorClientHalf = isUpdate && this.packageHasClientHalf(args.name)
     const running = startInstall({
       profile: this.profile,
       spec,
@@ -880,17 +960,30 @@ export class ShopGateway extends TypertRemoteService {
         const hot = this.hot ?? { mount: hotMount, unmount: hotUnmount }
         if (isUpdate) {
           // Sequencing: the old instance must be down before the new one
-          // mounts (see liveDisableIds). A failure here falls back to restart.
-          await this.liveDisableIds(priorEntryIds)
+          // mounts (see liveEntriesDown). A failure here falls back to restart.
+          await this.liveEntriesDown(priorEntryIds)
         }
         const result = await hot.mount(
           { plugin: (plugin, config) => (this.ctx as unknown as { plugin(plugin: unknown, config: unknown): { await(): Promise<unknown>; dispose(): Promise<unknown> | void } }).plugin(plugin, config) },
           this.profileDirResolved(),
           args.name,
         )
-        return result.ok
-          ? { needsRestart: false }
-          : { needsRestart: true, restartReason: result.reason ?? undefined }
+        if (!result.ok) {
+          return { activation: 'restart' as const, ...(result.reason !== null ? { restartReason: result.reason } : {}) }
+        }
+        // The mount SUCCEEDED, so the host half is live. Its browser half is
+        // not, and cannot be made so by a reload: a hot mount adds to the
+        // live loader entries without entering the composition the client
+        // registry enumerates (activation.ts, measured 2026-09-14). So
+        // `clientLive` is false here and a package with a browser half lands
+        // on `restart`, carrying the reason that says its host half is
+        // already running — the generic restart line would deny that.
+        const activation = activationOf({
+          hostLive: true,
+          clientLive: false,
+          hasClientHalf: priorClientHalf || this.packageHasClientHalf(args.name),
+        })
+        return activation === 'restart' ? { activation, restartReason: 'client-half' as const } : { activation }
       },
     })
     if (entry.source === 'github') {
@@ -1077,6 +1170,12 @@ export class ShopGateway extends TypertRemoteService {
     // Best-effort for the same reason as the update path: a package with an
     // unreadable patch must still be removable.
     const priorEntryIds = this.ownedEntryIdsOrNone(args.name)
+    // Read the browser half while the package is still on disk — `afterDone`
+    // runs after the uninstall deleted its manifest, and the conservative
+    // fallback would then answer `true` for every package, turning this
+    // verdict into a constant. Same ordering constraint, same reason, as
+    // `priorEntryIds` above.
+    const hadClientHalf = this.packageHasClientHalf(args.name)
     const running = startUninstall({
       profile: this.profile,
       name: args.name,
@@ -1090,10 +1189,17 @@ export class ShopGateway extends TypertRemoteService {
       afterDone: async () => {
         const hot = this.hot ?? { mount: hotMount, unmount: hotUnmount }
         const hotRemoved = await hot.unmount(args.name)
-        const disabled = hotRemoved || await this.liveDisableIds(priorEntryIds)
-        // Privilege is revoked the moment the fiber is gone; the boot
-        // composition drops the entry row at next boot.
-        return { needsRestart: false }
+        // Privilege is revoked the moment the fiber is gone, and the boot
+        // composition drops the entry row at the next boot either way — so
+        // neither arm finding anything still reports a live removal. What
+        // this must NOT do is claim the plugin stopped while its fiber is
+        // still up: "Removed and stopped immediately" would then be a false
+        // statement about privilege, and a restart is the honest advice.
+        const stopped = hotRemoved || await this.liveEntriesDown(priorEntryIds)
+        // `clientLive: true` for the same reason as the toggle: what an
+        // uninstall removes is a row of the boot composition, and dropping
+        // one from the served graph is the measured half of §2.
+        return { activation: activationOf({ hostLive: stopped, clientLive: true, hasClientHalf: hadClientHalf }) }
       },
     })
     // Forget the commit pin alongside the dependency; a stale pin would

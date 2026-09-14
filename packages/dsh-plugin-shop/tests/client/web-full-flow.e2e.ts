@@ -21,21 +21,27 @@
  *
  * The hot-mount scenarios (market borrowings §4, Task 18) ride the same
  * composition: a local npm registry (tests/fixtures/local-registry.ts) serves
- * three live fixtures — `dsh-shop-e2e-live` (a plain `- id:` / `name:` patch,
+ * four live fixtures — `dsh-shop-e2e-live` (a plain `- id:` / `name:` patch,
  * the only form the hot tree can mount), `dsh-shop-e2e-config` (a config-row
- * patch, valid for the bundle layer but not hot-mountable), and
- * `dsh-shop-e2e-peer` (the same hot-mountable patch as the live fixture, plus
- * a `peerDependencies` entry this profile never installs). The profile's
- * .npmrc points at the registry once the profile exists (pnpm, unlike npm,
- * never reads the registry from env vars), so gateway-spawned pnpm resolves
- * those installs locally while the beforeAll `file:` installs keep the real
- * registry. The live install must report done with `needsRestart === false`
- * and the entry must appear in the loader inventory (the strict liveness
- * read — a route-based probe is unavailable, see the fixture's index.js
- * comment); the config install must report done with the localized restart
- * reason and the §8 restart offer instead; the peer install proves the
- * harness-compatibility badge and gate warning render for a genuinely
- * unresolvable declared peer, and — warn, never block — still reaches done.
+ * patch, valid for the bundle layer but not hot-mountable), `dsh-shop-e2e-peer`
+ * (the same hot-mountable patch as the live fixture, plus a
+ * `peerDependencies` entry this profile never installs), and
+ * `dsh-shop-e2e-client` (the same hot-mountable patch again, plus a
+ * `dsh.client` declaration — the other three are host-only, so none of them
+ * can prove the reload path, which is exactly the blind spot the 2026-09-11
+ * activation-model reports came through). The profile's .npmrc points at the
+ * registry once the profile exists (pnpm, unlike npm, never reads the
+ * registry from env vars), so gateway-spawned pnpm resolves those installs
+ * locally while the beforeAll `file:` installs keep the real registry. The
+ * live install must report done with activation `live` and the entry must
+ * appear in the loader inventory (the strict liveness read — a route-based
+ * probe is unavailable, see the fixture's index.js comment); the config
+ * install must report done with the localized restart reason and the §8
+ * restart offer instead; the peer install proves the harness-compatibility
+ * badge and gate warning render for a genuinely unresolvable declared peer,
+ * and — warn, never block — still reaches done; the client install must
+ * report done with activation `reload` and offer the reload button instead
+ * of either the no-restart notice or the restart offer.
  *
  * Skipped unless the machine has both the real `dsh` CLI on PATH and a
  * playwright chromium installed (CI installs both; see .github/workflows).
@@ -66,10 +72,15 @@
  *   (gate warning line) — both render only when the entry has a declared
  *   peer this host cannot resolve; there is no `[data-shop-install-done]` —
  *   the done view below is the only terminal signal
- * - install done view: `[data-shop-restart-notice]` (the no-restart copy
- *   when needsRestart is false, the host's reason code localized otherwise) and
- *   the §8 offer `[data-shop-restart]` (only when needsRestart && the host
- *   can restart)
+ * - install done view: `[data-shop-restart-notice]` always renders (the
+ *   no-restart copy for activation `live`, the reload copy for `reload`, or
+ *   the host's reason code localized under `restart`), alongside the offer
+ *   that matches the activation: the §4 reload panel `[data-shop-reload]`,
+ *   whose value names which change made the page stale (a boot-composition
+ *   change only — a hot mount reports `restart`, see the client-half spec),
+ *   (activation `reload`), the §8 offer `[data-shop-restart]` (activation
+ *   `restart` && the host can restart), or `[data-shop-restart-disabled]`
+ *   (activation `restart` && the host cannot restart); `live` offers neither
  * - uninstall: `[data-shop-uninstall]`; done view `[data-shop-uninstall-done]`
  * - loader inventory tab: `dialog.getByRole('tab', { name: '插件列表' })`, then
  *   `expandGlobalPlane` — the tab splits into 会话插件 (the selected agent
@@ -423,6 +434,9 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
   const peerFixtureDir = fileURLToPath(
     new URL('../fixtures/live-packages/dsh-shop-e2e-peer', import.meta.url),
   )
+  const clientFixtureDir = fileURLToPath(
+    new URL('../fixtures/live-packages/dsh-shop-e2e-client', import.meta.url),
+  )
 
   beforeAll(async () => {
     catalogServer = await startCatalogServer()
@@ -430,7 +444,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
     // .npmrc points at it (written below, once the profile exists), so the
     // gateway's `dsh plugin add <name>@<version>` finds the fixtures locally
     // (and the failed-install name still 404s here, like it does on npm).
-    localRegistry = await startLocalRegistry([liveFixtureDir, configFixtureDir, peerFixtureDir])
+    localRegistry = await startLocalRegistry([liveFixtureDir, configFixtureDir, peerFixtureDir, clientFixtureDir])
     tmpHome = mkdtempSync(join(tmpdir(), 'dsh-home-'))
 
     // The REAL install path: the same executor the gateway runs, spawning
@@ -692,9 +706,10 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await card.locator('[data-shop-confirm]').waitFor({ state: 'visible', timeout: 10_000 })
       await card.locator('[data-shop-confirm]').click()
 
-      // needsRestart === false: the done view renders the no-restart notice
+      // activation `live`: the done view renders the no-restart notice
       // (never a restart reason) and offers no restart. A hot-mount failure
-      // would surface the host's localized reason here instead, failing this.
+      // would surface the host's localized reason here instead (under
+      // activation `restart`), failing this.
       const notice = card.locator('[data-shop-restart-notice]')
       await notice.waitFor({ state: 'visible', timeout: 60_000 })
       expect(await notice.textContent()).toContain('已安装并热挂载')
@@ -803,7 +818,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
 
       // Install: the same gate and poll. The config-row patch is a valid
       // bundle-layer patch the hot tree cannot replicate, so the install
-      // reports done with needsRestart === true and the host's published
+      // reports done with activation `restart` and the host's published
       // localized reason (parseSimplePatch rejects the row; the reason
       // renders verbatim on the notice).
       await card.locator('[data-shop-install]').click()
@@ -890,7 +905,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // The incompatible filter, against a genuinely-missing peer the HOST
       // decided about: its count comes from the host's own resolver run, not
       // from a fixture that asserts the answer, and this fixture profile makes
-      // exactly one of the four shelf entries incompatible.
+      // exactly one of the five shelf entries incompatible.
       const filter = dialog.locator('[data-shop-hide-incompatible]')
       await filter.waitFor({ state: 'visible', timeout: 10_000 })
       expect(await filter.textContent()).toBe(zh.hideIncompatible.replace('{count}', '1'))
@@ -947,6 +962,99 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // never the failed or rejected view.
       await card.locator('[data-shop-confirm]').click()
       await card.locator('[data-shop-restart-notice]').waitFor({ state: 'visible', timeout: 60_000 })
+    },
+    120_000,
+  )
+
+  it(
+    'a hot-mounted package with a browser half reports restart, and the reload it does not offer would deliver nothing',
+    async () => {
+      expect(page).toBeDefined()
+      const app = page!
+
+      // Close the dialog left open by the previous spec, then reopen on the
+      // shop tab for the client fixture's card (same reopen sequence as the
+      // previous two specs' start).
+      const dialog0 = app.getByRole('dialog', { name: '设置' })
+      await dialog0.locator('.VOzbGW_close').click()
+      await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
+      const dialog = app.getByRole('dialog', { name: '设置' })
+      await dialog.waitFor({ state: 'visible', timeout: 10_000 })
+      await dialog.getByRole('button', { name: '插件', exact: true }).click()
+      await dialog.getByRole('tab', { name: '插件商店' }).click()
+      await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
+      const card = dialog.locator('[data-shop-entry="dsh-shop-e2e-client"]')
+      await card.waitFor({ state: 'visible', timeout: 15_000 })
+
+      // Install: the same gate and poll as every other hot-mount scenario.
+      // The one thing new about this fixture is the `dsh.client` declaration
+      // in its package.json — the three older live fixtures declare only
+      // `dsh.bundle`, so every hot-mount assertion elsewhere in this suite
+      // was made about a package with no browser half.
+      await card.locator('[data-shop-install]').click()
+      await card.locator('[data-shop-confirm]').waitFor({ state: 'visible', timeout: 10_000 })
+      await card.locator('[data-shop-confirm]').click()
+
+      // activation `restart`, and the measurement under it is why.
+      //
+      // The host half hot-mounts live, exactly like the plain live fixture —
+      // the sibling spec reads that shape straight out of the loader
+      // inventory. What this fixture adds is a `dsh.client` declaration, and
+      // a browser half does not arrive by the same route: it reaches a tab
+      // only through `window.__DSH_BOOT__`, which the harness composes from
+      // the BOOT composition. A hot mount adds to the live loader entries
+      // without entering that, so there is nothing for a reload to fetch.
+      //
+      // The done view must therefore render the client-half restart copy and
+      // offer the restart gate — never the no-restart line (the §0
+      // `dsh-theme-endfield` report: told nothing was needed, needed a
+      // restart) and never the reload offer, which would send the reader to
+      // press a button that provably changes nothing.
+      const notice = card.locator('[data-shop-restart-notice]')
+      await notice.waitFor({ state: 'visible', timeout: 60_000 })
+      expect(await notice.textContent()).toBe(zh.hotClientHalfNotice)
+      await card.locator('[data-shop-restart]').waitFor({ state: 'visible', timeout: 10_000 })
+      expect(await card.locator('[data-shop-reload]').count()).toBe(0)
+
+      // The measurement the paragraph above rests on, taken here rather than
+      // asserted from the design, because the design said the opposite until
+      // this ran: §2 measured a runtime disable, a runtime enable, and that
+      // the hot-mounted row's bundle URL answers 200 — never that the
+      // package enters the graph a tab boots from, which is what would make
+      // anything request that URL.
+      //
+      // 2026-09-14, dsh 0.1.5-rc.1: across a reload following the hot mount
+      // the served graph is BYTE-IDENTICAL — same `rev`, the fixture's
+      // client half absent before and after — while its host half is live
+      // the whole time. The shop's own client half IS in the graph, and the
+      // shop is boot-composed rather than hot-mounted; that control is what
+      // separates "this graph carries no client halves" from "it carries
+      // every one except a hot-mounted one".
+      //
+      // This is also the only thing in the suite that executes the fixture's
+      // browser half at all. Without it `dsh-shop-e2e-client/client.js` and
+      // its `exports["./client"]` are loaded by nothing, and the suite stayed
+      // green while asserting only what the shop SAID.
+      //
+      // If these lines ever fail, the harness has started composing hot
+      // mounts into the client registry — and that is the signal to move the
+      // install path back to `reload`, not to relax the assertion.
+      const boot = async (): Promise<{ rev: string; ids: string[] }> => app.evaluate(() => {
+        const graph = (window as unknown as { __DSH_BOOT__?: { rev?: string; entries?: Array<{ id?: string }> } }).__DSH_BOOT__
+        return { rev: graph?.rev ?? '', ids: (graph?.entries ?? []).map(entry => entry.id ?? '') }
+      })
+      const before = await boot()
+      expect(before.ids).not.toContain('dsh-shop-e2e-client')
+      await app.reload({ waitUntil: 'domcontentloaded' })
+      await app.waitForFunction(
+        () => (window as unknown as { __DSH_BOOT__?: unknown }).__DSH_BOOT__ !== undefined,
+        undefined,
+        { timeout: 30_000 },
+      )
+      const after = await boot()
+      expect(after.rev).toBe(before.rev)
+      expect(after.ids).not.toContain('dsh-shop-e2e-client')
+      expect(after.ids).toContain('dsh-plugin-shop')
     },
     120_000,
   )

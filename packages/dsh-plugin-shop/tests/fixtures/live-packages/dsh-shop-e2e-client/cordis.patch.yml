@@ -1,0 +1,6 @@
+# A plain `- id:` / `name:` insert — the only form the shop's hot tree can
+# mount without a restart. Same shape as dsh-shop-e2e-live; what is new here
+# is the `dsh.client` declaration in package.json.
+- insert:
+    - id: e2e-client
+      name: dsh-shop-e2e-client

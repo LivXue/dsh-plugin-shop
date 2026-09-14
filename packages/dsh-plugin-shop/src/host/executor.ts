@@ -12,13 +12,17 @@ import { StringDecoder } from 'node:string_decoder'
 import { readProfileManifest, resolveProfileDir } from '@deepseek-ai/dsh-app-boot'
 import { dshCommand, resolveDshScript, DSH_PACKAGE, type DshCliFs } from './dsh-cli.ts'
 import type { HotRestartReason } from './hot.ts'
+import type { Activation } from './activation.ts'
 
 export type InstallState = 'running' | 'done' | 'failed'
 
 export interface InstallStatus {
   state: InstallState
   log: string[]
-  needsRestart?: boolean
+  /** What the reader must do for this change to be visible (design
+   * 2026-09-11-activation-model). Present only on "done". Absent means the
+   * install is still running or failed, never "nothing to do". */
+  activation?: Activation
   restartReason?: HotRestartReason
   detail?: string
 }
@@ -419,7 +423,7 @@ export function shellSafeTarget(target: string, platform: NodeJS.Platform): stri
  * manifest before the command reports `done` (§7.2 step 6 and its uninstall
  * mirror). When `afterDone` is given, a zero exit that passes `confirm`
  * withholds the terminal `done` until the callback — typically the hot-mount
- * attempt — settles; its result sets `needsRestart` (default `true`) and
+ * attempt — settles; its result sets `activation` (default `restart`) and
  * `restartReason`. The client stops polling at `done`, so the hot outcome
  * must settle before it. A throwing callback never fails the install — the
  * package IS installed; it reports `done` with the restart fallback. */
@@ -437,7 +441,7 @@ function spawnPluginCli(options: {
    * DSH_HOME the child gets — the confirm compares against what this saw. */
   beforeSpawn?: (home: string | undefined) => void
   confirm?: (home: string | undefined) => string | null
-  afterDone?: (home: string | undefined) => Promise<{ needsRestart: boolean; restartReason?: HotRestartReason } | void>
+  afterDone?: (home: string | undefined) => Promise<{ activation: Activation; restartReason?: HotRestartReason } | void>
   onStatus?: (status: InstallStatus) => void
   timeoutMs?: number
 }): RunningInstall {
@@ -465,14 +469,17 @@ function spawnPluginCli(options: {
   const log: string[] = []
   let logBytes = 0
   let state: InstallState = 'running'
-  let needsRestartOnDone = true
+  // The default is `restart`, and it is load-bearing: `updateStart` passes
+  // no `afterDone`, so the shop's own self-update lands here — a host half
+  // cannot swap itself live (§8).
+  let activationOnDone: Activation = 'restart'
   let restartReason: HotRestartReason | undefined
   let detail: string | undefined
 
   const status = (): InstallStatus => ({
     state,
     log: [...log],
-    ...(state === 'done' ? { needsRestart: needsRestartOnDone, ...(restartReason !== undefined ? { restartReason } : {}) } : {}),
+    ...(state === 'done' ? { activation: activationOnDone, ...(restartReason !== undefined ? { restartReason } : {}) } : {}),
     ...(detail !== undefined ? { detail } : {}),
   })
 
@@ -552,10 +559,10 @@ function spawnPluginCli(options: {
         } else if (afterDone !== undefined) {
           try {
             const outcome = await afterDone(env?.DSH_HOME)
-            needsRestartOnDone = outcome?.needsRestart ?? true
+            activationOnDone = outcome?.activation ?? 'restart'
             restartReason = outcome?.restartReason
           } catch {
-            needsRestartOnDone = true
+            activationOnDone = 'restart'
             restartReason = 'mount-failed'
           }
           state = 'done'
@@ -631,7 +638,7 @@ export function startInstall(options: {
    * on disk by then, so this is for facts that are unreadable until it is —
    * see `collidingEntryId`. */
   alsoConfirm?: (home: string | undefined) => string | null
-  afterDone?: (home: string | undefined) => Promise<{ needsRestart: boolean; restartReason?: HotRestartReason } | void>
+  afterDone?: (home: string | undefined) => Promise<{ activation: Activation; restartReason?: HotRestartReason } | void>
   onStatus?: (status: InstallStatus) => void
   timeoutMs?: number
 }): RunningInstall {
@@ -711,7 +718,7 @@ export function startUninstall(options: {
   dshBin?: string
   env?: NodeJS.ProcessEnv
   expectedName?: string
-  afterDone?: (home: string | undefined) => Promise<{ needsRestart: boolean; restartReason?: HotRestartReason } | void>
+  afterDone?: (home: string | undefined) => Promise<{ activation: Activation; restartReason?: HotRestartReason } | void>
   onStatus?: (status: InstallStatus) => void
   timeoutMs?: number
 }): RunningInstall {

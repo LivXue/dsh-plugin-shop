@@ -481,8 +481,11 @@
 
 /* Sits beside the 12px stats caption, so it is quieter than `.actionButton`:
  * this is an affordance, not a call to action — the catalog reloads on its
- * own at mount and the shelf is already usable without it. */
-.reloadButton {
+ * own at mount and the shelf is already usable without it. Named
+ * `catalogRefresh*` (not `reload*`) so it cannot collide with the §4 page
+ * reload offer below, which reloads the whole tab rather than refetching
+ * the catalog data. */
+.catalogRefreshButton {
   padding: 1px 9px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 999px;
@@ -493,22 +496,22 @@
   cursor: pointer;
 }
 
-.reloadButton:hover:not(:disabled) {
+.catalogRefreshButton:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, var(--dsw-alias-border-l2));
   color: var(--dsw-alias-brand-primary);
 }
 
-.reloadButton:disabled {
+.catalogRefreshButton:disabled {
   cursor: default;
   opacity: 0.6;
 }
 
-.reloadButton:focus-visible {
+.catalogRefreshButton:focus-visible {
   outline: 2px solid var(--dsw-alias-brand-primary);
   outline-offset: 1px;
 }
 
-.reloadFailed {
+.catalogRefreshFailed {
   font-size: 11px;
   color: var(--dsw-alias-state-warn-primary);
 }
@@ -1058,7 +1061,13 @@
   outline-offset: 1px;
 }
 
-.restartButton {
+/* The two activation offers share one recipe: a border in an alias token,
+ * never a `bg-layer` fill alone — all four bg-layer tokens collapse to the
+ * same white under `body` in the light theme, and a fill-only button would
+ * vanish there. Grouped rather than copied, because a copy is a rule that
+ * can be corrected on one button and left wrong on the other, silently. */
+.restartButton,
+.reloadButton {
   align-self: flex-start;
   padding: 5px 14px;
   border: 1px solid var(--dsw-alias-border-l2);
@@ -1069,14 +1078,27 @@
   cursor: pointer;
 }
 
-.restartButton:hover {
+.restartButton:hover,
+.reloadButton:hover {
   border-color: var(--dsw-alias-label-secondary);
 }
 
-.restartButton:focus-visible {
+.restartButton:focus-visible,
+.reloadButton:focus-visible {
   outline: 2px solid var(--dsw-alias-brand-primary);
   outline-offset: 1px;
 }
+
+/* The §4 reload offer: a notice plus its button, one item of
+ * `.installedActions` the way the restart gate is — a column of its own
+ * rather than inline with the row. */
+.reloadPanel {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
 
 .gate {
   display: flex;
@@ -1235,6 +1257,10 @@
 .outdatedActions {
   display: flex;
   align-items: center;
+  /* The reload offer (§4) mounts inside the switch beside the Update button
+   * and is a two-line block, not a control: without wrapping, a row reading
+   * [switch][notice + Reload][Update] overflows the settings dialog. */
+  flex-wrap: wrap;
   gap: 10px;
 }
 
@@ -1308,5 +1334,9 @@
 .switchWrap {
   display: inline-flex;
   align-items: center;
+  /* Same reason as `.outdatedActions`: `.reloadPanel`'s own comment calls
+   * itself "a column of its own rather than inline with the row", which held
+   * for `.installedActions` and not here until this line. */
+  flex-wrap: wrap;
   gap: 8px;
 }

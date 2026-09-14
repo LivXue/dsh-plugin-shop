@@ -29,6 +29,7 @@ export const zh = {
   install: '安装',
   confirm: '确认',
   cancel: '取消',
+  dismiss: '知道了',
   acknowledgementTitle: '需要确认',
   acknowledgementBody: ACKNOWLEDGEMENT_ZH,
   installing: '正在安装…',
@@ -40,7 +41,11 @@ export const zh = {
   hotHostUnsupportedNotice: '当前环境不支持热挂载；重启 dsh 后生效',
   hotTimeoutNotice: '热挂载超时；重启 dsh 后生效',
   hotMountFailedNotice: '热挂载失败；重启 dsh 后生效',
+  hotClientHalfNotice: '已安装并在运行；它的界面要重启 dsh 才会更新——刷新页面取不到',
   installedNoRestartNotice: '已安装并热挂载；现在即可使用，无需重启',
+  installedReloadNotice: '已生效；刷新页面即可看到',
+  reload: '刷新页面',
+  reloadNote: '服务器已经是新状态，当前页面显示的还是刷新前的内容。刷新会丢弃这个页面上未完成的内容。',
   installFailed: '安装失败',
   installTransportFailed: '安装请求未能送达。请稍后重试。',
   refresh: '刷新',
@@ -87,6 +92,10 @@ export const zh = {
   uninstallTransportFailed: '卸载请求未能送达。请稍后重试。',
   uninstalledLiveNotice: '已卸载并立即停止。profile 的启动组合将在下次重启时应用该移除。',
   uninstalledRestartNotice: '已卸载；重启 dsh 后生效',
+  // M-1: distinct from installedReloadNotice — that one tells the reader to
+  // reload to SEE a plugin they just installed; this one tells them to
+  // reload to see this one GONE. The server has already dropped it.
+  uninstalledReloadNotice: '已卸载；刷新页面即可看到它消失。profile 的启动组合将在下次重启时应用该移除。',
   restart: '重启 dsh',
   restartTitle: '确认重启 dsh',
   restartBody: '重启会断开当前页面与服务器的连接，正在进行的对话和任务会中断；浏览器会自动跳转到重启后的地址，稍等片刻即可继续使用。',
@@ -103,7 +112,7 @@ export const zh = {
   github: 'GitHub',
   enabledSwitch: '启用',
   toggleFailed: '设置失败，请重试。',
-  hotApplyNote: '无需重启，立即生效',
+  hotApplyNote: '已生效，无需重启',
 } satisfies Record<string, string>
 
 /** Shop locale key union. */
@@ -136,6 +145,7 @@ export const en = {
   install: 'Install',
   confirm: 'Confirm',
   cancel: 'Cancel',
+  dismiss: 'Dismiss',
   acknowledgementTitle: 'Acknowledgement required',
   acknowledgementBody: ACKNOWLEDGEMENT_EN,
   installing: 'Installing…',
@@ -147,7 +157,11 @@ export const en = {
   hotHostUnsupportedNotice: 'this harness cannot hot-mount; restart dsh to activate',
   hotTimeoutNotice: 'hot-mount timed out; restart dsh to activate',
   hotMountFailedNotice: 'hot-mount failed; restart dsh to activate',
+  hotClientHalfNotice: 'installed and running; its interface needs a restart of dsh — a reload cannot fetch it',
   installedNoRestartNotice: 'installed and hot-mounted; running now, no restart needed',
+  installedReloadNotice: 'already applied; reload the page to see it',
+  reload: 'Reload the page',
+  reloadNote: 'The server is already in the new state; this page is still showing what came before. Reloading discards anything in flight on this page.',
   installFailed: 'Install failed',
   installTransportFailed: 'The install request could not be delivered. Please retry.',
   refresh: 'Refresh',
@@ -189,6 +203,7 @@ export const en = {
   uninstallTransportFailed: 'The uninstall request could not be delivered. Please retry.',
   uninstalledLiveNotice: 'Removed and stopped immediately. The profile\'s boot composition picks up the removal at the next restart.',
   uninstalledRestartNotice: 'uninstalled; restart dsh to activate',
+  uninstalledReloadNotice: 'removed; reload the page to see it gone. The profile\'s boot composition picks up the removal at the next restart.',
   restart: 'Restart dsh',
   restartTitle: 'Restart dsh?',
   restartBody: 'Restarting disconnects this page and interrupts any conversation or task in progress; the browser will jump to the restarted address automatically, so give it a few seconds.',
@@ -205,5 +220,5 @@ export const en = {
   github: 'GitHub',
   enabledSwitch: 'Enable',
   toggleFailed: 'Failed to update. Please retry.',
-  hotApplyNote: 'takes effect without a restart',
+  hotApplyNote: 'applied without a restart',
 } satisfies Record<ShopLocaleKey, string>
