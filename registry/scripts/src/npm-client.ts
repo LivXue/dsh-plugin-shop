@@ -773,17 +773,32 @@ export function cellKey(cell: Cell): string {
  * {@link SEARCH_WINDOW}.
  * @param keyword - the harvest keyword.
  * @param probe - reads one query's `total`; injected so tests need no network.
- * @returns the cells to page, the keyword's own total, and whether a split
- *   happened (an unsplit keyword needs no coverage check: paging to its
- *   answered total already enumerates all of it).
+ * @returns the cells to page, the cells whose OWN total is past the window
+ *   (paged to it rather than through it — see below), the keyword's own total,
+ *   and whether a split happened (an unsplit keyword needs no coverage check:
+ *   paging to its answered total already enumerates all of it).
  * @throws when a cell is past the window and no refinement keyword splits it.
+ *
+ * An over-window cell yields entries in both lists, and neither entry is the
+ * other: its deeper intersections join `cells`, while the cell ITSELF joins
+ * `oversized`, to be paged to its own window. The intersections alone do not
+ * cover it, and the argument needs no
+ * measurement: `over ∩ other` is a subset of `other`, and an `other` inside
+ * the window is paged in full by this same run, so every intersection the
+ * split produces is a subset of a set already enumerated. They buy coverage
+ * only when `other` is ALSO over the window. The common case is the opposite
+ * one — the first refinement to cross is the fattest, and the fattest is the
+ * one every other is smaller than — and it cost the catalog 24 packages
+ * between 2026-09-11 and 2026-09-14, when `keywords:deepseek-harness,dsh`
+ * crossed and its own names stopped being reachable by anything. The design
+ * doc's 2026-09-14 amendment carries the measurement.
  */
 export async function partitionKeyword(
   keyword: string,
   probe: (cell: Cell) => Promise<number>,
-): Promise<{ cells: Cell[]; total: number; partitioned: boolean }> {
+): Promise<{ cells: Cell[]; oversized: Cell[]; total: number; partitioned: boolean }> {
   const total = await probe({ keywords: [keyword] })
-  if (total <= SEARCH_WINDOW) return { cells: [{ keywords: [keyword] }], total, partitioned: false }
+  if (total <= SEARCH_WINDOW) return { cells: [{ keywords: [keyword] }], oversized: [], total, partitioned: false }
   const cells: Cell[] = []
   const oversized: Cell[] = []
   for (const refinement of PARTITION_KEYWORDS) {
@@ -848,7 +863,7 @@ export async function partitionKeyword(
       `npm search for ${keywordQuery([keyword])} reports more than the ${SEARCH_WINDOW} names one query can reach (from is capped at ${MAX_SEARCH_FROM}) and no refinement keyword splits it; add one to PARTITION_KEYWORDS`,
     )
   }
-  return { cells, total, partitioned: true }
+  return { cells, oversized, total, partitioned: true }
 }
 
 /** The two fields the harvest reads off a search response. `objects` admits a
@@ -1687,7 +1702,7 @@ export async function searchByKeywords(
     }
   }
   for (const keyword of HARVEST_KEYWORDS) {
-    const { cells, total, partitioned } = await partitionKeyword(keyword, probe)
+    const { cells, oversized, total, partitioned } = await partitionKeyword(keyword, probe)
     const forKeyword = new Set<string>()
     // The window cell's own names, kept apart from the union. Without this the
     // "how much of the tail did the cells recover?" arithmetic has to INFER
@@ -1780,6 +1795,12 @@ export async function searchByKeywords(
       // Idempotent, and `enumerate` runs twice on the retry path.
       for (const name of windowNames) forKeyword.add(name)
       for (const cell of cells) await pageCell(cell, forKeyword, 'throw', servedFor)
+      // 'stop', because this cell's own total is past the window BY
+      // DEFINITION — that is what put it in this list — so the `from` cap is
+      // the API's ceiling here exactly as it is for the keyword itself, not a
+      // partition that failed to split. Paged after `cells` so `servedFor`
+      // carries its names before the publisher filter measures against them.
+      for (const cell of oversized) await pageCell(cell, forKeyword, 'stop', servedFor)
       if (partitioned) {
         publisherCells ??= await selectPublisherCells()
         for (const cell of publisherCells) await pageCell(cell, forKeyword, 'throw')
@@ -1818,6 +1839,10 @@ export async function searchByKeywords(
     }
     const shortfall = required - forKeyword.size
     if (shortfall <= 0) continue // whole, even when the keyword is past the window
+    // Every refinement cell this keyword PAGED, the oversized ones included.
+    // `cells.length` alone understates the partition in both messages below,
+    // and those messages are read to decide which half failed.
+    const pagedCells = cells.length + oversized.length
     // The shortfall splits into the two faults it can carry, and the split
     // holds as an identity on the union alone:
     //
@@ -1869,7 +1894,7 @@ export async function searchByKeywords(
       // partitioned on its first probe and then re-probed back to or below
       // the window still HAS a window sweep and cells, and blaming neither
       // is how the message stopped naming the failing half.
-      throw new Error(`npm search for ${keywordQuery([keyword])} reached only ${Math.min(required, SEARCH_WINDOW) - windowShortfall} of the ${Math.min(required, SEARCH_WINDOW)} names its own window can address (its window sweep served ${windowNames.size}, beside ${cells.length} refinement cell(s)), and a second full pass found no more; that is inside the reachable range, so no partition can explain it`)
+      throw new Error(`npm search for ${keywordQuery([keyword])} reached only ${Math.min(required, SEARCH_WINDOW) - windowShortfall} of the ${Math.min(required, SEARCH_WINDOW)} names its own window can address (its window sweep served ${windowNames.size}, beside ${pagedCells} refinement cell(s)), and a second full pass found no more; that is inside the reachable range, so no partition can explain it`)
     }
     // One noise allowance covers the WHOLE keyword. An overstated total of
     // 5251 can still pass with 5250 names, but three window misses plus three
@@ -1880,7 +1905,7 @@ export async function searchByKeywords(
     if (shortfall > MAX_SEARCH_SHORTFALL) {
       const rate = recovered / unreachable
       if (rate < MIN_UNREACHABLE_RECOVERY) {
-        throw new Error(`npm search for ${keywordQuery([keyword])} reaches ${Math.min(required, SEARCH_WINDOW)} of ${required} names in one query and the combined searches recovered ${recovered} of ${unreachable} beyond it across ${cells.length} cell(s) — under the ${MIN_UNREACHABLE_RECOVERY} floor, so the refinement coverage needs to improve`)
+        throw new Error(`npm search for ${keywordQuery([keyword])} reaches ${Math.min(required, SEARCH_WINDOW)} of ${required} names in one query and the combined searches recovered ${recovered} of ${unreachable} beyond it across ${pagedCells} cell(s) — under the ${MIN_UNREACHABLE_RECOVERY} floor, so the refinement coverage needs to improve`)
       }
       // A healthy rate can still leave too many names missing. At this point
       // the union exceeds one window, so windowShortfall is zero and the tail
