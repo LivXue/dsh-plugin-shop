@@ -75,7 +75,8 @@
  * - install done view: `[data-shop-restart-notice]` always renders (the
  *   no-restart copy for activation `live`, the reload copy for `reload`, or
  *   the host's reason code localized under `restart`), alongside the offer
- *   that matches the activation: the §4 reload panel `[data-shop-reload]`
+ *   that matches the activation: the §4 reload panel `[data-shop-reload]`,
+ *   whose value names which change made the page stale,
  *   (activation `reload`), the §8 offer `[data-shop-restart]` (activation
  *   `restart` && the host can restart), or `[data-shop-restart-disabled]`
  *   (activation `restart` && the host cannot restart); `live` offers neither
@@ -1007,8 +1008,67 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       const notice = card.locator('[data-shop-restart-notice]')
       await notice.waitFor({ state: 'visible', timeout: 60_000 })
       expect(await notice.textContent()).toBe(zh.installedReloadNotice)
-      await card.locator('[data-shop-reload]').waitFor({ state: 'visible', timeout: 10_000 })
+      // Scoped to the install: a card can carry more than one reload offer
+      // (an update that landed, a toggle that applied), and `waitFor` is
+      // strict — it throws on more than one match rather than picking.
+      await card.locator('[data-shop-reload="install"]').waitFor({ state: 'visible', timeout: 10_000 })
       expect(await card.locator('[data-shop-restart]').count()).toBe(0)
+
+      // And then the premise the whole design rests on, which this suite
+      // asserted nothing about until here: a plugin's browser half reaches a
+      // tab ONLY through `window.__DSH_BOOT__`, which the webserver
+      // recomposes from the live loader entries on every index request. So
+      // THIS tab — opened long before the install — must not hold the
+      // fixture's client entry, and one reload must bring it in, with no
+      // restart anywhere between. That pair is what makes `reload` the
+      // honest answer rather than `live` (nothing to do) or `restart`.
+      //
+      // It is also the only thing that executes the fixture at all: without
+      // it `dsh-shop-e2e-client/client.js` and its `exports["./client"]` are
+      // never loaded by anything, and a wrong `dsh.client` shape or client
+      // entry path would leave this suite green while the Reload button the
+      // design exists to offer delivered nothing.
+      const boot = async (): Promise<{ rev: string; ids: string[] }> => app.evaluate(() => {
+        const graph = (window as unknown as { __DSH_BOOT__?: { rev?: string; entries?: Array<{ id?: string }> } }).__DSH_BOOT__
+        return { rev: graph?.rev ?? '', ids: (graph?.entries ?? []).map(entry => entry.id ?? '') }
+      })
+      const before = await boot()
+      expect(before.ids).not.toContain('dsh-shop-e2e-client')
+      await app.reload({ waitUntil: 'domcontentloaded' })
+      await app.waitForFunction(
+        () => (window as unknown as { __DSH_BOOT__?: unknown }).__DSH_BOOT__ !== undefined,
+        undefined,
+        { timeout: 30_000 },
+      )
+      const after = await boot()
+
+      // MEASURED, not desired. 2026-09-14, dsh 0.1.5-rc.1: the served client
+      // graph is BYTE-IDENTICAL across the reload — same `rev`, and the
+      // fixture's client half still absent — while its HOST half is live
+      // (the sibling spec reads exactly that out of the loader inventory).
+      // The shop's own client half is present because the shop is
+      // BOOT-composed; the registry enumerates the boot composition, and a
+      // hot mount adds to the live loader entries without entering it.
+      //
+      // So on the install path a hot-mounted package with a browser half is
+      // told `reload`, and the reload delivers nothing. §2's measurement
+      // covered a runtime disable, a runtime enable, and that the
+      // hot-mounted row's bundle URL answers 200 — never that the package
+      // enters the graph a tab boots from, which is what would make a reader
+      // request that URL.
+      //
+      // Pinned deliberately, as the characterization of a known gap rather
+      // than as intent: the day the harness starts composing hot mounts into
+      // the client registry, these two lines fail, and that failure is the
+      // signal to make the install path's `reload` claim true and to delete
+      // them. Without it the gap is invisible — the suite was green with the
+      // fixture's client.js never executed by anything at all.
+      expect(after.rev).toBe(before.rev)
+      expect(after.ids).not.toContain('dsh-shop-e2e-client')
+      // The boot-composed control, to keep the two lines above honest: this
+      // assertion is what separates "the graph has no client halves in it"
+      // from "the graph has every one except a hot-mounted one".
+      expect(after.ids).toContain('dsh-plugin-shop')
     },
     120_000,
   )

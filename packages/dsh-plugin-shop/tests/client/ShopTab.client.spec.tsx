@@ -1252,7 +1252,11 @@ describe('ShopTab', () => {
     const toggle = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-toggle]')!
     fireEvent.click(toggle)
     await waitFor(() => expect(setEnabled).toHaveBeenCalledWith({ name: 'dsh-hello-plugin', enabled: false }))
-    expect(container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-hot-apply]')).toBeTruthy()
+    // The no-restart headline is deliberately gone here — see "drops the
+    // no-restart headline from a toggle that still needs a reload". Leading
+    // with "applied without a restart" over a page that has not caught up is
+    // the §0 incident; the reload panel's note says both halves in order.
+    expect(container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-hot-apply]')).toBeNull()
     expect(container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-reload]')).toBeTruthy()
   })
 
@@ -2349,6 +2353,27 @@ describe('ShopTab uninstall flow recovery', () => {
 })
 
 describe('ShopTab staleness cues', () => {
+  it('drops the no-restart headline from a toggle that still needs a reload', async () => {
+    // The toggle was the one flow whose headline did not vary with the
+    // activation: `hotApplyNote` ("applied without a restart") rendered
+    // unconditionally, with the qualification demoted to a quieter paragraph
+    // under it. That is the §0 incident verbatim — the first line asserts the
+    // change took effect, about the very thing the reader can see it has not.
+    // `reloadNote` says both halves and says them in the right order ("the
+    // server is already in the new state; this page is still showing what
+    // came before"), so it is the whole message here.
+    const { injected, setEnabled } = bench(snapshot(), [{
+      name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true,
+    }])
+    setEnabled.mockResolvedValue({ ok: true, activation: 'reload' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+
+    fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-toggle]') as HTMLElement)
+    await waitFor(() => expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-reload]')).toBeTruthy())
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-hot-apply]')).toBeNull()
+  })
+
   it('keeps the reload cue after a later toggle fails', async () => {
     const { injected, setEnabled } = bench(snapshot(), [{
       name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true,
@@ -2388,8 +2413,7 @@ describe('ShopTab staleness cues', () => {
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
 
     fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-toggle]') as HTMLElement)
-    await waitFor(() => expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-hot-apply]')).toBeTruthy())
-    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-reload]')).toBeTruthy()
+    await waitFor(() => expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-reload]')).toBeTruthy())
   })
 
   it('does not re-render the whole shelf when the search box changes', async () => {

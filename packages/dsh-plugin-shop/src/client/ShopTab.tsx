@@ -487,7 +487,7 @@ function InstallPanel({ target, tier, missing, blockers, missingStated = false, 
             actually needs one (and can restart at all, §C-1 — otherwise the
             disabled notice says why), and neither when the install landed
             without needing either. */}
-        {view.activation === 'reload' && <ReloadPanel t={t} reload={reload} />}
+        {view.activation === 'reload' && <ReloadPanel t={t} reload={reload} where="install" />}
         {view.activation === 'restart' && restartSupported && <RestartPanel t={t} restart={restart} />}
         {view.activation === 'restart' && !restartSupported && (
           <p className={css.notice} data-shop-restart-disabled>{t('restartDisabledNotice')}</p>
@@ -634,7 +634,7 @@ function UninstallPanel({ name, t, restart, restartSupported, reload, flow }: {
             stopped too, but this page still shows it as installed until
             reloaded. Either way, the restart offer (or its disabled notice,
             §C-1) renders only when the uninstall still needs one. */}
-        {view.activation === 'reload' && <ReloadPanel t={t} reload={reload} />}
+        {view.activation === 'reload' && <ReloadPanel t={t} reload={reload} where="uninstall" />}
         {view.activation === 'restart' && restartSupported && <RestartPanel t={t} restart={restart} />}
         {view.activation === 'restart' && !restartSupported && (
           <p className={css.notice} data-shop-restart-disabled>{t('restartDisabledNotice')}</p>
@@ -801,9 +801,13 @@ function RestartPanel({ t, restart, gate }: {
  * does not. Never automatic — a reload discards whatever the reader had in
  * flight (a conversation, a form, an upload), and the shop knows a reload
  * would help without knowing that now is a good time. */
-function ReloadPanel({ t, reload }: { t: ShopTabProps['t']; reload: () => void }): ReactNode {
+function ReloadPanel({ t, reload, where }: { t: ShopTabProps['t']; reload: () => void; where: 'install' | 'uninstall' | 'toggle' }): ReactNode {
   return (
-    <div className={css.reloadPanel} data-shop-reload>
+    // `where` names the change that made this page stale. A card can carry
+    // more than one at once — an update that landed, a toggle that applied —
+    // and a bare `[data-shop-reload]` is then not a unique locator, which is
+    // what a strict Playwright `waitFor` on it needs it to be.
+    <div className={css.reloadPanel} data-shop-reload={where}>
       <p className={css.notice}>{t('reloadNote')}</p>
       <button type="button" className={css.reloadButton} onClick={reload}>{t('reload')}</button>
     </div>
@@ -878,8 +882,13 @@ function EnabledSwitch({ row, t, setEnabled, reload }: {
       >
         <span className={css.switchKnob} />
       </button>
-      {toggle.kind === 'saved' && <p className={css.notice} data-shop-hot-apply>{t('hotApplyNote')}</p>}
-      {needsReload && <ReloadPanel t={t} reload={reload} />}
+      {/* "applied without a restart" answers a question the reader did not
+        * ask once a reload IS owed, and it answers it first — the §0 incident
+        * is a first line asserting the change took effect, about the very
+        * thing the reader can see has not. `reloadNote` carries both halves
+        * in the right order, so it is the whole message in that case. */}
+      {toggle.kind === 'saved' && !needsReload && <p className={css.notice} data-shop-hot-apply>{t('hotApplyNote')}</p>}
+      {needsReload && <ReloadPanel t={t} reload={reload} where="toggle" />}
       {toggle.kind === 'error' && <p className={css.failedDetail} data-shop-toggle-error>{toggle.detail}</p>}
     </div>
   )
@@ -1268,7 +1277,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
         // Keeping the entry while its uninstall flow is still showing an
         // outcome closes that gap the same way I-1 did for the card itself.
         const key = entryKey(entry)
-        if (!installedByKey.has(key) && uninstallFlows.flowFor(key).view.kind === 'idle') return false
+        if (!installedByKey.has(key) && !uninstallFlows.pending.has(key)) return false
       } else if (category !== null && categoryKey(entry) !== categoryLocaleKey(category)) {
         return false
       }
@@ -1279,11 +1288,15 @@ export function ShopTab(props: ShopTabProps): ReactNode {
         || summaryEn.toLowerCase().includes(q)
         || summaryZh.toLowerCase().includes(q)
     })
-    // `uninstallFlows.flowFor` (not `uninstallFlows` itself) is the dependency:
-    // it is a `useCallback` whose own deps are `[views, start, reset]`, so its
-    // identity changes exactly when a flow's view changes — which is exactly
-    // when this memo needs to recompute to keep or drop a settled row.
-  }, [sortedBrowsable, query, category, installedByKey, uninstallFlows.flowFor])
+    // `uninstallFlows.pending` (neither `uninstallFlows` nor its `flowFor`)
+    // is the dependency: a membership set whose identity changes when a flow
+    // ENTERS or LEAVES idle — twice per uninstall — which is exactly when
+    // this memo's answer can change. `flowFor` tracks `views` instead, and
+    // `views` changes on every poll response, so depending on it re-ran this
+    // pass over ~9,300 entries once a second while any uninstall ran, in
+    // every view, and allocated a flow object plus two closures per entry
+    // while doing it. See `pending`'s own comment in useUninstall.ts.
+  }, [sortedBrowsable, query, category, installedByKey, uninstallFlows.pending])
 
   // Never in the Installed view. That view is management, not shelf: an
   // installed plugin that is up to date appears in exactly one place — its

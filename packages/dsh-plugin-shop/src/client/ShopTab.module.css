@@ -1271,6 +1271,10 @@
 .outdatedActions {
   display: flex;
   align-items: center;
+  /* The reload offer (§4) mounts inside the switch beside the Update button
+   * and is a two-line block, not a control: without wrapping, a row reading
+   * [switch][notice + Reload][Update] overflows the settings dialog. */
+  flex-wrap: wrap;
   gap: 10px;
 }
 
@@ -1344,5 +1348,9 @@
 .switchWrap {
   display: inline-flex;
   align-items: center;
+  /* Same reason as `.outdatedActions`: `.reloadPanel`'s own comment calls
+   * itself "a column of its own rather than inline with the row", which held
+   * for `.installedActions` and not here until this line. */
+  flex-wrap: wrap;
   gap: 8px;
 }

@@ -56,13 +56,15 @@ const FIXTURE_ENTRIES = [
     metadata: 'derived',
     added: '2026-08-25',
     // The npm publishing account, so the expanded detail's npm row is proven
-    // in a real browser and not only in jsdom. The other two entries carry
-    // none, which is also the live catalog's state until the next daily build.
+    // in a real browser and not only in jsdom. No other entry here carries
+    // one, which is also the live catalog's state until the next daily build.
+    // Stated without a count on purpose: "the other two" was written when
+    // there were three entries and was quietly false at four.
     publisher: 'octocat',
     // npm's `dist.unpackedSize`, so the size label is proven through the real
     // wire → host zod → client format path. 847407 is the MEDIAN of the 250
     // live `dsh-plugin` packages measured on 2026-09-07, and it renders
-    // "847.4 kB". The other three entries carry none, which is what the live
+    // "847.4 kB". No other entry here carries one, which is what the live
     // catalog looks like until the daily build that first harvests this field.
     unpackedSize: 847407,
   },

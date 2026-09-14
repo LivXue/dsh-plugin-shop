@@ -148,10 +148,21 @@ function stubCtx(): never {
 /** Materialize an installed package with the bundle patch it declares, the
  * shape the loader actually composes: the shop resolves a package's rows
  * through its patch's inserted ids, never through the entry's module name. */
-function fixturePackage(profileDir: string, name: string, patch: string | null): void {
+/**
+ * @param client the package's `dsh.client` declaration, merged into the same
+ *   `dsh` object as the bundle patch. A parameter rather than a hand-written
+ *   manifest per site: overwriting the manifest this function already wrote
+ *   silently drops the bundle patch with it, which leaves `ownedEntryIds`
+ *   empty and the live-disable arm of whatever test did it inert — passing
+ *   for a reason unrelated to what it asserts.
+ */
+function fixturePackage(profileDir: string, name: string, patch: string | null, client?: object): void {
   const dir = join(profileDir, 'node_modules', ...name.split('/'))
   mkdirSync(dir, { recursive: true })
-  const dsh = patch === null ? {} : { bundle: { patch: './cordis.patch.yml' } }
+  const dsh = {
+    ...(patch === null ? {} : { bundle: { patch: './cordis.patch.yml' } }),
+    ...(client === undefined ? {} : { client }),
+  }
   writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, dsh }))
   if (patch !== null) writeFileSync(join(dir, 'cordis.patch.yml'), patch)
   // An install writes the dependency too, and installed-ness is read from it.
@@ -644,13 +655,7 @@ describe('ShopGateway.setEnabled', () => {
 
   it('reports activation reload from setEnabled when the toggled package has a browser half', async () => {
     const profileDir = toggleProfile()
-    fixturePackage(profileDir, 'dsh-themer', "- insert:\n    - id: themer-row\n      name: 'dsh-themer/host'\n")
-    // fixturePackage cannot express `dsh.client`; add it to the manifest it
-    // already wrote, alongside the bundle patch ownedEntryIds needs.
-    writeFileSync(join(profileDir, 'node_modules', 'dsh-themer', 'package.json'), JSON.stringify({
-      name: 'dsh-themer',
-      dsh: { bundle: { patch: './cordis.patch.yml' }, client: { inject: [], platform: 'web' } },
-    }))
+    fixturePackage(profileDir, 'dsh-themer', "- insert:\n    - id: themer-row\n      name: 'dsh-themer/host'\n", { inject: [], platform: 'web' })
     const gateway = new ShopGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: async () => ({ entries: [{ entryId: 'themer-row', moduleName: 'dsh-themer', enabled: true }] }) } })
     const result = await gateway.setEnabled({ name: 'dsh-themer', enabled: false })
     expect(result.ok).toBe(true)
@@ -1780,10 +1785,16 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     // above, which runs `fakeDshRemovingManifest` and asserts `live`, is the
     // one that separates them. What this test establishes is the other half:
     // that a declared browser half reaches `reload` at all.
-    writeFileSync(join(profileDir, 'node_modules', 'dsh-goodbye-plugin', 'package.json'), JSON.stringify({
-      name: 'dsh-goodbye-plugin',
-      dsh: { client: { inject: [], platform: 'web' } },
-    }))
+    // Re-seeded rather than overwritten: hotGateway already wrote this
+    // package's manifest AND its bundle patch, and replacing the manifest
+    // with a client-only one drops the patch — which empties priorEntryIds
+    // and makes this test's live-disable arm inert.
+    fixturePackage(
+      profileDir,
+      'dsh-goodbye-plugin',
+      "- insert:\n    - id: dsh-goodbye-plugin-row\n      name: 'dsh-goodbye-plugin/host'\n",
+      { inject: [], platform: 'web' },
+    )
     const result = await gateway.uninstall({ name: 'dsh-goodbye-plugin' })
     expect(result.ok).toBe(true)
     if (!result.ok) return

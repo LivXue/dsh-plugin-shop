@@ -9,7 +9,7 @@
  * install `rejected` codes, which belong to the install gate, and which
  * ShopUninstallResult's failure variant has no `code` field to populate. */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ShopInstallStatusResult, ShopUninstallResult } from '../host/index.ts'
 import { INSTALL_POLL_MS, reduceInstall, type InstallEvent, type InstallView } from './present.ts'
 
@@ -28,7 +28,24 @@ export interface UseUninstallFlows {
    * install registry's settle callback can supersede a stale uninstall
    * receipt without taking a dependency on this hook's output. */
   resetFlow: (key: string) => void
+  /**
+   * The identities whose flow is not `idle` — asked by the shelf, which has
+   * to keep a settled uninstall's row in the Installed view after the
+   * installed projection drops it.
+   *
+   * A membership test rather than a flow, and its IDENTITY changes only when
+   * that membership does. Both matter to the same caller: `flowFor` builds a
+   * fresh object and two closures per call, so asking it inside a filter
+   * allocated three objects for every entry on the shelf; and it tracks
+   * `views`, which changes on every poll RESPONSE, because `reduceInstall`
+   * returns a new `running` view for each status. A filter depending on that
+   * re-ran over the whole catalog once a second for a log line nobody read.
+   */
+  pending: ReadonlySet<string>
 }
+
+/** Shared empty set, so an idle registry hands out one stable identity. */
+const NO_PENDING: ReadonlySet<string> = new Set()
 
 /**
  * Uninstall flows owned by the tab and keyed by install identity. Lifting the
@@ -112,11 +129,24 @@ export function useUninstallFlows(
     return () => clearInterval(timer)
   }, [views, installStatus, apply])
 
+  const pendingRef = useRef<ReadonlySet<string>>(NO_PENDING)
+  const pending = useMemo(() => {
+    const next = new Set<string>()
+    for (const [key, view] of views) if (view.kind !== 'idle') next.add(key)
+    // Keep the previous instance when the membership is unchanged: that is
+    // the whole point of this value, and a fresh Set per poll response would
+    // invalidate every memo depending on it exactly as `views` does.
+    const previous = pendingRef.current
+    if (previous.size === next.size && [...next].every(key => previous.has(key))) return previous
+    pendingRef.current = next
+    return next
+  }, [views])
+
   const flowFor = useCallback((key: string): UninstallFlow => ({
     view: views.get(key) ?? { kind: 'idle' },
     start: args => start(key, args),
     reset: () => reset(key),
   }), [views, start, reset])
 
-  return { flowFor, resetFlow: reset }
+  return { flowFor, resetFlow: reset, pending }
 }
