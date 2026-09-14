@@ -2077,6 +2077,100 @@ describe('searchByKeywords', () => {
     expect([...new Set(seen)].sort()).toEqual(['alice', 'bob'])
   })
 
+  it('pages an oversized refinement cell itself, because its intersections cannot cover it', async () => {
+    // `partitionKeyword` answers an over-window refinement cell by replacing it
+    // with the deeper intersections `[keyword, over, other]`. That is correct
+    // when `other` is ALSO over the window — the case it was reasoned about —
+    // and it is EMPTY in the case that arrives first: `over ∩ other ⊆ other`,
+    // and an `other` inside the window is already paged in full, so every
+    // intersection the split produces is a subset of a set this same run has
+    // already enumerated. The oversized cell's own names — the ones carrying
+    // `over` and no other refinement — are then reachable by nothing.
+    //
+    // Live on 2026-09-11: `keywords:deepseek-harness,dsh` crossed the window,
+    // the split replaced it with intersections of cells the run was already
+    // paging, and 24 packages carrying `dsh` and no second refinement fell out
+    // of the catalog. Reproduced against the registry on 2026-09-14: paging the
+    // oversized cell instead of splitting it moved the union from 6,407 to
+    // 6,431 of an answered 6,441, and the split's union was a STRICT SUBSET of
+    // it — the intersections contributed not one name.
+    //
+    // `x0`..`x149` are that set here: served only by the oversized cell, at
+    // ranks its own window can still address. They are what the assertion is
+    // for; a fixture that let the plain window serve them would pass against
+    // the defect.
+    const totals: Record<string, number> = {
+      'keywords:dsh-plugin': 0,
+      'keywords:deepseek-harness': SEARCH_WINDOW + 150,
+      // Over the window, so `partitionKeyword` sends it to `oversized`.
+      'keywords:deepseek-harness,dsh': SEARCH_WINDOW + 20,
+      // Inside the window, so it is paged in full — which is exactly what
+      // makes the intersection below redundant rather than useful.
+      'keywords:deepseek-harness,plugin': 5,
+      // The split's product. It must be usable, or `partitionKeyword` throws
+      // "no refinement keyword splits it" before the coverage check is reached
+      // and the test would pass for the wrong reason.
+      'keywords:deepseek-harness,dsh,plugin': 5,
+    }
+    const { fetchImpl } = stubSearch(totals, (query, from) => {
+      if (query === 'keywords:deepseek-harness') {
+        return from > MAX_SEARCH_FROM ? [] : Array.from({ length: 250 }, (_, i) => `w${from + i}`)
+      }
+      if (query === 'keywords:deepseek-harness,dsh') {
+        // Its own window reaches 5,250 of the 5,270 it answers: the first
+        // 5,000 are names the plain window also serves, and the last page is
+        // the 150 only this cell can reach.
+        if (from < MAX_SEARCH_FROM) return Array.from({ length: 250 }, (_, i) => `w${from + i}`)
+        if (from === MAX_SEARCH_FROM) return Array.from({ length: 150 }, (_, i) => `x${i}`)
+        return []
+      }
+      if (query === 'keywords:deepseek-harness,plugin' || query === 'keywords:deepseek-harness,dsh,plugin') {
+        return Array.from({ length: 5 }, (_, i) => `w${i}`).slice(from, from + 250)
+      }
+      return []
+    })
+
+    const names = await searchByKeywords(fetchImpl)
+    expect(names).toContain('x0')
+    expect(names).toContain('x149')
+    expect(names).toHaveLength(SEARCH_WINDOW + 150)
+  })
+
+  it('counts the oversized cell among the cells it names in a coverage failure', async () => {
+    // The message exists to tell a maintainer WHERE the coverage went, and an
+    // oversized cell is now paged like any other — so a count that omits it
+    // understates the partition and points the reader at the wrong half. This
+    // repo has already lost hours to a diagnostic that misattributed a cause;
+    // the count is part of the diagnosis, not decoration.
+    //
+    // The fixture recovers nothing past the window on purpose, so the floor
+    // fires and the message prints. Three cells are paged — `plugin`,
+    // `dsh,plugin` and the oversized `dsh` itself.
+    const totals: Record<string, number> = {
+      'keywords:dsh-plugin': 0,
+      'keywords:deepseek-harness': SEARCH_WINDOW + 150,
+      'keywords:deepseek-harness,dsh': SEARCH_WINDOW + 20,
+      'keywords:deepseek-harness,plugin': 5,
+      'keywords:deepseek-harness,dsh,plugin': 5,
+    }
+    const { fetchImpl } = stubSearch(totals, (query, from) => {
+      if (query === 'keywords:deepseek-harness') {
+        return from > MAX_SEARCH_FROM ? [] : Array.from({ length: 250 }, (_, i) => `w${from + i}`)
+      }
+      // Re-serves names the window already holds and reaches nothing past it,
+      // so `recovered` stays 0 and the floor decides.
+      if (query === 'keywords:deepseek-harness,dsh') {
+        return from < MAX_SEARCH_FROM ? Array.from({ length: 250 }, (_, i) => `w${from + i}`) : []
+      }
+      if (query === 'keywords:deepseek-harness,plugin' || query === 'keywords:deepseek-harness,dsh,plugin') {
+        return Array.from({ length: 5 }, (_, i) => `w${i}`).slice(from, from + 250)
+      }
+      return []
+    })
+
+    await expect(searchByKeywords(fetchImpl)).rejects.toThrow(/across 3 cell\(s\)/)
+  })
+
   describe('publisher cells', () => {
     /** A keyword past the window whose tail is one publisher's family, which no
      * refinement cell reaches — the shape of the sayedev event. */
