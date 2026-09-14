@@ -24,6 +24,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ShopInstallStatusResult } from '../host/index.ts'
 import { INSTALL_POLL_MS, reduceInstall, type InstallEvent, type InstallView } from './present.ts'
+import { isTerminalInstallState } from '../shared/install-state.ts'
 
 /** One identity's flow, as the tab hands it to a panel. */
 export interface KeyedFlow<TArgs> {
@@ -125,7 +126,7 @@ export function useKeyedFlows<TArgs>(
       for (const [key, installId] of running) {
         void installStatus({ installId }).then(status => {
           apply(key, { type: 'status', status })
-          if (status.found && status.state !== 'running') settled.current?.(key, status.state)
+          if (status.found && isTerminalInstallState(status.state)) settled.current?.(key, status.state)
         }, () => {
           // Poll failures are transient; the retained host record is retried.
         })

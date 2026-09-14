@@ -13,8 +13,10 @@ import { readProfileManifest, resolveProfileDir } from '@deepseek-ai/dsh-app-boo
 import { dshCommand, resolveDshScript, DSH_PACKAGE, type DshCliFs } from './dsh-cli.ts'
 import type { HotRestartReason } from './hot.ts'
 import type { Activation } from './activation.ts'
+import type { Prefetcher, PrefetchRequest } from './prefetch.ts'
+import { isTerminalInstallState, type InstallState } from '../shared/install-state.ts'
 
-export type InstallState = 'running' | 'done' | 'failed'
+export type { InstallState } from '../shared/install-state.ts'
 
 export interface InstallStatus {
   state: InstallState
@@ -46,6 +48,26 @@ interface RunningInstall {
 // One in-flight command per profile (§7.2: pnpm locks itself, but its
 // concurrent-access errors are unreadable to a user).
 const profileQueues = new Map<string, Promise<unknown>>()
+
+/** How many commands are queued or running per profile.
+ *
+ * `profileQueues` cannot answer this: its entries are only ever set, never
+ * deleted, so `has(profile)` is true forever after a profile's first install
+ * and would call every later lone install queued — earning it a pointless
+ * prefetch and a `Downloading…` label that is simply false. Promise state is
+ * not observable, so a counter is the only honest signal available.
+ */
+const profileDepth = new Map<string, number>()
+
+function enterQueue(profile: string): number {
+  const ahead = profileDepth.get(profile) ?? 0
+  profileDepth.set(profile, ahead + 1)
+  return ahead
+}
+
+function leaveQueue(profile: string): void {
+  profileDepth.set(profile, Math.max(0, (profileDepth.get(profile) ?? 1) - 1))
+}
 
 function chain<T>(profile: string, task: () => Promise<T>): Promise<T> {
   const previous = profileQueues.get(profile) ?? Promise.resolve()
@@ -298,7 +320,11 @@ export interface KillFns {
   taskkill: (pid: number) => void
 }
 
-const nodeKills: KillFns = {
+/** The real kill. Exported for the tests that inject a RECORDING `KillFns`:
+ * a recorder that only records asserts that a kill was requested and leaves
+ * the child running, which for a `detached` fixture is an immortal node
+ * process per run — see `prefetch.test.ts`'s delegating recorder. */
+export const nodeKills: KillFns = {
   killGroup: pid => process.kill(-pid, 'SIGKILL'),
   killPid: pid => process.kill(pid, 'SIGKILL'),
   taskkill: pid => { spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' }) },
@@ -440,6 +466,9 @@ function spawnPluginCli(options: {
   /** Run inside the chained task immediately before the spawn, with the same
    * DSH_HOME the child gets — the confirm compares against what this saw. */
   beforeSpawn?: (home: string | undefined) => void
+  /** The download phase, when the caller wants one. Best-effort: a queued
+   * install whose prefetch fails or is refused simply installs cold. */
+  prefetcher?: Prefetcher
   confirm?: (home: string | undefined) => string | null
   afterDone?: (home: string | undefined) => Promise<{ activation: Activation; restartReason?: HotRestartReason } | void>
   onStatus?: (status: InstallStatus) => void
@@ -447,7 +476,7 @@ function spawnPluginCli(options: {
 }): RunningInstall {
   const {
     profile, argv, dshBin, env, platform = process.platform,
-    beforeSpawn, confirm, afterDone, onStatus, timeoutMs = INSTALL_TIMEOUT_MS,
+    beforeSpawn, prefetcher, confirm, afterDone, onStatus, timeoutMs = INSTALL_TIMEOUT_MS,
   } = options
   // Argv smuggling guard: an operand that begins with `-` would be parsed as
   // a flag by the CLI. A legitimate target — a catalog name for remove, a
@@ -468,6 +497,10 @@ function spawnPluginCli(options: {
   const installId = randomUUID()
   const log: string[] = []
   let logBytes = 0
+  // The queue slot is taken here, synchronously with the call: `ahead` is how
+  // many commands this profile already has queued or running, and it is the
+  // only signal that says whether a download phase has anything to overlap.
+  const ahead = enterQueue(profile)
   let state: InstallState = 'running'
   // The default is `restart`, and it is load-bearing: `updateStart` passes
   // no `afterDone`, so the shop's own self-update lands here — a host half
@@ -486,7 +519,10 @@ function spawnPluginCli(options: {
   // lineSink holds a trailing partial until the next chunk completes it, then
   // flushes it at settle if the stream ended without a newline.
   const append = (line: string): void => {
-    if (state !== 'running') return
+    // Terminal, not "not running": a line that arrives during the download
+    // phase is exactly the evidence §7 asks for, and `state !== 'running'`
+    // would drop it. Late output from a SETTLED command is still refused.
+    if (isTerminalInstallState(state)) return
     log.push(line)
     logBytes += Buffer.byteLength(line)
     // Drop oldest until both caps hold; the newest line is never dropped,
@@ -505,7 +541,67 @@ function spawnPluginCli(options: {
     return status()
   }
 
+  // Only an install with something ahead of it has anything to overlap with.
+  // `ahead` is a depth, not `profileQueues.has(profile)` — see `profileDepth`.
+  //
+  // `spec: target` is the RAW operand, deliberately: it is what the pump hands
+  // pnpm, and this runs after the operand passed both gates above. The gate is
+  // what makes the pump's own quoting sound — `prefetch.ts` spawns through a
+  // shell on win32 and relies on `UNSAFE_TARGET` having refused `"` — and a
+  // quoted `spawnArgv[1]` would reach `pnpm store add` as a literal string and
+  // silently warm nothing.
+  //
+  // `append` is handed over as the log, and the pump calls it from its own
+  // microtask and child handlers — so it must not throw, or the throw escapes
+  // as an uncaughtException and takes the host process and every install in
+  // flight with it, which is the one failure that could decide whether an
+  // install succeeds. It cannot, for the caller this is wired to: the gateway
+  // passes neither `onStatus` nor anything else that can fail, leaving a push
+  // and a byte count. A caller that passed BOTH a `prefetcher` and a throwing
+  // `onStatus` would reopen that hole.
+  //
+  // The `catch` is the whole of "best-effort" at this seam, and it is load-
+  // bearing rather than defensive. This block runs AFTER the queue slot was
+  // taken and BEFORE the chained task exists, so a synchronous throw here —
+  // `resolveProfileDir` refuses an invalid profile name, and the pump can
+  // throw on a call it cannot even build — would do two things this feature
+  // may never do: escape `spawnPluginCli` and fail an install the prefetch is
+  // not allowed to fail, and skip `chain` entirely, so `leaveQueue` would
+  // never run and this profile's depth would stay `+1` for the life of the
+  // process — every later install in it reading `ahead > 0`, earning a
+  // pointless prefetch and a `Downloading…` label that is simply false. The
+  // `catch` announces the failure in the install's own log rather than
+  // swallowing it, the same announcement the pump makes for a batch it could
+  // not start.
+  let prefetch: PrefetchRequest | null = null
+  if (ahead > 0 && prefetcher !== undefined) {
+    try {
+      prefetch = prefetcher.request({
+        profile,
+        spec: target,
+        // The profile directory decides which store pnpm picks, so the batch
+        // runs where dsh runs pnpm rather than where the shop happens to sit.
+        cwd: resolveProfileDir(profile, env?.DSH_HOME),
+        env,
+        log: append,
+      })
+    } catch (error) {
+      append(`dsh-plugin-shop: the download phase could not start — ${(error as Error).message}`)
+    }
+  }
+  if (prefetch?.started === true) {
+    state = 'downloading'
+  } else if (prefetch !== null) {
+    append(prefetch.reason === 'no-pnpm'
+      ? 'dsh-plugin-shop: no download phase — pnpm not found on PATH'
+      : 'dsh-plugin-shop: no download phase for this spec form; the install fetches it directly')
+  }
+
   const finished = chain(profile, () => new Promise<InstallStatus>((resolve) => {
+    // The phase flip: this install now holds the queue, so the serial turn it
+    // was waiting for is the one that is running.
+    state = 'running'
+    onStatus?.(status())
     beforeSpawn?.(env?.DSH_HOME)
     const { command, args } = dshCommand({
       dshBin,
@@ -610,7 +706,25 @@ function spawnPluginCli(options: {
       killTree(child.pid, platform)
       drainThenSettle()
     }, timeoutMs)
-  }))
+  })).finally(() => {
+    // The queue slot is released once the command has ENDED — not when the
+    // caller stops awaiting. `.finally` passes the value through, so
+    // `finished` still resolves with the InstallStatus it always did.
+    leaveQueue(profile)
+    // The pump is told this install no longer needs its batch: with nothing
+    // else waiting on it, an in-flight `pnpm store add` is killed rather than
+    // left to run out its bound.
+    prefetcher?.release(profile, target)
+  })
+
+  // `.finally` DERIVES a new promise, and a derived promise carries the
+  // rejection with it. `chain` absorbs one only for the promise it stores in
+  // `profileQueues` (`next.catch(() => {})`); nothing in `src/` attaches a
+  // handler to THIS one, so a rejection here would reach node as an
+  // `unhandledRejection` — process death by default, taking every install in
+  // flight with it. The task can reject: `dshCommand` and `beforeSpawn` run
+  // inside the `new Promise` executor below, and a throw there rejects it.
+  void finished.catch(() => {})
 
   return { installId, status, finished }
 }
@@ -633,6 +747,9 @@ export function startInstall(options: {
   env?: NodeJS.ProcessEnv
   platform?: NodeJS.Platform
   expectedName?: string
+  /** The download phase, when the caller has one — see `spawnPluginCli`.
+   * An uninstall has nothing to fetch and `startUninstall` takes none. */
+  prefetcher?: Prefetcher
   /** A further post-exit check, run only once the bundle-activation confirm
    * has passed. Returning a detail fails the install with it. The package is
    * on disk by then, so this is for facts that are unreadable until it is —
@@ -643,7 +760,7 @@ export function startInstall(options: {
   timeoutMs?: number
 }): RunningInstall {
   const {
-    profile, spec, dshBin = 'dsh', env, platform, expectedName,
+    profile, spec, dshBin = 'dsh', env, platform, expectedName, prefetcher,
     alsoConfirm, afterDone, onStatus, timeoutMs,
   } = options
   // The `before` snapshot is taken by the executor, not by the caller, and
@@ -664,6 +781,7 @@ export function startInstall(options: {
     beforeSpawn: expectedName !== undefined
       ? (home) => { before = readProfileDependencies(profile, home) }
       : undefined,
+    prefetcher,
     // `??` chains on null, and a returned detail is a non-empty string, so
     // the activation confirm — which can now name what actually landed —
     // still speaks first when both would fail.

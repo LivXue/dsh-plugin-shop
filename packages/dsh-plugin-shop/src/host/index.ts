@@ -26,6 +26,8 @@ import { detectSupervisor } from './supervisor.ts'
 import { readRepoPins, writeRepoPins, type RepoPinFs } from './repo-pins.ts'
 import { collidingEntryId, discoverProfile, ownedEntryIds, ownsEntryId, setUserLayerRow, setUserLayerRows } from './profile.ts'
 import { identityKey, installedSpecMatches } from '../shared/identity.ts'
+import { isTerminalInstallState, type InstallState } from '../shared/install-state.ts'
+import { createPrefetcher, type Prefetcher } from './prefetch.ts'
 import {
   createPeerVersionCheck,
   incompatibilityMap,
@@ -136,12 +138,17 @@ export interface ShopGatewayOptions {
   /** Test-only injection: the peer ranges the self-check judges against;
    * production reads them from the shipped package.json. */
   peerRanges?: Record<string, string>
+  /** Test-only injection: the download phase's pump; production builds the
+   * real one. A test gateway left with the real pump spawns `pnpm store add`
+   * — a live registry request — from every install that finds a command
+   * already queued for its profile. */
+  prefetcher?: Prefetcher
 }
 
 /** `shop/installStart` result (§7.3): rejections are typed wire values with an
  * author-readable `detail`, not thrown RPC errors. */
 export type ShopInstallResult =
-  | { ok: true; installId: string }
+  | { ok: true; installId: string; state: InstallState }
   | { ok: false; code: InstallRejectionCode; detail: string }
 
 export interface ShopInstallStatusResult extends InstallStatus { found: boolean }
@@ -195,7 +202,7 @@ export interface ShopVersionResult {
 /** `shop/updateStart` result (§7.3): the self-update spawn, or a typed
  * refusal (a version that is not plain semver). */
 export type ShopUpdateResult =
-  | { ok: true; installId: string }
+  | { ok: true; installId: string; state: InstallState }
   | { ok: false; detail: string }
 
 /** `shop/installed` entry (§7.3): one installed catalog plugin. The identity
@@ -355,6 +362,9 @@ export class ShopGateway extends TypertRemoteService {
   /** The release-tarball fetch for the install-time integrity check; global
    * fetch in production, a fixture response in tests. */
   private readonly fetchTarball: (url: string) => Promise<Response>
+  /** One pump for the whole gateway: batching is per profile and lives inside
+   * it, so a second instance would race the first for the same store. */
+  private readonly prefetcher: Prefetcher
   /** The install gate runs against the last loaded snapshot, never a fresh
    * fetch per request (§7.2: the Host's cached snapshot is the truth). */
   /** Finished install records retained, so a poll sees the true terminal
@@ -420,6 +430,7 @@ export class ShopGateway extends TypertRemoteService {
     this.platform = options.platform ?? process.platform
     this.ppid = options.ppid ?? process.ppid
     this.fetchTarball = options.fetchTarball ?? ((url: string) => fetch(url))
+    this.prefetcher = options.prefetcher ?? createPrefetcher()
     try {
       // The ephemeral `hot-<n>.yml` inputs from a previous session must
       // never survive a boot: a crashed session's stale inputs would mount
@@ -939,6 +950,10 @@ export class ShopGateway extends TypertRemoteService {
       // the same resolution the confirm uses, so a miss reports the difference
       // and can name what actually landed.
       expectedName: args.name,
+      // §7.2 step 5's new phase: an install that finds a command already
+      // queued for this profile warms pnpm's store from OUTSIDE the mutex
+      // while it waits. Best-effort — the install below is unchanged by it.
+      prefetcher: this.prefetcher,
       // And, now that the files are on disk, the one collision the name gate
       // cannot see. Reporting it beats a done install that kills the next
       // boot; the package stays on disk, so the detail says how to undo it.
@@ -997,26 +1012,36 @@ export class ShopGateway extends TypertRemoteService {
     this.installs.set(running.installId, running)
     this.installOrder.push(running.installId)
     this.evictFinishedInstalls()
-    return { ok: true, installId: running.installId }
+    return { ok: true, installId: running.installId, state: running.status().state }
   }
 
   /** Bound retained finished records at MAX_FINISHED_INSTALLS, evicting the
-   * oldest finished ones (insertion order, oldest first). Running records
-   * are never evicted; an id absent from the map reports `found: false`. */
+   * oldest finished ones (insertion order, oldest first). Live records —
+   * running AND queued — are never evicted; an id absent from the map reports
+   * `found: false`. */
   private evictFinishedInstalls(): void {
     const finishedIds: string[] = []
     for (const id of this.installOrder) {
       const record = this.installs.get(id)
-      if (record !== undefined && record.status().state !== 'running') finishedIds.push(id)
+      // Terminal, not "not running". A QUEUED install reports 'downloading',
+      // and counting it here evicts a live record: `installStatus` then answers
+      // found: false and the client renders "install record lost" for an
+      // install that is about to run. The comment above this method — live
+      // records are never evicted — is only true with this predicate.
+      if (record !== undefined && isTerminalInstallState(record.status().state)) finishedIds.push(id)
     }
     const excess = Math.max(0, finishedIds.length - ShopGateway.MAX_FINISHED_INSTALLS)
     for (const id of finishedIds.slice(0, excess)) this.installs.delete(id)
   }
 
-  /** Whether any command this gateway started is still running. */
+  /** Whether any command this gateway started is still running — or still
+   * waiting its turn. */
   private hasRunningCommand(): boolean {
     for (const record of this.installs.values()) {
-      if (record.status().state === 'running') return true
+      // A queued install is a command this gateway started and has not
+      // finished. Asking `=== 'running'` would let a restart boot a new dsh
+      // against a profile with installs pending — what F-5 refuses.
+      if (!isTerminalInstallState(record.status().state)) return true
     }
     return false
   }
@@ -1321,11 +1346,14 @@ export class ShopGateway extends TypertRemoteService {
       spec: `dsh-plugin-shop@${args.version}`,
       dshBin: this.dshBin,
       expectedName: 'dsh-plugin-shop',
+      // The self-update runs through the same executor, so a queued update
+      // gets the same download phase as a queued plugin install.
+      prefetcher: this.prefetcher,
     })
     this.installs.set(running.installId, running)
     this.installOrder.push(running.installId)
     this.evictFinishedInstalls()
-    return { ok: true, installId: running.installId }
+    return { ok: true, installId: running.installId, state: running.status().state }
   }
 }
 

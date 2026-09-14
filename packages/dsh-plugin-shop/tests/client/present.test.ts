@@ -4,10 +4,12 @@ import {
   uninstallActivationNoticeKey,
   authorOf, hasGithubHome, heldBy, isCustomLicense, isShopLike, missingPeersOf,
   nextVisibleCount, npmPageUrl,
-  reduceInstall, type InstallView,
+  installPhaseKey, reduceInstall, type InstallView,
   reviewHashPin, sortByStars, starsOf, tierKey,
 } from '../../src/client/present.ts'
+import { en, zh } from '../../src/client/locales.ts'
 import type { CatalogEntry } from '../../src/host/index.ts'
+import type { InstallState } from '../../src/shared/install-state.ts'
 
 const entry: CatalogEntry = {
   name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null,
@@ -106,7 +108,7 @@ describe('reduceInstall', () => {
     // did not, so the outcome that leaves something to inspect — what was
     // installed, what pnpm did — was the one that showed nothing, while the
     // outcome that failed kept its evidence.
-    const running = { kind: 'running' as const, installId: 'i1', log: ['+ dsh-x 1.0.0'] }
+    const running = { kind: 'running' as const, installId: 'i1', log: ['+ dsh-x 1.0.0'], phase: 'installing' as const }
     const done = reduceInstall(running, {
       type: 'status',
       status: { found: true, state: 'done', log: ['+ dsh-x 1.0.0', 'Done in 1.2s'], activation: 'live' },
@@ -116,18 +118,18 @@ describe('reduceInstall', () => {
   })
 
   it('starts from idle into running with the install id', () => {
-    const next = reduceInstall({ kind: 'idle' }, { type: 'started', installId: 'abc' })
-    expect(next).toEqual({ kind: 'running', installId: 'abc', log: [] })
+    const next = reduceInstall({ kind: 'idle' }, { type: 'started', installId: 'abc', state: 'running' })
+    expect(next).toEqual({ kind: 'running', installId: 'abc', log: [], phase: 'installing' })
   })
 
   it('carries running status updates with their log', () => {
-    const running = reduceInstall({ kind: 'idle' }, { type: 'started', installId: 'abc' })
+    const running = reduceInstall({ kind: 'idle' }, { type: 'started', installId: 'abc', state: 'running' })
     const next = reduceInstall(running, { type: 'status', status: { found: true, state: 'running', log: ['a'] } })
-    expect(next).toEqual({ kind: 'running', installId: 'abc', log: ['a'] })
+    expect(next).toEqual({ kind: 'running', installId: 'abc', log: ['a'], phase: 'installing' })
   })
 
   it('reaches done with a restart activation', () => {
-    const running = reduceInstall({ kind: 'idle' }, { type: 'started', installId: 'abc' })
+    const running = reduceInstall({ kind: 'idle' }, { type: 'started', installId: 'abc', state: 'running' })
     const next = reduceInstall(running, { type: 'status', status: { found: true, state: 'done', log: ['a'], activation: 'restart' } })
     expect(next).toEqual({ kind: 'done', activation: 'restart', log: ['a'] })
     // Without a host reason the done view keeps the old shape: no
@@ -136,7 +138,7 @@ describe('reduceInstall', () => {
   })
 
   it('reaches done carrying the host restart reason code when the hot mount failed', () => {
-    const running = reduceInstall({ kind: 'idle' }, { type: 'started', installId: 'abc' })
+    const running = reduceInstall({ kind: 'idle' }, { type: 'started', installId: 'abc', state: 'running' })
     const next = reduceInstall(running, { type: 'status', status: { found: true, state: 'done', log: ['a'], activation: 'restart', restartReason: 'mount-failed' } })
     expect(next).toEqual({ kind: 'done', activation: 'restart', log: ['a'], restartReason: 'mount-failed' })
   })
@@ -144,19 +146,19 @@ describe('reduceInstall', () => {
   it('reaches done with a live activation when the host reports the live outcome', () => {
     // The live install/uninstall outcome: nothing to restart or reload, so
     // the done view says so and the panels branch on it.
-    const running = reduceInstall({ kind: 'idle' }, { type: 'started', installId: 'abc' })
+    const running = reduceInstall({ kind: 'idle' }, { type: 'started', installId: 'abc', state: 'running' })
     const next = reduceInstall(running, { type: 'status', status: { found: true, state: 'done', log: ['a'], activation: 'live' } })
     expect(next).toEqual({ kind: 'done', activation: 'live', log: ['a'] })
   })
 
   it('reaches failed with the host detail and the log', () => {
-    const running = reduceInstall({ kind: 'idle' }, { type: 'started', installId: 'abc' })
+    const running = reduceInstall({ kind: 'idle' }, { type: 'started', installId: 'abc', state: 'running' })
     const next = reduceInstall(running, { type: 'status', status: { found: true, state: 'failed', log: ['boom'], detail: 'pnpm failed — run: dsh plugin --profile web install' } })
     expect(next).toEqual({ kind: 'failed', detail: 'pnpm failed — run: dsh plugin --profile web install', log: ['boom'] })
   })
 
   it('treats a lost install record as failed', () => {
-    const running = reduceInstall({ kind: 'idle' }, { type: 'started', installId: 'abc' })
+    const running = reduceInstall({ kind: 'idle' }, { type: 'started', installId: 'abc', state: 'running' })
     const next = reduceInstall(running, { type: 'status', status: { found: false, state: 'failed', log: [] } })
     expect(next?.kind).toBe('failed')
   })
@@ -214,9 +216,53 @@ describe('uninstallActivationNoticeKey', () => {
   })
 })
 
+describe('reduceInstall — the download phase', () => {
+  const started = (state: InstallState = 'running') =>
+    reduceInstall({ kind: 'idle' }, { type: 'started', installId: 'i1', state })
+
+  it('seeds the phase from the state the host reported at start', () => {
+    expect(started('downloading')).toEqual({
+      kind: 'running', installId: 'i1', log: [], phase: 'downloading',
+    })
+    expect(started('running')).toEqual({
+      kind: 'running', installId: 'i1', log: [], phase: 'installing',
+    })
+  })
+
+  // The failure this guards is not a wrong label: a `downloading` status read
+  // as terminal ends the poll and reports a success the host never sent.
+  it('keeps polling on a downloading status and carries the phase', () => {
+    const view = reduceInstall(started('downloading'), {
+      type: 'status',
+      status: { found: true, state: 'downloading', log: ['fetching'] },
+    })
+    expect(view).toEqual({
+      kind: 'running', installId: 'i1', log: ['fetching'], phase: 'downloading',
+    })
+  })
+
+  it('moves the phase to installing when the state does', () => {
+    const view = reduceInstall(started('downloading'), {
+      type: 'status',
+      status: { found: true, state: 'running', log: ['adding'] },
+    })
+    expect(view).toEqual({
+      kind: 'running', installId: 'i1', log: ['adding'], phase: 'installing',
+    })
+  })
+
+  it('still settles on done', () => {
+    const view = reduceInstall(started('downloading'), {
+      type: 'status',
+      status: { found: true, state: 'done', log: ['ok'], activation: 'live' },
+    })
+    expect(view.kind).toBe('done')
+  })
+})
+
 describe('reduceInstall on a done status', () => {
   it('carries the activation the host sent', () => {
-    const before: InstallView = { kind: 'running', installId: 'i1', log: [] }
+    const before: InstallView = { kind: 'running', installId: 'i1', log: [], phase: 'installing' }
     const after = reduceInstall(before, {
       type: 'status',
       status: { found: true, state: 'done', log: ['ok'], activation: 'reload' },
@@ -228,7 +274,7 @@ describe('reduceInstall on a done status', () => {
     // The host's own default is `restart` (executor.ts). Coercing an absent
     // field to anything cheaper would publish a success claim the host
     // never made.
-    const before: InstallView = { kind: 'running', installId: 'i1', log: [] }
+    const before: InstallView = { kind: 'running', installId: 'i1', log: [], phase: 'installing' }
     const after = reduceInstall(before, { type: 'status', status: { found: true, state: 'done', log: [] } })
     expect(after).toMatchObject({ kind: 'done', activation: 'restart' })
   })
@@ -671,5 +717,17 @@ describe('heldBy', () => {
 
   it('names an npm holder with the token the host refusal uses', () => {
     expect(heldBy(repoEntry, { 'dsh-hello-plugin': '^2.0.0' })).toBe('npm:dsh-hello-plugin')
+  })
+})
+
+describe('installPhaseKey', () => {
+  it('names a copy key for each phase, and both dictionaries carry it', () => {
+    expect(installPhaseKey('downloading')).toBe('downloading')
+    expect(installPhaseKey('installing')).toBe('installing')
+    for (const key of ['downloading', 'installing'] as const) {
+      expect(en[key]).toBeTruthy()
+      expect(zh[key]).toBeTruthy()
+      expect(en[key]).not.toBe(zh[key])
+    }
   })
 })

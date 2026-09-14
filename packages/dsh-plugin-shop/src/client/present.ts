@@ -12,6 +12,7 @@ import { holderLabel, identityKey, specVerdict, type EntryIdentity } from '../sh
 import type { ShopLocaleKey } from './locales.ts'
 import type { CatalogEntry, HotRestartReason, InstallRejectionCode } from '../host/index.ts'
 import type { Activation } from '../host/activation.ts'
+import { isTerminalInstallState, type InstallState } from '../shared/install-state.ts'
 
 // Re-exported so the client half has one import site for it.
 export type { Activation }
@@ -51,6 +52,13 @@ export function activationNoticeKey(activation: Activation, restartReason: HotRe
 export function uninstallActivationNoticeKey(activation: Activation): ShopLocaleKey {
   if (activation === 'restart') return 'uninstalledRestartNotice'
   return activation === 'reload' ? 'uninstalledReloadNotice' : 'uninstalledLiveNotice'
+}
+
+/** The copy key for one install phase. A function rather than an inline
+ * ternary in the JSX so it is unit-testable: the tab's only test seam is a
+ * whole-tab render driven by injected RPCs, which cannot be handed one view. */
+export function installPhaseKey(phase: 'downloading' | 'installing'): ShopLocaleKey {
+  return phase === 'downloading' ? 'downloading' : 'installing'
 }
 
 /** Tier → locale key, for the entry-card tier badge (§6.2). */
@@ -152,26 +160,45 @@ export function isCustomLicense(license: string | null): boolean {
 /** One polled install status (§7.3 wire data), structural. */
 export interface InstallStatusShape {
   found: boolean
-  state: 'running' | 'done' | 'failed'
+  state: InstallState
   log: string[]
   activation?: Activation
   restartReason?: HotRestartReason
   detail?: string
 }
 
-/** The install view state machine (§7.2). */
+/** The install view state machine (§7.2). `phase` distinguishes the download
+ * that runs ahead of the per-profile mutex from the install that holds it.
+ * It rides the `running` kind rather than adding a kind of its own: every
+ * `view.kind === 'running'` site — `useInstall.ts`'s poll collection among
+ * them — must keep treating a downloading install as live. */
 export type InstallView =
   | { kind: 'idle' }
   | { kind: 'rejected'; code: InstallRejectionCode; detail: string }
-  | { kind: 'running'; installId: string; log: string[] }
+  | { kind: 'running'; installId: string; log: string[]; phase: 'downloading' | 'installing' }
   | { kind: 'done'; activation: Activation; log: string[]; restartReason?: HotRestartReason }
   | { kind: 'failed'; detail: string; log: string[] }
 
 /** One event the install view reacts to. */
 export type InstallEvent =
   | { type: 'rejected'; code: InstallRejectionCode; detail: string }
-  | { type: 'started'; installId: string }
+  | { type: 'started'; installId: string; state: InstallState }
   | { type: 'status'; status: InstallStatusShape }
+
+/** The phase a non-terminal state renders as: the WIRE state the host
+ * reported (`InstallState`) mapped onto the phase the view carries. Exported
+ * because every hook that turns a start or a poll result into a view spells
+ * this same mapping, and three hand-copied ternaries are three chances for
+ * one of them to drift.
+ *
+ * Not to be confused with `installPhaseKey`, which is the OTHER direction and
+ * a different pair of values: view phase → the locale key to render. They
+ * happen to share two spellings today and that is a coincidence of naming,
+ * not a reason to fuse them — the wire union and the locale key set are free
+ * to diverge. */
+export function phaseOf(state: InstallState): 'downloading' | 'installing' {
+  return state === 'downloading' ? 'downloading' : 'installing'
+}
 
 /** §7.2 once-per-second poll cadence, as a named constant. */
 export const INSTALL_POLL_MS = 1000
@@ -206,7 +233,7 @@ export function nextVisibleCount(visible: number, total: number, batch: number):
 export function reduceInstall(state: InstallView, event: InstallEvent): InstallView {
   switch (event.type) {
     case 'started':
-      return { kind: 'running', installId: event.installId, log: [] }
+      return { kind: 'running', installId: event.installId, log: [], phase: phaseOf(event.state) }
     case 'rejected':
       return { kind: 'rejected', code: event.code, detail: event.detail }
     case 'status': {
@@ -218,8 +245,13 @@ export function reduceInstall(state: InstallView, event: InstallEvent): InstallV
       if (!status.found) {
         return { kind: 'failed', detail: status.detail ?? 'install record lost', log: status.log }
       }
-      if (status.state === 'running') {
-        return { kind: 'running', installId: state.installId, log: status.log }
+      if (!isTerminalInstallState(status.state)) {
+        return {
+          kind: 'running',
+          installId: state.installId,
+          log: status.log,
+          phase: phaseOf(status.state),
+        }
       }
       if (status.state === 'done') {
         // A hot-mount failure rides the done status as a bilingual restart

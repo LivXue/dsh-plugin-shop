@@ -8,11 +8,40 @@ import type { InventoryEntry, LoaderEntryLike, ShopGatewayOptions, ShopInstallSt
 import type { HotMountResult } from '../../src/host/hot.ts'
 import type { CatalogResult, CatalogSnapshot, LoadCatalogOptions } from '../../src/host/catalog.ts'
 import type { CatalogEntry } from '../../src/host/types.ts'
+import { startInstall } from '../../src/host/executor.ts'
+import { createPrefetcher, type Prefetcher } from '../../src/host/prefetch.ts'
+import { isTerminalInstallState } from '../../src/shared/install-state.ts'
 import { fakeDsh, fakeDshRecording, fakeDshRemovingManifest } from '../fixtures/fake-dsh.ts'
+import { fakePnpm } from '../fixtures/fake-pnpm.ts'
 import { fileTempRoot } from './temp-root.ts'
 import { memHotFs } from './mem-fs.ts'
 
 const TEMP_ROOT = fileTempRoot('index')
+
+/**
+ * The gateway's own download phase, pinned to a fixture `pnpm` for this whole
+ * file — the same substitution the `dshBin` option already makes for the CLI.
+ *
+ * A gateway left with the production pump (whose `pnpmBin` is the bare name
+ * `pnpm`) runs a real `pnpm store add <name>@<version>` for every install that
+ * finds a command already queued for its profile: a live request to
+ * registry.npmjs.org, measured at 1.4s for a fixture name that resolves to
+ * nothing, and a real download of `dsh-plugin-shop@<version>` in the
+ * self-update cases. The profile those batches run in exists — the file pins
+ * DSH_HOME to a fixture home — so nothing about this is inert.
+ *
+ * One fresh pump AND one fresh fixture binary per gateway, not one of either
+ * per file: the pump batches per profile inside itself, so sharing one
+ * instance across cases would let one case's batch serve another's install —
+ * and a shared binary would append every case's batch to one `pnpm.log`.
+ */
+function fixturePnpmBin(): string {
+  return fakePnpm(mkdtempSync(join(TEMP_ROOT, 'dsh-gateway-pnpm-')))
+}
+
+function fixturePrefetcher(): Prefetcher {
+  return createPrefetcher({ pnpmBin: fixturePnpmBin() })
+}
 
 // The install tests drive the full §7.2 path including the post-install
 // confirm, which re-reads the profile manifest through app-boot's
@@ -59,6 +88,7 @@ describe('two catalog entries share one name (G-1)', () => {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
       loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [alice, bob], denied: [], stars: {} }, stale: false }) as CatalogResult,
       dshBin: bin,
+      prefetcher: fixturePrefetcher(),
     })
   }
 
@@ -73,7 +103,7 @@ describe('two catalog entries share one name (G-1)', () => {
     if (!result.ok) return
     const deadline = Date.now() + 5000
     let terminal = gateway.installStatus({ installId: result.installId })
-    while (terminal.state === 'running' && Date.now() < deadline) {
+    while (!isTerminalInstallState(terminal.state) && Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 10))
       terminal = gateway.installStatus({ installId: result.installId })
     }
@@ -406,6 +436,7 @@ function gatewayWithSnapshot(snapshot: CatalogSnapshot, options: Partial<ShopGat
     profileDir,
     loadCatalog: async () => ({ snapshot, stale: false }) as CatalogResult,
     dshBin: bin,
+    prefetcher: fixturePrefetcher(),
     ...options,
   })
   return { gateway, callsLog: join(dir, 'calls.log') }
@@ -510,14 +541,18 @@ describe('ShopGateway.install — the four rejection paths, through the executor
     if (!result.ok) return
     const status = gateway.installStatus({ installId: result.installId })
     expect(status.found).toBe(true)
-    // The fixture dsh exits 0 immediately; the status may already be done.
-    expect(['running', 'done']).toContain(status.state)
+    // The fixture dsh exits 0 immediately, so the status may already be done;
+    // a previous case's install may still be draining, so this one may be
+    // QUEUED behind it and report 'downloading'. What the case is about is
+    // that it is live and not a failure — stated as terminality rather than as
+    // an allowlist that has to grow with every state the union gains.
+    expect(status.state).not.toBe('failed')
     // Poll installStatus until the fixture's subprocess is done (finished
     // records are retained), then prove the exact argv was recorded — the
     // profile and the pinned spec pass through to the subprocess.
     const deadline = Date.now() + 5000
     let terminal = status
-    while (terminal.state === 'running' && Date.now() < deadline) {
+    while (!isTerminalInstallState(terminal.state) && Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 10))
       terminal = gateway.installStatus({ installId: result.installId })
     }
@@ -536,7 +571,7 @@ describe('ShopGateway.install — the four rejection paths, through the executor
     // finished install keeps reporting its true state, found: true.
     const deadline = Date.now() + 5000
     let status = gateway.installStatus({ installId: result.installId })
-    while (status.state === 'running' && Date.now() < deadline) {
+    while (!isTerminalInstallState(status.state) && Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 10))
       status = gateway.installStatus({ installId: result.installId })
     }
@@ -557,14 +592,18 @@ describe('ShopGateway.install — the four rejection paths, through the executor
     const lastId = ids[ids.length - 1]
     if (firstId === undefined || lastId === undefined) throw new Error('no install ids collected')
     // The per-profile mutex serializes the fixtures; when the last one is
-    // terminal, all 33 are finished.
+    // terminal, all 33 are finished. TERMINAL, not "not running": the last
+    // install is QUEUED behind the other 32 and reports 'downloading' for as
+    // long as they run, so `!== 'running'` would end this drain immediately
+    // and the eviction below would then be asserting against 33 installs that
+    // are still in flight — none of which is a finished record to evict.
     const deadline = Date.now() + 15000
     let last = gateway.installStatus({ installId: lastId })
-    while (last.state === 'running' && Date.now() < deadline) {
+    while (!isTerminalInstallState(last.state) && Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 10))
       last = gateway.installStatus({ installId: lastId })
     }
-    expect(last.state).not.toBe('running')
+    expect(isTerminalInstallState(last.state)).toBe(true)
     // Adding one more install with 33 finished records evicts the oldest.
     const extra = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
     expect(extra.ok).toBe(true)
@@ -585,7 +624,7 @@ describe('ShopGateway.install — the four rejection paths, through the executor
       // serializes the fixtures; poll installStatus — the honest client seam.
       const deadline = Date.now() + 5000
       let status = gateway.installStatus({ installId: result.installId })
-      while (status.state === 'running' && Date.now() < deadline) {
+      while (!isTerminalInstallState(status.state) && Date.now() < deadline) {
         await new Promise(resolve => setTimeout(resolve, 10))
         status = gateway.installStatus({ installId: result.installId })
       }
@@ -985,6 +1024,7 @@ function gatewayOptions() {
     profile: 'web',
     exit: () => {}, restartExitDelayMs: 0,
     dshBin: bin,
+    prefetcher: fixturePrefetcher(),
     restartParentPid: 1_000_000_000,
     // Pinned: these cases assert the systemd and --port 0 policies, which
     // must not change meaning with the host OS now that the platform is also
@@ -1107,6 +1147,7 @@ describe('ShopGateway.updateStart', () => {
     const bin = fakeDshRecording(binDir, 0, { silent: true })
     const gateway = new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir, dshBin: bin,
+      prefetcher: fixturePrefetcher(),
     })
     const result = await gateway.updateStart({ version: '9.9.9' })
     expect(result.ok).toBe(true)
@@ -1143,6 +1184,7 @@ describe('ShopGateway github entries', () => {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
       loadCatalog: async () => ({ snapshot: { schemaVersion: 3, builtAt: '', entries: [repoEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
       dshBin: bin,
+      prefetcher: fixturePrefetcher(),
     })
   }
 
@@ -1154,7 +1196,7 @@ describe('ShopGateway github entries', () => {
     if (!result.ok) return
     const deadline = Date.now() + 5000
     let terminal = gateway.installStatus({ installId: result.installId })
-    while (terminal.state === 'running' && Date.now() < deadline) {
+    while (!isTerminalInstallState(terminal.state) && Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 10))
       terminal = gateway.installStatus({ installId: result.installId })
     }
@@ -1215,6 +1257,7 @@ describe('subpackage install spec', () => {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
       loadCatalog: async () => ({ snapshot: { schemaVersion: 4, builtAt: '', entries: [subEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
       dshBin: bin,
+      prefetcher: fixturePrefetcher(),
     })
   }
 
@@ -1226,7 +1269,7 @@ describe('subpackage install spec', () => {
     if (!result.ok) return
     const deadline = Date.now() + 5000
     let terminal = gateway.installStatus({ installId: result.installId })
-    while (terminal.state === 'running' && Date.now() < deadline) {
+    while (!isTerminalInstallState(terminal.state) && Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 10))
       terminal = gateway.installStatus({ installId: result.installId })
     }
@@ -1273,6 +1316,7 @@ describe('release-rescued tarball install', () => {
       loadCatalog: async () => ({ snapshot: { schemaVersion: 5, builtAt: '', entries: [tarballEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
       dshBin: bin,
       fetchTarball,
+      prefetcher: fixturePrefetcher(),
     })
   }
 
@@ -1291,7 +1335,7 @@ describe('release-rescued tarball install', () => {
     expect(fetchTarball).toHaveBeenCalledWith(TARBALL_URL)
     const deadline = Date.now() + 5000
     let terminal = gateway.installStatus({ installId: result.installId })
-    while (terminal.state === 'running' && Date.now() < deadline) {
+    while (!isTerminalInstallState(terminal.state) && Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 10))
       terminal = gateway.installStatus({ installId: result.installId })
     }
@@ -1344,6 +1388,7 @@ describe('release-rescued tarball install', () => {
       loadCatalog: async () => ({ snapshot: { schemaVersion: 5, builtAt: '', entries: [npmEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
       dshBin: npmBin,
       fetchTarball,
+      prefetcher: fixturePrefetcher(),
     })
     const npmResult = await npmGateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
     expect(npmResult.ok).toBe(true)
@@ -1365,6 +1410,7 @@ describe('release-rescued tarball install', () => {
       loadCatalog: async () => ({ snapshot: { schemaVersion: 5, builtAt: '', entries: [repoEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
       dshBin: repoBin,
       fetchTarball,
+      prefetcher: fixturePrefetcher(),
     })
     const repoResult = await repoGateway.install({ name: 'dsh-repo-plugin', version: commit, acknowledged: true })
     expect(repoResult.ok).toBe(true)
@@ -1487,7 +1533,10 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
   async function pollTerminal(gateway: ShopGateway, installId: string): Promise<ShopInstallStatusResult> {
     const deadline = Date.now() + 5000
     let status = gateway.installStatus({ installId })
-    while (status.state === 'running' && Date.now() < deadline) {
+    // TERMINAL, which is what this helper is named for. Asking `=== 'running'`
+    // returned a QUEUED install's 'downloading' as though it were settled, and
+    // every caller below then asserts `state === 'done'` against it.
+    while (!isTerminalInstallState(status.state) && Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 10))
       status = gateway.installStatus({ installId })
     }
@@ -2141,11 +2190,17 @@ describe('restart while an install is running (F-5)', () => {
       // worker; the failing assertion is the returned restart outcome.
       restartParentPid: 1_000_000_000,
       loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [listed], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      prefetcher: fixturePrefetcher(),
     })
     const started = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true, source: 'npm' })
     expect(started.ok).toBe(true)
     if (!started.ok) return
-    expect(gateway.installStatus({ installId: started.installId }).state).toBe('running')
+    // LIVE, not specifically 'running': this one holds the queue, but a
+    // previous case's install may still be draining into the same profile, in
+    // which case this one queued behind it and reports 'downloading'. Either
+    // way a command owns the profile, which is what the refusal below is
+    // about — and a terminal state here would make the case vacuous.
+    expect(isTerminalInstallState(gateway.installStatus({ installId: started.installId }).state)).toBe(false)
 
     const outcome = await gateway.restart()
     expect(outcome).toEqual({
@@ -2154,7 +2209,7 @@ describe('restart while an install is running (F-5)', () => {
     })
     expect(exit).not.toHaveBeenCalled()
     await vi.waitFor(() => {
-      expect(gateway.installStatus({ installId: started.installId }).state).not.toBe('running')
+      expect(isTerminalInstallState(gateway.installStatus({ installId: started.installId }).state)).toBe(true)
     }, { timeout: 5000 })
   })
 
@@ -2180,12 +2235,118 @@ describe('restart while an install is running (F-5)', () => {
       // `exit` leaves it harmless.
       platform: 'linux',
       loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [listed], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      prefetcher: fixturePrefetcher(),
     })
     const started = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true, source: 'npm' })
     if (!started.ok) throw new Error('the fixture install was rejected')
     await vi.waitFor(() => {
-      expect(gateway.installStatus({ installId: started.installId }).state).not.toBe('running')
+      // TERMINAL, not "not running": a queued install reports 'downloading',
+      // and treating that as settled would let this case pass while a command
+      // is still on its way to touching the profile.
+      expect(isTerminalInstallState(gateway.installStatus({ installId: started.installId }).state)).toBe(true)
     }, { timeout: 5000 })
     expect(await gateway.restart()).toEqual({ ok: true })
+  })
+})
+
+describe('a queued install is live, not finished', () => {
+  const listed: CatalogEntry = {
+    name: 'dsh-hello-plugin', version: '1.2.0', integrity: null, publishedAt: null, repository: null,
+    license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25',
+  }
+
+  it('does not evict a queued install as though it had finished', async () => {
+    // `evictFinishedInstalls` counted anything not 'running' as finished and
+    // evictable. A queued install reports 'downloading', so once the retained
+    // records pass the 32 cap the OLDEST QUEUED one is deleted — and
+    // installStatus then answers found: false, which the client's reducer
+    // renders as "install record lost" on an install that is about to run.
+    // The existing 33-install eviction case cannot catch this: it awaits every
+    // install's completion before adding the one that triggers eviction, so no
+    // record is 'downloading' at that moment. This one never awaits.
+    const { gateway } = gatewayWithSnapshot({ schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} })
+    const ids: string[] = []
+    for (let i = 0; i < 34; i += 1) {
+      const result = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
+      if (!result.ok) throw new Error('fixture install was rejected')
+      ids.push(result.installId)
+    }
+    const second = ids[1]
+    const last = ids[ids.length - 1]
+    if (second === undefined || last === undefined) throw new Error('no install ids collected')
+    // The first holds the queue; every later one is queued behind it.
+    expect(gateway.installStatus({ installId: second }).found).toBe(true)
+    // Drain, so the suite does not tear down with 34 children mid-flight.
+    // TERMINAL, not `=== 'running'`: the last install is QUEUED and reports
+    // 'downloading', so that condition would end the drain before a single
+    // child had even started.
+    const deadline = Date.now() + 20000
+    while (!isTerminalInstallState(gateway.installStatus({ installId: last }).state) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    expect(isTerminalInstallState(gateway.installStatus({ installId: last }).state)).toBe(true)
+  })
+
+  it('refuses a restart while an install is still queued', async () => {
+    // `hasRunningCommand` asked `state === 'running'`, so a queued install did
+    // not count and a restart was allowed to boot a new dsh against a profile
+    // with installs pending — the very case F-5 exists to refuse.
+    //
+    // The three options are the F-5 case's own safety net, for the run in
+    // which the gate does NOT hold: a permitted restart spawns a detached
+    // helper and then exits this process, so the exit is stubbed and the
+    // waited-for pid is one beyond pid_max (guaranteed dead), which leaves the
+    // helper exec'ing the fixture `dshBin` instead of the test runner's own
+    // argv.
+    const { gateway } = gatewayWithSnapshot(
+      { schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} },
+      { exit: vi.fn(), restartParentPid: 1_000_000_000, restartExitDelayMs: 1, restartArgv: ['web'] },
+    )
+    const first = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
+    const second = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
+    if (!first.ok || !second.ok) throw new Error('fixture install was rejected')
+    expect(second.state).toBe('downloading')
+    const restart = await gateway.restart()
+    expect(restart).toEqual({
+      ok: false,
+      detail: 'dsh-plugin-shop: an install is still running in this profile; a restart now would boot the new dsh against a half-written profile. Wait for it to finish and try again.',
+    })
+    const deadline = Date.now() + 20000
+    while (!isTerminalInstallState(gateway.installStatus({ installId: second.installId }).state) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+  })
+
+  it('refuses a restart for a queued install this gateway does not own the queue head of', async () => {
+    // The case above reaches the refusal through the RUNNING install it owns,
+    // so it passes even with the old `=== 'running'` predicate. Here the
+    // mutex is held by a command this gateway did not start — the ordinary
+    // consequence of a queue keyed by profile that outlives any one gateway —
+    // and the gateway's own record is queued. Nothing of its own reports
+    // 'running', so `=== 'running'` answered "no command is running" about a
+    // profile with an install pending, which is what F-5 refuses.
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-queued-restart-'))
+    const slow = fakeDsh(dir, [
+      'await new Promise(resolve => setTimeout(resolve, 1500))',
+      'process.exit(0)',
+    ].join('\n'))
+    const holder = startInstall({ profile: 'web', spec: 'a@1', dshBin: slow })
+    const { gateway } = gatewayWithSnapshot(
+      { schemaVersion: 2, builtAt: '', entries: [listed], denied: [], stars: {} },
+      { exit: vi.fn(), restartParentPid: 1_000_000_000, restartExitDelayMs: 1, restartArgv: ['web'] },
+    )
+    const queued = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
+    if (!queued.ok) throw new Error('fixture install was rejected')
+    expect(queued.state).toBe('downloading')
+    const restart = await gateway.restart()
+    expect(restart).toEqual({
+      ok: false,
+      detail: 'dsh-plugin-shop: an install is still running in this profile; a restart now would boot the new dsh against a half-written profile. Wait for it to finish and try again.',
+    })
+    const deadline = Date.now() + 20000
+    while (!isTerminalInstallState(gateway.installStatus({ installId: queued.installId }).state) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    await holder.finished
   })
 })

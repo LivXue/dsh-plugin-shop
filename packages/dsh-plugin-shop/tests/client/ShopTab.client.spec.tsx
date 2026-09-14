@@ -52,7 +52,7 @@ function bench(
   specs?: Record<string, string> | null,
 ) {
   const catalog = vi.fn<ShopTabInjected['catalog']>().mockResolvedValue(catalogResult)
-  const install = vi.fn<ShopTabInjected['install']>().mockResolvedValue({ ok: true, installId: 'i1' })
+  const install = vi.fn<ShopTabInjected['install']>().mockResolvedValue({ ok: true, installId: 'i1', state: 'running' })
   const installStatus = vi.fn<ShopTabInjected['installStatus']>().mockResolvedValue({ found: true, state: 'done', log: [], activation: 'restart' })
   const setEnabled = vi.fn<ShopTabInjected['setEnabled']>().mockResolvedValue({ ok: true, activation: 'live' })
   const rows: ShopInstalledEntry[] = installedEntries.map(row => ({ source: 'npm', ...row }))
@@ -66,7 +66,7 @@ function bench(
   const uninstall = vi.fn<ShopTabInjected['uninstall']>().mockResolvedValue({ ok: true, installId: 'u1' })
   const restart = vi.fn<ShopTabInjected['restart']>().mockResolvedValue({ ok: true })
   const version = vi.fn<ShopTabInjected['version']>().mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartSupported: true })
-  const updateStart = vi.fn<ShopTabInjected['updateStart']>().mockResolvedValue({ ok: true, installId: 's1' })
+  const updateStart = vi.fn<ShopTabInjected['updateStart']>().mockResolvedValue({ ok: true, installId: 's1', state: 'running' })
   const injected: ShopTabInjected = { catalog, install, installStatus, setEnabled, installed, installedSpecs, uninstall, restart, version, updateStart }
   return { catalog, install, installStatus, setEnabled, installed, installedSpecs, uninstall, restart, version, updateStart, injected }
 }
@@ -940,6 +940,24 @@ describe('ShopTab', () => {
     // and, once the row's button is pressed, the confirmation.
     await waitFor(() => expect(container.querySelector('[data-shop-self-update-done]')).toBeTruthy(), { timeout: 3000 })
     expect(container.querySelector('[data-shop-version]')?.parentElement?.querySelector('[data-shop-restart]')).toBeTruthy()
+  })
+
+  it('shows the download phase for a self-update still waiting on the mutex', async () => {
+    // The self-update panel is the SECOND site that renders a phase label, and
+    // it is driven by its own flow (`useUpdateSelf`), so the entry-panel case
+    // in this file leaves this one revertible to `t('installing')` — which is
+    // exactly the hole this pair closes.
+    const { injected, version, updateStart, installStatus } = bench(snapshot())
+    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartSupported: true })
+    updateStart.mockResolvedValue({ ok: true, installId: 's1', state: 'downloading' })
+    installStatus.mockResolvedValue({ found: true, state: 'downloading', log: ['fetching'] })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('v0.4.3')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-update-self]')!)
+    await waitFor(() => expect(container.querySelector('[data-shop-self-updating]')).toBeTruthy())
+    expect(container.querySelector('[data-shop-self-updating]')?.textContent).toContain(en.downloading)
+    expect(screen.queryByText(en.installing)).toBeNull()
+    expect(container.querySelector('[data-shop-self-update-done]')).toBeNull()
   })
 
   it('turns the version row into Restart once the self-update lands', async () => {
@@ -2216,6 +2234,35 @@ describe('ShopTab mutation flows (G-9)', () => {
     expect(container.querySelectorAll('[data-shop-update]')).toHaveLength(2)
     fireEvent.click(container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-update]')!)
     await waitFor(() => expect(container.querySelectorAll('[data-shop-update]')).toHaveLength(0))
+  })
+
+  it('shows the download phase for an install still waiting on the mutex', async () => {
+    // The feature's headline outcome. A card whose install is queued behind
+    // another in its profile must read "Downloading…", not "Installing…" —
+    // that label is the entire user-visible point of the download phase, and
+    // nothing else in this suite drives a `downloading` view through the tab:
+    // every other case has `install` resolve `state: 'running'` and the only
+    // copy assertions are on `en.installing`. Revert either render site to
+    // `t('installing')` and this file stays green without this case.
+    const { injected, install, installStatus } = bench(snapshot({ tier: 'verified' }))
+    install.mockResolvedValue({ ok: true, installId: 'i1', state: 'downloading' })
+    // The host reports the SAME phase on the poll, and `downloading` is not
+    // terminal: read as finished, the label would be replaced by the done
+    // notice before anyone saw it.
+    installStatus.mockResolvedValue({ found: true, state: 'downloading', log: ['fetching'] })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-install]')!)
+    await waitFor(() => expect(screen.getByText(en.downloading)).toBeTruthy())
+    expect(screen.queryByText(en.installing)).toBeNull()
+    // The poll then reports the same phase, and must leave the view running
+    // rather than end it: a poll that read `downloading` as finished would
+    // swap the label for the done notice before anyone saw it. The lines the
+    // download phase writes reach the same panel a user reads (§7).
+    await waitFor(() => expect(installStatus).toHaveBeenCalledWith({ installId: 'i1' }), { timeout: 3000 })
+    await waitFor(() => expect(screen.getByText('fetching')).toBeTruthy())
+    expect(screen.getByText(en.downloading)).toBeTruthy()
+    expect(container.querySelector('[data-shop-restart-notice]')).toBeNull()
   })
 
   it('keeps a running install when a search change unmounts its card', async () => {

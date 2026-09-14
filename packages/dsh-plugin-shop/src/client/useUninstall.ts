@@ -31,7 +31,7 @@ export function useUninstallFlows(
     try {
       const result = await uninstall(args)
       if (!result.ok) return { kind: 'failed', detail: result.detail, log: [] }
-      return { kind: 'running', installId: result.installId, log: [] }
+      return { kind: 'running', installId: result.installId, log: [], phase: 'installing' }
     } catch {
       // Same transport-failure rule as the install registry: a thrown
       // uninstall is the wire envelope rejecting, and its detail (hosts and

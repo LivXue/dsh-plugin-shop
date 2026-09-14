@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
-import { mkdirSync, mkdtempSync, writeFileSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { activationFailureDetail, shellSafeTarget, installFailureDetail, installTimeoutDetail, killTree, lineSink, spawnFailureDetail, startInstall, startUninstall, type InstallStatus } from '../../src/host/executor.ts'
 import type { HotRestartReason } from '../../src/host/hot.ts'
 import type { Activation } from '../../src/host/activation.ts'
+import { createPrefetcher, type Prefetcher } from '../../src/host/prefetch.ts'
 import { fakeDsh, fakeDshRecording } from '../fixtures/fake-dsh.ts'
+import { fakePnpm } from '../fixtures/fake-pnpm.ts'
 import { fileTempRoot } from './temp-root.ts'
 
 const TEMP_ROOT = fileTempRoot('executor')
@@ -1170,6 +1172,263 @@ describe('the child environment (F-12 residual)', () => {
       expect(readFileSync(join(dir, 'env.txt'), 'utf8').trim()).toBe('')
     } finally {
       delete process.env.SHOP_F12_PROBE
+    }
+  })
+})
+
+describe('the download phase in front of the queue', () => {
+  // Every case here uses a profile name of its own. `profileQueues` and the
+  // new `profileDepth` are MODULE-level, and 33 cases in this file already
+  // share `profile: 'web'` — an install still in flight from any of them
+  // would make "nothing is ahead of me" read `downloading` and turn these
+  // into intermittent failures that look like a regression in the feature
+  // under test.
+  //
+  // Two departures from the shape these cases were specified in, each so they
+  // assert something instead of nothing:
+  //
+  //  - each temp dir lives under TEMP_ROOT rather than a bare `tmpdir()`:
+  //    `tests/temp-dir-leak.test.ts` fails the suite for any `dsh-` directory
+  //    that outlives the run.
+  //  - each case pins `DSH_HOME` to a home whose profile directory EXISTS. The
+  //    pump's cwd is `resolveProfileDir(profile, env?.DSH_HOME)`, which
+  //    composes `<home>/profiles/<name>` and does not create it, and a spawn
+  //    whose cwd is missing fails ENOENT — which `prefetch.ts` reads as "pnpm
+  //    not found on PATH". Nothing would run and the log case below would be
+  //    asserting against a download phase that never happened.
+  const prefetchHome = (dir: string, profile: string): string => {
+    const home = join(dir, 'home')
+    mkdirSync(join(home, 'profiles', profile), { recursive: true })
+    return home
+  }
+
+  it('reports downloading while queued, then running once it holds the queue', async () => {
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-phase-'))
+    const bin = fakeDsh(dir, 'setTimeout(() => process.exit(0), 120)')
+    const prefetcher = createPrefetcher({ pnpmBin: fakePnpm(dir, { delayMs: 40 }) })
+    const env = { DSH_HOME: prefetchHome(dir, 'phase-queue') }
+    const first = startInstall({ profile: 'phase-queue', spec: 'a@1', dshBin: bin, prefetcher, env })
+    // Nothing was ahead of the first, so it never enters the download phase.
+    expect(first.status().state).toBe('running')
+    const second = startInstall({ profile: 'phase-queue', spec: 'b@1', dshBin: bin, prefetcher, env })
+    expect(second.status().state).toBe('downloading')
+    await first.finished
+    await second.finished
+    expect(second.status().state).toBe('done')
+  })
+
+  it('records the download phase in the install log a user reads', async () => {
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-phase-log-'))
+    const bin = fakeDsh(dir, 'setTimeout(() => process.exit(0), 120)')
+    const prefetcher = createPrefetcher({ pnpmBin: fakePnpm(dir, { delayMs: 20 }) })
+    const env = { DSH_HOME: prefetchHome(dir, 'phase-log') }
+    const first = startInstall({ profile: 'phase-log', spec: 'a@1', dshBin: bin, prefetcher, env })
+    const second = startInstall({ profile: 'phase-log', spec: 'b@1', dshBin: bin, prefetcher, env })
+    await first.finished
+    await second.finished
+    // `append` refuses a line only once the state is TERMINAL. Guarded by
+    // `state !== 'running'` instead, every line here is dropped and §7's
+    // visibility argument fails without a single test going red.
+    expect(second.status().log.some(line => line.includes('fetched ahead of the install'))).toBe(true)
+  })
+
+  it('says why there is no download phase for a tarball spec', async () => {
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-phase-tb-'))
+    const bin = fakeDsh(dir, 'setTimeout(() => process.exit(0), 80)')
+    const prefetcher = createPrefetcher({ pnpmBin: fakePnpm(dir) })
+    const env = { DSH_HOME: prefetchHome(dir, 'phase-tarball') }
+    const first = startInstall({ profile: 'phase-tarball', spec: 'a@1', dshBin: bin, prefetcher, env })
+    const second = startInstall({
+      profile: 'phase-tarball',
+      spec: 'https://github.com/o/s/releases/download/v1/a.tgz',
+      dshBin: bin,
+      prefetcher,
+      env,
+    })
+    expect(second.status().state).toBe('running')
+    expect(second.status().log.some(line => line.includes('no download phase for this spec form'))).toBe(true)
+    await first.finished
+    await second.finished
+  })
+
+  it('does not prefetch a lone install, this time or the next', async () => {
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-lone-'))
+    const bin = fakeDsh(dir, 'process.exit(0)')
+    const pnpmBin = fakePnpm(dir)
+    const prefetcher = createPrefetcher({ pnpmBin })
+    const env = { DSH_HOME: prefetchHome(dir, 'solo') }
+    // Two sequential installs, each awaited. `profileQueues` keeps its key
+    // after the first, so a predicate written as `has(profile)` would call the
+    // second one queued and prefetch it. Nothing is ahead of it.
+    await startInstall({ profile: 'solo', spec: 'a@1', dshBin: bin, prefetcher, env }).finished
+    await startInstall({ profile: 'solo', spec: 'b@1', dshBin: bin, prefetcher, env }).finished
+    await new Promise(resolve => setTimeout(resolve, 120))
+    expect(existsSync(join(dir, 'pnpm.log'))).toBe(false)
+  })
+
+  it('reaps the batch through the real killTree when the last install releases it', async () => {
+    // The pump's own tests inject non-killing fakes, so no batch is ever truly
+    // reaped in-tree: they assert that `killGroup` was CALLED, not that the
+    // process is gone. This is the other half, against the real `killTree`,
+    // and it goes through the wiring rather than the pump's API: the kill
+    // happens from the install's own `.finally`.
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-phase-reap-'))
+    const bin = fakeDsh(dir, 'setTimeout(() => process.exit(0), 30)')
+    const pidFile = join(dir, 'batch.pid')
+    // Not `fakePnpm`: this batch must outlive its release, or there is nothing
+    // to reap — it records its pid and then never exits.
+    const pnpmBin = join(dir, 'pnpm.mjs')
+    writeFileSync(pnpmBin, [
+      "import * as fs from 'node:fs'",
+      `fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid))`,
+      'setInterval(() => {}, 1000)',
+      '',
+    ].join('\n'))
+    const prefetcher = createPrefetcher({ pnpmBin })
+    const env = { DSH_HOME: prefetchHome(dir, 'phase-reap') }
+    const holder = startInstall({ profile: 'phase-reap', spec: 'a@1', dshBin: bin, env })
+    const queued = startInstall({ profile: 'phase-reap', spec: 'b@1', dshBin: bin, prefetcher, env })
+    expect(queued.status().state).toBe('downloading')
+    // The install that asked for the batch leaves nothing else waiting on it,
+    // so its release must end the child rather than let it run out its bound.
+    await queued.finished
+    await vi.waitFor(() => {
+      const batch = Number(readFileSync(pidFile, 'utf8'))
+      expect(Number.isInteger(batch) && batch > 0).toBe(true)
+      expect(() => process.kill(batch, 0)).toThrow()
+    }, { timeout: 5000 })
+    await holder.finished
+  })
+
+  /** Records the specs the pump would have been asked for, without running
+   * anything: the two cases below are about what reaches it and what does
+   * not. */
+  const recordingPrefetcher = (seen: string[]): Prefetcher => ({
+    request: (args) => {
+      seen.push(args.spec)
+      return { started: false, reason: 'no-pnpm' }
+    },
+    release: () => {},
+  })
+
+  it('never asks the pump for a spec the spawn gate refused', async () => {
+    // The pump's own win32 quoting is sound ONLY because `UNSAFE_TARGET` has
+    // already refused `"`: the pump spawns `pnpm` through a shell there, where
+    // node joins the argv into one cmd.exe line, and a quote the gate let
+    // through would be a command separator the pump cannot see. So the request
+    // must sit BELOW that throw — reaching the pump first would leave the gate
+    // with nothing to protect.
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-phase-gate-'))
+    const bin = fakeDsh(dir, 'setTimeout(() => process.exit(0), 60)')
+    const env = { DSH_HOME: prefetchHome(dir, 'phase-gate') }
+    const seen: string[] = []
+    const holder = startInstall({ profile: 'phase-gate', spec: 'a@1', dshBin: bin, env })
+    expect(() => startInstall({
+      profile: 'phase-gate', spec: 'a"b@1', dshBin: bin, prefetcher: recordingPrefetcher(seen), env,
+    })).toThrow(/unsafe operand/)
+    // The holder is queued BEHIND nothing, so this proves the throw landed
+    // before any pump call at all rather than merely before a queued one.
+    expect(seen).toEqual([])
+    await holder.finished
+  })
+
+  it('hands the pump the raw operand, never the shell-quoted one', async () => {
+    // `github:owner/slug#sha&path:<subdir>` is the spec `shellSafeTarget`
+    // quotes on win32, and the quote is for the CLI's OWN command line. The
+    // pump quotes what it spawns itself; handed the quoted form it would pass
+    // `pnpm store add "…"` a literal `"` and warm nothing, silently.
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-phase-raw-'))
+    const bin = fakeDsh(dir, 'setTimeout(() => process.exit(0), 60)')
+    const env = { DSH_HOME: prefetchHome(dir, 'phase-raw') }
+    const seen: string[] = []
+    const prefetcher = recordingPrefetcher(seen)
+    const spec = 'github:someone/dsh-repo-plugin#abc&path:sub'
+    const first = startInstall({ profile: 'phase-raw', spec: 'a@1', dshBin: bin, prefetcher, env, platform: 'win32' })
+    const second = startInstall({ profile: 'phase-raw', spec, dshBin: bin, prefetcher, env, platform: 'win32' })
+    expect(seen).toEqual([spec])
+    expect(second.status().log.some(line => line.includes('no download phase'))).toBe(true)
+    await first.finished
+    await second.finished
+  })
+
+  it('installs cold when the pump throws, and leaves the queue depth balanced', async () => {
+    // The strongest reading of "best-effort": a synchronous throw out of the
+    // pump is the one prefetch failure that can change whether an install
+    // succeeds. `request` is called AFTER the queue slot was taken and BEFORE
+    // the chained task exists, so an escaping throw does two things this
+    // feature may never do — fail an install the prefetch is not allowed to
+    // fail, and skip `chain`, so `leaveQueue` never runs and this profile's
+    // depth stays `+1` for the life of the process. Every later install in
+    // that profile then reads `ahead > 0`, earns a pointless prefetch and a
+    // `Downloading…` label that is simply false — exactly what the
+    // `profileDepth` comment exists to prevent.
+    //
+    // Injecting the pump rather than giving it a bad profile name is what
+    // isolates the prefetch: `resolveProfileDir` on an invalid name is the
+    // other way into this same throw, and it would take the spawn down with
+    // it, so the install's own fate could not be told from the pump's.
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-phase-throw-'))
+    const bin = fakeDsh(dir, 'process.exit(0)')
+    const env = { DSH_HOME: prefetchHome(dir, 'phase-throw') }
+    const holder = startInstall({ profile: 'phase-throw', spec: 'a@1', dshBin: bin, env })
+    const attempts: string[] = []
+    const throwing: Prefetcher = {
+      request: ({ spec }) => { attempts.push(spec); throw new Error('pump exploded') },
+      release: () => {},
+    }
+    // Reaching the next line at all is half the assertion: an escaping throw
+    // would end this case right here, with the pump's own error.
+    const second = startInstall({ profile: 'phase-throw', spec: 'b@1', dshBin: bin, prefetcher: throwing, env })
+    expect(attempts).toEqual(['b@1'])
+    // Reported rather than swallowed, in the install's own log.
+    expect(second.status().log.some(line => line.includes('the download phase could not start'))).toBe(true)
+    expect(second.status().log.some(line => line.includes('pump exploded'))).toBe(true)
+    expect(await second.finished).toMatchObject({ state: 'done' })
+    await holder.finished
+    // The depth went back to zero, so the next install into this profile has
+    // nothing to overlap and the pump is never asked. A leaked slot is
+    // invisible from the install's own status — this is the only place it
+    // shows.
+    const next: string[] = []
+    const third = startInstall({ profile: 'phase-throw', spec: 'c@1', dshBin: bin, prefetcher: recordingPrefetcher(next), env })
+    expect(next).toEqual([])
+    await third.finished
+  })
+})
+
+describe('a chained task that rejects', () => {
+  it('does not take the host process down with an unhandled rejection', async () => {
+    // `finished` is `chain(...).finally(...)`, and `.finally` DERIVES a new
+    // promise: `chain` absorbs a rejection only for the promise it stores in
+    // `profileQueues` (`next.catch(() => {})`), and nothing in `src/` attaches
+    // a handler to this one. A rejection that reaches node unhandled is an
+    // `unhandledRejection`, which by default kills the process — taking every
+    // install in flight with it, which is the one thing the prefetch may never
+    // do. The task CAN reject: `beforeSpawn` and `dshCommand` run inside the
+    // `new Promise` executor.
+    //
+    // An invalid profile name is the reachable path to it that needs no
+    // injection: `readProfileDependencies` calls `resolveProfileDir` outside
+    // its own try/catch, so `beforeSpawn` throws. The `expectedName` is what
+    // wires that callback.
+    //
+    // No handler is attached to `finished` here, deliberately: a test that
+    // awaited it with `.catch` would be attaching the very handler whose
+    // absence is the defect, and would pass either way.
+    const bin = fakeDsh(mkdtempSync(join(TEMP_ROOT, 'dsh-reject-')), 'process.exit(0)')
+    const seen: unknown[] = []
+    const onRejection = (reason: unknown): void => { seen.push(reason) }
+    process.on('unhandledRejection', onRejection)
+    try {
+      startInstall({ profile: '../escape', spec: 'a@1', dshBin: bin, expectedName: 'dsh-hello-plugin' })
+      // Long enough for the task to have run and for node to have reported a
+      // rejection it was never given a handler for. This waits on an ABSENCE,
+      // so a loaded machine running the timer late can only give the
+      // rejection more turns to surface, never fewer.
+      await new Promise(resolve => setTimeout(resolve, 100))
+      expect(seen).toEqual([])
+    } finally {
+      process.off('unhandledRejection', onRejection)
     }
   })
 })
