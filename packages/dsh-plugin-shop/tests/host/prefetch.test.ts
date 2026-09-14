@@ -1,4 +1,5 @@
-import { spawn as nodeSpawn, type SpawnOptions } from 'node:child_process'
+import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -42,6 +43,44 @@ const recording = (calls: Spawned[], run: SpawnFn = nodeSpawn): SpawnFn => (comm
  * the network, while a node that ends immediately still drives the pump's own
  * event path for real. */
 const standIn: SpawnFn = () => nodeSpawn(process.execPath, ['-e', ''], { stdio: 'ignore' })
+
+/** A `spawn` whose children exit when THIS test says so, for the one arm of
+ * the pump no child on this machine can reach.
+ *
+ * The windows absence arm is entered only by a batch the pump handed to a
+ * shell, which needs `platform: 'win32'`; a Linux runner cannot get there, and
+ * no real process would either — what makes the arm necessary is that the
+ * shell STARTS SUCCESSFULLY and reports the missing pnpm itself, so a child
+ * this file could start would report ENOENT on the `error` event instead, the
+ * path the CI case already covers. All the pump reads off a child is one
+ * registration per event plus the `exit` the test emits, so an `EventEmitter`
+ * is the whole fixture. It carries no `pid` on purpose: `killTree` reads that
+ * as nothing to kill, and a made-up one would only invite a `taskkill` against
+ * whatever holds it.
+ *
+ * Every spawn hands back its OWN child, because the pump's staleness guard is
+ * object identity — one object returned twice would make an old batch's
+ * handlers believe they were still current, which no real spawn can do, and
+ * the guard is the one thing these cases must not quietly defeat. */
+const scriptedSpawn = (): { spawn: SpawnFn; exitCurrent: (code: number) => void } => {
+  let current: { child: ChildProcess; exit: (code: number) => void } | null = null
+  return {
+    spawn: () => {
+      const emitter = new EventEmitter()
+      current = {
+        child: emitter as unknown as ChildProcess,
+        exit: code => { emitter.emit('exit', code) },
+      }
+      return current.child
+    },
+    /** Exit the child the pump started most recently — the batch an outcome
+     * at this point in a case belongs to. */
+    exitCurrent: code => {
+      if (current === null) throw new Error('no scripted child has been spawned yet')
+      current.exit(code)
+    },
+  }
+}
 
 /** A `KillFns` that records the kill AND performs it.
  *
@@ -153,6 +192,85 @@ describe('the prefetch pump', () => {
     // cannot say that here — a pnpm that does not exist can never write the
     // log, so it passes whatever the pump does.
     expect(calls.map(call => call.command)).toEqual([missing])
+  })
+
+  // The other half of that case, and the one no run of this file on a Linux
+  // box can perform: on win32 the batch above goes through a shell, so the
+  // child that fails is `cmd.exe` — which exists — and the `error` event the
+  // case above waits for never arrives. What arrives instead is an `exit`
+  // carrying the shell's not-found code, which is what this drives.
+  it('reads absence off a shell that exits not-found, and refuses the next by name', async () => {
+    const dir = temp()
+    const lines: string[] = []
+    const calls: Spawned[] = []
+    const scripted = scriptedSpawn()
+    const prefetcher = createPrefetcher({
+      pnpmBin: 'pnpm',
+      platform: 'win32',
+      spawn: recording(calls, scripted.spawn),
+    })
+    expect(prefetcher.request({
+      profile: 'web', spec: 'a@1', cwd: dir, log: line => lines.push(line),
+    })).toEqual({ started: true })
+    // Deterministic end to end, so no poll is needed and none is written: the
+    // batch is built from `request`'s microtask, the scripted child answers
+    // synchronously, and one turn of the queue is every wait this case has.
+    // Nothing here depends on how long node takes to start, because no node
+    // starts.
+    await Promise.resolve()
+    // The precondition the rest of the case rests on: this IS the shell path,
+    // which is the only one where the code below can mean absence. A bare
+    // `pnpm` is no `.js` entry, so `jsEntryCommand` declines it and win32 gets
+    // the shell.
+    expect(calls.map(call => ({ command: call.command, args: call.args, shell: call.options.shell })))
+      .toEqual([{ command: 'pnpm', args: ['store', 'add', 'a@1'], shell: true }])
+    expect(lines).toEqual([])
+    // 9009 is the literal, deliberately: importing the constant would let the
+    // test and the pump agree on a number while both were wrong, and this
+    // assertion is the only thing outside cmd.exe's own behaviour that holds
+    // the value still. That it is really cmd.exe's number is what CI's windows
+    // runner decides — see the constant's comment in `prefetch.ts`.
+    scripted.exitCurrent(9009)
+    // The same line the ENOENT case above announces, and the only one: an
+    // install told both "pnpm not found" and "exit 9009" was told twice about
+    // one event, and the CI case filters on the substring for exactly this.
+    expect(lines).toEqual(['dsh-plugin-shop: no download phase — pnpm not found on PATH'])
+    expect(prefetcher.request({ profile: 'web', spec: 'b@1', cwd: dir })).toEqual({
+      started: false, reason: 'no-pnpm',
+    })
+    // The refused install reached no child at all — the same thing the CI case
+    // asserts about its own refused install, here on the branch CI runs.
+    await Promise.resolve()
+    expect(calls).toHaveLength(1)
+  })
+
+  it('still reports a shell batch that really ran and failed, and keeps serving', async () => {
+    const dir = temp()
+    const lines: string[] = []
+    const scripted = scriptedSpawn()
+    const prefetcher = createPrefetcher({
+      pnpmBin: 'pnpm',
+      platform: 'win32',
+      spawn: scripted.spawn,
+    })
+    expect(prefetcher.request({ profile: 'web', spec: 'a@1', cwd: dir, log: line => lines.push(line) }))
+      .toEqual({ started: true })
+    await Promise.resolve()
+    scripted.exitCurrent(1)
+    // A code the shell uses for other reasons is NOT absence: the generic
+    // line stands, and the latch stays clear.
+    expect(lines.join('\n')).toContain('exit 1')
+    expect(lines.join('\n')).not.toContain('pnpm not found')
+    expect(prefetcher.request({
+      profile: 'web', spec: 'b@1', cwd: dir, log: line => lines.push(line),
+    })).toEqual({ started: true })
+    // Settle the batch that request just started, so its bound is cleared
+    // rather than left pending past the end of the case — and so the success
+    // line is asserted on the shell path too. It is a fresh child, so this
+    // exit reaches the batch that owns it and not the one that already ended.
+    await Promise.resolve()
+    scripted.exitCurrent(0)
+    expect(lines.join('\n')).toContain('packages fetched ahead of the install')
   })
 
   it('tells every install a failed batch served, and installs anyway', async () => {

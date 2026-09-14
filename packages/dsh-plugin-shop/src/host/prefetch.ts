@@ -88,6 +88,37 @@ interface Lane {
   env: NodeJS.ProcessEnv | undefined
 }
 
+/**
+ * `cmd.exe`'s exit code for a command line it could not resolve — the Windows
+ * answer to the ENOENT node never sends there.
+ *
+ * On the one platform where this module passes `shell: true`, the child node
+ * starts is `cmd.exe`, which EXISTS: the spawn succeeds, its "not recognized
+ * as an internal or external command" complaint goes to a stderr this module
+ * discards, and no `error` event ever arrives. The ENOENT latch below is
+ * therefore dead on Windows by construction. Measured 2026-09-14 on this
+ * Linux box, whose shell answers 127 instead of 9009 but is otherwise the same
+ * shape: `spawn('definitely-not-here', argv, { shell: true })` emits only
+ * `exit`, while the identical spawn without the shell emits `error: ENOENT`.
+ * PR #45's `windows` job is the half that cannot run here — it is where the
+ * missing latch showed up, as the case "reports pnpm absent to the install it
+ * was serving, and refuses the next by name" sitting red for the full 10s of
+ * its `vi.waitFor` because the line it filters for was never announced.
+ *
+ * **9009 itself is unverified on this machine and cannot be verified on it.**
+ * Nothing reaches this constant without `platform === 'win32'`, so no local
+ * run — including the test added for this branch, which drives the arm with
+ * this constant and so pins the plumbing rather than the number — executes it.
+ * CI's `windows` runner is the only oracle, and the case named above is the
+ * assertion that decides it: green only if the number is right. Should it be
+ * wrong, the fix is inert rather than harmful — the latch does not set and the
+ * generic exit line stands, which is what Windows does today. A false positive
+ * is bounded by this module's own contract: the worst a stray 9009 can do is
+ * refuse the rest of the process's prefetches, a lost optimization and never a
+ * failed, slower or altered install.
+ */
+const SHELL_COMMAND_NOT_FOUND = 9009
+
 export function createPrefetcher(options: {
   pnpmBin?: string
   spawn?: SpawnFn
@@ -124,6 +155,18 @@ export function createPrefetcher(options: {
   /** Tell every install the running batch served. */
   const announce = (current: Lane, line: string): void => {
     for (const log of current.inFlight.values()) log(line)
+  }
+
+  /** pnpm is not on PATH: stop prefetching for the rest of this process, and
+   * tell the installs the running batch served why.
+   *
+   * Both ways absence arrives land here — node's ENOENT for a binary it could
+   * not start, and cmd.exe's {@link SHELL_COMMAND_NOT_FOUND} for a name it
+   * could not resolve — so the latch and the line a user reads cannot drift
+   * apart between them. */
+  const latchAbsent = (current: Lane): void => {
+    pnpmAbsent = true
+    announce(current, 'dsh-plugin-shop: no download phase — pnpm not found on PATH')
   }
 
   const finish = (profile: string, current: Lane): void => {
@@ -207,8 +250,7 @@ export function createPrefetcher(options: {
     child.on('error', error => {
       if (!isCurrent()) return
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        pnpmAbsent = true
-        announce(current, 'dsh-plugin-shop: no download phase — pnpm not found on PATH')
+        latchAbsent(current)
       } else {
         announce(current, `dsh-plugin-shop: the download phase could not start — ${error.message}`)
       }
@@ -216,7 +258,14 @@ export function createPrefetcher(options: {
     })
     child.on('exit', code => {
       if (!isCurrent()) return
-      if (code === 0) announce(current, 'dsh-plugin-shop: packages fetched ahead of the install')
+      // Absence on the one path where `error` cannot report it. `shell` is
+      // true only for a batch node handed to cmd.exe, which is the only place
+      // 9009 means what it says — so the arm is gated on it rather than on the
+      // bare number, which a real pnpm is free to exit with for its own
+      // reasons. A batch that genuinely ran and failed still falls through to
+      // the two lines below.
+      if (shell && code === SHELL_COMMAND_NOT_FOUND) latchAbsent(current)
+      else if (code === 0) announce(current, 'dsh-plugin-shop: packages fetched ahead of the install')
       else if (code !== null) announce(current, `dsh-plugin-shop: the download phase exit ${code}; the install will fetch what is missing`)
       finish(profile, current)
     })
