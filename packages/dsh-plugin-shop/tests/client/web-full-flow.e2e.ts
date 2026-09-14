@@ -1013,7 +1013,22 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       const notice = card.locator('[data-shop-restart-notice]')
       await notice.waitFor({ state: 'visible', timeout: 60_000 })
       expect(await notice.textContent()).toBe(zh.hotClientHalfNotice)
-      await card.locator('[data-shop-restart]').waitFor({ state: 'visible', timeout: 10_000 })
+      // The same platform branch the config-fixture case above carries, and
+      // for the same reason: `restartPlatformSupported` is `platform !==
+      // 'win32'`, so on Windows `ActivationOffer` renders the disabled notice
+      // where a POSIX host renders the offer. The activation is `restart` on
+      // both — what differs is only which of the two the client may show.
+      // Measured 2026-09-14 on Windows 11, dsh 0.1.5-rc.1: this case sat red
+      // for the full 10s of this wait, on a host behaving exactly as designed.
+      if (process.platform === 'win32') {
+        await card.locator('[data-shop-restart-disabled]').waitFor({ state: 'visible', timeout: 10_000 })
+        expect(await card.locator('[data-shop-restart]').count()).toBe(0)
+      } else {
+        await card.locator('[data-shop-restart]').waitFor({ state: 'visible', timeout: 10_000 })
+      }
+      // Platform-independent, and the half this case is actually about: a hot
+      // mount puts no client half in the boot graph, so a reload would fetch
+      // nothing and must never be offered.
       expect(await card.locator('[data-shop-reload]').count()).toBe(0)
 
       // The measurement the paragraph above rests on, taken here rather than
