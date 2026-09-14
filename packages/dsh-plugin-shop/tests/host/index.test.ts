@@ -1771,9 +1771,15 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
       loaderEntries: () => [],
     })
     // Overwrite the auto-seeded host-only manifest with a client-half one —
-    // fixturePackage cannot express `dsh.client` — before calling uninstall:
-    // the read must happen while the package is still on disk, the same
-    // ordering constraint priorEntryIds already has.
+    // fixturePackage cannot express `dsh.client` — before calling uninstall.
+    //
+    // This is NOT the ordering discriminator, and the spec no longer claims
+    // it is (§5): for a client-declaring package both orderings answer
+    // `reload`, because a late read hits the deleted manifest and the
+    // conservative fallback assumes a browser half. The host-only sibling
+    // above, which runs `fakeDshRemovingManifest` and asserts `live`, is the
+    // one that separates them. What this test establishes is the other half:
+    // that a declared browser half reaches `reload` at all.
     writeFileSync(join(profileDir, 'node_modules', 'dsh-goodbye-plugin', 'package.json'), JSON.stringify({
       name: 'dsh-goodbye-plugin',
       dsh: { client: { inject: [], platform: 'web' } },

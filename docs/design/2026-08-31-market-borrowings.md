@@ -224,6 +224,20 @@ existing install/uninstall flows, Host-side. `installStatus` already
 carries `needsRestart`; its semantics change ("false" more often), the
 shape does not. No new RPC methods; the §5.3 boundaries stand.
 
+**Amendment (2026-09-11, design: 2026-09-11-activation-model.md §6): the
+wire contract DID change, and `needsRestart` is gone.** The paragraph
+above and every `needsRestart` in this section now read `activation:
+'live' | 'reload' | 'restart'`. The shape had to change because the
+field answered for the HOST half alone: a plugin's browser half reaches
+a tab only through `window.__DSH_BOOT__`, which the webserver recomposes
+on every index request, so a tab predating a hot mount is stale by one
+RELOAD — and `needsRestart: false` told its reader there was nothing to
+do. Nothing below changes in mechanism: `restart` keeps the reason codes
+§4.2 defines, `live` is what `needsRestart: false` meant for a package
+with no browser half, and `reload` is the case the boolean could not
+express. The self-update exclusion stands unchanged — it keeps
+`restart`, for the reason §4.2 gives.
+
 ### 4.1 `host/hot.ts` (mechanism ported from their hot.ts)
 
 - `loadHotTreeClass()`: dynamic `import('@deepseek-ai/cordis-plugin-include')`

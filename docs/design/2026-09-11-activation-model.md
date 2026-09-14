@@ -225,11 +225,28 @@ control.
 `activationOf` is a three-row truth table and is tested as one.
 
 The four flows are tested at the host boundary for which value they
-report, including the ordering constraint: an uninstall of a
-client-declaring package must report `reload` even though the manifest
-is gone by the time the result is composed. A test that passes because
-the read happened to be early is not evidence; the test asserts the
-value after a real uninstall.
+report, including the ordering constraint: the browser half is read
+while the package is still on disk, because `afterDone` runs once an
+uninstall has deleted the manifest and once an update has overwritten
+it.
+
+The discriminating test is the HOST-ONLY uninstall, not the
+client-declaring one. For a package that declares `dsh.client` both
+orderings answer `reload` — an early read finds the declaration, a late
+read finds nothing and the conservative fallback assumes one — so no
+assertion on that case can tell the two apart, and a test written there
+is not evidence about ordering however it is set up. The host-only case
+separates them: read early it is `false` and reports `live`, read late
+it hits the deleted manifest and reports `reload`. That test therefore
+drives a fake `dsh` whose `remove` really deletes the manifest, and
+asserts `live`. The client-declaring test stays, for the value it does
+establish — that a browser half reaches `reload` at all.
+
+The update path needs the opposite fixture, and has its own test: a
+package whose OLD version declares `dsh.client` and whose new one does
+not, which must still report `reload` because the open tab is running
+the old bundle. One manifest on disk cannot express two versions, so
+that test states them through the `hotFs` read seam.
 
 ## 6. The wire change
 
