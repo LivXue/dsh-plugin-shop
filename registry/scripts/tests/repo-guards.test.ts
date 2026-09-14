@@ -633,6 +633,28 @@ describe('the harness pin and the e2e contract move together', () => {
   })
 })
 
+describe('the e2e runs on the platform whose contract it branches on', () => {
+  it("runs plugin.yml's exit-criteria job on windows-latest as well as ubuntu", () => {
+    // web-full-flow.e2e.ts asserts a DIFFERENT outcome per platform, because
+    // `shop/restart` is POSIX-only: a restart-required install offers the
+    // restart gate on Linux and that reason's own notice on Windows. Until
+    // 2026-09-14 only ubuntu ran it, so the win32 arm was asserted by nothing
+    // automated and the divergence surfaced by hand, as an opaque 10s timeout
+    // on a host behaving exactly as designed.
+    //
+    // This guard exists because dropping windows-latest would restore that
+    // silently: every branch still compiles, the suite still passes, and half
+    // of what it claims simply stops being checked. A platform branch that no
+    // leg executes is indistinguishable from one that is correct.
+    const workflow = parse(read('.github/workflows/plugin.yml')) as {
+      jobs: Record<string, { strategy?: { matrix?: { os?: string[] } } }>
+    }
+    const os = workflow.jobs.test?.strategy?.matrix?.os ?? []
+    expect(os, 'plugin.yml runs the exit criteria on no ubuntu runner').toContain('ubuntu-latest')
+    expect(os, 'plugin.yml runs the exit criteria on no windows runner').toContain('windows-latest')
+  })
+})
+
 describe('the exit criteria cannot skip silently in CI', () => {
   it('tells the package suite that a skipped exit criterion is a failure', () => {
     // real-install.test.ts and web-full-flow.e2e.ts are the P1 and P2 exit

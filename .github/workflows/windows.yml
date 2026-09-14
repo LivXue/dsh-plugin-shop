@@ -91,5 +91,11 @@ jobs:
       # `tests/client/web-full-flow.e2e.ts` is in scope but self-skips:
       # `describe.skipIf(!hasDsh || !hasChromium)`, and this leg deliberately
       # installs neither, nor does it set DSH_SHOP_REQUIRE_E2E. plugin.yml is
-      # where that criterion runs, against a pinned harness.
+      # where that criterion runs, against a pinned harness — and since
+      # 2026-09-14 it runs there on windows-latest as well as ubuntu, so the
+      # skip here is a division of labour rather than a platform gap. Keeping
+      # the harness out of THIS leg is deliberate: its value is that both
+      # suites run whole against a plain toolchain, and a global dsh plus a
+      # browser download would make it a slower duplicate of plugin.yml's
+      # Windows arm.
       - run: pnpm -C packages/dsh-plugin-shop test
