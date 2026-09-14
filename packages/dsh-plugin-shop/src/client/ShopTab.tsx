@@ -6,8 +6,8 @@
 
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type { CatalogEntry, InstallArgs, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
-import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Activation, type Category, activationNoticeKey, uninstallActivationNoticeKey, authorOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatSize, formatStars, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, rejectionCodeKey, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
+import type { CatalogEntry, InstallArgs, RestartBlockedReason, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
+import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Activation, type Category, activationNoticeKey, uninstallActivationNoticeKey, authorOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatSize, formatStars, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, rejectionCodeKey, restartBlockedNoticeKey, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
 import { useInstallFlows, type InstallFlow } from './useInstall.ts'
 import { useUninstallFlows, type UninstallFlow } from './useUninstall.ts'
 import { useUpdateSelf } from './useUpdateSelf.ts'
@@ -80,7 +80,7 @@ function ChevronIcon({ open }: { open: boolean }): ReactNode {
  * install controls. An installed plugin's card carries its installed row:
  * current → the non-interactive installed label, behind → the update button;
  * uninstalled → the install button. */
-const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, nameTakenBy, t, flowFor, uninstallFlowFor, restart, restartSupported, reload, setEnabled, inInstalledView }: {
+const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, nameTakenBy, t, flowFor, uninstallFlowFor, restart, restartBlocked, reload, setEnabled, inInstalledView }: {
   entry: CatalogEntry
   stars: number | undefined
   installed: ShopInstalledEntry | undefined
@@ -93,7 +93,7 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, na
   flowFor: (key: string) => InstallFlow
   uninstallFlowFor: (key: string) => UninstallFlow
   restart: ShopTabInjected['restart']
-  restartSupported: boolean
+  restartBlocked: RestartBlockedReason | null
   reload: () => void
   setEnabled: ShopTabInjected['setEnabled']
   /** True when the Installed category filter is the active view, passed down
@@ -272,14 +272,14 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, na
               * is still browsable, and a live Install button beside its
               * uninstall receipt is the intended pairing. */}
             {!inInstalledView && (
-              <InstallPanel target={installTarget} tier={entry.tier} missing={missing} blockers={blockers} missingStated flow={flow} t={t} restart={restart} restartSupported={restartSupported} reload={reload} />
+              <InstallPanel target={installTarget} tier={entry.tier} missing={missing} blockers={blockers} missingStated flow={flow} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} />
             )}
             {uninstallFlow.view.kind !== 'idle' && (
               // A completed uninstall stays mounted after installed() drops
               // this row (I-1): the row saying so is gone, but the flow keyed
               // by identity is not, so its outcome — and any reload/restart
               // offer — remains on screen exactly like a completed install.
-              <UninstallPanel name={entry.name} t={t} restart={restart} restartSupported={restartSupported} reload={reload} flow={uninstallFlow} />
+              <UninstallPanel name={entry.name} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} flow={uninstallFlow} />
             )}
           </>
         ) : (
@@ -288,7 +288,7 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, na
               // The update button drives the same install flow for the
               // catalog's latest version; a completed flow stays mounted
               // after installed() catches up so its outcome remains visible.
-              <InstallPanel target={installTarget} tier={entry.tier} variant={installed.outdated ? 'update' : 'install'} missing={missing} blockers={blockers} missingStated flow={flow} t={t} restart={restart} restartSupported={restartSupported} reload={reload} />
+              <InstallPanel target={installTarget} tier={entry.tier} variant={installed.outdated ? 'update' : 'install'} missing={missing} blockers={blockers} missingStated flow={flow} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} />
             ) : (
               // No button on this branch, so the badge follows the label that
               // takes its place: an installed plugin whose modules are absent
@@ -301,7 +301,7 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, na
             {/* The hot enable/disable switch (§8) sits on every installed
              * row — current or outdated — and reads the inventory state. */}
             <EnabledSwitch row={installed} t={t} setEnabled={setEnabled} reload={reload} />
-            <UninstallPanel name={entry.name} t={t} restart={restart} restartSupported={restartSupported} reload={reload} flow={uninstallFlow} />
+            <UninstallPanel name={entry.name} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} flow={uninstallFlow} />
           </>
         )}
         {/* How big it is and who put it here, pushed to the right edge of the
@@ -418,7 +418,7 @@ function BlockerBadge({ blockers, t }: {
  * failure detail, rejection detail — driven by `useInstallFlows`. Shared by the
  * catalog cards (`variant: 'install'`) and the outdated rows' update button
  * (`variant: 'update'`, which drives the same install flow for `name@latest`). */
-function InstallPanel({ target, tier, missing, blockers, missingStated = false, variant = 'install', flow, t, restart, restartSupported, reload }: {
+function InstallPanel({ target, tier, missing, blockers, missingStated = false, variant = 'install', flow, t, restart, restartBlocked, reload }: {
   /** The install request this panel drives, identity included. */
   target: InstallArgs
   tier: CatalogEntry['tier']
@@ -438,7 +438,7 @@ function InstallPanel({ target, tier, missing, blockers, missingStated = false, 
   flow: InstallFlow
   t: ShopTabProps['t']
   restart: ShopTabInjected['restart']
-  restartSupported: boolean
+  restartBlocked: RestartBlockedReason | null
   reload: () => void
 }): ReactNode {
   const [gateOpen, setGateOpen] = useState(false)
@@ -482,7 +482,7 @@ function InstallPanel({ target, tier, missing, blockers, missingStated = false, 
               live that nothing had changed and to try again. */}
           {t(activationNoticeKey(view.activation, view.restartReason))}
         </p>
-        <ActivationOffer activation={view.activation} t={t} restart={restart} restartSupported={restartSupported} reload={reload} where="install" />
+        <ActivationOffer activation={view.activation} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} where="install" />
       </div>
     )
   }
@@ -582,11 +582,11 @@ function InstallPanel({ target, tier, missing, blockers, missingStated = false, 
  * §9.3 is about granting. A business failure (not in the catalog / not
  * installed) lands in the failed view with the host's published detail; a
  * transport failure carries the empty detail and the localized fallback. */
-function UninstallPanel({ name, t, restart, restartSupported, reload, flow }: {
+function UninstallPanel({ name, t, restart, restartBlocked, reload, flow }: {
   name: string
   t: ShopTabProps['t']
   restart: ShopTabInjected['restart']
-  restartSupported: boolean
+  restartBlocked: RestartBlockedReason | null
   reload: () => void
   flow: UninstallFlow
 }): ReactNode {
@@ -620,7 +620,7 @@ function UninstallPanel({ name, t, restart, restartSupported, reload, flow }: {
             next restart on its own — so it offers nothing. A `reload`
             uninstall stopped too, but this page still shows the plugin as
             installed until reloaded. */}
-        <ActivationOffer activation={view.activation} t={t} restart={restart} restartSupported={restartSupported} reload={reload} where="uninstall" />
+        <ActivationOffer activation={view.activation} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} where="uninstall" />
         {/* The way out of `done`. Without it the registry could enter this
             state and never leave: the receipt outlives the ROW it describes
             by design (I-1), but it also outlived the IDENTITY — a reinstall
@@ -789,22 +789,22 @@ function RestartPanel({ t, restart, gate }: {
  * One component rather than the same three lines in each panel. The
  * precedence between the three values is a single rule, and it was written
  * out twice: two places to find when a fourth activation value arrives or
- * the `restartSupported` gate changes, with nothing to make the second one
+ * the `restartBlocked` gate changes, with nothing to make the second one
  * fail if it were missed.
  */
-function ActivationOffer({ activation, t, restart, restartSupported, reload, where }: {
+function ActivationOffer({ activation, t, restart, restartBlocked, reload, where }: {
   activation: Activation
   t: ShopTabProps['t']
   restart: ShopTabInjected['restart']
-  restartSupported: boolean
+  restartBlocked: RestartBlockedReason | null
   reload: () => void
   where: 'install' | 'uninstall'
 }): ReactNode {
   if (activation === 'reload') return <ReloadPanel t={t} reload={reload} where={where} />
   if (activation !== 'restart') return null
-  return restartSupported
+  return restartBlocked === null
     ? <RestartPanel t={t} restart={restart} />
-    : <p className={css.notice} data-shop-restart-disabled>{t('restartDisabledNotice')}</p>
+    : <p className={css.notice} data-shop-restart-disabled>{t(restartBlockedNoticeKey(restartBlocked))}</p>
 }
 
 /** The §4 reload offer: the server already holds the new state and this tab
@@ -907,7 +907,7 @@ function EnabledSwitch({ row, t, setEnabled, reload }: {
 /** One outdated install row (§7.3): the name, the installed and latest
  * versions, the hot enable/disable switch, and the update button (the
  * install flow for `name@latest`, reusing `InstallPanel`). */
-function OutdatedRow({ row, tier, missing, t, setEnabled, flowFor, restart, restartSupported, reload }: {
+function OutdatedRow({ row, tier, missing, t, setEnabled, flowFor, restart, restartBlocked, reload }: {
   row: ShopInstalledEntry
   tier: CatalogEntry['tier']
   missing: string[]
@@ -915,7 +915,7 @@ function OutdatedRow({ row, tier, missing, t, setEnabled, flowFor, restart, rest
   setEnabled: ShopTabInjected['setEnabled']
   flowFor: (key: string) => InstallFlow
   restart: ShopTabInjected['restart']
-  restartSupported: boolean
+  restartBlocked: RestartBlockedReason | null
   reload: () => void
 }): ReactNode {
   return (
@@ -932,7 +932,7 @@ function OutdatedRow({ row, tier, missing, t, setEnabled, flowFor, restart, rest
         <InstallPanel
           target={{ name: row.name, version: row.latest, source: row.source, repo: row.repo, subdir: row.subdir }}
           tier={tier} variant="update" missing={missing} blockers={blockersOf(missing, undefined, t)}
-          flow={flowFor(identityKey(row))} t={t} restart={restart} restartSupported={restartSupported} reload={reload}
+          flow={flowFor(identityKey(row))} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload}
         />
       </div>
     </div>
@@ -946,7 +946,7 @@ function OutdatedRow({ row, tier, missing, t, setEnabled, flowFor, restart, rest
  * tier for the update gate is looked up from the catalog by name (community →
  * acknowledgement); an entry absent from the catalog defaults to the
  * community gate (the safer read). */
-function OutdatedSection({ state, entriesByKey, missingByKey, t, setEnabled, flowFor, restart, restartSupported, reload }: {
+function OutdatedSection({ state, entriesByKey, missingByKey, t, setEnabled, flowFor, restart, restartBlocked, reload }: {
   state: InstalledState
   entriesByKey: ReadonlyMap<string, CatalogEntry>
   missingByKey: ReadonlyMap<string, string[]>
@@ -954,7 +954,7 @@ function OutdatedSection({ state, entriesByKey, missingByKey, t, setEnabled, flo
   setEnabled: ShopTabInjected['setEnabled']
   flowFor: (key: string) => InstallFlow
   restart: ShopTabInjected['restart']
-  restartSupported: boolean
+  restartBlocked: RestartBlockedReason | null
   reload: () => void
 }): ReactNode {
   if (state.kind === 'loading') return null
@@ -977,7 +977,7 @@ function OutdatedSection({ state, entriesByKey, missingByKey, t, setEnabled, flo
               setEnabled={setEnabled}
               flowFor={flowFor}
               restart={restart}
-              restartSupported={restartSupported}
+              restartBlocked={restartBlocked}
               reload={reload}
             />
           </li>
@@ -1002,12 +1002,14 @@ export function ShopTab(props: ShopTabProps): ReactNode {
   // (the check is advisory — a failed one leaves the row empty, the tab's
   // own error states carry the bigger story).
   const [selfVersion, setSelfVersion] = useState<ShopVersionResult | null>(null)
-  // Whether the host can actually restart dsh (§C-1): the flag rides the
-  // same version read as the self-update row — no extra fetch. While the
-  // advisory check has not answered, treat restart as supported: a systemd
-  // deployment then gets the host's published refusal detail, and a failed
-  // check never passes the systemd claim off as fact.
-  const restartSupported = selfVersion?.restartSupported ?? true
+  // Why the host would refuse to restart dsh (§C-1), or null when it would
+  // not: the reason rides the same version read as the self-update row — no
+  // extra fetch. While the advisory check has not answered, treat restart as
+  // possible: a blocked deployment then gets the host's published refusal
+  // detail from the press itself, and a failed check never passes any one
+  // reason's claim off as fact — which is exactly what a defaulted-to-blocked
+  // value would do, since a reason has to name a cause to render at all.
+  const restartBlocked = selfVersion?.restartBlocked ?? null
   // The §4 reload trigger: a real page reload by default, so a test can
   // inject a spy instead — jsdom's own `location.reload` is not writable.
   // Memoized because it is handed to every `memo(EntryCard)`: defaulted
@@ -1450,7 +1452,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
                 * for it still renders in the panel below. While the update
                 * runs, Check returns and the progress panel is the
                 * affordance. */}
-              {selfUpdate.view.kind === 'done' && restartSupported ? (
+              {selfUpdate.view.kind === 'done' && restartBlocked === null ? (
                 <button
                   type="button"
                   className={css.restartSelfButton}
@@ -1529,15 +1531,15 @@ export function ShopTab(props: ShopTabProps): ReactNode {
             <p className={css.notice}>{t('installedRestartNotice')}</p>
             {/* The shop cannot swap itself live; the restart offer carries
                 the same §C-1 gate as the install and uninstall flows. */}
-            {restartSupported && (
+            {restartBlocked === null && (
               <RestartPanel
                 t={t}
                 restart={restart}
                 gate={{ open: selfRestartGate, close: () => setSelfRestartGate(false) }}
               />
             )}
-            {!restartSupported && (
-              <p className={css.notice} data-shop-restart-disabled>{t('restartDisabledNotice')}</p>
+            {restartBlocked !== null && (
+              <p className={css.notice} data-shop-restart-disabled>{t(restartBlockedNoticeKey(restartBlocked))}</p>
             )}
           </div>
         </div>
@@ -1699,7 +1701,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
               const key = entryKey(entry)
               return (
                 <li key={key}>
-                  <EntryCard entry={entry} stars={starsOf(entry, stars)} installed={installedByKey.get(key)} missing={missingByKey.get(key) ?? []} nameTakenBy={nameTakenByKey.get(key)} t={t} flowFor={flows.flowFor} uninstallFlowFor={uninstallFlows.flowFor} restart={restart} restartSupported={restartSupported} reload={reload} setEnabled={setEnabled} inInstalledView={category === 'installed'} />
+                  <EntryCard entry={entry} stars={starsOf(entry, stars)} installed={installedByKey.get(key)} missing={missingByKey.get(key) ?? []} nameTakenBy={nameTakenByKey.get(key)} t={t} flowFor={flows.flowFor} uninstallFlowFor={uninstallFlows.flowFor} restart={restart} restartBlocked={restartBlocked} reload={reload} setEnabled={setEnabled} inInstalledView={category === 'installed'} />
                 </li>
               )
             })}
@@ -1722,7 +1724,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
         setEnabled={setEnabled}
         flowFor={flows.flowFor}
         restart={restart}
-        restartSupported={restartSupported}
+        restartBlocked={restartBlocked}
         reload={reload}
       />
     </div>

@@ -40,11 +40,28 @@
  * restart offer instead; the peer install proves the harness-compatibility
  * badge and gate warning render for a genuinely unresolvable declared peer,
  * and — warn, never block — still reaches done; the client install must
- * report done with activation `reload` and offer the reload button instead
- * of either the no-restart notice or the restart offer.
+ * report done with activation `restart` and the client-half reason, and must
+ * NOT offer the reload button — a hot mount puts no client half in the boot
+ * graph, so a reload would fetch nothing. (That last sentence read the other
+ * way round until the 2026-09-11 activation model measured it; the reload
+ * path it described is the one this fixture disproved.)
+ *
+ * Both restart-offering flows above go through `expectRestartOffer`, which
+ * reads the offer the HOST allows rather than assuming the POSIX one: on
+ * Windows `shop/restart` is refused before anything is torn down, so the card
+ * carries that refusal's notice in the button's place.
  *
  * Skipped unless the machine has both the real `dsh` CLI on PATH and a
  * playwright chromium installed (CI installs both; see .github/workflows).
+ *
+ * KNOWN GAP: only `plugin.yml` installs them, and it runs on ubuntu. The
+ * windows-latest leg (`windows.yml`) deliberately installs neither and sets no
+ * `DSH_SHOP_REQUIRE_E2E`, so this file self-skips there. Every `win32` branch
+ * below is therefore verified by hand, not by CI — measured 2026-09-14 on
+ * Windows 11, dsh 0.1.5-rc.1 — and a Windows-only divergence can still merge
+ * green. Closing it means a windows-latest leg that installs dsh and a
+ * chromium; until then, re-run this file on Windows when touching the restart
+ * contract.
  *
  * Written against harness 0.1.5-rc.1 — the version `.github/workflows/plugin.yml`
  * installs globally, and therefore the one every selector below was measured
@@ -115,6 +132,7 @@
 
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -162,6 +180,77 @@ async function expandGlobalPlane(dialog: Locator): Promise<void> {
 import { zh } from '../../src/client/locales.ts'
 import { startCatalogServer, type CatalogServer } from '../fixtures/catalog-server.ts'
 import { startLocalRegistry, type LocalRegistry } from '../fixtures/local-registry.ts'
+
+/**
+ * A port to boot the web profile on, held only long enough to learn its
+ * number.
+ *
+ * `--port 0` would be simpler and is what this suite used to pass, but the
+ * shop refuses a restart under it — the OS hands the NEW process a different
+ * port and the browser would be stranded on a dead origin — and the host now
+ * ADVERTISES that refusal in `version().restartBlocked` rather than raising it
+ * only when the button is pressed. Booting that way would therefore make every
+ * restart-required install below render the port-zero notice, and the suite
+ * would stop exercising the restart offer altogether. It would also be the
+ * wrong thing to assert: the offer this file used to wait for was one this
+ * very composition guaranteed the host would refuse.
+ *
+ * Bound on the unspecified address, not loopback, so the reservation covers
+ * the interfaces dsh may bind. A collision in the gap between close and dsh's
+ * own bind fails at boot, loudly, with dsh's stdout and stderr attached.
+ */
+async function reservePort(): Promise<number> {
+  const probe = createServer()
+  await new Promise<void>((resolve, reject) => {
+    probe.once('error', reject)
+    probe.listen(0, resolve)
+  })
+  const address = probe.address()
+  await new Promise<void>(resolve => { probe.close(() => { resolve() }) })
+  if (address === null || typeof address === 'string') {
+    throw new Error('could not reserve a port for the dsh web profile')
+  }
+  return address.port
+}
+
+/**
+ * The §8 activation offer for a restart-required install, as the HOST's own
+ * contract decides it.
+ *
+ * Written once and called from both flows that reach it. Two copies of this
+ * branch existed and had already drifted on the single fact they both explain
+ * — one named the composition that makes it safe, the other claimed the
+ * platform decides alone — which is the defect `ActivationOffer`'s own
+ * docblock describes on the product side of the same rule.
+ *
+ * The version gate is load-bearing and is why this takes the dialog as well as
+ * the card. The client treats the advisory version check as fail-open
+ * (`selfVersion?.restartBlocked ?? null`), so a bare wait for
+ * `[data-shop-restart]` is satisfied by that default whether the host answered
+ * `null`, answered nothing, or threw. `[data-shop-version]` renders if and
+ * only if the check RESOLVED, so waiting on it first makes both branches
+ * claims about the host rather than about a default.
+ *
+ * The win32 branch asserts the notice's TEXT, not merely its presence. Asking
+ * only "did some notice render" is what let the shop tell every Windows reader
+ * that dsh runs as a systemd service and to set an override the platform gate
+ * — first of the three and the only one with no override — could never reach.
+ */
+async function expectRestartOffer(dialog: Locator, card: Locator): Promise<void> {
+  await dialog.locator('[data-shop-version]').waitFor({ state: 'visible', timeout: 30_000 })
+  if (process.platform === 'win32') {
+    const blocked = card.locator('[data-shop-restart-disabled]')
+    await blocked.waitFor({ state: 'visible', timeout: 10_000 })
+    expect(await blocked.textContent()).toBe(zh.restartBlockedWindowsNotice)
+    expect(await card.locator('[data-shop-restart]').count()).toBe(0)
+  } else {
+    await card.locator('[data-shop-restart]').waitFor({ state: 'visible', timeout: 10_000 })
+    // The other direction, which only this branch can check and which CI is
+    // the sole runner of: a regression rendering both the offer and a notice
+    // would otherwise pass on the one platform every merge goes through.
+    expect(await card.locator('[data-shop-restart-disabled]').count()).toBe(0)
+  }
+}
 
 /** Read the browser's colours, including colour-mix and translucent ancestor
  * backgrounds. These controls use solid fills; stop at the first opaque one. */
@@ -475,15 +564,18 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       `registry=${localRegistry.baseUrl}\n`,
     )
 
-    // Boot the real web profile against the fixture catalog. `--port 0` lets
-    // the OS pick the port; dsh prints the BOUND port in `dsh web: <url>`
-    // once the Loader tree settles (the web-app bundle announces readiness),
-    // so the URL is parsed from stdout rather than guessed.
+    // Boot the real web profile against the fixture catalog on a port
+    // reserved up front (see `reservePort`: `--port 0` is itself a restart
+    // refusal the host advertises, and booting under it would cost this file
+    // its restart-offer coverage). dsh prints the BOUND port in
+    // `dsh web: <url>` once the Loader tree settles (the web-app bundle
+    // announces readiness), so the URL is still parsed from stdout rather than
+    // assumed to be the one we asked for.
     // Through the same resolution as `hasDsh` above: a bare `dsh` is ENOENT on
     // Windows, and this spawn is what boots the harness the whole flow drives.
     const web = dshCommand({
       dshBin: 'dsh',
-      args: ['--profile', 'web', '--no-open', '--port', '0'],
+      args: ['--profile', 'web', '--no-open', '--port', String(await reservePort())],
       platform: process.platform,
       execPath: process.execPath,
       script: resolveDshScript(
@@ -493,7 +585,20 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
     })
     dshProcess = spawn(web.command, web.args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...localRegistryEnv(), DSH_HOME: tmpHome, DSH_SHOP_CATALOG_URL: catalogServer.baseUrl },
+      env: {
+        ...localRegistryEnv(),
+        DSH_HOME: tmpHome,
+        DSH_SHOP_CATALOG_URL: catalogServer.baseUrl,
+        // `detectSupervisor` reads these two plus ppid 1. The ppid half is
+        // already unreachable (dsh is a child of the vitest worker), but the
+        // markers are inherited, and a runner started as a systemd unit
+        // exports them into every descendant. Dropping them makes the
+        // platform the only restart reason this composition can produce —
+        // which is what `expectRestartOffer`'s branch claims, now enforced
+        // rather than assumed.
+        INVOCATION_ID: undefined,
+        JOURNAL_STREAM: undefined,
+      },
       detached: true, // its own process group, so teardown kills the whole tree
     })
     const stdout: string[] = []
@@ -713,7 +818,11 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       const notice = card.locator('[data-shop-restart-notice]')
       await notice.waitFor({ state: 'visible', timeout: 60_000 })
       expect(await notice.textContent()).toContain('已安装并热挂载')
-      expect(await card.locator('[data-shop-restart]').count()).toBe(0)
+      // Both offers, not just the enabled one: under activation `restart` a
+      // host that cannot restart renders `[data-shop-restart-disabled]`
+      // instead, so counting `[data-shop-restart]` alone would be satisfied by
+      // exactly the regression this line refuses — on Windows, silently.
+      expect(await card.locator('[data-shop-restart], [data-shop-restart-disabled]').count()).toBe(0)
 
       // Liveness through the loader inventory — the strict read of what is
       // actually mounted. A route-based probe is unavailable: the harness
@@ -778,7 +887,9 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await card2.locator('[data-shop-uninstall]').click()
       await card2.locator('[data-shop-install]').waitFor({ state: 'visible', timeout: 60_000 })
       expect(await card2.locator('[data-shop-uninstall]').count()).toBe(0)
-      expect(await card2.locator('[data-shop-restart]').count()).toBe(0)
+      // Both offers, for the reason the install-side twin above states: this
+      // is the only assertion that an uninstall did not report `restart`.
+      expect(await card2.locator('[data-shop-restart], [data-shop-restart-disabled]').count()).toBe(0)
 
       // The hot fiber is gone: a fresh settings mount takes a fresh inventory
       // snapshot (the tab's list() runs per mount), which no longer lists the
@@ -827,20 +938,9 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       const notice = card.locator('[data-shop-restart-notice]')
       await notice.waitFor({ state: 'visible', timeout: 60_000 })
       expect(await notice.textContent()).toContain('该插件的补丁包含无法热挂载的配置；重启 dsh 后生效')
-      // The §8 restart offer renders for a restart-required install on a
-      // restart-capable host (this composition: spawned by vitest, no systemd
-      // markers in the env) — and Windows is NOT one: `restartPlatformSupported`
-      // is `platform !== 'win32'`, because the two-phase handoff helper is a
-      // POSIX `sh` one-liner with no Windows equivalent. There the client
-      // renders the disabled notice instead, so assert the platform's actual
-      // contract rather than the POSIX one; hard-coding the offer is what made
-      // this case unpassable on Windows once the suite could run there at all.
-      if (process.platform === 'win32') {
-        await card.locator('[data-shop-restart-disabled]').waitFor({ state: 'visible', timeout: 10_000 })
-        expect(await card.locator('[data-shop-restart]').count()).toBe(0)
-      } else {
-        await card.locator('[data-shop-restart]').waitFor({ state: 'visible', timeout: 10_000 })
-      }
+      // The §8 restart offer for a restart-required install, as the host
+      // allows it on THIS platform — see `expectRestartOffer`.
+      await expectRestartOffer(dialog, card)
 
       // Nothing is live: a fresh settings mount takes a fresh inventory
       // snapshot, and the config fixture has no hot entry in it.
@@ -1006,26 +1106,20 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // without entering that, so there is nothing for a reload to fetch.
       //
       // The done view must therefore render the client-half restart copy and
-      // offer the restart gate — never the no-restart line (the §0
+      // the restart activation's offer — never the no-restart line (the §0
       // `dsh-theme-endfield` report: told nothing was needed, needed a
       // restart) and never the reload offer, which would send the reader to
-      // press a button that provably changes nothing.
+      // press a button that provably changes nothing. WHICH offer the restart
+      // activation shows is the host's call, not this case's; `activation` is
+      // `restart` either way, and that is what this case is about.
       const notice = card.locator('[data-shop-restart-notice]')
       await notice.waitFor({ state: 'visible', timeout: 60_000 })
       expect(await notice.textContent()).toBe(zh.hotClientHalfNotice)
-      // The same platform branch the config-fixture case above carries, and
-      // for the same reason: `restartPlatformSupported` is `platform !==
-      // 'win32'`, so on Windows `ActivationOffer` renders the disabled notice
-      // where a POSIX host renders the offer. The activation is `restart` on
-      // both — what differs is only which of the two the client may show.
-      // Measured 2026-09-14 on Windows 11, dsh 0.1.5-rc.1: this case sat red
-      // for the full 10s of this wait, on a host behaving exactly as designed.
-      if (process.platform === 'win32') {
-        await card.locator('[data-shop-restart-disabled]').waitFor({ state: 'visible', timeout: 10_000 })
-        expect(await card.locator('[data-shop-restart]').count()).toBe(0)
-      } else {
-        await card.locator('[data-shop-restart]').waitFor({ state: 'visible', timeout: 10_000 })
-      }
+      // Measured 2026-09-14 on Windows 11, dsh 0.1.5-rc.1: an unconditional
+      // wait for `[data-shop-restart]` here sat red for its full 10s on a host
+      // behaving exactly as designed, which is why this goes through the
+      // helper rather than naming one platform's outcome.
+      await expectRestartOffer(dialog, card)
       // Platform-independent, and the half this case is actually about: a hot
       // mount puts no client half in the boot graph, so a reload would fetch
       // nothing and must never be offered.

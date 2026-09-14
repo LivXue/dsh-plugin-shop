@@ -65,7 +65,7 @@ function bench(
     .mockResolvedValue(specs === undefined ? derived : specs)
   const uninstall = vi.fn<ShopTabInjected['uninstall']>().mockResolvedValue({ ok: true, installId: 'u1' })
   const restart = vi.fn<ShopTabInjected['restart']>().mockResolvedValue({ ok: true })
-  const version = vi.fn<ShopTabInjected['version']>().mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartSupported: true })
+  const version = vi.fn<ShopTabInjected['version']>().mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartBlocked: null })
   const updateStart = vi.fn<ShopTabInjected['updateStart']>().mockResolvedValue({ ok: true, installId: 's1', state: 'running' })
   const injected: ShopTabInjected = { catalog, install, installStatus, setEnabled, installed, installedSpecs, uninstall, restart, version, updateStart }
   return { catalog, install, installStatus, setEnabled, installed, installedSpecs, uninstall, restart, version, updateStart, injected }
@@ -687,20 +687,46 @@ describe('ShopTab', () => {
     expect(container.querySelector('[data-shop-restart]')).toBeTruthy()
   })
 
-  it('hides the restart offer and shows the disabled notice when the host reports restartSupported: false', async () => {
+  it("hides the restart offer and shows that reason's notice when the host reports restartBlocked: 'systemd'", async () => {
     const { injected, version } = bench(snapshot({ tier: 'verified' }))
-    version.mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartSupported: false })
+    version.mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartBlocked: 'systemd' })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     fireEvent.click(screen.getByText(en.install))
-    await waitFor(() => expect(screen.getByText(en.restartDisabledNotice)).toBeTruthy(), { timeout: 3000 })
+    await waitFor(() => expect(screen.getByText(en.restartBlockedSystemdNotice)).toBeTruthy(), { timeout: 3000 })
     // The pending-change notice stays; only the restart offer is gone.
     expect(screen.getByText(en.installedRestartNotice)).toBeTruthy()
     expect(container.querySelector('[data-shop-restart]')).toBeNull()
-    expect(container.querySelector('[data-shop-restart-disabled]')?.textContent).toBe(en.restartDisabledNotice)
+    expect(container.querySelector('[data-shop-restart-disabled]')?.textContent).toBe(en.restartBlockedSystemdNotice)
   })
 
-  it('still offers the restart button when the host reports restartSupported: true', async () => {
+  it("names Windows, not systemd, when the host reports restartBlocked: 'windows'", async () => {
+    const { injected, version } = bench(snapshot({ tier: 'verified' }))
+    version.mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartBlocked: 'windows' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText(en.install))
+    await waitFor(() => expect(container.querySelector('[data-shop-restart-disabled]')).toBeTruthy(), { timeout: 3000 })
+    const notice = container.querySelector('[data-shop-restart-disabled]')
+    expect(notice?.textContent).toBe(en.restartBlockedWindowsNotice)
+    // The specific regression: the one string this replaced named systemd and
+    // offered `allowRestart: true`, and the platform gate — first of the three
+    // and the only one with no override — made that advice inert.
+    expect(notice?.textContent).not.toContain('systemd')
+    expect(notice?.textContent).not.toContain('allowRestart')
+  })
+
+  it("names --port 0 when the host reports restartBlocked: 'port-zero'", async () => {
+    const { injected, version } = bench(snapshot({ tier: 'verified' }))
+    version.mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartBlocked: 'port-zero' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText(en.install))
+    await waitFor(() => expect(container.querySelector('[data-shop-restart-disabled]')).toBeTruthy(), { timeout: 3000 })
+    expect(container.querySelector('[data-shop-restart-disabled]')?.textContent).toBe(en.restartBlockedPortZeroNotice)
+  })
+
+  it('still offers the restart button when the host reports restartBlocked: null', async () => {
     const { injected } = bench(snapshot({ tier: 'verified' }))
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
@@ -772,11 +798,11 @@ describe('ShopTab', () => {
 
   it('hides the restart offer after an uninstall when restart is unsupported', async () => {
     const { injected, version } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }])
-    version.mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartSupported: false })
+    version.mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartBlocked: 'systemd' })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-uninstall]')!)
-    await waitFor(() => expect(screen.getByText(en.restartDisabledNotice)).toBeTruthy(), { timeout: 3000 })
+    await waitFor(() => expect(screen.getByText(en.restartBlockedSystemdNotice)).toBeTruthy(), { timeout: 3000 })
     expect(screen.getByText(en.uninstalledRestartNotice)).toBeTruthy()
     expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-restart]')).toBeNull()
   })
@@ -808,7 +834,7 @@ describe('ShopTab', () => {
 
   it('shows no update button when the version check has no answer', async () => {
     const { injected, version } = bench(snapshot())
-    version.mockResolvedValue({ installed: '0.4.4', latest: null, outdated: false, restartSupported: true })
+    version.mockResolvedValue({ installed: '0.4.4', latest: null, outdated: false, restartBlocked: null })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('v0.4.4')).toBeTruthy())
     expect(container.querySelector('[data-shop-update-self]')).toBeNull()
@@ -817,8 +843,8 @@ describe('ShopTab', () => {
   it('re-checks the version on demand from the check button next to it', async () => {
     const { injected, version } = bench(snapshot())
     version
-      .mockResolvedValueOnce({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartSupported: true })
-      .mockResolvedValue({ installed: '0.4.4', latest: '0.4.5', outdated: true, restartSupported: true })
+      .mockResolvedValueOnce({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartBlocked: null })
+      .mockResolvedValue({ installed: '0.4.4', latest: '0.4.5', outdated: true, restartBlocked: null })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('v0.4.4')).toBeTruthy())
     expect(container.querySelector('[data-shop-update-self]')).toBeNull()
@@ -830,7 +856,7 @@ describe('ShopTab', () => {
 
   it('reports up to date for a moment when the re-check finds nothing newer', async () => {
     const { injected, version } = bench(snapshot())
-    version.mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartSupported: true })
+    version.mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartBlocked: null })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('v0.4.4')).toBeTruthy())
     fireEvent.click(container.querySelector('[data-shop-check-update]')!)
@@ -920,7 +946,7 @@ describe('ShopTab', () => {
     // choose between "Check" and "Update" when only one of them was the thing
     // to do — and it was the row that already wraps at ordinary widths.
     const { injected, version } = bench(snapshot())
-    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartSupported: true })
+    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: null })
     const { container } = renderTab(injected)
     await waitFor(() => expect(container.querySelector('[data-shop-update-self]')).toBeTruthy())
     expect(container.querySelector('[data-shop-check-update]')).toBeNull()
@@ -928,7 +954,7 @@ describe('ShopTab', () => {
 
   it('shows the update button for a newer release and drives the self-update to the restart offer', async () => {
     const { injected, version, updateStart } = bench(snapshot())
-    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartSupported: true })
+    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: null })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('v0.4.3')).toBeTruthy())
     const button = container.querySelector('[data-shop-update-self]')
@@ -948,7 +974,7 @@ describe('ShopTab', () => {
     // in this file leaves this one revertible to `t('installing')` — which is
     // exactly the hole this pair closes.
     const { injected, version, updateStart, installStatus } = bench(snapshot())
-    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartSupported: true })
+    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: null })
     updateStart.mockResolvedValue({ ok: true, installId: 's1', state: 'downloading' })
     installStatus.mockResolvedValue({ found: true, state: 'downloading', log: ['fetching'] })
     const { container } = renderTab(injected)
@@ -965,7 +991,7 @@ describe('ShopTab', () => {
     // has exactly one thing to do, and the row already wraps at ordinary
     // panel widths, so it must never carry two of them at once.
     const { injected, version, updateStart } = bench(snapshot())
-    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartSupported: true })
+    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: null })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('v0.4.3')).toBeTruthy())
     fireEvent.click(container.querySelector('[data-shop-update-self]')!)
@@ -982,7 +1008,7 @@ describe('ShopTab', () => {
     // must not move it past the gate: the row opens the same confirm, and
     // only that confirm calls the RPC.
     const { injected, version, restart } = bench(snapshot())
-    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartSupported: true })
+    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: null })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('v0.4.3')).toBeTruthy())
     fireEvent.click(container.querySelector('[data-shop-update-self]')!)
@@ -996,18 +1022,28 @@ describe('ShopTab', () => {
 
   it('hides the restart offer in the self-update panel when restart is unsupported', async () => {
     const { injected, version } = bench(snapshot())
-    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartSupported: false })
+    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: 'systemd' })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('v0.4.3')).toBeTruthy())
     fireEvent.click(container.querySelector('[data-shop-update-self]')!)
     await waitFor(() => expect(container.querySelector('[data-shop-self-update-done] [data-shop-restart-disabled]')).toBeTruthy(), { timeout: 3000 })
     expect(container.querySelector('[data-shop-self-update-done] [data-shop-restart]')).toBeNull()
-    expect(container.querySelector('[data-shop-self-update-done] [data-shop-restart-disabled]')?.textContent).toBe(en.restartDisabledNotice)
+    expect(container.querySelector('[data-shop-self-update-done] [data-shop-restart-disabled]')?.textContent).toBe(en.restartBlockedSystemdNotice)
+  })
+
+  it('names the reason in the self-update panel too, not only on an entry card', async () => {
+    const { injected, version } = bench(snapshot())
+    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: 'windows' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('v0.4.3')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-update-self]')!)
+    await waitFor(() => expect(container.querySelector('[data-shop-self-update-done] [data-shop-restart-disabled]')).toBeTruthy(), { timeout: 3000 })
+    expect(container.querySelector('[data-shop-self-update-done] [data-shop-restart-disabled]')?.textContent).toBe(en.restartBlockedWindowsNotice)
   })
 
   it('renders the host detail when the self-update is refused', async () => {
     const { injected, version, updateStart } = bench(snapshot())
-    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartSupported: true })
+    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: null })
     updateStart.mockResolvedValue({ ok: false, detail: 'dsh-plugin-shop: 0.4.4 is not a valid version' })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('v0.4.3')).toBeTruthy())

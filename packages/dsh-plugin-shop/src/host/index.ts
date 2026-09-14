@@ -185,6 +185,35 @@ export type ShopUninstallResult =
  * failure — on failure the old process is still serving. */
 export type ShopRestartResult = RestartOutcome
 
+/** Why `shop/restart` would refuse, for a reason fixed for the life of this
+ * process: the platform, the supervisor (env and ppid are read once at
+ * construction), and the launch argv. Every one of them is decided before the
+ * first request arrives, which is what lets `version()` advertise it and the
+ * client name it without asking again.
+ *
+ * `restart()` carries one further refusal this deliberately omits — a running
+ * install — because that one is transient: a mount-time answer about it would
+ * be stale the moment the install finished, and a card would go on saying a
+ * restart was impossible after it had become possible. Static here, dynamic
+ * there; the split is the whole reason this is a separate predicate rather
+ * than a cache of `restart()`'s answer. */
+export type RestartBlockedReason = 'windows' | 'systemd' | 'port-zero'
+
+/** Each blocked reason's author-readable refusal, written once.
+ *
+ * `restart()` returns these as its `detail` and `version()` returns the bare
+ * reason for the client to localize, so the two can no longer disagree about
+ * WHY a restart is impossible. They did: `version()` reported a boolean that
+ * covered two of the refusals, the client had one string for that boolean, and
+ * that string named systemd — so a Windows user was told to restart a systemd
+ * service and to set an override that the platform check, being the first gate
+ * of the three, could never reach. */
+const RESTART_BLOCKED_DETAIL: Record<RestartBlockedReason, string> = {
+  windows: 'dsh-plugin-shop: restart is not supported on Windows yet; restart dsh manually to apply the change',
+  systemd: 'dsh-plugin-shop: restart is disabled because this process is a systemd service — a restart would kill the takeover helper along with the unit, and the service would not come back. Set allowRestart: true in the shop row config to override.',
+  'port-zero': 'dsh-plugin-shop: restart is not supported when dsh was launched with --port 0; restart dsh manually',
+}
+
 /** `shop/version` result (§7.3): the RUNNING shop version (from the shipped
  * package.json, not the manifest's range), the npm latest when the check
  * could answer (`null` = no answer — advisory, never an error), and the
@@ -193,10 +222,10 @@ export interface ShopVersionResult {
   installed: string
   latest: string | null
   outdated: boolean
-  /** Whether `shop/restart` is usable: false when a supervisor owns this
-   * process and no `allowRestart` override is set. The client hides the
-   * restart offer on false but keeps the pending-change notice. */
-  restartSupported: boolean
+  /** Why `shop/restart` would refuse, or null when nothing static stands in
+   * its way. The client drops the restart offer on a reason and renders that
+   * reason's own copy, keeping the pending-change notice either way. */
+  restartBlocked: RestartBlockedReason | null
 }
 
 /** `shop/updateStart` result (§7.3): the self-update spawn, or a typed
@@ -796,6 +825,33 @@ export class ShopGateway extends TypertRemoteService {
     return this.platform !== 'win32'
   }
 
+  /** Why a restart would be refused for this process, or null when nothing
+   * static does. One ordered list, read by `restart()` before it commits and
+   * by `version()` so the client can say the same thing up front.
+   *
+   * The order is the order the refusals were written in and is load-bearing
+   * for the copy a reader sees: Windows first, because the platform check has
+   * no override and reporting the systemd one there sends a Windows user to
+   * set `allowRestart: true`, which this gate would still refuse.
+   *
+   * - `windows`: the handoff helper is a POSIX shell one-liner (restart.ts)
+   *   and there is no `sh` on Windows. That spawn fails ASYNCHRONOUSLY, so
+   *   committing would answer `ok: true`, exit this process, and leave nothing
+   *   to take the port — dsh would simply be gone.
+   * - `systemd`: under a unit the two-phase handoff kills itself, because the
+   *   main process exiting also kills the unit's cgroup and takes the detached
+   *   helper with it; the service never comes back. Overridable, and the only
+   *   one of the three that is.
+   * - `port-zero`: the OS hands the NEW process a fresh port the browser
+   *   cannot know, so a restart would strand the client on a dead origin. */
+  private staticRestartBlock(): RestartBlockedReason | null {
+    if (!this.restartPlatformSupported()) return 'windows'
+    if (detectSupervisor(this.env, { ppid: this.ppid }) === 'systemd' && !this.allowRestartConfigured()) return 'systemd'
+    const portIndex = this.restartArgv.indexOf('--port')
+    if (portIndex !== -1 && this.restartArgv[portIndex + 1] === '0') return 'port-zero'
+    return null
+  }
+
   private allowRestartConfigured(): boolean {
     if (this.allowRestart !== undefined) return this.allowRestart
     const loader = (this.ctx as unknown as {
@@ -1263,29 +1319,13 @@ export class ShopGateway extends TypertRemoteService {
         detail: 'dsh-plugin-shop: an install is still running in this profile; a restart now would boot the new dsh against a half-written profile. Wait for it to finish and try again.',
       }
     }
-    // The handoff helper is a POSIX shell one-liner (restart.ts) and there is
-    // no `sh` on Windows. That spawn fails ASYNCHRONOUSLY, so committing here
-    // would answer `ok: true`, exit this process, and leave nothing to take
-    // the port — dsh would simply be gone. Refuse instead.
-    if (!this.restartPlatformSupported()) {
-      return { ok: false, detail: 'dsh-plugin-shop: restart is not supported on Windows yet; restart dsh manually to apply the change' }
-    }
-    // Under a systemd unit the two-phase handoff kills itself: the main
-    // process exiting also kills the unit's cgroup, taking the detached
-    // helper with it, and the service never comes back. Refuse before
-    // anything is torn down unless the user explicitly allowed it.
-    if (detectSupervisor(this.env, { ppid: this.ppid }) === 'systemd' && !this.allowRestartConfigured()) {
-      return {
-        ok: false,
-        detail: 'dsh-plugin-shop: restart is disabled because this process is a systemd service — a restart would kill the takeover helper along with the unit, and the service would not come back. Set allowRestart: true in the shop row config to override.',
-      }
-    }
-    // Under --port 0 the OS hands the NEW process a fresh port the browser
-    // cannot know; a restart would strand the client. Refuse before
-    // anything is torn down.
-    const portIndex = this.restartArgv.indexOf('--port')
-    if (portIndex !== -1 && this.restartArgv[portIndex + 1] === '0') {
-      return { ok: false, detail: 'dsh-plugin-shop: restart is not supported when dsh was launched with --port 0; restart dsh manually' }
+    // The three static refusals, in the order `staticRestartBlock` states
+    // them, and each one before anything is torn down. Asking it rather than
+    // repeating its checks is what keeps the answer the client was given at
+    // mount identical to the answer a press gets.
+    const blocked = this.staticRestartBlock()
+    if (blocked !== null) {
+      return { ok: false, detail: RESTART_BLOCKED_DETAIL[blocked] }
     }
     try {
       const { cacheDir } = this.rowConfig()
@@ -1327,8 +1367,7 @@ export class ShopGateway extends TypertRemoteService {
       installed,
       latest,
       outdated: latest !== null && lt(installed, latest),
-      restartSupported: this.restartPlatformSupported()
-        && (detectSupervisor(this.env, { ppid: this.ppid }) === null || this.allowRestartConfigured()),
+      restartBlocked: this.staticRestartBlock(),
     }
   }
 
