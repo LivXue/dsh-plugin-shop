@@ -323,19 +323,22 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, na
          *
          * The wrapper renders only when it has something to hold. An empty one
          * is not free: `.cardActions` is a flex row with `gap: 8px`, so a
-         * zero-width item still adds 8px after the last button — and "neither"
-         * is a common state rather than a corner, since a github entry has no
-         * size and the live catalog carries no `publisher` for most entries
-         * until the daily build that first harvested it. */}
+         * zero-width item still adds 8px after the last button. "Neither" was
+         * the COMMON state while a github entry had no size; now every live
+         * entry carries one, so it takes an unmeasurable size together with a
+         * missing `publisher` — which the live catalog still omits for most
+         * entries until the daily build that first harvested them. */}
         {(size !== undefined || author !== null) && (
           <span className={css.cardMeta}>
             {size !== undefined && (
               // role="img" + aria-label is this file's idiom for naming an
               // otherwise-generic element (see .starsBadge): the visible text
               // is the bare figure, while the accessible name and the tooltip
-              // say WHICH size it is. Unpacked and download differ by the
-              // compression ratio, and a reader who takes this for the
-              // download has been misinformed by us.
+              // say WHICH size it is. On-disk and download differ by a ratio
+              // that is itself unstable — npm unpacked/download measured a
+              // median 2.88x over 16 packages but ranged 1.01x to 5.91x — so
+              // a reader who takes this for the download has been misinformed
+              // by us, and no conversion would rescue them.
               <span className={css.size} data-shop-size role="img" aria-label={t('sizeLabel', { size })} title={t('sizeLabel', { size })}>
                 {size}
               </span>

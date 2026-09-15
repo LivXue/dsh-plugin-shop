@@ -58,9 +58,12 @@ export const zh = {
   npmPage: 'npm 页面',
   authorLine: '作者：{author}',
   /** The accessible name and tooltip of the size label; the label itself shows
-   * the bare figure. "解包后" is the load-bearing word — the number is npm's
-   * unpacked size, not the download. */
-  sizeLabel: '解包后 {size}',
+   * the bare figure. "磁盘占用" is the load-bearing phrase — the number is what
+   * the install lands on disk, not the download. It replaced "解包后", which
+   * was npm's word: a commit-pinned github entry unpacks nothing, its figure
+   * being the sum of its git tree's blobs. One phrase now covers both sources
+   * and stays true of npm, whose number is unchanged. */
+  sizeLabel: '磁盘占用 {size}',
   /** The incompatible filter's label. FIXED — the switch beside it carries the
    * state, so the words name what the switch does and never flip with it. */
   hideIncompatible: '隐藏不兼容 {count}',
@@ -176,7 +179,7 @@ export const en = {
   repository: 'Repository',
   npmPage: 'npm page',
   authorLine: 'Author: {author}',
-  sizeLabel: '{size} unpacked',
+  sizeLabel: '{size} on disk',
   hideIncompatible: 'Hide incompatible {count}',
   incompatibleFilterTitle: 'Leave out plugins whose components are missing',
   showIncompatibleTitle: 'Put plugins whose components are missing back on the shelf',

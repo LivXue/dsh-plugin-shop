@@ -64,8 +64,14 @@ const FIXTURE_ENTRIES = [
     // npm's `dist.unpackedSize`, so the size label is proven through the real
     // wire → host zod → client format path. 847407 is the MEDIAN of the 250
     // live `dsh-plugin` packages measured on 2026-09-07, and it renders
-    // "847.4 kB". No other entry here carries one, which is what the live
-    // catalog looks like until the daily build that first harvests this field.
+    // "847.4 kB".
+    //
+    // This entry carries the OLD key ALONE, which no live entry does any more
+    // — deliberately, because that is the rolled-back or cached catalog the
+    // client's `installSize ?? unpackedSize` fallback exists for, and this is
+    // the only lane that proves the fallback survives a real host zod. The
+    // `dsh-shop-e2e-live` entry carries the new key alone and proves the
+    // other half.
     unpackedSize: 847407,
   },
   {
@@ -78,6 +84,16 @@ const FIXTURE_ENTRIES = [
     tier: 'community',
     metadata: 'derived',
     added: '2026-08-31',
+    // The NEW key ALONE, which is exactly the shape of a github entry: the
+    // consumer schema REFUSES `unpackedSize` on one, so `installSize` is the
+    // only key a github size can ever arrive under. That made this the field
+    // with the most to lose to a stripping zod, and it lost it — the registry
+    // published a size for every github entry from 0.8.1 and no shelf ever
+    // showed one, because the schema declared no such key and zod dropped it
+    // in silence. Only a real host parse can catch that: the jsdom specs
+    // build their snapshot object directly and never cross it. 4123461
+    // renders "4.1 MB".
+    installSize: 4123461,
   },
   {
     name: 'dsh-shop-e2e-config',

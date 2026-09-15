@@ -154,18 +154,25 @@ describe('ShopTab', () => {
   })
 
   it('says WHICH size it is showing, for the reader and for assistive tech', async () => {
-    // Unpacked and download differ by the compression ratio. The visible text
-    // is the bare figure — the row is tight — so the word that disambiguates
-    // it rides the accessible name and the tooltip, the same idiom the stars
-    // badge uses. Without it the shop quietly misinforms anyone comparing
-    // this against a download size.
+    // On-disk and download differ by a ratio that is itself unstable — npm
+    // unpacked/download measured a median 2.88x over 16 packages but ranged
+    // 1.01x to 5.91x — so neither converts into the other and a reader is
+    // owed the label the figure was measured under. The visible text is the
+    // bare figure, the row being tight, so the disambiguating word rides the
+    // accessible name and the tooltip, the idiom the stars badge uses.
+    //
+    // "on disk" rather than "unpacked", changed with `installSize`: nothing
+    // is unpacked for a commit-pinned github entry, whose figure is the sum
+    // of its git tree's blobs. One label now spans both sources, and it stays
+    // true of npm — the number is still npm's own `dist.unpackedSize`, so the
+    // shelf and npmjs.com keep showing one figure for one package.
     const { injected } = bench(snapshot({ unpackedSize: 847407 }))
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     const size = container.querySelector('[data-shop-size]')!
-    expect(size.getAttribute('aria-label')).toBe('847.4 kB unpacked')
-    expect(size.getAttribute('title')).toBe('847.4 kB unpacked')
-    expect(zh.sizeLabel).toContain('解包后')
+    expect(size.getAttribute('aria-label')).toBe('847.4 kB on disk')
+    expect(size.getAttribute('title')).toBe('847.4 kB on disk')
+    expect(zh.sizeLabel).toContain('磁盘占用')
   })
 
   it('shows the size for a github entry, which carries it under installSize', async () => {
@@ -200,8 +207,13 @@ describe('ShopTab', () => {
   })
 
   it('shows no size for an entry the catalog gives none', async () => {
-    // Every github entry, and any npm publish older than npm 5.6. The label
-    // is absent rather than "0 B", which would claim the package is empty.
+    // An npm publish older than npm 5.6, or an entry whose size the registry
+    // could not measure honestly — a truncated git tree, a hostile blob size,
+    // a `subdir` matching nothing. No longer "every github entry": the live
+    // build report for 2026-09-14 reads "No install size: 0 of 10767". Rare
+    // is not never, and a size is a decoration that must not cost a listing.
+    // The label is absent rather than "0 B", which would claim the package is
+    // empty.
     const { injected } = bench(snapshot({ publisher: 'realauthor' }))
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
@@ -215,11 +227,13 @@ describe('ShopTab', () => {
   })
 
   it('renders no meta wrapper at all when the entry has neither size nor author', async () => {
-    // Not a corner case: a github entry has no size, and the live catalog
-    // carries no `publisher` for most entries until the daily build that
-    // first harvested it — so this is the ordinary card today. The wrapper
-    // must not render empty, because `.cardActions` is a gapped flex row and
-    // a zero-width item still costs 8px after the last button.
+    // Rarer than it was, and still worth pinning. This was the ORDINARY card
+    // while a github entry had no size at all; now every live entry carries
+    // one, so "neither" needs both an unmeasurable size and a missing
+    // `publisher` — which the live catalog omits for most entries until the
+    // daily build that first harvested them. The wrapper must not render
+    // empty, because `.cardActions` is a gapped flex row and a zero-width
+    // item still costs 8px after the last button.
     const { injected } = bench(snapshot())
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
