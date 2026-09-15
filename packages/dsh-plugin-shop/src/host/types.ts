@@ -24,6 +24,10 @@ export interface CatalogEntry {
      * the content-addressed identity; the tag is display only, a mutable ref
      * that must never carry the trust. */
     reviewedSha256?: string
+    /** Which repository was reviewed. A github review binds (`repo`,
+     * `reviewedCommit`) and never a name, because 83 live bundle names are
+     * claimed by both a fork and an original. */
+    repo?: string
     reviewer: string
     reviewCommit: string
     notes: string
@@ -51,12 +55,31 @@ export interface CatalogEntry {
   added?: string
   /** The package's declared peer dependency names (schemaVersion 6). */
   peers?: string[]
-  /** What installing this puts on disk, in bytes — npm's own
-   * `dist.unpackedSize`. npm entries only, and only where the packument
-   * carried one; a github entry has no honest figure and therefore no field
-   * (registry `Entry.unpackedSize`). Additive and optional, so it rides every
-   * schemaVersion. */
+  /** Wire-compatibility key, not a field to read — see {@link installSize},
+   * which the catalog parse fills from this one. It names npm's OWN quantity
+   * (`dist.unpackedSize`), so it is npm-only and the parse REFUSES one on a
+   * github entry: a github figure is a different measurement and would be
+   * wrong under this key, not merely absent (registry `Entry.unpackedSize`).
+   * The registry keeps emitting it so that a client older than this one still
+   * shows npm sizes; it retires with the transform in `catalog.ts`. Additive
+   * and optional, so it rides every schemaVersion. */
   unpackedSize?: number
+  /** What installing this puts on disk, in bytes — the same quantity as
+   * `unpackedSize`, for every source (registry `Entry.installSize`). npm
+   * repeats its packument figure here; a github entry sums its git tree's
+   * blobs, or the release tarball it was rescued from. Absent wherever the
+   * measurement could not be made honestly: a size is a decoration, so a
+   * missing one costs the label and never the listing. Additive and optional,
+   * so it rides every schemaVersion.
+   *
+   * THE size field: read this one and never `unpackedSize`. The catalog parse
+   * fills it from `unpackedSize` when an older catalog carries only that key,
+   * so every consumer of a parsed entry sees one field whatever the data
+   * predates (`catalog.ts`, the transform below the entry superRefine). For a
+   * github entry the figure is scoped to `subdir` when it has one — 239 of the
+   * 6,492 live github entries — which is the plugin's own cost and not the
+   * repository's; registry `Entry.installSize` carries the measured caveat. */
+  installSize?: number
 }
 
 export interface DeniedEntry { name: string; detail: string; replacement?: string }

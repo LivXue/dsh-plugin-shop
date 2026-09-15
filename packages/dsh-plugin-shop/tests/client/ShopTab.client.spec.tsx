@@ -14,6 +14,15 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+/**
+ * A catalog result as the client RECEIVES it — that is, after the host's zod.
+ * These specs build the object directly and never cross that parse, so it has
+ * to be spelled the way a parsed entry is: a size is `installSize`, the one
+ * field the client reads, which `catalog.ts`'s transform fills from a legacy
+ * `unpackedSize` because that is the only place an entry's `source` is known.
+ * An `unpackedSize` here would describe a snapshot no client can be handed,
+ * and would test a fallback the client deliberately does not have.
+ */
 function snapshot(overrides: Partial<ShopCatalogResult['plugins'][number]> = {}): ShopCatalogResult {
   return {
     schemaVersion: 2,
@@ -134,12 +143,16 @@ describe('ShopTab', () => {
     expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-npm] [data-shop-author]')).toBeNull()
   })
 
-  it('shows the unpacked size left of the author, without expanding the card', async () => {
+  it('shows the on-disk size left of the author, without expanding the card', async () => {
     // Both are collapsed-card facts, and the order is deliberate: size is a
     // property of the artifact, author of its origin. A reader scanning the
     // shelf compares sizes down a column, so the size must be the inner of
     // the two — the author's width varies and would ragged the column.
-    const { injected } = bench(snapshot({ publisher: 'realauthor', unpackedSize: 847407 }))
+    //
+    // "on-disk" rather than "unpacked", the word this title used to carry:
+    // nothing is unpacked for a commit-pinned github entry, so the label reads
+    // '{size} on disk' / '磁盘占用 {size}' (`locales.ts`) for both sources.
+    const { injected } = bench(snapshot({ publisher: 'realauthor', installSize: 847407 }))
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     const card = container.querySelector('[data-shop-entry="dsh-hello-plugin"]')!
@@ -154,23 +167,56 @@ describe('ShopTab', () => {
   })
 
   it('says WHICH size it is showing, for the reader and for assistive tech', async () => {
-    // Unpacked and download differ by the compression ratio. The visible text
-    // is the bare figure — the row is tight — so the word that disambiguates
-    // it rides the accessible name and the tooltip, the same idiom the stars
-    // badge uses. Without it the shop quietly misinforms anyone comparing
-    // this against a download size.
-    const { injected } = bench(snapshot({ unpackedSize: 847407 }))
+    // On-disk and download differ by a ratio that is itself unstable — the
+    // measurement lives on `Entry.installSize` in `registry/scripts/src/
+    // types.ts` — so neither converts into the other and a reader is owed the
+    // label the figure was measured under. The visible text is the bare
+    // figure, the row being tight, so the disambiguating word rides the
+    // accessible name and the tooltip, the idiom the stars badge uses.
+    //
+    // "on disk" rather than "unpacked", changed with `installSize`: nothing
+    // is unpacked for a commit-pinned github entry, whose figure is the sum
+    // of its git tree's blobs. One label now spans both sources, and it stays
+    // true of npm — the number is still npm's own `dist.unpackedSize`, so the
+    // shelf and npmjs.com keep showing one figure for one package.
+    const { injected } = bench(snapshot({ installSize: 847407 }))
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     const size = container.querySelector('[data-shop-size]')!
-    expect(size.getAttribute('aria-label')).toBe('847.4 kB unpacked')
-    expect(size.getAttribute('title')).toBe('847.4 kB unpacked')
-    expect(zh.sizeLabel).toContain('解包后')
+    expect(size.getAttribute('aria-label')).toBe('847.4 kB on disk')
+    expect(size.getAttribute('title')).toBe('847.4 kB on disk')
+    expect(zh.sizeLabel).toContain('磁盘占用')
+  })
+
+  it('shows the size for a github entry, which carries it under installSize', async () => {
+    // The whole point of the second key, and the bug this fixes. A github
+    // entry is REFUSED if it carries `unpackedSize` — that key names npm's
+    // quantity — so a github size can only ever arrive as `installSize`, and
+    // a shelf reading the old key alone showed none at all. The registry has
+    // published one for every entry since 0.8.1 and every client stripped it;
+    // the design doc's 2026-09-15 amendment records what that cost and counts
+    // it. This is the RENDER half of that fix: the parse half — that the host
+    // zod admits the key on a github entry rather than dropping it in silence
+    // — is `tests/host/catalog.test.ts`'s `installSize` block, and only the
+    // e2e crosses both.
+    const { injected } = bench(snapshot({
+      name: 'dsh-repo-plugin', source: 'github', repo: 'octocat/dsh-repo-plugin',
+      version: 'a'.repeat(40), installSize: 4123461,
+    }))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-repo-plugin')).toBeTruthy())
+    const size = container.querySelector('[data-shop-entry="dsh-repo-plugin"] [data-shop-size]')
+    expect(size?.textContent).toBe('4.1 MB')
   })
 
   it('shows no size for an entry the catalog gives none', async () => {
-    // Every github entry, and any npm publish older than npm 5.6. The label
-    // is absent rather than "0 B", which would claim the package is empty.
+    // An npm publish older than npm 5.6, or an entry whose size the registry
+    // could not measure honestly — a truncated git tree, a hostile blob size,
+    // a `subdir` matching nothing. No longer "every github entry", and
+    // `formatSize`'s own doc in `present.ts` holds the retraction and the
+    // measured count. Rare is not never, and a size is a decoration that must
+    // not cost a listing. The label is absent rather than "0 B", which would
+    // claim the package is empty.
     const { injected } = bench(snapshot({ publisher: 'realauthor' }))
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
@@ -184,11 +230,13 @@ describe('ShopTab', () => {
   })
 
   it('renders no meta wrapper at all when the entry has neither size nor author', async () => {
-    // Not a corner case: a github entry has no size, and the live catalog
-    // carries no `publisher` for most entries until the daily build that
-    // first harvested it — so this is the ordinary card today. The wrapper
-    // must not render empty, because `.cardActions` is a gapped flex row and
-    // a zero-width item still costs 8px after the last button.
+    // Rarer than it was, and still worth pinning. This was the ORDINARY card
+    // while a github entry had no size at all; now every live entry carries
+    // one, so "neither" needs both an unmeasurable size and a missing
+    // `publisher` — which the live catalog omits for most entries until the
+    // daily build that first harvested them. The wrapper must not render
+    // empty, because `.cardActions` is a gapped flex row and a zero-width
+    // item still costs 8px after the last button.
     const { injected } = bench(snapshot())
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())

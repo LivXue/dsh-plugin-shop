@@ -108,9 +108,12 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, na
   // Null for a github entry, and for any name outside npm's own grammar.
   const npmUrl = npmPageUrl(entry)
   const author = authorOf(entry)
-  // Undefined for a github entry and for an npm publish predating npm 5.6;
-  // the label is simply not rendered then.
-  const size = formatSize(entry.unpackedSize)
+  // One key, because the catalog parse already merged the two: it fills
+  // `installSize` from a legacy `unpackedSize`, which is the only place that
+  // knows the entry's source. Reading `entry.unpackedSize` here would be a
+  // bug — see `CatalogEntry.unpackedSize`. Undefined only where the registry
+  // could not measure honestly, and the label is not rendered then.
+  const size = formatSize(entry.installSize)
   const category = entry.catalog?.category ?? 'other'
   const installTarget: InstallArgs = {
     name: entry.name,
@@ -313,24 +316,30 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, na
          *
          * The size reads left of the author because it is a property of the
          * artifact and the author is a property of its origin — and because
-         * `size` is absent on every github entry, so putting it at the outer
-         * edge would leave a ragged right margin down the shelf.
+         * the author's width varies far more (an account name against a
+         * formatted figure), so the outer edge is the one that must absorb it
+         * or the right margin goes ragged down the shelf.
          *
          * The wrapper renders only when it has something to hold. An empty one
          * is not free: `.cardActions` is a flex row with `gap: 8px`, so a
-         * zero-width item still adds 8px after the last button — and "neither"
-         * is a common state rather than a corner, since a github entry has no
-         * size and the live catalog carries no `publisher` for most entries
-         * until the daily build that first harvested it. */}
+         * zero-width item still adds 8px after the last button. "Neither" was
+         * the COMMON state while a github entry had no size; now every live
+         * entry carries one, so it takes an unmeasurable size together with a
+         * missing `publisher` — which the live catalog still omits for most
+         * entries until the daily build that first harvested them. */}
         {(size !== undefined || author !== null) && (
           <span className={css.cardMeta}>
             {size !== undefined && (
               // role="img" + aria-label is this file's idiom for naming an
               // otherwise-generic element (see .starsBadge): the visible text
               // is the bare figure, while the accessible name and the tooltip
-              // say WHICH size it is. Unpacked and download differ by the
-              // compression ratio, and a reader who takes this for the
-              // download has been misinformed by us.
+              // say WHICH size it is. On-disk and download differ by a ratio
+              // that is itself unstable, so a reader who takes this for the
+              // download has been misinformed by us and no conversion would
+              // rescue them. The measurement and its spread are owned by
+              // `Entry.installSize` in registry/scripts/src/types.ts; it is
+              // deliberately not restated here, because this repo has twice
+              // had copies of one figure drift apart.
               <span className={css.size} data-shop-size role="img" aria-label={t('sizeLabel', { size })} title={t('sizeLabel', { size })}>
                 {size}
               </span>

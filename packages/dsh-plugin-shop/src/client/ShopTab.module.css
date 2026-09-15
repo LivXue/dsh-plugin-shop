@@ -885,9 +885,13 @@
 /* What the entry IS rather than what you can do with it — how big it is and
  * who published it — at the right edge of the action row. `margin-left: auto`
  * is what pushes it there, and it lives on this wrapper rather than on either
- * label so the group stays flush right when only one of the two has a value:
- * a github entry has no npm size, and a packument that named no account has no
- * author. The row is a wrapping flex, so an active install flow (which claims
+ * label so the group stays flush right when only one of the two has a value —
+ * a packument that named no account has no author, and an entry the registry
+ * could not measure honestly has no size. Rarer than it was (every live entry
+ * now carries a size, github included), but the wrapper is not what makes it
+ * rare: without one, an EMPTY meta group still costs 8px, because
+ * `.cardActions` is a flex row with `gap: 8px` and a zero-width item is still
+ * an item. The row is a wrapping flex, so an active install flow (which claims
  * the full width) drops the whole group to the next line rather than squeezing
  * it. */
 .cardMeta {
@@ -898,7 +902,7 @@
   min-width: 0;
 }
 
-/* The unpacked size, left of the author. Mono and tabular so the digits of one
+/* The on-disk size, left of the author. Mono and tabular so the digits of one
  * figure line up with the digits of another WHEREVER the two land: `.cardMeta`
  * is flush right and the author sits outside the size, so a size's x position
  * moves with the author's width and is different again on the many entries

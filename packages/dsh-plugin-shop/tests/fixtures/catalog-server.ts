@@ -64,8 +64,15 @@ const FIXTURE_ENTRIES = [
     // npm's `dist.unpackedSize`, so the size label is proven through the real
     // wire → host zod → client format path. 847407 is the MEDIAN of the 250
     // live `dsh-plugin` packages measured on 2026-09-07, and it renders
-    // "847.4 kB". No other entry here carries one, which is what the live
-    // catalog looks like until the daily build that first harvests this field.
+    // "847.4 kB".
+    //
+    // This entry carries the OLD key ALONE, which no live entry does any more
+    // — deliberately, because that is the rolled-back or cached catalog the
+    // parse-boundary merge exists for: `catalog.ts`'s transform fills
+    // `installSize` from it, the client reads `installSize` alone, and this is
+    // the only lane where a real host zod does that merge before a real
+    // browser renders the result. The `dsh-shop-e2e-live` entry carries the
+    // new key alone and proves the other half.
     unpackedSize: 847407,
   },
   {
@@ -78,6 +85,25 @@ const FIXTURE_ENTRIES = [
     tier: 'community',
     metadata: 'derived',
     added: '2026-08-31',
+    // The NEW key ALONE — and what that proves here is the KEY surviving a
+    // real host parse, not the github shape. This row declares no `source`,
+    // so `catalog.ts` defaults it to `npm` and it takes the npm early-return
+    // before any github check runs; it also carries no `repo` and a semver
+    // `version`, both of which the github branch would refuse. It cannot be
+    // flipped to `source: 'github'` either: the hot-mount spec installs this
+    // same name from the local npm registry (`web-full-flow.e2e.ts`), so a
+    // github source would break that lane.
+    //
+    // The key alone is the point, because that is what was lost: the registry
+    // published a size for every github entry from 0.8.1 and no shelf ever
+    // showed one, because the consumer schema declared no such key and a
+    // non-strict zod dropped it in silence. Only a real host parse can catch
+    // that — the jsdom specs build their snapshot object directly and never
+    // cross it. The GITHUB shape is covered where it can be: the parse in
+    // `tests/host/catalog.test.ts` (a github entry with `repo`, a commit-sha
+    // version and an `installSize`), the render in
+    // `tests/client/ShopTab.client.spec.tsx`. 4123461 renders "4.1 MB".
+    installSize: 4123461,
   },
   {
     name: 'dsh-shop-e2e-config',

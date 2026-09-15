@@ -825,13 +825,22 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         expect(authorBox.x).toBeGreaterThan(installBox.x + installBox.width)
       }
 
-      // The unpacked size, left of the author on the same collapsed row. Only
-      // this lane proves the whole chain: the catalog server serves
+      // The size, left of the author on the same collapsed row. Only this
+      // lane proves the whole chain: the catalog server serves
       // `unpackedSize: 847407`, the host's zod has to keep the key rather than
       // strip it (a non-strict schema strips what it does not declare — the
       // silent failure mode for a new field), and the client has to format it
       // decimally. jsdom sees the format; nothing but a browser sees the other
       // two links of that chain.
+      //
+      // That failure mode is not hypothetical: `installSize` spent from 0.8.1
+      // to 0.8.2 being published for every github entry and stripped by every
+      // client, because no lane asserted a size that came in under a key only
+      // the host's zod could admit. The `dsh-shop-e2e-live` assertion further
+      // down is that lane; this one holds the OLD key, so the pair pins both
+      // sides of the parse-boundary merge — the client reads `installSize`
+      // alone, and `catalog.ts`'s transform is what makes this older row
+      // render at all.
       const size = card.locator('[data-shop-size]')
       await size.waitFor({ state: 'visible', timeout: 10_000 })
       expect(await size.textContent()).toBe('847.4 kB')
@@ -844,7 +853,45 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         expect(sizeBox.x + sizeBox.width).toBeLessThanOrEqual(authorBox.x + 1)
       }
       // And it says WHICH size, for anyone who might read it as the download.
-      expect(await size.getAttribute('title')).toBe('解包后 847.4 kB')
+      // "磁盘占用" and not "解包后" since `installSize`: a commit-pinned github
+      // entry unpacks nothing, its figure being the sum of its git tree's
+      // blobs, so one phrase has to hold for both sources. The number is
+      // unchanged, so the shelf and npmjs.com still agree.
+      //
+      // Through the dictionary, not the interpolated string: this file already
+      // asserts templated copy that way (`zh.hideIncompatible.replace(...)`
+      // below), and a copy change must not red the slowest lane in the suite
+      // for a reason that has nothing to do with sizes.
+      expect(await size.getAttribute('title')).toBe(zh.sizeLabel.replace('{size}', '847.4 kB'))
+
+      // The other half of the pair: a size that arrives ONLY as `installSize`.
+      // Not "the shape every github entry has" — this row declares no
+      // `source`, so the parse defaults it to `npm`; what it proves is the
+      // KEY, which was undeclared yesterday, surviving a real host zod and
+      // reaching a real card. If the host does not declare it, a non-strict
+      // schema drops it in silence and this card shows nothing — which is
+      // exactly what shipped in 0.8.1 and 0.8.2. The github SHAPE is covered
+      // where it can be: the parse in `tests/host/catalog.test.ts`, the render
+      // in `tests/client/ShopTab.client.spec.tsx`; this name cannot carry it,
+      // because the hot-mount spec below installs it from the local npm
+      // registry (see `liveFixtureDir`).
+      //
+      // Card first, then the size inside it — the idiom the hot-mount spec
+      // uses, and here it is load-bearing. `.card` carries
+      // `content-visibility: auto` (ShopTab.module.css), so a card below the
+      // fold has a render-skipped subtree whose children report a 0x0 rect and
+      // never become "visible", while the card itself always has a box —
+      // that is what `contain-intrinsic-size` is for — and `waitFor` does not
+      // scroll. So each of the three things that can break says so on its own:
+      // a missing card fails as a missing CARD, a stripped key fails the
+      // `attached` wait (the DOM question this actually asks), and a
+      // mis-formatted figure fails one of the two assertions below.
+      const liveCard = dialog.locator('[data-shop-entry="dsh-shop-e2e-live"]')
+      await liveCard.waitFor({ state: 'visible', timeout: 15_000 })
+      const liveSize = liveCard.locator('[data-shop-size]')
+      await liveSize.waitFor({ state: 'attached', timeout: 10_000 })
+      expect(await liveSize.textContent()).toBe('4.1 MB')
+      expect(await liveSize.getAttribute('title')).toBe(zh.sizeLabel.replace('{size}', '4.1 MB'))
 
       // Both themes and all three active states: readable text, the shared
       // category hue on the selected border, and exact category-tab widths.

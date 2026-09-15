@@ -41,6 +41,36 @@ function starsFile(stars: Record<string, number>): { url: string; sha256: string
   return { url: `stars.${sha256}.json`, sha256, text }
 }
 
+/** The minimal listing the entry schema accepts — an npm entry with nothing
+ * optional on it, so whatever a case adds is the only thing under test.
+ *
+ * Shared rather than cloned per block: three byte-identical copies of this and
+ * two of `load` had accumulated below, carrying a duplicated bad-value matrix
+ * with them, and two hand-maintained copies of one matrix are one edit away
+ * from pinning a bound on one key and nothing on its twin. The older blocks
+ * above keep their own `entry`/`subEntry`/`v5Entry` because those are
+ * DIFFERENT shapes — a monorepo subpackage, a release-rescued row — not copies
+ * of this one. */
+const baseEntry = {
+  name: 'dsh-timeline', version: '0.1.4', integrity: 'sha512-x', publishedAt: null,
+  repository: null, license: 'MIT', tier: 'community', metadata: 'derived',
+}
+
+/** One catalog load whose data file holds `entries`, at `schemaVersion`.
+ *
+ * Fetched fresh through the real `loadCatalog`, never `entrySchema` in
+ * isolation: the transform under test sits behind the entry superRefine and
+ * the client reads a parsed `CatalogEntry`, so a case that bypassed the loader
+ * would pin a schema this file cannot prove is the one the shop runs. */
+async function load(entries: unknown[], schemaVersion: number) {
+  const data = dataJson(entries, [], schemaVersion)
+  const { pointer } = pointerFor(data, '2026-09-01T00:00:00Z', undefined, schemaVersion)
+  const fetchImpl = (async (input: string | URL) => new Response(
+    String(input).endsWith('/index.json') ? pointer : data, { status: 200 },
+  )) as unknown as typeof fetch
+  return loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() })
+}
+
 describe('loadCatalog', () => {
   const entry = {
     name: 'dsh-hello-plugin', version: '1.2.0', integrity: 'sha512-i', publishedAt: null,
@@ -634,26 +664,12 @@ describe('v5 (market borrowings) entries', () => {
 })
 
 describe('peers (schemaVersion 6)', () => {
-  // The file has no shared cross-describe fixture (each block above defines
-  // its own minimal entry — `entry`, `subEntry`, `v5Entry`); this one follows
-  // that same pattern rather than inventing a helper.
-  const baseEntry = {
-    name: 'dsh-timeline', version: '0.1.4', integrity: 'sha512-x', publishedAt: null,
-    repository: null, license: 'MIT', tier: 'community', metadata: 'derived',
-  }
-
   it('parses a v6 entry carrying peers', async () => {
     // Names copied from dsh-timeline@0.1.4's real manifest.
-    const data = dataJson(
+    const result = await load(
       [{ ...baseEntry, peers: ['@deepseek-ai/cordis', '@deepseek-ai/dsh-client-store', 'react'] }],
-      [], 6,
+      6,
     )
-    const { pointer } = pointerFor(data, '2026-09-01T00:00:00Z', undefined, 6)
-    const fetchImpl = (async (input: string | URL) => new Response(
-      String(input).endsWith('/index.json') ? pointer : data, { status: 200 },
-    )) as unknown as typeof fetch
-
-    const result = await loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() })
     expect(result.snapshot.entries[0]?.peers).toEqual([
       '@deepseek-ai/cordis', '@deepseek-ai/dsh-client-store', 'react',
     ])
@@ -662,34 +678,13 @@ describe('peers (schemaVersion 6)', () => {
   it('parses the live v5 shape, which has no peers field at all', async () => {
     // The 0.5.0 regression, in the shape that caused it: a required new field
     // made the client refuse the still-published older catalog outright.
-    const data = dataJson([baseEntry], [], 5)
-    const { pointer } = pointerFor(data, '2026-09-01T00:00:00Z', undefined, 5)
-    const fetchImpl = (async (input: string | URL) => new Response(
-      String(input).endsWith('/index.json') ? pointer : data, { status: 200 },
-    )) as unknown as typeof fetch
-
-    const result = await loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() })
+    const result = await load([baseEntry], 5)
     expect(result.snapshot.entries[0]?.peers).toBeUndefined()
     expect(result.snapshot.entries).toHaveLength(1)
   })
 })
 
 describe('unpackedSize', () => {
-  const baseEntry = {
-    name: 'dsh-timeline', version: '0.1.4', integrity: 'sha512-x', publishedAt: null,
-    repository: null, license: 'MIT', tier: 'community', metadata: 'derived',
-  }
-
-  /** One catalog load whose data file holds `entries`, at `schemaVersion`. */
-  async function load(entries: unknown[], schemaVersion: number) {
-    const data = dataJson(entries, [], schemaVersion)
-    const { pointer } = pointerFor(data, '2026-09-01T00:00:00Z', undefined, schemaVersion)
-    const fetchImpl = (async (input: string | URL) => new Response(
-      String(input).endsWith('/index.json') ? pointer : data, { status: 200 },
-    )) as unknown as typeof fetch
-    return loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() })
-  }
-
   it('carries the size through to the entry the client renders', async () => {
     // Additive and optional, so it rides EVERY schemaVersion — including the
     // live 5. That is the whole point: this schema strips a key it does not
@@ -699,47 +694,19 @@ describe('unpackedSize', () => {
     expect(result.snapshot.entries[0]?.unpackedSize).toBe(847407)
   })
 
-  it('parses an entry that carries no size at all', async () => {
-    // Every github entry, and any npm publish predating npm 5.6. Absent must
-    // stay parseable — a required field here is the 0.5.0 regression.
-    const result = await load([baseEntry], 5)
-    expect(result.snapshot.entries[0]?.unpackedSize).toBeUndefined()
-    expect(result.snapshot.entries).toHaveLength(1)
-  })
-
-  // Our own artifact, so a violation is our build having written something it
-  // cannot write — and this project stops rather than render a size label
-  // reading "-1.0 kB" or "NaN kB". The registry drops such a value at harvest,
-  // so nothing legitimate reaches this.
-  //
-  // `it.each` rather than a loop over the cases: vitest discards the message
-  // passed alongside a `.rejects` assertion, so a loop reported only "promise
-  // resolved instead of rejecting" and named no case — and its `await` meant
-  // the first hole hid every case after it.
-  it.each([
-    -1,
-    1.5,
-    '847407',
-    null,
-    // Past 2^53, which JSON cannot round-trip. zod 4's `.int()` caps at
-    // MAX_SAFE_INTEGER on its own, so these two need no extra refinement —
-    // they are here to PIN that, because the claim "the host's bound matches
-    // the registry's `Number.isSafeInteger`" is a property of the zod version
-    // and nothing else would notice it relaxing. The registry's own list
-    // carries the same case.
-    Number.MAX_SAFE_INTEGER + 2,
-    1e21,
-  ])('refuses a catalog whose size is not a safe non-negative integer: %j', async (bad) => {
-    await expect(load([{ ...baseEntry, unpackedSize: bad }], 5)).rejects.toThrow()
-  })
-
   it('refuses a size on a github entry, which measures the repository and not the install', async () => {
-    // The design says a github entry gets none: GitHub reports the repo's own
-    // disk usage including history, which is not what installing puts on disk
-    // and for a monorepo subpackage is not close. Until this rule had a
-    // boundary that could refuse one, it held only because `assignRepoTier`
-    // happens not to write it — and the client renders the field with no
-    // source check, so an approximation would show under an "unpacked" label.
+    // `unpackedSize` names npm's OWN quantity — `dist.unpackedSize` — so a
+    // github figure filed under it is a different measurement wearing a
+    // right-looking name: GitHub reports the repository's disk usage including
+    // history, which is not what installing puts on disk and for a monorepo
+    // subpackage is not close. A github size has a key of its own, and the
+    // block below is where it is read.
+    //
+    // Load-bearing rather than tidy: the data file is read with a throwing
+    // `parse`, so a single entry that trips this costs every installed shop
+    // the WHOLE catalog, not the one row — which is why the rule is worth
+    // stopping a build over. Until this boundary existed it held only because
+    // `assignRepoTier` happens not to write the key.
     await expect(load([{
       ...baseEntry, version: 'a'.repeat(40), source: 'github', repo: 'someone/thing', unpackedSize: 847407,
     }], 5)).rejects.toThrow()
@@ -749,6 +716,147 @@ describe('unpackedSize', () => {
       ...baseEntry, version: 'a'.repeat(40), source: 'github', repo: 'someone/thing',
     }], 5)
     expect(ok.snapshot.entries).toHaveLength(1)
+  })
+})
+
+describe('installSize', () => {
+  it('carries a github entry\'s size through to the entry the client renders', async () => {
+    // The reason this key exists at all. `unpackedSize` is REFUSED on a github
+    // entry by the superRefine above — it names npm's quantity, and GitHub's
+    // own repo figure is not it — so a github size can only ever arrive under
+    // a key of its own. The live catalog has carried one for every github
+    // entry since 0.8.1 while this schema stripped it as unknown: a size
+    // measured, published, and never shown to anyone.
+    const result = await load([{
+      ...baseEntry, version: 'a'.repeat(40), source: 'github', repo: 'someone/thing', installSize: 4123461,
+    }], 5)
+    expect(result.snapshot.entries[0]?.installSize).toBe(4123461)
+  })
+})
+
+describe('the two size keys carry one bound', () => {
+  // Our own artifact, so a violation is our build having written something it
+  // cannot write — and this project stops rather than render a size label
+  // reading "-1.0 kB" or "NaN kB". The registry drops such a value at harvest,
+  // so nothing legitimate reaches this.
+  //
+  // Parameterised over the KEY, because the two declarations are
+  // character-identical (`z.number().int().nonnegative().optional()`) and the
+  // two hand-written lists this replaced could be relaxed one at a time: a zod
+  // upgrade that loosened the ceiling would have had to be caught twice to be
+  // caught at all. It also STATES the bound for `installSize` rather than
+  // letting it inherit — an undeclared key is stripped, so before that field
+  // existed every one of these values parsed in silence.
+  //
+  // `it.each` rather than a loop over the cases: vitest discards the message
+  // passed alongside a `.rejects` assertion, so a loop reported only "promise
+  // resolved instead of rejecting" and named no case — and its `await` meant
+  // the first hole hid every case after it.
+  const badValues: unknown[] = [
+    -1,
+    1.5,
+    '847407',
+    null,
+    // NOT "past 2^53, which JSON cannot round-trip", which is what this
+    // comment claimed and is false twice over: `MAX_SAFE_INTEGER + 2` IS
+    // exactly 2^53 (9007199254740993 has no double, and ties-to-even lands on
+    // 9007199254740992), and `JSON.parse(JSON.stringify(x))` returns both of
+    // these unchanged. Nor are they fractional — `Number.isInteger(1e21)` is
+    // true. What they pin is the CEILING: zod 4's `.int()` refuses anything
+    // outside ±MAX_SAFE_INTEGER on its own, which is what makes this bound
+    // EQUAL to the registry's `Number.isSafeInteger` guard rather than merely
+    // similar to it. That equality is a property of the zod version and
+    // nothing else here would notice it relaxing. The registry's own list
+    // carries the same two cases.
+    Number.MAX_SAFE_INTEGER + 2,
+    1e21,
+  ]
+
+  const cases = (['unpackedSize', 'installSize'] as const).flatMap(
+    (key): Array<[key: string, value: unknown]> => badValues.map(value => [key, value]),
+  )
+
+  it.each(cases)('refuses a catalog whose %s is not a safe non-negative integer: %j', async (key, value) => {
+    await expect(load([{ ...baseEntry, [key]: value }], 5)).rejects.toThrow()
+  })
+})
+
+describe('installSize wins over unpackedSize, merged at the parse boundary', () => {
+  // Nothing pinned this precedence until the merge moved into the parse:
+  // rewriting the shelf's read as `unpackedSize ?? installSize` left the suite
+  // green, because no fixture carried both keys at DIFFERENT values — the two
+  // were equal wherever both appeared, which is also what the live catalog
+  // looks like (all 4,275 npm entries carry both, equal on every one, measured
+  // 2026-09-15). So the divergence below is synthetic on purpose: an operand
+  // order is unobservable without it, and reversed it now fails loudly with
+  // 1234567 against 7654321 rather than passing on a coincidence.
+
+  it('keeps an npm entry\'s own installSize when the two keys disagree', async () => {
+    const result = await load([{ ...baseEntry, installSize: 1234567, unpackedSize: 7654321 }], 5)
+    expect(result.snapshot.entries[0]?.installSize).toBe(1234567)
+    // And the older key is untouched: the transform FILLS a missing field, it
+    // never rewrites a present one in either direction.
+    expect(result.snapshot.entries[0]?.unpackedSize).toBe(7654321)
+  })
+
+  it('fills installSize from unpackedSize when only the older key is published', async () => {
+    // Every catalog built before 0.8.1, and every cached copy of one. The
+    // shelf reads `installSize` alone, so without this fill an npm size
+    // published for months would simply stop being shown.
+    const result = await load([{ ...baseEntry, unpackedSize: 847407 }], 5)
+    expect(result.snapshot.entries[0]?.installSize).toBe(847407)
+    // And it stays on the wire: a client older than this one reads that key
+    // and nothing else, so the fill may not consume it.
+    expect(result.snapshot.entries[0]?.unpackedSize).toBe(847407)
+  })
+
+  it('passes a github entry\'s installSize through and invents no unpackedSize', async () => {
+    // The merge runs one way only. An `unpackedSize` written back onto a
+    // github entry would be the very value the superRefine refuses, arriving
+    // from our own parse instead of from the wire — and because the data file
+    // is read with a throwing `parse`, a second pass over such an entry would
+    // cost the whole catalog.
+    const result = await load([{
+      ...baseEntry, version: 'a'.repeat(40), source: 'github', repo: 'someone/thing', installSize: 4123461,
+    }], 5)
+    expect(result.snapshot.entries[0]?.installSize).toBe(4123461)
+    expect(result.snapshot.entries[0]?.unpackedSize).toBeUndefined()
+  })
+
+  it('parses an entry that carries no size at all', async () => {
+    // Absent must stay parseable — every github entry before 0.8.1 and any npm
+    // publish predating npm 5.6, and a required field here is the 0.5.0
+    // regression — and absent must stay ABSENT. A transform that filled in a
+    // zero would render "0 B on disk", which a reader takes for a measured
+    // package rather than an unmeasured one.
+    const result = await load([baseEntry], 5)
+    expect(result.snapshot.entries[0]?.installSize).toBeUndefined()
+    expect(result.snapshot.entries[0]?.unpackedSize).toBeUndefined()
+    expect(result.snapshot.entries).toHaveLength(1)
+  })
+})
+
+describe('review.repo', () => {
+  it('keeps the repository a github review was bound to', async () => {
+    // WHICH repository passed review. The registry has written this key for as
+    // long as the review record has existed (`registry/scripts/src/config.ts`,
+    // `repo: row.repo`) and every client stripped it as unknown — the same bug
+    // as `installSize`, unnoticed because `verified.yml` is empty.
+    //
+    // Not decoration: 83 live bundle names are claimed by both a fork and an
+    // original, so a review that binds a NAME cannot say which of them was
+    // read, and a verified badge would follow the name onto the fork.
+    const review = {
+      reviewedCommit: 'b'.repeat(40), repo: 'someone/thing',
+      reviewer: 'someone', reviewCommit: 'abc123', notes: 'reviewed against the pinned commit',
+    }
+    const result = await load([{
+      ...baseEntry, version: 'b'.repeat(40), source: 'github', repo: 'someone/thing',
+      tier: 'verified', review,
+    }], 5)
+    // The whole record, so a sibling key quietly dropped by a future edit
+    // fails here too — which is exactly how `repo` went missing.
+    expect(result.snapshot.entries[0]?.review).toEqual(review)
   })
 })
 
