@@ -563,9 +563,13 @@ describe('formatSize', () => {
   })
 
   it('answers nothing for an entry that carries no size', () => {
-    // A github entry has no honest figure and an npm publish older than npm
-    // 5.6 recorded none. Undefined in, undefined out — so the card renders no
-    // label instead of a "0 B" that would claim the package is empty.
+    // The sizeless cases are an npm publish predating npm 5.6, which recorded
+    // no `dist.unpackedSize`, and an entry the registry could not measure
+    // honestly. NOT "a github entry": this said so, and `formatSize`'s own doc
+    // retracts it — that was true only while the shelf read `unpackedSize`
+    // alone, and every live github entry carries an `installSize`. Undefined
+    // in, undefined out — so the card renders no label instead of a "0 B" that
+    // would claim the package is empty.
     expect(formatSize(undefined)).toBeUndefined()
   })
 })

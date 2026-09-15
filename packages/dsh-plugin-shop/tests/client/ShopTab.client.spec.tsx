@@ -14,6 +14,15 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+/**
+ * A catalog result as the client RECEIVES it — that is, after the host's zod.
+ * These specs build the object directly and never cross that parse, so it has
+ * to be spelled the way a parsed entry is: a size is `installSize`, the one
+ * field the client reads, which `catalog.ts`'s transform fills from a legacy
+ * `unpackedSize` because that is the only place an entry's `source` is known.
+ * An `unpackedSize` here would describe a snapshot no client can be handed,
+ * and would test a fallback the client deliberately does not have.
+ */
 function snapshot(overrides: Partial<ShopCatalogResult['plugins'][number]> = {}): ShopCatalogResult {
   return {
     schemaVersion: 2,
@@ -134,12 +143,16 @@ describe('ShopTab', () => {
     expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-npm] [data-shop-author]')).toBeNull()
   })
 
-  it('shows the unpacked size left of the author, without expanding the card', async () => {
+  it('shows the on-disk size left of the author, without expanding the card', async () => {
     // Both are collapsed-card facts, and the order is deliberate: size is a
     // property of the artifact, author of its origin. A reader scanning the
     // shelf compares sizes down a column, so the size must be the inner of
     // the two — the author's width varies and would ragged the column.
-    const { injected } = bench(snapshot({ publisher: 'realauthor', unpackedSize: 847407 }))
+    //
+    // "on-disk" rather than "unpacked", the word this title used to carry:
+    // nothing is unpacked for a commit-pinned github entry, so the label reads
+    // '{size} on disk' / '磁盘占用 {size}' (`locales.ts`) for both sources.
+    const { injected } = bench(snapshot({ publisher: 'realauthor', installSize: 847407 }))
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     const card = container.querySelector('[data-shop-entry="dsh-hello-plugin"]')!
@@ -154,11 +167,11 @@ describe('ShopTab', () => {
   })
 
   it('says WHICH size it is showing, for the reader and for assistive tech', async () => {
-    // On-disk and download differ by a ratio that is itself unstable — npm
-    // unpacked/download measured a median 2.88x over 16 packages but ranged
-    // 1.01x to 5.91x — so neither converts into the other and a reader is
-    // owed the label the figure was measured under. The visible text is the
-    // bare figure, the row being tight, so the disambiguating word rides the
+    // On-disk and download differ by a ratio that is itself unstable — the
+    // measurement lives on `Entry.installSize` in `registry/scripts/src/
+    // types.ts` — so neither converts into the other and a reader is owed the
+    // label the figure was measured under. The visible text is the bare
+    // figure, the row being tight, so the disambiguating word rides the
     // accessible name and the tooltip, the idiom the stars badge uses.
     //
     // "on disk" rather than "unpacked", changed with `installSize`: nothing
@@ -166,7 +179,7 @@ describe('ShopTab', () => {
     // of its git tree's blobs. One label now spans both sources, and it stays
     // true of npm — the number is still npm's own `dist.unpackedSize`, so the
     // shelf and npmjs.com keep showing one figure for one package.
-    const { injected } = bench(snapshot({ unpackedSize: 847407 }))
+    const { injected } = bench(snapshot({ installSize: 847407 }))
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     const size = container.querySelector('[data-shop-size]')!
@@ -180,8 +193,12 @@ describe('ShopTab', () => {
     // entry is REFUSED if it carries `unpackedSize` — that key names npm's
     // quantity — so a github size can only ever arrive as `installSize`, and
     // a shelf reading the old key alone showed none at all. The registry has
-    // published one since 0.8.1: the live build report for 2026-09-14 reads
-    // "No install size: 0 of 10767 (github 0, npm 0)".
+    // published one for every entry since 0.8.1 and every client stripped it;
+    // the design doc's 2026-09-15 amendment records what that cost and counts
+    // it. This is the RENDER half of that fix: the parse half — that the host
+    // zod admits the key on a github entry rather than dropping it in silence
+    // — is `tests/host/catalog.test.ts`'s `installSize` block, and only the
+    // e2e crosses both.
     const { injected } = bench(snapshot({
       name: 'dsh-repo-plugin', source: 'github', repo: 'octocat/dsh-repo-plugin',
       version: 'a'.repeat(40), installSize: 4123461,
@@ -192,28 +209,14 @@ describe('ShopTab', () => {
     expect(size?.textContent).toBe('4.1 MB')
   })
 
-  it('still shows an npm size from a catalog carrying only the older key', async () => {
-    // Deliberately a guard rather than a new behaviour: it passes before the
-    // change and must keep passing after it. A cached or rolled-back catalog
-    // predates `installSize`, and reading the new key INSTEAD of the old one
-    // would silently blank every npm size the moment the shop met one. The
-    // two hold one quantity — measured 2026-09-15 over the live catalog, all
-    // 4,275 npm entries carry both and they are equal on every one — so the
-    // fallback costs nothing and buys the rollback.
-    const { injected } = bench(snapshot({ unpackedSize: 847407 }))
-    const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
-    expect(container.querySelector('[data-shop-size]')?.textContent).toBe('847.4 kB')
-  })
-
   it('shows no size for an entry the catalog gives none', async () => {
     // An npm publish older than npm 5.6, or an entry whose size the registry
     // could not measure honestly — a truncated git tree, a hostile blob size,
-    // a `subdir` matching nothing. No longer "every github entry": the live
-    // build report for 2026-09-14 reads "No install size: 0 of 10767". Rare
-    // is not never, and a size is a decoration that must not cost a listing.
-    // The label is absent rather than "0 B", which would claim the package is
-    // empty.
+    // a `subdir` matching nothing. No longer "every github entry", and
+    // `formatSize`'s own doc in `present.ts` holds the retraction and the
+    // measured count. Rare is not never, and a size is a decoration that must
+    // not cost a listing. The label is absent rather than "0 B", which would
+    // claim the package is empty.
     const { injected } = bench(snapshot({ publisher: 'realauthor' }))
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())

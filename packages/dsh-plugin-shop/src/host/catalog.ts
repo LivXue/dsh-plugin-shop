@@ -131,6 +131,14 @@ const entrySchema = z.object({
     // The release-rescued pin: the reviewed tarball's content hash, never the
     // tag (a tag is a mutable ref an author can re-point at different content).
     reviewedSha256: z.string().optional(),
+    // WHICH repository was reviewed. A github review binds (`repo`,
+    // `reviewedCommit`) and never a name, because 83 live bundle names are
+    // claimed by both a fork and an original — so without this key a verified
+    // badge cannot say which of them passed. The registry has written it since
+    // the review record existed (`config.ts` `repo: row.repo`); every client
+    // stripped it, exactly as `installSize` was stripped, and nothing noticed
+    // because `verified.yml` is empty. Declared now while the cost is zero.
+    repo: z.string().optional(),
     reviewer: z.string(),
     reviewCommit: z.string(),
     notes: z.string(),
@@ -223,13 +231,19 @@ const entrySchema = z.object({
   if (entry.repo === undefined) {
     ctx.addIssue({ code: 'custom', path: ['repo'], message: 'a github entry must carry its repo — it is the entry\'s identity and the spec is built from it' })
   }
-  // A github entry gets no size, deliberately: GitHub reports the repository's
-  // own disk usage including history, which is not what installing the plugin
-  // puts on disk, and for a monorepo subpackage is not even close. The design
-  // states that rule; without this it was stated nowhere that could refuse a
-  // violation, and `assignRepoTier` merely happens not to write one today.
-  // The client reads `unpackedSize` with no source check of its own, so an
-  // approximation attached here would render under a label saying "unpacked".
+  // `unpackedSize` names npm's OWN quantity, so a github entry carrying one is
+  // our build writing a number it cannot have measured: what GitHub reports is
+  // the repository's disk usage including history, which is not what installing
+  // the plugin puts on disk, and for a monorepo subpackage is not even close.
+  // A github size arrives as `installSize` instead, summed from the git tree's
+  // blobs — so this refuses a WRONG number under a right-looking key, and does
+  // not refuse github sizes as such (it did until 0.8.1; see `installSize`).
+  //
+  // Load-bearing rather than tidy: the data file is read with a throwing
+  // `parse`, so one github `unpackedSize` costs every already-installed shop
+  // the WHOLE catalog rather than the one entry. `assignRepoTier` merely
+  // happens not to write one today; the design states the rule, and without
+  // this it was stated nowhere that could refuse a violation.
   if (entry.unpackedSize !== undefined) {
     ctx.addIssue({ code: 'custom', path: ['unpackedSize'], message: 'a github entry carries no unpacked size — GitHub measures the repository, not the install' })
   }
@@ -238,7 +252,25 @@ const entrySchema = z.object({
   if (!COMMIT_SHA.test(entry.version) && !RELEASE_TAG.test(entry.version)) {
     ctx.addIssue({ code: 'custom', path: ['version'], message: `github entry version ${JSON.stringify(entry.version)} is neither a 40-character commit sha nor a release tag` })
   }
-})
+}).transform((entry) => (
+  // ONE size key downstream. `installSize` is the field every consumer reads;
+  // `unpackedSize` is a wire-compatibility key the registry keeps emitting for
+  // npm so that a client older than this one still shows npm sizes.
+  //
+  // The merge belongs HERE and not at the render site, because this is the only
+  // place that knows an entry's `source` — the superRefine directly above has
+  // just proved that an `unpackedSize` present at all belongs to an npm entry,
+  // where the two keys name one quantity (equal on all 4,275 live npm entries,
+  // measured 2026-09-15). Doing it here makes the precedence a property of a
+  // parsed `CatalogEntry` rather than of one JSX expression: a second consumer
+  // — a sort, a detail row, an install confirmation — cannot read the stale key
+  // by accident, which is the failure `installSize` itself just shipped in
+  // reverse. Retiring `unpackedSize` then deletes this transform and its
+  // declaration, instead of hunting every read site.
+  entry.installSize === undefined && entry.unpackedSize !== undefined
+    ? { ...entry, installSize: entry.unpackedSize }
+    : entry
+))
 
 const dataSchema = z.object({
   schemaVersion: z.number(),
