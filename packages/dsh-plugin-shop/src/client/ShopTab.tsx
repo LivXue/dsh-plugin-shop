@@ -108,9 +108,14 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, na
   // Null for a github entry, and for any name outside npm's own grammar.
   const npmUrl = npmPageUrl(entry)
   const author = authorOf(entry)
-  // Undefined for a github entry and for an npm publish predating npm 5.6;
-  // the label is simply not rendered then.
-  const size = formatSize(entry.unpackedSize)
+  // `installSize` first: it is the only key a github size can arrive under —
+  // the catalog schema REFUSES a github `unpackedSize`, which names npm's own
+  // quantity — and for npm it repeats the packument figure, equal on all
+  // 4,275 live npm entries when measured 2026-09-15. `unpackedSize` stays as
+  // the fallback so a cached or rolled-back catalog predating `installSize`
+  // does not blank every npm size. Undefined only where the registry could
+  // not measure honestly, and the label is simply not rendered then.
+  const size = formatSize(entry.installSize ?? entry.unpackedSize)
   const category = entry.catalog?.category ?? 'other'
   const installTarget: InstallArgs = {
     name: entry.name,

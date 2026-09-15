@@ -168,6 +168,37 @@ describe('ShopTab', () => {
     expect(zh.sizeLabel).toContain('解包后')
   })
 
+  it('shows the size for a github entry, which carries it under installSize', async () => {
+    // The whole point of the second key, and the bug this fixes. A github
+    // entry is REFUSED if it carries `unpackedSize` — that key names npm's
+    // quantity — so a github size can only ever arrive as `installSize`, and
+    // a shelf reading the old key alone showed none at all. The registry has
+    // published one since 0.8.1: the live build report for 2026-09-14 reads
+    // "No install size: 0 of 10767 (github 0, npm 0)".
+    const { injected } = bench(snapshot({
+      name: 'dsh-repo-plugin', source: 'github', repo: 'octocat/dsh-repo-plugin',
+      version: 'a'.repeat(40), installSize: 4123461,
+    }))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-repo-plugin')).toBeTruthy())
+    const size = container.querySelector('[data-shop-entry="dsh-repo-plugin"] [data-shop-size]')
+    expect(size?.textContent).toBe('4.1 MB')
+  })
+
+  it('still shows an npm size from a catalog carrying only the older key', async () => {
+    // Deliberately a guard rather than a new behaviour: it passes before the
+    // change and must keep passing after it. A cached or rolled-back catalog
+    // predates `installSize`, and reading the new key INSTEAD of the old one
+    // would silently blank every npm size the moment the shop met one. The
+    // two hold one quantity — measured 2026-09-15 over the live catalog, all
+    // 4,275 npm entries carry both and they are equal on every one — so the
+    // fallback costs nothing and buys the rollback.
+    const { injected } = bench(snapshot({ unpackedSize: 847407 }))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(container.querySelector('[data-shop-size]')?.textContent).toBe('847.4 kB')
+  })
+
   it('shows no size for an entry the catalog gives none', async () => {
     // Every github entry, and any npm publish older than npm 5.6. The label
     // is absent rather than "0 B", which would claim the package is empty.
