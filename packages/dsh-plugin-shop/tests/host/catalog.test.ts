@@ -752,6 +752,72 @@ describe('unpackedSize', () => {
   })
 })
 
+describe('installSize', () => {
+  const baseEntry = {
+    name: 'dsh-timeline', version: '0.1.4', integrity: 'sha512-x', publishedAt: null,
+    repository: null, license: 'MIT', tier: 'community', metadata: 'derived',
+  }
+
+  /** One catalog load whose data file holds `entries`, at `schemaVersion`. */
+  async function load(entries: unknown[], schemaVersion: number) {
+    const data = dataJson(entries, [], schemaVersion)
+    const { pointer } = pointerFor(data, '2026-09-01T00:00:00Z', undefined, schemaVersion)
+    const fetchImpl = (async (input: string | URL) => new Response(
+      String(input).endsWith('/index.json') ? pointer : data, { status: 200 },
+    )) as unknown as typeof fetch
+    return loadCatalog({ baseUrl: 'https://shop.test/v1/', cacheDir: '/cache', fetchImpl, fsImpl: memFs() })
+  }
+
+  it('carries a github entry\'s size through to the entry the client renders', async () => {
+    // The reason this key exists at all. `unpackedSize` is REFUSED on a github
+    // entry by the superRefine above — it names npm's quantity, and GitHub's
+    // own repo figure is not it — so a github size can only ever arrive under
+    // a key of its own. The live catalog has carried one for every github
+    // entry since 0.8.1 while this schema stripped it as unknown: a size
+    // measured, published, and never shown to anyone.
+    const result = await load([{
+      ...baseEntry, version: 'a'.repeat(40), source: 'github', repo: 'someone/thing', installSize: 4123461,
+    }], 5)
+    expect(result.snapshot.entries[0]?.installSize).toBe(4123461)
+  })
+
+  it('carries an npm entry\'s size too, alongside the older key', async () => {
+    // One quantity under two keys for the length of the migration. Measured
+    // 2026-09-15 against the live catalog: all 4,275 npm entries carry both
+    // and the two are equal on every one, so preferring the new key moves no
+    // npm figure today. `unpackedSize` keeps being emitted for the installed
+    // clients that predate this one.
+    const result = await load([{ ...baseEntry, unpackedSize: 847407, installSize: 847407 }], 5)
+    expect(result.snapshot.entries[0]?.installSize).toBe(847407)
+    expect(result.snapshot.entries[0]?.unpackedSize).toBe(847407)
+  })
+
+  it('parses an entry that carries no size at all', async () => {
+    // Absent must stay parseable. The measurement is best-effort upstream —
+    // every way it can fail yields no figure rather than a wrong one — so a
+    // required field here would make the catalog unloadable over a decoration.
+    const result = await load([baseEntry], 5)
+    expect(result.snapshot.entries[0]?.installSize).toBeUndefined()
+    expect(result.snapshot.entries).toHaveLength(1)
+  })
+
+  it.each([
+    -1,
+    1.5,
+    '847407',
+    null,
+    Number.MAX_SAFE_INTEGER + 2,
+    1e21,
+  ])('refuses a catalog whose size is not a safe non-negative integer: %j', async (bad) => {
+    // The same bound and the same reasoning as `unpackedSize` above, stated
+    // for this key rather than inherited from it — and that is the point: an
+    // undeclared key is STRIPPED, so before this field existed every one of
+    // these values parsed in silence. The registry drops them at harvest, so
+    // one arriving here is our own build writing what it cannot write.
+    await expect(load([{ ...baseEntry, installSize: bad }], 5)).rejects.toThrow()
+  })
+})
+
 describe('origin racing', () => {
   const entry = {
     name: 'dsh-hello-plugin', version: '1.2.0', integrity: 'sha512-i', publishedAt: null,

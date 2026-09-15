@@ -189,6 +189,25 @@ const entrySchema = z.object({
   // `catalog.test.ts`: a zod change that relaxed it would otherwise let
   // through an integer JSON cannot round-trip.
   unpackedSize: z.number().int().nonnegative().optional(),
+  // The same quantity for EVERY source: what installing the entry puts on
+  // disk. npm repeats `dist.unpackedSize` into it, a commit-pinned github
+  // entry sums its git tree's blobs (scoped to `subdir`), a release-rescued
+  // one sums the tarball it already inflated (registry `Entry.installSize`).
+  //
+  // A SECOND key rather than filling `unpackedSize` for github too, and the
+  // reason is this file: the superRefine below does not ignore a github
+  // `unpackedSize`, it raises on one, and the data file is read with a
+  // throwing `parse`. Filling the old key would therefore have cost every
+  // already-installed shop the WHOLE catalog until its client updated —
+  // which is not observable from here. An unknown key is stripped instead,
+  // so the registry shipped this alone and the catalog has carried it since
+  // 0.8.1; declaring it here is what finally lets a github size be SEEN.
+  //
+  // Same bound as `unpackedSize` and for the same reason — the client formats
+  // it into a label, and a fraction or a negative renders as one. Stated
+  // rather than inherited: until a key is declared it is stripped, so every
+  // malformed value parsed in silence.
+  installSize: z.number().int().nonnegative().optional(),
 }).superRefine((entry, ctx) => {
   // The install spec differs by source, so the grammar does too. Refusing at
   // this boundary prevents catalog bytes from reaching the process layer.

@@ -57,6 +57,15 @@ export interface CatalogEntry {
    * (registry `Entry.unpackedSize`). Additive and optional, so it rides every
    * schemaVersion. */
   unpackedSize?: number
+  /** What installing this puts on disk, in bytes — the same quantity as
+   * `unpackedSize`, for every source (registry `Entry.installSize`). npm
+   * repeats its packument figure here; a github entry sums its git tree's
+   * blobs, or the release tarball it was rescued from. Absent wherever the
+   * measurement could not be made honestly: a size is a decoration, so a
+   * missing one costs the label and never the listing. Additive and optional,
+   * so it rides every schemaVersion. Prefer it over `unpackedSize`, which is
+   * npm-only and retires once the installed client floor has moved. */
+  installSize?: number
 }
 
 export interface DeniedEntry { name: string; detail: string; replacement?: string }
