@@ -478,21 +478,25 @@ export function formatStars(n: number): string {
  * `dist.unpackedSize` and npm's own package page shows it decimal — a reader
  * comparing the shelf against npmjs.com must not find two different figures
  * for one package. A github figure is a different measurement (its git tree's
- * blobs) but not a different unit, so one rule serves both. One fractional digit at every magnitude above a kilobyte,
- * the same rule `formatStars` follows: a column of sizes is read by comparing
- * them down the shelf, and switching precision by magnitude makes that column
- * ragged for no gain.
+ * blobs) but not a different unit, so one rule serves both. One fractional
+ * digit at every magnitude above a kilobyte, the same rule `formatStars`
+ * follows: a column of sizes is read by comparing them down the shelf, and
+ * switching precision by magnitude makes that column ragged for no gain.
  *
  * Locale-free by construction (`toFixed`, not `toLocaleString`): the shelf's
  * two languages must not disagree about what a size is, and a decimal comma
  * in one of them would read as a thousands separator in the other.
  *
- * Undefined in, undefined out — an old npm publish, or an entry the registry
- * could not measure honestly, and the card renders no label rather than a
- * guess. The caller need not check first. This once read "a github entry",
- * which was true only while the shelf read `unpackedSize` alone: every live
- * github entry carries an `installSize` and the 2026-09-14 build report puts
- * the sizeless count at 0 of 10,767.
+ * Undefined in, undefined out — an npm publish predating npm 5.6, or an entry
+ * the registry could not measure honestly (`tree-size.ts` enumerates each way
+ * that happens), and the card renders no label rather than a guess. The caller
+ * need not check first.
+ *
+ * This once read "a github entry", which was true only while the shelf read
+ * `unpackedSize` alone. It is not a source distinction any more: every live
+ * github entry carries an `installSize`, and the sizeless count the build
+ * report prints is owned by `emit.ts` — read it there rather than from a copy
+ * here, because it tracks the daily build.
  */
 export function formatSize(bytes: number | undefined): string | undefined {
   if (bytes === undefined) return undefined
