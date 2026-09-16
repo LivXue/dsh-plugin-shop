@@ -245,6 +245,22 @@ installable plugin. A package without a license or a repository cannot be audite
 package with neither a `dsh.catalog` section nor an npm `description` has nothing to
 show.
 
+### 🌾 Which packages are harvested?
+
+The harvest reads declared keywords, never package names: `dsh-plugin` and
+`deepseek-harness` are the two it accepts, in npm `keywords` and as GitHub repo
+*topics*. `cordis-plugin` names the underlying framework, so it does not show
+that a package is an installable DSH bundle. The plugins that ship inside dsh are
+a separate matter: they declare no npm keywords at all, so no keyword choice
+would reach them.
+
+If your community plugin is built on Cordis and integrates with DSH, declare one
+of those two keywords and put a `dsh.bundle` section where the harvest reads it:
+on the npm path, in the manifest of the package you publish; on the GitHub path,
+in the root `package.json`, which also needs a `name`, or, in a monorepo, in the
+subpackage that is the plugin. A reusable Cordis library with no `dsh.bundle` is
+a library rather than an installable plugin.
+
 ## 🗂️ Repository layout
 
 | Path | What lives there |
