@@ -1325,17 +1325,52 @@ describe('ShopTab', () => {
     expect(zh.acknowledgementBody).toBe(ACKNOWLEDGEMENT_ZH)
   })
 
-  it('keeps the updatable heading distinct from the installed label', () => {
+  it('heads the update rows "Updatable", which the Installed filter does not say', () => {
     // The heading sits over rows filtered to `outdated`, a strict subset of
     // what the Installed filter and the installed card label name — and both
-    // read off `installed`. Until 2026-09-16 the heading was that same
-    // string in both dictionaries ('Installed' / '已安装'), so the section
-    // announced the superset and listed the subset. Asserted on the
-    // dictionaries rather than the DOM: a rendered heading only collides
-    // when a shelf happens to hold both, while these two values collide
-    // always.
-    expect(en.updatableSection).not.toBe(en.installed)
-    expect(zh.updatableSection).not.toBe(zh.installed)
+    // read off `installed`. Until 2026-09-16 the heading was that same string
+    // in both dictionaries ('Installed' / '已安装'), so the section announced
+    // the superset and listed the subset.
+    //
+    // Pinned to the VALUE rather than asserted distinct from `installed`:
+    // inequality is satisfied by '' — which typechecks and renders an empty
+    // <h2> — and by 'All installed', which puts the misnomer straight back.
+    // Every DOM gate in this file reads the heading out of the dictionary it
+    // would be checking, so this is the only assertion in the suite that ever
+    // sees the literal.
+    expect(en.updatableSection).toBe('Updatable')
+    expect(zh.updatableSection).toBe('可更新')
+  })
+
+  // Key pairs allowed to hold one string, written as `key = key → "value"`.
+  // Empty on purpose: every collision this scan found when it was written has
+  // been split, so any entry added here is a decision someone has to defend.
+  const ALLOWED_DUPLICATE_COPY: ReadonlySet<string> = new Set()
+
+  it.each([['en', en], ['zh', zh]] as const)('gives every %s key copy of its own', (locale, dict) => {
+    // The heading defect was two keys holding one string, and two more of the
+    // same shape were live in this dictionary when it was fixed: zh's
+    // `checkUpdate` / `checkUpdateTitle`, a tooltip saying its own label back
+    // after the label was shortened precisely to move meaning into `title`;
+    // and `acknowledgementTitle` / `needsAcknowledgementCode` in both, a
+    // prompt and a refusal reading identically on one card. A per-pair
+    // assertion only ever covers the pair its author noticed — 105 keys make
+    // 5,460 pairs — so the guard is one scan with an explicit allowlist.
+    //
+    // Emptiness is checked in the same pass, because it is the other hole a
+    // distinctness assertion leaves open: `satisfies Record<ShopLocaleKey,
+    // string>` accepts '', and a heading with no word at all is worse than a
+    // heading with the wrong one.
+    const byCopy = new Map<string, string[]>()
+    for (const [key, value] of Object.entries(dict as Record<string, string>)) {
+      expect(value, `${locale}.${key} is empty`).not.toBe('')
+      byCopy.set(value, [...(byCopy.get(value) ?? []), key])
+    }
+    const collisions = [...byCopy.entries()]
+      .filter(([, keys]) => keys.length > 1)
+      .map(([value, keys]) => `${keys.join(' = ')} → ${JSON.stringify(value)}`)
+      .filter(line => !ALLOWED_DUPLICATE_COPY.has(line))
+    expect(collisions).toEqual([])
   })
 
   it('lists outdated installs with their installed and latest versions', async () => {
@@ -1345,6 +1380,35 @@ describe('ShopTab', () => {
     expect(screen.getByText('installed v1.0.0')).toBeTruthy()
     expect(screen.getByText('latest v1.2.0')).toBeTruthy()
     expect(installed).toHaveBeenCalled()
+  })
+
+  it('gives the Updatable section an accessible name', async () => {
+    // A bare <section> maps to `generic`, not `region`: with no accessible
+    // name landmark navigation skips the update rows entirely, and this <h2>
+    // — the tab's only heading, rendered last, below the whole shelf — reads
+    // as a continuation of the cards above it.
+    const { injected } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(container.querySelector('[data-shop-outdated]')).not.toBeNull())
+    const section = container.querySelector('[data-shop-outdated]')
+    const heading = section?.querySelector('h2')
+    expect(heading?.textContent).toBe(en.updatableSection)
+    expect(heading?.id).toBeTruthy()
+    expect(section?.getAttribute('aria-labelledby')).toBe(heading?.id)
+  })
+
+  it('names the installed read, not the catalog, when `installed` fails', async () => {
+    // This branch renders inside the catalog-ready path, below a shelf that
+    // has already painted thousands of cards. Reporting it with the catalog's
+    // line pointed the reader at the one subsystem visibly working, and at a
+    // reload that succeeds and changes nothing.
+    const { injected, installed } = bench(snapshot())
+    installed.mockRejectedValue(new Error('inventory service unmounted'))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(container.querySelector('[data-shop-outdated-error]')).not.toBeNull())
+    const line = container.querySelector('[data-shop-outdated-error]')
+    expect(line?.textContent).toBe(en.installedError)
+    expect(line?.textContent).not.toBe(en.error)
   })
 
   it('toggles an outdated install with setEnabled and shows the hot-apply note', async () => {

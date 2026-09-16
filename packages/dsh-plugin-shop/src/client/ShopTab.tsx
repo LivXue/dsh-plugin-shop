@@ -948,6 +948,13 @@ function OutdatedRow({ row, tier, missing, t, setEnabled, flowFor, restart, rest
   )
 }
 
+/** The id the section points its `aria-labelledby` at. A bare `<section>`
+ * maps to `generic`, not `region`: without an accessible name landmark
+ * navigation skips the update rows, and this `<h2>` — the tab's only
+ * heading, rendered last, below the whole shelf — reads as a continuation
+ * of the cards above it. */
+const UPDATABLE_HEADING_ID = 'dsh-shop-updatable-heading'
+
 /** The §7.3 installed list, rendered as the "Updatable" section: each row
  * shows both versions, a switch, and an update button. The rows are the
  * installed entries filtered to `outdated` — a current install is already
@@ -972,13 +979,18 @@ function OutdatedSection({ state, entriesByKey, missingByKey, t, setEnabled, flo
 }): ReactNode {
   if (state.kind === 'loading') return null
   if (state.kind === 'error') {
-    return <p className={css.stateLine} data-shop-outdated-error>{t('error')}</p>
+    // `installedError`, not `error`: this branch reports a failed
+    // `shop/installed`, and it renders inside the catalog-ready path — below
+    // a shelf that has already painted. The catalog's line would name the
+    // one subsystem the reader can see working, and point at a reload that
+    // succeeds and changes nothing.
+    return <p className={css.stateLine} data-shop-outdated-error>{t('installedError')}</p>
   }
   const outdated = state.entries.filter(entry => entry.outdated)
   if (outdated.length === 0) return null
   return (
-    <section className={css.outdatedSection} data-shop-outdated>
-      <h2 className={css.updatableHeading}>{t('updatableSection')}</h2>
+    <section className={css.outdatedSection} data-shop-outdated aria-labelledby={UPDATABLE_HEADING_ID}>
+      <h2 className={css.updatableHeading} id={UPDATABLE_HEADING_ID}>{t('updatableSection')}</h2>
       <ul className={css.outdatedList}>
         {outdated.map(row => (
           <li key={identityKey(row)}>
