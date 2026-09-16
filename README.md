@@ -223,7 +223,7 @@ A `dsh.catalog` section is optional — declare it to control your own category,
 and capabilities, or omit it and the catalog derives a listing from your npm
 `description` instead.
 
-### Which packages are harvested?
+### 🌾 Which packages are harvested?
 
 The catalog uses the explicit `dsh-plugin` and `deepseek-harness` keywords.
 `cordis-plugin` names the underlying framework, but it does not show that a package
