@@ -1325,10 +1325,23 @@ describe('ShopTab', () => {
     expect(zh.acknowledgementBody).toBe(ACKNOWLEDGEMENT_ZH)
   })
 
+  it('keeps the updatable heading distinct from the installed label', () => {
+    // The heading sits over rows filtered to `outdated`, a strict subset of
+    // what the Installed filter and the installed card label name — and both
+    // read off `installed`. Until 2026-09-16 the heading was that same
+    // string in both dictionaries ('Installed' / '已安装'), so the section
+    // announced the superset and listed the subset. Asserted on the
+    // dictionaries rather than the DOM: a rendered heading only collides
+    // when a shelf happens to hold both, while these two values collide
+    // always.
+    expect(en.updatableSection).not.toBe(en.installed)
+    expect(zh.updatableSection).not.toBe(zh.installed)
+  })
+
   it('lists outdated installs with their installed and latest versions', async () => {
     const { injected, installed } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
     renderTab(injected)
-    await waitFor(() => expect(screen.getByText(en.installedSection)).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(en.updatableSection)).toBeTruthy())
     expect(screen.getByText('installed v1.0.0')).toBeTruthy()
     expect(screen.getByText('latest v1.2.0')).toBeTruthy()
     expect(installed).toHaveBeenCalled()
@@ -1701,7 +1714,7 @@ describe('ShopTab', () => {
       [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }],
     )
     const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText(en.installedSection)).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(en.updatableSection)).toBeTruthy())
     expect(container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-blocker]')).toBeTruthy()
   })
 
@@ -1722,7 +1735,7 @@ describe('ShopTab', () => {
       [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }],
     )
     const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText(en.installedSection)).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(en.updatableSection)).toBeTruthy())
     const badge = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-blocker]')
     const detail = en.incompatibleDetail.replace('{modules}', '@deepseek-ai/dsh-client-store')
     expect(badge?.getAttribute('title')).toBe(detail)
@@ -1743,7 +1756,7 @@ describe('ShopTab', () => {
       [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }],
     )
     const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText(en.installedSection)).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(en.updatableSection)).toBeTruthy())
     const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]') as HTMLElement
     const badge = row.querySelector('[data-shop-blocker]') as HTMLElement
     const detail = en.incompatibleDetail.replace('{modules}', '@deepseek-ai/dsh-client-store')
@@ -1776,7 +1789,7 @@ describe('ShopTab', () => {
       [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }],
     )
     const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText(en.installedSection)).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(en.updatableSection)).toBeTruthy())
     const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]') as HTMLElement
     const button = row.querySelector('[data-shop-update]') as HTMLElement
     expect(button.nextElementSibling?.hasAttribute('data-shop-blocker'), 'immediately right of Update').toBe(true)
@@ -1831,7 +1844,7 @@ describe('ShopTab', () => {
       [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }],
     )
     const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText(en.installedSection)).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(en.updatableSection)).toBeTruthy())
     const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]') as HTMLElement
     fireEvent.click(row.querySelector('[data-shop-update]') as HTMLElement)
     const warning = row.querySelector('[data-shop-incompatible-warning]')
@@ -2156,7 +2169,7 @@ describe('ShopTab duplicate catalog names', () => {
       }],
     )
     const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText(en.installedSection)).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(en.updatableSection)).toBeTruthy())
     expect(container.querySelectorAll('[data-shop-outdated-entry]')).toHaveLength(1)
     expect(container.querySelectorAll('[data-shop-outdated-entry] [data-shop-blocker]')).toHaveLength(1)
     expect(container.querySelectorAll('[data-shop-entry="dsh-foo"]')).toHaveLength(2)
@@ -2314,7 +2327,7 @@ describe('ShopTab mutation flows (G-9)', () => {
       name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true,
     }])
     const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText(en.installedSection)).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(en.updatableSection)).toBeTruthy())
     expect(container.querySelectorAll('[data-shop-update]')).toHaveLength(2)
     fireEvent.click(container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"] [data-shop-update]')!)
     await waitFor(() => expect(container.querySelectorAll('[data-shop-update]')).toHaveLength(0))

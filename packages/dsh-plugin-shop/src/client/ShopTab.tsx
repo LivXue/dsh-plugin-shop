@@ -948,10 +948,14 @@ function OutdatedRow({ row, tier, missing, t, setEnabled, flowFor, restart, rest
   )
 }
 
-/** The §7.3 installed list, rendered as the "installed" section: each row
+/** The §7.3 installed list, rendered as the "Updatable" section: each row
  * shows both versions, a switch, and an update button. The rows are the
  * installed entries filtered to `outdated` — a current install is already
  * spoken for by its shelf card's installed label, and has no row here. The
+ * heading names that filtered content, not the list it came from: it read
+ * "Installed" until 2026-09-16, which was the Installed filter's label
+ * character for character in both languages, over a strict subset of what
+ * that filter selects. Internals stay `outdated` — the Host field name. The
  * tier for the update gate is looked up from the catalog by name (community →
  * acknowledgement); an entry absent from the catalog defaults to the
  * community gate (the safer read). */
@@ -974,7 +978,7 @@ function OutdatedSection({ state, entriesByKey, missingByKey, t, setEnabled, flo
   if (outdated.length === 0) return null
   return (
     <section className={css.outdatedSection} data-shop-outdated>
-      <h2 className={css.catalogHeading}>{t('installedSection')}</h2>
+      <h2 className={css.catalogHeading}>{t('updatableSection')}</h2>
       <ul className={css.outdatedList}>
         {outdated.map(row => (
           <li key={identityKey(row)}>

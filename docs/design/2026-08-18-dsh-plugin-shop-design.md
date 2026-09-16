@@ -707,6 +707,20 @@ Two smaller consequences worth stating because they are easy to get wrong. The h
 
 **Amendment (2026-08-27, follow-up): boot-time warm.** The client bundle warms `shop/catalog` (plus the small `installed` and `version` reads) when its apply runs at web boot, so the shop's first open consumes the boot-time fetch instead of waiting on it — the host's slow network fetch happens while nobody is looking at the shop. The tab's plain open consumes the stashed promise (the host's snapshot is the same one a fresh call would serve, so §10 freshness semantics are unchanged); a refresh always goes to the wire, and a failed warm falls back to a fresh call. Each boot starts its own warm fetch.
 
+**Amendment (2026-09-16): the section over the update rows is headed "Updatable", not "Installed".**
+
+The heading and the Installed filter held one string. `installedSection` and `installed` were `'Installed'` / `'已安装'` character for character in both dictionaries, and the filter's button label, the installed card's label and this heading all printed one of the two. So the same word named two different sets on one screen: every installed entry, which is what the filter selects and what `shop/installed` returns, and the rows whose `outdated` is true, which is all this section has ever listed. In the Installed view a reader met the word twice — once on the pressed filter, once as a heading over a shorter list — where the second reading looks like the first one's result, and an up-to-date install looks lost rather than accounted for on its own card.
+
+The heading now reads `Updatable` / `可更新`. Nothing about the content moves: the rows are still the installed entries filtered to `outdated`, a current install is still spoken for by its shelf card alone, and the section still renders nothing when that filter is empty.
+
+Three things deliberately do not change with it:
+
+- *The internals keep saying `outdated`.* `ShopInstalledEntry.outdated` is the Host's verdict in the §7.3 table above, `data-shop-outdated` is the e2e hook, and `.outdatedSection` is the class. A copy change may not reshape a wire field, and the field is accurate about what it reports — the heading was wrong about what it covered, which is a different defect.
+- *The locale KEY moves with the value.* `installedSection: 'Updatable'` would leave the dictionary asserting the collision this amendment removes, one lookup away from the next reader restoring it; the key is `updatableSection`.
+- *The guard is a dictionary assertion, not a DOM one.* Rendered, the two strings collide only on a shelf that happens to hold an installed entry and an outdated one at once, so a DOM test would pass on the wrong fixture. The two values collide unconditionally, and the spec is asserted where it is unconditional.
+
+The README screenshots go on showing `Installed` here: they are shot against the published build at the pin the READMEs carry, so a UI change lands with stale images by construction and the promotion commit reshoots all six.
+
 ## 8. When changes take effect
 
 | Operation | Restart required | Evidence |
