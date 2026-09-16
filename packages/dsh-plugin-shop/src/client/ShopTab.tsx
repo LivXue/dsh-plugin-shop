@@ -58,7 +58,7 @@ type CatalogState =
 /** The installed list state (§7.3). `installed()` runs alongside `catalog()`
  * and its rows ARE the tab's installed signal: a shelf card for an installed
  * entry shows its installed state — or the update button when behind —
- * instead of the install button, and the entries rendered as the "installed"
+ * instead of the install button, and the entries rendered as the "Updatable"
  * section are the same list filtered to `outdated`. The enabled switch per
  * row is optimistic (v0 assumes an installed plugin is on). */
 type InstalledState =
@@ -575,7 +575,7 @@ function InstallPanel({ target, tier, missing, blockers, missingStated = false, 
       >
         {t(update ? 'update' : 'install')}
       </button>
-      {/* One wording everywhere, including the outdated row. `missingByName`
+      {/* One wording everywhere, including the outdated row. `missingByKey`
           is keyed by the CATALOG (latest) entry, so on that row the version
           that actually runs is the INSTALLED one and it is the update that
           wants the missing module — the copy's "may be" carries that
@@ -956,9 +956,9 @@ function OutdatedRow({ row, tier, missing, t, setEnabled, flowFor, restart, rest
  * "Installed" until 2026-09-16, which was the Installed filter's label
  * character for character in both languages, over a strict subset of what
  * that filter selects. Internals stay `outdated` — the Host field name. The
- * tier for the update gate is looked up from the catalog by name (community →
- * acknowledgement); an entry absent from the catalog defaults to the
- * community gate (the safer read). */
+ * tier for the update gate is looked up from the catalog by install IDENTITY,
+ * never by name (community → acknowledgement); an entry absent from the
+ * catalog defaults to the community gate (the safer read). */
 function OutdatedSection({ state, entriesByKey, missingByKey, t, setEnabled, flowFor, restart, restartBlocked, reload }: {
   state: InstalledState
   entriesByKey: ReadonlyMap<string, CatalogEntry>
@@ -978,7 +978,7 @@ function OutdatedSection({ state, entriesByKey, missingByKey, t, setEnabled, flo
   if (outdated.length === 0) return null
   return (
     <section className={css.outdatedSection} data-shop-outdated>
-      <h2 className={css.catalogHeading}>{t('updatableSection')}</h2>
+      <h2 className={css.updatableHeading}>{t('updatableSection')}</h2>
       <ul className={css.outdatedList}>
         {outdated.map(row => (
           <li key={identityKey(row)}>

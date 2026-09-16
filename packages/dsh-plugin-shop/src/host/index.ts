@@ -1134,7 +1134,7 @@ export class ShopGateway extends TypertRemoteService {
 
   /** Installed catalog plugins (§7.3): every entry of the snapshot the profile
    * manifest declares as a dependency, with the Host's `outdated` verdict
-   * attached. The tab's shelf cards and its installed section both derive
+   * attached. The tab's shelf cards and its Updatable section both derive
    * from this one list. */
   @Remote('installed')
   async installed(): Promise<ShopInstalledEntry[]> {

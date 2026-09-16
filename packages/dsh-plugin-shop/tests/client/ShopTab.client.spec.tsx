@@ -1427,7 +1427,7 @@ describe('ShopTab', () => {
     expect(card?.querySelector('[data-shop-update]')).toBeNull()
     // The card still carries the uninstall control.
     expect(card?.querySelector('[data-shop-uninstall]')).not.toBeNull()
-    // A current install has no row in the installed section.
+    // A current install has no row in the Updatable section.
     expect(container.querySelector('[data-shop-outdated]')).toBeNull()
   })
 
@@ -1879,7 +1879,7 @@ describe('ShopTab shop-like filtering', () => {
     expect(screen.queryByText('dsh-plugin-shop-2')).toBeNull()
   })
 
-  it('keeps an installed shop-like plugin manageable in the installed section', async () => {
+  it('keeps an outdated shop-like plugin manageable in the Updatable section', async () => {
     const { injected } = bench(twoPlugins(), [{ name: 'dsh-plugin-shop-2', installed: '^1.0.0', latest: '2.0.0', outdated: true, enabled: true }])
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
