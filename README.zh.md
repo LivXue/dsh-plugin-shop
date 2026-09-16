@@ -202,19 +202,6 @@ flowchart LR
 `name` 和 `dsh.bundle` 的 `package.json`——目录会把默认分支的 commit 钉为版本。`dsh.catalog` 段是可选的——声明它可以自己掌控分类、简介和 capabilities；不声明，目录会从你的
 npm `description` 推导一条 listing。
 
-### 哪些包会被采集？
-
-采集只看声明的关键字，从不看包名：npm `keywords` 里和 GitHub 仓库 *topic* 上，
-认 `dsh-plugin` 和 `deepseek-harness` 这两个。`cordis-plugin` 说的是底层插件框架，
-不能证明这个包就是可安装的 DSH bundle；而随 dsh 一起分发的那些插件是另一回事，
-它们根本不声明任何 npm keywords，换哪个关键字都采不到。
-
-如果你的社区插件基于 Cordis 且确实接入 DSH，请声明上面两个关键字之一，
-并把 `dsh.bundle` 放在采集真正会读的地方：走 npm 这条路，是你发布的那个包自己的 manifest；
-走 GitHub 这条路，是仓库根目录的 `package.json`，它还需要一个 `name`；
-或者，如果是 monorepo，就放在真正是插件的那个子包里。只作为可复用 Cordis 库、
-哪里都没有 `dsh.bundle` 的包，是库而不是可安装的插件，目录不会收录。
-
 ```json
 {
   "name": "dsh-hello-plugin",
@@ -234,6 +221,19 @@ npm `description` 推导一条 listing。
 
 **哪些不会上架，以及为什么：** 没有 `dsh.bundle` 的包是库而不是可安装插件；没有 license 或没有
 仓库地址的包无法被审计；既没有 `dsh.catalog` 段也没有 npm `description` 的包，没有任何内容可展示。
+
+### 哪些包会被采集？
+
+采集只看声明的关键字，从不看包名：npm `keywords` 里和 GitHub 仓库 *topic* 上，
+认 `dsh-plugin` 和 `deepseek-harness` 这两个。`cordis-plugin` 说的是底层插件框架，
+不能证明这个包就是可安装的 DSH bundle；而随 dsh 一起分发的那些插件是另一回事，
+它们根本不声明任何 npm keywords，换哪个关键字都采不到。
+
+如果你的社区插件基于 Cordis 且确实接入 DSH，请声明上面两个关键字之一，
+并把 `dsh.bundle` 放在采集真正会读的地方：走 npm 这条路，是你发布的那个包自己的 manifest；
+走 GitHub 这条路，是仓库根目录的 `package.json`，它还需要一个 `name`；
+或者，如果是 monorepo，就放在真正是插件的那个子包里。只作为可复用 Cordis 库、
+哪里都没有 `dsh.bundle` 的包，是库而不是可安装的插件。
 
 ## 🗂️ 仓库结构
 

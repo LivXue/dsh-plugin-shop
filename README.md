@@ -223,17 +223,6 @@ A `dsh.catalog` section is optional — declare it to control your own category,
 and capabilities, or omit it and the catalog derives a listing from your npm
 `description` instead.
 
-### 🌾 Which packages are harvested?
-
-The catalog uses the explicit `dsh-plugin` and `deepseek-harness` keywords.
-`cordis-plugin` names the underlying framework, but it does not show that a package
-is an installable DSH bundle. Some `@deepseek-ai/cordis-plugin-*` packages ship
-with Harness itself, so treating that family as third-party installs would be
-misleading. If your community plugin is built on Cordis and integrates with DSH,
-declare `dsh-plugin` or `deepseek-harness` in npm `keywords` (or as a GitHub topic)
-and keep a root `package.json` with `dsh.bundle`. A reusable Cordis library without
-`dsh.bundle` is not an installable DSH plugin and is not listed.
-
 ```json
 {
   "name": "dsh-hello-plugin",
@@ -255,6 +244,22 @@ Full field reference: [docs/schema.md](docs/schema.md).
 installable plugin. A package without a license or a repository cannot be audited. A
 package with neither a `dsh.catalog` section nor an npm `description` has nothing to
 show.
+
+### 🌾 Which packages are harvested?
+
+The harvest reads declared keywords, never package names: `dsh-plugin` and
+`deepseek-harness` are the two it accepts, in npm `keywords` and as GitHub repo
+*topics*. `cordis-plugin` names the underlying framework, so it does not show
+that a package is an installable DSH bundle. The plugins that ship inside dsh are
+a separate matter: they declare no npm keywords at all, so no keyword choice
+would reach them.
+
+If your community plugin is built on Cordis and integrates with DSH, declare one
+of those two keywords and put a `dsh.bundle` section where the harvest reads it:
+on the npm path, in the manifest of the package you publish; on the GitHub path,
+in the root `package.json`, which also needs a `name`, or, in a monorepo, in the
+subpackage that is the plugin. A reusable Cordis library with no `dsh.bundle` is
+a library rather than an installable plugin.
 
 ## 🗂️ Repository layout
 
