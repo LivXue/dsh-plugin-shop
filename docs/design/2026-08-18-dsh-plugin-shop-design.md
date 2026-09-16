@@ -721,6 +721,30 @@ Three things deliberately do not change with it:
 
 The README screenshots never carried this heading and will not gain it. `shoot-readme-screenshots.ts` installs the shop at the pin the READMEs hold — the published `latest` — so nothing in that profile is `outdated`, the section renders nothing, and the six images have no update rows to head. The standing rule that a UI change lands with stale images and the promotion commit reshoots all six is unaffected; it just has nothing to reshoot for this one.
 
+**Amendment (2026-09-16, follow-up): what `outdated` reports, per source.**
+
+`outdated` is not one comparison. For an npm entry it is `isBehind(spec,
+latest)`, a semver ordering, and `Updatable` is exactly what it means. For a
+github entry it is `pin !== entry.version` — two commit shas, an INEQUALITY
+with no ordering, because nothing the Host holds can order them. The catalog's
+version for such an entry is the repository's default branch as of the build;
+the pin is what the shop recorded at install time. If that branch is reverted
+or force-pushed behind the pin, the row still appears and Update installs the
+older tree.
+
+The client is not where that gets fixed, and a network probe per installed
+github entry to order the two is not worth what it costs. It is a bound on
+what the heading claims: for a github row `Updatable` means the catalog offers
+a different commit, and pressing Update syncs to the catalog rather than
+moving strictly forward. The row states both shas, so the reader can see which
+is which; the heading is the only place that overstates, and it overstates for
+one of the two sources.
+
+Recorded rather than narrowed in the field, because `ShopInstalledEntry.outdated`
+is a wire field both halves read, and because the alternatives — a second
+field, or a source-dependent heading — buy a precision the reader cannot act
+on.
+
 ## 8. When changes take effect
 
 | Operation | Restart required | Evidence |

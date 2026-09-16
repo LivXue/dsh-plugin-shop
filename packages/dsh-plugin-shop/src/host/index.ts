@@ -1185,6 +1185,14 @@ export class ShopGateway extends TypertRemoteService {
         // shop recorded at install time is the commit truth; without one the
         // entry was installed by other means and reads as current rather
         // than killing the RPC over an unknowable comparison.
+        //
+        // `pin !== entry.version` is an INEQUALITY, not an ordering. Two
+        // commit shas cannot be ordered without asking the repository, so
+        // this reports that the catalog offers a DIFFERENT commit, never
+        // that it offers a newer one; the npm arm below is a real semver
+        // comparison. §7.3's 2026-09-16 follow-up records what that bounds
+        // the Updatable heading to, and why a probe per installed github
+        // entry is not worth what it would cost.
         const pin = pins[identityKey(entry)] ?? pins[entry.name]
         installed.push({
           name: entry.name,
