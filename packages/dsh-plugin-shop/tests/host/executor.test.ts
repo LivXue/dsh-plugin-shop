@@ -12,6 +12,15 @@ import { fileTempRoot } from './temp-root.ts'
 
 const TEMP_ROOT = fileTempRoot('executor')
 
+/** How long a poll waits for a real child to start and exit. It bounds a
+ * failure report, never a passing run. The rule this file states below —
+ * "under parallel-suite load no fixed sleep is safe, so poll instead" — is
+ * not honoured by `vi.waitFor`'s own default, which is a 1s deadline and so
+ * shorter than most of the sleeps it replaced. `prefetch.test.ts` already
+ * carries this constant and cites the rule from here; a loaded Windows
+ * runner expired the default on 2026-09-16 (PR #51 CI). */
+const CHILD_WAIT = { timeout: 10_000 }
+
 // A fixture `dsh` that records its full argv in a marker file and exits with
 // the requested code, proving the executor passes --profile and the pinned
 // spec through: `dsh plugin --profile <p> add <spec>` is `argv.slice(0, 5)`.
@@ -626,10 +635,10 @@ describe('startInstall afterDone seam', () => {
       afterDoneCalls += 1
       return new Promise<{ activation: Activation }>(resolve => { settle = resolve })
     }
-    const running = startInstall({ profile: 'p', spec: 'fixture@1.0.0', dshBin: bin, afterDone })
+    const running = startInstall({ profile: 'afterdone-withholds', spec: 'fixture@1.0.0', dshBin: bin, afterDone })
     // Wait for the child to exit and the close handler to invoke afterDone;
     // under parallel-suite load no fixed sleep is safe, so poll instead.
-    await vi.waitFor(() => expect(afterDoneCalls).toBe(1))
+    await vi.waitFor(() => expect(afterDoneCalls).toBe(1), CHILD_WAIT)
     // The child has exited and afterDone is pending — the terminal `done` is
     // withheld until it settles.
     expect(running.status().state).toBe('running')
@@ -641,7 +650,7 @@ describe('startInstall afterDone seam', () => {
 
   it('an afterDone failure still reports done, with activation restart and the fallback reason', async () => {
     const bin = fixtureDsh(0)
-    const running = startInstall({ profile: 'p', spec: 'fixture@1.0.0', dshBin: bin,
+    const running = startInstall({ profile: 'afterdone-throws', spec: 'fixture@1.0.0', dshBin: bin,
       afterDone: async () => { throw new Error('boom') } })
     const status = await running.finished
     expect(status.state).toBe('done')
@@ -692,8 +701,8 @@ describe('startUninstall', () => {
       afterDoneCalls += 1
       return new Promise<{ activation: Activation; restartReason?: HotRestartReason }>(resolve => { settle = resolve })
     }
-    const running = startUninstall({ profile: 'web', name: 'dsh-hello-plugin', dshBin: bin, afterDone })
-    await vi.waitFor(() => expect(afterDoneCalls).toBe(1))
+    const running = startUninstall({ profile: 'afterdone-uninstall', name: 'dsh-hello-plugin', dshBin: bin, afterDone })
+    await vi.waitFor(() => expect(afterDoneCalls).toBe(1), CHILD_WAIT)
     expect(running.status().state).toBe('running')
     settle!({ activation: 'live', restartReason: 'mount-failed' })
     const status = await running.finished
