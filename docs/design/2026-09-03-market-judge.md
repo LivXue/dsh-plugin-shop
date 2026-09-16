@@ -101,7 +101,7 @@ batch in any order, so there is no positional check to add.
 Nor is withholding a deletion. `ShopTab.tsx:911` puts it plainly — *not
 advertised is not hidden*: a withheld entry is absent from `browsable`, so it
 cannot be browsed, searched or counted in the shop, but it stays in
-`plugins.json`, an installed copy stays manageable in the installed section,
+`plugins.json`, an installed copy stays manageable in the Installed view,
 and `dsh plugin add <name>` still works.
 
 Rows are never pruned, for the reason the memory exists: a name that drops out
