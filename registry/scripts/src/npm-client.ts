@@ -494,7 +494,18 @@ export function parseKeywordShortfall(value: unknown, where: string): KeywordSho
  *
  * `keywords:dsh-plugin` has NOT crossed the window yet: 3,973 against
  * {@link SEARCH_WINDOW} at 2026-09-08, growing about 60 names a day, so
- * 1,277 of headroom is 21 days and it crosses about 2026-09-29. It is
+ * 1,277 of headroom is 21 days and it crosses about 2026-09-29.
+ *
+ * RE-MEASURED 2026-09-16, AND THE DATE MOVED IN BY TEN DAYS. 5,024 against
+ * the same window, with the daily CI logs reading 4,666 on 09-11 and 4,966
+ * on 09-15: about 72 names a day rather than 60, and 226 of headroom left,
+ * so it crosses about 2026-09-19. The 09-08 projection is kept above because
+ * what changed is the rate it assumed, not its arithmetic, and because the
+ * ten-day error is the point: every consumer of this date budgeted against
+ * the slower one. Re-measure before acting — one `size=1` search answers it
+ * and the figure moves daily.
+ *
+ * It is
  * therefore still fully enumerable, which is the only window in which this
  * can be measured for the price of one paged search — the search response
  * carries each name's `keywords` and `maintainers`, so sixteen pages
@@ -676,10 +687,14 @@ export const PARTITION_KEYWORDS: readonly string[] = [
  *    57m37s, 429 backoffs included; one probe alone measured 1.2s), so the
  *    phase costs about `budget` seconds and a cycle takes
  *    `vocabulary / budget` runs. At 250 that is 14 runs — a fortnight at the
- *    daily cadence — and `keywords:dsh-plugin` crosses `SEARCH_WINDOW` around
- *    2026-09-29, when this axis stops being insurance and starts carrying the
- *    81 names no refinement can reach. One cycle must finish well inside that
- *    horizon, not at it.
+ *    daily cadence — and `keywords:dsh-plugin` crosses `SEARCH_WINDOW` on the
+ *    date {@link PARTITION_KEYWORDS} measures, when this axis stops being
+ *    insurance and starts carrying the 81 names no refinement can reach. One
+ *    cycle must finish well inside that horizon, not at it. NOTE 2026-09-16:
+ *    that re-measurement moved the crossing to about 2026-09-19, and this
+ *    bullet's own reasoning no longer closes — at 500 against a 3,735-name
+ *    vocabulary a cycle is ~7.5 runs, which does not fit inside three days.
+ *    The horizon, not the budget, is what moved; the answer is #38.
  *  - At or under 1,000, which still rotates (4 runs) but restores ~17 minutes
  *    of sequential requests against a run that took ~71 minutes without any
  *    probes at all. npm rate-limits this endpoint after about nine rapid
