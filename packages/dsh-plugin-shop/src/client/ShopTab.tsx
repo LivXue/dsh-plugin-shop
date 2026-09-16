@@ -80,7 +80,7 @@ function ChevronIcon({ open }: { open: boolean }): ReactNode {
  * install controls. An installed plugin's card carries its installed row:
  * current → the non-interactive installed label, behind → the update button;
  * uninstalled → the install button. */
-const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, nameTakenBy, t, flowFor, uninstallFlowFor, restart, restartBlocked, reload, setEnabled, inInstalledView }: {
+const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, nameTakenBy, t, flow, uninstallFlow, restart, restartBlocked, reload, setEnabled, inInstalledView }: {
   entry: CatalogEntry
   stars: number | undefined
   installed: ShopInstalledEntry | undefined
@@ -90,8 +90,11 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, na
    * that branch means THIS identity is the one installed. */
   nameTakenBy: string | undefined
   t: ShopTabProps['t']
-  flowFor: (key: string) => InstallFlow
-  uninstallFlowFor: (key: string) => UninstallFlow
+  /** This entry's own flow, not the registry accessor: the accessor's
+   * identity changes on every install poll response, so passing it here
+   * defeated this component's `memo` for every card on the shelf. */
+  flow: InstallFlow
+  uninstallFlow: UninstallFlow
   restart: ShopTabInjected['restart']
   restartBlocked: RestartBlockedReason | null
   reload: () => void
@@ -122,8 +125,6 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, na
     repo: entry.repo,
     subdir: entry.subdir,
   }
-  const flow = flowFor(entryKey(entry))
-  const uninstallFlow = uninstallFlowFor(entryKey(entry))
   return (
     <div className={css.card} data-shop-entry={entry.name} data-category={category}>
       <span className={css.cardSpine} aria-hidden="true" />
@@ -1750,7 +1751,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
               const key = entryKey(entry)
               return (
                 <li key={key}>
-                  <EntryCard entry={entry} stars={starsOf(entry, stars)} installed={installedByKey.get(key)} missing={missingByKey.get(key) ?? []} nameTakenBy={nameTakenByKey.get(key)} t={t} flowFor={flows.flowFor} uninstallFlowFor={uninstallFlows.flowFor} restart={restart} restartBlocked={restartBlocked} reload={reload} setEnabled={setEnabled} inInstalledView={category === 'installed'} />
+                  <EntryCard entry={entry} stars={starsOf(entry, stars)} installed={installedByKey.get(key)} missing={missingByKey.get(key) ?? []} nameTakenBy={nameTakenByKey.get(key)} t={t} flow={flows.flowFor(key)} uninstallFlow={uninstallFlows.flowFor(key)} restart={restart} restartBlocked={restartBlocked} reload={reload} setEnabled={setEnabled} inInstalledView={category === 'installed'} />
                 </li>
               )
             })}
