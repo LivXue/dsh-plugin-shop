@@ -202,6 +202,16 @@ flowchart LR
 `name` 和 `dsh.bundle` 的 `package.json`——目录会把默认分支的 commit 钉为版本。`dsh.catalog` 段是可选的——声明它可以自己掌控分类、简介和 capabilities；不声明，目录会从你的
 npm `description` 推导一条 listing。
 
+### 目录收录哪些包？
+
+本目录只认明确表示 DSH 集成的 `dsh-plugin` 和 `deepseek-harness`。
+`cordis-plugin` 说的是底层插件框架，不能证明这个包就是可安装的 DSH bundle。
+有些 `@deepseek-ai/cordis-plugin-*` 包本来就随 Harness 提供，把它们当成第三方插件会让用户误解。
+如果你的社区插件基于 Cordis 且确实接入 DSH，请在 npm 的 `keywords` 中声明
+`dsh-plugin` 或 `deepseek-harness`，或者把同名关键字加为 GitHub topic，并在仓库根目录提供带
+`dsh.bundle` 的 `package.json`。只作为可复用 Cordis 库、没有 `dsh.bundle` 的包，不属于可安装的
+DSH 插件，目录不会收录。
+
 ```json
 {
   "name": "dsh-hello-plugin",

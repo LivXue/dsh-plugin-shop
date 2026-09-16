@@ -223,6 +223,17 @@ A `dsh.catalog` section is optional — declare it to control your own category,
 and capabilities, or omit it and the catalog derives a listing from your npm
 `description` instead.
 
+### Which packages are harvested?
+
+The catalog uses the explicit `dsh-plugin` and `deepseek-harness` keywords.
+`cordis-plugin` names the underlying framework, but it does not show that a package
+is an installable DSH bundle. Some `@deepseek-ai/cordis-plugin-*` packages ship
+with Harness itself, so treating that family as third-party installs would be
+misleading. If your community plugin is built on Cordis and integrates with DSH,
+declare `dsh-plugin` or `deepseek-harness` in npm `keywords` (or as a GitHub topic)
+and keep a root `package.json` with `dsh.bundle`. A reusable Cordis library without
+`dsh.bundle` is not an installable DSH plugin and is not listed.
+
 ```json
 {
   "name": "dsh-hello-plugin",
