@@ -1885,6 +1885,44 @@ describe('ShopTab shop-like filtering', () => {
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     expect(screen.getByText('dsh-plugin-shop-2')).toBeTruthy()
   })
+
+  it('keeps a CURRENT shop-like plugin manageable in the Installed view', async () => {
+    // What the fixture above cannot see. With `outdated: true` the plugin has
+    // an Updatable row, so that assertion holds whether or not the shelf
+    // withholds its card. Up to date the row is gone, the card is the only
+    // place its enable switch and its uninstall button live — and the
+    // shop-like exclusion used to take the card too, leaving a plugin sitting
+    // on the profile with no control anywhere in the tab.
+    const { injected } = bench(twoPlugins(), [{ name: 'dsh-plugin-shop-2', installed: '2.0.0', latest: '2.0.0', outdated: false, enabled: true }])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    // Not advertised: the default shelf still withholds it.
+    expect(screen.queryByText('dsh-plugin-shop-2')).toBeNull()
+    // Not hidden: the Installed view carries the card, the card carries the
+    // controls, and no Updatable row exists to stand in for either.
+    fireEvent.click(container.querySelector('[data-shop-category-installed]')!)
+    await waitFor(() => expect(screen.getByText('dsh-plugin-shop-2')).toBeTruthy())
+    expect(container.querySelector('[data-shop-entry="dsh-plugin-shop-2"] [data-shop-uninstall]')).not.toBeNull()
+    expect(container.querySelector('[data-shop-outdated]')).toBeNull()
+  })
+
+  it('counts the Installed button off the list its own view renders', async () => {
+    // The count and the view applied different halves of one rule: the count
+    // tested the shop-like NAME alone, the view applied the whole exclusion
+    // including the repo slug and the `notAShop` clearing set. Either half
+    // could win, so the button named one number over a different number of
+    // cards — in both directions.
+    const { injected } = bench(twoPlugins(), [
+      { name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true },
+      { name: 'dsh-plugin-shop-2', installed: '2.0.0', latest: '2.0.0', outdated: false, enabled: true },
+    ])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const button = container.querySelector('[data-shop-category-installed]')!
+    expect(button.textContent?.trim()).toBe(`${en.installed} 2`)
+    fireEvent.click(button)
+    await waitFor(() => expect(container.querySelectorAll('[data-shop-entry]')).toHaveLength(2))
+  })
 })
 
 describe('ShopTab loading state', () => {
