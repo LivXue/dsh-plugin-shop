@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import {
-  MAINTAINER_MAX_LENGTH, MAX_PUBLISHERS, isMaintainerName, mergePublishers, nextCursor,
+  MAINTAINER_MAX_LENGTH, MAX_PUBLISHERS, atRiskOwners, HarvestedName, isMaintainerName, mergePublishers, nextCursor,
   parsePublisherState, serializePublisherState,
 } from '../src/publisher-state.ts'
 import { PUBLISHER_PROBE_BUDGET_DEFAULT } from '../src/npm-client.ts'
@@ -243,5 +243,48 @@ describe('publisher state', () => {
     expect(capped.publishers[0]).toBe('u000000')
     // Stable: re-merging the same union yields the same file, not a churn.
     expect(mergePublishers(capped, many).publishers).toEqual(capped.publishers)
+  })
+})
+
+
+const REFINEMENTS = ['dsh', 'dsh-plugin', 'deepseek-harness', 'agent', 'mcp']
+
+describe('atRiskOwners', () => {
+  it('returns the owners of names carrying no refinement beyond the harvest keyword', () => {
+    const names = [
+      { keywords: ['dsh-plugin'], maintainers: ['huanlin'] },
+      { keywords: ['dsh-plugin', 'agent'], maintainers: ['covered'] },
+    ]
+    expect(atRiskOwners(names, 'dsh-plugin', REFINEMENTS)).toEqual(['huanlin'])
+  })
+
+  it('does not count the other harvest keyword as bare: its intersection cell reaches the name', () => {
+    const names = [{ keywords: ['dsh-plugin', 'deepseek-harness'], maintainers: ['reachable'] }]
+    expect(atRiskOwners(names, 'dsh-plugin', REFINEMENTS)).toEqual([])
+  })
+
+  it('ignores keywords that are not refinements, because no cell is built from them', () => {
+    // `typescript` is not in PARTITION_KEYWORDS, so it buys no reachability.
+    const names = [{ keywords: ['dsh-plugin', 'typescript'], maintainers: ['still-at-risk'] }]
+    expect(atRiskOwners(names, 'dsh-plugin', REFINEMENTS)).toEqual(['still-at-risk'])
+  })
+
+  it('returns every owner of an at-risk name, sorted and unique', () => {
+    const names = [
+      { keywords: ['dsh-plugin'], maintainers: ['zoe', 'adam'] },
+      { keywords: ['dsh-plugin'], maintainers: ['adam'] },
+    ]
+    expect(atRiskOwners(names, 'dsh-plugin', REFINEMENTS)).toEqual(['adam', 'zoe'])
+  })
+
+  it('drops owners that are not maintainer usernames', () => {
+    const names = [{ keywords: ['dsh-plugin'], maintainers: ['ok', '', 'a'.repeat(200)] }]
+    expect(atRiskOwners(names, 'dsh-plugin', REFINEMENTS)).toEqual(['ok'])
+  })
+
+  it('is empty when a name carries no keywords at all, which cannot be attributed', () => {
+    // A name with no keywords did not reach the harvest through a keyword
+    // search, so treating it as at-risk for this keyword is unfounded.
+    expect(atRiskOwners([{ keywords: [], maintainers: ['x'] }], 'dsh-plugin', REFINEMENTS)).toEqual([])
   })
 })

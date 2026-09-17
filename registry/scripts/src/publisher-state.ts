@@ -214,3 +214,54 @@ export function mergePublishers(state: PublisherState, seen: readonly string[]):
   // because only the caller knows what budget the run actually spent.
   return { publishers: [...kept].sort(compareStrings).slice(0, MAX_PUBLISHERS), cursor: state.cursor ?? 0 }
 }
+/** One harvested name, reduced to the two fields the at-risk rule reads. */
+export interface HarvestedName {
+  readonly keywords: readonly string[]
+  readonly maintainers: readonly string[]
+}
+
+/**
+ * The maintainers of names that no refinement cell can reach.
+ *
+ * A `keywords:<harvest>,<refinement>` cell selects a name only if the name
+ * carries that refinement. A name whose only listed refinement is the harvest
+ * keyword itself is therefore reachable ONLY while its rank sits inside the
+ * keyword's window, and passes permanently out of reach when the keyword
+ * outgrows `SEARCH_WINDOW`. Those names are what the publisher axis exists
+ * for, and their owners are what it has to know.
+ *
+ * RANK IS NOT PART OF THIS RULE. A name carrying a refinement is reachable at
+ * any rank, so rank decides WHEN a name leaves reach and never WHICH names
+ * can. Selecting by rank would also mean predicting future ranks, where the
+ * rate-times-tail model over-predicted fivefold
+ * (`docs/plans/2026-09-08-publisher-partition.md`); this rule is exact and
+ * measurable while the keyword is still enumerable.
+ *
+ * A name carrying no keywords at all yields nothing: it did not reach the
+ * harvest through a keyword search, so attributing it to this keyword's
+ * residue is unfounded.
+ */
+export function atRiskOwners(
+  names: readonly HarvestedName[],
+  harvestKeyword: string,
+  refinements: readonly string[],
+): string[] {
+  const refinementSet = new Set(refinements)
+  const out = new Set<string>()
+  for (const name of names) {
+    if (name.keywords.length === 0) continue
+    let covered = false
+    for (const keyword of name.keywords) {
+      if (keyword !== harvestKeyword && refinementSet.has(keyword)) {
+        covered = true
+        break
+      }
+    }
+    if (covered) continue
+    for (const owner of name.maintainers) {
+      if (isMaintainerName(owner)) out.add(owner)
+    }
+  }
+  return [...out].sort(compareStrings)
+}
+
