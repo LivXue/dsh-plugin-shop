@@ -340,7 +340,15 @@ export function pinFor(state: PublisherState, keyword: string, users: readonly s
   // Re-bounded after the merge: a state handed in already over the bound must
   // not be grown by this call, and `Set` insertion cannot be relied on to stop
   // at the limit when the incoming names were already present.
-  pinned[keyword] = [...kept].sort(compareStrings).slice(0, MAX_PINNED_PER_KEYWORD)
+  const next = [...kept].sort(compareStrings).slice(0, MAX_PINNED_PER_KEYWORD)
+  // Deletes rather than committing `keyword: []`: an empty array is inert to
+  // `probeOrder` (`pinned?.[keyword] ?? []` reads the same either way), but it
+  // is not inert to `serializePublisherState`, which copies every existing key
+  // forward without ever dropping one — so an empty entry, once written,
+  // round-trips into the committed file forever. Mirrors `unpinFor`, which
+  // prunes for the same reason.
+  if (next.length === 0) delete pinned[keyword]
+  else pinned[keyword] = next
   return { ...state, pinned }
 }
 

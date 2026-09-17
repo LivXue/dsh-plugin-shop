@@ -361,6 +361,11 @@ describe('pinFor and unpinFor', () => {
     expect(pinFor({ publishers: [] }, 'k', ['ok', '']).pinned).toEqual({ k: ['ok'] })
   })
 
+  it('adds no key when nothing survives, so an empty entry cannot reach the committed file', () => {
+    expect(pinFor({ publishers: [] }, 'k', []).pinned).toEqual({})
+    expect(pinFor({ publishers: [] }, 'k', ['', 'a'.repeat(200)]).pinned).toEqual({})
+  })
+
   it('unpins only the named users, and only for that keyword', () => {
     const state: PublisherState = { publishers: [], pinned: { k: ['a', 'b'], other: ['a'] } }
     expect(unpinFor(state, 'k', ['a']).pinned).toEqual({ k: ['b'], other: ['a'] })
