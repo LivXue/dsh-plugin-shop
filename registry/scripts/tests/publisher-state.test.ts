@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import {
-  MAINTAINER_MAX_LENGTH, MAX_PUBLISHERS, atRiskOwners, HarvestedName, isMaintainerName, mergePublishers, nextCursor,
+  MAINTAINER_MAX_LENGTH, MAX_PUBLISHERS, atRiskOwners, isMaintainerName, mergePublishers, nextCursor,
   parsePublisherState, serializePublisherState,
 } from '../src/publisher-state.ts'
 import { PUBLISHER_PROBE_BUDGET_DEFAULT } from '../src/npm-client.ts'
@@ -245,7 +245,6 @@ describe('publisher state', () => {
     expect(mergePublishers(capped, many).publishers).toEqual(capped.publishers)
   })
 })
-
 
 const REFINEMENTS = ['dsh', 'dsh-plugin', 'deepseek-harness', 'agent', 'mcp']
 

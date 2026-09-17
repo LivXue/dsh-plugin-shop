@@ -214,6 +214,7 @@ export function mergePublishers(state: PublisherState, seen: readonly string[]):
   // because only the caller knows what budget the run actually spent.
   return { publishers: [...kept].sort(compareStrings).slice(0, MAX_PUBLISHERS), cursor: state.cursor ?? 0 }
 }
+
 /** One harvested name, reduced to the two fields the at-risk rule reads. */
 export interface HarvestedName {
   readonly keywords: readonly string[]
@@ -264,4 +265,3 @@ export function atRiskOwners(
   }
   return [...out].sort(compareStrings)
 }
-
