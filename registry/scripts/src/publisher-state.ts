@@ -310,3 +310,80 @@ export function atRiskOwners(
   }
   return [...out].sort(compareStrings)
 }
+
+/**
+ * How many maintainers one keyword may pin.
+ *
+ * Half {@link PUBLISHER_PROBE_BUDGET_DEFAULT}, so pinned probes can never take
+ * more than half a run and rotation always keeps the other half: the axis
+ * degrades under a large pinned set, it never starves. Written as a literal
+ * rather than imported from `npm-client.ts`, which would make this pure module
+ * depend on the shell; `publisher-state.test.ts` asserts the relation instead.
+ *
+ * At-risk names are ~2% of a keyword's names and the keyword grows ~70 a day,
+ * so a pinned set grows by roughly one owner a day and this bound is months
+ * out. It is here so that horizon is a bound and not a cliff, and a set AT the
+ * bound is reported (see `describePublisherAxis`) because at that point new
+ * residue owners are being refused.
+ */
+export const MAX_PINNED_PER_KEYWORD = 250
+
+/** The state plus `users` pinned for `keyword`; filtered, unique, sorted, bounded. */
+export function pinFor(state: PublisherState, keyword: string, users: readonly string[]): PublisherState {
+  const pinned: Record<string, string[]> = {}
+  for (const key of Object.keys(state.pinned ?? {})) pinned[key] = [...(state.pinned?.[key] ?? [])]
+  const kept = new Set(pinned[keyword] ?? [])
+  for (const user of users) {
+    if (kept.size >= MAX_PINNED_PER_KEYWORD) break
+    if (isMaintainerName(user)) kept.add(user)
+  }
+  // Re-bounded after the merge: a state handed in already over the bound must
+  // not be grown by this call, and `Set` insertion cannot be relied on to stop
+  // at the limit when the incoming names were already present.
+  pinned[keyword] = [...kept].sort(compareStrings).slice(0, MAX_PINNED_PER_KEYWORD)
+  return { ...state, pinned }
+}
+
+/** The state with `users` no longer pinned for `keyword`. */
+export function unpinFor(state: PublisherState, keyword: string, users: readonly string[]): PublisherState {
+  const pinned: Record<string, string[]> = {}
+  for (const key of Object.keys(state.pinned ?? {})) pinned[key] = [...(state.pinned?.[key] ?? [])]
+  const drop = new Set(users)
+  const kept = (pinned[keyword] ?? []).filter(user => !drop.has(user))
+  if (kept.length === 0) delete pinned[keyword]
+  else pinned[keyword] = kept
+  return { ...state, pinned }
+}
+
+/**
+ * Which publishers this run probes for `keyword`, in order.
+ *
+ * Pinned first and always; the rotation spends what is left of the budget,
+ * starting at the cursor and skipping anyone already pinned — probing one
+ * publisher twice in a run would spend budget to learn nothing.
+ *
+ * The rotation length is what the cursor must advance by. Advancing by the
+ * BUDGET instead would skip `pinned.length` publishers every snapshot,
+ * permanently and silently: the vocabulary grows, every build is green, and a
+ * band of the vocabulary is never rotated to.
+ */
+export function probeOrder(
+  state: PublisherState, keyword: string, budget: number,
+): { pinned: string[]; rotated: string[] } {
+  const size = state.publishers.length
+  if (size === 0 || budget <= 0) return { pinned: [], rotated: [] }
+  const pinnedAll = state.pinned?.[keyword] ?? []
+  const pinned = [...pinnedAll].slice(0, Math.min(budget, MAX_PINNED_PER_KEYWORD))
+  const already = new Set(pinned)
+  const rotated: string[] = []
+  const start = (state.cursor ?? 0) % size
+  let stepped = 0
+  while (pinned.length + rotated.length < budget && stepped < size) {
+    const candidate = state.publishers[(start + stepped) % size]
+    stepped++
+    if (candidate === undefined || already.has(candidate)) continue
+    already.add(candidate)
+    rotated.push(candidate)
+  }
+  return { pinned, rotated }
+}

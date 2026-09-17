@@ -3,8 +3,8 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import {
-  MAINTAINER_MAX_LENGTH, MAX_PUBLISHERS, PublisherState, atRiskOwners, isMaintainerName, mergePublishers, nextCursor,
-  parsePublisherState, serializePublisherState,
+  MAINTAINER_MAX_LENGTH, MAX_PINNED_PER_KEYWORD, MAX_PUBLISHERS, PublisherState, atRiskOwners, isMaintainerName,
+  mergePublishers, nextCursor, parsePublisherState, pinFor, probeOrder, serializePublisherState, unpinFor,
 } from '../src/publisher-state.ts'
 import { PUBLISHER_PROBE_BUDGET_DEFAULT } from '../src/npm-client.ts'
 
@@ -331,5 +331,83 @@ describe('atRiskOwners', () => {
     // A name with no keywords did not reach the harvest through a keyword
     // search, so treating it as at-risk for this keyword is unfounded.
     expect(atRiskOwners([{ keywords: [], maintainers: ['x'] }], 'dsh-plugin', REFINEMENTS)).toEqual([])
+  })
+})
+
+describe('MAX_PINNED_PER_KEYWORD', () => {
+  it('is half the probe budget, so rotation always keeps half a run', () => {
+    // Asserted as the relation, not the literal: the bound exists to stop
+    // pinned probes starving rotation, and that property is what must hold if
+    // the budget ever moves.
+    expect(MAX_PINNED_PER_KEYWORD * 2).toBe(PUBLISHER_PROBE_BUDGET_DEFAULT)
+  })
+})
+
+describe('pinFor and unpinFor', () => {
+  it('adds, sorted and unique, without touching another keyword', () => {
+    const state: PublisherState = { publishers: [], cursor: 0, pinned: { other: ['keepme'] } }
+    const next = pinFor(state, 'dsh-plugin', ['zoe', 'adam', 'zoe'])
+    expect(next.pinned).toEqual({ 'dsh-plugin': ['adam', 'zoe'], other: ['keepme'] })
+  })
+
+  it('refuses to grow a keyword past MAX_PINNED_PER_KEYWORD, keeping what it has', () => {
+    const full = Array.from({ length: MAX_PINNED_PER_KEYWORD }, (_, i) => `u${String(i).padStart(5, '0')}`)
+    const next = pinFor({ publishers: [], pinned: { k: full } }, 'k', ['newcomer'])
+    expect(next.pinned?.k).toHaveLength(MAX_PINNED_PER_KEYWORD)
+    expect(next.pinned?.k).not.toContain('newcomer')
+  })
+
+  it('drops names outside the grammar rather than committing a file it cannot read', () => {
+    expect(pinFor({ publishers: [] }, 'k', ['ok', '']).pinned).toEqual({ k: ['ok'] })
+  })
+
+  it('unpins only the named users, and only for that keyword', () => {
+    const state: PublisherState = { publishers: [], pinned: { k: ['a', 'b'], other: ['a'] } }
+    expect(unpinFor(state, 'k', ['a']).pinned).toEqual({ k: ['b'], other: ['a'] })
+  })
+
+  it('drops a keyword whose last pin is removed, rather than leaving an empty array', () => {
+    expect(unpinFor({ publishers: [], pinned: { k: ['a'] } }, 'k', ['a']).pinned).toEqual({})
+  })
+})
+
+describe('probeOrder', () => {
+  const vocabulary = Array.from({ length: 10 }, (_, i) => `u${i}`)
+
+  it('puts the pinned first and rotates the rest from the cursor', () => {
+    const state: PublisherState = { publishers: vocabulary, cursor: 2, pinned: { k: ['u7'] } }
+    const order = probeOrder(state, 'k', 4)
+    expect(order.pinned).toEqual(['u7'])
+    // 4 budget minus 1 pinned leaves 3 rotated, starting at index 2.
+    expect(order.rotated).toEqual(['u2', 'u3', 'u4'])
+  })
+
+  it('does not rotate to a publisher it already pinned, which would probe it twice', () => {
+    const state: PublisherState = { publishers: vocabulary, cursor: 2, pinned: { k: ['u3'] } }
+    const order = probeOrder(state, 'k', 4)
+    expect(order.pinned).toEqual(['u3'])
+    expect(order.rotated).toEqual(['u2', 'u4', 'u5'])
+  })
+
+  it('wraps the rotation past the end of the vocabulary', () => {
+    const state: PublisherState = { publishers: vocabulary, cursor: 8 }
+    expect(probeOrder(state, 'k', 4).rotated).toEqual(['u8', 'u9', 'u0', 'u1'])
+  })
+
+  it('ignores another keyword\'s pins', () => {
+    const state: PublisherState = { publishers: vocabulary, cursor: 0, pinned: { other: ['u5'] } }
+    const order = probeOrder(state, 'k', 2)
+    expect(order.pinned).toEqual([])
+    expect(order.rotated).toEqual(['u0', 'u1'])
+  })
+
+  it('never spends more than the budget in total', () => {
+    const pinned = vocabulary.slice(0, 6)
+    const order = probeOrder({ publishers: vocabulary, cursor: 0, pinned: { k: pinned } }, 'k', 4)
+    expect(order.pinned.length + order.rotated.length).toBeLessThanOrEqual(4)
+  })
+
+  it('is empty on an empty vocabulary rather than looping', () => {
+    expect(probeOrder({ publishers: [], cursor: 0 }, 'k', 5)).toEqual({ pinned: [], rotated: [] })
   })
 })
