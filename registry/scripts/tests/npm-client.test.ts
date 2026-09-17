@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { type Cell, cellKey, cellQuery, FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, keywordsOf, KEYWORDS_MAX_COUNT, maintainersOf, MAINTAINERS_MAX_COUNT, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describeShortfall, parseKeywordShortfall, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
+import { type Cell, cellKey, cellQuery, FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, keywordsOf, KEYWORDS_MAX_COUNT, maintainersOf, MAINTAINERS_MAX_COUNT, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describeShortfall, parseKeywordShortfall, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, type PublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
 import { ENTRY_PAYLOAD_MAX_BYTES, entryPayloadBytes } from '../src/gate.ts'
 import { MAX_TARBALL_BYTES } from '../src/github-client.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
@@ -1171,6 +1171,33 @@ describe('searchByKeywords', () => {
       }), { status: 200 })
     }) as unknown as typeof fetch
     return { fetchImpl, urls }
+  }
+
+  /**
+   * Like `stubSearch`, but each page carries whole package objects so a
+   * fixture can exercise the keywords and maintainers the at-risk rule reads.
+   * `total` answers the full list, so paging terminates the way production
+   * does.
+   */
+  function stubSearchWithPackages(
+    pages: Record<string, { name: string; keywords: string[]; maintainers: string[] }[]>,
+  ): typeof fetch {
+    return (async (url: string | URL) => {
+      const params = new URL(String(url)).searchParams
+      const text = params.get('text') ?? ''
+      const from = Number(params.get('from') ?? '0')
+      const all = pages[text] ?? []
+      const objects = all.slice(from, from + 250).map(pkg => ({
+        package: {
+          name: pkg.name,
+          keywords: pkg.keywords,
+          maintainers: pkg.maintainers.map(username => ({ username })),
+        },
+      }))
+      return new Response(JSON.stringify({ objects, total: all.length }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }) as unknown as typeof fetch
   }
 
   it('does not end a keyword on a short non-final page — it reads the total', async () => {
@@ -2352,6 +2379,29 @@ describe('searchByKeywords', () => {
       // Only the one carrying names the union lacks is paged.
       expect(pages('alice')).toEqual([])
       expect(pages('sayedev').length).toBeGreaterThan(0)
+    })
+  })
+
+  describe('the publisher axis seeds at-risk owners while a keyword is enumerable', () => {
+    it('reports the owners of names carrying only the harvest keyword', async () => {
+      const reports: PublisherAxisReport[] = []
+      // Under the window, so no partition and no probing: seeding is the only
+      // thing the axis does here, which is the state dsh-plugin is in today.
+      const fetchImpl = stubSearchWithPackages({
+        'keywords:dsh-plugin': [
+          { name: 'bare', keywords: ['dsh-plugin'], maintainers: ['huanlin'] },
+          { name: 'covered', keywords: ['dsh-plugin', 'agent'], maintainers: ['other'] },
+        ],
+        'keywords:deepseek-harness': [],
+      })
+      await searchByKeywords(
+        fetchImpl, undefined, undefined, undefined, undefined,
+        () => {}, () => {}, [], PUBLISHER_PROBE_BUDGET_DEFAULT, 0,
+        r => reports.push(r),
+      )
+      const dshPlugin = reports.find(r => r.keyword === 'dsh-plugin')
+      expect(dshPlugin?.seeded).toEqual(['huanlin'])
+      expect(dshPlugin?.atRiskNames).toBe(1)
     })
   })
 

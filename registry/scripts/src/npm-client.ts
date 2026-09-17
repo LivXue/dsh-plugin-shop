@@ -1,6 +1,6 @@
 import { readCappedBody } from './http-body.ts'
 import { compareStrings } from './identity.ts'
-import { isMaintainerName } from './publisher-state.ts'
+import { atRiskNameCount, atRiskOwners, isMaintainerName, MAX_PINNED_PER_KEYWORD, type HarvestedName } from './publisher-state.ts'
 import type { Candidate, Rejection } from './types.ts'
 
 /**
@@ -296,6 +296,28 @@ export function parseKeywordShortfall(value: unknown, where: string): KeywordSho
     windowShortfall,
     tailShortfall,
   }
+}
+
+/**
+ * What the publisher axis did for one keyword in one run.
+ *
+ * The INPUTS are carried, not only the results. An empty vocabulary is a
+ * legal no-op — 0.8.1 shipped one and CI was green while the axis did
+ * nothing — so `vocabulary: 0` has to be reportable as a value rather
+ * than as an absent line.
+ */
+export interface PublisherAxisReport {
+  readonly keyword: string
+  readonly vocabulary: number
+  readonly pinnedProbed: number
+  readonly pinnedSupplied: number
+  readonly rotatedProbed: number
+  readonly rotatedSupplied: number
+  readonly suppliedNames: number
+  /** At-risk owners observed this run, for the caller to pin. */
+  readonly seeded: readonly string[]
+  readonly atRiskNames: number
+  readonly pinnedFull: boolean
 }
 
 /**
@@ -1669,6 +1691,19 @@ export async function searchByKeywords(
    * `PublisherState.cursor`, which carries this across runs.
    */
   publisherProbeOffset: number = 0,
+  /**
+   * Called once per harvest keyword with what the publisher axis did for it
+   * this run. Fires even when the keyword never crosses the window, because
+   * `vocabulary`/`atRiskNames` are informative on their own and a caller
+   * pinning owners needs every keyword, not only the ones that partitioned.
+   */
+  onPublisherAxis: (report: PublisherAxisReport) => void = () => {},
+  /**
+   * Maintainers already pinned for a keyword, prior runs' seeding. Read only
+   * to report {@link PublisherAxisReport.pinnedFull} here; Task 6 is what
+   * spends it on probing.
+   */
+  pinned: Readonly<Record<string, readonly string[]>> = {},
 ): Promise<string[]> {
   const seen = new Set<string>()
   const probe = (cell: Cell): Promise<number> =>
@@ -1696,6 +1731,12 @@ export async function searchByKeywords(
      * runs twice on the retry path.
      */
     tally?: Map<string, Set<string>>,
+    /**
+     * Where to collect this page's names for the at-risk rule, keyed to one
+     * harvest keyword's run. Optional so a caller that has no use for it — none
+     * yet does, outside the per-keyword loop below — pays nothing extra.
+     */
+    harvested?: HarvestedName[],
   ): Promise<void> => {
     const query = cellQuery(cell)
     // The last total this cell answered, so a `from` past the cap can tell a
@@ -1743,6 +1784,9 @@ export async function searchByKeywords(
         }
         const owners = maintainersOf(object?.package)
         observed.push(...owners)
+        // The at-risk rule reads these two fields off the object the loop
+        // already holds; `keywordsOf` starts no request.
+        harvested?.push({ keywords: keywordsOf(object?.package), maintainers: owners })
         if (tally !== undefined && typeof found === 'string') {
           for (const owner of owners) {
             let names = tally.get(owner)
@@ -1773,6 +1817,14 @@ export async function searchByKeywords(
   for (const keyword of HARVEST_KEYWORDS) {
     const { cells, oversized, total, partitioned } = await partitionKeyword(keyword, probe)
     const forKeyword = new Set<string>()
+    /**
+     * Every name this keyword's run has paged, reduced to what the at-risk
+     * rule reads. Fed by every `pageCell` call below, the window sweep and the
+     * publisher cells included, so a name's risk is judged on every keyword it
+     * was actually seen carrying rather than only the cells built to look for
+     * refinements.
+     */
+    const harvested: HarvestedName[] = []
     // The window cell's own names, kept apart from the union. Without this the
     // "how much of the tail did the cells recover?" arithmetic has to INFER
     // the window's contribution as `min(required, SEARCH_WINDOW)`, which is
@@ -1858,21 +1910,21 @@ export async function searchByKeywords(
       // which is the half they measure well on. See PARTITION_KEYWORDS for
       // the ranks. It costs 21 requests and shrinks the residual to names
       // that are BOTH outside the window AND carry no refinement keyword.
-      if (partitioned) await pageCell({ keywords: [keyword] }, windowNames, 'stop', servedFor)
+      if (partitioned) await pageCell({ keywords: [keyword] }, windowNames, 'stop', servedFor, harvested)
       // The window's names belong to the union too; kept in their own set as
       // well so the coverage arithmetic can tell the two halves apart.
       // Idempotent, and `enumerate` runs twice on the retry path.
       for (const name of windowNames) forKeyword.add(name)
-      for (const cell of cells) await pageCell(cell, forKeyword, 'throw', servedFor)
+      for (const cell of cells) await pageCell(cell, forKeyword, 'throw', servedFor, harvested)
       // 'stop', because this cell's own total is past the window BY
       // DEFINITION — that is what put it in this list — so the `from` cap is
       // the API's ceiling here exactly as it is for the keyword itself, not a
       // partition that failed to split. Paged after `cells` so `servedFor`
       // carries its names before the publisher filter measures against them.
-      for (const cell of oversized) await pageCell(cell, forKeyword, 'stop', servedFor)
+      for (const cell of oversized) await pageCell(cell, forKeyword, 'stop', servedFor, harvested)
       if (partitioned) {
         publisherCells ??= await selectPublisherCells()
-        for (const cell of publisherCells) await pageCell(cell, forKeyword, 'throw')
+        for (const cell of publisherCells) await pageCell(cell, forKeyword, 'throw', undefined, harvested)
       }
     }
     await enumerate()
@@ -1907,6 +1959,24 @@ export async function searchByKeywords(
       required = Math.min(required, await probe({ keywords: [keyword] }))
     }
     const shortfall = required - forKeyword.size
+    // Computed and reported UNCONDITIONALLY, before the early `continue`: the
+    // productivity signal this axis selects on cannot exist before a keyword
+    // crosses the window (under it `selectPublisherCells` is never called), so
+    // seeding is the only thing to report for a whole keyword, and it would
+    // never be reported at all if this sat after the guard below.
+    const seeded = atRiskOwners(harvested, keyword, PARTITION_KEYWORDS)
+    onPublisherAxis({
+      keyword,
+      vocabulary: publishers.length,
+      pinnedProbed: 0,
+      pinnedSupplied: 0,
+      rotatedProbed: 0,
+      rotatedSupplied: 0,
+      suppliedNames: 0,
+      seeded,
+      atRiskNames: atRiskNameCount(harvested, keyword, PARTITION_KEYWORDS),
+      pinnedFull: (pinned[keyword] ?? []).length >= MAX_PINNED_PER_KEYWORD,
+    })
     if (shortfall <= 0) continue // whole, even when the keyword is past the window
     // Every refinement cell this keyword PAGED, the oversized ones included.
     // `cells.length` alone understates the partition in both messages below,

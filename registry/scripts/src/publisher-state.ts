@@ -267,14 +267,16 @@ export interface HarvestedName {
 }
 
 /**
- * The maintainers of names that no refinement cell can reach.
+ * Whether `name` is reachable ONLY while its rank sits inside the harvest
+ * keyword's search window — the shared rule behind {@link atRiskOwners} and
+ * {@link atRiskNameCount}.
  *
  * A `keywords:<harvest>,<refinement>` cell selects a name only if the name
  * carries that refinement. A name whose only listed refinement is the harvest
  * keyword itself is therefore reachable ONLY while its rank sits inside the
  * keyword's window, and passes permanently out of reach when the keyword
  * outgrows `SEARCH_WINDOW`. Those names are what the publisher axis exists
- * for, and their owners are what it has to know.
+ * for.
  *
  * RANK IS NOT PART OF THIS RULE. A name carrying a refinement is reachable at
  * any rank, so rank decides WHEN a name leaves reach and never WHICH names
@@ -283,9 +285,36 @@ export interface HarvestedName {
  * (`docs/plans/2026-09-08-publisher-partition.md`); this rule is exact and
  * measurable while the keyword is still enumerable.
  *
- * A name carrying no keywords at all yields nothing: it did not reach the
+ * A name carrying no keywords at all is never at risk: it did not reach the
  * harvest through a keyword search, so attributing it to this keyword's
  * residue is unfounded.
+ *
+ * Takes the refinement set pre-built rather than the raw list so a caller
+ * iterating many names builds it once, not once per name.
+ */
+function isAtRisk(
+  name: HarvestedName,
+  harvestKeyword: string,
+  refinementSet: ReadonlySet<string>,
+): boolean {
+  if (name.keywords.length === 0) return false
+  for (const keyword of name.keywords) {
+    if (keyword !== harvestKeyword && refinementSet.has(keyword)) return false
+  }
+  return true
+}
+
+/**
+ * The maintainers of names that no refinement cell can reach — see {@link
+ * isAtRisk} for the rule that selects them.
+ *
+ * An owner is counted only once no matter how many at-risk names it
+ * maintains, and only when it passes {@link isMaintainerName}: this list
+ * feeds a `maintainer:` query argument, so a name outside that grammar has no
+ * cell it could be probed with. That silently drops an at-risk name whose
+ * every maintainer fails the grammar — the count of names is a different
+ * question, answered by {@link atRiskNameCount}, which does not share this
+ * blind spot because it never needs a probeable username.
  */
 export function atRiskOwners(
   names: readonly HarvestedName[],
@@ -295,20 +324,37 @@ export function atRiskOwners(
   const refinementSet = new Set(refinements)
   const out = new Set<string>()
   for (const name of names) {
-    if (name.keywords.length === 0) continue
-    let covered = false
-    for (const keyword of name.keywords) {
-      if (keyword !== harvestKeyword && refinementSet.has(keyword)) {
-        covered = true
-        break
-      }
-    }
-    if (covered) continue
+    if (!isAtRisk(name, harvestKeyword, refinementSet)) continue
     for (const owner of name.maintainers) {
       if (isMaintainerName(owner)) out.add(owner)
     }
   }
   return [...out].sort(compareStrings)
+}
+
+/**
+ * How many names are at risk — see {@link isAtRisk} for the rule.
+ *
+ * Deliberately NOT derived from {@link atRiskOwners}'s output. That list is
+ * OWNERS, filtered to {@link isMaintainerName} and de-duplicated, so neither
+ * its length nor a sum over it recovers the name count: a name with two
+ * maintainers is not two names, and a name whose only maintainer fails the
+ * grammar is at risk but contributes no owner at all. This function counts
+ * names directly against the same {@link isAtRisk} predicate instead, so a
+ * report's `atRiskNames` reflects every at-risk name regardless of whether
+ * any of its maintainers are usable as a probe argument.
+ */
+export function atRiskNameCount(
+  names: readonly HarvestedName[],
+  harvestKeyword: string,
+  refinements: readonly string[],
+): number {
+  const refinementSet = new Set(refinements)
+  let count = 0
+  for (const name of names) {
+    if (isAtRisk(name, harvestKeyword, refinementSet)) count++
+  }
+  return count
 }
 
 /**

@@ -3,8 +3,9 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import {
-  MAINTAINER_MAX_LENGTH, MAX_PINNED_PER_KEYWORD, MAX_PUBLISHERS, PublisherState, atRiskOwners, isMaintainerName,
-  mergePublishers, nextCursor, parsePublisherState, pinFor, probeOrder, serializePublisherState, unpinFor,
+  MAINTAINER_MAX_LENGTH, MAX_PINNED_PER_KEYWORD, MAX_PUBLISHERS, PublisherState, atRiskNameCount, atRiskOwners,
+  isMaintainerName, mergePublishers, nextCursor, parsePublisherState, pinFor, probeOrder, serializePublisherState,
+  unpinFor,
 } from '../src/publisher-state.ts'
 import { PUBLISHER_PROBE_BUDGET_DEFAULT } from '../src/npm-client.ts'
 
@@ -331,6 +332,33 @@ describe('atRiskOwners', () => {
     // A name with no keywords did not reach the harvest through a keyword
     // search, so treating it as at-risk for this keyword is unfounded.
     expect(atRiskOwners([{ keywords: [], maintainers: ['x'] }], 'dsh-plugin', REFINEMENTS)).toEqual([])
+  })
+})
+
+describe('atRiskNameCount', () => {
+  it('does not count a name covered by a refinement', () => {
+    const names = [{ keywords: ['dsh-plugin', 'agent'], maintainers: ['covered'] }]
+    expect(atRiskNameCount(names, 'dsh-plugin', REFINEMENTS)).toBe(0)
+  })
+
+  it('counts a name carrying only the harvest keyword', () => {
+    const names = [{ keywords: ['dsh-plugin'], maintainers: ['huanlin'] }]
+    expect(atRiskNameCount(names, 'dsh-plugin', REFINEMENTS)).toBe(1)
+  })
+
+  it('counts an at-risk name even when its only maintainer fails the grammar, unlike atRiskOwners', () => {
+    // The distinguishing case the correction exists for: atRiskOwners
+    // aggregates OWNERS and has nothing to report once every maintainer of an
+    // at-risk name fails isMaintainerName. atRiskNameCount counts NAMES and
+    // must not inherit that blind spot, so both are asserted on one fixture.
+    const names = [{ keywords: ['dsh-plugin'], maintainers: ['a'.repeat(200)] }]
+    expect(atRiskOwners(names, 'dsh-plugin', REFINEMENTS)).toEqual([])
+    expect(atRiskNameCount(names, 'dsh-plugin', REFINEMENTS)).toBe(1)
+  })
+
+  it('does not count a name with no keywords at all', () => {
+    const names = [{ keywords: [], maintainers: ['x'] }]
+    expect(atRiskNameCount(names, 'dsh-plugin', REFINEMENTS)).toBe(0)
   })
 })
 
