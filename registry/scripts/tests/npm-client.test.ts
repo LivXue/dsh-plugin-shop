@@ -1242,6 +1242,59 @@ describe('searchByKeywords', () => {
     }) as unknown as typeof fetch
   }
 
+  /**
+   * Shared by the two probe stubs below: every bare `keywords:*` window query
+   * answers a total past `SEARCH_WINDOW` so either harvest keyword
+   * partitions; `,dsh` is the one refinement `partitionKeyword` finds
+   * non-empty (every other refinement answers empty, the same shape as
+   * `familyPastWindow` below), and a `maintainer:<user>` query is routed to
+   * `onMaintainer` for its total. Keyword-agnostic because `keywordQuery`
+   * never sorts and `partitionKeyword` always puts the harvest keyword first,
+   * so `,dsh` ends both `keywords:dsh-plugin,dsh` and
+   * `keywords:deepseek-harness,dsh`. Pages are real enough to page through —
+   * the window serves `w<rank>`, the refinement re-serves `w0` — but no
+   * maintainer cell ever supplies a name, which is all the three tests below
+   * need: none of them reads `pinnedSupplied`, `rotatedSupplied` or
+   * `suppliedNames`.
+   */
+  function stubPublisherProbe(onMaintainer: (user: string) => number): typeof fetch {
+    return (async (url: string | URL) => {
+      const params = new URL(String(url)).searchParams
+      const query = params.get('text') ?? ''
+      const from = Number(params.get('from') ?? '0')
+      const isProbe = params.get('size') === '1'
+      const maintainerMatch = /maintainer:(\S+)$/.exec(query)
+      if (maintainerMatch) {
+        const user = maintainerMatch[1] ?? ''
+        return new Response(JSON.stringify({ total: onMaintainer(user), objects: [] }), { status: 200 })
+      }
+      if (!query.includes(',')) {
+        const objects = isProbe || from > MAX_SEARCH_FROM
+          ? [] : Array.from({ length: 250 }, (_, i) => ({ package: { name: `w${from + i}` } }))
+        return new Response(JSON.stringify({ total: SEARCH_WINDOW + 1, objects }), { status: 200 })
+      }
+      const total = query.endsWith(',dsh') ? 1 : 0
+      const objects = isProbe || total === 0 ? [] : [{ package: { name: 'w0' } }].slice(from, from + 250)
+      return new Response(JSON.stringify({ total, objects }), { status: 200 })
+    }) as unknown as typeof fetch
+  }
+
+  /**
+   * Records every maintainer probed; every cell answers 0, so none is ever
+   * selected for paging and probing is visible without paging complicating it.
+   */
+  function recordingProbeStub(probed: string[]): typeof fetch {
+    return stubPublisherProbe(user => {
+      probed.push(user)
+      return 0
+    })
+  }
+
+  /** Answers a `maintainer:<user>` probe with `totals[user]`, default 0. */
+  function probeStubWithTotals(totals: Record<string, number>): typeof fetch {
+    return stubPublisherProbe(user => totals[user] ?? 0)
+  }
+
   it('does not end a keyword on a short non-final page — it reads the total', async () => {
     // Live shape: npm served a 249-object page of a 600-name result set. The
     // old `objects.length < PAGE_SIZE` break dropped pages 1 and 2 in silence.
@@ -2477,6 +2530,152 @@ describe('searchByKeywords', () => {
       // inflates.
       expect(deepseekHarness?.seeded).toEqual(['pubowner'])
       expect(deepseekHarness?.atRiskNames).toBe(2)
+    })
+  })
+
+  describe('the publisher axis probes its pinned set first', () => {
+    it('probes a pinned publisher the rotation would not have reached', async () => {
+      const probed: string[] = []
+      const reports: PublisherAxisReport[] = []
+      const vocabulary = Array.from({ length: 100 }, (_, i) => `u${String(i).padStart(3, '0')}`)
+      const fetchImpl = recordingProbeStub(probed)
+      await searchByKeywords(
+        fetchImpl, undefined, undefined, undefined, undefined,
+        () => {}, () => {}, vocabulary, 3, 0,
+        r => reports.push(r),
+        { 'deepseek-harness': ['u099'] },
+      )
+      // Cursor 0 and a budget of 3 reaches u000..u001 by rotation; u099 is
+      // reached only because it is pinned.
+      expect(probed).toContain('u099')
+      const report = reports.find(r => r.keyword === 'deepseek-harness')
+      expect(report?.pinnedProbed).toBe(1)
+      expect(report?.rotatedProbed).toBe(2)
+    })
+
+    it('evicts a pinned publisher whose cell total is zero, and only that one', async () => {
+      const reports: PublisherAxisReport[] = []
+      const fetchImpl = probeStubWithTotals({ 'u001': 0, 'u002': 4 })
+      await searchByKeywords(
+        fetchImpl, undefined, undefined, undefined, undefined,
+        () => {}, () => {}, ['u001', 'u002'], 2, 0,
+        r => reports.push(r),
+        { 'deepseek-harness': ['u001', 'u002'] },
+      )
+      expect(reports.find(r => r.keyword === 'deepseek-harness')?.evicted).toEqual(['u001'])
+    })
+
+    it('does not evict a pinned publisher that merely supplied nothing', async () => {
+      // The seeded set supplies nothing on every run until the crossing. A rule
+      // that evicted on "supplied nothing" would empty the pinned set during
+      // exactly the days it exists to prepare for.
+      const reports: PublisherAxisReport[] = []
+      const fetchImpl = probeStubWithTotals({ 'u001': 4 })
+      await searchByKeywords(
+        fetchImpl, undefined, undefined, undefined, undefined,
+        () => {}, () => {}, ['u001'], 2, 0,
+        r => reports.push(r),
+        { 'deepseek-harness': ['u001'] },
+      )
+      expect(reports.find(r => r.keyword === 'deepseek-harness')?.evicted).toEqual([])
+    })
+
+    /**
+     * `deepseek-harness` partitions on `,dsh` alone and every name — window
+     * and cell alike — carries `['deepseek-harness', 'dsh']`, so none of them
+     * is at-risk (design doc §2's R is `{dsh}`, not empty): a maintainer that
+     * reaches `seeded` in the two fixtures below can only have arrived through
+     * the outcome path (§3), never through seeding. `dsh-plugin` answers 0
+     * throughout, so it neither partitions nor runs the axis, keeping every
+     * assertion to the one keyword under test.
+     *
+     * `shortFirstPage` reproduces the "npm served a short non-final page"
+     * anomaly at the window's own `from=0`, and only there, to drive
+     * `enumerate()` around the retry path without changing what the publisher
+     * cell itself answers — which is what the second test needs, to tell
+     * "measured twice" from "measured once and stayed put".
+     */
+    function outcomeStub(
+      maintainer: string,
+      maintainerTotal: number,
+      maintainerNames: readonly string[],
+      shortFirstPage: boolean,
+    ): typeof fetch {
+      let firstPageCalls = 0
+      const tag = (name: string) => ({
+        package: { name, keywords: ['deepseek-harness', 'dsh'], maintainers: [] as { username: string }[] },
+      })
+      return (async (url: string | URL) => {
+        const params = new URL(String(url)).searchParams
+        const query = params.get('text') ?? ''
+        const from = Number(params.get('from') ?? '0')
+        const isProbe = params.get('size') === '1'
+        if (query === 'keywords:dsh-plugin') {
+          return new Response(JSON.stringify({ total: 0, objects: [] }), { status: 200 })
+        }
+        const maintainerMatch = /maintainer:(\S+)$/.exec(query)
+        if (maintainerMatch) {
+          const objects = isProbe ? [] : maintainerNames.map(name => ({
+            package: { name, keywords: ['deepseek-harness', 'dsh'], maintainers: [{ username: maintainer }] },
+          })).slice(from, from + 250)
+          return new Response(JSON.stringify({ total: maintainerTotal, objects }), { status: 200 })
+        }
+        if (query === 'keywords:deepseek-harness,dsh') {
+          return new Response(JSON.stringify({ total: 1, objects: isProbe ? [] : [tag('w0')] }), { status: 200 })
+        }
+        if (query === 'keywords:deepseek-harness') {
+          if (isProbe) return new Response(JSON.stringify({ total: SEARCH_WINDOW + 1, objects: [] }), { status: 200 })
+          if (from > MAX_SEARCH_FROM) return new Response(JSON.stringify({ total: SEARCH_WINDOW + 1, objects: [] }), { status: 200 })
+          if (from === 0 && shortFirstPage && firstPageCalls === 0) {
+            firstPageCalls++
+            const objects = Array.from({ length: 245 }, (_, i) => tag(`w${i}`))
+            return new Response(JSON.stringify({ total: SEARCH_WINDOW + 1, objects }), { status: 200 })
+          }
+          if (from === 0) firstPageCalls++
+          const objects = Array.from({ length: 250 }, (_, i) => tag(`w${from + i}`))
+          return new Response(JSON.stringify({ total: SEARCH_WINDOW + 1, objects }), { status: 200 })
+        }
+        return new Response(JSON.stringify({ total: 0, objects: [] }), { status: 200 })
+      }) as unknown as typeof fetch
+    }
+
+    describe('the publisher axis pins by outcome', () => {
+      it('credits a rotated cell that supplies a new name, and pins the maintainer for next time', async () => {
+        const reports: PublisherAxisReport[] = []
+        const fetchImpl = outcomeStub('newowner', 3, ['beyond0', 'beyond1', 'beyond2'], false)
+        await searchByKeywords(
+          fetchImpl, undefined, undefined, undefined, undefined,
+          () => {}, () => {}, ['newowner'], 5, 0,
+          r => reports.push(r),
+        )
+        const report = reports.find(r => r.keyword === 'deepseek-harness')
+        expect(report?.rotatedSupplied).toBe(3)
+        expect(report?.suppliedNames).toBe(3)
+        // Correction: an outcome-pinned maintainer is carried into `seeded`,
+        // the same field seeding uses, so the caller has one list to persist
+        // per keyword regardless of which entry path (design doc §3) produced
+        // a given owner.
+        expect(report?.seeded).toEqual(['newowner'])
+      })
+
+      it('does not double-count a publisher cell across the retry path', async () => {
+        // The window's first page is short by five on the first call and whole
+        // on the second, so `forKeyword.size < required` after pass one and
+        // `enumerate()` runs again. The publisher cell answers identically both
+        // times: if the paging loop credited it on every pass rather than on
+        // its own before/after delta against the union, this would read 6
+        // supplied, not 3.
+        const reports: PublisherAxisReport[] = []
+        const fetchImpl = outcomeStub('newowner', 3, ['beyond0', 'beyond1', 'beyond2'], true)
+        await searchByKeywords(
+          fetchImpl, undefined, undefined, undefined, undefined,
+          () => {}, () => {}, ['newowner'], 5, 0,
+          r => reports.push(r),
+        )
+        const report = reports.find(r => r.keyword === 'deepseek-harness')
+        expect(report?.rotatedSupplied).toBe(3)
+        expect(report?.suppliedNames).toBe(3)
+      })
     })
   })
 

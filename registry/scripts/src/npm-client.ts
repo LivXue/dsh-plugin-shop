@@ -1,6 +1,6 @@
 import { readCappedBody } from './http-body.ts'
 import { compareStrings } from './identity.ts'
-import { atRiskNameCount, atRiskOwners, isMaintainerName, MAX_PINNED_PER_KEYWORD, type HarvestedName } from './publisher-state.ts'
+import { atRiskNameCount, atRiskOwners, isMaintainerName, MAX_PINNED_PER_KEYWORD, probeOrder, type HarvestedName } from './publisher-state.ts'
 import type { Candidate, Rejection } from './types.ts'
 
 /**
@@ -316,6 +316,8 @@ export interface PublisherAxisReport {
   readonly suppliedNames: number
   /** At-risk owners observed this run, for the caller to pin. */
   readonly seeded: readonly string[]
+  /** Pinned maintainers evicted this run: their cell answered zero. */
+  readonly evicted: readonly string[]
   readonly atRiskNames: number
   readonly pinnedFull: boolean
 }
@@ -1854,10 +1856,35 @@ export async function searchByKeywords(
      * run. Re-probing there would double the cost of the axis to buy a second
      * opinion on a question whose answer cannot have changed mid-run.
      */
-    let publisherCells: Cell[] | undefined
+    let publisherCells: { pinned: Cell[]; rotated: Cell[] } | undefined
+    /** How many cells `selectPublisherCells` probed from each half of
+     * `probeOrder`'s result. Set once — selection is memoized below. */
+    let pinnedProbed = 0
+    let rotatedProbed = 0
+    /** Names credited to a cell's own PAGING (the before/after delta measured
+     * in `enumerate` below), never to its probe — a probe only proves a cell
+     * could supply something, not that it did. */
+    let pinnedSupplied = 0
+    let rotatedSupplied = 0
+    let suppliedNames = 0
+    /** Pinned maintainers whose cell answered zero this run — see the exit
+     * rule below. Exit is this and nothing else. */
+    const evicted: string[] = []
+    /** Rotated maintainers whose paging delta proved worth pinning this run
+     * (design doc §3's outcome entry) — see `enumerate`'s rotated loop.
+     * Merged into `seeded` where `onPublisherAxis` is called. */
+    const earned: string[] = []
     /**
-     * Build a cell per known publisher, probe it, and keep only the ones that
-     * can supply something the union does not already hold.
+     * Probe the pinned set first, then the rotation `probeOrder` (pure,
+     * `publisher-state.ts`) hands back for this keyword, and keep only the
+     * cells that can supply something the union does not already hold.
+     *
+     * Selection only proves a cell COULD supply something; it makes no
+     * pinning decision itself. Only paging proves a cell DID, which is why
+     * outcome entry (`earned`, above) is decided in `enumerate`'s paging loop,
+     * not here — a cell selected because `cellTotal > served` can still page
+     * zero NEW names, when every package it claims was already seen
+     * redundantly through the window or another cell.
      *
      * The filter is `cellTotal > served`, and it is the difference between an
      * axis that costs a few thousand probes and one that also pages a few
@@ -1876,39 +1903,39 @@ export async function searchByKeywords(
      * this runs. Both harvest keywords have twenty-odd non-empty refinement
      * cells, so that path is hypothetical, and its message already names the
      * true remedy: the refinement list is out of date.
+     *
+     * A zero-total cell exits the pinned set here (`evicted`) and nothing
+     * else does: a cell that merely fails the filters below is left in place
+     * for the next run to probe again, exactly as an un-pinned rotated cell
+     * is (design doc §3) — a rule evicting on "supplied nothing" would empty
+     * the pinned set during exactly the days seeding exists to prepare for.
      */
-    const selectPublisherCells = async (): Promise<Cell[]> => {
-      const selected: Cell[] = []
-      // Indexed and wrapped rather than iterated, so the budget is a WINDOW on
-      // the vocabulary instead of a prefix of it. Modulo on the offset too: the
-      // cursor is read from a committed file whose vocabulary may have been
-      // capped at MAX_PUBLISHERS since it was written, so it can point past the
-      // end without the file being malformed.
-      const size = publishers.length
-      const start = size === 0 ? 0 : publisherProbeOffset % size
-      let spent = 0
-      while (spent < publisherProbeBudget && spent < size) {
-        const maintainer = publishers[(start + spent) % size]
-        spent++
-        // Unreachable — `start < size` and `spent < size` keep the index in
-        // range — but guarded rather than asserted away, per CLAUDE.md, and
-        // skipped rather than defaulted: an empty string is not a username and
-        // `cellQuery` throws on one, which would turn an impossible index into
-        // a failed build.
-        if (maintainer === undefined) continue
-        const cell: Cell = { keywords: [keyword], maintainer }
-        const cellTotal = await probe(cell)
-        if (cellTotal === 0) continue
-        // A publisher cell is bounded by one account's output under one
-        // keyword, so it fits the window in every case measured. One that does
-        // not is left to the refinement cells rather than throwing: an account
-        // with more than SEARCH_WINDOW packages is beyond this axis, not a
-        // partition failure.
-        if (cellTotal > SEARCH_WINDOW) continue
-        if (cellTotal <= (servedFor.get(maintainer)?.size ?? 0)) continue
-        selected.push(cell)
+    const selectPublisherCells = async (): Promise<{ pinned: Cell[]; rotated: Cell[] }> => {
+      const pinnedCells: Cell[] = []
+      const rotatedCells: Cell[] = []
+      const order = probeOrder({ publishers, cursor: publisherProbeOffset, pinned }, keyword, publisherProbeBudget)
+      pinnedProbed = order.pinned.length
+      rotatedProbed = order.rotated.length
+      for (const [source, users] of [['pinned', order.pinned], ['rotated', order.rotated]] as const) {
+        for (const maintainer of users) {
+          const cell: Cell = { keywords: [keyword], maintainer }
+          const cellTotal = await probe(cell)
+          if (cellTotal === 0) {
+            if (source === 'pinned') evicted.push(maintainer)
+            continue
+          }
+          // A publisher cell is bounded by one account's output under one
+          // keyword, so it fits the window in every case measured. One that
+          // does not is left to the refinement cells rather than throwing: an
+          // account with more than SEARCH_WINDOW packages is beyond this
+          // axis, not a partition failure.
+          if (cellTotal > SEARCH_WINDOW) continue
+          if (cellTotal <= (servedFor.get(maintainer)?.size ?? 0)) continue
+          if (source === 'pinned') pinnedCells.push(cell)
+          else rotatedCells.push(cell)
+        }
       }
-      return selected
+      return { pinned: pinnedCells, rotated: rotatedCells }
     }
     const enumerate = async (): Promise<void> => {
       // The keyword's own reachable window, unioned in beside the refinement
@@ -1936,7 +1963,39 @@ export async function searchByKeywords(
       for (const cell of oversized) await pageCell(cell, forKeyword, 'stop', servedFor, harvested)
       if (partitioned) {
         publisherCells ??= await selectPublisherCells()
-        for (const cell of publisherCells) await pageCell(cell, forKeyword, 'throw', undefined, harvested)
+        // Selection only proves a cell COULD supply something not already
+        // seen; only paging proves it DID. Measured as a before/after delta
+        // on the union — never trusted from the probe's `cellTotal`, which
+        // counts the cell's own packages, not how many are NEW to this
+        // keyword's run — and attributed to pinned or rotated by which half
+        // of `publisherCells` the cell came from.
+        //
+        // This loop reruns on the retry path below (`forKeyword` only grows
+        // and a cell's own query is stable within one run), so a cell already
+        // paged once pages the same names again and its delta is 0 the second
+        // time: nothing here can be credited twice.
+        for (const cell of publisherCells.pinned) {
+          const before = forKeyword.size
+          await pageCell(cell, forKeyword, 'throw', undefined, harvested)
+          const delta = forKeyword.size - before
+          if (delta > 0) {
+            pinnedSupplied += delta
+            suppliedNames += delta
+          }
+        }
+        for (const cell of publisherCells.rotated) {
+          const before = forKeyword.size
+          await pageCell(cell, forKeyword, 'throw', undefined, harvested)
+          const delta = forKeyword.size - before
+          if (delta > 0) {
+            rotatedSupplied += delta
+            suppliedNames += delta
+            // Outcome entry (design doc §3): a rotated cell that supplied a
+            // name nothing else had earns a pinned spot, so the next run
+            // probes it directly instead of waiting for rotation to return.
+            if (cell.maintainer !== undefined) earned.push(cell.maintainer)
+          }
+        }
       }
     }
     await enumerate()
@@ -1976,16 +2035,22 @@ export async function searchByKeywords(
     // crosses the window (under it `selectPublisherCells` is never called), so
     // seeding is the only thing to report for a whole keyword, and it would
     // never be reported at all if this sat after the guard below.
-    const seeded = atRiskOwners([...harvested.values()], keyword, PARTITION_KEYWORDS)
+    // Merged with `earned` rather than reported alongside it: the caller
+    // persists one pinned set per keyword and does not need to know which
+    // entry path (design doc §2 seeding or §3 outcome) put a given owner in
+    // it.
+    const seeded = [...new Set([...atRiskOwners([...harvested.values()], keyword, PARTITION_KEYWORDS), ...earned])]
+      .sort(compareStrings)
     onPublisherAxis({
       keyword,
       vocabulary: publishers.length,
-      pinnedProbed: 0,
-      pinnedSupplied: 0,
-      rotatedProbed: 0,
-      rotatedSupplied: 0,
-      suppliedNames: 0,
+      pinnedProbed,
+      pinnedSupplied,
+      rotatedProbed,
+      rotatedSupplied,
+      suppliedNames,
       seeded,
+      evicted,
       atRiskNames: atRiskNameCount([...harvested.values()], keyword, PARTITION_KEYWORDS),
       pinnedFull: (pinned[keyword] ?? []).length >= MAX_PINNED_PER_KEYWORD,
     })
