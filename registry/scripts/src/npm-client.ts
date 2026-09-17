@@ -1733,10 +1733,14 @@ export async function searchByKeywords(
     tally?: Map<string, Set<string>>,
     /**
      * Where to collect this page's names for the at-risk rule, keyed to one
-     * harvest keyword's run. Optional so a caller that has no use for it — none
-     * yet does, outside the per-keyword loop below — pays nothing extra.
+     * harvest keyword's run and, within it, by package name — `enumerate()`
+     * re-runs every cell on the retry path, and a partitioned keyword's
+     * publisher cells can re-serve a name its window cell already supplied,
+     * so an unkeyed collection would count one name's at-risk observation
+     * more than once. Optional so a caller that has no use for it — none yet
+     * does, outside the per-keyword loop below — pays nothing extra.
      */
-    harvested?: HarvestedName[],
+    harvested?: Map<string, HarvestedName>,
   ): Promise<void> => {
     const query = cellQuery(cell)
     // The last total this cell answered, so a `from` past the cap can tell a
@@ -1785,8 +1789,13 @@ export async function searchByKeywords(
         const owners = maintainersOf(object?.package)
         observed.push(...owners)
         // The at-risk rule reads these two fields off the object the loop
-        // already holds; `keywordsOf` starts no request.
-        harvested?.push({ keywords: keywordsOf(object?.package), maintainers: owners })
+        // already holds; `keywordsOf` starts no request. Keyed by name, like
+        // `tally` below, so a re-observation of the same package — the retry
+        // path, or a publisher cell re-serving a window name — overwrites
+        // rather than duplicates.
+        if (typeof found === 'string') {
+          harvested?.set(found, { keywords: keywordsOf(object?.package), maintainers: owners })
+        }
         if (tally !== undefined && typeof found === 'string') {
           for (const owner of owners) {
             let names = tally.get(owner)
@@ -1819,12 +1828,15 @@ export async function searchByKeywords(
     const forKeyword = new Set<string>()
     /**
      * Every name this keyword's run has paged, reduced to what the at-risk
-     * rule reads. Fed by every `pageCell` call below, the window sweep and the
-     * publisher cells included, so a name's risk is judged on every keyword it
-     * was actually seen carrying rather than only the cells built to look for
-     * refinements.
+     * rule reads and keyed by package name. Fed by every `pageCell` call
+     * below, the window sweep and the publisher cells included, so a name's
+     * risk is judged on every keyword it was actually seen carrying rather
+     * than only the cells built to look for refinements. Keyed rather than a
+     * plain list so the retry path re-running every cell, or a publisher cell
+     * re-serving a name its window cell already supplied, observes a name
+     * twice without counting it twice.
      */
-    const harvested: HarvestedName[] = []
+    const harvested = new Map<string, HarvestedName>()
     // The window cell's own names, kept apart from the union. Without this the
     // "how much of the tail did the cells recover?" arithmetic has to INFER
     // the window's contribution as `min(required, SEARCH_WINDOW)`, which is
@@ -1964,7 +1976,7 @@ export async function searchByKeywords(
     // crosses the window (under it `selectPublisherCells` is never called), so
     // seeding is the only thing to report for a whole keyword, and it would
     // never be reported at all if this sat after the guard below.
-    const seeded = atRiskOwners(harvested, keyword, PARTITION_KEYWORDS)
+    const seeded = atRiskOwners([...harvested.values()], keyword, PARTITION_KEYWORDS)
     onPublisherAxis({
       keyword,
       vocabulary: publishers.length,
@@ -1974,7 +1986,7 @@ export async function searchByKeywords(
       rotatedSupplied: 0,
       suppliedNames: 0,
       seeded,
-      atRiskNames: atRiskNameCount(harvested, keyword, PARTITION_KEYWORDS),
+      atRiskNames: atRiskNameCount([...harvested.values()], keyword, PARTITION_KEYWORDS),
       pinnedFull: (pinned[keyword] ?? []).length >= MAX_PINNED_PER_KEYWORD,
     })
     if (shortfall <= 0) continue // whole, even when the keyword is past the window

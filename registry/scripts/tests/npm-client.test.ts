@@ -1200,6 +1200,48 @@ describe('searchByKeywords', () => {
     }) as unknown as typeof fetch
   }
 
+  /**
+   * Like `stubSearchWithPackages`, but a page fetch for the same `text` can
+   * answer differently across calls — the shape `enumerate()`'s retry needs:
+   * pass one's page omits an object pass two serves, mirroring the "npm
+   * served a 249-of-250 page" anomaly this module already tolerates,
+   * documented in the test right below. `size=1` (a probe) always answers
+   * the fixed `total` and never advances the call counter, so every probe —
+   * `partitionKeyword`'s own and the pre/post-retry `required` reads — sees
+   * the same number regardless of how many times paging ran.
+   */
+  function stubSearchWithRetriedPages(
+    totals: Record<string, number>,
+    pagesByCall: Record<string, { name: string; keywords: string[]; maintainers: string[] }[][]>,
+  ): typeof fetch {
+    const calls: Record<string, number> = {}
+    return (async (url: string | URL) => {
+      const params = new URL(String(url)).searchParams
+      const text = params.get('text') ?? ''
+      const from = Number(params.get('from') ?? '0')
+      const total = totals[text] ?? 0
+      if (params.get('size') === '1' || from !== 0) {
+        return new Response(JSON.stringify({ total, objects: [] }), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        })
+      }
+      const sequence = pagesByCall[text] ?? []
+      const index = calls[text] ?? 0
+      calls[text] = index + 1
+      const page = sequence[Math.min(index, sequence.length - 1)] ?? []
+      const objects = page.map(pkg => ({
+        package: {
+          name: pkg.name,
+          keywords: pkg.keywords,
+          maintainers: pkg.maintainers.map(username => ({ username })),
+        },
+      }))
+      return new Response(JSON.stringify({ objects, total }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }) as unknown as typeof fetch
+  }
+
   it('does not end a keyword on a short non-final page — it reads the total', async () => {
     // Live shape: npm served a 249-object page of a 600-name result set. The
     // old `objects.length < PAGE_SIZE` break dropped pages 1 and 2 in silence.
@@ -2402,6 +2444,39 @@ describe('searchByKeywords', () => {
       const dshPlugin = reports.find(r => r.keyword === 'dsh-plugin')
       expect(dshPlugin?.seeded).toEqual(['huanlin'])
       expect(dshPlugin?.atRiskNames).toBe(1)
+    })
+
+    it('does not overcount a name the retry path re-pages', async () => {
+      const reports: PublisherAxisReport[] = []
+      // The registry answers a total of 2 for deepseek-harness, but the first
+      // pass's only page omits `another` — the documented "npm served a
+      // 249-of-250 page" anomaly this module already tolerates by re-running
+      // enumerate() once. The retry re-pages `atrisk`, which an
+      // un-deduplicated `harvested` array counts a second time even though
+      // only two distinct at-risk names were ever observed.
+      const fetchImpl = stubSearchWithRetriedPages(
+        { 'keywords:dsh-plugin': 0, 'keywords:deepseek-harness': 2 },
+        {
+          'keywords:deepseek-harness': [
+            [{ name: 'atrisk', keywords: ['deepseek-harness'], maintainers: ['pubowner'] }],
+            [
+              { name: 'atrisk', keywords: ['deepseek-harness'], maintainers: ['pubowner'] },
+              { name: 'another', keywords: ['deepseek-harness'], maintainers: ['pubowner'] },
+            ],
+          ],
+        },
+      )
+      await searchByKeywords(
+        fetchImpl, undefined, undefined, undefined, undefined,
+        () => {}, () => {}, [], PUBLISHER_PROBE_BUDGET_DEFAULT, 0,
+        r => reports.push(r),
+      )
+      const deepseekHarness = reports.find(r => r.keyword === 'deepseek-harness')
+      // atRiskOwners accumulates into a Set, so the retry's re-observation of
+      // `pubowner` leaves it untouched; atRiskNames is the raw count the bug
+      // inflates.
+      expect(deepseekHarness?.seeded).toEqual(['pubowner'])
+      expect(deepseekHarness?.atRiskNames).toBe(2)
     })
   })
 
