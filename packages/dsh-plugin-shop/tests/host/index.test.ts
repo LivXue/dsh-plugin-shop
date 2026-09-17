@@ -856,6 +856,41 @@ describe('forwards-only outdated', () => {
     await gateway.catalog({})
     expect(await gateway.installed()).toEqual([{ name: 'dsh-two', source: 'npm', installed: '^1.0.0', latest: '1.5.0', outdated: true, enabled: true }])
   })
+
+  // The github arm is NOT forwards-only, and cannot be. There `outdated` is
+  // `pin !== entry.version`: an inequality between two commit shas, which
+  // nothing the Host holds can order. A default branch reverted or
+  // force-pushed BEHIND the pin still reports outdated, and Update syncs to
+  // the catalog rather than moving strictly forward. Pinned here, beside the
+  // npm cases that establish the opposite, so the asymmetry stays deliberate
+  // and visible; §7.3's 2026-09-16 follow-up records why it is not narrowed.
+  it('reports a github pin that merely DIFFERS from the catalog commit as outdated', async () => {
+    const catalogCommit = 'c'.repeat(40)
+    const aheadPin = 'd'.repeat(40)
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-forwards-gh-'))
+    mkdirSync(join(dir, 'cache'), { recursive: true })
+    writeFileSync(join(dir, 'cache/github-pins.json'), JSON.stringify({ 'github:carol/dsh-three#': aheadPin }))
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-forwards-gh-profile-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
+      name: 'dsh-profile-web', dsh: { profile: { bundles: [] } },
+      dependencies: { 'dsh-three': 'github:carol/dsh-three' },
+    }))
+    const repoEntry: CatalogEntry = {
+      name: 'dsh-three', version: catalogCommit, integrity: catalogCommit, publishedAt: null,
+      repository: 'https://github.com/carol/dsh-three', license: 'MIT',
+      tier: 'community', metadata: 'derived', source: 'github', repo: 'carol/dsh-three',
+      added: '2026-08-25',
+    }
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [repoEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
+    })
+    await gateway.catalog({})
+    expect(await gateway.installed()).toEqual([{
+      name: 'dsh-three', source: 'github', repo: 'carol/dsh-three',
+      installed: aheadPin, latest: catalogCommit, outdated: true, enabled: true,
+    }])
+  })
 })
 
 describe('ShopGateway.uninstall', () => {

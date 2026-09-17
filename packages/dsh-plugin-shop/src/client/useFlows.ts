@@ -34,7 +34,11 @@ export interface KeyedFlow<TArgs> {
 }
 
 export interface UseKeyedFlows<TArgs> {
-  /** Two panels asking for the same identity receive one flow. */
+  /** Two panels asking for the same identity receive one flow — the SAME
+   * object, for as long as that identity's view is unchanged, so a
+   * memoized consumer handed the result re-renders only when its own flow
+   * moves. The accessor's identity still tracks `views`; the result's does
+   * not, and the result is what a card should be given. */
   flowFor: (key: string) => KeyedFlow<TArgs>
   /** Return one identity to `idle` without building a flow for it. Stable
    * across renders (unlike `flowFor`, whose identity tracks `views`), so one
@@ -59,6 +63,11 @@ export interface UseKeyedFlows<TArgs> {
 
 /** Shared empty set, so an idle registry hands out one stable identity. */
 const NO_PENDING: ReadonlySet<string> = new Set()
+
+/** Shared idle view, so every key WITHOUT a flow yields one object rather
+ * than a fresh literal per call. That is what lets `flowFor` below answer
+ * "did this key change?" by identity. */
+const IDLE_VIEW: InstallView = { kind: 'idle' }
 
 /**
  * @param begin the starting RPC and its answer, mapped to the first view.
@@ -148,11 +157,44 @@ export function useKeyedFlows<TArgs>(
     return next
   }, [views])
 
-  const flowFor = useCallback((key: string): KeyedFlow<TArgs> => ({
-    view: views.get(key) ?? { kind: 'idle' },
-    start: args => start(key, args),
-    reset: () => reset(key),
-  }), [views, start, reset])
+  // One flow object per key, rebuilt only when THAT key's view changes.
+  //
+  // `flowFor` itself cannot be frozen: a caller holding a stale accessor
+  // would never learn that the install it is showing has moved on. What has
+  // to be stable is the RESULT per key, because that is what a memoized card
+  // compares. `views` is replaced wholesale on every poll RESPONSE, but
+  // `reduceInstall` returns the same view object when a key's state did not
+  // change, and a key with no flow yields the shared `IDLE_VIEW` — so
+  // comparing views by identity is exactly the question being asked.
+  //
+  // Without this the accessor was the prop, so every mounted card failed
+  // `memo`'s shallow compare once a second for the whole duration of any one
+  // install anywhere: a shelf of visible cards rebuilding their badge rows,
+  // two inline SVGs each and their blocker paragraphs, for an install none of
+  // them were party to.
+  //
+  // The cache holds one small object per key ever asked — bounded by how far
+  // the reader scrolls, since `visibleCount` only grows — and is dropped
+  // whole when `start` or `reset` change identity, because a retained flow
+  // would go on calling the superseded closure.
+  const flowCache = useRef(new Map<string, KeyedFlow<TArgs>>())
+  const flowClosures = useRef({ start, reset })
+  const flowFor = useCallback((key: string): KeyedFlow<TArgs> => {
+    if (flowClosures.current.start !== start || flowClosures.current.reset !== reset) {
+      flowCache.current = new Map()
+      flowClosures.current = { start, reset }
+    }
+    const view = views.get(key) ?? IDLE_VIEW
+    const cached = flowCache.current.get(key)
+    if (cached !== undefined && cached.view === view) return cached
+    const flow: KeyedFlow<TArgs> = {
+      view,
+      start: args => start(key, args),
+      reset: () => reset(key),
+    }
+    flowCache.current.set(key, flow)
+    return flow
+  }, [views, start, reset])
 
   return { flowFor, resetFlow: reset, pending }
 }

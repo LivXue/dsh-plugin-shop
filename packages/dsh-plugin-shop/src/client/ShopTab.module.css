@@ -456,7 +456,7 @@
   border-radius: 999px;
 }
 
-.catalogHeading {
+.updatableHeading {
   margin: 2px 0 0;
   font-size: 16px;
   font-weight: 600;
@@ -1202,7 +1202,8 @@
   color: var(--dsw-alias-label-primary);
 }
 
-/* Installed section. */
+/* The Updatable section. The class keeps the Host's field name; only the
+   heading the reader sees was renamed. */
 .outdatedSection {
   display: flex;
   flex-direction: column;

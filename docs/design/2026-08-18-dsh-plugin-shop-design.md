@@ -639,7 +639,7 @@ The filter was made a pill too, wearing `.categoryButton` and stating only its h
 **Corrections (2026-09-07, review of this amendment).** The first implementation tested the missing-peer list directly, which broke the rule above in two ways that both reached the reader:
 
 - *An entry can carry BOTH blockers.* `BlockerBadge` lets a taken name decide the visible word when both hold, so such a card reads "Name taken" — and testing the peer list hid it anyway, taking away the only surface explaining the refusal, which is the very carve-out the paragraph above states. The filter and its count both ask one predicate: missing peers AND no name holder.
-- *The modifier does not apply to the Installed view.* That view is management, not shelf. An installed plugin that is up to date appears in exactly one place — its card, which carries the enable switch and the uninstall button, since the installed section lists only rows whose `outdated` is true — so subtracting there left a reader no way to disable or remove the broken install they had come to fix, above a tab still counting it. The filter is skipped for that view and its control is not rendered there; the state survives, so switching back restores both.
+- *The modifier does not apply to the Installed view.* That view is management, not shelf. An installed plugin that is up to date appears in exactly one place — its card, which carries the enable switch and the uninstall button, since the Updatable section lists only rows whose `outdated` is true — so subtracting there left a reader no way to disable or remove the broken install they had come to fix, above a tab still counting it. The filter is skipped for that view and its control is not rendered there; the state survives, so switching back restores both.
 
 **The control carried the action in its label and therefore no `aria-pressed`.** The two encodings are each coherent and must not be mixed: the category tabs keep a fixed label and let `aria-pressed` carry the state; this button's label flipped between "Hide incompatible N" and "Show incompatible N". With both, a screen reader announced "Show incompatible 1, pressed" while they were hidden — the inverse of the truth. Superseded by the amendment below, which takes the other branch of that same choice.
 
@@ -719,6 +719,44 @@ Two smaller consequences worth stating because they are easy to get wrong. The h
 **An empty shelf says which control emptied it.** The filter is persistent and its search box is empty, so the generic "No matching plugins" line misattributed the cause to a search the reader had not made. The client keeps what the category and search selected separately from what the modifier left, so a non-empty former with an empty latter is the modifier, stated as such — and no second copy of the filter chain exists to drift from the first.
 
 **Amendment (2026-08-27, follow-up): boot-time warm.** The client bundle warms `shop/catalog` (plus the small `installed` and `version` reads) when its apply runs at web boot, so the shop's first open consumes the boot-time fetch instead of waiting on it — the host's slow network fetch happens while nobody is looking at the shop. The tab's plain open consumes the stashed promise (the host's snapshot is the same one a fresh call would serve, so §10 freshness semantics are unchanged); a refresh always goes to the wire, and a failed warm falls back to a fresh call. Each boot starts its own warm fetch.
+
+**Amendment (2026-09-16): the section over the update rows is headed "Updatable", not "Installed".**
+
+The heading and the Installed filter held one string. `installedSection` and `installed` were `'Installed'` / `'已安装'` character for character in both dictionaries, and the filter's button label, the installed card's label and this heading all printed one of the two. So the same word named two different sets on one screen: every installed entry, which is what the filter selects and what `shop/installed` returns, and the rows whose `outdated` is true, which is all this section has ever listed. The section renders below the shelf in every view and under every search, so a reader met the word twice wherever the filter bar stood — once on the Installed button, once as a heading over a shorter list — where the second reading looks like the first one's result, and an up-to-date install looks lost rather than accounted for on its own card.
+
+The heading now reads `Updatable` / `可更新`. Nothing about the content moves: the rows are still the installed entries filtered to `outdated`, a current install is still spoken for by its shelf card alone, and the section still renders nothing when that filter is empty.
+
+Three things deliberately do not change with it:
+
+- *The internals keep saying `outdated`.* `ShopInstalledEntry.outdated` is the Host's verdict in the §7.3 table above, `data-shop-outdated` is the section's DOM hook, which the client suite selects on, and `.outdatedSection` is the class. A copy change may not reshape a wire field — the heading was wrong about what it covered, which is a different defect. What the field reports is not one thing across sources, and the heading is a stronger claim than one of them supports; the follow-up below states both.
+- *The locale KEY moves with the value.* `installedSection: 'Updatable'` would leave the dictionary asserting the collision this amendment removes, one lookup away from the next reader restoring it; the key is `updatableSection`.
+- *The guard is a dictionary assertion, not a DOM one.* Not because the rendered collision is hard to stage — the filter's label is unconditional, so it already stands beside the heading whenever the section renders at all. Because the defect is a property of the key space rather than of any one screen: one scan over both dictionaries covers every view, every locale and every future pair, where a DOM guard covers the one pair its author thought of, in the one view they staged it in. The scan is in `ShopTab.client.spec.tsx`, with an allowlist for the collisions that are deliberate.
+
+The README screenshots never carried this heading and will not gain it. `shoot-readme-screenshots.ts` installs the shop at the pin the READMEs hold — the published `latest` — so nothing in that profile is `outdated`, the section renders nothing, and the six images have no update rows to head. The standing rule that a UI change lands with stale images and the promotion commit reshoots all six is unaffected; it just has nothing to reshoot for this one.
+
+**Amendment (2026-09-16, follow-up): what `outdated` reports, per source.**
+
+`outdated` is not one comparison. For an npm entry it is `isBehind(spec,
+latest)`, a semver ordering, and `Updatable` is exactly what it means. For a
+github entry it is `pin !== entry.version` — two commit shas, an INEQUALITY
+with no ordering, because nothing the Host holds can order them. The catalog's
+version for such an entry is the repository's default branch as of the build;
+the pin is what the shop recorded at install time. If that branch is reverted
+or force-pushed behind the pin, the row still appears and Update installs the
+older tree.
+
+The client is not where that gets fixed, and a network probe per installed
+github entry to order the two is not worth what it costs. It is a bound on
+what the heading claims: for a github row `Updatable` means the catalog offers
+a different commit, and pressing Update syncs to the catalog rather than
+moving strictly forward. The row states both shas, so the reader can see which
+is which; the heading is the only place that overstates, and it overstates for
+one of the two sources.
+
+Recorded rather than narrowed in the field, because `ShopInstalledEntry.outdated`
+is a wire field both halves read, and because the alternatives — a second
+field, or a source-dependent heading — buy a precision the reader cannot act
+on.
 
 ## 8. When changes take effect
 

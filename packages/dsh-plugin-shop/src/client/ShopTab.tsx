@@ -58,7 +58,7 @@ type CatalogState =
 /** The installed list state (§7.3). `installed()` runs alongside `catalog()`
  * and its rows ARE the tab's installed signal: a shelf card for an installed
  * entry shows its installed state — or the update button when behind —
- * instead of the install button, and the entries rendered as the "installed"
+ * instead of the install button, and the entries rendered as the "Updatable"
  * section are the same list filtered to `outdated`. The enabled switch per
  * row is optimistic (v0 assumes an installed plugin is on). */
 type InstalledState =
@@ -80,7 +80,7 @@ function ChevronIcon({ open }: { open: boolean }): ReactNode {
  * install controls. An installed plugin's card carries its installed row:
  * current → the non-interactive installed label, behind → the update button;
  * uninstalled → the install button. */
-const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, nameTakenBy, t, flowFor, uninstallFlowFor, restart, restartBlocked, reload, setEnabled, inInstalledView }: {
+const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, nameTakenBy, t, flow, uninstallFlow, restart, restartBlocked, reload, setEnabled, inInstalledView }: {
   entry: CatalogEntry
   stars: number | undefined
   installed: ShopInstalledEntry | undefined
@@ -90,8 +90,11 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, na
    * that branch means THIS identity is the one installed. */
   nameTakenBy: string | undefined
   t: ShopTabProps['t']
-  flowFor: (key: string) => InstallFlow
-  uninstallFlowFor: (key: string) => UninstallFlow
+  /** This entry's own flow, not the registry accessor: the accessor's
+   * identity changes on every install poll response, so passing it here
+   * defeated this component's `memo` for every card on the shelf. */
+  flow: InstallFlow
+  uninstallFlow: UninstallFlow
   restart: ShopTabInjected['restart']
   restartBlocked: RestartBlockedReason | null
   reload: () => void
@@ -122,8 +125,6 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, na
     repo: entry.repo,
     subdir: entry.subdir,
   }
-  const flow = flowFor(entryKey(entry))
-  const uninstallFlow = uninstallFlowFor(entryKey(entry))
   return (
     <div className={css.card} data-shop-entry={entry.name} data-category={category}>
       <span className={css.cardSpine} aria-hidden="true" />
@@ -575,7 +576,7 @@ function InstallPanel({ target, tier, missing, blockers, missingStated = false, 
       >
         {t(update ? 'update' : 'install')}
       </button>
-      {/* One wording everywhere, including the outdated row. `missingByName`
+      {/* One wording everywhere, including the outdated row. `missingByKey`
           is keyed by the CATALOG (latest) entry, so on that row the version
           that actually runs is the INSTALLED one and it is the update that
           wants the missing module — the copy's "may be" carries that
@@ -948,13 +949,24 @@ function OutdatedRow({ row, tier, missing, t, setEnabled, flowFor, restart, rest
   )
 }
 
-/** The §7.3 installed list, rendered as the "installed" section: each row
+/** The id the section points its `aria-labelledby` at. A bare `<section>`
+ * maps to `generic`, not `region`: without an accessible name landmark
+ * navigation skips the update rows, and this `<h2>` — the tab's only
+ * heading, rendered last, below the whole shelf — reads as a continuation
+ * of the cards above it. */
+const UPDATABLE_HEADING_ID = 'dsh-shop-updatable-heading'
+
+/** The §7.3 installed list, rendered as the "Updatable" section: each row
  * shows both versions, a switch, and an update button. The rows are the
  * installed entries filtered to `outdated` — a current install is already
  * spoken for by its shelf card's installed label, and has no row here. The
- * tier for the update gate is looked up from the catalog by name (community →
- * acknowledgement); an entry absent from the catalog defaults to the
- * community gate (the safer read). */
+ * heading names that filtered content, not the list it came from: it read
+ * "Installed" until 2026-09-16, which was the Installed filter's label
+ * character for character in both languages, over a strict subset of what
+ * that filter selects. Internals stay `outdated` — the Host field name. The
+ * tier for the update gate is looked up from the catalog by install IDENTITY,
+ * never by name (community → acknowledgement); an entry absent from the
+ * catalog defaults to the community gate (the safer read). */
 function OutdatedSection({ state, entriesByKey, missingByKey, t, setEnabled, flowFor, restart, restartBlocked, reload }: {
   state: InstalledState
   entriesByKey: ReadonlyMap<string, CatalogEntry>
@@ -968,13 +980,18 @@ function OutdatedSection({ state, entriesByKey, missingByKey, t, setEnabled, flo
 }): ReactNode {
   if (state.kind === 'loading') return null
   if (state.kind === 'error') {
-    return <p className={css.stateLine} data-shop-outdated-error>{t('error')}</p>
+    // `installedError`, not `error`: this branch reports a failed
+    // `shop/installed`, and it renders inside the catalog-ready path — below
+    // a shelf that has already painted. The catalog's line would name the
+    // one subsystem the reader can see working, and point at a reload that
+    // succeeds and changes nothing.
+    return <p className={css.stateLine} data-shop-outdated-error>{t('installedError')}</p>
   }
   const outdated = state.entries.filter(entry => entry.outdated)
   if (outdated.length === 0) return null
   return (
-    <section className={css.outdatedSection} data-shop-outdated>
-      <h2 className={css.catalogHeading}>{t('installedSection')}</h2>
+    <section className={css.outdatedSection} data-shop-outdated aria-labelledby={UPDATABLE_HEADING_ID}>
+      <h2 className={css.updatableHeading} id={UPDATABLE_HEADING_ID}>{t('updatableSection')}</h2>
       <ul className={css.outdatedList}>
         {outdated.map(row => (
           <li key={identityKey(row)}>
@@ -1198,14 +1215,30 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     return map
   }, [installedState])
 
-  // Entries the shelf will advertise: what the catalog carries, less the
+  // Sort once for a loaded catalog, then filter that stable ordering. A
+  // filtered-list sort repeated the full comparator work on every keystroke.
+  const stars = useMemo(
+    () => (catalogState.kind === 'ready' ? catalogState.result.stars : {}),
+    [catalogState],
+  )
+
+  // Every catalog entry, in shelf order. `browsable` FILTERS this instead of
+  // sorting its own result: a filter preserves relative order and the sort is
+  // stable, so one ordering is computed once and both lists carry it. The
+  // Installed view reads this list directly — see `matched`.
+  const sortedCatalog = useMemo(
+    () => (catalogState.kind === 'ready' ? sortByStars(catalogState.result.plugins, stars) : []),
+    [catalogState, stars],
+  )
+
+  // Entries the shelf will ADVERTISE: what the catalog carries, less the
   // competing markets. The exclusion lives here ONCE — `filtered`, the
   // category counts and the catalog line all read it — because while each
   // spelled it out for itself they drifted apart: the line counted every
   // entry and said "9300 packages" above a shelf that would never render 73
-  // of them. An INSTALLED shop-like plugin stays manageable in the installed
-  // section below; not advertised is not hidden. The repo slug gets the same
-  // check for github entries.
+  // of them. Advertising is all it governs: an INSTALLED shop-like plugin is
+  // still managed from the Installed view, which reads `sortedCatalog`.
+  // The repo slug gets the same check for github entries.
   const browsable = useMemo(() => {
     if (catalogState.kind !== 'ready') return []
     // `notAShop` is the catalog's own exemption list (registry/not-a-shop.yml):
@@ -1213,18 +1246,10 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     // stores tea or sells plugins. It travels with the data, so a correction
     // lands on the next daily build instead of the client's next release.
     const cleared = new Set(catalogState.result.notAShop ?? [])
-    return catalogState.result.plugins.filter(entry =>
+    return sortedCatalog.filter(entry =>
       cleared.has(entry.name)
       || (!isShopLike(entry.name) && (entry.repo === undefined || !isShopLike(entry.repo))))
-  }, [catalogState])
-
-  // Sort once for a loaded catalog, then filter that stable ordering. A
-  // filtered-list sort repeated the full comparator work on every keystroke.
-  const stars = useMemo(
-    () => (catalogState.kind === 'ready' ? catalogState.result.stars : {}),
-    [catalogState],
-  )
-  const sortedBrowsable = useMemo(() => sortByStars(browsable, stars), [browsable, stars])
+  }, [catalogState, sortedCatalog])
 
   // Each card's incompatibility badge, looked up once per catalog load
   // instead of computed inline in the render: missingPeersOf hands back a
@@ -1285,7 +1310,15 @@ export function ShopTab(props: ShopTabProps): ReactNode {
   // it, with no second copy of the filter chain to drift.
   const matched = useMemo(() => {
     const q = query.trim().toLowerCase()
-    return sortedBrowsable.filter(entry => {
+    // The Installed view is management, not shelf, so it reads the whole
+    // catalog. The shop-like exclusion governs what the shelf ADVERTISES;
+    // applying it here withheld a plugin from the one view carrying its
+    // enable switch and its uninstall button, and once such an install is up
+    // to date the Updatable section drops it too — so a plugin sitting on the
+    // profile had no control anywhere in the tab. Not advertised is not
+    // hidden. Every other view reads `browsable`, and so does every count.
+    const source = category === 'installed' ? sortedCatalog : browsable
+    return source.filter(entry => {
       if (category === 'installed') {
         // The Installed view's half of the same rule EntryCard already
         // applies one level down (I-1: `uninstallFlow.view.kind !== 'idle'`
@@ -1317,7 +1350,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     // pass over ~9,300 entries once a second while any uninstall ran, in
     // every view, and allocated a flow object plus two closures per entry
     // while doing it. See `pending`'s own comment in useUninstall.ts.
-  }, [sortedBrowsable, query, category, installedByKey, uninstallFlows.pending])
+  }, [sortedCatalog, browsable, query, category, installedByKey, uninstallFlows.pending])
 
   // Never in the Installed view. That view is management, not shelf: an
   // installed plugin that is up to date appears in exactly one place — its
@@ -1372,12 +1405,20 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     return counts
   }, [browsable])
 
-  // The Installed button's count: installed entries the shelf would actually
-  // show (shop-like installed plugins stay in the installed section below).
-  const installedCount = useMemo(() => {
-    if (installedState.kind !== 'ready') return 0
-    return installedState.entries.filter(entry => !isShopLike(entry.name)).length
-  }, [installedState])
+  // The Installed button's count: the entries its view will actually render.
+  // It reads the SAME list that view filters, for the reason `browsable`'s
+  // own comment gives one level up — while the two spelled the rule out
+  // separately they drifted, and in both directions: the count applied the
+  // shop-like NAME test alone while the view applied the whole exclusion, so
+  // a name cleared by `notAShop` rendered a card the count skipped, and an
+  // entry excluded by its repo slug was counted with no card to reach.
+  // Counting over the catalog rather than over `installed()` also drops the
+  // entries installed by other means, which have no catalog entry and so
+  // never render a card here either.
+  const installedCount = useMemo(
+    () => sortedCatalog.filter(entry => installedByKey.has(entryKey(entry))).length,
+    [sortedCatalog, installedByKey],
+  )
 
   // How many browsable entries the Host reported missing components for —
   // the number the filter button carries. Over `browsable`, like every
@@ -1710,7 +1751,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
               const key = entryKey(entry)
               return (
                 <li key={key}>
-                  <EntryCard entry={entry} stars={starsOf(entry, stars)} installed={installedByKey.get(key)} missing={missingByKey.get(key) ?? []} nameTakenBy={nameTakenByKey.get(key)} t={t} flowFor={flows.flowFor} uninstallFlowFor={uninstallFlows.flowFor} restart={restart} restartBlocked={restartBlocked} reload={reload} setEnabled={setEnabled} inInstalledView={category === 'installed'} />
+                  <EntryCard entry={entry} stars={starsOf(entry, stars)} installed={installedByKey.get(key)} missing={missingByKey.get(key) ?? []} nameTakenBy={nameTakenByKey.get(key)} t={t} flow={flows.flowFor(key)} uninstallFlow={uninstallFlows.flowFor(key)} restart={restart} restartBlocked={restartBlocked} reload={reload} setEnabled={setEnabled} inInstalledView={category === 'installed'} />
                 </li>
               )
             })}
