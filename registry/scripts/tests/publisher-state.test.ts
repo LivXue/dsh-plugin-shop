@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import {
-  MAINTAINER_MAX_LENGTH, MAX_PUBLISHERS, atRiskOwners, isMaintainerName, mergePublishers, nextCursor,
+  MAINTAINER_MAX_LENGTH, MAX_PUBLISHERS, PublisherState, atRiskOwners, isMaintainerName, mergePublishers, nextCursor,
   parsePublisherState, serializePublisherState,
 } from '../src/publisher-state.ts'
 import { PUBLISHER_PROBE_BUDGET_DEFAULT } from '../src/npm-client.ts'
@@ -89,7 +89,7 @@ describe('publisher state', () => {
     const raw = serializePublisherState({ publishers: ['sayedev', 'bowenliang123'] })
     // Sorted by code unit, like every other artifact this repo writes, so the
     // committed file does not churn on the order npm happened to answer in.
-    expect(raw).toBe('{\n  "publishers": [\n    "bowenliang123",\n    "sayedev"\n  ],\n  "cursor": 0\n}\n')
+    expect(raw).toBe('{\n  "publishers": [\n    "bowenliang123",\n    "sayedev"\n  ],\n  "cursor": 0,\n  "pinned": {}\n}\n')
     expect(parsePublisherState(raw).publishers).toEqual(['bowenliang123', 'sayedev'])
   })
 
@@ -150,7 +150,7 @@ describe('publisher state', () => {
     // repo-state.ts is a Record, where a repeated JSON key collapses too.
     expect(parsePublisherState('{"publishers":["b","a","a"]}').publishers).toEqual(['a', 'b'])
     expect(serializePublisherState(parsePublisherState('{"publishers":["a","a"]}')))
-      .toBe('{\n  "publishers": [\n    "a"\n  ],\n  "cursor": 0\n}\n')
+      .toBe('{\n  "publishers": [\n    "a"\n  ],\n  "cursor": 0,\n  "pinned": {}\n}\n')
   })
 
   describe('the probe cursor', () => {
@@ -163,7 +163,7 @@ describe('publisher state', () => {
     it('round-trips a position', () => {
       expect(parsePublisherState('{"publishers":["a","b"],"cursor":1}').cursor).toBe(1)
       expect(serializePublisherState({ publishers: ['a'], cursor: 7 }))
-        .toBe('{\n  "publishers": [\n    "a"\n  ],\n  "cursor": 7\n}\n')
+        .toBe('{\n  "publishers": [\n    "a"\n  ],\n  "cursor": 7,\n  "pinned": {}\n}\n')
     })
 
     it('throws on a cursor that is not a count', () => {
@@ -243,6 +243,52 @@ describe('publisher state', () => {
     expect(capped.publishers[0]).toBe('u000000')
     // Stable: re-merging the same union yields the same file, not a churn.
     expect(mergePublishers(capped, many).publishers).toEqual(capped.publishers)
+  })
+})
+
+describe('the pinned map in the committed state', () => {
+  it('round-trips, sorted by keyword and by username', () => {
+    const raw = JSON.stringify({
+      publishers: ['a'], cursor: 0,
+      pinned: { 'dsh-plugin': ['zoe', 'adam'], 'deepseek-harness': ['bob'] },
+    })
+    const state = parsePublisherState(raw)
+    expect(state.pinned).toEqual({ 'deepseek-harness': ['bob'], 'dsh-plugin': ['adam', 'zoe'] })
+    expect(JSON.parse(serializePublisherState(state)).pinned)
+      .toEqual({ 'deepseek-harness': ['bob'], 'dsh-plugin': ['adam', 'zoe'] })
+    // Key order is committed bytes, so assert the order and not just the value.
+    expect(Object.keys(JSON.parse(serializePublisherState(state)).pinned))
+      .toEqual(['deepseek-harness', 'dsh-plugin'])
+  })
+
+  it('reads a file written before pinned existed as having none', () => {
+    expect(parsePublisherState(JSON.stringify({ publishers: ['a'] })).pinned).toEqual({})
+  })
+
+  it('throws on a pinned that is not an object of arrays', () => {
+    expect(() => parsePublisherState(JSON.stringify({ publishers: [], pinned: ['a'] })))
+      .toThrow(/pinned must be an object/)
+    expect(() => parsePublisherState(JSON.stringify({ publishers: [], pinned: { k: 'a' } })))
+      .toThrow(/pinned\["k"\] must be an array/)
+  })
+
+  it('throws on a pinned username outside the grammar, like publishers does', () => {
+    expect(() => parsePublisherState(JSON.stringify({ publishers: [], pinned: { k: ['ok', ''] } })))
+      .toThrow(/pinned\["k"\]\[1\] is not a maintainer username/)
+  })
+
+  it('de-duplicates within a keyword', () => {
+    const state = parsePublisherState(JSON.stringify({ publishers: [], pinned: { k: ['a', 'a'] } }))
+    expect(state.pinned).toEqual({ k: ['a'] })
+  })
+
+  it('serializes an empty pinned as an empty object, so the key is always present', () => {
+    expect(JSON.parse(serializePublisherState({ publishers: [], cursor: 0 })).pinned).toEqual({})
+  })
+
+  it('rides through mergePublishers untouched', () => {
+    const state: PublisherState = { publishers: ['a'], cursor: 3, pinned: { k: ['pinned-one'] } }
+    expect(mergePublishers(state, ['b']).pinned).toEqual({ k: ['pinned-one'] })
   })
 })
 

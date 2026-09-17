@@ -120,6 +120,46 @@ export interface PublisherState {
    * committed vocabulary.
    */
   readonly cursor?: number
+  /**
+   * Maintainers pinned for one harvest keyword: probed on every run rather
+   * than waited for by rotation.
+   *
+   * Keyed by harvest keyword because the cells are `{keywords: [K],
+   * maintainer}` and so the verdict is per keyword — a maintainer pinned for
+   * `dsh-plugin` must not be dropped because its `deepseek-harness` cell
+   * supplied nothing. Optional because a file written before this existed
+   * carries none, and absent means empty rather than malformed.
+   */
+  readonly pinned?: Readonly<Record<string, readonly string[]>>
+}
+
+/**
+ * Parse the pinned map, validating that it is an object of arrays of usernames.
+ * Returns an empty object for missing or undefined pinned field.
+ * @throws when the shape is invalid or usernames are outside the grammar.
+ */
+function readPinned(parsed: unknown): Record<string, string[]> {
+  const pinned = (parsed as { pinned?: unknown }).pinned
+  if (pinned === undefined) return {}
+  if (typeof pinned !== 'object' || pinned === null || Array.isArray(pinned)) {
+    throw new Error('publisher-state.json: pinned must be an object')
+  }
+  const out: Record<string, string[]> = {}
+  for (const keyword of Object.keys(pinned).sort(compareStrings)) {
+    const users = (pinned as Record<string, unknown>)[keyword]
+    if (!Array.isArray(users)) {
+      throw new Error(`publisher-state.json: pinned[${JSON.stringify(keyword)}] must be an array`)
+    }
+    const kept = new Set<string>()
+    users.forEach((user, i) => {
+      if (!isMaintainerName(user)) {
+        throw new Error(`publisher-state.json: pinned[${JSON.stringify(keyword)}][${i}] is not a maintainer username`)
+      }
+      kept.add(user)
+    })
+    out[keyword] = [...kept].sort(compareStrings)
+  }
+  return out
 }
 
 /**
@@ -168,13 +208,17 @@ export function parsePublisherState(raw: string): PublisherState {
     // the tail of the vocabulary never being probed again.
     throw new Error('publisher-state.json: cursor must be a non-negative integer')
   }
-  return { publishers: [...out].sort(compareStrings), cursor: cursor ?? 0 }
+  return { publishers: [...out].sort(compareStrings), cursor: cursor ?? 0, pinned: readPinned(parsed) }
 }
 
 /** Serialize, sorted by code unit and newline-terminated. */
 export function serializePublisherState(state: PublisherState): string {
   const publishers = [...state.publishers].sort(compareStrings)
-  return `${JSON.stringify({ publishers, cursor: state.cursor ?? 0 }, null, 2)}\n`
+  const pinned: Record<string, string[]> = {}
+  for (const keyword of Object.keys(state.pinned ?? {}).sort(compareStrings)) {
+    pinned[keyword] = [...(state.pinned?.[keyword] ?? [])].sort(compareStrings)
+  }
+  return `${JSON.stringify({ publishers, cursor: state.cursor ?? 0, pinned }, null, 2)}\n`
 }
 
 /**
@@ -209,10 +253,11 @@ export function nextCursor(state: PublisherState, budget: number): number {
  */
 export function mergePublishers(state: PublisherState, seen: readonly string[]): PublisherState {
   const kept = new Set([...state.publishers, ...seen].filter(isMaintainerName))
-  // The cursor rides through: a merge grows the vocabulary, it does not restart
-  // the rotation. Advancing it is `nextCursor`'s job and the caller's decision,
-  // because only the caller knows what budget the run actually spent.
-  return { publishers: [...kept].sort(compareStrings).slice(0, MAX_PUBLISHERS), cursor: state.cursor ?? 0 }
+  // The cursor and pinned map ride through: a merge grows the vocabulary, it
+  // does not restart the rotation or disturb the pinned map. Advancing the
+  // cursor is `nextCursor`'s job and the caller's decision, because only the
+  // caller knows what budget the run actually spent.
+  return { publishers: [...kept].sort(compareStrings).slice(0, MAX_PUBLISHERS), cursor: state.cursor ?? 0, pinned: state.pinned ?? {} }
 }
 
 /** One harvested name, reduced to the two fields the at-risk rule reads. */

@@ -122,7 +122,7 @@ describe('the publisher vocabulary survives the run that discovered it', () => {
       // against a fixture that happened to cover it.
       const run = runEntry(cwd, 'build.ts', ['--harvest-from', 'dist/harvest.json'], [])
       expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
-      expect(vocabulary(cwd)).toEqual({ publishers: ['alice', 'bob'], cursor: 0 })
+      expect(vocabulary(cwd)).toEqual({ publishers: ['alice', 'bob'], cursor: 0, pinned: {} })
       expect(run.stderr).toContain('publisher vocabulary 0 -> 2')
     } finally {
       rmSync(cwd, { recursive: true, force: true })
@@ -169,7 +169,7 @@ describe('the publisher vocabulary survives the run that discovered it', () => {
         `${JSON.stringify({ candidates: [], rejections: [], shortfalls: [] })}\n`)
       const run = runEntry(cwd, 'build.ts', ['--harvest-from', 'dist/harvest.json'], [])
       expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
-      expect(vocabulary(cwd)).toEqual({ publishers: ['alice'], cursor: 0 })
+      expect(vocabulary(cwd)).toEqual({ publishers: ['alice'], cursor: 0, pinned: {} })
     } finally {
       rmSync(cwd, { recursive: true, force: true })
     }
