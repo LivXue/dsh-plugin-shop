@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { type Cell, cellKey, cellQuery, FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, maintainersOf, MAINTAINERS_MAX_COUNT, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describeShortfall, parseKeywordShortfall, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
+import { type Cell, cellKey, cellQuery, FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, keywordsOf, KEYWORDS_MAX_COUNT, maintainersOf, MAINTAINERS_MAX_COUNT, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describeShortfall, parseKeywordShortfall, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
 import { ENTRY_PAYLOAD_MAX_BYTES, entryPayloadBytes } from '../src/gate.ts'
 import { MAX_TARBALL_BYTES } from '../src/github-client.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
@@ -844,6 +844,33 @@ describe('maintainersOf', () => {
     // (2026-09-09), so the tail this drops has never existed.
     const many = Array.from({ length: MAINTAINERS_MAX_COUNT + 5 }, (_, i) => ({ username: `u${i}` }))
     expect(maintainersOf({ maintainers: many })).toHaveLength(MAINTAINERS_MAX_COUNT)
+  })
+})
+
+describe('keywordsOf', () => {
+  it('reads the keywords array off a search object', () => {
+    expect(keywordsOf({ keywords: ['dsh-plugin', 'agent'] })).toEqual(['dsh-plugin', 'agent'])
+  })
+
+  it('is empty for anything that is not an object with an array', () => {
+    expect(keywordsOf(null)).toEqual([])
+    expect(keywordsOf('dsh-plugin')).toEqual([])
+    expect(keywordsOf({})).toEqual([])
+    // npm serves this: a single keyword as a bare string, not an array.
+    expect(keywordsOf({ keywords: 'dsh-plugin' })).toEqual([])
+  })
+
+  it('drops entries that are not non-empty strings, keeping the rest', () => {
+    expect(keywordsOf({ keywords: ['dsh', 42, null, '', { a: 1 }, 'mcp'] })).toEqual(['dsh', 'mcp'])
+  })
+
+  it('de-duplicates', () => {
+    expect(keywordsOf({ keywords: ['dsh', 'dsh', 'mcp'] })).toEqual(['dsh', 'mcp'])
+  })
+
+  it('bounds the count, because the array is registry-controlled', () => {
+    const many = Array.from({ length: KEYWORDS_MAX_COUNT + 50 }, (_, i) => `k${i}`)
+    expect(keywordsOf({ keywords: many })).toHaveLength(KEYWORDS_MAX_COUNT)
   })
 })
 

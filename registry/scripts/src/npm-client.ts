@@ -971,7 +971,7 @@ async function readJsonCapped(
 }
 
 interface SearchBody {
-  objects?: ({ package?: { name?: unknown; maintainers?: unknown } | null } | null)[]
+  objects?: ({ package?: { name?: unknown; maintainers?: unknown; keywords?: unknown } | null } | null)[]
   total?: unknown
 }
 
@@ -1015,6 +1015,31 @@ export function maintainersOf(pkg: unknown): string[] {
     if (typeof entry !== 'object' || entry === null) continue
     const username = (entry as { username?: unknown }).username
     if (isMaintainerName(username)) out.add(username)
+  }
+  return [...out]
+}
+
+/**
+ * Maximum keywords read off one search object, for the same reason as {@link
+ * MAINTAINERS_MAX_COUNT}: the array is registry-controlled and one page is
+ * bounded only by {@link MAX_SEARCH_BODY_BYTES}, which admits far more entries
+ * than any real package carries.
+ */
+export const KEYWORDS_MAX_COUNT = 128
+
+/**
+ * The keywords one search object declares. The bytes are already fetched and
+ * parsed — the paging loop reads {@link maintainersOf} off this same object —
+ * so reading this field costs no request. It is what decides whether a name is
+ * reachable by any refinement cell at all; see `atRiskOwners`.
+ */
+export function keywordsOf(pkg: unknown): string[] {
+  if (typeof pkg !== 'object' || pkg === null) return []
+  const raw = (pkg as { keywords?: unknown }).keywords
+  if (!Array.isArray(raw)) return []
+  const out = new Set<string>()
+  for (const entry of raw.slice(0, KEYWORDS_MAX_COUNT)) {
+    if (typeof entry === 'string' && entry.length > 0) out.add(entry)
   }
   return [...out]
 }
