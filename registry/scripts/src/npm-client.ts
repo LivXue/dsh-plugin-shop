@@ -2044,16 +2044,21 @@ export async function searchByKeywords(
      * `rotatedProbed`: the walk skips a candidate already pinned, consuming a
      * position without returning one. */
     let stepped = 0
-    /** Publisher cells already paged this run, by query. `enumerate` runs
-     * twice whenever a keyword's residual sends it round again — every run,
-     * for `deepseek-harness` — and the second pass's delta is 0 by this
-     * module's own reasoning, so re-paging buys nothing. It is not free
-     * either: a pinned maintainer whose at-risk names sit past the window
-     * passes the `cellTotal > served` filter on every future run, so at the
-     * pinned bound this is up to 250 zero-yield `size=250` requests per
-     * keyword per run. The partition cells are deliberately NOT tracked here
-     * — re-paging those is what the retry exists for. */
-    const pagedPublisherCells = new Set<string>()
+    // A publisher cell IS re-paged when `enumerate` runs again, exactly as a
+    // partition cell is, and skipping it to save the requests was tried and
+    // reverted the same day (2026-09-18). The saving is real — for
+    // `deepseek-harness` the retry runs on every run, so every selected
+    // publisher cell costs a second `size=250` request — and the reasoning
+    // was that the second pass's delta is 0. That reasoning describes the
+    // EXPECTED case and the retry exists for the other one: pass two may
+    // serve an object pass one omitted (the documented 249-of-250 page), and
+    // for a publisher cell that object is a past-window name nothing else can
+    // reach. The run that shipped the skip came up 17 names short of the 14 a
+    // build may publish short, against a run an hour earlier that recovered
+    // its whole tail. That is not proof — the two runs probed different bands
+    // — but a coverage mechanism does not trade coverage for speed on a
+    // suspicion. Bring it back only with a measurement of what pass two
+    // actually recovers from these cells.
     /** Names credited to a cell's own PAGING (the before/after delta measured
      * in `enumerate` below), never to its probe — a probe only proves a cell
      * could supply something, not that it did. */
@@ -2183,16 +2188,12 @@ export async function searchByKeywords(
         // paged once pages the same names again and its delta is 0 the second
         // time: nothing here can be credited twice.
         for (const cell of publisherCells.pinned) {
-          if (pagedPublisherCells.has(cellQuery(cell))) continue
-          pagedPublisherCells.add(cellQuery(cell))
           const before = forKeyword.size
           await pageCell(cell, forKeyword, 'throw', undefined, harvested)
           const delta = forKeyword.size - before
           if (delta > 0) pinnedSupplied += delta
         }
         for (const cell of publisherCells.rotated) {
-          if (pagedPublisherCells.has(cellQuery(cell))) continue
-          pagedPublisherCells.add(cellQuery(cell))
           const before = forKeyword.size
           await pageCell(cell, forKeyword, 'throw', undefined, harvested)
           const delta = forKeyword.size - before

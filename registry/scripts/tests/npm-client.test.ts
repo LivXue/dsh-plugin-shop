@@ -2867,8 +2867,12 @@ describe('searchByKeywords', () => {
       maintainerTotal: number,
       maintainerNames: readonly string[],
       shortFirstPage: boolean,
+      /** Omit the publisher cell's last name on its FIRST page only — the
+       * documented 249-of-250 anomaly, aimed at a publisher cell. */
+      shortMaintainerPage = false,
     ): typeof fetch {
       let firstPageCalls = 0
+      let maintainerPageCalls = 0
       const tag = (name: string) => ({
         package: { name, keywords: ['deepseek-harness', 'dsh'], maintainers: [] as { username: string }[] },
       })
@@ -2882,7 +2886,9 @@ describe('searchByKeywords', () => {
         }
         const maintainerMatch = /maintainer:(\S+)$/.exec(query)
         if (maintainerMatch) {
-          const objects = isProbe ? [] : maintainerNames.map(name => ({
+          const short = shortMaintainerPage && !isProbe && maintainerPageCalls++ === 0
+          const served = short ? maintainerNames.slice(0, -1) : maintainerNames
+          const objects = isProbe ? [] : served.map(name => ({
             package: { name, keywords: ['deepseek-harness', 'dsh'], maintainers: [{ username: maintainer }] },
           })).slice(from, from + 250)
           return new Response(JSON.stringify({ total: maintainerTotal, objects }), { status: 200 })
@@ -2944,29 +2950,22 @@ describe('searchByKeywords', () => {
         expect((report?.pinnedSupplied ?? 0) + (report?.rotatedSupplied ?? 0)).toBe(3)
       })
 
-      it('does not PAGE a publisher cell twice when the retry runs', async () => {
-        // The counter was already safe; the requests were not. `enumerate`
-        // runs twice whenever a keyword's residual sends it round again --
-        // every run, for `deepseek-harness` -- and this module's own comment
-        // says the second pass's delta is 0, so every selected publisher cell
-        // was re-paging for names already in the union. It is not a fixed
-        // cost either: a pinned maintainer whose at-risk names sit past the
-        // window passes the `cellTotal > served` filter on EVERY future run,
-        // so at the 250-pin bound that is up to 250 zero-yield `size=250`
-        // requests per keyword per run, roughly 4-5 minutes a day against a
-        // probe phase already measured at 9-11.
-        const urls: string[] = []
-        const inner = outcomeStub('newowner', 3, ['beyond0', 'beyond1', 'beyond2'], true)
-        const fetchImpl = ((url: string | URL, init?: RequestInit) => {
-          urls.push(String(url))
-          return (inner as (u: string | URL, i?: RequestInit) => Promise<Response>)(url, init)
-        }) as unknown as typeof fetch
-        await searchByKeywords(
+      it('RE-pages a publisher cell when the retry runs, recovering a name its first page omitted', async () => {
+        // Skipping the second page of a publisher cell to save the request was
+        // tried and reverted on 2026-09-18. The saving is real -- for
+        // `deepseek-harness` the retry runs every run -- and the argument was
+        // that the second pass's delta is 0. That describes the expected case,
+        // and the retry exists for the other one: pass two may serve an object
+        // pass one omitted, and for a publisher cell that object is a
+        // past-window name nothing else can reach. This fixture is that case,
+        // aimed at the publisher cell rather than at the window.
+        const fetchImpl = outcomeStub('newowner', 3, ['beyond0', 'beyond1', 'beyond2'], true, true)
+        const names = await searchByKeywords(
           fetchImpl, undefined, undefined, undefined, undefined,
           () => {}, () => {}, { publishers: ['newowner'] }, 5,
         )
-        const pages = urls.filter(u => u.includes('maintainer%3Anewowner') && !u.includes('size=1'))
-        expect(pages).toHaveLength(1)
+        // `beyond2` exists only on the publisher cell's SECOND page request.
+        expect(names).toContain('beyond2')
       })
     })
   })
