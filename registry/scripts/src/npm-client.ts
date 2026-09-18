@@ -194,8 +194,41 @@ export const MIN_UNREACHABLE_RECOVERY = 0.9
  * A tolerated residual is never silent — {@link searchByKeywords} reports the
  * numbers to its caller, and {@link describeShortfall} puts both the window
  * and the tail term in the build report and the CI log.
+ *
+ * AMENDED 2026-09-18: 14 -> 20, and THE BRACKET'S UPPER BOUND IS GONE. The
+ * paragraphs above say the answer is not a larger number here. That reasoning
+ * has not been refuted; it has been overridden, deliberately, and what it cost
+ * is stated here rather than left to be rediscovered.
+ *
+ * WHAT WAS SURRENDERED. 15 was the size of the one real partition gap this
+ * repo has measured — PARTITION_KEYWORDS was fifteen names short the day after
+ * it was documented as complete. A cap at or above 15 absorbs a gap that size
+ * in silence. Worse, it is now the ONLY bound that could: {@link
+ * MIN_UNREACHABLE_RECOVERY} is a rate, and a rate's strictness decays with the
+ * tail, so from a 150-name tail up a fifteen-name gap already clears the
+ * floor. Past that tail a refinement quietly ceasing to split is no longer
+ * refused by anything. Today's `deepseek-harness` tail is 1,921.
+ *
+ * WHY ANYWAY. `keywords:deepseek-harness,dsh` crossed its own window (6,139
+ * against 5,250, measured 2026-09-18), so names carrying only that refinement
+ * are now beyond every cell; `keywords:dsh-plugin` crossed the same day
+ * (5,590). On 2026-09-18 a family of ~220 packages landed between 09:22 and
+ * 11:03 — the total went 6,951 -> 7,171 at ~131/hour against a documented
+ * drift of ~83/DAY — and two consecutive runs then failed at a residual of 17.
+ * Publisher pinning is the built answer to exactly this, and it cannot work
+ * from a standing start: a pinned set accumulates across runs, so the first
+ * run seeds and only later runs probe. Holding the cap at 14 stops the catalog
+ * publishing during precisely the days the mechanism needs to fill.
+ *
+ * WHAT 20 BUYS, MEASURED. Today's residual is 17, so this is roughly one day
+ * of margin at the ~2.5/day drift, and less than that against another family
+ * event. The daily readings above include 19 (09-12) and 23 (09-13): 20 would
+ * have published the first and not the second. This is a smaller holding
+ * measure than its size suggests, and it is the second one taken against
+ * issue #38 — the answer remains a partition or a probe rate that reaches the
+ * residue, not a third raise.
  */
-export const MAX_UNREACHABLE_RESIDUAL = 14
+export const MAX_UNREACHABLE_RESIDUAL = 20
 
 /** One keyword that enumerated fewer names than its own total promised. */
 export interface KeywordShortfall {

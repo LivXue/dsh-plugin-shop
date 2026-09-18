@@ -2095,21 +2095,30 @@ describe('searchByKeywords', () => {
         .rejects.toThrow(/recovered 0 of 157/)
     })
 
-    it('refuses the fifteen-name partition gap at the live tail size', async () => {
-      // THE case the cap was re-sized for, as behaviour rather than as a
-      // bound on a constant. 157 out of reach, cells recover 142 — the shape
-      // PARTITION_KEYWORDS took the day after it was documented as complete.
-      // The rate floor passes it (142/157 = 0.9045, above 0.9), so at the
-      // former cap of 25 this published fifteen names short in silence. The
-      // cap is what refuses it, and the message names the tail term.
-      // The cap is interpolated, not spelled: the sibling bound test admits
-      // any value in [9, 15), and at 12 this gap is still correctly refused,
-      // so a literal would redden this test for a reason it does not assert.
-      await expect(searchByKeywords(pastWindow(5407, 142)))
-        .rejects.toThrow(new RegExp(`a tail shortfall of 15, past the ${MAX_UNREACHABLE_RESIDUAL} names a build may publish short`))
-      // The family event it must still absorb is `publishes when the
-      // partition recovers nearly all of what is out of reach`, which runs
-      // this same fixture and additionally asserts the shortfall record.
+    it('PUBLISHES the fifteen-name partition gap it used to refuse', async () => {
+      // THE case the cap was originally sized for, inverted by the 2026-09-18
+      // raise, and kept as behaviour because the loss deserves a red test if
+      // it is ever undone by accident rather than on purpose.
+      //
+      // 157 out of reach, cells recover 142 — the shape PARTITION_KEYWORDS
+      // took the day after it was documented as complete. The rate floor
+      // passes it (142/157 = 0.9045, above 0.9), so the cap was the only
+      // bound refusing it; an earlier 25 published it in silence and the
+      // bracket's ceiling existed to stop that recurring. At 20 it recurs:
+      // a real partition gap of exactly the size this repo has measured is
+      // now published, reported only as a count in the build report.
+      //
+      // Asserted as the resolved harvest, not as a message, because the
+      // failure this guards against is the SILENCE.
+      const names = await searchByKeywords(pastWindow(5407, 142))
+      expect(names).toHaveLength(SEARCH_WINDOW + 142)
+      // Still refused once the gap outgrows the new cap, so the bound has
+      // moved rather than gone. The fixture needs a LARGER tail to isolate
+      // the cap: at 157 a 21-name gap is 86.6% recovery and the rate floor
+      // refuses it first, with a different message. 250 out of reach
+      // recovering 229 is 91.6%, above the floor, so the cap is what speaks.
+      await expect(searchByKeywords(pastWindow(SEARCH_WINDOW + 250, 229)))
+        .rejects.toThrow(new RegExp(`a tail shortfall of 21, past the ${MAX_UNREACHABLE_RESIDUAL} names a build may publish short`))
     })
 
     it('refuses when the residual outgrows what may be published short', async () => {
@@ -2156,10 +2165,20 @@ describe('searchByKeywords', () => {
       //          MAX_SEARCH_SHORTFALL's comment refuses any bound at or above
       //          that because it absorbs a real partition gap silently.
       // An earlier 25 sat outside the upper bound, on the reasoning that the
-      // family needed 20-plus of headroom — it needed 9. The two magnitudes
-      // are compatible, so assert the window rather than a loose range.
+      // family needed 20-plus of headroom — it needed 9.
       expect(MAX_UNREACHABLE_RESIDUAL).toBeGreaterThanOrEqual(6 + MAX_SEARCH_SHORTFALL)
-      expect(MAX_UNREACHABLE_RESIDUAL).toBeLessThan(15)
+      // THE UPPER BOUND WAS ABANDONED ON 2026-09-18, and this assertion is
+      // what it cost: the cap is now above the one real partition gap this
+      // repo has measured, so it absorbs a gap that size in silence. That was
+      // taken deliberately (see MAX_UNREACHABLE_RESIDUAL's own 2026-09-18
+      // amendment) to publish while publisher pinning accumulates a pinned
+      // set, which it cannot do from a standing start.
+      //
+      // Pinned to the exact value rather than left as a range, so a third
+      // raise cannot happen by widening a bound that no longer means
+      // anything: it has to edit this line, and this line says what is gone.
+      // The floor above is still a measurement and still holds.
+      expect(MAX_UNREACHABLE_RESIDUAL).toBe(20)
     })
 
     it('keeps the prose copies of the cap in step with the constant', () => {
@@ -2183,11 +2202,18 @@ describe('searchByKeywords', () => {
       // losing the magnitudes that bound it is how 25 passed review once.
       for (const [name, doc] of [['CLAUDE.md', claude], ['the spec', spec]] as const) {
         expect(doc, `${name} lost the bracket floor`).toMatch(new RegExp(`at least \\*{0,2}${6 + MAX_SEARCH_SHORTFALL}\\b`))
-        expect(doc, `${name} lost the bracket ceiling`).toMatch(/under \*{0,2}15\b/)
+        // The ceiling is gone from the CODE, so requiring the docs to still
+        // recite it would pass on a document that never said it was
+        // abandoned — the old assertion does still match, because both docs
+        // keep `under 15` as history. What has to be pinned now is the
+        // SURRENDER: a reader has to learn from either document that a
+        // fifteen-name partition gap is absorbed in silence, since no bound
+        // refuses one any more.
+        expect(doc, `${name} does not say the 15-name gap is now absorbed`).toMatch(/absorbs (a|that) \*{0,2}15-name/)
       }
     })
 
-    it('divides the labour: the rate cannot catch a partition gap, the cap can', () => {
+    it('no longer refuses the fifteen-name partition gap at any real tail', () => {
       // A rate floor's strictness DECAYS with the tail — 0.9 permits 10% of
       // it — so above this crossover every rate violation is already a cap
       // violation and the rate decides nothing but which message prints.
@@ -2200,13 +2226,21 @@ describe('searchByKeywords', () => {
       const gap = 15
       const clearsFloorFrom = Math.round(gap / (1 - MIN_UNREACHABLE_RECOVERY))
       expect(clearsFloorFrom).toBe(150)
-      // THE DIVISION OF LABOUR: that tail is past the crossover, so by the
-      // time a gap this size can satisfy the rate, the rate was already inert
-      // and the cap is the only bound left holding it. Asserted as a relation
-      // and not as `crossover === 100`, which would pin the cap to exactly 10
-      // and make the sibling test's deliberately loose bracket unreachable —
-      // the relation holds across all of [9, 15).
-      expect(clearsFloorFrom).toBeGreaterThan(crossover)
+      // THE DIVISION OF LABOUR HAS INVERTED, and this is the concrete cost
+      // of the 2026-09-18 raise. It used to read `clearsFloorFrom >
+      // crossover`: the gap cleared the rate floor only above a tail where
+      // the cap was already the binding bound, so something always refused
+      // it. With the cap above the gap itself that is no longer true — the
+      // crossover moved out past the tail at which the rate goes inert, and
+      // between them sits a band where NEITHER bound refuses a fifteen-name
+      // partition gap.
+      expect(clearsFloorFrom).toBeLessThan(crossover)
+      // Stated as behaviour rather than as arithmetic: at the live tail the
+      // gap passes both bounds. `deepseek-harness` measured 1,921 past the
+      // window on 2026-09-18, an order of magnitude beyond `clearsFloorFrom`.
+      const liveTail = 1921
+      expect(gap).toBeLessThanOrEqual(MAX_UNREACHABLE_RESIDUAL)
+      expect((liveTail - gap) / liveTail).not.toBeLessThan(MIN_UNREACHABLE_RECOVERY)
       // And the rate really does wave it through there. Written the way
       // production writes it, `rate < floor`, because the complementary form
       // `missing / tail < 1 - floor` disagrees at EVERY exact-90% tail:
