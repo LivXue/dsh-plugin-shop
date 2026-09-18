@@ -2,7 +2,8 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { type Cell, cellKey, cellQuery, FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, maintainersOf, MAINTAINERS_MAX_COUNT, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describeShortfall, parseKeywordShortfall, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
+import { applyAxisReport, MAX_EVICTIONS_PER_RUN, MAX_PINNED_PER_KEYWORD, type PublisherState } from '../src/publisher-state.ts'
+import { type Cell, cellKey, cellQuery, FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, keywordsOf, KEYWORD_MAX_LENGTH, KEYWORDS_MAX_COUNT, maintainersOf, MAINTAINERS_MAX_COUNT, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describePublisherAxis, describeShortfall, parseKeywordShortfall, parsePublisherAxisReport, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, type PublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
 import { ENTRY_PAYLOAD_MAX_BYTES, entryPayloadBytes } from '../src/gate.ts'
 import { MAX_TARBALL_BYTES } from '../src/github-client.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
@@ -812,6 +813,144 @@ describe('parseKeywordShortfall', () => {
   })
 })
 
+describe('parsePublisherAxisReport', () => {
+  const record = {
+    keyword: 'dsh-plugin', partitioned: true, seedingComplete: false, vocabulary: 3775, pinnedSet: 38,
+    pinnedProbed: 38, pinnedSupplied: 0, cursor: 1305, rotatedProbed: 462,
+    rotatedSupplied: 7, stepped: 462, seeded: [], evicted: [], atRiskNames: 81,
+  }
+
+  it('accepts a record the production path can actually emit', () => {
+    expect(parsePublisherAxisReport(record, 'handoff.json').keyword).toBe('dsh-plugin')
+  })
+
+  it('refuses a walk shorter than the rotation it claims to have produced', () => {
+    // `stepped` is positions walked and `rotatedProbed` publishers returned;
+    // the walk SKIPS a candidate already pinned, so it can only ever consume
+    // at least as many positions as it yielded. A handoff is the one path into
+    // these fields that does not come from the producer, and `advanceCursor`
+    // spends `stepped` against the committed file.
+    expect(() => parsePublisherAxisReport({ ...record, stepped: 3 }, 'handoff.json'))
+      .toThrow(/walked 3 vocabulary position\(s\) but reports 462 rotated/)
+  })
+
+  it('refuses a record that claims probing without a partition', () => {
+    // Nothing is probed at all for a keyword inside its window, so a record
+    // asserting both describes two different runs -- and
+    // `describePublisherAxis` would publish both halves in one sentence, the
+    // failure `parseKeywordShortfall`'s own identity check exists to prevent.
+    expect(() => parsePublisherAxisReport({ ...record, partitioned: false }, 'handoff.json'))
+      .toThrow(/reports probing but no partition/)
+  })
+
+  it('refuses a record with no partitioned flag, which decides whether a pin may be removed', () => {
+    const { partitioned: _omitted, ...without } = record
+    expect(() => parsePublisherAxisReport(without, 'handoff.json')).toThrow(/no boolean `partitioned`/)
+  })
+
+  it('refuses a record claiming both complete seeding and a partition', () => {
+    // Complete seeding means the keyword enumerated whole INSIDE its window,
+    // and it is what licenses `applyAxisReport` to REMOVE a pin. A record
+    // asserting both describes two different runs, and the write it would
+    // license is the expensive direction: design doc §3, a stale pin costs one
+    // probe per run and a wrong eviction costs the crossing.
+    expect(() => parsePublisherAxisReport({ ...record, seedingComplete: true }, 'handoff.json'))
+      .toThrow(/claims complete seeding and a partition/)
+  })
+
+  it('refuses a record with no boolean seedingComplete', () => {
+    const { seedingComplete: _omitted, ...without } = record
+    expect(() => parsePublisherAxisReport(without, 'handoff.json')).toThrow(/no boolean `seedingComplete`/)
+  })
+
+  it('refuses a record with no pinned set size', () => {
+    const { pinnedSet: _omitted, ...without } = record
+    expect(() => parsePublisherAxisReport(without, 'handoff.json')).toThrow(/no integer `pinnedSet`/)
+  })
+})
+
+describe('describePublisherAxis', () => {
+  /** A partitioned run with nothing to report; cases override what they test. */
+  const axis = (over: Partial<PublisherAxisReport> = {}): PublisherAxisReport => ({
+    keyword: 'dsh-plugin', partitioned: true, seedingComplete: false, vocabulary: 0, pinnedSet: 0,
+    pinnedProbed: 0, pinnedSupplied: 0, cursor: 0, rotatedProbed: 0, rotatedSupplied: 0,
+    stepped: 0, seeded: [], atRiskNames: 0, evicted: [], ...over,
+  })
+
+  it('names the inputs, not only the results, so an inert axis is visible', () => {
+    // 0.8.1 shipped an empty vocabulary and CI was green while the axis did
+    // nothing. `vocabulary 0` has to be a printed value, not an absent line.
+    expect(describePublisherAxis(axis())).toContain('vocabulary 0')
+  })
+
+  it('names the pinned SET, so a keyword waiting for its crossing is not read as broken', () => {
+    // Every probe counter is legitimately zero for a keyword still inside its
+    // window, so without the set size the line for 38 seeded owners waiting to
+    // be spent is byte-identical to the line for seeding that never worked --
+    // the 0.8.1 failure this report exists to make impossible.
+    const line = describePublisherAxis(axis({ partitioned: false, seedingComplete: true, vocabulary: 3775, pinnedSet: 38 }))
+    expect(line).toContain('38 pinned')
+    expect(line).toContain('inside the 5250-name window, so nothing was probed')
+    expect(line).not.toContain('probed (')
+  })
+
+  it('reports a full pinned set from the set size, not from a second field', () => {
+    expect(describePublisherAxis(axis({ pinnedSet: MAX_PINNED_PER_KEYWORD }))).toMatch(/pinned set is FULL/)
+  })
+
+  it('names the at-risk input even when nothing was seeded', () => {
+    // Gated on `seeded.length > 0`, this vanished in exactly the case where it
+    // is diagnostic: `isAtRisk` answers false for any name whose `keywords`
+    // array is absent, so a search response that stopped carrying the field
+    // would make seeding a permanent no-op -- and print a line indistinguishable
+    // from a healthy run that found nothing new.
+    expect(describePublisherAxis(axis({ atRiskNames: 81 })))
+      .toContain('seeded 0 owner(s) from 81 at-risk name(s) seen this run')
+  })
+
+  it('reports seeded and evicted owners', () => {
+    const line = describePublisherAxis(axis({
+      vocabulary: 500, pinnedSet: 10, pinnedProbed: 10, pinnedSupplied: 3,
+      rotatedProbed: 5, rotatedSupplied: 2, stepped: 5,
+      seeded: ['newowner'], atRiskNames: 12, evicted: ['goneowner'],
+    }))
+    // "seen this run", not bare "at-risk name(s)": for a keyword the harvest
+    // partitions past SEARCH_WINDOW this count is only what the window sweep
+    // showed, never the keyword's whole at-risk population -- see design doc
+    // §4's 2026-09-18 amendment.
+    expect(line).toContain('seeded 1 owner(s) from 12 at-risk name(s) seen this run')
+    expect(line).toContain('unpinned 1 with no package left')
+  })
+
+  it('names the cursor the rotated segment started from, and totals what was recovered', () => {
+    // Design doc §6's own observability example, in the units the counters
+    // actually carry: §6 wrote "(3 supplied 7 names)" for three CELLS
+    // supplying seven names, while `rotatedSupplied` counts NAMES. The fixture
+    // that carried §6's numerals into these fields asserted
+    // `pinnedSupplied: 0, rotatedSupplied: 3, suppliedNames: 7` -- a record
+    // the production path cannot emit, because the two halves and the total
+    // are one identity. §6 is amended to match; the redundant third counter is
+    // gone, so the inconsistent state is no longer representable.
+    const line = describePublisherAxis(axis({
+      vocabulary: 3775, pinnedSet: 38, pinnedProbed: 38, cursor: 1305,
+      rotatedProbed: 462, rotatedSupplied: 7, stepped: 462, atRiskNames: 81,
+    }))
+    expect(line).toContain('38 pinned, 38 probed (0 supplied)')
+    expect(line).toContain('462 rotated from cursor 1305 (7 supplied)')
+    expect(line).toContain('7 name(s) recovered')
+  })
+
+  it('escapes the keyword, which on the handoff path is untrusted and this line is published', () => {
+    // `isPinnableKeyword` holds a handoff keyword to a length and three
+    // refused names, so a newline passes -- and `build.ts` renders each part
+    // as `- ${part}` into the report.md published to gh-pages, where one
+    // forges a whole extra bullet. CLAUDE.md, "Untrusted input".
+    const line = describePublisherAxis(axis({ keyword: 'k\n- FORGED: everything is fine' }))
+    expect(line).not.toContain('\n')
+    expect(line).not.toMatch(/\|/)
+  })
+})
+
 describe('maintainersOf', () => {
   it("reads the usernames a search object's package carries", () => {
     expect(maintainersOf({ maintainers: [{ username: 'sayedev', email: 'a@b.c' }] })).toEqual(['sayedev'])
@@ -844,6 +983,51 @@ describe('maintainersOf', () => {
     // (2026-09-09), so the tail this drops has never existed.
     const many = Array.from({ length: MAINTAINERS_MAX_COUNT + 5 }, (_, i) => ({ username: `u${i}` }))
     expect(maintainersOf({ maintainers: many })).toHaveLength(MAINTAINERS_MAX_COUNT)
+  })
+})
+
+describe('keywordsOf', () => {
+  it('reads the keywords array off a search object', () => {
+    expect(keywordsOf({ keywords: ['dsh-plugin', 'agent'] })).toEqual(['dsh-plugin', 'agent'])
+  })
+
+  it('is empty for anything that is not an object with an array', () => {
+    expect(keywordsOf(null)).toEqual([])
+    expect(keywordsOf('dsh-plugin')).toEqual([])
+    expect(keywordsOf({})).toEqual([])
+    // npm serves this: a single keyword as a bare string, not an array.
+    expect(keywordsOf({ keywords: 'dsh-plugin' })).toEqual([])
+  })
+
+  it('drops entries that are not non-empty strings, keeping the rest', () => {
+    expect(keywordsOf({ keywords: ['dsh', 42, null, '', { a: 1 }, 'mcp'] })).toEqual(['dsh', 'mcp'])
+  })
+
+  it('de-duplicates', () => {
+    expect(keywordsOf({ keywords: ['dsh', 'dsh', 'mcp'] })).toEqual(['dsh', 'mcp'])
+  })
+
+  it('bounds the count, because the array is registry-controlled', () => {
+    const many = Array.from({ length: KEYWORDS_MAX_COUNT + 50 }, (_, i) => `k${i}`)
+    expect(keywordsOf({ keywords: many })).toHaveLength(KEYWORDS_MAX_COUNT)
+  })
+
+  it('bounds each keyword\'s length too, unlike the count bound which leaves a long string intact', () => {
+    // KEYWORDS_MAX_COUNT only ever bounded how many entries survive; nothing
+    // bounded how long any one of them could be, unlike maintainersOf's sibling
+    // MAINTAINER_MAX_LENGTH or toCandidate's PEER_NAME_MAX_LENGTH. Unlike
+    // those two, a keyword this field returns never reaches `plugins.json` or
+    // a build report line: its one call site fills HarvestedName.keywords,
+    // which only isAtRisk reads. The bound is defence in depth on a
+    // registry-controlled array, not a guard on a published byte — see
+    // KEYWORD_MAX_LENGTH's comment for the traced reach.
+    //
+    // Literals, not derived from KEYWORD_MAX_LENGTH, so the fixture pins the
+    // value instead of moving with it.
+    const kept = 'k'.repeat(128)
+    const dropped = 'k'.repeat(129)
+    expect(KEYWORD_MAX_LENGTH).toBe(128)
+    expect(keywordsOf({ keywords: [kept, dropped] })).toEqual([kept])
   })
 })
 
@@ -1144,6 +1328,144 @@ describe('searchByKeywords', () => {
       }), { status: 200 })
     }) as unknown as typeof fetch
     return { fetchImpl, urls }
+  }
+
+  /**
+   * Like `stubSearch`, but each page carries whole package objects so a
+   * fixture can exercise the keywords and maintainers the at-risk rule reads.
+   * `total` answers the full list, so paging terminates the way production
+   * does.
+   */
+  function stubSearchWithPackages(
+    pages: Record<string, { name: string; keywords: string[]; maintainers: string[] }[]>,
+  ): typeof fetch {
+    return (async (url: string | URL) => {
+      const params = new URL(String(url)).searchParams
+      const text = params.get('text') ?? ''
+      const from = Number(params.get('from') ?? '0')
+      const all = pages[text] ?? []
+      const objects = all.slice(from, from + 250).map(pkg => ({
+        package: {
+          name: pkg.name,
+          keywords: pkg.keywords,
+          maintainers: pkg.maintainers.map(username => ({ username })),
+        },
+      }))
+      return new Response(JSON.stringify({ objects, total: all.length }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }) as unknown as typeof fetch
+  }
+
+  /**
+   * Like `stubSearchWithPackages`, but a page fetch for the same `text` can
+   * answer differently across calls — the shape `enumerate()`'s retry needs:
+   * pass one's page omits an object pass two serves, mirroring the "npm
+   * served a 249-of-250 page" anomaly this module already tolerates,
+   * documented in the test right below. `size=1` (a probe) always answers
+   * the fixed `total` and never advances the call counter, so every probe —
+   * `partitionKeyword`'s own and the pre/post-retry `required` reads — sees
+   * the same number regardless of how many times paging ran.
+   */
+  function stubSearchWithRetriedPages(
+    totals: Record<string, number>,
+    pagesByCall: Record<string, { name: string; keywords: string[]; maintainers: string[] }[][]>,
+  ): typeof fetch {
+    const calls: Record<string, number> = {}
+    return (async (url: string | URL) => {
+      const params = new URL(String(url)).searchParams
+      const text = params.get('text') ?? ''
+      const from = Number(params.get('from') ?? '0')
+      const total = totals[text] ?? 0
+      if (params.get('size') === '1' || from !== 0) {
+        return new Response(JSON.stringify({ total, objects: [] }), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        })
+      }
+      const sequence = pagesByCall[text] ?? []
+      const index = calls[text] ?? 0
+      calls[text] = index + 1
+      const page = sequence[Math.min(index, sequence.length - 1)] ?? []
+      const objects = page.map(pkg => ({
+        package: {
+          name: pkg.name,
+          keywords: pkg.keywords,
+          maintainers: pkg.maintainers.map(username => ({ username })),
+        },
+      }))
+      return new Response(JSON.stringify({ objects, total }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }) as unknown as typeof fetch
+  }
+
+  /**
+   * Shared by the two probe stubs below: every bare `keywords:*` window query
+   * answers a total past `SEARCH_WINDOW` so either harvest keyword
+   * partitions; `,dsh` is the one refinement `partitionKeyword` finds
+   * non-empty (every other refinement answers empty, the same shape as
+   * `familyPastWindow` below), and a `maintainer:<user>` query is routed to
+   * `onMaintainer` for its total. Keyword-agnostic because `keywordQuery`
+   * never sorts and `partitionKeyword` always puts the harvest keyword first,
+   * so `,dsh` ends both `keywords:dsh-plugin,dsh` and
+   * `keywords:deepseek-harness,dsh`. Pages are real enough to page through —
+   * the window serves `w<rank>`, the refinement re-serves `w0` — but no
+   * maintainer cell ever supplies a name, which is all the three tests below
+   * need: none of them reads `pinnedSupplied`, `rotatedSupplied` or
+   * `suppliedNames`.
+   */
+  function stubPublisherProbe(onMaintainer: (user: string) => number): typeof fetch {
+    return (async (url: string | URL) => {
+      const params = new URL(String(url)).searchParams
+      const query = params.get('text') ?? ''
+      const from = Number(params.get('from') ?? '0')
+      const isProbe = params.get('size') === '1'
+      const maintainerMatch = /maintainer:(\S+)$/.exec(query)
+      if (maintainerMatch) {
+        const user = maintainerMatch[1] ?? ''
+        return new Response(JSON.stringify({ total: onMaintainer(user), objects: [] }), { status: 200 })
+      }
+      if (!query.includes(',')) {
+        const objects = isProbe || from > MAX_SEARCH_FROM
+          ? [] : Array.from({ length: 250 }, (_, i) => ({ package: { name: `w${from + i}` } }))
+        return new Response(JSON.stringify({ total: SEARCH_WINDOW + 1, objects }), { status: 200 })
+      }
+      const total = query.endsWith(',dsh') ? 1 : 0
+      const objects = isProbe || total === 0 ? [] : [{ package: { name: 'w0' } }].slice(from, from + 250)
+      return new Response(JSON.stringify({ total, objects }), { status: 200 })
+    }) as unknown as typeof fetch
+  }
+
+  /**
+   * Records every maintainer probed; every cell answers 0, so none is ever
+   * selected for paging and probing is visible without paging complicating it.
+   */
+  function recordingProbeStub(probed: string[]): typeof fetch {
+    return stubPublisherProbe(user => {
+      probed.push(user)
+      return 0
+    })
+  }
+
+  /** Answers a `maintainer:<user>` probe with `totals[user]`, default 0. */
+  function probeStubWithTotals(totals: Record<string, number>): typeof fetch {
+    return stubPublisherProbe(user => totals[user] ?? 0)
+  }
+
+  /**
+   * Answers each user's FIRST probe with 0 and every later one with `then` —
+   * the shape of a transient registry answer, which is the only thing a
+   * confirming re-probe can tell apart from a real unpublish.
+   */
+  function probeStubTransientZero(then: number): typeof fetch {
+    const asked = new Set<string>()
+    return stubPublisherProbe(user => {
+      if (!asked.has(user)) {
+        asked.add(user)
+        return 0
+      }
+      return then
+    })
   }
 
   it('does not end a keyword on a short non-final page — it reads the total', async () => {
@@ -1773,21 +2095,30 @@ describe('searchByKeywords', () => {
         .rejects.toThrow(/recovered 0 of 157/)
     })
 
-    it('refuses the fifteen-name partition gap at the live tail size', async () => {
-      // THE case the cap was re-sized for, as behaviour rather than as a
-      // bound on a constant. 157 out of reach, cells recover 142 — the shape
-      // PARTITION_KEYWORDS took the day after it was documented as complete.
-      // The rate floor passes it (142/157 = 0.9045, above 0.9), so at the
-      // former cap of 25 this published fifteen names short in silence. The
-      // cap is what refuses it, and the message names the tail term.
-      // The cap is interpolated, not spelled: the sibling bound test admits
-      // any value in [9, 15), and at 12 this gap is still correctly refused,
-      // so a literal would redden this test for a reason it does not assert.
-      await expect(searchByKeywords(pastWindow(5407, 142)))
-        .rejects.toThrow(new RegExp(`a tail shortfall of 15, past the ${MAX_UNREACHABLE_RESIDUAL} names a build may publish short`))
-      // The family event it must still absorb is `publishes when the
-      // partition recovers nearly all of what is out of reach`, which runs
-      // this same fixture and additionally asserts the shortfall record.
+    it('PUBLISHES the fifteen-name partition gap it used to refuse', async () => {
+      // THE case the cap was originally sized for, inverted by the 2026-09-18
+      // raise, and kept as behaviour because the loss deserves a red test if
+      // it is ever undone by accident rather than on purpose.
+      //
+      // 157 out of reach, cells recover 142 — the shape PARTITION_KEYWORDS
+      // took the day after it was documented as complete. The rate floor
+      // passes it (142/157 = 0.9045, above 0.9), so the cap was the only
+      // bound refusing it; an earlier 25 published it in silence and the
+      // bracket's ceiling existed to stop that recurring. At 20 it recurs:
+      // a real partition gap of exactly the size this repo has measured is
+      // now published, reported only as a count in the build report.
+      //
+      // Asserted as the resolved harvest, not as a message, because the
+      // failure this guards against is the SILENCE.
+      const names = await searchByKeywords(pastWindow(5407, 142))
+      expect(names).toHaveLength(SEARCH_WINDOW + 142)
+      // Still refused once the gap outgrows the new cap, so the bound has
+      // moved rather than gone. The fixture needs a LARGER tail to isolate
+      // the cap: at 157 a 21-name gap is 86.6% recovery and the rate floor
+      // refuses it first, with a different message. 250 out of reach
+      // recovering 229 is 91.6%, above the floor, so the cap is what speaks.
+      await expect(searchByKeywords(pastWindow(SEARCH_WINDOW + 250, 229)))
+        .rejects.toThrow(new RegExp(`a tail shortfall of 21, past the ${MAX_UNREACHABLE_RESIDUAL} names a build may publish short`))
     })
 
     it('refuses when the residual outgrows what may be published short', async () => {
@@ -1834,10 +2165,20 @@ describe('searchByKeywords', () => {
       //          MAX_SEARCH_SHORTFALL's comment refuses any bound at or above
       //          that because it absorbs a real partition gap silently.
       // An earlier 25 sat outside the upper bound, on the reasoning that the
-      // family needed 20-plus of headroom — it needed 9. The two magnitudes
-      // are compatible, so assert the window rather than a loose range.
+      // family needed 20-plus of headroom — it needed 9.
       expect(MAX_UNREACHABLE_RESIDUAL).toBeGreaterThanOrEqual(6 + MAX_SEARCH_SHORTFALL)
-      expect(MAX_UNREACHABLE_RESIDUAL).toBeLessThan(15)
+      // THE UPPER BOUND WAS ABANDONED ON 2026-09-18, and this assertion is
+      // what it cost: the cap is now above the one real partition gap this
+      // repo has measured, so it absorbs a gap that size in silence. That was
+      // taken deliberately (see MAX_UNREACHABLE_RESIDUAL's own 2026-09-18
+      // amendment) to publish while publisher pinning accumulates a pinned
+      // set, which it cannot do from a standing start.
+      //
+      // Pinned to the exact value rather than left as a range, so a third
+      // raise cannot happen by widening a bound that no longer means
+      // anything: it has to edit this line, and this line says what is gone.
+      // The floor above is still a measurement and still holds.
+      expect(MAX_UNREACHABLE_RESIDUAL).toBe(20)
     })
 
     it('keeps the prose copies of the cap in step with the constant', () => {
@@ -1861,11 +2202,18 @@ describe('searchByKeywords', () => {
       // losing the magnitudes that bound it is how 25 passed review once.
       for (const [name, doc] of [['CLAUDE.md', claude], ['the spec', spec]] as const) {
         expect(doc, `${name} lost the bracket floor`).toMatch(new RegExp(`at least \\*{0,2}${6 + MAX_SEARCH_SHORTFALL}\\b`))
-        expect(doc, `${name} lost the bracket ceiling`).toMatch(/under \*{0,2}15\b/)
+        // The ceiling is gone from the CODE, so requiring the docs to still
+        // recite it would pass on a document that never said it was
+        // abandoned — the old assertion does still match, because both docs
+        // keep `under 15` as history. What has to be pinned now is the
+        // SURRENDER: a reader has to learn from either document that a
+        // fifteen-name partition gap is absorbed in silence, since no bound
+        // refuses one any more.
+        expect(doc, `${name} does not say the 15-name gap is now absorbed`).toMatch(/absorbs (a|that) \*{0,2}15-name/)
       }
     })
 
-    it('divides the labour: the rate cannot catch a partition gap, the cap can', () => {
+    it('no longer refuses the fifteen-name partition gap at any real tail', () => {
       // A rate floor's strictness DECAYS with the tail — 0.9 permits 10% of
       // it — so above this crossover every rate violation is already a cap
       // violation and the rate decides nothing but which message prints.
@@ -1878,13 +2226,21 @@ describe('searchByKeywords', () => {
       const gap = 15
       const clearsFloorFrom = Math.round(gap / (1 - MIN_UNREACHABLE_RECOVERY))
       expect(clearsFloorFrom).toBe(150)
-      // THE DIVISION OF LABOUR: that tail is past the crossover, so by the
-      // time a gap this size can satisfy the rate, the rate was already inert
-      // and the cap is the only bound left holding it. Asserted as a relation
-      // and not as `crossover === 100`, which would pin the cap to exactly 10
-      // and make the sibling test's deliberately loose bracket unreachable —
-      // the relation holds across all of [9, 15).
-      expect(clearsFloorFrom).toBeGreaterThan(crossover)
+      // THE DIVISION OF LABOUR HAS INVERTED, and this is the concrete cost
+      // of the 2026-09-18 raise. It used to read `clearsFloorFrom >
+      // crossover`: the gap cleared the rate floor only above a tail where
+      // the cap was already the binding bound, so something always refused
+      // it. With the cap above the gap itself that is no longer true — the
+      // crossover moved out past the tail at which the rate goes inert, and
+      // between them sits a band where NEITHER bound refuses a fifteen-name
+      // partition gap.
+      expect(clearsFloorFrom).toBeLessThan(crossover)
+      // Stated as behaviour rather than as arithmetic: at the live tail the
+      // gap passes both bounds. `deepseek-harness` measured 1,921 past the
+      // window on 2026-09-18, an order of magnitude beyond `clearsFloorFrom`.
+      const liveTail = 1921
+      expect(gap).toBeLessThanOrEqual(MAX_UNREACHABLE_RESIDUAL)
+      expect((liveTail - gap) / liveTail).not.toBeLessThan(MIN_UNREACHABLE_RECOVERY)
       // And the rate really does wave it through there. Written the way
       // production writes it, `rate < floor`, because the complementary form
       // `missing / tail < 1 - floor` disagrees at EVERY exact-90% tail:
@@ -2198,7 +2554,7 @@ describe('searchByKeywords', () => {
       // refinement cell reaches none of them; maintainer:sayedev reaches all.
       const names = await searchByKeywords(
         familyPastWindow(5410, 160), undefined, undefined, undefined, undefined,
-        () => {}, () => {}, ['sayedev'])
+        () => {}, () => {}, { publishers: ['sayedev'] })
       expect(names).toHaveLength(5410)
     })
 
@@ -2218,7 +2574,7 @@ describe('searchByKeywords', () => {
           ? Array.from({ length: 10 }, (_, i) => `p${i}`) : []),
       )
       await searchByKeywords(fetchImpl, undefined, undefined, undefined, undefined,
-        () => {}, () => {}, ['alice', 'bob'])
+        () => {}, () => {}, { publishers: ['alice', 'bob'] })
       expect(urls.filter(u => u.includes('maintainer'))).toEqual([])
     })
 
@@ -2238,7 +2594,7 @@ describe('searchByKeywords', () => {
       )
       const many = Array.from({ length: 50 }, (_, i) => `u${i}`)
       await expect(searchByKeywords(fetchImpl, undefined, undefined, undefined, undefined,
-        () => {}, () => {}, many, 10)).rejects.toThrow()
+        () => {}, () => {}, { publishers: many }, 10)).rejects.toThrow()
       expect(urls.filter(u => u.includes('maintainer')).length).toBe(10)
       // Probed ten times, not twenty: the retry re-PAGES the partition but must
       // not re-PROBE the vocabulary, or the axis costs double on every keyword
@@ -2262,7 +2618,7 @@ describe('searchByKeywords', () => {
       )
       const many = Array.from({ length: 10 }, (_, i) => `u${i}`)
       await expect(searchByKeywords(fetchImpl, undefined, undefined, undefined, undefined,
-        () => {}, () => {}, many, 4, 8)).rejects.toThrow()
+        () => {}, () => {}, { publishers: many, cursor: 8 }, 4)).rejects.toThrow()
       const probed = urls.filter(u => u.includes('maintainer'))
         .map(u => (/maintainer%3A(u\d+)/.exec(u) ?? [])[1])
       // Offset 8, budget 4, ten publishers: it wraps rather than stopping at
@@ -2313,7 +2669,7 @@ describe('searchByKeywords', () => {
         name => (aliceNames.has(name) ? ['alice'] : sayedevNames.has(name) ? ['sayedev'] : []),
       )
       const names = await searchByKeywords(fetchImpl, undefined, undefined, undefined, undefined,
-        () => {}, () => {}, ['alice', 'sayedev'])
+        () => {}, () => {}, { publishers: ['alice', 'sayedev'] })
       // The six past the window are recovered, so the run publishes whole.
       expect(names).toHaveLength(5256)
       const probes = (user: string) => urls.filter(u => u.includes(`maintainer%3A${user}`) && u.includes('size=1'))
@@ -2325,6 +2681,373 @@ describe('searchByKeywords', () => {
       // Only the one carrying names the union lacks is paged.
       expect(pages('alice')).toEqual([])
       expect(pages('sayedev').length).toBeGreaterThan(0)
+    })
+  })
+
+  describe('the publisher axis seeds at-risk owners while a keyword is enumerable', () => {
+    it('reports the owners of names carrying only the harvest keyword', async () => {
+      const reports: PublisherAxisReport[] = []
+      // Under the window, so no partition and no probing: seeding is the only
+      // thing the axis does here, which is the state dsh-plugin is in today.
+      const fetchImpl = stubSearchWithPackages({
+        'keywords:dsh-plugin': [
+          { name: 'bare', keywords: ['dsh-plugin'], maintainers: ['huanlin'] },
+          { name: 'covered', keywords: ['dsh-plugin', 'agent'], maintainers: ['other'] },
+        ],
+        'keywords:deepseek-harness': [],
+      })
+      await searchByKeywords(
+        fetchImpl, undefined, undefined, undefined, undefined,
+        () => {}, () => {}, { publishers: [] }, PUBLISHER_PROBE_BUDGET_DEFAULT,
+        r => reports.push(r),
+      )
+      const dshPlugin = reports.find(r => r.keyword === 'dsh-plugin')
+      expect(dshPlugin?.seeded).toEqual(['huanlin'])
+      expect(dshPlugin?.atRiskNames).toBe(1)
+    })
+
+    it('does not overcount a name the retry path re-pages', async () => {
+      const reports: PublisherAxisReport[] = []
+      // The registry answers a total of 2 for deepseek-harness, but the first
+      // pass's only page omits `another` — the documented "npm served a
+      // 249-of-250 page" anomaly this module already tolerates by re-running
+      // enumerate() once. The retry re-pages `atrisk`, which an
+      // un-deduplicated `harvested` array counts a second time even though
+      // only two distinct at-risk names were ever observed.
+      const fetchImpl = stubSearchWithRetriedPages(
+        { 'keywords:dsh-plugin': 0, 'keywords:deepseek-harness': 2 },
+        {
+          'keywords:deepseek-harness': [
+            [{ name: 'atrisk', keywords: ['deepseek-harness'], maintainers: ['pubowner'] }],
+            [
+              { name: 'atrisk', keywords: ['deepseek-harness'], maintainers: ['pubowner'] },
+              { name: 'another', keywords: ['deepseek-harness'], maintainers: ['pubowner'] },
+            ],
+          ],
+        },
+      )
+      await searchByKeywords(
+        fetchImpl, undefined, undefined, undefined, undefined,
+        () => {}, () => {}, { publishers: [] }, PUBLISHER_PROBE_BUDGET_DEFAULT,
+        r => reports.push(r),
+      )
+      const deepseekHarness = reports.find(r => r.keyword === 'deepseek-harness')
+      // atRiskOwners accumulates into a Set, so the retry's re-observation of
+      // `pubowner` leaves it untouched; atRiskNames is the raw count the bug
+      // inflates.
+      expect(deepseekHarness?.seeded).toEqual(['pubowner'])
+      expect(deepseekHarness?.atRiskNames).toBe(2)
+    })
+  })
+
+  it('scores a name at risk when its only refinement cell is itself past the window', async () => {
+    // Reachability is measured, not assumed from PARTITION_KEYWORDS
+    // membership. An `oversized` refinement cell is paged with 'stop' --
+    // truncated at SEARCH_WINDOW exactly as the bare keyword is -- so a name
+    // whose only refinement is that one is reachable by NOTHING past its rank.
+    // Naming it covered because the refinement is "in the list" hides
+    // precisely the population this axis exists for, and it is not
+    // hypothetical: `partitionKeyword`'s comment records
+    // `keywords:deepseek-harness,dsh` crossing its own window and costing the
+    // catalog 24 packages between 2026-09-11 and 2026-09-14.
+    const atRisk = { name: 'w0', keywords: ['deepseek-harness', 'dsh'], maintainers: ['residueowner'] }
+    const plain = (name: string) => ({ name, keywords: ['deepseek-harness', 'plugin'], maintainers: ['covered'] })
+    const totals: Record<string, number> = {
+      'keywords:dsh-plugin': 0,
+      'keywords:deepseek-harness': SEARCH_WINDOW + 150,
+      // Over its OWN window, so it lands in `oversized` and is truncated.
+      'keywords:deepseek-harness,dsh': SEARCH_WINDOW + 20,
+      // Fits, so `dsh`'s overflow has a split and `partitionKeyword` does not
+      // throw; `w0` does not carry `plugin`, so this cell cannot reach it.
+      'keywords:deepseek-harness,plugin': 5,
+      'keywords:deepseek-harness,dsh,plugin': 5,
+    }
+    const fetchImpl = (async (url: string | URL) => {
+      const params = new URL(String(url)).searchParams
+      const text = params.get('text') ?? ''
+      const from = Number(params.get('from') ?? '0')
+      const total = totals[text] ?? 0
+      const objects = params.get('size') === '1' || from > MAX_SEARCH_FROM ? [] : (() => {
+        if (text === 'keywords:deepseek-harness') {
+          return [from === 0 ? atRisk : plain(`w${from}`), ...Array.from({ length: 249 }, (_, i) => plain(`w${from + i + 1}`))]
+        }
+        if (text === 'keywords:deepseek-harness,dsh') {
+          return from < MAX_SEARCH_FROM
+            ? Array.from({ length: 250 }, (_, i) => plain(`w${from + i}`))
+            : Array.from({ length: 150 }, (_, i) => plain(`x${i}`))
+        }
+        return Array.from({ length: 5 }, (_, i) => plain(`w${i}`)).slice(from, from + 250)
+      })()
+      return new Response(JSON.stringify({
+        total,
+        objects: objects.map(pkg => ({
+          package: { name: pkg.name, keywords: pkg.keywords, maintainers: pkg.maintainers.map(username => ({ username })) },
+        })),
+      }), { status: 200, headers: { 'content-type': 'application/json' } })
+    }) as unknown as typeof fetch
+    const reports: PublisherAxisReport[] = []
+    await searchByKeywords(fetchImpl, undefined, undefined, undefined, undefined,
+      () => {}, () => {}, { publishers: [] }, PUBLISHER_PROBE_BUDGET_DEFAULT, r => reports.push(r))
+    const report = reports.find(r => r.keyword === 'deepseek-harness')
+    expect(report?.seeded).toContain('residueowner')
+    expect(report?.seeded).not.toContain('covered')
+  })
+
+  describe('the publisher axis probes its pinned set first', () => {
+    it('probes a pinned publisher the rotation would not have reached', async () => {
+      const probed: string[] = []
+      const reports: PublisherAxisReport[] = []
+      const vocabulary = Array.from({ length: 100 }, (_, i) => `u${String(i).padStart(3, '0')}`)
+      const fetchImpl = recordingProbeStub(probed)
+      await searchByKeywords(
+        fetchImpl, undefined, undefined, undefined, undefined,
+        () => {}, () => {}, { publishers: vocabulary, pinned: { 'deepseek-harness': ['u099'] } }, 3,
+        r => reports.push(r),
+      )
+      // Cursor 0 and a budget of 3 reaches u000..u001 by rotation; u099 is
+      // reached only because it is pinned.
+      expect(probed).toContain('u099')
+      const report = reports.find(r => r.keyword === 'deepseek-harness')
+      expect(report?.pinnedProbed).toBe(1)
+      expect(report?.rotatedProbed).toBe(2)
+    })
+
+    it('evicts a pinned publisher whose cell total is zero, and only that one', async () => {
+      const reports: PublisherAxisReport[] = []
+      const fetchImpl = probeStubWithTotals({ 'u001': 0, 'u002': 4 })
+      await searchByKeywords(
+        fetchImpl, undefined, undefined, undefined, undefined,
+        () => {}, () => {}, { publishers: ['u001', 'u002'], pinned: { 'deepseek-harness': ['u001', 'u002'] } }, 4,
+        r => reports.push(r),
+      )
+      expect(reports.find(r => r.keyword === 'deepseek-harness')?.evicted).toEqual(['u001'])
+    })
+
+    it('does not evict on a zero the next probe contradicts', async () => {
+      // A zero total is not an error and this module says so elsewhere:
+      // `{"objects":[],"total":0}` is a real answer, and the same search has
+      // served a 249-of-250 page and a 200 carrying `<!doctype html>`. Acting
+      // on one sample is the trade design doc §3 refuses, because the loss is
+      // ONE-WAY: a pinned owner's names sit past SEARCH_WINDOW, so the window
+      // sweep can never put them back into the harvest and seeding can never
+      // name that owner again.
+      const reports: PublisherAxisReport[] = []
+      await searchByKeywords(
+        probeStubTransientZero(4), undefined, undefined, undefined, undefined,
+        // EMPTY vocabulary, so `u001` is reached only as a pin. With it in the
+        // vocabulary the earlier harvest keyword's rotation probes `u001`
+        // first and consumes the transient answer, leaving this keyword's
+        // pinned probe to see the settled one -- and the case would then pass
+        // with or without the confirming probe.
+        () => {}, () => {}, { publishers: [], pinned: { 'deepseek-harness': ['u001'] } }, 2,
+        r => reports.push(r),
+      )
+      expect(reports.find(r => r.keyword === 'deepseek-harness')?.evicted).toEqual([])
+    })
+
+    it('removes nothing at all when more pins answer zero than one run may remove', async () => {
+      // A correlated zero is a registry fault, not simultaneous unpublishes:
+      // pinned owners go one at a time and the set grows by about one a day.
+      // The confirming probe cannot tell that case apart -- a degraded index
+      // answers zero twice as readily as once -- but the COUNT can.
+      const many = Array.from({ length: MAX_EVICTIONS_PER_RUN + 1 }, (_, i) => `u${String(i).padStart(3, '0')}`)
+      const state: PublisherState = { publishers: many, pinned: { 'deepseek-harness': many } }
+      const reports: PublisherAxisReport[] = []
+      await searchByKeywords(
+        probeStubWithTotals({}), undefined, undefined, undefined, undefined,
+        () => {}, () => {}, state, 2 * many.length,
+        r => reports.push(r),
+      )
+      const report = reports.find(r => r.keyword === 'deepseek-harness')
+      expect(report?.evicted).toHaveLength(MAX_EVICTIONS_PER_RUN + 1)
+      // The report still NAMES them; refusing to act on them is the pure
+      // module's call, so that the untrusted handoff path is covered too.
+      const applied = applyAxisReport(state, report as PublisherAxisReport)
+      expect(applied.evictionsRefused).toBe(MAX_EVICTIONS_PER_RUN + 1)
+      expect(applied.state.pinned?.['deepseek-harness']).toHaveLength(many.length)
+    })
+
+    it('does not evict a pinned publisher that merely supplied nothing', async () => {
+      // The seeded set supplies nothing on every run until the crossing. A rule
+      // that evicted on "supplied nothing" would empty the pinned set during
+      // exactly the days it exists to prepare for.
+      const reports: PublisherAxisReport[] = []
+      const fetchImpl = probeStubWithTotals({ 'u001': 4 })
+      await searchByKeywords(
+        fetchImpl, undefined, undefined, undefined, undefined,
+        () => {}, () => {}, { publishers: ['u001'], pinned: { 'deepseek-harness': ['u001'] } }, 2,
+        r => reports.push(r),
+      )
+      expect(reports.find(r => r.keyword === 'deepseek-harness')?.evicted).toEqual([])
+    })
+
+    /**
+     * `deepseek-harness` partitions on `,dsh` alone and every name — window
+     * and cell alike — carries `['deepseek-harness', 'dsh']`, so none of them
+     * is at-risk (design doc §2's R is `{dsh}`, not empty): a maintainer that
+     * reaches `seeded` in the two fixtures below can only have arrived through
+     * the outcome path (§3), never through seeding. `dsh-plugin` answers 0
+     * throughout, so it neither partitions nor runs the axis, keeping every
+     * assertion to the one keyword under test.
+     *
+     * `shortFirstPage` reproduces the "npm served a short non-final page"
+     * anomaly at the window's own `from=0`, and only there, to drive
+     * `enumerate()` around the retry path without changing what the publisher
+     * cell itself answers — which is what the second test needs, to tell
+     * "measured twice" from "measured once and stayed put".
+     */
+    function outcomeStub(
+      maintainer: string,
+      maintainerTotal: number,
+      maintainerNames: readonly string[],
+      shortFirstPage: boolean,
+      /** Omit the publisher cell's last name on its FIRST page only — the
+       * documented 249-of-250 anomaly, aimed at a publisher cell. */
+      shortMaintainerPage = false,
+    ): typeof fetch {
+      let firstPageCalls = 0
+      let maintainerPageCalls = 0
+      const tag = (name: string) => ({
+        package: { name, keywords: ['deepseek-harness', 'dsh'], maintainers: [] as { username: string }[] },
+      })
+      return (async (url: string | URL) => {
+        const params = new URL(String(url)).searchParams
+        const query = params.get('text') ?? ''
+        const from = Number(params.get('from') ?? '0')
+        const isProbe = params.get('size') === '1'
+        if (query === 'keywords:dsh-plugin') {
+          return new Response(JSON.stringify({ total: 0, objects: [] }), { status: 200 })
+        }
+        const maintainerMatch = /maintainer:(\S+)$/.exec(query)
+        if (maintainerMatch) {
+          const short = shortMaintainerPage && !isProbe && maintainerPageCalls++ === 0
+          const served = short ? maintainerNames.slice(0, -1) : maintainerNames
+          const objects = isProbe ? [] : served.map(name => ({
+            package: { name, keywords: ['deepseek-harness', 'dsh'], maintainers: [{ username: maintainer }] },
+          })).slice(from, from + 250)
+          return new Response(JSON.stringify({ total: maintainerTotal, objects }), { status: 200 })
+        }
+        if (query === 'keywords:deepseek-harness,dsh') {
+          return new Response(JSON.stringify({ total: 1, objects: isProbe ? [] : [tag('w0')] }), { status: 200 })
+        }
+        if (query === 'keywords:deepseek-harness') {
+          if (isProbe) return new Response(JSON.stringify({ total: SEARCH_WINDOW + 1, objects: [] }), { status: 200 })
+          if (from > MAX_SEARCH_FROM) return new Response(JSON.stringify({ total: SEARCH_WINDOW + 1, objects: [] }), { status: 200 })
+          if (from === 0 && shortFirstPage && firstPageCalls === 0) {
+            firstPageCalls++
+            const objects = Array.from({ length: 245 }, (_, i) => tag(`w${i}`))
+            return new Response(JSON.stringify({ total: SEARCH_WINDOW + 1, objects }), { status: 200 })
+          }
+          if (from === 0) firstPageCalls++
+          const objects = Array.from({ length: 250 }, (_, i) => tag(`w${from + i}`))
+          return new Response(JSON.stringify({ total: SEARCH_WINDOW + 1, objects }), { status: 200 })
+        }
+        return new Response(JSON.stringify({ total: 0, objects: [] }), { status: 200 })
+      }) as unknown as typeof fetch
+    }
+
+    describe('the publisher axis pins by outcome', () => {
+      it('credits a rotated cell that supplies a new name, and pins the maintainer for next time', async () => {
+        const reports: PublisherAxisReport[] = []
+        const fetchImpl = outcomeStub('newowner', 3, ['beyond0', 'beyond1', 'beyond2'], false)
+        await searchByKeywords(
+          fetchImpl, undefined, undefined, undefined, undefined,
+          () => {}, () => {}, { publishers: ['newowner'] }, 5,
+          r => reports.push(r),
+        )
+        const report = reports.find(r => r.keyword === 'deepseek-harness')
+        expect(report?.rotatedSupplied).toBe(3)
+        expect((report?.pinnedSupplied ?? 0) + (report?.rotatedSupplied ?? 0)).toBe(3)
+        // Correction: an outcome-pinned maintainer is carried into `seeded`,
+        // the same field seeding uses, so the caller has one list to persist
+        // per keyword regardless of which entry path (design doc §3) produced
+        // a given owner.
+        expect(report?.seeded).toEqual(['newowner'])
+      })
+
+      it('does not double-count a publisher cell across the retry path', async () => {
+        // The window's first page is short by five on the first call and whole
+        // on the second, so `forKeyword.size < required` after pass one and
+        // `enumerate()` runs again. The publisher cell answers identically both
+        // times: if the paging loop credited it on every pass rather than on
+        // its own before/after delta against the union, this would read 6
+        // supplied, not 3.
+        const reports: PublisherAxisReport[] = []
+        const fetchImpl = outcomeStub('newowner', 3, ['beyond0', 'beyond1', 'beyond2'], true)
+        await searchByKeywords(
+          fetchImpl, undefined, undefined, undefined, undefined,
+          () => {}, () => {}, { publishers: ['newowner'] }, 5,
+          r => reports.push(r),
+        )
+        const report = reports.find(r => r.keyword === 'deepseek-harness')
+        expect(report?.rotatedSupplied).toBe(3)
+        expect((report?.pinnedSupplied ?? 0) + (report?.rotatedSupplied ?? 0)).toBe(3)
+      })
+
+      it('RE-pages a publisher cell when the retry runs, recovering a name its first page omitted', async () => {
+        // Skipping the second page of a publisher cell to save the request was
+        // tried and reverted on 2026-09-18. The saving is real -- for
+        // `deepseek-harness` the retry runs every run -- and the argument was
+        // that the second pass's delta is 0. That describes the expected case,
+        // and the retry exists for the other one: pass two may serve an object
+        // pass one omitted, and for a publisher cell that object is a
+        // past-window name nothing else can reach. This fixture is that case,
+        // aimed at the publisher cell rather than at the window.
+        const fetchImpl = outcomeStub('newowner', 3, ['beyond0', 'beyond1', 'beyond2'], true, true)
+        const names = await searchByKeywords(
+          fetchImpl, undefined, undefined, undefined, undefined,
+          () => {}, () => {}, { publishers: ['newowner'] }, 5,
+        )
+        // `beyond2` exists only on the publisher cell's SECOND page request.
+        expect(names).toContain('beyond2')
+      })
+    })
+  })
+
+  describe('the crossing', () => {
+    it('keeps a seeded owner pinned and probed after the keyword crosses the window', async () => {
+      // Seeds a real owner through the unstubbed atRiskOwners path while
+      // `dsh-plugin` is still inside the window, then chains that call's
+      // actual `seeded` output into a second, past-window call's pinned
+      // argument -- the chaining is what makes this a regression lock rather
+      // than a fixture. It locks in two things: atRiskOwners seeds
+      // immediately, under the window (confirmed by reverting a mutation
+      // that dropped it from the seed line and watching this assertion
+      // fail); and probeOrder (publisher-state.ts) sources the pinned-probe
+      // list unconditionally from the persisted map -- no re-derivation of
+      // at-risk status, no window-crossed check -- so a name earned under
+      // the window is still probed on a later, past-window run even when it
+      // is absent from that run's own rotation vocabulary.
+      //
+      // It does NOT discriminate the eviction predicate's wording: an
+      // immediate `cellTotal === 0` rule and an N-miss-streak rule would
+      // produce the same `probed` array on this one past-window call, since
+      // probing always precedes any eviction decision and this test never
+      // reads `evicted`. That predicate is covered separately, by 'evicts a
+      // pinned publisher whose cell total is zero, and only that one'
+      // (line 2588: immediate, not after a streak) and 'does not evict a
+      // pinned publisher that merely supplied nothing' (line 2600: keyed on
+      // `cellTotal`, not on supplied-delta). A cross-run PERSISTED miss
+      // counter is untested because none exists -- parsePublisherState drops
+      // unknown top-level keys, so one cannot appear by accident, but no
+      // test here models multi-run persisted state, so a badly-implemented
+      // counter would not be caught either.
+      const under = stubSearchWithPackages({
+        'keywords:dsh-plugin': [{ name: 'bare', keywords: ['dsh-plugin'], maintainers: ['huanlin'] }],
+        'keywords:deepseek-harness': [],
+      })
+      const seedReports: PublisherAxisReport[] = []
+      await searchByKeywords(under, undefined, undefined, undefined, undefined,
+        () => {}, () => {}, { publishers: [] }, 500, r => seedReports.push(r))
+      const seeded = seedReports.find(r => r.keyword === 'dsh-plugin')?.seeded ?? []
+      expect(seeded).toEqual(['huanlin'])
+
+      // Same owner, now past the window: it must still be probed.
+      const probed: string[] = []
+      const over = recordingProbeStub(probed)
+      await searchByKeywords(over, undefined, undefined, undefined, undefined,
+        () => {}, () => {}, { publishers: ['zzz-unrelated'], pinned: { 'dsh-plugin': [...seeded] } }, 2)
+      expect(probed).toContain('huanlin')
     })
   })
 

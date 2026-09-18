@@ -19,8 +19,8 @@ import { fetchStarCounts } from './github-stars.ts'
 import { HARVEST_TOPICS, REPO_BACKFILL_BUDGET_DEFAULT, harvestRepos, parseHarvestBudget } from './github-client.ts'
 import { parseRepoState, repoGoneDetail, serializeRepoState } from './repo-state.ts'
 import { githubOwnerName } from './github-repo.ts'
-import { fetchCandidates, searchByKeywords, describeShortfall, parseKeywordShortfall, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall } from './npm-client.ts'
-import { mergePublishers, nextCursor, parsePublisherState, serializePublisherState } from './publisher-state.ts'
+import { fetchCandidates, searchByKeywords, describePublisherAxis, describeShortfall, HARVEST_KEYWORDS, parseKeywordShortfall, parsePublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall, type PublisherAxisReport } from './npm-client.ts'
+import { applyAxisReport, MAX_EVICTIONS_PER_RUN, MAX_PINNED_PER_KEYWORD, mergePublishers, parsePublisherState, retainPinned, serializePublisherState } from './publisher-state.ts'
 import { pagesArtifactNames } from './pages-artifacts.ts'
 import { runPipeline, selectEntries } from './pipeline.ts'
 import { CATALOG_SCHEMA_VERSION, SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION } from './emit.ts'
@@ -87,6 +87,13 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
    * hand-rolled `'; '` between them read as a delimiter at two nesting
    * levels once both harvest keywords were past the window. */
   const npmParts: string[] = []
+  /** What the publisher axis did per keyword, reported under its own heading
+   * rather than folded into `npmParts` above: vocabulary size, probe counts,
+   * seeding and eviction are routine bookkeeping that can fill this array on
+   * a build that is missing nothing, and filing that under "packages
+   * missing from this build" would misdiagnose a healthy run for the plugin
+   * authors who read the published report. */
+  const axisParts: string[] = []
   /**
    * The publisher axis's committed vocabulary, read BEFORE the branch so both
    * halves share one seed and one observation set. The file is absent on a
@@ -98,6 +105,11 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     ? parsePublisherState(readFileSync(publisherStatePath, 'utf8'))
     : { publishers: [] }
   const sawPublishers = new Set<string>()
+  // What the publisher axis did per keyword, from whichever source this run
+  // has: the live search below, or the handoff's `publisherAxis` in the
+  // `--harvest-from` branch. Spent once, after the branch, so both paths pin
+  // and evict through the same pinFor/unpinFor/cursor logic.
+  const axis: PublisherAxisReport[] = []
   if (harvestFrom === undefined) {
     // registry.npmmirror.com does not implement the `keywords:` qualifier this
     // search depends on — measured 2026-09-03, it answers
@@ -119,9 +131,9 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
       fetch, undefined, npmToken, undefined, undefined,
       s => shortfalls.push(s),
       users => { for (const u of users) sawPublishers.add(u) },
-      priorPublishers.publishers,
+      priorPublishers,
       PUBLISHER_PROBE_BUDGET_DEFAULT,
-      priorPublishers.cursor ?? 0,
+      report => axis.push(report),
     )
     for (const s of shortfalls) {
       npmParts.push(describeShortfall(s))
@@ -134,6 +146,7 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   } else {
     const parsed = JSON.parse(readFileSync(harvestFrom, 'utf8')) as {
       candidates?: unknown; rejections?: unknown; shortfalls?: unknown; publishers?: unknown
+      publisherAxis?: unknown
     }
     if (!Array.isArray(parsed.candidates) || !Array.isArray(parsed.rejections)) {
       throw new Error(`--harvest-from ${harvestFrom}: expected { candidates, rejections } arrays`)
@@ -158,6 +171,23 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     if (parsed.publishers !== undefined) {
       const observed = parsePublisherState(JSON.stringify({ publishers: parsed.publishers }))
       for (const username of observed.publishers) sawPublishers.add(username)
+    }
+    // STRICT where `shortfalls`/`publishers` above are lenient, and
+    // deliberately so: those two only widen a report or a vocabulary, but this
+    // one is what pinFor/unpinFor spend against the committed file below, so a
+    // malformed record read as "no axis this run" would silently pin or evict
+    // nothing while looking exactly like a run that had nothing to do —
+    // `publisher-state.json`'s `pinned` map would stay empty on every real run
+    // while every test that drives this branch with a well-formed fixture
+    // stayed green. Optional as a WHOLE, like its siblings: a handoff written
+    // before this field existed must still build.
+    if (parsed.publisherAxis !== undefined) {
+      if (!Array.isArray(parsed.publisherAxis)) {
+        throw new Error(`--harvest-from ${harvestFrom}: expected an array of publisher axis records for \`publisherAxis\``)
+      }
+      for (const raw of parsed.publisherAxis) {
+        axis.push(parsePublisherAxisReport(raw, `--harvest-from ${harvestFrom}`))
+      }
     }
     process.stderr.write(`reusing harvest: ${candidates.length} npm candidate(s)\n`)
   }
@@ -346,16 +376,57 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   // leave a vocabulary recording work it did not publish; and the cursor
   // advances only on a run that got this far, so a failing run does not skip
   // its slice of the vocabulary.
-  const nextPublishers = mergePublishers(priorPublishers, [...sawPublishers])
-  writeFileSync(publisherStatePath, serializePublisherState({
-    ...nextPublishers,
-    cursor: nextCursor(nextPublishers, PUBLISHER_PROBE_BUDGET_DEFAULT),
-  }))
+  // Pruned to the keywords this build actually harvests. Both keyed maps copy
+  // every existing key forward, so a key written once by a since-renamed
+  // HARVEST_KEYWORDS entry, or by a handoff naming a keyword this build does
+  // not harvest, would otherwise round-trip into the committed file forever
+  // with nothing able to probe, evict or report it.
+  let nextPublishers = retainPinned(mergePublishers(priorPublishers, [...sawPublishers]), HARVEST_KEYWORDS)
+  // Spent here, after the merge above establishes the vocabulary both cells
+  // and pins are named against, and after the pipeline has run: a build that
+  // throws on its own artifacts should not leave a pin or an evicted name
+  // behind for work it never published.
+  // One call per report, and every decision inside it — eviction before
+  // seeding, how complete `seeded` is, how far this keyword's own cursor
+  // moves. All of that is policy, so it lives in the pure module where a
+  // fixture can drive it; what is left here is the loop and the reporting.
+  for (const report of axis) {
+    const applied = applyAxisReport(nextPublishers, report)
+    nextPublishers = applied.state
+    const notes: string[] = []
+    // Reported from the call that actually refused, with a count. Derived
+    // from the PRIOR pinned set instead, this said nothing at all on the one
+    // run where refusal began -- the set is still under the bound when the
+    // run starts -- and never said how many owners it cost.
+    if (applied.refused.length > 0) {
+      notes.push(`refused ${applied.refused.length} new residue owner(s): the pinned set is FULL at ${MAX_PINNED_PER_KEYWORD}`)
+    }
+    // Loud, because the alternative reading of a large eviction list is a
+    // registry fault and the run just declined to act on it. Left silent this
+    // would look like a healthy run that evicted nothing.
+    if (applied.evictionsRefused > 0) {
+      notes.push(`REMOVED NO PINS: ${applied.evictionsRefused} pinned cells answered zero, more than the ${MAX_EVICTIONS_PER_RUN} one run may remove, which describes the registry rather than the ecosystem`)
+    }
+    axisParts.push([describePublisherAxis(report), ...notes].join(', '))
+  }
+  // An axis that reported nothing is reported AS nothing, rather than by an
+  // absent heading. On the `--harvest-from` path a handoff carrying no
+  // `publisherAxis` -- one written before the field existed -- pins nothing,
+  // evicts nothing and advances no cursor, so every subsequent run re-probes
+  // the same band while the vocabulary grows. That is the failure this
+  // module's cursor exists to prevent, and it looked exactly like a healthy
+  // run with nothing to do.
+  if (axis.length === 0) {
+    axisParts.push('no publisher axis record this run: nothing was pinned, evicted or rotated, and every keyword cursor stayed where it was')
+  }
+  for (const part of axisParts) process.stderr.write(`npm: ${part}\n`)
+  writeFileSync(publisherStatePath, serializePublisherState(nextPublishers))
   process.stderr.write(
     `npm: publisher vocabulary ${priorPublishers.publishers.length} -> ${nextPublishers.publishers.length}\n`)
   const npmLine = npmParts.length === 0 ? '' : `\nnpm search shortfall (tolerated, packages missing from this build):\n${npmParts.map(part => `- ${part}\n`).join('')}`
+  const axisLine = axisParts.length === 0 ? '' : `\npublisher axis (per-keyword pinning and probing, not itself a shortfall):\n${axisParts.map(part => `- ${part}\n`).join('')}`
   const repoLine = repoNote === '' ? '' : `\nGitHub: ${repoNote}\n`
-  writeFileSync(join(OUT_DIR, 'report.md'), `${artifacts.report}\nStars: ${starsNote}\n${npmLine}${repoLine}`)
+  writeFileSync(join(OUT_DIR, 'report.md'), `${artifacts.report}\nStars: ${starsNote}\n${npmLine}${axisLine}${repoLine}`)
 
   // Pages gets a directory staged from scratch, holding exactly the artifacts
   // the spec lists. `dist/v1` is NOT cleaned and is not what deploys: the

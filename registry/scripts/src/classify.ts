@@ -25,7 +25,7 @@ import { classifyPackages } from './llm-client.ts'
 import { judgeMarkets, type MarketItem } from './market-judge.ts'
 import { selectMarketPending } from './market-select.ts'
 import { mergeMarketRows, serializeMarketRows } from './markets.ts'
-import { fetchCandidates, searchByKeywords, describeShortfall, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall } from './npm-client.ts'
+import { fetchCandidates, searchByKeywords, describePublisherAxis, describeShortfall, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall, type PublisherAxisReport } from './npm-client.ts'
 import { parsePublisherState } from './publisher-state.ts'
 import { parseRepoState } from './repo-state.ts'
 import type { Category, RepoCandidate } from './types.ts'
@@ -112,17 +112,27 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
     ? parsePublisherState(readFileSync(publisherStatePath, 'utf8'))
     : { publishers: [] }
   const sawPublishers = new Set<string>()
+  // What the publisher axis did per keyword this run, carried on the handoff
+  // for build.ts to spend — `--harvest-from` never calls searchByKeywords
+  // itself, so a pin earned here would otherwise reach no one.
+  const axis: PublisherAxisReport[] = []
   const names = await searchByKeywords(
     fetch, undefined, npmToken, undefined, undefined,
-    s => shortfalls.push(s),
+    // Written AS THEY FIRE, not collected and printed after the call returns.
+    // `searchByKeywords` throws on a residual past MAX_UNREACHABLE_RESIDUAL,
+    // and that throw is raised from inside this call -- so the deferred form
+    // printed nothing at all on precisely the run that needed explaining. On
+    // 2026-09-18 two runs died on a 17-name residual having already computed
+    // the axis report for both keywords, and neither line reached the log: the
+    // vocabulary, the band probed, what the publisher cells recovered and how
+    // many owners were seeded were all known, and all discarded. The arrays
+    // stay because the handoff still carries them.
+    s => { shortfalls.push(s); process.stderr.write(`classify: ${describeShortfall(s)}\n`) },
     users => { for (const u of users) sawPublishers.add(u) },
-    priorPublishers.publishers,
+    priorPublishers,
     PUBLISHER_PROBE_BUDGET_DEFAULT,
-    priorPublishers.cursor ?? 0,
+    report => { axis.push(report); process.stderr.write(`classify: ${describePublisherAxis(report)}\n`) },
   )
-  for (const s of shortfalls) {
-    process.stderr.write(`classify: ${describeShortfall(s)}\n`)
-  }
   process.stderr.write(`classify: harvested ${names.length} candidate(s)\n`)
   const { candidates, rejections } = await fetchCandidates(names, fetch, npmToken, npmBackupRegistry)
 
@@ -210,7 +220,7 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
   // rule.
   const publishers = [...sawPublishers].sort(compareStrings)
   writeFileSync(join(DIST_DIR, 'harvest.json'),
-    `${JSON.stringify({ candidates, rejections, shortfalls, publishers })}\n`)
+    `${JSON.stringify({ candidates, rejections, shortfalls, publishers, publisherAxis: axis })}\n`)
   const sortedDiscards = [...discarded].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
   const reportLines = [
     '# Classification report',

@@ -51,6 +51,29 @@ These block a real launch, not the code.
 5. **The daily build starts failing in late September 2026, and no refinement can stop it.** `keywords:dsh-plugin` crosses `SEARCH_WINDOW` around 2026-09-29, and its coverage was measured before the fact rather than after a red build. Two structural facts, neither of which a later measurement changes: the packages this project cannot partition on carry `dsh-plugin` and mostly nothing else, so **"add a keyword" is not available** — the first case where the shipped mechanism has no move at all; and they are publisher-clustered tightly enough that one owner holds more than `MAX_UNREACHABLE_RESIDUAL` alone, so a single family landing past the window reddens the build the day it lands rather than after weeks of drift. Every figure lives in `PARTITION_KEYWORDS`' comment in `registry/scripts/src/npm-client.ts` ("THE OTHER HARVEST KEYWORD"), per the note above; the design doc's 2026-09-08 amendment states the conclusions, and [2026-09-08-publisher-partition.md](2026-09-08-publisher-partition.md) is the answer — **built, and shipped in 0.8.1** (PRs #33 and #35): the vocabulary is persisted in `registry/publisher-state.json` and its cells join the partition, which is the only axis with a move against the shape described above. That it EXISTS is not that it suffices: the coverage arithmetic still decides per run whether the result may publish, and a vocabulary only covers publishers already seen. Re-measure before acting — the date moves with the total. **Re-measured 2026-09-16: 5,024 against the 5,250 window at ~72/day, so it crosses about 2026-09-19 rather than late September, and item 5 is now days away.** The daily build has meanwhile gone red on the OTHER keyword: `MAX_UNREACHABLE_RESIDUAL` was raised 10 -> 14 that day to publish at all, which spends the bracket this item was relying on.
 
    What needs a human is which structural option to take, because each changes what the shop publishes or how loudly it fails: scale the tolerance to the measured overshoot, derive the refinement vocabulary from harvested packuments instead of by hand, drop the over-window keyword, or pay for the `replicate.npmjs.com` feed, which is the only provably complete route and is its own project. The design doc lists them with prices. Doing nothing means the catalog publishes short of what npm reports, by a margin that grows, until a family event turns it into a red build.
+
+   → Amended 2026-09-18: the publisher axis this item calls "the only axis
+   with a move" has itself gained one.
+   [docs/design/2026-09-17-publisher-pinning.md](../design/2026-09-17-publisher-pinning.md)
+   is implemented on this branch and gives that axis the memory this item
+   found missing: a name at risk (no `PARTITION_KEYWORDS` refinement beyond
+   its own harvest keyword) seeds its maintainers into a persisted pinned
+   set, so they are probed because they are residue owners rather than by
+   the probability of a uniform rotation landing on their slice (design doc
+   §2-4). That narrows the shortfall this item names — "a vocabulary only
+   covers publishers already seen" — for the slice seeding can reach; the
+   design doc's own §4 amendment sizes that slice and its limits rather than
+   restating them here. It does not make the human decision above moot:
+   nothing guarantees that the publisher axis probes and pages the specific
+   cell holding a given past-window at-risk name in any given run (design
+   doc §4(c)), so a keyword that has already crossed still has no
+   guaranteed route back — seeding and the outcome path both keep reaching
+   for such a name every run, and neither one, nor their union, is
+   guaranteed to find it. The coverage
+   arithmetic still decides per run whether the result may publish, and the
+   crossing date itself has moved again since this item's 2026-09-16
+   reading — read it from the design doc's own header, which supersedes it,
+   rather than trusting either figure without re-measuring.
 ## P1 — the Host half (done 2026-08-25)
 
 The shop's server side: `packages/dsh-plugin-shop/src/host/`, registering the `shop/*` Remote. Spec sections 5.3, 7.2, 7.3, and 9 define it. Exit criterion: the real-installation test in spec section 11.3 passes. Implemented per [2026-08-25-p1-host.md](2026-08-25-p1-host.md): all five `shop/*` methods, catalog fetch/verify/cache with stale degradation, the four rejection paths through the executor, per-profile mutex, hot setEnabled, and the CI gate. Kept below as the record of the constraints P1 was built under.

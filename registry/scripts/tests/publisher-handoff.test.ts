@@ -66,12 +66,20 @@ function runEntry(cwd: string, file: string, args: readonly string[], rules: rea
   }
 }
 
-/** A search response, with maintainers on every object. */
-function searchPage(total: number, names: readonly string[], owners: readonly string[]): unknown {
+/** A search response, with maintainers on every object. `keywords`, when
+ * given, is attached to every object alike -- enough to make a name at risk
+ * (or not) for the publisher axis without needing a distinct page per name. */
+function searchPage(
+  total: number, names: readonly string[], owners: readonly string[], keywords?: readonly string[],
+): unknown {
   return {
     total,
     objects: names.map(name => ({
-      package: { name, maintainers: owners.map(username => ({ username })) },
+      package: {
+        name,
+        maintainers: owners.map(username => ({ username })),
+        ...(keywords === undefined ? {} : { keywords }),
+      },
     })),
   }
 }
@@ -122,7 +130,7 @@ describe('the publisher vocabulary survives the run that discovered it', () => {
       // against a fixture that happened to cover it.
       const run = runEntry(cwd, 'build.ts', ['--harvest-from', 'dist/harvest.json'], [])
       expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
-      expect(vocabulary(cwd)).toEqual({ publishers: ['alice', 'bob'], cursor: 0 })
+      expect(vocabulary(cwd)).toEqual({ publishers: ['alice', 'bob'], cursor: 0, cursors: {}, pinned: {} })
       expect(run.stderr).toContain('publisher vocabulary 0 -> 2')
     } finally {
       rmSync(cwd, { recursive: true, force: true })
@@ -169,7 +177,7 @@ describe('the publisher vocabulary survives the run that discovered it', () => {
         `${JSON.stringify({ candidates: [], rejections: [], shortfalls: [] })}\n`)
       const run = runEntry(cwd, 'build.ts', ['--harvest-from', 'dist/harvest.json'], [])
       expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
-      expect(vocabulary(cwd)).toEqual({ publishers: ['alice'], cursor: 0 })
+      expect(vocabulary(cwd)).toEqual({ publishers: ['alice'], cursor: 0, cursors: {}, pinned: {} })
     } finally {
       rmSync(cwd, { recursive: true, force: true })
     }
@@ -208,4 +216,130 @@ describe('the publisher vocabulary survives the run that discovered it', () => {
       }
     })
   }
+
+  it('a seeded owner classify.ts observes reaches pinned via build.ts --harvest-from', () => {
+    // The actual CI path: classify.ts harvests and hands off, build.ts
+    // --harvest-from is what persists. A test that only drives searchByKeywords
+    // directly, or only drives build.ts's own (never-taken-in-CI) search
+    // branch, cannot tell this path apart from one where the handoff carries
+    // no publisherAxis at all and pinning silently never happens.
+    const cwd = newWorkspace()
+    try {
+      const classifyRun = runEntry(cwd, 'classify.ts', [], [
+        { contains: 'size=1', body: { total: 1, objects: [] } },
+        { contains: '/-/v1/search', body: searchPage(1, ['dsh-a'], ['carol'], ['dsh-plugin']) },
+        { contains: '/dsh-a', body: packument('dsh-a') },
+      ])
+      expect(classifyRun.status, `classify stderr:\n${classifyRun.stderr}`).toBe(0)
+      const handoff = JSON.parse(readFileSync(join(cwd, 'dist', 'harvest.json'), 'utf8')) as {
+        publisherAxis?: unknown
+      }
+      // 'carol' is at risk under 'dsh-plugin' (her only package's only keyword
+      // IS the harvest keyword) and not under 'deepseek-harness' (where that
+      // same keyword is a refinement that clears her) -- confirming the axis
+      // ran the real isAtRisk rule rather than a stub.
+      expect(handoff.publisherAxis).toMatchObject([
+        { keyword: 'dsh-plugin', seeded: ['carol'] },
+        { keyword: 'deepseek-harness', seeded: [] },
+      ])
+
+      const buildRun = runEntry(cwd, 'build.ts', ['--harvest-from', 'dist/harvest.json'], [])
+      expect(buildRun.status, `build stderr:\n${buildRun.stderr}`).toBe(0)
+      expect(vocabulary(cwd)).toMatchObject({ pinned: { 'dsh-plugin': ['carol'] } })
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  for (const [label, value] of [
+    ['a string', '"nope"'],
+    ['null', 'null'],
+    ['missing cursor', '[{"keyword":"dsh-plugin","vocabulary":0,"partitioned":false,"seedingComplete":true,"pinnedSet":0,"pinnedProbed":0,"pinnedSupplied":0,"rotatedProbed":0,"rotatedSupplied":0,"stepped":0,"seeded":[],"evicted":[],"atRiskNames":0}]'],
+    ['missing rotatedProbed', '[{"keyword":"dsh-plugin","vocabulary":0,"partitioned":false,"seedingComplete":true,"pinnedSet":0,"pinnedProbed":0,"pinnedSupplied":0,"cursor":0,"rotatedSupplied":0,"stepped":0,"seeded":[],"evicted":[],"atRiskNames":0}]'],
+    ['an ungrammatical seeded username', '[{"keyword":"dsh-plugin","vocabulary":0,"partitioned":false,"seedingComplete":true,"pinnedSet":0,"pinnedProbed":0,"pinnedSupplied":0,"cursor":0,"rotatedProbed":0,"rotatedSupplied":0,"stepped":0,"seeded":["Alice"],"evicted":[],"atRiskNames":0}]'],
+    // A dangerous keyword is exactly as unusable as a missing one: it reaches
+    // pinFor/unpinFor as the map key, and pinFor's own guard now refuses it --
+    // but parsePublisherAxisReport must refuse it itself, at the handoff
+    // boundary, the same way it refuses an ungrammatical seeded username
+    // rather than leaving that to whatever pinFor happens to do with it.
+    ['a dangerous keyword', '[{"keyword":"__proto__","vocabulary":0,"partitioned":false,"seedingComplete":true,"pinnedSet":0,"pinnedProbed":0,"pinnedSupplied":0,"cursor":0,"rotatedProbed":0,"rotatedSupplied":0,"stepped":0,"seeded":[],"evicted":[],"atRiskNames":0}]'],
+  ] as const) {
+    it(`refuses a handoff whose publisherAxis field is ${label}, before writing anything`, () => {
+      // Strict like `publishers`, not lenient like `shortfalls`: this field
+      // feeds pinFor/unpinFor, which write committed state, so a malformed
+      // record must not be read as "no axis this run" any more than a
+      // malformed `publishers` may be read as "nobody this run".
+      const cwd = newWorkspace()
+      try {
+        mkdirSync(join(cwd, 'dist'), { recursive: true })
+        writeFileSync(join(cwd, 'dist', 'harvest.json'),
+          `{"candidates":[],"rejections":[],"shortfalls":[],"publisherAxis":${value}}\n`)
+        const run = runEntry(cwd, 'build.ts', ['--harvest-from', 'dist/harvest.json'], [])
+        expect(run.status, `stderr:\n${run.stderr}`).not.toBe(0)
+        expect(run.stderr, `stderr:\n${run.stderr}`).toContain('publisher axis')
+        expect(run.stderr).not.toContain('ERR_UNSUPPORTED_ESM_URL_SCHEME')
+        expect(run.stderr).not.toContain('preload-fetch:')
+        expect(existsSync(join(cwd, 'registry', 'publisher-state.json'))).toBe(false)
+        expect(existsSync(join(cwd, 'registry', 'first-seen.yml'))).toBe(false)
+      } finally {
+        rmSync(cwd, { recursive: true, force: true })
+      }
+    })
+  }
+
+  it('advances each keyword\'s own cursor by what that keyword WALKED', () => {
+    // Two things at once, and both were wrong before. The advance is
+    // `stepped` -- vocabulary positions walked -- not the budget and not the
+    // rotation length; and it lands on the keyword's OWN cursor, so a
+    // more-pinned keyword walking a shorter band is not dragged past what it
+    // covered by the other keyword's longer one. 600 publishers is comfortably
+    // above the probe budget, so these positions can only come from the
+    // records.
+    const cwd = newWorkspace()
+    try {
+      const publishers = Array.from({ length: 600 }, (_, i) => `u${String(i).padStart(3, '0')}`)
+      writeFileSync(join(cwd, 'registry', 'publisher-state.json'),
+        `${JSON.stringify({ publishers, cursor: 0 }, null, 2)}\n`)
+      mkdirSync(join(cwd, 'dist'), { recursive: true })
+      const record = (keyword: string, stepped: number) => ({
+        keyword, partitioned: true, seedingComplete: false, vocabulary: 600, pinnedSet: 0, pinnedProbed: 0, pinnedSupplied: 0,
+        cursor: 0, rotatedProbed: stepped, rotatedSupplied: 0, stepped,
+        seeded: [], evicted: [], atRiskNames: 0,
+      })
+      writeFileSync(join(cwd, 'dist', 'harvest.json'), `${JSON.stringify({
+        candidates: [], rejections: [], shortfalls: [],
+        publisherAxis: [record('dsh-plugin', 42), record('deepseek-harness', 17)],
+      })}\n`)
+      const run = runEntry(cwd, 'build.ts', ['--harvest-from', 'dist/harvest.json'], [])
+      expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
+      // A shared cursor advanced by max(42, 17) would put deepseek-harness at
+      // 42, skipping the 25 publishers it never walked -- and at a vocabulary
+      // commensurate with the advance, skipping the same band forever.
+      expect(vocabulary(cwd)).toMatchObject({ cursors: { 'dsh-plugin': 42, 'deepseek-harness': 17 } })
+      // The legacy field is the minimum, so a reader predating `cursors`
+      // re-probes a band rather than skipping one.
+      expect(vocabulary(cwd)).toMatchObject({ cursor: 17 })
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('says so in the report when a handoff carries no publisher axis at all', () => {
+    // A handoff written before the field existed pins nothing, evicts nothing
+    // and advances no cursor, so every subsequent run re-probes the same band
+    // while the vocabulary grows -- the failure the cursor exists to prevent,
+    // and it looked exactly like a healthy run with nothing to do, because the
+    // heading was simply absent.
+    const cwd = newWorkspace()
+    try {
+      mkdirSync(join(cwd, 'dist'), { recursive: true })
+      writeFileSync(join(cwd, 'dist', 'harvest.json'),
+        '{"candidates":[],"rejections":[],"shortfalls":[]}\n')
+      const run = runEntry(cwd, 'build.ts', ['--harvest-from', 'dist/harvest.json'], [])
+      expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
+      expect(run.stderr).toContain('no publisher axis record this run')
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
 })

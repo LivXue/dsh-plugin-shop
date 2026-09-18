@@ -106,11 +106,28 @@ export function mergeMarketRows(
  */
 export function serializeMarketRows(rows: readonly MarketRow[]): string {
   const sorted = [...rows].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-  const text = sorted.map(row => [
+  const rowsText = sorted.map(row => [
     `- name: ${JSON.stringify(row.name)}`,
     `  market: ${row.market ? 'true' : 'false'}`,
     `  by: ${row.by}`,
     `  reason: ${JSON.stringify(row.reason.replace(/\s+/g, ' ').trim())}`,
-  ].join('\n')).join('\n\n')
+  ].join('\n'))
+  // A document made of comments alone parses to `null`, and the loader
+  // requires a list; a zero-row file (a fresh workspace, or a run that judged
+  // nothing new) must still be one, or the very next build dies reading what
+  // this step wrote — and it dies in the NEXT build, naming a file the failing
+  // commit did not touch.
+  //
+  // This is the THIRD copy of the same two lines, not the second: both
+  // `serializeCategoryRows` (categories.ts) and `serializeFirstSeen`
+  // (config.ts) already carry `rowsText.length === 0 ? ['[]'] : rowsText`
+  // verbatim, and `readOptional` in config.ts is the read-side twin. All three
+  // are the same function end to end — header, code-unit sort, JSON-quoted
+  // `- name:` rows, empty-list fallback, trailing newline — and all three are
+  // read back by one `loadRegistryConfig`. The general fix is one
+  // `serializeYamlRows(header, rowsText, separator)` beside `readOptional`,
+  // owning the guard once; the fourth writer is otherwise one copied function
+  // away from shipping without it, as this one did.
+  const text = rowsText.length === 0 ? '[]' : rowsText.join('\n\n')
   return `${HEADER}${text}\n`
 }
