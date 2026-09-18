@@ -27,6 +27,17 @@ describe('mergeMarketRows', () => {
 })
 
 describe('serializeMarketRows', () => {
+  it('still writes a valid YAML list when there are no rows', () => {
+    // The loader requires a list and a comment-only document parses to `null`,
+    // so a zero-row file (a fresh workspace, or a run that judged nothing new)
+    // kills the NEXT build, naming a file the failing commit did not touch.
+    // Asserted here rather than left to the entry-point chain in
+    // publisher-handoff.test.ts, which exercises it only incidentally: that
+    // test is about pinning, and a workspace that gains a seeded markets.yml
+    // would turn this regression green again.
+    expect(parse(serializeMarketRows([]))).toEqual([])
+  })
+
   it('round-trips a reason carrying YAML metacharacters', () => {
     // `reason` quotes an untrusted npm description. A colon, a quote or a
     // newline in it would otherwise produce a file the loader cannot read —
