@@ -923,9 +923,12 @@ describe('keywordsOf', () => {
   it('bounds each keyword\'s length too, unlike the count bound which leaves a long string intact', () => {
     // KEYWORDS_MAX_COUNT only ever bounded how many entries survive; nothing
     // bounded how long any one of them could be, unlike maintainersOf's sibling
-    // MAINTAINER_MAX_LENGTH or toCandidate's PEER_NAME_MAX_LENGTH. A keyword
-    // this field returns reaches a published `plugins.json` and a build report
-    // line, same as those, so it needs the same second half of the bound.
+    // MAINTAINER_MAX_LENGTH or toCandidate's PEER_NAME_MAX_LENGTH. Unlike
+    // those two, a keyword this field returns never reaches `plugins.json` or
+    // a build report line: its one call site fills HarvestedName.keywords,
+    // which only isAtRisk reads. The bound is defence in depth on a
+    // registry-controlled array, not a guard on a published byte — see
+    // KEYWORD_MAX_LENGTH's comment for the traced reach.
     //
     // Literals, not derived from KEYWORD_MAX_LENGTH, so the fixture pins the
     // value instead of moving with it.

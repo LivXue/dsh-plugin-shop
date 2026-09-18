@@ -88,7 +88,7 @@ condition under which the at-risk set is visible.
 **Amendment (2026-09-18): this sentence does not hold for the shipped code —
 see §4's amendment.** Seeding is not gated on full enumeration; it runs for
 every harvest keyword each run, against whatever names that run's window
-sweep and refinement cells actually put in `harvested`.
+sweep, refinement cells and publisher cells actually put in `harvested`.
 
 ## 3. Pinning lifecycle
 
@@ -179,50 +179,90 @@ every run — for no benefit: nothing else in the pinning lifecycle needs the
 "fully enumerable" property, only the COMPLETENESS of what a single run's
 seeding pass can see depends on it (see (c), below).
 
-**(b) The "~38 against a budget of 500 — 7.6%" arithmetic, and "seeds
-nothing" below, both rest on that false premise, and the real pinned set is
-larger than either implies.** `deepseek-harness` seeds from its own
-window-floor sweep too, and the at-risk rate across that slice is not
-uniform. `PARTITION_KEYWORDS`'s own comment (`npm-client.ts`) measured, for
-`deepseek-harness` pre-`deepwatch`: 7 of 250 uncovered — "uncovered" there is
-the same predicate as "at risk" here, `R = ∅` — at ranks 5,000-5,250 (the
-bottom of its former window, 2.8%), against 0 of 250 at ranks 2,500-2,750
-(mid-ranking, 0.0%). At-risk names concentrate at the bottom of a window the
-same way the uncovered ones did. That does not hand back an exact count —
-this comment's own repeated instruction is to re-measure live rather than
-trust a figure here, and no one has re-run `deepseek-harness`'s own
-window-floor sweep specifically to count the at-risk names inside it — but a
-2.8% band at the bottom of a window-sized sweep is not a rounding error
-against a budget of 500, and it argues for tens of owners, not the zero the
-paragraph below states. The real total the pinned sets reach across both
-keywords is therefore larger than "~38 … 7.6%" by an unmeasured but
-non-trivial margin.
+**(b) "Seeds nothing" below is wrong as an absolute — but only just, and by a
+margin that is already measured.** `deepseek-harness` is partitioned, and a
+partitioned keyword runs a mandatory window-floor `pageCell` sweep into
+`harvested` (`npm-client.ts`), so its seeding pass does see every at-risk
+name ranked inside the 5,250 that sweep serves. A sweep that runs and finds
+little is not the same statement as a sweep that does not run.
+
+How little it finds has already been counted, in the very comment this
+section cites. `PARTITION_KEYWORDS`'s own comment (`npm-client.ts`) records
+**one** name in the 5,250 `deepseek-harness` can address as carrying no
+refinement from that list beyond the harvest keyword itself — `R = ∅`, the
+same predicate as "at risk" here. That population is exactly the one the
+window-floor sweep serves, so the figure needs no adjustment to apply to
+seeding. It was measured 2026-09-08, and that comment's standing instruction
+is to re-measure live rather than trust a figure written down; re-measure
+before acting on it.
+
+**No owner count for `deepseek-harness` has been measured.** The 38 owners in
+§0 are `dsh-plugin`'s, and `PARTITION_KEYWORDS`'s comment refuses a ratio
+across these two populations in both directions, so neither keyword's figure
+may be converted into the other's.
+
+So the real magnitude is CLOSE TO the "nothing" below rather than far from
+it: one at-risk name, of unmeasured ownership. What needs qualifying is the
+absolute wording, not the design consequence — `deepseek-harness`'s pinned
+set is still built essentially by the outcome path. And `dsh-plugin`'s "~38
+against a budget of 500 — 7.6%" is measured against `dsh-plugin`'s own fully
+enumerated name set and its own budget; nothing here touches it.
+
+> **Corrected 2026-09-18, the same day this amendment was written.** As first
+> written, (b) asserted that "no one has re-run `deepseek-harness`'s own
+> window-floor sweep specifically to count the at-risk names inside it", and
+> from the pre-`deepwatch` 2.8% band at ranks 5,000-5,250 argued for "tens of
+> owners, not the zero the paragraph below states" — and that the "~38 …
+> 7.6%" arithmetic rested on a false premise. All three were wrong. The count
+> exists and is the 1-of-5,250 above; the band figure is the one number in
+> that comment that may not carry such an argument, since the comment flags it
+> as "not reconciled with the 1-of-5,250, so neither may be multiplied against
+> the other keyword's figure"; and the 7.6% is `dsh-plugin`'s own and never
+> depended on `deepseek-harness`. The paragraph below under-claims by rounding
+> one down to zero; this point then over-claimed in the other direction by an
+> order of magnitude, off a superseded figure. Recorded rather than quietly
+> rewritten: an amendment whose whole job is accuracy is the last place to
+> make a silent correction.
 
 **(c) For a keyword that IS partitioned, seeding is structurally incomplete,
 though not for the reason first written here.** An at-risk name (§2, `R =
 ∅`) carries no `PARTITION_KEYWORDS` refinement, so by that same definition no
-`keywords:K,r` cell can ever match it — refinement cells are the one source
-that can never contribute an at-risk name to `harvested`. The window-floor
-sweep is a source, but not the only one: `harvested` is fed by every
-`pageCell` call this run makes, publisher cells included — both the pinned
-loop and the rotated loop pass it (`npm-client.ts`) — and
+`keywords:K,r` cell matches it — refinement cells are the one source that
+does not contribute an at-risk name to `harvested`. "Does not", not "cannot":
+`keywordsOf` truncates at `KEYWORDS_MAX_COUNT` (`npm-client.ts`), so a
+package declaring more than 128 keywords with its refinement past the cut is
+recorded as carrying none of them, and is then served by that refinement's
+cell *and* scored at risk. Exotic — no real package approaches that bound,
+which is why it is a defensive ceiling — but it is the one way around the
+structural claim, and it is a truncation bound rather than anything about
+tags.
+
+The window-floor sweep is a source, but not the only one: `harvested` is fed
+by every `pageCell` call this run makes, publisher cells included — both the
+pinned loop and the rotated loop pass it (`npm-client.ts`) — and
 `atRiskOwners`/`atRiskNameCount` (§2) run over the whole map,
 unconditionally, before `seeded` is built. So a publisher cell probed and
 paged this run, pinned or freshly rotated to, hands seeding any at-risk name
 it holds at whatever rank that name sits, window or past it — the maintainer
 axis does not filter by rank under `K`, which is the entire point of running
-it. Seeding is in fact the BROADER of the two entry paths, not the narrower:
-it counts a name the instant `harvested` holds it, with no delta test, while
-the outcome path (§3) fires only from the rotated loop and only when the
-name is new to the run's union. A rotated cell that earns a pinned spot this
-run (`delta > 0`) satisfies both paths in the same run, off the same
-`harvested` entry.
+it.
+
+**Over at-risk names** — this paragraph's whole subject — seeding is in fact
+the BROADER of the two entry paths, not the narrower: it counts such a name
+the instant `harvested` holds it, with no delta test, while the outcome path
+(§3) fires only from the rotated loop and only when the name is new to the
+run's union. Outside that scope the two are incomparable rather than nested,
+because the outcome path is not restricted to at-risk names: a rotated cell
+whose new names all carry a refinement earns a pin while seeding nothing. So
+a rotated cell that earns a pinned spot this run (`delta > 0`) satisfies both
+paths off the same `harvested` entry when that entry is at risk, and only the
+outcome path when it is not.
 
 The real gap is narrower than "past the window, only the outcome path
 reaches it": nothing guarantees that the cell holding a given past-window
 at-risk name is selected and paged this run at all. Publisher-cell selection
-is the pinned list plus a rotation slice under budget, filtered by the
-productivity test (§4); a maintainer not yet pinned is reached only if
+is the pinned list plus a rotation slice under budget (§4), filtered by the
+productivity test (§1); a maintainer not yet pinned is reached only if
 rotation happens to land on it. So a partitioned keyword's seeding this run
 sees the window-floor sweep (every at-risk name ranked inside the window,
 every run) plus whatever the publisher axis — pinned and rotated together —

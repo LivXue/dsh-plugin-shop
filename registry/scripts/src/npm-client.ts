@@ -378,7 +378,11 @@ export function parsePublisherAxisReport(value: unknown, where: string): Publish
     return arr
   }
   if (typeof r?.keyword !== 'string' || !isPinnableKeyword(r.keyword)) {
-    throw new Error(`${where}: publisher axis record has no \`keyword\`; re-run the harvest that wrote it`)
+    // Names the SHAPE required, like `count` and `names` above, rather than
+    // reporting absence: this condition is failed by an invalid keyword just
+    // as often as by a missing one, and "has no `keyword`" about a record that
+    // carries `"__proto__"` sends an operator looking for the wrong defect.
+    throw new Error(`${where}: publisher axis record has no \`keyword\` string usable as a pinned-set key (absent, empty, over-long, or a prototype-hijacking name); re-run the harvest that wrote it`)
   }
   if (typeof r.pinnedFull !== 'boolean') {
     throw new Error(`${where}: publisher axis record for \`${r.keyword}\` has no boolean \`pinnedFull\`; re-run the harvest that wrote it`)
@@ -1134,13 +1138,24 @@ export const KEYWORDS_MAX_COUNT = 128
  * survive, and left how long any one of them could be unbounded — unlike its
  * siblings `MAINTAINER_MAX_LENGTH` (with {@link MAINTAINERS_MAX_COUNT}, in
  * `publisher-state.ts`) and {@link PEER_NAME_MAX_LENGTH} (with {@link
- * PEERS_MAX_COUNT}), which both pair a count bound with a length bound. A
- * keyword this field returns reaches
- * `atRiskOwners`, a published `plugins.json`, and build-report text the same
- * as a peer name does, so it carries the same requirement to be bounded on
- * both axes. 128 matches the sibling bounds rather than a fresh measurement:
- * no real npm keyword approaches it, so this is a defensive ceiling, not a
- * trim of an observed tail.
+ * PEERS_MAX_COUNT}), which both pair a count bound with a length bound.
+ *
+ * Its reach is narrower than those two, and worth stating exactly rather than
+ * by analogy: {@link keywordsOf} has one call site, which fills
+ * `HarvestedName.keywords`, which only `isAtRisk` reads — so a keyword this
+ * field returns reaches `atRiskOwners`/`atRiskNameCount` and stops there.
+ * Those return usernames and a count; no keyword of a package leaves them,
+ * and none reaches `plugins.json` or the build report (the axis line prints
+ * the HARVEST keyword, a `HARVEST_KEYWORDS` literal, never a package's own
+ * tag). The bound is therefore defence in depth on registry-controlled input
+ * held in memory for the length of a run, not a guard on a published byte.
+ * 128 matches the sibling bounds rather than a fresh measurement: no real npm
+ * keyword approaches it, so this is a defensive ceiling, not a trim of an
+ * observed tail.
+ *
+ * NOT the same field as `Candidate.keywords`, which `toCandidate` fills from
+ * the packument and which does reach the classifier prompt; that one carries
+ * no bound of either kind and is not what this constant covers.
  */
 export const KEYWORD_MAX_LENGTH = 128
 

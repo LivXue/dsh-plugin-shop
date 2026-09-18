@@ -114,12 +114,26 @@ export function isMaintainerName(value: unknown): value is string {
  * refused alongside it: both already name a non-array value on the same
  * prototype chain, and reach the identical class of crash.
  *
+ * **This list is not, and cannot be, complete under that criterion, and is
+ * not what actually closes the class.** `toString`, `valueOf`,
+ * `hasOwnProperty` and every other `Object.prototype` member match it just as
+ * well — on a plain `{}`, `pinned['toString'] ?? []` returns a function, so
+ * the fallback never fires and `new Set(fn)` throws exactly as `constructor`
+ * does. What closes the class is that every `pinned` map in this file is
+ * built with `Object.create(null)`, which inherits none of those names, so
+ * such a key is created as an ordinary entry, round-trips, and is inert. The
+ * three names below are the demonstrated cases, kept as defence in depth at
+ * the boundary — a second refusal for the two that hijack an object outright
+ * and the one that replaces its prototype. Widening the list would chase a
+ * prototype chain the maps no longer have; do not grow it in place of the
+ * null-prototype construction, which is load-bearing.
+ *
  * A harvest keyword is never one of these three in practice — they come from
  * `PARTITION_KEYWORDS` in `npm-client.ts` — but this file's `pinned` map is
  * keyed by whatever string a caller hands in, and per CLAUDE.md's "Untrusted
  * input" policy the `--harvest-from` handoff that supplies it is exactly
- * that: untrusted. The boundary has to refuse these by name rather than
- * assume the source is friendly.
+ * that: untrusted. The boundary refuses these by name rather than assume the
+ * source is friendly.
  */
 const DANGEROUS_KEYWORD_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
 
@@ -262,7 +276,17 @@ export function parsePublisherState(raw: string): PublisherState {
 /** Serialize, sorted by code unit and newline-terminated. */
 export function serializePublisherState(state: PublisherState): string {
   const publishers = [...state.publishers].sort(compareStrings)
-  const pinned: Record<string, string[]> = {}
+  // Null-prototype for the same reason as `readPinned`, `pinFor` and
+  // `unpinFor`: this loop assigns `pinned[keyword]` for every own key of
+  // `state.pinned`, so on a plain object a `__proto__` key would set the
+  // prototype instead of an entry and vanish from the written file — a silent
+  // drop in the one function that decides what gets committed. Unreachable
+  // today, because every producer of a `PublisherState` refuses that key at
+  // its own boundary; this is the fourth builder of the same map and there is
+  // no reason for it to be the one that relies on its callers. Nothing
+  // downstream notices: `JSON.stringify` serializes a null-prototype object
+  // identically, and the file round-trips byte-equal.
+  const pinned: Record<string, string[]> = Object.create(null)
   for (const keyword of Object.keys(state.pinned ?? {}).sort(compareStrings)) {
     pinned[keyword] = [...(state.pinned?.[keyword] ?? [])].sort(compareStrings)
   }
