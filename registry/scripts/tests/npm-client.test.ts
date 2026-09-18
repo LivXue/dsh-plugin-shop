@@ -2,7 +2,8 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { type Cell, cellKey, cellQuery, FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, keywordsOf, KEYWORD_MAX_LENGTH, KEYWORDS_MAX_COUNT, maintainersOf, MAINTAINERS_MAX_COUNT, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describePublisherAxis, describeShortfall, parseKeywordShortfall, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, type PublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
+import { applyAxisReport, MAX_EVICTIONS_PER_RUN, MAX_PINNED_PER_KEYWORD, type PublisherState } from '../src/publisher-state.ts'
+import { type Cell, cellKey, cellQuery, FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, keywordsOf, KEYWORD_MAX_LENGTH, KEYWORDS_MAX_COUNT, maintainersOf, MAINTAINERS_MAX_COUNT, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describePublisherAxis, describeShortfall, parseKeywordShortfall, parsePublisherAxisReport, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, type PublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
 import { ENTRY_PAYLOAD_MAX_BYTES, entryPayloadBytes } from '../src/gate.ts'
 import { MAX_TARBALL_BYTES } from '../src/github-client.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
@@ -812,33 +813,107 @@ describe('parseKeywordShortfall', () => {
   })
 })
 
+describe('parsePublisherAxisReport', () => {
+  const record = {
+    keyword: 'dsh-plugin', partitioned: true, seedingComplete: false, vocabulary: 3775, pinnedSet: 38,
+    pinnedProbed: 38, pinnedSupplied: 0, cursor: 1305, rotatedProbed: 462,
+    rotatedSupplied: 7, stepped: 462, seeded: [], evicted: [], atRiskNames: 81,
+  }
+
+  it('accepts a record the production path can actually emit', () => {
+    expect(parsePublisherAxisReport(record, 'handoff.json').keyword).toBe('dsh-plugin')
+  })
+
+  it('refuses a walk shorter than the rotation it claims to have produced', () => {
+    // `stepped` is positions walked and `rotatedProbed` publishers returned;
+    // the walk SKIPS a candidate already pinned, so it can only ever consume
+    // at least as many positions as it yielded. A handoff is the one path into
+    // these fields that does not come from the producer, and `advanceCursor`
+    // spends `stepped` against the committed file.
+    expect(() => parsePublisherAxisReport({ ...record, stepped: 3 }, 'handoff.json'))
+      .toThrow(/walked 3 vocabulary position\(s\) but reports 462 rotated/)
+  })
+
+  it('refuses a record that claims probing without a partition', () => {
+    // Nothing is probed at all for a keyword inside its window, so a record
+    // asserting both describes two different runs -- and
+    // `describePublisherAxis` would publish both halves in one sentence, the
+    // failure `parseKeywordShortfall`'s own identity check exists to prevent.
+    expect(() => parsePublisherAxisReport({ ...record, partitioned: false }, 'handoff.json'))
+      .toThrow(/reports probing but no partition/)
+  })
+
+  it('refuses a record with no partitioned flag, which decides whether a pin may be removed', () => {
+    const { partitioned: _omitted, ...without } = record
+    expect(() => parsePublisherAxisReport(without, 'handoff.json')).toThrow(/no boolean `partitioned`/)
+  })
+
+  it('refuses a record claiming both complete seeding and a partition', () => {
+    // Complete seeding means the keyword enumerated whole INSIDE its window,
+    // and it is what licenses `applyAxisReport` to REMOVE a pin. A record
+    // asserting both describes two different runs, and the write it would
+    // license is the expensive direction: design doc §3, a stale pin costs one
+    // probe per run and a wrong eviction costs the crossing.
+    expect(() => parsePublisherAxisReport({ ...record, seedingComplete: true }, 'handoff.json'))
+      .toThrow(/claims complete seeding and a partition/)
+  })
+
+  it('refuses a record with no boolean seedingComplete', () => {
+    const { seedingComplete: _omitted, ...without } = record
+    expect(() => parsePublisherAxisReport(without, 'handoff.json')).toThrow(/no boolean `seedingComplete`/)
+  })
+
+  it('refuses a record with no pinned set size', () => {
+    const { pinnedSet: _omitted, ...without } = record
+    expect(() => parsePublisherAxisReport(without, 'handoff.json')).toThrow(/no integer `pinnedSet`/)
+  })
+})
+
 describe('describePublisherAxis', () => {
+  /** A partitioned run with nothing to report; cases override what they test. */
+  const axis = (over: Partial<PublisherAxisReport> = {}): PublisherAxisReport => ({
+    keyword: 'dsh-plugin', partitioned: true, seedingComplete: false, vocabulary: 0, pinnedSet: 0,
+    pinnedProbed: 0, pinnedSupplied: 0, cursor: 0, rotatedProbed: 0, rotatedSupplied: 0,
+    stepped: 0, seeded: [], atRiskNames: 0, evicted: [], ...over,
+  })
+
   it('names the inputs, not only the results, so an inert axis is visible', () => {
-    const line = describePublisherAxis({
-      keyword: 'dsh-plugin', vocabulary: 0,
-      pinnedProbed: 0, pinnedSupplied: 0, cursor: 0, rotatedProbed: 0, rotatedSupplied: 0,
-      suppliedNames: 0, seeded: [], atRiskNames: 0, evicted: [], pinnedFull: false,
-    })
     // 0.8.1 shipped an empty vocabulary and CI was green while the axis did
     // nothing. `vocabulary 0` has to be a printed value, not an absent line.
-    expect(line).toContain('vocabulary 0')
+    expect(describePublisherAxis(axis())).toContain('vocabulary 0')
   })
 
-  it('reports a full pinned set, because new residue owners are then refused', () => {
-    const line = describePublisherAxis({
-      keyword: 'dsh-plugin', vocabulary: 3775,
-      pinnedProbed: 250, pinnedSupplied: 4, cursor: 0, rotatedProbed: 250, rotatedSupplied: 1,
-      suppliedNames: 5, seeded: [], atRiskNames: 81, evicted: [], pinnedFull: true,
-    })
-    expect(line).toMatch(/pinned set is FULL/)
+  it('names the pinned SET, so a keyword waiting for its crossing is not read as broken', () => {
+    // Every probe counter is legitimately zero for a keyword still inside its
+    // window, so without the set size the line for 38 seeded owners waiting to
+    // be spent is byte-identical to the line for seeding that never worked --
+    // the 0.8.1 failure this report exists to make impossible.
+    const line = describePublisherAxis(axis({ partitioned: false, seedingComplete: true, vocabulary: 3775, pinnedSet: 38 }))
+    expect(line).toContain('38 pinned')
+    expect(line).toContain('inside the 5250-name window, so nothing was probed')
+    expect(line).not.toContain('probed (')
   })
 
-  it('reports seeded and evicted owners, the one branch the two fixtures above leave empty', () => {
-    const line = describePublisherAxis({
-      keyword: 'dsh-plugin', vocabulary: 500,
-      pinnedProbed: 10, pinnedSupplied: 3, cursor: 0, rotatedProbed: 5, rotatedSupplied: 2,
-      suppliedNames: 5, seeded: ['newowner'], atRiskNames: 12, evicted: ['goneowner'], pinnedFull: false,
-    })
+  it('reports a full pinned set from the set size, not from a second field', () => {
+    expect(describePublisherAxis(axis({ pinnedSet: MAX_PINNED_PER_KEYWORD }))).toMatch(/pinned set is FULL/)
+  })
+
+  it('names the at-risk input even when nothing was seeded', () => {
+    // Gated on `seeded.length > 0`, this vanished in exactly the case where it
+    // is diagnostic: `isAtRisk` answers false for any name whose `keywords`
+    // array is absent, so a search response that stopped carrying the field
+    // would make seeding a permanent no-op -- and print a line indistinguishable
+    // from a healthy run that found nothing new.
+    expect(describePublisherAxis(axis({ atRiskNames: 81 })))
+      .toContain('seeded 0 owner(s) from 81 at-risk name(s) seen this run')
+  })
+
+  it('reports seeded and evicted owners', () => {
+    const line = describePublisherAxis(axis({
+      vocabulary: 500, pinnedSet: 10, pinnedProbed: 10, pinnedSupplied: 3,
+      rotatedProbed: 5, rotatedSupplied: 2, stepped: 5,
+      seeded: ['newowner'], atRiskNames: 12, evicted: ['goneowner'],
+    }))
     // "seen this run", not bare "at-risk name(s)": for a keyword the harvest
     // partitions past SEARCH_WINDOW this count is only what the window sweep
     // showed, never the keyword's whole at-risk population -- see design doc
@@ -847,15 +922,32 @@ describe('describePublisherAxis', () => {
     expect(line).toContain('unpinned 1 with no package left')
   })
 
-  it('names the cursor the rotated segment started from, per design doc §6', () => {
-    // Same numbers as the design doc's own observability example, so this
-    // test doubles as a check that the shipped line says what §6 promised.
-    const line = describePublisherAxis({
-      keyword: 'dsh-plugin', vocabulary: 3775,
-      pinnedProbed: 38, pinnedSupplied: 0, cursor: 1305, rotatedProbed: 462, rotatedSupplied: 3,
-      suppliedNames: 7, seeded: [], atRiskNames: 0, evicted: [], pinnedFull: false,
-    })
-    expect(line).toContain('462 rotated from cursor 1305')
+  it('names the cursor the rotated segment started from, and totals what was recovered', () => {
+    // Design doc §6's own observability example, in the units the counters
+    // actually carry: §6 wrote "(3 supplied 7 names)" for three CELLS
+    // supplying seven names, while `rotatedSupplied` counts NAMES. The fixture
+    // that carried §6's numerals into these fields asserted
+    // `pinnedSupplied: 0, rotatedSupplied: 3, suppliedNames: 7` -- a record
+    // the production path cannot emit, because the two halves and the total
+    // are one identity. §6 is amended to match; the redundant third counter is
+    // gone, so the inconsistent state is no longer representable.
+    const line = describePublisherAxis(axis({
+      vocabulary: 3775, pinnedSet: 38, pinnedProbed: 38, cursor: 1305,
+      rotatedProbed: 462, rotatedSupplied: 7, stepped: 462, atRiskNames: 81,
+    }))
+    expect(line).toContain('38 pinned, 38 probed (0 supplied)')
+    expect(line).toContain('462 rotated from cursor 1305 (7 supplied)')
+    expect(line).toContain('7 name(s) recovered')
+  })
+
+  it('escapes the keyword, which on the handoff path is untrusted and this line is published', () => {
+    // `isPinnableKeyword` holds a handoff keyword to a length and three
+    // refused names, so a newline passes -- and `build.ts` renders each part
+    // as `- ${part}` into the report.md published to gh-pages, where one
+    // forges a whole extra bullet. CLAUDE.md, "Untrusted input".
+    const line = describePublisherAxis(axis({ keyword: 'k\n- FORGED: everything is fine' }))
+    expect(line).not.toContain('\n')
+    expect(line).not.toMatch(/\|/)
   })
 })
 
@@ -1358,6 +1450,22 @@ describe('searchByKeywords', () => {
   /** Answers a `maintainer:<user>` probe with `totals[user]`, default 0. */
   function probeStubWithTotals(totals: Record<string, number>): typeof fetch {
     return stubPublisherProbe(user => totals[user] ?? 0)
+  }
+
+  /**
+   * Answers each user's FIRST probe with 0 and every later one with `then` —
+   * the shape of a transient registry answer, which is the only thing a
+   * confirming re-probe can tell apart from a real unpublish.
+   */
+  function probeStubTransientZero(then: number): typeof fetch {
+    const asked = new Set<string>()
+    return stubPublisherProbe(user => {
+      if (!asked.has(user)) {
+        asked.add(user)
+        return 0
+      }
+      return then
+    })
   }
 
   it('does not end a keyword on a short non-final page — it reads the total', async () => {
@@ -2412,7 +2520,7 @@ describe('searchByKeywords', () => {
       // refinement cell reaches none of them; maintainer:sayedev reaches all.
       const names = await searchByKeywords(
         familyPastWindow(5410, 160), undefined, undefined, undefined, undefined,
-        () => {}, () => {}, ['sayedev'])
+        () => {}, () => {}, { publishers: ['sayedev'] })
       expect(names).toHaveLength(5410)
     })
 
@@ -2432,7 +2540,7 @@ describe('searchByKeywords', () => {
           ? Array.from({ length: 10 }, (_, i) => `p${i}`) : []),
       )
       await searchByKeywords(fetchImpl, undefined, undefined, undefined, undefined,
-        () => {}, () => {}, ['alice', 'bob'])
+        () => {}, () => {}, { publishers: ['alice', 'bob'] })
       expect(urls.filter(u => u.includes('maintainer'))).toEqual([])
     })
 
@@ -2452,7 +2560,7 @@ describe('searchByKeywords', () => {
       )
       const many = Array.from({ length: 50 }, (_, i) => `u${i}`)
       await expect(searchByKeywords(fetchImpl, undefined, undefined, undefined, undefined,
-        () => {}, () => {}, many, 10)).rejects.toThrow()
+        () => {}, () => {}, { publishers: many }, 10)).rejects.toThrow()
       expect(urls.filter(u => u.includes('maintainer')).length).toBe(10)
       // Probed ten times, not twenty: the retry re-PAGES the partition but must
       // not re-PROBE the vocabulary, or the axis costs double on every keyword
@@ -2476,7 +2584,7 @@ describe('searchByKeywords', () => {
       )
       const many = Array.from({ length: 10 }, (_, i) => `u${i}`)
       await expect(searchByKeywords(fetchImpl, undefined, undefined, undefined, undefined,
-        () => {}, () => {}, many, 4, 8)).rejects.toThrow()
+        () => {}, () => {}, { publishers: many, cursor: 8 }, 4)).rejects.toThrow()
       const probed = urls.filter(u => u.includes('maintainer'))
         .map(u => (/maintainer%3A(u\d+)/.exec(u) ?? [])[1])
       // Offset 8, budget 4, ten publishers: it wraps rather than stopping at
@@ -2527,7 +2635,7 @@ describe('searchByKeywords', () => {
         name => (aliceNames.has(name) ? ['alice'] : sayedevNames.has(name) ? ['sayedev'] : []),
       )
       const names = await searchByKeywords(fetchImpl, undefined, undefined, undefined, undefined,
-        () => {}, () => {}, ['alice', 'sayedev'])
+        () => {}, () => {}, { publishers: ['alice', 'sayedev'] })
       // The six past the window are recovered, so the run publishes whole.
       expect(names).toHaveLength(5256)
       const probes = (user: string) => urls.filter(u => u.includes(`maintainer%3A${user}`) && u.includes('size=1'))
@@ -2556,7 +2664,7 @@ describe('searchByKeywords', () => {
       })
       await searchByKeywords(
         fetchImpl, undefined, undefined, undefined, undefined,
-        () => {}, () => {}, [], PUBLISHER_PROBE_BUDGET_DEFAULT, 0,
+        () => {}, () => {}, { publishers: [] }, PUBLISHER_PROBE_BUDGET_DEFAULT,
         r => reports.push(r),
       )
       const dshPlugin = reports.find(r => r.keyword === 'dsh-plugin')
@@ -2586,7 +2694,7 @@ describe('searchByKeywords', () => {
       )
       await searchByKeywords(
         fetchImpl, undefined, undefined, undefined, undefined,
-        () => {}, () => {}, [], PUBLISHER_PROBE_BUDGET_DEFAULT, 0,
+        () => {}, () => {}, { publishers: [] }, PUBLISHER_PROBE_BUDGET_DEFAULT,
         r => reports.push(r),
       )
       const deepseekHarness = reports.find(r => r.keyword === 'deepseek-harness')
@@ -2598,6 +2706,59 @@ describe('searchByKeywords', () => {
     })
   })
 
+  it('scores a name at risk when its only refinement cell is itself past the window', async () => {
+    // Reachability is measured, not assumed from PARTITION_KEYWORDS
+    // membership. An `oversized` refinement cell is paged with 'stop' --
+    // truncated at SEARCH_WINDOW exactly as the bare keyword is -- so a name
+    // whose only refinement is that one is reachable by NOTHING past its rank.
+    // Naming it covered because the refinement is "in the list" hides
+    // precisely the population this axis exists for, and it is not
+    // hypothetical: `partitionKeyword`'s comment records
+    // `keywords:deepseek-harness,dsh` crossing its own window and costing the
+    // catalog 24 packages between 2026-09-11 and 2026-09-14.
+    const atRisk = { name: 'w0', keywords: ['deepseek-harness', 'dsh'], maintainers: ['residueowner'] }
+    const plain = (name: string) => ({ name, keywords: ['deepseek-harness', 'plugin'], maintainers: ['covered'] })
+    const totals: Record<string, number> = {
+      'keywords:dsh-plugin': 0,
+      'keywords:deepseek-harness': SEARCH_WINDOW + 150,
+      // Over its OWN window, so it lands in `oversized` and is truncated.
+      'keywords:deepseek-harness,dsh': SEARCH_WINDOW + 20,
+      // Fits, so `dsh`'s overflow has a split and `partitionKeyword` does not
+      // throw; `w0` does not carry `plugin`, so this cell cannot reach it.
+      'keywords:deepseek-harness,plugin': 5,
+      'keywords:deepseek-harness,dsh,plugin': 5,
+    }
+    const fetchImpl = (async (url: string | URL) => {
+      const params = new URL(String(url)).searchParams
+      const text = params.get('text') ?? ''
+      const from = Number(params.get('from') ?? '0')
+      const total = totals[text] ?? 0
+      const objects = params.get('size') === '1' || from > MAX_SEARCH_FROM ? [] : (() => {
+        if (text === 'keywords:deepseek-harness') {
+          return [from === 0 ? atRisk : plain(`w${from}`), ...Array.from({ length: 249 }, (_, i) => plain(`w${from + i + 1}`))]
+        }
+        if (text === 'keywords:deepseek-harness,dsh') {
+          return from < MAX_SEARCH_FROM
+            ? Array.from({ length: 250 }, (_, i) => plain(`w${from + i}`))
+            : Array.from({ length: 150 }, (_, i) => plain(`x${i}`))
+        }
+        return Array.from({ length: 5 }, (_, i) => plain(`w${i}`)).slice(from, from + 250)
+      })()
+      return new Response(JSON.stringify({
+        total,
+        objects: objects.map(pkg => ({
+          package: { name: pkg.name, keywords: pkg.keywords, maintainers: pkg.maintainers.map(username => ({ username })) },
+        })),
+      }), { status: 200, headers: { 'content-type': 'application/json' } })
+    }) as unknown as typeof fetch
+    const reports: PublisherAxisReport[] = []
+    await searchByKeywords(fetchImpl, undefined, undefined, undefined, undefined,
+      () => {}, () => {}, { publishers: [] }, PUBLISHER_PROBE_BUDGET_DEFAULT, r => reports.push(r))
+    const report = reports.find(r => r.keyword === 'deepseek-harness')
+    expect(report?.seeded).toContain('residueowner')
+    expect(report?.seeded).not.toContain('covered')
+  })
+
   describe('the publisher axis probes its pinned set first', () => {
     it('probes a pinned publisher the rotation would not have reached', async () => {
       const probed: string[] = []
@@ -2606,9 +2767,8 @@ describe('searchByKeywords', () => {
       const fetchImpl = recordingProbeStub(probed)
       await searchByKeywords(
         fetchImpl, undefined, undefined, undefined, undefined,
-        () => {}, () => {}, vocabulary, 3, 0,
+        () => {}, () => {}, { publishers: vocabulary, pinned: { 'deepseek-harness': ['u099'] } }, 3,
         r => reports.push(r),
-        { 'deepseek-harness': ['u099'] },
       )
       // Cursor 0 and a budget of 3 reaches u000..u001 by rotation; u099 is
       // reached only because it is pinned.
@@ -2623,11 +2783,54 @@ describe('searchByKeywords', () => {
       const fetchImpl = probeStubWithTotals({ 'u001': 0, 'u002': 4 })
       await searchByKeywords(
         fetchImpl, undefined, undefined, undefined, undefined,
-        () => {}, () => {}, ['u001', 'u002'], 2, 0,
+        () => {}, () => {}, { publishers: ['u001', 'u002'], pinned: { 'deepseek-harness': ['u001', 'u002'] } }, 4,
         r => reports.push(r),
-        { 'deepseek-harness': ['u001', 'u002'] },
       )
       expect(reports.find(r => r.keyword === 'deepseek-harness')?.evicted).toEqual(['u001'])
+    })
+
+    it('does not evict on a zero the next probe contradicts', async () => {
+      // A zero total is not an error and this module says so elsewhere:
+      // `{"objects":[],"total":0}` is a real answer, and the same search has
+      // served a 249-of-250 page and a 200 carrying `<!doctype html>`. Acting
+      // on one sample is the trade design doc §3 refuses, because the loss is
+      // ONE-WAY: a pinned owner's names sit past SEARCH_WINDOW, so the window
+      // sweep can never put them back into the harvest and seeding can never
+      // name that owner again.
+      const reports: PublisherAxisReport[] = []
+      await searchByKeywords(
+        probeStubTransientZero(4), undefined, undefined, undefined, undefined,
+        // EMPTY vocabulary, so `u001` is reached only as a pin. With it in the
+        // vocabulary the earlier harvest keyword's rotation probes `u001`
+        // first and consumes the transient answer, leaving this keyword's
+        // pinned probe to see the settled one -- and the case would then pass
+        // with or without the confirming probe.
+        () => {}, () => {}, { publishers: [], pinned: { 'deepseek-harness': ['u001'] } }, 2,
+        r => reports.push(r),
+      )
+      expect(reports.find(r => r.keyword === 'deepseek-harness')?.evicted).toEqual([])
+    })
+
+    it('removes nothing at all when more pins answer zero than one run may remove', async () => {
+      // A correlated zero is a registry fault, not simultaneous unpublishes:
+      // pinned owners go one at a time and the set grows by about one a day.
+      // The confirming probe cannot tell that case apart -- a degraded index
+      // answers zero twice as readily as once -- but the COUNT can.
+      const many = Array.from({ length: MAX_EVICTIONS_PER_RUN + 1 }, (_, i) => `u${String(i).padStart(3, '0')}`)
+      const state: PublisherState = { publishers: many, pinned: { 'deepseek-harness': many } }
+      const reports: PublisherAxisReport[] = []
+      await searchByKeywords(
+        probeStubWithTotals({}), undefined, undefined, undefined, undefined,
+        () => {}, () => {}, state, 2 * many.length,
+        r => reports.push(r),
+      )
+      const report = reports.find(r => r.keyword === 'deepseek-harness')
+      expect(report?.evicted).toHaveLength(MAX_EVICTIONS_PER_RUN + 1)
+      // The report still NAMES them; refusing to act on them is the pure
+      // module's call, so that the untrusted handoff path is covered too.
+      const applied = applyAxisReport(state, report as PublisherAxisReport)
+      expect(applied.evictionsRefused).toBe(MAX_EVICTIONS_PER_RUN + 1)
+      expect(applied.state.pinned?.['deepseek-harness']).toHaveLength(many.length)
     })
 
     it('does not evict a pinned publisher that merely supplied nothing', async () => {
@@ -2638,9 +2841,8 @@ describe('searchByKeywords', () => {
       const fetchImpl = probeStubWithTotals({ 'u001': 4 })
       await searchByKeywords(
         fetchImpl, undefined, undefined, undefined, undefined,
-        () => {}, () => {}, ['u001'], 2, 0,
+        () => {}, () => {}, { publishers: ['u001'], pinned: { 'deepseek-harness': ['u001'] } }, 2,
         r => reports.push(r),
-        { 'deepseek-harness': ['u001'] },
       )
       expect(reports.find(r => r.keyword === 'deepseek-harness')?.evicted).toEqual([])
     })
@@ -2710,12 +2912,12 @@ describe('searchByKeywords', () => {
         const fetchImpl = outcomeStub('newowner', 3, ['beyond0', 'beyond1', 'beyond2'], false)
         await searchByKeywords(
           fetchImpl, undefined, undefined, undefined, undefined,
-          () => {}, () => {}, ['newowner'], 5, 0,
+          () => {}, () => {}, { publishers: ['newowner'] }, 5,
           r => reports.push(r),
         )
         const report = reports.find(r => r.keyword === 'deepseek-harness')
         expect(report?.rotatedSupplied).toBe(3)
-        expect(report?.suppliedNames).toBe(3)
+        expect((report?.pinnedSupplied ?? 0) + (report?.rotatedSupplied ?? 0)).toBe(3)
         // Correction: an outcome-pinned maintainer is carried into `seeded`,
         // the same field seeding uses, so the caller has one list to persist
         // per keyword regardless of which entry path (design doc §3) produced
@@ -2734,12 +2936,37 @@ describe('searchByKeywords', () => {
         const fetchImpl = outcomeStub('newowner', 3, ['beyond0', 'beyond1', 'beyond2'], true)
         await searchByKeywords(
           fetchImpl, undefined, undefined, undefined, undefined,
-          () => {}, () => {}, ['newowner'], 5, 0,
+          () => {}, () => {}, { publishers: ['newowner'] }, 5,
           r => reports.push(r),
         )
         const report = reports.find(r => r.keyword === 'deepseek-harness')
         expect(report?.rotatedSupplied).toBe(3)
-        expect(report?.suppliedNames).toBe(3)
+        expect((report?.pinnedSupplied ?? 0) + (report?.rotatedSupplied ?? 0)).toBe(3)
+      })
+
+      it('does not PAGE a publisher cell twice when the retry runs', async () => {
+        // The counter was already safe; the requests were not. `enumerate`
+        // runs twice whenever a keyword's residual sends it round again --
+        // every run, for `deepseek-harness` -- and this module's own comment
+        // says the second pass's delta is 0, so every selected publisher cell
+        // was re-paging for names already in the union. It is not a fixed
+        // cost either: a pinned maintainer whose at-risk names sit past the
+        // window passes the `cellTotal > served` filter on EVERY future run,
+        // so at the 250-pin bound that is up to 250 zero-yield `size=250`
+        // requests per keyword per run, roughly 4-5 minutes a day against a
+        // probe phase already measured at 9-11.
+        const urls: string[] = []
+        const inner = outcomeStub('newowner', 3, ['beyond0', 'beyond1', 'beyond2'], true)
+        const fetchImpl = ((url: string | URL, init?: RequestInit) => {
+          urls.push(String(url))
+          return (inner as (u: string | URL, i?: RequestInit) => Promise<Response>)(url, init)
+        }) as unknown as typeof fetch
+        await searchByKeywords(
+          fetchImpl, undefined, undefined, undefined, undefined,
+          () => {}, () => {}, { publishers: ['newowner'] }, 5,
+        )
+        const pages = urls.filter(u => u.includes('maintainer%3Anewowner') && !u.includes('size=1'))
+        expect(pages).toHaveLength(1)
       })
     })
   })
@@ -2778,7 +3005,7 @@ describe('searchByKeywords', () => {
       })
       const seedReports: PublisherAxisReport[] = []
       await searchByKeywords(under, undefined, undefined, undefined, undefined,
-        () => {}, () => {}, [], 500, 0, r => seedReports.push(r), {})
+        () => {}, () => {}, { publishers: [] }, 500, r => seedReports.push(r))
       const seeded = seedReports.find(r => r.keyword === 'dsh-plugin')?.seeded ?? []
       expect(seeded).toEqual(['huanlin'])
 
@@ -2786,8 +3013,7 @@ describe('searchByKeywords', () => {
       const probed: string[] = []
       const over = recordingProbeStub(probed)
       await searchByKeywords(over, undefined, undefined, undefined, undefined,
-        () => {}, () => {}, ['zzz-unrelated'], 1, 0,
-        () => {}, { 'dsh-plugin': [...seeded] })
+        () => {}, () => {}, { publishers: ['zzz-unrelated'], pinned: { 'dsh-plugin': [...seeded] } }, 2)
       expect(probed).toContain('huanlin')
     })
   })

@@ -3,9 +3,9 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import {
-  MAINTAINER_MAX_LENGTH, MAX_PINNED_PER_KEYWORD, MAX_PUBLISHERS, PublisherState, atRiskNameCount, atRiskOwners,
-  isMaintainerName, mergePublishers, nextCursor, parsePublisherState, pinFor, probeOrder, serializePublisherState,
-  unpinFor,
+  MAINTAINER_MAX_LENGTH, MAX_PINNED_KEYWORDS, MAX_PINNED_PER_KEYWORD, MAX_PUBLISHERS, PublisherState, advanceCursor,
+  applyAxisReport, atRiskNameCount, atRiskOwners, cursorFor, isMaintainerName, mergePublishers, parsePublisherState,
+  pinFor, probeOrder, retainPinned, serializePublisherState, unpinFor,
 } from '../src/publisher-state.ts'
 import { PUBLISHER_PROBE_BUDGET_DEFAULT } from '../src/npm-client.ts'
 
@@ -13,11 +13,11 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 
 describe('the shipped budget against the shipped vocabulary', () => {
   it('is small enough that the rotation is live, not dormant', () => {
-    // `nextCursor` returns 0 whenever `size <= budget`, so a budget at or above
-    // the committed vocabulary disables the rotation ENTIRELY -- and silently,
-    // because a cursor that never moves looks exactly like a cursor that has
-    // nothing to do. Every run then probes the whole vocabulary, in one
-    // sequential pass.
+    // A budget at or above the committed vocabulary means one run walks the
+    // whole of it, so `advanceCursor` lands back where it started and the
+    // rotation is inert -- silently, because a cursor that never moves looks
+    // exactly like a cursor that has nothing to do. Every run then probes the
+    // whole vocabulary, in one sequential pass.
     //
     // That is not hypothetical. 0.8.1 shipped the axis with a 4,000 budget
     // against an EMPTY committed vocabulary, so its own CI proved only the
@@ -34,7 +34,7 @@ describe('the shipped budget against the shipped vocabulary', () => {
     expect(
       PUBLISHER_PROBE_BUDGET_DEFAULT,
       `a ${PUBLISHER_PROBE_BUDGET_DEFAULT} budget against ${state.publishers.length} committed publishers `
-      + 'leaves nextCursor pinned at 0: every run probes the whole vocabulary in one pass',
+      + 'walks the whole vocabulary in one run: the cursor returns to where it started and the rotation is inert',
     ).toBeLessThan(state.publishers.length)
   })
 })
@@ -90,7 +90,7 @@ describe('publisher state', () => {
     const raw = serializePublisherState({ publishers: ['sayedev', 'bowenliang123'] })
     // Sorted by code unit, like every other artifact this repo writes, so the
     // committed file does not churn on the order npm happened to answer in.
-    expect(raw).toBe('{\n  "publishers": [\n    "bowenliang123",\n    "sayedev"\n  ],\n  "cursor": 0,\n  "pinned": {}\n}\n')
+    expect(raw).toBe('{\n  "publishers": [\n    "bowenliang123",\n    "sayedev"\n  ],\n  "cursor": 0,\n  "cursors": {},\n  "pinned": {}\n}\n')
     expect(parsePublisherState(raw).publishers).toEqual(['bowenliang123', 'sayedev'])
   })
 
@@ -151,7 +151,7 @@ describe('publisher state', () => {
     // repo-state.ts is a Record, where a repeated JSON key collapses too.
     expect(parsePublisherState('{"publishers":["b","a","a"]}').publishers).toEqual(['a', 'b'])
     expect(serializePublisherState(parsePublisherState('{"publishers":["a","a"]}')))
-      .toBe('{\n  "publishers": [\n    "a"\n  ],\n  "cursor": 0,\n  "pinned": {}\n}\n')
+      .toBe('{\n  "publishers": [\n    "a"\n  ],\n  "cursor": 0,\n  "cursors": {},\n  "pinned": {}\n}\n')
   })
 
   describe('the probe cursor', () => {
@@ -164,7 +164,7 @@ describe('publisher state', () => {
     it('round-trips a position', () => {
       expect(parsePublisherState('{"publishers":["a","b"],"cursor":1}').cursor).toBe(1)
       expect(serializePublisherState({ publishers: ['a'], cursor: 7 }))
-        .toBe('{\n  "publishers": [\n    "a"\n  ],\n  "cursor": 7,\n  "pinned": {}\n}\n')
+        .toBe('{\n  "publishers": [\n    "a"\n  ],\n  "cursor": 7,\n  "cursors": {},\n  "pinned": {}\n}\n')
     })
 
     it('throws on a cursor that is not a count', () => {
@@ -174,35 +174,6 @@ describe('publisher state', () => {
       expect(() => parsePublisherState('{"publishers":[],"cursor":-1}')).toThrow(/cursor/)
       expect(() => parsePublisherState('{"publishers":[],"cursor":1.5}')).toThrow(/cursor/)
       expect(() => parsePublisherState('{"publishers":[],"cursor":"3"}')).toThrow(/cursor/)
-    })
-
-    it('stays put while the whole vocabulary fits one run', () => {
-      // Rotating a list every run can already probe is churn in a committed
-      // file for nothing.
-      expect(nextCursor({ publishers: ['a', 'b', 'c'] }, 10)).toBe(0)
-      expect(nextCursor({ publishers: ['a', 'b', 'c'], cursor: 2 }, 3)).toBe(0)
-    })
-
-    it('preserves the cursor when nothing rotated, rather than restarting at zero', () => {
-      // Distinct from "stays put" above, where the vocabulary itself is too
-      // small to rotate: here the vocabulary is larger than the rotation and
-      // a run that rotated nothing -- a keyword that answered a shortfall, or
-      // was not partitioned this run -- must leave a nonzero cursor where it
-      // was rather than snapping it back to the start of the vocabulary.
-      expect(nextCursor({ publishers: ['a', 'b', 'c', 'd', 'e'], cursor: 3 }, 0)).toBe(3)
-    })
-
-    it('advances by one budget and wraps, so no publisher is starved forever', () => {
-      // THE point of the cursor. `selectPublisherCells` walks the vocabulary in
-      // sorted order and stops at the budget, so without rotation the same
-      // prefix is probed every run and everything after it is never probed at
-      // all -- not a partial run, a permanently excluded tail. The shape is
-      // anticipated by this module's own bounds: MAX_PUBLISHERS is 20,000,
-      // several times whatever per-run budget npm-client ships.
-      const ten = { publishers: Array.from({ length: 10 }, (_, i) => `u${i}`) }
-      expect(nextCursor(ten, 4)).toBe(4)
-      expect(nextCursor({ ...ten, cursor: 4 }, 4)).toBe(8)
-      expect(nextCursor({ ...ten, cursor: 8 }, 4)).toBe(2)
     })
 
     it('carries the cursor through a merge', () => {
@@ -398,10 +369,13 @@ describe('atRiskNameCount', () => {
 })
 
 describe('MAX_PINNED_PER_KEYWORD', () => {
-  it('is half the probe budget, so rotation always keeps half a run', () => {
-    // Asserted as the relation, not the literal: the bound exists to stop
-    // pinned probes starving rotation, and that property is what must hold if
-    // the budget ever moves.
+  it('is half the probe budget, so everything stored can also be probed', () => {
+    // Asserted as the relation, not the literal. Rotation's half is guaranteed
+    // by probeOrder itself (see 'never lets the pinned half take more than half
+    // the budget'), so what this relation protects is the other direction: a
+    // bound ABOVE half the budget lets a pinned set grow a tail probeOrder
+    // never reaches, pinned in name only and silently -- the set size is
+    // reported, the unreachable part of it is not.
     expect(MAX_PINNED_PER_KEYWORD * 2).toBe(PUBLISHER_PROBE_BUDGET_DEFAULT)
   })
 })
@@ -495,18 +469,260 @@ describe('probeOrder', () => {
     expect(order.pinned.length + order.rotated.length).toBeLessThanOrEqual(4)
   })
 
-  it('is empty on an empty vocabulary rather than looping', () => {
-    expect(probeOrder({ publishers: [], cursor: 0 }, 'k', 5)).toEqual({ pinned: [], rotated: [] })
+  it('rotates to nobody on an empty vocabulary rather than looping', () => {
+    expect(probeOrder({ publishers: [], cursor: 0 }, 'k', 5)).toEqual({ pinned: [], rotated: [], stepped: 0 })
+  })
+
+  it('still probes the pinned set when the vocabulary is empty', () => {
+    // A pin is not a member of the vocabulary -- it is read from `state.pinned`
+    // and survives MAX_PUBLISHERS truncation -- so an empty vocabulary is a
+    // reason to rotate to nobody, never a reason to stop probing pins.
+    // Returning early above the pinned slice stranded them: never probed, so
+    // never supplied and never evicted, with the axis line reading as an
+    // ordinary empty-vocabulary no-op.
+    expect(probeOrder({ publishers: [], pinned: { k: ['a', 'b'] } }, 'k', 5))
+      .toEqual({ pinned: ['a', 'b'], rotated: [], stepped: 0 })
+  })
+
+  it('never lets the pinned half take more than half the budget', () => {
+    // The guarantee has to be a property of this function, not a coincidence
+    // between MAX_PINNED_PER_KEYWORD and a budget declared in another module.
+    // Capping at `min(budget, MAX_PINNED_PER_KEYWORD)` meant any budget at or
+    // below 250 -- a reduced-cost run, a rate-limit backoff, a future override
+    // -- handed the whole budget to the pinned set, leaving `rotated` empty
+    // and, with it, the cursor frozen: the starvation the cursor exists to
+    // prevent, reached through the pinned set instead of through a fixed
+    // prefix.
+    const pinned = Array.from({ length: 10 }, (_, i) => `p${i}`)
+    const order = probeOrder({ publishers: vocabulary, pinned: { k: pinned } }, 'k', 4)
+    expect(order.pinned).toEqual(['p0', 'p1'])
+    expect(order.rotated).toHaveLength(2)
   })
 })
 
-describe('the cursor advances by what actually rotated', () => {
-  it('advances by the rotation count, not by the budget', () => {
+describe('the cursor advances by what the rotation WALKED', () => {
+  it('advances by the positions walked, not by the budget and not by the rotation length', () => {
     const publishers = Array.from({ length: 100 }, (_, i) => `u${String(i).padStart(3, '0')}`)
     const state: PublisherState = { publishers, cursor: 0, pinned: { k: ['u099'] } }
     const order = probeOrder(state, 'k', 10)
+    // Budget 10, capped at 5 pinned; `u099` is the only pin, so 1 pinned and 9
+    // rotated, walking positions 0..8.
     expect(order.rotated).toHaveLength(9)
+    expect(order.stepped).toBe(9)
     // Advancing by the budget would land on 10 and skip u009 forever.
-    expect(nextCursor(state, order.rotated.length)).toBe(9)
+    expect(cursorFor(advanceCursor(state, 'k', order.stepped), 'k')).toBe(9)
+  })
+
+  it('advances past a pinned publisher the walk stepped over but did not rotate to', () => {
+    // `stepped` and `rotated.length` come apart exactly here: the walk
+    // consumes the pinned candidate's position without returning it. Advancing
+    // by the shorter figure restarts the next run INSIDE the band this one
+    // already covered, re-probing it -- ~16 wasted probes a run at the 250-pin
+    // bound over a 3,775-name vocabulary, and a correspondingly longer lap.
+    const state: PublisherState = { publishers: ['u0', 'u1', 'u2', 'u3', 'u4'], cursor: 0, pinned: { k: ['u1'] } }
+    const order = probeOrder(state, 'k', 4)
+    expect(order.rotated).toEqual(['u0', 'u2', 'u3'])
+    expect(order.stepped).toBe(4)
+    // 3, the rotation length, would restart on u3 -- already probed this run.
+    expect(cursorFor(advanceCursor(state, 'k', order.stepped), 'k')).toBe(4)
+  })
+
+  it('gives every keyword a lap of its own, so the more-pinned one is not starved', () => {
+    // THE reason the cursor is per keyword. `probeOrder` leaves a keyword's
+    // rotation `budget - |pinned[K]|` slots, so two keywords with different
+    // pinned sets walk different distances; one shared cursor has to advance
+    // by one of those distances and is wrong for the other keyword either way.
+    // Advancing by the larger starved the more-pinned keyword -- and at a
+    // vocabulary commensurate with the advance it starved it PERMANENTLY,
+    // which is the case simulated here: 40 publishers, budget 10, 5 pins on
+    // `heavy` (so it rotates 5 and the shared advance would be `light`'s 10).
+    // 40 is a multiple of 10, so the shared cursor visits only 0/10/20/30 and
+    // `heavy` sees positions 0-4 of each band and never 5-9, forever.
+    const publishers = Array.from({ length: 40 }, (_, i) => `u${String(i).padStart(2, '0')}`)
+    let state: PublisherState = { publishers, pinned: { heavy: ['p0', 'p1', 'p2', 'p3', 'p4'] } }
+    const seen = new Set<string>()
+    for (let run = 0; run < 20; run++) {
+      const order = probeOrder(state, 'heavy', 10)
+      for (const user of order.rotated) seen.add(user)
+      state = advanceCursor(state, 'heavy', order.stepped)
+      // The other keyword walks its own, longer band on its own cursor.
+      state = advanceCursor(state, 'light', probeOrder(state, 'light', 10).stepped)
+    }
+    expect(seen.size).toBe(publishers.length)
+  })
+
+  it('holds the position when nothing was walked, rather than restarting at zero', () => {
+    // A keyword that did not partition, or a run with no axis record at all,
+    // walked nothing; snapping to the start of the vocabulary would abandon
+    // the lap in progress.
+    expect(cursorFor(advanceCursor({ publishers: ['a', 'b', 'c', 'd', 'e'], cursor: 3 }, 'k', 0), 'k')).toBe(3)
+  })
+
+  it('stays put when one run walks the whole vocabulary, rather than churning the file', () => {
+    // Restored as arithmetic rather than as a special case: a run that walked
+    // `size` positions lands on `(cursor + size) % size`, which is `cursor`.
+    // Rotating a list every run can already probe is churn in a committed file
+    // for nothing.
+    const three = { publishers: ['a', 'b', 'c'] }
+    expect(cursorFor(advanceCursor(three, 'k', probeOrder(three, 'k', 10).stepped), 'k')).toBe(0)
+    expect(cursorFor(advanceCursor({ ...three, cursor: 2 }, 'k', 3), 'k')).toBe(2)
+  })
+
+  it('clamps a walk longer than the vocabulary, which only a handoff can claim', () => {
+    // `probeOrder` stops at `stepped < size`, so a larger figure reaches
+    // `advanceCursor` only from an untrusted `--harvest-from` record, which
+    // `parsePublisherAxisReport` can hold to integer-ness but not to a
+    // vocabulary it does not know. A full lap is the one reading that skips
+    // nobody.
+    expect(cursorFor(advanceCursor({ publishers: ['a', 'b', 'c'], cursor: 1 }, 'k', 100_000), 'k')).toBe(1)
+  })
+
+  it('throws on a dangerous keyword rather than corrupting the cursor map', () => {
+    expect(() => advanceCursor({ publishers: ['a'] }, '__proto__', 1))
+      .toThrow(/advanceCursor keyword "__proto__" is not a valid harvest keyword/)
+  })
+
+  it('seeds a keyword with no cursor of its own from the legacy field', () => {
+    // The migration path, and the shape of today's committed file: it carries
+    // `cursor` and no `cursors`.
+    expect(cursorFor({ publishers: ['a', 'b'], cursor: 1 }, 'k')).toBe(1)
+    expect(cursorFor({ publishers: ['a', 'b'], cursor: 1, cursors: { k: 0 } }, 'k')).toBe(0)
+  })
+
+  it('writes the legacy cursor as the minimum over the per-keyword ones', () => {
+    // The only value that cannot put a reader AHEAD of a keyword's own lap: a
+    // keyword joining the harvest starts where the vocabulary is least
+    // covered, and a reader predating `cursors` re-probes a band rather than
+    // skipping one.
+    const raw = serializePublisherState({ publishers: ['a'], cursor: 9, cursors: { late: 7, early: 2 } })
+    expect(JSON.parse(raw).cursor).toBe(2)
+    expect(JSON.parse(raw).cursors).toEqual({ early: 2, late: 7 })
+  })
+})
+
+describe('the pinned map cannot grow without bound or keep a key nothing uses', () => {
+  it('drops an empty entry on READ, as every writer already does on write', () => {
+    // `pinFor` and `unpinFor` delete a keyword whose list empties because
+    // `serializePublisherState` copies every existing key forward, so an empty
+    // entry once written round-trips forever. The parser was the one path that
+    // did not hold to it, and self-healing reaches an entry only for a keyword
+    // some axis report names -- a stale key is passed to neither writer.
+    expect(parsePublisherState('{"publishers":[],"pinned":{"k":[]}}').pinned).toEqual({})
+  })
+
+  it('throws past MAX_PINNED_KEYWORDS rather than letting the map widen forever', () => {
+    // MAX_PINNED_PER_KEYWORD caps the names under one key; nothing capped the
+    // keys. Throws rather than truncating: the only writer is `pinFor`, which
+    // cannot produce a key `retainPinned` has not kept, so a file over this
+    // bound was hand-edited or badly merged and dropping keys silently would
+    // discard real pins under the name of a repair.
+    const wide = Object.fromEntries(
+      Array.from({ length: MAX_PINNED_KEYWORDS + 1 }, (_, i) => [`k${i}`, ['owner']]),
+    )
+    expect(() => parsePublisherState(JSON.stringify({ publishers: [], pinned: wide })))
+      .toThrow(/pinned names 17 keywords, more than the 16/)
+  })
+
+  it('prunes a key no current harvest keyword names, from both maps', () => {
+    const state: PublisherState = {
+      publishers: ['a'],
+      cursors: { live: 5, renamed: 9 },
+      pinned: { live: ['keepme'], renamed: ['dropme'] },
+    }
+    const kept = retainPinned(state, ['live'])
+    expect(kept.pinned).toEqual({ live: ['keepme'] })
+    expect(kept.cursors).toEqual({ live: 5 })
+  })
+
+  it('builds every map with a null prototype, including the paths that had a plain literal', () => {
+    // The `DANGEROUS_KEYWORD_KEYS` comment rests its whole safety argument on
+    // this, and names the three-name refusal as explicitly insufficient:
+    // `toString` is admitted, and on a plain object `pinned['toString'] ?? []`
+    // returns a function, so the fallback never fires and the spread throws
+    // "is not iterable" as a raw, unfiled TypeError. Both offending paths were
+    // live -- the absent-field return is what today's committed file takes,
+    // and `mergePublishers` is what `build.ts` seeds from when the file is
+    // missing altogether.
+    const parsed = parsePublisherState('{"publishers":["a","b"],"cursor":0}')
+    expect(Object.getPrototypeOf(parsed.pinned)).toBeNull()
+    expect(() => probeOrder(parsed, 'toString', 2)).not.toThrow()
+    const merged = mergePublishers({ publishers: ['a'] }, ['b'])
+    expect(Object.getPrototypeOf(merged.pinned)).toBeNull()
+    expect(() => probeOrder(merged, 'valueOf', 2)).not.toThrow()
+  })
+})
+
+describe('applyAxisReport', () => {
+  const base = (over: Partial<PublisherState> = {}): PublisherState =>
+    ({ publishers: ['u0', 'u1', 'u2', 'u3'], ...over })
+  const outcome = (over: Partial<Parameters<typeof applyAxisReport>[1]> = {}) =>
+    ({ keyword: 'k', seedingComplete: false, seeded: [], evicted: [], stepped: 0, ...over })
+
+  it('evicts before it pins, so this run\'s own harvest outlasts a contradicting probe', () => {
+    // Both lists can name one maintainer: `seeded`'s atRiskOwners half reads
+    // this run's harvest, and the probe that produced `evicted` can disagree
+    // with it (a lagging search index, a rename, a scoped package whose
+    // `maintainers` array and the `maintainer:` qualifier differ). Pinning
+    // first let the probe win, and because atRiskOwners is recomputed from
+    // scratch every run the two then ALTERNATED forever -- pinned on odd runs,
+    // evicted on even ones, a diff in the committed file every other day and
+    // the maintainer's cell probed on only half of all runs.
+    const after = applyAxisReport(base({ pinned: { k: ['flap'] } }), outcome({ seeded: ['flap'], evicted: ['flap'] }))
+    expect(after.state.pinned?.k).toEqual(['flap'])
+  })
+
+  it('reuses a slot freed this run, instead of refusing a seed while a dead pin holds it', () => {
+    const full = Array.from({ length: MAX_PINNED_PER_KEYWORD }, (_, i) => `u${String(i).padStart(5, '0')}`)
+    const after = applyAxisReport(
+      base({ pinned: { k: full } }),
+      outcome({ seeded: ['newresidueowner'], evicted: [full[0] as string] }),
+    )
+    expect(after.state.pinned?.k).toContain('newresidueowner')
+    expect(after.refused).toEqual([])
+  })
+
+  it('reports what the bound refused, in the run that refused it', () => {
+    // Derived from the PRIOR pinned set instead, the warning said nothing at
+    // all on the one run where refusal began -- the set is still under the
+    // bound when such a run starts -- and never said how many owners it cost.
+    const full = Array.from({ length: MAX_PINNED_PER_KEYWORD }, (_, i) => `u${String(i).padStart(5, '0')}`)
+    const after = applyAxisReport(base({ pinned: { k: full } }), outcome({ seeded: ['za', 'zb'] }))
+    expect(after.refused).toEqual(['za', 'zb'])
+  })
+
+  it('does not report a name the bound never had a chance at', () => {
+    // Outside the grammar is not "refused for want of a slot", and reporting
+    // it as such sends a reader looking for a full set that is not there.
+    expect(applyAxisReport(base(), outcome({ seeded: ['ok', 'Not A Name'] })).refused).toEqual([])
+  })
+
+  it('removes a pin the complete seeding of an un-partitioned keyword does not name', () => {
+    // Entry runs for every keyword; exit is `selectPublisherCells`'s alone and
+    // that only runs once a keyword partitions. Without this the pinned set of
+    // a keyword still inside its window is MONOTONE -- it climbs to the bound
+    // and then reports itself FULL about a set nothing has ever probed. Under
+    // the window every name was paged, so `seeded` IS the whole at-risk owner
+    // set and a pin it omits has stopped being at risk.
+    const after = applyAxisReport(
+      base({ pinned: { k: ['gone', 'still'] } }),
+      outcome({ seedingComplete: true, seeded: ['still'] }),
+    )
+    expect(after.state.pinned?.k).toEqual(['still'])
+  })
+
+  it('keeps a pin the partial seeding of a partitioned keyword does not name', () => {
+    // The mirror image, and the reason the two cases cannot share a rule: past
+    // the window `seeded` is only what the window sweep showed, and the owners
+    // this axis exists for are precisely the ones it cannot show.
+    const after = applyAxisReport(
+      base({ pinned: { k: ['past-the-window', 'still'] } }),
+      outcome({ seedingComplete: false, seeded: ['still'] }),
+    )
+    expect(after.state.pinned?.k).toEqual(['past-the-window', 'still'])
+  })
+
+  it('advances only its own keyword\'s cursor', () => {
+    const after = applyAxisReport(base({ cursors: { k: 1, other: 2 } }), outcome({ stepped: 2 }))
+    expect(after.state.cursors).toEqual({ k: 3, other: 2 })
   })
 })

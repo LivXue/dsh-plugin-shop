@@ -19,8 +19,8 @@ import { fetchStarCounts } from './github-stars.ts'
 import { HARVEST_TOPICS, REPO_BACKFILL_BUDGET_DEFAULT, harvestRepos, parseHarvestBudget } from './github-client.ts'
 import { parseRepoState, repoGoneDetail, serializeRepoState } from './repo-state.ts'
 import { githubOwnerName } from './github-repo.ts'
-import { fetchCandidates, searchByKeywords, describePublisherAxis, describeShortfall, parseKeywordShortfall, parsePublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall, type PublisherAxisReport } from './npm-client.ts'
-import { mergePublishers, nextCursor, parsePublisherState, pinFor, serializePublisherState, unpinFor } from './publisher-state.ts'
+import { fetchCandidates, searchByKeywords, describePublisherAxis, describeShortfall, HARVEST_KEYWORDS, parseKeywordShortfall, parsePublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall, type PublisherAxisReport } from './npm-client.ts'
+import { applyAxisReport, MAX_EVICTIONS_PER_RUN, MAX_PINNED_PER_KEYWORD, mergePublishers, parsePublisherState, retainPinned, serializePublisherState } from './publisher-state.ts'
 import { pagesArtifactNames } from './pages-artifacts.ts'
 import { runPipeline, selectEntries } from './pipeline.ts'
 import { CATALOG_SCHEMA_VERSION, SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION } from './emit.ts'
@@ -131,19 +131,13 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
       fetch, undefined, npmToken, undefined, undefined,
       s => shortfalls.push(s),
       users => { for (const u of users) sawPublishers.add(u) },
-      priorPublishers.publishers,
+      priorPublishers,
       PUBLISHER_PROBE_BUDGET_DEFAULT,
-      priorPublishers.cursor ?? 0,
       report => axis.push(report),
-      priorPublishers.pinned,
     )
     for (const s of shortfalls) {
       npmParts.push(describeShortfall(s))
       process.stderr.write(`npm: ${describeShortfall(s)}\n`)
-    }
-    for (const report of axis) {
-      axisParts.push(describePublisherAxis(report))
-      process.stderr.write(`npm: ${describePublisherAxis(report)}\n`)
     }
     process.stderr.write(`harvested ${names.length} npm candidate(s)\n`)
     const harvested = await fetchCandidates(names, fetch, npmToken, npmBackupRegistry)
@@ -192,9 +186,7 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
         throw new Error(`--harvest-from ${harvestFrom}: expected an array of publisher axis records for \`publisherAxis\``)
       }
       for (const raw of parsed.publisherAxis) {
-        const report = parsePublisherAxisReport(raw, `--harvest-from ${harvestFrom}`)
-        axis.push(report)
-        axisParts.push(describePublisherAxis(report))
+        axis.push(parsePublisherAxisReport(raw, `--harvest-from ${harvestFrom}`))
       }
     }
     process.stderr.write(`reusing harvest: ${candidates.length} npm candidate(s)\n`)
@@ -384,50 +376,51 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   // leave a vocabulary recording work it did not publish; and the cursor
   // advances only on a run that got this far, so a failing run does not skip
   // its slice of the vocabulary.
-  let nextPublishers = mergePublishers(priorPublishers, [...sawPublishers])
+  // Pruned to the keywords this build actually harvests. Both keyed maps copy
+  // every existing key forward, so a key written once by a since-renamed
+  // HARVEST_KEYWORDS entry, or by a handoff naming a keyword this build does
+  // not harvest, would otherwise round-trip into the committed file forever
+  // with nothing able to probe, evict or report it.
+  let nextPublishers = retainPinned(mergePublishers(priorPublishers, [...sawPublishers]), HARVEST_KEYWORDS)
   // Spent here, after the merge above establishes the vocabulary both cells
   // and pins are named against, and after the pipeline has run: a build that
   // throws on its own artifacts should not leave a pin or an evicted name
   // behind for work it never published.
-  let rotated = 0
+  // One call per report, and every decision inside it — eviction before
+  // seeding, how complete `seeded` is, how far this keyword's own cursor
+  // moves. All of that is policy, so it lives in the pure module where a
+  // fixture can drive it; what is left here is the loop and the reporting.
   for (const report of axis) {
-    // pinFor before unpinFor, and safely so. Within one report the two lists
-    // cannot name the same maintainer through the probed halves alone:
-    // `evicted` only ever names a maintainer probed from probeOrder's
-    // `pinned` half, `seeded`'s outcome contribution only ever names one
-    // probed from its `rotated` half, and probeOrder (publisher-state.ts)
-    // keeps those two halves disjoint by construction (a pinned maintainer
-    // is excluded from the rotation slice). The remaining route into
-    // `seeded` -- atRiskOwners, read straight off this run's harvested set
-    // -- is independent of that split and could in principle name a
-    // maintainer this same run's probe also zeroed out. Even then this
-    // order only costs one run: applying pinFor first means eviction wins
-    // for this report, but atRiskOwners is recomputed fresh from the
-    // harvested set every run with no memory of a prior seeding, so a
-    // maintainer who still owns a live at-risk package is simply re-seeded
-    // next run -- the same one-probe cost the design already accepts for a
-    // stale pin (design doc §3), not a lost publisher.
-    nextPublishers = pinFor(nextPublishers, report.keyword, report.seeded)
-    nextPublishers = unpinFor(nextPublishers, report.keyword, report.evicted)
-    // Math.max, never summed: every keyword rotates the SAME shared cursor
-    // over the SAME shared vocabulary, so the advance is how far the
-    // farthest-reaching keyword got, not the total of all of them. The
-    // residual cost of sharing one cursor this way: a keyword whose own
-    // pinned set is larger gets a smaller rotation budget (design doc §4's
-    // `budget - |pinned[K]|`) and so a smaller `rotatedProbed`, yet the
-    // cursor still advances by the OTHER keyword's larger figure -- so the
-    // more-pinned keyword's own rotation skips a band of the vocabulary
-    // every run, one it would have reached on its own budget alone.
-    // Bounded, not unbounded: the cursor wraps (`% size` in `probeOrder`),
-    // so the skipped band is revisited on the next lap rather than lost
-    // forever -- but a lap still touches strictly less of the vocabulary
-    // for that keyword than for the one setting the pace.
-    rotated = Math.max(rotated, report.rotatedProbed)
+    const applied = applyAxisReport(nextPublishers, report)
+    nextPublishers = applied.state
+    const notes: string[] = []
+    // Reported from the call that actually refused, with a count. Derived
+    // from the PRIOR pinned set instead, this said nothing at all on the one
+    // run where refusal began -- the set is still under the bound when the
+    // run starts -- and never said how many owners it cost.
+    if (applied.refused.length > 0) {
+      notes.push(`refused ${applied.refused.length} new residue owner(s): the pinned set is FULL at ${MAX_PINNED_PER_KEYWORD}`)
+    }
+    // Loud, because the alternative reading of a large eviction list is a
+    // registry fault and the run just declined to act on it. Left silent this
+    // would look like a healthy run that evicted nothing.
+    if (applied.evictionsRefused > 0) {
+      notes.push(`REMOVED NO PINS: ${applied.evictionsRefused} pinned cells answered zero, more than the ${MAX_EVICTIONS_PER_RUN} one run may remove, which describes the registry rather than the ecosystem`)
+    }
+    axisParts.push([describePublisherAxis(report), ...notes].join(', '))
   }
-  writeFileSync(publisherStatePath, serializePublisherState({
-    ...nextPublishers,
-    cursor: nextCursor(nextPublishers, rotated),
-  }))
+  // An axis that reported nothing is reported AS nothing, rather than by an
+  // absent heading. On the `--harvest-from` path a handoff carrying no
+  // `publisherAxis` -- one written before the field existed -- pins nothing,
+  // evicts nothing and advances no cursor, so every subsequent run re-probes
+  // the same band while the vocabulary grows. That is the failure this
+  // module's cursor exists to prevent, and it looked exactly like a healthy
+  // run with nothing to do.
+  if (axis.length === 0) {
+    axisParts.push('no publisher axis record this run: nothing was pinned, evicted or rotated, and every keyword cursor stayed where it was')
+  }
+  for (const part of axisParts) process.stderr.write(`npm: ${part}\n`)
+  writeFileSync(publisherStatePath, serializePublisherState(nextPublishers))
   process.stderr.write(
     `npm: publisher vocabulary ${priorPublishers.publishers.length} -> ${nextPublishers.publishers.length}\n`)
   const npmLine = npmParts.length === 0 ? '' : `\nnpm search shortfall (tolerated, packages missing from this build):\n${npmParts.map(part => `- ${part}\n`).join('')}`

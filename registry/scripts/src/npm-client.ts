@@ -1,6 +1,7 @@
 import { readCappedBody } from './http-body.ts'
 import { compareStrings } from './identity.ts'
-import { atRiskNameCount, atRiskOwners, isMaintainerName, isPinnableKeyword, MAX_PINNED_PER_KEYWORD, probeOrder, type HarvestedName } from './publisher-state.ts'
+import { escapeCell } from './emit.ts'
+import { atRiskNameCount, atRiskOwners, cursorFor, isMaintainerName, isPinnableKeyword, MAX_PINNED_PER_KEYWORD, probeOrder, type AxisOutcome, type HarvestedName, type PublisherState } from './publisher-state.ts'
 import type { Candidate, Rejection } from './types.ts'
 
 /**
@@ -248,7 +249,10 @@ export function describeShortfall(s: KeywordShortfall): string {
   if (s.tailShortfall > 0) {
     parts.push(`${s.tailShortfall} of the ${s.unreachable} names the reported total puts beyond that window, of which the combined searches recovered ${s.recovered}`)
   }
-  return `${keywordQuery([s.keyword])} enumerated ${s.enumerated} of ${s.required}, missing ${parts.join('; ')}`
+  // Escaped for the reason `describePublisherAxis` states: on the
+  // `--harvest-from` path this keyword is untrusted handoff JSON and this
+  // string is published bytes.
+  return `${escapeCell(keywordQuery([s.keyword]))} enumerated ${s.enumerated} of ${s.required}, missing ${parts.join('; ')}`
 }
 
 /**
@@ -306,25 +310,37 @@ export function parseKeywordShortfall(value: unknown, where: string): KeywordSho
  * nothing — so `vocabulary: 0` has to be reportable as a value rather
  * than as an absent line.
  */
-export interface PublisherAxisReport {
-  readonly keyword: string
+export interface PublisherAxisReport extends AxisOutcome {
+  /**
+   * Whether the keyword had to be partitioned — past SEARCH_WINDOW — which is
+   * also whether the axis probed anything at all. Reported so a keyword inside
+   * its window says so, rather than printing the row of zeros a broken axis
+   * prints too. Distinct from {@link AxisOutcome.seedingComplete}, which also
+   * requires the keyword to have enumerated whole.
+   */
+  readonly partitioned: boolean
   readonly vocabulary: number
+  /**
+   * How many maintainers were pinned for this keyword when the run started.
+   *
+   * The axis's core state, and the one figure that separates "38 seeded owners
+   * are waiting for the crossing" from "seeding has never worked": every probe
+   * counter is legitimately zero for a keyword still inside its window, so
+   * without this the line for a healthy pre-crossing keyword is byte-identical
+   * to the line for an inert axis — the 0.8.1 failure this report exists to
+   * make impossible.
+   */
+  readonly pinnedSet: number
   readonly pinnedProbed: number
   readonly pinnedSupplied: number
   /** Where this run's rotation started: the same index `probeOrder` was
-   * handed as `state.cursor`. Carried so a reader can tell which band of the
-   * vocabulary `rotatedProbed` came from, matching design doc §6's own
+   * handed as this keyword's cursor. Carried so a reader can tell which band
+   * of the vocabulary `rotatedProbed` came from, matching design doc §6's own
    * example line ("462 rotated from cursor 1305"). */
   readonly cursor: number
   readonly rotatedProbed: number
   readonly rotatedSupplied: number
-  readonly suppliedNames: number
-  /** At-risk owners observed this run, for the caller to pin. */
-  readonly seeded: readonly string[]
-  /** Pinned maintainers evicted this run: their cell answered zero. */
-  readonly evicted: readonly string[]
   readonly atRiskNames: number
-  readonly pinnedFull: boolean
 }
 
 /**
@@ -336,22 +352,43 @@ export interface PublisherAxisReport {
  * because it is broken", and only the inputs answer that.
  */
 export function describePublisherAxis(report: PublisherAxisReport): string {
-  const parts = [
-    `vocabulary ${report.vocabulary}`,
-    `${report.pinnedProbed} pinned probed (${report.pinnedSupplied} supplied)`,
-    `${report.rotatedProbed} rotated from cursor ${report.cursor} (${report.rotatedSupplied} supplied)`,
-    `${report.suppliedNames} name(s) recovered`,
-  ]
+  const parts = [`vocabulary ${report.vocabulary}`, `${report.pinnedSet} pinned`]
+  if (report.partitioned) {
+    parts.push(
+      `${report.pinnedProbed} probed (${report.pinnedSupplied} supplied)`,
+      `${report.rotatedProbed} rotated from cursor ${report.cursor} (${report.rotatedSupplied} supplied)`,
+      `${report.pinnedSupplied + report.rotatedSupplied} name(s) recovered`,
+    )
+  } else {
+    // Named rather than left as a row of zeros. A keyword inside its window is
+    // never probed at all, so every probe counter is legitimately zero — the
+    // same shape a broken axis prints, which is the one distinction this line
+    // exists to draw.
+    parts.push(`inside the ${SEARCH_WINDOW}-name window, so nothing was probed`)
+  }
+  // Printed UNCONDITIONALLY, results and inputs alike. Gating it on
+  // `seeded.length > 0` removed the one input that tells "nothing to seed"
+  // apart from "seeding is broken" in exactly the case where the question
+  // arises: `isAtRisk` answers false for any name whose `keywords` array is
+  // absent, so a search response that stopped carrying the field would make
+  // seeding a permanent no-op and print a line indistinguishable from a
+  // healthy run.
+  //
   // "at-risk name(s) SEEN THIS RUN", not "at-risk name(s)": for a keyword the
   // harvest partitions past SEARCH_WINDOW, the count below is only what the
   // window sweep actually showed, never the keyword's whole at-risk
   // population -- names past the window are exactly what this axis exists to
   // reach, so the unqualified noun would read as a completeness this line
   // cannot promise. See design doc §4's 2026-09-18 amendment.
-  if (report.seeded.length > 0) parts.push(`seeded ${report.seeded.length} owner(s) from ${report.atRiskNames} at-risk name(s) seen this run`)
+  parts.push(`seeded ${report.seeded.length} owner(s) from ${report.atRiskNames} at-risk name(s) seen this run`)
   if (report.evicted.length > 0) parts.push(`unpinned ${report.evicted.length} with no package left`)
-  if (report.pinnedFull) parts.push(`pinned set is FULL at ${MAX_PINNED_PER_KEYWORD} — new residue owners are being refused`)
-  return `${keywordQuery([report.keyword])} publisher axis — ${parts.join(', ')}`
+  if (report.pinnedSet >= MAX_PINNED_PER_KEYWORD) parts.push(`pinned set is FULL at ${MAX_PINNED_PER_KEYWORD}`)
+  // Escaped, like every other untrusted string this repo renders into the
+  // build report. On the `--harvest-from` path the keyword is handoff JSON,
+  // and `isPinnableKeyword` holds it only to a length and three refused names
+  // -- a newline forges a whole extra bullet in the PUBLISHED report.md, and
+  // `|` breaks any table it lands in. CLAUDE.md, "Untrusted input".
+  return `${escapeCell(keywordQuery([report.keyword]))} publisher axis — ${parts.join(', ')}`
 }
 
 /**
@@ -384,22 +421,55 @@ export function parsePublisherAxisReport(value: unknown, where: string): Publish
     // carries `"__proto__"` sends an operator looking for the wrong defect.
     throw new Error(`${where}: publisher axis record has no \`keyword\` string usable as a pinned-set key (absent, empty, over-long, or a prototype-hijacking name); re-run the harvest that wrote it`)
   }
-  if (typeof r.pinnedFull !== 'boolean') {
-    throw new Error(`${where}: publisher axis record for \`${r.keyword}\` has no boolean \`pinnedFull\`; re-run the harvest that wrote it`)
+  if (typeof r.partitioned !== 'boolean') {
+    throw new Error(`${where}: publisher axis record for \`${r.keyword}\` has no boolean \`partitioned\`; re-run the harvest that wrote it`)
+  }
+  if (typeof r.seedingComplete !== 'boolean') {
+    throw new Error(`${where}: publisher axis record for \`${r.keyword}\` has no boolean \`seedingComplete\`; re-run the harvest that wrote it`)
+  }
+  // Complete seeding means the keyword enumerated whole INSIDE its window, so
+  // it cannot be claimed by a record that also reports a partition — and it is
+  // what licenses removing a pin.
+  if (r.seedingComplete && r.partitioned) {
+    throw new Error(`${where}: publisher axis record for \`${r.keyword}\` claims complete seeding and a partition, which cannot both be true; re-run the harvest that wrote it`)
+  }
+  const pinnedProbed = count('pinnedProbed')
+  const rotatedProbed = count('rotatedProbed')
+  const stepped = count('stepped')
+  // Cross-field checks, for the reason `parseKeywordShortfall`'s identity
+  // check exists: a handoff is the one path into these fields that does not
+  // come from the producer, and a record can otherwise state one thing in a
+  // counter and its contradiction in another -- which
+  // `describePublisherAxis` then publishes as a single sentence.
+  //
+  // `stepped` is the vocabulary POSITIONS the rotation walked and
+  // `rotatedProbed` the publishers it returned; the walk skips a candidate
+  // already pinned, so it can only ever consume at least as many positions
+  // as it yielded.
+  if (stepped < rotatedProbed) {
+    throw new Error(`${where}: publisher axis record for \`${r.keyword}\` walked ${stepped} vocabulary position(s) but reports ${rotatedProbed} rotated, which no walk can do; re-run the harvest that wrote it`)
+  }
+  // Nothing is probed at all for a keyword inside its window, so a record
+  // that reports probes AND claims it did not partition describes two
+  // different runs.
+  if (!r.partitioned && pinnedProbed + rotatedProbed + stepped > 0) {
+    throw new Error(`${where}: publisher axis record for \`${r.keyword}\` reports probing but no partition, which cannot both be true; re-run the harvest that wrote it`)
   }
   return {
     keyword: r.keyword,
+    partitioned: r.partitioned,
+    seedingComplete: r.seedingComplete,
     vocabulary: count('vocabulary'),
-    pinnedProbed: count('pinnedProbed'),
+    pinnedSet: count('pinnedSet'),
+    pinnedProbed,
     pinnedSupplied: count('pinnedSupplied'),
     cursor: count('cursor'),
-    rotatedProbed: count('rotatedProbed'),
+    rotatedProbed,
     rotatedSupplied: count('rotatedSupplied'),
-    suppliedNames: count('suppliedNames'),
+    stepped,
     seeded: names('seeded'),
     evicted: names('evicted'),
     atRiskNames: count('atRiskNames'),
-    pinnedFull: r.pinnedFull,
   }
 }
 
@@ -1788,33 +1858,27 @@ export async function searchByKeywords(
    */
   onPublishers: (usernames: readonly string[]) => void = () => {},
   /**
-   * The maintainer usernames prior runs have seen, as the publisher axis's
-   * vocabulary. Empty means the axis is inert and the behaviour is exactly
-   * what it was before it existed — which is what makes it safe to land.
+   * The publisher axis's committed state: the vocabulary prior runs have seen,
+   * each keyword's rotation position, and each keyword's pinned set. Passed
+   * WHOLE rather than field by field — `probeOrder` takes exactly this shape,
+   * and three positional parameters that were destructured by the caller only
+   * to be reassembled here is three chances to transpose two `number`s that
+   * type-check either way. An empty vocabulary with no pins means the axis is
+   * inert and the behaviour is exactly what it was before it existed — which
+   * is what makes it safe to land.
    */
-  publishers: readonly string[] = [],
+  publisherState: PublisherState = { publishers: [] },
   publisherProbeBudget: number = PUBLISHER_PROBE_BUDGET_DEFAULT,
-  /**
-   * Where in `publishers` this run starts spending its budget, wrapping at the
-   * end. The budget is a PREFIX of a sorted list, so a fixed start probes the
-   * same names on every run and never probes the rest — see
-   * `PublisherState.cursor`, which carries this across runs.
-   */
-  publisherProbeOffset: number = 0,
   /**
    * Called once per harvest keyword with what the publisher axis did for it
    * this run. Fires even when the keyword never crosses the window, because
-   * `vocabulary`/`atRiskNames` are informative on their own and a caller
-   * pinning owners needs every keyword, not only the ones that partitioned.
+   * `vocabulary`/`atRiskNames`/`pinnedSet` are informative on their own and a
+   * caller pinning owners needs every keyword, not only the ones that
+   * partitioned.
    */
   onPublisherAxis: (report: PublisherAxisReport) => void = () => {},
-  /**
-   * Maintainers already pinned for a keyword, prior runs' seeding. Read only
-   * to report {@link PublisherAxisReport.pinnedFull} here; Task 6 is what
-   * spends it on probing.
-   */
-  pinned: Readonly<Record<string, readonly string[]>> = {},
 ): Promise<string[]> {
+  const publishers = publisherState.publishers
   const seen = new Set<string>()
   const probe = (cell: Cell): Promise<number> =>
     searchTotal(cell, fetchImpl, sleep, token, backupRegistry, timeoutMs)
@@ -1901,9 +1965,15 @@ export async function searchByKeywords(
         // The at-risk rule reads these two fields off the object the loop
         // already holds; `keywordsOf` starts no request. Keyed by name, like
         // `tally` below, so a re-observation of the same package — the retry
-        // path, or a publisher cell re-serving a window name — overwrites
-        // rather than duplicates.
-        if (typeof found === 'string') {
+        // path, or a publisher cell re-serving a window name — cannot
+        // duplicate it. FIRST observation wins rather than last: a name is
+        // served many times over one keyword's run (the window sweep, then
+        // most of the refinement cells, then the publisher cells, and the
+        // whole of `enumerate` twice), and every one of those carries the same
+        // registry record, so overwriting rebuilt an identical value — a
+        // fresh Set, a spread and an object literal — some fifteen thousand
+        // times per keyword to no effect.
+        if (typeof found === 'string' && harvested?.has(found) !== true) {
           harvested?.set(found, { keywords: keywordsOf(object?.package), maintainers: owners })
         }
         if (tally !== undefined && typeof found === 'string') {
@@ -1969,12 +2039,26 @@ export async function searchByKeywords(
      * `probeOrder`'s result. Set once — selection is memoized below. */
     let pinnedProbed = 0
     let rotatedProbed = 0
+    /** Vocabulary positions the rotation walked, which is what the cursor
+     * advances by — see `advanceCursor` in `publisher-state.ts`. Not
+     * `rotatedProbed`: the walk skips a candidate already pinned, consuming a
+     * position without returning one. */
+    let stepped = 0
+    /** Publisher cells already paged this run, by query. `enumerate` runs
+     * twice whenever a keyword's residual sends it round again — every run,
+     * for `deepseek-harness` — and the second pass's delta is 0 by this
+     * module's own reasoning, so re-paging buys nothing. It is not free
+     * either: a pinned maintainer whose at-risk names sit past the window
+     * passes the `cellTotal > served` filter on every future run, so at the
+     * pinned bound this is up to 250 zero-yield `size=250` requests per
+     * keyword per run. The partition cells are deliberately NOT tracked here
+     * — re-paging those is what the retry exists for. */
+    const pagedPublisherCells = new Set<string>()
     /** Names credited to a cell's own PAGING (the before/after delta measured
      * in `enumerate` below), never to its probe — a probe only proves a cell
      * could supply something, not that it did. */
     let pinnedSupplied = 0
     let rotatedSupplied = 0
-    let suppliedNames = 0
     /** Pinned maintainers whose cell answered zero this run — see the exit
      * rule below. Exit is this and nothing else. */
     const evicted: string[] = []
@@ -2021,15 +2105,31 @@ export async function searchByKeywords(
     const selectPublisherCells = async (): Promise<{ pinned: Cell[]; rotated: Cell[] }> => {
       const pinnedCells: Cell[] = []
       const rotatedCells: Cell[] = []
-      const order = probeOrder({ publishers, cursor: publisherProbeOffset, pinned }, keyword, publisherProbeBudget)
+      const order = probeOrder(publisherState, keyword, publisherProbeBudget)
       pinnedProbed = order.pinned.length
       rotatedProbed = order.rotated.length
+      stepped = order.stepped
       for (const [source, users] of [['pinned', order.pinned], ['rotated', order.rotated]] as const) {
         for (const maintainer of users) {
           const cell: Cell = { keywords: [keyword], maintainer }
           const cellTotal = await probe(cell)
           if (cellTotal === 0) {
-            if (source === 'pinned') evicted.push(maintainer)
+            // CONFIRMED before it evicts, and only the pinned half can evict
+            // at all. A zero total is not an error and this module says so
+            // elsewhere: `{"objects":[],"total":0}` is what npm serves for a
+            // real query against a registry that does not implement the
+            // `keywords:` qualifier, and the same search has been observed
+            // serving a 249-of-250 page and a 200 carrying `<!doctype html>`.
+            // Acting on one sample is the trade design doc §3 refuses — "a
+            // stale pin costs one probe per run, a wrong eviction costs the
+            // crossing" — because the loss is ONE-WAY for the keyword this
+            // axis exists for: a pinned owner's names sit past rank
+            // SEARCH_WINDOW, so the window sweep can never put them back into
+            // `harvested` and seeding can never name that owner again. The
+            // second probe costs one request and only ever on a zero, which
+            // is rare by construction: every maintainer in the vocabulary was
+            // read off a `keywords:<harvest>` result.
+            if (source === 'pinned' && await probe(cell) === 0) evicted.push(maintainer)
             continue
           }
           // A publisher cell is bounded by one account's output under one
@@ -2083,21 +2183,21 @@ export async function searchByKeywords(
         // paged once pages the same names again and its delta is 0 the second
         // time: nothing here can be credited twice.
         for (const cell of publisherCells.pinned) {
+          if (pagedPublisherCells.has(cellQuery(cell))) continue
+          pagedPublisherCells.add(cellQuery(cell))
           const before = forKeyword.size
           await pageCell(cell, forKeyword, 'throw', undefined, harvested)
           const delta = forKeyword.size - before
-          if (delta > 0) {
-            pinnedSupplied += delta
-            suppliedNames += delta
-          }
+          if (delta > 0) pinnedSupplied += delta
         }
         for (const cell of publisherCells.rotated) {
+          if (pagedPublisherCells.has(cellQuery(cell))) continue
+          pagedPublisherCells.add(cellQuery(cell))
           const before = forKeyword.size
           await pageCell(cell, forKeyword, 'throw', undefined, harvested)
           const delta = forKeyword.size - before
           if (delta > 0) {
             rotatedSupplied += delta
-            suppliedNames += delta
             // Outcome entry (design doc §3): a rotated cell that supplied a
             // name nothing else had earns a pinned spot, so the next run
             // probes it directly instead of waiting for rotation to return.
@@ -2147,21 +2247,44 @@ export async function searchByKeywords(
     // persists one pinned set per keyword and does not need to know which
     // entry path (design doc §2 seeding or §3 outcome) put a given owner in
     // it.
-    const seeded = [...new Set([...atRiskOwners([...harvested.values()], keyword, PARTITION_KEYWORDS), ...earned])]
+    //
+    // Measured against the refinements that actually REACH a name this run,
+    // not against PARTITION_KEYWORDS wholesale. A refinement whose own cell is
+    // `oversized` is paged with 'stop' — truncated at SEARCH_WINDOW exactly as
+    // the bare keyword is — so a name carrying only that refinement is
+    // reachable by nothing past its rank, and scoring it safe because the
+    // refinement is "in the list" hides precisely the population this axis
+    // exists for. `keywords:deepseek-harness,dsh` crossing its own window is
+    // not hypothetical: `partitionKeyword`'s comment records it costing the
+    // catalog 24 packages between 2026-09-11 and 2026-09-14. Only a
+    // two-keyword cell counts — a deeper `[K, R, S]` split reaches a name only
+    // if it also carries S, so it does not make R alone sufficient.
+    //
+    // Under the window there is no partition and nothing has been measured, so
+    // the full list is the right forecast: the question there is which names
+    // WILL be stranded when the keyword crosses, and every refinement still
+    // has its own window to spend.
+    const reachable = partitioned
+      ? cells.flatMap(cell => (cell.keywords.length === 2 && cell.keywords[1] !== undefined ? [cell.keywords[1]] : []))
+      : PARTITION_KEYWORDS
+    const harvestedNames = [...harvested.values()]
+    const seeded = [...new Set([...atRiskOwners(harvestedNames, keyword, reachable), ...earned])]
       .sort(compareStrings)
     onPublisherAxis({
       keyword,
+      partitioned,
+      seedingComplete: !partitioned && shortfall <= 0,
       vocabulary: publishers.length,
+      pinnedSet: (publisherState.pinned?.[keyword] ?? []).length,
       pinnedProbed,
       pinnedSupplied,
-      cursor: publisherProbeOffset,
+      cursor: cursorFor(publisherState, keyword),
       rotatedProbed,
       rotatedSupplied,
-      suppliedNames,
+      stepped,
       seeded,
       evicted,
-      atRiskNames: atRiskNameCount([...harvested.values()], keyword, PARTITION_KEYWORDS),
-      pinnedFull: (pinned[keyword] ?? []).length >= MAX_PINNED_PER_KEYWORD,
+      atRiskNames: atRiskNameCount(harvestedNames, keyword, reachable),
     })
     if (shortfall <= 0) continue // whole, even when the keyword is past the window
     // Every refinement cell this keyword PAGED, the oversized ones included.

@@ -160,25 +160,47 @@ export function isPinnableKeyword(value: string): boolean {
 export interface PublisherState {
   readonly publishers: readonly string[]
   /**
-   * Where the next run starts spending its probe budget, as an index into
-   * `publishers`. Optional because a file written before this existed carries
-   * none, and absent means zero rather than malformed.
+   * The seed a keyword's rotation starts from when {@link
+   * PublisherState.cursors} carries no entry of its own for it — a keyword
+   * newly added to `HARVEST_KEYWORDS`, or a file written before `cursors`
+   * existed. Optional, and absent means zero rather than malformed.
    *
-   * It exists because the budget is a PREFIX, not a sample. `selectPublisherCells`
-   * walks the sorted vocabulary and stops at {@link
+   * A rotation exists at all because the budget is a PREFIX, not a sample.
+   * {@link probeOrder} walks the sorted vocabulary and stops at {@link
    * PUBLISHER_PROBE_BUDGET_DEFAULT}, so with no rotation the same first N are
    * probed on every run and everything sorted after them is never probed at
    * all — deterministic starvation rather than a partial run, and invisible
    * because a name that is never probed cannot be reported missing.
    *
-   * The inverse failure is just as silent and has already happened: {@link
-   * nextCursor} returns 0 while the whole vocabulary fits one budget, so a
-   * budget sized ABOVE the vocabulary leaves this field pinned at 0 and every
-   * run probes everything. {@link PUBLISHER_PROBE_BUDGET_DEFAULT}'s comment
-   * owns that incident and the bracket that now keeps the budget under the
-   * committed vocabulary.
+   * {@link serializePublisherState} writes this as the MINIMUM over `cursors`,
+   * so it names the least-advanced position any keyword holds. That is the
+   * conservative seed in both directions: a keyword joining the harvest starts
+   * where the vocabulary is least covered, and a reader predating `cursors`
+   * resumes behind every keyword rather than ahead of one — re-probing a band
+   * rather than skipping it.
    */
   readonly cursor?: number
+  /**
+   * Where each harvest keyword's rotation starts next run, as an index into
+   * `publishers`.
+   *
+   * PER KEYWORD for the same reason `pinned` is, and it is the same argument:
+   * {@link probeOrder} leaves a keyword's rotation `budget - |pinned[K]|`
+   * slots, so two keywords with different pinned sets walk different distances
+   * in one run. One shared cursor must advance by ONE of those distances and
+   * is wrong for the other keyword either way — advance by the larger and the
+   * more-pinned keyword skips a band every run, which at a vocabulary
+   * commensurate with the advance is the SAME band forever (at 4,000
+   * publishers, a 500 budget and 250 pins, half the vocabulary is never
+   * reached); advance by the smaller and the other keyword re-probes ground it
+   * already covered. A cursor of its own lets each keyword complete its own
+   * lap, and the keyword the axis exists for is precisely the one that
+   * accumulates the most pins.
+   *
+   * Optional because a file written before this existed carries none, and
+   * absent means "seed every keyword from `cursor`" rather than malformed.
+   */
+  readonly cursors?: Readonly<Record<string, number>>
   /**
    * Maintainers pinned for one harvest keyword: probed on every run rather
    * than waited for by rotation.
@@ -199,12 +221,33 @@ export interface PublisherState {
  */
 function readPinned(parsed: unknown): Record<string, string[]> {
   const pinned = (parsed as { pinned?: unknown }).pinned
-  if (pinned === undefined) return {}
+  // `Object.create(null)` on this path too, not a `{}` literal. The comment on
+  // DANGEROUS_KEYWORD_KEYS rests its whole safety argument on every `pinned`
+  // map in this file being built that way, and THIS is the path today's
+  // committed file takes — it carries no `pinned` key at all. A plain object
+  // here put `Object.prototype` back on the chain for the one map that reaches
+  // production, where `probeOrder`'s `state.pinned?.['toString'] ?? []` returns
+  // a function, the fallback never fires, and the spread throws
+  // "pinnedAll is not iterable" as a raw, unfiled TypeError.
+  if (pinned === undefined) return Object.create(null)
   if (typeof pinned !== 'object' || pinned === null || Array.isArray(pinned)) {
     throw new Error('publisher-state.json: pinned must be an object')
   }
+  const keywords = Object.keys(pinned).sort(compareStrings)
+  // Both halves of the bound, as every other list this module reads carries
+  // both: MAX_PINNED_PER_KEYWORD caps the names under one key and this caps
+  // the keys. Without it nothing bounded the map's width at all — a key, once
+  // written, round-trips forever (see `retainPinned`, which is what prunes a
+  // key the harvest no longer uses), so an unbounded count is an unbounded
+  // committed file. Throws rather than truncating because the only writer is
+  // `pinFor`, which cannot produce a key `retainPinned` has not kept: a file
+  // over this bound was hand-edited or badly merged, and silently dropping
+  // keys would discard real pins under the name of a repair.
+  if (keywords.length > MAX_PINNED_KEYWORDS) {
+    throw new Error(`publisher-state.json: pinned names ${keywords.length} keywords, more than the ${MAX_PINNED_KEYWORDS} this harvest can have`)
+  }
   const out: Record<string, string[]> = Object.create(null)
-  for (const keyword of Object.keys(pinned).sort(compareStrings)) {
+  for (const keyword of keywords) {
     if (!isPinnableKeyword(keyword)) {
       throw new Error(`publisher-state.json: pinned key ${JSON.stringify(keyword)} is not a valid harvest keyword`)
     }
@@ -219,7 +262,60 @@ function readPinned(parsed: unknown): Record<string, string[]> {
       }
       kept.add(user)
     })
-    out[keyword] = [...kept].sort(compareStrings)
+    // Dropped, not kept: `pinFor` and `unpinFor` both delete a keyword whose
+    // list empties, because `serializePublisherState` copies every existing
+    // key forward and an empty entry once written round-trips forever. The
+    // parser was the one path that did not hold to that, so a hand edit or a
+    // bad merge re-introduced exactly what the writers exist to prevent — and
+    // self-healing reaches it only for a keyword some axis report names, since
+    // the writers are called per report keyword.
+    if (kept.size > 0) out[keyword] = [...kept].sort(compareStrings)
+  }
+  return out
+}
+
+/**
+ * Bound on how many keywords the pinned map may carry.
+ *
+ * `HARVEST_KEYWORDS` holds two, and a rename or an addition is a code change,
+ * so this is a defensive ceiling on a committed file rather than a measured
+ * tail. It is deliberately loose: the point is that the map cannot grow
+ * without bound, not that it matches today's harvest exactly — `retainPinned`
+ * is what holds it to the keywords actually in use.
+ */
+export const MAX_PINNED_KEYWORDS = 16
+
+/** A non-negative integer index, or a throw naming the field. */
+function readCursorValue(value: unknown, field: string): number {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+    // Stops the run rather than silently restarting the rotation at zero. A
+    // reset looks like nothing at all from the outside, and what it costs is
+    // the tail of the vocabulary never being probed again.
+    throw new Error(`publisher-state.json: ${field} must be a non-negative integer`)
+  }
+  return value
+}
+
+/**
+ * Parse the per-keyword cursor map, held to the same key grammar as `pinned`
+ * and the same value rule as the legacy `cursor`.
+ */
+function readCursors(parsed: unknown): Record<string, number> {
+  const cursors = (parsed as { cursors?: unknown }).cursors
+  if (cursors === undefined) return Object.create(null)
+  if (typeof cursors !== 'object' || cursors === null || Array.isArray(cursors)) {
+    throw new Error('publisher-state.json: cursors must be an object')
+  }
+  const keywords = Object.keys(cursors).sort(compareStrings)
+  if (keywords.length > MAX_PINNED_KEYWORDS) {
+    throw new Error(`publisher-state.json: cursors names ${keywords.length} keywords, more than the ${MAX_PINNED_KEYWORDS} this harvest can have`)
+  }
+  const out: Record<string, number> = Object.create(null)
+  for (const keyword of keywords) {
+    if (!isPinnableKeyword(keyword)) {
+      throw new Error(`publisher-state.json: cursors key ${JSON.stringify(keyword)} is not a valid harvest keyword`)
+    }
+    out[keyword] = readCursorValue((cursors as Record<string, unknown>)[keyword], `cursors[${JSON.stringify(keyword)}]`)
   }
   return out
 }
@@ -264,13 +360,12 @@ export function parsePublisherState(raw: string): PublisherState {
   // round-trips forever and costs one wasted probe and one wasted paged sweep
   // on every build.
   const cursor = (parsed as { cursor?: unknown }).cursor
-  if (cursor !== undefined && (typeof cursor !== 'number' || !Number.isInteger(cursor) || cursor < 0)) {
-    // Stops the run rather than silently restarting the rotation at zero. A
-    // reset looks like nothing at all from the outside, and what it costs is
-    // the tail of the vocabulary never being probed again.
-    throw new Error('publisher-state.json: cursor must be a non-negative integer')
+  return {
+    publishers: [...out].sort(compareStrings),
+    cursor: cursor === undefined ? 0 : readCursorValue(cursor, 'cursor'),
+    cursors: readCursors(parsed),
+    pinned: readPinned(parsed),
   }
-  return { publishers: [...out].sort(compareStrings), cursor: cursor ?? 0, pinned: readPinned(parsed) }
 }
 
 /** Serialize, sorted by code unit and newline-terminated. */
@@ -290,24 +385,67 @@ export function serializePublisherState(state: PublisherState): string {
   for (const keyword of Object.keys(state.pinned ?? {}).sort(compareStrings)) {
     pinned[keyword] = [...(state.pinned?.[keyword] ?? [])].sort(compareStrings)
   }
-  return `${JSON.stringify({ publishers, cursor: state.cursor ?? 0, pinned }, null, 2)}\n`
+  // Same construction and the same reason, for the same class of key.
+  const cursors: Record<string, number> = Object.create(null)
+  const positions: number[] = []
+  for (const keyword of Object.keys(state.cursors ?? {}).sort(compareStrings)) {
+    const position = state.cursors?.[keyword] ?? 0
+    cursors[keyword] = position
+    positions.push(position)
+  }
+  // The legacy single cursor, derived rather than carried: the MINIMUM over
+  // the per-keyword positions, which is the only value that cannot put a
+  // reader AHEAD of a keyword's own lap. See {@link PublisherState.cursor}.
+  const cursor = positions.length === 0 ? state.cursor ?? 0 : Math.min(...positions)
+  return `${JSON.stringify({ publishers, cursor, cursors, pinned }, null, 2)}\n`
+}
+
+/** Where `keyword`'s rotation starts this run — its own position, or the seed. */
+export function cursorFor(state: PublisherState, keyword: string): number {
+  return state.cursors?.[keyword] ?? state.cursor ?? 0
 }
 
 /**
- * Where the next run should start, given how many publishers this one
- * ROTATED to — not how large its budget was.
+ * The state with `keyword`'s rotation advanced past the band it just walked.
  *
- * Pinned probes do not advance the rotation: they are probed every run by
- * definition, so counting them here would step the cursor past
- * `pinned.length` publishers per snapshot, permanently and silently. The
- * vocabulary would grow, every build would stay green, and a band of it would
- * never be probed.
+ * `stepped` is vocabulary POSITIONS examined, which {@link probeOrder} returns
+ * and which is neither the budget nor the rotation length:
+ *
+ * - Not the budget. Pinned probes do not advance a rotation — they are probed
+ *   every run by definition — so counting them would step past `pinned.length`
+ *   publishers per snapshot, permanently and silently.
+ * - Not `rotated.length` either. The walk SKIPS a candidate already in the
+ *   pinned set, so it consumes a position without returning one; advancing by
+ *   the shorter figure restarts the next run inside the band this one already
+ *   covered, re-probing it. At the 250-pin bound over a 3,775-name vocabulary
+ *   that is ~16 wasted probes a run and a correspondingly longer lap.
+ *
+ * Advancing by exactly what was walked also restores the no-churn property for
+ * free: a run that walked the whole vocabulary has `stepped === size`, and
+ * `(cursor + size) % size` is `cursor`, so a budget at or above the vocabulary
+ * leaves the committed file untouched instead of rewriting it daily for a
+ * rotation that is already covering everything.
+ *
+ * A run that walked nothing — no axis record, a keyword that did not
+ * partition — leaves the position where it was rather than snapping to zero.
  */
-export function nextCursor(state: PublisherState, rotated: number): number {
+export function advanceCursor(state: PublisherState, keyword: string, stepped: number): PublisherState {
+  if (!isPinnableKeyword(keyword)) {
+    throw new Error(`publisher-state.json: advanceCursor keyword ${JSON.stringify(keyword)} is not a valid harvest keyword`)
+  }
   const size = state.publishers.length
-  if (size <= rotated) return 0
-  if (rotated <= 0) return state.cursor ?? 0
-  return ((state.cursor ?? 0) + rotated) % size
+  const cursors: Record<string, number> = Object.create(null)
+  for (const key of Object.keys(state.cursors ?? {})) cursors[key] = state.cursors?.[key] ?? 0
+  // Clamped to the vocabulary, because `probeOrder`'s walk stops at
+  // `stepped < size` and so can never report more: a larger figure reaches
+  // here only from a `--harvest-from` handoff, which is untrusted and which
+  // `parsePublisherAxisReport` can only check for integer-ness — it does not
+  // know the vocabulary. Clamping lands the cursor exactly where it started
+  // (a full lap), which is the one reading of "walked further than there is
+  // to walk" that skips nobody.
+  const walked = Math.min(stepped, size)
+  cursors[keyword] = size === 0 || walked <= 0 ? cursorFor(state, keyword) : (cursorFor(state, keyword) + walked) % size
+  return { ...state, cursors }
 }
 
 /**
@@ -328,11 +466,26 @@ export function nextCursor(state: PublisherState, rotated: number): number {
  */
 export function mergePublishers(state: PublisherState, seen: readonly string[]): PublisherState {
   const kept = new Set([...state.publishers, ...seen].filter(isMaintainerName))
-  // The cursor and pinned map ride through: a merge grows the vocabulary, it
-  // does not restart the rotation or disturb the pinned map. Advancing the
-  // cursor is `nextCursor`'s job and the caller's decision, because only the
-  // caller knows what budget the run actually spent.
-  return { publishers: [...kept].sort(compareStrings).slice(0, MAX_PUBLISHERS), cursor: state.cursor ?? 0, pinned: state.pinned ?? {} }
+  // The cursors and pinned map ride through: a merge grows the vocabulary, it
+  // does not restart a rotation or disturb the pinned map. Advancing a cursor
+  // is `advanceCursor`'s job and the caller's decision, because only the
+  // caller knows how far the run actually walked.
+  //
+  // Rebuilt with `Object.create(null)` rather than passed through with `?? {}`.
+  // A plain-object fallback made this the one builder in the file that could
+  // hand `probeOrder` a map with `Object.prototype` on its chain — and it is
+  // on the live path, because `build.ts` seeds from `{ publishers: [] }`
+  // whenever `publisher-state.json` is absent.
+  const pinned: Record<string, string[]> = Object.create(null)
+  for (const key of Object.keys(state.pinned ?? {})) pinned[key] = [...(state.pinned?.[key] ?? [])]
+  const cursors: Record<string, number> = Object.create(null)
+  for (const key of Object.keys(state.cursors ?? {})) cursors[key] = state.cursors?.[key] ?? 0
+  return {
+    publishers: [...kept].sort(compareStrings).slice(0, MAX_PUBLISHERS),
+    cursor: state.cursor ?? 0,
+    cursors,
+    pinned,
+  }
 }
 
 /** One harvested name, reduced to the two fields the at-risk rule reads. */
@@ -435,11 +588,15 @@ export function atRiskNameCount(
 /**
  * How many maintainers one keyword may pin.
  *
- * Half {@link PUBLISHER_PROBE_BUDGET_DEFAULT}, so pinned probes can never take
- * more than half a run and rotation always keeps the other half: the axis
- * degrades under a large pinned set, it never starves. Written as a literal
- * rather than imported from `npm-client.ts`, which would make this pure module
- * depend on the shell; `publisher-state.test.ts` asserts the relation instead.
+ * Half {@link PUBLISHER_PROBE_BUDGET_DEFAULT}. The "rotation always keeps half
+ * a run" guarantee is NOT this constant's job — {@link probeOrder} caps the
+ * pinned half at `⌊budget/2⌋` itself, so the property holds at every budget
+ * rather than only at the shipped pair. What the relation still buys is that
+ * everything STORED can also be probed: a bound above half the budget would
+ * let a pinned set grow a tail that `probeOrder` never reaches, pinned in name
+ * only. Written as a literal rather than imported from `npm-client.ts`, which
+ * would make this pure module depend on the shell; `publisher-state.test.ts`
+ * asserts the relation instead.
  *
  * At-risk names are ~2% of a keyword's names and the keyword grows ~70 a day,
  * so a pinned set grows by roughly one owner a day and this bound is months
@@ -461,9 +618,15 @@ export function pinFor(state: PublisherState, keyword: string, users: readonly s
     if (kept.size >= MAX_PINNED_PER_KEYWORD) break
     if (isMaintainerName(user)) kept.add(user)
   }
-  // Re-bounded after the merge: a state handed in already over the bound must
-  // not be grown by this call, and `Set` insertion cannot be relied on to stop
-  // at the limit when the incoming names were already present.
+  // The `break` above is what stops this call GROWING a set past the bound —
+  // the size is tested before every `add`, and re-adding a name already
+  // present does not raise it. What the slice covers is the other case: a
+  // state handed in ALREADY over the bound, which `readPinned` accepts because
+  // the alternative is a committed file no build can read. It shrinks such a
+  // state to the alphabetically-first MAX_PINNED_PER_KEYWORD, which is a
+  // repair and not a selection — the only writer is this function, so an
+  // over-bound input was hand-edited, badly merged, or written before the
+  // bound was lowered.
   const next = [...kept].sort(compareStrings).slice(0, MAX_PINNED_PER_KEYWORD)
   // Deletes rather than committing `keyword: []`: an empty array is inert to
   // `probeOrder` (`pinned?.[keyword] ?? []` reads the same either way), but it
@@ -491,27 +654,177 @@ export function unpinFor(state: PublisherState, keyword: string, users: readonly
 }
 
 /**
+ * The state with every `pinned` and `cursors` key outside `keywords` dropped.
+ *
+ * Both maps are keyed by harvest keyword and every writer copies each existing
+ * key forward, so a key written once — by a `HARVEST_KEYWORDS` entry that was
+ * later renamed or removed, or by a `--harvest-from` handoff naming a keyword
+ * this build does not harvest — round-trips into the committed file forever.
+ * Nothing probes it, nothing can evict it (eviction only names a maintainer
+ * the run PROBED), and nothing reports it: it simply accumulates in a
+ * daily-committed artifact. The caller passes the keywords it actually
+ * harvests, which is the only place that list is known.
+ */
+export function retainPinned(state: PublisherState, keywords: readonly string[]): PublisherState {
+  const keep = new Set(keywords)
+  const pinned: Record<string, string[]> = Object.create(null)
+  for (const key of Object.keys(state.pinned ?? {})) {
+    if (keep.has(key)) pinned[key] = [...(state.pinned?.[key] ?? [])]
+  }
+  const cursors: Record<string, number> = Object.create(null)
+  for (const key of Object.keys(state.cursors ?? {})) {
+    if (keep.has(key)) cursors[key] = state.cursors?.[key] ?? 0
+  }
+  return { ...state, cursors, pinned }
+}
+
+/**
+ * How many pins one run may remove.
+ *
+ * A pinned cell answering zero is confirmed by a second probe before it is
+ * reported at all, which covers a transient answer on ONE cell. It cannot
+ * cover a correlated one: a search index degraded for a whole class of query
+ * answers zero twice as readily as once, and the second probe lands
+ * milliseconds after the first. What distinguishes the two is the COUNT —
+ * pinned owners unpublish one at a time, and the set grows by roughly one
+ * owner a day, so a run reporting many at once is describing the registry and
+ * not the ecosystem.
+ *
+ * Over the cap `applyAxisReport` removes nothing and says so. The asymmetry is
+ * deliberate and design doc §3 states it: a stale pin costs one probe per run,
+ * a wrong eviction costs the crossing — for a keyword past the window, an
+ * evicted owner's names sit past `SEARCH_WINDOW`, so the sweep can never put
+ * them back into the harvest and seeding can never name that owner again.
+ *
+ * 8 rather than a measured figure: nothing has ever evicted in production, and
+ * the number that matters is only that it is far below a pinned set's size and
+ * far above a day's genuine churn.
+ */
+export const MAX_EVICTIONS_PER_RUN = 8
+
+/**
+ * What one keyword's publisher axis did in one run, reduced to the fields that
+ * decide a WRITE. `npm-client.ts`'s `PublisherAxisReport` extends this with the
+ * counters that are only ever printed.
+ */
+export interface AxisOutcome {
+  readonly keyword: string
+  /**
+   * Whether `seeded` is the keyword's WHOLE at-risk owner set, which is what
+   * licenses this run to remove a pin that `seeded` does not name.
+   *
+   * True only when the keyword enumerated whole AND inside its window: every
+   * name it has was paged, so a pin `seeded` omits has stopped being at risk
+   * (an unpublish, or a package that gained a refinement keyword). It is false
+   * past the window — there `seeded` is only what the window sweep showed, and
+   * the owners this axis exists for are precisely the ones it cannot show —
+   * and false on a tolerated shortfall, where a handful of names went unseen
+   * and one of them may be a pinned owner's only at-risk package. That
+   * shortfall case is why this is not simply `!partitioned`: the cost of
+   * getting it wrong is a pin missing on the day the keyword crosses, which is
+   * the one day this whole mechanism exists for.
+   */
+  readonly seedingComplete: boolean
+  /** At-risk owners observed this run, for the caller to pin. */
+  readonly seeded: readonly string[]
+  /** Pinned maintainers evicted this run: their cell answered zero. */
+  readonly evicted: readonly string[]
+  /** Vocabulary positions the rotation walked — see {@link advanceCursor}. */
+  readonly stepped: number
+}
+
+/**
+ * The committed state after one keyword's axis report: evictions applied,
+ * seeds pinned, cursor advanced. The whole per-report transition, in the pure
+ * module, because every step of it is a policy decision.
+ *
+ * ORDER: evict, then pin. The reverse loses a maintainer that both lists name
+ * — `seeded`'s `atRiskOwners` half reads this run's own harvest, so it can
+ * name a maintainer whose `maintainer:` probe answered zero (a lagging search
+ * index, a rename, a scoped package whose `maintainers` array and the
+ * `maintainer:` qualifier disagree). Pinning first lets the probe win over
+ * direct evidence, and because `atRiskOwners` is recomputed from scratch every
+ * run the two then alternate forever: pinned on odd runs, evicted on even
+ * ones, a diff in the committed file every other day and the maintainer's cell
+ * probed on only half of all runs. Evicting first lets the harvest win, which
+ * is the evidence that cannot be a transient index answer. It also lets a
+ * freed slot be reused in the SAME run: at the bound, pinning first refuses
+ * new residue owners while dead pins still hold the set.
+ *
+ * `refused` is what `pinFor` could not take because the set is at {@link
+ * MAX_PINNED_PER_KEYWORD} — returned rather than inferred later, because the
+ * caller's report is built before this runs and a bound reported from the
+ * PRIOR set names the failure one run after it first happened, without ever
+ * naming how many owners it cost.
+ */
+export function applyAxisReport(
+  state: PublisherState, outcome: AxisOutcome,
+): { state: PublisherState; refused: string[]; evictionsRefused: number } {
+  // All or nothing, and nothing past the cap: half a suspect eviction list is
+  // no safer than all of it, and applying the first 8 of 200 would turn a
+  // registry fault into a silent partial one. Enforced here rather than where
+  // the probes run, because `evicted` also arrives from an untrusted
+  // `--harvest-from` handoff that never probed anything at all.
+  const evicted = outcome.evicted.length > MAX_EVICTIONS_PER_RUN ? [] : outcome.evicted
+  const evictionsRefused = outcome.evicted.length > MAX_EVICTIONS_PER_RUN ? outcome.evicted.length : 0
+  const keep = new Set(outcome.seeded)
+  // With complete seeding a pin `seeded` does not name is an owner that has
+  // stopped being at risk. Without this second exit the pinned set of a
+  // keyword that has not yet crossed is MONOTONE: entry runs every run, while
+  // the probe exit is `selectPublisherCells`'s alone and that only runs once
+  // the keyword partitions. It would climb to the bound and then report itself
+  // FULL about a set nothing had ever probed.
+  const stale = outcome.seedingComplete
+    ? [...evicted, ...(state.pinned?.[outcome.keyword] ?? []).filter(user => !keep.has(user))]
+    : evicted
+  let next = unpinFor(state, outcome.keyword, stale)
+  next = pinFor(next, outcome.keyword, outcome.seeded)
+  const pinnedNow = new Set(next.pinned?.[outcome.keyword] ?? [])
+  // Only names the bound could have taken: one outside the grammar was never a
+  // candidate, and reporting it as refused would send a reader looking for a
+  // full set that is not there.
+  const refused = outcome.seeded.filter(user => isMaintainerName(user) && !pinnedNow.has(user))
+  return { state: advanceCursor(next, outcome.keyword, outcome.stepped), refused, evictionsRefused }
+}
+
+/**
  * Which publishers this run probes for `keyword`, in order.
  *
  * Pinned first and always; the rotation spends what is left of the budget,
- * starting at the cursor and skipping anyone already pinned — probing one
- * publisher twice in a run would spend budget to learn nothing.
+ * starting at this keyword's own cursor and skipping anyone already pinned —
+ * probing one publisher twice in a run would spend budget to learn nothing.
  *
- * The rotation length is what the cursor must advance by. Advancing by the
- * BUDGET instead would skip `pinned.length` publishers every snapshot,
- * permanently and silently: the vocabulary grows, every build is green, and a
- * band of the vocabulary is never rotated to.
+ * `stepped` is what the caller advances the cursor by: vocabulary POSITIONS
+ * walked, which is neither the budget nor `rotated.length`. See {@link
+ * advanceCursor}, which owns that argument.
+ *
+ * The pinned half is capped at HALF THE BUDGET rather than at {@link
+ * MAX_PINNED_PER_KEYWORD}, so "rotation always keeps the other half" is a
+ * property of this function instead of a coincidence between two constants
+ * declared in different modules. At the shipped pair the two are identical
+ * (250 of 500); below it — a reduced-cost run, a rate-limit backoff, a future
+ * override — the old form let the pinned set take the whole budget, leaving
+ * `rotated` empty and the cursor frozen, which is the starvation the cursor
+ * exists to prevent.
  */
 export function probeOrder(
   state: PublisherState, keyword: string, budget: number,
-): { pinned: string[]; rotated: string[] } {
-  const size = state.publishers.length
-  if (size === 0 || budget <= 0) return { pinned: [], rotated: [] }
+): { pinned: string[]; rotated: string[]; stepped: number } {
+  if (budget <= 0) return { pinned: [], rotated: [], stepped: 0 }
   const pinnedAll = state.pinned?.[keyword] ?? []
-  const pinned = [...pinnedAll].slice(0, Math.min(budget, MAX_PINNED_PER_KEYWORD))
+  const pinned = [...pinnedAll].slice(0, Math.floor(budget / 2))
+  const size = state.publishers.length
+  // AFTER the pinned slice, not before it. A pin is not a member of the
+  // vocabulary — `probeOrder` reads it from `state.pinned`, and a pinned
+  // maintainer survives `mergePublishers`'s MAX_PUBLISHERS truncation — so an
+  // empty vocabulary is a reason to rotate to nobody, never a reason to stop
+  // probing the pinned set. Returning early above it stranded the pins:
+  // never probed, so never supplied and never evicted, with the axis line
+  // reading as an ordinary empty-vocabulary no-op.
+  if (size === 0) return { pinned, rotated: [], stepped: 0 }
   const already = new Set(pinned)
   const rotated: string[] = []
-  const start = (state.cursor ?? 0) % size
+  const start = cursorFor(state, keyword) % size
   let stepped = 0
   while (pinned.length + rotated.length < budget && stepped < size) {
     const candidate = state.publishers[(start + stepped) % size]
@@ -520,5 +833,5 @@ export function probeOrder(
     already.add(candidate)
     rotated.push(candidate)
   }
-  return { pinned, rotated }
+  return { pinned, rotated, stepped }
 }

@@ -120,11 +120,9 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
     fetch, undefined, npmToken, undefined, undefined,
     s => shortfalls.push(s),
     users => { for (const u of users) sawPublishers.add(u) },
-    priorPublishers.publishers,
+    priorPublishers,
     PUBLISHER_PROBE_BUDGET_DEFAULT,
-    priorPublishers.cursor ?? 0,
     report => axis.push(report),
-    priorPublishers.pinned,
   )
   for (const s of shortfalls) {
     process.stderr.write(`classify: ${describeShortfall(s)}\n`)

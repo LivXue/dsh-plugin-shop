@@ -130,7 +130,7 @@ describe('the publisher vocabulary survives the run that discovered it', () => {
       // against a fixture that happened to cover it.
       const run = runEntry(cwd, 'build.ts', ['--harvest-from', 'dist/harvest.json'], [])
       expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
-      expect(vocabulary(cwd)).toEqual({ publishers: ['alice', 'bob'], cursor: 0, pinned: {} })
+      expect(vocabulary(cwd)).toEqual({ publishers: ['alice', 'bob'], cursor: 0, cursors: {}, pinned: {} })
       expect(run.stderr).toContain('publisher vocabulary 0 -> 2')
     } finally {
       rmSync(cwd, { recursive: true, force: true })
@@ -177,7 +177,7 @@ describe('the publisher vocabulary survives the run that discovered it', () => {
         `${JSON.stringify({ candidates: [], rejections: [], shortfalls: [] })}\n`)
       const run = runEntry(cwd, 'build.ts', ['--harvest-from', 'dist/harvest.json'], [])
       expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
-      expect(vocabulary(cwd)).toEqual({ publishers: ['alice'], cursor: 0, pinned: {} })
+      expect(vocabulary(cwd)).toEqual({ publishers: ['alice'], cursor: 0, cursors: {}, pinned: {} })
     } finally {
       rmSync(cwd, { recursive: true, force: true })
     }
@@ -254,15 +254,15 @@ describe('the publisher vocabulary survives the run that discovered it', () => {
   for (const [label, value] of [
     ['a string', '"nope"'],
     ['null', 'null'],
-    ['missing cursor', '[{"keyword":"dsh-plugin","vocabulary":0,"pinnedProbed":0,"pinnedSupplied":0,"rotatedProbed":0,"rotatedSupplied":0,"suppliedNames":0,"seeded":[],"evicted":[],"atRiskNames":0,"pinnedFull":false}]'],
-    ['missing rotatedProbed', '[{"keyword":"dsh-plugin","vocabulary":0,"pinnedProbed":0,"pinnedSupplied":0,"cursor":0,"rotatedSupplied":0,"suppliedNames":0,"seeded":[],"evicted":[],"atRiskNames":0,"pinnedFull":false}]'],
-    ['an ungrammatical seeded username', '[{"keyword":"dsh-plugin","vocabulary":0,"pinnedProbed":0,"pinnedSupplied":0,"cursor":0,"rotatedProbed":0,"rotatedSupplied":0,"suppliedNames":0,"seeded":["Alice"],"evicted":[],"atRiskNames":0,"pinnedFull":false}]'],
+    ['missing cursor', '[{"keyword":"dsh-plugin","vocabulary":0,"partitioned":false,"seedingComplete":true,"pinnedSet":0,"pinnedProbed":0,"pinnedSupplied":0,"rotatedProbed":0,"rotatedSupplied":0,"stepped":0,"seeded":[],"evicted":[],"atRiskNames":0}]'],
+    ['missing rotatedProbed', '[{"keyword":"dsh-plugin","vocabulary":0,"partitioned":false,"seedingComplete":true,"pinnedSet":0,"pinnedProbed":0,"pinnedSupplied":0,"cursor":0,"rotatedSupplied":0,"stepped":0,"seeded":[],"evicted":[],"atRiskNames":0}]'],
+    ['an ungrammatical seeded username', '[{"keyword":"dsh-plugin","vocabulary":0,"partitioned":false,"seedingComplete":true,"pinnedSet":0,"pinnedProbed":0,"pinnedSupplied":0,"cursor":0,"rotatedProbed":0,"rotatedSupplied":0,"stepped":0,"seeded":["Alice"],"evicted":[],"atRiskNames":0}]'],
     // A dangerous keyword is exactly as unusable as a missing one: it reaches
     // pinFor/unpinFor as the map key, and pinFor's own guard now refuses it --
     // but parsePublisherAxisReport must refuse it itself, at the handoff
     // boundary, the same way it refuses an ungrammatical seeded username
     // rather than leaving that to whatever pinFor happens to do with it.
-    ['a dangerous keyword', '[{"keyword":"__proto__","vocabulary":0,"pinnedProbed":0,"pinnedSupplied":0,"cursor":0,"rotatedProbed":0,"rotatedSupplied":0,"suppliedNames":0,"seeded":[],"evicted":[],"atRiskNames":0,"pinnedFull":false}]'],
+    ['a dangerous keyword', '[{"keyword":"__proto__","vocabulary":0,"partitioned":false,"seedingComplete":true,"pinnedSet":0,"pinnedProbed":0,"pinnedSupplied":0,"cursor":0,"rotatedProbed":0,"rotatedSupplied":0,"stepped":0,"seeded":[],"evicted":[],"atRiskNames":0}]'],
   ] as const) {
     it(`refuses a handoff whose publisherAxis field is ${label}, before writing anything`, () => {
       // Strict like `publishers`, not lenient like `shortfalls`: this field
@@ -287,28 +287,57 @@ describe('the publisher vocabulary survives the run that discovered it', () => {
     })
   }
 
-  it('the cursor advances by what the axis rotated to, not by the probe budget', () => {
-    // Old behaviour advanced by PUBLISHER_PROBE_BUDGET_DEFAULT regardless of
-    // how much the axis actually rotated to. 600 publishers is comfortably
-    // above that budget on either the old or the new formula, so a cursor of
-    // 42 can only come from actually reading `rotatedProbed`.
+  it('advances each keyword\'s own cursor by what that keyword WALKED', () => {
+    // Two things at once, and both were wrong before. The advance is
+    // `stepped` -- vocabulary positions walked -- not the budget and not the
+    // rotation length; and it lands on the keyword's OWN cursor, so a
+    // more-pinned keyword walking a shorter band is not dragged past what it
+    // covered by the other keyword's longer one. 600 publishers is comfortably
+    // above the probe budget, so these positions can only come from the
+    // records.
     const cwd = newWorkspace()
     try {
       const publishers = Array.from({ length: 600 }, (_, i) => `u${String(i).padStart(3, '0')}`)
       writeFileSync(join(cwd, 'registry', 'publisher-state.json'),
         `${JSON.stringify({ publishers, cursor: 0 }, null, 2)}\n`)
       mkdirSync(join(cwd, 'dist'), { recursive: true })
+      const record = (keyword: string, stepped: number) => ({
+        keyword, partitioned: true, seedingComplete: false, vocabulary: 600, pinnedSet: 0, pinnedProbed: 0, pinnedSupplied: 0,
+        cursor: 0, rotatedProbed: stepped, rotatedSupplied: 0, stepped,
+        seeded: [], evicted: [], atRiskNames: 0,
+      })
       writeFileSync(join(cwd, 'dist', 'harvest.json'), `${JSON.stringify({
         candidates: [], rejections: [], shortfalls: [],
-        publisherAxis: [{
-          keyword: 'dsh-plugin', vocabulary: 600, pinnedProbed: 0, pinnedSupplied: 0,
-          cursor: 0, rotatedProbed: 42, rotatedSupplied: 0, suppliedNames: 0,
-          seeded: [], evicted: [], atRiskNames: 0, pinnedFull: false,
-        }],
+        publisherAxis: [record('dsh-plugin', 42), record('deepseek-harness', 17)],
       })}\n`)
       const run = runEntry(cwd, 'build.ts', ['--harvest-from', 'dist/harvest.json'], [])
       expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
-      expect(vocabulary(cwd)).toMatchObject({ cursor: 42 })
+      // A shared cursor advanced by max(42, 17) would put deepseek-harness at
+      // 42, skipping the 25 publishers it never walked -- and at a vocabulary
+      // commensurate with the advance, skipping the same band forever.
+      expect(vocabulary(cwd)).toMatchObject({ cursors: { 'dsh-plugin': 42, 'deepseek-harness': 17 } })
+      // The legacy field is the minimum, so a reader predating `cursors`
+      // re-probes a band rather than skipping one.
+      expect(vocabulary(cwd)).toMatchObject({ cursor: 17 })
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('says so in the report when a handoff carries no publisher axis at all', () => {
+    // A handoff written before the field existed pins nothing, evicts nothing
+    // and advances no cursor, so every subsequent run re-probes the same band
+    // while the vocabulary grows -- the failure the cursor exists to prevent,
+    // and it looked exactly like a healthy run with nothing to do, because the
+    // heading was simply absent.
+    const cwd = newWorkspace()
+    try {
+      mkdirSync(join(cwd, 'dist'), { recursive: true })
+      writeFileSync(join(cwd, 'dist', 'harvest.json'),
+        '{"candidates":[],"rejections":[],"shortfalls":[]}\n')
+      const run = runEntry(cwd, 'build.ts', ['--harvest-from', 'dist/harvest.json'], [])
+      expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
+      expect(run.stderr).toContain('no publisher axis record this run')
     } finally {
       rmSync(cwd, { recursive: true, force: true })
     }
