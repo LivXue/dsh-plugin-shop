@@ -1,6 +1,6 @@
 import { readCappedBody } from './http-body.ts'
 import { compareStrings } from './identity.ts'
-import { atRiskNameCount, atRiskOwners, isMaintainerName, MAX_PINNED_PER_KEYWORD, probeOrder, type HarvestedName } from './publisher-state.ts'
+import { atRiskNameCount, atRiskOwners, isMaintainerName, isPinnableKeyword, MAX_PINNED_PER_KEYWORD, probeOrder, type HarvestedName } from './publisher-state.ts'
 import type { Candidate, Rejection } from './types.ts'
 
 /**
@@ -311,6 +311,11 @@ export interface PublisherAxisReport {
   readonly vocabulary: number
   readonly pinnedProbed: number
   readonly pinnedSupplied: number
+  /** Where this run's rotation started: the same index `probeOrder` was
+   * handed as `state.cursor`. Carried so a reader can tell which band of the
+   * vocabulary `rotatedProbed` came from, matching design doc §6's own
+   * example line ("462 rotated from cursor 1305"). */
+  readonly cursor: number
   readonly rotatedProbed: number
   readonly rotatedSupplied: number
   readonly suppliedNames: number
@@ -334,10 +339,16 @@ export function describePublisherAxis(report: PublisherAxisReport): string {
   const parts = [
     `vocabulary ${report.vocabulary}`,
     `${report.pinnedProbed} pinned probed (${report.pinnedSupplied} supplied)`,
-    `${report.rotatedProbed} rotated (${report.rotatedSupplied} supplied)`,
+    `${report.rotatedProbed} rotated from cursor ${report.cursor} (${report.rotatedSupplied} supplied)`,
     `${report.suppliedNames} name(s) recovered`,
   ]
-  if (report.seeded.length > 0) parts.push(`seeded ${report.seeded.length} owner(s) from ${report.atRiskNames} at-risk name(s)`)
+  // "at-risk name(s) SEEN THIS RUN", not "at-risk name(s)": for a keyword the
+  // harvest partitions past SEARCH_WINDOW, the count below is only what the
+  // window sweep actually showed, never the keyword's whole at-risk
+  // population -- names past the window are exactly what this axis exists to
+  // reach, so the unqualified noun would read as a completeness this line
+  // cannot promise. See design doc §4's 2026-09-18 amendment.
+  if (report.seeded.length > 0) parts.push(`seeded ${report.seeded.length} owner(s) from ${report.atRiskNames} at-risk name(s) seen this run`)
   if (report.evicted.length > 0) parts.push(`unpinned ${report.evicted.length} with no package left`)
   if (report.pinnedFull) parts.push(`pinned set is FULL at ${MAX_PINNED_PER_KEYWORD} — new residue owners are being refused`)
   return `${keywordQuery([report.keyword])} publisher axis — ${parts.join(', ')}`
@@ -366,7 +377,7 @@ export function parsePublisherAxisReport(value: unknown, where: string): Publish
     }
     return arr
   }
-  if (typeof r?.keyword !== 'string') {
+  if (typeof r?.keyword !== 'string' || !isPinnableKeyword(r.keyword)) {
     throw new Error(`${where}: publisher axis record has no \`keyword\`; re-run the harvest that wrote it`)
   }
   if (typeof r.pinnedFull !== 'boolean') {
@@ -377,6 +388,7 @@ export function parsePublisherAxisReport(value: unknown, where: string): Publish
     vocabulary: count('vocabulary'),
     pinnedProbed: count('pinnedProbed'),
     pinnedSupplied: count('pinnedSupplied'),
+    cursor: count('cursor'),
     rotatedProbed: count('rotatedProbed'),
     rotatedSupplied: count('rotatedSupplied'),
     suppliedNames: count('suppliedNames'),
@@ -1117,6 +1129,22 @@ export function maintainersOf(pkg: unknown): string[] {
 export const KEYWORDS_MAX_COUNT = 128
 
 /**
+ * Maximum length of one recorded keyword, the other half of the same policy as
+ * {@link KEYWORDS_MAX_COUNT}: that bound only ever capped how many entries
+ * survive, and left how long any one of them could be unbounded — unlike its
+ * siblings `MAINTAINER_MAX_LENGTH` (with {@link MAINTAINERS_MAX_COUNT}, in
+ * `publisher-state.ts`) and {@link PEER_NAME_MAX_LENGTH} (with {@link
+ * PEERS_MAX_COUNT}), which both pair a count bound with a length bound. A
+ * keyword this field returns reaches
+ * `atRiskOwners`, a published `plugins.json`, and build-report text the same
+ * as a peer name does, so it carries the same requirement to be bounded on
+ * both axes. 128 matches the sibling bounds rather than a fresh measurement:
+ * no real npm keyword approaches it, so this is a defensive ceiling, not a
+ * trim of an observed tail.
+ */
+export const KEYWORD_MAX_LENGTH = 128
+
+/**
  * The keywords one search object declares. The bytes are already fetched and
  * parsed — the paging loop reads {@link maintainersOf} off this same object —
  * so reading this field costs no request. It is what decides whether a name is
@@ -1128,7 +1156,7 @@ export function keywordsOf(pkg: unknown): string[] {
   if (!Array.isArray(raw)) return []
   const out = new Set<string>()
   for (const entry of raw.slice(0, KEYWORDS_MAX_COUNT)) {
-    if (typeof entry === 'string' && entry.length > 0) out.add(entry)
+    if (typeof entry === 'string' && entry.length > 0 && entry.length <= KEYWORD_MAX_LENGTH) out.add(entry)
   }
   return [...out]
 }
@@ -2111,6 +2139,7 @@ export async function searchByKeywords(
       vocabulary: publishers.length,
       pinnedProbed,
       pinnedSupplied,
+      cursor: publisherProbeOffset,
       rotatedProbed,
       rotatedSupplied,
       suppliedNames,

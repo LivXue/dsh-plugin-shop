@@ -12,12 +12,15 @@
  *
  * A deterministic build input like `verified.yml` and `repo-state.json`:
  * sorted by code unit, and a malformed one throws rather than silently
- * harvesting with half a partition. To be committed daily — stated in the
- * future tense because it is not yet: no module reads or writes
- * `registry/publisher-state.json`, the file does not exist, and `daily.yml`
- * does not stage it. Task 6 of the plan wires all three, and
- * `workflow.test.ts` asserts the staged set by equality, so the write cannot
- * land without the `git add`.
+ * harvesting with half a partition. Originally specified to be committed
+ * daily while nothing yet read or wrote `registry/publisher-state.json` and
+ * `daily.yml` did not stage it — Task 6 of the plan was to wire all three.
+ *
+ * Done as of 2026-09-18: the file exists (3,775 publishers and a cursor as of
+ * 2026-09-16), `build.ts` reads and writes it, and `daily.yml` stages it
+ * alongside `repo-state.json` and `first-seen.yml` — `workflow.test.ts`
+ * asserts the staged set by equality, so the write cannot land without the
+ * `git add`.
  *
  * PURE, and the grammar lives here rather than in `npm-client.ts` for that
  * reason: it is a policy decision, the core owns those, and no pure module in
@@ -97,6 +100,48 @@ export function isMaintainerName(value: unknown): value is string {
     && MAINTAINER_NAME.test(value)
 }
 
+/**
+ * Own-property names that hijack a plain object through bracket assignment.
+ * `pinned` and the local map every {@link pinFor}, {@link unpinFor} and
+ * {@link readPinned} build are ordinary objects, so `obj[key] = value` for
+ * `key === '__proto__'` does not create a property at all — it runs the
+ * inherited `Object.prototype.__proto__` SETTER and replaces the object's own
+ * prototype. A subsequent `Object.keys` never sees the entry (a silent drop
+ * on read), and a subsequent read of `obj[key]` returns whatever was just
+ * installed as the prototype rather than `undefined`, so an `?? []` fallback
+ * never fires and the value reaches `Set`/`Array` methods that do not exist
+ * on it (a raw, unfiled crash on write). `constructor` and `prototype` are
+ * refused alongside it: both already name a non-array value on the same
+ * prototype chain, and reach the identical class of crash.
+ *
+ * A harvest keyword is never one of these three in practice — they come from
+ * `PARTITION_KEYWORDS` in `npm-client.ts` — but this file's `pinned` map is
+ * keyed by whatever string a caller hands in, and per CLAUDE.md's "Untrusted
+ * input" policy the `--harvest-from` handoff that supplies it is exactly
+ * that: untrusted. The boundary has to refuse these by name rather than
+ * assume the source is friendly.
+ */
+const DANGEROUS_KEYWORD_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+
+/**
+ * Bound on a keyword used as a `pinned` map key. Real harvest keywords are
+ * `PARTITION_KEYWORDS` entries — a handful of characters — so this is a
+ * defensive ceiling rather than a measured one, sized like this file's other
+ * bounds on registry-controlled input.
+ */
+const KEYWORD_KEY_MAX_LENGTH = 128
+
+/**
+ * Whether `value` may be used as a `pinned` map key without corrupting the
+ * object it is set on. Exported so `npm-client.ts`'s `parsePublisherAxisReport`
+ * can hold its `keyword` field to the same grammar at the handoff boundary,
+ * rather than leaving a bad value to surface only when `pinFor`/`unpinFor`
+ * happen to be called with it.
+ */
+export function isPinnableKeyword(value: string): boolean {
+  return value.length > 0 && value.length <= KEYWORD_KEY_MAX_LENGTH && !DANGEROUS_KEYWORD_KEYS.has(value)
+}
+
 /** Every maintainer username the harvest has seen, sorted, unique. */
 export interface PublisherState {
   readonly publishers: readonly string[]
@@ -144,8 +189,11 @@ function readPinned(parsed: unknown): Record<string, string[]> {
   if (typeof pinned !== 'object' || pinned === null || Array.isArray(pinned)) {
     throw new Error('publisher-state.json: pinned must be an object')
   }
-  const out: Record<string, string[]> = {}
+  const out: Record<string, string[]> = Object.create(null)
   for (const keyword of Object.keys(pinned).sort(compareStrings)) {
+    if (!isPinnableKeyword(keyword)) {
+      throw new Error(`publisher-state.json: pinned key ${JSON.stringify(keyword)} is not a valid harvest keyword`)
+    }
     const users = (pinned as Record<string, unknown>)[keyword]
     if (!Array.isArray(users)) {
       throw new Error(`publisher-state.json: pinned[${JSON.stringify(keyword)}] must be an array`)
@@ -233,7 +281,8 @@ export function serializePublisherState(state: PublisherState): string {
  */
 export function nextCursor(state: PublisherState, rotated: number): number {
   const size = state.publishers.length
-  if (size <= rotated || rotated <= 0) return 0
+  if (size <= rotated) return 0
+  if (rotated <= 0) return state.cursor ?? 0
   return ((state.cursor ?? 0) + rotated) % size
 }
 
@@ -378,7 +427,10 @@ export const MAX_PINNED_PER_KEYWORD = 250
 
 /** The state plus `users` pinned for `keyword`; filtered, unique, sorted, bounded. */
 export function pinFor(state: PublisherState, keyword: string, users: readonly string[]): PublisherState {
-  const pinned: Record<string, string[]> = {}
+  if (!isPinnableKeyword(keyword)) {
+    throw new Error(`publisher-state.json: pinFor keyword ${JSON.stringify(keyword)} is not a valid harvest keyword`)
+  }
+  const pinned: Record<string, string[]> = Object.create(null)
   for (const key of Object.keys(state.pinned ?? {})) pinned[key] = [...(state.pinned?.[key] ?? [])]
   const kept = new Set(pinned[keyword] ?? [])
   for (const user of users) {
@@ -402,7 +454,10 @@ export function pinFor(state: PublisherState, keyword: string, users: readonly s
 
 /** The state with `users` no longer pinned for `keyword`. */
 export function unpinFor(state: PublisherState, keyword: string, users: readonly string[]): PublisherState {
-  const pinned: Record<string, string[]> = {}
+  if (!isPinnableKeyword(keyword)) {
+    throw new Error(`publisher-state.json: unpinFor keyword ${JSON.stringify(keyword)} is not a valid harvest keyword`)
+  }
+  const pinned: Record<string, string[]> = Object.create(null)
   for (const key of Object.keys(state.pinned ?? {})) pinned[key] = [...(state.pinned?.[key] ?? [])]
   const drop = new Set(users)
   const kept = (pinned[keyword] ?? []).filter(user => !drop.has(user))

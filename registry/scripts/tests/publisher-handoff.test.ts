@@ -254,8 +254,15 @@ describe('the publisher vocabulary survives the run that discovered it', () => {
   for (const [label, value] of [
     ['a string', '"nope"'],
     ['null', 'null'],
-    ['missing rotatedProbed', '[{"keyword":"dsh-plugin","vocabulary":0,"pinnedProbed":0,"pinnedSupplied":0,"rotatedSupplied":0,"suppliedNames":0,"seeded":[],"evicted":[],"atRiskNames":0,"pinnedFull":false}]'],
-    ['an ungrammatical seeded username', '[{"keyword":"dsh-plugin","vocabulary":0,"pinnedProbed":0,"pinnedSupplied":0,"rotatedProbed":0,"rotatedSupplied":0,"suppliedNames":0,"seeded":["Alice"],"evicted":[],"atRiskNames":0,"pinnedFull":false}]'],
+    ['missing cursor', '[{"keyword":"dsh-plugin","vocabulary":0,"pinnedProbed":0,"pinnedSupplied":0,"rotatedProbed":0,"rotatedSupplied":0,"suppliedNames":0,"seeded":[],"evicted":[],"atRiskNames":0,"pinnedFull":false}]'],
+    ['missing rotatedProbed', '[{"keyword":"dsh-plugin","vocabulary":0,"pinnedProbed":0,"pinnedSupplied":0,"cursor":0,"rotatedSupplied":0,"suppliedNames":0,"seeded":[],"evicted":[],"atRiskNames":0,"pinnedFull":false}]'],
+    ['an ungrammatical seeded username', '[{"keyword":"dsh-plugin","vocabulary":0,"pinnedProbed":0,"pinnedSupplied":0,"cursor":0,"rotatedProbed":0,"rotatedSupplied":0,"suppliedNames":0,"seeded":["Alice"],"evicted":[],"atRiskNames":0,"pinnedFull":false}]'],
+    // A dangerous keyword is exactly as unusable as a missing one: it reaches
+    // pinFor/unpinFor as the map key, and pinFor's own guard now refuses it --
+    // but parsePublisherAxisReport must refuse it itself, at the handoff
+    // boundary, the same way it refuses an ungrammatical seeded username
+    // rather than leaving that to whatever pinFor happens to do with it.
+    ['a dangerous keyword', '[{"keyword":"__proto__","vocabulary":0,"pinnedProbed":0,"pinnedSupplied":0,"cursor":0,"rotatedProbed":0,"rotatedSupplied":0,"suppliedNames":0,"seeded":[],"evicted":[],"atRiskNames":0,"pinnedFull":false}]'],
   ] as const) {
     it(`refuses a handoff whose publisherAxis field is ${label}, before writing anything`, () => {
       // Strict like `publishers`, not lenient like `shortfalls`: this field
@@ -295,7 +302,7 @@ describe('the publisher vocabulary survives the run that discovered it', () => {
         candidates: [], rejections: [], shortfalls: [],
         publisherAxis: [{
           keyword: 'dsh-plugin', vocabulary: 600, pinnedProbed: 0, pinnedSupplied: 0,
-          rotatedProbed: 42, rotatedSupplied: 0, suppliedNames: 0,
+          cursor: 0, rotatedProbed: 42, rotatedSupplied: 0, suppliedNames: 0,
           seeded: [], evicted: [], atRiskNames: 0, pinnedFull: false,
         }],
       })}\n`)

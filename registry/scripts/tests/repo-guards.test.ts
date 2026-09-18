@@ -324,6 +324,16 @@ describe('what CI publishes to Pages', () => {
     expect(read('registry/scripts/src/build.ts')).toContain('parsed.publisherAxis')
   })
 
+  it('publishes the axis heading a reader needs to find the publisher-axis lines', () => {
+    // Sibling to the shortfall heading guarded just above
+    // ('npm search shortfall'). publisher-handoff.test.ts's own 'publisher
+    // axis' assertions are on the REFUSAL path's stderr text (a malformed
+    // handoff), not on the heading a healthy run actually writes into
+    // report.md and the CI log, so nothing pinned this exact string before.
+    expect(read('registry/scripts/src/build.ts'))
+      .toContain('publisher axis (per-keyword pinning and probing, not itself a shortfall):')
+  })
+
   it('hands the build the harvest path the classifier writes', () => {
     // Two files, one contract: classify.ts writes the handoff and daily.yml
     // tells build.ts where to read it. A silent mismatch would make the build

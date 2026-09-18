@@ -183,6 +183,15 @@ describe('publisher state', () => {
       expect(nextCursor({ publishers: ['a', 'b', 'c'], cursor: 2 }, 3)).toBe(0)
     })
 
+    it('preserves the cursor when nothing rotated, rather than restarting at zero', () => {
+      // Distinct from "stays put" above, where the vocabulary itself is too
+      // small to rotate: here the vocabulary is larger than the rotation and
+      // a run that rotated nothing -- a keyword that answered a shortfall, or
+      // was not partitioned this run -- must leave a nonzero cursor where it
+      // was rather than snapping it back to the start of the vocabulary.
+      expect(nextCursor({ publishers: ['a', 'b', 'c', 'd', 'e'], cursor: 3 }, 0)).toBe(3)
+    })
+
     it('advances by one budget and wraps, so no publisher is starved forever', () => {
       // THE point of the cursor. `selectPublisherCells` walks the vocabulary in
       // sorted order and stops at the budget, so without rotation the same
@@ -276,6 +285,32 @@ describe('the pinned map in the committed state', () => {
   it('throws on a pinned username outside the grammar, like publishers does', () => {
     expect(() => parsePublisherState(JSON.stringify({ publishers: [], pinned: { k: ['ok', ''] } })))
       .toThrow(/pinned\["k"\]\[1\] is not a maintainer username/)
+  })
+
+  it('throws on a dangerous pinned key rather than silently dropping it', () => {
+    // out[keyword] = ... in readPinned is a bracket ASSIGNMENT; for
+    // keyword === '__proto__' that invokes the inherited Object.prototype
+    // accessor and reassigns the object's own prototype instead of creating a
+    // visible property, so the entry silently vanishes from Object.keys with
+    // no thrown error and no trace of what was lost. The JSON has to be a raw
+    // string here, not a JS object literal with a `__proto__` key: `{
+    // __proto__: [...] }` in source sets the new object's prototype at parse
+    // time and never becomes an own property for JSON.stringify to see,
+    // which is the opposite of what JSON.parse does to the same text.
+    expect(() => parsePublisherState('{"publishers": [], "pinned": {"__proto__": ["a"]}}'))
+      .toThrow(/pinned key "__proto__" is not a valid harvest keyword/)
+    expect(() => parsePublisherState('{"publishers": [], "pinned": {"constructor": ["a"]}}'))
+      .toThrow(/pinned key "constructor" is not a valid harvest keyword/)
+    expect(() => parsePublisherState('{"publishers": [], "pinned": {"prototype": ["a"]}}'))
+      .toThrow(/pinned key "prototype" is not a valid harvest keyword/)
+  })
+
+  it('throws on an empty or over-length pinned key', () => {
+    const long = 'k'.repeat(129)
+    expect(() => parsePublisherState(JSON.stringify({ publishers: [], pinned: { '': ['a'] } })))
+      .toThrow(/pinned key "" is not a valid harvest keyword/)
+    expect(() => parsePublisherState(JSON.stringify({ publishers: [], pinned: { [long]: ['a'] } })))
+      .toThrow(/is not a valid harvest keyword/)
   })
 
   it('de-duplicates within a keyword', () => {
@@ -401,6 +436,26 @@ describe('pinFor and unpinFor', () => {
 
   it('drops a keyword whose last pin is removed, rather than leaving an empty array', () => {
     expect(unpinFor({ publishers: [], pinned: { k: ['a'] } }, 'k', ['a']).pinned).toEqual({})
+  })
+
+  it('throws on a dangerous keyword rather than crashing inside Set/Array logic', () => {
+    // Historically: pinned['__proto__'] ?? [] in pinFor read through the
+    // inherited Object.prototype accessor ('pinned' was a plain {} literal),
+    // returning Object.prototype itself -- truthy, so `?? []` never fired --
+    // and `new Set(Object.prototype)` threw "object is not iterable", a raw,
+    // unfiled TypeError. unpinFor has the same construction and would have
+    // thrown "pinned[keyword].filter is not a function" instead.
+    expect(() => pinFor({ publishers: [] }, '__proto__', ['a']))
+      .toThrow(/pinFor keyword "__proto__" is not a valid harvest keyword/)
+    expect(() => unpinFor({ publishers: [] }, '__proto__', ['a']))
+      .toThrow(/unpinFor keyword "__proto__" is not a valid harvest keyword/)
+  })
+
+  it('throws on constructor, prototype, and an empty or over-length keyword', () => {
+    expect(() => pinFor({ publishers: [] }, 'constructor', ['a'])).toThrow(/is not a valid harvest keyword/)
+    expect(() => pinFor({ publishers: [] }, 'prototype', ['a'])).toThrow(/is not a valid harvest keyword/)
+    expect(() => pinFor({ publishers: [] }, '', ['a'])).toThrow(/is not a valid harvest keyword/)
+    expect(() => pinFor({ publishers: [] }, 'k'.repeat(129), ['a'])).toThrow(/is not a valid harvest keyword/)
   })
 })
 

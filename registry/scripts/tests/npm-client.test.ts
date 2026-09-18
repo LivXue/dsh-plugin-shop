@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { type Cell, cellKey, cellQuery, FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, keywordsOf, KEYWORDS_MAX_COUNT, maintainersOf, MAINTAINERS_MAX_COUNT, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describePublisherAxis, describeShortfall, parseKeywordShortfall, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, type PublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
+import { type Cell, cellKey, cellQuery, FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, keywordsOf, KEYWORD_MAX_LENGTH, KEYWORDS_MAX_COUNT, maintainersOf, MAINTAINERS_MAX_COUNT, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describePublisherAxis, describeShortfall, parseKeywordShortfall, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, type PublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
 import { ENTRY_PAYLOAD_MAX_BYTES, entryPayloadBytes } from '../src/gate.ts'
 import { MAX_TARBALL_BYTES } from '../src/github-client.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
@@ -816,7 +816,7 @@ describe('describePublisherAxis', () => {
   it('names the inputs, not only the results, so an inert axis is visible', () => {
     const line = describePublisherAxis({
       keyword: 'dsh-plugin', vocabulary: 0,
-      pinnedProbed: 0, pinnedSupplied: 0, rotatedProbed: 0, rotatedSupplied: 0,
+      pinnedProbed: 0, pinnedSupplied: 0, cursor: 0, rotatedProbed: 0, rotatedSupplied: 0,
       suppliedNames: 0, seeded: [], atRiskNames: 0, evicted: [], pinnedFull: false,
     })
     // 0.8.1 shipped an empty vocabulary and CI was green while the axis did
@@ -827,7 +827,7 @@ describe('describePublisherAxis', () => {
   it('reports a full pinned set, because new residue owners are then refused', () => {
     const line = describePublisherAxis({
       keyword: 'dsh-plugin', vocabulary: 3775,
-      pinnedProbed: 250, pinnedSupplied: 4, rotatedProbed: 250, rotatedSupplied: 1,
+      pinnedProbed: 250, pinnedSupplied: 4, cursor: 0, rotatedProbed: 250, rotatedSupplied: 1,
       suppliedNames: 5, seeded: [], atRiskNames: 81, evicted: [], pinnedFull: true,
     })
     expect(line).toMatch(/pinned set is FULL/)
@@ -836,11 +836,26 @@ describe('describePublisherAxis', () => {
   it('reports seeded and evicted owners, the one branch the two fixtures above leave empty', () => {
     const line = describePublisherAxis({
       keyword: 'dsh-plugin', vocabulary: 500,
-      pinnedProbed: 10, pinnedSupplied: 3, rotatedProbed: 5, rotatedSupplied: 2,
+      pinnedProbed: 10, pinnedSupplied: 3, cursor: 0, rotatedProbed: 5, rotatedSupplied: 2,
       suppliedNames: 5, seeded: ['newowner'], atRiskNames: 12, evicted: ['goneowner'], pinnedFull: false,
     })
-    expect(line).toContain('seeded 1 owner(s) from 12 at-risk name(s)')
+    // "seen this run", not bare "at-risk name(s)": for a keyword the harvest
+    // partitions past SEARCH_WINDOW this count is only what the window sweep
+    // showed, never the keyword's whole at-risk population -- see design doc
+    // §4's 2026-09-18 amendment.
+    expect(line).toContain('seeded 1 owner(s) from 12 at-risk name(s) seen this run')
     expect(line).toContain('unpinned 1 with no package left')
+  })
+
+  it('names the cursor the rotated segment started from, per design doc §6', () => {
+    // Same numbers as the design doc's own observability example, so this
+    // test doubles as a check that the shipped line says what §6 promised.
+    const line = describePublisherAxis({
+      keyword: 'dsh-plugin', vocabulary: 3775,
+      pinnedProbed: 38, pinnedSupplied: 0, cursor: 1305, rotatedProbed: 462, rotatedSupplied: 3,
+      suppliedNames: 7, seeded: [], atRiskNames: 0, evicted: [], pinnedFull: false,
+    })
+    expect(line).toContain('462 rotated from cursor 1305')
   })
 })
 
@@ -903,6 +918,21 @@ describe('keywordsOf', () => {
   it('bounds the count, because the array is registry-controlled', () => {
     const many = Array.from({ length: KEYWORDS_MAX_COUNT + 50 }, (_, i) => `k${i}`)
     expect(keywordsOf({ keywords: many })).toHaveLength(KEYWORDS_MAX_COUNT)
+  })
+
+  it('bounds each keyword\'s length too, unlike the count bound which leaves a long string intact', () => {
+    // KEYWORDS_MAX_COUNT only ever bounded how many entries survive; nothing
+    // bounded how long any one of them could be, unlike maintainersOf's sibling
+    // MAINTAINER_MAX_LENGTH or toCandidate's PEER_NAME_MAX_LENGTH. A keyword
+    // this field returns reaches a published `plugins.json` and a build report
+    // line, same as those, so it needs the same second half of the bound.
+    //
+    // Literals, not derived from KEYWORD_MAX_LENGTH, so the fixture pins the
+    // value instead of moving with it.
+    const kept = 'k'.repeat(128)
+    const dropped = 'k'.repeat(129)
+    expect(KEYWORD_MAX_LENGTH).toBe(128)
+    expect(keywordsOf({ keywords: [kept, dropped] })).toEqual([kept])
   })
 })
 

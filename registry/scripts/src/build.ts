@@ -391,11 +391,37 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   // behind for work it never published.
   let rotated = 0
   for (const report of axis) {
+    // pinFor before unpinFor, and safely so. Within one report the two lists
+    // cannot name the same maintainer through the probed halves alone:
+    // `evicted` only ever names a maintainer probed from probeOrder's
+    // `pinned` half, `seeded`'s outcome contribution only ever names one
+    // probed from its `rotated` half, and probeOrder (publisher-state.ts)
+    // keeps those two halves disjoint by construction (a pinned maintainer
+    // is excluded from the rotation slice). The remaining route into
+    // `seeded` -- atRiskOwners, read straight off this run's harvested set
+    // -- is independent of that split and could in principle name a
+    // maintainer this same run's probe also zeroed out. Even then this
+    // order only costs one run: applying pinFor first means eviction wins
+    // for this report, but atRiskOwners is recomputed fresh from the
+    // harvested set every run with no memory of a prior seeding, so a
+    // maintainer who still owns a live at-risk package is simply re-seeded
+    // next run -- the same one-probe cost the design already accepts for a
+    // stale pin (design doc §3), not a lost publisher.
     nextPublishers = pinFor(nextPublishers, report.keyword, report.seeded)
     nextPublishers = unpinFor(nextPublishers, report.keyword, report.evicted)
     // Math.max, never summed: every keyword rotates the SAME shared cursor
     // over the SAME shared vocabulary, so the advance is how far the
-    // farthest-reaching keyword got, not the total of all of them.
+    // farthest-reaching keyword got, not the total of all of them. The
+    // residual cost of sharing one cursor this way: a keyword whose own
+    // pinned set is larger gets a smaller rotation budget (design doc §4's
+    // `budget - |pinned[K]|`) and so a smaller `rotatedProbed`, yet the
+    // cursor still advances by the OTHER keyword's larger figure -- so the
+    // more-pinned keyword's own rotation skips a band of the vocabulary
+    // every run, one it would have reached on its own budget alone.
+    // Bounded, not unbounded: the cursor wraps (`% size` in `probeOrder`),
+    // so the skipped band is revisited on the next lap rather than lost
+    // forever -- but a lap still touches strictly less of the vocabulary
+    // for that keyword than for the one setting the pace.
     rotated = Math.max(rotated, report.rotatedProbed)
   }
   writeFileSync(publisherStatePath, serializePublisherState({

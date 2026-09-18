@@ -1,6 +1,6 @@
 # Publisher pinning — design
 
-Status: **specified (2026-09-17), not implemented.** Answers
+Status: **specified (2026-09-17), implemented (2026-09-18).** Answers
 [#38](https://github.com/LivXue/dsh-plugin-shop/issues/38). The publisher
 axis shipped in 0.8.1 rotates uniformly through its vocabulary and keeps no
 record of which cells ever supplied a name, so a residue owner is probed with
@@ -85,6 +85,11 @@ and parsed either way.
 Seeding runs for any keyword the harvest pages in full — which is exactly the
 condition under which the at-risk set is visible.
 
+**Amendment (2026-09-18): this sentence does not hold for the shipped code —
+see §4's amendment.** Seeding is not gated on full enumeration; it runs for
+every harvest keyword each run, against whatever names that run's window
+sweep and refinement cells actually put in `harvested`.
+
 ## 3. Pinning lifecycle
 
 **Entry** is either of:
@@ -154,6 +159,90 @@ Two guards:
   are silently not pinned. That is the failure worth naming: a slower rotation
   is a coverage regression rather than an error, and discovering nothing new
   looks exactly like having nothing to discover.
+
+**Amendment (2026-09-18): §2 and the two paragraphs above are wrong about the
+shipped code, in three ways worth separating.**
+
+**(a) Seeding is not gated on full enumeration, and that is deliberate.**
+`searchByKeywords`'s `onPublisherAxis` callback fires, in its own words,
+"even when the keyword never crosses the window, because
+`vocabulary`/`atRiskNames` are informative on their own and a caller pinning
+owners needs every keyword, not only the ones that partitioned"
+(`npm-client.ts`). `atRiskOwners`/`atRiskNameCount` are computed against
+`[...harvested.values()]` — whatever names that run actually put in the
+harvested set, which for a partitioned keyword includes the mandatory
+window-floor `pageCell` sweep and every refinement cell's contribution, not
+nothing. Gating seeding on `!partitioned` would have thrown away exactly the
+recurring, no-extra-request signal a keyword keeps producing after it
+crosses — the one slice of the at-risk population still visible for free
+every run — for no benefit: nothing else in the pinning lifecycle needs the
+"fully enumerable" property, only the COMPLETENESS of what a single run's
+seeding pass can see depends on it (see (c), below).
+
+**(b) The "~38 against a budget of 500 — 7.6%" arithmetic, and "seeds
+nothing" below, both rest on that false premise, and the real pinned set is
+larger than either implies.** `deepseek-harness` seeds from its own
+window-floor sweep too, and the at-risk rate across that slice is not
+uniform. `PARTITION_KEYWORDS`'s own comment (`npm-client.ts`) measured, for
+`deepseek-harness` pre-`deepwatch`: 7 of 250 uncovered — "uncovered" there is
+the same predicate as "at risk" here, `R = ∅` — at ranks 5,000-5,250 (the
+bottom of its former window, 2.8%), against 0 of 250 at ranks 2,500-2,750
+(mid-ranking, 0.0%). At-risk names concentrate at the bottom of a window the
+same way the uncovered ones did. That does not hand back an exact count —
+this comment's own repeated instruction is to re-measure live rather than
+trust a figure here, and no one has re-run `deepseek-harness`'s own
+window-floor sweep specifically to count the at-risk names inside it — but a
+2.8% band at the bottom of a window-sized sweep is not a rounding error
+against a budget of 500, and it argues for tens of owners, not the zero the
+paragraph below states. The real total the pinned sets reach across both
+keywords is therefore larger than "~38 … 7.6%" by an unmeasured but
+non-trivial margin.
+
+**(c) For a keyword that IS partitioned, seeding is structurally incomplete,
+though not for the reason first written here.** An at-risk name (§2, `R =
+∅`) carries no `PARTITION_KEYWORDS` refinement, so by that same definition no
+`keywords:K,r` cell can ever match it — refinement cells are the one source
+that can never contribute an at-risk name to `harvested`. The window-floor
+sweep is a source, but not the only one: `harvested` is fed by every
+`pageCell` call this run makes, publisher cells included — both the pinned
+loop and the rotated loop pass it (`npm-client.ts`) — and
+`atRiskOwners`/`atRiskNameCount` (§2) run over the whole map,
+unconditionally, before `seeded` is built. So a publisher cell probed and
+paged this run, pinned or freshly rotated to, hands seeding any at-risk name
+it holds at whatever rank that name sits, window or past it — the maintainer
+axis does not filter by rank under `K`, which is the entire point of running
+it. Seeding is in fact the BROADER of the two entry paths, not the narrower:
+it counts a name the instant `harvested` holds it, with no delta test, while
+the outcome path (§3) fires only from the rotated loop and only when the
+name is new to the run's union. A rotated cell that earns a pinned spot this
+run (`delta > 0`) satisfies both paths in the same run, off the same
+`harvested` entry.
+
+The real gap is narrower than "past the window, only the outcome path
+reaches it": nothing guarantees that the cell holding a given past-window
+at-risk name is selected and paged this run at all. Publisher-cell selection
+is the pinned list plus a rotation slice under budget, filtered by the
+productivity test (§4); a maintainer not yet pinned is reached only if
+rotation happens to land on it. So a partitioned keyword's seeding this run
+sees the window-floor sweep (every at-risk name ranked inside the window,
+every run) plus whatever the publisher axis — pinned and rotated together —
+happens to probe and page (any rank, but only for the maintainers actually
+selected). Neither term is complete on its own, and their union is not
+guaranteed to be either — which is the sense in which this paragraph's
+original claim of incompleteness is right, for the wrong mechanism.
+
+The two axes are not independent, and the loop between them is worth naming
+rather than leaving implicit: an outcome-path probe that surfaces a residue
+owner earns it a pinned spot (§3), and from the next run on, that owner is
+probed unconditionally rather than left to rotation's odds — widening the
+NEXT run's seeding input, for as long as the owner keeps publishing under
+the keyword. The publisher axis feeds seeding; it does not only sit beside
+it.
+
+This is not a bug to fix — it is why §3 has two entry paths instead of one,
+and why the design accepts that a crossed keyword's pinned set stays
+incomplete rather than promising seeding, the publisher axis, or their
+combination will eventually enumerate it.
 
 ## 5. Module placement
 
