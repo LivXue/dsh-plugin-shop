@@ -2,7 +2,25 @@ name: catalog
 
 on:
   schedule:
-    - cron: '17 3 * * *'
+    # 00:07 UTC. The minute is 7 and not 0 deliberately: every cron everyone
+    # writes lands on the hour, and GitHub drops or defers scheduled runs under
+    # load, so the top of the hour is the worst slot to ask for.
+    #
+    # THE TIME HERE IS A REQUEST, NOT A START TIME, and the gap is large enough
+    # to matter. Measured against the six scheduled runs before this changed,
+    # all of which asked for 03:17 UTC:
+    #
+    #   09-13  08:18  +5h01m      09-16  08:35  +5h18m
+    #   09-14  08:55  +5h38m      09-17  08:39  +5h22m
+    #   09-15  08:41  +5h24m      09-18  08:15  +4h58m
+    #
+    # So this asks for 00:07 and should be expected to run around 05:00-05:45
+    # UTC. Written as the time wanted rather than backdated by five hours to
+    # land there: the delay is observed, not promised, and a compensated value
+    # silently runs five hours early the day GitHub's scheduler catches up.
+    # `builtAt` and the published version both read the clock at run time, so
+    # nothing downstream depends on which of the two it is.
+    - cron: '7 0 * * *'
   push:
     branches: [main]
     # A full harvest is thousands of live npm and GitHub requests. Without

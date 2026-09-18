@@ -212,7 +212,7 @@ describe('a test-only change does not buy a harvest', () => {
     // checkbox in the PR template. daily.yml ran that typecheck and no longer
     // triggers here, so the leg that still triggers has to run it. Losing it
     // fails the way this whole block is about: nothing goes red, a type error
-    // in a test file merges green, and the 03:17 cron dies on it before the
+    // in a test file merges green, and the nightly cron dies on it before the
     // harvest. The package's own `pnpm -C packages/... typecheck` is a
     // different tsconfig and deliberately does not count.
     const runsRootTypecheck = (workflow: string): boolean =>
