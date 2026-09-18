@@ -19,7 +19,7 @@ import { fetchStarCounts } from './github-stars.ts'
 import { HARVEST_TOPICS, REPO_BACKFILL_BUDGET_DEFAULT, harvestRepos, parseHarvestBudget } from './github-client.ts'
 import { parseRepoState, repoGoneDetail, serializeRepoState } from './repo-state.ts'
 import { githubOwnerName } from './github-repo.ts'
-import { fetchCandidates, searchByKeywords, describeShortfall, parseKeywordShortfall, parsePublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall, type PublisherAxisReport } from './npm-client.ts'
+import { fetchCandidates, searchByKeywords, describePublisherAxis, describeShortfall, parseKeywordShortfall, parsePublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall, type PublisherAxisReport } from './npm-client.ts'
 import { mergePublishers, nextCursor, parsePublisherState, pinFor, serializePublisherState, unpinFor } from './publisher-state.ts'
 import { pagesArtifactNames } from './pages-artifacts.ts'
 import { runPipeline, selectEntries } from './pipeline.ts'
@@ -87,6 +87,13 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
    * hand-rolled `'; '` between them read as a delimiter at two nesting
    * levels once both harvest keywords were past the window. */
   const npmParts: string[] = []
+  /** What the publisher axis did per keyword, reported under its own heading
+   * rather than folded into `npmParts` above: vocabulary size, probe counts,
+   * seeding and eviction are routine bookkeeping that can fill this array on
+   * a build that is missing nothing, and filing that under "packages
+   * missing from this build" would misdiagnose a healthy run for the plugin
+   * authors who read the published report. */
+  const axisParts: string[] = []
   /**
    * The publisher axis's committed vocabulary, read BEFORE the branch so both
    * halves share one seed and one observation set. The file is absent on a
@@ -133,6 +140,10 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     for (const s of shortfalls) {
       npmParts.push(describeShortfall(s))
       process.stderr.write(`npm: ${describeShortfall(s)}\n`)
+    }
+    for (const report of axis) {
+      axisParts.push(describePublisherAxis(report))
+      process.stderr.write(`npm: ${describePublisherAxis(report)}\n`)
     }
     process.stderr.write(`harvested ${names.length} npm candidate(s)\n`)
     const harvested = await fetchCandidates(names, fetch, npmToken, npmBackupRegistry)
@@ -181,7 +192,9 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
         throw new Error(`--harvest-from ${harvestFrom}: expected an array of publisher axis records for \`publisherAxis\``)
       }
       for (const raw of parsed.publisherAxis) {
-        axis.push(parsePublisherAxisReport(raw, `--harvest-from ${harvestFrom}`))
+        const report = parsePublisherAxisReport(raw, `--harvest-from ${harvestFrom}`)
+        axis.push(report)
+        axisParts.push(describePublisherAxis(report))
       }
     }
     process.stderr.write(`reusing harvest: ${candidates.length} npm candidate(s)\n`)
@@ -392,8 +405,9 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   process.stderr.write(
     `npm: publisher vocabulary ${priorPublishers.publishers.length} -> ${nextPublishers.publishers.length}\n`)
   const npmLine = npmParts.length === 0 ? '' : `\nnpm search shortfall (tolerated, packages missing from this build):\n${npmParts.map(part => `- ${part}\n`).join('')}`
+  const axisLine = axisParts.length === 0 ? '' : `\npublisher axis (per-keyword pinning and probing, not itself a shortfall):\n${axisParts.map(part => `- ${part}\n`).join('')}`
   const repoLine = repoNote === '' ? '' : `\nGitHub: ${repoNote}\n`
-  writeFileSync(join(OUT_DIR, 'report.md'), `${artifacts.report}\nStars: ${starsNote}\n${npmLine}${repoLine}`)
+  writeFileSync(join(OUT_DIR, 'report.md'), `${artifacts.report}\nStars: ${starsNote}\n${npmLine}${axisLine}${repoLine}`)
 
   // Pages gets a directory staged from scratch, holding exactly the artifacts
   // the spec lists. `dist/v1` is NOT cleaned and is not what deploys: the

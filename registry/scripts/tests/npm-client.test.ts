@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { type Cell, cellKey, cellQuery, FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, keywordsOf, KEYWORDS_MAX_COUNT, maintainersOf, MAINTAINERS_MAX_COUNT, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describeShortfall, parseKeywordShortfall, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, type PublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
+import { type Cell, cellKey, cellQuery, FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, keywordsOf, KEYWORDS_MAX_COUNT, maintainersOf, MAINTAINERS_MAX_COUNT, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describePublisherAxis, describeShortfall, parseKeywordShortfall, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, type PublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
 import { ENTRY_PAYLOAD_MAX_BYTES, entryPayloadBytes } from '../src/gate.ts'
 import { MAX_TARBALL_BYTES } from '../src/github-client.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
@@ -809,6 +809,38 @@ describe('parseKeywordShortfall', () => {
       { ...handoff, enumerated: 10, required: 10, unreachable: 0, recovered: 0, windowShortfall: 0, tailShortfall: 0 },
       'handoff.json',
     )).toThrow(/enumerated 10 of 10, so it records no shortfall to describe/)
+  })
+})
+
+describe('describePublisherAxis', () => {
+  it('names the inputs, not only the results, so an inert axis is visible', () => {
+    const line = describePublisherAxis({
+      keyword: 'dsh-plugin', vocabulary: 0,
+      pinnedProbed: 0, pinnedSupplied: 0, rotatedProbed: 0, rotatedSupplied: 0,
+      suppliedNames: 0, seeded: [], atRiskNames: 0, evicted: [], pinnedFull: false,
+    })
+    // 0.8.1 shipped an empty vocabulary and CI was green while the axis did
+    // nothing. `vocabulary 0` has to be a printed value, not an absent line.
+    expect(line).toContain('vocabulary 0')
+  })
+
+  it('reports a full pinned set, because new residue owners are then refused', () => {
+    const line = describePublisherAxis({
+      keyword: 'dsh-plugin', vocabulary: 3775,
+      pinnedProbed: 250, pinnedSupplied: 4, rotatedProbed: 250, rotatedSupplied: 1,
+      suppliedNames: 5, seeded: [], atRiskNames: 81, evicted: [], pinnedFull: true,
+    })
+    expect(line).toMatch(/pinned set is FULL/)
+  })
+
+  it('reports seeded and evicted owners, the one branch the two fixtures above leave empty', () => {
+    const line = describePublisherAxis({
+      keyword: 'dsh-plugin', vocabulary: 500,
+      pinnedProbed: 10, pinnedSupplied: 3, rotatedProbed: 5, rotatedSupplied: 2,
+      suppliedNames: 5, seeded: ['newowner'], atRiskNames: 12, evicted: ['goneowner'], pinnedFull: false,
+    })
+    expect(line).toContain('seeded 1 owner(s) from 12 at-risk name(s)')
+    expect(line).toContain('unpinned 1 with no package left')
   })
 })
 
@@ -2676,6 +2708,54 @@ describe('searchByKeywords', () => {
         expect(report?.rotatedSupplied).toBe(3)
         expect(report?.suppliedNames).toBe(3)
       })
+    })
+  })
+
+  describe('the crossing', () => {
+    it('keeps a seeded owner pinned and probed after the keyword crosses the window', async () => {
+      // Seeds a real owner through the unstubbed atRiskOwners path while
+      // `dsh-plugin` is still inside the window, then chains that call's
+      // actual `seeded` output into a second, past-window call's pinned
+      // argument -- the chaining is what makes this a regression lock rather
+      // than a fixture. It locks in two things: atRiskOwners seeds
+      // immediately, under the window (confirmed by reverting a mutation
+      // that dropped it from the seed line and watching this assertion
+      // fail); and probeOrder (publisher-state.ts) sources the pinned-probe
+      // list unconditionally from the persisted map -- no re-derivation of
+      // at-risk status, no window-crossed check -- so a name earned under
+      // the window is still probed on a later, past-window run even when it
+      // is absent from that run's own rotation vocabulary.
+      //
+      // It does NOT discriminate the eviction predicate's wording: an
+      // immediate `cellTotal === 0` rule and an N-miss-streak rule would
+      // produce the same `probed` array on this one past-window call, since
+      // probing always precedes any eviction decision and this test never
+      // reads `evicted`. That predicate is covered separately, by 'evicts a
+      // pinned publisher whose cell total is zero, and only that one'
+      // (line 2588: immediate, not after a streak) and 'does not evict a
+      // pinned publisher that merely supplied nothing' (line 2600: keyed on
+      // `cellTotal`, not on supplied-delta). A cross-run PERSISTED miss
+      // counter is untested because none exists -- parsePublisherState drops
+      // unknown top-level keys, so one cannot appear by accident, but no
+      // test here models multi-run persisted state, so a badly-implemented
+      // counter would not be caught either.
+      const under = stubSearchWithPackages({
+        'keywords:dsh-plugin': [{ name: 'bare', keywords: ['dsh-plugin'], maintainers: ['huanlin'] }],
+        'keywords:deepseek-harness': [],
+      })
+      const seedReports: PublisherAxisReport[] = []
+      await searchByKeywords(under, undefined, undefined, undefined, undefined,
+        () => {}, () => {}, [], 500, 0, r => seedReports.push(r), {})
+      const seeded = seedReports.find(r => r.keyword === 'dsh-plugin')?.seeded ?? []
+      expect(seeded).toEqual(['huanlin'])
+
+      // Same owner, now past the window: it must still be probed.
+      const probed: string[] = []
+      const over = recordingProbeStub(probed)
+      await searchByKeywords(over, undefined, undefined, undefined, undefined,
+        () => {}, () => {}, ['zzz-unrelated'], 1, 0,
+        () => {}, { 'dsh-plugin': [...seeded] })
+      expect(probed).toContain('huanlin')
     })
   })
 

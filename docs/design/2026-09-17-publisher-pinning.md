@@ -222,6 +222,31 @@ load-bearing:
    past it, asserting the seeded owners are still pinned and still probed.
    This is the only case that catches a miss-counting eviction rule (§3);
    every fixture written entirely past the window agrees with the wrong rule.
+
+   **Amendment (2026-09-18): that last sentence overstates it.** An immediate
+   `cellTotal === 0` eviction rule and an N-miss-streak rule produce the same
+   `probed` array on this test's one past-window call, because probing
+   always precedes any eviction decision and the test never reads `evicted`
+   — it cannot discriminate the predicate's wording, and does not. What it
+   actually locks in: the real, unstubbed at-risk path (`atRiskOwners`)
+   seeds the owner while `dsh-plugin` is still inside the window (confirmed
+   by reverting a mutation that dropped it from the seed line); and
+   `probeOrder` (`publisher-state.ts`) sources the pinned-probe list
+   unconditionally from the persisted map — no re-derivation of at-risk
+   status, no window-crossed check — so a name earned under the window is
+   still probed on a later, past-window run even when it is absent from that
+   run's own rotation vocabulary. Chaining the first call's real `seeded`
+   output into the second call's pinned argument is what makes this a
+   regression lock rather than a fixture. The eviction predicate itself is
+   covered elsewhere, by 'evicts a pinned publisher whose cell total is
+   zero, and only that one' (`npm-client.test.ts:2588`, immediate, not after
+   a streak) and 'does not evict a pinned publisher that merely supplied
+   nothing' (`npm-client.test.ts:2600`, keyed on `cellTotal`, not on
+   supplied-delta). A cross-run PERSISTED miss counter is untested because
+   none exists: `parsePublisherState` drops unknown top-level keys, so one
+   cannot appear by accident, but nothing today would catch a
+   badly-implemented one either, since no test models multi-run persisted
+   state.
 2. **Cursor advance.** Rotation spends `budget − |pinned|`, so the cursor
    advances by the rotation count. Asserted against a pinned set large enough
    that the two differ.

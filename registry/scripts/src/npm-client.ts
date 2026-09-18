@@ -323,6 +323,27 @@ export interface PublisherAxisReport {
 }
 
 /**
+ * One skimmable line naming what the publisher axis did for one keyword.
+ *
+ * The inputs are printed beside the results. An empty vocabulary is a legal
+ * no-op and shipped once as one, green, proving nothing; a reader has to be
+ * able to tell "did nothing because there was nothing to do" from "did nothing
+ * because it is broken", and only the inputs answer that.
+ */
+export function describePublisherAxis(report: PublisherAxisReport): string {
+  const parts = [
+    `vocabulary ${report.vocabulary}`,
+    `${report.pinnedProbed} pinned probed (${report.pinnedSupplied} supplied)`,
+    `${report.rotatedProbed} rotated (${report.rotatedSupplied} supplied)`,
+    `${report.suppliedNames} name(s) recovered`,
+  ]
+  if (report.seeded.length > 0) parts.push(`seeded ${report.seeded.length} owner(s) from ${report.atRiskNames} at-risk name(s)`)
+  if (report.evicted.length > 0) parts.push(`unpinned ${report.evicted.length} with no package left`)
+  if (report.pinnedFull) parts.push(`pinned set is FULL at ${MAX_PINNED_PER_KEYWORD} — new residue owners are being refused`)
+  return `${keywordQuery([report.keyword])} publisher axis — ${parts.join(', ')}`
+}
+
+/**
  * Read one publisher-axis record back off a `--harvest-from` handoff. Like
  * {@link parseKeywordShortfall}, every field here is load-bearing: the record
  * is what `build.ts` spends on `pinFor`/`unpinFor` against the committed
