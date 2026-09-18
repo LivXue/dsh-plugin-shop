@@ -25,7 +25,7 @@ import { classifyPackages } from './llm-client.ts'
 import { judgeMarkets, type MarketItem } from './market-judge.ts'
 import { selectMarketPending } from './market-select.ts'
 import { mergeMarketRows, serializeMarketRows } from './markets.ts'
-import { fetchCandidates, searchByKeywords, describeShortfall, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall } from './npm-client.ts'
+import { fetchCandidates, searchByKeywords, describeShortfall, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall, type PublisherAxisReport } from './npm-client.ts'
 import { parsePublisherState } from './publisher-state.ts'
 import { parseRepoState } from './repo-state.ts'
 import type { Category, RepoCandidate } from './types.ts'
@@ -112,6 +112,10 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
     ? parsePublisherState(readFileSync(publisherStatePath, 'utf8'))
     : { publishers: [] }
   const sawPublishers = new Set<string>()
+  // What the publisher axis did per keyword this run, carried on the handoff
+  // for build.ts to spend — `--harvest-from` never calls searchByKeywords
+  // itself, so a pin earned here would otherwise reach no one.
+  const axis: PublisherAxisReport[] = []
   const names = await searchByKeywords(
     fetch, undefined, npmToken, undefined, undefined,
     s => shortfalls.push(s),
@@ -119,6 +123,8 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
     priorPublishers.publishers,
     PUBLISHER_PROBE_BUDGET_DEFAULT,
     priorPublishers.cursor ?? 0,
+    report => axis.push(report),
+    priorPublishers.pinned,
   )
   for (const s of shortfalls) {
     process.stderr.write(`classify: ${describeShortfall(s)}\n`)
@@ -210,7 +216,7 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
   // rule.
   const publishers = [...sawPublishers].sort(compareStrings)
   writeFileSync(join(DIST_DIR, 'harvest.json'),
-    `${JSON.stringify({ candidates, rejections, shortfalls, publishers })}\n`)
+    `${JSON.stringify({ candidates, rejections, shortfalls, publishers, publisherAxis: axis })}\n`)
   const sortedDiscards = [...discarded].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
   const reportLines = [
     '# Classification report',

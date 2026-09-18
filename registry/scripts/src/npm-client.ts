@@ -323,6 +323,50 @@ export interface PublisherAxisReport {
 }
 
 /**
+ * Read one publisher-axis record back off a `--harvest-from` handoff. Like
+ * {@link parseKeywordShortfall}, every field here is load-bearing: the record
+ * is what `build.ts` spends on `pinFor`/`unpinFor` against the committed
+ * file, so a malformed record read as an empty one would pin or evict
+ * nothing while looking exactly like a run that had nothing to do.
+ */
+export function parsePublisherAxisReport(value: unknown, where: string): PublisherAxisReport {
+  const r = value as Record<string, unknown> | null
+  const count = (field: string): number => {
+    const n = r?.[field]
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) {
+      throw new Error(`${where}: publisher axis record has no integer \`${field}\`; re-run the harvest that wrote it`)
+    }
+    return n
+  }
+  const names = (field: string): string[] => {
+    const arr = r?.[field]
+    if (!Array.isArray(arr) || !arr.every((v): v is string => isMaintainerName(v))) {
+      throw new Error(`${where}: publisher axis record has no \`${field}\` array of maintainer usernames; re-run the harvest that wrote it`)
+    }
+    return arr
+  }
+  if (typeof r?.keyword !== 'string') {
+    throw new Error(`${where}: publisher axis record has no \`keyword\`; re-run the harvest that wrote it`)
+  }
+  if (typeof r.pinnedFull !== 'boolean') {
+    throw new Error(`${where}: publisher axis record for \`${r.keyword}\` has no boolean \`pinnedFull\`; re-run the harvest that wrote it`)
+  }
+  return {
+    keyword: r.keyword,
+    vocabulary: count('vocabulary'),
+    pinnedProbed: count('pinnedProbed'),
+    pinnedSupplied: count('pinnedSupplied'),
+    rotatedProbed: count('rotatedProbed'),
+    rotatedSupplied: count('rotatedSupplied'),
+    suppliedNames: count('suppliedNames'),
+    seeded: names('seeded'),
+    evicted: names('evicted'),
+    atRiskNames: count('atRiskNames'),
+    pinnedFull: r.pinnedFull,
+  }
+}
+
+/**
  * Refinement keywords the harvest ANDs onto an over-window keyword to split it
  * into reachable cells, most-covering first.
  *

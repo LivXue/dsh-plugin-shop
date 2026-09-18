@@ -66,12 +66,20 @@ function runEntry(cwd: string, file: string, args: readonly string[], rules: rea
   }
 }
 
-/** A search response, with maintainers on every object. */
-function searchPage(total: number, names: readonly string[], owners: readonly string[]): unknown {
+/** A search response, with maintainers on every object. `keywords`, when
+ * given, is attached to every object alike -- enough to make a name at risk
+ * (or not) for the publisher axis without needing a distinct page per name. */
+function searchPage(
+  total: number, names: readonly string[], owners: readonly string[], keywords?: readonly string[],
+): unknown {
   return {
     total,
     objects: names.map(name => ({
-      package: { name, maintainers: owners.map(username => ({ username })) },
+      package: {
+        name,
+        maintainers: owners.map(username => ({ username })),
+        ...(keywords === undefined ? {} : { keywords }),
+      },
     })),
   }
 }
@@ -208,4 +216,94 @@ describe('the publisher vocabulary survives the run that discovered it', () => {
       }
     })
   }
+
+  it('a seeded owner classify.ts observes reaches pinned via build.ts --harvest-from', () => {
+    // The actual CI path: classify.ts harvests and hands off, build.ts
+    // --harvest-from is what persists. A test that only drives searchByKeywords
+    // directly, or only drives build.ts's own (never-taken-in-CI) search
+    // branch, cannot tell this path apart from one where the handoff carries
+    // no publisherAxis at all and pinning silently never happens.
+    const cwd = newWorkspace()
+    try {
+      const classifyRun = runEntry(cwd, 'classify.ts', [], [
+        { contains: 'size=1', body: { total: 1, objects: [] } },
+        { contains: '/-/v1/search', body: searchPage(1, ['dsh-a'], ['carol'], ['dsh-plugin']) },
+        { contains: '/dsh-a', body: packument('dsh-a') },
+      ])
+      expect(classifyRun.status, `classify stderr:\n${classifyRun.stderr}`).toBe(0)
+      const handoff = JSON.parse(readFileSync(join(cwd, 'dist', 'harvest.json'), 'utf8')) as {
+        publisherAxis?: unknown
+      }
+      // 'carol' is at risk under 'dsh-plugin' (her only package's only keyword
+      // IS the harvest keyword) and not under 'deepseek-harness' (where that
+      // same keyword is a refinement that clears her) -- confirming the axis
+      // ran the real isAtRisk rule rather than a stub.
+      expect(handoff.publisherAxis).toMatchObject([
+        { keyword: 'dsh-plugin', seeded: ['carol'] },
+        { keyword: 'deepseek-harness', seeded: [] },
+      ])
+
+      const buildRun = runEntry(cwd, 'build.ts', ['--harvest-from', 'dist/harvest.json'], [])
+      expect(buildRun.status, `build stderr:\n${buildRun.stderr}`).toBe(0)
+      expect(vocabulary(cwd)).toMatchObject({ pinned: { 'dsh-plugin': ['carol'] } })
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  for (const [label, value] of [
+    ['a string', '"nope"'],
+    ['null', 'null'],
+    ['missing rotatedProbed', '[{"keyword":"dsh-plugin","vocabulary":0,"pinnedProbed":0,"pinnedSupplied":0,"rotatedSupplied":0,"suppliedNames":0,"seeded":[],"evicted":[],"atRiskNames":0,"pinnedFull":false}]'],
+    ['an ungrammatical seeded username', '[{"keyword":"dsh-plugin","vocabulary":0,"pinnedProbed":0,"pinnedSupplied":0,"rotatedProbed":0,"rotatedSupplied":0,"suppliedNames":0,"seeded":["Alice"],"evicted":[],"atRiskNames":0,"pinnedFull":false}]'],
+  ] as const) {
+    it(`refuses a handoff whose publisherAxis field is ${label}, before writing anything`, () => {
+      // Strict like `publishers`, not lenient like `shortfalls`: this field
+      // feeds pinFor/unpinFor, which write committed state, so a malformed
+      // record must not be read as "no axis this run" any more than a
+      // malformed `publishers` may be read as "nobody this run".
+      const cwd = newWorkspace()
+      try {
+        mkdirSync(join(cwd, 'dist'), { recursive: true })
+        writeFileSync(join(cwd, 'dist', 'harvest.json'),
+          `{"candidates":[],"rejections":[],"shortfalls":[],"publisherAxis":${value}}\n`)
+        const run = runEntry(cwd, 'build.ts', ['--harvest-from', 'dist/harvest.json'], [])
+        expect(run.status, `stderr:\n${run.stderr}`).not.toBe(0)
+        expect(run.stderr, `stderr:\n${run.stderr}`).toContain('publisher axis')
+        expect(run.stderr).not.toContain('ERR_UNSUPPORTED_ESM_URL_SCHEME')
+        expect(run.stderr).not.toContain('preload-fetch:')
+        expect(existsSync(join(cwd, 'registry', 'publisher-state.json'))).toBe(false)
+        expect(existsSync(join(cwd, 'registry', 'first-seen.yml'))).toBe(false)
+      } finally {
+        rmSync(cwd, { recursive: true, force: true })
+      }
+    })
+  }
+
+  it('the cursor advances by what the axis rotated to, not by the probe budget', () => {
+    // Old behaviour advanced by PUBLISHER_PROBE_BUDGET_DEFAULT regardless of
+    // how much the axis actually rotated to. 600 publishers is comfortably
+    // above that budget on either the old or the new formula, so a cursor of
+    // 42 can only come from actually reading `rotatedProbed`.
+    const cwd = newWorkspace()
+    try {
+      const publishers = Array.from({ length: 600 }, (_, i) => `u${String(i).padStart(3, '0')}`)
+      writeFileSync(join(cwd, 'registry', 'publisher-state.json'),
+        `${JSON.stringify({ publishers, cursor: 0 }, null, 2)}\n`)
+      mkdirSync(join(cwd, 'dist'), { recursive: true })
+      writeFileSync(join(cwd, 'dist', 'harvest.json'), `${JSON.stringify({
+        candidates: [], rejections: [], shortfalls: [],
+        publisherAxis: [{
+          keyword: 'dsh-plugin', vocabulary: 600, pinnedProbed: 0, pinnedSupplied: 0,
+          rotatedProbed: 42, rotatedSupplied: 0, suppliedNames: 0,
+          seeded: [], evicted: [], atRiskNames: 0, pinnedFull: false,
+        }],
+      })}\n`)
+      const run = runEntry(cwd, 'build.ts', ['--harvest-from', 'dist/harvest.json'], [])
+      expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
+      expect(vocabulary(cwd)).toMatchObject({ cursor: 42 })
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
 })

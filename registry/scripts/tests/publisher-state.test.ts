@@ -444,3 +444,14 @@ describe('probeOrder', () => {
     expect(probeOrder({ publishers: [], cursor: 0 }, 'k', 5)).toEqual({ pinned: [], rotated: [] })
   })
 })
+
+describe('the cursor advances by what actually rotated', () => {
+  it('advances by the rotation count, not by the budget', () => {
+    const publishers = Array.from({ length: 100 }, (_, i) => `u${String(i).padStart(3, '0')}`)
+    const state: PublisherState = { publishers, cursor: 0, pinned: { k: ['u099'] } }
+    const order = probeOrder(state, 'k', 10)
+    expect(order.rotated).toHaveLength(9)
+    // Advancing by the budget would land on 10 and skip u009 forever.
+    expect(nextCursor(state, order.rotated.length)).toBe(9)
+  })
+})

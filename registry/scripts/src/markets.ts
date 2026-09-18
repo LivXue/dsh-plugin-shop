@@ -106,11 +106,18 @@ export function mergeMarketRows(
  */
 export function serializeMarketRows(rows: readonly MarketRow[]): string {
   const sorted = [...rows].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-  const text = sorted.map(row => [
+  const rowsText = sorted.map(row => [
     `- name: ${JSON.stringify(row.name)}`,
     `  market: ${row.market ? 'true' : 'false'}`,
     `  by: ${row.by}`,
     `  reason: ${JSON.stringify(row.reason.replace(/\s+/g, ' ').trim())}`,
-  ].join('\n')).join('\n\n')
+  ].join('\n'))
+  // A document made of comments alone parses to `null`, and the loader
+  // requires a list; a zero-row file (a fresh workspace, or a run that judged
+  // nothing new) must still be one, or the very next build dies reading what
+  // this step wrote — the same failure categories.ts's HEADER-only case
+  // guards against already, via the identical `body.length === 0 ? ['[]']`
+  // fix in serializeCategoryRows.
+  const text = rowsText.length === 0 ? '[]' : rowsText.join('\n\n')
   return `${HEADER}${text}\n`
 }

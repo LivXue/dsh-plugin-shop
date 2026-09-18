@@ -303,7 +303,7 @@ describe('what CI publishes to Pages', () => {
     // rides the handoff the published report cannot say this build is missing
     // packages. The write and the read have to move together.
     expect(read('registry/scripts/src/classify.ts'))
-      .toContain('JSON.stringify({ candidates, rejections, shortfalls, publishers })')
+      .toContain('JSON.stringify({ candidates, rejections, shortfalls, publishers, publisherAxis: axis })')
     expect(read('registry/scripts/src/build.ts')).toContain('parsed.shortfalls')
     // And it reaches the artifact a reader actually sees.
     expect(read('registry/scripts/src/build.ts')).toContain('npm search shortfall')
@@ -314,6 +314,14 @@ describe('what CI publishes to Pages', () => {
     // a source-string match cannot tell a field that is written from one that
     // is written and then ignored.
     expect(read('registry/scripts/src/build.ts')).toContain('parsed.publishers')
+    // `publisherAxis` rides the same handoff for the same reason `publishers`
+    // does: CI's --harvest-from build never calls searchByKeywords itself, so
+    // a pin or eviction the classifier's run earned would reach no publisher
+    // unless it travels here too. Checked here only so this assertion cannot
+    // drift out of step with its siblings above — publisher-handoff.test.ts is
+    // again what proves the field is actually spent (into pinFor/unpinFor/
+    // nextCursor), not just carried and ignored.
+    expect(read('registry/scripts/src/build.ts')).toContain('parsed.publisherAxis')
   })
 
   it('hands the build the harvest path the classifier writes', () => {

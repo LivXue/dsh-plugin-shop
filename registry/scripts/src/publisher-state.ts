@@ -222,17 +222,19 @@ export function serializePublisherState(state: PublisherState): string {
 }
 
 /**
- * Where the next run should start, given what this one could afford.
+ * Where the next run should start, given how many publishers this one
+ * ROTATED to — not how large its budget was.
  *
- * Zero while the whole vocabulary fits one budget: rotating a list that is
- * probed in full every run is churn in a committed file for nothing. Past
- * that it advances by exactly one budget and wraps, so a vocabulary of
- * `MAX_PUBLISHERS` against the default budget is covered in five runs.
+ * Pinned probes do not advance the rotation: they are probed every run by
+ * definition, so counting them here would step the cursor past
+ * `pinned.length` publishers per snapshot, permanently and silently. The
+ * vocabulary would grow, every build would stay green, and a band of it would
+ * never be probed.
  */
-export function nextCursor(state: PublisherState, budget: number): number {
+export function nextCursor(state: PublisherState, rotated: number): number {
   const size = state.publishers.length
-  if (size <= budget || budget <= 0) return 0
-  return ((state.cursor ?? 0) + budget) % size
+  if (size <= rotated || rotated <= 0) return 0
+  return ((state.cursor ?? 0) + rotated) % size
 }
 
 /**
