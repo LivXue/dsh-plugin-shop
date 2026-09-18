@@ -118,18 +118,21 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
   const axis: PublisherAxisReport[] = []
   const names = await searchByKeywords(
     fetch, undefined, npmToken, undefined, undefined,
-    s => shortfalls.push(s),
+    // Written AS THEY FIRE, not collected and printed after the call returns.
+    // `searchByKeywords` throws on a residual past MAX_UNREACHABLE_RESIDUAL,
+    // and that throw is raised from inside this call -- so the deferred form
+    // printed nothing at all on precisely the run that needed explaining. On
+    // 2026-09-18 two runs died on a 17-name residual having already computed
+    // the axis report for both keywords, and neither line reached the log: the
+    // vocabulary, the band probed, what the publisher cells recovered and how
+    // many owners were seeded were all known, and all discarded. The arrays
+    // stay because the handoff still carries them.
+    s => { shortfalls.push(s); process.stderr.write(`classify: ${describeShortfall(s)}\n`) },
     users => { for (const u of users) sawPublishers.add(u) },
     priorPublishers,
     PUBLISHER_PROBE_BUDGET_DEFAULT,
-    report => axis.push(report),
+    report => { axis.push(report); process.stderr.write(`classify: ${describePublisherAxis(report)}\n`) },
   )
-  for (const s of shortfalls) {
-    process.stderr.write(`classify: ${describeShortfall(s)}\n`)
-  }
-  for (const report of axis) {
-    process.stderr.write(`classify: ${describePublisherAxis(report)}\n`)
-  }
   process.stderr.write(`classify: harvested ${names.length} candidate(s)\n`)
   const { candidates, rejections } = await fetchCandidates(names, fetch, npmToken, npmBackupRegistry)
 
