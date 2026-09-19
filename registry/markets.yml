@@ -39,6 +39,11 @@
   by: human
   reason: "dsh 插件市场：搜索 GitHub dsh-plugin 话题下的插件仓库，一键安装到本地 dsh profile（agent 工具 + 设置页插件市场 tab）"
 
+- name: "@99galaxy/dsh-plugin-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: 在 DeepSeek Harness 设置面板里浏览并一键安装社区插件 | A plugin market inside the DeepSeek Harness settings panel"
+
 - name: "@ace-xu/dsh-plugin-market"
   market: true
   by: llm
