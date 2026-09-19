@@ -788,6 +788,165 @@ export function applyAxisReport(
 }
 
 /**
+ * The smallest allocation a keyword that partitions may receive.
+ *
+ * A POLICY FLOOR, not a measured optimum, and said so rather than dressed up.
+ * What IS measured is what it costs and what it prevents.
+ *
+ * Costs: against the 3,887-name vocabulary committed 2026-09-19, a keyword
+ * held at this floor walks its rotation in 39 runs — five and a half weeks at
+ * the daily cadence, against the 14-run cycle
+ * {@link PUBLISHER_PROBE_BUDGET_DEFAULT}'s comment sized for a keyword under
+ * pressure. That is the right order for a keyword with nothing at risk, and
+ * the wrong one for a keyword carrying a residual; which of the two it is
+ * gets re-measured every run, and its share moves with the answer.
+ *
+ * Prevents: a per-keyword standing start. Only the rotation can seed a
+ * keyword's FIRST pin, a pinned set accumulates across runs, and a purely
+ * proportional split rounds the smallest tail toward nothing — so without a
+ * floor the keyword with the least tail is the one permanently unable to
+ * build the pinned set that keeps its tail small. That is the trap
+ * `MAX_UNREACHABLE_RESIDUAL`'s comment records for the whole axis ("cannot
+ * work from a standing start"), reproduced one keyword at a time.
+ *
+ * At the 2026-09-19 measurement the floors are 100 for `dsh-plugin` (whose 45
+ * pins ask only 90) and 456 for `deepseek-harness` (228 pins), and neither is
+ * what its keyword finally receives — 171 and 829 — because the proportional
+ * remainder is added on top of the floor, not compared against it.
+ */
+export const MIN_PROBE_BUDGET_PER_KEYWORD = 100
+
+/** One keyword's claim on a run's publisher probes. */
+export interface ProbeDemand {
+  /** The harvest keyword. */
+  readonly keyword: string
+  /**
+   * Names this keyword's answered total puts PAST the search window. Zero
+   * means it does not partition, so it spends no probes and adds nothing to
+   * the pool. A count rather than the total, so this pure module needs no
+   * window constant from the impure one that owns the search.
+   */
+  readonly tail: number
+}
+
+/**
+ * Split `amount` whole probes across `weights`, largest remainder first.
+ *
+ * Integer throughout — `Math.floor((amount * weight) / total)` and the exact
+ * `%` remainder beside it — so the shares sum to `amount` with no float drift
+ * and two runs over the same measurements allocate identically. Ties break on
+ * the caller's own ordering, which is the only tie-break available that does
+ * not depend on a locale.
+ */
+function shareOut(weights: readonly number[], amount: number): number[] {
+  if (weights.length === 0) return []
+  if (amount <= 0) return weights.map(() => 0)
+  const total = weights.reduce((sum, weight) => sum + weight, 0)
+  const parts = weights.map((weight, index) => (total > 0
+    ? { index, share: Math.floor((amount * weight) / total), remainder: (amount * weight) % total }
+    // Nothing to go by. An even split rather than a throw: a caller reaching
+    // here has already decided every claimant is entitled to something.
+    : { index, share: Math.floor(amount / weights.length), remainder: 0 }))
+  let left = amount - parts.reduce((sum, part) => sum + part.share, 0)
+  for (const part of [...parts].sort((a, b) => b.remainder - a.remainder || a.index - b.index)) {
+    if (left <= 0) break
+    part.share += 1
+    left -= 1
+  }
+  return parts.map(part => part.share)
+}
+
+/**
+ * Split one run's publisher probes across the harvest keywords by demand.
+ *
+ * WHAT THIS REPLACED, and the measurement that condemned it: every keyword
+ * that partitioned was handed {@link PUBLISHER_PROBE_BUDGET_DEFAULT}
+ * outright. The 2026-09-19 published report records what one such run bought:
+ *
+ * | keyword          |  tail | residual | pinned probes | rotation probes |
+ * | ---------------- | ----: | -------: | ------------: | --------------: |
+ * | dsh-plugin       |   376 |        1 |     45 -> 0   |      455 -> 0   |
+ * | deepseek-harness | 1,969 |       15 |    228 -> 13  |      272 -> 0   |
+ *
+ * So half the run's probes — about nine minutes of wall clock — went to the
+ * keyword that was ONE name short and recovered nothing, while the keyword
+ * sitting at 15 of the 20 names `MAX_UNREACHABLE_RESIDUAL` allows took the
+ * SMALLER rotation. Not merely flat: anti-correlated with demand, because
+ * {@link probeOrder} caps the pinned half at half the budget and gives the
+ * remainder to the rotation, so a small pinned set is rewarded with a large
+ * rotation share.
+ *
+ * THE POOL IS THE OLD SPEND, exactly — `perKeywordBudget` times the keywords
+ * that partition. This is a redistribution and never a raise: one crossing
+ * keyword is allocated precisely what the flat rule gave it, and the
+ * per-run request arithmetic in `PUBLISHER_PROBE_BUDGET_DEFAULT`'s comment
+ * still holds unchanged. Buying coverage with more requests is a different
+ * decision from spending the same requests better, and only the first one
+ * needs the rate limit re-measured.
+ *
+ * DEMAND IS THE TAIL, NOT THE RESIDUAL, though the residual is what the
+ * probes are aimed at. In order of weight:
+ *  - the residual is known only AFTER the cells page, and the allocation is
+ *    decided before the first probe;
+ *  - it is a small integer that reaches zero, so a share keyed to it would
+ *    stop a keyword's rotation dead on the run after a clean one — which is
+ *    the run its tail grew;
+ *  - the tail is measured before any probe, is thousands of names wide and
+ *    moves smoothly. Loose as a proxy but not wrong: on 2026-09-19 the tail
+ *    per missing name was 376 and 131, within a factor of 2.9, and the two
+ *    orderings agree on which keyword needs the probes.
+ *
+ * TWO FLOORS, each answering a way a bare proportional split fails:
+ *  - twice the pinned set, so `probeOrder`'s `floor(budget / 2)` cap can
+ *    still reach every pin. An unprobed pin supplies nothing AND is never
+ *    evicted, so starving the pinned half raises the very residual this
+ *    exists to lower — and that half is the productive one: 13 of 13
+ *    recoveries on the run above. Written against `probeOrder`'s own rule
+ *    rather than against `MAX_PINNED_PER_KEYWORD`, so the two cannot drift.
+ *  - {@link MIN_PROBE_BUDGET_PER_KEYWORD}, so a keyword with no pins can
+ *    still seed its first.
+ * When the floors alone exceed the pool, the pool wins and is split in their
+ * proportion: this is a CAP before it is an allocation. The rule that forgot
+ * that spent 57m37s on 3,474 sequential probes and threw.
+ *
+ * @param state - the committed axis state, read for the pinned sets alone and
+ *   read from the same place `probeOrder` reads them.
+ * @param demands - one entry per harvest keyword, in the caller's order.
+ * @param perKeywordBudget - the pool's per-keyword term.
+ * @returns keyword to whole probes, summing to the pool. A keyword with no
+ *   tail maps to 0 rather than going absent, so a caller reading one back
+ *   cannot mistake "allocated nothing" for "not a harvest keyword".
+ */
+export function allocateProbeBudgets(
+  state: PublisherState, demands: readonly ProbeDemand[], perKeywordBudget: number,
+): Readonly<Record<string, number>> {
+  const out: Record<string, number> = Object.create(null)
+  for (const demand of demands) out[demand.keyword] = 0
+  const live = demands.filter(demand => Number.isFinite(demand.tail) && demand.tail > 0)
+  const perKeyword = Number.isFinite(perKeywordBudget) ? Math.floor(perKeywordBudget) : 0
+  const pool = Math.max(0, perKeyword) * live.length
+  if (pool === 0) return out
+  // `Array.isArray` rather than `?.length`: a state built from a plain object
+  // literal instead of `parsePublisherState` answers `Object.prototype` for a
+  // keyword named `toString`, and a function has a `length` of its own.
+  const claims = live.map(demand => {
+    const pinned = state.pinned?.[demand.keyword]
+    const floor = Math.max(
+      2 * (Array.isArray(pinned) ? pinned.length : 0), MIN_PROBE_BUDGET_PER_KEYWORD)
+    return { keyword: demand.keyword, tail: demand.tail, floor: Math.min(pool, floor) }
+  })
+  const floorTotal = claims.reduce((sum, claim) => sum + claim.floor, 0)
+  const capped = floorTotal >= pool
+  const shares = capped
+    ? shareOut(claims.map(claim => claim.floor), pool)
+    : shareOut(claims.map(claim => claim.tail), pool - floorTotal)
+  claims.forEach((claim, index) => {
+    out[claim.keyword] = (capped ? 0 : claim.floor) + (shares[index] ?? 0)
+  })
+  return out
+}
+
+/**
  * Which publishers this run probes for `keyword`, in order.
  *
  * Pinned first and always; the rotation spends what is left of the budget,
@@ -801,11 +960,18 @@ export function applyAxisReport(
  * The pinned half is capped at HALF THE BUDGET rather than at {@link
  * MAX_PINNED_PER_KEYWORD}, so "rotation always keeps the other half" is a
  * property of this function instead of a coincidence between two constants
- * declared in different modules. At the shipped pair the two are identical
- * (250 of 500); below it — a reduced-cost run, a rate-limit backoff, a future
- * override — the old form let the pinned set take the whole budget, leaving
- * `rotated` empty and the cursor frozen, which is the starvation the cursor
- * exists to prevent.
+ * declared in different modules. The two coincided exactly (250 of 500) while
+ * every keyword was handed a flat budget; a keyword allocated 829 has a cap
+ * of 414 that `MAX_PINNED_PER_KEYWORD` reaches first. Below the pair — a
+ * reduced-cost run, a rate-limit backoff, a future override — the old form
+ * let the pinned set take the whole budget, leaving `rotated` empty and the
+ * cursor frozen, which is the starvation the cursor exists to prevent.
+ *
+ * A BUDGET FROM {@link allocateProbeBudgets} NEVER TRUNCATES THE PINNED SET,
+ * and that is by construction rather than by luck: its floor is twice the
+ * pinned count precisely so this cap clears it. The two rules live in
+ * different functions and `publisher-state.test.ts` pins the invariant
+ * itself, not only the arithmetic on either side of it.
  */
 export function probeOrder(
   state: PublisherState, keyword: string, budget: number,

@@ -3,11 +3,12 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import {
-  MAINTAINER_MAX_LENGTH, MAX_PINNED_KEYWORDS, MAX_PINNED_PER_KEYWORD, MAX_PUBLISHERS, PublisherState, advanceCursor,
-  applyAxisReport, atRiskNameCount, atRiskOwners, cursorFor, isMaintainerName, mergePublishers, parsePublisherState,
+  MAINTAINER_MAX_LENGTH, MAX_PINNED_KEYWORDS, MAX_PINNED_PER_KEYWORD, MAX_PUBLISHERS, MIN_PROBE_BUDGET_PER_KEYWORD,
+  PublisherState, advanceCursor, allocateProbeBudgets, applyAxisReport, atRiskNameCount, atRiskOwners, cursorFor,
+  isMaintainerName, mergePublishers, parsePublisherState,
   pinFor, probeOrder, retainPinned, serializePublisherState, unpinFor,
 } from '../src/publisher-state.ts'
-import { PUBLISHER_PROBE_BUDGET_DEFAULT } from '../src/npm-client.ts'
+import { HARVEST_KEYWORDS, PUBLISHER_PROBE_BUDGET_DEFAULT } from '../src/npm-client.ts'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 
@@ -30,10 +31,18 @@ describe('the shipped budget against the shipped vocabulary', () => {
     // Asserted as the PROPERTY rather than against a literal, because the
     // vocabulary only grows (`mergePublishers` never removes a name it keeps),
     // so it moves away from this boundary and never back toward it.
+    //
+    // Against the POOL, not the per-keyword term, since `allocateProbeBudgets`
+    // began splitting by tail: one keyword can now be allocated nearly all of
+    // `PUBLISHER_PROBE_BUDGET_DEFAULT x HARVEST_KEYWORDS.length`, so that
+    // product is what has to stay under the vocabulary. Bounding the smaller
+    // number would have left the dormant-rotation defect reachable by the
+    // reallocation that was meant to be free.
     const state = parsePublisherState(readFileSync(join(repoRoot, 'registry', 'publisher-state.json'), 'utf8'))
+    const pool = PUBLISHER_PROBE_BUDGET_DEFAULT * HARVEST_KEYWORDS.length
     expect(
-      PUBLISHER_PROBE_BUDGET_DEFAULT,
-      `a ${PUBLISHER_PROBE_BUDGET_DEFAULT} budget against ${state.publishers.length} committed publishers `
+      pool,
+      `a ${pool} pool against ${state.publishers.length} committed publishers `
       + 'walks the whole vocabulary in one run: the cursor returns to where it started and the rotation is inert',
     ).toBeLessThan(state.publishers.length)
   })
@@ -724,5 +733,130 @@ describe('applyAxisReport', () => {
   it('advances only its own keyword\'s cursor', () => {
     const after = applyAxisReport(base({ cursors: { k: 1, other: 2 } }), outcome({ stepped: 2 }))
     expect(after.state.cursors).toEqual({ k: 3, other: 2 })
+  })
+})
+
+describe('allocateProbeBudgets', () => {
+  /**
+   * The two harvest keywords as the 2026-09-19 build measured them: tails of
+   * 376 and 1,969 names past the window, pinned sets of 45 and 228. That run
+   * spent 500 probes on each keyword and the published report records what it
+   * bought — `dsh-plugin` recovered 0 names against a residual of 1, while
+   * `deepseek-harness` recovered 13 against a residual of 15.
+   */
+  const measured = [
+    { keyword: 'dsh-plugin', tail: 376 },
+    { keyword: 'deepseek-harness', tail: 1969 },
+  ] as const
+  const shipped: PublisherState = {
+    publishers: Array.from({ length: 3887 }, (_, i) => `u${i}`),
+    pinned: {
+      'dsh-plugin': Array.from({ length: 45 }, (_, i) => `a${i}`),
+      'deepseek-harness': Array.from({ length: 228 }, (_, i) => `b${i}`),
+    },
+  }
+  const sum = (budgets: Readonly<Record<string, number>>): number =>
+    Object.values(budgets).reduce((a, b) => a + b, 0)
+
+  it('spends exactly the pool the flat per-keyword budget spent', () => {
+    // The whole change is a REDISTRIBUTION. Two over-window keywords at 500
+    // each cost 1,000 probes before and must cost 1,000 after, or this buys
+    // its coverage with wall clock and rate-limit exposure the budget comment
+    // sized deliberately.
+    expect(sum(allocateProbeBudgets(shipped, measured, 500))).toBe(1000)
+  })
+
+  it('sends the probes to the keyword that holds the tail', () => {
+    // 1,969 names past the window against 376 — a 5.2x demand ratio answered
+    // with an even split, and worse than even: probeOrder caps the pinned half
+    // at floor(budget/2), so the keyword with the SMALLER pinned set took the
+    // larger rotation (455 against 272) on the run this fixture is taken from.
+    const budgets = allocateProbeBudgets(shipped, measured, 500)
+    const light = budgets['dsh-plugin'] ?? 0
+    const heavy = budgets['deepseek-harness'] ?? 0
+    expect(heavy).toBeGreaterThan(light * 4)
+  })
+
+  it('gives a lone over-window keyword exactly the budget it had before', () => {
+    // The pool is the per-keyword budget times the keywords that partition, so
+    // one crossing keyword is allocated precisely what the flat rule gave it.
+    // Without this the same constant would mean two different spends depending
+    // on how many keywords happened to cross that day.
+    const budgets = allocateProbeBudgets(shipped, [{ keyword: 'deepseek-harness', tail: 1969 }], 500)
+    expect(budgets['deepseek-harness']).toBe(500)
+  })
+
+  it('spends nothing on a keyword inside the window, and does not pool for it', () => {
+    // A keyword under the window never partitions, so it never reaches the
+    // probe pass at all. Counting it into the pool would hand the crossing
+    // keyword a budget nobody measured.
+    const budgets = allocateProbeBudgets(shipped, [
+      { keyword: 'dsh-plugin', tail: 0 },
+      { keyword: 'deepseek-harness', tail: 1969 },
+    ], 500)
+    expect(budgets['dsh-plugin'] ?? 0).toBe(0)
+    expect(budgets['deepseek-harness']).toBe(500)
+  })
+
+  it('never drops a keyword below the budget that probes its whole pinned set', () => {
+    // The floor, and the reason it is 2x the pinned set rather than 1x:
+    // `probeOrder` caps the pinned half at floor(budget/2). A pin that is not
+    // probed supplies nothing and is never evicted either, so starving the
+    // pinned half raises the very residual this allocation exists to lower —
+    // and the pinned half is the productive one (13 of 13 recoveries on the
+    // 2026-09-19 run came from it).
+    const budgets = allocateProbeBudgets(
+      { publishers: [], pinned: { small: Array.from({ length: 250 }, (_, i) => `p${i}`) } },
+      [{ keyword: 'small', tail: 1 }, { keyword: 'huge', tail: 100_000 }],
+      500,
+    )
+    expect(budgets['small']).toBeGreaterThanOrEqual(500)
+    // The property itself, not just the arithmetic behind it: the floor exists
+    // so `probeOrder`'s cap never truncates a pinned set, and the two live in
+    // different functions.
+    expect(probeOrder(
+      { publishers: [], pinned: { small: Array.from({ length: 250 }, (_, i) => `p${i}`) } },
+      'small', budgets['small'] ?? 0,
+    ).pinned).toHaveLength(250)
+  })
+
+  it('keeps a keyword with no pins rotating, so it can seed its first one', () => {
+    // The standing-start trap, per keyword. A pinned set accumulates across
+    // runs and only the rotation can seed the first entry, so an allocation
+    // that rounds a small-tailed keyword to nothing locks it at zero pins
+    // forever — the same failure MAX_UNREACHABLE_RESIDUAL's comment records
+    // for the axis as a whole.
+    const budgets = allocateProbeBudgets(
+      { publishers: Array.from({ length: 3887 }, (_, i) => `u${i}`) },
+      [{ keyword: 'tiny', tail: 1 }, { keyword: 'huge', tail: 1_000_000 }],
+      500,
+    )
+    expect(budgets['tiny']).toBeGreaterThanOrEqual(MIN_PROBE_BUDGET_PER_KEYWORD)
+  })
+
+  it('still never exceeds the pool when the floors alone would', () => {
+    // A reduced-cost run, or a rate-limit backoff, hands this a budget smaller
+    // than the floors. The budget is a CAP before it is an allocation — the
+    // one it replaced spent 57m37s on 3,474 sequential probes and threw.
+    const budgets = allocateProbeBudgets(shipped, measured, 10)
+    expect(sum(budgets)).toBeLessThanOrEqual(20)
+    expect(sum(budgets)).toBe(20)
+  })
+
+  it('allocates whole probes, and the same ones whatever order it is asked in', () => {
+    // A probe is a request; a fractional one cannot be spent. Largest
+    // remainder rather than rounding, so the shares sum to the pool exactly,
+    // and the tie-break is the keyword's own position so two runs over the
+    // same measurements allocate identically.
+    const forward = allocateProbeBudgets(shipped, measured, 500)
+    const reversed = allocateProbeBudgets(shipped, [...measured].reverse(), 500)
+    expect(Object.values(forward).every(Number.isInteger)).toBe(true)
+    expect(reversed['dsh-plugin']).toBe(forward['dsh-plugin'])
+    expect(reversed['deepseek-harness']).toBe(forward['deepseek-harness'])
+  })
+
+  it('allocates nothing at all when the budget is zero or negative', () => {
+    expect(sum(allocateProbeBudgets(shipped, measured, 0))).toBe(0)
+    expect(sum(allocateProbeBudgets(shipped, measured, -5))).toBe(0)
   })
 })

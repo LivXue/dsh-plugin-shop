@@ -388,6 +388,80 @@ the pinned set, leaving the rotation empty and the cursor frozen. The slice is
 now `min(|pinned[K]|, ⌊budget/2⌋)`, which makes the guarantee a property of
 `probeOrder` at every budget.
 
+### 2026-09-19 amendment: the budget is a run pool split by tail, not a per-keyword grant
+
+```
+tail[K]   = max(0, total[K] - SEARCH_WINDOW)
+pool      = PUBLISHER_PROBE_BUDGET_DEFAULT x |keywords that partition|
+floor[K]  = max(2 x |pinned[K]|, MIN_PROBE_BUDGET_PER_KEYWORD)
+budget[K] = floor[K] + (pool - SUM floor) x tail[K] / SUM tail
+```
+
+The grant this replaces — every partitioning keyword receives
+`PUBLISHER_PROBE_BUDGET_DEFAULT` outright — is measured against what it bought
+in the 2026-09-19 published build report:
+
+| keyword | tail | residual | pinned probes -> supplied | rotation probes -> supplied |
+| --- | ---: | ---: | ---: | ---: |
+| `dsh-plugin` | 376 | 1 | 45 -> 0 | 455 -> 0 |
+| `deepseek-harness` | 1,969 | 15 | 228 -> 13 | 272 -> 0 |
+
+Half the run's probes went to the keyword one name short of complete and
+recovered nothing, while the keyword at 15 of the 20 names
+`MAX_UNREACHABLE_RESIDUAL` allows took the smaller rotation. The grant is not
+merely flat but anti-correlated with demand: `probeOrder` caps the pinned half
+at half the budget and gives the remainder to the rotation, so the smaller
+pinned set draws the larger rotation share.
+
+**The pool is the old spend.** `PUBLISHER_PROBE_BUDGET_DEFAULT` times the
+keywords that partition is exactly what the grant cost, so this is a
+redistribution and never a raise: a lone crossing keyword receives precisely
+what it received before, and the per-run request arithmetic that constant's
+comment owns is unchanged. At the measurement above the split is 171 / 829,
+which moves `deepseek-harness`'s rotation cycle from 14.3 runs to 6.5 and
+`dsh-plugin`'s from 8.5 to 31.
+
+**Demand is the tail, although the residual is the target.** The residual is
+known only after the cells page and the allocation is fixed before the first
+probe. It is also a small integer that reaches zero, so a share keyed to it
+would stop a keyword's rotation on the run after a clean one — the run its
+tail grew. The tail is measured before any probe, is thousands of names wide
+and moves smoothly. As a proxy it is loose but ordered the same way: tail per
+missing name was 376 and 131 on 2026-09-19, within a factor of 2.9.
+
+Two floors, each answering a way a bare proportional split fails:
+
+- **Twice the pinned set**, so `probeOrder`'s half-the-budget cap still reaches
+  every pin. An unprobed pin supplies nothing and is never evicted either, so
+  starving the pinned half raises the residual the allocation exists to lower,
+  and that half is the productive one — 13 of 13 recoveries above. Stated
+  against `probeOrder`'s own rule rather than against `MAX_PINNED_PER_KEYWORD`,
+  so the two cannot drift apart.
+- **`MIN_PROBE_BUDGET_PER_KEYWORD` (100)**, a policy floor rather than a
+  measured optimum. Only the rotation can seed a keyword's first pin and a
+  pinned set accumulates across runs, so a purely proportional split holds the
+  smallest tail at zero pins permanently — the standing start of §1, one
+  keyword at a time. Against the 3,887-name vocabulary committed 2026-09-19, a
+  keyword held at this floor cycles in 39 runs.
+
+When the floors exceed the pool, the pool wins and is split in their
+proportion: the budget is a cap before it is an allocation.
+
+**Every keyword is partitioned before any is paged**, because a
+demand-proportional split cannot be computed from the first keyword's tail
+alone. This costs no extra request on a run that completes; on one that throws
+while paging it has spent the later keyword's refinement probes early, and the
+converse is the better half of that trade — a keyword no refinement splits now
+throws before the earlier keyword pages five thousand names it is about to
+discard.
+
+**What this does not fix.** The pool is unchanged, so the axis reaches no name
+it could not reach before; it reaches the residue sooner. The residual drifts
+about 2.5 names a day, `dsh-plugin`'s tail is growing, and once the two tails
+are comparable the split returns to roughly even. This buys time on issue #38
+exactly as the cap raise did, differing only in that it costs nothing and
+surrenders no guard.
+
 ## 5. Module placement
 
 The at-risk rule and the probe order are policy and belong in the pure core,
