@@ -1,7 +1,7 @@
 import { readCappedBody } from './http-body.ts'
 import { compareStrings } from './identity.ts'
 import { escapeCell } from './emit.ts'
-import { atRiskNameCount, atRiskOwners, cursorFor, isMaintainerName, isPinnableKeyword, MAX_PINNED_PER_KEYWORD, probeOrder, type AxisOutcome, type HarvestedName, type PublisherState } from './publisher-state.ts'
+import { allocateProbeBudgets, atRiskNameCount, atRiskOwners, cursorFor, isMaintainerName, isPinnableKeyword, MAX_PINNED_PER_KEYWORD, probeOrder, type AxisOutcome, type HarvestedName, type PublisherState } from './publisher-state.ts'
 import type { Candidate, Rejection } from './types.ts'
 
 /**
@@ -862,7 +862,19 @@ export const PARTITION_KEYWORDS: readonly string[] = [
 ]
 
 /**
- * How many publisher cells one run may PROBE per over-window keyword.
+ * The PER-KEYWORD TERM of how many publisher cells one run may probe.
+ *
+ * **NO LONGER WHAT A KEYWORD RECEIVES**, since 2026-09-19. A run's probes are
+ * this constant times the keywords that partition, and `allocateProbeBudgets`
+ * in `publisher-state.ts` splits that pool by each keyword's tail. The
+ * PRODUCT is unchanged, so every figure below still describes a run: the
+ * per-run cost, the rate-limit exposure, the arithmetic CLAUDE.md points here
+ * for. What moved is the per-keyword cycle, which is now a share's rather
+ * than this constant's — at the 2026-09-19 measurement `deepseek-harness` was
+ * allocated 829 and `dsh-plugin` 171, cycling in 6.5 and 31 runs where a flat
+ * 500 gave 14.3 and 8.5. Faster for the keyword carrying the residual, slower
+ * for the one already covered; `allocateProbeBudgets`' own comment owns why
+ * that is the right direction and what the flat rule measured.
  *
  * **DELIBERATELY BELOW the committed vocabulary**, which is what makes
  * `PublisherState.cursor` do anything: `nextCursor` returns 0 whenever
@@ -890,7 +902,9 @@ export const PARTITION_KEYWORDS: readonly string[] = [
  *  - Under 3,474 — the vocabulary committed on 2026-09-10 — or the rotation is
  *    dormant, which is the defect above. The vocabulary only grows
  *    (`mergePublishers` never removes a name it keeps), so this end has margin
- *    that widens on its own.
+ *    that widens on its own. It is the POOL that has to clear this bound now,
+ *    not this term: one keyword can be allocated nearly all of it, and
+ *    `publisher-state.test.ts` asserts the product.
  *  - Over 250. A probe costs ~1.0s measured end to end (3,474 of them in
  *    57m37s, 429 backoffs included; one probe alone measured 1.2s), so the
  *    phase costs about `budget` seconds and a cycle takes
@@ -1901,7 +1915,14 @@ export async function searchByKeywords(
    * is what makes it safe to land.
    */
   publisherState: PublisherState = { publishers: [] },
-  publisherProbeBudget: number = PUBLISHER_PROBE_BUDGET_DEFAULT,
+  /**
+   * The POOL'S PER-KEYWORD TERM, not what any one keyword receives. The run's
+   * probes are `this x (keywords that partition)`, split across them by tail
+   * — see `allocateProbeBudgets` in `publisher-state.ts`. A lone crossing
+   * keyword therefore still gets exactly this, which is what the flat rule
+   * this replaced gave every crossing keyword outright.
+   */
+  publisherProbeBudgetPerKeyword: number = PUBLISHER_PROBE_BUDGET_DEFAULT,
   /**
    * Called once per harvest keyword with what the publisher axis did for it
    * this run. Fires even when the keyword never crosses the window, because
@@ -2036,8 +2057,33 @@ export async function searchByKeywords(
       if (objects.length === 0 || from + objects.length >= cellTotal) return
     }
   }
+  /**
+   * Every keyword's partition, measured before ANY of them is paged.
+   *
+   * Hoisted out of the loop below for one reason: the probe budget is
+   * allocated by demand, and a demand-proportional split cannot be computed
+   * from the first keyword's tail alone. It costs no extra request on a run
+   * that completes — `partitionKeyword` is still called exactly once per
+   * keyword — and on a run that throws while paging, it has spent the LATER
+   * keyword's refinement probes early. The converse is the better half of
+   * the trade: a keyword no refinement splits now throws before the earlier
+   * keyword pages five thousand names it is about to discard.
+   */
+  const partitions: { keyword: string; cells: Cell[]; oversized: Cell[]; total: number; partitioned: boolean }[] = []
   for (const keyword of HARVEST_KEYWORDS) {
-    const { cells, oversized, total, partitioned } = await partitionKeyword(keyword, probe)
+    partitions.push({ keyword, ...await partitionKeyword(keyword, probe) })
+  }
+  /**
+   * What each keyword may spend on publisher probes. `tail` is the demand
+   * signal and it is exactly what `partitioned` is decided on, so a keyword
+   * inside the window asks for nothing and is allocated nothing.
+   */
+  const probeBudgets = allocateProbeBudgets(
+    publisherState,
+    partitions.map(part => ({ keyword: part.keyword, tail: Math.max(0, part.total - SEARCH_WINDOW) })),
+    publisherProbeBudgetPerKeyword,
+  )
+  for (const { keyword, cells, oversized, total, partitioned } of partitions) {
     const forKeyword = new Set<string>()
     /**
      * Every name this keyword's run has paged, reduced to what the at-risk
@@ -2143,7 +2189,7 @@ export async function searchByKeywords(
     const selectPublisherCells = async (): Promise<{ pinned: Cell[]; rotated: Cell[] }> => {
       const pinnedCells: Cell[] = []
       const rotatedCells: Cell[] = []
-      const order = probeOrder(publisherState, keyword, publisherProbeBudget)
+      const order = probeOrder(publisherState, keyword, probeBudgets[keyword] ?? 0)
       pinnedProbed = order.pinned.length
       rotatedProbed = order.rotated.length
       stepped = order.stepped

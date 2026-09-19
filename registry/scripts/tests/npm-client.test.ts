@@ -1038,12 +1038,19 @@ describe('searchByKeywords', () => {
     // churn is tolerated symmetrically with the partitioned branch) — so
     // dsh-plugin costs 4 requests (probe, two pages, re-probe) and
     // deepseek-harness costs 3 (probe, one already-empty page, re-probe).
+    //
+    // BOTH LEADING PROBES COME FIRST, which is the only thing that moved when
+    // the probe budget stopped being flat: `searchByKeywords` partitions every
+    // keyword before paging any of them, because a demand-proportional split
+    // of the publisher probes cannot be computed from the first keyword's tail
+    // alone. Seven requests either way — this fixture is keyed on call ORDER,
+    // so it has to say which order, and `call` below pins the count unchanged.
     const pages = [
       { total: 251, objects: [] }, // dsh-plugin: pre-paging probe
+      { total: 0, objects: [] }, // deepseek-harness: pre-paging probe
       { total: 251, objects: Array.from({ length: 250 }, (_, i) => ({ package: { name: `dsh-p${i}` } })) },
       { total: 251, objects: [{ package: { name: 'dsh-last' } }] },
       { total: 251, objects: [] }, // dsh-plugin: post-paging re-probe
-      { total: 0, objects: [] }, // deepseek-harness: pre-paging probe
       { total: 0, objects: [] }, // deepseek-harness: one page, already empty
       { total: 0, objects: [] }, // deepseek-harness: post-paging re-probe
     ]
@@ -1775,7 +1782,11 @@ describe('searchByKeywords', () => {
     await expect(searchByKeywords(fetchImpl)).rejects.toThrow(
       /npm search for keywords:dsh-plugin needs from=5250, past the 5000 the registry honors \(a larger from silently returns page 0\)/,
     )
-    expect(urls).toHaveLength(22) // one size=1 probe plus from=0..5000
+    // One size=1 probe PER HARVEST KEYWORD plus from=0..5000. The second
+    // probe is new: every keyword is partitioned before any is paged, so the
+    // keyword this run never reaches has still been measured when the first
+    // one throws. One request, on a path that is already failing the build.
+    expect(urls).toHaveLength(23)
   })
 
   it('throws when a page answers no total, rather than ending the cell silently', async () => {
@@ -1802,7 +1813,9 @@ describe('searchByKeywords', () => {
     await expect(searchByKeywords(fetchImpl)).rejects.toThrow(
       /npm search for keywords:dsh-plugin at from=0 answered no total; a truncated page cannot be told from a complete one/,
     )
-    expect(call).toBe(2) // the probe, then the one page that trips the throw
+    // A probe per harvest keyword — both are measured before either is paged
+    // — then the one page that trips the throw.
+    expect(call).toBe(3)
   })
 
   it('throws when the total probe itself answers no total', async () => {
@@ -2599,6 +2612,54 @@ describe('searchByKeywords', () => {
       // Probed ten times, not twenty: the retry re-PAGES the partition but must
       // not re-PROBE the vocabulary, or the axis costs double on every keyword
       // whose residual sends it round again — which is the steady state.
+    })
+
+    it('splits the run\u2019s probes by tail rather than handing each keyword the same', async () => {
+      // The 2026-09-19 published report is what a flat split bought: 500
+      // probes to `dsh-plugin`, whose residual was 1, recovering nothing; 500
+      // to `deepseek-harness`, whose residual was 15. Worse than even, in
+      // fact — `probeOrder` caps the pinned half at floor(budget/2) and gives
+      // the rest to the rotation, so the keyword with 45 pins took a 455-probe
+      // rotation while the one with 228 took 272.
+      //
+      // Here both keywords cross the window with tails of 150 and 750. The
+      // exact shares are `allocateProbeBudgets`'s and pinned there; what this
+      // test owns is that `searchByKeywords` SPENDS them — the wiring, not
+      // the policy. Before it, both counts were 300.
+      // Both keywords cover their own tail through the refinement cell, so
+      // the run COMPLETES. A run that throws on the first keyword never
+      // reaches the second one's probes at all, which is what an earlier
+      // draft of this fixture measured instead of the split.
+      const tail = (prefix: string, length: number): string[] =>
+        Array.from({ length }, (_, i) => `${prefix}${5250 + i}`)
+      const { fetchImpl, urls } = stubSearch(
+        query => (query === 'keywords:dsh-plugin' ? 5400
+          : query === 'keywords:deepseek-harness' ? 6000
+            : query === 'keywords:dsh-plugin,dsh' ? 150
+              : query === 'keywords:deepseek-harness,dsh' ? 750 : 0),
+        (query, from) => {
+          if (query === 'keywords:dsh-plugin,dsh') return tail('p', 150).slice(from, from + 250)
+          if (query === 'keywords:deepseek-harness,dsh') return tail('h', 750).slice(from, from + 250)
+          if (from > MAX_SEARCH_FROM) return []
+          if (query === 'keywords:dsh-plugin') return Array.from({ length: 250 }, (_, i) => `p${from + i}`)
+          if (query === 'keywords:deepseek-harness') return Array.from({ length: 250 }, (_, i) => `h${from + i}`)
+          return []
+        },
+      )
+      const many = Array.from({ length: 600 }, (_, i) => `u${i}`)
+      const names = await searchByKeywords(fetchImpl, undefined, undefined, undefined, undefined,
+        () => {}, () => {}, { publishers: many }, 300)
+      expect(names).toHaveLength(11_400)
+      const probed = urls.filter(url => url.includes('maintainer'))
+      const forKeyword = (keyword: string): number =>
+        probed.filter(url => decodeURIComponent(url).includes(`keywords:${keyword} maintainer:`)).length
+      expect(forKeyword('dsh-plugin')).toBe(167)
+      expect(forKeyword('deepseek-harness')).toBe(433)
+      // ZERO COST, and this is the assertion that makes it one: the pool is
+      // the per-keyword budget times the keywords that partitioned, so the
+      // run spends exactly what the flat rule spent and merely spends it
+      // where the tail is.
+      expect(probed).toHaveLength(600)
     })
 
     it('starts the budget at the offset, so the tail past it is not starved forever', async () => {
