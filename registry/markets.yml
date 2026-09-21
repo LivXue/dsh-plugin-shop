@@ -109,6 +109,11 @@
   by: human
   reason: "Plugin market for DeepSeek Harness: browse npm, inspect details, install into the current profile"
 
+- name: "@gausszhou/dsh-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: Visual plugin market inside DeepSeek Harness — browse, search, and one-click install community plugins. · DSH 可视化插件市场：逛一逛，点一下，装好。"
+
 - name: "@hhxg/dsh-hhxg-market"
   market: false
   by: human
