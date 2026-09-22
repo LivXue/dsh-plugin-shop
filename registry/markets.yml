@@ -254,6 +254,11 @@
   by: human
   reason: "Community plugin store panel for the DeepSeek Harness Web UI (browse/search dshplugin.org index, copyable pinned install commands)"
 
+- name: "dsh-community-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: 为 DeepSeek Harness (DSH) 插件生态打造的现代化桌面端解决方案。万物皆「插件」，桌面本身也是「插件」。"
+
 - name: "dsh-desktop-market"
   market: true
   by: human
