@@ -926,14 +926,46 @@ export const PARTITION_KEYWORDS: readonly string[] = [
  *    is NOT retried. Exposure scales with this number, so buying cycle length
  *    the horizon does not need buys risk instead.
  *
- * So 500. MEASURED against the estimate above, on the two runs that followed
- * this change: the `Classify new listings` step took 15m42s and 17m31s
- * against a 6m23s control on the last run whose vocabulary was empty, so the
- * probe phase is 9m19s and 11m08s — ~1.1-1.3s per probe, and the step
+ * It was 500, and that value was MEASURED against the estimate above on the
+ * two runs that followed it: the `Classify new listings` step took 15m42s and
+ * 17m31s against a 6m23s control on the last run whose vocabulary was empty,
+ * so the probe phase is 9m19s and 11m08s — ~1.1-1.3s per probe, and the step
  * completes and publishes where 3,474 probes reached 57m37s and threw. Same
  * accumulate-over-days posture as `REPO_BACKFILL_BUDGET` on the GitHub half,
  * with the one difference named above — that half persists its
  * per-repository outcomes and this one does not.
+ *
+ * **800 SINCE 2026-09-22, and the rotation did not force it.**
+ * {@link MAX_PINNED_PER_KEYWORD} did: it is half this number by the relation
+ * `publisher-state.test.ts` asserts, and `keywords:deepseek-harness` reached
+ * 239 pins of 250 on 2026-09-22 (read off `registry/publisher-state.json` on
+ * `main`), growing ~2.75 a run. A full pinned set refuses new residue owners,
+ * and the pinned half is the productive one: over the four runs after the
+ * budget became demand-allocated it supplied 13, 15, 19 and 32 names where
+ * the rotation supplied 0, 3, 1 and 0. So the bound that was throttling the
+ * only half that pays had to move, and this constant had to move with it or
+ * `probeOrder` would reach ⌊budget/2⌋ of a larger set and no more.
+ *
+ * WHAT THE RAISE COSTS. The pool is `this x (keywords that partition)`, so a
+ * run goes from 1,000 probes to 1,600. At the 1.1-1.3s per probe measured
+ * above that is 11-13 minutes added to `Classify new listings`, which took
+ * 32m38s, 32m45s, 33m12s and 36m40s over 2026-09-19 to 2026-09-21 (the step's
+ * `started_at` to `completed_at` in `actions/runs/<id>/jobs`). The whole
+ * `build` job took 62m30s to 71m20s over the same runs against the
+ * `timeout-minutes: 120` in `daily.yml`, so the raise lands the worst observed
+ * run near 84 minutes with about half an hour of margin. Derived from a
+ * measured per-probe cost rather than measured end to end, because no run
+ * exists yet at this pool; re-read those four figures after one does.
+ *
+ * WHERE IT BUYS RISK, which is the half not to gloss. Exposure scales with
+ * this number, and the third bullet above records that sustained pressure is
+ * what escalated to the 503 that {@link searchTotal} does not retry. 1,600
+ * sequential probes a run sits closer to the 3,474 that produced that 503 than
+ * 1,000 did. What still separates them is shape rather than size: the pool is
+ * split across two keywords and interleaved with paging instead of run as one
+ * uninterrupted burst. If a 503 returns, this is the first constant to look
+ * at, and lowering it means lowering MAX_PINNED_PER_KEYWORD in the same
+ * change — the test above fails otherwise, which is the point of it.
  *
  * ONE CYCLE IS SEVEN *SNAPSHOTS*, NOT SEVEN RUNS, and the distinction is
  * observable rather than pedantic: a run reads the cursor out of the tree it
@@ -956,7 +988,7 @@ export const PARTITION_KEYWORDS: readonly string[] = [
  * the residual sends `deepseek-harness` round again on EVERY run. The filter
  * drops it to the cells that can actually supply something.
  */
-export const PUBLISHER_PROBE_BUDGET_DEFAULT = 500
+export const PUBLISHER_PROBE_BUDGET_DEFAULT = 800
 
 /** One query's `text` value: the keyword, plus any refinements ANDed on. */
 export function keywordQuery(keywords: readonly string[]): string {

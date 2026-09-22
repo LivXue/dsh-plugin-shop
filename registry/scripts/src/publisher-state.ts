@@ -598,13 +598,30 @@ export function atRiskNameCount(
  * would make this pure module depend on the shell; `publisher-state.test.ts`
  * asserts the relation instead.
  *
- * At-risk names are ~2% of a keyword's names and the keyword grows ~70 a day,
- * so a pinned set grows by roughly one owner a day and this bound is months
- * out. It is here so that horizon is a bound and not a cliff, and a set AT the
- * bound is reported (see `describePublisherAxis`) because at that point new
- * residue owners are being refused.
+ * A set AT the bound is reported (see `describePublisherAxis`) because at that
+ * point new residue owners are being refused, and the refusals are counted
+ * too: `applyAxisReport` returns them and `build.ts` prints them.
+ *
+ * **THE HORIZON THIS BOUND WAS SIZED FOR WAS WRONG BY A FACTOR OF THREE**,
+ * and that is why it moved from 250 to 400 on 2026-09-22. The estimate it
+ * shipped with read: at-risk names are ~2% of a keyword's names and the
+ * keyword grows ~70 a day, so a pinned set grows by roughly one owner a day
+ * and the bound is months out. The measured series for
+ * `keywords:deepseek-harness`, read off `registry/publisher-state.json` on
+ * `main` after each run, is 228, 233, 234, 236, 239 across 2026-09-19 to
+ * 2026-09-22 — about 2.75 an run, and 239 of 250 within four days of the
+ * estimate being written.
+ *
+ * What the estimate missed is the SHAPE of seeding rather than its rate. The
+ * set does not accumulate slowly against the at-risk population; it tracks it,
+ * because nearly every at-risk name contributes a distinct owner — 241, 242
+ * and 244 at-risk names produced 234, 236 and 239 pins over those same runs.
+ * So the bound is not a slow-filling reservoir with months of headroom, it is
+ * a ceiling a few names above the at-risk owner count, and it binds as soon as
+ * that count reaches it. Size any future raise against the at-risk owner
+ * count and its growth, never against the keyword's own growth.
  */
-export const MAX_PINNED_PER_KEYWORD = 250
+export const MAX_PINNED_PER_KEYWORD = 400
 
 /** The state plus `users` pinned for `keyword`; filtered, unique, sorted, bounded. */
 export function pinFor(state: PublisherState, keyword: string, users: readonly string[]): PublisherState {
@@ -960,9 +977,10 @@ export function allocateProbeBudgets(
  * The pinned half is capped at HALF THE BUDGET rather than at {@link
  * MAX_PINNED_PER_KEYWORD}, so "rotation always keeps the other half" is a
  * property of this function instead of a coincidence between two constants
- * declared in different modules. The two coincided exactly (250 of 500) while
- * every keyword was handed a flat budget; a keyword allocated 829 has a cap
- * of 414 that `MAX_PINNED_PER_KEYWORD` reaches first. Below the pair — a
+ * declared in different modules. The two coincide at the shipped pair (400 of
+ * 800) and nowhere else once the budget is allocated: a keyword allocated
+ * 1,300 has a cap of 650 that `MAX_PINNED_PER_KEYWORD` reaches first, and one
+ * allocated 300 has a cap of 150 that its own pinned set reaches first. Below the pair — a
  * reduced-cost run, a rate-limit backoff, a future override — the old form
  * let the pinned set take the whole budget, leaving `rotated` empty and the
  * cursor frozen, which is the starvation the cursor exists to prevent.

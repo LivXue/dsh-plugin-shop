@@ -462,6 +462,67 @@ are comparable the split returns to roughly even. This buys time on issue #38
 exactly as the cap raise did, differing only in that it costs nothing and
 surrenders no guard.
 
+### 2026-09-22 amendment: the bound is 400 and the budget 800, because the horizon above was wrong by a factor of three
+
+The two guards in this section predicted `MAX_PINNED_PER_KEYWORD` was "~8
+months out" at one owner a day. Measured, from `registry/publisher-state.json`
+on `main` after each run, `keywords:deepseek-harness` pinned:
+
+| date | 09-19 (published) | 09-19 (merge) | 09-20 | 09-21 | 09-22 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| pinned | 228 | 233 | 234 | 236 | 239 |
+| at-risk names seen | 235 | 241 | 242 | 244 | — |
+
+About 2.75 owners a run, and 239 of 250 within four days.
+
+**What the estimate missed is the shape of seeding, not its rate.** The set
+does not accumulate slowly against the at-risk population, it tracks it:
+nearly every at-risk name contributes a distinct owner, so the pinned set sits
+a few names below the at-risk owner count and binds as soon as that count
+reaches the bound. Size any future raise against the at-risk owner count and
+its growth, never against the keyword's own growth.
+
+**The bound cannot be raised alone.** With the budget allocated by tail
+(the 2026-09-19 amendment), every keyword at the bound at once makes the
+allocator's floors — twice each pinned set — sum to `2 x C x K` against a pool
+of `P x K`, so the floors fit only while `C <= P / 2`. Past that the allocator
+clamps, `probeOrder` slices `⌊budget/2⌋` of a larger set, and because
+`pinFor` stores the set sorted by code unit the slice is the same alphabetical
+prefix every run: the tail is pinned in name only, and silently, since the
+axis line reports the set's size and not how much of it was reached. So the
+pair moves together, 250/500 to 400/800, and `publisher-state.test.ts` asserts
+the property through `allocateProbeBudgets` and `probeOrder` rather than as
+arithmetic between two literals.
+
+**What it costs.** The pool is `P x |keywords that partition|`, so a run goes
+from 1,000 probes to 1,600. At the 1.1-1.3s per probe already measured, that
+is 11-13 minutes added to `Classify new listings`, which took 32m38s, 32m45s,
+33m12s and 36m40s over 2026-09-19 to 2026-09-21 (the step's `started_at` to
+`completed_at` in `actions/runs/<id>/jobs`). The `build` job took 62m30s to
+71m20s over the same runs against `daily.yml`'s `timeout-minutes: 120`, so the
+worst observed run lands near 84 minutes with about half an hour of margin.
+Derived from a measured per-probe cost, not measured end to end: no run exists
+at this pool yet, and those four figures should be re-read once one does.
+
+**Where it buys risk.** Exposure scales with the pool, and
+`PUBLISHER_PROBE_BUDGET_DEFAULT`'s comment records that sustained pressure is
+what escalated to the 503 that `searchTotal` does not retry. 1,600 sequential
+probes sits closer to the 3,474 that produced that 503 than 1,000 did; what
+still separates them is shape rather than size, since the pool is split across
+two keywords and interleaved with paging instead of run as one burst. This is
+the first constant to lower if a 503 returns, and lowering it means lowering
+the bound in the same change.
+
+**Why this half and not the rotation's.** Over the four runs after the budget
+became demand-allocated, the pinned half supplied 13, 15, 19 and 32 names
+against the rotation's 0, 3, 1 and 0 — about 66 names from 695 probes against
+4 from roughly 1,769. Taking the rotation's share instead of paying for new
+probes was the cheaper option and was rejected: the rotation's value is a
+full-cycle property, it is the only path to an owner the at-risk rule cannot
+see, and holding it at a fixed reservation would have moved its cycle from 6.8
+runs to 26 — long enough that a family event reddens the build before the
+rotation finds it, which is the event this axis exists for.
+
 ## 5. Module placement
 
 The at-risk rule and the probe order are policy and belong in the pure core,

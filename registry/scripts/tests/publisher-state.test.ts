@@ -387,6 +387,42 @@ describe('MAX_PINNED_PER_KEYWORD', () => {
     // reported, the unreachable part of it is not.
     expect(MAX_PINNED_PER_KEYWORD * 2).toBe(PUBLISHER_PROBE_BUDGET_DEFAULT)
   })
+
+  it('lets EVERY keyword hold a full pinned set and still probe all of it', () => {
+    // The property the relation above exists for, asserted through the two
+    // functions that actually enforce it rather than as arithmetic between two
+    // literals. The worst case is every keyword at the bound at once: that is
+    // when `allocateProbeBudgets` has to clamp, because the floors it would
+    // otherwise honour (twice each pinned set) sum to the whole pool, and a
+    // clamp that cut into a pinned set would leave `probeOrder` slicing the
+    // same alphabetical prefix every run -- the tail pinned in name only, and
+    // silently, since the axis line reports the set's SIZE and not how much of
+    // it was reached.
+    //
+    // It is also the test that says what raising one of the two constants
+    // costs: raise MAX_PINNED_PER_KEYWORD alone and this goes red, because
+    // ⌊budget/2⌋ can no longer reach the bound.
+    const pinned: Record<string, string[]> = {}
+    for (const keyword of HARVEST_KEYWORDS) {
+      pinned[keyword] = Array.from({ length: MAX_PINNED_PER_KEYWORD },
+        (_, i) => `${keyword}-u${String(i).padStart(4, '0')}`)
+    }
+    const state: PublisherState = {
+      publishers: Array.from({ length: 4_000 }, (_, i) => `v${i}`), pinned,
+    }
+    const budgets = allocateProbeBudgets(
+      state,
+      HARVEST_KEYWORDS.map(keyword => ({ keyword, tail: 1 })),
+      PUBLISHER_PROBE_BUDGET_DEFAULT,
+    )
+    for (const keyword of HARVEST_KEYWORDS) {
+      expect(
+        probeOrder(state, keyword, budgets[keyword] ?? 0).pinned,
+        `${keyword} holds ${MAX_PINNED_PER_KEYWORD} pins but was allocated ${budgets[keyword]} probes, `
+        + 'so probeOrder can only reach half of that many',
+      ).toHaveLength(MAX_PINNED_PER_KEYWORD)
+    }
+  })
 })
 
 describe('pinFor and unpinFor', () => {
