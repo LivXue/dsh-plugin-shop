@@ -946,16 +946,25 @@ export const PARTITION_KEYWORDS: readonly string[] = [
  * only half that pays had to move, and this constant had to move with it or
  * `probeOrder` would reach ⌊budget/2⌋ of a larger set and no more.
  *
- * WHAT THE RAISE COSTS. The pool is `this x (keywords that partition)`, so a
- * run goes from 1,000 probes to 1,600. At the 1.1-1.3s per probe measured
- * above that is 11-13 minutes added to `Classify new listings`, which took
- * 32m38s, 32m45s, 33m12s and 36m40s over 2026-09-19 to 2026-09-21 (the step's
- * `started_at` to `completed_at` in `actions/runs/<id>/jobs`). The whole
- * `build` job took 62m30s to 71m20s over the same runs against the
- * `timeout-minutes: 120` in `daily.yml`, so the raise lands the worst observed
- * run near 84 minutes with about half an hour of margin. Derived from a
- * measured per-probe cost rather than measured end to end, because no run
- * exists yet at this pool; re-read those four figures after one does.
+ * WHAT THE RAISE COSTS, MEASURED END TO END. The pool is `this x (keywords
+ * that partition)`, so a run goes from 1,000 probes to 1,600. The first run at
+ * the larger pool — this change's own PR dry run on 2026-09-22 — spent 44m18s
+ * in `Classify new listings`, against 32m38s, 32m45s, 33m12s and 36m40s over
+ * 2026-09-19 to 2026-09-21 (each read as the step's `started_at` to
+ * `completed_at` in `actions/runs/<id>/jobs`). Against the mean of those four,
+ * 33m49s, the 600 extra probes cost 10m29s — about 1.05s each. The `build` job
+ * took 75m54s against 62m30s to 71m20s before it, which leaves 44 minutes
+ * against the `timeout-minutes: 120` in `daily.yml`.
+ *
+ * CORRECTION, left visible rather than edited away. This paragraph first read
+ * "11-13 minutes" and "about half an hour of margin", derived from the
+ * 1.1-1.3s per probe measured when the axis was new, and flagged as derived
+ * rather than measured. Both were high. That band was taken while the
+ * vocabulary was fresh and the probes ran as one concentrated burst, so it
+ * carries more 429 backoff than a steady-state run does; a larger pool split
+ * across two keywords and interleaved with paging runs closer to 1.05s. Size
+ * any further change on the measured 1.05s, not on the older band — the two
+ * diverge in proportion to the pool.
  *
  * WHERE IT BUYS RISK, which is the half not to gloss. Exposure scales with
  * this number, and the third bullet above records that sustained pressure is

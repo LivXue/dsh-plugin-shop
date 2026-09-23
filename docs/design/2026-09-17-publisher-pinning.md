@@ -494,15 +494,27 @@ pair moves together, 250/500 to 400/800, and `publisher-state.test.ts` asserts
 the property through `allocateProbeBudgets` and `probeOrder` rather than as
 arithmetic between two literals.
 
-**What it costs.** The pool is `P x |keywords that partition|`, so a run goes
-from 1,000 probes to 1,600. At the 1.1-1.3s per probe already measured, that
-is 11-13 minutes added to `Classify new listings`, which took 32m38s, 32m45s,
-33m12s and 36m40s over 2026-09-19 to 2026-09-21 (the step's `started_at` to
-`completed_at` in `actions/runs/<id>/jobs`). The `build` job took 62m30s to
-71m20s over the same runs against `daily.yml`'s `timeout-minutes: 120`, so the
-worst observed run lands near 84 minutes with about half an hour of margin.
-Derived from a measured per-probe cost, not measured end to end: no run exists
-at this pool yet, and those four figures should be re-read once one does.
+**What it costs, measured end to end.** The pool is
+`P x |keywords that partition|`, so a run goes from 1,000 probes to 1,600.
+
+| pool | `Classify new listings` | `build` job |
+| --- | --- | --- |
+| 1,000 (2026-09-19 to 09-21, four runs) | 32m38s, 32m45s, 33m12s, 36m40s | 62m30s - 71m20s |
+| 1,600 (2026-09-22, the PR dry run) | **44m18s** | **75m54s** |
+
+Each figure is the step's or job's `started_at` to `completed_at` in
+`actions/runs/<id>/jobs`. Against the mean of the four, 33m49s, the 600 extra
+probes cost 10m29s — about 1.05s each. The `build` job leaves 44 minutes
+against `daily.yml`'s `timeout-minutes: 120`.
+
+**Correction to the paragraph above, stated rather than edited away.** It first
+read "11-13 minutes" and "about half an hour of margin", derived from the
+1.1-1.3s per probe measured when the axis was new and flagged as derived rather
+than measured. Both were high. That band was taken while the vocabulary was
+fresh and the probes ran as one concentrated burst, so it carries more 429
+backoff than a steady-state run does; a larger pool split across two keywords
+and interleaved with paging runs closer to 1.05s. Size any further change on
+the measured 1.05s — the two diverge in proportion to the pool.
 
 **Where it buys risk.** Exposure scales with the pool, and
 `PUBLISHER_PROBE_BUDGET_DEFAULT`'s comment records that sustained pressure is
