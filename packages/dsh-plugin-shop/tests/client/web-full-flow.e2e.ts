@@ -61,7 +61,7 @@
  * arms were asserted by nothing, and the divergence they now pin was found
  * as an opaque 10s timeout on a host behaving exactly as designed.
  *
- * Written against harness 0.1.5-rc.1 — the version `.github/workflows/plugin.yml`
+ * Written against harness 0.1.5-rc.3 — the version `.github/workflows/plugin.yml`
  * installs globally, and therefore the one every selector below was measured
  * on. The two are held together mechanically: `repo-guards.test.ts` fails the
  * build if this line and that pin name different versions — the pin has moved

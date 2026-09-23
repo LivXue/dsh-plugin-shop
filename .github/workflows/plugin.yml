@@ -122,7 +122,28 @@ jobs:
       # the lower end of the peer range is asserted by the build rather than
       # observed. That is a known gap, not an oversight — closing it means a
       # second e2e job on the floor, which is a decision, not a comment.
-      - run: npm install -g @deepseek-ai/dsh@0.1.5-rc.1
+      # 0.1.5-rc.3 SINCE 2026-09-23, and the reason is not a feature: rc.1 and
+      # rc.2 no longer BOOT from a global install. On 2026-09-22 the harness
+      # published 0.1.5-rc.3 of dsh and of its plugin packages together
+      # (dsh-sandbox-local, dsh-util-values, dsh-sandbox-windows-acl). A core
+      # at rc.1 declares `^0.1.5-rc.1` for those, and semver admits a higher
+      # PRERELEASE of the same [major.minor.patch] — so a fresh install now
+      # pairs an rc.1 core with rc.3 plugins, and Cordis cannot resolve them:
+      # `dsh: plugin(s) failed to load: @deepseek-ai/dsh-sandbox-local`.
+      #
+      # Measured 2026-09-23 by installing each version into an isolated prefix
+      # and booting `dsh --profile web`: rc.1 fails, rc.2 (the current `latest`)
+      # fails, rc.3 boots. The same rc.1 installed NON-globally boots, because
+      # npm lays its tree out differently — which is why this surfaced only in
+      # CI. Reverting individual packages to rc.2 in place does not fix it: the
+      # whole closure moved, not one package.
+      #
+      # This is a pinned CEILING as the block above says, so it must not be
+      # bumped on availability alone. It moved here because the suite was RUN
+      # against rc.3 first: all six web-full-flow cases pass under
+      # DSH_SHOP_REQUIRE_E2E=1, which is what the e2e's contract header
+      # attests and what repo-guards.test.ts checks this line against.
+      - run: npm install -g @deepseek-ai/dsh@0.1.5-rc.3
       - run: dsh --version
       # The web full-flow e2e (P2 exit criterion) needs a playwright browser;
       # without --with-deps for now — the ubuntu-latest image already carries
