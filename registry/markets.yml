@@ -59,6 +59,11 @@
   by: human
   reason: "A self-hosted Framework Hub marketplace for DSH profiles."
 
+- name: "@chatcode/cco-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: ChatCode CLI Plugin Market — browse, search, and one-click install community plugins. · ChatCode CLI 可视化插件市场：逛一逛，点一下，装好。"
+
 - name: "@cyber-moshen/dsh-plugin-market"
   market: true
   by: human
