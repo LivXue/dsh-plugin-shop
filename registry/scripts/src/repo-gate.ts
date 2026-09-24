@@ -253,11 +253,14 @@ export function gateRepo(
 
   // The same per-entry budget the npm gate applies, over this channel's own
   // untrusted fields and in `assignRepoTier`'s key order, so the measured
-  // bytes are the bytes `emit` will write. A repo entry carries no `peers`,
-  // which is where the npm weight is — but `tarball.url` comes straight from
-  // the GitHub releases API and is bounded nowhere else, and the budget is
-  // what covers whatever field an entry grows next. Last, so that every reason
-  // naming a single field is reported ahead of it.
+  // bytes are the bytes `emit` will write. `peers` is measured from
+  // 2026-09-24, the day this channel began carrying it: the sentence that sat
+  // here until then — "a repo entry carries no `peers`" — was the written
+  // record of the compatibility badge's blind spot over 6,979 of 11,864
+  // entries (2026-09-01-harness-compatibility §8.1). `tarball.url` comes
+  // straight from the GitHub releases API and is bounded nowhere else, and the
+  // budget is what covers whatever field an entry grows next. Last, so that
+  // every reason naming a single field is reported ahead of it.
   const release = candidate.release
   const payloadBytes = entryPayloadBytes({
     name: candidate.name,
@@ -269,10 +272,13 @@ export function gateRepo(
     catalog,
     repo: candidate.repo,
     ...(candidate.subdir !== undefined ? { subdir: candidate.subdir } : {}),
-    // Not counted, for the reason `gate.ts` gives at its own probe: a size is
-    // a decoration and must not cost a listing. Bounded overshoot, ~39 bytes.
-
     ...(release !== undefined ? { tarball: { url: release.url, sha256: release.sha256 } } : {}),
+    // `installSize` sits here in the entry and is NOT counted, for the reason
+    // `gate.ts` gives at its own probe: a size is a decoration and must not
+    // cost a listing. Bounded overshoot, ~39 bytes.
+    ...(candidate.peers !== undefined && candidate.peers.length > 0 ? { peers: candidate.peers } : {}),
+    // The author's own text, counted as the npm gate counts it.
+    ...(candidate.compatibility !== undefined ? { compatibility: candidate.compatibility } : {}),
   })
   if (payloadBytes > ENTRY_PAYLOAD_MAX_BYTES) {
     return reject(unit, 'no-manifest',

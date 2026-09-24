@@ -124,15 +124,33 @@ describe('assignTier', () => {
     // `installSize` was appended after `unpackedSize` rather than inserted
     // beside it: a new key at the END of the optional block rewrites every
     // entry once, which a new field must; putting it earlier would also move
-    // the keys after it, for no gain.
+    // the keys after it, for no gain. `compatibility` followed it by the same
+    // rule.
     const full = accepted('dsh-other-plugin', '1.0.0', 'declared', 'realauthor')
     full.candidate.peers = ['@deepseek-ai/dsh-client-store']
     full.candidate.unpackedSize = 847407
+    full.candidate.compatibility = { dsh: '>=0.1.5', profiles: ['web'] }
     expect(Object.keys(assignTier(full, config))).toEqual([
       'name', 'version', 'integrity', 'publishedAt', 'repository', 'license',
       'metadata', 'catalog', 'source', 'added', 'publisher', 'peers',
-      'unpackedSize', 'installSize', 'tier',
+      'unpackedSize', 'installSize', 'compatibility', 'tier',
     ])
+  })
+
+  it('carries the author’s compatibility declaration onto the entry, verbatim', () => {
+    // A requirement, never a verdict: the tier copies it and decides nothing
+    // from it — the reader's own host compares it against what is running.
+    const input = accepted('dsh-other-plugin', '1.0.0')
+    input.candidate.compatibility = { dsh: '0.1.2-rc.1 || 0.1.5-alpha.1', profiles: ['web'] }
+    const entry = assignTier(input, config)
+    expect(entry.compatibility).toEqual({ dsh: '0.1.2-rc.1 || 0.1.5-alpha.1', profiles: ['web'] })
+    // Nothing else moves because of it: a declaration naming another harness
+    // does not touch the tier.
+    expect(entry.tier).toBe('community')
+  })
+
+  it('omits compatibility entirely when the package declares none', () => {
+    expect('compatibility' in assignTier(accepted('dsh-other-plugin', '1.0.0'), config)).toBe(false)
   })
 
   it('marks an unlisted package community and attaches no review', () => {
@@ -272,19 +290,51 @@ describe('assignRepoTier', () => {
     // invalidated every CDN cache with the whole suite green — the gap
     // pipeline.test.ts's own determinism guard was written after.
     //
-    // `installSize` sits last, after `added`: the placement §7.1 prescribes
-    // and the one the npm path uses. Inserted beside `subdir` it also moved
-    // `tarball` and `added` in every github entry that gains a size, for no
-    // gain — a new key at the END rewrites every entry once, which a new
-    // field must, and nothing more.
+    // `installSize` sits after `added`: the placement §7.1 prescribes and the
+    // one the npm path uses. Inserted beside `subdir` it also moved `tarball`
+    // and `added` in every github entry that gains a size, for no gain — a
+    // new key at the END rewrites every entry once, which a new field must,
+    // and nothing more. `peers` arrived on this channel later than
+    // `installSize` did, so by the same rule it sits after it, not in the
+    // npm path's slot ahead of the sizes — and `compatibility` after both.
     const full = repoAccepted('dsh-repo-plugin', { tag: 'v1.0.0', url: 'https://example.com/a.tgz', sha256: 'a'.repeat(64) })
     full.repo.subdir = 'packages/plugin'
     full.repo.installSize = 43_859
+    full.repo.peers = ['@deepseek-ai/cordis']
+    full.repo.compatibility = { profiles: ['web'] }
     expect(Object.keys(assignRepoTier(full, config))).toEqual([
       'name', 'version', 'integrity', 'publishedAt', 'repository', 'license',
       'metadata', 'catalog', 'source', 'repo', 'subdir', 'tarball', 'added',
-      'installSize', 'tier',
+      'installSize', 'peers', 'compatibility', 'tier',
     ])
+  })
+
+  it('carries the author’s compatibility declaration onto a github entry, and omits it when there is none', () => {
+    const declared = repoAccepted('dsh-repo-plugin')
+    declared.repo.compatibility = { dsh: '>=0.1.5' }
+    expect(assignRepoTier(declared, config).compatibility).toEqual({ dsh: '>=0.1.5' })
+    expect('compatibility' in assignRepoTier(repoAccepted('dsh-repo-plugin'), config)).toBe(false)
+  })
+
+  it('carries the manifest’s peer names onto a github entry', () => {
+    // The record the compatibility badge reads. Until 2026-09-24 no github
+    // entry carried one, so the badge said nothing about any of them.
+    const input = repoAccepted('dsh-repo-plugin')
+    input.repo.peers = ['react', '@deepseek-ai/cordis']
+    expect(assignRepoTier(input, config).peers).toEqual(['react', '@deepseek-ai/cordis'])
+  })
+
+  it('omits peers on a github entry that requires none, or was recorded before they were read', () => {
+    // Absent, not [], exactly as the npm path omits it: an empty array on
+    // every peerless entry is bytes that carry no fact. And a carried
+    // candidate with no `peers` at all publishes nothing either — no verdict
+    // when the fact is missing, so the badge under-warns and never mis-warns.
+    const none = repoAccepted('dsh-repo-plugin')
+    none.repo.peers = []
+    expect('peers' in assignRepoTier(none, config)).toBe(false)
+    const unread = repoAccepted('dsh-repo-plugin')
+    expect(unread.repo.peers).toBeUndefined()
+    expect('peers' in assignRepoTier(unread, config)).toBe(false)
   })
 
   it('throws, naming the repository, when a repo identity has no first-seen row', () => {

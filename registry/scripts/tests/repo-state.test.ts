@@ -23,6 +23,9 @@ function candidate(repo: string): RepoCandidate {
     // here, every fixture below would queue for a re-probe and the tests about
     // `pushedAt` and `assetVerified` would stop testing those.
     sizeProbed: true,
+    // And its manifest's peers were read — none, here. Absent, every fixture
+    // would queue for the one-time peers re-read instead, for the same reason.
+    peers: [],
   }
 }
 
@@ -143,6 +146,70 @@ describe('repo-state', () => {
     }
     const { toFetch } = diffRepoState(probedNoSize, [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }])
     expect(toFetch).toEqual([])
+  })
+
+  it('diff: an unchanged repo whose candidates were recorded before peers were read is re-read once', () => {
+    // The same retroactivity hole as the two markers above, and this time
+    // nothing else would close it. Measured on the committed repo-state.json
+    // of 2026-09-24: 0 of 10,864 listable candidates still lacked
+    // `sizeProbed`, so with unchanged heads the diff queued NOTHING — the
+    // size backfill that re-read every repository once has finished. Without
+    // a marker of its own, peers would reach 10,629 repositories only as each
+    // happened to push.
+    const unread: RepoState = {
+      'a/one': {
+        pushedAt: '2026-08-01T00:00:00Z',
+        commit,
+        candidates: [{ ...candidate('a/one'), peers: undefined }],
+      },
+    }
+    const { toFetch } = diffRepoState(unread, [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }])
+    expect(toFetch.map(e => e.repo)).toEqual(['a/one'])
+    // A backfill, never a change: it must not displace a repository that
+    // actually pushed.
+    expect(toFetch[0]?.backfillOnly).toBe(true)
+  })
+
+  it('diff: a candidate that records NO peers is left alone, so the re-read is once and not daily', () => {
+    // `[]` is a record — the manifest was read and requires nothing — and it
+    // is what every re-read leaves behind for a peerless plugin. Keying the
+    // re-read on an EMPTY list would put every such repository in every
+    // run's queue forever, the reason `sizeProbed` is a marker too.
+    const { toFetch } = diffRepoState(state, [
+      { repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' },
+      { repo: 'b/two', pushedAt: '2026-08-01T00:00:00Z' },
+    ])
+    expect(state['a/one'].candidates[0]?.peers).toEqual([])
+    expect(toFetch).toEqual([])
+  })
+
+  it('diff: a repo whose head moved is never labelled backfill, even if it also lacks peers', () => {
+    const both: RepoState = {
+      'a/one': {
+        pushedAt: '2026-07-01T00:00:00Z',
+        commit,
+        candidates: [{ ...candidate('a/one'), peers: undefined }],
+      },
+    }
+    const { toFetch } = diffRepoState(both, [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }])
+    expect(toFetch.map(e => e.backfillOnly)).toEqual([false])
+  })
+
+  it('diff: a candidate that can never list does not queue its repository for peers', () => {
+    // The predicate the size marker asks, for the reason its comment gives.
+    // One of gateRepo's three unconditional rejections can reach no entry, so
+    // its peers would reach no reader either; counting it would queue a repo
+    // whose only candidate is bundle-less on every run for nothing. And the
+    // absence stays: should the gate ever loosen, the same predicate re-queues
+    // exactly the candidates the loosening made listable.
+    const unlistable: RepoState = {
+      'a/one': {
+        pushedAt: '2026-08-01T00:00:00Z',
+        commit,
+        candidates: [{ ...candidate('a/one'), hasBundle: false, peers: undefined }],
+      },
+    }
+    expect(diffRepoState(unlistable, [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }]).toFetch).toEqual([])
   })
 
   it('diff: recorded repos absent from the search are gone', () => {
@@ -351,6 +418,81 @@ describe('a carried installSize is re-bounded on the way in', () => {
     // into the committed file.
     const carried = parseRepoState(rowWith({ sizeProbed: false }))['a/one']?.candidates[0]
     expect(carried?.sizeProbed).toBeUndefined()
+  })
+})
+
+describe('a carried peers or compatibility record is checked on the way in', () => {
+  // Carried candidates are revived by a bare cast, and nothing downstream
+  // re-derives either field: `tier.ts` copies both into the published entry
+  // as they stand. So a shape this build never writes is a malformed registry
+  // file, and a malformed registry file throws rather than publishing it.
+  const rowWith = (extra: Record<string, unknown>): string => JSON.stringify({
+    'a/one': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [{ ...candidate('a/one'), ...extra }] },
+  })
+
+  it('round-trips both, and leaves an absent peers absent rather than inventing an empty one', () => {
+    const recorded: RepoState = {
+      'a/one': {
+        pushedAt: '2026-08-01T00:00:00Z',
+        commit,
+        candidates: [{
+          ...candidate('a/one'),
+          peers: ['@deepseek-ai/cordis', 'react'],
+          compatibility: { dsh: '0.1.5-rc.1 || 0.1.6', profiles: ['web'] },
+        }],
+      },
+    }
+    expect(parseRepoState(serializeRepoState(recorded))).toEqual(recorded)
+    // Absent is the marker that queues the re-read. A parse that filled in
+    // `[]` would record "requires nothing" for a manifest nobody read, and the
+    // repository would never be re-read at all.
+    const { peers: _unread, ...legacy } = candidate('a/one')
+    const parsed = parseRepoState(JSON.stringify({ 'a/one': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [legacy] } }))
+    expect(parsed['a/one']?.candidates[0]).not.toHaveProperty('peers')
+    expect(diffRepoState(parsed, [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }]).toFetch).toHaveLength(1)
+  })
+
+  it.each([
+    ['a string', 'react'],
+    ['null', null],
+    ['an object', { react: '*' }],
+    ['a number in the list', ['react', 42]],
+    ['a null in the list', [null]],
+  ])('throws on a peers that is %s', (_label, peers) => {
+    expect(() => parseRepoState(rowWith({ peers }))).toThrow('a/one has a candidate with a malformed peers record')
+  })
+
+  it('keeps each half of a compatibility record standing alone', () => {
+    for (const compatibility of [{ dsh: '>=0.1.5' }, { profiles: ['web', 'tui'] }]) {
+      expect(parseRepoState(rowWith({ compatibility }))['a/one']?.candidates[0]?.compatibility).toEqual(compatibility)
+    }
+  })
+
+  it.each([
+    ['null', null],
+    ['a string', 'web'],
+    ['an array', ['web']],
+    ['a number range', { dsh: 5 }],
+    ['a string profiles', { profiles: 'web' }],
+    ['a number in profiles', { profiles: ['web', 1] }],
+    // `compatibilityOf` returns nothing at all rather than an empty object,
+    // because an empty object in the artifact reads as a declaration the
+    // author did not make.
+    ['empty', {}],
+    // Copied into plugins.json whole, so a key this build never harvested
+    // would be published under the author's name.
+    ['carrying a key the harvest never writes', { dsh: '0.1.5', node: '>=22' }],
+  ])('throws on a compatibility that is %s', (_label, compatibility) => {
+    expect(() => parseRepoState(rowWith({ compatibility }))).toThrow('a/one has a candidate with a malformed compatibility record')
+  })
+
+  it('throws on a candidate that is not an object at all', () => {
+    // Reading either field off it would otherwise be the first thing to
+    // fail, as a TypeError naming nothing.
+    for (const value of [null, 'a string', 42, ['nested']]) {
+      const text = JSON.stringify({ 'a/one': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [value] } })
+      expect(() => parseRepoState(text), JSON.stringify(value)).toThrow('a/one has a candidate that is not an object')
+    }
   })
 })
 

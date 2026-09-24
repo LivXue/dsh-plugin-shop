@@ -16,7 +16,7 @@
 
 import { createHash } from 'node:crypto'
 import { truncateWholeCharacters } from './gate.ts'
-import { FetchTimeoutError, fetchWithRetry, withTimeout } from './npm-client.ts'
+import { compatibilityOf, FetchTimeoutError, fetchWithRetry, peerNamesOf, withTimeout } from './npm-client.ts'
 import { canEverList } from './repo-gate.ts'
 import { diffRepoState, nextRepoState, type RepoSeen, type RepoState, type RepoToFetch } from './repo-state.ts'
 import { hasWorkspaceDeps, monorepoSignal, selectSubpackagePaths } from './subpackage-select.ts'
@@ -827,6 +827,8 @@ function projectCandidate(
     name?: unknown
     description?: unknown
     scripts?: { prepare?: unknown; prepack?: unknown }
+    peerDependencies?: unknown
+    peerDependenciesMeta?: unknown
     dsh?: { bundle?: unknown; catalog?: unknown }
   }
   const scripts = typeof m.scripts === 'object' && m.scripts !== null ? m.scripts : {}
@@ -850,9 +852,20 @@ function projectCandidate(
     hasBundle: m.dsh?.bundle !== undefined,
     requiresBuild: typeof scripts.prepare === 'string' || typeof scripts.prepack === 'string',
     hasWorkspaceDeps: hasWorkspaceDeps(manifest),
+    // Always written, `[]` included: its absence on a carried candidate is
+    // what queues the repository for a re-read (repo-state.ts), so a candidate
+    // projected here must never lack it. `manifest` is this candidate's own —
+    // the subpackage's for a subpackage, never the root's.
+    peers: peerNamesOf(m),
     catalog: m.dsh?.catalog ?? null,
     description: meta.description ?? (typeof m.description === 'string' ? m.description : null),
     ...(subdir !== undefined ? { subdir } : {}),
+    // Read in the SAME projection that writes `peers`, which is what lets
+    // `peers` stand as this field's re-read marker too (RepoCandidate).
+    ...(() => {
+      const compatibility = compatibilityOf(m.dsh)
+      return compatibility === undefined ? {} : { compatibility }
+    })(),
   }
 }
 

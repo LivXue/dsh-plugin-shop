@@ -8,7 +8,7 @@ import { BUNDLE_NAME_MAX_LENGTH, BUNDLE_NAME_RE, GITHUB_REQUEST_TIMEOUT_MS, MAX_
 import { diffRepoState, parseRepoState, serializeRepoState } from '../src/repo-state.ts'
 import type { RepoState } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
-import { FetchTimeoutError } from '../src/npm-client.ts'
+import { COMPATIBILITY_RANGE_MAX_LENGTH, compatibilityOf, FetchTimeoutError, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, peerNamesOf } from '../src/npm-client.ts'
 import { verifyReleaseAsset } from '../src/release-asset.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
 
@@ -477,6 +477,95 @@ describe('fetchRepoCandidate', () => {
       expect(result.candidates[0]?.repo).toBe('someone/dsh-repo-plugin')
       expect(result.candidates[0]?.commit).toBe(commit)
       expect(result.candidates[0]?.requiresBuild).toBe(false)
+    }
+  })
+
+  /**
+   * One plain repository serving `manifest` as its root package.json, driven
+   * through the real fetch. The sizing tree is left unrouted: that read is
+   * best-effort and swallows the throw, so it changes nothing asserted here.
+   */
+  async function candidateFromManifest(manifest: unknown): Promise<RepoCandidate | undefined> {
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(JSON.stringify(manifest), { status: 200 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': new Response(JSON.stringify({
+        sha: commit,
+        commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    if (!result.ok) throw new Error(`fixture manifest was not projected: ${result.detail}`)
+    return result.candidates[0]
+  }
+
+  it('records the manifest’s required peer names, without ranges and without its optional ones', async () => {
+    // The data was always in hand: this file parses the manifest the peers
+    // live in, and dropped the field. So a github entry carried no peers at
+    // all, and the compatibility badge was blind to every one of them —
+    // 6,979 of the 11,864 entries in the catalog built 2026-09-23. The
+    // optional peer is left out from this channel's first day, by the same
+    // reader the npm channel uses.
+    const candidate = await candidateFromManifest({
+      name: 'dsh-galgame',
+      dsh: { bundle: { patch: './cordis.patch.yml' } },
+      peerDependencies: { '@deepseek-ai/cordis': '^4.0.1', react: '^18.2.0', 'react-dom': '^18.2.0' },
+      peerDependenciesMeta: { react: { optional: true } },
+    })
+    expect(candidate?.peers).toEqual(['@deepseek-ai/cordis', 'react-dom'])
+  })
+
+  it('records an EMPTY peers list, not an absent one, when the manifest declares none', async () => {
+    // Present-and-empty is a record: "this manifest was read and requires
+    // nothing". Absent means "recorded before peers were read at all", and
+    // that absence is what queues a carried repository for its one re-read
+    // (repo-state.ts) — so writing nothing here would re-queue it forever.
+    for (const peerDependencies of [undefined, null, 'react', ['react'], 42]) {
+      const candidate = await candidateFromManifest({ name: 'dsh-plain', dsh: { bundle: {} }, peerDependencies })
+      expect(candidate?.peers, JSON.stringify(peerDependencies)).toEqual([])
+    }
+  })
+
+  it('bounds and filters the peers exactly as the npm channel does, through the same reader', async () => {
+    // One reader for both channels, so an npm package and the repository it
+    // was published from cannot be recorded under two rules. Each case is
+    // pinned to a literal AND to peerNamesOf itself: the literal says what the
+    // rule is, the comparison says this channel did not grow a reader of its
+    // own. The silent trim is the npm channel's too — no rejection code and no
+    // published `detail` covers a truncated peers list on either side.
+    const long = 'a'.repeat(PEER_NAME_MAX_LENGTH + 1)
+    const many = Object.fromEntries(Array.from({ length: PEERS_MAX_COUNT + 5 }, (_, i) => [`peer-${i}`, '*']))
+    const cases: { manifest: Record<string, unknown>; expected: string[] }[] = [
+      { manifest: { peerDependencies: { [long]: '*', ok: '*', '': '*' } }, expected: ['ok'] },
+      { manifest: { peerDependencies: many }, expected: Object.keys(many).slice(0, PEERS_MAX_COUNT) },
+      { manifest: { peerDependencies: { a: '*', b: '*' }, peerDependenciesMeta: { a: { optional: 'true' } } }, expected: ['a', 'b'] },
+      { manifest: { peerDependencies: { a: '*', b: '*' }, peerDependenciesMeta: { b: { optional: true } } }, expected: ['a'] },
+    ]
+    for (const { manifest, expected } of cases) {
+      const candidate = await candidateFromManifest({ name: 'dsh-bounded', dsh: { bundle: {} }, ...manifest })
+      expect(candidate?.peers).toEqual(expected)
+      expect(candidate?.peers).toEqual(peerNamesOf(manifest))
+    }
+  })
+
+  it('records the manifest’s dsh.compatibility through the same reader, and nothing when it declares none', async () => {
+    // Harvested from both channels, by one reader, so the rule for a
+    // malformed half is the same wherever a listing came from.
+    const cases: { compatibility: unknown; expected: unknown }[] = [
+      { compatibility: { dsh: '0.1.5-rc.1 || 0.1.6', profiles: ['web'] }, expected: { dsh: '0.1.5-rc.1 || 0.1.6', profiles: ['web'] } },
+      { compatibility: { dsh: '0.1.5', profiles: 'web' }, expected: { dsh: '0.1.5' } },
+      { compatibility: { dsh: 'x'.repeat(COMPATIBILITY_RANGE_MAX_LENGTH + 1), profiles: ['tui'] }, expected: { profiles: ['tui'] } },
+    ]
+    for (const { compatibility, expected } of cases) {
+      const dsh = { bundle: {}, compatibility }
+      const candidate = await candidateFromManifest({ name: 'dsh-declared', dsh })
+      expect(candidate?.compatibility).toEqual(expected)
+      expect(candidate?.compatibility).toEqual(compatibilityOf(dsh))
+    }
+    // Absent, never `{}`, for a manifest that declares none or nothing usable.
+    for (const compatibility of [undefined, null, 'web', {}, { dsh: 42 }]) {
+      const candidate = await candidateFromManifest({ name: 'dsh-undeclared', dsh: { bundle: {}, compatibility } })
+      expect(candidate, JSON.stringify(compatibility)).toBeDefined()
+      expect(candidate !== undefined && 'compatibility' in candidate, JSON.stringify(compatibility)).toBe(false)
     }
   })
 
@@ -1540,6 +1629,10 @@ describe('harvestRepos', () => {
       // Without this every fixture below would queue for the one-time
       // backfill and stop testing the `pushedAt` carry it exists to test.
       sizeProbed: true,
+      // And its manifest's peers were read — none. Absent, every fixture
+      // would queue for the one-time peers re-read instead, for the same
+      // reason.
+      peers: [],
     }
   }
   function entryOf(repo: string): RepoState[string] {
@@ -1682,6 +1775,33 @@ describe('harvestRepos', () => {
     expect(persisted?.installSize).toBe(4242)
     // Self-terminating, asserted end to end: the state this run WROTE queues
     // nothing on the next run's diff.
+    expect(diffRepoState(result.nextState, seen).toFetch).toEqual([])
+  })
+
+  it('re-reads a carried repository recorded before peers existed, once, and records what its manifest requires', async () => {
+    // The peers twin of the case above, and the one that matters more: the
+    // size backfill is over, so this marker is the ONLY thing that re-reads
+    // an unchanged repository. It has to be a real re-projection of the
+    // manifest, not a carry — the carried candidate has no peers to carry.
+    const { peers: _unread, ...recorded } = candidateOf('a/unread')
+    const state: RepoState = { 'a/unread': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [recorded] } }
+    // Unchanged head: the ONLY reason this repo is queued is the missing peers.
+    const seen = [{ repo: 'a/unread', pushedAt: '2026-08-01T00:00:00Z' }]
+    const routes = repoRoutes('a/unread', '2026-08-01T00:00:00.000Z')
+    routes['https://raw.githubusercontent.com/a/unread/main/package.json'] = new Response(JSON.stringify({
+      name: 'unread',
+      dsh: { bundle: {}, compatibility: { dsh: '>=0.1.5' } },
+      peerDependencies: { '@deepseek-ai/cordis': '*', react: '*' },
+      peerDependenciesMeta: { react: { optional: true } },
+    }), { status: 200 })
+    const result = await harvestRepos({ state, budget: 5, fetchImpl: harvestFetch(seen, routes), sleep, token: 't' })
+    expect(result.fetched).toBe(1)
+    const persisted = result.nextState['a/unread']?.candidates[0]
+    expect(persisted?.peers).toEqual(['@deepseek-ai/cordis'])
+    // The same visit reads the declaration too — the reason it needs no
+    // marker of its own.
+    expect(persisted?.compatibility).toEqual({ dsh: '>=0.1.5' })
+    // And once: the state this run WROTE queues nothing on the next diff.
     expect(diffRepoState(result.nextState, seen).toFetch).toEqual([])
   })
 
@@ -2269,6 +2389,50 @@ describe('subpackage probe', () => {
       expect(result.candidates.map(c => c.name)).toEqual(['the-plugin'])
       expect(result.candidates[0]?.subdir).toBe('packages/the-plugin')
       expect(result.candidates[0]?.repo).toBe('someone/monorepo')
+    }
+  })
+
+  it('records each subpackage’s peers and compatibility from its OWN manifest, never the root’s', async () => {
+    // A subpackage declares its own requirements. Inheriting the root's would
+    // be a fabricated record — a requirement nobody declared for that plugin —
+    // and the badge built on it would accuse the plugin of needing it. The
+    // root here declares both of its own so that inheriting either is visible.
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/monorepo/main/package.json': new Response(JSON.stringify({
+        private: true,
+        workspaces: ['packages/*'],
+        peerDependencies: { 'root-only': '*' },
+        dsh: { compatibility: { profiles: ['root-only'] } },
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/commits/main': new Response(JSON.stringify({
+        sha: commit,
+        commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/git/trees/main?recursive=1': new Response(JSON.stringify({
+        tree: [
+          { path: 'package.json' },
+          { path: 'packages/peered/package.json' },
+          { path: 'packages/unpeered/package.json' },
+        ],
+      }), { status: 200 }),
+      'https://raw.githubusercontent.com/someone/monorepo/main/packages/peered/package.json': new Response(JSON.stringify({
+        name: 'peered',
+        dsh: { bundle: {}, compatibility: { dsh: '>=0.1.5' } },
+        peerDependencies: { react: '*', '@deepseek-ai/cordis': '*' },
+        peerDependenciesMeta: { react: { optional: true } },
+      }), { status: 200 }),
+      'https://raw.githubusercontent.com/someone/monorepo/main/packages/unpeered/package.json': new Response(JSON.stringify({
+        name: 'unpeered',
+        dsh: { bundle: {} },
+      }), { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.candidates.map(c => [c.subdir, c.peers, c.compatibility])).toEqual([
+        ['packages/peered', ['@deepseek-ai/cordis'], { dsh: '>=0.1.5' }],
+        ['packages/unpeered', [], undefined],
+      ])
     }
   })
 

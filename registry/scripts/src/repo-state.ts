@@ -60,13 +60,14 @@ export interface RepoSeen {
  *
  * `backfillOnly` means nothing about the repository changed — it is queued to
  * re-ask a question about the commit already recorded (an unverified release,
- * a missing size probe). The distinction exists because the budget is smaller
- * than the backlog: 13,443 recorded repositories entered the size backfill at
- * once against a `REPO_BACKFILL_BUDGET` of 2,000, and an undifferentiated
- * queue sorted by NAME served an unchanged repository being re-measured for a
- * decoration ahead of a repository that had actually published a fix. For
- * roughly seven consecutive runs, everything late in the alphabet would not
- * have reached the catalog at all.
+ * a missing size probe, a manifest projected before its peers were read). The
+ * distinction exists because the budget is smaller than the backlog: 13,443
+ * recorded repositories entered the size backfill at once against a
+ * `REPO_BACKFILL_BUDGET` of 2,000, and an undifferentiated queue sorted by NAME
+ * served an unchanged repository being re-measured for a decoration ahead of a
+ * repository that had actually published a fix. For roughly seven consecutive
+ * runs, everything late in the alphabet would not have reached the catalog at
+ * all. The peers re-read queues 10,629 at once (2026-09-24), the same shape.
  */
 export interface RepoToFetch extends RepoSeen {
   backfillOnly: boolean
@@ -124,6 +125,64 @@ function reboundCarriedSize(candidate: RepoCandidate): RepoCandidate {
 }
 
 /**
+ * Refuse a carried candidate whose `peers` or `compatibility` is a shape this
+ * build never writes, and return it typed.
+ *
+ * Both ride the bare cast `parseRepoState` revives candidates with, and neither
+ * is re-derived on the way out: `tier.ts` copies them into the published entry
+ * as they stand. This build is their only writer, so a wrong shape means the
+ * file was edited or corrupted by something else, and it throws — the rule for
+ * a malformed registry file, as for a malformed `failure` record. `installSize`
+ * is repaired instead (`reboundCarriedSize`) because a size is a decoration;
+ * these two feed a warning published against someone's plugin, which is the
+ * kind of output this project would rather stop than publish wrong. ABSENT is
+ * not a wrong shape: it is the marker a record written before either field
+ * existed carries, and it stays absent so that `diffRepoState` queues the
+ * re-read.
+ *
+ * Types only, not the harvest's length and count bounds. Those are applied
+ * where the value is read (`peerNamesOf`, `compatibilityOf`), and a bound
+ * lowered later must not turn every row written under the old one into a
+ * build that cannot start; the payload budget in `repo-gate.ts` still
+ * measures whatever a carried row would publish.
+ * @param repo - the state key, for the error.
+ * @param candidate - one carried candidate, unvalidated.
+ */
+function checkCarriedDeclarations(repo: string, candidate: unknown): RepoCandidate {
+  if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) {
+    throw new Error(`repo-state.json: ${repo} has a candidate that is not an object`)
+  }
+  const { peers, compatibility } = candidate as { peers?: unknown; compatibility?: unknown }
+  if (peers !== undefined && !isStringArray(peers)) {
+    throw new Error(`repo-state.json: ${repo} has a candidate with a malformed peers record`)
+  }
+  if (compatibility !== undefined && !isCompatibilityRecord(compatibility)) {
+    throw new Error(`repo-state.json: ${repo} has a candidate with a malformed compatibility record`)
+  }
+  return candidate as RepoCandidate
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(item => typeof item === 'string')
+}
+
+/**
+ * The shape `compatibilityOf` writes and nothing else: a plain object with at
+ * least one of `dsh` (a string) and `profiles` (strings), and no other key.
+ * Empty is refused because that reader returns nothing rather than `{}` — an
+ * empty object in the artifact reads as a declaration the author did not make
+ * — and a foreign key because the object is published whole, so a key the
+ * harvest never read would go out under the author's name.
+ */
+function isCompatibilityRecord(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const keys = Object.keys(value)
+  if (keys.length === 0 || keys.some(key => key !== 'dsh' && key !== 'profiles')) return false
+  const { dsh, profiles } = value as { dsh?: unknown; profiles?: unknown }
+  return (dsh === undefined || typeof dsh === 'string') && (profiles === undefined || isStringArray(profiles))
+}
+
+/**
  * Parse the committed state file; a malformed file throws (it is a build
  * input, and silently dropping it would schedule a fresh full sweep). The
  * pre-subpackage shape (`candidate`, singular) still parses — the committed
@@ -153,9 +212,9 @@ export function parseRepoState(text: string): RepoState {
     }
     let candidates: RepoCandidate[]
     if (Array.isArray(entry.candidates)) {
-      candidates = (entry.candidates as RepoCandidate[]).map(reboundCarriedSize)
+      candidates = entry.candidates.map(candidate => reboundCarriedSize(checkCarriedDeclarations(repo, candidate)))
     } else if (typeof entry.candidate === 'object' && entry.candidate !== null) {
-      candidates = [reboundCarriedSize(entry.candidate as RepoCandidate)]
+      candidates = [reboundCarriedSize(checkCarriedDeclarations(repo, entry.candidate))]
     } else {
       throw new Error(`repo-state.json: ${repo} has neither candidates nor a candidate`)
     }
@@ -233,7 +292,7 @@ export function diffRepoState(
     // commit already recorded — worth asking, but never at a changed repo's
     // expense, which is what `backfillOnly` lets the caller enforce.
     const changed = recorded === undefined || recorded.pushedAt !== entry.pushedAt
-    if (changed || hasUnverifiedRelease(recorded) || lacksSizeProbe(recorded, treeCap)) {
+    if (changed || hasUnverifiedRelease(recorded) || lacksSizeProbe(recorded, treeCap) || lacksPeerRecord(recorded)) {
       toFetch.push({ ...entry, backfillOnly: !changed })
     }
   }
@@ -290,6 +349,37 @@ function lacksSizeProbe(recorded: RepoState[string], treeCap: number): boolean {
         // refusal was ours and is worth re-asking exactly once.
         || (candidate.sizeCappedAt !== undefined && candidate.sizeCappedAt < treeCap)),
   )
+}
+
+/**
+ * Whether a recorded repo has listable candidates projected before their
+ * manifest's `peers` were read.
+ *
+ * The same retroactivity hole as {@link lacksSizeProbe}, and this time nothing
+ * else closes it. The size backfill re-read every recorded repository once,
+ * and it is over: measured on the committed repo-state.json of 2026-09-24, 0
+ * of 10,864 listable candidates still lacked `sizeProbed`, so with unchanged
+ * heads the diff queued nothing at all. Without a marker of its own, `peers`
+ * would reach the 10,629 repositories holding those candidates only as each
+ * happened to push — for a dormant one, never — and the compatibility badge
+ * would stay blind to them.
+ *
+ * `peers` is its own marker: `projectCandidate` always writes it, `[]` when the
+ * manifest requires nothing, so absence means "never read" and a re-read
+ * leaves it present whatever it found. The queue is therefore once per
+ * repository and self-terminating, served after changed repositories like the
+ * size backfill was (`backfillOnly`). A full re-fetch re-projects the manifest,
+ * so the same visit also reads `compatibility` — which is why that field has
+ * no marker (see `RepoCandidate.compatibility`). Keying on an EMPTY list
+ * instead would re-queue every peerless plugin on every run forever.
+ *
+ * Only candidates that could list, by {@link canEverList}, for the reason
+ * `lacksSizeProbe` gives: a peers list on an entry that can never exist reaches
+ * no reader, and asking the same predicate means a loosened gate rule re-queues
+ * exactly the candidates it made listable.
+ */
+function lacksPeerRecord(recorded: RepoState[string]): boolean {
+  return (recorded.candidates ?? []).some(candidate => canEverList(candidate) && candidate.peers === undefined)
 }
 
 /**

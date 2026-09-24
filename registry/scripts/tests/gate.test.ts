@@ -494,6 +494,17 @@ describe('the per-entry size budget', () => {
   const peers = (count: number, length: number): string[] =>
     Array.from({ length: count }, (_, i) => `${String(i).padStart(4, '0')}${'p'.repeat(length - 4)}`)
 
+  /** Bytes the probe reported for an over-budget candidate plus `extra`. */
+  const reported = (extra: Parameters<typeof candidate>[0]): number => {
+    const result = gate(candidate({ peers: peers(200, 214), ...extra }), config)
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('fixture must be over budget for the probe to report')
+    return Number(/Would publish (\d+) bytes/.exec(result.rejection.detail)?.[1])
+  }
+  /** What one key adds to an entry in plugins.json, measured by the same serializer. */
+  const marginal = (key: string, value: unknown): number =>
+    entryPayloadBytes({ name: 'x', [key]: value }) - entryPayloadBytes({ name: 'x' })
+
   it('states the budget as a literal', () => {
     expect(ENTRY_PAYLOAD_MAX_BYTES).toBe(12 * 1024)
   })
@@ -523,17 +534,9 @@ describe('the per-entry size budget', () => {
     // author reads to find out why their package vanished. The design settles
     // the direction: "a size is a decoration, so a broken one costs the size
     // and not the listing" (§7, `unpackedSize`).
-    const reported = (extra: Parameters<typeof candidate>[0]): number => {
-      const result = gate(candidate({ peers: peers(200, 214), ...extra }), config)
-      expect(result.ok).toBe(false)
-      if (result.ok) throw new Error('fixture must be over budget for the probe to report')
-      return Number(/Would publish (\d+) bytes/.exec(result.rejection.detail)?.[1])
-    }
+    //
     // Per key, because the two names differ by a character and the arithmetic
     // has to be exact to tell one key from two.
-    const marginal = (key: string, size: number): number =>
-      entryPayloadBytes({ name: 'x', [key]: size }) - entryPayloadBytes({ name: 'x' })
-
     const charged = reported({ unpackedSize: 847_407 }) - reported({})
     // One key, not two: 30 bytes for `unpackedSize` alone. Counting the
     // duplicate as well charged 59.
@@ -544,6 +547,21 @@ describe('the per-entry size budget', () => {
     // can inflate it, unlike every field the probe does count.
     expect(marginal('installSize', Number.MAX_SAFE_INTEGER)).toBe(39)
     expect(marginal('installSize', 847_407)).toBe(29)
+  })
+
+  it('counts the author’s compatibility declaration against the budget, because emit writes it', () => {
+    // Unlike the size above, this is the author's own text — a range and a
+    // list of names copied verbatim from their manifest — so it is exactly
+    // the kind of field the budget exists to measure. A differential for the
+    // same reason as the size case: the charge must be exactly the bytes the
+    // key adds to the entry, no more and no less.
+    const compatibility = {
+      dsh: '0.1.2-alpha.4 || 0.1.2-alpha.5 || 0.1.2-rc.1 || 0.1.3-alpha.1 || 0.1.5-alpha.1',
+      profiles: ['web'],
+    }
+    expect(reported({ compatibility }) - reported({})).toBe(marginal('compatibility', compatibility))
+    // And the package that declares none pays nothing.
+    expect(reported({ compatibility: undefined })).toBe(reported({}))
   })
 
   it('accepts the worst entry the live catalog could hold', () => {
