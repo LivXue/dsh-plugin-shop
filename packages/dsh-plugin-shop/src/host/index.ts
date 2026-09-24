@@ -36,6 +36,7 @@ import {
   type PeerResolver,
   type PeerVersionResolver,
 } from './peers.ts'
+import { compatibilityMap, type HarnessVerdict } from './compatibility.ts'
 
 // Re-exported so the boundary type is reachable from the package's public
 // ./types subpath; the typert generator refuses remote parameter types it
@@ -48,6 +49,9 @@ export type { HotRestartReason } from './hot.ts'
 export type { Activation } from './activation.ts'
 // The catalog entry shape reaches the client half through this same boundary.
 export type { CatalogEntry } from './types.ts'
+// So does the compatibility verdict, which lives beside the pure function that
+// forms it; the client imports it from here, never from that module.
+export type { HarnessVerdict } from './compatibility.ts'
 
 /** One Loader inventory entry, structurally — the shop never depends on
  * cordis-plugin-loader, whose types do not reach this package's typecheck. */
@@ -138,6 +142,11 @@ export interface ShopGatewayOptions {
   /** Test-only injection: the peer ranges the self-check judges against;
    * production reads them from the shipped package.json. */
   peerRanges?: Record<string, string>
+  /** Test-only injection: answers which `@deepseek-ai/dsh` version this
+   * installation runs, for the `dsh.compatibility` verdict — null when it
+   * cannot tell. Production asks the self-check's own resolver, at the same
+   * profile anchor. */
+  resolveDshVersion?: () => string | null
   /** Test-only injection: the download phase's pump; production builds the
    * real one. A test gateway left with the real pump spawns `pnpm store add`
    * — a live registry request — from every install that finds a command
@@ -335,27 +344,19 @@ export interface ShopCatalogResult {
    * of the verdict only: a module the browser's module table serves — a
    * platform seed word such as `react` — has no package on disk and is still
    * listed here, so the client removes every name its live module table
-   * provides before anything renders (`client/module-table.ts`). A key is
+   * provides before anything renders (`client/module-table.ts`), and renders
+   * no peer verdict at all on a page that offers no usable table. A key is
    * absent when the plugin runs here or when no verdict could be formed;
    * same-named entries stay independent. */
   incompatible: Record<string, string[]>
   /** Install identity → what the entry's author declared in
    * `dsh.compatibility` that this installation does not meet (design
    * 2026-09-01-harness-compatibility §8.2). A key is absent when nothing was
-   * declared, when every declared half is met, or when no verdict could be
-   * formed — the running version unreadable, a range semver cannot parse. */
+   * declared or every declared half is met. A half that cannot be judged —
+   * the running version unreadable, a range semver cannot parse — is left out
+   * while the other is still judged, so an unknown never reads as an
+   * accusation; same-named entries stay independent. */
   incompatibleHarness: Record<string, HarnessVerdict>
-}
-
-/** What an author declared in `dsh.compatibility` that this installation does
- * not meet. Each half is present only when the author declared it AND it is
- * unmet here, and carries both sides, so the reader is told what was declared
- * and what is actually running rather than only that something is wrong. */
-export interface HarnessVerdict {
-  /** The declared `dsh` range, and the `@deepseek-ai/dsh` version running. */
-  dsh?: { range: string; running: string }
-  /** The declared profile names, and the profile this dsh was booted with. */
-  profile?: { declared: string[]; running: string }
 }
 
 /** An own-property read of a dependency map parsed from the profile manifest.
@@ -436,16 +437,6 @@ export class ShopGateway extends TypertRemoteService {
   /** The user's own `registry=` from `~/.npmrc`, read at most once per
    * gateway. A wrapper distinguishes a genuine `null` from an unread value. */
   private npmRegistryCache: { value: string | null } | null = null
-  /** The incompatibility map already computed for `lastSnapshot`, keyed by
-   * that snapshot's own object identity. Design §3 asks for the verdict
-   * once per loaded snapshot, not once per RPC call: `loadCatalog` serves
-   * the same snapshot from its on-disk cache for minutes at a time, so
-   * without this, reopening the tab within that window would re-walk
-   * `node_modules` for every distinct peer name again — and Node only
-   * caches a SUCCESSFUL resolution, so a genuinely missing peer pays a full
-   * failed walk on every single call. Recomputed only when `catalog()`
-   * loads a snapshot that is not this exact object. */
-  private incompatibleCache: { snapshot: CatalogSnapshot; map: Record<string, string[]> } | null = null
   /** Install records, running and finished; a poll finds one here or reports not found. */
   private readonly installs = new Map<string, ReturnType<typeof startInstall>>()
   /** Every install id in insertion order, oldest first; finished-record eviction walks this from the front. */
@@ -511,8 +502,7 @@ export class ShopGateway extends TypertRemoteService {
     try {
       createPeerVersionCheck({
         ranges: this.options.peerRanges ?? ownPeerRanges(),
-        resolve: this.options.resolvePeerVersion
-          ?? nodeVersionResolver(pathToFileURL(join(this.profileDirResolved(), 'cordis.yml')).href),
+        resolve: this.options.resolvePeerVersion ?? nodeVersionResolver(this.profileAnchor()),
         warn: message => {
           const logger = (this.ctx as { logger?: { warn(message: string): void } }).logger
           if (logger === undefined) console.warn(message)
@@ -554,6 +544,16 @@ export class ShopGateway extends TypertRemoteService {
   private profileDirResolved(): string {
     if (this.profileDir !== undefined) return this.profileDir
     return discoverProfile(fileURLToPath(import.meta.url), this.bootBaseDir()).dir
+  }
+
+  /** Where every "what does this installation provide?" question resolves
+   * from: the profile's own Loader root, which is where the harness resolves
+   * plugins from. One definition for the peer presence check, the load-time
+   * self-check and the compatibility verdict, so none of the three can drift
+   * onto a different notion of "the running installation". Throws when no
+   * profile directory can be discovered. */
+  private profileAnchor(): string {
+    return pathToFileURL(join(this.profileDirResolved(), 'cordis.yml')).href
   }
 
   /** The inventory, through the wire remote: an envelope `{ ok, value }` or
@@ -887,28 +887,28 @@ export class ShopGateway extends TypertRemoteService {
   @Remote('catalog')
   async catalog(args?: { refresh?: boolean }): Promise<ShopCatalogResult> {
     const { snapshot, stale } = await this.loadCatalogOnce(args?.refresh ?? false)
+    // Both verdicts are judged on every call and never remembered against the
+    // snapshot. The snapshot records what each entry DECLARES; what this
+    // installation provides is not in it, and moves under it — installing a
+    // missing peer from the shop is exactly the event that must clear its
+    // badge, and a map kept per snapshot would go on naming that peer for as
+    // long as the snapshot is served. Asking every time is cheap; design
+    // 2026-09-01-harness-compatibility §9.6 owns the measurement.
     let incompatible: Record<string, string[]>
-    if (this.incompatibleCache !== null && this.incompatibleCache.snapshot === snapshot) {
-      incompatible = this.incompatibleCache.map
-    } else {
-      try {
-        const resolve = this.options.resolvePeer ?? nodeResolver(pathToFileURL(join(this.profileDirResolved(), 'cordis.yml')).href)
-        incompatible = incompatibilityMap(snapshot.entries, resolve)
-      } catch {
-        // No profile anchor could be discovered (e.g. a bare test construction
-        // that supplies neither `profileDir` nor a resolvable module location,
-        // or the constructor's own stub-ctx case above) — no peer verdict is
-        // formable for anything in this snapshot. A plugin we cannot judge is
-        // never accused, so the whole map degrades straight to empty here
-        // rather than routing through a resolver that throws on first use:
-        // incompatibilityMap memoises per distinct peer NAME, not per call, so
-        // a throwing stand-in would be invoked and caught fresh for every
-        // distinct peer in the snapshot — hundreds, per the design doc's own
-        // measurement — on every single catalog() call for as long as the
-        // profile anchor stays unavailable.
-        incompatible = {}
-      }
-      this.incompatibleCache = { snapshot, map: incompatible }
+    try {
+      const resolve = this.options.resolvePeer ?? nodeResolver(this.profileAnchor())
+      incompatible = incompatibilityMap(snapshot.entries, resolve)
+    } catch {
+      // No profile anchor could be discovered (e.g. a bare test construction
+      // that supplies neither `profileDir` nor a resolvable module location,
+      // or the constructor's own stub-ctx case above) — no peer verdict is
+      // formable for anything in this snapshot. A plugin we cannot judge is
+      // never accused, so the whole map degrades straight to empty here
+      // rather than routing through a stand-in resolver that throws:
+      // incompatibilityMap would ask it up to once per distinct peer name in
+      // the snapshot — hundreds, per the design doc's own measurement — and
+      // catch every throw, only to arrive at this same empty map.
+      incompatible = {}
     }
     return {
       schemaVersion: snapshot.schemaVersion,
@@ -919,10 +919,35 @@ export class ShopGateway extends TypertRemoteService {
       notAShop: snapshot.notAShop ?? [],
       stars: snapshot.stars,
       incompatible,
-      // Placeholder until the §8.2 verdict lands on this branch: the contract
-      // is fixed first so the host and client halves are built against one
-      // type rather than two descriptions of it.
-      incompatibleHarness: {},
+      incompatibleHarness: compatibilityMap(snapshot.entries, {
+        dshVersion: this.runningDshVersion(),
+        profile: this.profile,
+      }),
+    }
+  }
+
+  /**
+   * The `@deepseek-ai/dsh` version this installation provides, for the
+   * `dsh.compatibility` verdict: the load-time self-check's own resolver, at
+   * the anchor every other harness question resolves from, so this verdict
+   * and the peer checks cannot drift onto different notions of "the running
+   * installation" (design 2026-09-01-harness-compatibility §8.2).
+   *
+   * Null forms no verdict on the `dsh` half — never an accusation, and never
+   * a failed catalog.
+   */
+  private runningDshVersion(): string | null {
+    try {
+      if (this.options.resolveDshVersion !== undefined) return this.options.resolveDshVersion()
+      return nodeVersionResolver(this.profileAnchor())('@deepseek-ai/dsh')
+    } catch {
+      // Swallows a missing profile anchor — `profileDirResolved()` throws when
+      // no profile can be discovered — and anything a resolver throws, the
+      // injected one included. Each is a version nobody could read, and the
+      // answer for that is no verdict on its half; the profile half is still
+      // judged, because the profile this gateway was booted with is known
+      // either way.
+      return null
     }
   }
 

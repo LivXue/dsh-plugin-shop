@@ -2145,7 +2145,7 @@ describe('ShopGateway.catalog incompatibility', () => {
     expect((await gateway.catalog({})).incompatible).toEqual({})
   })
 
-  it('reports nothing for a v5 catalog, whose entries carry no peers', async () => {
+  it('reports nothing for an entry that carries no peers, however resolution would answer', async () => {
     const { gateway } = gatewayWithSnapshot(
       { schemaVersion: 5, builtAt: '', entries: [{ ...peered, peers: undefined }], denied: [], stars: {} },
       { resolvePeer: () => false },
@@ -2179,27 +2179,128 @@ describe('ShopGateway.catalog incompatibility', () => {
     expect(result.incompatible).toEqual({})
   })
 
-  it('caches the incompatibility map for a snapshot instead of recomputing on a repeat call', async () => {
-    // gatewayWithSnapshot's loadCatalog stub closes over one fixed snapshot
-    // object, so both calls below load the exact same object — the scenario
-    // design §3 calls "once per loaded snapshot", and the real loadCatalog's
-    // five-minute on-disk freshness window means a real reopened tab hits
-    // this same path far more often than a fresh snapshot.
-    const resolvePeer = vi.fn((spec: string) => spec !== '@deepseek-ai/dsh-client-store')
+  it('asks again on every call, so a peer installed between two calls stops being reported', async () => {
+    // The ordinary event: the reader installs the peer a badge names, and the
+    // next time the tab asks, the badge must be gone. Both calls load the SAME
+    // snapshot object — gatewayWithSnapshot's stub closes over one — which is
+    // precisely the case a cache keyed on the snapshot answers from memory,
+    // replaying "missing" for a peer that now resolves. The snapshot records
+    // what an entry declares; what this installation provides is not in it,
+    // and moves under it.
+    let installed = false
     const { gateway } = gatewayWithSnapshot(
-      { schemaVersion: 6, builtAt: '', entries: [peered], denied: [], stars: {} },
-      { resolvePeer },
+      { schemaVersion: 5, builtAt: '', entries: [peered], denied: [], stars: {} },
+      { resolvePeer: (spec: string) => spec !== '@deepseek-ai/dsh-client-store' || installed },
     )
 
-    const first = await gateway.catalog({})
-    expect(first.incompatible).toEqual({ 'npm:dsh-timeline': ['@deepseek-ai/dsh-client-store'] })
-    expect(resolvePeer).toHaveBeenCalledTimes(2) // the two distinct peer names on `peered`
+    const before = await gateway.catalog({})
+    expect(before.incompatible).toEqual({ 'npm:dsh-timeline': ['@deepseek-ai/dsh-client-store'] })
 
-    const second = await gateway.catalog({})
-    expect(second.incompatible).toEqual({ 'npm:dsh-timeline': ['@deepseek-ai/dsh-client-store'] })
-    // Unchanged: the second call must reuse the cached map, never ask the
-    // resolver again for a snapshot it has already judged.
-    expect(resolvePeer).toHaveBeenCalledTimes(2)
+    installed = true
+    const after = await gateway.catalog({})
+    expect(after.incompatible).toEqual({})
+  })
+})
+
+describe('ShopGateway.catalog harness compatibility', () => {
+  /** `@xmanrui/dsh-im@4.19.2`'s own `dsh.compatibility.dsh`, verbatim (design
+   * 2026-09-01-harness-compatibility §8.2): five exact versions, none of them
+   * a harness anyone runs today. */
+  const DSH_IM_RANGE = '0.1.2-alpha.4 || 0.1.2-alpha.5 || 0.1.2-rc.1 || 0.1.3-alpha.1 || 0.1.5-alpha.1'
+  const dshIm: CatalogEntry = {
+    name: '@xmanrui/dsh-im', version: '4.19.2', integrity: null, publishedAt: null, repository: null,
+    license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25',
+    compatibility: { dsh: DSH_IM_RANGE, profiles: ['web'] },
+  }
+  /** A range no harness on the 0.1 line satisfies, so a READABLE version would
+   * always add a `dsh` half — which is what makes its absence mean something. */
+  const tuiOnly: CatalogEntry = { ...dshIm, name: 'dsh-tui-only', compatibility: { dsh: '0.9.0', profiles: ['tui'] } }
+
+  it('carries the verdict, naming what the author declared and what is running', async () => {
+    // Booted as `tui`, so the real declaration fails both halves — and each
+    // runtime fact reaches the verdict from the gateway: the version through
+    // the seam, the profile from the one this gateway was booted with.
+    const { gateway } = gatewayWithSnapshot(
+      { schemaVersion: 5, builtAt: '', entries: [dshIm], denied: [], stars: {} },
+      { profile: 'tui', resolveDshVersion: () => '0.1.5-rc.3' },
+    )
+    expect((await gateway.catalog({})).incompatibleHarness).toEqual({
+      'npm:@xmanrui/dsh-im': {
+        dsh: { range: DSH_IM_RANGE, running: '0.1.5-rc.3' },
+        profile: { declared: ['web'], running: 'tui' },
+      },
+    })
+  })
+
+  it('reads the running version where the harness resolves plugins from: the profile', async () => {
+    // Nothing injected for the version, so this is the production read — the
+    // load-time self-check's own resolver, at the same profile anchor, asked
+    // for `@deepseek-ai/dsh`. The fixture profile carries its own copy of the
+    // package, at a version published nowhere so that nothing but this
+    // fixture can be its source, and the verdict must name exactly that
+    // version: a wrong package name or a different anchor cannot.
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-harness-version-'))
+    const dshDir = join(profileDir, 'node_modules', '@deepseek-ai', 'dsh')
+    mkdirSync(dshDir, { recursive: true })
+    writeFileSync(join(dshDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh', version: '0.1.9-rc.3' }))
+    const { gateway } = gatewayWithSnapshot(
+      { schemaVersion: 5, builtAt: '', entries: [dshIm], denied: [], stars: {} },
+      { profileDir },
+    )
+    expect((await gateway.catalog({})).incompatibleHarness).toEqual({
+      'npm:@xmanrui/dsh-im': { dsh: { range: DSH_IM_RANGE, running: '0.1.9-rc.3' } },
+    })
+  })
+
+  it('forms no range verdict, rather than throwing, when no profile anchor exists', async () => {
+    // No `profileDir` and no seam, so the production read runs and
+    // `profileDirResolved()` throws: nothing above this module is a profile.
+    // The version is then a fact nobody could read, so the range half stays
+    // silent and the catalog still answers. The declaration's profile list
+    // names `web`, the profile this gateway was given, so nothing else is
+    // owed either.
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/',
+      cacheDir: '/cache',
+      profile: 'web',
+      loadCatalog: async () => ({
+        snapshot: { schemaVersion: 5, builtAt: '', entries: [dshIm], denied: [], stars: {} },
+        stale: false,
+      }) as CatalogResult,
+    })
+
+    const result = await gateway.catalog({})
+    expect(result.incompatibleHarness).toEqual({})
+  })
+
+  it.each([
+    ['answers null', (): string | null => null],
+    ['throws', (): string | null => { throw new Error('anchor unavailable') }],
+  ])('judges only the profile half when the version read %s', async (_label, resolveDshVersion) => {
+    // An unknown silences its own half and no other (design §8.2): the
+    // profile is known whatever the version read does.
+    const { gateway } = gatewayWithSnapshot(
+      { schemaVersion: 5, builtAt: '', entries: [tuiOnly], denied: [], stars: {} },
+      { resolveDshVersion },
+    )
+    expect((await gateway.catalog({})).incompatibleHarness).toEqual({
+      'npm:dsh-tui-only': { profile: { declared: ['tui'], running: 'web' } },
+    })
+  })
+
+  it('reads the running version again on every call', async () => {
+    // Nothing is remembered against the snapshot, the same rule as the peer
+    // map: one snapshot object is served twice, and the second answer follows
+    // what the installation reports by then.
+    let version = '0.1.5-rc.3'
+    const { gateway } = gatewayWithSnapshot(
+      { schemaVersion: 5, builtAt: '', entries: [dshIm], denied: [], stars: {} },
+      { resolveDshVersion: () => version },
+    )
+    expect(Object.keys((await gateway.catalog({})).incompatibleHarness)).toEqual(['npm:@xmanrui/dsh-im'])
+
+    version = '0.1.5-alpha.1' // one of the five the author lists
+    expect((await gateway.catalog({})).incompatibleHarness).toEqual({})
   })
 })
 
