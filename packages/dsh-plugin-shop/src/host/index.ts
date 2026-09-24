@@ -331,10 +331,31 @@ export interface ShopCatalogResult {
    * or the sidecar could not be fetched/verified (§5). */
   stars: Record<string, number>
   /** Install identity (`npm:<name>` / `github:<repo>#<subdir>`) → the declared
-   * peers this installation does not provide. A key is absent when the plugin
-   * runs here or when no verdict could be formed; same-named entries stay
-   * independent. */
+   * peers node resolution cannot find from the profile. This is the HOST half
+   * of the verdict only: a module the browser's module table serves — a
+   * platform seed word such as `react` — has no package on disk and is still
+   * listed here, so the client removes every name its live module table
+   * provides before anything renders (`client/module-table.ts`). A key is
+   * absent when the plugin runs here or when no verdict could be formed;
+   * same-named entries stay independent. */
   incompatible: Record<string, string[]>
+  /** Install identity → what the entry's author declared in
+   * `dsh.compatibility` that this installation does not meet (design
+   * 2026-09-01-harness-compatibility §8.2). A key is absent when nothing was
+   * declared, when every declared half is met, or when no verdict could be
+   * formed — the running version unreadable, a range semver cannot parse. */
+  incompatibleHarness: Record<string, HarnessVerdict>
+}
+
+/** What an author declared in `dsh.compatibility` that this installation does
+ * not meet. Each half is present only when the author declared it AND it is
+ * unmet here, and carries both sides, so the reader is told what was declared
+ * and what is actually running rather than only that something is wrong. */
+export interface HarnessVerdict {
+  /** The declared `dsh` range, and the `@deepseek-ai/dsh` version running. */
+  dsh?: { range: string; running: string }
+  /** The declared profile names, and the profile this dsh was booted with. */
+  profile?: { declared: string[]; running: string }
 }
 
 /** An own-property read of a dependency map parsed from the profile manifest.
@@ -898,6 +919,10 @@ export class ShopGateway extends TypertRemoteService {
       notAShop: snapshot.notAShop ?? [],
       stars: snapshot.stars,
       incompatible,
+      // Placeholder until the §8.2 verdict lands on this branch: the contract
+      // is fixed first so the host and client halves are built against one
+      // type rather than two descriptions of it.
+      incompatibleHarness: {},
     }
   }
 

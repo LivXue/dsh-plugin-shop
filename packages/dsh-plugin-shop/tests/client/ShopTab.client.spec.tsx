@@ -37,7 +37,7 @@ function snapshot(overrides: Partial<ShopCatalogResult['plugins'][number]> = {})
     }],
     denied: [],
     stars: {},
-    incompatible: {},
+    incompatible: {}, incompatibleHarness: {},
   }
 }
 
@@ -1932,7 +1932,7 @@ describe('ShopTab shop-like filtering', () => {
         },
       ],
       denied: [],
-      incompatible: {},
+      incompatible: {}, incompatibleHarness: {},
     }
   }
 
@@ -2033,7 +2033,7 @@ function manyPlugins(n: number): ShopCatalogResult {
     version: '1.0.0', integrity: null, publishedAt: null,
     repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25',
   })) as ShopCatalogResult['plugins']
-  return { schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', stale: false, plugins, denied: [], stars: {}, incompatible: {} }
+  return { schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', stale: false, plugins, denied: [], stars: {}, incompatible: {}, incompatibleHarness: {} }
 }
 
 const showingText = (shown: number, total: number): string =>
@@ -2092,7 +2092,7 @@ describe('ShopTab incremental rendering', () => {
       ...Array.from({ length: 60 }, (_, i) => ({ name: `dsh-alpha-${String(i).padStart(2, '0')}`, version: '1.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25' })),
       ...Array.from({ length: 60 }, (_, i) => ({ name: `dsh-beta-${String(i).padStart(2, '0')}`, version: '1.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25' })),
     ] as ShopCatalogResult['plugins']
-    const { injected } = bench({ schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', stale: false, plugins, denied: [], stars: {}, incompatible: {} })
+    const { injected } = bench({ schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', stale: false, plugins, denied: [], stars: {}, incompatible: {}, incompatibleHarness: {} })
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-alpha-00')).toBeTruthy())
 
@@ -2209,7 +2209,7 @@ describe('ShopTab duplicate catalog names', () => {
     return {
       schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', stale: false, stars: {},
       plugins: [template('one'), template('two'), template('three'), snapshot().plugins[0]!],
-      denied: [], incompatible: {},
+      denied: [], incompatible: {}, incompatibleHarness: {},
     }
   }
 
