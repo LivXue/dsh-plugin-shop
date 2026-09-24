@@ -3,8 +3,9 @@
  * shop's OWN declared peers — which ones it provides at a version outside
  * the declared range. */
 
-import { createRequire } from 'node:module'
-import { readFileSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
+import { dirname, isAbsolute, join, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { satisfies, valid, validRange } from 'semver'
 import { identityKey, type EntryIdentity } from '../shared/identity.ts'
 
@@ -13,30 +14,157 @@ import { identityKey, type EntryIdentity } from '../shared/identity.ts'
 export type PeerResolver = (spec: string) => boolean
 
 /**
- * The production resolver: the same question the harness's own
- * ClientModuleRegistry asks, through a require anchored at the profile. Asking
- * what the loader asks is what keeps this verdict and the runtime's behaviour
- * from drifting apart.
+ * The two filesystem reads the package lookup makes. Injected so fixtures can
+ * drive every branch of the walk — including a permission failure, which a
+ * real directory cannot stage when the suite runs as root — while
+ * `NODE_LOOKUP_FS` below stays the one place this module touches the disk.
  */
-export function nodeResolver(baseUrl: string): PeerResolver {
-  const require = createRequire(baseUrl)
-  return spec => {
+export interface PackageLookupFs {
+  /** `statSync`'s contract: follows symlinks, and throws an errno error
+   * (`code` set) for a path it cannot stat. */
+  stat(path: string): { isDirectory(): boolean }
+  /** `readFileSync(path, 'utf8')`'s contract: throws for a file it cannot read. */
+  readFile(path: string): string
+}
+
+const NODE_LOOKUP_FS: PackageLookupFs = {
+  stat: path => statSync(path),
+  readFile: path => readFileSync(path, 'utf8'),
+}
+
+/**
+ * One segment of a bare package name, about to be spliced into a path.
+ *
+ * A leading `.` refuses the segment whole: `.` and `..` would walk the path
+ * out of `node_modules`, and `.bin` or `.pnpm` are directories an install
+ * carries that no package can be. The ESM resolver agrees as far as it goes:
+ * it refuses an unscoped name that starts with `.`, and any name holding `%`
+ * or `\`, with ERR_INVALID_MODULE_SPECIFIER (measured on Node 26.6.0 with
+ * `.bin`, `a%2e`, `a\b`). `\` is also a separator on Windows, `:` names a
+ * drive, an NTFS stream or a URL scheme (`node:fs`, `file:`), and NUL is a
+ * byte no path may carry.
+ */
+function isNameSegment(segment: string): boolean {
+  return segment.length > 0 && !segment.startsWith('.') && !/[\\:%\0]/.test(segment)
+}
+
+/**
+ * Whether `spec` is a bare package name — `name`, or `@scope/name` — and so
+ * safe to look up. Peer names are catalog input, and hostile; this check is
+ * what keeps one from becoming a path. The lookup this replaced resolved
+ * `'../x/package.json'` relative to the profile and an absolute name as
+ * itself, so a peer name could point it at any path on the reader's disk.
+ */
+function isBarePackageName(spec: string): boolean {
+  const segments = spec.split('/')
+  const [first, second] = segments
+  if (first === undefined) return false
+  if (!first.startsWith('@')) return segments.length === 1 && isNameSegment(first)
+  return segments.length === 2 && second !== undefined && isNameSegment(first.slice(1)) && isNameSegment(second)
+}
+
+/**
+ * The directory `spec` is installed at as seen from `fromDir`, or null when
+ * the walk reaches the filesystem root without finding one: for each ancestor
+ * `dir`, `dir/node_modules/<spec>`, and the first that is a DIRECTORY is the
+ * match. That is how the ESM resolver matches a bare package (PACKAGE_RESOLVE
+ * continues past a candidate "if the folder does not exist", and stops at the
+ * first that does), whatever the manifest inside says — the loader imports
+ * from that directory or fails there, and never falls through to an ancestor.
+ * Measured on Node 26.6.0: an empty `node_modules/<name>` in front of an
+ * ancestor's working copy fails the import with ERR_MODULE_NOT_FOUND.
+ *
+ * Throws for a `spec` that is not a bare package name, and for a stat failure
+ * other than ENOENT or ENOTDIR: both leave the answer unknown, and only a
+ * walk that looked everywhere and found nothing may say "absent".
+ */
+function findPackageDir(fromDir: string, spec: string, fs: PackageLookupFs): string | null {
+  if (!isBarePackageName(spec)) throw new TypeError(`not a bare package name: ${JSON.stringify(spec)}`)
+  const segments = spec.split('/')
+  for (let dir = fromDir; ;) {
+    const candidate = join(dir, 'node_modules', ...segments)
     try {
-      require.resolve(`${spec}/package.json`)
-      return true
+      if (fs.stat(candidate).isDirectory()) return candidate
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code
-      // Genuine module-not-found is the only "absent" answer.
-      if (code === 'MODULE_NOT_FOUND') return false
-      // An installed package may intentionally hide ./package.json behind an
-      // exports map. Resolution found the package directory; the restricted
-      // subpath is not evidence that the peer is missing.
-      if (code === 'ERR_PACKAGE_PATH_NOT_EXPORTED') return true
-      // Preserve unknown resolution failures so incompatibilityMap can make
-      // its explicit no-verdict choice rather than inventing a warning.
-      throw error
+      // ENOENT is nothing here — a dangling link included, since stat
+      // follows it — and ENOTDIR is a component of the path that is a file.
+      // Either way keep walking. EACCES, ELOOP and the rest mean this
+      // candidate may hold the package, and nobody can tell.
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error
     }
+    const parent = dirname(dir)
+    if (parent === dir) return null
+    dir = parent
   }
+}
+
+/**
+ * The directory the walk starts from. `createRequire` took a file URL or an
+ * absolute path and so does this — the production anchor is
+ * `<profile>/cordis.yml` as a file URL — and, like `createRequire`, a
+ * trailing separator names the directory itself rather than a file in its
+ * parent. Anything else throws here, at construction, which the gateway's
+ * call sites already treat as "no anchor, no verdict".
+ */
+function anchorDirectory(baseUrl: string): string {
+  const path = isAbsolute(baseUrl) ? baseUrl : fileURLToPath(baseUrl)
+  return path.endsWith('/') || path.endsWith(sep) ? path : dirname(path)
+}
+
+/** `nodeResolver` over an injected filesystem, walking up from `fromDir` —
+ * the seam fixtures drive the lookup through. */
+export function packageResolver(fromDir: string, fs: PackageLookupFs): PeerResolver {
+  return spec => findPackageDir(fromDir, spec, fs) !== null
+}
+
+/**
+ * The production resolver, anchored at the profile. A peer is present when
+ * some ancestor's `node_modules/<spec>` is a directory, the way the ESM
+ * resolver that loads plugins' host halves matches a bare package (see
+ * `findPackageDir`). From `<profile>/cordis.yml` the walk reads
+ * `<profile>/node_modules`, then `$DSH_HOME/profiles/node_modules` — the link
+ * farm dsh-app-boot's `healProfilesModuleFallback` keeps, pointing into the
+ * global dsh install — and so on up to the root.
+ *
+ * It used to ask `require.resolve('<spec>/package.json')`, a question that
+ * answered wrongly twice:
+ *
+ *  - Under a packaged dsh executable (`process.pkg`) the link farm holds ESM
+ *    proxy packages instead of symlinks, and a proxy's `exports` leaves
+ *    `./package.json` out on purpose, so resolving it threw
+ *    ERR_PACKAGE_PATH_NOT_EXPORTED for every proxied peer. Presence read that
+ *    as present; the version resolver below could read nothing. Reproduced:
+ *    a proxy at `0.2.0-rc.1` against a declared `^0.1.1-rc.2` gave presence
+ *    true, version null, mismatches `[]` — the load-time self-check could
+ *    never fire under a packaged dsh.
+ *  - Node caches a SUCCESSFUL CJS resolution for the life of the process
+ *    (`Module._pathCache`, keyed on request + lookup paths) and hands the
+ *    cached filename back without looking at the disk; a failure is not
+ *    cached. Measured on Node 26.6.0 in one process: absent → false,
+ *    installed → true, uninstalled → STILL true. A peer the reader removed
+ *    left every plugin declaring it unflagged until dsh restarted.
+ *
+ * So nothing is cached and `exports` is never consulted: every call stats
+ * afresh, and present is present. `stat` follows symlinks, so a link to
+ * nothing reads absent — which matters, because the link farm adds links and
+ * never prunes them: 29 of its 511 dangled on the machine this was measured
+ * on, after upgrades.
+ *
+ * The global folders — `NODE_PATH`, `~/.node_modules`, `~/.node_libraries`,
+ * `$PREFIX/lib/node` — are deliberately not searched: the ESM resolver that
+ * loads plugin host code does not search them either. That is not academic.
+ * pnpm's bin shims export `NODE_PATH` (this repo's own `node_modules/.bin/
+ * vitest` points it into the virtual store), and under one the old lookup
+ * found harness packages from any anchor at all, a temp directory included.
+ *
+ * It throws for a `spec` that is not a bare package name and for a stat
+ * failure other than absence, and `incompatibilityMap` turns a throw into no
+ * verdict: neither is a fact this resolver can establish, and false is an
+ * accusation.
+ */
+export function nodeResolver(baseUrl: string): PeerResolver {
+  return packageResolver(anchorDirectory(baseUrl), NODE_LOOKUP_FS)
 }
 
 /**
@@ -101,38 +229,52 @@ export interface PeerVersionMismatch {
   found: string
 }
 
+/** `nodeVersionResolver` over an injected filesystem, walking up from
+ * `fromDir` — the seam fixtures drive the lookup through. */
+export function packageVersionResolver(fromDir: string, fs: PackageLookupFs): PeerVersionResolver {
+  return spec => {
+    let dir: string | null
+    try {
+      dir = findPackageDir(fromDir, spec, fs)
+    } catch {
+      // Swallows a spec that is not a bare package name and a stat failure
+      // other than absence — the two cases the presence resolver throws for.
+      // Null already means no verdict here, so nothing needs them apart.
+      return null
+    }
+    if (dir === null) return null
+    let manifest: unknown
+    try {
+      manifest = JSON.parse(fs.readFile(join(dir, 'package.json')))
+    } catch {
+      // Swallows a manifest that is missing, unreadable or malformed: a fact
+      // we cannot read is not a mismatch, and this check must never be the
+      // reason a load fails.
+      return null
+    }
+    const version = typeof manifest === 'object' && manifest !== null
+      ? (manifest as { version?: unknown }).version
+      : undefined
+    return typeof version === 'string' && version.length > 0 ? version : null
+  }
+}
+
 /**
- * The production resolver: `nodeResolver`'s own resolution, kept this time
- * instead of collapsed to a boolean. Anything that leaves no version to read
- * answers null — a peer that is absent, one that restricts `./package.json`
- * in its exports, an unreadable or malformed manifest, a manifest with no
- * `version`. Absence is deliberately NOT reported as a version violation:
- * `incompatibilityMap` is what covers a missing peer.
+ * The production version resolver: `nodeResolver`'s lookup, then the matched
+ * directory's own `package.json`, read directly. Reading it directly is the
+ * fix, not a shortcut: resolving `<spec>/package.json` is what an exports map
+ * can refuse, and a packaged dsh's module proxy refuses it by construction
+ * while carrying the proxied package's version in exactly that file (see
+ * `nodeResolver`).
+ *
+ * Anything that leaves no version to read answers null: a spec that is not a
+ * bare package name, a stat failure other than absence, a peer that is
+ * absent, a manifest that is missing, unreadable or malformed, a `version`
+ * that is not a non-empty string. Absence is deliberately NOT reported as a
+ * version violation: `incompatibilityMap` is what covers a missing peer.
  */
 export function nodeVersionResolver(baseUrl: string): PeerVersionResolver {
-  const require = createRequire(baseUrl)
-  return spec => {
-    let manifestPath: string
-    try {
-      manifestPath = require.resolve(`${spec}/package.json`)
-    } catch {
-      // Swallows every resolution failure — MODULE_NOT_FOUND (absent) and
-      // ERR_PACKAGE_PATH_NOT_EXPORTED (present but unreadable) alike. Unlike
-      // nodeResolver, this resolver has no answer that could be mistaken for
-      // an accusation: null already means "no verdict", so the two cases need
-      // no distinction here.
-      return null
-    }
-    try {
-      const version = (JSON.parse(readFileSync(manifestPath, 'utf8')) as { version?: unknown }).version
-      return typeof version === 'string' ? version : null
-    } catch {
-      // Swallows an unreadable or malformed manifest: a fact we cannot read
-      // is not a mismatch, and this check must never be the reason a load
-      // fails.
-      return null
-    }
-  }
+  return packageVersionResolver(anchorDirectory(baseUrl), NODE_LOOKUP_FS)
 }
 
 /**

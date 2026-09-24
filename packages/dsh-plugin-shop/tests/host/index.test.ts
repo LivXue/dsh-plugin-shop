@@ -2,8 +2,10 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import ShopGateway, { verifyTarballSha256 } from '../../src/host/index.ts'
+import { nodeVersionResolver } from '../../src/host/peers.ts'
+import { ownPeerRanges } from '../../src/own-version.ts'
 import type { InventoryEntry, LoaderEntryLike, RestartBlockedReason, ShopGatewayOptions, ShopInstallStatusResult } from '../../src/host/index.ts'
 import type { HotMountResult } from '../../src/host/hot.ts'
 import type { CatalogResult, CatalogSnapshot, LoadCatalogOptions } from '../../src/host/catalog.ts'
@@ -328,18 +330,28 @@ describe('ShopGateway', () => {
   })
 
   it('loads silently against the harness this repo actually installs', async () => {
-    // The production path with nothing injected: the real declared ranges,
-    // read from the shipped package.json, against the real installed
-    // versions. A `createRequire` inside vitest carries pnpm's virtual store
-    // on its module.paths, so this resolves the same versions a profile
-    // would. If the harness under this repo ever moves off the declared
-    // line, this test failing IS the warning firing — read the message and
-    // decide whether the ranges or the install is wrong.
+    // The real declared ranges, read from the shipped package.json, against
+    // the versions this repository installs, through the production resolver
+    // anchored at the package root, where pnpm links the harness packages
+    // this build is developed against. If that harness ever moves off the
+    // declared line, this test failing IS the warning firing — read the
+    // message and decide whether the ranges or the install is wrong.
+    //
+    // Until 2026-09-24 this was anchored at a bare temp profile, and it
+    // passed only because the vitest launcher's NODE_PATH reached pnpm's
+    // store: `require.resolve` searched it. The direct lookup that replaced
+    // it does not search NODE_PATH, because the ESM loader that runs plugin
+    // host code does not either, so that anchor found nothing, formed no
+    // verdict and asserted nothing. Every version is therefore asserted READ
+    // before the silence below is believed.
+    const packageRoot = fileURLToPath(new URL('../../', import.meta.url))
+    const resolvePeerVersion = nodeVersionResolver(pathToFileURL(join(packageRoot, 'package.json')).href)
+    for (const spec of Object.keys(ownPeerRanges())) expect(resolvePeerVersion(spec), spec).not.toBeNull()
     const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-peerversion-live-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
     const warnings: string[] = []
     const ctx = { get: () => undefined, reflect: { provide: () => {} }, logger: { warn: (m: string) => warnings.push(m) } } as never
-    new ShopGateway(ctx, { profile: 'web', profileDir })
+    new ShopGateway(ctx, { profile: 'web', profileDir, resolvePeerVersion })
     expect(warnings).toEqual([])
   })
 
