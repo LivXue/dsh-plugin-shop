@@ -96,9 +96,11 @@ Per-failure diagnostics are in the
   one that fails becomes a named rejection carrying one of seventeen recorded reasons,
   in words its author can read. The `plugins` and `filtered` badges above count both
   sides, live.
-- **🔌 Dependency check on your machine** — your installation resolves each recorded
-  peer name against your own profile, the question dsh's loader asks at mount, so a
-  card reads **Incompatible** only when the modules are really missing *here*.
+- **🔌 Dependency check on your machine** — your installation checks each peer a
+  plugin requires against your own profile and the modules dsh's web client provides
+  itself, and the author's declared dsh version and profile against the ones you run,
+  so a card reads **Incompatible** only when something is really missing or
+  unsupported *here*.
 - **🗓️ Daily rebuild** — committed to git, so every change is a reviewable diff. A
   new plugin lands the next morning; a repository that disappears drops out the same
   way.
@@ -129,7 +131,7 @@ flowchart TB
   subgraph SHELVE["3 · Shelve — what the catalog records"]
     direction LR
     CAT["one of 7 categories"]
-    PEER["the declared peer NAMES,<br/>never their version ranges"]
+    PEER["the required peer NAMES,<br/>never their version ranges"]
   end
 
   NPM --> G1
@@ -151,9 +153,9 @@ The two halves share no code, only the schema.
 flowchart LR
   CAT[["the catalog<br/>index.json + plugins.sha256.json"]]
   CAT ==> HOST["5 · Host half<br/>races every origin<br/>verifies sha256 · caches"]
-  HOST ==> DEP{"6 · Dependency check<br/>resolve each recorded peer<br/>against YOUR profile"}
+  HOST ==> DEP{"6 · Dependency check<br/>find each recorded peer<br/>in YOUR profile or web client"}
   DEP -->|"one or more absent"| BAD["Incompatible<br/>the card names<br/>what is missing"]
-  DEP -->|"all resolve"| GOOD["installable"]
+  DEP -->|"all provided"| GOOD["installable"]
   BAD --> CLIENT["Client half — the Settings tab<br/>nine shop/* methods<br/>no network · no filesystem"]
   GOOD --> CLIENT
   CLIENT ==>|"dsh plugin add"| PROF[("your dsh profile")]
@@ -164,11 +166,12 @@ differently:
 
 - **The gate rejects; it never silently drops.** Every candidate that fails becomes a
   named rejection with a reason, attached to the build.
-- **The dependency check is not a catalog fact.** The build records only the peer
-  *names* — never their version ranges, because nearly every dsh plugin declares
-  `"*"` and the harness's own prereleases do not satisfy ordinary ranges, so checking
-  them would accuse plugins that work. Whether a name resolves is decided by your
-  installation, against your profile.
+- **The dependency check is not a catalog fact.** The build records only the *names*
+  of the peers a plugin requires — never their version ranges, because nearly every
+  dsh plugin declares `"*"` and the harness's own prereleases do not satisfy ordinary
+  ranges, so checking them would accuse plugins that work. Whether a name is provided
+  is decided by your installation: your profile, and the modules dsh's web client
+  provides itself.
 
 ## ✅ What it is
 

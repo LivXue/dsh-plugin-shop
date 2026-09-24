@@ -122,7 +122,7 @@ bundle is not.
 | **Enable / disable** | Applies to an installed plugin without a restart. A plugin with a browser half also needs the open page reloaded, and the shop offers the button when it does |
 | **Installed state** | An installed plugin shows an Installed label on its card — or an Update button when the catalog has a newer version — plus an Uninstall button; the Installed filter in the category bar shows only installed plugins |
 | **Size & author** | Each card shows what installing the plugin puts on disk, next to the account that published it — npm's own unpacked figure, so it matches the package's npm page |
-| **Leave out what cannot run** | A plugin whose declared components your installation does not provide is badged incompatible; the filter at the end of the category bar takes those off the shelf. It never hides a plugin whose name is already taken by another install, and never subtracts from the Installed view — those cards are the only place the problem is explained or can be undone |
+| **Leave out what cannot run** | A plugin whose required components your installation does not provide, or whose author declares a dsh version or profile other than the one you run, is badged incompatible; the filter at the end of the category bar takes those off the shelf. It never hides a plugin whose name is already taken by another install, and never subtracts from the Installed view — those cards are the only place the problem is explained or can be undone |
 | **Reload** | When an uninstall or a toggle is already live on the server and only the open page is stale, the shop offers to reload that page — never automatically, because a reload discards work in flight |
 | **Restart** | When the plugin's host half could not be brought up live — and also when it could, but the plugin has a browser half: a plugin that arrives mid-session reaches the page only through a restart, so the shop says so rather than offering a reload that would change nothing. It states the cost first: the page disconnects and in-flight work is interrupted |
 | **Self-update** | The shop shows its own version next to the search box, checks npm for a newer release, and updates itself with the pinned version — then the usual restart |
@@ -144,16 +144,19 @@ them are the reason the shelf is worth reading:
    dependencies, either of which would fail the install on your machine. A name a hair
    away from a popular one is held until someone clears it. Seventeen recorded
    reasons, all mechanical, and every rejection carries a line its author can read.
-3. **Classify and record.** Seven categories, and the peer modules each plugin
-   declares — names only, never version ranges.
+3. **Classify and record.** Seven categories, the peer modules each plugin
+   requires — names only, never version ranges — and the author's own
+   `dsh.compatibility`, when declared.
 4. **Publish.** Content-addressed JSON, to npm and GitHub Pages at once.
 5. **Fetch here.** This package races the origins and verifies the sha256 before
    trusting a byte.
-6. **Check dependencies here too.** Your installation resolves each recorded peer name
-   against *your* profile — the same question dsh's loader asks at mount time. A card
-   whose modules are absent reads **Incompatible** and names them. That verdict is
-   computed on your machine, because it depends on the harness you are actually
-   running, not the one the build ran on.
+6. **Check dependencies here too.** Your installation looks up each recorded peer name
+   in *your* profile, then sets aside whatever dsh's web client provides itself. A card
+   whose modules neither provides reads **Incompatible** and names them, and so does
+   one whose author declares a dsh version or profile you are not running — it says
+   what was declared and what you run. That verdict is computed on your machine,
+   because it depends on the harness you are actually running, not the one the build
+   ran on.
 
 The full pipeline diagram lives in the
 [repository README](https://github.com/LivXue/dsh-plugin-shop#-how-it-fits-together).

@@ -1,5 +1,50 @@
 # Repo peers and `dsh.compatibility` — implementation plan
 
+> **Status (2026-09-24): implemented**, together with the audit recorded in
+> `docs/design/2026-09-01-harness-compatibility.md` §9. The tasks below are
+> the plan as written and are left as they were; five things were built
+> differently, each for a reason found while building it:
+>
+> - **The shared reader excludes optional peers.** One `peerNamesOf`, in
+>   `npm-client.ts`, serves both channels and leaves out a peer marked
+>   `optional: true` in `peerDependenciesMeta`, before the length filter and
+>   the 128-name cap. Task 1's reader took `Object.keys(peerDependencies)`,
+>   which records an optional peer as a requirement — the audit found 381 live
+>   entries badged for nothing else (design §9.2).
+> - **`RepoCandidate.peers` is optional, and its absence queues a
+>   re-fetch.** Records revived from `repo-state.json` are a bare cast, so a
+>   record written before the change lacks the field at runtime, which Task 1's
+>   `peers: string[]` would have typed away. And the rollout note's "roughly
+>   eight daily builds" assumed a backfill that re-reads old records; it
+>   re-reads only what a marker queues. An absent `peers` now queues its
+>   repository once, like `sizeProbed` and `assetVerified`, and
+>   `compatibility` rides the same marker (design §9.8).
+> - **The verdict lives in `packages/dsh-plugin-shop/src/host/compatibility.ts`,
+>   not `peers.ts`,** and its shape is `{ dsh?: { range, running }, profile?:
+>   { declared, running } }` rather than Task 7's `{ dsh?: string; profiles?:
+>   string[] }`: each half carries both sides, so the copy can name what was
+>   declared and what is running.
+> - **The running version is read through `nodeVersionResolver`,** at the same
+>   profile anchor as the peer check, instead of Task 7's separate
+>   `nodeDshVersion` over `createRequire`. That resolver no longer uses
+>   `require.resolve` at all (design §9.5), and a second reader would have
+>   been a second notion of "the running installation".
+> - **The verdict renders as blockers the incompatible filter counts** — on
+>   the card, in the install acknowledgement and on the installed rows, under
+>   the "Incompatible" badge — rather than as Task 8's two standalone warning
+>   lines beside the missing-peer warning. Task 8's `harnessVerdictOf` selector
+>   is kept and feeds `blockersOf`, and its copy keys are `harnessRangeDetail`
+>   / `harnessProfileDetail` rather than `harnessMismatch` / `profileMismatch`,
+>   because each line names both sides. Warn, never block, is unchanged.
+>
+> The rollout note at the end is superseded too: four of the five
+> `@lanxing/dsh-galgame` peers it counts as not resolving are platform seed
+> words the web client provides (design §9.1), and the backfill it describes
+> needed a marker to happen at all (design §9.8). Measured against the
+> committed `repo-state.json` on 2026-09-24, that marker queues 10,629
+> repositories: at least six daily builds at the 2,000 budget, not "roughly
+> eight".
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Close the two gaps behind "this plugin is incompatible and the shop said nothing": github-channel entries carry no `peers` at all (61% of the catalog, blind since the record shipped), and `dsh.compatibility` — an exact declaration authors already publish — is read by nothing in this repository.
