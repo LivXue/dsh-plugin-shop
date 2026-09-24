@@ -2,8 +2,8 @@
 
 # dsh-plugin-shop
 
-**The plugin shop for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)** — discover, install,
-enable and update dsh plugins from a browsable, git-auditable catalog.
+**The plugin shop for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)** — browse, install,
+enable, disable, and update dsh plugins, with every catalog change tracked in Git.
 
 [![npm](https://img.shields.io/npm/v/dsh-plugin-shop?logo=npm&color=cb3837)](https://www.npmjs.com/package/dsh-plugin-shop)
 [![plugins](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2FLivXue.github.io%2Fdsh-plugin-shop%2Fv1%2Findex.json&query=count&label=plugins&color=blue)](https://LivXue.github.io/dsh-plugin-shop/v1/index.json)
@@ -20,116 +20,118 @@ English | [中文](README.zh.md)
 
 ## 📦 Install the shop
 
-Two tracks. They do the same thing; pick the one that matches who is reading.
+Install the shop manually, or have an agent follow the automated steps below.
 
-### 🧑 For people
+### 🧑 Manual installation
 
-**Prerequisites:** Node.js. Running the harness itself needs no install — the
-upstream-documented form is `npx -y @deepseek-ai/dsh web`. Plugin management
-goes through `dsh plugin`, which spawns both the `dsh` command and `pnpm` —
-install them once with `npm install -g @deepseek-ai/dsh pnpm` and verify with
-`dsh --version` and `pnpm --version`.
+**Prerequisite:** Node.js. You can run DeepSeek Harness without a global installation
+using the command in its official documentation: `npx -y @deepseek-ai/dsh web`.
+Plugin management uses `dsh plugin`, which invokes both `dsh` and `pnpm`.
+Install these tools with `npm install -g @deepseek-ai/dsh pnpm`, then check that both
+are available with `dsh --version` and `pnpm --version`.
 
 ```sh
-# dsh on PATH (global install). Pin the version: pnpm 11 holds back very
-# recent releases, so a bare `add dsh-plugin-shop` can hand you an older
-# version for a while. This is the current release — refresh it with
-# `npm view dsh-plugin-shop version`.
+# With dsh installed globally, run the following command.
+# Specify the version: pnpm 11 restricts newly published releases by default,
+# so omitting the version may install an older release. The current version
+# is shown below; check for updates with `npm view dsh-plugin-shop version`.
 dsh plugin --profile web add dsh-plugin-shop@0.8.3
-# or straight through npx, nothing installed:
+# Alternatively, run the installation command through npx:
 npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.8.3
 ```
 
-Replace `web` with your profile if you use another one. Restart `dsh` once — a newly
-added bundle is not applied to a running process — then open
+Replace `web` with your profile name if you use a different one. Restart `dsh` after
+installation to load the new plugin, then open:
 
 > **Settings → Plugins → Plugin shop**
 
-### 🤖 For agents
+### 🤖 Installation with an agent
 
-Non-interactive. `--profile` is **mandatory**; without it `dsh plugin` exits with
+An agent can run these steps without interaction. **The `--profile` option is required.**
+If it is omitted, `dsh plugin` exits with this error:
 `error: required option '--profile <name>' not specified`.
 
 ```sh
-# 1. resolve a profile name ($DSH_HOME defaults to ~/.dsh; node_modules is not a profile)
+# 1. List available profiles ($DSH_HOME defaults to ~/.dsh; exclude node_modules).
 ls -1 "${DSH_HOME:-$HOME/.dsh}/profiles" | grep -v '^node_modules$'
 
-# 2. install — pin the version: it bypasses pnpm's release cooldown and
-#    deterministic installs are the point of the agent path
+# 2. Specify the version to bypass pnpm's release cooldown and ensure
+#    that the expected version is installed.
 dsh plugin --profile <profile> add dsh-plugin-shop@0.8.3
 
-# 3. verify — a zero exit above only means pnpm resolved the package
-dsh plugin --profile <profile> list --depth 0   # dsh-plugin-shop must appear
+# 3. Verify the installation; exit code 0 above only means pnpm resolved the package.
+dsh plugin --profile <profile> list --depth 0   # The output should include dsh-plugin-shop.
 
-# 4. restart the profile; a new bundle is not hot-applied
+# 4. Restart the profile to load the new plugin.
 dsh --profile <profile>
 ```
 
-The same fact as step 3 lives in `$DSH_HOME/profiles/<profile>/package.json` under
-`dsh.profile.bundles`, if you would rather read the manifest than parse CLI output.
-Per-failure diagnostics are in the
-[package README](packages/dsh-plugin-shop/README.md#failure-modes).
+You can also verify step 3 by checking that `dsh.profile.bundles` in
+`$DSH_HOME/profiles/<profile>/package.json` includes the plugin. For troubleshooting,
+see the [package README](packages/dsh-plugin-shop/README.md#failure-modes).
 
 ## 🖼️ Screenshots
 
 <div align="center">
-<img src="docs/images/shelf-light.png" alt="The plugin shop shelf inside dsh Settings" width="860">
+<img src="docs/images/shelf-light.png" alt="The plugin shop in dsh Settings" width="860">
 </div>
 
 <table>
 <tr>
-<td width="50%"><img src="docs/images/gate-light.png" alt="Installing an unreviewed plugin requires an explicit acknowledgement"></td>
-<td width="50%"><img src="docs/images/shelf-dark.png" alt="The same shelf in the dark theme"></td>
+<td width="50%"><img src="docs/images/gate-light.png" alt="Confirmation is required before installing an unreviewed plugin"></td>
+<td width="50%"><img src="docs/images/shelf-dark.png" alt="The plugin shop in dark mode"></td>
 </tr>
 <tr>
-<td align="center"><sub>Installing an unreviewed plugin requires an explicit acknowledgement</sub></td>
-<td align="center"><sub>The same shelf in the dark theme</sub></td>
+<td align="center"><sub>Confirmation is required before installing an unreviewed plugin</sub></td>
+<td align="center"><sub>The plugin shop in dark mode</sub></td>
 </tr>
 </table>
 
 ## ✨ Highlights
 
-- **🌐 Whole-registry harvest** — every npm package keyed `dsh-plugin` or
-  `deepseek-harness`, plus every GitHub repository using them as topics. Nothing is
-  submitted here; there is no queue to join.
-- **🧹 Hard filtering** — every candidate is gated mechanically on every build, and
-  one that fails becomes a named rejection carrying one of seventeen recorded reasons,
-  in words its author can read. The `plugins` and `filtered` badges above count both
-  sides, live.
-- **🔌 Dependency check on your machine** — your installation resolves each recorded
-  peer name against your own profile, the question dsh's loader asks at mount, so a
-  card reads **Incompatible** only when the modules are really missing *here*.
-- **🗓️ Daily rebuild** — committed to git, so every change is a reviewable diff. A
-  new plugin lands the next morning; a repository that disappears drops out the same
-  way.
-- **🗂️ Seven categories** — an author who declares `dsh.catalog` picks their own; the
-  rest are classified for them.
+- **🌐 Automatic discovery** — the catalog collects npm packages with the
+  `dsh-plugin` or `deepseek-harness` keyword and GitHub repositories with either
+  topic. Authors do not need to submit an application or join a queue.
+- **🧹 Strict screening** — every candidate is checked automatically on each build.
+  Rejected plugins are recorded by name with one of seventeen predefined reasons
+  and a detailed explanation to help authors troubleshoot. The `plugins` and
+  `filtered` badges above show the current totals.
+- **🔌 Local dependency checks** — the shop resolves each declared peer dependency
+  in your profile, just as the dsh loader does when loading a plugin. A card shows
+  **Incompatible** only when a dependency is missing from your environment.
+- **🗓️ Daily updates** — the catalog is rebuilt daily, with changes committed to
+  Git for review. Eligible new plugins are listed the next morning, and plugins
+  whose repositories are no longer available are removed during the same process.
+- **🗂️ Seven categories** — authors can choose a category through `dsh.catalog`.
+  Otherwise, the build assigns one automatically.
 
-## 🗺️ How it fits together
+<a id="-how-it-fits-together"></a>
 
-**In this repository — the daily build.** Everything here is `registry/`.
+## 🗺️ How it works
+
+**The catalog is built daily in this repository.** The build code lives in `registry/`.
 
 ```mermaid
 flowchart TB
-  subgraph HARVEST["1 · Harvest — the whole public registry, every day"]
+  subgraph HARVEST["1 · Discover — collect plugins from public sources daily"]
     direction LR
     NPM(["npm packages<br/>keyword dsh-plugin<br/>keyword deepseek-harness"])
-    GH(["GitHub repositories<br/>the same keywords,<br/>used as topics"])
+    GH(["GitHub repositories<br/>with the same keywords<br/>as topics"])
   end
 
-  subgraph GATE["2 · Gate — every candidate must clear all five, on every build"]
+  subgraph GATE["2 · Screen — check every candidate on each build"]
     direction LR
-    G1["a plugin at all?<br/><br/>a dsh.bundle the<br/>loader can mount"]
-    G2["auditable?<br/><br/>a license,<br/>a live repository"]
-    G3["installable?<br/><br/>not deprecated on npm ·<br/>repo listings also need<br/>no build scripts and<br/>no workspace: deps"]
-    G4["what it claims?<br/><br/>tarball integrity, publish time,<br/>not a near-miss of another name"]
-    G5["anything to show?<br/><br/>a valid dsh.catalog,<br/>or an npm description"]
+    G1["Is it a loadable plugin?<br/><br/>Has a valid<br/>dsh.bundle"]
+    G2["Can it be reviewed?<br/><br/>Has a license and<br/>an accessible source repository"]
+    G3["Can it be installed?<br/><br/>Not deprecated on npm;<br/>repository listings also require<br/>no build scripts or<br/>workspace: dependencies"]
+    G4["Is the package information credible?<br/><br/>Check integrity, publication time,<br/>and potentially misleading names"]
+    G5["Is there information to display?<br/><br/>Has a valid dsh.catalog<br/>or an npm description"]
   end
 
-  subgraph SHELVE["3 · Shelve — what the catalog records"]
+  subgraph SHELVE["3 · List — record plugin details"]
     direction LR
-    CAT["one of 7 categories"]
-    PEER["the declared peer NAMES,<br/>never their version ranges"]
+    CAT["One of seven categories"]
+    PEER["Declared peer dependency names,<br/>without version ranges"]
   end
 
   NPM --> G1
@@ -139,89 +141,92 @@ flowchart TB
   G3 -.-> REJ
   G4 -.-> REJ
   G5 -.-> REJ
-  REJ[["rejected — one author-readable reason per name"]]
-  G5 ==>|"all five clear"| CAT
-  PEER ==> PUB[["4 · Publish — content-addressed JSON, committed to git, then GitHub Pages and npm"]]
+  REJ[["Rejected — record the plugin name and explain why"]]
+  G5 ==>|"All five checks pass"| CAT
+  PEER ==> PUB[["4 · Publish — name JSON files by content hash, commit to Git, and publish to GitHub Pages and npm"]]
 ```
 
-**On your machine — the npm package.** Everything here is `packages/dsh-plugin-shop/`.
-The two halves share no code, only the schema.
+**The shop runs locally as an npm package.** Its code lives in `packages/dsh-plugin-shop/`.
+The catalog build and the local shop share a data schema; their code is independent.
 
 ```mermaid
 flowchart LR
-  CAT[["the catalog<br/>index.json + plugins.sha256.json"]]
-  CAT ==> HOST["5 · Host half<br/>races every origin<br/>verifies sha256 · caches"]
-  HOST ==> DEP{"6 · Dependency check<br/>resolve each recorded peer<br/>against YOUR profile"}
-  DEP -->|"one or more absent"| BAD["Incompatible<br/>the card names<br/>what is missing"]
-  DEP -->|"all resolve"| GOOD["installable"]
-  BAD --> CLIENT["Client half — the Settings tab<br/>nine shop/* methods<br/>no network · no filesystem"]
+  CAT[["Plugin catalog<br/>index.json + plugins.sha256.json"]]
+  CAT ==> HOST["5 · Host<br/>Request multiple sources concurrently<br/>Verify sha256 and cache the result"]
+  HOST ==> DEP{"6 · Check dependencies<br/>Resolve each peer dependency<br/>in your profile"}
+  DEP -->|"Missing dependencies"| BAD["Incompatible<br/>The card lists<br/>missing dependencies"]
+  DEP -->|"All dependencies resolve"| GOOD["Ready to install"]
+  BAD --> CLIENT["Client — the plugin shop in Settings<br/>Calls nine shop/* methods on the host<br/>No network or filesystem access"]
   GOOD --> CLIENT
   CLIENT ==>|"dsh plugin add"| PROF[("your dsh profile")]
 ```
 
-Two parts are worth naming, because they are the ones people expect to work
-differently:
+Two details are useful to understand:
 
-- **The gate rejects; it never silently drops.** Every candidate that fails becomes a
-  named rejection with a reason, attached to the build.
-- **The dependency check is not a catalog fact.** The build records only the peer
-  *names* — never their version ranges, because nearly every dsh plugin declares
-  `"*"` and the harness's own prereleases do not satisfy ordinary ranges, so checking
-  them would accuse plugins that work. Whether a name resolves is decided by your
-  installation, against your profile.
+- **Every rejected plugin is documented.** The build report records its name and
+  explains which check it failed, so authors can investigate.
+- **Compatibility depends on your local environment.** The catalog records peer
+  dependency *names*, without version ranges. Nearly all dsh plugins declare `"*"`,
+  but the harness's prereleases do not satisfy ordinary version ranges. Checking
+  those ranges would incorrectly mark working plugins as incompatible. Instead,
+  the shop checks whether each dependency can be resolved in your profile.
 
-## ✅ What it is
+## ✅ Project principles
 
 | | |
 |---|---|
-| **Public and community-run** | Publishing to npm with the `dsh-plugin` or `deepseek-harness` keyword is all it takes to be discovered. Nothing is submitted to this project. |
-| **Git-auditable** | Every daily catalog change is a reviewable diff, not a row in someone's database. |
-| **Tiered trust, honestly reported** | A review is pinned to the exact version it covered, so an author who passes review once cannot publish a malicious version and inherit the trust. **Today `registry/verified.yml` is empty: no listing has been read by a human, every entry is community-tier, and every install asks for the acknowledgement.** The filtering above is mechanical, and it is not a substitute for reading the code you are about to run. |
-| **Zero-privilege UI** | Compromising the browser interface does not compromise the runtime. |
+| **Open to the community** | Publish to npm with the `dsh-plugin` or `deepseek-harness` keyword to make your plugin discoverable. No separate submission to this project is needed. |
+| **Traceable changes** | Catalog updates are committed to Git daily, so you can inspect each change and its history. |
+| **Explicit trust levels** | A human review applies only to the exact version reviewed. Other versions cannot inherit that status, preventing an author from using an earlier review to endorse a malicious release. **Currently, `registry/verified.yml` is empty: no catalog entries have been reviewed by a human. All plugins are in the community tier and require confirmation before each installation.** Automated screening cannot replace a review of the plugin's code. |
+| **Restricted UI permissions** | The browser interface has no network or filesystem access. Compromising it does not grant runtime privileges. |
 
-## 🚫 What it is not
+## 🚫 Permissions and limitations
 
-> **It is not a sandbox.** A dsh plugin, once mounted, holds the full `ctx` — your
-> filesystem, your shell, and the requests going to the model. Installing one is
-> complete trust. This project does not change that; it tells you the truth before you
-> click.
+> **The shop does not provide sandbox isolation.** Once loaded, a dsh plugin has
+> access to the full `ctx`, including your filesystem, shell, and requests sent to
+> the model. Installing a plugin means trusting it with these permissions. The shop
+> explains them before installation, but does not restrict what a running plugin can do.
 
-It also carries no download counts, ratings, or reviews, and it will never offer an
-"install from arbitrary URL" button. That capability stays in `dsh plugin add`, where
-enabling build scripts and pinning a commit are decisions you make explicitly.
+The shop does not display download counts, ratings, or reviews, and it will not offer
+installation from arbitrary URLs. For that, use `dsh plugin add` and decide whether to
+allow build scripts or pin a specific commit.
 
-## 📚 The catalog
+## 📚 Plugin catalog
 
-Built daily and published as static JSON, to two places at once: the npm package
-`dsh-plugin-shop-catalog` and GitHub Pages. Your installation races them — the
-registry you have configured, npmmirror, npmjs, then Pages — and takes whichever
-answers first, because the link to one of them can be far slower than the link to
-another from where you sit. All of them carry the same bytes, and the sha256 in the
-pointer is checked before any of them is trusted. `DSH_SHOP_CATALOG_URL` opts out of
-the race and reads only what you name.
+The catalog is built daily and published as static JSON through the
+`dsh-plugin-shop-catalog` npm package and GitHub Pages. The shop requests it from
+multiple sources: your configured npm registry, npmmirror, npmjs, and GitHub Pages.
+It uses the first valid response to avoid delays from a slow connection to any one
+source. Each source serves identical data, which is checked against the sha256 hash
+in the index before use. Set `DSH_SHOP_CATALOG_URL` to use only a specific source.
 
-| Artifact | Purpose |
+| File | Purpose |
 |---|---|
-| [`/v1/index.json`](https://LivXue.github.io/dsh-plugin-shop/v1/index.json) | The pointer — `schemaVersion`, `builtAt`, the entry `count` and `rejected` totals (the badges above read them live), and the content hash. Small enough to poll. |
-| `/v1/plugins.<sha256>.json` | The data — content-addressed, safe to cache indefinitely. |
-| `/v1/stars.<sha256>.json` | GitHub star counts by package name, when the daily build could fetch them |
+| [`/v1/index.json`](https://LivXue.github.io/dsh-plugin-shop/v1/index.json) | The index: `schemaVersion`, `builtAt`, the `count` of listed plugins, the `rejected` total, and content hashes. The badges above read these totals live. The file is small enough for regular polling. |
+| `/v1/plugins.<sha256>.json` | Plugin data, named by its content hash and safe to cache indefinitely. |
+| `/v1/stars.<sha256>.json` | GitHub star counts for each plugin, keyed by package name, when the daily build can retrieve them. |
 
-Each build's rejection report, carrying an author-readable reason for every rejected
-package, is attached to the workflow run. Nothing disappears without a reason attached
-to its name.
+Each workflow run includes a rejection report listing every rejected plugin and the
+reason it was excluded, with details to help authors troubleshoot.
 
-The data files are content-addressed, so each build publishes new names and the previous
-ones stop existing, while the pointer above them is cached for ten minutes. If you fetch
-`/v1/` yourself, re-read `index.json` whenever a data URL answers 404 — or read the same
-bytes from the npm package `dsh-plugin-shop-catalog`, where the pointer and the data it
-names always ship in one tarball.
+When catalog content changes, the data filenames change with their content hashes,
+and the old files are removed. However, `index.json` is cached for ten minutes, so it
+may temporarily reference files that no longer exist. If you fetch data directly
+from `/v1/` and a data URL returns 404, fetch `index.json` again. Alternatively, read
+the same data from the `dsh-plugin-shop-catalog` npm package, which always bundles
+the index with its matching data files.
 
 ## 🏷️ Listing a plugin
 
-Add a harvest keyword (`dsh-plugin` or `deepseek-harness`) to your `package.json` and publish to npm; the daily build picks it up. A plugin that never publishes to npm is listed from its GitHub repository instead: add the same keyword as a repo *topic* and keep a `package.json` at the root with a `name` and `dsh.bundle` — the catalog pins the default-branch commit as the version.
-A `dsh.catalog` section is optional — declare it to control your own category, summary
-and capabilities, or omit it and the catalog derives a listing from your npm
-`description` instead.
+Add `dsh-plugin` or `deepseek-harness` to the keywords in your `package.json` and
+publish to npm. The daily build will discover your plugin and list it once it passes
+the checks. If you do not publish to npm, your plugin can be listed from its GitHub
+repository: add either keyword as a repository topic and include `name` and
+`dsh.bundle` in the root `package.json`. The catalog pins a specific commit from the
+default branch as the plugin's version.
+
+The optional `dsh.catalog` section lets you specify the category, summary, and
+capabilities. Without it, the catalog generates a listing from your npm `description`.
 
 ```json
 {
@@ -238,39 +243,42 @@ and capabilities, or omit it and the catalog derives a listing from your npm
 }
 ```
 
-Full field reference: [docs/schema.md](docs/schema.md).
+See [docs/schema.md](docs/schema.md) for the full field reference.
 
-**Not listed, and why:** a package without `dsh.bundle` is a library rather than an
-installable plugin. A package without a license or a repository cannot be audited. A
-package with neither a `dsh.catalog` section nor an npm `description` has nothing to
-show.
+**Common reasons for exclusion:**
 
-### 🌾 Which packages are harvested?
+- No `dsh.bundle`, so the package cannot be installed as a plugin.
+- No license or source repository, so the package cannot be reviewed.
+- Neither `dsh.catalog` nor an npm `description`, leaving no plugin information to display.
 
-The harvest reads declared keywords, never package names: `dsh-plugin` and
-`deepseek-harness` are the two it accepts, in npm `keywords` and as GitHub repo
-*topics*. `cordis-plugin` names the underlying framework, so it does not show
-that a package is an installable DSH bundle. The plugins that ship inside dsh are
-a separate matter: they declare no npm keywords at all, so no keyword choice
-would reach them.
+### 🌾 Which packages are discovered?
 
-If your community plugin is built on Cordis and integrates with DSH, declare one
-of those two keywords and put a `dsh.bundle` section where the harvest reads it:
-on the npm path, in the manifest of the package you publish; on the GitHub path,
-in the root `package.json`, which also needs a `name`, or, in a monorepo, in the
-subpackage that is the plugin. A reusable Cordis library with no `dsh.bundle` is
-a library rather than an installable plugin.
+Discovery matches `dsh-plugin` and `deepseek-harness` in npm `keywords` or GitHub
+repository topics, regardless of the package name. The `cordis-plugin` keyword
+identifies the underlying framework, but does not establish that a package can be
+installed as a DSH plugin. Built-in plugins distributed with dsh declare no npm
+keywords, so this discovery process does not find them.
+
+If your community plugin uses Cordis and integrates with DSH, add either keyword
+and declare `dsh.bundle` in the appropriate manifest:
+
+- **For npm packages:** use the `package.json` of the package you publish.
+- **For GitHub repositories:** use the root `package.json`, which must also declare
+  a `name`. In a monorepo, you can instead declare the bundle in the subpackage that
+  provides the plugin.
+
+A general-purpose Cordis library without `dsh.bundle` cannot be installed as a DSH plugin.
 
 ## 🗂️ Repository layout
 
-| Path | What lives there |
+| Path | Contents |
 |---|---|
-| `registry/` | The catalog pipeline — a pure core (`gate`, `tier`, `emit`, `pipeline`) behind an impure shell (`npm-client`, `build`) |
-| `registry/verified.yml` | The human review record, pinned per version |
-| `registry/denied.yml` | The denylist; every entry states why |
-| `registry/snapshots/` | `manifest.lock`, committed daily |
-| `packages/dsh-plugin-shop/` | The npm package — Host half and Client half |
-| `docs/design/` | The specification. It is the authority; code follows it. |
+| `registry/` | The catalog pipeline. Core logic (`gate`, `tier`, `emit`, `pipeline`) uses pure functions; surrounding modules (`npm-client`, `build`) handle network requests, file access, and other side effects. |
+| `registry/verified.yml` | Human review records tied to specific versions. |
+| `registry/denied.yml` | The denylist, with a reason for each entry. |
+| `registry/snapshots/` | Daily `manifest.lock` snapshots. |
+| `packages/dsh-plugin-shop/` | The shop's npm package, containing the host and client components. |
+| `docs/design/` | Design specifications that guide the implementation. |
 
 ## 🛠️ Development
 
@@ -280,30 +288,32 @@ pnpm test        # vitest
 pnpm typecheck
 ```
 
-`pnpm build:catalog` runs the real harvest against npm and GitHub — thousands of live
-requests and several minutes. The tests cover every policy decision without a
-network, so reach for it only when you have changed the fetching or writing layer.
+`pnpm build:catalog` collects live data from npm and GitHub, making thousands of
+network requests and taking several minutes. All policy decisions are covered by
+offline tests. Run the full build when you change data fetching or file output and
+need to verify the complete workflow.
 
-Status and open work: [docs/plans/2026-08-18-remaining-work.md](docs/plans/2026-08-18-remaining-work.md).
-Specification: [docs/design/2026-08-18-dsh-plugin-shop-design.md](docs/design/2026-08-18-dsh-plugin-shop-design.md).
+Project status and remaining work: [docs/plans/2026-08-18-remaining-work.md](docs/plans/2026-08-18-remaining-work.md).
+Design specification: [docs/design/2026-08-18-dsh-plugin-shop-design.md](docs/design/2026-08-18-dsh-plugin-shop-design.md).
 
 ## 🤝 Contributing
 
-Three ways in, cheapest first.
+Contributions are welcome. Here are three ways to help, starting with a small correction:
 
-- **Correct a verdict.** Categories and competing-market judgements are made by a
-  classifier, and the [build report](https://LivXue.github.io/dsh-plugin-shop/v1/report.md)
-  names every call it made with no human behind it. Fixing one is a single line of
-  YAML — no network, no TypeScript, no local build.
-- **Get a plugin listed.** Add a harvest keyword and publish. If the shelf still
-  does not show it, that same report says why, per package, in terms written for
-  the author.
-- **Change the pipeline.** [`docs/design/`](docs/design/) is the specification and
-  the authority; `CLAUDE.md` is the working agreement.
+- **Correct a classification.** A classifier assigns categories and determines
+  whether a plugin is another plugin marketplace. The
+  [build report](https://LivXue.github.io/dsh-plugin-shop/v1/report.md) lists every
+  decision that has not been reviewed by a human. Correcting one takes a single
+  line of YAML, with no network access, TypeScript changes, or local build required.
+- **Publish your plugin.** Add a discovery keyword and publish. If the plugin does
+  not appear in the shop, check the same build report for an explanation.
+- **Improve the pipeline.** Follow the specifications in [`docs/design/`](docs/design/)
+  and the development conventions in `CLAUDE.md`.
 
-All three in full: [CONTRIBUTING.md](CONTRIBUTING.md). Be decent to each other:
-[Code of Conduct](CODE_OF_CONDUCT.md). Vulnerabilities and malicious plugins go
-[privately](SECURITY.md), never to a public issue.
+See the [contribution guide](CONTRIBUTING.md) for detailed instructions, and follow
+the [Code of Conduct](CODE_OF_CONDUCT.md) when taking part in discussions. Report
+vulnerabilities or malicious plugins privately through the
+[security reporting process](SECURITY.md), not in a public issue.
 
 ## 📄 License
 
