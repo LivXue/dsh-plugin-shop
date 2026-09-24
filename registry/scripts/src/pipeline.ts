@@ -19,6 +19,49 @@ export interface PipelineResult extends Artifacts {
 }
 
 /**
+ * The repository candidates this build may emit, with their `peers` withheld
+ * until the release that can read them is out.
+ *
+ * `peers` on a github entry is a record every shop judges — and a shop from
+ * 0.8.3 or earlier judges it by node resolution alone, which on the current
+ * harness badges platform seed words (design 2026-09-01-harness-compatibility
+ * §9.1). Measured on a seeded sample of 297 real github manifests
+ * (2026-09-24): such a client would badge about 15% of github entries, half of
+ * them for seed words alone. Publishing github peers before the shop that
+ * refines against the module table is `latest` would therefore raise an
+ * installed shop's false alarms rather than lower them — so emission waits on
+ * `SHOP_EMIT_REPO_PEERS`, flipped in the release commit that first promotes
+ * that shop, the same choreography `SHOP_HARVEST_REPOS`,
+ * `SHOP_HARVEST_SUBPACKAGES` and `SHOP_CATALOG_V5` followed.
+ *
+ * Only EMISSION is gated. The harvest reads peers and `repo-state.json` keeps
+ * them whatever this answers, so the record is as complete as the backfill has
+ * made it on the day the flag flips; this function is applied to the build's
+ * own copy of the candidates, after that file is written. Stripping here,
+ * before either gate pass, also keeps the per-entry payload budget honest: it
+ * measures the bytes `emit` will write, and withheld peers are not written.
+ * npm entries are untouched — their peers already reach every shop.
+ * @param repoCandidates - the repository candidates this run harvested.
+ * @param emitRepoPeers - whether this build may publish github peers.
+ * @returns the candidates to gate and emit, and how many declared peers that
+ *   were withheld — a report figure, never a listing decision.
+ */
+export function withholdRepoPeers(
+  repoCandidates: readonly RepoCandidate[],
+  emitRepoPeers: boolean,
+): { candidates: RepoCandidate[]; withheld: number } {
+  if (emitRepoPeers) return { candidates: [...repoCandidates], withheld: 0 }
+  let withheld = 0
+  const candidates = repoCandidates.map(candidate => {
+    if (candidate.peers === undefined) return candidate
+    if (candidate.peers.length > 0) withheld += 1
+    const { peers: _withheld, ...rest } = candidate
+    return rest
+  })
+  return { candidates, withheld }
+}
+
+/**
  * Registry rows that matched nothing this run, as report lines.
  *
  * A denial, a review or a clearance is matched EXACTLY (the repo keyspace

@@ -156,6 +156,13 @@ jobs:
           # client: the flag flips in the release commit that ships it, so no
           # older client ever meets a theme category or v5 entry shape.
           SHOP_CATALOG_V5: '1'
+          # Github `peers` are harvested and recorded in repo-state.json now,
+          # and EMITTED only once this is '1'. It flips in the release commit
+          # that first promotes a shop carrying the module-table refinement
+          # (packages/dsh-plugin-shop/src/client/module-table.ts) to `latest`:
+          # until then an installed shop judges peers by node resolution alone,
+          # which badges platform seed words (design 2026-09-01 §9.1, §9.8).
+          SHOP_EMIT_REPO_PEERS: '0'
           # A dedicated read-only PAT lifts the stars GraphQL quota past the
           # catalog's repo count; without it the GITHUB_TOKEN's ~1k points
           # cover only a third of the shelf per run.

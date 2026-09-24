@@ -167,19 +167,29 @@ function isStringArray(value: unknown): value is string[] {
 }
 
 /**
- * The shape `compatibilityOf` writes and nothing else: a plain object with at
- * least one of `dsh` (a string) and `profiles` (strings), and no other key.
- * Empty is refused because that reader returns nothing rather than `{}` — an
- * empty object in the artifact reads as a declaration the author did not make
- * — and a foreign key because the object is published whole, so a key the
- * harvest never read would go out under the author's name.
+ * The shape `compatibilityOf` writes and nothing else: a plain object carrying
+ * at least one of `dsh` (a NON-EMPTY string) and `profiles` (a NON-EMPTY array
+ * of non-empty strings), and no other key. Empty is refused because that
+ * reader returns nothing rather than `{}` — an empty object in the artifact
+ * reads as a declaration the author did not make — and a foreign key because
+ * the object is published whole, so a key the harvest never read would go out
+ * under the author's name. `{dsh: ''}` and `{profiles: []}` are refused for
+ * the same reason as `{}`: that reader cannot produce either, so one in the
+ * committed file is a shape no build wrote. The harvest's length bounds are
+ * NOT re-applied here — they are that reader's policy, and a copy of them
+ * would be a second place to keep in step.
  */
 function isCompatibilityRecord(value: unknown): boolean {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
   const keys = Object.keys(value)
   if (keys.length === 0 || keys.some(key => key !== 'dsh' && key !== 'profiles')) return false
   const { dsh, profiles } = value as { dsh?: unknown; profiles?: unknown }
-  return (dsh === undefined || typeof dsh === 'string') && (profiles === undefined || isStringArray(profiles))
+  if (dsh !== undefined && (typeof dsh !== 'string' || dsh.length === 0)) return false
+  if (profiles !== undefined) {
+    if (!isStringArray(profiles) || profiles.length === 0) return false
+    if (profiles.some(profile => profile.length === 0)) return false
+  }
+  return true
 }
 
 /**
@@ -372,6 +382,12 @@ function lacksSizeProbe(recorded: RepoState[string], treeCap: number): boolean {
  * so the same visit also reads `compatibility` — which is why that field has
  * no marker (see `RepoCandidate.compatibility`). Keying on an EMPTY list
  * instead would re-queue every peerless plugin on every run forever.
+ *
+ * The one exception, which `lacksSizeProbe` states too: a re-fetch that throws
+ * or answers `fetch-failed` persists nothing, so that repository queues again
+ * next run. Bounded by the backfill budget, and newly reachable for unchanged,
+ * fully-marked repositories — the failure mode is a slower backfill, not an
+ * unbounded run.
  *
  * Only candidates that could list, by {@link canEverList}, for the reason
  * `lacksSizeProbe` gives: a peers list on an entry that can never exist reaches

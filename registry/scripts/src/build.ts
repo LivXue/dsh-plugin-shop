@@ -22,7 +22,7 @@ import { githubOwnerName } from './github-repo.ts'
 import { fetchCandidates, searchByKeywords, describePublisherAxis, describeShortfall, HARVEST_KEYWORDS, parseKeywordShortfall, parsePublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall, type PublisherAxisReport } from './npm-client.ts'
 import { applyAxisReport, MAX_EVICTIONS_PER_RUN, MAX_PINNED_PER_KEYWORD, mergePublishers, parsePublisherState, retainPinned, serializePublisherState } from './publisher-state.ts'
 import { pagesArtifactNames } from './pages-artifacts.ts'
-import { runPipeline, selectEntries } from './pipeline.ts'
+import { runPipeline, selectEntries, withholdRepoPeers } from './pipeline.ts'
 import { CATALOG_SCHEMA_VERSION, SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION } from './emit.ts'
 import { assembleStarsForEntries, serializeStars } from './stars-assemble.ts'
 import type { Candidate, Rejection, RepoCandidate } from './types.ts'
@@ -260,6 +260,22 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     // everything was fine.
     repoNote = `${repos.windowCount} windows, ${repos.seen.length} repos seen, ${repos.fetched} fetched (${repos.thrown} threw), ${repos.carried} carried, ${repos.deferred} deferred`
     process.stderr.write(`github: ${repoNote}\n`)
+  }
+
+  // Github `peers` are harvested and recorded above whatever this says, and
+  // emitted only once the flag flips: a shop from 0.8.3 or earlier judges any
+  // `peers` by node resolution alone, which badges platform seed words, so the
+  // flag flips in the release commit that first promotes the shop that refines
+  // against the module table (`withholdRepoPeers`). Applied here, once, so both
+  // gate passes below — the stars selection and runPipeline — see the same
+  // candidates and cannot disagree about what is listed.
+  const emitRepoPeers = process.env.SHOP_EMIT_REPO_PEERS === '1'
+  const peersGate = withholdRepoPeers(repoCandidates, emitRepoPeers)
+  repoCandidates = peersGate.candidates
+  if (!emitRepoPeers && peersGate.withheld > 0) {
+    const peersNote = `github peers withheld from ${peersGate.withheld} candidates: SHOP_EMIT_REPO_PEERS is not 1 (flipped in the release that promotes the module-table client to latest)`
+    process.stderr.write(`github: ${peersNote}\n`)
+    repoNote = repoNote === '' ? peersNote : `${repoNote}; ${peersNote}`
   }
 
   // The stars sidecar and the final artifacts all land under OUT_DIR (the

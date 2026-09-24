@@ -2,9 +2,9 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { runPipeline, selectEntries, unmatchedRegistryNotes } from '../src/pipeline.ts'
+import { runPipeline, selectEntries, unmatchedRegistryNotes, withholdRepoPeers } from '../src/pipeline.ts'
 import { parseRegistryConfig } from '../src/config.ts'
-import type { Candidate, Rejection } from '../src/types.ts'
+import type { Candidate, Rejection, RepoCandidate } from '../src/types.ts'
 
 const candidates = JSON.parse(
   // Resolved from THIS module, not the cwd: a cwd-relative fixture path makes
@@ -838,5 +838,74 @@ describe('selectEntries', () => {
     const recorded = selectEntries(candidates, [], config, '2026-12-25T00:00:00.000Z')
     expect(recorded.entries.length).toBeGreaterThan(0)
     expect(recorded.entries.some(e => e.added === '2026-12-25')).toBe(false)
+  })
+})
+
+describe('withholdRepoPeers (SHOP_EMIT_REPO_PEERS)', () => {
+  // A shop from 0.8.3 or earlier judges any `peers` by node resolution alone,
+  // which badges platform seed words (design 2026-09-01 §9.1), so github peers
+  // are emitted only once the refining shop is `latest` (§9.8). The harvest
+  // and repo-state.json are not this function's concern: it is applied to the
+  // build's own copy of the candidates.
+  const commit = 'd'.repeat(40)
+  const repo = (name: string, peers: string[] | undefined): RepoCandidate => ({
+    name,
+    repo: `someone/${name}`,
+    commit,
+    version: commit,
+    publishedAt: '2026-08-01T12:00:00.000Z',
+    repository: `https://github.com/someone/${name}`,
+    license: 'MIT',
+    hasBundle: true,
+    requiresBuild: false,
+    hasWorkspaceDeps: false,
+    catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
+    description: 'A repo plugin.',
+    ...(peers === undefined ? {} : { peers }),
+  })
+
+  it('strips github peers while the flag is off, and counts only the ones that declared any', () => {
+    const input = [repo('with-peers', ['react', '@x/absent']), repo('none', []), repo('unread', undefined)]
+    const { candidates, withheld } = withholdRepoPeers(input, false)
+    expect(candidates.map(candidate => 'peers' in candidate)).toEqual([false, false, false])
+    // `[]` is withheld too — publishing it would be the same record — but it
+    // declared nothing, so it is not counted as a withheld declaration.
+    expect(withheld).toBe(1)
+    // The input is left alone: the harvest's own record is not this
+    // function's to change.
+    expect(input[0]?.peers).toEqual(['react', '@x/absent'])
+  })
+
+  it('passes every candidate through unchanged once the flag is on', () => {
+    const input = [repo('with-peers', ['react']), repo('unread', undefined)]
+    expect(withholdRepoPeers(input, true)).toEqual({ candidates: input, withheld: 0 })
+  })
+
+  it('publishes no github peers while withheld, and publishes them once emitted', () => {
+    const parse = (json: string) => (JSON.parse(json) as { plugins: { name: string; peers?: string[] }[] }).plugins
+    const input = [repo('dsh-repo-peers', ['@x/absent'])]
+    const withheld = parse(runPipeline([], withholdRepoPeers(input, false).candidates, config, BUILT_AT).pluginsJson)
+    expect(withheld.map(entry => [entry.name, entry.peers])).toEqual([['dsh-repo-peers', undefined]])
+    const emitted = parse(runPipeline([], withholdRepoPeers(input, true).candidates, config, BUILT_AT).pluginsJson)
+    expect(emitted.map(entry => [entry.name, entry.peers])).toEqual([['dsh-repo-peers', ['@x/absent']]])
+  })
+
+  it('does not charge withheld peers to the payload budget', () => {
+    // The budget measures the bytes `emit` will write, so peers that will not
+    // be written must not cost a listing. 128 names of 128 characters — both
+    // exactly at their bounds, so no field rule fires first — serialize to a
+    // block npm-client.ts measures at 17,959 bytes, past the 12,288-byte
+    // budget on their own: emitted, the entry is refused; withheld, it lists.
+    const peers = Array.from({ length: 128 }, (_, index) => `${'p'.repeat(124)}-${String(index).padStart(3, '0')}`)
+    expect(peers.every(peer => peer.length === 128)).toBe(true)
+    const heavy = [repo('dsh-heavy-peers', peers)]
+
+    const emitted = runPipeline([], withholdRepoPeers(heavy, true).candidates, config, BUILT_AT)
+    expect(JSON.parse(emitted.pluginsJson).plugins).toEqual([])
+    expect(emitted.report).toMatch(/\| someone\/dsh-heavy-peers \| no-manifest \| Would publish \d+ bytes of catalog entry, past the 12288-byte budget/)
+
+    const withheld = runPipeline([], withholdRepoPeers(heavy, false).candidates, config, BUILT_AT)
+    const listed = (JSON.parse(withheld.pluginsJson) as { plugins: { name: string }[] }).plugins
+    expect(listed.map(entry => entry.name)).toEqual(['dsh-heavy-peers'])
   })
 })

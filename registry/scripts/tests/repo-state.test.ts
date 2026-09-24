@@ -479,6 +479,12 @@ describe('a carried peers or compatibility record is checked on the way in', () 
     // because an empty object in the artifact reads as a declaration the
     // author did not make.
     ['empty', {}],
+    // And it never writes a half that says nothing: an empty range and an
+    // empty template list are dropped by that reader, so either one in the
+    // committed file is a shape no build wrote.
+    ['an empty range', { dsh: '' }],
+    ['an empty profile list', { profiles: [] }],
+    ['an empty profile name', { profiles: [''] }],
     // Copied into plugins.json whole, so a key this build never harvested
     // would be published under the author's name.
     ['carrying a key the harvest never writes', { dsh: '0.1.5', node: '>=22' }],
