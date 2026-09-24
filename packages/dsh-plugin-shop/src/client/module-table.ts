@@ -11,11 +11,10 @@
  * this profile's boot graph); a registered factory; otherwise it throws. Seed
  * words never touch node resolution, and of the nine the 0.1.5-rc.3 web shell
  * seeds only `@deepseek-ai/cordis` exists as a package on disk — so the host
- * reports the other eight missing for every plugin that declares them.
- * Measured on the live catalog against that harness (2026-09-24): 1,493
- * entries badged "Incompatible", 755 of them only because of seed words, and
- * `react` alone accusing 1,177 plugins — the very module this shop's own
- * client requires at runtime, from that seed, and plainly runs with.
+ * reports the other eight missing for every plugin that declares them, which
+ * on the live catalog made most of the host's badges false — `react` among
+ * them, the very module this shop's own client runs with. Design
+ * 2026-09-01-harness-compatibility §9.1 owns the measurement.
  *
  * So the host's list is never rendered as it arrives: every name the live
  * table provides is removed first (`index.ts`, at the moment a result is

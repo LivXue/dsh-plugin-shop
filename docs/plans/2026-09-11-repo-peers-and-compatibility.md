@@ -2,7 +2,7 @@
 
 > **Status (2026-09-24): implemented**, together with the audit recorded in
 > `docs/design/2026-09-01-harness-compatibility.md` §9. The tasks below are
-> the plan as written and are left as they were; five things were built
+> the plan as written and are left as they were; seven things were built
 > differently, each for a reason found while building it:
 >
 > - **The shared reader excludes optional peers.** One `peerNamesOf`, in
@@ -24,6 +24,17 @@
 >   { declared, running } }` rather than Task 7's `{ dsh?: string; profiles?:
 >   string[] }`: each half carries both sides, so the copy can name what was
 >   declared and what is running.
+> - **Github `peers` are harvested and recorded now, but EMITTED only once
+>   `SHOP_EMIT_REPO_PEERS` flips** — in the release commit that first
+>   promotes a build carrying the module-table refinement to `latest`. Task 3
+>   emitted them unconditionally, and an installed shop from 0.8.3 or earlier
+>   judges any `peers` by node resolution alone: on a sample of 297 real github
+>   manifests it would badge about 15% of github entries, half of them for
+>   platform seed words (design §9.8).
+> - **The profile half is judged by the harness's own template bundles, not
+>   by the profile's name** — Task 7 compared `profiles` with the profile
+>   directory's name, which the reader chooses; a `rescue` profile built from
+>   the web bundles would have been told it is not `web` (design §9.9).
 > - **The running version is read through `nodeVersionResolver`,** at the same
 >   profile anchor as the peer check, instead of Task 7's separate
 >   `nodeDshVersion` over `createRequire`. That resolver no longer uses

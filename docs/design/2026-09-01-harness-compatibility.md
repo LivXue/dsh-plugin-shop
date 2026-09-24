@@ -643,8 +643,10 @@ were badged for nothing else.
 **Fixed at harvest, not in the client.** A shared `peerNamesOf` records
 required peers only, for both channels (§9.8). The catalog records
 requirements (§2), and an optional peer is not one, so it was the record
-that was wrong. Fixing it there also fixes every shop version already
-installed, on the next catalog build, with no client release.
+that was wrong. Fixing it there also clears these 381 false alarms in every
+shop version already installed, on the next catalog build, with no client
+release — these, and not the seed-word ones, which only the refining client
+can clear (§9.1).
 
 **Optional names are filtered before the 128-name cap**, so an optional
 peer never takes a slot. **Malformed meta reads as "not optional"**:
@@ -766,8 +768,35 @@ a re-fetch, the same device as `sizeProbed` and `assetVerified`. Against
 that same file it queues 10,629 repositories: at the 2,000-repository
 backfill budget, at least six daily builds, and more on a day whose
 changed repositories — always served first — take part of the budget.
-§8.1's safety argument is unchanged: an entry with no `peers` carries no
-verdict, so the interim under-warns and never mis-warns.
+§8.1's safety argument holds for the backfill itself: an entry with no
+`peers` carries no verdict, so the interim under-warns and never
+mis-warns.
+
+**Emission is gated on the refining client (`SHOP_EMIT_REPO_PEERS`).** That
+argument does NOT hold for a shop already installed. A client from 0.8.3 or
+earlier judges every entry that carries `peers` by node resolution alone —
+the verdict §9.1 measured as majority-false — so the day github entries
+carried peers, every not-yet-upgraded shop would badge them for seed words.
+Measured on a seeded sample of 297 real github manifests (2026-09-24),
+projected through `peerNamesOf`: such a client would badge 15.2% of github
+entries, about 1,024 of 6,757, and about half of those, some 501, for seed
+words alone; the refining client badges about 523. Publishing github peers
+before that client is `latest` would therefore raise an installed shop's
+false alarms rather than lower them. So the harvest, the `repo-state.json`
+record and the re-fetch marker run from this change, while emission waits
+on `SHOP_EMIT_REPO_PEERS`, which flips in the release commit that first
+promotes a build carrying `client/module-table.ts` to `latest` — the
+precedent `SHOP_HARVEST_REPOS`, `SHOP_HARVEST_SUBPACKAGES` and
+`SHOP_CATALOG_V5` set, each flipped in the release that shipped its reading
+client. The backfill runs meanwhile, so the record is as complete as the
+days since this change allow on the day it flips, and the build report
+says, while it is off, that github peers are withheld. What the gate buys
+is ORDER, not absence: the fix is published before the data an older client
+mishandles. A shop that is never updated still meets github peers after the
+flip, as it meets the npm seed-word verdicts today, and how many such
+installations exist cannot be measured — §2's amendment records why npm's
+download counts are no census. The shop's own update prompt is what reaches
+them.
 
 **Optional peers are excluded on this channel too**, through the shared
 `peerNamesOf` (§9.2).
@@ -797,7 +826,29 @@ reason.
 **The running side.** The version is read through the same
 `nodeVersionResolver`, at the same profile anchor, as the peer check —
 what §8.2 asked of its `createRequire` read, kept through the change of
-resolver (§9.5). The profile is the gateway's discovered profile.
+resolver (§9.5).
+
+**The profile half is judged by what the running profile IS, not by
+its name.** The first cut compared the declared list with the profile
+directory's name, and a profile's name is the reader's choice: `dsh
+--profile rescue --from-default-profile web` builds a profile called
+`rescue` from the web bundles, and dsh records nothing about which
+template it came from — while `headless` can carry `dsh-web-app` too. So
+an author's `profiles: ["web"]`, the one real declaration
+(`@xmanrui/dsh-im`), would have badged the plugin on every web-app
+profile not literally named `web`, and the filter would have hidden it:
+the false-alarm class this amendment exists to remove. A declared name is
+therefore read as one of the harness's own templates — the
+`PROFILE_TEMPLATES` that `@deepseek-ai/dsh-app-boot` exports (on
+0.1.5-rc.3: `acp`, `web`, `headless`, `sdk`, `sdk-minimal`), read at
+runtime and never copied — and it is met when every bundle of that
+template is in the running profile's `dsh.profile.bundles`. The half is
+met if any declared template is; a declared name that is no template
+(`tui`, `desktop`) cannot be judged, so a list with such a name and no
+met template gives no verdict; and the profile half is unmet only when
+every declared name is a template this profile does not compose. An
+unreadable bundle list or template table is no verdict at all. The
+verdict still names the running profile by its name, for the copy.
 
 **Rendering.** New blocker kinds, on the card, in the install
 acknowledgement and on the installed rows. The badge reads
