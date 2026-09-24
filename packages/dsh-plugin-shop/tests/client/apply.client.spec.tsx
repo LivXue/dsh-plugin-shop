@@ -29,11 +29,15 @@ interface ShopStub {
 
 /** Boot apply() against a stubbed remote and return the shop tab entry's
  * injected face — the real unwrap from index.ts sits between the wire
- * envelopes the stub returns and the injected methods the tab calls. */
-async function boot(shop: ShopStub = {}) {
+ * envelopes the stub returns and the injected methods the tab calls.
+ *
+ * @param modules the page's `modules` service, provided before the shop boots
+ *   the way the web shell provides it; omitted, the page has none. */
+async function boot(shop: ShopStub = {}, modules?: unknown) {
   const ctx = new Context()
   const locale = new LocaleRuntime(ctx)
   ctx.provide('locale', locale)
+  if (modules !== undefined) ctx.provide('modules', modules)
   await ctx.plugin(SlotRegistry).await()
   // The settings surface declares the tab seat at boot in the real shell;
   // declaring it here makes the tab's inject callback run synchronously
@@ -133,14 +137,22 @@ describe('shop client apply', () => {
 describe('shop client apply warm', () => {
   const fakeCatalog = {
     schemaVersion: 2, builtAt: '2026-08-27T00:00:00Z', stale: false,
-    plugins: [], denied: [], stars: {}, incompatible: {},
+    plugins: [], denied: [], stars: {}, incompatible: {}, incompatibleHarness: {},
   }
 
+  // Equality, not identity, in the three cases below. They asserted `toBe`
+  // until 2026-09-24, when the tab stopped being handed the host's object:
+  // every result now passes through the module table on its way to the tab
+  // (module-table.ts), which makes a copy with a refined `incompatible` and
+  // leaves the stashed result untouched for the next hand-over to refine. What
+  // these cases prove — WHICH result was served, and with how many wire calls
+  // — is carried by the distinguishing `builtAt` and the call counts, exactly
+  // as before.
   it('warms the catalog at boot and serves the tab from the warm fetch', async () => {
     const catalog = vi.fn().mockResolvedValue({ ok: true, value: fakeCatalog })
     const { injected } = await boot({ catalog })
     expect(catalog).toHaveBeenCalledTimes(1) // the boot-time warm
-    expect(await injected.catalog(undefined)).toBe(fakeCatalog)
+    expect(await injected.catalog(undefined)).toEqual(fakeCatalog)
     expect(catalog).toHaveBeenCalledTimes(1) // consumed, no second wire call
     // A refresh always goes to the wire.
     await injected.catalog({ refresh: true })
@@ -152,7 +164,7 @@ describe('shop client apply warm', () => {
       .mockResolvedValueOnce({ ok: false, error: { code: 'WIRE', message: 'down' } })
       .mockResolvedValue({ ok: true, value: fakeCatalog })
     const { injected } = await boot({ catalog })
-    expect(await injected.catalog(undefined)).toBe(fakeCatalog)
+    expect(await injected.catalog(undefined)).toEqual(fakeCatalog)
     expect(catalog).toHaveBeenCalledTimes(2)
   })
 
@@ -162,8 +174,8 @@ describe('shop client apply warm', () => {
       .mockResolvedValueOnce({ ok: true, value: fakeCatalog })
       .mockResolvedValue({ ok: true, value: second })
     const { injected } = await boot({ catalog })
-    expect(await injected.catalog({ refresh: true })).toBe(second)
-    expect(await injected.catalog(undefined)).toBe(second)
+    expect(await injected.catalog({ refresh: true })).toEqual(second)
+    expect(await injected.catalog(undefined)).toEqual(second)
     expect(catalog).toHaveBeenCalledTimes(2)
   })
 
@@ -182,5 +194,100 @@ describe('shop client apply warm', () => {
 
   it("bounds the stash at the host's own freshness window", () => {
     expect(WARM_TTL_MS).toBe(5 * 60 * 1000)
+  })
+})
+
+describe('shop client apply: the tab is handed the module table verdict', () => {
+  /** The harness's own rejection for a name nothing provides — verbatim from
+   * @deepseek-ai/dsh-client-modules 0.1.5-rc.3, since "absent" is keyed on it. */
+  const cannotResolve = (specifier: string): Error =>
+    new Error(`client-modules: cannot resolve "${specifier}" — not a seed word, not a materialized module, and not a row in the boot graph (the runtime mirror of the bundle purity gate)`)
+
+  /** A page's `modules` service: react and react-dom are seed words, and
+   * `cached` names what has materialized so far. */
+  function moduleTable(cached: string[] = []) {
+    const probe = vi.fn(async (specifier: string): Promise<unknown> => {
+      if (specifier === 'react' || specifier === 'react-dom') return {}
+      throw cannotResolve(specifier)
+    })
+    const table = {
+      version: 'client',
+      manifest: { rev: 'r1', modules: [], plugins: [] },
+      loadCache: new Map<string, unknown>(cached.map(id => [id, { id, exports: {}, styles: [], edges: new Set() }])),
+      import: probe,
+    }
+    return { table, probe }
+  }
+
+  /** What the host sends: node resolution found none of these, including the
+   * two seed words the page serves from its own instances. */
+  const hostSaid = (incompatible: Record<string, string[]>) => ({
+    schemaVersion: 2, builtAt: '2026-09-24T00:00:00Z', stale: false,
+    plugins: [], denied: [], stars: {}, incompatible,
+    incompatibleHarness: { 'npm:declares-tui': { profile: { declared: ['tui'], running: 'web' } } },
+  })
+  const HOST = hostSaid({ 'npm:seed-only': ['react', 'react-dom'], 'npm:needs-absent': ['react', '@x/absent'] })
+  const REFINED = { 'npm:needs-absent': ['@x/absent'] }
+
+  it('hands the tab the warm result with every name the table provides removed, asking once per name', async () => {
+    const { table, probe } = moduleTable()
+    const catalog = vi.fn().mockResolvedValue({ ok: true, value: HOST })
+    const { injected } = await boot({ catalog }, table)
+    const result = await injected.catalog(undefined)
+    expect(result.incompatible).toEqual(REFINED)
+    // Only the peer half changes: everything else is the host's result as sent.
+    expect(result).toEqual({ ...HOST, incompatible: REFINED })
+    // Once per distinct name per hand-over. A refinement run twice over one
+    // result would ask `@x/absent` again — "exactly once" is this count.
+    expect(probe.mock.calls.map(call => call[0]).sort()).toEqual(['@x/absent', 'react', 'react-dom'])
+  })
+
+  it('refines a refreshed result, and the fresh one a failed warm fetch falls back to', async () => {
+    const { table } = moduleTable()
+    const catalog = vi.fn()
+      .mockResolvedValueOnce({ ok: false, error: { code: 'WIRE', message: 'down' } })
+      .mockResolvedValue({ ok: true, value: HOST })
+    const { injected } = await boot({ catalog }, table)
+    expect((await injected.catalog(undefined)).incompatible).toEqual(REFINED) // the fallback
+    expect((await injected.catalog({ refresh: true })).incompatible).toEqual(REFINED) // the refresh
+    expect(catalog).toHaveBeenCalledTimes(3)
+  })
+
+  it('refines against a module table registered only after the shop booted', async () => {
+    // The warm fetch starts during plugin boot, when nothing guarantees the
+    // `modules` service is registered yet. Refining there would find no table
+    // and hand the tab silence for a plugin that IS broken; refining when the
+    // tab asks finds the table it will actually be served from.
+    const { table } = moduleTable()
+    const catalog = vi.fn().mockResolvedValue({ ok: true, value: HOST })
+    const { ctx, injected } = await boot({ catalog })
+    ctx.provide('modules', table)
+    expect((await injected.catalog(undefined)).incompatible).toEqual(REFINED)
+    expect(catalog).toHaveBeenCalledTimes(1) // still the warm result
+  })
+
+  it('judges a stashed result against the table as it stands when the tab asks', async () => {
+    // The stash keeps the host's own result, so each hand-over sees the table
+    // of that moment: a module that materialized after the first open clears
+    // the entry that wanted it, with no second wire call.
+    const { table } = moduleTable()
+    const catalog = vi.fn().mockResolvedValue({ ok: true, value: HOST })
+    const { injected } = await boot({ catalog }, table)
+    expect((await injected.catalog(undefined)).incompatible).toEqual(REFINED)
+    table.loadCache.set('@x/absent', { id: '@x/absent', exports: {}, styles: [], edges: new Set() })
+    expect((await injected.catalog(undefined)).incompatible).toEqual({})
+    expect(catalog).toHaveBeenCalledTimes(1)
+  })
+
+  it('hands the tab no peer verdict at all when the page has no module table', async () => {
+    // Not the host's list as it arrived: measured, that list is majority-false
+    // on this harness line, and an unavailable fact must never read as an
+    // accusation.
+    const catalog = vi.fn().mockResolvedValue({ ok: true, value: HOST })
+    const { injected } = await boot({ catalog })
+    const result = await injected.catalog(undefined)
+    expect(result.incompatible).toEqual({})
+    // The author's own declaration is not the module table's to judge.
+    expect(result.incompatibleHarness).toEqual(HOST.incompatibleHarness)
   })
 })

@@ -6,8 +6,8 @@
 
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type { CatalogEntry, InstallArgs, RestartBlockedReason, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
-import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Activation, type Category, activationNoticeKey, uninstallActivationNoticeKey, authorOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatSize, formatStars, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, rejectionCodeKey, restartBlockedNoticeKey, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
+import type { CatalogEntry, HarnessVerdict, InstallArgs, RestartBlockedReason, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
+import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, readsIncompatible, rejectionCodeKey, restartBlockedNoticeKey, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
 import { useInstallFlows, type InstallFlow } from './useInstall.ts'
 import { useUninstallFlows, type UninstallFlow } from './useUninstall.ts'
 import { useUpdateSelf } from './useUpdateSelf.ts'
@@ -80,11 +80,15 @@ function ChevronIcon({ open }: { open: boolean }): ReactNode {
  * install controls. An installed plugin's card carries its installed row:
  * current → the non-interactive installed label, behind → the update button;
  * uninstalled → the install button. */
-const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, nameTakenBy, t, flow, uninstallFlow, restart, restartBlocked, reload, setEnabled, inInstalledView }: {
+const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, harness, nameTakenBy, t, flow, uninstallFlow, restart, restartBlocked, reload, setEnabled, inInstalledView }: {
   entry: CatalogEntry
   stars: number | undefined
   installed: ShopInstalledEntry | undefined
   missing: string[]
+  /** What the author declared in `dsh.compatibility` that this installation
+   * does not meet. The host's own object, read out of the result — never
+   * rebuilt per render, which would defeat this component's `memo`. */
+  harness: HarnessVerdict | undefined
   /** The repository (or npm package) whose plugin already holds this bundle
    * name. Undefined on the `installed !== undefined` branch by construction:
    * that branch means THIS identity is the one installed. */
@@ -105,7 +109,7 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, na
   inInstalledView: boolean
 }): ReactNode {
   const [open, setOpen] = useState(false)
-  const blockers = blockersOf(missing, nameTakenBy, t)
+  const blockers = stateBlockers(blockersOf(missing, harness, nameTakenBy), t)
   const detailId = useId()
   const summary = entry.catalog?.summary
   // Null for a github entry, and for any name outside npm's own grammar.
@@ -191,9 +195,10 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, na
         {/* Everything in this entry's way, one paragraph each, in the order
           * `blockersOf` fixes. Computed ONCE for the card: the badge below is
           * handed this same list, so the two can never be built from
-          * different inputs or drift in ordering. */}
+          * different inputs or drift in ordering. The attribute carries the
+          * kind, so a locator can name one line among several. */}
         {blockers.map(blocker => (
-          <p className={css.incompatibleDetail} data-shop-incompatible-detail key={blocker.kind}>{blocker.text}</p>
+          <p className={css.incompatibleDetail} data-shop-incompatible-detail={blocker.kind} key={blocker.kind}>{blocker.text}</p>
         ))}
         {open && entry.catalog !== undefined && entry.catalog.capabilities.length > 0 && (
           <div className={css.capabilitiesBlock}>
@@ -276,7 +281,7 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, na
               * is still browsable, and a live Install button beside its
               * uninstall receipt is the intended pairing. */}
             {!inInstalledView && (
-              <InstallPanel target={installTarget} tier={entry.tier} missing={missing} blockers={blockers} missingStated flow={flow} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} />
+              <InstallPanel target={installTarget} tier={entry.tier} blockers={blockers} blockersStated flow={flow} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} />
             )}
             {uninstallFlow.view.kind !== 'idle' && (
               // A completed uninstall stays mounted after installed() drops
@@ -292,7 +297,7 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, na
               // The update button drives the same install flow for the
               // catalog's latest version; a completed flow stays mounted
               // after installed() catches up so its outcome remains visible.
-              <InstallPanel target={installTarget} tier={entry.tier} variant={installed.outdated ? 'update' : 'install'} missing={missing} blockers={blockers} missingStated flow={flow} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} />
+              <InstallPanel target={installTarget} tier={entry.tier} variant={installed.outdated ? 'update' : 'install'} blockers={blockers} blockersStated flow={flow} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} />
             ) : (
               // No button on this branch, so the badge follows the label that
               // takes its place: an installed plugin whose modules are absent
@@ -355,70 +360,78 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, na
   )
 })
 
-/** What stands between this entry and a working install. Two conditions of
- * different severity and different remedy, which is why the badge reads its
- * label off the kind instead of calling both "incompatible": missing
- * components are advisory — the host installs anyway — while a taken name is
- * a refusal the host will make, and the fix is uninstalling a plugin rather
- * than upgrading dsh. */
-type BlockerKind = 'name-taken' | 'missing-peers'
-interface Blocker { kind: BlockerKind; text: string }
+/** One blocker as the reader meets it: the kind every surface keys its node
+ * by, and the sentence it prints. What stands in the way, and in what order,
+ * is `blockersOf`'s (present.ts); this layer only puts it into words. */
+interface StatedBlocker { kind: BlockerKind; text: string }
 
 /**
- * Everything standing in this entry's way, already localized.
+ * Everything standing in this entry's way, localized ONCE per surface: the
+ * detail paragraphs and the badge summarizing them read this one list, so
+ * they can never be built from different inputs.
  *
- * The two are independent and both can hold at once, so this is a list and
- * every surface renders the same list. The name conflict reads first: it is
- * about a plugin the reader chose and would lose.
+ * The host sent facts — module names, the declared range and the running
+ * version, the declared and the running profile — and the sentences are this
+ * dictionary's, in the reader's own language (§4: no copy crosses the RPC).
  */
-function blockersOf(missing: string[], nameTakenBy: string | undefined, t: ShopTabProps['t']): Blocker[] {
-  const blockers: Blocker[] = []
-  if (nameTakenBy !== undefined) {
-    blockers.push({ kind: 'name-taken', text: t('nameTakenDetail', { holder: nameTakenBy }) })
+function stateBlockers(blockers: readonly Blocker[], t: ShopTabProps['t']): StatedBlocker[] {
+  return blockers.map(blocker => ({ kind: blocker.kind, text: blockerText(blocker, t) }))
+}
+
+/** One blocker's sentence. Exhaustive with no default, so a fifth kind added
+ * to `Blocker` is a type error here rather than a line that renders nothing. */
+function blockerText(blocker: Blocker, t: ShopTabProps['t']): string {
+  switch (blocker.kind) {
+    case 'name-taken': return t('nameTakenDetail', { holder: blocker.holder })
+    case 'missing-peers': return t('incompatibleDetail', { modules: blocker.modules.join(', ') })
+    case 'harness-range': return t('harnessRangeDetail', { range: blocker.range, running: blocker.running })
+    case 'harness-profile': return t('harnessProfileDetail', { declared: blocker.declared.join(', '), running: blocker.running })
   }
-  if (missing.length > 0) {
-    blockers.push({ kind: 'missing-peers', text: t('incompatibleDetail', { modules: missing.join(', ') }) })
-  }
-  return blockers
 }
 
 /** The harness-compatibility verdict, rendered beside the control it
  * qualifies. It answers "what happens if I press this", not "what is this",
  * so it belongs to the action row and not among the identity badges in the
  * header — where it also sat inside a <button>, competing with that button's
- * own hit area for the tooltip. Renders nothing when the harness provides
- * everything. */
+ * own hit area for the tooltip. Renders nothing when nothing stands in the
+ * way. */
 function BlockerBadge({ blockers, t }: {
   /** Already computed by the surface that owns the card, so the badge and the
    * detail paragraphs can never be built from different inputs. */
-  blockers: readonly Blocker[]
+  blockers: readonly StatedBlocker[]
   t: ShopTabProps['t']
 }): ReactNode {
   // On the list, not on the joined copy. `detail === ''` asked a question
   // about the dictionary — an empty or shadowed locale entry would have made
   // the badge vanish from a card that does have a reason.
-  if (blockers.length === 0) return null
+  const lead = blockers[0]
+  // The word is `blockerBadgeKey`'s, the same rule the incompatible filter
+  // reads through `readsIncompatible`: a card that says "Incompatible" is
+  // exactly a card that filter counts and takes away.
+  const word = blockerBadgeKey(blockers)
+  if (lead === undefined || word === null) return null
   const detail = blockers.map(blocker => blocker.text).join('\n')
-  // A taken name is the more serious of the two and names a different remedy,
-  // so it decides the visible word when both hold.
-  const taken = blockers.some(blocker => blocker.kind === 'name-taken')
   return (
     // role="img" + aria-label is this file's own idiom for naming an
     // otherwise-generic element for assistive tech (see .starsBadge above):
     // the visible word stays the compact "Incompatible" label while the
     // accessible name carries the full explanation. This matters most on
     // OutdatedRow, which prints no [data-shop-incompatible-detail] line, so
-    // without this the module list would reach the accessibility tree only
-    // through `title` -- not keyboard-reachable, and announced unreliably or
-    // not at all by screen readers. `title` stays too, for the mouse.
+    // without this its reasons — the module list, the declared range — would
+    // reach the accessibility tree only through `title` -- not
+    // keyboard-reachable, and announced unreliably or not at all by screen
+    // readers. `title` stays too, for the mouse.
+    //
+    // `data-shop-blocker` names the reason that reads first: the name
+    // conflict whenever one holds, which is exactly when it decides the word.
     <span
       className={css.incompatibleBadge}
-      data-shop-blocker={taken ? 'name-taken' : 'missing-peers'}
+      data-shop-blocker={lead.kind}
       role="img"
       aria-label={detail}
       title={detail}
     >
-      {t(taken ? 'nameTakenBadge' : 'incompatibleBadge')}
+      {t(word)}
     </span>
   )
 }
@@ -428,21 +441,20 @@ function BlockerBadge({ blockers, t }: {
  * failure detail, rejection detail — driven by `useInstallFlows`. Shared by the
  * catalog cards (`variant: 'install'`) and the outdated rows' update button
  * (`variant: 'update'`, which drives the same install flow for `name@latest`). */
-function InstallPanel({ target, tier, missing, blockers, missingStated = false, variant = 'install', flow, t, restart, restartBlocked, reload }: {
+function InstallPanel({ target, tier, blockers, blockersStated = false, variant = 'install', flow, t, restart, restartBlocked, reload }: {
   /** The install request this panel drives, identity included. */
   target: InstallArgs
   tier: CatalogEntry['tier']
-  missing: string[]
   /** What stands in this install's way, computed by the surface that owns the
-   * card. Empty on an outdated row: that row IS the installed plugin, so no
-   * name conflict is possible and its badge carries `missing` alone. */
-  blockers: readonly Blocker[]
-  /** The surface around this panel already states what is missing, so the
-   * gate must not repeat it. True on a catalog card, which renders the detail
-   * whenever anything is missing; false on an outdated row, which carries the
-   * badge and its title and nothing else — there the gate is the only place
-   * the modules are named in plain sight. */
-  missingStated?: boolean
+   * card. Never a name conflict on an outdated row: that row IS the installed
+   * plugin, so its list holds the harness reasons alone. */
+  blockers: readonly StatedBlocker[]
+  /** The surface around this panel already states every blocker, so the gate
+   * must not repeat them. True on a catalog card, which renders a detail line
+   * per blocker; false on an outdated row, which carries the badge and its
+   * title and nothing else — there the gate is the only place the reasons are
+   * written out in plain sight. */
+  blockersStated?: boolean
   variant?: 'install' | 'update'
   /** Shared by every panel rendering this install identity. */
   flow: InstallFlow
@@ -527,8 +539,10 @@ function InstallPanel({ target, tier, missing, blockers, missingStated = false, 
       <div className={css.gate}>
         <p className={css.gateTitle}>{t('acknowledgementTitle')}</p>
         <p className={css.gateBody}>{t('acknowledgementBody')}</p>
-        {!missingStated && blockersOf(missing, undefined, t).map(blocker => (
-          <p className={css.gateWarning} data-shop-incompatible-warning key={blocker.kind}>{blocker.text}</p>
+        {/* A name conflict never reaches this gate: it disables the button
+          * that opens it (below), and an outdated row cannot hold one. */}
+        {!blockersStated && blockers.map(blocker => (
+          <p className={css.gateWarning} data-shop-incompatible-warning={blocker.kind} key={blocker.kind}>{blocker.text}</p>
         ))}
         <div className={css.gateActions}>
           <button
@@ -554,8 +568,10 @@ function InstallPanel({ target, tier, missing, blockers, missingStated = false, 
   // the same verdict — so the button must not open the §9.3 gate for it. That
   // gate asks the reader to accept a plugin's privileges; spending it on an
   // install that cannot proceed, and then landing them on a rejected card with
-  // no retry, is the worst order to do these things in. Missing components
-  // stay clickable: the host installs those, and the copy says "may".
+  // no retry, is the worst order to do these things in. Every harness reason
+  // stays clickable — warn, never block (§4): the host installs those, the
+  // missing-components copy says "may", and an author's declared range is a
+  // claim about what they tested, not a refusal this shop may enforce.
   const refused = blockers.some(blocker => blocker.kind === 'name-taken')
   return (
     <>
@@ -580,7 +596,9 @@ function InstallPanel({ target, tier, missing, blockers, missingStated = false, 
           is keyed by the CATALOG (latest) entry, so on that row the version
           that actually runs is the INSTALLED one and it is the update that
           wants the missing module — the copy's "may be" carries that
-          imprecision deliberately rather than splitting the string. */}
+          imprecision deliberately rather than splitting the string. The
+          author's declaration is the catalog version's too, which on that row
+          is exactly the version the Update button would install. */}
       <BlockerBadge blockers={blockers} t={t} />
     </>
   )
@@ -917,10 +935,11 @@ function EnabledSwitch({ row, t, setEnabled, reload }: {
 /** One outdated install row (§7.3): the name, the installed and latest
  * versions, the hot enable/disable switch, and the update button (the
  * install flow for `name@latest`, reusing `InstallPanel`). */
-function OutdatedRow({ row, tier, missing, t, setEnabled, flowFor, restart, restartBlocked, reload }: {
+function OutdatedRow({ row, tier, missing, harness, t, setEnabled, flowFor, restart, restartBlocked, reload }: {
   row: ShopInstalledEntry
   tier: CatalogEntry['tier']
   missing: string[]
+  harness: HarnessVerdict | undefined
   t: ShopTabProps['t']
   setEnabled: ShopTabInjected['setEnabled']
   flowFor: (key: string) => InstallFlow
@@ -941,7 +960,7 @@ function OutdatedRow({ row, tier, missing, t, setEnabled, flowFor, restart, rest
         <EnabledSwitch row={row} t={t} setEnabled={setEnabled} reload={reload} />
         <InstallPanel
           target={{ name: row.name, version: row.latest, source: row.source, repo: row.repo, subdir: row.subdir }}
-          tier={tier} variant="update" missing={missing} blockers={blockersOf(missing, undefined, t)}
+          tier={tier} variant="update" blockers={stateBlockers(blockersOf(missing, harness, undefined), t)}
           flow={flowFor(identityKey(row))} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload}
         />
       </div>
@@ -967,10 +986,13 @@ const UPDATABLE_HEADING_ID = 'dsh-shop-updatable-heading'
  * tier for the update gate is looked up from the catalog by install IDENTITY,
  * never by name (community → acknowledgement); an entry absent from the
  * catalog defaults to the community gate (the safer read). */
-function OutdatedSection({ state, entriesByKey, missingByKey, t, setEnabled, flowFor, restart, restartBlocked, reload }: {
+function OutdatedSection({ state, entriesByKey, missingByKey, harnessVerdicts, t, setEnabled, flowFor, restart, restartBlocked, reload }: {
   state: InstalledState
   entriesByKey: ReadonlyMap<string, CatalogEntry>
   missingByKey: ReadonlyMap<string, string[]>
+  /** The catalog result's `incompatibleHarness`, or undefined from a host that
+   * predates it — `harnessVerdictOf` reads either. */
+  harnessVerdicts: Readonly<Record<string, HarnessVerdict>> | undefined
   t: ShopTabProps['t']
   setEnabled: ShopTabInjected['setEnabled']
   flowFor: (key: string) => InstallFlow
@@ -999,6 +1021,7 @@ function OutdatedSection({ state, entriesByKey, missingByKey, t, setEnabled, flo
               row={row}
               tier={entriesByKey.get(identityKey(row))?.tier ?? 'community'}
               missing={missingByKey.get(identityKey(row)) ?? []}
+              harness={harnessVerdictOf(harnessVerdicts, identityKey(row))}
               t={t}
               setEnabled={setEnabled}
               flowFor={flowFor}
@@ -1087,8 +1110,9 @@ export function ShopTab(props: ShopTabProps): ReactNode {
   // `installed` is a filter mode alongside the six catalog categories, not a
   // seventh category: it selects by installed state, not by `catalog.category`.
   const [category, setCategory] = useState<Category | 'installed' | null>(null)
-  // Whether the shelf leaves out entries the Host reported missing components
-  // for. Off by default: a filter nobody asked for must not hide listings on
+  // Whether the shelf leaves out entries badged "Incompatible" — components
+  // missing here, or an author's declaration this dsh does not meet. Off by
+  // default: a filter nobody asked for must not hide listings on
   // first open, and the count on the button is what tells a reader there is
   // anything to hide. Independent of `category`, because it subtracts from
   // whatever the categories selected rather than competing with them.
@@ -1292,15 +1316,30 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     return map
   }, [catalogState, specs])
 
+  // The author-declared half of the verdict, by install identity. No map of
+  // our own is built for it, unlike `missingByKey`: `harnessVerdictOf` hands
+  // back the host's own object or undefined, both stable across renders, so
+  // EntryCard's memo holds without one. Declared above `filtered` for the same
+  // temporal-dead-zone reason as `missingByKey`.
+  const harnessVerdicts = useMemo(
+    () => (catalogState.kind === 'ready' ? catalogState.result.incompatibleHarness : undefined),
+    [catalogState],
+  )
+
   // The set the filter offers to take away: exactly the entries whose badge
-  // READS "Incompatible". `BlockerBadge` lets a taken name decide the visible
-  // word when both blockers hold, so testing the peer list alone would hide a
-  // card that never mentioned compatibility — and that card is the only
-  // surface explaining why its install is refused. One predicate, so the
-  // count on the button and the set it subtracts can never disagree.
+  // READS "Incompatible" — built from the same `blockersOf` list every card
+  // renders and judged by the same `blockerBadgeKey` rule the badge prints
+  // (`readsIncompatible`). A taken name decides the visible word when it
+  // holds, so a card carrying one is kept: it never mentioned compatibility,
+  // and it is the only surface explaining why its install is refused. One
+  // predicate, so the badge, the count on the button and the set it subtracts
+  // can never disagree — whichever reason, peers or the author's declaration,
+  // put the word there.
   const badgedIncompatible = useCallback(
-    (key: string) => (missingByKey.get(key) ?? []).length > 0 && !nameTakenByKey.has(key),
-    [missingByKey, nameTakenByKey],
+    (key: string) => readsIncompatible(
+      blockersOf(missingByKey.get(key) ?? [], harnessVerdictOf(harnessVerdicts, key), nameTakenByKey.get(key)),
+    ),
+    [missingByKey, harnessVerdicts, nameTakenByKey],
   )
 
   // What the category and the search box select, BEFORE the incompatible
@@ -1361,10 +1400,10 @@ export function ShopTab(props: ShopTabProps): ReactNode {
   // not hidden.
   //
   // Applied to the survivors rather than inside the pass above: this is the
-  // most expensive predicate on the shelf (a key string, a map lookup) and the
-  // least selective — the host flags a handful out of thousands — so running
-  // it after the search narrows ~9,300 entries to a few is the same answer for
-  // a fraction of the work on every keystroke.
+  // most expensive predicate on the shelf (a key string, three lookups and a
+  // small blocker list) and the least selective, so running it after the
+  // search narrows ~9,300 entries to a few is the same answer for a fraction
+  // of the work on every keystroke.
   const filtered = useMemo(
     () => (hideIncompatible && category !== 'installed'
       ? matched.filter(entry => !badgedIncompatible(entryKey(entry)))
@@ -1420,8 +1459,8 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     [sortedCatalog, installedByKey],
   )
 
-  // How many browsable entries the Host reported missing components for —
-  // the number the filter button carries. Over `browsable`, like every
+  // How many browsable entries read "Incompatible" — the number the filter
+  // button carries. Over `browsable`, like every
   // category count: a count over `filtered` would change as the reader typed
   // and would read as "how many are hidden right now", which is not what the
   // button offers to do.
@@ -1663,8 +1702,8 @@ export function ShopTab(props: ShopTabProps): ReactNode {
           * choose what to show and this subtracts from whatever they chose, so
           * it does not participate in `category` state and its own state
           * survives a category switch. The count is over `browsable` like the
-          * category counts, so it says how many entries the shelf holds with
-          * something missing — not how many the current filter shows.
+          * category counts, so it says how many entries the shelf holds badged
+          * "Incompatible" — not how many the current filter shows.
           *
           * So it is a SWITCH and not a pill. It wore `.categoryButton` and sat
           * in the same row at the same size, which made a boolean modifier
@@ -1751,7 +1790,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
               const key = entryKey(entry)
               return (
                 <li key={key}>
-                  <EntryCard entry={entry} stars={starsOf(entry, stars)} installed={installedByKey.get(key)} missing={missingByKey.get(key) ?? []} nameTakenBy={nameTakenByKey.get(key)} t={t} flow={flows.flowFor(key)} uninstallFlow={uninstallFlows.flowFor(key)} restart={restart} restartBlocked={restartBlocked} reload={reload} setEnabled={setEnabled} inInstalledView={category === 'installed'} />
+                  <EntryCard entry={entry} stars={starsOf(entry, stars)} installed={installedByKey.get(key)} missing={missingByKey.get(key) ?? []} harness={harnessVerdictOf(harnessVerdicts, key)} nameTakenBy={nameTakenByKey.get(key)} t={t} flow={flows.flowFor(key)} uninstallFlow={uninstallFlows.flowFor(key)} restart={restart} restartBlocked={restartBlocked} reload={reload} setEnabled={setEnabled} inInstalledView={category === 'installed'} />
                 </li>
               )
             })}
@@ -1770,6 +1809,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
         state={installedState}
         entriesByKey={entriesByKey}
         missingByKey={missingByKey}
+        harnessVerdicts={harnessVerdicts}
         t={t}
         setEnabled={setEnabled}
         flowFor={flows.flowFor}

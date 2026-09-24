@@ -15,6 +15,7 @@ import shopRemote from 'dsh-plugin-shop/remote'
 import type { ShopCatalogResult } from '../host/index.ts'
 import type { ShopLocaleKey } from './locales.ts'
 import { en, zh } from './locales.ts'
+import { refineAgainstModuleTable } from './module-table.ts'
 import { ShopTab, type ShopTabInjected } from './ShopTab.tsx'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -100,27 +101,50 @@ export async function apply(ctx: ClientContext): Promise<void> {
   void Promise.resolve(ns.installed()).then(result => unwrap(result)).catch(() => {})
   void Promise.resolve(ns.version()).then(result => unwrap(result)).catch(() => {})
 
+  // The host's own result: the stash when it is fresh, the wire otherwise.
+  // Every result becomes the stash, refresh included. A plain open only
+  // consumes it inside the host's own freshness window.
+  const hostCatalog = async (args?: { refresh?: boolean }): Promise<ShopCatalogResult> => {
+    if (args?.refresh === true) {
+      const refreshed = unwrap(await ns.catalog(args))
+      warmCatalog = { at: Date.now(), result: Promise.resolve(refreshed) }
+      return refreshed
+    }
+    const warm = warmCatalog
+    if (warm !== null && Date.now() - warm.at < WARM_TTL_MS) {
+      try {
+        return await warm.result
+      } catch {
+        // The stashed fetch failed; a fresh call is the retry.
+      }
+    }
+    const fresh = unwrap(await ns.catalog(args))
+    warmCatalog = { at: Date.now(), result: Promise.resolve(fresh) }
+    return fresh
+  }
+
+  // The host's peer list is only half a verdict (module-table.ts says why and
+  // how much of it is wrong), so every result is refined against this page's
+  // module table on its way to the tab — warm, stashed, fresh and refreshed
+  // alike, exactly once each. On the way OUT, never on the way in: the warm
+  // fetch starts during plugin boot, when nothing guarantees the `modules`
+  // service is registered yet, while the tab cannot be opened before it is —
+  // the web shell mounts its UI only once plugin boot has run (`runPluginBoot`
+  // then `mountApp`, on 0.1.5-rc.3). The table also grows as modules
+  // materialize, so the stash keeps the host's own result and each hand-over
+  // judges it against the table as it stands then.
+  //
+  // Read through the reflect shop rather than declared in `inject`: an inject
+  // requirement would hold the whole tab back on a harness that publishes no
+  // table, where the right cost is the peer badges alone
+  // (`refineAgainstModuleTable` answers `{}` there).
+  const handOver = async (result: ShopCatalogResult): Promise<ShopCatalogResult> => ({
+    ...result,
+    incompatible: await refineAgainstModuleTable(result.incompatible, ctx.get('modules') as unknown),
+  })
+
   const injected = (): ShopTabInjected => ({
-    catalog: async args => {
-      // Every result becomes the stash, refresh included. A plain open only
-      // consumes it inside the host's own freshness window.
-      if (args?.refresh === true) {
-        const refreshed = unwrap(await ns.catalog(args))
-        warmCatalog = { at: Date.now(), result: Promise.resolve(refreshed) }
-        return refreshed
-      }
-      const warm = warmCatalog
-      if (warm !== null && Date.now() - warm.at < WARM_TTL_MS) {
-        try {
-          return await warm.result
-        } catch {
-          // The stashed fetch failed; a fresh call is the retry.
-        }
-      }
-      const fresh = unwrap(await ns.catalog(args))
-      warmCatalog = { at: Date.now(), result: Promise.resolve(fresh) }
-      return fresh
-    },
+    catalog: async args => handOver(await hostCatalog(args)),
     install: async args => unwrap(await ns.installStart(args)),
     installStatus: async args => unwrap(await ns.installStatus(args)),
     setEnabled: async args => unwrap(await ns.setEnabled(args)),

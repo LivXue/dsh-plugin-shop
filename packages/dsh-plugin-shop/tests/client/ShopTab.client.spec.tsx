@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ACKNOWLEDGEMENT_EN, ACKNOWLEDGEMENT_ZH, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, rejectionCodeKey } from '../../src/client/present.ts'
 import { en, zh, type ShopLocaleKey } from '../../src/client/locales.ts'
 import { ShopTab, type ShopTabInjected, type ShopTabProps } from '../../src/client/ShopTab.tsx'
-import type { ShopCatalogResult, ShopInstalledEntry } from '../../src/host/index.ts'
+import type { HarnessVerdict, ShopCatalogResult, ShopInstalledEntry } from '../../src/host/index.ts'
 
 afterEach(() => {
   cleanup()
@@ -1913,6 +1913,225 @@ describe('ShopTab', () => {
     fireEvent.click(row.querySelector('[data-shop-update]') as HTMLElement)
     const warning = row.querySelector('[data-shop-incompatible-warning]')
     expect(warning?.textContent).toBe(en.incompatibleDetail.replace('{modules}', '@deepseek-ai/dsh-client-store'))
+  })
+})
+
+describe('ShopTab author-declared compatibility (§8.2)', () => {
+  // What the host sends when an author's `dsh.compatibility` is unmet here:
+  // each half names BOTH sides, so the card can say what was declared and what
+  // actually runs instead of only that something is wrong. `0.1.2-rc.1` is a
+  // range no 0.1.5 build satisfies.
+  const RANGE: HarnessVerdict = { dsh: { range: '0.1.2-rc.1', running: '0.1.5-rc.3' } }
+  const PROFILE: HarnessVerdict = { profile: { declared: ['tui'], running: 'web' } }
+  const rangeLine = en.harnessRangeDetail.replace('{range}', '0.1.2-rc.1').replace('{running}', '0.1.5-rc.3')
+  const profileLine = en.harnessProfileDetail.replace('{declared}', 'tui').replace('{running}', 'web')
+  const outdatedRow: InstalledFixture = { name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }
+
+  const withVerdict = (verdict: HarnessVerdict): ShopCatalogResult =>
+    ({ ...snapshot({ tier: 'community' }), incompatibleHarness: { 'npm:dsh-hello-plugin': verdict } })
+  const cardOf = (container: HTMLElement, name = 'dsh-hello-plugin'): HTMLElement =>
+    container.querySelector(`[data-shop-entry="${name}"]`) as HTMLElement
+
+  it('states a declared dsh range on the card, naming what is declared and what runs', async () => {
+    const { injected } = bench(withVerdict(RANGE))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const card = cardOf(container)
+    const line = card.querySelector('[data-shop-incompatible-detail="harness-range"]')
+    expect(line?.textContent).toBe(rangeLine)
+    // Both sides by value, so a dictionary edit that dropped one fails here
+    // rather than rendering a line that says less than the host sent.
+    expect(line?.textContent).toContain('0.1.2-rc.1')
+    expect(line?.textContent).toContain('0.1.5-rc.3')
+    const badge = card.querySelector('[data-shop-blocker]')
+    expect(badge?.textContent).toBe(en.incompatibleBadge)
+    expect(badge?.getAttribute('data-shop-blocker')).toBe('harness-range')
+    // Warn, never block (§4): the author's claim is information, not a veto.
+    expect((card.querySelector('[data-shop-install]') as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('states the declared profiles on the card, naming the one this dsh was launched with', async () => {
+    const { injected } = bench(withVerdict(PROFILE))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const card = cardOf(container)
+    const line = card.querySelector('[data-shop-incompatible-detail="harness-profile"]')
+    expect(line?.textContent).toBe(profileLine)
+    expect(line?.textContent).toContain('tui')
+    expect(line?.textContent).toContain('web')
+    expect(card.querySelector('[data-shop-blocker]')?.textContent).toBe(en.incompatibleBadge)
+    expect((card.querySelector('[data-shop-install]') as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('states both halves when both are unmet, under one badge that names both', async () => {
+    const { injected } = bench(withVerdict({ ...RANGE, ...PROFILE }))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const card = cardOf(container)
+    const lines = [...card.querySelectorAll('[data-shop-incompatible-detail]')].map(node => node.textContent)
+    expect(lines).toEqual([rangeLine, profileLine])
+    expect(card.querySelectorAll('[data-shop-blocker]')).toHaveLength(1)
+    // The badge's accessible name is the one place a screen reader meets
+    // both on a row that prints no detail line, so it carries both.
+    expect(card.querySelector('[data-shop-blocker]')?.getAttribute('aria-label')).toBe(`${rangeLine}\n${profileLine}`)
+  })
+
+  it('says nothing for an entry the host gave no verdict', async () => {
+    const { injected } = bench({ ...snapshot({ tier: 'community' }), incompatibleHarness: {} })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(container.querySelector('[data-shop-blocker]')).toBeNull()
+    expect(container.querySelector('[data-shop-incompatible-detail]')).toBeNull()
+    expect(container.querySelector('[data-shop-hide-incompatible]')?.textContent).toContain('Hide incompatible 0')
+  })
+
+  it('says nothing, and still renders, for a host that predates the verdict', async () => {
+    // A tab can outlive a shop self-update by one reload and then be talking
+    // to the OLD in-process host until dsh restarts — and that host sends no
+    // `incompatibleHarness` at all, whatever the type says.
+    const { injected } = bench({ ...snapshot({ tier: 'community' }), incompatibleHarness: undefined } as unknown as ShopCatalogResult)
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(container.querySelector('[data-shop-blocker]')).toBeNull()
+    expect(container.querySelector('[data-shop-hide-incompatible]')?.textContent).toContain('Hide incompatible 0')
+  })
+
+  it('warns, never blocks: the install proceeds through the acknowledgement, stated once', async () => {
+    const { injected, install } = bench(withVerdict({ ...RANGE, ...PROFILE }))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const card = cardOf(container)
+    fireEvent.click(card.querySelector('[data-shop-install]') as HTMLElement)
+    expect(card.querySelector('[data-shop-confirm]'), 'the gate should be open').toBeTruthy()
+    // The card states each line and the gate opens inside that same card, so
+    // the gate must not print them a second time.
+    const text = card.textContent ?? ''
+    expect(text.split(rangeLine).length - 1, 'the range line must appear exactly once').toBe(1)
+    expect(text.split(profileLine).length - 1, 'the profile line must appear exactly once').toBe(1)
+    expect(card.querySelector('[data-shop-incompatible-warning]')).toBeNull()
+    fireEvent.click(card.querySelector('[data-shop-confirm]') as HTMLElement)
+    await waitFor(() => expect(install).toHaveBeenCalled())
+  })
+
+  it('warns inside the update acknowledgement on the outdated row, which has no detail line of its own', async () => {
+    const { injected } = bench(withVerdict({ ...RANGE, ...PROFILE }), [outdatedRow])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText(en.updatableSection)).toBeTruthy())
+    const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]') as HTMLElement
+    fireEvent.click(row.querySelector('[data-shop-update]') as HTMLElement)
+    expect(row.querySelector('[data-shop-confirm]'), 'the gate should be open').toBeTruthy()
+    expect(row.querySelector('[data-shop-incompatible-warning="harness-range"]')?.textContent).toBe(rangeLine)
+    expect(row.querySelector('[data-shop-incompatible-warning="harness-profile"]')?.textContent).toBe(profileLine)
+  })
+
+  it('badges the outdated row beside its Update button, naming the declaration for assistive tech', async () => {
+    const { injected } = bench(withVerdict(RANGE), [outdatedRow])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText(en.updatableSection)).toBeTruthy())
+    const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]') as HTMLElement
+    const badge = row.querySelector('[data-shop-blocker]') as HTMLElement
+    expect(badge.textContent).toBe(en.incompatibleBadge)
+    expect(badge.getAttribute('aria-label')).toBe(rangeLine)
+    expect(badge.getAttribute('title')).toBe(rangeLine)
+    expect(row.querySelector('[data-shop-update]')?.nextElementSibling?.hasAttribute('data-shop-blocker'), 'immediately right of Update').toBe(true)
+  })
+
+  it('badges a current install beside its installed label, where there is no button to qualify', async () => {
+    const { injected } = bench(withVerdict(PROFILE), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const card = cardOf(container)
+    const label = card.querySelector('[data-shop-installed]') as HTMLElement
+    expect(label.nextElementSibling?.getAttribute('data-shop-blocker'), 'immediately after the installed label').toBe('harness-profile')
+    expect(card.querySelectorAll('[data-shop-blocker]')).toHaveLength(1)
+    expect(card.querySelector('[data-shop-incompatible-detail="harness-profile"]')?.textContent).toBe(profileLine)
+  })
+
+  it('counts and hides an entry whose only blocker is the declaration, like any card badged Incompatible', async () => {
+    // One predicate for the badge and the filter: a card that READS
+    // "Incompatible" is in the set the switch counts and takes away, whichever
+    // reason put the word there.
+    const result = snapshot()
+    result.plugins = [
+      { ...result.plugins[0]!, name: 'dsh-works-here' },
+      { ...result.plugins[0]!, name: 'dsh-declares-tui' },
+    ]
+    result.incompatibleHarness = { 'npm:dsh-declares-tui': PROFILE }
+    const { injected } = bench(result)
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-works-here')).toBeTruthy())
+    const filter = container.querySelector('[data-shop-hide-incompatible]') as HTMLElement
+    expect(filter.textContent).toContain('Hide incompatible 1')
+
+    fireEvent.click(filter)
+    expect(screen.queryByText('dsh-declares-tui')).toBeNull()
+    expect(screen.getByText('dsh-works-here')).toBeTruthy()
+    // And when the filter is what emptied the shelf, the empty line says so.
+    fireEvent.change(screen.getByLabelText(en.search), { target: { value: 'declares' } })
+    expect(container.querySelector('[data-shop-empty]')?.textContent).toBe(en.emptyIncompatibleFiltered)
+
+    fireEvent.change(screen.getByLabelText(en.search), { target: { value: '' } })
+    fireEvent.click(filter)
+    expect(screen.getByText('dsh-declares-tui')).toBeTruthy()
+  })
+
+  it('lets a taken name decide the word over a declaration, and keeps that card out of the filter', async () => {
+    const { injected } = bench(withVerdict({ ...RANGE, ...PROFILE }), [], { 'dsh-hello-plugin': 'github:someone/else' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const card = cardOf(container)
+    // The specs load after the catalog, so the name conflict arrives second.
+    await waitFor(() => expect(card.querySelector('[data-shop-blocker]')?.getAttribute('data-shop-blocker')).toBe('name-taken'))
+    expect(card.querySelector('[data-shop-blocker]')?.textContent).toBe(en.nameTakenBadge)
+    // Every reason is still stated, the name conflict first.
+    const kinds = [...card.querySelectorAll('[data-shop-incompatible-detail]')].map(node => node.getAttribute('data-shop-incompatible-detail'))
+    expect(kinds).toEqual(['name-taken', 'harness-range', 'harness-profile'])
+    // Not badged "Incompatible", so neither counted nor hidden by that filter.
+    expect(container.querySelector('[data-shop-hide-incompatible]')?.textContent).toContain('Hide incompatible 0')
+    fireEvent.click(container.querySelector('[data-shop-hide-incompatible]') as HTMLElement)
+    expect(screen.getByText('dsh-hello-plugin')).toBeTruthy()
+  })
+
+  it('keys the verdict by install identity, so a same-named entry is not accused', async () => {
+    const base = snapshot().plugins[0]!
+    const alice = { ...base, name: 'dsh-foo', version: 'a'.repeat(40), source: 'github' as const, repo: 'alice/dsh-foo' }
+    const bob = { ...alice, version: 'b'.repeat(40), repo: 'bob/dsh-foo' }
+    const { injected } = bench({ ...snapshot(), plugins: [alice, bob], incompatibleHarness: { 'github:bob/dsh-foo#': RANGE } })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(container.querySelectorAll('[data-shop-entry="dsh-foo"]')).toHaveLength(2))
+    expect(container.querySelectorAll('[data-shop-blocker]')).toHaveLength(1)
+    expect(container.querySelectorAll('[data-shop-incompatible-detail="harness-range"]')).toHaveLength(1)
+  })
+
+  it('keeps the shelf memo when every card carries a verdict', async () => {
+    // Each card is handed its verdict as a prop. Read out of the result it is
+    // one object per load; built per render — a spread, a fresh default — it
+    // would defeat memo(EntryCard) and re-render every mounted card on each
+    // keystroke. Scale-free for the reason the staleness-cues case gives: the
+    // per-keystroke work must not GROW with the shelf.
+    const deltaFor = async (cards: number): Promise<number> => {
+      const result = snapshot({ tier: 'verified' })
+      const one = result.plugins[0]!
+      result.plugins = Array.from({ length: cards }, (_, index) => ({ ...one, name: `dsh-plugin-${index}` }))
+      result.incompatibleHarness = Object.fromEntries(result.plugins.map(entry => [`npm:${entry.name}`, { ...RANGE, ...PROFILE }]))
+      const { injected } = bench(result)
+      let calls = 0
+      const t = ((key: ShopLocaleKey, params?: Record<string, unknown>): string => {
+        calls += 1
+        const template = en[key]
+        if (params === undefined) return template
+        return template.replace(/\{(\w+)\}/g, (match, name: string) => (name in params ? String(params[name]) : match))
+      }) as ShopTabProps['t']
+      render(<ShopTab {...({ t, ...injected } as unknown as ShopTabProps)} />)
+      await waitFor(() => expect(screen.getByText(`dsh-plugin-${cards - 1}`)).toBeTruthy())
+      const before = calls
+      fireEvent.change(screen.getByLabelText(en.search), { target: { value: 'dsh-plugin-' } })
+      await waitFor(() => expect(calls).toBeGreaterThan(before))
+      const delta = calls - before
+      cleanup()
+      return delta
+    }
+    expect(await deltaFor(8)).toBe(await deltaFor(2))
   })
 })
 

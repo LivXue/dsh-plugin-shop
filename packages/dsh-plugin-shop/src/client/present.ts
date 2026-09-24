@@ -10,7 +10,7 @@ export { isShopLike } from '../shared/shop-like.ts'
 export { identityKey, type EntryIdentity } from '../shared/identity.ts'
 import { holderLabel, identityKey, specVerdict, type EntryIdentity } from '../shared/identity.ts'
 import type { ShopLocaleKey } from './locales.ts'
-import type { CatalogEntry, HotRestartReason, InstallRejectionCode, RestartBlockedReason } from '../host/index.ts'
+import type { CatalogEntry, HarnessVerdict, HotRestartReason, InstallRejectionCode, RestartBlockedReason } from '../host/index.ts'
 import type { Activation } from '../host/activation.ts'
 import { isTerminalInstallState, type InstallState } from '../shared/install-state.ts'
 
@@ -93,6 +93,90 @@ export function tierKey(tier: CatalogEntry['tier']): ShopLocaleKey {
  * never by name, because two entries can share a name. */
 export function missingPeersOf(incompatible: Record<string, string[]>, key: string): string[] {
   return incompatible[key] ?? []
+}
+
+/** The author's own `dsh.compatibility` that this installation does not meet
+ * (design 2026-09-01 §8.2), or undefined when the host gave no verdict. Keyed
+ * by install identity, never by name, for the reason `missingPeersOf` is.
+ *
+ * The map itself may be absent, whatever the result type says: a tab can
+ * outlive a shop self-update by one reload and then be talking to the OLD
+ * in-process host until dsh restarts, which answers the shape from before the
+ * key existed. That is "no verdict", never a crash. */
+export function harnessVerdictOf(
+  verdicts: Readonly<Record<string, HarnessVerdict>> | undefined,
+  key: string,
+): HarnessVerdict | undefined {
+  // Own properties only, the way `starsOf` and `heldBy` read their wire maps.
+  return verdicts !== undefined && Object.hasOwn(verdicts, key) ? verdicts[key] : undefined
+}
+
+/**
+ * One thing standing between an entry and a working install, carrying the
+ * facts its copy names — never the copy, which the tab localizes (§4: no copy
+ * crosses the RPC).
+ *
+ * Two severities with two remedies. A taken name is a refusal the host WILL
+ * make, and the fix is uninstalling a plugin. Everything else is about this
+ * harness and is advisory — the host installs anyway: components node
+ * resolution and the page's module table both lack, and an author's declared
+ * range or profile list this dsh falls outside of.
+ */
+export type Blocker =
+  | { kind: 'name-taken'; holder: string }
+  | { kind: 'missing-peers'; modules: readonly string[] }
+  | { kind: 'harness-range'; range: string; running: string }
+  | { kind: 'harness-profile'; declared: readonly string[]; running: string }
+
+export type BlockerKind = Blocker['kind']
+
+/**
+ * Everything standing in one entry's way, in the order every surface renders
+ * it — the card's detail lines, the badge's accessible name, the outdated
+ * row's gate warning — and the one list the incompatible filter reads, through
+ * `readsIncompatible`.
+ *
+ * The name conflict reads first: it is about a plugin the reader chose and
+ * would lose. Then what this machine is measured to lack, then what the author
+ * declared, range before profiles — the order the host's verdict carries its
+ * halves.
+ */
+export function blockersOf(
+  missing: readonly string[],
+  harness: HarnessVerdict | undefined,
+  nameTakenBy: string | undefined,
+): Blocker[] {
+  const blockers: Blocker[] = []
+  if (nameTakenBy !== undefined) blockers.push({ kind: 'name-taken', holder: nameTakenBy })
+  if (missing.length > 0) blockers.push({ kind: 'missing-peers', modules: missing })
+  if (harness?.dsh !== undefined) blockers.push({ kind: 'harness-range', range: harness.dsh.range, running: harness.dsh.running })
+  if (harness?.profile !== undefined) {
+    blockers.push({ kind: 'harness-profile', declared: harness.profile.declared, running: harness.profile.running })
+  }
+  return blockers
+}
+
+/**
+ * The badge's visible word for these blockers, or null when there are none.
+ *
+ * "Incompatible" for anything about this harness, whichever reason put it
+ * there. A taken name is the more serious condition and names a different
+ * remedy, so it decides the word whenever it holds — the card is perfectly
+ * compatible, and a different plugin is in the way.
+ */
+export function blockerBadgeKey(blockers: readonly { kind: BlockerKind }[]): ShopLocaleKey | null {
+  if (blockers.length === 0) return null
+  return blockers.some(blocker => blocker.kind === 'name-taken') ? 'nameTakenBadge' : 'incompatibleBadge'
+}
+
+/** Whether the badge reads "Incompatible" — exactly the set the incompatible
+ * filter counts and takes away. Derived from the badge's own rule, never
+ * restated beside it: the filter used to test the peer list by hand, which
+ * held only while missing peers were the one reason for the word — a card
+ * badged for its declared range would have read "Incompatible" and survived
+ * the filter that names it. */
+export function readsIncompatible(blockers: readonly { kind: BlockerKind }[]): boolean {
+  return blockerBadgeKey(blockers) === 'incompatibleBadge'
 }
 
 /**
