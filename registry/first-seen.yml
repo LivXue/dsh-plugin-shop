@@ -80,6 +80,8 @@
   added: 2026-09-22
 - name: "121103qwq/dsh-vision-sidecar"
   added: 2026-08-31
+- name: "1225sakura/oh-my-deepseekharness"
+  added: 2026-09-24
 - name: "123dbl/dsh-side-session"
   added: 2026-09-03
 - name: "123twtd/dsh-plugin-manager"
@@ -102,6 +104,8 @@
   added: 2026-08-31
 - name: "13323232dong/dsh-tunnel-qr-plugin"
   added: 2026-08-31
+- name: "1420079678-ctrl/agent-body"
+  added: 2026-09-24
 - name: "142475/dsh-esc-stop"
   added: 2026-08-31
 - name: "142gg-gzx/unity-dsh-bridge"
@@ -234,6 +238,8 @@
   added: 2026-08-31
 - name: "1847123733/dsh-prompt-optimize"
   added: 2026-08-31
+- name: "1959377950-dotcom/dsh-workspace-archive-all"
+  added: 2026-09-24
 - name: "1985899182/dsh-harness-chat-control"
   added: 2026-09-08
 - name: "1a125/dsh-mcp-manager"
@@ -314,6 +320,8 @@
   added: 2026-09-01
 - name: "2h0n/dsh-web-notification"
   added: 2026-08-31
+- name: "2huy4n/roleplaytimer"
+  added: 2026-09-24
 - name: "305037991x-pixel/dsh-account-balance"
   added: 2026-09-05
 - name: "305037991x-pixel/dsh-balance"
@@ -324,10 +332,14 @@
   added: 2026-09-14
 - name: "318197375/dsh-bottom-stats"
   added: 2026-08-31
+- name: "3330661249/dsh-pm-workbench"
+  added: 2026-09-24
 - name: "3361805598-gif/dsh-md-annotator"
   added: 2026-09-02
 - name: "3361805598-gif/dsh-usage-analytics"
   added: 2026-09-07
+- name: "33wade333/dsh-dashboard-ai"
+  added: 2026-09-24
 - name: "3403473060/dsh-inline-images"
   added: 2026-08-31
 - name: "342949145/dsh-vision-bridge"
@@ -542,6 +554,14 @@
   added: 2026-09-17
 - name: "@a_dove/dsh-plugin-registry"
   added: 2026-09-04
+- name: "@aa2246740/dsh-approve-for-me"
+  added: 2026-09-24
+- name: "@aa2246740/dsh-autoresearch"
+  added: 2026-09-24
+- name: "@aa2246740/dsh-resume"
+  added: 2026-09-24
+- name: "@aa2246740/dsh-skillhub"
+  added: 2026-09-24
 - name: "@aalvsz/dsh-hermes-bridge"
   added: 2026-09-01
 - name: "@aaravarr/dsh-subagent-max"
@@ -850,6 +870,8 @@
   added: 2026-09-08
 - name: "@anysearch-ai/dsh"
   added: 2026-08-25
+- name: "@anysearch-cli/dsh-plugin"
+  added: 2026-09-24
 - name: "@anysearch/anysearch-dsh"
   added: 2026-08-25
 - name: "@anywhere-labs/framefactory-plugin"
@@ -912,12 +934,18 @@
   added: 2026-09-14
 - name: "@argszero/cordis-plugin-orphan-tool-call-guard"
   added: 2026-09-19
+- name: "@argszero/cordis-plugin-profile-fallback-advisor"
+  added: 2026-09-24
 - name: "@argszero/cordis-plugin-prompt-audit"
   added: 2026-09-14
 - name: "@argszero/cordis-plugin-reparse-escape-guard"
   added: 2026-09-23
 - name: "@argszero/cordis-plugin-repeat-guard-escalation"
   added: 2026-09-14
+- name: "@argszero/cordis-plugin-sandbox-grant-advisor"
+  added: 2026-09-24
+- name: "@argszero/cordis-plugin-session-log-budget"
+  added: 2026-09-24
 - name: "@argszero/cordis-plugin-session-model"
   added: 2026-09-19
 - name: "@argszero/cordis-plugin-session-query-read-guard"
@@ -1160,6 +1188,8 @@
   added: 2026-09-17
 - name: "@caizhiyuan/dsh-tool-monitor"
   added: 2026-09-04
+- name: "@calltelemetry/dsh-review-float"
+  added: 2026-09-24
 - name: "@can/dsh-jlink"
   added: 2026-09-04
 - name: "@canary-builds/dsh-connect"
@@ -2158,6 +2188,8 @@
   added: 2026-08-28
 - name: "@doubleelec/dsh-workspace-explorer"
   added: 2026-09-16
+- name: "@dougen/dsh-cdp"
+  added: 2026-09-24
 - name: "@dougen/dsh-deepseek-usage"
   added: 2026-08-28
 - name: "@dph/dsh-plugin-control-center"
@@ -3892,6 +3924,18 @@
   added: 2026-09-05
 - name: "@guosheng_047/dsh-erp"
   added: 2026-09-14
+- name: "@guowenzhang/dsh-claude-compat"
+  added: 2026-09-24
+- name: "@guowenzhang/dsh-drawio"
+  added: 2026-09-24
+- name: "@guowenzhang/dsh-mcp-manager"
+  added: 2026-09-24
+- name: "@guowenzhang/dsh-memory"
+  added: 2026-09-24
+- name: "@guowenzhang/dsh-ui-beautify"
+  added: 2026-09-24
+- name: "@guowenzhang/dsh-worktree"
+  added: 2026-09-24
 - name: "@guyunli/dsh-provider-quota"
   added: 2026-09-04
 - name: "@gwsbhqt/dsh-insight"
@@ -4036,6 +4080,8 @@
   added: 2026-08-26
 - name: "@hilariouhiss/dsh-ponytail"
   added: 2026-08-26
+- name: "@hilariouhiss/dsh-project-mcp"
+  added: 2026-09-24
 - name: "@hilariouhiss/dsh-skill-kit"
   added: 2026-09-04
 - name: "@hilariouhiss/dsh-superpowers"
@@ -4330,6 +4376,8 @@
   added: 2026-08-31
 - name: "@jackguo0310/dsh-cost"
   added: 2026-09-23
+- name: "@jackguo0310/opencode2dsh"
+  added: 2026-09-24
 - name: "@jackyoung022/dsh-session-canvas"
   added: 2026-09-04
 - name: "@jaco-tech/dsh-llm-claude-bridge"
@@ -4352,6 +4400,8 @@
   added: 2026-09-04
 - name: "@jasper/dsh-plugin-petdex-market"
   added: 2026-08-31
+- name: "@jasun0925/dsh-skills-manager"
+  added: 2026-09-24
 - name: "@javierni/balance-show"
   added: 2026-08-28
 - name: "@jaxzhou/dsh-file-explorer"
@@ -4438,6 +4488,8 @@
   added: 2026-09-04
 - name: "@jiodg45/dsh-codegraph-analyzer"
   added: 2026-08-28
+- name: "@jipika/dsh-memory"
+  added: 2026-09-24
 - name: "@jiyr0119/dsh-service-console"
   added: 2026-08-25
 - name: "@jiyr0119/dsh-workspace-explorer"
@@ -4666,6 +4718,20 @@
   added: 2026-09-05
 - name: "@kksw/dsh-my-files"
   added: 2026-09-01
+- name: "@klarkxy/dsh-ai-services"
+  added: 2026-09-24
+- name: "@klarkxy/dsh-current-title"
+  added: 2026-09-24
+- name: "@klarkxy/dsh-memory"
+  added: 2026-09-24
+- name: "@klarkxy/dsh-model-center"
+  added: 2026-09-24
+- name: "@klarkxy/dsh-mood"
+  added: 2026-09-24
+- name: "@klarkxy/dsh-recap"
+  added: 2026-09-24
+- name: "@klarkxy/dsh-self-improvement"
+  added: 2026-09-24
 - name: "@klarkxy/dsh-web-search-manager"
   added: 2026-09-22
 - name: "@klarkxy/dsh-zhihu"
@@ -4776,6 +4842,8 @@
   added: 2026-08-25
 - name: "@lansi-ai/dsh-fetch-url"
   added: 2026-09-04
+- name: "@lantiosity/dsh-token-fee"
+  added: 2026-09-24
 - name: "@lanxi266/dsh-cluster-plugin"
   added: 2026-08-31
 - name: "@lanxing/dsh-galgame"
@@ -5054,6 +5122,34 @@
   added: 2026-09-01
 - name: "@liuguangzhe/dsh-token-usage"
   added: 2026-09-16
+- name: "@liuhange/dsh-data-asset-compliance-check"
+  added: 2026-09-24
+- name: "@liuhange/dsh-data-asset-inventory-scan"
+  added: 2026-09-24
+- name: "@liuhange/dsh-data-asset-orchestration"
+  added: 2026-09-24
+- name: "@liuhange/dsh-data-asset-quality-score"
+  added: 2026-09-24
+- name: "@liuhange/dsh-data-asset-registration-helper"
+  added: 2026-09-24
+- name: "@liuhange/dsh-data-asset-shared"
+  added: 2026-09-24
+- name: "@liuhange/dsh-data-asset-valuation"
+  added: 2026-09-24
+- name: "@liuhange/dsh-data-cleaning"
+  added: 2026-09-24
+- name: "@liuhange/dsh-data-inventory"
+  added: 2026-09-24
+- name: "@liuhange/dsh-data-masking"
+  added: 2026-09-24
+- name: "@liuhange/dsh-data-packaging"
+  added: 2026-09-24
+- name: "@liuhange/dsh-generate-registration-docs"
+  added: 2026-09-24
+- name: "@liuhange/dsh-match-registration-agency"
+  added: 2026-09-24
+- name: "@liuhange/dsh-registration-precheck"
+  added: 2026-09-24
 - name: "@liuliuhuhushui/dsh-quota-float"
   added: 2026-08-28
 - name: "@liushutan/dsh-archive-manager"
@@ -5240,6 +5336,8 @@
   added: 2026-09-19
 - name: "@logictan/dsh-ctx-mem"
   added: 2026-09-20
+- name: "@logictan/dsh-desktop-agent"
+  added: 2026-09-24
 - name: "@logictan/dsh-easyrewrite"
   added: 2026-09-19
 - name: "@logictan/dsh-fakeip-fetch"
@@ -5252,6 +5350,8 @@
   added: 2026-09-19
 - name: "@logictan/dshmarket"
   added: 2026-09-19
+- name: "@lolkda/dsh-file-manager"
+  added: 2026-09-24
 - name: "@lolkda/dsh-prompt-manager"
   added: 2026-09-14
 - name: "@lolkda/dsh-skills-manager"
@@ -5444,6 +5544,8 @@
   added: 2026-09-04
 - name: "@marecgents/dsh-hub"
   added: 2026-09-04
+- name: "@maricgeer/dsh-websearch"
+  added: 2026-09-24
 - name: "@marlonlau/dsh-wallpaper-engine"
   added: 2026-09-01
 - name: "@mars-sea/dsh-commandcode-provider"
@@ -5718,6 +5820,8 @@
   added: 2026-09-14
 - name: "@morlay/dsh-client-ui-primitives"
   added: 2026-09-18
+- name: "@morlay/dsh-context-assembler"
+  added: 2026-09-24
 - name: "@morlay/dsh-llm-openai-compatible"
   added: 2026-08-25
 - name: "@morlay/dsh-sandbox-local"
@@ -6456,6 +6560,8 @@
   added: 2026-09-04
 - name: "@sesori/pr-monitor-deepseek"
   added: 2026-09-16
+- name: "@sevoniva/dsh-cloudflare-access"
+  added: 2026-09-24
 - name: "@shallbay/dsh-token-stats"
   added: 2026-09-04
 - name: "@shaoshi/dshscan"
@@ -6626,6 +6732,8 @@
   added: 2026-09-04
 - name: "@soluna-harness/install"
   added: 2026-09-04
+- name: "@songxiyuan/dsh-tracebook"
+  added: 2026-09-24
 - name: "@songyang0603/dsh-codex-apply-patch-engine"
   added: 2026-09-04
 - name: "@songyang0603/dsh-codex-approval"
@@ -7030,6 +7138,8 @@
   added: 2026-08-25
 - name: "@tokenlabai/dsh-provider"
   added: 2026-08-27
+- name: "@tokennotincluded/dsh-lmm-provider"
+  added: 2026-09-24
 - name: "@tokens-as-parameters/root"
   added: 2026-09-04
 - name: "@tokensapi/dsh-connect"
@@ -7110,6 +7220,10 @@
   added: 2026-09-04
 - name: "@univerxyz/dsh-dsov-plugin"
   added: 2026-08-25
+- name: "@unreal-harness/rsi-guided"
+  added: 2026-09-24
+- name: "@unreal-harness/rsi-trace"
+  added: 2026-09-24
 - name: "@uppercrusteve/dsh-converge"
   added: 2026-08-28
 - name: "@uppercrusteve/dsh-tool-health"
@@ -8708,6 +8822,8 @@
   added: 2026-08-31
 - name: "allentnetus/dsh-job-hunting"
   added: 2026-09-01
+- name: "alllllinnrann/dsh-inapp-browser"
+  added: 2026-09-24
 - name: "alloyplane/dsh-eye-upload"
   added: 2026-08-31
 - name: "alloyplane/dsh-eye-vision"
@@ -8862,6 +8978,8 @@
   added: 2026-09-01
 - name: "antarescorn/dsh-auto-reviewer"
   added: 2026-08-31
+- name: "anthony1x6000/dsh-searxng-search"
+  added: 2026-09-24
 - name: "anthonyyu-verkada/dsh-mcp-client-plus"
   added: 2026-09-18
 - name: "antibrow/dsh-antibrow"
@@ -9136,14 +9254,20 @@
   added: 2026-09-01
 - name: "az790871109/dsh-summary-sidebar"
   added: 2026-09-01
+- name: "azazo1/dsh-approve-prefix"
+  added: 2026-09-24
 - name: "azazo1/dsh-copy-session-ref"
   added: 2026-09-09
 - name: "azazo1/dsh-fork-inbox-guard"
   added: 2026-09-14
+- name: "azazo1/dsh-git-commands"
+  added: 2026-09-24
 - name: "azazo1/dsh-limit-timeout"
   added: 2026-09-15
 - name: "azazo1/dsh-node-accent"
   added: 2026-09-14
+- name: "azazo1/dsh-reduce-effects"
+  added: 2026-09-24
 - name: "azazo1/dsh-reject-message"
   added: 2026-09-08
 - name: "azazo1/dsh-think-window"
@@ -9512,6 +9636,8 @@
   added: 2026-09-22
 - name: "bowluna/dsh-zcode-scribe"
   added: 2026-09-22
+- name: "boyl/dsh-sidebar-pins"
+  added: 2026-09-24
 - name: "boyuan623-coder/deepseek_harness_plugin_box"
   added: 2026-09-01
 - name: "bpc-oss/chrome-faithful"
@@ -9806,6 +9932,8 @@
   added: 2026-09-01
 - name: "cesaryike/dsh-image-to-path"
   added: 2026-09-01
+- name: "cetoeil/dsh-process-guard"
+  added: 2026-09-24
 - name: "cetus"
   added: 2026-09-04
 - name: "cfanmaoli/kimi-webbridge-dsh"
@@ -10022,10 +10150,14 @@
   added: 2026-09-18
 - name: "chinaboy0618/dsh-web-auth"
   added: 2026-09-10
+- name: "chinazkk/dsh-console"
+  added: 2026-09-24
 - name: "chinese-script-policy"
   added: 2026-09-18
 - name: "chinesezjc/dsh-interconnect"
   added: 2026-08-31
+- name: "chintoleung/dsh-ping"
+  added: 2026-09-24
 - name: "chip-philo-gh/dsh-loop-breaker"
   added: 2026-09-16
 - name: "chip-philo-gh/dsh-mcu-lab"
@@ -10188,6 +10320,8 @@
   added: 2026-09-15
 - name: "clearailhc/clearai-dsh"
   added: 2026-09-14
+- name: "clearleaf13/dsh-llamacpp-connect"
+  added: 2026-09-24
 - name: "clen1/deepseek-harness-pet-plugin"
   added: 2026-09-01
 - name: "cleverer-dsh"
@@ -10322,6 +10456,8 @@
   added: 2026-09-04
 - name: "comecaramelos/dsh-docker-desktop-mcp"
   added: 2026-09-21
+- name: "comecaramelos/dsh-hover-information"
+  added: 2026-09-24
 - name: "commandcode-dash"
   added: 2026-09-11
 - name: "commandcode-go-for-dsh"
@@ -10490,6 +10626,8 @@
   added: 2026-08-31
 - name: "cup113/dsh-effort-memory"
   added: 2026-09-22
+- name: "cup113/dsh-plugin-pyrun"
+  added: 2026-09-24
 - name: "cup113/personal-track"
   added: 2026-09-21
 - name: "curiosity654/dsh-subagent-pi"
@@ -10504,6 +10642,8 @@
   added: 2026-09-01
 - name: "cwbcheng/dsh-knowledge-graph"
   added: 2026-09-01
+- name: "cx2002302-lang/dsh-chat-collapse"
+  added: 2026-09-24
 - name: "cxdyun/dsh-skills-marketplace"
   added: 2026-09-01
 - name: "cxy9204/dsh-skill-store"
@@ -10556,6 +10696,8 @@
   added: 2026-09-01
 - name: "da1dr1em/dsh-ego-browser"
   added: 2026-08-31
+- name: "dabigu/dsh-remote-mesh"
+  added: 2026-09-24
 - name: "dabigu/dsh-remote-workspaces"
   added: 2026-09-22
 - name: "daemtri/web-directory-picker"
@@ -11218,6 +11360,8 @@
   added: 2026-08-25
 - name: "dock-files"
   added: 2026-08-25
+- name: "dock-flash"
+  added: 2026-09-24
 - name: "dock-git"
   added: 2026-08-25
 - name: "dock-images"
@@ -11380,6 +11524,8 @@
   added: 2026-09-01
 - name: "dragonk/dsh-locale-pl"
   added: 2026-09-14
+- name: "dream-num/univer-workspace"
+  added: 2026-09-24
 - name: "dreamrift/dsh-vision-bridge"
   added: 2026-08-31
 - name: "dreamrift/dsh-web-search-pool"
@@ -11924,6 +12070,8 @@
   added: 2026-08-31
 - name: "dsh-ai-image-design"
   added: 2026-09-04
+- name: "dsh-ai-memory"
+  added: 2026-09-24
 - name: "dsh-ai-models"
   added: 2026-09-01
 - name: "dsh-ai-monitor"
@@ -12028,6 +12176,8 @@
   added: 2026-08-28
 - name: "dsh-all-warmup"
   added: 2026-09-01
+- name: "dsh-allowed-workspace-roots"
+  added: 2026-09-24
 - name: "dsh-allrouter"
   added: 2026-08-25
 - name: "dsh-ally"
@@ -12136,6 +12286,8 @@
   added: 2026-09-20
 - name: "dsh-answer-pet"
   added: 2026-08-31
+- name: "dsh-answer-reviewer"
+  added: 2026-09-24
 - name: "dsh-anthropic-fonts"
   added: 2026-08-25
 - name: "dsh-anthropic-oauth"
@@ -12434,6 +12586,8 @@
   added: 2026-09-01
 - name: "dsh-ask-leader"
   added: 2026-09-01
+- name: "dsh-ask-notify"
+  added: 2026-09-24
 - name: "dsh-ask-peer"
   added: 2026-09-04
 - name: "dsh-aspect-ratio"
@@ -12508,6 +12662,8 @@
   added: 2026-09-04
 - name: "dsh-attention"
   added: 2026-08-25
+- name: "dsh-attention-health"
+  added: 2026-09-24
 - name: "dsh-attention-notify"
   added: 2026-09-01
 - name: "dsh-attestation-proof"
@@ -14114,6 +14270,8 @@
   added: 2026-09-04
 - name: "dsh-claude-skills"
   added: 2026-08-31
+- name: "dsh-claude-slider"
+  added: 2026-09-24
 - name: "dsh-claude-style"
   added: 2026-09-20
 - name: "dsh-claude-subscription"
@@ -14628,6 +14786,8 @@
   added: 2026-09-01
 - name: "dsh-coding-workspace"
   added: 2026-09-04
+- name: "dsh-codinput"
+  added: 2026-09-24
 - name: "dsh-coffee-ratio"
   added: 2026-09-01
 - name: "dsh-coffee-temp"
@@ -15396,6 +15556,8 @@
   added: 2026-09-01
 - name: "dsh-cua-drive"
   added: 2026-09-04
+- name: "dsh-cua-preview"
+  added: 2026-09-24
 - name: "dsh-cuba"
   added: 2026-09-01
 - name: "dsh-cube"
@@ -17024,6 +17186,8 @@
   added: 2026-09-04
 - name: "dsh-feishu"
   added: 2026-08-31
+- name: "dsh-feishu-assistant"
+  added: 2026-09-24
 - name: "dsh-feishu-auth"
   added: 2026-09-14
 - name: "dsh-feishu-beacon"
@@ -17044,6 +17208,8 @@
   added: 2026-08-28
 - name: "dsh-feishu-control"
   added: 2026-08-25
+- name: "dsh-feishu-cui"
+  added: 2026-09-24
 - name: "dsh-feishu-integration"
   added: 2026-09-02
 - name: "dsh-feishu-mcp"
@@ -19732,6 +19898,8 @@
   added: 2026-08-25
 - name: "dsh-linghun"
   added: 2026-09-22
+- name: "dsh-lingxi"
+  added: 2026-09-24
 - name: "dsh-link"
   added: 2026-09-04
 - name: "dsh-link-plugin"
@@ -20024,6 +20192,8 @@
   added: 2026-09-04
 - name: "dsh-llm-retry-settings"
   added: 2026-09-01
+- name: "dsh-llm-router"
+  added: 2026-09-24
 - name: "dsh-llm-sampling"
   added: 2026-09-04
 - name: "dsh-llm-subscription"
@@ -20328,6 +20498,8 @@
   added: 2026-09-04
 - name: "dsh-mandarin-grade"
   added: 2026-09-02
+- name: "dsh-manga-translation-plugin"
+  added: 2026-09-24
 - name: "dsh-manual-compact"
   added: 2026-08-26
 - name: "dsh-manual-compact-plugin"
@@ -20344,6 +20516,8 @@
   added: 2026-09-04
 - name: "dsh-markdown"
   added: 2026-09-04
+- name: "dsh-markdown-code-style"
+  added: 2026-09-24
 - name: "dsh-markdown-lint"
   added: 2026-09-02
 - name: "dsh-markdown-memory"
@@ -20896,6 +21070,8 @@
   added: 2026-08-25
 - name: "dsh-mimo-agent-tools"
   added: 2026-09-01
+- name: "dsh-mimo-connect"
+  added: 2026-09-24
 - name: "dsh-mimo-link"
   added: 2026-08-25
 - name: "dsh-mimo-memory"
@@ -21202,6 +21378,8 @@
   added: 2026-08-31
 - name: "dsh-model-ocean-selector"
   added: 2026-09-01
+- name: "dsh-model-organizer"
+  added: 2026-09-24
 - name: "dsh-model-override"
   added: 2026-08-28
 - name: "dsh-model-palette"
@@ -21728,6 +21906,8 @@
   added: 2026-09-04
 - name: "dsh-notes-markdown"
   added: 2026-08-25
+- name: "dsh-notes-plugin"
+  added: 2026-09-24
 - name: "dsh-nothing-skin"
   added: 2026-08-31
 - name: "dsh-notice"
@@ -23244,6 +23424,8 @@
   added: 2026-09-07
 - name: "dsh-plugin-desktop-shortcut"
   added: 2026-09-04
+- name: "dsh-plugin-desktop-updates"
+  added: 2026-09-24
 - name: "dsh-plugin-dev"
   added: 2026-09-04
 - name: "dsh-plugin-dev-assistant"
@@ -23342,6 +23524,8 @@
   added: 2026-09-04
 - name: "dsh-plugin-feishu-bridge"
   added: 2026-08-30
+- name: "dsh-plugin-feishu-workspace"
+  added: 2026-09-24
 - name: "dsh-plugin-file-explorer"
   added: 2026-09-04
 - name: "dsh-plugin-file-manager"
@@ -23996,6 +24180,8 @@
   added: 2026-09-23
 - name: "dsh-plugin-slashx-gateway"
   added: 2026-08-28
+- name: "dsh-plugin-smart-config"
+  added: 2026-09-24
 - name: "dsh-plugin-smooth-stream"
   added: 2026-08-25
 - name: "dsh-plugin-snake"
@@ -24834,6 +25020,8 @@
   added: 2026-09-01
 - name: "dsh-prompt-boost"
   added: 2026-08-31
+- name: "dsh-prompt-commands"
+  added: 2026-09-24
 - name: "dsh-prompt-customizer"
   added: 2026-09-04
 - name: "dsh-prompt-enhance"
@@ -25374,6 +25562,8 @@
   added: 2026-09-05
 - name: "dsh-recovery-proof"
   added: 2026-09-01
+- name: "dsh-recovery-resume"
+  added: 2026-09-24
 - name: "dsh-recovery-watchdog"
   added: 2026-09-04
 - name: "dsh-recruit"
@@ -26082,6 +26272,8 @@
   added: 2026-08-25
 - name: "dsh-schedule-ilife"
   added: 2026-09-21
+- name: "dsh-schedule-later"
+  added: 2026-09-24
 - name: "dsh-schedule-tasks"
   added: 2026-09-04
 - name: "dsh-scheduled"
@@ -26164,6 +26356,8 @@
   added: 2026-09-02
 - name: "dsh-sdd-generator"
   added: 2026-08-25
+- name: "dsh-sdd-progress-xc"
+  added: 2026-09-24
 - name: "dsh-seal"
   added: 2026-09-04
 - name: "dsh-search"
@@ -26646,6 +26840,8 @@
   added: 2026-08-28
 - name: "dsh-session-timeline"
   added: 2026-08-28
+- name: "dsh-session-title"
+  added: 2026-09-24
 - name: "dsh-session-title-cold"
   added: 2026-09-04
 - name: "dsh-session-title-interval-llm-repo"
@@ -28536,6 +28732,8 @@
   added: 2026-08-31
 - name: "dsh-timer-task"
   added: 2026-09-02
+- name: "dsh-timeseries-workbench"
+  added: 2026-09-24
 - name: "dsh-timesheet"
   added: 2026-09-02
 - name: "dsh-timestamp"
@@ -29250,6 +29448,8 @@
   added: 2026-09-04
 - name: "dsh-tv"
   added: 2026-09-04
+- name: "dsh-tweaks"
+  added: 2026-09-24
 - name: "dsh-twitter"
   added: 2026-09-04
 - name: "dsh-tx"
@@ -29762,6 +29962,8 @@
   added: 2026-08-25
 - name: "dsh-versions"
   added: 2026-09-02
+- name: "dsh-vertical-layout"
+  added: 2026-09-24
 - name: "dsh-vertical-org"
   added: 2026-09-02
 - name: "dsh-vet"
@@ -30370,6 +30572,8 @@
   added: 2026-09-01
 - name: "dsh-web-search-exa"
   added: 2026-09-04
+- name: "dsh-web-search-firecrawl"
+  added: 2026-09-24
 - name: "dsh-web-search-free"
   added: 2026-08-31
 - name: "dsh-web-search-glm"
@@ -31538,6 +31742,8 @@
   added: 2026-09-01
 - name: "dzqjoker/dsh-plugin-local-model"
   added: 2026-09-14
+- name: "eapp1e/dsh-poker"
+  added: 2026-09-24
 - name: "earzuchan/dshvibelearning"
   added: 2026-08-31
 - name: "easy-archive"
@@ -31576,6 +31782,8 @@
   added: 2026-09-21
 - name: "echocat-skill-panel-3.0"
   added: 2026-09-18
+- name: "echoheim/dsh-memory"
+  added: 2026-09-24
 - name: "echouniverse/dshacp"
   added: 2026-08-31
 - name: "eclipti/dsh-invest-research"
@@ -31774,6 +31982,10 @@
   added: 2026-08-31
 - name: "existyay/polaris"
   added: 2026-09-01
+- name: "exoticknight/dsh-plugin-template"
+  added: 2026-09-24
+- name: "exoticknight/dsh-system1"
+  added: 2026-09-24
 - name: "exoticknight/dsh-theme-eink-retro"
   added: 2026-09-01
 - name: "exynos671/dsh-windows-notify"
@@ -31846,6 +32058,8 @@
   added: 2026-09-03
 - name: "feishu-dsh-bridge"
   added: 2026-09-01
+- name: "feiwell/dsh-enhance-prompt"
+  added: 2026-09-24
 - name: "feiyang-dev/dsh-mobile-remote"
   added: 2026-09-01
 - name: "feiyang-dev/dsh-usage-plugin"
@@ -31868,6 +32082,8 @@
   added: 2026-09-11
 - name: "fengbin01/dsh-team-superflow"
   added: 2026-09-01
+- name: "fengchang618gmail/dsh-course-subtitles"
+  added: 2026-09-24
 - name: "fengmax1997/dsh-line-select"
   added: 2026-09-01
 - name: "fengs2021/dsh-feishu-bridge"
@@ -31894,6 +32110,8 @@
   added: 2026-09-01
 - name: "ffseika0304/code-ownership-audit"
   added: 2026-09-07
+- name: "ffyfox/dsh-linux-desktop"
+  added: 2026-09-24
 - name: "ffyuuu/dsh-llm-longcat"
   added: 2026-09-01
 - name: "fhidalgodev/dsh-odoo-sdd"
@@ -32060,6 +32278,8 @@
   added: 2026-09-21
 - name: "freehul/sgme"
   added: 2026-08-31
+- name: "freepeak/dsh-mux"
+  added: 2026-09-24
 - name: "frida-dsh-plugin"
   added: 2026-09-04
 - name: "fro2en12/dsh-download-progress"
@@ -32362,6 +32582,8 @@
   added: 2026-08-31
 - name: "gmleong/dsh-img"
   added: 2026-09-01
+- name: "gnatnaituy/dsh-sidebar-browser"
+  added: 2026-09-24
 - name: "gnx001/dsh-system-monitor"
   added: 2026-09-23
 - name: "go-farther-and-farther/dsh-tool-eyes"
@@ -32634,6 +32856,8 @@
   added: 2026-09-10
 - name: "hann428/dsh-usage-dashboard"
   added: 2026-08-31
+- name: "hanochhu/dsh-context-offload"
+  added: 2026-09-24
 - name: "hanshanxue83/collaborative-emergent-intelligence"
   added: 2026-09-01
 - name: "hansjone/netxops"
@@ -32676,6 +32900,8 @@
   added: 2026-08-31
 - name: "happy-friday-lite"
   added: 2026-09-04
+- name: "harde1/dsh-xcodebuild"
+  added: 2026-09-24
 - name: "hardes11/dsh-squeeze-command"
   added: 2026-09-05
 - name: "harmless0819-dev/dsh-agent-chat"
@@ -32780,6 +33006,8 @@
   added: 2026-08-31
 - name: "harzva/dsh-voice"
   added: 2026-08-31
+- name: "hasan-aghayev/dsh-pet-companion"
+  added: 2026-09-24
 - name: "hasan-aghayev/dsh-session-resilience"
   added: 2026-09-14
 - name: "hasan-aghayev/dsh-task-orchestrator"
@@ -33238,6 +33466,8 @@
   added: 2026-09-01
 - name: "hun1315/tencent-agent-mail-dsh-plugin"
   added: 2026-09-04
+- name: "hunan36/dsh-git-flow"
+  added: 2026-09-24
 - name: "hunter118/dsh-s7r"
   added: 2026-09-01
 - name: "hunterxxn/deep-flow"
@@ -33590,6 +33820,10 @@
   added: 2026-09-01
 - name: "jackmis0724/dsh-skill-manager"
   added: 2026-09-01
+- name: "jackovibe/dsh-codex-pin"
+  added: 2026-09-24
+- name: "jackovibe/dsh-settings-order"
+  added: 2026-09-24
 - name: "jackson-chen97/dsh-devops"
   added: 2026-09-14
 - name: "jackuh105/dsh-mobile-ui"
@@ -33656,6 +33890,8 @@
   added: 2026-09-04
 - name: "jayliu2025-vip/dsh-fate-twin-contract"
   added: 2026-08-31
+- name: "jaylor-wang/dsh-awesome-agent-preset"
+  added: 2026-09-24
 - name: "jaylor-wang/dsh-tool-antigravity"
   added: 2026-09-19
 - name: "jazzulu/find-dsh-plugins"
@@ -33670,6 +33906,8 @@
   added: 2026-09-01
 - name: "jcleener/dsh-model-cascade"
   added: 2026-09-01
+- name: "jd579g/dsh-mcp-hub"
+  added: 2026-09-24
 - name: "jdqingm/dsh-plan-build-toggle"
   added: 2026-09-01
 - name: "jdz321/dsh-plugin-git-status"
@@ -33820,6 +34058,8 @@
   added: 2026-09-01
 - name: "jinzhengen964-cmyk/dsh-bg-skin"
   added: 2026-09-01
+- name: "jipika/dsh-ui-fixes"
+  added: 2026-09-24
 - name: "jiuge2467/dsh-desktop"
   added: 2026-09-01
 - name: "jiuyue-sep/dsh-plugin-archive-shelf"
@@ -33896,6 +34136,8 @@
   added: 2026-08-31
 - name: "johnblur/dsh-bilingual-reader"
   added: 2026-08-31
+- name: "johngd/dsh-office-preview"
+  added: 2026-09-24
 - name: "johnhom1024/dsh-loopback-bridge"
   added: 2026-09-07
 - name: "johnnycls/dsh-no-setup-mode"
@@ -34378,6 +34620,8 @@
   added: 2026-08-31
 - name: "klrsl/dsh-packer"
   added: 2026-08-31
+- name: "knighthongyu/dsh-handoff-compaction"
+  added: 2026-09-24
 - name: "knlght/dsh-shutdown"
   added: 2026-09-01
 - name: "knlght/dsh-update-check"
@@ -34646,6 +34890,8 @@
   added: 2026-09-01
 - name: "leavestring/awesome-dsh-background-plugin"
   added: 2026-09-01
+- name: "leawind/dsh-carrot-on-a-stick"
+  added: 2026-09-24
 - name: "leawind/dsh-ops-mcp"
   added: 2026-09-23
 - name: "leechen298/code2skill"
@@ -34856,6 +35102,8 @@
   added: 2026-08-31
 - name: "liangz2210-lgtm/dsh-openclaude-ecosystem"
   added: 2026-09-16
+- name: "liaowenqi123/dsh-meeting-coordinator"
+  added: 2026-09-24
 - name: "liaoyuqing/dsh-llm-error-retry"
   added: 2026-09-02
 - name: "libinyam/dsh-experts"
@@ -34904,6 +35152,8 @@
   added: 2026-09-01
 - name: "lihang-lh/dsh-moon-light"
   added: 2026-09-01
+- name: "liheng99/dsh-starbridge-client"
+  added: 2026-09-24
 - name: "lijiawei255/dsh-status-chime"
   added: 2026-09-21
 - name: "lijunfeng000000000000/zotero-mcp-dsh"
@@ -35258,6 +35508,8 @@
   added: 2026-09-01
 - name: "loyalchiiina/dsh-archive-manager-pro"
   added: 2026-09-19
+- name: "loyalchiiina/dsh-lobsterai-daddy"
+  added: 2026-09-24
 - name: "loyalchiiina/dsh-skill-browser"
   added: 2026-09-04
 - name: "loyalchiiina/dsh-todo-float-ball"
@@ -35266,6 +35518,8 @@
   added: 2026-09-16
 - name: "lpf20200901/dsh-memory-delta"
   added: 2026-09-17
+- name: "lphuxhuq/dsh-vietnamese-lang"
+  added: 2026-09-24
 - name: "lpx-e5bd8/dsh-plugin-lark"
   added: 2026-09-04
 - name: "lq-1123/paste-to-workspace"
@@ -35620,6 +35874,8 @@
   added: 2026-08-31
 - name: "martlet-tech/dsh-approval-explain"
   added: 2026-09-22
+- name: "martlet-tech/dsh-open-folder-fix"
+  added: 2026-09-24
 - name: "marvekg/deepseek-harness-model-config"
   added: 2026-08-31
 - name: "marvekg/dsh-plugins"
@@ -35700,6 +35956,8 @@
   added: 2026-09-01
 - name: "maybemar/dsh-ctrl-c"
   added: 2026-08-31
+- name: "maybemeibemaybi/dsh-harmonyos-hiboard"
+  added: 2026-09-24
 - name: "mayf3/dsh-session-doctor"
   added: 2026-09-01
 - name: "mayifei1995/dsh-approval-comment"
@@ -35846,6 +36104,8 @@
   added: 2026-09-01
 - name: "mia-wong1016/dsh-codex-plus"
   added: 2026-09-22
+- name: "miaotofu01/study-mate"
+  added: 2026-09-24
 - name: "michael-han-il/dsh-llm-finish-reason-tolerance"
   added: 2026-09-01
 - name: "michengai/dsh-agency-agents"
@@ -35884,6 +36144,8 @@
   added: 2026-08-31
 - name: "mikugui/dsh-session-eater"
   added: 2026-09-21
+- name: "mikulo/dsh-prompt-switcher"
+  added: 2026-09-24
 - name: "mikuuuuuue/dsh-planner-executor"
   added: 2026-09-01
 - name: "milbaxter/dsh-critique-loop"
@@ -35894,6 +36156,8 @@
   added: 2026-09-03
 - name: "mimichunterz/dsh-agent-compact"
   added: 2026-08-31
+- name: "mimo-first-bridge"
+  added: 2026-09-24
 - name: "mimo-vision"
   added: 2026-08-28
 - name: "minatoai/dsh-net-proxy-plugin"
@@ -36246,6 +36510,8 @@
   added: 2026-09-01
 - name: "muallen/dsh-gateway-wallet"
   added: 2026-08-31
+- name: "muche-dsh-plugin"
+  added: 2026-09-24
 - name: "mudden2380078550-creator/write-chinese-long-screenplay"
   added: 2026-08-31
 - name: "muelsysel/deepseek-harness-desktop"
@@ -36328,6 +36594,8 @@
   added: 2026-09-02
 - name: "mykeura/dsh-minimalist-themes"
   added: 2026-09-01
+- name: "mypanda-hash/chengxiao"
+  added: 2026-09-24
 - name: "mypet"
   added: 2026-08-25
 - name: "mysadc/dsh-plugin-description"
@@ -36442,6 +36710,8 @@
   added: 2026-09-01
 - name: "neptune810/dsh-model-router"
   added: 2026-09-14
+- name: "neptune810/dsh-power-button"
+  added: 2026-09-24
 - name: "nesarf/mega-index-map"
   added: 2026-09-09
 - name: "netori/dsh-imagegen-zhenzhen"
@@ -36656,6 +36926,8 @@
   added: 2026-08-31
 - name: "nothree-code/voco-input-sh"
   added: 2026-08-31
+- name: "novadev9-bot/cordis-plugin-novelist"
+  added: 2026-09-24
 - name: "novel-atlas"
   added: 2026-09-04
 - name: "novel-harness"
@@ -37052,6 +37324,8 @@
   added: 2026-09-04
 - name: "particlelight/dsh-ultracode"
   added: 2026-08-31
+- name: "passerby325799/dsh-trans-md"
+  added: 2026-09-24
 - name: "paste-file-path-pro"
   added: 2026-09-04
 - name: "patch-guard"
@@ -37080,6 +37354,8 @@
   added: 2026-09-01
 - name: "pbwheel/dsh-agency-market"
   added: 2026-09-01
+- name: "pbwheel/dsh-workbuddy-expert"
+  added: 2026-09-24
 - name: "pc439527/dsh-side-monitor"
   added: 2026-09-01
 - name: "pd90506/dsh-web-notification"
@@ -38166,6 +38442,8 @@
   added: 2026-09-20
 - name: "scientisbo/dsh-codex-usage"
   added: 2026-09-01
+- name: "scif-lin/dsh-browsercontrol-mcp"
+  added: 2026-09-24
 - name: "scitiger-ai/dsh-decision-map"
   added: 2026-09-01
 - name: "scorpio69t/teach-math-with-manim"
@@ -39444,6 +39722,8 @@
   added: 2026-09-14
 - name: "todaywei/dsh-wei-sitecontrol"
   added: 2026-09-10
+- name: "tokai-teiodh/dsh-script-cards"
+  added: 2026-09-24
 - name: "tokan-dsh-token-analytics"
   added: 2026-09-01
 - name: "token-bar"
@@ -39474,6 +39754,8 @@
   added: 2026-09-14
 - name: "toolshrink"
   added: 2026-08-31
+- name: "top1wu/dsh-session-isolation"
+  added: 2026-09-24
 - name: "tostoevsky/tsienhsueshen"
   added: 2026-09-01
 - name: "toto-the-cat"
@@ -42380,6 +42662,8 @@
   added: 2026-09-14
 - name: "veripower"
   added: 2026-09-01
+- name: "vermilionpasvikin/dsh-coderag"
+  added: 2026-09-24
 - name: "very12345/sai-dsh-plugins"
   added: 2026-09-01
 - name: "veryint/dsh-image-vision"
@@ -42494,6 +42778,8 @@
   added: 2026-09-17
 - name: "voidprim/dsh-wsl-windows-folder-picker"
   added: 2026-09-22
+- name: "volens-dsh"
+  added: 2026-09-24
 - name: "vonweller/dsh-skillhub"
   added: 2026-09-02
 - name: "vorpal-poem/dsh-doubao-voice"
@@ -42588,6 +42874,8 @@
   added: 2026-09-02
 - name: "wang122818/dsh-command-delete"
   added: 2026-09-02
+- name: "wang90/dsh-image-reader"
+  added: 2026-09-24
 - name: "wangdefa-memory"
   added: 2026-09-01
 - name: "wangfujian762/dsh-web-quota-meter"
@@ -42632,6 +42920,8 @@
   added: 2026-09-16
 - name: "wangzhaonan16/dsh-fs-allowlist"
   added: 2026-09-02
+- name: "wangzhuoyuan229-source/deepseeklauncher"
+  added: 2026-09-24
 - name: "wanjiqi-meme"
   added: 2026-08-31
 - name: "wannanbigpig/dsh-sidebar"
@@ -43112,6 +43402,8 @@
   added: 2026-09-02
 - name: "wtstarmark/dsh-qaq"
   added: 2026-09-01
+- name: "wu81313-lab/dsh-company-kb"
+  added: 2026-09-24
 - name: "wuhobin/dsh-mcp-manage"
   added: 2026-09-02
 - name: "wujiaojue/dsh-herdr-site"
@@ -43940,6 +44232,8 @@
   added: 2026-09-04
 - name: "xgrin/dsh-search-router"
   added: 2026-09-01
+- name: "xguimax/dsh-wrongbook"
+  added: 2026-09-24
 - name: "xi-zhao/openquantum"
   added: 2026-09-02
 - name: "xia-sc/dsh-cc-studio"
@@ -44410,6 +44704,8 @@
   added: 2026-09-02
 - name: "yelloooooow/dsh-shutdown-button"
   added: 2026-09-08
+- name: "yembors64632/dsh-trae-connect"
+  added: 2026-09-24
 - name: "yepyeel/dsh-vision"
   added: 2026-09-02
 - name: "yeqingtang/dsh-session-flow"
@@ -44792,6 +45088,8 @@
   added: 2026-09-01
 - name: "yvesgao/dsh-shortcut-creator"
   added: 2026-09-01
+- name: "yvhcel888/dsh-slide-gauge"
+  added: 2026-09-24
 - name: "ywleeo/browser-mcp"
   added: 2026-09-02
 - name: "ywleeo/dsh-balance"
@@ -44968,6 +45266,8 @@
   added: 2026-09-02
 - name: "zeroa234/dsh-neutrino"
   added: 2026-09-02
+- name: "zerocode321/dsh-workspace-menu"
+  added: 2026-09-24
 - name: "zerodegress/dsh-model-redactor"
   added: 2026-09-02
 - name: "zerohackz/openflowframes"
@@ -45018,12 +45318,16 @@
   added: 2026-09-14
 - name: "zhang-guo-wen/dsh-mcp-manager"
   added: 2026-09-20
+- name: "zhang-guo-wen/dsh-web-design"
+  added: 2026-09-24
 - name: "zhang-jiazhi/dsh-prompt-optimizer"
   added: 2026-09-02
 - name: "zhang-jiazhi/dsh-stats-panel"
   added: 2026-09-02
 - name: "zhang-zhengyuan/dsh-memory-amem"
   added: 2026-09-01
+- name: "zhang0098/dsh-telegram-channel"
+  added: 2026-09-24
 - name: "zhang24xiao/dsh-snippets"
   added: 2026-09-16
 - name: "zhang66633/.dsh-plugin-installer"
@@ -45428,6 +45732,10 @@
   added: 2026-09-02
 - name: "ztyhehe/unipet-dsh"
   added: 2026-09-02
+- name: "ztyss/dsh-draft-fold"
+  added: 2026-09-24
+- name: "ztyss/dsh-llm-provider"
+  added: 2026-09-24
 - name: "zukunftsholz/dsh-zgit"
   added: 2026-09-02
 - name: "zuoguyoupan2023/adhdgofly-dsh-ext"
