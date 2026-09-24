@@ -29,6 +29,34 @@
 export type ModuleOracle = (spec: string) => Promise<boolean | null>
 
 /**
+ * How long one probe may take before its answer counts as unknown.
+ *
+ * The work a probe can actually reach is a microtask: a seed-word lookup, or a
+ * factory this page already registered. So this bounds a harness that never
+ * answers, not work — and it exists because the cost of the alternative is the
+ * whole shelf. `refineAgainstModuleTable` promises that a table in any state
+ * cannot cost the reader the catalog, and an `import()` that never settles
+ * would have made that promise false by leaving the tab with nothing to render
+ * (§9's degradation rule: an unavailable fact is silence, never an accusation).
+ * A probe per name, not one deadline for the whole refinement: every other
+ * name is still judged, and the tab waits at most this long however many names
+ * there are.
+ */
+export const MODULE_PROBE_TIMEOUT_MS = 2_000
+
+/** `outcome`, or null once `ms` has passed — whichever settles first. The
+ * timer is cleared either way, so a settled probe leaves nothing pending. */
+function withDeadline(outcome: Promise<boolean | null>, ms: number): Promise<boolean | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<null>(resolve => {
+    timer = setTimeout(() => resolve(null), ms)
+  })
+  return Promise.race([outcome, deadline]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer)
+  })
+}
+
+/**
  * The host's verdict less every name the oracle provides.
  *
  * An entry whose list empties is dropped, and an entry ANY of whose names
@@ -42,18 +70,21 @@ export type ModuleOracle = (spec: string) => Promise<boolean | null>
 export async function refineIncompatible(
   incompatible: Readonly<Record<string, readonly string[]>>,
   provides: ModuleOracle,
+  timeoutMs: number = MODULE_PROBE_TIMEOUT_MS,
 ): Promise<Record<string, string[]>> {
   const answers = new Map<string, Promise<boolean | null>>()
   const ask = (spec: string): Promise<boolean | null> => {
-    let answer = answers.get(spec)
-    if (answer === undefined) {
-      // The executor turns a synchronous throw into a rejection, and the
-      // catch reads either as unknown: an oracle that failed has said nothing,
-      // which is `null`, never the `false` that would accuse. Nothing else
-      // reaches this catch — `provides` is the only call inside it.
-      answer = new Promise<boolean | null>(resolve => { resolve(provides(spec)) }).catch(() => null)
-      answers.set(spec, answer)
-    }
+    const cached = answers.get(spec)
+    if (cached !== undefined) return cached
+    // The executor turns a synchronous throw into a rejection, and the
+    // catch reads either as unknown: an oracle that failed has said nothing,
+    // which is `null`, never the `false` that would accuse. Nothing else
+    // reaches this catch — `provides` is the only call inside it.
+    const answer = withDeadline(
+      new Promise<boolean | null>(resolve => { resolve(provides(spec)) }).catch(() => null),
+      timeoutMs,
+    )
+    answers.set(spec, answer)
     return answer
   }
   const judged = await Promise.all(Object.entries(incompatible).map(async ([key, names]) => {
@@ -170,8 +201,9 @@ export function moduleTableOracle(service: unknown): ModuleOracle | null {
 export async function refineAgainstModuleTable(
   incompatible: Readonly<Record<string, readonly string[]>>,
   service: unknown,
+  timeoutMs: number = MODULE_PROBE_TIMEOUT_MS,
 ): Promise<Record<string, string[]>> {
   const oracle = moduleTableOracle(service)
   if (oracle === null) return {}
-  return refineIncompatible(incompatible, oracle)
+  return refineIncompatible(incompatible, oracle, timeoutMs)
 }

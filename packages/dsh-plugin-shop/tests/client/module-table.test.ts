@@ -132,6 +132,35 @@ describe('refineIncompatible', () => {
     expect(await refineIncompatible({}, oracle)).toEqual({})
     expect(oracle).not.toHaveBeenCalled()
   })
+
+  it('gives no verdict to a name whose probe never settles, and judges the rest', async () => {
+    // `refineAgainstModuleTable` promises a table in any state cannot cost the
+    // reader the catalog. An `import()` that never settles would have made
+    // that false by leaving the tab with nothing to render, so a probe that
+    // outlives its deadline reads as unknown — the same answer as a probe that
+    // threw, and the same silence.
+    const hanging: ModuleOracle = spec => spec === '@x/hangs' ? new Promise(() => {}) : Promise.resolve(false)
+    const refined = await refineIncompatible(
+      { 'npm:hung': ['@x/hangs', '@x/absent'], 'npm:judged': ['@x/absent'] },
+      hanging,
+      20,
+    )
+    expect(refined).toEqual({ 'npm:judged': ['@x/absent'] })
+  })
+
+  it('does not wait on a probe that settles, and leaves no timer behind', async () => {
+    // The deadline is a guard, not a delay: a seed-word lookup settles in a
+    // microtask, and a settled probe must clear its timer rather than hold the
+    // process (or a test) open for the full timeout.
+    vi.useFakeTimers()
+    try {
+      const refined = await refineIncompatible({ 'npm:a': ['react'] }, oracleOf({ react: true }), 60_000)
+      expect(refined).toEqual({})
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('refineAgainstModuleTable', () => {
