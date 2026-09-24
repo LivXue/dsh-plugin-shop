@@ -148,8 +148,12 @@ const FIXTURE_ENTRIES = [
     added: '2026-08-31',
     peers: ['@deepseek-ai/dsh-client-store', '@dsh-shop-e2e/absent-peer'],
     // Unmet on both halves by the harness the e2e boots: no 0.1.5 build
-    // satisfies `0.1.2-rc.1`, and the e2e runs the `web` profile.
-    compatibility: { dsh: '0.1.2-rc.1', profiles: ['tui'] },
+    // satisfies `0.1.2-rc.1`, and the e2e's `web` profile does not compose
+    // the `acp` template — a declared profile is judged by the harness's own
+    // PROFILE_TEMPLATES bundles, so it has to be a template this harness
+    // ships and whose bundles (`dsh-base`, `dsh-acp-app`) the web profile
+    // lacks. A name that is no template, `tui` included, would be silence.
+    compatibility: { dsh: '0.1.2-rc.1', profiles: ['acp'] },
   },
   {
     name: 'dsh-shop-e2e-client',

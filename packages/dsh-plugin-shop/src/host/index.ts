@@ -3,6 +3,11 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { readProfileManifest } from '@deepseek-ai/dsh-app-boot'
+// Namespace import, not a named one: `PROFILE_TEMPLATES` is read at runtime and
+// validated, because an app-boot that never grew the export must cost the
+// profile half its verdict and nothing more. A named import of an absent
+// export fails ESM linking, which would take the whole Host down instead.
+import * as appBoot from '@deepseek-ai/dsh-app-boot'
 import { lt, minVersion, valid } from 'semver'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -36,7 +41,7 @@ import {
   type PeerResolver,
   type PeerVersionResolver,
 } from './peers.ts'
-import { compatibilityMap, type HarnessVerdict } from './compatibility.ts'
+import { compatibilityMap, profileTemplatesOf, type HarnessVerdict, type ProfileTemplates } from './compatibility.ts'
 
 // Re-exported so the boundary type is reachable from the package's public
 // ./types subpath; the typert generator refuses remote parameter types it
@@ -147,6 +152,15 @@ export interface ShopGatewayOptions {
    * cannot tell. Production asks the self-check's own resolver, at the same
    * profile anchor. */
   resolveDshVersion?: () => string | null
+  /** Test-only injection: the harness's own profile-template table, for the
+   * `dsh.compatibility` profile half — the bundles each profile template
+   * composes. Production reads `PROFILE_TEMPLATES` from the installed
+   * `@deepseek-ai/dsh-app-boot`; null when it cannot be read. */
+  profileTemplates?: () => unknown
+  /** Test-only injection: the bundles the running profile composes, or null
+   * when the profile manifest cannot be read. Production reads them from the
+   * same profile manifest every other read uses. */
+  profileBundles?: () => readonly string[] | null
   /** Test-only injection: the download phase's pump; production builds the
    * real one. A test gateway left with the real pump spawns `pnpm store add`
    * — a live registry request — from every install that finds a command
@@ -921,8 +935,53 @@ export class ShopGateway extends TypertRemoteService {
       incompatible,
       incompatibleHarness: compatibilityMap(snapshot.entries, {
         dshVersion: this.runningDshVersion(),
-        profile: this.profile,
-      }),
+        profile: { name: this.profile, bundles: this.runningProfileBundles() },
+      }, this.profileTemplates()),
+    }
+  }
+
+  /**
+   * The harness's own profile-template table: template name → the bundles it
+   * composes, which is what the profile half compares against (design
+   * 2026-09-01-harness-compatibility §9.9). Read from the installed
+   * `@deepseek-ai/dsh-app-boot` rather than copied, and normalized by
+   * `profileTemplatesOf`, which knows both shapes this export has had.
+   *
+   * An empty record — a harness without the export, or one whose shape this
+   * build does not know — costs the profile half its verdict and nothing else.
+   * A copied table would be the drift this whole check exists to remove.
+   */
+  private profileTemplates(): ProfileTemplates {
+    try {
+      if (this.options.profileTemplates !== undefined) return profileTemplatesOf(this.options.profileTemplates())
+      return profileTemplatesOf((appBoot as { PROFILE_TEMPLATES?: unknown }).PROFILE_TEMPLATES)
+    } catch {
+      // Swallows a harness whose export throws when read. Nothing else can
+      // reach it: `profileTemplatesOf` answers {} for every shape it does not
+      // know.
+      return {}
+    }
+  }
+
+  /**
+   * The bundles the running profile composes, or null when the profile
+   * manifest cannot be read — which is no verdict on the profile half rather
+   * than an accusation. `dsh.profile.bundles` is the same list
+   * `discoverProfile` uses to recognize a profile directory, read through the
+   * harness's own parser so a profile this shop was booted inside is read the
+   * way dsh reads it.
+   */
+  private runningProfileBundles(): readonly string[] | null {
+    try {
+      if (this.options.profileBundles !== undefined) return this.options.profileBundles()
+      const bundles = readProfileManifest('dsh-plugin-shop', this.profileDirResolved()).dsh?.profile?.bundles
+      if (!Array.isArray(bundles) || !bundles.every((bundle): bundle is string => typeof bundle === 'string')) return null
+      return bundles
+    } catch {
+      // Swallows a missing profile directory and an unreadable or malformed
+      // manifest: each means nobody can say what this profile composes, and
+      // the answer for that is silence on this half, never a warning.
+      return null
     }
   }
 

@@ -440,7 +440,7 @@ function gatewayWithSnapshot(snapshot: CatalogSnapshot, options: Partial<ShopGat
   // The install flow reads the running profile manifest before spawning (to
   // tell an update from a fresh install); the fixture supplies one.
   const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-gateway-profile-'))
-  writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
+  writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'] } }, dependencies: {} }))
   const gateway = new ShopGateway(stubCtx(), {
     catalogUrl: 'https://shop.test/v1/',
     cacheDir: '/cache',
@@ -2213,22 +2213,27 @@ describe('ShopGateway.catalog harness compatibility', () => {
     compatibility: { dsh: DSH_IM_RANGE, profiles: ['web'] },
   }
   /** A range no harness on the 0.1 line satisfies, so a READABLE version would
-   * always add a `dsh` half — which is what makes its absence mean something. */
-  const tuiOnly: CatalogEntry = { ...dshIm, name: 'dsh-tui-only', compatibility: { dsh: '0.9.0', profiles: ['tui'] } }
+   * always add a `dsh` half — which is what makes its absence mean something.
+   *
+   * `headless` is a template this fixture profile does not compose: it is one
+   * of the two the pinned app-boot ships (`web`, `headless`), so the
+   * production table can judge it, and a web-bundled profile lacks
+   * `@deepseek-ai/dsh-headless`. `tui`, the name this used to declare, is no
+   * template at all — silence under §9.9, which would make these tests pass
+   * for the wrong reason. */
+  const headlessOnly: CatalogEntry = { ...dshIm, name: 'dsh-headless-only', compatibility: { dsh: '0.9.0', profiles: ['headless'] } }
 
   it('carries the verdict, naming what the author declared and what is running', async () => {
-    // Booted as `tui`, so the real declaration fails both halves — and each
-    // runtime fact reaches the verdict from the gateway: the version through
-    // the seam, the profile from the one this gateway was booted with.
+    // The gateway's own profile name reaches the copy, while the RANGE is what
+    // this declaration fails: its `web` is met, because the fixture profile
+    // composes the web template's bundles and a declared template is judged by
+    // what the profile IS, never by the name it was given (§9.9).
     const { gateway } = gatewayWithSnapshot(
       { schemaVersion: 5, builtAt: '', entries: [dshIm], denied: [], stars: {} },
       { profile: 'tui', resolveDshVersion: () => '0.1.5-rc.3' },
     )
     expect((await gateway.catalog({})).incompatibleHarness).toEqual({
-      'npm:@xmanrui/dsh-im': {
-        dsh: { range: DSH_IM_RANGE, running: '0.1.5-rc.3' },
-        profile: { declared: ['web'], running: 'tui' },
-      },
+      'npm:@xmanrui/dsh-im': { dsh: { range: DSH_IM_RANGE, running: '0.1.5-rc.3' } },
     })
   })
 
@@ -2280,11 +2285,11 @@ describe('ShopGateway.catalog harness compatibility', () => {
     // An unknown silences its own half and no other (design §8.2): the
     // profile is known whatever the version read does.
     const { gateway } = gatewayWithSnapshot(
-      { schemaVersion: 5, builtAt: '', entries: [tuiOnly], denied: [], stars: {} },
+      { schemaVersion: 5, builtAt: '', entries: [headlessOnly], denied: [], stars: {} },
       { resolveDshVersion },
     )
     expect((await gateway.catalog({})).incompatibleHarness).toEqual({
-      'npm:dsh-tui-only': { profile: { declared: ['tui'], running: 'web' } },
+      'npm:dsh-headless-only': { profile: { declared: ['headless'], running: 'web' } },
     })
   })
 

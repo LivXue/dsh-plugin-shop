@@ -1168,7 +1168,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       expect(await card.locator('[data-shop-incompatible-detail="harness-range"]').textContent())
         .toBe(zh.harnessRangeDetail.replace('{range}', '0.1.2-rc.1').replace('{running}', running))
       expect(await card.locator('[data-shop-incompatible-detail="harness-profile"]').textContent())
-        .toBe(zh.harnessProfileDetail.replace('{declared}', 'tui').replace('{running}', 'web'))
+        .toBe(zh.harnessProfileDetail.replace('{declared}', 'acp').replace('{running}', 'web'))
 
       // And the seed-only card says nothing at all. Its two peers, `react` and
       // `react-dom`, have no package on disk, so node resolution alone would
