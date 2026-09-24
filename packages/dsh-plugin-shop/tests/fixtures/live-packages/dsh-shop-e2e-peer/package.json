@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "main": "index.js",
-  "peerDependencies": { "@deepseek-ai/dsh-client-store": "*" },
-  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+  "peerDependencies": { "@deepseek-ai/dsh-client-store": "*", "@dsh-shop-e2e/absent-peer": "*" },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "compatibility": { "dsh": "0.1.2-rc.1", "profiles": ["tui"] }
+  }
 }
