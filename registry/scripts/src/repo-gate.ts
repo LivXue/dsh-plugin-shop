@@ -253,14 +253,18 @@ export function gateRepo(
 
   // The same per-entry budget the npm gate applies, over this channel's own
   // untrusted fields and in `assignRepoTier`'s key order, so the measured
-  // bytes are the bytes `emit` will write. `peers` is measured from
-  // 2026-09-24, the day this channel began carrying it: the sentence that sat
-  // here until then — "a repo entry carries no `peers`" — was the written
-  // record of the compatibility badge's blind spot over 6,979 of 11,864
-  // entries (2026-09-01-harness-compatibility §8.1). `tarball.url` comes
-  // straight from the GitHub releases API and is bounded nowhere else, and the
-  // budget is what covers whatever field an entry grows next. Last, so that
-  // every reason naming a single field is reported ahead of it.
+  // bytes are the bytes `emit` will write. `peers` counts toward it only once
+  // `SHOP_EMIT_REPO_PEERS` flips: `withholdRepoPeers` (`pipeline.ts`) strips
+  // `peers` from every candidate ahead of both gate passes while the flag is
+  // unset, so this line measures zero bytes for it regardless of what
+  // harvest has recorded since 2026-09-24, the day this channel began
+  // carrying the field — the sentence that sat here until then, "a repo
+  // entry carries no `peers`", was the written record of the compatibility
+  // badge's blind spot over 6,979 of 11,864 entries
+  // (2026-09-01-harness-compatibility §8.1). `tarball.url` comes straight
+  // from the GitHub releases API and is bounded nowhere else, and the budget
+  // is what covers whatever field an entry grows next. Last, so that every
+  // reason naming a single field is reported ahead of it.
   const release = candidate.release
   const payloadBytes = entryPayloadBytes({
     name: candidate.name,

@@ -724,10 +724,11 @@ describe('the peers bounds', () => {
 
 describe('the compatibility bounds', () => {
   // The longest `dsh.compatibility.dsh` seen on 2026-09-11 is
-  // @xmanrui/dsh-im's five-version list; dsh's own profiles are `web`, `tui`
-  // and `headless`.
+  // @xmanrui/dsh-im's five-version list; dsh 0.1.5-rc.3's own shipped profile
+  // templates (`@deepseek-ai/dsh-app-boot`'s `PROFILE_TEMPLATES`) are `acp`,
+  // `web`, `headless`, `sdk` and `sdk-minimal` — `tui` is not one of them.
   const LIVE_LONGEST_RANGE = '0.1.2-alpha.4 || 0.1.2-alpha.5 || 0.1.2-rc.1 || 0.1.3-alpha.1 || 0.1.5-alpha.1'
-  const DSH_PROFILES = ['web', 'tui', 'headless']
+  const DSH_PROFILES = ['acp', 'web', 'headless', 'sdk', 'sdk-minimal']
 
   it('states the bounds as literals', () => {
     // Quoted to authors in docs/schema.md: a bound that moves is a published
@@ -744,6 +745,11 @@ describe('the compatibility bounds', () => {
     expect(LIVE_LONGEST_RANGE).toHaveLength(78)
     expect(COMPATIBILITY_RANGE_MAX_LENGTH).toBeGreaterThan(LIVE_LONGEST_RANGE.length * 3)
     expect(PROFILE_NAME_MAX_LENGTH).toBeGreaterThan(Math.max(...DSH_PROFILES.map(name => name.length)) * 3)
+    // The count bound is the tight one of the three, with the real five
+    // templates: 16 clears 5 x 3 = 15 by exactly one, not "with room to
+    // spare" like the other two above. A sixth shipped template would fail
+    // this assertion outright — which is the point: it is a live canary on
+    // `COMPATIBILITY_PROFILES_MAX_COUNT`, not slack to spend elsewhere.
     expect(COMPATIBILITY_PROFILES_MAX_COUNT).toBeGreaterThan(DSH_PROFILES.length * 3)
   })
 

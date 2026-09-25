@@ -1730,9 +1730,15 @@ export const PEER_NAME_MAX_LENGTH = 128
  * The names of the peers a manifest REQUIRES, in manifest order, bounded by
  * {@link PEER_NAME_MAX_LENGTH} and {@link PEERS_MAX_COUNT}. The one reader for
  * both channels — `toCandidate` here and `projectCandidate` in
- * `github-client.ts` — so an npm package and the repository it came from cannot
- * be recorded under two different rules. Why an optional peer is left out at
- * all is {@link Candidate.peers}'s to say.
+ * `github-client.ts` — so an npm package and the repository it came from
+ * cannot be recorded under two different rules, after the next re-read:
+ * `DECLARATIONS_RULE` (`repo-state.ts`) stamps which rule wrote a github
+ * candidate's `peers`, and a stamp that does not match it queues that one
+ * manifest re-read before the two channels agree again. Why an optional
+ * peer is left out at all is {@link Candidate.peers}'s to say.
+ *
+ * A change to what this function returns must bump `DECLARATIONS_RULE`, or a
+ * recorded github candidate keeps the old answer — nothing else enforces it.
  *
  * A peer is optional exactly when `peerDependenciesMeta` is a plain object
  * holding the name as an OWN key, whose value is a plain object holding
@@ -1776,8 +1782,11 @@ export function peerNamesOf(manifest: { peerDependencies?: unknown; peerDependen
 export const COMPATIBILITY_RANGE_MAX_LENGTH = 256
 
 /**
- * Longest profile name recorded, in UTF-16 code units. dsh's own are `web`,
- * `tui` and `headless`, so this is 8x the longest of them.
+ * Longest profile name recorded, in UTF-16 code units. The real 0.1.5-rc.3
+ * shipped templates (`@deepseek-ai/dsh-app-boot`'s `PROFILE_TEMPLATES`) are
+ * `acp`, `web`, `headless`, `sdk` and `sdk-minimal` — `tui` is none of them
+ * — and the longest is `sdk-minimal` at 11 characters, so 64 is about 5.8x
+ * it.
  */
 export const PROFILE_NAME_MAX_LENGTH = 64
 
@@ -1793,7 +1802,10 @@ export const COMPATIBILITY_PROFILES_MAX_COUNT = 16
 /**
  * Read `dsh.compatibility` out of an untrusted manifest's `dsh`, keeping only
  * what is well formed and within bounds. The one reader for both channels, as
- * {@link peerNamesOf} is for peers.
+ * {@link peerNamesOf} is for peers — and under the same rule: a change to
+ * what this function returns must bump `DECLARATIONS_RULE` (`repo-state.ts`),
+ * or a recorded github candidate keeps the old answer — nothing else
+ * enforces it.
  *
  * Dropped, never rejected, like every other value the harvest bounds on the
  * author's behalf: an over-long range must not cost the listing it came

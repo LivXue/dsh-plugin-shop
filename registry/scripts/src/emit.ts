@@ -214,8 +214,13 @@ export function emit(
   // missing cannot tell a deliberate gate from an omission. `peers` had one
   // anyway, on size rather than safety; see the note on it above for why it
   // came off instead of being opened. A field reaching a new channel does not
-  // earn one either: github entries carry `peers` from 2026-09-24 on the same
-  // terms.
+  // earn one either: github entries will carry `peers` on the same terms — no
+  // version gate — once `SHOP_EMIT_REPO_PEERS` flips. Until then
+  // `withholdRepoPeers` (`pipeline.ts`) strips `peers` from every github
+  // candidate ahead of both gate passes, so a github entry never carries one
+  // while the flag is unset; that flip is a rollout gate, a different axis
+  // (which channel may publish the field) from the version gate this list
+  // tracks.
   //
   // `installSize` is why "unknown key" is the load-bearing half of that rule
   // rather than "additive". It carries the on-disk figure for EVERY source,
