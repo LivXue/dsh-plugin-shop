@@ -21,10 +21,12 @@ const SHOP_REPO_URL = 'https://github.com/LivXue/dsh-plugin-shop'
  * error state renders. */
 export interface ShopTabInjected {
   /** `reverdict: true` means "judge again against the installation as it
-   * stands now" — the host's own snapshot and freshness window, exactly like
-   * a plain open, never a network refresh. It is a client-only instruction:
-   * `index.ts` never lets it reach the host RPC, which accepts only
-   * `{ refresh?: boolean }`. */
+   * stands now" — the host's own snapshot and freshness window, asked with
+   * the same plain call as a stash-expired open, never a network refresh. A
+   * plain open can still serve the stash; a reverdict always bypasses it (the
+   * install or uninstall that triggered it predates whatever the stash
+   * holds). It is a client-only instruction: `index.ts` never lets it reach
+   * the host RPC, which accepts only `{ refresh?: boolean }`. */
   catalog: (args?: { refresh?: boolean; reverdict?: boolean }) => Promise<ShopCatalogResult>
   install: (args: InstallArgs) => Promise<ShopInstallResult>
   installStatus: (args: { installId: string }) => Promise<ShopInstallStatusResult>
@@ -1094,12 +1096,15 @@ export function ShopTab(props: ShopTabProps): ReactNode {
   // see the version-check effect below, which keys on this instead of
   // `request` precisely so a mutation settling cannot restart it.
   const [versionReload, setVersionReload] = useState(0)
-  // A settled mutation (install or uninstall, `done` only) refreshes the
-  // installed projection via `mutations`, AND separately asks the catalog to
-  // judge itself again by pushing `request` to `reverdict` (finding #10,
-  // `installSettled`/`uninstallSettled` below) — an entry's badges can depend
-  // on what is now installed, so the catalog no longer merely "stays on
-  // screen" across a mutation the way it does across an unrelated render.
+  // A settled install bumps `mutations` — which refreshes the installed
+  // projection below — on EITHER outcome, done or failed; a settled uninstall
+  // bumps it only on `done`, because a failed one returns immediately and
+  // never reaches `noteMutation()` at all. Only a `done` install or uninstall
+  // ALSO asks the catalog to judge itself again by pushing `request` to
+  // `reverdict` (finding #10, `installSettled`/`uninstallSettled` below) — an
+  // entry's badges can depend on what is now installed, so the catalog no
+  // longer merely "stays on screen" across a mutation the way it does across
+  // an unrelated render.
   const [mutations, setMutations] = useState(0)
   const noteMutation = useCallback(() => { setMutations(current => current + 1) }, [])
   // Install and uninstall are mutually exclusive answers about one identity,
@@ -1174,15 +1179,38 @@ export function ShopTab(props: ShopTabProps): ReactNode {
   const [visibleCount, setVisibleCount] = useState(SHOP_VISIBLE_BATCH)
   const sentinelRef = useRef<HTMLLIElement>(null)
   const filteredLenRef = useRef(0)
+  // Which `refresh` request (if any) a reader is still waiting on. A
+  // reverdict or a later refresh can supersede a Refresh click before its own
+  // request settles; if the superseded one then fails, that failure must
+  // still reach the reader who clicked it — but only while nothing newer has
+  // since taken over waiting on that button. Identity, not a shared boolean,
+  // is what tells "still the live wait" apart from "already superseded by
+  // another refresh": a boolean flag cannot distinguish a stale rejection
+  // from the newer refresh's own outcome, so it would either drop a real
+  // failure or stomp on the newer request's fresh state. Set by the effect
+  // below at its own start, and cleared in its own `finally` — only ever by
+  // the instance that set it.
+  const pendingRefreshRef = useRef<LoadRequest | null>(null)
 
   useEffect(() => {
     let cancelled = false
     // A refresh or a reverdict (finding #10) keeps the stale snapshot visible
     // during the background re-fetch (§10); a retry leaves the error state
     // and starts from loading.
+    //
+    // The `reverdict` half of this guard is unreachable as a distinguishing
+    // condition TODAY: a reverdict fires only from `installSettled`/
+    // `uninstallSettled` below, and both require `catalogState.kind ===
+    // 'ready'` already — the button that settles is only clickable once the
+    // shelf has rendered. So the ternary already returns `current` unchanged
+    // on a reverdict with or without this clause. Kept anyway as a defensive
+    // invariant rather than trimmed as dead code: a future reverdict fired
+    // before the shelf is ready must still keep the stale state, not flash to
+    // loading.
     if (request.kind !== 'refresh' && request.kind !== 'reverdict') {
       setCatalogState(current => (current.kind === 'ready' ? current : { kind: 'loading' }))
     }
+    if (request.kind === 'refresh') pendingRefreshRef.current = request
     const load = async (): Promise<void> => {
       try {
         const result = await catalog(
@@ -1204,10 +1232,19 @@ export function ShopTab(props: ShopTabProps): ReactNode {
         // that found no newer build — except a reverdict, which was never a
         // click the reader made, so there is nothing of the reader's to
         // report failing; the shelf simply keeps the verdict it already had.
-        if (cancelled) return
+        if (cancelled) {
+          // Superseded. Still report a REFRESH's own failure to the reader
+          // who clicked it, unless a newer refresh has since taken over that
+          // wait — whose own outcome now owns `reloadFailed` instead.
+          if (request.kind === 'refresh' && pendingRefreshRef.current === request) {
+            setReloadFailed(true)
+          }
+          return
+        }
         setCatalogState(current => (current.kind === 'ready' ? current : { kind: 'error' }))
         if (request.kind !== 'reverdict') setReloadFailed(true)
       } finally {
+        if (pendingRefreshRef.current === request) pendingRefreshRef.current = null
         // Released on both outcomes: a reload that failed must hand the
         // button back rather than leave it disabled with nothing to retry.
         if (!cancelled) setReloading(false)

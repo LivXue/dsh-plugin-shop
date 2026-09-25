@@ -132,12 +132,20 @@ const CANNOT_RESOLVE = 'client-modules: cannot resolve'
  * 1. A graph row provides it, and `import` is NOT called — for a row it
  *    fetches the bundle and runs the module body, and a probe must never be
  *    what loads a plugin. `manifest.modules` is the row index, but it is not
- *    fixed for the page's whole life on every harness build: on 0.1.5-rc.3
+ *    fixed for the page's whole life on every harness build. On 0.1.5-rc.3
  *    `this.manifest = options.manifest` is the constructor's only write, so a
- *    row placed at boot stands unchanged; on 0.1.7-rc.2 (`next`)
- *    `updateManifest` REPLACES it and `prune` keeps every row still
- *    referenced, so a package this page uninstalled without a restart can
- *    remain a row here — kept, not re-verified.
+ *    row placed at boot stands unchanged for as long as the page lives. On
+ *    0.1.7-rc.2 (`next`) `updateManifest` REPLACES `this.manifest` outright
+ *    with a new manifest that no longer lists an uninstalled package, and
+ *    `reconcile` removes the plugin from the loader — so UNTIL this page's own
+ *    uninstall reconciles, the OLD row still stands in `manifest.modules` and
+ *    this step clears the entry falsely; AFTER it reconciles, this step can no
+ *    longer be the false clear, because `manifest.modules` has already dropped
+ *    the package. The false clear then comes from `prune`, which keeps the
+ *    removed id only in the PRIVATE `graphRows` and in `loadCache`, and only
+ *    while some retained module still references it — that is step 2 below,
+ *    or the side effect of `import` in step 3 (a private graph row this
+ *    function cannot see).
  * 2. A `loadCache` record provides it, again without `import`.
  * 3. Otherwise `import(spec, '', {})`, with the spec as written — the seed
  *    holds `react-dom/client` itself, not its stripped form. Resolving means a
@@ -217,8 +225,6 @@ export function moduleTableOracle(service: unknown): ModuleOracle | null {
  * `loadCache`, not `import` — because a row or a cache record can outlive a
  * restart-free uninstall (`moduleTableOracle`'s header), and the table's own
  * "provided" would be precisely the false clear this set exists to prevent.
- * The override does not depend on the oracle existing, which is why a removed
- * name's entry can surface even when `service` offers no usable table at all.
  */
 export async function refineAgainstModuleTable(
   incompatible: Readonly<Record<string, readonly string[]>>,
@@ -227,8 +233,14 @@ export async function refineAgainstModuleTable(
   timeoutMs: number = MODULE_PROBE_TIMEOUT_MS,
 ): Promise<Record<string, string[]>> {
   const oracle = moduleTableOracle(service)
-  if (oracle === null && removed.size === 0) return {}
+  // Controller ruling (Task 2 fix round 1, Important 3): unconditional. On a
+  // page with no usable table nothing can falsely vouch for a removed name in
+  // the first place, so finding #8 does not arise there, and design §9's
+  // documented silence — no usable table, no verdicts — applies uniformly
+  // rather than carving out an exception for the page-removed set. Every
+  // supported harness provides the table anyway.
+  if (oracle === null) return {}
   const withRemoved: ModuleOracle = async spec =>
-    (removed.has(stripClientSuffix(spec)) ? false : (oracle === null ? null : oracle(spec)))
+    (removed.has(stripClientSuffix(spec)) ? false : oracle(spec))
   return refineIncompatible(incompatible, withRemoved, timeoutMs)
 }

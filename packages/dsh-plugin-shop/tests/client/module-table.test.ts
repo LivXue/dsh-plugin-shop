@@ -265,13 +265,14 @@ describe('refineAgainstModuleTable', () => {
     await refineAgainstModuleTable({ 'npm:a': ['@x/absent'] }, { ...table, loadCache: {} })
     expect(probe).not.toHaveBeenCalled()
   })
-
 })
 
 describe('refineAgainstModuleTable: the page-removed set', () => {
   it('keeps the host verdict for a name this page uninstalled, even though the table still lists it as a row, and never asks the table to import it', async () => {
-    // dock-base has a client half and is still a graph row after a
-    // restart-free uninstall (0.1.7-rc.2's `prune` keeps referenced rows) —
+    // dock-base is a graph row here — modeling either 0.1.5-rc.3, where a row
+    // placed at boot stands unchanged for the page's whole life, or the
+    // window on 0.1.7-rc.2 before this page's own uninstall has reconciled,
+    // when the old row still stands in `manifest.modules`. Either way this is
     // exactly the false "provided" the page-removed set exists to prevent.
     const { table, probe } = fakeTable({ rows: ['dock-base'] })
     const refined = await refineAgainstModuleTable(
@@ -281,6 +282,28 @@ describe('refineAgainstModuleTable: the page-removed set', () => {
     )
     expect(refined).toEqual({ 'npm:needs-dock-base': ['dock-base', '@x/absent'] })
     expect(asked(probe)).toEqual(['@x/absent'])
+  })
+
+  it('never lets the removed override ask the table about a removed name, even one neither a row nor cached that import would resolve', async () => {
+    // Important 1(a): after 0.1.7-rc.2 reconciles this page's own uninstall,
+    // `manifest.modules` no longer lists the removed package at all (Important
+    // 2's paragraph above) — the genuinely post-reconcile shape, unlike the
+    // row-based fixture above which models the pre-reconcile / 0.1.5-rc.3
+    // case. `react` is neither a row nor cached here, and the table's own
+    // `import` WOULD resolve it (a seed word) if ever asked — so this is the
+    // one shape that tells apart "removed intercepts before the oracle is
+    // consulted" from a mutant that asks the oracle FIRST and overrides the
+    // answer after: such a mutant still gets `dock-base` right in the test
+    // above (a row short-circuits before `import` regardless of ordering) but
+    // would call `import('react', ...)` here, which this test forbids.
+    const { table, probe } = fakeTable()
+    const refined = await refineAgainstModuleTable(
+      { 'npm:needs-react': ['react', '@x/absent'] },
+      table,
+      new Set(['react']),
+    )
+    expect(refined).toEqual({ 'npm:needs-react': ['react', '@x/absent'] })
+    expect(asked(probe)).not.toContain('react')
   })
 
   it('normalizes a trailing /client before matching the removed set', async () => {
@@ -293,15 +316,27 @@ describe('refineAgainstModuleTable: the page-removed set', () => {
     expect(refined).toEqual({ 'npm:a': ['dock-base/client'] })
   })
 
-  it('surfaces a removed name even when the page has no usable table at all', async () => {
-    // The override must not depend on the oracle existing: a page-removed
-    // name is a fact this page already knows on its own account.
+  it('gives no verdict at all when there is no usable table, not even for a name this page uninstalled, and leaves an unrelated entry equally silent', async () => {
+    // Controller ruling (Important 3): an unusable table yields NO peer
+    // verdicts, unconditionally — design §9's documented silence applies the
+    // same way whether or not the page-removed set happens to be non-empty,
+    // because with no table nothing can falsely vouch for a removed name in
+    // the first place. This replaces a deleted test that asserted the
+    // opposite (a removed name surfacing even with no table).
+    //
+    // Two SEPARATE entries — one naming only the removed name, one naming
+    // only an unrelated ordinary name — so a mutant that reinstates the old
+    // `oracle === null && removed.size === 0` guard cannot hide behind
+    // `refineIncompatible`'s own "an unknown name drops the whole entry"
+    // rule: such a mutant wrongly keeps the removed-only entry's verdict (the
+    // removed override still fires before ever asking a null oracle), in an
+    // entry the unrelated name never shares.
     const refined = await refineAgainstModuleTable(
-      { 'npm:a': ['dock-base'] },
+      { 'npm:removed-only': ['dock-base'], 'npm:ordinary-only': ['@x/ordinary'] },
       undefined,
       new Set(['dock-base']),
     )
-    expect(refined).toEqual({ 'npm:a': ['dock-base'] })
+    expect(refined).toEqual({})
   })
 
   it('still judges every other name in the same entry normally', async () => {

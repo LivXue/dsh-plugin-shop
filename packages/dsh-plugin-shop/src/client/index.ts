@@ -128,15 +128,26 @@ export async function apply(ctx: ClientContext): Promise<void> {
   // a client-only key like `reverdict` must never reach the wire, even by a
   // future field added to `args` and forwarded by accident.
   const hostCatalog = async (args?: { refresh?: boolean; reverdict?: boolean }): Promise<ShopCatalogResult> => {
-    if (args?.reverdict === true) {
-      const judged = unwrap(await ns.catalog(undefined))
-      warmCatalog = { at: Date.now(), result: Promise.resolve(judged) }
-      return judged
-    }
+    // `refresh` is checked FIRST (Minor 11): it also bypasses the stash and
+    // restashes, exactly like reverdict, so checking it first costs the
+    // refresh branch nothing — but checking reverdict first would have let a
+    // caller-supplied `{ refresh: true, reverdict: true }` fall into the
+    // reverdict branch and silently drop the network refresh the caller
+    // asked for.
     if (args?.refresh === true) {
       const refreshed = unwrap(await ns.catalog({ refresh: true }))
       warmCatalog = { at: Date.now(), result: Promise.resolve(refreshed) }
       return refreshed
+    }
+    if (args?.reverdict === true) {
+      // Dropped before asking, not after (Minor 8): a failed reverdict must
+      // not leave the PRE-mutation stash standing for the next plain open to
+      // replay — the mutation already landed, so no stash is safer than a
+      // stale one.
+      warmCatalog = null
+      const judged = unwrap(await ns.catalog(undefined))
+      warmCatalog = { at: Date.now(), result: Promise.resolve(judged) }
+      return judged
     }
     const warm = warmCatalog
     if (warm !== null && Date.now() - warm.at < WARM_TTL_MS) {
@@ -178,16 +189,26 @@ export async function apply(ctx: ClientContext): Promise<void> {
 
   const injected = (): ShopTabInjected => ({
     catalog: async args => handOver(await hostCatalog(args)),
-    install: async args => unwrap(await ns.installStart(args)),
+    // Each mutator drops the stash the MOMENT it starts, not when it settles
+    // (Minor 8): a mutation always changes what a reverdict would say, and if
+    // this tab unmounts before the mutation settles, no reverdict is ever
+    // requested (ShopTab's settle callbacks live in state that unmounted with
+    // it) — so the next plain open, on this tab or a fresh one, must ask the
+    // host rather than replay a stash from before the mutation. Residual: a
+    // re-mount DURING the mutation runs its own boot-time warm fetch (above)
+    // and can refill the stash before this call's own mutation settles, in
+    // which case that later boot's fetch — not this one — decides what the
+    // next plain open serves.
+    install: async args => { warmCatalog = null; return unwrap(await ns.installStart(args)) },
     installStatus: async args => unwrap(await ns.installStatus(args)),
     setEnabled: async args => unwrap(await ns.setEnabled(args)),
     installed: async () => unwrap(await ns.installed()),
     installedSpecs: async () => unwrap(await ns.installedSpecs()),
-    uninstall: async args => unwrap(await ns.uninstallStart(args)),
+    uninstall: async args => { warmCatalog = null; return unwrap(await ns.uninstallStart(args)) },
     noteUninstalled: name => { pageRemoved.add(name) },
     restart: async () => unwrap(await ns.restart()),
     version: async () => unwrap(await ns.version()),
-    updateStart: async args => unwrap(await ns.updateStart(args)),
+    updateStart: async args => { warmCatalog = null; return unwrap(await ns.updateStart(args)) },
   })
 
   ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register({

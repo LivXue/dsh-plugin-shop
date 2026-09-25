@@ -24,6 +24,8 @@ afterEach(cleanup)
  * installStart, never install, which the namespace service owns). */
 interface ShopStub {
   installStart?: (args: InstallArgs) => Promise<unknown>
+  uninstallStart?: (args: { name: string }) => Promise<unknown>
+  updateStart?: (args: { version: string }) => Promise<unknown>
   catalog?: () => Promise<unknown>
 }
 
@@ -61,10 +63,10 @@ async function boot(shop: ShopStub = {}, modules?: unknown) {
     installStatus: vi.fn(),
     setEnabled: vi.fn(),
     installed: vi.fn(),
-    uninstallStart: vi.fn(),
+    uninstallStart: shop.uninstallStart ?? vi.fn(),
     restart: vi.fn(),
     version: vi.fn(),
-    updateStart: vi.fn(),
+    updateStart: shop.updateStart ?? vi.fn(),
   })
   await apply(ctx)
   const entry = ctx.slots.entries('settings.plugins.tab').find(e => e.options.id === 'shop')
@@ -215,6 +217,89 @@ describe('shop client apply warm', () => {
     expect(await injected.catalog(undefined)).toEqual(second)
     expect(catalog).toHaveBeenCalledTimes(2)
   })
+
+  it('checks refresh before reverdict, so a combined { refresh: true, reverdict: true } still reaches the network', async () => {
+    // Minor 11: reverdict alone calls `ns.catalog(undefined)` (the test
+    // above); if refresh were checked second, this combined call would take
+    // the reverdict branch and never ask for `{ refresh: true }` at all.
+    const second = { ...fakeCatalog, builtAt: '2026-08-28T00:00:00Z' }
+    const catalog = vi.fn()
+      .mockResolvedValueOnce({ ok: true, value: fakeCatalog })
+      .mockResolvedValue({ ok: true, value: second })
+    const { injected } = await boot({ catalog })
+    expect(catalog).toHaveBeenCalledTimes(1) // the boot-time warm
+    expect(await injected.catalog({ refresh: true, reverdict: true })).toEqual(second)
+    expect(catalog).toHaveBeenCalledTimes(2)
+    expect(catalog.mock.calls[1]).toEqual([{ refresh: true }])
+  })
+
+  it('drops the stash before a reverdict asks, so a failed reverdict never leaves a pre-mutation stash for the next plain open to replay', async () => {
+    const third = { ...fakeCatalog, builtAt: '2026-08-29T00:00:00Z' }
+    const catalog = vi.fn()
+      .mockResolvedValueOnce({ ok: true, value: fakeCatalog }) // boot-time warm
+      .mockResolvedValueOnce({ ok: false, error: { code: 'WIRE', message: 'down' } }) // the reverdict itself fails
+      .mockResolvedValue({ ok: true, value: third }) // the next plain open
+    const { injected } = await boot({ catalog })
+    expect(catalog).toHaveBeenCalledTimes(1) // the boot-time warm
+    await expect(injected.catalog({ reverdict: true })).rejects.toThrow()
+    expect(catalog).toHaveBeenCalledTimes(2)
+    // If the pre-mutation stash had survived, this open would replay
+    // `fakeCatalog` with no further wire call; instead it must ask again.
+    expect(await injected.catalog(undefined)).toEqual(third)
+    expect(catalog).toHaveBeenCalledTimes(3)
+  })
+
+  it('drops the stash the moment install() starts, before installStart settles', async () => {
+    // Minor 8: each mutator drops the stash SYNCHRONOUSLY at the start of the
+    // call, not in a .then() after the host call resolves — because a tab can
+    // unmount before installStart settles, and then no reverdict is ever
+    // requested. A plain open concurrent with the still-pending install must
+    // not replay the pre-mutation stash.
+    let resolveInstall!: (value: unknown) => void
+    const installStart = vi.fn(() => new Promise(resolve => { resolveInstall = resolve }))
+    const catalog = vi.fn().mockResolvedValue({ ok: true, value: fakeCatalog })
+    const { injected } = await boot({ catalog, installStart })
+    expect(catalog).toHaveBeenCalledTimes(1) // the boot-time warm, still fresh
+
+    const args: InstallArgs = { name: 'dsh-hello-plugin', version: '1.0.0', acknowledged: true }
+    const pending = injected.install(args)
+    // installStart has not settled yet — resolveInstall is still unused.
+    await injected.catalog(undefined)
+    expect(catalog).toHaveBeenCalledTimes(2) // re-asked; the stash was dropped already
+
+    resolveInstall({ ok: true, value: { ok: true, installId: 'i1' } })
+    await pending
+  })
+
+  it('drops the stash the moment uninstall() starts, before uninstallStart settles', async () => {
+    let resolveUninstall!: (value: unknown) => void
+    const uninstallStart = vi.fn(() => new Promise(resolve => { resolveUninstall = resolve }))
+    const catalog = vi.fn().mockResolvedValue({ ok: true, value: fakeCatalog })
+    const { injected } = await boot({ catalog, uninstallStart })
+    expect(catalog).toHaveBeenCalledTimes(1)
+
+    const pending = injected.uninstall({ name: 'dsh-hello-plugin' })
+    await injected.catalog(undefined)
+    expect(catalog).toHaveBeenCalledTimes(2)
+
+    resolveUninstall({ ok: true, value: { ok: true } })
+    await pending
+  })
+
+  it('drops the stash the moment updateStart() starts, before updateStart settles', async () => {
+    let resolveUpdate!: (value: unknown) => void
+    const updateStart = vi.fn(() => new Promise(resolve => { resolveUpdate = resolve }))
+    const catalog = vi.fn().mockResolvedValue({ ok: true, value: fakeCatalog })
+    const { injected } = await boot({ catalog, updateStart })
+    expect(catalog).toHaveBeenCalledTimes(1)
+
+    const pending = injected.updateStart({ version: '1.1.0' })
+    await injected.catalog(undefined)
+    expect(catalog).toHaveBeenCalledTimes(2)
+
+    resolveUpdate({ ok: true, value: { ok: true, installId: 'u1' } })
+    await pending
+  })
 })
 
 describe('shop client apply: the tab is handed the module table verdict', () => {
@@ -346,12 +431,44 @@ describe('shop client apply: the page-removed set and a bare incompatible result
     expect(catalog).toHaveBeenCalledTimes(1)
   })
 
+  it('resets the page-removed set on a fresh apply(), so a name noted uninstalled before does not carry over', async () => {
+    // Important 1(c): `pageRemoved` lives at module scope (index.ts), which
+    // is what lets it survive the SAME tab closing and reopening — but that
+    // scope is also wider than one page, and index.ts's own comment on the
+    // reset (beside `warmCatalog`, at the top of apply()) says a re-applied
+    // bundle is a new page that has uninstalled nothing yet. Two independent
+    // boot() calls are two independent apply()s sharing the one module
+    // instance, so the only way the second could still hide dock-base is a
+    // missing reset leaking the first call's Set into it.
+    const table = {
+      version: 'client' as const,
+      manifest: {
+        rev: 'r1',
+        modules: [{ id: 'dock-base', url: '/plugin/dock-base?rev=r1', initialUrl: '/batch?rev=r1', rev: 'r1', inject: [], external: [] }],
+        plugins: [{ id: 'dock-base', inject: [], immediately: false }],
+      },
+      loadCache: new Map<string, unknown>(),
+      import: vi.fn(async () => ({})),
+    }
+    const HOST = hostSaid({ 'npm:needs-dock-base': ['dock-base'] })
+    const catalog = vi.fn().mockResolvedValue({ ok: true, value: HOST })
+
+    const first = await boot({ catalog }, table)
+    first.injected.noteUninstalled?.('dock-base')
+    expect((await first.injected.catalog(undefined)).incompatible).toEqual({ 'npm:needs-dock-base': ['dock-base'] })
+
+    // A second, independent apply() over the SAME table and the SAME catalog
+    // stub — but a fresh Context, and no noteUninstalled call on this face.
+    const second = await boot({ catalog }, table)
+    expect((await second.injected.catalog(undefined)).incompatible).toEqual({})
+  })
+
   it('hands over without rejecting when the host result carries no incompatible field at all', async () => {
     // A host built at 0.5.4 or earlier: every other field is present, but
     // this one predates it. A usable table is provided too, so the
-    // refinement cannot take its own no-table shortcut (oracle null and
-    // nothing removed) and must actually reach `Object.entries(incompatible)`
-    // — the unguarded read that `handOver`'s `?? {}` has to protect.
+    // refinement cannot take its own no-table shortcut (oracle null) and must
+    // actually reach `Object.entries(incompatible)` — the unguarded read that
+    // `handOver`'s `?? {}` has to protect.
     const table = {
       version: 'client' as const,
       manifest: { rev: 'r1', modules: [], plugins: [] },
