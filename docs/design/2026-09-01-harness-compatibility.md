@@ -449,8 +449,8 @@ through the same anchor §3 already uses —
 `createRequire(profileBaseUrl).resolve('@deepseek-ai/dsh/package.json')`,
 measured to yield `0.1.5-rc.1` on the reporting machine — so this check
 and the peer check cannot drift onto different notions of "the running
-installation". (As built, the version is read through
-`nodeVersionResolver`'s direct lookup at that anchor — §9.5, §9.9.)
+installation". (As built, the version is read from the running dsh
+itself, not at that anchor, and on purpose: see section 9.9.)
 
 **Warn, never block**, per §4, and **no verdict when the fact is
 missing**, per §3: no declaration, an unparseable range, an unresolvable
@@ -590,11 +590,12 @@ loader asks" named a question the loader does not ask.
    publishes, as before, the names it cannot find from the profile
    (`ShopCatalogResult.incompatible`).
 2. **The client then removes every name its live module table serves**,
-   through the public `ClientModuleLoader` contract only:
-   `ctx.get('modules')`, reading `manifest.modules`, `loadCache`, and
-   `import()`, whose seed branch answers without side effects. Never
-   through the TypeScript-private `seed`, `factories` or `graphRows`:
-   private members promise nothing across a harness release.
+   save a name this page has uninstalled (below), through the public
+   `ClientModuleLoader` contract only: `ctx.get('modules')`, reading
+   `manifest.modules`, `loadCache`, and `import()`, whose seed branch
+   answers without side effects. Never through the TypeScript-private
+   `seed`, `factories` or `graphRows`: private members promise nothing
+   across a harness release.
 
 The table is read in one direction: it can clear a name the host could
 not find, never add one. §1's third bullet rejects a module table as an
@@ -603,13 +604,59 @@ is to reading the table as an accusation, and this reads it only as an
 acquittal. A module not yet live leaves the host's verdict standing; it
 cannot raise one.
 
+**The table can outlive an uninstall, so the page remembers its own.**
+An acquittal is only as current as the table that gives it. On
+0.1.5-rc.3 the table is a boot-time snapshot: the module system's
+constructor is the only writer of `manifest.modules`, and only
+`invalidate` prunes `loadCache`, so a restart-free uninstall leaves the
+removed package's row and cache record where they were. On 0.1.7-rc.2
+(`next`), `updateManifest` replaces the manifest once the uninstall
+reconciles; until then the old row stands, and after it `prune` keeps
+the removed package in the table's private graph rows and in
+`loadCache` while any retained module still references it. A kept row
+that never materialized is then reached by the `import()` probe, which
+fetches and runs that plugin's client bundle: the side effect the probe
+exists never to cause. So the client keeps the set of package names
+this page has uninstalled since it loaded, and the refinement neither
+clears a name in that set nor asks the table about one: for those
+names the host's verdict stands. The shop cannot uninstall what the
+harness itself serves (seed words, the harness's own client packages),
+so none of those enters the set, and an install needs no counterpart,
+because a reinstalled package resolves on the host again and leaves the
+host's list. The set survives the tab closing and reopening, and a
+re-applied bundle, which is a new page, starts it empty. The limit,
+stated: an uninstall made from another tab, another window or the CLI
+is not in the set and stays unknown to this page until it reloads, and
+on 0.1.7-rc.2 a kept row for such a package can still reach `import()`.
+
+**Verdicts are asked for again after an install or an uninstall.** When
+either settles `done`, and only then, the tab asks the host again with a
+reverdict: it skips the page's stash, asks with the plain call a
+stash-expired open makes (the host's own snapshot and freshness window,
+never a network refresh), and its answer becomes the new stash. The
+host forms both verdicts on every call (section 9.6), so that answer
+describes the installation as the mutation left it. `reverdict` is the
+client's own instruction and never reaches the wire, whose `catalog`
+takes `{ refresh?: boolean }` alone. The shelf stays on screen while it
+runs, as it does for a refresh. A Refresh already pending takes
+precedence over it, and a reverdict never hides a failed Refresh; a
+failed reverdict leaves the screen as it was with no note of its own,
+since the reader asked for nothing. It does not re-run the shop's own
+version check, which asks npm and stays tied to an explicit Refresh or
+Retry. The stash is dropped when a mutation starts and again when a
+reverdict starts, so a plain open in between asks the host rather than
+replaying a verdict formed before the change.
+
 **An unusable table yields no peer verdicts at all** — never a fallback
 to the host's, because measured, the host's answer alone is
 majority-false on this line. Even with optional peers out of the record
 (§9.2), 610 of the 1,112 entries it would still badge are accused of
 seed words and nothing else: 991 and 1,493, each less the 381 that §9.2
 clears. Silence is the documented degradation — §3's rule, applied to
-the second stage.
+the second stage. It holds on a page that has uninstalled packages too:
+a table that is not there cannot vouch for a removed name, so the false
+clear the page-removed set exists to prevent does not arise, and the set
+carves no exception out of the silence.
 
 **Why not a hard-coded seed list.** A copy is exactly the drift that
 caused this. `packages/dsh-plugin-shop/tsdown.client.config.ts`'s
@@ -631,6 +678,20 @@ table does not serve is still not flagged — `zod`, for one, resolves to
 4.6.5 through the link farm and is not seeded. How often that matters is
 unmeasured, and the gap is structural: a peer list does not say which
 half of a plugin needs a peer.
+
+**Amended 2026-09-25, on review.** The page-removed set and the
+reverdict are new. Before them the refinement trusted every row and
+cache record the table held, so a restart-free uninstall erased the
+host's correct "missing X". Reproduced against the real client: after
+uninstalling `dock-base`, which has a client half and which six catalog
+entries declare as a peer, skipping the reload and pressing Refresh, the
+host listed it missing, the table cleared it, and no badge came back
+until the page reloaded. And a settled mutation left the shelf's
+verdicts as they were: the page replayed its stash for up to
+`WARM_TTL_MS` and the tab never asked again, so installing a missing
+peer from the shop, which hot-mounts it and offers no reload, left
+every entry declaring that peer badged "missing" until a Refresh, a
+reload or the stash expired.
 
 ### 9.2 Optional peers were recorded as requirements
 
@@ -696,8 +757,23 @@ The resolver no longer goes through `require.resolve`. It walks the
 `node_modules` directories upward from the profile anchor, exactly as
 Node's ESM resolver matches a bare package name:
 
-- **present** means the package directory exists — following symlinks,
-  so the 29 dangling links in this machine's link farm read absent;
+- **present** means the walk's match holds a manifest. The walk visits
+  each ancestor's `node_modules/<name>` in turn, and the first that stats
+  as a directory, following symlinks, is the match; a candidate that is
+  anything else (absent, a file, a dangling link, or a path whose stat
+  fails for any reason, `EACCES` and `ELOOP` included) is not here, and
+  the walk moves on to the next ancestor. It stops at the match whatever
+  the match holds, and the package is present only when that directory
+  holds a `package.json` that stats as a file. A match with no
+  manifest reads absent and shadows every copy above it, because the
+  loader fails the import there rather than falling through. This is
+  Node's own rule, taken from Node 26.6.0's reader (`getPackageJSONURL`)
+  and measured against it: a looping link in front of a real copy loads
+  the copy, and an empty directory in front of one fails with
+  `ERR_MODULE_NOT_FOUND`. So the 29 dangling links in this machine's
+  link farm read absent. One shape is knowingly given up: a directory
+  holding `index.js` and no manifest imports, and reads absent here; no
+  package manager installs it;
 - **the version** is read from that directory's own `package.json`;
 - **no `exports` gating and no process cache** — the first closes §9.3,
   the second §9.4;
@@ -709,14 +785,33 @@ Node's ESM resolver matches a bare package name:
   name such as `../x` resolved relative to the profile. A name that fails
   validation now yields no verdict for the entry that declares it.
 
-The presence check (`nodeResolver`) and the version reads
-(`nodeVersionResolver`: §7's self-check and §9.9's running version) both
-answer from this lookup. §3's degradation rule stands, and its triggers
-are now a profile anchor that cannot be discovered, a peer name that
-fails validation, and a filesystem error other than absence — only a
-walk that looked everywhere and found nothing may say "absent". At the
-second stage they are a module table that cannot be read, and a name the
-table cannot answer for, which silences the entry declaring it (§9.1).
+The presence check (`nodeResolver`), section 7's version self-check
+(`nodeVersionResolver`) and the lookup of the running dsh's own
+app-boot (section 9.9) all answer from this one lookup
+(`packageDirectory`). Section 3's degradation rule stands, and at this
+stage its triggers are now two: a profile directory that cannot be
+discovered, and a peer name that fails validation. No state of the
+filesystem makes the lookup throw: it answers present or absent, and,
+but for the `index.js` shape above, says absent exactly where the
+loader would fail. At the second stage the triggers are a module table
+that cannot be read, and a name the table cannot answer for, which
+silences the entry declaring it (section 9.1).
+
+**Amended 2026-09-25, on review.** The first cut walked on only past
+`ENOENT` and `ENOTDIR` and threw on any other stat failure, reasoning
+that such a candidate might hold the package, and `incompatibilityMap`
+turned the throw into no verdict. The loader never asks what a candidate
+it cannot stat holds; it walks on. So a missing peer, whose walk runs
+all the way to the root, met any unsearchable or looping `node_modules`
+on the way (a `~/node_modules` made by `sudo npm i` under umask 027,
+say), and every missing-peer badge in the catalog went silent while
+those plugins still failed to import: that was the trigger this section
+listed as "a filesystem error other than absence". The first cut also
+counted any matched directory as present, so an uninstall that stopped
+part-way (on Windows a locked file is enough) left
+`node_modules/<name>/` holding nothing but a nested `node_modules/`, and
+the badge naming that peer disappeared while the plugin failed with
+`ERR_MODULE_NOT_FOUND`.
 
 ### 9.6 The per-snapshot cache never hit, and is deleted
 
@@ -732,6 +827,8 @@ worse than none: it would go on saying "missing X" after the user
 installs X, for as long as that snapshot is served. The verdict is
 recomputed on every `catalog()` call instead, which costs ~17 ms warm
 and 182 ms cold for 334 distinct peer names.
+The one input kept across calls is which harness is running, read once
+per gateway, because a running process cannot change it (section 9.9).
 
 ### 9.7 The e2e asserted a false positive
 
@@ -755,7 +852,7 @@ specified. Records revived from `registry/repo-state.json` are a bare
 cast, so a record written before this change lacks the field at runtime
 whatever its type claims; the type now says what is true.
 
-**A re-fetch marker.** "Fills in over roughly eight builds" assumed the
+**A re-read marker.** "Fills in over roughly eight builds" assumed the
 backfill would re-read old records. It does not: `pushedAt` gates the
 re-fetch, and beyond the repositories that changed, the GitHub half
 re-reads only those a marker queues. The `installSize` backfill the
@@ -763,11 +860,109 @@ estimate leaned on had nothing left to queue — measured against the
 committed `repo-state.json` on 2026-09-24, 0 of its 10,864 listable
 candidates still lacked `sizeProbed` — so without a marker a cached
 record would gain `peers` only when its repository next pushed, and for a
-dormant one, never. An absent `peers` now queues its repository once for
-a re-fetch, the same device as `sizeProbed` and `assetVerified`. Against
-that same file it queues 10,629 repositories: at the 2,000-repository
-backfill budget, at least six daily builds, and more on a day whose
-changed repositories — always served first — take part of the budget.
+dormant one, never. The marker is a rule version. Each candidate carries
+`declarationsRule`, the `DECLARATIONS_RULE` (`repo-state.ts`) under
+which its `peers` and `compatibility` were written, and one writer
+writes the two fields and the stamp together, on every projection. A
+listable candidate whose stamp is not the current rule, absent
+included, queues its repository for a re-read. The rule is bumped
+whenever `peerNamesOf` or `compatibilityOf` changes what it returns, or
+where a candidate's declarations are read from changes, and every
+recorded listable candidate is then re-read once; nothing but that
+discipline enforces the bump, and both readers' doc comments say so.
+The stamp compares for equality, so one from a later rule (a build that
+was rolled back) is re-read as well.
+
+**The re-read asks for the declarations and nothing else.** A
+repository whose only need is the stamp goes to a queue of its own,
+served after every full fetch, in a run the systematic-failure bound let
+through, and never competing with a changed repository. For each
+listable candidate with a stale stamp it reads what the entry installs:
+the `package.json` at the recorded commit and subdirectory, one raw
+request and no REST call, never the branch, which may have moved; or,
+for a release-rescued root, the recorded release asset, believed only
+once it hashes to the recorded sha256. A success writes the two fields
+and the stamp, and nothing else. A failure (a request that throws, a
+status that is not ok, a manifest that is unreadable or names another
+package, a pinned archive that does not open as this package) leaves
+the candidate exactly as recorded and unstamped, so it queues again
+next run; it is never a failure record, never a published row, and
+never counts toward the systematic-failure bound. A recorded asset that
+answers 404, answers past the tarball cap, or no longer hashes to its
+pin is instead a definite answer that the verified bytes are gone: the
+rescue is unverified and left unstamped, and takes the full re-probe
+next run, where GitHub's own releases answer decides what stands. A
+failed re-read costs a slower backfill and nothing else.
+
+**The phase is bounded three ways**, each by a constant in
+`github-client.ts` whose comment owns its figures.
+`DECLARATIONS_REREAD_BUDGET_DEFAULT` caps how many repositories one run
+re-reads; its comment measures the queue the stamp opened and how many
+runs it takes to drain. `DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT`
+caps how long the phase may keep starting reads, and is checked before
+every read; its comment holds the measured build-job table that sizes it
+against the job's `timeout-minutes`. And a breaker stops the phase after
+`DECLARATIONS_REREAD_MAX_CONSECUTIVE_FAILURES` host failures in a row.
+It counts only reads the host failed, a request that threw or was
+answered 429 or 5xx. Any other answer resets it, and a record refused
+before any request neither counts nor resets it: a record that fails the
+same way every run gathers at the head of every later run's queue, and
+a breaker that counted it would trip there for good. What the phase
+does not start is deferred, unchanged. It describes at most
+`DECLARATIONS_REREAD_FAILURE_LINES` failed re-reads a run on stderr,
+and past that one line with the total, and the build note carries the
+counts and, when the phase stopped early, why.
+
+**Every re-read takes the first answer it gets.** The asset download
+makes one attempt, bounded by `TARBALL_REQUEST_TIMEOUT_MS`, and the raw
+manifest read retries only a request that throws. Neither waits out a
+429 or a 5xx: a failed re-read is asked again next run anyway, so a wait
+buys it nothing, and a read with no status ladder ends within its own
+deadlines, which is what bounds how far a read already in flight can
+overrun the time budget. The full fetch's release probe keeps its
+429/5xx ladder, because it decides whether a changed repository's
+rescue is listed.
+
+**Both pins are checked before any request.** A recorded commit that is
+not a 40-character sha is refused, since it would read some other ref
+than the one the entry installs. A recorded release-asset URL is
+requested only when it parses as a github.com release download for the
+repository it is recorded under: `https`, no credentials and no port,
+the host `github.com` (a trailing dot normalized away), and a path
+`/<owner>/<repo>/releases/download/<asset>` naming that repository,
+owner and name compared case-insensitively. Anything else is refused
+and counted as a failed re-read. No release-asset request carries the
+GitHub token either, the full probe's download included: only requests
+to api.github.com and raw.githubusercontent.com are sent it. The reason
+is that `repo-state.json` is not only this build's output. A pull
+request can edit it, and the build runs on pull requests with the job's
+token, so a recorded URL naming another host would have sent that token
+there, in plaintext over `http://`. A public release asset needs none.
+
+**A transport failure is never recorded as a fact about a repository.**
+Every transport failure in the full fetch path throws, the release
+probe's included, and lands as a `fetch-failed` row: nothing is
+persisted, the recorded entry stands, and the repository is fetched
+again next run. The probe answers "no release" only for a definite
+answer: a 404 from `releases/latest`, a release that names no tarball
+asset, an asset past `MAX_TARBALL_BYTES`, or a 404 for the asset
+itself. A 200 that is not GitHub's release object throws too, whether it
+is not JSON or lacks a string `tag_name` and an `assets` array; a
+proxy's error page is the likely source. A root or subpackage manifest
+reads as unreadable, and so as `no-manifest`, only when its bytes
+arrived and do not parse, and a subpackage-discovery tree that fails
+mid-read throws rather than reading as "no subpackages". The cost is
+stated rather than hidden: an environment that blocks the release-asset
+host now fails every repository that reaches the probe, and enough of
+them trip the systematic-failure bound and stop the build, where it
+used to delist every rescued entry and go green.
+
+**A rescued entry declares what its tarball declares.** A
+release-rescued root installs the release tarball, not the default
+branch it was projected from, so its `peers` and `compatibility` are
+read from the `package.json` inside the verified tarball: the rule the
+rescue already applied to its name and `installSize`.
+
 §8.1's safety argument holds for the backfill itself: an entry with no
 `peers` carries no verdict, so the interim under-warns and never
 mis-warns.
@@ -783,7 +978,7 @@ entries, about 1,024 of 6,757, and about half of those, some 501, for seed
 words alone; the refining client badges about 523. Publishing github peers
 before that client is `latest` would therefore raise an installed shop's
 false alarms rather than lower them. So the harvest, the `repo-state.json`
-record and the re-fetch marker run from this change, while emission waits
+record and the declarations re-read run from this change, while emission waits
 on `SHOP_EMIT_REPO_PEERS`, which flips in the release commit that first
 promotes a build carrying `client/module-table.ts` to `latest` — the
 precedent `SHOP_HARVEST_REPOS`, `SHOP_HARVEST_SUBPACKAGES` and
@@ -798,20 +993,67 @@ installations exist cannot be measured — §2's amendment records why npm's
 download counts are no census. The shop's own update prompt is what reaches
 them.
 
+**The classifier gates the candidates the build lists.** `classify.ts`
+gates the same github candidates again, read back from
+`repo-state.json`, which keeps the peers it recorded whatever the flag
+says. So both steps decide the flag through one helper
+(`repoPeersEmitted`) and withhold through `withholdRepoPeers` before any
+gate pass, and the per-entry payload budget (`ENTRY_PAYLOAD_MAX_BYTES`)
+measures the same candidate in both. The flag is declared once, on the
+`build` job, so the classify step, which runs before the build step,
+reads the value the build step reads, and `workflow.test.ts` pins that
+no step redeclares it.
+
 **Optional peers are excluded on this channel too**, through the shared
 `peerNamesOf` (§9.2).
 
-**`compatibility` rides the same marker**, because the same projection
-writes both fields: a record that carries `peers` was written by a
-projection that also read `dsh.compatibility`.
+**`compatibility` rides the same stamp**, because one writer writes both
+fields and the stamp together: a candidate stamped under the current
+rule had its `dsh.compatibility` read under that rule too, and an
+absent `compatibility` beside a stamp means "declares none".
+
+**Amended 2026-09-25, on review.** Four rules above changed:
+
+- The marker was the bare presence of `peers`, and it sent every record
+  it queued back through the full fetch (a head commit, a recursive
+  sizing tree, subpackage discovery and, for a rescued root, the release
+  probe and its archive) to learn what one `package.json` says. Presence
+  also knew "read or not" and never "read under which rule": a change to
+  `peerNamesOf` would have reached npm entries on the next build and no
+  dormant repository ever, a carried `['react', 'left-pad']` staying as
+  it was while npm's reader returned `['react']`.
+- Down that path, transient failures became durable facts. A recorded
+  rescue whose `releases/latest` answered 403 once, or whose asset
+  download dropped, came back as its `requires-build` root, which the
+  gate rejects as "Declares a prepare/prepack build script ... Publish
+  to npm" while the verified tarball still stood. A reset while reading
+  a root `package.json` was persisted as `no-manifest`, "package.json
+  was unreadable.", though that code must never mean a request that
+  failed. A failed monorepo tree read, or a reset subpackage manifest
+  read, dropped its subpackage entries. None of these moved `pushedAt`,
+  so nothing re-queued the repository until it pushed again.
+- A rescued root carried its default branch's declarations, which can
+  describe a package the entry does not install: `wyzh0117/dsh-notebook`
+  requires nothing at HEAD, while the tarball it installs requires
+  `@deepseek-ai/dsh-client-runtime`. And `compatibility`, which is not
+  withheld, already reached readers: a `"dsh": ">=0.1.7-0"` declared
+  only at HEAD made an older tarball read "Incompatible" on 0.1.5-rc.3.
+- The classifier gated its candidates with peers attached while the
+  build stripped them first, so a repository whose peers alone crossed
+  the payload budget listed in the build and dropped out of the
+  classifier's live names. That pruned its `categories.yml` row, and the
+  entry read `other` every day until the flag flipped. The flag was set
+  on the build step alone, which the classify step never saw.
 
 ### 9.9 §8.2 as built: `dsh.compatibility`
 
-**Harvest.** Read on both channels and bounded — the range at 256
-characters, each profile name at 64, at most 16 profiles, trimmed
-silently with no build-report row, like the peers trim — then carried
-through gate, tier and emit. It rides every `schemaVersion`, and the
-host's zod accepts it.
+**Harvest.** Read on both channels and bounded (the range at
+`COMPATIBILITY_RANGE_MAX_LENGTH`, each profile name at
+`PROFILE_NAME_MAX_LENGTH`, at most `COMPATIBILITY_PROFILES_MAX_COUNT`
+profiles, all in `npm-client.ts`), trimmed silently with no build-report
+row, like the peers trim, then carried through gate, tier and emit. It
+rides every `schemaVersion`, and the host's zod accepts it. A
+release-rescued entry's declaration is its tarball's (section 9.8).
 
 **Verdict.** `compatibilityMap`, in
 `packages/dsh-plugin-shop/src/host/compatibility.ts`, published as
@@ -820,35 +1062,107 @@ host's zod accepts it.
 half is present only when the author declared it AND it is unmet here,
 and carries both sides. Unknown on either side — a running version that
 cannot be read, a range semver cannot parse — means no verdict for that
-half. Ranges are checked with `includePrerelease: true`, for §7's
-reason.
+half. The map runs under the same degrade-to-empty guard as the peer
+map: a declaration nobody can judge is never an accusation, and one
+entry must not cost every reader the catalog.
 
-**The running side.** The version is read through the same
-`nodeVersionResolver`, at the same profile anchor, as the peer check —
-what §8.2 asked of its `createRequire` read, kept through the change of
-resolver (§9.5).
+**Ranges are checked with `includePrerelease: true`, and that is all
+the option does.** It is load-bearing: the harness ships nothing but
+prereleases, and strict semver refuses a prerelease against any range
+whose comparators carry none (`0.1.5-rc.3` fails `>=0.1.0`, and even
+`*`), so every author who wrote a plain range would be told they exclude
+a harness their range includes. It does not read a range the way its
+author probably meant it: under it a prerelease compares like any other
+version, and sorts below its own release. Measured with semver 7.8.5,
+and pinned in `compatibility.test.ts`:
 
-**The profile half is judged by what the running profile IS, not by
-its name.** The first cut compared the declared list with the profile
-directory's name, and a profile's name is the reader's choice: `dsh
---profile rescue --from-default-profile web` builds a profile called
-`rescue` from the web bundles, and dsh records nothing about which
-template it came from — while `headless` can carry `dsh-web-app` too. So
-an author's `profiles: ["web"]`, the one real declaration
-(`@xmanrui/dsh-im`), would have badged the plugin on every web-app
-profile not literally named `web`, and the filter would have hidden it:
-the false-alarm class this amendment exists to remove. A declared name is
-therefore read as one of the harness's own templates — the
-`PROFILE_TEMPLATES` that `@deepseek-ai/dsh-app-boot` exports (on
-0.1.5-rc.3: `acp`, `web`, `headless`, `sdk`, `sdk-minimal`), read at
-runtime and never copied — and it is met when every bundle of that
-template is in the running profile's `dsh.profile.bundles`. The half is
-met if any declared template is; a declared name that is no template
-(`tui`, `desktop`) cannot be judged, so a list with such a name and no
-met template gives no verdict; and the profile half is unmet only when
-every declared name is a template this profile does not compose. An
-unreadable bundle list or template table is no verdict at all. The
-verdict still names the running profile by its name, for the copy.
+- a floor written without `-0` refuses its own prereleases: `>=0.1.5`,
+  `^0.1.5` and `0.1.5` all refuse `0.1.5-rc.3`, while `>=0.1.5-0`
+  admits every `0.1.5-rc.N`;
+- an upper bound written without `-0` admits the next line's
+  prereleases: `<0.2.0` and `>=0.1.0 <0.2.0` both admit `0.2.0-rc.1`,
+  and only a bound that desugars to `<0.2.0-0` refuses it: `^0.1.0`,
+  `~0.1.0` and `0.1.x` do, as does `<0.2.0-0` written out.
+
+`^0.1.5-0` desugars to `>=0.1.5-0 <0.2.0-0`, so it does both. The
+comparison stays semver's own and is never rewritten here: a verdict
+that coerced prereleases would answer differently from semver, which is
+what an author checks a range against. `docs/schema.md` gives authors
+the spellings that say what they usually mean.
+
+**The running side is the dsh that runs.** It is identified from the
+script this process was started with (`restartScript`,
+`process.argv[1]` in production), resolved through symlinks. The
+package that owns it, the first directory at or above it holding a
+`package.json` file, must be `@deepseek-ai/dsh`, and that manifest's
+`version` is the running version. The template table is the
+`PROFILE_TEMPLATES` of that dsh's own `@deepseek-ai/dsh-app-boot`. It
+is found by section 9.5's lookup from the dsh package directory, never
+through `NODE_PATH` (which pnpm's bin shims export), and imported by
+file URL, which under the running dsh is the module it already loaded.
+Both are read once per gateway and kept, a read that found nothing
+included, because a running process cannot change which dsh it is
+(`harness.ts`). A process that dsh's CLI did not start, such as a test
+runner or another host embedding the shop, reads no harness, and both
+halves are silent; a table that cannot be read costs the profile half
+and keeps the version. This parts from section 8.2 on purpose.
+Section 8.2 read the version at the peer check's anchor so that the two
+checks could not describe different installations, but they ask
+different questions: a peer must be importable from the profile, while
+the version is that of whichever dsh is running, and the profile anchor
+answered the second wrongly.
+
+A limit, stated not fixed: under a packaged dsh executable
+(`process.pkg`, section 9.3), no version or template table can be read
+this way, and both halves degrade to silence. That is unmeasured: like
+section 9.3's case, it was not reproduced on a real packaged binary.
+
+**The profile half is met by the running profile's name, or by what it
+composes.** It is met when the running profile's name is one of the
+declared names, or when the running profile's `dsh.profile.bundles`
+hold every bundle of a declared template: one of the running harness's
+own `PROFILE_TEMPLATES` (on 0.1.5-rc.3: `acp`, `web`, `headless`,
+`sdk`, `sdk-minimal`), read at runtime and never copied. A declared
+name that is no template cannot be judged by bundles, so a list holding
+one is met by name or gives no verdict. The half is unmet only when the
+running name is not declared and every declared name is a template this
+profile does not compose. An unreadable bundle list or template table
+leaves the name to decide, and otherwise gives no verdict. The verdict
+names the running profile by its name, for the copy.
+
+Why both. For a name dsh does not ship, a profile's name is the
+reader's choice: `dsh --profile rescue --from-default-profile web`
+builds a profile called `rescue` from the web bundles, and dsh records
+nothing about which template it came from, while `headless` can carry
+`dsh-web-app` too. Judged by name alone, an author's
+`profiles: ["web"]`, the one real declaration (`@xmanrui/dsh-im`),
+would badge the plugin on every web-app profile not literally named
+`web`, and the filter would hide it: the false-alarm class this
+amendment exists to remove. So a name that does not match is judged by
+what the profile composes. Bundles alone fail the other way, because a
+profile keeps the bundle list it was created with: the first harness
+release that added a bundle to `web` would badge every
+`profiles: ["web"]` plugin on every existing `web` profile, with copy
+saying the plugin supports web and dsh was launched with web. A name
+dsh ships is not the reader's choice. On 0.1.5-rc.3 both paths that
+create a missing profile build one of a shipped name from its template
+(dsh-app-boot's `loadProfile`, and `dsh plugin`), and dsh refuses a
+shipped name as the target of `--from-default-profile`, so a profile
+carrying one was built from that template. For any other declared
+name, a matching name can only turn a verdict into silence, never raise
+one. The residual, kept knowingly: a custom-named profile is still
+judged by bundles alone, so a template that gained a bundle would badge
+the custom profiles built from it before; no published
+`@deepseek-ai/dsh-app-boot` had changed a template's bundle list as of
+2026-09-25.
+
+**The template table has no prototype, and is read by own keys only.**
+The names looked up in it are catalog input, and hostile. A table built
+on `{}` answered `constructor`, `__proto__`, `toString`,
+`hasOwnProperty` and `valueOf` from `Object.prototype`, each a
+legal-looking profile name, with a value that passed the
+missing-template guard and threw out of `compatibilityMap`. Such a name
+is now an unknown one: no template, so no verdict.
 
 **Rendering.** New blocker kinds, on the card, in the install
 acknowledgement and on the installed rows. The badge reads
@@ -857,6 +1171,32 @@ entries exactly as it does a missing-peer blocker — unless the name is
 taken, which decides the visible word (the authority spec's 2026-09-07
 amendment, as amended 2026-09-24) — and nothing blocks. The copy names
 what was declared and what is running, not merely that they differ.
+
+**Amended 2026-09-25, on review.**
+
+- The running version was read through `nodeVersionResolver` at the
+  profile anchor: what the profile can import, not what runs. A plugin
+  that depends on the dsh package gets its copy hoisted into
+  `<profile>/node_modules` (the listed `dsh-claude-tui@0.1.6` pulls
+  0.1.2-rc.1), and every verdict then said "running 0.1.2-rc.1" while
+  0.1.5-rc.3 ran, reproduced with real installs; a second install
+  sharing `DSH_HOME` re-points the link farm the same way. The templates
+  came from the shop's own import of app-boot, which resolves from the
+  shop's real path: under a `link:` install that is this repository's
+  devDependency, 0.1.1-rc.2 with two templates, while 0.1.5-rc.3 ran
+  with five.
+- The profile half was judged by bundles alone, so the template growth
+  described above would have badged every plugin declaring that
+  template on every profile built from it before the release.
+- One entry declaring `profiles: ["constructor"]` made every
+  `catalog()` call reject, for every user: the table answered from
+  `Object.prototype`, and nothing guarded the verdict map.
+- This section said ranges were checked with `includePrerelease` for
+  section 7's reason. That reason, that the option still refuses a
+  minor-line move, holds for section 7's caret range, which desugars to
+  `<0.2.0-0`, and not for an upper bound an author writes out. The rule
+  is unchanged; the claim was wrong, and `docs/schema.md` now gives
+  authors the spellings.
 
 ### 9.10 What does not change
 
