@@ -26,6 +26,7 @@ import { judgeMarkets, type MarketItem } from './market-judge.ts'
 import { selectMarketPending } from './market-select.ts'
 import { mergeMarketRows, serializeMarketRows } from './markets.ts'
 import { fetchCandidates, searchByKeywords, describePublisherAxis, describeShortfall, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall, type PublisherAxisReport } from './npm-client.ts'
+import { repoPeersEmitted, withholdRepoPeers } from './pipeline.ts'
 import { parsePublisherState } from './publisher-state.ts'
 import { parseRepoState } from './repo-state.ts'
 import type { Category, RepoCandidate } from './types.ts'
@@ -64,6 +65,12 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
   const model = process.env.LLM_MODEL ?? 'deepseek-v4-flash'
   const apiKey = process.env.LLM_API_KEY ?? ''
   const npmToken = process.env.NPM_TOKEN
+  // Read through the same helper build.ts reads with, so the two steps can
+  // never disagree about which repositories fit the payload budget (finding
+  // #5 of the PR #58 review). daily.yml declares the flag at the `build`
+  // JOB's level for exactly this reason — a step-level value here would let
+  // it drift from build:catalog's.
+  const emitRepoPeers = repoPeersEmitted(process.env.SHOP_EMIT_REPO_PEERS)
 
   // The daily harvest runs HERE, not in build.ts: the workflow passes
   // `--harvest-from dist/harvest.json` so the ecosystem is fetched once. That
@@ -137,20 +144,29 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
   const { candidates, rejections } = await fetchCandidates(names, fetch, npmToken, npmBackupRegistry)
 
   // The GitHub half, read from the committed harvest memory rather than
-  // re-harvested: `repo-state.json` records the very candidates `build.ts`
-  // composes the catalog from, so reading it costs no GitHub call, needs no
-  // token, and leaves `build.ts` the only writer of that state. The price is a
-  // day of lag for a brand-new repository — it is classified by the next run,
-  // which is the "unclassified, retried on the next build" state D4 defines.
-  // A missing file is the npm-only case; a malformed one throws, exactly as it
+  // re-harvested: `repo-state.json` costs no GitHub call, needs no token, and
+  // leaves `build.ts` the only writer of that state. The price is a day of
+  // lag for a brand-new repository — it is classified by the next run, which
+  // is the "unclassified, retried on the next build" state D4 defines. A
+  // missing file is the npm-only case; a malformed one throws, exactly as it
   // does in the build (it is a committed build input).
+  //
+  // repo-state.json keeps github `peers` regardless of SHOP_EMIT_REPO_PEERS —
+  // withholding only gates EMISSION (pipeline.ts) — so the raw record here is
+  // NOT "the very candidates build.ts composes the catalog from": build.ts
+  // withholds peers before its own gate passes, and this must withhold them
+  // the same way before gating below, or the two steps measure a different
+  // payload for the same repository and can disagree about what lists
+  // (finding #5 of the PR #58 review, reproduced with a repository whose
+  // peers alone crossed the 12 KiB budget).
   const repoStatePath = join(REGISTRY_DIR, 'repo-state.json')
-  const repoCandidates: RepoCandidate[] = []
+  const repoCandidatesRaw: RepoCandidate[] = []
   if (existsSync(repoStatePath)) {
     for (const entry of Object.values(parseRepoState(readFileSync(repoStatePath, 'utf8')))) {
-      repoCandidates.push(...entry.candidates)
+      repoCandidatesRaw.push(...entry.candidates)
     }
   }
+  const repoCandidates = withholdRepoPeers(repoCandidatesRaw, emitRepoPeers).candidates
   process.stderr.write(`classify: ${repoCandidates.length} recorded repo candidate(s)\n`)
 
   const { pending, liveNames } = selectPending(candidates, repoCandidates, config)

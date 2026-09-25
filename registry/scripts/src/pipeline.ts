@@ -19,6 +19,28 @@ export interface PipelineResult extends Artifacts {
 }
 
 /**
+ * Whether a build may publish github `peers`, decided from the raw value of
+ * `SHOP_EMIT_REPO_PEERS` alone.
+ *
+ * The flag has two readers and they must agree: `build.ts`, which withholds
+ * before its own gate passes, and `classify.ts`, which re-reads the same
+ * `repo-state.json` candidates a day later and gates them a third time. An
+ * inline `=== '1'` in each is two places to drift, and they had: classify
+ * gated candidates with peers still attached, so a repository whose peers
+ * alone cross the payload budget was listed by the build and dropped from
+ * `liveNames` by the classifier, which then pruned its `categories.yml` row —
+ * the entry listed as `other` every day until the flag flipped (finding #5 of
+ * the PR #58 review). Taking the value as a parameter rather than reading
+ * `process.env` keeps this module pure; the callers are the ones that read
+ * the environment.
+ * @param flag - `process.env.SHOP_EMIT_REPO_PEERS` as the caller read it.
+ * @returns whether the flag is the exact string `'1'`.
+ */
+export function repoPeersEmitted(flag: string | undefined): boolean {
+  return flag === '1'
+}
+
+/**
  * The repository candidates this build may emit, with their `peers` withheld
  * until the release that can read them is out.
  *
@@ -36,15 +58,20 @@ export interface PipelineResult extends Artifacts {
  *
  * Only EMISSION is gated. The harvest reads peers and `repo-state.json` keeps
  * them whatever this answers, so the record is as complete as the backfill has
- * made it on the day the flag flips; this function is applied to the build's
- * own copy of the candidates, after that file is written. Stripping here,
- * before either gate pass, also keeps the per-entry payload budget honest: it
- * measures the bytes `emit` will write, and withheld peers are not written.
- * npm entries are untouched — their peers already reach every shop.
+ * made it on the day the flag flips. Two callers apply this to their own copy
+ * of the same harvest: `build.ts`, after that file is written, and
+ * `classify.ts`, reading the file back a day later — and because
+ * `repo-state.json` keeps the peers it recorded, the classifier's copy has
+ * them attached until this strips them. Both must, or the payload budget
+ * measures two different candidates. Stripping before either gate pass also
+ * keeps that budget honest: it measures the bytes `emit` will write, and
+ * withheld peers are not written. npm entries are untouched — their peers
+ * already reach every shop.
  * @param repoCandidates - the repository candidates this run harvested.
- * @param emitRepoPeers - whether this build may publish github peers.
- * @returns the candidates to gate and emit, and how many declared peers that
- *   were withheld — a report figure, never a listing decision.
+ * @param emitRepoPeers - whether this build may publish github peers
+ *   ({@link repoPeersEmitted} decides it from the raw flag).
+ * @returns the candidates to gate and emit, and how many candidates had a
+ *   non-empty `peers` withheld — a report figure, never a listing decision.
  */
 export function withholdRepoPeers(
   repoCandidates: readonly RepoCandidate[],
@@ -59,6 +86,31 @@ export function withholdRepoPeers(
     return rest
   })
   return { candidates, withheld }
+}
+
+/**
+ * Why the github declarations re-read stopped early, as a build-note
+ * fragment to append next to its counts — `''` when it did not.
+ *
+ * `RepoHarvestResult.rereadStopped` (github-client.ts, Task 3) is `null` when
+ * the phase ran to its own budget or its queue simply emptied, so there is
+ * nothing to add. The two non-null values are `'time-budget'` (the phase's
+ * own time budget, {@link DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT} in
+ * github-client.ts, was spent) and `'failure-breaker'` (the host, not any one
+ * record, failed {@link DECLARATIONS_REREAD_MAX_CONSECUTIVE_FAILURES} times in
+ * a row — see that constant's doc in github-client.ts). Either way the counts
+ * already printed beside it (`rereadAttempted`, `rereadDeferred`, ...) say how
+ * much of the queue that left; this only says why.
+ * @param stopped - `RepoHarvestResult.rereadStopped`, verbatim.
+ * @returns `'; re-read stopped: time budget'`, `'; re-read stopped: failure
+ *   breaker'`, or `''` for `null`.
+ */
+export function describeRereadStopped(stopped: 'time-budget' | 'failure-breaker' | null): string {
+  switch (stopped) {
+    case null: return ''
+    case 'time-budget': return '; re-read stopped: time budget'
+    case 'failure-breaker': return '; re-read stopped: failure breaker'
+  }
 }
 
 /**

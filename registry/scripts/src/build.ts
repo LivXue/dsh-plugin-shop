@@ -22,7 +22,7 @@ import { githubOwnerName } from './github-repo.ts'
 import { fetchCandidates, searchByKeywords, describePublisherAxis, describeShortfall, HARVEST_KEYWORDS, parseKeywordShortfall, parsePublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall, type PublisherAxisReport } from './npm-client.ts'
 import { applyAxisReport, MAX_EVICTIONS_PER_RUN, MAX_PINNED_PER_KEYWORD, mergePublishers, parsePublisherState, retainPinned, serializePublisherState } from './publisher-state.ts'
 import { pagesArtifactNames } from './pages-artifacts.ts'
-import { runPipeline, selectEntries, withholdRepoPeers } from './pipeline.ts'
+import { describeRereadStopped, repoPeersEmitted, runPipeline, selectEntries, withholdRepoPeers } from './pipeline.ts'
 import { CATALOG_SCHEMA_VERSION, SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION } from './emit.ts'
 import { assembleStarsForEntries, serializeStars } from './stars-assemble.ts'
 import type { Candidate, Rejection, RepoCandidate } from './types.ts'
@@ -258,7 +258,20 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     // count rides beside it. A run where every attempt threw once read
     // "300 fetched, 300 carried": the one line a human scans for an outage said
     // everything was fine.
-    repoNote = `${repos.windowCount} windows, ${repos.seen.length} repos seen, ${repos.fetched} fetched (${repos.thrown} threw), ${repos.carried} carried, ${repos.deferred} deferred`
+    // Declaration re-reads (Task 3, commit f16281a): repos.rereadAttempted and
+    // .rereadDeferred count REPOSITORIES the phase started or queued past its
+    // budget; .rereadUpdated, .rereadFailed and .rereadAssetChanged count
+    // CANDIDATES among those started — a re-read that succeeds writes only
+    // `peers`, `compatibility` and the declaration stamp, so this line is the
+    // only place that number is visible outside the harvest itself.
+    // repos.rereadStopped says why the phase stopped starting reads early —
+    // its own time budget (DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT) spent,
+    // or the failure breaker (DECLARATIONS_REREAD_MAX_CONSECUTIVE_FAILURES)
+    // tripping on the host rather than any one record — or null when neither
+    // happened. `describeRereadStopped` (pipeline.ts) renders it, appending
+    // nothing for null so a healthy run's line does not grow a clause that
+    // says nothing.
+    repoNote = `${repos.windowCount} windows, ${repos.seen.length} repos seen, ${repos.fetched} fetched (${repos.thrown} threw), ${repos.carried} carried, ${repos.deferred} deferred; declaration re-reads: ${repos.rereadAttempted} repos (${repos.rereadUpdated} updated, ${repos.rereadFailed} failed, ${repos.rereadAssetChanged} asset changed), ${repos.rereadDeferred} deferred${describeRereadStopped(repos.rereadStopped)}`
     process.stderr.write(`github: ${repoNote}\n`)
   }
 
@@ -268,14 +281,24 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   // flag flips in the release commit that first promotes the shop that refines
   // against the module table (`withholdRepoPeers`). Applied here, once, so both
   // gate passes below — the stars selection and runPipeline — see the same
-  // candidates and cannot disagree about what is listed.
-  const emitRepoPeers = process.env.SHOP_EMIT_REPO_PEERS === '1'
+  // candidates and cannot disagree about what is listed. `classify.ts` applies
+  // the same helper to its own copy of repo-state.json's candidates, and reads
+  // the flag through the same `repoPeersEmitted` so the two steps cannot drift
+  // (finding #5 of the PR #58 review).
+  const emitRepoPeers = repoPeersEmitted(process.env.SHOP_EMIT_REPO_PEERS)
   const peersGate = withholdRepoPeers(repoCandidates, emitRepoPeers)
   repoCandidates = peersGate.candidates
-  if (!emitRepoPeers && peersGate.withheld > 0) {
+  // `withholdRepoPeers` returns `withheld: 0` unconditionally when the flag is
+  // on (its own early return), so `withheld > 0` already implies `!emitRepoPeers`
+  // — testing both was redundant.
+  if (peersGate.withheld > 0) {
     const peersNote = `github peers withheld from ${peersGate.withheld} candidates: SHOP_EMIT_REPO_PEERS is not 1 (flipped in the release that promotes the module-table client to latest)`
     process.stderr.write(`github: ${peersNote}\n`)
-    repoNote = repoNote === '' ? peersNote : `${repoNote}; ${peersNote}`
+    // repoNote is never '' here: every branch above that can reach this point
+    // (github-token-missing, flag-off, and the harvest branch) assigns it a
+    // non-empty string before falling through (verified by reading all three
+    // branches of the if/else-if/else above).
+    repoNote = `${repoNote}; ${peersNote}`
   }
 
   // The stars sidecar and the final artifacts all land under OUT_DIR (the

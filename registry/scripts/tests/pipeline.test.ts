@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { runPipeline, selectEntries, unmatchedRegistryNotes, withholdRepoPeers } from '../src/pipeline.ts'
+import { describeRereadStopped, repoPeersEmitted, runPipeline, selectEntries, unmatchedRegistryNotes, withholdRepoPeers } from '../src/pipeline.ts'
 import { parseRegistryConfig } from '../src/config.ts'
 import type { Candidate, Rejection, RepoCandidate } from '../src/types.ts'
 
@@ -841,6 +841,30 @@ describe('selectEntries', () => {
   })
 })
 
+describe('repoPeersEmitted (SHOP_EMIT_REPO_PEERS)', () => {
+  // finding #5: build.ts and classify.ts each used to test the flag inline,
+  // and classify.ts's own copy never existed at all — it ran gateRepo over
+  // repo-state.json candidates with peers still attached, so the two steps
+  // disagreed about which repositories cross the payload budget. One helper
+  // both callers read closes that gap by construction: there is only one
+  // place left that can drift from `'1'`.
+  it('is true only for the exact string "1"', () => {
+    expect(repoPeersEmitted('1')).toBe(true)
+  })
+
+  it('is false for every other value, including unset, empty, and truthy-looking strings', () => {
+    expect(repoPeersEmitted(undefined)).toBe(false)
+    expect(repoPeersEmitted('')).toBe(false)
+    expect(repoPeersEmitted('0')).toBe(false)
+    expect(repoPeersEmitted('true')).toBe(false)
+    expect(repoPeersEmitted('yes')).toBe(false)
+    // A leading/trailing space is not '1' either — the flag is set verbatim
+    // in daily.yml, never through a shell that would trim it for us.
+    expect(repoPeersEmitted(' 1')).toBe(false)
+    expect(repoPeersEmitted('1 ')).toBe(false)
+  })
+})
+
 describe('withholdRepoPeers (SHOP_EMIT_REPO_PEERS)', () => {
   // A shop from 0.8.3 or earlier judges any `peers` by node resolution alone,
   // which badges platform seed words (design 2026-09-01 §9.1), so github peers
@@ -907,5 +931,25 @@ describe('withholdRepoPeers (SHOP_EMIT_REPO_PEERS)', () => {
     const withheld = runPipeline([], withholdRepoPeers(heavy, false).candidates, config, BUILT_AT)
     const listed = (JSON.parse(withheld.pluginsJson) as { plugins: { name: string }[] }).plugins
     expect(listed.map(entry => entry.name)).toEqual(['dsh-heavy-peers'])
+  })
+})
+
+describe('describeRereadStopped (github declarations re-read)', () => {
+  // RepoHarvestResult.rereadStopped (github-client.ts, Task 3) says why the
+  // re-read phase stopped starting reads before its queue ran out, or null
+  // when it did not. build.ts appends the phrase next to the re-read counts
+  // on the github report line, and only when it is non-null — a healthy run
+  // (budget unspent, queue drained or empty) must not grow a trailing clause
+  // that says nothing.
+  it('names the time budget', () => {
+    expect(describeRereadStopped('time-budget')).toBe('; re-read stopped: time budget')
+  })
+
+  it('names the failure breaker', () => {
+    expect(describeRereadStopped('failure-breaker')).toBe('; re-read stopped: failure breaker')
+  })
+
+  it('is empty when the phase did not stop early', () => {
+    expect(describeRereadStopped(null)).toBe('')
   })
 })

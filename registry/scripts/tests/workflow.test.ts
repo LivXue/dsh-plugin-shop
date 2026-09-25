@@ -971,3 +971,62 @@ describe('every job in the workflow is bounded', () => {
     expect(minutes).toBeLessThan(360)
   })
 })
+
+describe('SHOP_EMIT_REPO_PEERS is read once, at job level', () => {
+  // classify.ts runs its own gateRepo pass over repo-state.json's candidates
+  // and must withhold github `peers` exactly the way build.ts does (ruling R10,
+  // pipeline.ts's repoPeersEmitted / withholdRepoPeers) — finding #5 was the two
+  // steps disagreeing because only build.ts withheld them. A step-level `env:`
+  // sets the flag for that one step; only a job-level `env:` guarantees the
+  // classify step and the build:catalog step read the identical value, which is
+  // the whole point of having one helper both callers read.
+  function buildJob(): Record<string, unknown> {
+    const doc: unknown = parse(workflow)
+    const jobs = typeof doc === 'object' && doc !== null ? (doc as Record<string, unknown>).jobs : undefined
+    const build = typeof jobs === 'object' && jobs !== null ? (jobs as Record<string, unknown>).build : undefined
+    if (typeof build !== 'object' || build === null) throw new Error('daily.yml: jobs.build is not a mapping — the workflow shape changed')
+    return build as Record<string, unknown>
+  }
+
+  function stepEnv(step: unknown): Record<string, unknown> | undefined {
+    if (typeof step !== 'object' || step === null) return undefined
+    const env = (step as Record<string, unknown>).env
+    return typeof env === 'object' && env !== null ? (env as Record<string, unknown>) : undefined
+  }
+
+  it("is declared in the build job's own env:", () => {
+    const env = buildJob().env
+    if (typeof env !== 'object' || env === null) throw new Error('daily.yml: jobs.build.env is not a mapping — the workflow shape changed')
+    // '0' today: github peers are withheld until the release that first
+    // promotes a shop carrying the module-table refinement. The value is not
+    // the point here — its PLACEMENT is.
+    expect((env as Record<string, unknown>).SHOP_EMIT_REPO_PEERS).toBe('0')
+  })
+
+  it("is never redeclared in an individual step's own env:, which would shadow the job-level value", () => {
+    // A step-level copy would win over the job-level one for that step alone,
+    // which is exactly how the two steps drifted apart before: build:catalog
+    // set the flag for itself and the classify step never saw it at all.
+    const steps = buildJob().steps
+    if (!Array.isArray(steps)) throw new Error('daily.yml: jobs.build.steps is not an array — the workflow shape changed')
+    // The premise, asserted rather than assumed: a parse that found no steps
+    // would make the sweep below vacuous.
+    expect(steps.length).toBe(buildSteps.length)
+    const offenders = steps
+      .map((step, index) => {
+        const env = stepEnv(step)
+        if (env === undefined || !Object.hasOwn(env, 'SHOP_EMIT_REPO_PEERS')) return null
+        const name = typeof step === 'object' && step !== null ? (step as Record<string, unknown>).name : undefined
+        return typeof name === 'string' ? name : `step ${index}`
+      })
+      .filter((name): name is string => name !== null)
+    expect(offenders).toEqual([])
+  })
+
+  it('has a build job env: at all, so the placement above is not accidental', () => {
+    // Guards the premise of the first test: if `jobs.build.env` were dropped
+    // entirely the assertion there would throw rather than pass, but this
+    // states the requirement directly.
+    expect(buildJob().env).toEqual(expect.any(Object))
+  })
+})
