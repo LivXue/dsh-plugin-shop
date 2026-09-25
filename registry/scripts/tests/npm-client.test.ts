@@ -568,9 +568,11 @@ describe('PARTITION_KEYWORDS', () => {
     // The scan's own positive control: with no claims found it would pass by
     // checking nothing. Deliberately an exact count and not a lower bound, so
     // growing the note is a decision somebody makes rather than something that
-    // slides. 12 for the 2026-09-04 round, plus `deepwatch` for the 2026-09-07
-    // window crossing.
-    expect(credited).toHaveLength(13)
+    // slides. 12 for the 2026-09-04 round, `deepwatch` for the 2026-09-07
+    // window crossing, and nine for the 2026-09-25 crossing of the cell the two
+    // harvest keywords share, each measured against a recorded run rather than
+    // read off a tag list.
+    expect(credited).toHaveLength(22)
     for (const keyword of credited) {
       expect(
         PARTITION_KEYWORDS,
@@ -659,11 +661,12 @@ describe('partitionKeyword', () => {
     // drives it through searchByKeywords with static totals that hide the
     // extra cell.
     //
-    // It is also the arithmetic in PARTITION_KEYWORDS' own comment: the 27
-    // entries yield 26 cells against this keyword, because one of them IS this
-    // keyword. Counted, not restated: the assertion below derives it, and this
-    // comment read "ten entries yield NINE cells" beside an assertion
-    // computing 26.
+    // It is also the arithmetic in PARTITION_KEYWORDS' own comment: the list
+    // yields one cell fewer than it has entries against this keyword, because
+    // one of them IS this keyword. Counted, not restated: the assertion below
+    // derives it. This comment has carried the count twice and both went
+    // stale, "ten entries yield NINE cells" beside an assertion computing 26,
+    // then "27 entries yield 26" when the 2026-09-25 entries landed.
     const probed: string[] = []
     // `cellQuery`, not `keywordQuery(cell.keywords)`: the stub renders through
     // the same function the harvest does, so the byte-identical strings
