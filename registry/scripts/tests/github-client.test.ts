@@ -4,7 +4,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { BUNDLE_NAME_MAX_LENGTH, BUNDLE_NAME_RE, DECLARATIONS_REREAD_BUDGET_DEFAULT, GITHUB_REQUEST_TIMEOUT_MS, MAX_MANIFEST_BYTES, MAX_TARBALL_BYTES, MAX_THROWN_FRACTION, MIN_THROWN_TO_BOUND, MAX_TREE_BYTES, REPO_BACKFILL_BUDGET_DEFAULT, SUBDIR_MAX_LENGTH, TARBALL_REQUEST_TIMEOUT_MS, TREE_REQUEST_TIMEOUT_MS, fetchRepoCandidate, harvestRepos, isBundleName, parseHarvestBudget, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
+import { BUNDLE_NAME_MAX_LENGTH, BUNDLE_NAME_RE, DECLARATIONS_REREAD_BUDGET_DEFAULT, DECLARATIONS_REREAD_FAILURE_LINES, DECLARATIONS_REREAD_MAX_CONSECUTIVE_FAILURES, DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT, GITHUB_REQUEST_TIMEOUT_MS, MAX_MANIFEST_BYTES, MAX_TARBALL_BYTES, MAX_THROWN_FRACTION, MIN_THROWN_TO_BOUND, MAX_TREE_BYTES, REPO_BACKFILL_BUDGET_DEFAULT, SUBDIR_MAX_LENGTH, TARBALL_REQUEST_TIMEOUT_MS, TREE_REQUEST_TIMEOUT_MS, fetchRepoCandidate, harvestRepos, isBundleName, parseHarvestBudget, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
 import { DECLARATIONS_RULE, diffRepoState, parseRepoState, serializeRepoState } from '../src/repo-state.ts'
 import type { RepoState } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
@@ -1539,6 +1539,95 @@ describe('release-tarball rescue probe', () => {
     }
   })
 
+  it.each([
+    ['a JSON error object', { message: 'API rate limit exceeded for installation' }],
+    ['a release with no asset list', { tag_name: 'v1.0.0', assets: null }],
+    ['a release with no tag name', { assets: [] }],
+    ['an array', []],
+    ['null', null],
+  ])('throws on a releases answer that is %s, rather than answering no release', async (_label, body) => {
+    // Every release GitHub serves carries a string `tag_name` and an `assets`
+    // array, empty or not, so a 200 without both is not its answer — a proxy's
+    // JSON error object is the likely one. Answering "no release" for it would
+    // drop a recorded rescue durably, the outcome the probe throws on transport
+    // to avoid; so it throws, as a body that is not JSON does.
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(buildManifest, { status: 200 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': headResponse(),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/releases/latest': new Response(JSON.stringify(body), { status: 200 }),
+    })
+    await expect(fetchRepoCandidate(meta, fetchImpl, sleep, 'token')).rejects.toThrow('not a release object')
+  })
+
+  it('rethrows a releases body that fails mid-read as itself, never as a body that is not JSON', async () => {
+    // The releases answer is read, then parsed (fix round 1). One `.json()`
+    // call behind one catch used to turn undici's `TypeError: terminated` into
+    // "answered 200 with a body that is not JSON" — a proxy's error page, as
+    // far as an operator could tell, while the truth was a connection reset.
+    // Both throw; only the read-then-parse split says which happened.
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(buildManifest, { status: 200 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': headResponse(),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/releases/latest': new Response(new ReadableStream<Uint8Array>({
+        start(controller) { controller.error(new TypeError('terminated')) },
+      }), { status: 200 }),
+    })
+    const rejection = fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    await expect(rejection).rejects.toThrow('terminated')
+    await expect(rejection).rejects.not.toThrow('not JSON')
+  })
+
+  it('never sends the token with the asset download, while the releases API call keeps it', async () => {
+    // No release-asset request carries Authorization (fix round 1, security
+    // review): downloadReleaseAsset takes no token at all, so the rule lives
+    // in one place for the probe and the re-read alike. A public asset needs
+    // none, and GitHub's `browser_download_url` redirects to a separate asset
+    // host. The API request beside it is the control that proves the header
+    // is being captured: it must still carry the token.
+    const headers = new Map<string, string | null>()
+    const routed = stubFetch({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(buildManifest, { status: 200 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': headResponse(),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/releases/latest': new Response(JSON.stringify({
+        tag_name: 'v1.0.0',
+        assets: [{ browser_download_url: assetUrl }],
+      }), { status: 200 }),
+      [assetUrl]: new Response(tarballBytes, { status: 200 }),
+    })
+    const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+      headers.set(String(url), new Headers(init?.headers).get('authorization'))
+      return routed(url as string, init)
+    }) as unknown as typeof fetch
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'secret-token')
+    expect(result.ok && result.candidates[0]?.release?.assetVerified).toBe(true)
+    expect(headers.get('https://api.github.com/repos/someone/dsh-repo-plugin/releases/latest')).toBe('Bearer secret-token')
+    expect(headers.get(assetUrl)).toBeNull()
+  })
+
+  it('still rides the 429/5xx ladder for its asset download, where the re-read does not', async () => {
+    // Fix round 1, extension. The probe decides whether a CHANGED repository's
+    // rescue is listed, so a 503 on its asset is waited out, not turned into a
+    // fetch-failed on the first answer. Only the declarations re-read, whose
+    // failures change nothing, takes the first answer it gets.
+    const routed = stubFetch({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(buildManifest, { status: 200 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': headResponse(),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/releases/latest': new Response(JSON.stringify({
+        tag_name: 'v1.0.0',
+        assets: [{ browser_download_url: assetUrl }],
+      }), { status: 200 }),
+    })
+    let assetCalls = 0
+    const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+      if (String(url) !== assetUrl) return routed(url as string, init)
+      assetCalls += 1
+      return assetCalls === 1 ? new Response('unavailable', { status: 503 }) : new Response(tarballBytes, { status: 200 })
+    }) as unknown as typeof fetch
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(assetCalls).toBe(2)
+    expect(result.ok && result.candidates[0]?.release).toEqual({ tag: 'v1.0.0', url: assetUrl, sha256: expectedSha256, assetVerified: true })
+  })
+
   it('reads past an asset entry that is not an object, rather than throwing on it', async () => {
     // The probe lost its catch-all (R7), so an unguarded property read on a
     // `null` entry in `assets` would now throw — a `fetch-failed` on every run
@@ -1809,6 +1898,45 @@ describe('harvestRepos', () => {
       }
       throw new Error(`unrouted: ${text}`)
     }) as unknown as typeof fetch
+  }
+
+  /**
+   * A body that delivers `prefix` and then dies the way undici reports a
+   * connection reset mid-body: a `TypeError: terminated` out of the stream.
+   * Pull-driven on purpose — an error raised in `start` discards whatever was
+   * queued, which models a body that never began rather than one cut off.
+   * The one such helper in this suite: the re-read's tests had grown a copy.
+   */
+  function droppingBody(prefix: Uint8Array | string): ReadableStream<Uint8Array> {
+    const bytes = typeof prefix === 'string' ? new TextEncoder().encode(prefix) : prefix
+    let delivered = false
+    return new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (!delivered) {
+          delivered = true
+          controller.enqueue(bytes)
+          return
+        }
+        controller.error(new TypeError('terminated'))
+      },
+    })
+  }
+
+  /**
+   * Run `run` with stderr captured and handed back: the harvest writes one
+   * diagnostic line per throw or failed re-read there, and those lines are the
+   * re-read's only failure signal besides its counts. The one stderr helper in
+   * this suite; a second, write-and-discard copy was folded into it.
+   */
+  async function quietly<T>(run: () => Promise<T>): Promise<{ value: T; stderr: string }> {
+    const lines: string[] = []
+    const write = process.stderr.write.bind(process.stderr)
+    process.stderr.write = ((chunk: string | Uint8Array) => { lines.push(String(chunk)); return true }) as typeof process.stderr.write
+    try {
+      return { value: await run(), stderr: lines.join('') }
+    } finally {
+      process.stderr.write = write
+    }
   }
 
   it('serves a changed repository before the size backfill, whatever the alphabet says', async () => {
@@ -2098,36 +2226,9 @@ describe('harvestRepos', () => {
     const headOk = () => new Response(JSON.stringify({ sha: commit, commit: { author: { date: '2026-08-02T00:00:00.000Z' } } }), { status: 200 })
     const sizingOk = () => new Response(JSON.stringify({ truncated: false, tree: [{ path: 'index.js', type: 'blob', size: 10 }] }), { status: 200 })
 
-    /**
-     * A body that delivers `prefix` and then dies the way undici reports a
-     * connection reset mid-body: a `TypeError: terminated` out of the stream.
-     * Pull-driven on purpose — an error raised in `start` discards whatever
-     * was queued, which models a body that never began rather than one cut off.
-     */
-    function droppingBody(prefix: Uint8Array | string): ReadableStream<Uint8Array> {
-      const bytes = typeof prefix === 'string' ? new TextEncoder().encode(prefix) : prefix
-      let delivered = false
-      return new ReadableStream<Uint8Array>({
-        pull(controller) {
-          if (!delivered) {
-            delivered = true
-            controller.enqueue(bytes)
-            return
-          }
-          controller.error(new TypeError('terminated'))
-        },
-      })
-    }
-
-    /** Harvest with stderr captured: each throw writes a diagnostic line there. */
+    /** One harvest of `state` with stderr captured (by `quietly`), the result handed back. */
     async function quietHarvest(state: RepoState, fetchImpl: typeof fetch): Promise<Awaited<ReturnType<typeof harvestRepos>>> {
-      const write = process.stderr.write.bind(process.stderr)
-      process.stderr.write = (() => true) as typeof process.stderr.write
-      try {
-        return await harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' })
-      } finally {
-        process.stderr.write = write
-      }
+      return (await quietly(() => harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' }))).value
     }
 
     function expectKeptAsRecorded(result: Awaited<ReturnType<typeof harvestRepos>>, repo: string, recorded: RepoState[string]): void {
@@ -2239,6 +2340,7 @@ describe('harvestRepos', () => {
       it.each([
         ['releases/latest answers 403', { releases: () => new Response('rate limit exceeded', { status: 403 }) }],
         ['releases/latest answers 200 with a body that is not JSON', { releases: () => new Response('<!doctype html><h1>502</h1>', { status: 200 }) }],
+        ['releases/latest answers 200 with a JSON object that is not a release', { releases: () => new Response(JSON.stringify({ message: 'API rate limit exceeded for installation' }), { status: 200 }) }],
         ['the asset download throws', { releases: releaseBody, asset: () => { throw new TypeError('fetch failed') } }],
         ['the asset answers 500 after its retry ladder', { releases: releaseBody, asset: () => new Response('upstream error', { status: 500 }) }],
         ['the asset body drops mid-download', { releases: releaseBody, asset: () => new Response(droppingBody(tarball.subarray(0, 64)), { status: 200 }) }],
@@ -2282,33 +2384,27 @@ describe('harvestRepos', () => {
       return { ...rest, commit: atCommit, version: atCommit, installSize: 4242, ...extra }
     }
 
-    /** The fetch stub for a re-read: the search, then `answer` per URL, recording every request. */
+    /**
+     * The fetch stub for a re-read: the search, then `answer` per URL,
+     * recording every other request and the Authorization header it carried.
+     */
     function rereadFetch(
       seen: readonly { repo: string; pushedAt: string }[],
       answer: (url: string) => Response | undefined,
-    ): { fetchImpl: typeof fetch; requested: string[] } {
+    ): { fetchImpl: typeof fetch; requested: string[]; authorizations: (string | null)[] } {
       const requested: string[] = []
-      const fetchImpl = (async (url: string | URL) => {
+      const authorizations: (string | null)[] = []
+      const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
         const text = String(url)
         const searched = searchItems(text, seen)
         if (searched !== undefined) return searched
         requested.push(text)
+        authorizations.push(new Headers(init?.headers).get('authorization'))
         const answered = answer(text)
         if (answered === undefined) throw new Error(`unrouted: ${text}`)
         return answered
       }) as unknown as typeof fetch
-      return { fetchImpl, requested }
-    }
-
-    async function quietly<T>(run: () => Promise<T>): Promise<{ value: T; stderr: string }> {
-      const lines: string[] = []
-      const write = process.stderr.write.bind(process.stderr)
-      process.stderr.write = ((chunk: string | Uint8Array) => { lines.push(String(chunk)); return true }) as typeof process.stderr.write
-      try {
-        return { value: await run(), stderr: lines.join('') }
-      } finally {
-        process.stderr.write = write
-      }
+      return { fetchImpl, requested, authorizations }
     }
 
     it('writes exactly peers, compatibility and the stamp, from the manifest at the recorded commit and subdir', async () => {
@@ -2362,6 +2458,7 @@ describe('harvestRepos', () => {
       expect(result.thrown).toBe(0)
       expect([result.rereadAttempted, result.rereadUpdated, result.rereadFailed, result.rereadAssetChanged, result.rereadDeferred])
         .toEqual([2, 2, 0, 0, 0])
+      expect(result.rereadStopped).toBeNull()
       // Self-terminating: what this run wrote queues nothing next run.
       const next = diffRepoState(result.nextState, seen)
       expect(next.toFetch).toEqual([])
@@ -2403,14 +2500,14 @@ describe('harvestRepos', () => {
         peerDependenciesMeta: { 'peer-optional': { optional: true } },
       })
       const sha256 = createHash('sha256').update(packed).digest('hex')
-      const recordedRescue = (pin: string): RepoState => ({
+      const recordedRescue = (pin: string, url: string = assetUrl): RepoState => ({
         'r/rescued': {
           pushedAt: quietAt,
           commit: commitA,
           candidates: [unstamped('r/rescued', commitA, {
             name: 'rescued',
             requiresBuild: true,
-            release: { tag: 'v1.0.0', url: assetUrl, sha256: pin, assetVerified: true },
+            release: { tag: 'v1.0.0', url, sha256: pin, assetVerified: true },
             // HEAD's, as the old projection wrote them: what this re-read must
             // replace with the tarball's own.
             compatibility: { dsh: '>=0.1.7-0' },
@@ -2434,13 +2531,24 @@ describe('harvestRepos', () => {
         expect(result.rereadUpdated).toBe(1)
       })
 
-      it('unverifies a recorded asset that no longer hashes to its pin, and does not stamp it', async () => {
-        // Not a read failure: the answer is definite — these are not the bytes
-        // that were verified — so the release loses `assetVerified`, which
-        // sends the repository through the full re-probe next run
-        // (`hasUnverifiedRelease`). Its declarations stay as they were.
-        const state = recordedRescue('f'.repeat(64))
-        const { fetchImpl } = rereadFetch(seen, url => (url === assetUrl ? new Response(packed, { status: 200 }) : undefined))
+      it.each([
+        ['no longer hashes to its pin', 'f'.repeat(64), () => new Response(packed, { status: 200 })],
+        ['answers 404', sha256, () => new Response('Not Found', { status: 404 })],
+        ['is past the tarball cap', sha256, () => new Response('x', { status: 200, headers: { 'content-length': String(32 * 1024 * 1024 + 1) } })],
+      ])('unverifies the rescue, and does not stamp it, when the recorded asset %s', async (_label, pin, asset) => {
+        // Not a read failure: each is a definite answer that the bytes this URL
+        // serves are not the ones that were verified — gone, grown past a cap
+        // they verified under, or different. So the release loses
+        // `assetVerified`, which sends the repository through the full re-probe
+        // next run (`hasUnverifiedRelease`), and GitHub's own releases answer
+        // decides there: a deleted release retires the rescue, a re-uploaded
+        // one is verified afresh. The declarations stay as they were.
+        //
+        // Changed (fix round 1, controller's ruling): a 404 and an over-cap
+        // answer used to be read failures that changed nothing, which left a
+        // deleted release listed on a dead URL and re-requested every run.
+        const state = recordedRescue(pin)
+        const { fetchImpl } = rereadFetch(seen, url => (url === assetUrl ? asset() : undefined))
         const { value: result } = await quietly(() => harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' }))
         const recorded = state['r/rescued']?.candidates[0]
         if (recorded === undefined || recorded.release === undefined) throw new Error('fixture has no release')
@@ -2454,10 +2562,88 @@ describe('harvestRepos', () => {
       })
 
       it.each([
+        ['plain http', 'http://github.com/r/rescued/releases/download/v1.0.0/rescued.tgz'],
+        ['userinfo', 'https://x:y@github.com/r/rescued/releases/download/v1.0.0/rescued.tgz'],
+        ['userinfo that names the host', 'https://github.com@evil.example/r/rescued/releases/download/v1.0.0/rescued.tgz'],
+        ['a port', 'https://github.com:444/r/rescued/releases/download/v1.0.0/rescued.tgz'],
+        ['a foreign host', 'https://evil.example/r/rescued/releases/download/v1.0.0/rescued.tgz'],
+        ['a lookalike host', 'https://github.com.evil.example/r/rescued/releases/download/v1.0.0/rescued.tgz'],
+        ['a different owner', 'https://github.com/someone-else/rescued/releases/download/v1.0.0/rescued.tgz'],
+        ['a different repository name', 'https://github.com/r/other/releases/download/v1.0.0/rescued.tgz'],
+        ['a path that is not a release download', 'https://github.com/r/rescued/archive/refs/tags/v1.0.0.tar.gz'],
+        ['no asset after the download path', 'https://github.com/r/rescued/releases/download/'],
+        ['an unparseable string', 'not a url'],
+      ])('never requests a recorded asset URL with %s, and changes nothing', async (_label, url) => {
+        // IMPORTANT (review of f16281a). `release.url` is read from
+        // repo-state.json, which a pull request can edit, and the re-read
+        // downloaded it with the job's token: daily.yml runs the build on
+        // `pull_request` with GITHUB_TOKEN, and every recorded rescue sits in
+        // the re-read queue, so one edited URL sent that token to any host —
+        // in plaintext, over http. The probe only ever fetches GitHub's own
+        // `browser_download_url`, so the recorded URL is held to that shape
+        // before any request: https, github.com exactly, this repository's
+        // `/releases/download/` path. Every URL here is answered with the
+        // genuine tarball, so a request made at all would also UPDATE the
+        // candidate — the refusal is the only way both assertions hold.
+        const state = recordedRescue(sha256, url)
+        const { fetchImpl, requested } = rereadFetch(seen, () => new Response(packed, { status: 200 }))
+        const { value: result } = await quietly(() => harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' }))
+        expect(requested).toEqual([])
+        expect(result.nextState['r/rescued']).toEqual(state['r/rescued'])
+        expect([result.rereadUpdated, result.rereadFailed, result.rereadAssetChanged]).toEqual([0, 1, 0])
+      })
+
+      it.each([
+        ['a mixed-case owner and name, as GitHub resolves them', 'https://github.com/R/Rescued/releases/download/v1.0.0/rescued.tgz'],
+        ['the host written fully qualified, with its trailing dot', 'https://github.com./r/rescued/releases/download/v1.0.0/rescued.tgz'],
+        ['an upper-case host, which the parser lowercases', 'https://GITHUB.COM/r/rescued/releases/download/v1.0.0/rescued.tgz'],
+      ])('accepts its own repository\'s release URL with %s', async (_label, url) => {
+        // The other side of the guard: these are the same host and the same
+        // repository, so refusing them would leave a genuine rescue unstamped
+        // forever. The request goes to the URL exactly as it was parsed — its
+        // `href`, which is what the checks read — and not to the recorded
+        // string, which the upper-case host shows are not always the same.
+        const parsed = new URL(url).href
+        const state = recordedRescue(sha256, url)
+        const { fetchImpl, requested } = rereadFetch(seen, asked => (asked === parsed ? new Response(packed, { status: 200 }) : undefined))
+        const result = await harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' })
+        expect(requested).toEqual([parsed])
+        expect(result.rereadUpdated).toBe(1)
+      })
+
+      it('downloads the recorded asset without the token, which a public asset never needs', async () => {
+        // The second half of the same fix: even a URL of the right shape gets
+        // no Authorization header. A commit-pinned repository in the same run
+        // is the control — its raw request is the one that DOES carry the
+        // token, which proves the header is being captured at all.
+        const plain = unstamped('a/plain', commitA)
+        const state: RepoState = {
+          ...recordedRescue(sha256),
+          'a/plain': { pushedAt: quietAt, commit: commitA, candidates: [plain] },
+        }
+        const rawUrl = `https://raw.githubusercontent.com/a/plain/${commitA}/package.json`
+        const { fetchImpl, requested, authorizations } = rereadFetch(
+          [...seen, { repo: 'a/plain', pushedAt: quietAt }],
+          url => {
+            if (url === assetUrl) return new Response(packed, { status: 200 })
+            if (url === rawUrl) return new Response(JSON.stringify({ name: 'plain', dsh: { bundle: {} } }), { status: 200 })
+            return undefined
+          },
+        )
+        const result = await harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 'secret-token' })
+        const headerFor = (url: string) => authorizations[requested.indexOf(url)]
+        expect(headerFor(assetUrl)).toBeNull()
+        expect(headerFor(rawUrl)).toBe('Bearer secret-token')
+        expect(result.rereadUpdated).toBe(2)
+      })
+
+      it.each([
         ['throws', () => { throw new TypeError('fetch failed') }],
         ['answers 403', () => new Response('forbidden', { status: 403 })],
-        ['answers 404', () => new Response('Not Found', { status: 404 })],
       ])('changes nothing when the recorded asset download %s', async (_label, asset) => {
+        // What stays a failure on this path: a transport that did not answer,
+        // or answered with a refusal that says nothing about the asset. (A 404
+        // moved to the case above, per the controller's ruling in fix round 1.)
         const state = recordedRescue(sha256)
         const { fetchImpl } = rereadFetch(seen, url => (url === assetUrl ? asset() : undefined))
         const { value: result } = await quietly(() => harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' }))
@@ -2467,47 +2653,34 @@ describe('harvestRepos', () => {
       })
     })
 
-    /**
-     * A body that delivers `prefix` and then dies as undici reports a
-     * connection reset: `TypeError: terminated` out of the stream.
-     */
-    function droppingResponse(prefix: string): Response {
-      let delivered = false
-      return new Response(new ReadableStream<Uint8Array>({
-        pull(controller) {
-          if (!delivered) {
-            delivered = true
-            controller.enqueue(new TextEncoder().encode(prefix))
-            return
-          }
-          controller.error(new TypeError('terminated'))
-        },
-      }), { status: 200 })
-    }
-
     it.each([
       ['a 403', () => new Response('forbidden', { status: 403 })],
       ['a 404', () => new Response('404: Not Found', { status: 404 })],
       ['a request that throws', () => { throw new TypeError('fetch failed') }],
-      ['a body that drops mid-read', () => droppingResponse('{"name":"quiet","peerDepend')],
+      ['a body that drops mid-read', () => new Response(droppingBody('{"name":"quiet","peerDepend'), { status: 200 })],
       ['a body that is not JSON', () => new Response('{ "name": "quiet", ', { status: 200 })],
       ['a manifest that names another package', () => new Response(JSON.stringify({ name: 'someone-else', dsh: { bundle: {} } }), { status: 200 })],
     ])('changes nothing, and says nothing about the repository, on %s', async (_label, manifest) => {
-      // A 404 included, which on the full fetch IS a verdict: the entry was
-      // projected from this very path at this very commit, and git content at
-      // a commit does not change, so a 404 here says the read went wrong — not
-      // that the manifest is gone. The candidate is byte-identical and
-      // unstamped, so the next run asks again; nothing is written as a
-      // failure, no row is published, and `thrown` — the systematic-failure
-      // bound's input — does not move.
+      // A 404 included, which on the full fetch IS a verdict. Not here: the
+      // full fetch read this path at the default branch and resolved the
+      // recorded commit in a separate request, and the two name the same file
+      // unless a push landed between them — which moves `pushedAt` and sends
+      // the repository to the full fetch rather than here. So a 404 at the
+      // recorded commit says the read went wrong, not that the manifest is
+      // gone. The candidate is byte-identical and unstamped, so the next run
+      // asks again; nothing is written as a failure, no row is published, and
+      // `thrown` — the systematic-failure bound's input — does not move.
       const recorded = unstamped('q/quiet', commitA, { name: 'quiet' })
       const state: RepoState = { 'q/quiet': { pushedAt: quietAt, commit: commitA, candidates: [recorded] } }
       const seen = [{ repo: 'q/quiet', pushedAt: quietAt }]
       const { fetchImpl } = rereadFetch(seen, url => (
         url === `https://raw.githubusercontent.com/q/quiet/${commitA}/package.json` ? manifest() : undefined))
-      const { value: result } = await quietly(() => harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' }))
+      const { value: result, stderr } = await quietly(() => harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' }))
       expect(result.nextState['q/quiet']).toEqual(state['q/quiet'])
       expect(result.nextState['q/quiet']?.candidates[0]).not.toHaveProperty('declarationsRule')
+      // The phase's only failure signal besides its counts, so it is pinned:
+      // a failed re-read writes a diagnostic naming the unit, never a row.
+      expect(stderr).toContain('github: re-reading the declarations of q/quiet failed')
       expect(result.nextState['q/quiet']?.failure).toBeUndefined()
       expect(result.failures).toEqual([])
       expect(result.thrown).toBe(0)
@@ -2534,25 +2707,330 @@ describe('harvestRepos', () => {
       expect([result.rereadUpdated, result.rereadFailed]).toEqual([0, 1])
     })
 
-    it('never trips the systematic-failure bound, however many re-reads fail', async () => {
-      // Twenty-five of twenty-five failing is past the floor and at 100% share,
-      // which would stop the build if these were full fetches. A re-read that
-      // fails changes nothing, so a blocked raw host costs a slower backfill —
-      // and the full-fetch half, which DOES make durable changes, is where
-      // that bound belongs.
+    /**
+     * `count` carried repositories in name order, every fourth of which (the
+     * last of each batch of REPO_CONCURRENCY) re-reads cleanly while the rest
+     * answer 503: three failures and one success a batch, so the failure
+     * breaker never sees eight in a row whatever order a batch settles in.
+     * A 503 rather than any other refusal because it is one the breaker
+     * counts: these runs go on past eight failures because the successes
+     * reset it, not because the failures are of a kind it ignores.
+     */
+    function mostlyFailing(count: number): { state: RepoState; seen: { repo: string; pushedAt: string }[]; failing: string[]; fetchImpl: typeof fetch } {
       const state: RepoState = {}
       const seen: { repo: string; pushedAt: string }[] = []
-      for (let i = 0; i < 25; i += 1) {
+      const failing: string[] = []
+      const healthy = new Set<string>()
+      for (let i = 0; i < count; i += 1) {
         const repo = `q/quiet-${String(i).padStart(2, '0')}`
         state[repo] = { pushedAt: quietAt, commit: commitA, candidates: [unstamped(repo, commitA)] }
         seen.push({ repo, pushedAt: quietAt })
+        if (i % 4 === 3) healthy.add(repo)
+        else failing.push(repo)
       }
-      const { fetchImpl } = rereadFetch(seen, () => new Response('blocked by egress policy', { status: 403 }))
+      const { fetchImpl } = rereadFetch(seen, url => {
+        const [owner, slug] = new URL(url).pathname.split('/').slice(1, 3)
+        return healthy.has(`${owner}/${slug}`)
+          ? new Response(JSON.stringify({ name: slug, dsh: { bundle: {} } }), { status: 200 })
+          : new Response('unavailable', { status: 503 })
+      })
+      return { state, seen, failing, fetchImpl }
+    }
+
+    it('never trips the systematic-failure bound, however many re-reads fail', async () => {
+      // Twenty-one failures clear the twenty-failure floor at a 75% share,
+      // which would stop the build if these were full fetches. A re-read that
+      // fails changes nothing, so a raw host failing most reads costs a slower
+      // backfill — and the full-fetch half, which DOES make durable changes,
+      // is where that bound belongs.
+      //
+      // Changed (fix round 1): this was twenty-five failures in a row, which
+      // the new consecutive-failure breaker stops at eight; one success a
+      // batch keeps the run going, so the claim is still tested past the floor.
+      const { state, failing, fetchImpl } = mostlyFailing(28)
       const { value: result } = await quietly(() => harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' }))
-      expect(MIN_THROWN_TO_BOUND).toBeLessThanOrEqual(25)
+      expect(result.rereadFailed).toBe(21)
+      expect(result.rereadFailed).toBeGreaterThanOrEqual(MIN_THROWN_TO_BOUND)
       expect(result.thrown).toBe(0)
-      expect(result.rereadFailed).toBe(25)
+      expect(result.rereadStopped).toBeNull()
+      for (const repo of failing) expect(result.nextState[repo], repo).toEqual(state[repo])
+    })
+
+    it('prints the first ten failures, then one line with the total', async () => {
+      // The breaker stops a host that fails every read after eight, but not
+      // one that fails three reads in four, as here, and not answers or
+      // refusals it does not count — any of which could put one line per
+      // candidate on stderr for most of a 4,000-repository slice. The counts
+      // carry the total; stderr keeps enough lines to diagnose, and says how
+      // many it left out.
+      const { state, fetchImpl } = mostlyFailing(16)
+      const { value: result, stderr } = await quietly(() => harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' }))
+      expect(result.rereadFailed).toBe(12)
+      const lines = stderr.split('\n').filter(line => line.startsWith('github: re-reading the declarations of '))
+      expect(lines).toHaveLength(10)
+      expect(stderr).toContain('github: 12 declaration re-reads failed this run')
+    })
+
+    /** `count` carried, unstamped repositories named `prefix-NN`, in name order. */
+    function carriedRepos(prefix: string, count: number, atCommit: string = commitA): { state: RepoState; seen: { repo: string; pushedAt: string }[] } {
+      const state: RepoState = {}
+      const seen: { repo: string; pushedAt: string }[] = []
+      for (let i = 0; i < count; i += 1) {
+        const repo = `${prefix}-${String(i).padStart(2, '0')}`
+        state[repo] = { pushedAt: quietAt, commit: atCommit, candidates: [unstamped(repo, atCommit)] }
+        seen.push({ repo, pushedAt: quietAt })
+      }
+      return { state, seen }
+    }
+    const repoOf = (url: string): string => new URL(url).pathname.split('/').slice(1, 3).join('/')
+
+    it('starts no new batch once its time budget is spent, and defers the rest unchanged', async () => {
+      // IMPORTANT (review of f16281a). Batches of REPO_CONCURRENCY run in lock
+      // step, so any batch holding a stalled read waits out a whole deadline —
+      // for a rescued root, TARBALL_REQUEST_TIMEOUT_MS. Against the committed
+      // file a stalled asset host made the first 4,000-repository slice cost
+      // about 9.5 hours and the second about 14, against a 120-minute job, and
+      // a killed job commits no state: the next run meets the same slice and
+      // the catalog stops publishing. The phase now has a wall clock of its own.
+      //
+      // The stall is real — the fake never answers and a 5 ms deadline ends
+      // each attempt — while the clock is injected and moved a minute per
+      // request, so the budget is spent after one batch in milliseconds.
+      let clock = 0
+      const { state, seen } = carriedRepos('s/stalled', 10)
+      const requested = new Set<string>()
+      const fetchImpl = (async (url: string | URL) => {
+        const text = String(url)
+        const searched = searchItems(text, seen)
+        if (searched !== undefined) return searched
+        requested.add(repoOf(text))
+        clock += 60_000
+        return new Promise<Response>(() => {})
+      }) as unknown as typeof fetch
+      const { value: result, stderr } = await quietly(() => harvestRepos({
+        state, budget: 5, fetchImpl, sleep, token: 't', timeoutMs: 5, rereadTimeBudgetMs: 1, now: () => clock,
+      }))
+      expect([...requested].sort()).toEqual(['s/stalled-00', 's/stalled-01', 's/stalled-02', 's/stalled-03'])
+      expect(result.rereadStopped).toBe('time-budget')
+      expect([result.rereadAttempted, result.rereadUpdated, result.rereadFailed, result.rereadDeferred]).toEqual([4, 0, 4, 6])
       expect(result.nextState).toEqual(state)
+      expect(stderr).toContain('github: the declarations re-read stopped after 4 of 10 repositories')
+    })
+
+    it('starts no further read inside a repository once its time budget is spent', async () => {
+      // A monorepo's stale subpackages are read one after another — eight of
+      // them in one queued repository today — so a check between batches alone
+      // would let a single batch run several deadlines past the budget.
+      let clock = 0
+      const subdirs = ['packages/a', 'packages/b', 'packages/c']
+      const state: RepoState = {
+        'm/many': {
+          pushedAt: quietAt,
+          commit: commitA,
+          candidates: subdirs.map(subdir => unstamped('m/many', commitA, { name: subdir.slice('packages/'.length), subdir })),
+        },
+      }
+      const seen = [{ repo: 'm/many', pushedAt: quietAt }]
+      const { fetchImpl, requested } = rereadFetch(seen, () => {
+        clock += 60_000
+        return new Response('forbidden', { status: 403 })
+      })
+      const { value: result } = await quietly(() => harvestRepos({
+        state, budget: 5, fetchImpl, sleep, token: 't', rereadTimeBudgetMs: 1, now: () => clock,
+      }))
+      expect(requested).toEqual([`https://raw.githubusercontent.com/m/many/${commitA}/packages/a/package.json`])
+      expect(result.rereadStopped).toBe('time-budget')
+      expect([result.rereadAttempted, result.rereadFailed, result.rereadDeferred]).toEqual([1, 1, 0])
+      expect(result.nextState).toEqual(state)
+    })
+
+    it.each([
+      ['answers 503', () => new Response('unavailable', { status: 503 }), 1],
+      ['answers 429', () => new Response('slow down', { status: 429 }), 1],
+      ['throws', () => { throw new TypeError('fetch failed') }, 4],
+    ])('stops after eight consecutive reads whose request %s, and defers the rest unchanged', async (_label, answer, attemptsEach) => {
+      // The raw path's storm. Eight host failures in a row is two batches of
+      // evidence, and without the breaker a host failing every read would be
+      // sent every read in the slice.
+      //
+      // Fix round 1, extension: the re-read waits out no 429 or 5xx — the
+      // first answer is the answer, one request a read — because a failure
+      // here changes nothing and is asked again next run, and because a read
+      // with no status ladder is bounded by its own deadlines, which is what
+      // bounds the phase's overrun. A throw is still retried by fetchRobust,
+      // four attempts in all: four 30 s deadlines are 134 s with backoff,
+      // well inside the tarball's 300 s, and a raw read's throw is most often
+      // the transient h2 reset that ladder exists for.
+      const { state, seen } = carriedRepos('s/storm', 20)
+      const { fetchImpl, requested } = rereadFetch(seen, answer)
+      const { value: result, stderr } = await quietly(() => harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' }))
+      expect(new Set(requested.map(repoOf)).size).toBe(8)
+      expect(requested).toHaveLength(8 * attemptsEach)
+      expect(result.rereadStopped).toBe('failure-breaker')
+      expect([result.rereadAttempted, result.rereadFailed, result.rereadDeferred]).toEqual([8, 8, 12])
+      expect(result.nextState).toEqual(state)
+      expect(stderr).toContain('github: the declarations re-read stopped after 8 of 20 repositories')
+    })
+
+    it('downloads a recorded asset once, with no ladder, and counts a 503 toward the breaker', async () => {
+      // Fix round 1, extension. The full probe rides fetchWithRetry's ladder
+      // for its asset, because it decides whether a changed repository's
+      // rescue lists. The re-read decides nothing a later run cannot, so it
+      // takes the first answer: one request an asset, which bounds a download
+      // in flight when the time budget runs out to TARBALL_REQUEST_TIMEOUT_MS.
+      // The answer is still the host failing, so it counts toward the breaker,
+      // and eight in a row stop the phase.
+      const pinned: RepoState = {}
+      const seen: { repo: string; pushedAt: string }[] = []
+      for (let i = 0; i < 12; i += 1) {
+        const repo = `r/storm-${String(i).padStart(2, '0')}`
+        const url = `https://github.com/${repo}/releases/download/v1.0.0/storm.tgz`
+        pinned[repo] = {
+          pushedAt: quietAt,
+          commit: commitA,
+          candidates: [unstamped(repo, commitA, { requiresBuild: true, release: { tag: 'v1.0.0', url, sha256: 'f'.repeat(64), assetVerified: true } })],
+        }
+        seen.push({ repo, pushedAt: quietAt })
+      }
+      const { fetchImpl, requested } = rereadFetch(seen, () => new Response('unavailable', { status: 503 }))
+      const { value: result } = await quietly(() => harvestRepos({ state: pinned, budget: 5, fetchImpl, sleep, token: 't' }))
+      expect(requested).toHaveLength(8)
+      expect(new Set(requested).size).toBe(8)
+      expect(requested.every(url => url.startsWith('https://github.com/r/storm-'))).toBe(true)
+      expect(result.rereadStopped).toBe('failure-breaker')
+      expect([result.rereadAttempted, result.rereadFailed, result.rereadAssetChanged, result.rereadDeferred]).toEqual([8, 8, 0, 4])
+      expect(result.nextState).toEqual(pinned)
+    })
+
+    it('does not let records refused before any request trip the breaker', async () => {
+      // A refusal costs no request and no time, so it is no evidence of a
+      // failing host — and it is deterministic, so counting it would trip the
+      // breaker at the same point of the same name-sorted queue every run and
+      // starve everything behind it for good. Twelve are refused here, past
+      // the breaker's eight, and the phase runs to the end.
+      const { state, seen } = carriedRepos('q/branchy', 12, 'main')
+      const { fetchImpl, requested } = rereadFetch(seen, () => new Response('{}', { status: 200 }))
+      const { value: result } = await quietly(() => harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' }))
+      expect(requested).toEqual([])
+      expect(result.rereadStopped).toBeNull()
+      expect([result.rereadAttempted, result.rereadFailed, result.rereadDeferred]).toEqual([12, 12, 0])
+      expect(result.nextState).toEqual(state)
+    })
+
+    it.each([
+      ['a 404', () => new Response('404: Not Found', { status: 404 })],
+      ['a 403', () => new Response('forbidden', { status: 403 })],
+      ['a body that is not JSON', () => new Response('{ "name": ', { status: 200 })],
+      ['a manifest that names another package', () => new Response(JSON.stringify({ name: 'someone-else', dsh: { bundle: {} } }), { status: 200 })],
+    ])('does not let %s trip the breaker, since a record answering it heads every later queue', async (_label, answer) => {
+      // An answer the read cannot use is a fact about the record, not about
+      // the host, and it is persistent: the same record answers the same way
+      // on every run. And the queue is served in name order while every read
+      // that succeeds is stamped and leaves it, so after one run such records
+      // are the HEAD of the queue, side by side, on every run after — however
+      // far apart their names are. Counted, eight of them gathered from
+      // anywhere would trip the breaker at the head of every run for good,
+      // and nothing behind them would be read again. So an answer resets the
+      // count, as any answer does.
+      const answering = carriedRepos('a/answer', 10)
+      const healthy = carriedRepos('b/healthy', 4)
+      const state: RepoState = { ...answering.state, ...healthy.state }
+      const { fetchImpl } = rereadFetch([...answering.seen, ...healthy.seen], url => {
+        const [owner, slug] = new URL(url).pathname.split('/').slice(1, 3)
+        return owner === 'b'
+          ? new Response(JSON.stringify({ name: slug, dsh: { bundle: {} } }), { status: 200 })
+          : answer()
+      })
+      const { value: result } = await quietly(() => harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' }))
+      expect(result.rereadStopped).toBeNull()
+      expect([result.rereadAttempted, result.rereadUpdated, result.rereadFailed, result.rereadDeferred]).toEqual([14, 4, 10, 0])
+      for (const repo of Object.keys(answering.state)) expect(result.nextState[repo], repo).toEqual(state[repo])
+    })
+
+    it('does not let a pinned asset whose archive it cannot open trip the breaker either', async () => {
+      // The rescued path's persistent answer: bytes that still hash to the pin,
+      // so they are exactly what was verified, and that this pipeline's reader
+      // cannot open today. They fail the same way on every run and head the
+      // queue like the answers above.
+      const junk = Buffer.from('not a gzipped tarball')
+      const pin = createHash('sha256').update(junk).digest('hex')
+      const pinned: RepoState = {}
+      const seen: { repo: string; pushedAt: string }[] = []
+      for (let i = 0; i < 10; i += 1) {
+        const repo = `a/junk-${String(i).padStart(2, '0')}`
+        const url = `https://github.com/${repo}/releases/download/v1.0.0/junk.tgz`
+        pinned[repo] = {
+          pushedAt: quietAt,
+          commit: commitA,
+          candidates: [unstamped(repo, commitA, { requiresBuild: true, release: { tag: 'v1.0.0', url, sha256: pin, assetVerified: true } })],
+        }
+        seen.push({ repo, pushedAt: quietAt })
+      }
+      const healthy = carriedRepos('b/healthy', 4)
+      const state: RepoState = { ...pinned, ...healthy.state }
+      const { fetchImpl } = rereadFetch([...seen, ...healthy.seen], url => {
+        if (url.startsWith('https://github.com/')) return new Response(junk, { status: 200 })
+        const slug = new URL(url).pathname.split('/')[2]
+        return new Response(JSON.stringify({ name: slug, dsh: { bundle: {} } }), { status: 200 })
+      })
+      const { value: result } = await quietly(() => harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' }))
+      expect(result.rereadStopped).toBeNull()
+      expect([result.rereadAttempted, result.rereadUpdated, result.rereadFailed, result.rereadAssetChanged]).toEqual([14, 4, 10, 0])
+      for (const repo of Object.keys(pinned)) expect(result.nextState[repo], repo).toEqual(state[repo])
+    })
+
+    it('counts only failures in a row: an answer between them starts the count again', async () => {
+      // Four failures; three more and a 404; four more; then a healthy batch.
+      // Eleven failures in twelve reads and never eight in a row, so the
+      // healthy batch is still read. Were the 404 ignored rather than an
+      // answer, the count would reach eleven and stop the phase before it.
+      const { state, seen } = carriedRepos('s/mixed', 16)
+      const { fetchImpl } = rereadFetch(seen, url => {
+        const slug = new URL(url).pathname.split('/')[2] ?? ''
+        const index = Number(slug.slice('mixed-'.length))
+        if (index === 7) return new Response('404: Not Found', { status: 404 })
+        if (index >= 12) return new Response(JSON.stringify({ name: slug, dsh: { bundle: {} } }), { status: 200 })
+        return new Response('unavailable', { status: 503 })
+      })
+      const { value: result } = await quietly(() => harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' }))
+      expect(result.rereadStopped).toBeNull()
+      expect([result.rereadAttempted, result.rereadUpdated, result.rereadFailed]).toEqual([16, 4, 12])
+    })
+
+    it.each([
+      ['rereadBudget', Number.NaN],
+      ['rereadBudget', -1],
+      ['rereadBudget', 1.5],
+      ['rereadBudget', Number.POSITIVE_INFINITY],
+      ['rereadTimeBudgetMs', Number.NaN],
+      ['rereadTimeBudgetMs', -1],
+      ['rereadTimeBudgetMs', Number.POSITIVE_INFINITY],
+    ])('refuses a %s of %s instead of silently reading nothing, or all but one', async (option, value) => {
+      // `.slice(0, NaN)` reads nothing and `.slice(0, -1)` all but one, both in
+      // silence; a NaN or infinite time budget never stops, a negative one
+      // always has. Each is a misconfiguration, and it fails loudly.
+      const fetchImpl = (async () => { throw new Error('never called') }) as unknown as typeof fetch
+      await expect(harvestRepos({ state: {}, budget: 5, fetchImpl, sleep, token: 't', [option]: value })).rejects.toThrow(option)
+    })
+
+    it('accepts a re-read budget of zero, a deliberate "re-read nothing"', async () => {
+      const { state, seen } = carriedRepos('z/zero', 3)
+      const { fetchImpl, requested } = rereadFetch(seen, () => undefined)
+      const result = await harvestRepos({ state, budget: 5, rereadBudget: 0, fetchImpl, sleep, token: 't' })
+      expect(requested).toEqual([])
+      expect([result.rereadAttempted, result.rereadDeferred]).toEqual([0, 3])
+    })
+
+    it('bounds the phase at ten minutes, eight failures in a row, and ten failure lines', () => {
+      // Literals, so the constants cannot drift under fixtures computed from
+      // them. The reasons behind each number are on the constants.
+      //
+      // Changed (fix round 1, extension): fifteen minutes became ten. Against
+      // the longest measured build job, 86m25s, fifteen minutes and the batch
+      // in flight left about fourteen minutes of the 120; ten leaves 18m35s.
+      expect(DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT).toBe(10 * 60 * 1000)
+      expect(DECLARATIONS_REREAD_MAX_CONSECUTIVE_FAILURES).toBe(8)
+      expect(DECLARATIONS_REREAD_FAILURE_LINES).toBe(10)
     })
 
     it('re-reads at most its own budget, in name order, and defers the rest', async () => {
@@ -2591,7 +3069,7 @@ describe('harvestRepos', () => {
       expect(next.toReread).toEqual([])
     })
 
-    it('defaults its budget to 4,000 repositories, a third of the queue the stamp opened', () => {
+    it('defaults its budget to 4,000 repositories, which clears the queue the stamp opened in three runs', () => {
       // A literal, so the constant cannot drift under a fixture computed from
       // it. The arithmetic behind the number is on the constant.
       expect(DECLARATIONS_REREAD_BUDGET_DEFAULT).toBe(4000)
@@ -3667,7 +4145,12 @@ const EXCUSED_BODY_READS: readonly ExcusedBodyRead[] = [
     reason: 'api.github.com commits: a sha and a date, both shape-checked before use',
   },
   {
-    snippet: 'body = await response.json() as typeof body',
+    // Re-keyed from `body = await response.json() as typeof body` (fix round
+    // 1): the releases answer is now read as text and parsed separately, so a
+    // failure mid-read propagates as the transport failure it is, and only
+    // bytes that arrived can be called "not JSON". The body and the reason it
+    // needs no byte cap are unchanged.
+    snippet: 'const releaseText = await response.text()',
     reason: 'api.github.com releases: a tag name and an asset list GitHub composes; the tarball it points at '
       + 'is separately capped at MAX_TARBALL_BYTES',
   },
@@ -4069,13 +4552,11 @@ describe('body deadlines', () => {
 
   it('does not multiply the tarball deadline by the retry ladder', async () => {
     // 300s is defensible for ONE attempt and indefensible for four. fetchRobust
-    // retries a throw four times with backoff, so a stalled asset HOST -- the
-    // CI egress allowlist this module's own catch comment names, where
-    // api.github.com is permitted and the asset's separate redirect host is
-    // not -- cost 4 x 300s + 14s backoff = 21 minutes per repository. Measured
-    // against the live state file: 303 of 13,120 candidates carry a release,
-    // so a 2000-repo run puts ~46 on this path, ~243 minutes at
-    // REPO_CONCURRENCY 4 -- twice the whole job bound.
+    // retries a throw four times with backoff, so a stalled asset HOST -- a CI
+    // egress allowlist where api.github.com is permitted and the asset's
+    // separate redirect host is not -- cost 4 x 300s + 14s backoff = 21
+    // minutes per repository, over twice the job bound for a full budget of
+    // them (the arithmetic, re-measured, is on `downloadReleaseAsset`).
     //
     // Flipped (R7): the probe used to degrade the stall to "no release", and
     // now it throws — a `fetch-failed` that keeps a recorded rescue rather than

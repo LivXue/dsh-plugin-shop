@@ -205,12 +205,33 @@ export function isBundleName(value: unknown): value is string {
 }
 
 /**
+ * Whether a GitHub read waits out a 429 or a 5xx on fetchWithRetry's ladder
+ * (`'ladder'`), or takes the first answer it gets (`'first-answer'`).
+ *
+ * Every read whose answer decides what is listed rides the ladder: a status
+ * that says "not this time" is worth several waits there. Only the
+ * declarations re-read takes the first answer. A failure there changes nothing
+ * and is asked again next run, so a wait buys it nothing; and a read with no
+ * status ladder ends within its own deadlines, which is what bounds how far
+ * the re-read can overrun its time budget, since a read in flight cannot be
+ * interrupted (see {@link DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT}).
+ */
+type StatusRetry = 'ladder' | 'first-answer'
+
+/** The request init that sends `token` as a Bearer header, as fetchWithRetry builds it; none without one. */
+function bearer(token: string | undefined): RequestInit | undefined {
+  return token === undefined ? undefined : { headers: { Authorization: `Bearer ${token}` } }
+}
+
+/**
  * GitHub's API speaks HTTP/2 to undici, whose long-lived h2 connections can
  * die with a transient `UND_ERR_HEADERS_TIMEOUT` on the next request. A
  * bounded retry on network throws (4 attempts, doubling backoff 2/4/8s)
  * rides those out. This ladder is for THROWS only, so it does not compound
  * with fetchWithRetry's, which owns the statuses — a 429 or any 5xx is
- * returned rather than thrown, and is retried inside that call.
+ * returned rather than thrown, and is retried inside that call unless the
+ * caller asks for the first answer ({@link StatusRetry}). Either way a throw
+ * is retried: at four 30 s deadlines that costs at most 134 s with backoff.
  */
 async function fetchRobust(
   url: string,
@@ -218,6 +239,7 @@ async function fetchRobust(
   sleep: (ms: number) => Promise<void>,
   token: string | undefined,
   timeoutMs: number = GITHUB_REQUEST_TIMEOUT_MS,
+  statusRetry: StatusRetry = 'ladder',
 ): Promise<Response> {
   // The deadline wraps the impl INSIDE the retry ladder, so each of the four
   // attempts is bounded rather than the ladder multiplying undici's 300s
@@ -225,7 +247,9 @@ async function fetchRobust(
   const timed = withTimeout(fetchImpl, timeoutMs, 'github')
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await fetchWithRetry(url, timed, sleep, token)
+      return statusRetry === 'ladder'
+        ? await fetchWithRetry(url, timed, sleep, token)
+        : await timed(url, bearer(token))
     } catch (error) {
       if (attempt >= 3) throw error
       await sleep(2000 * 2 ** attempt)
@@ -702,9 +726,11 @@ async function fetchHeadCommit(
  * `requires-build` class triggers this probe, so its API cost is bounded by
  * the class it rescues. The result rides `repo-state.json` through the
  * candidate, so it re-probes only when the repo's `pushedAt` advances.
- * The tarball is downloaded once here and hashed: GitHub release assets are
- * immutable per URL (re-upload = new asset = new URL), so URL + sha256 is the
- * audit story.
+ * The tarball is downloaded once here and hashed, and the HASH is the audit
+ * story, not the URL: a `browser_download_url` names a tag and a file name, so
+ * an asset deleted and re-uploaded under its old name serves different bytes
+ * at the same URL. The recorded sha256 is what the host verifies at install,
+ * and what the declarations re-read checks before it believes a byte.
  *
  * NOT advisory, and it throws rather than degrading. It used to return null on
  * any failure, on the reasoning that its fallback — the unchanged
@@ -736,7 +762,9 @@ async function fetchHeadCommit(
  * and not the default branch the candidate was projected from.
  * @throws on every transport failure: a non-ok status other than 404 from
  *   either request (after its retry ladder), a request that throws, a body that
- *   fails mid-read, a deadline, or a releases body that is not JSON.
+ *   fails mid-read, a deadline — and on a 200 that is not GitHub's release
+ *   answer: a body that is not JSON, or JSON that is not an object with a string
+ *   `tag_name` and an `assets` array.
  */
 async function fetchLatestReleaseTarball(
   owner: string,
@@ -762,28 +790,37 @@ async function fetchLatestReleaseTarball(
   if (!response.ok) {
     throw new Error(`github api returned ${response.status} reading the latest release of ${owner}/${slug}`)
   }
-  let body: { tag_name?: unknown; assets?: unknown } | null
+  // Read, then parse — the discovery tree's two steps, for the same reason.
+  // Reading is the transport and sits outside any catch: a deadline, a reset
+  // mid-body (undici's `TypeError: terminated`) or any stream error propagates
+  // as it is, never relabelled as a malformed body.
+  const releaseText = await response.text()
+  let parsed: unknown
   try {
-    body = await response.json() as typeof body
-  } catch (error) {
-    // A body that failed mid-read and one that arrived and is not JSON both
-    // land here, and both throw: neither is GitHub saying anything about this
-    // repository's releases — a proxy's error page wearing a 200 is the likely
-    // second — and answering "no release" for them is exactly the durable
-    // delisting this probe no longer does. A deadline keeps its own error, for
-    // the reason readSearchBody gives.
-    if (error instanceof FetchTimeoutError) throw error
+    parsed = JSON.parse(releaseText)
+  } catch {
+    // Catches only the JSON syntax error, and throws in its place one that
+    // names the request: bytes that arrived whole and are not GitHub's answer
+    // — a proxy's error page wearing a 200 is the likely source. Answering "no
+    // release" for them would durably drop a recorded rescue, the delisting
+    // this probe throws on transport to avoid.
     throw new Error(`github api answered ${response.status} for the latest release of ${owner}/${slug} with a body that is not JSON`)
   }
-  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+  const body = parsed as { tag_name?: unknown; assets?: unknown } | null
+  // Every release GitHub serves carries a string `tag_name` and an `assets`
+  // array, empty or not. A 200 without both is not its release answer — a
+  // proxy's JSON error object is the likely one — so it throws for the reason
+  // above rather than reading as "no release". "Names no tarball asset", the
+  // one null left in this body, is a release that says so.
+  if (typeof body !== 'object' || body === null || Array.isArray(body)
+    || typeof body.tag_name !== 'string' || !Array.isArray(body.assets)) {
     throw new Error(`github api answered ${response.status} for the latest release of ${owner}/${slug} with a body that is not a release object`)
   }
-  if (typeof body.tag_name !== 'string' || !Array.isArray(body.assets)) return null
   const asset = body.assets
     .map(a => (a as { browser_download_url?: unknown } | null)?.browser_download_url)
     .find((u): u is string => typeof u === 'string' && /\.(?:tgz|tar\.gz)$/i.test(u))
   if (asset === undefined) return null
-  const download = await downloadReleaseAsset(asset, fetchImpl, sleep, token, tarballTimeoutMs)
+  const download = await downloadReleaseAsset(asset, fetchImpl, sleep, tarballTimeoutMs, 'ladder')
   if (download.outcome !== 'bytes') return null
   // The bytes are already in hand for the hash, so verifying that they ARE
   // this package costs nothing more. Until this check the rescue carried the
@@ -810,13 +847,22 @@ type AssetDownload =
   | { outcome: 'over-cap' }
 
 /**
- * Download one release asset, once, under the tarball deadline and body cap.
+ * Download one release asset under the tarball deadline and body cap, as many
+ * attempts as `statusRetry` allows.
  *
  * Shared by the rescue probe and the declarations re-read, so the one path
  * that reads up to 32 MB is bounded one way wherever it runs. Each caller
  * decides what a non-`bytes` outcome means: the probe reads both as "no
- * release", while the re-read reads anything but the recorded bytes as a
- * failure that changes nothing.
+ * release"; the re-read reads both, like bytes that miss the pin, as the
+ * recorded asset being gone, and unverifies the rescue for a full re-probe.
+ *
+ * It sends no token, to any URL, and there is no parameter to pass one: a
+ * public release asset needs none, and the one rule that keeps the job's
+ * GITHUB_TOKEN off every asset request lives here rather than at two call
+ * sites. The re-read's URL comes from a file a pull request can edit, and
+ * even the probe's — GitHub's own `browser_download_url` — redirects to a
+ * separate asset host. Only requests to api.github.com and
+ * raw.githubusercontent.com carry the token.
  *
  * The asset alone gets the larger bound: the metadata requests around it read
  * a few hundred bytes of GitHub's own JSON, and lending them 300s would hand a
@@ -827,28 +873,42 @@ type AssetDownload =
  * flaky h2 connection and ruinous at 300s an attempt: a stalled asset host —
  * a CI egress allowlist that permits api.github.com and blocks the asset's
  * separate redirect host — cost 4 x 300s + 14s = 21 minutes per repository.
- * Against the live state file, 303 of 13,120 candidates carry a release, so a
- * 2000-repo run puts ~46 on this path: ~243 minutes at REPO_CONCURRENCY 4,
- * twice the whole job bound. One bounded attempt costs at most 5 minutes, so
- * the same total is ~58 — still the largest single thing the harvest can
- * spend, and the place to put an aggregate budget if it is ever seen for real.
- * The single attempt matters more now that a failed download throws: every
- * repository behind a blocked asset host reaches harvestRepos' catch, and it
- * must get there in one deadline rather than four. fetchWithRetry still
- * absorbs a 429 or a 5xx, which answer immediately and then wait out its
- * ladder rather than this deadline.
- * @param url - the asset URL, as the releases API or the recorded pin gives it.
- * @throws on any status but an ok one or a 404 (a 5xx after fetchWithRetry's
- *   ladder), a request that throws, a body that fails mid-read, or a deadline.
+ * Against the committed state file of 2026-09-25, 441 of its 17,849
+ * repositories reach this download (411 rescued, 30 whose asset was refused),
+ * so a 2000-repository run puts ~49 on this path: ~250 minutes at
+ * REPO_CONCURRENCY 4, twice the whole 120-minute job bound. One bounded attempt
+ * costs at most 5 minutes, so the same total is ~62 — still the largest single
+ * thing the full fetch can spend, and the place to put an aggregate budget if
+ * it is ever seen for real. (The declarations re-read has one: see
+ * DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT.)
+ *
+ * A failed download throws, and the repository behind it reaches harvestRepos'
+ * catch. What that costs is the caller's `statusRetry`: `'first-answer'` puts
+ * it there in one deadline, and `'ladder'` lets a 429 or a 5xx that answers
+ * immediately ride fetchWithRetry's ladder first — which the PROBE does,
+ * because it decides whether a changed repository's rescue is listed. The
+ * re-read takes the first answer, so that one download in flight when its
+ * time budget runs out is bounded by this deadline alone: it is what makes
+ * that constant's arithmetic hold.
+ * @param url - the asset URL, as the releases API or the checked recorded pin gives it.
+ * @throws on any status but an ok one or a 404 (with the ladder, a 5xx after
+ *   fetchWithRetry's retries), a request that throws, a body that fails
+ *   mid-read, or a deadline.
  */
 async function downloadReleaseAsset(
   url: string,
   fetchImpl: typeof fetch,
   sleep: (ms: number) => Promise<void>,
-  token: string | undefined,
   tarballTimeoutMs: number,
+  statusRetry: StatusRetry,
 ): Promise<AssetDownload> {
-  const response = await fetchWithRetry(url, withTimeout(fetchImpl, tarballTimeoutMs, 'github'), sleep, token)
+  const timed = withTimeout(fetchImpl, tarballTimeoutMs, 'github')
+  // No token on either path, deliberately: see above. fetchWithRetry adds an
+  // Authorization header to whatever URL it is given a token for, so it is
+  // given `undefined`, and the single attempt is sent no init at all.
+  const response = statusRetry === 'ladder'
+    ? await fetchWithRetry(url, timed, sleep, undefined)
+    : await timed(url)
   if (response.status === 404) return { outcome: 'not-found' }
   if (!response.ok) throw new Error(`github returned ${response.status} downloading the release asset ${url}`)
   const bytes = await readTarballBody(response)
@@ -1585,14 +1645,119 @@ export const REPO_BACKFILL_BUDGET_DEFAULT = 2000
  * The estimate this is sized from, against the committed repo-state.json of
  * 2026-09-25: 10,864 listable candidates in 10,629 repositories, none stamped,
  * 411 of them rescued. At 4,000 repositories a run the queue clears in three
- * runs (4,000 + 4,000 + 2,629), at about 1.02 requests a repository, and each
- * run reaches roughly 155 recorded assets. At REPO_CONCURRENCY 4 and a few
- * hundred milliseconds a raw request, a full slice is a few minutes against
- * the build job's 120-minute bound. It runs after the full fetches and never
+ * runs (4,000 + 4,000 + 2,629) unless the time budget cuts a slice short, at
+ * about 1.02 requests a repository, and the three slices hold 132, 213 and 66
+ * rescued roots, each an asset download.
+ *
+ * This bounds how MANY repositories a run re-reads, not how long that takes.
+ * A healthy slice should take minutes, but a stalled host holds each batch for
+ * a whole deadline: against the same file a stalled asset host would have
+ * held the first slice about 9.5 hours and the second about 14. Time is
+ * bounded separately, by {@link DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT}
+ * and the failure breaker beside it. It runs after the full fetches and never
  * takes their budget, so a quiet day's backfill cannot displace a repository
  * that pushed.
  */
 export const DECLARATIONS_REREAD_BUDGET_DEFAULT = 4000
+
+/**
+ * The longest the declarations re-read may keep STARTING reads in one run,
+ * when {@link RepoHarvestOptions.rereadTimeBudgetMs} is unset: 10 minutes.
+ *
+ * daily.yml bounds the build job at 120 minutes (`timeout-minutes`), and a job
+ * that reaches it is killed and commits no state: the next run meets the same
+ * slice, and the catalog stops publishing. So the budget, and the read still in
+ * flight when it runs out, must fit in what the rest of the job leaves. Build
+ * job durations, from each job's own start and end, over the last five
+ * successful catalog runs — none of which ran this phase:
+ *
+ *   run               build job   GitHub half   repositories fetched in full
+ *   2026-09-21          71m20s       33m10s       1,167
+ *   2026-09-22          69m24s       32m48s       1,231
+ *   2026-09-23          69m24s       33m13s       1,418
+ *   2026-09-23 (push)   79m26s       32m01s       1,477
+ *   2026-09-24          86m25s       32m00s       1,517
+ *
+ * The arithmetic, on the longest of them:
+ *
+ *   86m25s   the build job without this phase
+ * + 10m      this budget, spent in full
+ * +  5m      at most one batch in flight when it runs out
+ * = 101m25s  18m35s inside the 120-minute bound.
+ *
+ * Why one batch in flight costs at most 5 minutes: the phase asks before
+ * every read, not only every batch, so each repository in the last batch has
+ * at most one read in flight, and they run side by side. And every re-read
+ * request takes the first answer it gets ({@link StatusRetry}), so no read
+ * rides a status ladder. The asset download is then one attempt, at most
+ * TARBALL_REQUEST_TIMEOUT_MS: 300 s. The raw manifest read still retries a
+ * THROW on fetchRobust's ladder, but four 30 s deadlines and 14 s of backoff
+ * are 134 s, never the larger of the two.
+ *
+ * It was 15 minutes, 14 inside the bound on the same arithmetic — and that
+ * held only while the read in flight had no status ladder. With one, a host
+ * answering 5xx just as each deadline expired could hold one asset read
+ * through six 300 s attempts and the backoff between them, over half an hour.
+ * Taking the first answer bounds that read; the smaller budget buys back the
+ * margin. (daily.yml's own header says the job "takes about 50 minutes": that
+ * was written on 2026-09-04, before these runs.)
+ *
+ * What a healthy slice needs is INFERRED, NOT TIMED: no catalog run has timed
+ * this phase. The GitHub half took 32 to 33 minutes on every run above whether
+ * it fetched 1,167 repositories or 1,517, so the search's fixed 2 s pace sets
+ * its length, and 88 more batches of full fetches, several requests each, do
+ * not show in it. A slice is 1,000 batches of one request each. A slice the
+ * budget does cut short defers its tail, which slows the stamp backfill and
+ * costs the catalog nothing.
+ *
+ * A budget on STARTING reads, not a deadline on them: what is not started is
+ * deferred and unchanged, and the stamp that queued it is still missing next
+ * run.
+ */
+export const DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT = 10 * 60 * 1000
+
+/**
+ * Consecutive host failures after which the declarations re-read starts no
+ * more reads: eight, two batches of {@link REPO_CONCURRENCY}.
+ *
+ * The time budget alone would let a failing host spend all of it for
+ * nothing, since a failed read changes nothing: a stalled asset host holds
+ * each batch for a 300 s deadline, a stalled raw host for fetchRobust's 134 s,
+ * and a host answering 5xx at once would be sent every read in the slice. So
+ * what the breaker counts is exactly those — reads that threw, or were
+ * answered 429 or 5xx — and any read the host answered otherwise resets it,
+ * whether the answer was usable or not.
+ *
+ * What it does not count matters as much, because the queue is served in
+ * name order and every read that succeeds is stamped and leaves it. A record
+ * that fails the same way on every run is therefore found at the HEAD of every
+ * later run's queue, beside every other such record however far apart their
+ * names — and once eight had gathered there, a breaker that counted them would
+ * trip at the head of every run for good, and nothing behind them would be
+ * read again. Those persistent failures are the answers a record gives — a
+ * 404 or 403, a manifest that is unreadable or another package's, a pinned
+ * archive that does not open — and the refusals made before any request (a
+ * recorded URL or commit that fails its check). Each costs one prompt request
+ * or none, and says nothing about a host: answers reset the count, as any
+ * answer does, and refusals neither count nor reset.
+ *
+ * A host failure that recurs at the head — the asset host blocked outright,
+ * say — still stops the phase there each run, and the time budget would too.
+ * That clears when the host does, because it was never the record's.
+ */
+export const DECLARATIONS_REREAD_MAX_CONSECUTIVE_FAILURES = 8
+
+/**
+ * How many failed re-reads one run describes on stderr before it only counts
+ * them: ten, then one line with the total. The breaker stops a host that
+ * fails every read after eight, but not one that fails three reads in four —
+ * each success resets it — nor the answers and refusals it does not count, and
+ * any of those could print one line per candidate for most of a
+ * 4,000-repository slice, most of them the same sentence. The counts in the
+ * result carry the total; these lines are for diagnosing, and ten of them
+ * diagnose.
+ */
+export const DECLARATIONS_REREAD_FAILURE_LINES = 10
 
 /**
  * Parse the per-run fetch budget from its environment string.
@@ -1645,9 +1810,24 @@ export interface RepoHarvestOptions {
    * Maximum repositories whose declarations are re-read this run — the pacing
    * knob for the stamp backfill, separate from {@link budget} and never
    * drawing on it. The rest defer to later runs. Defaults to
-   * {@link DECLARATIONS_REREAD_BUDGET_DEFAULT}.
+   * {@link DECLARATIONS_REREAD_BUDGET_DEFAULT}. A non-negative integer, or
+   * {@link harvestRepos} throws: `.slice(0, NaN)` would read nothing and
+   * `.slice(0, -1)` all but one, both in silence.
    */
   rereadBudget?: number
+  /**
+   * How long the declarations re-read may keep starting reads, in
+   * milliseconds of {@link now}. Defaults to
+   * {@link DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT}; a non-negative finite
+   * number, or {@link harvestRepos} throws.
+   */
+  rereadTimeBudgetMs?: number
+  /**
+   * The clock the re-read's time budget is measured on. Defaults to
+   * `Date.now`; a seam, so a test can spend a budget without waiting it out.
+   * Only this phase reads it.
+   */
+  now?: () => number
   /**
    * Pause before retrying the WHOLE harvest once, when the first attempt
    * throws. Unset means no retry.
@@ -1692,33 +1872,56 @@ export interface RepoHarvestResult {
   carried: number
   deferred: number
   /**
-   * Repositories whose declarations this run re-read — the re-read queue's
-   * length after {@link RepoHarvestOptions.rereadBudget}, not a success count.
-   * Disjoint from {@link fetched}: a repository fetched in full is re-projected
-   * and stamped by that fetch, so it is never also re-read.
+   * Repositories whose declarations re-read this run STARTED — at most
+   * {@link RepoHarvestOptions.rereadBudget}, fewer when the time budget or the
+   * failure breaker stopped the phase ({@link rereadStopped}); not a success
+   * count. Disjoint from {@link fetched}: a repository fetched in full is
+   * re-projected and stamped by that fetch, so it is never also re-read.
    */
   rereadAttempted: number
   /** Candidates whose re-read succeeded: `peers`, `compatibility` and the
    * stamp written, and nothing else about them changed. */
   rereadUpdated: number
   /**
-   * Candidates whose re-read failed — a throw, any non-ok status, a 404
-   * included, an unreadable, over-cap or foreign manifest. Each is left
-   * byte-identical and unstamped, so the next run asks again. Counted here and
-   * NOWHERE else: never a failure record, never a published row, and never
-   * part of {@link thrown}, because a failure that changes nothing is not
-   * evidence of a harvest that would publish something wrong.
+   * Candidates whose re-read failed, of every kind: a request that threw; on
+   * the raw path any non-ok status (a 404 included) or a manifest that is
+   * unreadable, over the cap or another package's; on the rescued path any
+   * status but a 404, or a pinned archive that does not open as this
+   * package; and on either path a record refused before any request — a
+   * recorded commit that is not a sha, a recorded release URL that is not
+   * this repository's own github.com download. (Only the throws and the raw
+   * 429s and 5xx count toward the failure breaker; see
+   * {@link DECLARATIONS_REREAD_MAX_CONSECUTIVE_FAILURES}.) Each is left
+   * byte-identical and unstamped, so the next run asks again. Counted here
+   * and NOWHERE else: never a failure record, never a published row, and
+   * never part of {@link thrown}, because a failure that changes nothing is
+   * not evidence of a harvest that would publish something wrong.
    */
   rereadFailed: number
   /**
-   * Rescued candidates whose recorded release asset no longer hashes to its
-   * recorded sha256. Not a failure, a finding: the release loses
+   * Rescued candidates whose recorded release asset is no longer the verified
+   * one — it answered 404, answered past the tarball cap, or no longer hashes
+   * to its recorded sha256. Not a failure, a finding: the release loses
    * `assetVerified` and stays unstamped, so the next run sends the repository
-   * through the full re-probe (`hasUnverifiedRelease`).
+   * through the full re-probe (`hasUnverifiedRelease`), where GitHub's own
+   * releases answer decides.
    */
   rereadAssetChanged: number
-  /** Repositories queued for a re-read beyond {@link RepoHarvestOptions.rereadBudget}. */
+  /**
+   * Repositories queued for a re-read and not started this run: beyond
+   * {@link RepoHarvestOptions.rereadBudget}, or left when the time budget or
+   * the failure breaker stopped the phase. Deferring changes nothing.
+   */
   rereadDeferred: number
+  /**
+   * Why the re-read stopped starting reads before its queue ran out, or null
+   * when it did not: `'time-budget'` once
+   * {@link RepoHarvestOptions.rereadTimeBudgetMs} was spent, `'failure-breaker'`
+   * after {@link DECLARATIONS_REREAD_MAX_CONSECUTIVE_FAILURES} host failures in
+   * a row. The second is the host failing rather than any one record, and worth
+   * saying so in the build note.
+   */
+  rereadStopped: 'time-budget' | 'failure-breaker' | null
   /**
    * The first attempt's error message when {@link RepoHarvestOptions.retryAfterMs}
    * bought a second one, else null. Reported rather than swallowed: a harvest
@@ -1743,6 +1946,15 @@ export interface RepoHarvestResult {
  */
 export async function harvestRepos(options: RepoHarvestOptions): Promise<RepoHarvestResult> {
   const { retryAfterMs } = options
+  // Before the first request, and outside the retry: a misconfigured budget is
+  // not a transient failure, and a retry would only repeat it thirty seconds on.
+  const { rereadBudget, rereadTimeBudgetMs } = options
+  if (rereadBudget !== undefined && !(Number.isSafeInteger(rereadBudget) && rereadBudget >= 0)) {
+    throw new Error(`harvestRepos: rereadBudget must be a non-negative integer; got ${String(rereadBudget)}`)
+  }
+  if (rereadTimeBudgetMs !== undefined && !(Number.isFinite(rereadTimeBudgetMs) && rereadTimeBudgetMs >= 0)) {
+    throw new Error(`harvestRepos: rereadTimeBudgetMs must be a non-negative finite number; got ${String(rereadTimeBudgetMs)}`)
+  }
   try {
     return { ...await harvestOnce(options), firstAttemptError: null }
   } catch (error) {
@@ -1773,12 +1985,15 @@ async function harvestOnce(options: RepoHarvestOptions): Promise<Omit<RepoHarves
     timeoutMs = GITHUB_REQUEST_TIMEOUT_MS,
     tarballTimeoutMs = TARBALL_REQUEST_TIMEOUT_MS,
     rereadBudget = DECLARATIONS_REREAD_BUDGET_DEFAULT,
+    rereadTimeBudgetMs = DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT,
+    now = Date.now,
   } = options
   if (token === undefined) {
     return {
       candidates: [], failures: [], thrown: 0, seen: [], gone: [], nextState: state, skipped: true,
       searchStars: new Map(), windowCount: 0, fetched: 0, carried: 0, deferred: 0,
       rereadAttempted: 0, rereadUpdated: 0, rereadFailed: 0, rereadAssetChanged: 0, rereadDeferred: 0,
+      rereadStopped: null,
     }
   }
   const { seen, metas, windowCount } = await searchReposByTopic(fetchImpl, sleep, token)
@@ -1925,7 +2140,11 @@ async function harvestOnce(options: RepoHarvestOptions): Promise<Omit<RepoHarves
   // DECLARATIONS_REREAD_BUDGET_DEFAULT.
   const rereadQueue = [...toReread].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).slice(0, rereadBudget)
   const reread = await rereadDeclarations(
-    nextRepoState(state, seen, fresh), rereadQueue, fetchImpl, sleep, token, timeoutMs, tarballTimeoutMs,
+    nextRepoState(state, seen, fresh),
+    rereadQueue,
+    { fetchImpl, sleep, token, timeoutMs, tarballTimeoutMs },
+    rereadTimeBudgetMs,
+    now,
   )
   const nextState = reread.state
   const candidates = Object.values(nextState).flatMap(entry => entry.candidates)
@@ -1952,11 +2171,14 @@ async function harvestOnce(options: RepoHarvestOptions): Promise<Omit<RepoHarves
     fetched: queue.length,
     carried,
     deferred: toFetch.length - queue.length,
-    rereadAttempted: rereadQueue.length,
+    rereadAttempted: reread.attempted,
     rereadUpdated: reread.updated,
     rereadFailed: reread.failed,
     rereadAssetChanged: reread.assetChanged,
-    rereadDeferred: toReread.length - rereadQueue.length,
+    // Beyond the count budget, and whatever a time budget or the breaker left
+    // unstarted: `attempted` counts only the repositories a batch began.
+    rereadDeferred: toReread.length - reread.attempted,
+    rereadStopped: reread.stopped,
   }
 }
 
@@ -1964,10 +2186,76 @@ async function harvestOnce(options: RepoHarvestOptions): Promise<Omit<RepoHarves
 type RereadOutcome =
   /** Read: the candidate with `peers`, `compatibility` and the stamp written. */
   | { outcome: 'updated'; candidate: RepoCandidate }
-  /** The recorded asset no longer hashes to its pin: the candidate unverified. */
-  | { outcome: 'asset-changed'; candidate: RepoCandidate }
-  /** Anything else: the candidate stays exactly as recorded. */
+  /** The recorded asset is no longer the verified one: the candidate unverified. */
+  | { outcome: 'asset-changed'; candidate: RepoCandidate; reason: string }
+  /**
+   * The host failed to answer: the request threw (on the raw path, after
+   * fetchRobust's retries), or was answered 429 or 5xx — the statuses
+   * fetchWithRetry treats as "not this time", which the re-read takes as its
+   * answer rather than waiting out ({@link StatusRetry}). The candidate stays
+   * exactly as recorded.
+   */
   | { outcome: 'failed'; reason: string }
+  /**
+   * The host answered, and the answer is no use to this record: any other
+   * non-ok status, or bytes that are not this candidate's manifest. A fact
+   * about the record, so the same record answers it again next run. The
+   * candidate stays exactly as recorded.
+   */
+  | { outcome: 'unusable'; reason: string }
+  /** Refused before any request: the candidate stays exactly as recorded. */
+  | { outcome: 'refused'; reason: string }
+
+/** The harvest's transport, as every re-read uses it. */
+interface RereadTransport {
+  fetchImpl: typeof fetch
+  sleep: (ms: number) => Promise<void>
+  token: string | undefined
+  timeoutMs: number
+  tarballTimeoutMs: number
+}
+
+/**
+ * The recorded release URL, parsed, when it is one this repository's own
+ * GitHub release could have produced — or null for anything else.
+ *
+ * `release.url` is read back from repo-state.json, and that file is not only
+ * this build's output: a pull request can edit it, and daily.yml runs the
+ * build on `pull_request` with the job's GITHUB_TOKEN, with every recorded
+ * rescue queued for a re-read. The probe only ever records GitHub's own
+ * `browser_download_url`, which is always
+ * `https://github.com/<owner>/<repo>/releases/download/…`, so anything else in
+ * the file was not written by the probe and is not requested at all. Parsed,
+ * never matched as a string: a string test is what
+ * `https://github.com@evil.example/` and `https://github.com.evil.example/`
+ * exist to pass. Even an accepted URL is sent no token — downloadReleaseAsset
+ * never sends one.
+ *
+ * A trailing dot on the host is normalized away, since `github.com.` is the
+ * same host written fully qualified. No port and no credentials, because the
+ * probe's URL never carries either. Owner and name compare case-insensitively
+ * against the state key, as GitHub resolves them.
+ * @param raw - the recorded URL, untrusted.
+ * @param owner - the state key's owner.
+ * @param slug - the state key's repository name.
+ */
+function recordedReleaseUrl(raw: string, owner: string, slug: string): URL | null {
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    // Swallows the TypeError `new URL` throws for a string that is no URL at
+    // all. There is nothing to request, which is the refusal the caller counts.
+    return null
+  }
+  if (url.protocol !== 'https:' || url.username !== '' || url.password !== '' || url.port !== '') return null
+  if (url.hostname.toLowerCase().replace(/[.]$/, '') !== 'github.com') return null
+  const [root, urlOwner, urlSlug, releases, download, ...asset] = url.pathname.split('/')
+  if (root !== '' || urlOwner === undefined || urlSlug === undefined) return null
+  if (urlOwner.toLowerCase() !== owner.toLowerCase() || urlSlug.toLowerCase() !== slug.toLowerCase()) return null
+  if (releases !== 'releases' || download !== 'download' || asset.join('/') === '') return null
+  return url
+}
 
 /**
  * Re-read one carried candidate's declarations from what the entry installs,
@@ -1982,13 +2270,31 @@ type RereadOutcome =
  * not whether the release still verifies under today's rules, not whether the
  * repository still has the same subpackages — so nothing else can change.
  *
- * Never throws. Every failure — a throw, ANY non-ok status, a 404 included, an
- * unreadable or over-cap body, a manifest that is not this candidate's — comes
- * back `failed`, and the caller then keeps the candidate exactly as recorded,
- * unstamped, for the next run to ask again. A 404 is a failure here where it is
- * a verdict on the full fetch: this path at this commit is where the candidate
- * was projected FROM, and git content at a commit does not change, so a 404
- * says the read went wrong rather than that the manifest is gone.
+ * Never throws, and three answers leave the candidate exactly as recorded,
+ * unstamped, for the next run to ask again; they differ only in what the
+ * phase's failure breaker makes of them. `refused` is a record whose pin fails
+ * its check before any request: a commit that is not a sha, a release URL
+ * that is not this repository's own github.com download. `failed` is the host
+ * failing — a throw, or on the raw path a 429 or 5xx, taken as the first
+ * answer: neither request here rides a status ladder ({@link StatusRetry}).
+ * On the rescued path downloadReleaseAsset throws for every status but a 404,
+ * so any other status is `failed` there too; a public release asset has no
+ * status of the record's own to answer. `unusable` is an
+ * answer that cannot be used: on the raw path any other non-ok status, a 404
+ * included, or an unreadable, over-cap or foreign manifest; on the rescued
+ * path a pinned archive that does not open as this package.
+ *
+ * A raw 404 is not a verdict here, where it is one on the full fetch, because
+ * the full fetch read this manifest at the default branch and took the commit
+ * from a separate request: the two name the same file unless a push landed
+ * between those requests, and a push moves `pushedAt`, which sends the
+ * repository to the full fetch instead of here. So a 404 at the recorded
+ * commit says the read went wrong, not that the manifest is gone.
+ *
+ * On the rescued path a 404, an answer past the cap and bytes that miss the pin
+ * are all `asset-changed` instead: definite answers that the verified asset is
+ * gone from its URL, which unverify the rescue so the full re-probe can ask
+ * GitHub's releases API what stands there now.
  * @param owner - the repository owner, from the state key.
  * @param slug - the repository name, from the state key.
  * @param candidate - a carried, listable candidate whose stamp is stale.
@@ -1997,65 +2303,165 @@ async function rereadCandidate(
   owner: string,
   slug: string,
   candidate: RepoCandidate,
-  fetchImpl: typeof fetch,
-  sleep: (ms: number) => Promise<void>,
-  token: string | undefined,
-  timeoutMs: number,
-  tarballTimeoutMs: number,
+  transport: RereadTransport,
 ): Promise<RereadOutcome> {
+  const { fetchImpl, sleep, token, timeoutMs, tarballTimeoutMs } = transport
+  const release = candidate.release
+  // Both pins are checked before any request, and a record that fails one is
+  // not read at all: the URL could send a request anywhere, and a commit that
+  // is not a sha — `main`, say — would read some other ref than the one the
+  // entry installs.
+  const assetUrl = release === undefined ? null : recordedReleaseUrl(release.url, owner, slug)
+  if (release !== undefined && assetUrl === null) {
+    return { outcome: 'refused', reason: `the recorded release URL is not a https://github.com/${owner}/${slug}/releases/download/ URL, so it was not requested` }
+  }
+  if (release === undefined && !/^[0-9a-f]{40}$/.test(candidate.commit)) {
+    return { outcome: 'refused', reason: 'the recorded commit is not a 40-character sha, so it pins nothing to read' }
+  }
   try {
-    const release = candidate.release
-    if (release !== undefined) {
-      const download = await downloadReleaseAsset(release.url, fetchImpl, sleep, token, tarballTimeoutMs)
-      if (download.outcome === 'not-found') return { outcome: 'failed', reason: 'the recorded release asset answered 404' }
+    if (release !== undefined && assetUrl !== null) {
+      // The parsed URL's own spelling, so what is requested is exactly what was
+      // checked — no second parser gets a say.
+      const download = await downloadReleaseAsset(assetUrl.href, fetchImpl, sleep, tarballTimeoutMs, 'first-answer')
+      // Three definite answers that the verified bytes are not what this URL
+      // serves now — deleted, grown past a cap they passed, or different.
+      if (download.outcome === 'not-found') return unverified(candidate, release, 'the recorded release asset answered 404')
       if (download.outcome === 'over-cap') {
-        return { outcome: 'failed', reason: `the recorded release asset is past the ${MAX_TARBALL_BYTES}-byte cap` }
+        return unverified(candidate, release, `the recorded release asset answered past the ${MAX_TARBALL_BYTES}-byte cap it was verified under`)
       }
       if (createHash('sha256').update(download.bytes).digest('hex') !== release.sha256) {
-        // Definite, not a failure: these are not the bytes that were verified.
-        // Only `assetVerified` goes, which is what sends the repository through
-        // the full re-probe next run (`hasUnverifiedRelease`); the declarations
-        // are not stamped, because the pinned archive they describe is gone.
-        const { assetVerified: _unverified, ...unverified } = release
-        return { outcome: 'asset-changed', candidate: { ...candidate, release: unverified } }
+        return unverified(candidate, release, 'the recorded release asset no longer hashes to its recorded sha256')
       }
       const read = readPackedDeclarations(download.bytes, candidate.name)
-      if (!read.ok) return { outcome: 'failed', reason: read.detail }
+      // The pinned bytes, so the same bytes next run, and the same answer.
+      if (!read.ok) return { outcome: 'unusable', reason: read.detail }
       const updated: RepoCandidate = { ...candidate }
       writeDeclarations(updated, read.declarations)
       return { outcome: 'updated', candidate: updated }
     }
-    // The pin is what makes this the entry's own manifest. A record whose
-    // commit is not one would read some other ref — `main` would be the
-    // branch — so it is not read at all.
-    if (!/^[0-9a-f]{40}$/.test(candidate.commit)) {
-      return { outcome: 'failed', reason: 'the recorded commit is not a 40-character sha, so it pins nothing to read' }
-    }
     const path = candidate.subdir === undefined ? 'package.json' : `${candidate.subdir}/package.json`
-    const response = await fetchRobust(`${RAW_GITHUB}/${owner}/${slug}/${candidate.commit}/${path}`, fetchImpl, sleep, token, timeoutMs)
-    if (!response.ok) return { outcome: 'failed', reason: `github raw returned ${response.status}` }
-    const read = await readManifest(response)
-    if (!read.ok) return { outcome: 'failed', reason: read.detail }
-    const manifest = read.manifest as { name?: unknown; peerDependencies?: unknown; peerDependenciesMeta?: unknown; dsh?: unknown } | null
-    if (typeof manifest !== 'object' || manifest === null || Array.isArray(manifest)) {
-      return { outcome: 'failed', reason: 'the manifest at the recorded commit is not a JSON object' }
+    const rawUrl = `${RAW_GITHUB}/${owner}/${slug}/${candidate.commit}/${path}`
+    const response = await fetchRobust(rawUrl, fetchImpl, sleep, token, timeoutMs, 'first-answer')
+    if (!response.ok) {
+      // The line fetchWithRetry draws: what it retries is the host unable to
+      // answer this time, and anything else is an answer.
+      const hostFailed = response.status === 429 || response.status >= 500
+      return { outcome: hostFailed ? 'failed' : 'unusable', reason: `github raw returned ${response.status}` }
     }
-    // The candidate was projected from this very file, so its name must still
-    // be there; one that is not means the read reached something else, and
-    // its declarations would describe a package this entry does not install.
-    if (manifest.name !== candidate.name) {
-      return { outcome: 'failed', reason: 'the manifest at the recorded commit names a different package' }
+    const read = await readManifest(response)
+    if (!read.ok) return { outcome: 'unusable', reason: read.detail }
+    const manifest = read.manifest as { name?: unknown; peerDependencies?: unknown; peerDependenciesMeta?: unknown; dsh?: unknown } | null
+    // The name decides whether these are this candidate's declarations, and it
+    // decides every manifest that is not an object as well: `null` has no name
+    // through the optional chain, and an array or a primitive has none that can
+    // equal a bundle name. The candidate was projected from the manifest at
+    // this path on the default branch, read moments before its commit was
+    // resolved — the same file unless a push landed between the two requests,
+    // and a push routes the repository to the full fetch. So a name that
+    // differs means the read reached something else, and its declarations
+    // would describe a package this entry does not install.
+    if (manifest?.name !== candidate.name) {
+      return { outcome: 'unusable', reason: 'the manifest at the recorded commit names a different package' }
     }
     const updated: RepoCandidate = { ...candidate }
     writeDeclarations(updated, manifest)
     return { outcome: 'updated', candidate: updated }
   } catch (error) {
-    // Swallows every way the read can throw — a stalled or reset request, a
-    // body that fails mid-read, a deadline — because each is the transport
-    // and none may change the record: the caller keeps the candidate exactly
-    // as it was, and the missing stamp re-queues it. The message still reaches
-    // stderr through the caller.
+    // Swallows every way a read can throw — a stalled or reset request, a body
+    // that fails mid-read, a deadline — because each is the transport and none
+    // may change the record: the caller keeps the candidate exactly as it was,
+    // and the missing stamp re-queues it. The message reaches stderr through
+    // the caller, within its line cap.
     return { outcome: 'failed', reason: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+/**
+ * A rescued candidate whose verified asset is gone from its URL, unverified —
+ * the one change such an answer makes. Only `assetVerified` goes, which sends
+ * the repository through the full re-probe next run (`hasUnverifiedRelease`),
+ * where GitHub's releases answer decides what stands; the declarations are not
+ * stamped, because the archive they would describe is gone.
+ */
+function unverified(
+  candidate: RepoCandidate,
+  release: NonNullable<RepoCandidate['release']>,
+  reason: string,
+): RereadOutcome {
+  const { assetVerified: _unverified, ...rest } = release
+  return { outcome: 'asset-changed', candidate: { ...candidate, release: rest }, reason }
+}
+
+/**
+ * One run's re-read phase: what it has settled, and whether it may still
+ * start a read. Shared by every repository in flight, so the time budget and
+ * the failure breaker see the whole phase rather than one batch.
+ */
+interface RereadPhase {
+  /** Whether a read may start now; once it says no, it says no for good. */
+  mayStart(): boolean
+  /** Count one read's outcome, and describe it on stderr within the cap. */
+  settle(unit: string, result: RereadOutcome): void
+  readonly stopped: 'time-budget' | 'failure-breaker' | null
+  readonly updated: number
+  readonly failed: number
+  readonly assetChanged: number
+}
+
+/**
+ * Open a re-read phase that may start reads until `timeBudgetMs` of `now` is
+ * spent, or until {@link DECLARATIONS_REREAD_MAX_CONSECUTIVE_FAILURES} reads in
+ * a row have failed at the host — whichever comes first.
+ */
+function rereadPhase(timeBudgetMs: number, now: () => number): RereadPhase {
+  const startedAt = now()
+  let stopped: RereadPhase['stopped'] = null
+  let consecutiveFailures = 0
+  let updated = 0
+  let failed = 0
+  let assetChanged = 0
+  return {
+    mayStart() {
+      if (stopped !== null) return false
+      if (now() - startedAt >= timeBudgetMs) stopped = 'time-budget'
+      else if (consecutiveFailures >= DECLARATIONS_REREAD_MAX_CONSECUTIVE_FAILURES) stopped = 'failure-breaker'
+      return stopped === null
+    },
+    settle(unit, result) {
+      switch (result.outcome) {
+        case 'updated':
+          updated += 1
+          consecutiveFailures = 0
+          return
+        case 'asset-changed':
+          // An answer, and a definite one: the host is up, whatever it said.
+          assetChanged += 1
+          consecutiveFailures = 0
+          process.stderr.write(`github: re-reading ${unit}: ${result.reason}, so the rescue is unverified for a full re-probe\n`)
+          return
+        case 'failed':
+          consecutiveFailures += 1
+          break
+        case 'unusable':
+          // An answer, if a useless one: the host is up. And never counted, for
+          // the reason DECLARATIONS_REREAD_MAX_CONSECUTIVE_FAILURES gives.
+          consecutiveFailures = 0
+          break
+        case 'refused':
+          // Neither counts nor resets: see DECLARATIONS_REREAD_MAX_CONSECUTIVE_FAILURES.
+          break
+      }
+      failed += 1
+      // A diagnostic for whoever reads the build, never a row: the entry is
+      // unchanged, so there is nothing to say about the repository.
+      if (failed <= DECLARATIONS_REREAD_FAILURE_LINES) {
+        process.stderr.write(`github: re-reading the declarations of ${unit} failed, left as recorded for the next run: ${result.reason}\n`)
+      }
+    },
+    get stopped() { return stopped },
+    get updated() { return updated },
+    get failed() { return failed },
+    get assetChanged() { return assetChanged },
   }
 }
 
@@ -2069,88 +2475,109 @@ async function rereadCandidate(
  * diff queued the repository on; the rest, a candidate that can never list
  * included, are carried as they are. No candidate is added, removed or renamed
  * and no failure record is written: a re-read can only ever refine a record.
+ *
+ * Every read after the repository's first asks the phase first. A monorepo's
+ * stale subpackages are read one after another — eight in one queued
+ * repository today — so a check between batches alone would let a single
+ * batch overrun the time budget by that many deadlines. A candidate the phase
+ * no longer allows is left exactly as recorded, like a deferred repository.
  * @param repo - the state key, `owner/slug`.
  */
 async function rereadEntry(
   repo: string,
   entry: RepoStateEntry,
-  fetchImpl: typeof fetch,
-  sleep: (ms: number) => Promise<void>,
-  token: string | undefined,
-  timeoutMs: number,
-  tarballTimeoutMs: number,
-): Promise<{ entry: RepoStateEntry; updated: number; failed: number; assetChanged: number }> {
+  transport: RereadTransport,
+  phase: RereadPhase,
+): Promise<RepoStateEntry> {
   const [owner, slug] = repo.split('/')
-  let updated = 0
-  let failed = 0
-  let assetChanged = 0
+  let reads = 0
+  let changed = false
   const candidates: RepoCandidate[] = []
   for (const candidate of entry.candidates) {
-    if (!canEverList(candidate) || candidate.declarationsRule === DECLARATIONS_RULE) {
+    if (!canEverList(candidate) || candidate.declarationsRule === DECLARATIONS_RULE || (reads > 0 && !phase.mayStart())) {
       candidates.push(candidate)
       continue
     }
+    reads += 1
     const unit = candidate.subdir === undefined ? repo : `${repo}#${candidate.subdir}`
     const result: RereadOutcome = owner === undefined || slug === undefined
-      ? { outcome: 'failed', reason: `unusable repository name ${repo}` }
-      : await rereadCandidate(owner, slug, candidate, fetchImpl, sleep, token, timeoutMs, tarballTimeoutMs)
-    if (result.outcome === 'failed') {
-      failed += 1
-      // A diagnostic for whoever reads the build, never a row: the entry is
-      // unchanged, so there is nothing to say about the repository.
-      process.stderr.write(`github: re-reading the declarations of ${unit} failed, left as recorded for the next run: ${result.reason}\n`)
-      candidates.push(candidate)
-      continue
-    }
-    if (result.outcome === 'asset-changed') {
-      assetChanged += 1
-      process.stderr.write(`github: re-reading ${unit}: its release asset no longer hashes to the recorded sha256, so the rescue is unverified for a full re-probe\n`)
+      ? { outcome: 'refused', reason: `unusable repository name ${repo}` }
+      : await rereadCandidate(owner, slug, candidate, transport)
+    phase.settle(unit, result)
+    if (result.outcome === 'updated' || result.outcome === 'asset-changed') {
+      changed = true
+      candidates.push(result.candidate)
     } else {
-      updated += 1
+      candidates.push(candidate)
     }
-    candidates.push(result.candidate)
   }
-  if (updated === 0 && assetChanged === 0) return { entry, updated, failed, assetChanged }
-  return { entry: { ...entry, candidates }, updated, failed, assetChanged }
+  return changed ? { ...entry, candidates } : entry
 }
 
 /**
  * Serve the declarations re-read queue against the state this run is about to
  * record, {@link REPO_CONCURRENCY} repositories at a time, and hand back that
- * state with each re-read entry in place. The input state is never mutated —
- * harvestRepos retries a whole attempt with the SAME options, and a first
- * attempt that had written into them would hand the second a different start.
+ * state with each re-read entry in place.
+ *
+ * Bounded three ways: the queue arrives cut to the count budget, a batch starts
+ * only while the phase allows it (`timeBudgetMs` of `now`, and the failure
+ * breaker), and so does every read after a repository's first. What is not
+ * started is deferred and unchanged, which is all R9 asks of a deferral: the
+ * missing stamp queues it again next run.
+ *
+ * The input state is never mutated — harvestRepos retries a whole attempt
+ * with the SAME options, and a first attempt that had written into them would
+ * hand the second a different start.
  * @param state - the next state as the full fetches left it.
  * @param queue - repositories to re-read, already sorted and budgeted.
+ * @returns the state to record, and how many repositories a batch started.
  */
 async function rereadDeclarations(
   state: RepoState,
   queue: readonly string[],
-  fetchImpl: typeof fetch,
-  sleep: (ms: number) => Promise<void>,
-  token: string | undefined,
-  timeoutMs: number,
-  tarballTimeoutMs: number,
-): Promise<{ state: RepoState; updated: number; failed: number; assetChanged: number }> {
+  transport: RereadTransport,
+  timeBudgetMs: number,
+  now: () => number,
+): Promise<{
+  state: RepoState
+  attempted: number
+  updated: number
+  failed: number
+  assetChanged: number
+  stopped: 'time-budget' | 'failure-breaker' | null
+}> {
   const next: RepoState = { ...state }
-  let updated = 0
-  let failed = 0
-  let assetChanged = 0
+  const phase = rereadPhase(timeBudgetMs, now)
+  let attempted = 0
   for (let i = 0; i < queue.length; i += REPO_CONCURRENCY) {
+    if (!phase.mayStart()) break
     const batch = queue.slice(i, i + REPO_CONCURRENCY)
+    attempted += batch.length
     const results = await Promise.all(batch.map(async repo => {
       // hasOwn: the key is a repository name the search returned.
       const entry = Object.hasOwn(state, repo) ? state[repo] : undefined
       if (entry === undefined) return undefined
-      return { repo, ...await rereadEntry(repo, entry, fetchImpl, sleep, token, timeoutMs, tarballTimeoutMs) }
+      return { repo, entry: await rereadEntry(repo, entry, transport, phase) }
     }))
     for (const result of results) {
-      if (result === undefined) continue
-      next[result.repo] = result.entry
-      updated += result.updated
-      failed += result.failed
-      assetChanged += result.assetChanged
+      if (result !== undefined) next[result.repo] = result.entry
     }
   }
-  return { state: next, updated, failed, assetChanged }
+  if (phase.failed > DECLARATIONS_REREAD_FAILURE_LINES) {
+    process.stderr.write(`github: ${phase.failed} declaration re-reads failed this run and were left as recorded; the first ${DECLARATIONS_REREAD_FAILURE_LINES} are above\n`)
+  }
+  if (phase.stopped !== null) {
+    const why = phase.stopped === 'time-budget'
+      ? `its ${timeBudgetMs} ms budget was spent`
+      : `the host failed ${DECLARATIONS_REREAD_MAX_CONSECUTIVE_FAILURES} reads in a row`
+    process.stderr.write(`github: the declarations re-read stopped after ${attempted} of ${queue.length} repositories because ${why}; the rest are deferred, unchanged, to the next run\n`)
+  }
+  return {
+    state: next,
+    attempted,
+    updated: phase.updated,
+    failed: phase.failed,
+    assetChanged: phase.assetChanged,
+    stopped: phase.stopped,
+  }
 }

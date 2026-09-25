@@ -33,7 +33,12 @@ export interface CatalogSection {
 export interface Compatibility {
   /** A semver range over `@deepseek-ai/dsh` versions, verbatim. */
   dsh?: string
-  /** The profile names the plugin supports (`web`, `tui`, …). */
+  /**
+   * The profile names the plugin supports, verbatim. The harness's own
+   * templates on 0.1.5-rc.3 are `acp`, `web`, `headless`, `sdk` and
+   * `sdk-minimal`; a declared name that is none of them (a custom profile's) is
+   * recorded all the same, and judged on the reader's machine.
+   */
   profiles?: string[]
 }
 

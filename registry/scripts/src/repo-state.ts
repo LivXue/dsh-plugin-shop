@@ -446,11 +446,15 @@ function lacksSizeProbe(recorded: RepoState[string], treeCap: number): boolean {
  *
  * What it queues is a RE-READ, not a fetch: the diff's separate `toReread`,
  * which harvestRepos serves after every full fetch with one manifest read per
- * candidate at the recorded commit (or the recorded release asset), under its
- * own budget. A re-read that fails changes nothing and persists nothing, so its
- * repository simply queues again next run — never as a failure record, never
- * as a published row, and never toward the systematic-failure bound. The
- * failure mode is a slower backfill, bounded by that budget.
+ * candidate at the recorded commit (or the recorded release asset). A re-read
+ * that fails changes nothing and persists nothing, so its repository simply
+ * queues again next run — never as a failure record, never as a published
+ * row, and never toward the systematic-failure bound. The failure mode is a
+ * slower backfill. Its COUNT per run is bounded by the re-read's own
+ * repository budget; its TIME is not, because a stalled host holds each read
+ * for a whole deadline, and is bounded separately by the phase's wall-clock
+ * budget and consecutive-failure breaker (`DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT`
+ * in github-client.ts). What they stop is deferred, unchanged.
  *
  * Only candidates that could list, by {@link canEverList}, for the reason
  * `lacksSizeProbe` gives: declarations on an entry that can never exist reach
