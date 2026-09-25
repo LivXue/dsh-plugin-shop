@@ -285,12 +285,13 @@ describe('refineAgainstModuleTable: the page-removed set', () => {
   })
 
   it('never lets the removed override ask the table about a removed name, even one neither a row nor cached that import would resolve', async () => {
-    // Important 1(a): after 0.1.7-rc.2 reconciles this page's own uninstall,
-    // `manifest.modules` no longer lists the removed package at all (Important
-    // 2's paragraph above) — the genuinely post-reconcile shape, unlike the
-    // row-based fixture above which models the pre-reconcile / 0.1.5-rc.3
-    // case. `react` is neither a row nor cached here, and the table's own
-    // `import` WOULD resolve it (a seed word) if ever asked — so this is the
+    // After 0.1.7-rc.2 reconciles this page's own uninstall,
+    // `manifest.modules` no longer lists the removed package at all
+    // (module-table.ts's header, step 1) — the genuinely post-reconcile
+    // shape, unlike the row-based fixture above which models the
+    // pre-reconcile / 0.1.5-rc.3 case. `react` is neither a row nor cached
+    // here, and the table's own `import` WOULD resolve it (a seed word) if
+    // ever asked — so this is the
     // one shape that tells apart "removed intercepts before the oracle is
     // consulted" from a mutant that asks the oracle FIRST and overrides the
     // answer after: such a mutant still gets `dock-base` right in the test
@@ -317,12 +318,12 @@ describe('refineAgainstModuleTable: the page-removed set', () => {
   })
 
   it('gives no verdict at all when there is no usable table, not even for a name this page uninstalled, and leaves an unrelated entry equally silent', async () => {
-    // Controller ruling (Important 3): an unusable table yields NO peer
-    // verdicts, unconditionally — design §9's documented silence applies the
-    // same way whether or not the page-removed set happens to be non-empty,
-    // because with no table nothing can falsely vouch for a removed name in
-    // the first place. This replaces a deleted test that asserted the
-    // opposite (a removed name surfacing even with no table).
+    // An unusable table yields NO peer verdicts, unconditionally: the
+    // documented silence (design 2026-09-01-harness-compatibility section
+    // 9.1) applies the same way whether or not the page-removed set happens
+    // to be non-empty, because with no table nothing can falsely vouch for a
+    // removed name in the first place. This replaces a deleted test that
+    // asserted the opposite (a removed name surfacing even with no table).
     //
     // Two SEPARATE entries — one naming only the removed name, one naming
     // only an unrelated ordinary name — so a mutant that reinstates the old

@@ -258,12 +258,13 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     // count rides beside it. A run where every attempt threw once read
     // "300 fetched, 300 carried": the one line a human scans for an outage said
     // everything was fine.
-    // Declaration re-reads (Task 3, commit f16281a): repos.rereadAttempted and
-    // .rereadDeferred count REPOSITORIES the phase started or queued past its
-    // budget; .rereadUpdated, .rereadFailed and .rereadAssetChanged count
-    // CANDIDATES among those started — a re-read that succeeds writes only
-    // `peers`, `compatibility` and the declaration stamp, so this line is the
-    // only place that number is visible outside the harvest itself.
+    // Declaration re-reads (design 2026-09-01-harness-compatibility section
+    // 9.8): repos.rereadAttempted and .rereadDeferred count REPOSITORIES the
+    // phase started or queued past its budget; .rereadUpdated, .rereadFailed
+    // and .rereadAssetChanged count CANDIDATES among those started — a
+    // re-read that succeeds writes only `peers`, `compatibility` and the
+    // declaration stamp, so this line is the only place that number is
+    // visible outside the harvest itself.
     // repos.rereadStopped says why the phase stopped starting reads early —
     // its own time budget (DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT) spent,
     // or the failure breaker (DECLARATIONS_REREAD_MAX_CONSECUTIVE_FAILURES)
@@ -284,7 +285,7 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   // candidates and cannot disagree about what is listed. `classify.ts` applies
   // the same helper to its own copy of repo-state.json's candidates, and reads
   // the flag through the same `repoPeersEmitted` so the two steps cannot drift
-  // (finding #5 of the PR #58 review).
+  // (design 2026-09-01-harness-compatibility section 9.8).
   const emitRepoPeers = repoPeersEmitted(process.env.SHOP_EMIT_REPO_PEERS)
   const peersGate = withholdRepoPeers(repoCandidates, emitRepoPeers)
   repoCandidates = peersGate.candidates

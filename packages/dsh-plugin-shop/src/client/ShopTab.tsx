@@ -38,8 +38,9 @@ export interface ShopTabInjected {
   installedSpecs: () => Promise<Record<string, string> | null>
   uninstall: (args: { name: string }) => Promise<ShopUninstallResult>
   /** Tells the client half that this page uninstalled `name`, so the module
-   * table's refinement never vouches for it again (finding #8): a graph row
-   * or a `loadCache` record can outlive a restart-free uninstall, and would
+   * table's refinement never vouches for it again (the page-removed set,
+   * design 2026-09-01-harness-compatibility section 9.1): a graph row or a
+   * `loadCache` record can outlive a restart-free uninstall, and would
    * otherwise clear a badge the host is still right to show. Optional — a
    * stub or an old host face may not offer it — and installs need no
    * counterpart, since a reinstalled package resolves on the host again. */
@@ -62,12 +63,13 @@ export type ShopTabProps =
 /** What the tab is trying to load, and with which catalog cache behavior:
  * a refresh forces the network re-fetch while the stale snapshot stays
  * visible (§10); a retry leaves the error state and starts from loading; a
- * reverdict (finding #10) asks again with the host's own snapshot and
- * freshness window — never a network refresh — after an install or uninstall
- * settles `done`, so a badge computed before the mutation does not survive
- * it. Like a refresh, the stale snapshot stays on screen while it runs, and a
- * failed reverdict leaves the screen exactly as it was, with no note — it was
- * never a click the reader made, so there is nothing to report failing. */
+ * reverdict (design 2026-09-01-harness-compatibility section 9.1) asks
+ * again with the host's own snapshot and freshness window — never a network
+ * refresh — after an install or uninstall settles `done`, so a badge
+ * computed before the mutation does not survive it. Like a refresh, the
+ * stale snapshot stays on screen while it runs, and a failed reverdict
+ * leaves the screen exactly as it was, with no note — it was never a click
+ * the reader made, so there is nothing to report failing. */
 type LoadRequest = { kind: 'initial' } | { kind: 'refresh' } | { kind: 'retry' } | { kind: 'reverdict' }
 
 type CatalogState =
@@ -1101,10 +1103,10 @@ export function ShopTab(props: ShopTabProps): ReactNode {
   // bumps it only on `done`, because a failed one returns immediately and
   // never reaches `noteMutation()` at all. Only a `done` install or uninstall
   // ALSO asks the catalog to judge itself again by pushing `request` to
-  // `reverdict` (finding #10, `installSettled`/`uninstallSettled` below) — an
-  // entry's badges can depend on what is now installed, so the catalog no
-  // longer merely "stays on screen" across a mutation the way it does across
-  // an unrelated render.
+  // `reverdict` (`installSettled`/`uninstallSettled` below; design
+  // 2026-09-01-harness-compatibility section 9.1) — an entry's badges can
+  // depend on what is now installed, so the catalog no longer merely "stays
+  // on screen" across a mutation the way it does across an unrelated render.
   const [mutations, setMutations] = useState(0)
   const noteMutation = useCallback(() => { setMutations(current => current + 1) }, [])
   // Install and uninstall are mutually exclusive answers about one identity,
@@ -1121,9 +1123,8 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     noteMutation()
     // An install that lands can resolve another entry's missing peer, so the
     // catalog is asked to judge again against the installation as it now
-    // stands (finding #10) — never on a FAILED install, which changed
-    // nothing. This is a judge-again, not a reader's click, so it never
-    // touches `versionReload`.
+    // stands — never on a FAILED install, which changed nothing. This is a
+    // judge-again, not a reader's click, so it never touches `versionReload`.
     if (outcome === 'done') setRequest({ kind: 'reverdict' })
   }, [noteMutation])
   const flows = useInstallFlows(install, installStatus, installSettled)
@@ -1139,10 +1140,10 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     // `key` is the composite identity (`entryKey`/`identityKey`:
     // `npm:<name>` or `github:<repo>#<subdir>`), never the bare package name
     // that `noteUninstalled` and the module table's page-removed set key on
-    // (finding #8) — look the entry up by identity and hand over its bare
-    // `.name`. No match (catalog not yet loaded, or the entry already gone)
-    // leaves nothing to tell; `noteUninstalled` is best-effort, not the
-    // uninstall's own record of truth.
+    // — look the entry up by identity and hand over its bare `.name`. No
+    // match (catalog not yet loaded, or the entry already gone) leaves
+    // nothing to tell; `noteUninstalled` is best-effort, not the uninstall's
+    // own record of truth.
     const name = catalogState.kind === 'ready'
       ? catalogState.result.plugins.find(entry => entryKey(entry) === key)?.name
       : undefined
@@ -1150,7 +1151,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     // Uninstalling can free another entry's blocked peer, or — via the
     // page-removed set this unblocks on the client side — stop the module
     // table vouching for the name just removed, so the catalog is asked to
-    // judge again too (finding #10).
+    // judge again too.
     setRequest({ kind: 'reverdict' })
   }, [flows, noteMutation, catalogState, noteUninstalled])
   const uninstallFlows = useUninstallFlows(uninstall, installStatus, uninstallSettled)
@@ -1194,18 +1195,20 @@ export function ShopTab(props: ShopTabProps): ReactNode {
 
   useEffect(() => {
     let cancelled = false
-    // A refresh or a reverdict (finding #10) keeps the stale snapshot visible
-    // during the background re-fetch (§10); a retry leaves the error state
-    // and starts from loading.
+    // A refresh or a reverdict keeps the stale snapshot visible during the
+    // background re-fetch (§10); a retry leaves the error state and starts
+    // from loading.
     //
-    // The `reverdict` half of this guard is unreachable as a distinguishing
-    // condition TODAY: a reverdict fires only from `installSettled`/
-    // `uninstallSettled` below, and both require `catalogState.kind ===
-    // 'ready'` already — the button that settles is only clickable once the
-    // shelf has rendered. So the ternary already returns `current` unchanged
-    // on a reverdict with or without this clause. Kept anyway as a defensive
-    // invariant rather than trimmed as dead code: a future reverdict fired
-    // before the shelf is ready must still keep the stale state, not flash to
+    // Both halves of this guard are unreachable as distinguishing conditions
+    // TODAY, because neither request can arrive before the shelf is ready. A
+    // refresh has one dispatcher, the ready view's Refresh button, and the
+    // loading and error views return before that button renders. A reverdict
+    // fires only from `installSettled`/`uninstallSettled` above, whose flows
+    // start from buttons that are only clickable once the shelf has rendered.
+    // So the ternary already returns `current` unchanged on either request
+    // with or without this clause. Kept anyway as a defensive invariant rather
+    // than trimmed as dead code: a future refresh or reverdict fired before
+    // the shelf is ready must still keep the stale state, not flash to
     // loading.
     if (request.kind !== 'refresh' && request.kind !== 'reverdict') {
       setCatalogState(current => (current.kind === 'ready' ? current : { kind: 'loading' }))
@@ -1218,6 +1221,14 @@ export function ShopTab(props: ShopTabProps): ReactNode {
             : request.kind === 'reverdict' ? { reverdict: true }
               : undefined,
         )
+        // A superseded load's result is dropped here, and that includes a
+        // Refresh still in flight when a reverdict supersedes it. The Refresh
+        // still takes precedence, but only through the host: the reverdict
+        // asks with the plain call, and the host's `loadCatalogOnce` joins a
+        // plain call to the load already in flight, a refresh's included, so
+        // the reverdict's answer carries the refreshed snapshot without a
+        // second network load (design 2026-09-01-harness-compatibility
+        // section 9.1).
         if (!cancelled) setCatalogState({ kind: 'ready', result })
       } catch {
         // The transport detail is private (it can name hosts and ports) and
@@ -1259,7 +1270,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
   // reverdict: a reverdict answers "what would the host judge about the
   // installation right now," which has nothing to do with whether a newer
   // dsh-plugin-shop build exists, so a mutation settling must never restart
-  // this check (finding #10).
+  // this check (design 2026-09-01-harness-compatibility section 9.1).
   useEffect(() => {
     let cancelled = false
     const load = async (): Promise<void> => {

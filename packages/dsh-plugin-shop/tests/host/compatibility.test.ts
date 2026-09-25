@@ -253,10 +253,10 @@ describe('compatibilityMap and Object.prototype', () => {
 
 describe('the profile half, by name', () => {
   /** A harness release after 0.1.5-rc.3 whose `web` template grew a bundle.
-   * Hypothetical: the review of 2026-09-25 found no published app-boot that
-   * changed a template's bundle list. But profiles keep the bundle list they
-   * were created with, so the day one does, every existing `web` profile lacks
-   * the new bundle. */
+   * Hypothetical: no published app-boot had changed a template's bundle list
+   * as of 2026-09-25 (`compatibilityMap`'s doc comment says what was read).
+   * But profiles keep the bundle list they were created with, so the day one
+   * does, every existing `web` profile lacks the new bundle. */
   const GROWN: ProfileTemplates = { ...RC3_TEMPLATES, web: [...RC3_TEMPLATES.web!, '@deepseek-ai/dsh-web-extra'] }
   const declaresWeb = npm('@xmanrui/dsh-im', { profiles: ['web'] })
 
@@ -265,7 +265,9 @@ describe('the profile half, by name', () => {
     // `web` profile the day `web` gained a bundle, with copy saying it
     // declares support for web and this dsh was launched with web. A shipped
     // template's name is not the reader's choice: dsh builds a missing
-    // profile of that name from the template and installs only append to it.
+    // profile of that name from the template and refuses the name as a
+    // `--from-default-profile` target, so the name says which template the
+    // profile was built from, whatever it composes now.
     expect(compatibilityMap([declaresWeb], withProfile('web', RC3_TEMPLATES.web!), GROWN)).toEqual({})
     // Whatever its bundles means whatever: a `web` profile composing none of
     // the template is still the `web` the author declared.

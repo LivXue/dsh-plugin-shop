@@ -623,6 +623,8 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
   let localRegistry: LocalRegistry | undefined
   let tmpHome = ''
   let webUrl = ''
+  /** What the launched dsh CLI answers to `--version`, read in beforeAll. */
+  let launchedDshVersion = ''
   let dshProcess: ChildProcess | undefined
   let browser: Browser | undefined
   let page: Page | undefined
@@ -694,16 +696,34 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
     // assumed to be the one we asked for.
     // Through the same resolution as `hasDsh` above: a bare `dsh` is ENOENT on
     // Windows, and this spawn is what boots the harness the whole flow drives.
+    const script = resolveDshScript(
+      { exists: path => existsSync(path), read: path => readFileSync(path, 'utf8') },
+      { argv1: process.argv[1], path: process.env.PATH },
+    )
     const web = dshCommand({
       dshBin: 'dsh',
       args: ['--profile', 'web', '--no-open', '--port', String(await reservePort())],
       platform: process.platform,
       execPath: process.execPath,
-      script: resolveDshScript(
-        { exists: path => existsSync(path), read: path => readFileSync(path, 'utf8') },
-        { argv1: process.argv[1], path: process.env.PATH },
-      ),
+      script,
     })
+    // The oracle for the running version a harness-range detail names: the
+    // same CLI, same command and same script as the spawn below, asked for
+    // its own `--version`. dsh answers from its own manifest, so this is
+    // independent of `src/host/harness.ts`, the code under test, which finds
+    // that version its own way (the package that owns the script dsh was
+    // started with).
+    const versionCommand = dshCommand({
+      dshBin: 'dsh',
+      args: ['--version'],
+      platform: process.platform,
+      execPath: process.execPath,
+      script,
+    })
+    const versionAnswer = spawnSync(versionCommand.command, versionCommand.args, { encoding: 'utf8' })
+    expect(versionAnswer.status, `dsh --version failed:\n${versionAnswer.stderr}`).toBe(0)
+    launchedDshVersion = versionAnswer.stdout.trim()
+    expect(launchedDshVersion, 'dsh --version printed no version').toMatch(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)
     dshProcess = spawn(web.command, web.args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {
@@ -1160,13 +1180,12 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // build their snapshot directly and never cross the host zod, which is
       // how `installSize` was published for weeks and shown nowhere — and only
       // the real harness can say what is running. The expected running
-      // version is read where the host's resolver finds it: the link farm the
-      // harness heals into this profile's DSH_HOME.
-      const running = (JSON.parse(readFileSync(
-        join(tmpHome, 'profiles', 'node_modules', '@deepseek-ai', 'dsh', 'package.json'), 'utf8',
-      )) as { version: string }).version
+      // version is the launched CLI's own `dsh --version` (beforeAll). It used
+      // to be read from the link farm the harness heals into this profile's
+      // DSH_HOME, the host's old source, and passed only because the two
+      // agree in this profile.
       expect(await card.locator('[data-shop-incompatible-detail="harness-range"]').textContent())
-        .toBe(zh.harnessRangeDetail.replace('{range}', '0.1.2-rc.1').replace('{running}', running))
+        .toBe(zh.harnessRangeDetail.replace('{range}', '0.1.2-rc.1').replace('{running}', launchedDshVersion))
       expect(await card.locator('[data-shop-incompatible-detail="harness-profile"]').textContent())
         .toBe(zh.harnessProfileDetail.replace('{declared}', 'acp').replace('{running}', 'web'))
 

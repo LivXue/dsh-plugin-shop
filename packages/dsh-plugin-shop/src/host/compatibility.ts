@@ -125,14 +125,21 @@ export function profileTemplatesOf(exported: unknown): ProfileTemplates {
  *   names, or when it composes every bundle of a declared template.
  *
  *   The name is trusted for the names dsh ships, because for those it is not
- *   the reader's choice: dsh-app-boot's `loadProfile` builds a missing
- *   profile of a template's name from that template, `normalizeShippedProfile`
- *   keeps it on the template, and installs only append bundles. Bundles alone
- *   could not decide there: a profile keeps the bundle list it was created
- *   with, so the first harness release that added a bundle to `web` would
- *   badge every `profiles: ["web"]` plugin (`@xmanrui/dsh-im`) on every
- *   existing `web` profile, with copy saying it supports web and this dsh was
- *   launched with web.
+ *   the reader's choice. On 0.1.5-rc.3 both paths that create a missing
+ *   profile build one of a shipped name from that name's template
+ *   (dsh-app-boot's `loadProfile`, and `dsh plugin`), and dsh refuses a
+ *   shipped name as the target of `--from-default-profile`, so a profile
+ *   carrying one was built from that template. That is all the name
+ *   guarantees: which template the profile was built from, not what it
+ *   composes now. Nothing holds the bundle list to the template afterwards:
+ *   `dsh plugin`'s reconcile, not app-boot, appends each bundle it installs,
+ *   and app-boot's `normalizeShippedProfile` rewrites only a list that is
+ *   exactly a retired tuple or the current one. Bundles alone could not
+ *   decide there: a profile keeps the bundle list it was created with, so the
+ *   first harness release that added a bundle to `web` would badge every
+ *   `profiles: ["web"]` plugin (`@xmanrui/dsh-im`) on every existing `web`
+ *   profile, with copy saying it supports web and this dsh was launched with
+ *   web.
  *
  *   Any other name is the reader's choice — `dsh --profile rescue
  *   --from-default-profile web` builds a profile called `rescue` from the web
@@ -148,9 +155,15 @@ export function profileTemplatesOf(exported: unknown): ProfileTemplates {
  *
  *   The residual, knowingly kept: a custom-named profile is still judged by
  *   bundles, so a template that later gained a bundle would badge the custom
- *   profiles created before the change. It has not happened yet: the review
- *   of 2026-09-25 read all 28 published dsh-app-boot versions and found no
- *   template whose bundle list changed between them.
+ *   profiles created before the change. No PUBLISHED
+ *   `@deepseek-ai/dsh-app-boot` had changed a template's bundle list as of
+ *   2026-09-25: all 28 versions, read that day, give every template they
+ *   share the same list. One list was retired before the first publish:
+ *   every published app-boot, from the first, carries a retired `headless`
+ *   tuple (`@deepseek-ai/dsh-base`, `@deepseek-ai/dsh-web-app`,
+ *   `@deepseek-ai/dsh-headless`) in `INSTALLATION_OWNED_PROFILE_TUPLES`, and
+ *   `normalizeShippedProfile` rewrites a `headless` profile carrying exactly
+ *   that list to the current template when it loads.
  */
 export function compatibilityMap(
   entries: readonly (EntryIdentity & { compatibility?: { dsh?: string; profiles?: string[] } })[],

@@ -12,9 +12,9 @@
  *   `<profile>/node_modules` — the listed `dsh-claude-tui@0.1.6` pulls
  *   0.1.2-rc.1 — a second install sharing DSH_HOME re-points the link farm,
  *   and under a packaged dsh the bin-only package gets no link-farm proxy at
- *   all, so the read was dead or stale. The review of 2026-09-25 reproduced
- *   the first with real installs: every verdict said "running 0.1.2-rc.1"
- *   while 0.1.5-rc.3 ran.
+ *   all, so the read was dead or stale. The first was reproduced with real
+ *   installs on 2026-09-25 (the design's section 9.9 amendment): every
+ *   verdict said "running 0.1.2-rc.1" while 0.1.5-rc.3 ran.
  * - The templates came from the shop's own `import * as appBoot`, which
  *   resolves from the SHOP's real path: under a `link:` install that is this
  *   repository's devDependency, 0.1.1-rc.2 with two templates, while

@@ -147,8 +147,9 @@ describe('selectPending', () => {
 })
 
 describe('a github repository whose peers alone cross the payload budget', () => {
-  // finding #5 of the PR #58 review: build.ts always withholds github `peers`
-  // before its own gate passes (SHOP_EMIT_REPO_PEERS is '0' by default), but
+  // Design 2026-09-01-harness-compatibility section 9.8, "The classifier
+  // gates the candidates the build lists": build.ts always withholds github
+  // `peers` before its own gate passes (SHOP_EMIT_REPO_PEERS is '0' by default), but
   // classify.ts used to read repo-state.json's raw record — peers still
   // attached — straight into this same selectPending/gateRepo pass. A
   // repository whose peers alone push it past the 12 KiB payload budget then

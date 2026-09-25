@@ -162,7 +162,9 @@ describe('repo-state', () => {
   const unchanged = [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }]
 
   it('diff: an unchanged repository whose listable candidate carries no stamp is re-read, not re-fetched', () => {
-    // Changed (R9). This test sent the repository to the FULL fetch queue on a
+    // Changed with the declarations stamp (design
+    // 2026-09-01-harness-compatibility section 9.8). This test sent the
+    // repository to the FULL fetch queue on a
     // presence-only marker (`peers` absent): head commit, recursive sizing tree,
     // release probe and archive, subpackage discovery — to learn facts that sit
     // in one package.json at the recorded commit (the cost is measured once, on
@@ -488,8 +490,9 @@ describe('a carried peers or compatibility record is checked on the way in', () 
     // A record from before either field existed carries neither `peers` nor a
     // stamp. A parse that filled in `[]` would record "requires nothing" for a
     // manifest nobody read; left absent, the missing stamp queues the re-read.
-    // (Changed with R9: this asserted a FULL fetch, when the absence of `peers`
-    // itself was the marker.)
+    // (Changed with the declarations stamp, design
+    // 2026-09-01-harness-compatibility section 9.8: this asserted a FULL
+    // fetch, when the absence of `peers` itself was the marker.)
     const { peers: _unread, declarationsRule: _unstamped, ...legacy } = candidate('a/one')
     const parsed = parseRepoState(JSON.stringify({ 'a/one': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [legacy] } }))
     expect(parsed['a/one']?.candidates[0]).not.toHaveProperty('peers')

@@ -219,9 +219,9 @@ describe('shop client apply warm', () => {
   })
 
   it('checks refresh before reverdict, so a combined { refresh: true, reverdict: true } still reaches the network', async () => {
-    // Minor 11: reverdict alone calls `ns.catalog(undefined)` (the test
-    // above); if refresh were checked second, this combined call would take
-    // the reverdict branch and never ask for `{ refresh: true }` at all.
+    // Reverdict alone calls `ns.catalog(undefined)` (the test above); if
+    // refresh were checked second, this combined call would take the
+    // reverdict branch and never ask for `{ refresh: true }` at all.
     const second = { ...fakeCatalog, builtAt: '2026-08-28T00:00:00Z' }
     const catalog = vi.fn()
       .mockResolvedValueOnce({ ok: true, value: fakeCatalog })
@@ -250,8 +250,8 @@ describe('shop client apply warm', () => {
   })
 
   it('drops the stash the moment install() starts, before installStart settles', async () => {
-    // Minor 8: each mutator drops the stash SYNCHRONOUSLY at the start of the
-    // call, not in a .then() after the host call resolves — because a tab can
+    // Each mutator drops the stash SYNCHRONOUSLY at the start of the call,
+    // not in a .then() after the host call resolves — because a tab can
     // unmount before installStart settles, and then no reverdict is ever
     // requested. A plain open concurrent with the still-pending install must
     // not replay the pre-mutation stash.
@@ -406,7 +406,8 @@ describe('shop client apply: the page-removed set and a bare incompatible result
   it('keeps "missing dock-base" after noteUninstalled(\'dock-base\'), although the table still lists it as a row', async () => {
     // dock-base has a client half and remains a graph row after a
     // restart-free uninstall — exactly the false "provided" the page-removed
-    // set exists to prevent (module-table.ts's header, finding #8).
+    // set exists to prevent (module-table.ts's header; design
+    // 2026-09-01-harness-compatibility section 9.1).
     const table = {
       version: 'client' as const,
       manifest: {
@@ -432,8 +433,8 @@ describe('shop client apply: the page-removed set and a bare incompatible result
   })
 
   it('resets the page-removed set on a fresh apply(), so a name noted uninstalled before does not carry over', async () => {
-    // Important 1(c): `pageRemoved` lives at module scope (index.ts), which
-    // is what lets it survive the SAME tab closing and reopening — but that
+    // `pageRemoved` lives at module scope (index.ts), which is what lets it
+    // survive the SAME tab closing and reopening — but that
     // scope is also wider than one page, and index.ts's own comment on the
     // reset (beside `warmCatalog`, at the top of apply()) says a re-applied
     // bundle is a new page that has uninstalled nothing yet. Two independent

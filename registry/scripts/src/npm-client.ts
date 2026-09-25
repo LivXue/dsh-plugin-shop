@@ -1733,9 +1733,10 @@ export const PEER_NAME_MAX_LENGTH = 128
  * `github-client.ts` — so an npm package and the repository it came from
  * cannot be recorded under two different rules, after the next re-read:
  * `DECLARATIONS_RULE` (`repo-state.ts`) stamps which rule wrote a github
- * candidate's `peers`, and a stamp that does not match it queues that one
- * manifest re-read before the two channels agree again. Why an optional
- * peer is left out at all is {@link Candidate.peers}'s to say.
+ * candidate's `peers`, and a stamp that does not match it queues the
+ * repository for a re-read, one manifest read per stale candidate, before the
+ * two channels agree again. Why an optional peer is left out at all is
+ * {@link Candidate.peers}'s to say.
  *
  * A change to what this function returns must bump `DECLARATIONS_RULE`, or a
  * recorded github candidate keeps the old answer — nothing else enforces it.

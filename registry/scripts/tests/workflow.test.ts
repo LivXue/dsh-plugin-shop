@@ -471,7 +471,7 @@ function pushFunction(step: WorkflowStep): string {
 // harvests against `registry/` out of that same tree. `push_with_rebase` runs
 // `git fetch origin main` + `git rebase origin/main`, so while the classifier's
 // commit step sat between the two, anything a human landed on main during the
-// ~50-minute run arrived AFTER the tests had validated the checked-out SHA and
+// run arrived AFTER the tests had validated the checked-out SHA and
 // BEFORE the harvest read its inputs, with node_modules resolved from a
 // possibly superseded lockfile. On an unattended job that publishes to npm
 // `latest` and to Pages, that is the 0.5.0 failure mode with a longer fuse.
@@ -612,7 +612,7 @@ describe('the daily workflow pushes safely', () => {
     }
   }
 
-  /** Someone pushes to main while the ~50-minute run is in flight. */
+  /** Someone pushes to main while the run is in flight. */
   function humanPush(seed: string, file: string, content: string): void {
     git(seed, 'fetch', '--quiet', 'origin', 'main')
     git(seed, 'checkout', '--quiet', '-B', 'main', 'origin/main')
@@ -836,7 +836,7 @@ describe('the daily workflow pushes safely', () => {
         git(runner, 'add', 'bot')
         git(runner, 'commit', '--quiet', '-m', 'bot')
         // Same write as the healthy case above — what differs is that a human
-        // landed on this very file while the ~50-minute run was in flight.
+        // landed on this very file while the run was in flight.
         writeFileSync(join(runner, 'g'), 'written by build:catalog\n')
         const { status, out } = runPush(dir, runner, pushFunction(step))
         // The premise, asserted rather than assumed: this is NOT the aborted
@@ -974,12 +974,14 @@ describe('every job in the workflow is bounded', () => {
 
 describe('SHOP_EMIT_REPO_PEERS is read once, at job level', () => {
   // classify.ts runs its own gateRepo pass over repo-state.json's candidates
-  // and must withhold github `peers` exactly the way build.ts does (ruling R10,
-  // pipeline.ts's repoPeersEmitted / withholdRepoPeers) — finding #5 was the two
-  // steps disagreeing because only build.ts withheld them. A step-level `env:`
-  // sets the flag for that one step; only a job-level `env:` guarantees the
-  // classify step and the build:catalog step read the identical value, which is
-  // the whole point of having one helper both callers read.
+  // and must withhold github `peers` exactly the way build.ts does, through
+  // pipeline.ts's repoPeersEmitted / withholdRepoPeers (design
+  // 2026-09-01-harness-compatibility section 9.8). The defect this guards
+  // against was the two steps disagreeing because only build.ts withheld
+  // them. A step-level `env:` sets the flag for that one step; only a
+  // job-level `env:` guarantees the classify step and the build:catalog step
+  // read the identical value, which is the whole point of having one helper
+  // both callers read.
   function buildJob(): Record<string, unknown> {
     const doc: unknown = parse(workflow)
     const jobs = typeof doc === 'object' && doc !== null ? (doc as Record<string, unknown>).jobs : undefined

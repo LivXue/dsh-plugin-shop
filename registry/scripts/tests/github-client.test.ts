@@ -548,10 +548,12 @@ describe('fetchRepoCandidate', () => {
   })
 
   it('stamps the candidate with the declaration rule its peers and compatibility were read under', async () => {
-    // The re-read marker (R9): a projection that wrote `peers` without the
-    // stamp would send its repository straight back through the re-read next
-    // run, and one that wrote the stamp without `peers` would freeze a record
-    // that was never read. So the two are written by one writer, together.
+    // The re-read marker (the declarations stamp, design
+    // 2026-09-01-harness-compatibility section 9.8): a projection that wrote
+    // `peers` without the stamp would send its repository straight back
+    // through the re-read next run, and one that wrote the stamp without
+    // `peers` would freeze a record that was never read. So the two are
+    // written by one writer, together.
     const candidate = await candidateFromManifest({ name: 'dsh-stamped', dsh: { bundle: {} }, peerDependencies: { a: '*' } })
     expect(candidate?.peers).toEqual(['a'])
     expect(candidate?.declarationsRule).toBe(DECLARATIONS_RULE)
@@ -1342,9 +1344,10 @@ describe('release-tarball rescue probe', () => {
   })
 
   describe('a rescued root declares what its tarball declares', () => {
-    // Finding #4 of the PR #58 review. The entry installs the release TARBALL,
-    // but its `peers` and `compatibility` were projected from the default-
-    // branch HEAD — which can be a different version entirely. The live case:
+    // Design 2026-09-01-harness-compatibility section 9.8. The entry installs
+    // the release TARBALL, but its `peers` and `compatibility` were projected
+    // from the default-branch HEAD — which can be a different version
+    // entirely. The live case:
     // wyzh0117/dsh-notebook's HEAD (0.2.3) requires nothing while its pinned
     // v0.1.0 tarball requires @deepseek-ai/dsh-client-runtime; and a HEAD-only
     // `"dsh": ">=0.1.7-0"` made an old tarball read "Incompatible" on
@@ -1384,7 +1387,7 @@ describe('release-tarball rescue probe', () => {
       // Removed, not left at HEAD's value: absent means "declares none", and
       // this archive declares none.
       expect(candidate !== undefined && 'compatibility' in candidate).toBe(false)
-      // Under the same stamp every projection writes (R9), so the tarball's
+      // Under the same stamp every projection writes, so the tarball's
       // declarations are not re-read into HEAD's by the next run's backfill.
       expect(candidate?.declarationsRule).toBe(DECLARATIONS_RULE)
     })
@@ -1560,8 +1563,8 @@ describe('release-tarball rescue probe', () => {
   })
 
   it('rethrows a releases body that fails mid-read as itself, never as a body that is not JSON', async () => {
-    // The releases answer is read, then parsed (fix round 1). One `.json()`
-    // call behind one catch used to turn undici's `TypeError: terminated` into
+    // The releases answer is read, then parsed. One `.json()` call behind one
+    // catch used to turn undici's `TypeError: terminated` into
     // "answered 200 with a body that is not JSON" — a proxy's error page, as
     // far as an operator could tell, while the truth was a connection reset.
     // Both throw; only the read-then-parse split says which happened.
@@ -1578,8 +1581,9 @@ describe('release-tarball rescue probe', () => {
   })
 
   it('never sends the token with the asset download, while the releases API call keeps it', async () => {
-    // No release-asset request carries Authorization (fix round 1, security
-    // review): downloadReleaseAsset takes no token at all, so the rule lives
+    // No release-asset request carries Authorization (design
+    // 2026-09-01-harness-compatibility section 9.8): downloadReleaseAsset
+    // takes no token at all, so the rule lives
     // in one place for the probe and the re-read alike. A public asset needs
     // none, and GitHub's `browser_download_url` redirects to a separate asset
     // host. The API request beside it is the control that proves the header
@@ -1605,8 +1609,8 @@ describe('release-tarball rescue probe', () => {
   })
 
   it('still rides the 429/5xx ladder for its asset download, where the re-read does not', async () => {
-    // Fix round 1, extension. The probe decides whether a CHANGED repository's
-    // rescue is listed, so a 503 on its asset is waited out, not turned into a
+    // The probe decides whether a CHANGED repository's rescue is listed, so a
+    // 503 on its asset is waited out, not turned into a
     // fetch-failed on the first answer. Only the declarations re-read, whose
     // failures change nothing, takes the first answer it gets.
     const routed = stubFetch({
@@ -1629,7 +1633,9 @@ describe('release-tarball rescue probe', () => {
   })
 
   it('reads past an asset entry that is not an object, rather than throwing on it', async () => {
-    // The probe lost its catch-all (R7), so an unguarded property read on a
+    // The probe lost its catch-all (every transport failure throws now:
+    // design 2026-09-01-harness-compatibility section 9.8), so an unguarded
+    // property read on a
     // `null` entry in `assets` would now throw — a `fetch-failed` on every run
     // for a body GitHub answered in full. The list is read totally instead:
     // what is not an asset object names no asset, and the next entry is asked.
@@ -1674,7 +1680,8 @@ describe('release-tarball rescue probe', () => {
 
   it('refuses a tarball whose content-length exceeds the cap — a refusal of ours, so no release rather than a throw', async () => {
     // Retitled, not changed: this said "the probe degrades, never throws",
-    // which stopped being the probe's contract (R7) — every transport failure
+    // which stopped being the probe's contract (design
+    // 2026-09-01-harness-compatibility section 9.8) — every transport failure
     // now throws. The cap is still null because it is not one: the asset
     // answered, and declining to hold it is a decision WE make.
     const fetchImpl = stubFetch({
@@ -1746,8 +1753,10 @@ describe('release-tarball rescue probe', () => {
   })
 
   it('throws when the tarball body cannot be read, rather than answering no release', async () => {
-    // Flipped (R7). This test pinned the old contract — a drop mid-download
-    // left the probe null, "not crash the harvest" — and that null is what
+    // Flipped when every transport failure began to throw (design
+    // 2026-09-01-harness-compatibility section 9.8). This test pinned the old
+    // contract — a drop mid-download left the probe null, "not crash the
+    // harvest" — and that null is what
     // delisted a recorded rescue: `nextRepoState` swaps the candidates, and the
     // root it re-projected is `requires-build`. A throw is a `fetch-failed` in
     // harvestRepos instead, which persists nothing and keeps the rescue; the
@@ -1771,7 +1780,7 @@ describe('release-tarball rescue probe', () => {
   })
 
   it('throws when the releases call dies on transport, rather than answering no release', async () => {
-    // Flipped (R7), for the reason the case above gives. The releases/latest
+    // Flipped, for the reason the case above gives. The releases/latest
     // request throws once fetchRobust's four attempts are spent, and the probe
     // no longer has a catch-all to turn that into "this repository has no
     // release" — which is a fact only a 404 can state.
@@ -2001,8 +2010,10 @@ describe('harvestRepos', () => {
     // unchanged repository. It has to be a real read of the manifest, not a
     // carry — the carried candidate has no peers to carry.
     //
-    // Changed (R9). This test drove the FULL fetch: the branch manifest, the
-    // head commit and the sizing tree, and `fetched` was 1. The marker is a
+    // Changed with the declarations stamp (design
+    // 2026-09-01-harness-compatibility section 9.8). This test drove the FULL
+    // fetch: the branch manifest, the head commit and the sizing tree, and
+    // `fetched` was 1. The marker is a
     // rule stamp now, and a repository whose only need is the stamp takes a
     // manifest-only re-read instead — one raw request, at the RECORDED commit,
     // which is what the entry installs — so nothing but that manifest is routed.
@@ -2367,8 +2378,9 @@ describe('harvestRepos', () => {
   })
 
   describe('the declarations re-read', () => {
-    // A repository whose ONLY need is the declarations stamp (R9): unchanged,
-    // size-probed, any release verified. It takes one manifest read per stale
+    // A repository whose ONLY need is the declarations stamp (design
+    // 2026-09-01-harness-compatibility section 9.8): unchanged, size-probed,
+    // any release verified. It takes one manifest read per stale
     // listable candidate — at the RECORDED commit, never the branch — or, for a
     // rescued root, the recorded release asset, and nothing else about the
     // entry may move. A failed read changes nothing at all, so it is retried
@@ -2490,8 +2502,9 @@ describe('harvestRepos', () => {
 
     describe('a rescued root', () => {
       // A rescued entry installs its recorded asset, so that — not the commit —
-      // is what the re-read opens (R8). The pin is the check: the same URL can
-      // serve different bytes (an asset deleted and re-uploaded under its old
+      // is what the re-read opens (design 2026-09-01-harness-compatibility
+      // section 9.8). The pin is the check: the same URL can serve different
+      // bytes (an asset deleted and re-uploaded under its old
       // name), and declarations read from bytes that are not the pin would
       // describe an archive nobody verified.
       const assetUrl = 'https://github.com/r/rescued/releases/download/v1.0.0/rescued.tgz'
@@ -2544,9 +2557,10 @@ describe('harvestRepos', () => {
         // decides there: a deleted release retires the rescue, a re-uploaded
         // one is verified afresh. The declarations stay as they were.
         //
-        // Changed (fix round 1, controller's ruling): a 404 and an over-cap
-        // answer used to be read failures that changed nothing, which left a
-        // deleted release listed on a dead URL and re-requested every run.
+        // Changed (design 2026-09-01-harness-compatibility section 9.8): a 404
+        // and an over-cap answer used to be read failures that changed
+        // nothing, which left a deleted release listed on a dead URL and
+        // re-requested every run.
         const state = recordedRescue(pin)
         const { fetchImpl } = rereadFetch(seen, url => (url === assetUrl ? asset() : undefined))
         const { value: result } = await quietly(() => harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' }))
@@ -2574,8 +2588,8 @@ describe('harvestRepos', () => {
         ['no asset after the download path', 'https://github.com/r/rescued/releases/download/'],
         ['an unparseable string', 'not a url'],
       ])('never requests a recorded asset URL with %s, and changes nothing', async (_label, url) => {
-        // IMPORTANT (review of f16281a). `release.url` is read from
-        // repo-state.json, which a pull request can edit, and the re-read
+        // IMPORTANT. `release.url` is read from repo-state.json, which a pull
+        // request can edit, and the re-read
         // downloaded it with the job's token: daily.yml runs the build on
         // `pull_request` with GITHUB_TOKEN, and every recorded rescue sits in
         // the re-read queue, so one edited URL sent that token to any host —
@@ -2643,7 +2657,8 @@ describe('harvestRepos', () => {
       ])('changes nothing when the recorded asset download %s', async (_label, asset) => {
         // What stays a failure on this path: a transport that did not answer,
         // or answered with a refusal that says nothing about the asset. (A 404
-        // moved to the case above, per the controller's ruling in fix round 1.)
+        // moved to the case above: it is a definite answer that the verified
+        // asset is gone, which unverifies the rescue.)
         const state = recordedRescue(sha256)
         const { fetchImpl } = rereadFetch(seen, url => (url === assetUrl ? asset() : undefined))
         const { value: result } = await quietly(() => harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' }))
@@ -2744,9 +2759,9 @@ describe('harvestRepos', () => {
       // backfill — and the full-fetch half, which DOES make durable changes,
       // is where that bound belongs.
       //
-      // Changed (fix round 1): this was twenty-five failures in a row, which
-      // the new consecutive-failure breaker stops at eight; one success a
-      // batch keeps the run going, so the claim is still tested past the floor.
+      // Changed: this was twenty-five failures in a row, which the new
+      // consecutive-failure breaker stops at eight; one success a batch keeps
+      // the run going, so the claim is still tested past the floor.
       const { state, failing, fetchImpl } = mostlyFailing(28)
       const { value: result } = await quietly(() => harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' }))
       expect(result.rereadFailed).toBe(21)
@@ -2785,8 +2800,8 @@ describe('harvestRepos', () => {
     const repoOf = (url: string): string => new URL(url).pathname.split('/').slice(1, 3).join('/')
 
     it('starts no new batch once its time budget is spent, and defers the rest unchanged', async () => {
-      // IMPORTANT (review of f16281a). Batches of REPO_CONCURRENCY run in lock
-      // step, so any batch holding a stalled read waits out a whole deadline —
+      // IMPORTANT. Batches of REPO_CONCURRENCY run in lock step, so any batch
+      // holding a stalled read waits out a whole deadline —
       // for a rescued root, TARBALL_REQUEST_TIMEOUT_MS. Against the committed
       // file a stalled asset host made the first 4,000-repository slice cost
       // about 9.5 hours and the second about 14, against a 120-minute job, and
@@ -2853,8 +2868,9 @@ describe('harvestRepos', () => {
       // evidence, and without the breaker a host failing every read would be
       // sent every read in the slice.
       //
-      // Fix round 1, extension: the re-read waits out no 429 or 5xx — the
-      // first answer is the answer, one request a read — because a failure
+      // The re-read waits out no 429 or 5xx (design
+      // 2026-09-01-harness-compatibility section 9.8) — the first answer is
+      // the answer, one request a read — because a failure
       // here changes nothing and is asked again next run, and because a read
       // with no status ladder is bounded by its own deadlines, which is what
       // bounds the phase's overrun. A throw is still retried by fetchRobust,
@@ -2873,8 +2889,8 @@ describe('harvestRepos', () => {
     })
 
     it('downloads a recorded asset once, with no ladder, and counts a 503 toward the breaker', async () => {
-      // Fix round 1, extension. The full probe rides fetchWithRetry's ladder
-      // for its asset, because it decides whether a changed repository's
+      // The full probe rides fetchWithRetry's ladder for its asset, because
+      // it decides whether a changed repository's
       // rescue lists. The re-read decides nothing a later run cannot, so it
       // takes the first answer: one request an asset, which bounds a download
       // in flight when the time budget runs out to TARBALL_REQUEST_TIMEOUT_MS.
@@ -3025,8 +3041,8 @@ describe('harvestRepos', () => {
       // Literals, so the constants cannot drift under fixtures computed from
       // them. The reasons behind each number are on the constants.
       //
-      // Changed (fix round 1, extension): fifteen minutes became ten. Against
-      // the longest measured build job, 86m25s, fifteen minutes and the batch
+      // Changed: fifteen minutes became ten. Against the longest measured
+      // build job, 86m25s, fifteen minutes and the batch
       // in flight left about fourteen minutes of the 120; ten leaves 18m35s.
       expect(DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT).toBe(10 * 60 * 1000)
       expect(DECLARATIONS_REREAD_MAX_CONSECUTIVE_FAILURES).toBe(8)
@@ -4145,8 +4161,8 @@ const EXCUSED_BODY_READS: readonly ExcusedBodyRead[] = [
     reason: 'api.github.com commits: a sha and a date, both shape-checked before use',
   },
   {
-    // Re-keyed from `body = await response.json() as typeof body` (fix round
-    // 1): the releases answer is now read as text and parsed separately, so a
+    // Re-keyed from `body = await response.json() as typeof body`: the
+    // releases answer is now read as text and parsed separately, so a
     // failure mid-read propagates as the transport failure it is, and only
     // bytes that arrived can be called "not JSON". The body and the reason it
     // needs no byte cap are unchanged.
@@ -4158,8 +4174,9 @@ const EXCUSED_BODY_READS: readonly ExcusedBodyRead[] = [
     // Re-keyed from `const parsed = await treeResponse.json() as unknown`:
     // the discovery tree is now read as text and parsed separately, so a
     // transport failure mid-body propagates while only a body that arrived and
-    // does not parse still means "no subpackages" (R7). The body and the
-    // reason it needs no byte cap are unchanged.
+    // does not parse still means "no subpackages" (design
+    // 2026-09-01-harness-compatibility section 9.8). The body and the reason
+    // it needs no byte cap are unchanged.
     snippet: 'const treeText = await treeResponse.text()',
     reason: 'api.github.com git/trees: GitHub caps this at 100k entries and truncates, and only the `path` '
       + 'strings are read out of it — no repository-authored value is carried forward from this body',
@@ -4487,8 +4504,10 @@ describe('body deadlines', () => {
 
   it('bounds a tarball that sends headers and then stalls its body', async () => {
     // The case a header-phase deadline cannot see, on the one path that reads
-    // up to MAX_TARBALL_BYTES. Flipped (R7): the probe was advisory, so this
-    // bounded failure used to degrade to "no release" and re-project the root
+    // up to MAX_TARBALL_BYTES. Flipped when every transport failure began to
+    // throw (design 2026-09-01-harness-compatibility section 9.8): the probe
+    // was advisory, so this bounded failure used to degrade to "no release"
+    // and re-project the root
     // as `requires-build` — which delisted a recorded rescue. The deadline now
     // throws, and harvestRepos records nothing. What this test is FOR is
     // unchanged: the failure is bounded, and by the tarball's own deadline.
@@ -4524,8 +4543,10 @@ describe('body deadlines', () => {
   })
 
   it('rethrows a manifest body that fails mid-read, and still calls one that arrived and does not parse unreadable', async () => {
-    // Flipped (R7). This test pinned the old line — only a DEADLINE was
-    // rethrown, and a body that "arrived broken" was the author's
+    // Flipped when every transport failure began to throw (design
+    // 2026-09-01-harness-compatibility section 9.8). This test pinned the old
+    // line — only a DEADLINE was rethrown, and a body that "arrived broken"
+    // was the author's
     // `no-manifest` — on the worry that widening the rethrow would turn a real
     // verdict into a transient retry forever. But a stream that errors has not
     // arrived: undici reports a connection reset mid-body as a plain
@@ -4558,8 +4579,9 @@ describe('body deadlines', () => {
     // minutes per repository, over twice the job bound for a full budget of
     // them (the arithmetic, re-measured, is on `downloadReleaseAsset`).
     //
-    // Flipped (R7): the probe used to degrade the stall to "no release", and
-    // now it throws — a `fetch-failed` that keeps a recorded rescue rather than
+    // Flipped (design 2026-09-01-harness-compatibility section 9.8): the
+    // probe used to degrade the stall to "no release", and now it throws — a
+    // `fetch-failed` that keeps a recorded rescue rather than
     // delisting it. The one-attempt bound matters MORE for that: every
     // repository behind a blocked asset host now reaches harvestRepos' catch,
     // and it must get there in one deadline, not four.

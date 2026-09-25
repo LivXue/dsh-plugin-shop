@@ -88,8 +88,11 @@ jobs:
     # The declarations re-read is a third bounded phase, but unlike the two
     # above it runs INSIDE the harvest rather than in front of it, so it
     # spends from that ~60 rather than adding to the split above. It bounds
-    # itself at DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT, plus at most one
-    # in-flight asset read (TARBALL_REQUEST_TIMEOUT_MS): 10 + 5.
+    # itself at DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT, plus the reads
+    # still in flight when that runs out, each at most one asset read
+    # (TARBALL_REQUEST_TIMEOUT_MS). The first constant's comment in
+    # registry/scripts/src/github-client.ts does that arithmetic against this
+    # job's timeout-minutes; neither figure is restated here.
     #
     # The harvest is what this bound is really for, and it is honest about what
     # it buys. Measured: one stalled repository costs four bounded attempts
@@ -126,14 +129,15 @@ jobs:
     # every step's value, because two steps read it independently and
     # disagreeing was the bug. `classify.ts` re-reads repo-state.json's github
     # candidates a day after `build.ts` records them and gates them a third
-    # time (ruling R10, pipeline.ts's `repoPeersEmitted` / `withholdRepoPeers`);
-    # while the flag lived only on the build:catalog step below, classify.ts
-    # had no way to read the same value and gated raw candidates with peers
-    # still attached, while build.ts had withheld them from its own gate. A
-    # repository whose peers alone crossed the payload budget then listed
-    # (build.ts's withheld copy fit) and was pruned from categories.yml the
-    # very next run (classify.ts's raw copy did not fit) — reading `other`
-    # every day until the flag flipped (finding #5 of the PR #58 review).
+    # time, through the same pipeline.ts helpers the build uses
+    # (`repoPeersEmitted` / `withholdRepoPeers`; design
+    # 2026-09-01-harness-compatibility section 9.8). While the flag lived only
+    # on the build:catalog step below, classify.ts had no way to read the same
+    # value and gated raw candidates with peers still attached, while build.ts
+    # had withheld them from its own gate. A repository whose peers alone
+    # crossed the payload budget then listed (build.ts's withheld copy fit) and
+    # was pruned from categories.yml the very next run (classify.ts's raw copy
+    # did not fit) — reading `other` every day until the flag flipped.
     env:
       SHOP_EMIT_REPO_PEERS: '0'
     steps:
@@ -184,10 +188,11 @@ jobs:
           # older client ever meets a theme category or v5 entry shape.
           SHOP_CATALOG_V5: '1'
           # SHOP_EMIT_REPO_PEERS is declared on the `build` JOB above, not
-          # here: `classify.ts` must read the identical value (finding #5 of
-          # the PR #58 review), and only a job-level env: guarantees that. See
-          # the job-level comment for what the flag does, and pipeline.ts's
-          # `repoPeersEmitted` for the flag itself.
+          # here: `classify.ts` must read the identical value (design
+          # 2026-09-01-harness-compatibility section 9.8), and only a
+          # job-level env: guarantees that. See the job-level comment for what
+          # the flag does, and pipeline.ts's `repoPeersEmitted` for the flag
+          # itself.
           # A dedicated read-only PAT lifts the stars GraphQL quota past the
           # catalog's repo count; without it the GITHUB_TOKEN's ~1k points
           # cover only a third of the shelf per run.

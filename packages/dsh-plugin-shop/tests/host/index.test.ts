@@ -2516,6 +2516,37 @@ describe('concurrent catalog loads (G-7)', () => {
     await gateway.catalog({ refresh: true })
     expect(seen).toEqual([false, true])
   })
+
+  it('joins a plain catalog() to a refresh in flight: one load, and the refresh\'s result', async () => {
+    // The client's reverdict asks with this plain call, and a Refresh still
+    // pending takes precedence over it only because of this join: the tab
+    // drops the superseded refresh's own result, so the reverdict's answer
+    // must BE the refreshed snapshot (design 2026-09-01-harness-compatibility
+    // section 9.1). Each load stamps its own `builtAt`, so a second, plain
+    // load would show in the answer as well as in the call count.
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-once-join-refresh-'))
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: {} }))
+    const seen: Array<boolean | undefined> = []
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
+      loadCatalog: async options => {
+        seen.push(options.refresh)
+        await gate
+        const builtAt = options.refresh === true ? 'from-the-refresh' : 'from-a-plain-load'
+        return { snapshot: { schemaVersion: 6, builtAt, entries, denied: [], stars: {} }, stale: false } as CatalogResult
+      },
+    })
+    const refreshing = gateway.catalog({ refresh: true })
+    await vi.waitFor(() => expect(seen).toEqual([true]))
+    const plain = gateway.catalog()
+    release()
+    const [refreshed, joined] = await Promise.all([refreshing, plain])
+    expect(seen).toEqual([true])
+    expect(refreshed.builtAt).toBe('from-the-refresh')
+    expect(joined.builtAt).toBe('from-the-refresh')
+  })
 })
 
 describe('restart while an install is running (F-5)', () => {

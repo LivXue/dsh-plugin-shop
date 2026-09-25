@@ -842,8 +842,9 @@ describe('selectEntries', () => {
 })
 
 describe('repoPeersEmitted (SHOP_EMIT_REPO_PEERS)', () => {
-  // finding #5: build.ts and classify.ts each used to test the flag inline,
-  // and classify.ts's own copy never existed at all — it ran gateRepo over
+  // Design 2026-09-01-harness-compatibility section 9.8: build.ts and
+  // classify.ts each used to test the flag inline, and classify.ts's own
+  // copy never existed at all — it ran gateRepo over
   // repo-state.json candidates with peers still attached, so the two steps
   // disagreed about which repositories cross the payload budget. One helper
   // both callers read closes that gap by construction: there is only one
@@ -935,7 +936,7 @@ describe('withholdRepoPeers (SHOP_EMIT_REPO_PEERS)', () => {
 })
 
 describe('describeRereadStopped (github declarations re-read)', () => {
-  // RepoHarvestResult.rereadStopped (github-client.ts, Task 3) says why the
+  // RepoHarvestResult.rereadStopped (github-client.ts) says why the
   // re-read phase stopped starting reads before its queue ran out, or null
   // when it did not. build.ts appends the phrase next to the re-read counts
   // on the github report line, and only when it is non-null — a healthy run

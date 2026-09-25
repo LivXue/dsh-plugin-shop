@@ -29,10 +29,10 @@ export interface PipelineResult extends Artifacts {
  * gated candidates with peers still attached, so a repository whose peers
  * alone cross the payload budget was listed by the build and dropped from
  * `liveNames` by the classifier, which then pruned its `categories.yml` row —
- * the entry listed as `other` every day until the flag flipped (finding #5 of
- * the PR #58 review). Taking the value as a parameter rather than reading
- * `process.env` keeps this module pure; the callers are the ones that read
- * the environment.
+ * the entry listed as `other` every day until the flag flipped (design
+ * 2026-09-01-harness-compatibility section 9.8). Taking the value as a
+ * parameter rather than reading `process.env` keeps this module pure; the
+ * callers are the ones that read the environment.
  * @param flag - `process.env.SHOP_EMIT_REPO_PEERS` as the caller read it.
  * @returns whether the flag is the exact string `'1'`.
  */
@@ -92,7 +92,7 @@ export function withholdRepoPeers(
  * Why the github declarations re-read stopped early, as a build-note
  * fragment to append next to its counts — `''` when it did not.
  *
- * `RepoHarvestResult.rereadStopped` (github-client.ts, Task 3) is `null` when
+ * `RepoHarvestResult.rereadStopped` (github-client.ts) is `null` when
  * the phase ran to its own budget or its queue simply emptied, so there is
  * nothing to add. The two non-null values are `'time-budget'` (the phase's
  * own time budget, {@link DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT} in

@@ -1699,8 +1699,7 @@ export const DECLARATIONS_REREAD_BUDGET_DEFAULT = 4000
  * answering 5xx just as each deadline expired could hold one asset read
  * through six 300 s attempts and the backoff between them, over half an hour.
  * Taking the first answer bounds that read; the smaller budget buys back the
- * margin. (daily.yml's own header says the job "takes about 50 minutes": that
- * was written on 2026-09-04, before these runs.)
+ * margin.
  *
  * What a healthy slice needs is INFERRED, NOT TIMED: no catalog run has timed
  * this phase. The GitHub half took 32 to 33 minutes on every run above whether
@@ -2522,8 +2521,9 @@ async function rereadEntry(
  * Bounded three ways: the queue arrives cut to the count budget, a batch starts
  * only while the phase allows it (`timeBudgetMs` of `now`, and the failure
  * breaker), and so does every read after a repository's first. What is not
- * started is deferred and unchanged, which is all R9 asks of a deferral: the
- * missing stamp queues it again next run.
+ * started is deferred and unchanged, which is all a deferral needs to be
+ * (design 2026-09-01-harness-compatibility section 9.8): the missing stamp
+ * queues it again next run.
  *
  * The input state is never mutated — harvestRepos retries a whole attempt
  * with the SAME options, and a first attempt that had written into them would

@@ -42,9 +42,10 @@ export const WARM_TTL_MS = 5 * 60 * 1000
  * result, including an explicit refresh, replaces this timestamped stash. */
 let warmCatalog: { at: number; result: Promise<ShopCatalogResult> } | null = null
 
-/** Package names THIS PAGE has uninstalled since it loaded (finding #8): the
- * module table can still hold a graph row or a `loadCache` record for one
- * after a restart-free uninstall (module-table.ts's header explains why), so
+/** Package names THIS PAGE has uninstalled since it loaded (design
+ * 2026-09-01-harness-compatibility section 9.1): the module table can still
+ * hold a graph row or a `loadCache` record for one after a restart-free
+ * uninstall (module-table.ts's header explains why), so
  * the refinement must never clear a name here on the table's say-so — the
  * host's verdict stands unconditionally. Module-level so it survives the tab
  * closing and reopening; reset in `apply` beside `warmCatalog`, because a
@@ -128,8 +129,8 @@ export async function apply(ctx: ClientContext): Promise<void> {
   // a client-only key like `reverdict` must never reach the wire, even by a
   // future field added to `args` and forwarded by accident.
   const hostCatalog = async (args?: { refresh?: boolean; reverdict?: boolean }): Promise<ShopCatalogResult> => {
-    // `refresh` is checked FIRST (Minor 11): it also bypasses the stash and
-    // restashes, exactly like reverdict, so checking it first costs the
+    // `refresh` is checked FIRST: it also bypasses the stash and restashes,
+    // exactly like reverdict, so checking it first costs the
     // refresh branch nothing — but checking reverdict first would have let a
     // caller-supplied `{ refresh: true, reverdict: true }` fall into the
     // reverdict branch and silently drop the network refresh the caller
@@ -140,10 +141,9 @@ export async function apply(ctx: ClientContext): Promise<void> {
       return refreshed
     }
     if (args?.reverdict === true) {
-      // Dropped before asking, not after (Minor 8): a failed reverdict must
-      // not leave the PRE-mutation stash standing for the next plain open to
-      // replay — the mutation already landed, so no stash is safer than a
-      // stale one.
+      // Dropped before asking, not after: a failed reverdict must not leave
+      // the PRE-mutation stash standing for the next plain open to replay —
+      // the mutation already landed, so no stash is safer than a stale one.
       warmCatalog = null
       const judged = unwrap(await ns.catalog(undefined))
       warmCatalog = { at: Date.now(), result: Promise.resolve(judged) }
@@ -190,8 +190,9 @@ export async function apply(ctx: ClientContext): Promise<void> {
   const injected = (): ShopTabInjected => ({
     catalog: async args => handOver(await hostCatalog(args)),
     // Each mutator drops the stash the MOMENT it starts, not when it settles
-    // (Minor 8): a mutation always changes what a reverdict would say, and if
-    // this tab unmounts before the mutation settles, no reverdict is ever
+    // (design 2026-09-01-harness-compatibility section 9.1): a mutation
+    // always changes what a reverdict would say, and if this tab unmounts
+    // before the mutation settles, no reverdict is ever
     // requested (ShopTab's settle callbacks live in state that unmounted with
     // it) — so the next plain open, on this tab or a fresh one, must ask the
     // host rather than replay a stash from before the mutation. Residual: a

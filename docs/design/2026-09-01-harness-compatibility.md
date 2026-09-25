@@ -621,13 +621,19 @@ this page has uninstalled since it loaded, and the refinement neither
 clears a name in that set nor asks the table about one: for those
 names the host's verdict stands. The shop cannot uninstall what the
 harness itself serves (seed words, the harness's own client packages),
-so none of those enters the set, and an install needs no counterpart,
-because a reinstalled package resolves on the host again and leaves the
-host's list. The set survives the tab closing and reopening, and a
-re-applied bundle, which is a new page, starts it empty. The limit,
-stated: an uninstall made from another tab, another window or the CLI
-is not in the set and stays unknown to this page until it reloads, and
-on 0.1.7-rc.2 a kept row for such a package can still reach `import()`.
+and an install needs no counterpart, because a reinstalled package
+resolves on the host again and leaves the host's list. The set survives
+the tab closing and reopening, and a re-applied bundle, which is a new
+page, starts it empty. The limit, stated: an uninstall made from
+another tab, another window or the CLI is not in the set and stays
+unknown to this page until it reloads, and on 0.1.7-rc.2 a kept row for
+such a package can still reach `import()`. A residual, stated not
+fixed: a seed word can still enter the set by name. A github entry's
+package name is whatever its author declares, and no gate stops an
+entry named `react` or `@deepseek-ai/dsh-client-store`. Uninstalling
+such an entry from the shop puts that name in the set, and every entry
+that declares it is then badged, though the table still serves it,
+until the page reloads.
 
 **Verdicts are asked for again after an install or an uninstall.** When
 either settles `done`, and only then, the tab asks the host again with a
@@ -639,13 +645,18 @@ describes the installation as the mutation left it. `reverdict` is the
 client's own instruction and never reaches the wire, whose `catalog`
 takes `{ refresh?: boolean }` alone. The shelf stays on screen while it
 runs, as it does for a refresh. A Refresh already pending takes
-precedence over it, and a reverdict never hides a failed Refresh; a
-failed reverdict leaves the screen as it was with no note of its own,
-since the reader asked for nothing. It does not re-run the shop's own
-version check, which asks npm and stays tied to an explicit Refresh or
-Retry. The stash is dropped when a mutation starts and again when a
-reverdict starts, so a plain open in between asks the host rather than
-replaying a verdict formed before the change.
+precedence over it, and that holds only through the host: the tab
+discards the superseded refresh's own result, and the reverdict's
+plain call gets the refreshed snapshot because the host's
+`loadCatalogOnce` joins a plain call to a load already in flight, a
+refresh's included, rather than starting a second one. A reverdict
+never hides a failed Refresh; a failed reverdict leaves the screen as
+it was with no note of its own, since the reader asked for nothing.
+It does not re-run the shop's own version check, which asks npm and
+stays tied to an explicit Refresh or Retry. The stash is dropped when a
+mutation starts and again when a reverdict starts, so a plain open in
+between asks the host rather than replaying a verdict formed before the
+change.
 
 **An unusable table yields no peer verdicts at all** — never a fallback
 to the host's, because measured, the host's answer alone is

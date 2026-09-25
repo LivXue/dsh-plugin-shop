@@ -219,8 +219,9 @@ export function moduleTableOracle(service: unknown): ModuleOracle | null {
  * never read as an accusation. Never rejects, so a table in any state cannot
  * cost the reader the catalog.
  *
- * `removed` is the page-removed set (finding #8): package names this page has
- * uninstalled since it loaded. Every name in it is reported missing exactly
+ * `removed` is the page-removed set (design 2026-09-01-harness-compatibility
+ * section 9.1): package names this page has uninstalled since it loaded.
+ * Every name in it is reported missing exactly
  * as the host said, WITHOUT ever reaching the table — not the rows check, not
  * `loadCache`, not `import` — because a row or a cache record can outlive a
  * restart-free uninstall (`moduleTableOracle`'s header), and the table's own
@@ -233,12 +234,13 @@ export async function refineAgainstModuleTable(
   timeoutMs: number = MODULE_PROBE_TIMEOUT_MS,
 ): Promise<Record<string, string[]>> {
   const oracle = moduleTableOracle(service)
-  // Controller ruling (Task 2 fix round 1, Important 3): unconditional. On a
-  // page with no usable table nothing can falsely vouch for a removed name in
-  // the first place, so finding #8 does not arise there, and design §9's
-  // documented silence — no usable table, no verdicts — applies uniformly
-  // rather than carving out an exception for the page-removed set. Every
-  // supported harness provides the table anyway.
+  // Unconditional, removed names included. On a page with no usable table
+  // nothing can falsely vouch for a removed name in the first place, so the
+  // false clear the page-removed set exists to prevent does not arise there,
+  // and the documented silence (no usable table, no verdicts: design
+  // 2026-09-01-harness-compatibility section 9.1) applies uniformly rather
+  // than carving out an exception for the page-removed set. Every supported
+  // harness provides the table anyway.
   if (oracle === null) return {}
   const withRemoved: ModuleOracle = async spec =>
     (removed.has(stripClientSuffix(spec)) ? false : oracle(spec))

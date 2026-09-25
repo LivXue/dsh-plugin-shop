@@ -971,6 +971,12 @@ describe('packageResolver and packageVersionResolver over an injected filesystem
   })
 
   it('reads every candidate failing to stat as absent, never as a throw', () => {
+    // Flipped on 2026-09-25: this asserted `toThrow(/EACCES/)` for the
+    // resolver, and "no verdict" for the entry declaring the peer. It asserts
+    // `false` now because the walk treats any stat failure as "not here, keep
+    // walking", as Node's ESM resolver does (design
+    // 2026-09-01-harness-compatibility section 9.5): the loader never asks
+    // what a candidate it cannot stat holds, so neither may the lookup.
     // The same rule taken to its end: nothing on the filesystem can make the
     // lookup throw. Only a name that is not a bare package name still does
     // (the hostile-name case above).

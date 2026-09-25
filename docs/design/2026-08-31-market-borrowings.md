@@ -152,9 +152,10 @@ that was decided against keeping the commit pin):
   tarball specs through `dsh plugin add` (dsh passes specs verbatim;
   dsh-market installs tarball targets through the same machinery).
 - The harvest downloads the tarball once and records its sha256 in the
-  snapshot, beside the URL. GitHub release assets are immutable per
-  URL (re-upload = new asset = new URL), so URL pinning plus the
-  recorded hash is the audit story. The Host enforces it at install:
+  snapshot, beside the URL. The recorded hash is the audit story, not
+  the URL: a release download URL names a tag and a file name, and an
+  asset deleted and re-uploaded under its old name serves different
+  bytes at the same URL. The Host enforces it at install:
   the tarball is fetched and verified against the recorded sha256
   before anything spawns, and a mismatch or an unverifiable download
   is a typed `tarball-integrity` rejection. The check cannot close
@@ -163,6 +164,19 @@ that was decided against keeping the commit pin):
   residue — but it catches passive MITM and asset tampering at the
   check instant, and the catalog chain (pointer sha256 +
   validateEntryCoherence) already pins the URL itself.
+
+  **Amended 2026-09-25:** this bullet said GitHub release assets were
+  immutable per URL (re-upload = new asset = new URL), so that URL
+  pinning plus the recorded hash was the audit story. The premise is
+  false: the URL is `/releases/download/<tag>/<file name>`, and
+  nothing stops an author deleting an asset and uploading different
+  bytes under the same name. Read as true, it makes a recorded URL
+  proof of the recorded bytes, so anything that re-reads the asset
+  could skip the hash; the harvest's declarations re-read would then
+  take a replaced asset's `peers` and `compatibility` as the verified
+  tarball's. So that re-read believes an asset only once it hashes to
+  the recorded sha256, and treats a mismatch as a changed asset
+  (2026-09-01-harness-compatibility.md, section 9.8).
 - `outdated` = the harvest re-probes and finds a newer release tag.
   Re-probing happens when the repo's `pushedAt` advances (existing
   incremental machinery); otherwise the recorded tarball stands. The

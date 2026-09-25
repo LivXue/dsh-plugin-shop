@@ -66,10 +66,10 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
   const apiKey = process.env.LLM_API_KEY ?? ''
   const npmToken = process.env.NPM_TOKEN
   // Read through the same helper build.ts reads with, so the two steps can
-  // never disagree about which repositories fit the payload budget (finding
-  // #5 of the PR #58 review). daily.yml declares the flag at the `build`
-  // JOB's level for exactly this reason — a step-level value here would let
-  // it drift from build:catalog's.
+  // never disagree about which repositories fit the payload budget (design
+  // 2026-09-01-harness-compatibility section 9.8). daily.yml declares the
+  // flag at the `build` JOB's level for exactly this reason — a step-level
+  // value here would let it drift from build:catalog's.
   const emitRepoPeers = repoPeersEmitted(process.env.SHOP_EMIT_REPO_PEERS)
 
   // The daily harvest runs HERE, not in build.ts: the workflow passes
@@ -157,8 +157,8 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
   // withholds peers before its own gate passes, and this must withhold them
   // the same way before gating below, or the two steps measure a different
   // payload for the same repository and can disagree about what lists
-  // (finding #5 of the PR #58 review, reproduced with a repository whose
-  // peers alone crossed the 12 KiB budget).
+  // (design 2026-09-01-harness-compatibility section 9.8; reproduced with a
+  // repository whose peers alone crossed the 12 KiB budget).
   const repoStatePath = join(REGISTRY_DIR, 'repo-state.json')
   const repoCandidatesRaw: RepoCandidate[] = []
   if (existsSync(repoStatePath)) {

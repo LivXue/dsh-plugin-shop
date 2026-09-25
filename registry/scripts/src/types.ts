@@ -286,10 +286,12 @@ export interface RepoCandidate {
      *
      * Persisted so the record says which RULES produced it. Absent means the
      * rescue predates the check — taken on release metadata alone — or that
-     * the declarations re-read found the recorded asset no longer hashing to
-     * `sha256`; either way `diffRepoState` queues that repo for one re-probe
-     * rather than trusting it, because `pushedAt` alone would let an
-     * unverified rescue stand forever on a repo that never pushes again.
+     * the declarations re-read found the verified asset gone from its URL:
+     * the recorded asset answered 404, answered past the size cap it was
+     * verified under, or no longer hashes to `sha256`. Either way
+     * `diffRepoState` queues that repo for one re-probe rather than trusting
+     * it, because `pushedAt` alone would let an unverified rescue stand
+     * forever on a repo that never pushes again.
      */
     assetVerified?: true
   }

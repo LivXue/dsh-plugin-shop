@@ -2875,14 +2875,20 @@ describe('ShopTab uninstall flow recovery', () => {
       .mockResolvedValueOnce([{ ...outdated, source: 'npm' }])
       .mockResolvedValue([{ ...outdated, source: 'npm', installed: '1.2.0', outdated: false }])
     const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    // Waits on the element the next step clicks, which exists exactly once.
+    // Not on the name: the row is outdated, so the Updatable section prints
+    // it too, and a wait on the text found two elements once both had
+    // rendered. It passed only when it happened to land between the two
+    // commits.
+    await waitFor(() => expect(container.querySelectorAll('[data-shop-entry="dsh-hello-plugin"] [data-shop-update]')).toHaveLength(1))
 
     fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-update]')!)
     await waitFor(() => expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-restart-notice]')).toBeTruthy(), { timeout: 3000 })
-    // The update landing already earns its own legitimate reverdict (Minor
-    // 5's guard), so "was catalog ever asked again" cannot tell the failed
-    // uninstall below apart from this. Only a call count taken right here,
-    // before the uninstall starts, can isolate what happens next.
+    // The update landing already earns its own legitimate reverdict (a
+    // settled `done` install asks the catalog again), so "was catalog ever
+    // asked again" cannot tell the failed uninstall below apart from this.
+    // Only a call count taken right here, before the uninstall starts, can
+    // isolate what happens next.
     const callsAfterUpdate = catalog.mock.calls.length
 
     fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-uninstall]')!)
@@ -2903,8 +2909,10 @@ describe('ShopTab uninstall flow recovery', () => {
   })
 })
 
-describe('ShopTab reverdicts after a mutation settles (finding #10, #8)', () => {
-  // §10 (R6): an install or uninstall changes what the host would judge —
+describe('ShopTab reverdicts after a mutation settles, and feeds the page-removed set', () => {
+  // Design 2026-09-01-harness-compatibility section 9.1 (the reverdict, and
+  // the page-removed set): an install or uninstall changes what the host
+  // would judge —
   // installing dock-base makes every entry that named it as a missing peer
   // resolvable, so the badge must not survive on the strength of a catalog
   // fetched before the mutation. `reverdict: true` asks again with the host's
@@ -2992,7 +3000,7 @@ describe('ShopTab reverdicts after a mutation settles (finding #10, #8)', () => 
     expect(screen.queryByText(en.refreshFailed)).toBeNull()
   })
 
-  it('tells the client half which package it uninstalled, by the bare name, once the uninstall settles done (finding #8)', async () => {
+  it('tells the client half which package it uninstalled, by the bare name, once the uninstall settles done, for the page-removed set', async () => {
     // The flow registry these callbacks key on is the identity string
     // (`npm:dsh-hello-plugin`), never the bare package name — a regression to
     // passing that key straight through would defeat the page-removed set
@@ -3030,7 +3038,7 @@ describe('ShopTab reverdicts after a mutation settles (finding #10, #8)', () => 
     fireEvent.click(container.querySelector('[data-shop-uninstall]')!)
     await waitFor(() => expect(container.querySelector('[data-shop-uninstall-done]')).toBeTruthy(), { timeout: 3000 })
     // The optional lookup being skipped must not also skip the reverdict that
-    // runs right after it (Minor 6) — a regression that hardened
+    // runs right after it — a regression that hardened
     // `noteUninstalled?.(name)` into an unconditional call would throw here,
     // since this host face has none, and never reach the line below.
     await waitFor(() => expect(catalog).toHaveBeenLastCalledWith({ reverdict: true }), { timeout: 3000 })
@@ -3051,11 +3059,11 @@ describe('ShopTab reverdicts after a mutation settles (finding #10, #8)', () => 
     expect(installed).toHaveBeenCalledTimes(1)
 
     fireEvent.click(container.querySelector('[data-shop-install]')!)
-    // `noteMutation()` runs on EITHER outcome (Minor 9's fixed comment above
-    // says so), so waiting for the installed projection's second read is
-    // proof `installSettled` already ran past that line — including, were the
-    // guard on the next line removed, the reverdict call right after it,
-    // since nothing awaits between the two.
+    // `noteMutation()` runs on EITHER outcome (ShopTab.tsx's comment on
+    // `mutations` says so), so waiting for the installed projection's second
+    // read is proof `installSettled` already ran past that line — including,
+    // were the guard on the next line removed, the reverdict call right after
+    // it, since nothing awaits between the two.
     await waitFor(() => expect(installed).toHaveBeenCalledTimes(2), { timeout: 3000 })
     expect(catalog).not.toHaveBeenCalledWith({ reverdict: true })
   })

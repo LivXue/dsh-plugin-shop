@@ -88,7 +88,9 @@ describe('verifyReleaseAsset', () => {
     // used to carry — that an accepted verdict says exactly what it means to —
     // without restating what the fixture happens to pack.
     //
-    // Changed (R8): the verdict now also hands back the packed manifest's
+    // Changed when a rescued entry began declaring what its tarball declares
+    // (design 2026-09-01-harness-compatibility section 9.8): the verdict now
+    // also hands back the packed manifest's
     // declaration inputs, which a rescued entry's `peers` and `compatibility`
     // are projected from (the two tests below). Still nothing else.
     const verdict = verifyReleaseAsset(packedTarball('dsh-foo'), 'dsh-foo')
@@ -672,7 +674,8 @@ describe('verifyReleaseAsset', () => {
   it('never throws, whatever the bytes are', () => {
     // The property is unchanged; its reason is not. This said "the rescue is
     // advisory", which stopped being true when the probe began throwing on
-    // every transport failure (R7). What a throw from HERE would do now is
+    // every transport failure (design 2026-09-01-harness-compatibility
+    // section 9.8). What a throw from HERE would do now is
     // worse than crash: the probe no longer catches it, so it would surface as
     // a `fetch-failed` — retried every run, forever — for bytes that DID arrive
     // and are the author's to fix, when the answer owed is a refusal whose
