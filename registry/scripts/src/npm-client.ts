@@ -2,7 +2,7 @@ import { readCappedBody } from './http-body.ts'
 import { compareStrings } from './identity.ts'
 import { escapeCell } from './emit.ts'
 import { allocateProbeBudgets, atRiskNameCount, atRiskOwners, cursorFor, isMaintainerName, isPinnableKeyword, MAX_PINNED_PER_KEYWORD, probeOrder, type AxisOutcome, type HarvestedName, type PublisherState } from './publisher-state.ts'
-import type { Candidate, Rejection } from './types.ts'
+import type { Candidate, Compatibility, Rejection } from './types.ts'
 
 /**
  * The keywords a plugin author declares. Ecosystem-neutral by design: an
@@ -1792,6 +1792,118 @@ export const PEERS_MAX_COUNT = 128
 export const PEER_NAME_MAX_LENGTH = 128
 
 /**
+ * The names of the peers a manifest REQUIRES, in manifest order, bounded by
+ * {@link PEER_NAME_MAX_LENGTH} and {@link PEERS_MAX_COUNT}. The one reader for
+ * both channels — `toCandidate` here and `projectCandidate` in
+ * `github-client.ts` — so an npm package and the repository it came from
+ * cannot be recorded under two different rules, after the next re-read:
+ * `DECLARATIONS_RULE` (`repo-state.ts`) stamps which rule wrote a github
+ * candidate's `peers`, and a stamp that does not match it queues the
+ * repository for a re-read, one manifest read per stale candidate, before the
+ * two channels agree again. Why an optional peer is left out at all is
+ * {@link Candidate.peers}'s to say.
+ *
+ * A change to what this function returns must bump `DECLARATIONS_RULE`, or a
+ * recorded github candidate keeps the old answer — nothing else enforces it.
+ *
+ * A peer is optional exactly when `peerDependenciesMeta` is a plain object
+ * holding the name as an OWN key, whose value is a plain object holding
+ * `optional` as an own key set to the boolean `true`. Own keys, not index
+ * reads: `constructor` is a legal npm name, and an index read on a plain
+ * object answers for `Object.prototype` (release-asset.ts reads its hostile
+ * manifests the same way). Anything malformed — a meta that is not an object,
+ * an entry that is not one, `optional: "true"`, `optional: 1` — marks nothing
+ * optional. The requirement was declared in `peerDependencies`; only an exact
+ * qualifier withdraws it, and a malformed meta must never cost a required peer.
+ *
+ * Optional names go BEFORE the length filter and the count cap, so an optional
+ * peer never occupies a slot: capping first would record the list short by
+ * however many optional peers sat inside the first {@link PEERS_MAX_COUNT}. A
+ * `peerDependencies` that is not a plain object declares none — hostile input,
+ * and a malformed field costs the list, never the listing.
+ * @param manifest - one version manifest, npm's or a repository's, unvalidated.
+ * @returns the required peer names, possibly none.
+ */
+export function peerNamesOf(manifest: { peerDependencies?: unknown; peerDependenciesMeta?: unknown }): string[] {
+  const declared = manifest.peerDependencies
+  if (declared === null || typeof declared !== 'object' || Array.isArray(declared)) return []
+  const meta = manifest.peerDependenciesMeta
+  const optional = (peer: string): boolean => {
+    if (meta === null || typeof meta !== 'object' || Array.isArray(meta) || !Object.hasOwn(meta, peer)) return false
+    const entry: unknown = (meta as Record<string, unknown>)[peer]
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry) || !Object.hasOwn(entry, 'optional')) return false
+    return (entry as { optional?: unknown }).optional === true
+  }
+  return Object.keys(declared)
+    .filter(peer => !optional(peer))
+    .filter(peer => peer.length > 0 && peer.length <= PEER_NAME_MAX_LENGTH)
+    .slice(0, PEERS_MAX_COUNT)
+}
+
+/**
+ * Longest `dsh.compatibility.dsh` range recorded, in UTF-16 code units. A real
+ * range is a handful of versions joined by `||`: @xmanrui/dsh-im's five-version
+ * list, the longest seen on 2026-09-11, is 78 characters, so this is 3.3x it.
+ */
+export const COMPATIBILITY_RANGE_MAX_LENGTH = 256
+
+/**
+ * Longest profile name recorded, in UTF-16 code units. The real 0.1.5-rc.3
+ * shipped templates (`@deepseek-ai/dsh-app-boot`'s `PROFILE_TEMPLATES`) are
+ * `acp`, `web`, `headless`, `sdk` and `sdk-minimal` — `tui` is none of them
+ * — and the longest is `sdk-minimal` at 11 characters, so 64 is about 5.8x
+ * it.
+ */
+export const PROFILE_NAME_MAX_LENGTH = 64
+
+/**
+ * Most profile names recorded from one declaration. Unlike the peers bounds,
+ * this and the two length bounds above do not multiply into anything near the
+ * per-entry budget. Measured through gate.ts's serializer, a declaration at all
+ * three limits at once adds 1,588 bytes to an entry, 12.9% of
+ * `ENTRY_PAYLOAD_MAX_BYTES`; @xmanrui/dsh-im's real one adds 179.
+ */
+export const COMPATIBILITY_PROFILES_MAX_COUNT = 16
+
+/**
+ * Read `dsh.compatibility` out of an untrusted manifest's `dsh`, keeping only
+ * what is well formed and within bounds. The one reader for both channels, as
+ * {@link peerNamesOf} is for peers — and under the same rule: a change to
+ * what this function returns must bump `DECLARATIONS_RULE` (`repo-state.ts`),
+ * or a recorded github candidate keeps the old answer — nothing else
+ * enforces it.
+ *
+ * Dropped, never rejected, like every other value the harvest bounds on the
+ * author's behalf: an over-long range must not cost the listing it came
+ * with, and the entry lists exactly as it would have with no declaration at
+ * all. A malformed half never costs the other — the author told us
+ * something usable, and exactly that much is published — and a field with
+ * nothing usable left is ABSENT rather than empty, because an empty object in
+ * the artifact would read as a declaration the author did not make. Nothing is
+ * parsed: the range is copied verbatim, and whether it is satisfied is decided
+ * on the reader's machine (2026-09-01-harness-compatibility §8.2).
+ * @param dsh - the manifest's `dsh` value, unvalidated.
+ * @returns the declaration, or undefined when nothing in it survives.
+ */
+export function compatibilityOf(dsh: unknown): Compatibility | undefined {
+  if (dsh === null || typeof dsh !== 'object' || Array.isArray(dsh)) return undefined
+  const raw = (dsh as { compatibility?: unknown }).compatibility
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const { dsh: range, profiles } = raw as { dsh?: unknown; profiles?: unknown }
+  const out: Compatibility = {}
+  if (typeof range === 'string' && range.length > 0 && range.length <= COMPATIBILITY_RANGE_MAX_LENGTH) {
+    out.dsh = range
+  }
+  if (Array.isArray(profiles)) {
+    const kept = profiles
+      .filter((profile): profile is string => typeof profile === 'string' && profile.length > 0 && profile.length <= PROFILE_NAME_MAX_LENGTH)
+      .slice(0, COMPATIBILITY_PROFILES_MAX_COUNT)
+    if (kept.length > 0) out.profiles = kept
+  }
+  return out.dsh === undefined && out.profiles === undefined ? undefined : out
+}
+
+/**
  * Project one npm packument into a candidate.
  * @param packument - the parsed registry document for one package.
  * @returns the candidate, or null when the document names no usable latest version.
@@ -1896,6 +2008,7 @@ export function toCandidate(packument: unknown): Candidate | null {
       keywords?: unknown
       _npmUser?: { name?: unknown }
       peerDependencies?: unknown
+      peerDependenciesMeta?: unknown
       dsh?: { bundle?: unknown; catalog?: unknown }
     }>
   }
@@ -1933,11 +2046,7 @@ export function toCandidate(packument: unknown): Candidate | null {
       const publisher = publisherOf(doc.maintainers, manifest._npmUser?.name)
       return publisher === undefined ? {} : { publisher }
     })(),
-    peers: manifest.peerDependencies !== null && typeof manifest.peerDependencies === 'object' && !Array.isArray(manifest.peerDependencies)
-      ? Object.keys(manifest.peerDependencies)
-        .filter(peer => peer.length > 0 && peer.length <= PEER_NAME_MAX_LENGTH)
-        .slice(0, PEERS_MAX_COUNT)
-      : [],
+    peers: peerNamesOf(manifest),
     // Bounded HERE rather than at the gate, and dropped rather than rejected:
     // the shelf shows this figure and nothing decides on it, so a packument
     // carrying `"unpackedSize": "big"`, a fraction, or a negative loses its
@@ -1952,6 +2061,12 @@ export function toCandidate(packument: unknown): Candidate | null {
       && manifest.dist.unpackedSize >= 0
       ? { unpackedSize: manifest.dist.unpackedSize }
       : {}),
+    // Absent stays absent, like the size above: most packages declare none,
+    // and `compatibilityOf` returns nothing rather than an empty object.
+    ...(() => {
+      const compatibility = compatibilityOf(manifest.dsh)
+      return compatibility === undefined ? {} : { compatibility }
+    })(),
   }
 }
 

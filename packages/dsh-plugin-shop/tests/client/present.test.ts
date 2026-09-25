@@ -2,13 +2,13 @@ import { describe, expect, it } from 'vitest'
 import {
   ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, activationNoticeKey, categoryKey, displayVersion, entryKey, formatSize, formatStars,
   uninstallActivationNoticeKey,
-  authorOf, hasGithubHome, heldBy, isCustomLicense, isShopLike, missingPeersOf,
-  nextVisibleCount, npmPageUrl,
+  authorOf, blockerBadgeKey, blockersOf, harnessVerdictOf, hasGithubHome, heldBy, isCustomLicense, isShopLike, missingPeersOf,
+  nextVisibleCount, npmPageUrl, readsIncompatible,
   installPhaseKey, reduceInstall, type InstallView,
   reviewHashPin, sortByStars, starsOf, tierKey,
 } from '../../src/client/present.ts'
 import { en, zh } from '../../src/client/locales.ts'
-import type { CatalogEntry } from '../../src/host/index.ts'
+import type { CatalogEntry, HarnessVerdict } from '../../src/host/index.ts'
 import type { InstallState } from '../../src/shared/install-state.ts'
 
 const entry: CatalogEntry = {
@@ -599,6 +599,99 @@ describe('missingPeersOf', () => {
 
   it('returns none for a name the host said nothing about', () => {
     expect(missingPeersOf({ 'dsh-timeline': ['x'] }, 'dsh-other')).toEqual([])
+  })
+})
+
+/** Both halves of a `dsh.compatibility` declaration this machine does not meet,
+ * shaped the way the host sends them: each side names what was declared AND
+ * what is running. `0.1.2-rc.1` is a range no 0.1.5 build satisfies. */
+const RANGE: HarnessVerdict = { dsh: { range: '0.1.2-rc.1', running: '0.1.5-rc.3' } }
+const PROFILE: HarnessVerdict = { profile: { declared: ['tui', 'cli'], running: 'web' } }
+
+describe('harnessVerdictOf', () => {
+  it('returns the verdict for this install identity', () => {
+    expect(harnessVerdictOf({ 'npm:dsh-im': RANGE }, 'npm:dsh-im')).toBe(RANGE)
+  })
+
+  it('returns undefined for an entry the host gave no verdict', () => {
+    expect(harnessVerdictOf({ 'npm:dsh-im': RANGE }, 'npm:other')).toBeUndefined()
+    expect(harnessVerdictOf({}, 'npm:other')).toBeUndefined()
+  })
+
+  it('keys by install identity, never by name', () => {
+    // Two repositories publishing one package name are two entries; a verdict
+    // formed from one's declaration says nothing about the other's.
+    const alice = entryKey({ ...entry, name: 'dsh-foo', source: 'github', repo: 'alice/dsh-foo' })
+    const bob = entryKey({ ...entry, name: 'dsh-foo', source: 'github', repo: 'bob/dsh-foo' })
+    const verdicts = { [bob]: RANGE }
+    expect(harnessVerdictOf(verdicts, bob)).toBe(RANGE)
+    expect(harnessVerdictOf(verdicts, alice)).toBeUndefined()
+  })
+
+  it('makes no claim when the host sent no map at all', () => {
+    // A tab can outlive a shop self-update by one reload and then be talking
+    // to the OLD in-process host, which answers the shape from before the key
+    // existed. Absent is "no verdict", never a crash.
+    expect(harnessVerdictOf(undefined, 'npm:dsh-im')).toBeUndefined()
+  })
+})
+
+describe('blockersOf', () => {
+  it('lists nothing when nothing stands in the way', () => {
+    expect(blockersOf([], undefined, undefined)).toEqual([])
+    // An empty verdict carries no half, so it is no blocker either.
+    expect(blockersOf([], {}, undefined)).toEqual([])
+  })
+
+  it('carries both sides of each declaration half, never a bare mismatch', () => {
+    expect(blockersOf([], { ...RANGE, ...PROFILE }, undefined)).toEqual([
+      { kind: 'harness-range', range: '0.1.2-rc.1', running: '0.1.5-rc.3' },
+      { kind: 'harness-profile', declared: ['tui', 'cli'], running: 'web' },
+    ])
+  })
+
+  it('reads the name conflict first, then what is missing here, then what the author declared', () => {
+    expect(blockersOf(['@x/absent'], { ...RANGE, ...PROFILE }, 'CLAPEILL/dsh-foo').map(blocker => blocker.kind))
+      .toEqual(['name-taken', 'missing-peers', 'harness-range', 'harness-profile'])
+  })
+})
+
+describe('blockerBadgeKey and readsIncompatible', () => {
+  it('has no badge when nothing stands in the way', () => {
+    expect(blockerBadgeKey([])).toBeNull()
+    expect(readsIncompatible([])).toBe(false)
+  })
+
+  it('reads "Incompatible" for a declaration half alone, as for missing components', () => {
+    for (const verdict of [RANGE, PROFILE]) {
+      const blockers = blockersOf([], verdict, undefined)
+      expect(blockerBadgeKey(blockers)).toBe('incompatibleBadge')
+      expect(readsIncompatible(blockers)).toBe(true)
+    }
+    expect(readsIncompatible(blockersOf(['@x/absent'], undefined, undefined))).toBe(true)
+  })
+
+  it('lets a taken name decide the word whenever it holds', () => {
+    // The more serious of the two, with a different remedy — uninstall the
+    // holder, not upgrade dsh — so the badge must not say "Incompatible", and
+    // the incompatible filter must not take away the only card explaining why
+    // the install is refused.
+    const blockers = blockersOf(['@x/absent'], { ...RANGE, ...PROFILE }, 'CLAPEILL/dsh-foo')
+    expect(blockerBadgeKey(blockers)).toBe('nameTakenBadge')
+    expect(readsIncompatible(blockers)).toBe(false)
+  })
+})
+
+describe('the harness verdict copy', () => {
+  it.each([['en', en], ['zh', zh]] as const)('names both sides in %s, declared and running', (_locale, dict) => {
+    // The DOM specs render through `en` alone, so this is the only check that
+    // the zh copy does not quietly drop a side: "unsupported" without WHAT the
+    // author declared and WHAT runs here is exactly the bare verdict the host
+    // shape was built to avoid.
+    expect(dict.harnessRangeDetail).toContain('{range}')
+    expect(dict.harnessRangeDetail).toContain('{running}')
+    expect(dict.harnessProfileDetail).toContain('{declared}')
+    expect(dict.harnessProfileDetail).toContain('{running}')
   })
 })
 

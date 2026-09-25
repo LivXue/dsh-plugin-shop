@@ -3,5 +3,6 @@
   "version": "1.0.0",
   "private": true,
   "main": "index.js",
+  "peerDependencies": { "react": "*", "react-dom": "*" },
   "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
 }

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ACKNOWLEDGEMENT_EN, ACKNOWLEDGEMENT_ZH, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, rejectionCodeKey } from '../../src/client/present.ts'
 import { en, zh, type ShopLocaleKey } from '../../src/client/locales.ts'
 import { ShopTab, type ShopTabInjected, type ShopTabProps } from '../../src/client/ShopTab.tsx'
-import type { ShopCatalogResult, ShopInstalledEntry } from '../../src/host/index.ts'
+import type { HarnessVerdict, ShopCatalogResult, ShopInstalledEntry } from '../../src/host/index.ts'
 
 afterEach(() => {
   cleanup()
@@ -37,7 +37,7 @@ function snapshot(overrides: Partial<ShopCatalogResult['plugins'][number]> = {})
     }],
     denied: [],
     stars: {},
-    incompatible: {},
+    incompatible: {}, incompatibleHarness: {},
   }
 }
 
@@ -1916,6 +1916,225 @@ describe('ShopTab', () => {
   })
 })
 
+describe('ShopTab author-declared compatibility (§8.2)', () => {
+  // What the host sends when an author's `dsh.compatibility` is unmet here:
+  // each half names BOTH sides, so the card can say what was declared and what
+  // actually runs instead of only that something is wrong. `0.1.2-rc.1` is a
+  // range no 0.1.5 build satisfies.
+  const RANGE: HarnessVerdict = { dsh: { range: '0.1.2-rc.1', running: '0.1.5-rc.3' } }
+  const PROFILE: HarnessVerdict = { profile: { declared: ['tui'], running: 'web' } }
+  const rangeLine = en.harnessRangeDetail.replace('{range}', '0.1.2-rc.1').replace('{running}', '0.1.5-rc.3')
+  const profileLine = en.harnessProfileDetail.replace('{declared}', 'tui').replace('{running}', 'web')
+  const outdatedRow: InstalledFixture = { name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }
+
+  const withVerdict = (verdict: HarnessVerdict): ShopCatalogResult =>
+    ({ ...snapshot({ tier: 'community' }), incompatibleHarness: { 'npm:dsh-hello-plugin': verdict } })
+  const cardOf = (container: HTMLElement, name = 'dsh-hello-plugin'): HTMLElement =>
+    container.querySelector(`[data-shop-entry="${name}"]`) as HTMLElement
+
+  it('states a declared dsh range on the card, naming what is declared and what runs', async () => {
+    const { injected } = bench(withVerdict(RANGE))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const card = cardOf(container)
+    const line = card.querySelector('[data-shop-incompatible-detail="harness-range"]')
+    expect(line?.textContent).toBe(rangeLine)
+    // Both sides by value, so a dictionary edit that dropped one fails here
+    // rather than rendering a line that says less than the host sent.
+    expect(line?.textContent).toContain('0.1.2-rc.1')
+    expect(line?.textContent).toContain('0.1.5-rc.3')
+    const badge = card.querySelector('[data-shop-blocker]')
+    expect(badge?.textContent).toBe(en.incompatibleBadge)
+    expect(badge?.getAttribute('data-shop-blocker')).toBe('harness-range')
+    // Warn, never block (§4): the author's claim is information, not a veto.
+    expect((card.querySelector('[data-shop-install]') as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('states the declared profiles on the card, naming the one this dsh was launched with', async () => {
+    const { injected } = bench(withVerdict(PROFILE))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const card = cardOf(container)
+    const line = card.querySelector('[data-shop-incompatible-detail="harness-profile"]')
+    expect(line?.textContent).toBe(profileLine)
+    expect(line?.textContent).toContain('tui')
+    expect(line?.textContent).toContain('web')
+    expect(card.querySelector('[data-shop-blocker]')?.textContent).toBe(en.incompatibleBadge)
+    expect((card.querySelector('[data-shop-install]') as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('states both halves when both are unmet, under one badge that names both', async () => {
+    const { injected } = bench(withVerdict({ ...RANGE, ...PROFILE }))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const card = cardOf(container)
+    const lines = [...card.querySelectorAll('[data-shop-incompatible-detail]')].map(node => node.textContent)
+    expect(lines).toEqual([rangeLine, profileLine])
+    expect(card.querySelectorAll('[data-shop-blocker]')).toHaveLength(1)
+    // The badge's accessible name is the one place a screen reader meets
+    // both on a row that prints no detail line, so it carries both.
+    expect(card.querySelector('[data-shop-blocker]')?.getAttribute('aria-label')).toBe(`${rangeLine}\n${profileLine}`)
+  })
+
+  it('says nothing for an entry the host gave no verdict', async () => {
+    const { injected } = bench({ ...snapshot({ tier: 'community' }), incompatibleHarness: {} })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(container.querySelector('[data-shop-blocker]')).toBeNull()
+    expect(container.querySelector('[data-shop-incompatible-detail]')).toBeNull()
+    expect(container.querySelector('[data-shop-hide-incompatible]')?.textContent).toContain('Hide incompatible 0')
+  })
+
+  it('says nothing, and still renders, for a host that predates the verdict', async () => {
+    // A tab can outlive a shop self-update by one reload and then be talking
+    // to the OLD in-process host until dsh restarts — and that host sends no
+    // `incompatibleHarness` at all, whatever the type says.
+    const { injected } = bench({ ...snapshot({ tier: 'community' }), incompatibleHarness: undefined } as unknown as ShopCatalogResult)
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(container.querySelector('[data-shop-blocker]')).toBeNull()
+    expect(container.querySelector('[data-shop-hide-incompatible]')?.textContent).toContain('Hide incompatible 0')
+  })
+
+  it('warns, never blocks: the install proceeds through the acknowledgement, stated once', async () => {
+    const { injected, install } = bench(withVerdict({ ...RANGE, ...PROFILE }))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const card = cardOf(container)
+    fireEvent.click(card.querySelector('[data-shop-install]') as HTMLElement)
+    expect(card.querySelector('[data-shop-confirm]'), 'the gate should be open').toBeTruthy()
+    // The card states each line and the gate opens inside that same card, so
+    // the gate must not print them a second time.
+    const text = card.textContent ?? ''
+    expect(text.split(rangeLine).length - 1, 'the range line must appear exactly once').toBe(1)
+    expect(text.split(profileLine).length - 1, 'the profile line must appear exactly once').toBe(1)
+    expect(card.querySelector('[data-shop-incompatible-warning]')).toBeNull()
+    fireEvent.click(card.querySelector('[data-shop-confirm]') as HTMLElement)
+    await waitFor(() => expect(install).toHaveBeenCalled())
+  })
+
+  it('warns inside the update acknowledgement on the outdated row, which has no detail line of its own', async () => {
+    const { injected } = bench(withVerdict({ ...RANGE, ...PROFILE }), [outdatedRow])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText(en.updatableSection)).toBeTruthy())
+    const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]') as HTMLElement
+    fireEvent.click(row.querySelector('[data-shop-update]') as HTMLElement)
+    expect(row.querySelector('[data-shop-confirm]'), 'the gate should be open').toBeTruthy()
+    expect(row.querySelector('[data-shop-incompatible-warning="harness-range"]')?.textContent).toBe(rangeLine)
+    expect(row.querySelector('[data-shop-incompatible-warning="harness-profile"]')?.textContent).toBe(profileLine)
+  })
+
+  it('badges the outdated row beside its Update button, naming the declaration for assistive tech', async () => {
+    const { injected } = bench(withVerdict(RANGE), [outdatedRow])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText(en.updatableSection)).toBeTruthy())
+    const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]') as HTMLElement
+    const badge = row.querySelector('[data-shop-blocker]') as HTMLElement
+    expect(badge.textContent).toBe(en.incompatibleBadge)
+    expect(badge.getAttribute('aria-label')).toBe(rangeLine)
+    expect(badge.getAttribute('title')).toBe(rangeLine)
+    expect(row.querySelector('[data-shop-update]')?.nextElementSibling?.hasAttribute('data-shop-blocker'), 'immediately right of Update').toBe(true)
+  })
+
+  it('badges a current install beside its installed label, where there is no button to qualify', async () => {
+    const { injected } = bench(withVerdict(PROFILE), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const card = cardOf(container)
+    const label = card.querySelector('[data-shop-installed]') as HTMLElement
+    expect(label.nextElementSibling?.getAttribute('data-shop-blocker'), 'immediately after the installed label').toBe('harness-profile')
+    expect(card.querySelectorAll('[data-shop-blocker]')).toHaveLength(1)
+    expect(card.querySelector('[data-shop-incompatible-detail="harness-profile"]')?.textContent).toBe(profileLine)
+  })
+
+  it('counts and hides an entry whose only blocker is the declaration, like any card badged Incompatible', async () => {
+    // One predicate for the badge and the filter: a card that READS
+    // "Incompatible" is in the set the switch counts and takes away, whichever
+    // reason put the word there.
+    const result = snapshot()
+    result.plugins = [
+      { ...result.plugins[0]!, name: 'dsh-works-here' },
+      { ...result.plugins[0]!, name: 'dsh-declares-tui' },
+    ]
+    result.incompatibleHarness = { 'npm:dsh-declares-tui': PROFILE }
+    const { injected } = bench(result)
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-works-here')).toBeTruthy())
+    const filter = container.querySelector('[data-shop-hide-incompatible]') as HTMLElement
+    expect(filter.textContent).toContain('Hide incompatible 1')
+
+    fireEvent.click(filter)
+    expect(screen.queryByText('dsh-declares-tui')).toBeNull()
+    expect(screen.getByText('dsh-works-here')).toBeTruthy()
+    // And when the filter is what emptied the shelf, the empty line says so.
+    fireEvent.change(screen.getByLabelText(en.search), { target: { value: 'declares' } })
+    expect(container.querySelector('[data-shop-empty]')?.textContent).toBe(en.emptyIncompatibleFiltered)
+
+    fireEvent.change(screen.getByLabelText(en.search), { target: { value: '' } })
+    fireEvent.click(filter)
+    expect(screen.getByText('dsh-declares-tui')).toBeTruthy()
+  })
+
+  it('lets a taken name decide the word over a declaration, and keeps that card out of the filter', async () => {
+    const { injected } = bench(withVerdict({ ...RANGE, ...PROFILE }), [], { 'dsh-hello-plugin': 'github:someone/else' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const card = cardOf(container)
+    // The specs load after the catalog, so the name conflict arrives second.
+    await waitFor(() => expect(card.querySelector('[data-shop-blocker]')?.getAttribute('data-shop-blocker')).toBe('name-taken'))
+    expect(card.querySelector('[data-shop-blocker]')?.textContent).toBe(en.nameTakenBadge)
+    // Every reason is still stated, the name conflict first.
+    const kinds = [...card.querySelectorAll('[data-shop-incompatible-detail]')].map(node => node.getAttribute('data-shop-incompatible-detail'))
+    expect(kinds).toEqual(['name-taken', 'harness-range', 'harness-profile'])
+    // Not badged "Incompatible", so neither counted nor hidden by that filter.
+    expect(container.querySelector('[data-shop-hide-incompatible]')?.textContent).toContain('Hide incompatible 0')
+    fireEvent.click(container.querySelector('[data-shop-hide-incompatible]') as HTMLElement)
+    expect(screen.getByText('dsh-hello-plugin')).toBeTruthy()
+  })
+
+  it('keys the verdict by install identity, so a same-named entry is not accused', async () => {
+    const base = snapshot().plugins[0]!
+    const alice = { ...base, name: 'dsh-foo', version: 'a'.repeat(40), source: 'github' as const, repo: 'alice/dsh-foo' }
+    const bob = { ...alice, version: 'b'.repeat(40), repo: 'bob/dsh-foo' }
+    const { injected } = bench({ ...snapshot(), plugins: [alice, bob], incompatibleHarness: { 'github:bob/dsh-foo#': RANGE } })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(container.querySelectorAll('[data-shop-entry="dsh-foo"]')).toHaveLength(2))
+    expect(container.querySelectorAll('[data-shop-blocker]')).toHaveLength(1)
+    expect(container.querySelectorAll('[data-shop-incompatible-detail="harness-range"]')).toHaveLength(1)
+  })
+
+  it('keeps the shelf memo when every card carries a verdict', async () => {
+    // Each card is handed its verdict as a prop. Read out of the result it is
+    // one object per load; built per render — a spread, a fresh default — it
+    // would defeat memo(EntryCard) and re-render every mounted card on each
+    // keystroke. Scale-free for the reason the staleness-cues case gives: the
+    // per-keystroke work must not GROW with the shelf.
+    const deltaFor = async (cards: number): Promise<number> => {
+      const result = snapshot({ tier: 'verified' })
+      const one = result.plugins[0]!
+      result.plugins = Array.from({ length: cards }, (_, index) => ({ ...one, name: `dsh-plugin-${index}` }))
+      result.incompatibleHarness = Object.fromEntries(result.plugins.map(entry => [`npm:${entry.name}`, { ...RANGE, ...PROFILE }]))
+      const { injected } = bench(result)
+      let calls = 0
+      const t = ((key: ShopLocaleKey, params?: Record<string, unknown>): string => {
+        calls += 1
+        const template = en[key]
+        if (params === undefined) return template
+        return template.replace(/\{(\w+)\}/g, (match, name: string) => (name in params ? String(params[name]) : match))
+      }) as ShopTabProps['t']
+      render(<ShopTab {...({ t, ...injected } as unknown as ShopTabProps)} />)
+      await waitFor(() => expect(screen.getByText(`dsh-plugin-${cards - 1}`)).toBeTruthy())
+      const before = calls
+      fireEvent.change(screen.getByLabelText(en.search), { target: { value: 'dsh-plugin-' } })
+      await waitFor(() => expect(calls).toBeGreaterThan(before))
+      const delta = calls - before
+      cleanup()
+      return delta
+    }
+    expect(await deltaFor(8)).toBe(await deltaFor(2))
+  })
+})
+
 describe('ShopTab shop-like filtering', () => {
   function twoPlugins(): ShopCatalogResult {
     return {
@@ -1932,7 +2151,7 @@ describe('ShopTab shop-like filtering', () => {
         },
       ],
       denied: [],
-      incompatible: {},
+      incompatible: {}, incompatibleHarness: {},
     }
   }
 
@@ -2033,7 +2252,7 @@ function manyPlugins(n: number): ShopCatalogResult {
     version: '1.0.0', integrity: null, publishedAt: null,
     repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25',
   })) as ShopCatalogResult['plugins']
-  return { schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', stale: false, plugins, denied: [], stars: {}, incompatible: {} }
+  return { schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', stale: false, plugins, denied: [], stars: {}, incompatible: {}, incompatibleHarness: {} }
 }
 
 const showingText = (shown: number, total: number): string =>
@@ -2092,7 +2311,7 @@ describe('ShopTab incremental rendering', () => {
       ...Array.from({ length: 60 }, (_, i) => ({ name: `dsh-alpha-${String(i).padStart(2, '0')}`, version: '1.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25' })),
       ...Array.from({ length: 60 }, (_, i) => ({ name: `dsh-beta-${String(i).padStart(2, '0')}`, version: '1.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25' })),
     ] as ShopCatalogResult['plugins']
-    const { injected } = bench({ schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', stale: false, plugins, denied: [], stars: {}, incompatible: {} })
+    const { injected } = bench({ schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', stale: false, plugins, denied: [], stars: {}, incompatible: {}, incompatibleHarness: {} })
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-alpha-00')).toBeTruthy())
 
@@ -2209,7 +2428,7 @@ describe('ShopTab duplicate catalog names', () => {
     return {
       schemaVersion: 2, builtAt: '2026-08-25T00:00:00Z', stale: false, stars: {},
       plugins: [template('one'), template('two'), template('three'), snapshot().plugins[0]!],
-      denied: [], incompatible: {},
+      denied: [], incompatible: {}, incompatibleHarness: {},
     }
   }
 
@@ -2379,6 +2598,81 @@ describe('ShopTab catalog reload', () => {
     renderTab(injected)
     await waitFor(() => expect(screen.getByText(en.error)).toBeTruthy())
     expect(screen.queryByText(en.refreshFailed)).toBeNull()
+  })
+})
+
+describe('ShopTab refresh failure across a superseding request', () => {
+  // A reverdict, or a later refresh, can take over the wait a Refresh click
+  // started before that click's own catalog() call has settled. Whichever
+  // request the reader is still waiting on when a rejection finally arrives
+  // is the one that should decide `reloadFailed`; whichever was already
+  // superseded before then must not.
+
+  const installedRow: InstalledFixture = {
+    name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true,
+  }
+
+  it('still reports a failed refresh once a reverdict has superseded it', async () => {
+    const { injected, catalog, installStatus } = bench(snapshot(), [installedRow])
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'live' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+
+    // The refresh's own catalog() call is held open...
+    let rejectRefresh!: (error: unknown) => void
+    catalog.mockImplementationOnce(() => new Promise<ShopCatalogResult>((_resolve, reject) => { rejectRefresh = reject }))
+    fireEvent.click(screen.getByRole('button', { name: en.refresh }))
+    await waitFor(() => screen.getByRole('button', { name: en.refreshing }))
+
+    // ...while an uninstall settles done, firing a reverdict that supersedes
+    // the still-pending refresh. The reverdict's own catalog() call resolves
+    // normally (the mock's default), moving the button past the refresh
+    // without ever touching the refresh's own pending promise.
+    fireEvent.click(container.querySelector('[data-shop-uninstall]')!)
+    await waitFor(() => expect(catalog).toHaveBeenLastCalledWith({ reverdict: true }), { timeout: 3000 })
+    await waitFor(() => screen.getByRole('button', { name: en.refresh }))
+
+    // The superseded refresh finally rejects. Its failure is still the
+    // reader's own click; a reverdict superseding it must not swallow that.
+    await act(async () => { rejectRefresh(new Error('offline')) })
+    await waitFor(() => expect(screen.getByText(en.refreshFailed)).toBeTruthy())
+    expect(screen.getByText('dsh-hello-plugin')).toBeTruthy()
+  })
+
+  it('lets only the newer of two refreshes decide, once an older one is superseded', async () => {
+    const { injected, catalog, installStatus } = bench(snapshot(), [installedRow])
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'live' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+
+    let rejectFirst!: (error: unknown) => void
+    catalog.mockImplementationOnce(() => new Promise<ShopCatalogResult>((_resolve, reject) => { rejectFirst = reject }))
+    fireEvent.click(screen.getByRole('button', { name: en.refresh }))
+    await waitFor(() => screen.getByRole('button', { name: en.refreshing }))
+
+    // A reverdict supersedes the first refresh and resolves on its own,
+    // handing the button back without ever touching the first refresh's
+    // still-pending promise.
+    fireEvent.click(container.querySelector('[data-shop-uninstall]')!)
+    await waitFor(() => expect(catalog).toHaveBeenLastCalledWith({ reverdict: true }), { timeout: 3000 })
+    await waitFor(() => screen.getByRole('button', { name: en.refresh }))
+
+    // A second, later refresh click takes over the wait in turn...
+    let rejectSecond!: (error: unknown) => void
+    catalog.mockImplementationOnce(() => new Promise<ShopCatalogResult>((_resolve, reject) => { rejectSecond = reject }))
+    fireEvent.click(screen.getByRole('button', { name: en.refresh }))
+    await waitFor(() => screen.getByRole('button', { name: en.refreshing }))
+
+    // ...so the FIRST refresh's own, much later rejection is stale twice
+    // over and must report nothing, leaving the second refresh's own wait
+    // undisturbed.
+    await act(async () => { rejectFirst(new Error('offline')) })
+    expect(screen.queryByText(en.refreshFailed)).toBeNull()
+    expect(screen.getByRole('button', { name: en.refreshing })).toBeTruthy()
+
+    // Only the second, still-live refresh's own outcome may now decide.
+    await act(async () => { rejectSecond(new Error('offline again')) })
+    await waitFor(() => expect(screen.getByText(en.refreshFailed)).toBeTruthy())
   })
 })
 
@@ -2573,7 +2867,7 @@ describe('ShopTab uninstall flow recovery', () => {
     const outdated: InstalledFixture = {
       name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true,
     }
-    const { injected, installStatus, installed } = bench(snapshot({ tier: 'verified' }), [outdated])
+    const { injected, catalog, installStatus, installed } = bench(snapshot({ tier: 'verified' }), [outdated])
     installStatus.mockImplementation(async ({ installId }) => (installId === 'u1'
       ? { found: true, state: 'failed', log: [], detail: 'the bundle is still present' }
       : { found: true, state: 'done', log: [], activation: 'restart' }))
@@ -2581,10 +2875,21 @@ describe('ShopTab uninstall flow recovery', () => {
       .mockResolvedValueOnce([{ ...outdated, source: 'npm' }])
       .mockResolvedValue([{ ...outdated, source: 'npm', installed: '1.2.0', outdated: false }])
     const { container } = renderTab(injected)
-    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    // Waits on the element the next step clicks, which exists exactly once.
+    // Not on the name: the row is outdated, so the Updatable section prints
+    // it too, and a wait on the text found two elements once both had
+    // rendered. It passed only when it happened to land between the two
+    // commits.
+    await waitFor(() => expect(container.querySelectorAll('[data-shop-entry="dsh-hello-plugin"] [data-shop-update]')).toHaveLength(1))
 
     fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-update]')!)
     await waitFor(() => expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-restart-notice]')).toBeTruthy(), { timeout: 3000 })
+    // The update landing already earns its own legitimate reverdict (a
+    // settled `done` install asks the catalog again), so "was catalog ever
+    // asked again" cannot tell the failed uninstall below apart from this.
+    // Only a call count taken right here, before the uninstall starts, can
+    // isolate what happens next.
+    const callsAfterUpdate = catalog.mock.calls.length
 
     fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-uninstall]')!)
     await waitFor(() => expect(screen.getByText(en.uninstallFailed)).toBeTruthy(), { timeout: 3000 })
@@ -2595,6 +2900,196 @@ describe('ShopTab uninstall flow recovery', () => {
     // notice and its restart offer with it — a rejection the reader did not
     // cause, erasing an outcome that is still true.
     expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-restart-notice]')).toBeTruthy()
+    // The prior update's reverdict is exactly the state a reverdict-on-failure
+    // regression would be easiest to miss in: there is already a plausible
+    // reason for the catalog to have been asked again. This failed uninstall
+    // must not add another — `uninstallSettled` returns before ever reaching
+    // the reverdict call for an outcome that changed nothing.
+    expect(catalog).toHaveBeenCalledTimes(callsAfterUpdate)
+  })
+})
+
+describe('ShopTab reverdicts after a mutation settles, and feeds the page-removed set', () => {
+  // Design 2026-09-01-harness-compatibility section 9.1 (the reverdict, and
+  // the page-removed set): an install or uninstall changes what the host
+  // would judge —
+  // installing dock-base makes every entry that named it as a missing peer
+  // resolvable, so the badge must not survive on the strength of a catalog
+  // fetched before the mutation. `reverdict: true` asks again with the host's
+  // own snapshot and freshness window, never a network refresh (that is what
+  // the Refresh button is for), and it must never restart the unrelated
+  // version check (`version` stays tied only to explicit refresh/retry).
+
+  const installedRow: InstalledFixture = {
+    name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true,
+  }
+
+  it('reverdicts the catalog once an install settles done, clearing the stale badge on an entry that was never installed, and does not re-check the version', async () => {
+    // The original shape of this test badged and installed the SAME entry,
+    // so a badge disappearing after install could equally be explained by
+    // that entry's own card changing once it is installed rather than by the
+    // reverdict re-judging the catalog. A second entry (Y, dsh-other-plugin)
+    // whose badge names the installed one (X, dsh-hello-plugin) as a missing
+    // peer, and which the install itself never touches, is the only way to
+    // tell those two explanations apart.
+    const withEntries = (incompatible: ShopCatalogResult['incompatible']): ShopCatalogResult => {
+      const result = snapshot({ tier: 'verified' })
+      result.plugins = [
+        { ...result.plugins[0]!, name: 'dsh-hello-plugin' },
+        { ...result.plugins[0]!, name: 'dsh-other-plugin' },
+      ]
+      result.incompatible = incompatible
+      return result
+    }
+    const before = withEntries({ 'npm:dsh-other-plugin': ['dsh-hello-plugin'] })
+    const after = withEntries({})
+    const { injected, catalog, version, installStatus } = bench(before)
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'restart' })
+    catalog.mockResolvedValueOnce(before).mockResolvedValue(after)
+    const noteUninstalled = vi.fn()
+    const { container } = renderTab({ ...injected, noteUninstalled })
+    await waitFor(() => expect(screen.getByText('dsh-other-plugin')).toBeTruthy())
+    // The badge sits on Y, which nothing below ever installs.
+    expect(container.querySelector('[data-shop-entry="dsh-other-plugin"] [data-shop-blocker]')?.textContent).toBe(en.incompatibleBadge)
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-blocker]')).toBeNull()
+    expect(catalog).toHaveBeenCalledTimes(1)
+    expect(catalog).toHaveBeenLastCalledWith(undefined)
+    expect(version).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-install]')!)
+    await waitFor(() => expect(catalog).toHaveBeenLastCalledWith({ reverdict: true }), { timeout: 3000 })
+    // Y's badge disappears once X's install settles, even though Y itself was
+    // never mutated — proof the reverdict re-judges the whole catalog, not
+    // just the card whose own button was clicked.
+    await waitFor(() => expect(container.querySelector('[data-shop-entry="dsh-other-plugin"] [data-shop-blocker]')).toBeNull())
+    // The version check is unrelated to a catalog reverdict.
+    expect(version).toHaveBeenCalledTimes(1)
+    // An install has no counterpart in the page-removed set.
+    expect(noteUninstalled).not.toHaveBeenCalled()
+  })
+
+  it('reverdicts the catalog once an uninstall settles done, replacing the stale badge, and does not re-check the version', async () => {
+    const before = { ...snapshot(), incompatible: { 'npm:dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] } }
+    const after = snapshot()
+    const { injected, catalog, version, installStatus } = bench(before, [installedRow])
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'live' })
+    catalog.mockResolvedValueOnce(before).mockResolvedValue(after)
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText(en.incompatibleBadge)).toBeTruthy())
+    expect(version).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(container.querySelector('[data-shop-uninstall]')!)
+    await waitFor(() => expect(catalog).toHaveBeenLastCalledWith({ reverdict: true }), { timeout: 3000 })
+    await waitFor(() => expect(screen.queryByText(en.incompatibleBadge)).toBeNull())
+    expect(version).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the shelf on screen and shows no reload-failed note when a reverdict fails', async () => {
+    const { injected, catalog, installStatus } = bench(snapshot(), [installedRow])
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'live' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+
+    catalog.mockRejectedValueOnce(new Error('offline'))
+    fireEvent.click(container.querySelector('[data-shop-uninstall]')!)
+    await waitFor(() => expect(catalog).toHaveBeenLastCalledWith({ reverdict: true }), { timeout: 3000 })
+    // The shelf survives the failed reverdict...
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    // ...and unlike a failed Refresh, a reverdict was never a click the reader
+    // made, so there is nothing to report failing.
+    expect(screen.queryByText(en.refreshFailed)).toBeNull()
+  })
+
+  it('tells the client half which package it uninstalled, by the bare name, once the uninstall settles done, for the page-removed set', async () => {
+    // The flow registry these callbacks key on is the identity string
+    // (`npm:dsh-hello-plugin`), never the bare package name — a regression to
+    // passing that key straight through would defeat the page-removed set
+    // silently, because `module-table.ts` matches on the bare name.
+    const { injected, installStatus } = bench(snapshot(), [installedRow])
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'live' })
+    const noteUninstalled = vi.fn()
+    const { container } = renderTab({ ...injected, noteUninstalled })
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+
+    fireEvent.click(container.querySelector('[data-shop-uninstall]')!)
+    await waitFor(() => expect(noteUninstalled).toHaveBeenCalledWith('dsh-hello-plugin'), { timeout: 3000 })
+    expect(noteUninstalled).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not call noteUninstalled when the uninstall is refused', async () => {
+    const { injected, uninstall } = bench(snapshot(), [installedRow])
+    uninstall.mockResolvedValue({ ok: false, detail: 'the bundle is still present' })
+    const noteUninstalled = vi.fn()
+    const { container } = renderTab({ ...injected, noteUninstalled })
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+
+    fireEvent.click(container.querySelector('[data-shop-uninstall]')!)
+    await waitFor(() => expect(screen.getByText('the bundle is still present')).toBeTruthy())
+    expect(noteUninstalled).not.toHaveBeenCalled()
+  })
+
+  it('tolerates a host face that offers no noteUninstalled at all', async () => {
+    // Optional per the interface: a stub or an old host face may not provide
+    // it, and an uninstall must still settle normally.
+    const { injected, catalog, installStatus } = bench(snapshot(), [installedRow])
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'live' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-uninstall]')!)
+    await waitFor(() => expect(container.querySelector('[data-shop-uninstall-done]')).toBeTruthy(), { timeout: 3000 })
+    // The optional lookup being skipped must not also skip the reverdict that
+    // runs right after it — a regression that hardened
+    // `noteUninstalled?.(name)` into an unconditional call would throw here,
+    // since this host face has none, and never reach the line below.
+    await waitFor(() => expect(catalog).toHaveBeenLastCalledWith({ reverdict: true }), { timeout: 3000 })
+  })
+
+  it('does not reverdict the catalog when an install settles failed', async () => {
+    // `installSettled`'s done-only guard (`if (outcome === 'done')
+    // setRequest({kind:'reverdict'})`): a failed install installed nothing,
+    // so nothing any badge depends on could have changed. Only the polled
+    // path reaches `installSettled` at all — a synchronous refusal from
+    // `install` itself resolves a `rejected` view directly in `useInstall.ts`
+    // and never calls it — so the failure here has to come from
+    // `installStatus` polling to a terminal `failed` state instead.
+    const { injected, catalog, installStatus, installed } = bench(snapshot({ tier: 'verified' }))
+    installStatus.mockResolvedValue({ found: true, state: 'failed', log: [], detail: 'boom' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(installed).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(container.querySelector('[data-shop-install]')!)
+    // `noteMutation()` runs on EITHER outcome (ShopTab.tsx's comment on
+    // `mutations` says so), so waiting for the installed projection's second
+    // read is proof `installSettled` already ran past that line — including,
+    // were the guard on the next line removed, the reverdict call right after
+    // it, since nothing awaits between the two.
+    await waitFor(() => expect(installed).toHaveBeenCalledTimes(2), { timeout: 3000 })
+    expect(catalog).not.toHaveBeenCalledWith({ reverdict: true })
+  })
+
+  it('does not reverdict the catalog or call noteUninstalled when an uninstall settles failed', async () => {
+    // The mirror guard in `uninstallSettled` (`if (outcome !== 'done')
+    // return`) is stronger than the install one above: a failed uninstall
+    // removed nothing, so it returns before `noteMutation`, the
+    // `noteUninstalled` lookup and the reverdict all run — none of them leave
+    // a trace to synchronize on. As above, only the polled path reaches this,
+    // never a synchronous refusal (that path never calls `uninstallSettled`).
+    const { injected, catalog, installStatus } = bench(snapshot(), [installedRow])
+    installStatus.mockResolvedValue({ found: true, state: 'failed', log: [], detail: 'still present' })
+    const noteUninstalled = vi.fn()
+    const { container } = renderTab({ ...injected, noteUninstalled })
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+
+    fireEvent.click(container.querySelector('[data-shop-uninstall]')!)
+    // The rendered failed view is the only thing the guarded branch and its
+    // mutant share to synchronize on, since correct code leaves nothing else
+    // downstream of the guard to wait for. The polling tick that produces
+    // this view is the same synchronous tick that would have run the
+    // reverdict and noteUninstalled calls, had the guard been removed.
+    await waitFor(() => expect(screen.getByText(en.uninstallFailed)).toBeTruthy(), { timeout: 3000 })
+    expect(catalog).not.toHaveBeenCalledWith({ reverdict: true })
+    expect(noteUninstalled).not.toHaveBeenCalled()
   })
 })
 

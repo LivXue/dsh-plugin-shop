@@ -48,6 +48,24 @@ import { parse } from 'yaml'
 import { readTar } from '../../../packages/dsh-plugin-shop/src/shared/tar.ts'
 import { hasWorkspaceDeps } from './subpackage-select.ts'
 
+/**
+ * The packed manifest's declaration inputs, exactly as the archive holds them
+ * and not yet read: the three values `peerNamesOf` and `compatibilityOf` take.
+ *
+ * Untyped on purpose. A rescued entry installs the archive, so its `peers` and
+ * `compatibility` must come from the archive's own package.json rather than the
+ * default-branch HEAD it was projected from (a live scan found 7 of 220 rescued
+ * repositories whose installed peers differ). But those two readers are the one
+ * reader each for both channels, and they live in the network module this pure
+ * one may not import — so the values cross the boundary raw, and the shell
+ * reads them with the same functions it reads every other manifest with.
+ */
+export interface PackedDeclarations {
+  peerDependencies: unknown
+  peerDependenciesMeta: unknown
+  dsh: unknown
+}
+
 export type ReleaseAssetVerdict =
   | {
     ok: true
@@ -68,6 +86,8 @@ export type ReleaseAssetVerdict =
      * cannot stand in for the other under a shared label.
      */
     installSize: number
+    /** What the packed manifest declares — see {@link PackedDeclarations}. */
+    declarations: PackedDeclarations
   }
   /** Why the rescue was refused, in the author's terms. It reaches a published
    * build-report row AND the committed `repo-state.json`, so every value
@@ -372,7 +392,28 @@ function missingInsertTarget(
   return null
 }
 
-export function verifyReleaseAsset(bytes: Uint8Array, bundleName: string): ReleaseAssetVerdict {
+/** The packed manifest fields this module reads, all hostile and unvalidated. */
+interface PackedManifest {
+  name?: unknown
+  dsh?: unknown
+  exports?: unknown
+  main?: unknown
+  peerDependencies?: unknown
+  peerDependenciesMeta?: unknown
+}
+
+/**
+ * Open the asset as far as its package.json, and prove it is `bundleName`: one
+ * top-level directory, a manifest in it that is a JSON object, and that
+ * manifest's `name`. The part of the verdict that establishes WHICH package
+ * the bytes are — shared by {@link verifyReleaseAsset}, which goes on to ask
+ * whether the package is complete, and {@link readPackedDeclarations}, which
+ * asks only what it declares.
+ */
+function openPackedManifest(
+  bytes: Uint8Array,
+  bundleName: string,
+): { ok: true; files: Map<string, Uint8Array>; paths: string[]; root: string; manifest: PackedManifest } | { ok: false; detail: string } {
   let files: Map<string, Uint8Array>
   try {
     files = readTar(gunzipSync(bytes, { maxOutputLength: MAX_INFLATED_BYTES }))
@@ -396,7 +437,7 @@ export function verifyReleaseAsset(bytes: Uint8Array, bundleName: string): Relea
   if (raw === undefined) {
     return { ok: false, detail: `the release asset's ${echo(rooted.root)} directory carries no package.json, so it is not a packed npm package` }
   }
-  let manifest: { name?: unknown; dsh?: unknown; exports?: unknown; main?: unknown }
+  let manifest: PackedManifest
   try {
     // npm's own reader strips a UTF-8 BOM, so a manifest carrying one installs
     // fine; refusing it here — and calling the archive unreadable — would
@@ -420,6 +461,47 @@ export function verifyReleaseAsset(bytes: Uint8Array, bundleName: string): Relea
         + ' Attach the packed tarball for this package instead.',
     }
   }
+  return { ok: true, files, paths, root: rooted.root, manifest }
+}
+
+/** The three declaration inputs of a manifest the caller has already opened. */
+function declarationsOf(manifest: PackedManifest): PackedDeclarations {
+  // By fixed keys, never an input-derived one.
+  return {
+    peerDependencies: manifest.peerDependencies,
+    peerDependenciesMeta: manifest.peerDependenciesMeta,
+    dsh: manifest.dsh,
+  }
+}
+
+/**
+ * What an asset that is `bundleName` declares, without re-deciding whether it
+ * is still a complete pack.
+ *
+ * For the declarations re-read of a rescue that was ALREADY verified: the
+ * harvest downloads the recorded asset, checks it still hashes to the recorded
+ * pin, and reads its declarations here. The identity checks stay — the bytes
+ * must still be this package, the same single root and name
+ * {@link verifyReleaseAsset} requires — but the build-completeness rules do
+ * not run again. Whether the rescue is listed is the full re-probe's question,
+ * asked when the repository changes; a verifier rule tightened since would
+ * otherwise leave a verified entry unstamped and re-downloaded every run,
+ * without changing whether it lists.
+ * @returns the declarations, or why the bytes are not this package.
+ */
+export function readPackedDeclarations(
+  bytes: Uint8Array,
+  bundleName: string,
+): { ok: true; declarations: PackedDeclarations } | { ok: false; detail: string } {
+  const opened = openPackedManifest(bytes, bundleName)
+  if (!opened.ok) return opened
+  return { ok: true, declarations: declarationsOf(opened.manifest) }
+}
+
+export function verifyReleaseAsset(bytes: Uint8Array, bundleName: string): ReleaseAssetVerdict {
+  const opened = openPackedManifest(bytes, bundleName)
+  if (!opened.ok) return opened
+  const { files, paths, root, manifest } = opened
   // A NON-NULL OBJECT is what the rule means. `!== undefined` admitted
   // `false`, `0`, `''` and `null`, none of which registers a plugin, so the
   // rescue would have re-admitted exactly the silent no-op install that
@@ -447,7 +529,7 @@ export function verifyReleaseAsset(bytes: Uint8Array, bundleName: string): Relea
   // and delists none of the 169 the other rules accept (measured).
   const patch = (bundle as { patch?: unknown }).patch
   if (typeof patch === 'string') {
-    const target = normalize(`${rooted.root}/${patch.replace(/^\.\//, '')}`)
+    const target = normalize(`${root}/${patch.replace(/^\.\//, '')}`)
     if (!paths.includes(target)) {
       return {
         ok: false,
@@ -464,7 +546,7 @@ export function verifyReleaseAsset(bytes: Uint8Array, bundleName: string): Relea
     if (patchBytes !== undefined && patchBytes.byteLength <= MAX_PATCH_BYTES) {
       const missing = missingInsertTarget(
         Buffer.from(patchBytes).toString('utf8').replace(/^\ufeff/, ''),
-        manifest, bundleName, rooted.root, new Set(paths),
+        manifest, bundleName, root, new Set(paths),
       )
       if (missing !== null) {
         return {
@@ -499,5 +581,11 @@ export function verifyReleaseAsset(bytes: Uint8Array, bundleName: string): Relea
   for (const [path, member] of files) installed.set(normalize(path), member.byteLength)
   let installSize = 0
   for (const bytes of installed.values()) installSize += bytes
-  return { ok: true, installSize }
+  return {
+    ok: true,
+    installSize,
+    // Read off the manifest the name check just passed — the one that lands
+    // on disk.
+    declarations: declarationsOf(manifest),
+  }
 }

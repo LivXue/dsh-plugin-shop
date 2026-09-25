@@ -206,14 +206,21 @@ export function emit(
   // boundary — the classifier and the config keep `theme`, so flipping
   // SHOP_CATALOG_V5 at release time restores it without re-reviewing anything
   // (design §3.5). The additive fields (`added`, `tarball`, `replacement`,
-  // `peers`, `publisher`, `unpackedSize`, `installSize`) ride EVERY version:
-  // an old client's zod strips a key it does not know (consumer-side zod is
-  // non-strict by design), so none of them needs a gate. Keep this list whole
-  // — it is the one place the "does a new field need a version gate?"
-  // decision is recorded, and a reader who finds their field missing cannot
-  // tell a deliberate gate from an omission. `peers` had one anyway, on size
-  // rather than safety; see the note on it above for why it came off instead
-  // of being opened.
+  // `peers`, `publisher`, `unpackedSize`, `installSize`, `compatibility`) ride
+  // EVERY version: an old client's zod strips a key it does not know
+  // (consumer-side zod is non-strict by design), so none of them needs a gate.
+  // Keep this list whole — it is the one place the "does a new field need a
+  // version gate?" decision is recorded, and a reader who finds their field
+  // missing cannot tell a deliberate gate from an omission. `peers` had one
+  // anyway, on size rather than safety; see the note on it above for why it
+  // came off instead of being opened. A field reaching a new channel does not
+  // earn one either: github entries will carry `peers` on the same terms — no
+  // version gate — once `SHOP_EMIT_REPO_PEERS` flips. Until then
+  // `withholdRepoPeers` (`pipeline.ts`) strips `peers` from every github
+  // candidate ahead of both gate passes, so a github entry never carries one
+  // while the flag is unset; that flip is a rollout gate, a different axis
+  // (which channel may publish the field) from the version gate this list
+  // tracks.
   //
   // `installSize` is why "unknown key" is the load-bearing half of that rule
   // rather than "additive". It carries the on-disk figure for EVERY source,
@@ -228,13 +235,13 @@ export function emit(
   let themeDowngraded = 0
   const emitted = entries.map(entry => {
     // Well-formed FIRST, and over the whole entry, because plugins.json is not
-    // the catalog section: `license`, `repository`, `publisher` and each
-    // `peers` name are npm-manifest strings taken verbatim and bounded on
-    // length alone, so `"license": "MIT\ud800"` put a lone surrogate straight
-    // into the artifact. Every earlier attempt at this guarantee named the
-    // routes it knew about and was overtaken by one it did not, so it is
-    // stated here instead — at the boundary every published string crosses,
-    // covering whatever fields an Entry grows next.
+    // the catalog section: `license`, `repository`, `publisher`, each `peers`
+    // name and both `compatibility` strings are manifest strings taken
+    // verbatim and bounded on length alone, so `"license": "MIT\ud800"` put a
+    // lone surrogate straight into the artifact. Every earlier attempt at this
+    // guarantee named the routes it knew about and was overtaken by one it did
+    // not, so it is stated here instead — at the boundary every published
+    // string crosses, covering whatever fields an Entry grows next.
     let next = toWellFormedEntry(entry)
     if (schemaVersion < CATALOG_SCHEMA_VERSION && next.catalog.category === 'theme') {
       themeDowngraded += 1

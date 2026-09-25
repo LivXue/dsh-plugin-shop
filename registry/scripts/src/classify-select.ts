@@ -26,12 +26,18 @@ import type { Candidate, RepoCandidate } from './types.ts'
  * neither: the author owns that row and the prune removes it.
  *
  * @param npmCandidates - the npm half of the harvest.
- * @param repoCandidates - the GitHub half, read from the committed
- *   `repo-state.json` rather than re-harvested: the recorded candidates are
- *   the same values `build.ts` composes the catalog from, and reading them
- *   costs no GitHub call and cannot advance the harvest state. A repository
- *   discovered by today's build is therefore classified by tomorrow's run —
- *   the same "unclassified, retried next build" state D4 already defines.
+ * @param repoCandidates - the GitHub half, with github `peers` withheld the
+ *   same way `build.ts` withholds them (`withholdRepoPeers`, keyed on
+ *   `SHOP_EMIT_REPO_PEERS` via `repoPeersEmitted`) before this is called:
+ *   only then do these match what `build.ts` composes the catalog from and
+ *   gate the same way (design 2026-09-01-harness-compatibility section 9.8;
+ *   the caller used to pass repo-state.json's own record, peers still
+ *   attached, and a peers-heavy repository crossed the payload budget here
+ *   while it fit in the build). The caller reads them from committed
+ *   `repo-state.json` rather than re-harvesting, which costs no GitHub call
+ *   and cannot advance the harvest state. A repository discovered by today's
+ *   build is therefore classified by tomorrow's run — the same
+ *   "unclassified, retried next build" state D4 already defines.
  * @param config - the human-authored registry files.
  */
 export function selectPending(

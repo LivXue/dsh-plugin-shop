@@ -3,6 +3,7 @@ import { parseRegistryConfig } from '../src/config.ts'
 import { gate } from '../src/gate.ts'
 import { gateRepo } from '../src/repo-gate.ts'
 import { selectPending } from '../src/classify-select.ts'
+import { withholdRepoPeers } from '../src/pipeline.ts'
 import type { Candidate, RepoCandidate } from '../src/types.ts'
 
 const commit = 'a'.repeat(40)
@@ -142,5 +143,42 @@ describe('selectPending', () => {
       config,
     )
     expect(pending.map(p => p.name)).toEqual(['dsh-alpha', 'dsh-mike', 'dsh-zulu'])
+  })
+})
+
+describe('a github repository whose peers alone cross the payload budget', () => {
+  // Design 2026-09-01-harness-compatibility section 9.8, "The classifier
+  // gates the candidates the build lists": build.ts always withholds github
+  // `peers` before its own gate passes (SHOP_EMIT_REPO_PEERS is '0' by default), but
+  // classify.ts used to read repo-state.json's raw record — peers still
+  // attached — straight into this same selectPending/gateRepo pass. A
+  // repository whose peers alone push it past the 12 KiB payload budget then
+  // listed (build.ts's withheld copy fits) but dropped out of `liveNames` on
+  // the very next run (classify's raw copy does not), which deleted its
+  // categories.yml row and left it reading `other` forever. 128 names of 128
+  // characters is the same fixture pipeline.test.ts's "does not charge
+  // withheld peers to the payload budget" proves at 17,959 bytes, well past
+  // the 12,288-byte budget.
+  const heavyPeers = Array.from({ length: 128 }, (_, index) => `${'p'.repeat(124)}-${String(index).padStart(3, '0')}`)
+  const heavy = repo({ name: 'dsh-heavy-peers', repo: 'someone/dsh-heavy-peers', peers: heavyPeers })
+
+  it('is dropped from liveNames when gated with peers still attached, as classify.ts used to', () => {
+    expect(gateRepo(heavy, config).ok).toBe(false)
+    const { liveNames } = selectPending([], [heavy], config)
+    expect(liveNames.has('dsh-heavy-peers')).toBe(false)
+  })
+
+  it('stays in liveNames once withheld the same way build.ts withholds them', () => {
+    const withheld = withholdRepoPeers([heavy], false).candidates
+    const { liveNames } = selectPending([], withheld, config)
+    expect(liveNames.has('dsh-heavy-peers')).toBe(true)
+  })
+
+  it('agrees with the raw candidate once SHOP_EMIT_REPO_PEERS is on, because withholding is then a no-op', () => {
+    const passthrough = withholdRepoPeers([heavy], true).candidates
+    const raw = selectPending([], [heavy], config)
+    const emitted = selectPending([], passthrough, config)
+    expect(raw.liveNames.has('dsh-heavy-peers')).toBe(false)
+    expect(emitted.liveNames.has('dsh-heavy-peers')).toBe(false)
   })
 })

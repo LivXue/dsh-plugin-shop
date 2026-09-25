@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { canEverList, gateRepo } from '../src/repo-gate.ts'
-import { ENTRY_PAYLOAD_MAX_BYTES, LICENSE_MAX_LENGTH, REPOSITORY_MAX_LENGTH, gate } from '../src/gate.ts'
+import { ENTRY_PAYLOAD_MAX_BYTES, LICENSE_MAX_LENGTH, REPOSITORY_MAX_LENGTH, entryPayloadBytes, gate } from '../src/gate.ts'
 import { parseRegistryConfig } from '../src/config.ts'
 import type { RepoCandidate } from '../src/types.ts'
 
@@ -371,10 +371,55 @@ describe('the bounds the two channels share', () => {
 })
 
 describe('the per-entry size budget on the github channel', () => {
-  // A repo entry carries no `peers`, so the budget is not where its weight is
-  // today — but a release-rescued entry publishes `tarball.url` straight from
-  // the GitHub releases API, and that string is bounded nowhere else. The
-  // budget is the backstop for it and for whatever field an entry grows next.
+  // A repo entry carried no `peers` until 2026-09-24, and this comment said
+  // so — the written record of a blind spot over most of the catalog. It
+  // carries them now, bounded exactly as on npm, and the budget measures them
+  // as it measures `tarball.url`, which a release-rescued entry publishes
+  // straight from the GitHub releases API and nothing else bounds.
+
+  /** Bytes the probe reported for an over-budget repo entry plus `extra`. */
+  const reported = (extra: Partial<RepoCandidate>): number => {
+    const result = gateRepo(repo({
+      release: {
+        tag: 'v1.0.0',
+        url: `https://github.com/someone/dsh-repo-plugin/releases/download/v1.0.0/${'u'.repeat(20_000)}.tgz`,
+        sha256: 'a'.repeat(64),
+      },
+      requiresBuild: true,
+      ...extra,
+    }), config)
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('fixture must be over budget for the probe to report')
+    return Number(/Would publish (\d+) bytes/.exec(result.rejection.detail)?.[1])
+  }
+  /** What one key adds to an entry in plugins.json, measured by the same serializer. */
+  const marginal = (key: string, value: unknown): number =>
+    entryPayloadBytes({ name: 'x', [key]: value }) - entryPayloadBytes({ name: 'x' })
+
+  it('counts peers against the budget, because emit writes them', () => {
+    // A differential, for the reason gate.test.ts's twin gives: searching for
+    // the largest entry that still lists calibrates itself against whatever
+    // the probe counts and passes either way. The budget's one promise is that
+    // the bytes it measures are the bytes `emit` writes, and a field emitted
+    // but not counted breaks exactly that.
+    const peers = ['react', '@deepseek-ai/cordis', '@deepseek-ai/dsh-client-store']
+    expect(reported({ peers }) - reported({})).toBe(marginal('peers', peers))
+    // Nothing for an empty list, because nothing is emitted for one — and
+    // nothing for an absent one, the record carried from before peers were read.
+    expect(reported({ peers: [] })).toBe(reported({}))
+    expect(reported({ peers: undefined })).toBe(reported({}))
+  })
+
+  it('counts the author’s compatibility declaration against the budget, as the npm gate does', () => {
+    // The author's own text, harvested by the same reader on both channels,
+    // so it costs the same on both.
+    const compatibility = { dsh: '>=0.1.5 <0.2.0', profiles: ['web', 'tui'] }
+    expect(reported({ compatibility }) - reported({})).toBe(marginal('compatibility', compatibility))
+    // Both at once: each is charged its own bytes, and neither hides the other.
+    const peers = ['react']
+    expect(reported({ peers, compatibility }) - reported({}))
+      .toBe(marginal('peers', peers) + marginal('compatibility', compatibility))
+  })
 
   it('rejects a repo entry whose published payload is past the budget', () => {
     const result = gateRepo(repo({
@@ -402,20 +447,6 @@ describe('the per-entry size budget on the github channel', () => {
     // decoration and must not cost a listing. It is also measured from a
     // repository's own tree, so counting it lets the CONTENT of a repo change
     // whether its entry lists, for a number the author never wrote.
-    const reported = (extra: Partial<RepoCandidate>): number => {
-      const result = gateRepo(repo({
-        release: {
-          tag: 'v1.0.0',
-          url: `https://github.com/someone/dsh-repo-plugin/releases/download/v1.0.0/${'u'.repeat(20_000)}.tgz`,
-          sha256: 'a'.repeat(64),
-        },
-        requiresBuild: true,
-        ...extra,
-      }), config)
-      expect(result.ok).toBe(false)
-      if (result.ok) throw new Error('fixture must be over budget for the probe to report')
-      return Number(/Would publish (\d+) bytes/.exec(result.rejection.detail)?.[1])
-    }
     expect(reported({ installSize: 4_242_424 })).toBe(reported({}))
   })
 
@@ -423,8 +454,11 @@ describe('the per-entry size budget on the github channel', () => {
     // Every maximum measured against the live catalog on 2026-09-04, in one
     // entry: repository 108, license 37, both summaries 200 CJK characters
     // (599 UTF-8 bytes each), 20 capabilities of 14. A github entry has no
-    // peers and no publisher, so this is the whole of its weight — about
-    // 2.5 KiB against a 12,288-byte budget.
+    // publisher. It had no peers either until 2026-09-24, so none were ever
+    // measured on this channel; the npm channel's live maximum (58 names of
+    // at most 50 characters, 2026-09-04) stands in for them, and the longest
+    // compatibility declaration seen (@xmanrui/dsh-im's, 2026-09-11) rides
+    // along.
     const summary = `${'中'.repeat(199)}x`
     const result = gateRepo(repo({
       repository: `https://github.com/an-organization/${'r'.repeat(73)}`,
@@ -433,6 +467,11 @@ describe('the per-entry size budget on the github channel', () => {
         category: 'tool',
         summary: { en: summary, zh: summary },
         capabilities: Array.from({ length: 20 }, () => 'c'.repeat(14)),
+      },
+      peers: Array.from({ length: 58 }, (_, i) => `${String(i).padStart(4, '0')}${'p'.repeat(46)}`),
+      compatibility: {
+        dsh: '0.1.2-alpha.4 || 0.1.2-alpha.5 || 0.1.2-rc.1 || 0.1.3-alpha.1 || 0.1.5-alpha.1',
+        profiles: ['web'],
       },
     }), config)
     expect(result.ok).toBe(true)

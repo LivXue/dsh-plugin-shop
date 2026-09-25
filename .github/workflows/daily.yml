@@ -67,7 +67,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     # A full healthy run -- install, tests, classify, harvest, stars, emit --
-    # takes about 50 minutes, so this does not constrain one.
+    # takes well over an hour, so this does not constrain one.
+    # DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT's comment in
+    # registry/scripts/src/github-client.ts owns the measured per-run
+    # durations; they are not restated here.
     #
     # What it is for: a per-request deadline bounds ONE request, and it is the
     # SUM that decides whether this job survives a stalled counterpart.
@@ -82,6 +85,15 @@ jobs:
     # optional data can therefore take ~60 of these 120 minutes, not ~40,
     # leaving ~60 for the harvest.
     #
+    # The declarations re-read is a third bounded phase, but unlike the two
+    # above it runs INSIDE the harvest rather than in front of it, so it
+    # spends from that ~60 rather than adding to the split above. It bounds
+    # itself at DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT, plus the reads
+    # still in flight when that runs out, each at most one asset read
+    # (TARBALL_REQUEST_TIMEOUT_MS). The first constant's comment in
+    # registry/scripts/src/github-client.ts does that arithmetic against this
+    # job's timeout-minutes; neither figure is restated here.
+    #
     # The harvest is what this bound is really for, and it is honest about what
     # it buys. Measured: one stalled repository costs four bounded attempts
     # plus backoff, 134s -- except on the release-rescue path, where the asset
@@ -95,7 +107,9 @@ jobs:
     # state commit and no catalog. This caps the wasted runner time at two
     # hours instead of six; it does not turn that outcome into a reported one.
     # An in-harvest budget, of the kind classify and stars now carry, is what
-    # that would take, and none exists yet.
+    # that would take. The declarations re-read now has one
+    # (DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT); the full-fetch queue this
+    # paragraph describes still does not.
     timeout-minutes: 120
     permissions:
       # read, not write. This job installs dependencies, calls a plaintext LLM
@@ -103,12 +117,29 @@ jobs:
       # grant is what every one of those steps runs under. The two steps that
       # push carry their own credential in their own `env:` instead.
       contents: read
-    # No job-level `env:`. Anything declared there is in EVERY step's
-    # environment, and this block held NPM_TOKEN, LLM_API_KEY and GITHUB_TOKEN
-    # — so all three sat in `pnpm install`'s environment, readable by a
-    # postinstall hook in any transitive dependency, and LLM_API_KEY sat in the
-    # environment of the step that fetches thousands of third-party manifests.
-    # Exactly two steps consume any of them, and each now declares its own.
+    # Job-level `env:` holds exactly one entry, and it is not a secret. A
+    # secret declared here would be in EVERY step's environment — this block
+    # used to hold NPM_TOKEN, LLM_API_KEY and GITHUB_TOKEN, so all three sat in
+    # `pnpm install`'s environment, readable by a postinstall hook in any
+    # transitive dependency, and LLM_API_KEY sat in the environment of the step
+    # that fetches thousands of third-party manifests. Exactly two steps
+    # consume any of the three secrets, and each still declares its own below.
+    #
+    # SHOP_EMIT_REPO_PEERS is job-level for the opposite reason: it must be
+    # every step's value, because two steps read it independently and
+    # disagreeing was the bug. `classify.ts` re-reads repo-state.json's github
+    # candidates a day after `build.ts` records them and gates them a third
+    # time, through the same pipeline.ts helpers the build uses
+    # (`repoPeersEmitted` / `withholdRepoPeers`; design
+    # 2026-09-01-harness-compatibility section 9.8). While the flag lived only
+    # on the build:catalog step below, classify.ts had no way to read the same
+    # value and gated raw candidates with peers still attached, while build.ts
+    # had withheld them from its own gate. A repository whose peers alone
+    # crossed the payload budget then listed (build.ts's withheld copy fit) and
+    # was pruned from categories.yml the very next run (classify.ts's raw copy
+    # did not fit) — reading `other` every day until the flag flipped.
+    env:
+      SHOP_EMIT_REPO_PEERS: '0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -156,6 +187,12 @@ jobs:
           # client: the flag flips in the release commit that ships it, so no
           # older client ever meets a theme category or v5 entry shape.
           SHOP_CATALOG_V5: '1'
+          # SHOP_EMIT_REPO_PEERS is declared on the `build` JOB above, not
+          # here: `classify.ts` must read the identical value (design
+          # 2026-09-01-harness-compatibility section 9.8), and only a
+          # job-level env: guarantees that. See the job-level comment for what
+          # the flag does, and pipeline.ts's `repoPeersEmitted` for the flag
+          # itself.
           # A dedicated read-only PAT lifts the stars GraphQL quota past the
           # catalog's repo count; without it the GITHUB_TOKEN's ~1k points
           # cover only a third of the shelf per run.
@@ -255,7 +292,7 @@ jobs:
         # WHY IT SITS HERE and not beside the classify step that produced it:
         # push_with_rebase mutates the working tree. Between `pnpm test` and
         # `pnpm build:catalog`, where this step used to run, it pulled whatever
-        # a human landed on main during the ~50-minute run into the tree AFTER
+        # a human landed on main during the run into the tree AFTER
         # the tests had validated the checked-out SHA and BEFORE the harvest
         # read `registry/`, with node_modules resolved from a possibly
         # superseded lockfile. workflow.test.ts now fails on any tree-mutating

@@ -36,6 +36,8 @@ import {
   type PeerResolver,
   type PeerVersionResolver,
 } from './peers.ts'
+import { compatibilityMap, type HarnessVerdict } from './compatibility.ts'
+import { readRunningHarness, type RunningHarness } from './harness.ts'
 
 // Re-exported so the boundary type is reachable from the package's public
 // ./types subpath; the typert generator refuses remote parameter types it
@@ -48,6 +50,9 @@ export type { HotRestartReason } from './hot.ts'
 export type { Activation } from './activation.ts'
 // The catalog entry shape reaches the client half through this same boundary.
 export type { CatalogEntry } from './types.ts'
+// So does the compatibility verdict, which lives beside the pure function that
+// forms it; the client imports it from here, never from that module.
+export type { HarnessVerdict } from './compatibility.ts'
 
 /** One Loader inventory entry, structurally — the shop never depends on
  * cordis-plugin-loader, whose types do not reach this package's typecheck. */
@@ -99,8 +104,25 @@ export interface ShopGatewayOptions {
    * defaults to the real `process.argv` minus node and the script path. */
   restartArgv?: string[]
   /** The JS entry `shop/restart` re-runs; defaults to `process.argv[1]`, the
-   * script this dsh was started with. */
+   * script this dsh was started with. It is also what identifies the running
+   * harness for the `dsh.compatibility` verdict: the package that owns this
+   * script, through symlinks, is the dsh actually running, and its own
+   * app-boot supplies the profile templates (`harness.ts`). A script owned by
+   * anything else — a test runner, another host — leaves both halves of that
+   * verdict silent. The tests about where the running version comes from pass
+   * a fixture install here, which is the production path; the rest inject
+   * `readHarness`. */
   restartScript?: string
+  /** Test-only injection: how the running harness is read from
+   * `restartScript`; production uses `readRunningHarness`. It exists because
+   * an in-process test cannot import a module from another Windows drive
+   * under vitest's module runner, and a Windows runner has the checkout on D:
+   * and the temp dir, where every fixture harness lives, on C:. The read's
+   * import of the fixture's app-boot fails there, and the table reads empty.
+   * Production passes nothing, so the running dsh is read as before. Read
+   * once and kept either way (see `harnessRead`), so like the default it
+   * must never reject. */
+  readHarness?: (script: string | undefined) => Promise<RunningHarness>
   /** Test-only injection: the exit the restart calls after the response is
    * delivered. Production uses `process.exit`. */
   exit?: (code?: number) => void
@@ -331,10 +353,25 @@ export interface ShopCatalogResult {
    * or the sidecar could not be fetched/verified (§5). */
   stars: Record<string, number>
   /** Install identity (`npm:<name>` / `github:<repo>#<subdir>`) → the declared
-   * peers this installation does not provide. A key is absent when the plugin
-   * runs here or when no verdict could be formed; same-named entries stay
-   * independent. */
+   * peers node resolution cannot find from the profile. This is the HOST half
+   * of the verdict only: a module the browser's module table serves — a
+   * platform seed word such as `react` — has no package on disk and is still
+   * listed here, so the client removes every name its live module table
+   * provides before anything renders (`client/module-table.ts`), and renders
+   * no peer verdict at all on a page that offers no usable table. A key is
+   * absent when the plugin runs here or when no verdict could be formed;
+   * same-named entries stay independent. */
   incompatible: Record<string, string[]>
+  /** Install identity → what the entry's author declared in
+   * `dsh.compatibility` that this installation does not meet (design
+   * 2026-09-01-harness-compatibility §8.2). A key is absent when nothing was
+   * declared or every declared half is met. A half that cannot be judged —
+   * the running version unreadable, a range semver cannot parse — is left out
+   * while the other is still judged, so an unknown never reads as an
+   * accusation; same-named entries stay independent. A process not started
+   * by dsh's CLI judges neither half: nothing then says which harness runs
+   * (`harness.ts`). */
+  incompatibleHarness: Record<string, HarnessVerdict>
 }
 
 /** An own-property read of a dependency map parsed from the profile manifest.
@@ -415,16 +452,11 @@ export class ShopGateway extends TypertRemoteService {
   /** The user's own `registry=` from `~/.npmrc`, read at most once per
    * gateway. A wrapper distinguishes a genuine `null` from an unread value. */
   private npmRegistryCache: { value: string | null } | null = null
-  /** The incompatibility map already computed for `lastSnapshot`, keyed by
-   * that snapshot's own object identity. Design §3 asks for the verdict
-   * once per loaded snapshot, not once per RPC call: `loadCatalog` serves
-   * the same snapshot from its on-disk cache for minutes at a time, so
-   * without this, reopening the tab within that window would re-walk
-   * `node_modules` for every distinct peer name again — and Node only
-   * caches a SUCCESSFUL resolution, so a genuinely missing peer pays a full
-   * failed walk on every single call. Recomputed only when `catalog()`
-   * loads a snapshot that is not this exact object. */
-  private incompatibleCache: { snapshot: CatalogSnapshot; map: Record<string, string[]> } | null = null
+  /** The harness this process runs, read at most once per gateway: which dsh
+   * is running cannot change while it runs, and the read imports a module. A
+   * promise, so concurrent first calls share one read; `readRunningHarness`
+   * never rejects, so there is no failure to retry. */
+  private harnessRead: Promise<RunningHarness> | null = null
   /** Install records, running and finished; a poll finds one here or reports not found. */
   private readonly installs = new Map<string, ReturnType<typeof startInstall>>()
   /** Every install id in insertion order, oldest first; finished-record eviction walks this from the front. */
@@ -490,8 +522,7 @@ export class ShopGateway extends TypertRemoteService {
     try {
       createPeerVersionCheck({
         ranges: this.options.peerRanges ?? ownPeerRanges(),
-        resolve: this.options.resolvePeerVersion
-          ?? nodeVersionResolver(pathToFileURL(join(this.profileDirResolved(), 'cordis.yml')).href),
+        resolve: this.options.resolvePeerVersion ?? nodeVersionResolver(this.profileAnchor()),
         warn: message => {
           const logger = (this.ctx as { logger?: { warn(message: string): void } }).logger
           if (logger === undefined) console.warn(message)
@@ -533,6 +564,38 @@ export class ShopGateway extends TypertRemoteService {
   private profileDirResolved(): string {
     if (this.profileDir !== undefined) return this.profileDir
     return discoverProfile(fileURLToPath(import.meta.url), this.bootBaseDir()).dir
+  }
+
+  /** Where every "what can this installation's plugins import?" question
+   * resolves from: the profile's own Loader root, which is where the harness
+   * resolves plugins from. One definition for the peer presence check and the
+   * load-time self-check, so neither can drift onto a different notion of
+   * "the installation". NOT where the running harness is read from: a copy
+   * of `@deepseek-ai/dsh` a plugin's dependencies hoist into the profile is
+   * importable from here and is not what runs (`harness.ts`). Throws when no
+   * profile directory can be discovered and none is given. */
+  private profileAnchor(profileDir: string = this.profileDirResolved()): string {
+    return pathToFileURL(join(profileDir, 'cordis.yml')).href
+  }
+
+  /** `profileDirResolved`, or null when no profile directory can be
+   * discovered — for the reads that answer "cannot tell" rather than fail. */
+  private profileDirOrNone(): string | null {
+    try {
+      return this.profileDirResolved()
+    } catch {
+      // Swallows the discovery failure: no profile above this module and none
+      // on the boot's baseUrl (the bare test constructions). Every caller
+      // reads null as "no verdict needing the profile can be formed".
+      return null
+    }
+  }
+
+  /** The harness this process runs, read once (see `harnessRead`). */
+  private runningHarness(): Promise<RunningHarness> {
+    const read = this.options.readHarness ?? readRunningHarness
+    this.harnessRead ??= read(this.restartScript)
+    return this.harnessRead
   }
 
   /** The inventory, through the wire remote: an envelope `{ ok, value }` or
@@ -866,28 +929,56 @@ export class ShopGateway extends TypertRemoteService {
   @Remote('catalog')
   async catalog(args?: { refresh?: boolean }): Promise<ShopCatalogResult> {
     const { snapshot, stale } = await this.loadCatalogOnce(args?.refresh ?? false)
-    let incompatible: Record<string, string[]>
-    if (this.incompatibleCache !== null && this.incompatibleCache.snapshot === snapshot) {
-      incompatible = this.incompatibleCache.map
-    } else {
+    // Both verdicts are judged on every call and never remembered against the
+    // snapshot. The snapshot records what each entry DECLARES; what this
+    // installation provides is not in it, and moves under it — installing a
+    // missing peer from the shop is exactly the event that must clear its
+    // badge, and a map kept per snapshot would go on naming that peer for as
+    // long as the snapshot is served. Asking every time is cheap; design
+    // 2026-09-01-harness-compatibility §9.6 owns the measurement. The one
+    // input kept is the running harness — which dsh this process is, and its
+    // template table — because a running process cannot change it.
+    const harness = await this.runningHarness()
+    // The profile directory, looked up ONCE: the peer resolver's anchor and
+    // the profile half's bundles are read from the same directory, so the two
+    // verdicts cannot describe two different profiles. None discovered (a
+    // bare construction that supplies neither `profileDir` nor a module
+    // location under a profile) means no verdict that needs one.
+    const profileDir = this.profileDirOrNone()
+    let incompatible: Record<string, string[]> = {}
+    if (profileDir !== null) {
       try {
-        const resolve = this.options.resolvePeer ?? nodeResolver(pathToFileURL(join(this.profileDirResolved(), 'cordis.yml')).href)
+        const resolve = this.options.resolvePeer ?? nodeResolver(this.profileAnchor(profileDir))
         incompatible = incompatibilityMap(snapshot.entries, resolve)
       } catch {
-        // No profile anchor could be discovered (e.g. a bare test construction
-        // that supplies neither `profileDir` nor a resolvable module location,
-        // or the constructor's own stub-ctx case above) — no peer verdict is
-        // formable for anything in this snapshot. A plugin we cannot judge is
-        // never accused, so the whole map degrades straight to empty here
-        // rather than routing through a resolver that throws on first use:
-        // incompatibilityMap memoises per distinct peer NAME, not per call, so
-        // a throwing stand-in would be invoked and caught fresh for every
-        // distinct peer in the snapshot — hundreds, per the design doc's own
-        // measurement — on every single catalog() call for as long as the
-        // profile anchor stays unavailable.
+        // Swallows anything incompatibilityMap throws on an entry shape this
+        // build did not expect — `peers: 5`, say, which is not iterable, and
+        // which the catalog's zod parse refuses, so only an injected snapshot
+        // can carry it. A plugin we cannot judge is never accused, so the
+        // whole map degrades to empty rather than one entry costing every
+        // reader the catalog. A resolver's own throws never reach here:
+        // incompatibilityMap turns those into no verdict for the entry.
         incompatible = {}
       }
-      this.incompatibleCache = { snapshot, map: incompatible }
+    }
+    let incompatibleHarness: Record<string, HarnessVerdict>
+    try {
+      incompatibleHarness = compatibilityMap(snapshot.entries, {
+        dshVersion: harness.dshVersion,
+        profile: { name: this.profile, bundles: profileDir === null ? null : this.runningProfileBundles(profileDir) },
+      }, harness.templates)
+    } catch {
+      // Swallows anything compatibilityMap throws on a declaration this build
+      // did not expect — `profiles: 5`, say, which has no `includes`, and
+      // which the catalog's zod parse refuses, so only an injected snapshot
+      // can carry it. The rule is the peer map's: a declaration nobody can
+      // judge is never an accusation, and this call answers for the whole
+      // shelf, so one entry must not reject it. It did: before the template
+      // table lost its prototype, one entry declaring
+      // `profiles: ["constructor"]` made every catalog() call reject, for
+      // every user. The whole map degrades to empty; the peer map above
+      // stands.
+      incompatibleHarness = {}
     }
     return {
       schemaVersion: snapshot.schemaVersion,
@@ -898,6 +989,28 @@ export class ShopGateway extends TypertRemoteService {
       notAShop: snapshot.notAShop ?? [],
       stars: snapshot.stars,
       incompatible,
+      incompatibleHarness,
+    }
+  }
+
+  /**
+   * The bundles the profile at `profileDir` composes, or null when its
+   * manifest cannot be read — which is no verdict on the profile half rather
+   * than an accusation. `dsh.profile.bundles` is the same list
+   * `discoverProfile` uses to recognize a profile directory, read through the
+   * harness's own parser so a profile this shop was booted inside is read the
+   * way dsh reads it.
+   */
+  private runningProfileBundles(profileDir: string): readonly string[] | null {
+    try {
+      const bundles = readProfileManifest('dsh-plugin-shop', profileDir).dsh?.profile?.bundles
+      if (!Array.isArray(bundles) || !bundles.every((bundle): bundle is string => typeof bundle === 'string')) return null
+      return bundles
+    } catch {
+      // Swallows an unreadable or malformed manifest: nobody can then say what
+      // this profile composes, and the answer for that is silence on this
+      // half, never a warning.
+      return null
     }
   }
 

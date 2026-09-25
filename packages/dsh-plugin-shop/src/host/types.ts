@@ -53,8 +53,22 @@ export interface CatalogEntry {
   tarball?: { url: string; sha256: string }
   /** The date this entry first appeared in the catalog (YYYY-MM-DD). */
   added?: string
-  /** The package's declared peer dependency names (schemaVersion 6). */
+  /** The names of the package's REQUIRED peer dependencies — a peer its
+   * author marks optional in `peerDependenciesMeta` is left out at harvest.
+   * Additive and optional, so it rides every schemaVersion: the version-6
+   * gate this comment used to name came off on 2026-09-03 without ever being
+   * opened. Present on npm entries. Not on github entries yet: the registry
+   * harvests their peers from 2026-09-24 but withholds them from the catalog
+   * (`withholdRepoPeers`) until `SHOP_EMIT_REPO_PEERS` flips, in the release
+   * commit that first promotes a shop refining peers against the browser's
+   * module table to `latest` (design 2026-09-01-harness-compatibility §9.8).
+   * An absent list forms no peer verdict. */
   peers?: string[]
+  /** The author's own `dsh.compatibility` declaration, when they published
+   * one. A REQUIREMENT, never a verdict: the host compares it against the
+   * running installation (`ShopCatalogResult.incompatibleHarness`). Additive
+   * and optional, so it rides every schemaVersion. */
+  compatibility?: { dsh?: string; profiles?: string[] }
   /** Wire-compatibility key, not a field to read — see {@link installSize},
    * which the catalog parse fills from this one. It names npm's OWN quantity
    * (`dist.unpackedSize`), so it is npm-only and the parse REFUSES one on a

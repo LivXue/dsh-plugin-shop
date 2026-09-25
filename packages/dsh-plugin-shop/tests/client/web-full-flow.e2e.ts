@@ -24,8 +24,9 @@
  * four live fixtures — `dsh-shop-e2e-live` (a plain `- id:` / `name:` patch,
  * the only form the hot tree can mount), `dsh-shop-e2e-config` (a config-row
  * patch, valid for the bundle layer but not hot-mountable), `dsh-shop-e2e-peer`
- * (the same hot-mountable patch as the live fixture, plus a
- * `peerDependencies` entry this profile never installs), and
+ * (the same hot-mountable patch as the live fixture, plus peers and a
+ * `dsh.compatibility` declaration this harness does not meet — see
+ * tests/fixtures/catalog-server.ts for the exact split), and
  * `dsh-shop-e2e-client` (the same hot-mountable patch again, plus a
  * `dsh.client` declaration — the other three are host-only, so none of them
  * can prove the reload path, which is exactly the blind spot the 2026-09-11
@@ -38,8 +39,10 @@
  * probe is unavailable, see the fixture's index.js comment); the config
  * install must report done with the localized restart reason and the §8
  * restart offer instead; the peer install proves the harness-compatibility
- * badge and gate warning render for a genuinely unresolvable declared peer,
- * and — warn, never block — still reaches done; the client install must
+ * badge renders for a genuinely absent declared peer and for both halves of
+ * an unmet `dsh.compatibility`, that a peer the browser's module table seeds
+ * is never named — on that card, or as a badge on the seed-only live card —
+ * and that the install, warn never block, still reaches done; the client install must
  * report done with activation `restart` and the client-half reason, and must
  * NOT offer the reload button — a hot mount puts no client half in the boot
  * graph, so a reload would fetch nothing. (That last sentence read the other
@@ -84,9 +87,11 @@
  * - install gate: `[data-shop-confirm]`; failure view: 安装失败 + the detail
  *   paragraph; state lines are plain text (no data attributes)
  * - harness compatibility: `[data-shop-blocker]` (badge, on both the
- *   catalog card and the installed row) and `[data-shop-incompatible-detail]`
- *   (gate warning line) — both render only when the entry has a declared
- *   peer this host cannot resolve; there is no `[data-shop-install-done]` —
+ *   catalog card and the installed row) and one
+ *   `[data-shop-incompatible-detail="<kind>"]` line per blocker —
+ *   `missing-peers` (a declared peer neither the host nor the browser's
+ *   module table provides), `harness-range` and `harness-profile` (an unmet
+ *   half of `dsh.compatibility`); there is no `[data-shop-install-done]` —
  *   the done view below is the only terminal signal
  * - install done view: `[data-shop-restart-notice]` always renders (the
  *   no-restart copy for activation `live`, the reload copy for `reload`, or
@@ -618,6 +623,8 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
   let localRegistry: LocalRegistry | undefined
   let tmpHome = ''
   let webUrl = ''
+  /** What the launched dsh CLI answers to `--version`, read in beforeAll. */
+  let launchedDshVersion = ''
   let dshProcess: ChildProcess | undefined
   let browser: Browser | undefined
   let page: Page | undefined
@@ -689,16 +696,34 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
     // assumed to be the one we asked for.
     // Through the same resolution as `hasDsh` above: a bare `dsh` is ENOENT on
     // Windows, and this spawn is what boots the harness the whole flow drives.
+    const script = resolveDshScript(
+      { exists: path => existsSync(path), read: path => readFileSync(path, 'utf8') },
+      { argv1: process.argv[1], path: process.env.PATH },
+    )
     const web = dshCommand({
       dshBin: 'dsh',
       args: ['--profile', 'web', '--no-open', '--port', String(await reservePort())],
       platform: process.platform,
       execPath: process.execPath,
-      script: resolveDshScript(
-        { exists: path => existsSync(path), read: path => readFileSync(path, 'utf8') },
-        { argv1: process.argv[1], path: process.env.PATH },
-      ),
+      script,
     })
+    // The oracle for the running version a harness-range detail names: the
+    // same CLI, same command and same script as the spawn below, asked for
+    // its own `--version`. dsh answers from its own manifest, so this is
+    // independent of `src/host/harness.ts`, the code under test, which finds
+    // that version its own way (the package that owns the script dsh was
+    // started with).
+    const versionCommand = dshCommand({
+      dshBin: 'dsh',
+      args: ['--version'],
+      platform: process.platform,
+      execPath: process.execPath,
+      script,
+    })
+    const versionAnswer = spawnSync(versionCommand.command, versionCommand.args, { encoding: 'utf8' })
+    expect(versionAnswer.status, `dsh --version failed:\n${versionAnswer.stderr}`).toBe(0)
+    launchedDshVersion = versionAnswer.stdout.trim()
+    expect(launchedDshVersion, 'dsh --version printed no version').toMatch(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)
     dshProcess = spawn(web.command, web.args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {
@@ -1115,7 +1140,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
   )
 
   it(
-    'badges a plugin whose declared peer this harness does not provide, and still installs on confirm',
+    'badges a peer nothing provides and an unmet dsh.compatibility, never a seeded module, and still installs on confirm',
     async () => {
       expect(page).toBeDefined()
       const app = page!
@@ -1134,16 +1159,44 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       const card = dialog.locator('[data-shop-entry="dsh-shop-e2e-peer"]')
       await card.waitFor({ state: 'visible', timeout: 15_000 })
 
-      // The catalog entry declares peers: ["@deepseek-ai/dsh-client-store"]
-      // (the real module whose absence broke a real user's harness on the
-      // 0.1.1-rc.2 line); this profile never installs it, so the host's
-      // nodeResolver (src/host/peers.ts), anchored at the profile root, finds
-      // it unresolvable and the badge renders — its raw name lands in the
-      // card's visible text via the always-rendered incompatibleDetail line,
-      // not just the badge's title attribute.
+      // The catalog entry declares two peers, and the verdict takes both stages
+      // (design 2026-09-01 §9.1). `@dsh-shop-e2e/absent-peer` is provided by
+      // nothing: node resolution from the profile finds no package, and the
+      // browser's module table has no such word, so it is named — in the
+      // card's visible text, via the always-rendered detail line, not just the
+      // badge's title attribute. `@deepseek-ai/dsh-client-store` — the module
+      // whose absence broke a real user's harness on the 0.1.1-rc.2 line — has
+      // no package on disk either, so the host still lists it; but on this
+      // harness it is a platform seed word, the client's module table serves
+      // it, and it must NOT be named. Until 2026-09-24 this spec asserted the
+      // opposite, and so asserted a false alarm as the correct answer.
       await card.locator('[data-shop-blocker]').waitFor({ state: 'visible', timeout: 15_000 })
-      expect(await card.textContent()).toContain('@deepseek-ai/dsh-client-store')
+      expect(await card.textContent()).toContain('@dsh-shop-e2e/absent-peer')
+      expect(await card.textContent(), 'a peer the module table seeds was reported missing').not.toContain('@deepseek-ai/dsh-client-store')
       expect(await card.locator('[data-shop-blocker]').textContent()).toBe(zh.incompatibleBadge)
+
+      // The same entry declares a `dsh.compatibility` that fails both halves.
+      // Only a real host parse can carry the key to here — the jsdom specs
+      // build their snapshot directly and never cross the host zod, which is
+      // how `installSize` was published for weeks and shown nowhere — and only
+      // the real harness can say what is running. The expected running
+      // version is the launched CLI's own `dsh --version` (beforeAll). It used
+      // to be read from the link farm the harness heals into this profile's
+      // DSH_HOME, the host's old source, and passed only because the two
+      // agree in this profile.
+      expect(await card.locator('[data-shop-incompatible-detail="harness-range"]').textContent())
+        .toBe(zh.harnessRangeDetail.replace('{range}', '0.1.2-rc.1').replace('{running}', launchedDshVersion))
+      expect(await card.locator('[data-shop-incompatible-detail="harness-profile"]').textContent())
+        .toBe(zh.harnessProfileDetail.replace('{declared}', 'acp').replace('{running}', 'web'))
+
+      // And the seed-only card says nothing at all. Its two peers, `react` and
+      // `react-dom`, have no package on disk, so node resolution alone would
+      // badge it — the false alarm 755 live entries carried. The peer card's
+      // badge above is rendered, so the refined verdict has arrived and this
+      // count is final.
+      const liveCard = dialog.locator('[data-shop-entry="dsh-shop-e2e-live"]')
+      expect(await liveCard.count()).toBe(1)
+      expect(await liveCard.locator('[data-shop-blocker]').count(), 'a seed-only card was badged').toBe(0)
 
       // The copy is two sentences separated by a `\n` it carries itself, and
       // NOTHING else in this suite can prove that renders. The component tests
@@ -1152,15 +1205,15 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // passes it through untouched, and whether the bundled stylesheet still
       // says pre-line by the time a browser reads it, are answerable only
       // here, against the real dsh and a real chromium.
-      const detail = card.locator('[data-shop-incompatible-detail]')
+      const detail = card.locator('[data-shop-incompatible-detail="missing-peers"]')
       await detail.waitFor({ state: 'visible', timeout: 15_000 })
       const shape = await detail.evaluate(el => ({ text: el.textContent ?? '', whiteSpace: getComputedStyle(el).whiteSpace }))
       expect(shape.text, 'the harness i18n dropped the newline the copy carries').toContain('\n')
       expect(shape.whiteSpace, 'pre-line did not survive into the bundled stylesheet').toBe('pre-line')
 
-      // The incompatible filter, against a genuinely-missing peer the HOST
-      // decided about: its count comes from the host's own resolver run, not
-      // from a fixture that asserts the answer, and this fixture profile makes
+      // The incompatible filter, against verdicts the real host and the real
+      // module table formed: its count comes from their run, not from a
+      // fixture that asserts the answer, and this fixture profile makes
       // exactly one of the five shelf entries incompatible.
       const filter = dialog.locator('[data-shop-hide-incompatible]')
       await filter.waitFor({ state: 'visible', timeout: 10_000 })
@@ -1196,7 +1249,9 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await card.waitFor({ state: 'detached', timeout: 10_000 })
       expect(await filter.textContent()).toBe(zh.hideIncompatible.replace('{count}', '1'))
       expect(await filter.getAttribute('aria-checked')).toBe('true')
-      // The compatible fixtures stayed.
+      // The compatible fixtures stayed — the seed-only live card among them,
+      // which the filter would have taken too if node resolution alone had
+      // decided.
       expect(await dialog.locator('[data-shop-entry="dsh-shop-e2e-live"]').count()).toBe(1)
       await filter.click()
       await card.waitFor({ state: 'visible', timeout: 10_000 })
@@ -1206,11 +1261,14 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await card.locator('[data-shop-install]').click()
       await card.locator('[data-shop-confirm]').waitFor({ state: 'visible', timeout: 10_000 })
       // The gate does NOT restate what is missing: the card above it already
-      // does, and both rendering the same two lines printed them twice. The
+      // does, and both rendering the same lines printed them twice. The
       // outdated row is the one surface that still needs the gate to say it,
-      // and it has no card detail to duplicate.
+      // and it has no card detail to duplicate. One line per blocker.
       expect(await card.locator('[data-shop-incompatible-warning]').count()).toBe(0)
-      expect(await card.locator('[data-shop-incompatible-detail]').count()).toBe(1)
+      expect(await card.locator('[data-shop-incompatible-detail]').count()).toBe(3)
+      for (const kind of ['missing-peers', 'harness-range', 'harness-profile']) {
+        expect(await card.locator(`[data-shop-incompatible-detail="${kind}"]`).count(), kind).toBe(1)
+      }
 
       // Confirm → warn, never block: the real pnpm install only warns on the
       // unresolvable peer (the profile's autoInstallPeers: false, same as

@@ -127,6 +127,56 @@ describe('emit publisher', () => {
     const { pluginsJson } = emit([entry('dsh-a'), repoEntry('dsh-b', 'you/dsh-b')], [], '2026-08-26T00:00:00.000Z')
     expect(pluginsJson).not.toContain('installSize')
   })
+
+  it('publishes peers on a GITHUB entry at every schemaVersion', () => {
+    // Additive and optional, and new to this channel on 2026-09-24. Pinned in
+    // the published bytes for the reason the size cases above give: emit is
+    // the only module that treats entries differently per schemaVersion, so
+    // it is the only place a gate can strand a field — which is exactly what
+    // happened to `peers` the first time.
+    const peered = { ...repoEntry('dsh-b', 'you/dsh-b'), peers: ['@deepseek-ai/cordis', 'react'] }
+    for (const version of [SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION, CATALOG_SCHEMA_VERSION]) {
+      const { pluginsJson } = emit([peered], [], '2026-08-26T00:00:00.000Z', null, version)
+      const parsed = JSON.parse(pluginsJson) as { plugins: { peers?: string[] }[] }
+      expect(parsed.plugins[0]?.peers).toEqual(['@deepseek-ai/cordis', 'react'])
+    }
+  })
+
+  it('publishes compatibility at every schemaVersion, on both channels', () => {
+    // Additive and optional: an old client's zod strips the key. Bumping the
+    // version NUMBER is what breaks old clients, so this field must never be
+    // gated on one — the stale "schemaVersion 6" claim `peers` carried is the
+    // mistake this pins against repeating.
+    const compatibility = { dsh: '0.1.5-rc.1 || 0.1.6', profiles: ['web'] }
+    const entries = [
+      { ...entry('dsh-a'), compatibility },
+      { ...repoEntry('dsh-b', 'you/dsh-b'), compatibility },
+    ]
+    for (const version of [SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION, CATALOG_SCHEMA_VERSION]) {
+      const { pluginsJson } = emit(entries, [], '2026-08-26T00:00:00.000Z', null, version)
+      const parsed = JSON.parse(pluginsJson) as { plugins: { compatibility?: unknown }[] }
+      expect(parsed.plugins.map(p => p.compatibility)).toEqual([compatibility, compatibility])
+    }
+  })
+
+  it('emits no compatibility key for an entry without one', () => {
+    const { pluginsJson } = emit([entry('dsh-a'), repoEntry('dsh-b', 'you/dsh-b')], [], '2026-08-26T00:00:00.000Z')
+    expect(pluginsJson).not.toContain('compatibility')
+  })
+
+  it('well-forms the compatibility strings like every other published string', () => {
+    // The well-formedness pass claims to cover "whatever fields an Entry grows
+    // next" because it recurses rather than listing fields; this is the first
+    // field to cash that claim one level down, inside a nested object. A lone
+    // surrogate stays valid JSON and a stable hash here and fails the reader's
+    // UTF-8 re-encode, so the replacement is asserted, not just the absence.
+    const hostile = { ...entry('dsh-a'), compatibility: { dsh: '>=0.1.5\ud800', profiles: ['web\udc00', 'tui'] } }
+    const { pluginsJson } = emit([hostile], [], '2026-08-26T00:00:00.000Z')
+    const parsed = JSON.parse(pluginsJson) as { plugins: { compatibility?: { dsh?: string; profiles?: string[] } }[] }
+    expect(parsed.plugins[0]?.compatibility).toEqual({ dsh: '>=0.1.5\ufffd', profiles: ['web\ufffd', 'tui'] })
+    // The pass rebuilds nested objects, so their key order is its to keep.
+    expect(Object.keys(parsed.plugins[0]?.compatibility ?? {})).toEqual(['dsh', 'profiles'])
+  })
 })
 
 describe('emit', () => {

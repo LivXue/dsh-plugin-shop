@@ -663,7 +663,10 @@ describe('v5 (market borrowings) entries', () => {
   })
 })
 
-describe('peers (schemaVersion 6)', () => {
+describe('peers', () => {
+  // Additive and optional, so it rides every schemaVersion: the version-6 gate
+  // this block was once named after came off on 2026-09-03 without ever being
+  // opened, and the live catalog has carried `peers` at 5 since.
   it('parses a v6 entry carrying peers', async () => {
     // Names copied from dsh-timeline@0.1.4's real manifest.
     const result = await load(
@@ -675,12 +678,94 @@ describe('peers (schemaVersion 6)', () => {
     ])
   })
 
-  it('parses the live v5 shape, which has no peers field at all', async () => {
+  it('parses an entry with no peers field at all', async () => {
     // The 0.5.0 regression, in the shape that caused it: a required new field
-    // made the client refuse the still-published older catalog outright.
+    // made the client refuse the still-published older catalog outright. Still
+    // a live shape — an npm package that declares no peers, and every github
+    // entry whose repository the harvest has not re-read (design §8.1).
     const result = await load([baseEntry], 5)
     expect(result.snapshot.entries[0]?.peers).toBeUndefined()
     expect(result.snapshot.entries).toHaveLength(1)
+  })
+
+  it('parses a github entry carrying peers', async () => {
+    // No github entry carried any until 2026-09-11 (design §8.1); the shape was
+    // always legal here, and this pins that it stays so now the channel relies
+    // on it. Two of the peers @lanxing/dsh-galgame@1.1.0 declares — the entry
+    // whose missing warning that amendment was written after.
+    const result = await load([{
+      ...baseEntry, version: 'a'.repeat(40), source: 'github', repo: 'someone/thing',
+      peers: ['@deepseek-ai/dsh-client-runtime', 'react'],
+    }], 5)
+    expect(result.snapshot.entries[0]?.peers).toEqual(['@deepseek-ai/dsh-client-runtime', 'react'])
+  })
+})
+
+describe('compatibility', () => {
+  // The author's own `dsh.compatibility`, which the host judges against the
+  // running harness (design 2026-09-01-harness-compatibility §8.2). Declared
+  // here or it is not read at all: this schema is non-strict and strips a key
+  // it does not know, which is exactly how `installSize` was published for
+  // weeks and shown to nobody.
+
+  /** `@xmanrui/dsh-im@4.19.2`'s own declaration, verbatim (design §8.2). */
+  const DSH_IM = {
+    dsh: '0.1.2-alpha.4 || 0.1.2-alpha.5 || 0.1.2-rc.1 || 0.1.3-alpha.1 || 0.1.5-alpha.1',
+    profiles: ['web'],
+  }
+
+  it('carries the declaration through to the entry the host judges', async () => {
+    // At 5, the live version: additive and optional, so it rides every
+    // schemaVersion and needs no gate of its own.
+    const result = await load([{ ...baseEntry, name: '@xmanrui/dsh-im', version: '4.19.2', compatibility: DSH_IM }], 5)
+    expect(result.snapshot.entries[0]?.compatibility).toEqual(DSH_IM)
+  })
+
+  it('carries a github entry\'s declaration too', async () => {
+    // Harvested from both channels' manifests, so both must parse it.
+    const result = await load([{
+      ...baseEntry, version: 'a'.repeat(40), source: 'github', repo: 'someone/thing', compatibility: DSH_IM,
+    }], 5)
+    expect(result.snapshot.entries[0]?.compatibility).toEqual(DSH_IM)
+  })
+
+  it('keeps either half when it arrives alone', async () => {
+    // The harvest publishes whichever half is well formed and drops the other,
+    // so a half standing alone is an ordinary shape. A required half here would
+    // be the 0.5.0 regression again: the data file is read with a throwing
+    // `parse`, so it would cost every installed shop the whole catalog.
+    const result = await load([
+      { ...baseEntry, name: 'dsh-range-only', compatibility: { dsh: DSH_IM.dsh } },
+      { ...baseEntry, name: 'dsh-profiles-only', compatibility: { profiles: ['tui'] } },
+    ], 5)
+    expect(result.snapshot.entries.map(entry => entry.compatibility)).toEqual([
+      { dsh: DSH_IM.dsh },
+      { profiles: ['tui'] },
+    ])
+  })
+
+  it('parses an entry that declares none', async () => {
+    // Nearly every live entry. Absent must stay absent: an empty object would
+    // read as a declaration the author never made.
+    const result = await load([baseEntry], 5)
+    expect(result.snapshot.entries[0]?.compatibility).toBeUndefined()
+    expect(result.snapshot.entries).toHaveLength(1)
+  })
+
+  // Typed rather than waved through, like the size keys: the host feeds `dsh`
+  // to semver and `profiles` to a membership test, and the registry publishes
+  // only strings (its reader drops anything else at harvest). So a value that
+  // fails here is our own build having written something it cannot write,
+  // and this project stops for that rather than guessing at a meaning. Until
+  // the key was declared, every one of these was stripped in silence.
+  it.each([
+    ['a range that is not a string', { dsh: 42 }],
+    ['profiles that are not a list', { profiles: 'web' }],
+    ['a profile name that is not a string', { profiles: [7] }],
+    ['a declaration that is not an object', 'web'],
+    ['a null declaration', null],
+  ])('refuses a catalog carrying %s', async (_label, compatibility) => {
+    await expect(load([{ ...baseEntry, compatibility }], 5)).rejects.toThrow()
   })
 })
 

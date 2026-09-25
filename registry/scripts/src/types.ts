@@ -15,6 +15,33 @@ export interface CatalogSection {
   capabilities: string[]
 }
 
+/**
+ * The author's own machine-readable statement of which harness their plugin
+ * supports, copied from the manifest's `dsh.compatibility` — a sibling of
+ * `dsh.catalog`, not part of it, so the generated `plugin-entry.schema.json`
+ * (which is `dsh.catalog` only) does not describe it.
+ *
+ * A REQUIREMENT, never a verdict — the same rule as {@link Candidate.peers}:
+ * whether it is satisfied depends on the reader's installation, so the
+ * comparison happens on the reader's machine, never in this pipeline.
+ * `compatibilityOf` in `npm-client.ts` is the one reader, for both channels.
+ *
+ * Additive and optional, so it rides EVERY `schemaVersion`; see `emit.ts`'s
+ * list for why no version gate is needed, and {@link Entry.peers} for the
+ * stale-version-claim mistake this comment exists not to repeat.
+ */
+export interface Compatibility {
+  /** A semver range over `@deepseek-ai/dsh` versions, verbatim. */
+  dsh?: string
+  /**
+   * The profile names the plugin supports, verbatim. The harness's own
+   * templates on 0.1.5-rc.3 are `acp`, `web`, `headless`, `sdk` and
+   * `sdk-minimal`; a declared name that is none of them (a custom profile's) is
+   * recorded all the same, and judged on the reader's machine.
+   */
+  profiles?: string[]
+}
+
 /** One npm package as fetched, before any gating decision. */
 export interface Candidate {
   name: string
@@ -45,12 +72,25 @@ export interface Candidate {
    */
   publisher?: string
   /**
-   * The names of the package's `peerDependencies`, without ranges. A peer is
-   * what the environment must already provide, so an unresolvable one means
-   * the plugin cannot run on this harness — the failure that broke a user on
-   * 2026-09-01. Ranges are deliberately dropped: nearly every dsh plugin
-   * declares `"*"`, and the harness's own prerelease versions do not satisfy
-   * ordinary ranges, so checking them would accuse working plugins.
+   * The names of the package's REQUIRED `peerDependencies`, without ranges, in
+   * manifest order. A peer is what the environment must already provide, so an
+   * unresolvable one means the plugin cannot run on this harness — the failure
+   * that broke a user on 2026-09-01. Ranges are deliberately dropped: nearly
+   * every dsh plugin declares `"*"`, and the harness's own prerelease versions
+   * do not satisfy ordinary ranges, so checking them would accuse working
+   * plugins.
+   *
+   * Required only: a peer its author marks `{ "optional": true }` in
+   * `peerDependenciesMeta` is left out, because optional means the package
+   * runs without it — the environment need not provide it, and recording it as
+   * a requirement is a false accusation with the catalog's name on it.
+   * Optional peers WERE recorded as requirements until 2026-09-24. An audit
+   * that day against the live catalog
+   * (11,864 entries, built 2026-09-23) fetched the manifest of every entry
+   * badged incompatible: 465 of the 1,493 named a peer marked optional, and 381
+   * were badged on optional peers ALONE. dsh-plugin-shop 0.8.3 itself marks all
+   * five of its peers optional. `peerNamesOf` in `npm-client.ts` decides what
+   * counts as marked, for this channel and the github one alike.
    */
   peers: string[]
   /**
@@ -65,6 +105,12 @@ export interface Candidate {
    * Every consumer of this must say which one it is showing.
    */
   unpackedSize?: number
+  /**
+   * The manifest's `dsh.compatibility`, keeping only what is well formed and
+   * within bounds, and absent when nothing in it survives (`compatibilityOf`).
+   * See {@link Compatibility}.
+   */
+  compatibility?: Compatibility
 }
 
 /**
@@ -103,6 +149,65 @@ export interface RepoCandidate {
    * WORKSPACE_PKG_NOT_FOUND) — rejected at harvest.
    */
   hasWorkspaceDeps: boolean
+  /**
+   * The names of the manifest's REQUIRED `peerDependencies`, without ranges —
+   * the same record, read by the same `peerNamesOf`, as
+   * {@link Candidate.peers}, so an optional peer is left out on this channel
+   * from its first day. Each candidate reads its OWN manifest: a subpackage
+   * declares its own requirements, and inheriting the root's would be a
+   * fabricated record.
+   *
+   * This channel carried none until 2026-09-24, which left the compatibility
+   * badge blind to 6,979 of the 11,864 entries in the catalog built 2026-09-23.
+   * The data was always in hand: `github-client` parses the manifest these live
+   * in, and dropped the field (2026-09-01-harness-compatibility §8.1).
+   *
+   * OPTIONAL in the type, and the absence is a fact rather than an oversight.
+   * `parseRepoState` revives carried candidates from `repo-state.json` by a
+   * cast, so every record written before this field existed has none at
+   * runtime; a required type would be a lie that makes `peers.length` throw.
+   * Every projection writes it — `[]` when the manifest requires nothing — so
+   * ABSENT means "recorded before peers were read". Absence is no longer the
+   * re-read marker, though: {@link RepoCandidate.declarationsRule} is, because
+   * presence could say whether peers were read and never under which rule, so
+   * a change to `peerNamesOf` reached npm entries and no dormant repository.
+   * An entry with no `peers` carries no verdict, so the interim under-warns and
+   * never mis-warns.
+   *
+   * A release-rescued root's peers are its TARBALL's, read from the archive
+   * the entry installs — never the default-branch HEAD it was projected from,
+   * which can be a different version requiring different things.
+   */
+  peers?: string[]
+  /**
+   * The manifest's `dsh.compatibility`, read by the same `compatibilityOf` as
+   * {@link Candidate.compatibility}; absent when the manifest declares nothing
+   * usable. Persisted with the candidate, like everything on it.
+   *
+   * It needs NO marker of its own, deliberately. One writer writes it beside
+   * {@link RepoCandidate.peers} and stamps both with
+   * {@link RepoCandidate.declarationsRule}, so a stamped candidate had its
+   * compatibility read under that rule too: `compatibility` absent beside a
+   * stamp means "declares none", and a missing or stale stamp queues the
+   * re-read that reads both. Do not add a second marker for this field. A
+   * release-rescued root's is its tarball's, like its peers.
+   */
+  compatibility?: Compatibility
+  /**
+   * The declaration rule that wrote {@link RepoCandidate.peers} and
+   * {@link RepoCandidate.compatibility} — `DECLARATIONS_RULE` in
+   * `repo-state.ts` at the time. A positive integer; `parseRepoState` refuses
+   * any other shape.
+   *
+   * The re-read marker for both fields. A listable candidate whose stamp is not
+   * the current rule — absent included, which is every record written before
+   * the stamp existed — queues its repository for one manifest-only re-read
+   * (`repo-state.ts`), and a successful re-read writes exactly the two fields
+   * and this stamp. Every projection writes it beside `peers`, and a release
+   * rescue beside the tarball's declarations, so a stamped candidate's two
+   * fields are as current as the stamp says.
+   */
+  declarationsRule?: number
   /**
    * The subpackage directory (e.g. `packages/foo`) when this candidate is a
    * monorepo subpackage rather than the repo root; absent for root entries.
@@ -180,7 +285,10 @@ export interface RepoCandidate {
      * That `verifyReleaseAsset` opened this asset and accepted it.
      *
      * Persisted so the record says which RULES produced it. Absent means the
-     * rescue predates the check — taken on release metadata alone — and
+     * rescue predates the check — taken on release metadata alone — or that
+     * the declarations re-read found the verified asset gone from its URL:
+     * the recorded asset answered 404, answered past the size cap it was
+     * verified under, or no longer hashes to `sha256`. Either way
      * `diffRepoState` queues that repo for one re-probe rather than trusting
      * it, because `pushedAt` alone would let an unverified rescue stand
      * forever on a repo that never pushes again.
@@ -303,11 +411,17 @@ export interface Entry {
    * See {@link Candidate.publisher} for why this and not `author`. */
   publisher?: string
   /**
-   * The package's declared peer dependency names, present exactly when it
-   * declares any. The Host resolves them against the running installation to
-   * tell the reader whether the plugin can run there; the catalog records the
-   * requirement, never a verdict, because compatibility depends on who is
-   * reading.
+   * The names of the package's REQUIRED peer dependencies, present exactly
+   * when it requires any — a peer its author marks optional is not one (see
+   * {@link Candidate.peers}). The Host resolves them against the running
+   * installation to tell the reader whether the plugin can run there; the
+   * catalog records the requirement, never a verdict, because compatibility
+   * depends on who is reading. npm entries carry it. github entries have it
+   * HARVESTED from 2026-09-24 — recorded in `repo-state.json` as each
+   * repository is fetched or re-read (see {@link RepoCandidate.peers}) — but
+   * PUBLISHED only once `SHOP_EMIT_REPO_PEERS` flips: until then
+   * `withholdRepoPeers` (`pipeline.ts`) strips them from what the build emits,
+   * because a shop from 0.8.3 or earlier would badge platform seed words.
    *
    * Additive and optional, so it rides every schemaVersion — see
    * {@link Entry.unpackedSize} for the reasoning. This said "Emitted only at
@@ -391,4 +505,18 @@ export interface Entry {
    * the other, and a reader is owed the label it was measured under.
    */
   installSize?: number
+  /**
+   * The author's declared harness compatibility (`dsh.compatibility`), present
+   * exactly when the manifest declared something usable — see
+   * {@link Compatibility}. The Host compares it against the running
+   * installation; the catalog records the requirement, never a verdict.
+   *
+   * Additive and optional, so it rides every schemaVersion: a client that
+   * predates it strips the key (consumer zod is non-strict by design), and
+   * bumping the version NUMBER is the change that breaks old clients — the
+   * reasoning {@link Entry.unpackedSize} gives, and the claim {@link
+   * Entry.peers} got wrong for as long as its stale "schemaVersion 6" note
+   * outlived the gate.
+   */
+  compatibility?: Compatibility
 }

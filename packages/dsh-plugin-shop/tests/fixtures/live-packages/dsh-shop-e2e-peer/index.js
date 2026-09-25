@@ -1,11 +1,15 @@
-// The harness-compatibility e2e fixture: its package.json declares a peer
-// dependency, @deepseek-ai/dsh-client-store — the real module whose absence
-// broke a real user's harness on the 0.1.1-rc.2 line — that this test's
-// profile never installs (autoInstallPeers: false in the profile's own
-// pnpm-workspace.yaml, same as every real dsh profile). The host's
-// nodeResolver (src/host/peers.ts) therefore reports it missing, which is
-// what the e2e's badge and install-gate-warning assertions rest on; nothing
-// this module does at runtime is part of that proof.
+// The harness-compatibility e2e fixture. Its package.json declares two peers
+// this test's profile never installs (autoInstallPeers: false in the
+// profile's own pnpm-workspace.yaml, same as every real dsh profile), and the
+// verdict judges them in two stages (design 2026-09-01 §9.1):
+// `@dsh-shop-e2e/absent-peer` is provided by nothing, so the badge names it;
+// `@deepseek-ai/dsh-client-store` — the real module whose absence broke a
+// real user's harness on the 0.1.1-rc.2 line — has no package on disk
+// either, but the web client's module table seeds it, so the badge must NOT
+// name it. It also declares a `dsh.compatibility` this harness does not
+// meet. tests/fixtures/catalog-server.ts carries the same facts, and the
+// e2e's assertions rest on those; nothing this module does at runtime is
+// part of that proof.
 //
 // The patch is the same plain `- id:` / `name:` row as the dsh-shop-e2e-live
 // fixture — the only form the shop's hot tree can mount without a restart —

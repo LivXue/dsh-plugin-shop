@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { applyAxisReport, MAX_EVICTIONS_PER_RUN, MAX_PINNED_PER_KEYWORD, type PublisherState } from '../src/publisher-state.ts'
-import { type Cell, cellKey, cellQuery, FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, keywordsOf, KEYWORD_MAX_LENGTH, KEYWORDS_MAX_COUNT, maintainersOf, MAINTAINERS_MAX_COUNT, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describePublisherAxis, describeShortfall, parseKeywordShortfall, parsePublisherAxisReport, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, type PublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
+import { type Cell, cellKey, cellQuery, COMPATIBILITY_PROFILES_MAX_COUNT, COMPATIBILITY_RANGE_MAX_LENGTH, FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, keywordsOf, KEYWORD_MAX_LENGTH, KEYWORDS_MAX_COUNT, maintainersOf, MAINTAINERS_MAX_COUNT, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describePublisherAxis, describeShortfall, parseKeywordShortfall, parsePublisherAxisReport, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, PROFILE_NAME_MAX_LENGTH, type PublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
 import { ENTRY_PAYLOAD_MAX_BYTES, entryPayloadBytes } from '../src/gate.ts'
 import { MAX_TARBALL_BYTES } from '../src/github-client.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
@@ -468,6 +468,186 @@ describe('toCandidate', () => {
     expect(result?.peers).toEqual(['ok'])
   })
 
+  /** The fixture packument with its latest manifest's peer fields replaced. */
+  const withPeerFields = (peerDependencies: unknown, peerDependenciesMeta?: unknown): unknown => ({
+    ...packument,
+    versions: {
+      '1.2.0': {
+        ...packument.versions['1.2.0'],
+        peerDependencies,
+        ...(peerDependenciesMeta === undefined ? {} : { peerDependenciesMeta }),
+      },
+    },
+  })
+
+  it('leaves out a peer its author marked optional, and keeps the required ones in order', () => {
+    // An optional peer is by definition one the environment need NOT provide,
+    // so recording it as a requirement badges a working plugin incompatible.
+    // That is what the catalog did: measured 2026-09-24 against the live
+    // catalog (11,864 entries, built 2026-09-23), 465 of the 1,493 entries
+    // badged incompatible named a peer their author had marked optional, and
+    // 381 were badged on optional peers alone. The optional one sits in the
+    // MIDDLE, so the survivors keeping manifest order is asserted, not assumed.
+    const candidate = toCandidate(withPeerFields(
+      { react: '^18.2.0', '@deepseek-ai/cordis': '*', '@deepseek-ai/dsh-client-store': '*' },
+      { '@deepseek-ai/cordis': { optional: true } },
+    ))
+    expect(candidate?.peers).toEqual(['react', '@deepseek-ai/dsh-client-store'])
+  })
+
+  it('records no peers for a package that marks every peer optional', () => {
+    // The shape dsh-plugin-shop 0.8.3 itself publishes: five peers, all five
+    // optional — every one of them something the package runs without.
+    const shopPeers = [
+      '@deepseek-ai/cordis',
+      '@deepseek-ai/cordis-plugin-include',
+      '@deepseek-ai/dsh-app-boot',
+      '@deepseek-ai/dsh-home-paths',
+      '@deepseek-ai/dsh-typert-protocol',
+    ]
+    const candidate = toCandidate(withPeerFields(
+      Object.fromEntries(shopPeers.map(name => [name, '*'])),
+      Object.fromEntries(shopPeers.map(name => [name, { optional: true }])),
+    ))
+    expect(candidate?.peers).toEqual([])
+  })
+
+  it('reads a malformed peerDependenciesMeta as marking nothing optional', () => {
+    // The requirement is declared in peerDependencies; only an exact,
+    // well-formed `optional: true` withdraws it. A qualifier we cannot read is
+    // not a withdrawal, so a malformed meta must never cost a required peer —
+    // whatever the author meant by `optional: "true"`, we do not guess it.
+    for (const meta of [
+      'react', 42, true, null, ['react'],
+      { react: true }, { react: null }, { react: 'optional' }, { react: [{ optional: true }] },
+      { react: {} }, { react: { optional: false } }, { react: { optional: 'true' } },
+      { react: { optional: 1 } }, { react: { optional: null } },
+    ]) {
+      expect(toCandidate(withPeerFields({ react: '*', vue: '*' }, meta))?.peers, JSON.stringify(meta))
+        .toEqual(['react', 'vue'])
+    }
+    // An array meta is refused outright rather than read. `Object.hasOwn(['x'],
+    // '0')` is true, so a peer whose name looks like an index would otherwise be
+    // looked up in it — and withdrawn by an array element.
+    expect(toCandidate(withPeerFields({ 0: '*' }, [{ optional: true }]))?.peers).toEqual(['0'])
+  })
+
+  it('asks only the meta’s OWN keys, so a name Object.prototype also answers to is judged on what the author wrote', () => {
+    // `constructor` is a legal npm name, and an index read on a plain object
+    // answers for Object.prototype. Undeclared in the meta it stays required;
+    // declared optional there it is withdrawn like any other name.
+    expect(toCandidate(withPeerFields({ constructor: '*', react: '*' }, { react: { optional: true } }))?.peers)
+      .toEqual(['constructor'])
+    expect(toCandidate(withPeerFields({ constructor: '*', react: '*' }, { constructor: { optional: true } }))?.peers)
+      .toEqual(['react'])
+    // An INHERITED answer is not the author's, at either level. JSON.parse
+    // cannot build an object with a prototype, so no packument reaches this —
+    // the realistic input is the pair above — and these pin the rule itself
+    // for any caller that is not handing over parsed JSON.
+    expect(toCandidate(withPeerFields({ react: '*' }, Object.create({ react: { optional: true } })))?.peers)
+      .toEqual(['react'])
+    expect(toCandidate(withPeerFields({ react: '*' }, { react: Object.create({ optional: true }) }))?.peers)
+      .toEqual(['react'])
+  })
+
+  it('never records a name that appears only in peerDependenciesMeta', () => {
+    // The meta qualifies peers declared elsewhere and declares none itself: a
+    // reader iterating the meta's keys would invent `vue` as a requirement.
+    expect(toCandidate(withPeerFields({ react: '*' }, { vue: { optional: false } }))?.peers).toEqual(['react'])
+  })
+
+  it('drops optional peers BEFORE the count cap, so none of them takes a required peer’s slot', () => {
+    // PEERS_MAX_COUNT + 2 declared, the first two optional. Filtered first,
+    // the PEERS_MAX_COUNT required names fill the cap exactly. Capped first,
+    // the two optional names would take two of the slots and then be filtered
+    // out, recording PEERS_MAX_COUNT - 2 — two requirements lost to names that
+    // are not requirements at all. None of the names is integer-like, so the
+    // object keeps them in exactly the order they are listed here.
+    const required = Array.from({ length: PEERS_MAX_COUNT }, (_, i) => `required-${i}`)
+    const declared = Object.fromEntries(['optional-a', 'optional-b', ...required].map(name => [name, '*']))
+    expect(Object.keys(declared)).toHaveLength(PEERS_MAX_COUNT + 2)
+    const candidate = toCandidate(withPeerFields(declared, {
+      'optional-a': { optional: true },
+      'optional-b': { optional: true },
+    }))
+    expect(candidate?.peers).toHaveLength(PEERS_MAX_COUNT)
+    expect(candidate?.peers).toEqual(required)
+  })
+
+  /** The fixture packument with `dsh.compatibility` set on its latest manifest. */
+  const withCompatibility = (compatibility: unknown): unknown => ({
+    ...packument,
+    versions: {
+      '1.2.0': {
+        ...packument.versions['1.2.0'],
+        dsh: { ...packument.versions['1.2.0'].dsh, compatibility },
+      },
+    },
+  })
+
+  it('records a well-formed dsh.compatibility verbatim', () => {
+    // @xmanrui/dsh-im@4.19.2's own declaration: an exact list of the harness
+    // versions it supports, which nothing here read until 2026-09-24. The
+    // range is copied, never parsed — whether it is satisfied is a question
+    // about the reader's installation, answered on the reader's machine.
+    const declared = {
+      dsh: '0.1.2-alpha.4 || 0.1.2-alpha.5 || 0.1.2-rc.1 || 0.1.3-alpha.1 || 0.1.5-alpha.1',
+      profiles: ['web'],
+    }
+    expect(toCandidate(withCompatibility(declared))?.compatibility).toEqual(declared)
+  })
+
+  it('keeps the half that is well formed and drops the half that is not', () => {
+    // A malformed half must not cost the other: the author told us something
+    // usable, and exactly that much is published.
+    expect(toCandidate(withCompatibility({ dsh: '0.1.5', profiles: 'web' }))?.compatibility).toEqual({ dsh: '0.1.5' })
+    expect(toCandidate(withCompatibility({ dsh: 5, profiles: ['web'] }))?.compatibility).toEqual({ profiles: ['web'] })
+  })
+
+  it('omits the field entirely when nothing in it survives', () => {
+    // Absent, not `{}`: an empty object in the artifact reads as a declaration
+    // the author did not make. `undefined` is the package that declares none,
+    // the common case.
+    for (const value of [undefined, null, 'web', 42, [], ['web'], {}, { dsh: 42, profiles: [7] }, { dsh: '', profiles: [] }]) {
+      const candidate = toCandidate(withCompatibility(value))
+      expect(candidate, JSON.stringify(value)).not.toBeNull()
+      expect(candidate !== null && 'compatibility' in candidate, JSON.stringify(value)).toBe(false)
+    }
+    // A `dsh` that is not an object carries no declaration either, and costs
+    // nothing else: the listing's own fields are read as before.
+    const oddDsh = {
+      ...packument,
+      versions: { '1.2.0': { ...packument.versions['1.2.0'], dsh: 'compatible with everything' } },
+    }
+    expect(toCandidate(oddDsh)?.compatibility).toBeUndefined()
+    expect(toCandidate(oddDsh)?.version).toBe('1.2.0')
+  })
+
+  it('keeps each profile name that is a non-empty string, in the author’s order', () => {
+    expect(toCandidate(withCompatibility({ profiles: ['web', 7, null, '', { name: 'x' }, 'tui'] }))?.compatibility)
+      .toEqual({ profiles: ['web', 'tui'] })
+  })
+
+  it('bounds the range string and each profile name, dropping what is past them', () => {
+    // Dropped, not rejected — the same policy as every decoration the harvest
+    // bounds: an oversized declaration costs the author that value, never the
+    // listing. The literals are written out rather than derived from the
+    // constants, so the fixture cannot move with the bound it pins: `<=` to
+    // `<` and 256 to 255 are the mutations it exists for.
+    const keptRange = 'x'.repeat(256)
+    const keptProfile = 'p'.repeat(64)
+    expect(toCandidate(withCompatibility({ dsh: keptRange, profiles: [keptProfile] }))?.compatibility)
+      .toEqual({ dsh: keptRange, profiles: [keptProfile] })
+    expect(toCandidate(withCompatibility({ dsh: 'x'.repeat(257), profiles: ['web', 'q'.repeat(65)] }))?.compatibility)
+      .toEqual({ profiles: ['web'] })
+  })
+
+  it('bounds how many profiles it records, keeping the first', () => {
+    const many = Array.from({ length: COMPATIBILITY_PROFILES_MAX_COUNT + 5 }, (_, i) => `profile-${i}`)
+    expect(toCandidate(withCompatibility({ profiles: many }))?.compatibility)
+      .toEqual({ profiles: many.slice(0, COMPATIBILITY_PROFILES_MAX_COUNT) })
+  })
+
   it('projects a packument that is not an object shape to no candidate, rather than throwing', () => {
     // `null` is legal JSON, so a 200 whose whole body is those four bytes
     // parses cleanly and reaches here — and every property read below the
@@ -539,6 +719,55 @@ describe('the peers bounds', () => {
     expect(entryPayloadBytes({ peers: worst })).toBeLessThan(ENTRY_PAYLOAD_MAX_BYTES * 2)
     const live = Array.from({ length: LIVE_MAX_PEER_COUNT }, () => 'p'.repeat(LIVE_MAX_PEER_NAME_LENGTH))
     expect(entryPayloadBytes({ peers: live })).toBeLessThan(ENTRY_PAYLOAD_MAX_BYTES / 2)
+  })
+})
+
+describe('the compatibility bounds', () => {
+  // The longest `dsh.compatibility.dsh` seen on 2026-09-11 is
+  // @xmanrui/dsh-im's five-version list; dsh 0.1.5-rc.3's own shipped profile
+  // templates (`@deepseek-ai/dsh-app-boot`'s `PROFILE_TEMPLATES`) are `acp`,
+  // `web`, `headless`, `sdk` and `sdk-minimal` — `tui` is not one of them.
+  const LIVE_LONGEST_RANGE = '0.1.2-alpha.4 || 0.1.2-alpha.5 || 0.1.2-rc.1 || 0.1.3-alpha.1 || 0.1.5-alpha.1'
+  const DSH_PROFILES = ['acp', 'web', 'headless', 'sdk', 'sdk-minimal']
+
+  it('states the bounds as literals', () => {
+    // Quoted to authors in docs/schema.md: a bound that moves is a published
+    // statement that went false.
+    expect(COMPATIBILITY_RANGE_MAX_LENGTH).toBe(256)
+    expect(PROFILE_NAME_MAX_LENGTH).toBe(64)
+    expect(COMPATIBILITY_PROFILES_MAX_COUNT).toBe(16)
+  })
+
+  it('admits every declaration seen in the wild, with room to spare', () => {
+    // A value past these bounds is dropped SILENTLY — no rejection code and
+    // no published `detail` covers it, as for a trimmed peers list — so a
+    // bound must clear what exists outright.
+    expect(LIVE_LONGEST_RANGE).toHaveLength(78)
+    expect(COMPATIBILITY_RANGE_MAX_LENGTH).toBeGreaterThan(LIVE_LONGEST_RANGE.length * 3)
+    expect(PROFILE_NAME_MAX_LENGTH).toBeGreaterThan(Math.max(...DSH_PROFILES.map(name => name.length)) * 3)
+    // The count bound is the tight one of the three, with the real five
+    // templates: 16 clears 5 x 3 = 15 by exactly one, not "with room to
+    // spare" like the other two above. A sixth shipped template would fail
+    // this assertion outright — which is the point: it is a live canary on
+    // `COMPATIBILITY_PROFILES_MAX_COUNT`, not slack to spend elsewhere.
+    expect(COMPATIBILITY_PROFILES_MAX_COUNT).toBeGreaterThan(DSH_PROFILES.length * 3)
+  })
+
+  it('keeps the whole declaration inside the per-entry budget even at every bound', () => {
+    // Unlike the peers bounds, these do NOT multiply into something past the
+    // budget: at every bound at once the block is 12.9% of what one entry may
+    // cost, so no author reaching them loses a listing to this field alone.
+    // Both figures are quoted in the constants' comment, so they are asserted
+    // here rather than left to go stale there.
+    const marginal = (compatibility: unknown): number =>
+      entryPayloadBytes({ name: 'x', compatibility }) - entryPayloadBytes({ name: 'x' })
+    const worst = {
+      dsh: 'x'.repeat(COMPATIBILITY_RANGE_MAX_LENGTH),
+      profiles: Array.from({ length: COMPATIBILITY_PROFILES_MAX_COUNT }, () => 'p'.repeat(PROFILE_NAME_MAX_LENGTH)),
+    }
+    expect(marginal(worst)).toBe(1588)
+    expect(marginal(worst)).toBeLessThan(ENTRY_PAYLOAD_MAX_BYTES / 4)
+    expect(marginal({ dsh: LIVE_LONGEST_RANGE, profiles: ['web'] })).toBe(179)
   })
 })
 

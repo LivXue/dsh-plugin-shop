@@ -67,6 +67,10 @@ export function assignTier(accepted: Accepted, config: RegistryConfig): Entry {
     // dropping it here would blank the size for every client that predates
     // `installSize`. See Entry.installSize for the retirement path.
     ...(candidate.unpackedSize !== undefined ? { installSize: candidate.unpackedSize } : {}),
+    // Last, the newest key at the end of the optional block (§7.1). Copied,
+    // never judged: nothing here decides anything from the author's
+    // declaration, because whether it holds depends on who is reading.
+    ...(candidate.compatibility !== undefined ? { compatibility: candidate.compatibility } : {}),
   }
   // Defence in depth: a github review is keyed by its repository now, so it
   // can no longer be reached by an npm name at all (config.ts). If one ever
@@ -132,6 +136,15 @@ export function assignRepoTier(accepted: RepoAccepted, config: RegistryConfig): 
     // entry carrying that key, and the data file is parsed with a throw, so
     // one such row costs every reader the WHOLE catalog.
     ...(repo.installSize !== undefined ? { installSize: repo.installSize } : {}),
+    // After `installSize`, not in the npm path's slot ahead of the sizes: it
+    // reached this channel later, and a new key goes at the END (§7.1).
+    // Omitted when empty, exactly as the npm path omits it — an empty array
+    // is bytes carrying no fact — and when ABSENT, the carried record of a
+    // repository not re-read since peers were: no fact, so no verdict.
+    ...(repo.peers !== undefined && repo.peers.length > 0 ? { peers: repo.peers } : {}),
+    // After `peers`, for the same reason, and copied the same way the npm
+    // path copies it.
+    ...(repo.compatibility !== undefined ? { compatibility: repo.compatibility } : {}),
   }
   // A release-pinned entry is reviewed by its tarball sha256: the tag is
   // display only — a mutable ref an author can re-point at different content

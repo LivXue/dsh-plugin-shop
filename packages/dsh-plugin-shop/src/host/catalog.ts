@@ -14,9 +14,15 @@ import { COMMIT_SHA, RELEASE_TAG } from '../shared/identity.ts'
  * 3 adds `source` and repo entries (github install channel); 4 adds `subdir`
  * for monorepo-subpackage entries (2026-08-31 hub-borrowings A); 5 adds
  * `added`, `tarball` (release rescue), the `theme` category, and
- * `denied[].replacement` (2026-08-31 market borrowings);
- * 6 adds `peers`, the package's declared peer dependency names
- * (2026-09-01 harness compatibility). */
+ * `denied[].replacement` (2026-08-31 market borrowings).
+ *
+ * 6 adds nothing. It was reserved for `peers` (2026-09-01 harness
+ * compatibility), and that gate came off on 2026-09-03 without ever being
+ * opened: `peers` rides 5, as every additive optional key does, because this
+ * schema strips a key it does not know while a higher version NUMBER is what
+ * a capped client refuses outright. Every shop built since this constant
+ * became 6 accepts a 6 without knowing what one would mean, so a change those
+ * shops must refuse has to be 7. */
 export const SUPPORTED_SCHEMA_VERSION = 6
 
 /** A cached catalog younger than this is served without touching the network. */
@@ -173,11 +179,34 @@ const entrySchema = z.object({
   // non-strict schema, which is what lets old and new hosts share one
   // catalog. Same reasoning as `added`.
   publisher: z.string().optional(),
-  // v6: the package's declared peer dependency names. OPTIONAL on the
-  // consumer, and this is not a style preference: the live catalog is v5 and
-  // carries no such field, and making `added` required is exactly what made
-  // 0.5.0 refuse the published catalog for every user.
+  // The package's declared peer dependency names, riding every schemaVersion
+  // (see SUPPORTED_SCHEMA_VERSION for the version-6 gate that never opened).
+  // OPTIONAL on the consumer, and this is not a style preference: a package
+  // that declares no peers carries none, and no github entry carries any yet
+  // — the registry harvests them from 2026-09-24 but withholds them from
+  // emission (`withholdRepoPeers`) until `SHOP_EMIT_REPO_PEERS` flips (design
+  // 2026-09-01-harness-compatibility §8.1, §9.8) — and making `added`
+  // required is exactly what made 0.5.0 refuse the published catalog for
+  // every user.
   peers: z.array(z.string()).optional(),
+  // The author's own `dsh.compatibility` (same design, §8.2): a semver range
+  // over `@deepseek-ai/dsh` versions and the profile names the plugin
+  // supports, either of which may stand alone. A REQUIREMENT, never a
+  // verdict — the host judges it against the running installation
+  // (`compatibility.ts`). Additive and optional, so it rides every
+  // schemaVersion, and declared because this schema strips a key it does not
+  // know: that is how `installSize` was published for weeks and shown to
+  // nobody. Non-strict inside too, so a half this build has never heard of is
+  // stripped rather than refused.
+  //
+  // Typed rather than waved through, like the size keys below: the host hands
+  // `dsh` to semver and `profiles` to a membership test, and the registry
+  // publishes strings only, so anything else is our own build having written
+  // what it cannot write.
+  compatibility: z.object({
+    dsh: z.string().optional(),
+    profiles: z.array(z.string()).optional(),
+  }).optional(),
   // npm's `dist.unpackedSize`, additive and optional for the same reason as
   // `publisher` — this schema strips a key it does not know, so old and new
   // hosts share one catalog, while bumping the version NUMBER would make

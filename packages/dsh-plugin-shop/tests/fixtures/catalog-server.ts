@@ -14,16 +14,33 @@
  * `dsh-shop-e2e-client`, ARE served by the local registry
  * (tests/fixtures/local-registry.ts): the simple-patch fixture mounts
  * without a restart, the config-row fixture falls back to a restart, the
- * peer fixture declares `peers: ["@deepseek-ai/dsh-client-store"]` — a
- * module this test's profile never installs — so the harness-compatibility
- * badge and install-gate warning have a genuinely-missing peer to report
- * against a real host resolver, and the client fixture additionally declares
- * `dsh.client` (activation-model design, §3) so a hot-mounted install has a
- * browser half and reports `reload` rather than `live` — the other three
- * live fixtures are host-only, so none of them can exercise that path. That
- * one missing peer is also the incompatible FILTER's subject: it makes the
- * shelf hold exactly one incompatible entry, so the filter's count and the
- * card it removes are both determinate.
+ * peer fixture carries every harness-compatibility verdict the shop can form
+ * (below), and the client fixture additionally declares `dsh.client`
+ * (activation-model design, §3) so a hot-mounted install has a browser half
+ * and reports `reload` rather than `live` — the other three live fixtures are
+ * host-only, so none of them can exercise that path.
+ *
+ * The compatibility verdict is formed in two stages — the host's node
+ * resolution, then the browser's module table (design 2026-09-01 §9) — and
+ * only a real harness can show the second stage, so the fixtures split the
+ * cases between two cards:
+ *
+ * - `dsh-shop-e2e-peer` declares `@deepseek-ai/dsh-client-store` — the module
+ *   whose absence broke a real user on 0.1.1-rc.2, and a platform seed word
+ *   on the pinned 0.1.5-rc.3, so it must NOT be named — beside
+ *   `@dsh-shop-e2e/absent-peer`, which nothing anywhere provides and so must
+ *   be. It also declares a `dsh.compatibility` that the running harness does
+ *   not meet on either half, so the declaration is proven through a real host
+ *   parse: a consumer schema that stripped the key would lose exactly those
+ *   two lines, whatever the peer badge did.
+ * - `dsh-shop-e2e-live` declares only seed words (`react`, `react-dom`), which
+ *   the host cannot resolve (they have no package on disk) and the module
+ *   table serves. Before 2026-09-24 this was the false alarm on 755 live
+ *   entries; now the card must carry no blocker at all.
+ *
+ * That leaves exactly one incompatible entry on the shelf, so the filter's
+ * count and the card it removes are both determinate — and the filter
+ * leaving `dsh-shop-e2e-live` in place is itself the seed-word assertion.
  *
  * Port 0 → the OS assigns an ephemeral port; the caller reads `baseUrl` and
  * closes the server in teardown. The fixtures live here, not in the test, so
@@ -104,6 +121,9 @@ const FIXTURE_ENTRIES = [
     // version and an `installSize`), the render in
     // `tests/client/ShopTab.client.spec.tsx`. 4123461 renders "4.1 MB".
     installSize: 4123461,
+    // Seed words only: node resolution reports both missing, the browser's
+    // module table serves both, and the card must say nothing (header).
+    peers: ['react', 'react-dom'],
   },
   {
     name: 'dsh-shop-e2e-config',
@@ -126,7 +146,14 @@ const FIXTURE_ENTRIES = [
     tier: 'community',
     metadata: 'derived',
     added: '2026-08-31',
-    peers: ['@deepseek-ai/dsh-client-store'],
+    peers: ['@deepseek-ai/dsh-client-store', '@dsh-shop-e2e/absent-peer'],
+    // Unmet on both halves by the harness the e2e boots: no 0.1.5 build
+    // satisfies `0.1.2-rc.1`, and the e2e's `web` profile does not compose
+    // the `acp` template — a declared profile is judged by the harness's own
+    // PROFILE_TEMPLATES bundles, so it has to be a template this harness
+    // ships and whose bundles (`dsh-base`, `dsh-acp-app`) the web profile
+    // lacks. A name that is no template, `tui` included, would be silence.
+    compatibility: { dsh: '0.1.2-rc.1', profiles: ['acp'] },
   },
   {
     name: 'dsh-shop-e2e-client',

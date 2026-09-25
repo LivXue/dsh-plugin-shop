@@ -38,6 +38,12 @@ export const zh = {
   installedRestartNotice: '已安装；重启 dsh 后生效',
   incompatibleBadge: '不兼容',
   incompatibleDetail: '缺少组件/插件：{modules}\n此插件可能是为其他版本的 DSH 设计的。',
+  /** The author's own `dsh.compatibility`, unmet on this machine (design
+   * 2026-09-01 §8.2). Each names BOTH sides — what the author declared and
+   * what this dsh runs — because the host sends both, and a bare
+   * "unsupported" leaves the reader guessing which side is off. */
+  harnessRangeDetail: '作者声明支持的 dsh 版本：{range}；本机运行的是 {running}。',
+  harnessProfileDetail: '作者声明支持的 profile：{declared}；此 dsh 以 {running} profile 启动。',
   hotNoPatchNotice: '该插件没有可热挂载的补丁文件；重启 dsh 后生效',
   hotNotSimpleNotice: '该插件的补丁包含无法热挂载的配置；重启 dsh 后生效',
   hotHostUnsupportedNotice: '当前环境不支持热挂载；重启 dsh 后生效',
@@ -68,9 +74,12 @@ export const zh = {
   /** The incompatible filter's label. FIXED — the switch beside it carries the
    * state, so the words name what the switch does and never flip with it. */
   hideIncompatible: '隐藏不兼容 {count}',
-  incompatibleFilterTitle: '不显示缺少组件的插件',
-  showIncompatibleTitle: '把缺少组件的插件放回列表',
-  emptyIncompatibleFiltered: '匹配的插件都缺少组件，已被「隐藏不兼容」筛掉。',
+  /** What the filter takes away is every card whose badge reads 不兼容 —
+   * missing components OR an author's declaration this dsh does not meet —
+   * so these three name the badge, not one of its reasons. */
+  incompatibleFilterTitle: '不显示标为不兼容的插件',
+  showIncompatibleTitle: '把标为不兼容的插件放回列表',
+  emptyIncompatibleFiltered: '匹配的插件都标为不兼容，已被「隐藏不兼容」筛掉。',
   license: '许可',
   customLicense: '自定义许可',
   reviewedVersionLine: '已审核 v{reviewed} / 当前 v{current} 未审核',
@@ -161,6 +170,8 @@ export const en = {
   installedRestartNotice: 'installed; restart dsh to activate',
   incompatibleBadge: 'Incompatible',
   incompatibleDetail: 'Missing components/plugins: {modules}\nThis plugin may be designed for another DSH version.',
+  harnessRangeDetail: 'The author declares support for dsh {range}; this machine runs {running}.',
+  harnessProfileDetail: 'The author declares support for the {declared} profile(s); this dsh was launched with the {running} profile.',
   hotNoPatchNotice: 'no patch file to hot-mount; restart dsh to activate',
   hotNotSimpleNotice: 'the patch has config rows that cannot be hot-mounted; restart dsh to activate',
   hotHostUnsupportedNotice: 'this harness cannot hot-mount; restart dsh to activate',
@@ -183,9 +194,9 @@ export const en = {
   authorLine: 'Author: {author}',
   sizeLabel: '{size} on disk',
   hideIncompatible: 'Hide incompatible {count}',
-  incompatibleFilterTitle: 'Leave out plugins whose components are missing',
-  showIncompatibleTitle: 'Put plugins whose components are missing back on the shelf',
-  emptyIncompatibleFiltered: 'Every matching plugin is missing components, and the incompatible filter is leaving them out.',
+  incompatibleFilterTitle: 'Leave out plugins marked incompatible with this dsh',
+  showIncompatibleTitle: 'Put plugins marked incompatible back on the shelf',
+  emptyIncompatibleFiltered: 'Every matching plugin is marked incompatible, and the incompatible filter is leaving them out.',
   license: 'License',
   customLicense: 'Custom license',
   reviewedVersionLine: 'reviewed v{reviewed} / current v{current} unreviewed',

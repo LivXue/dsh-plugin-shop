@@ -96,9 +96,12 @@ see the [package README](packages/dsh-plugin-shop/README.md#failure-modes).
   Rejected plugins are recorded by name with one of seventeen predefined reasons
   and a detailed explanation to help authors troubleshoot. The `plugins` and
   `filtered` badges above show the current totals.
-- **🔌 Local dependency checks** — the shop resolves each declared peer dependency
-  in your profile, just as the dsh loader does when loading a plugin. A card shows
-  **Incompatible** only when a dependency is missing from your environment.
+- **🔌 Local dependency checks** — the shop checks each peer dependency a plugin
+  requires against your profile and the modules dsh's web client provides. When the
+  author declares which dsh versions or profiles a plugin supports, the shop also
+  compares them with what you run. A card shows **Incompatible** only when a
+  dependency is missing from your environment or the author's declared support
+  does not cover it.
 - **🗓️ Daily updates** — the catalog is rebuilt daily, with changes committed to
   Git for review. Eligible new plugins are listed the next morning, and plugins
   whose repositories are no longer available are removed during the same process.
@@ -131,7 +134,7 @@ flowchart TB
   subgraph SHELVE["3 · List — record plugin details"]
     direction LR
     CAT["One of seven categories"]
-    PEER["Declared peer dependency names,<br/>without version ranges"]
+    PEER["Required peer dependency names,<br/>without version ranges"]
   end
 
   NPM --> G1
@@ -153,9 +156,9 @@ The catalog build and the local shop share a data schema; their code is independ
 flowchart LR
   CAT[["Plugin catalog<br/>index.json + plugins.sha256.json"]]
   CAT ==> HOST["5 · Host<br/>Request multiple sources concurrently<br/>Verify sha256 and cache the result"]
-  HOST ==> DEP{"6 · Check dependencies<br/>Resolve each peer dependency<br/>in your profile"}
+  HOST ==> DEP{"6 · Check dependencies<br/>Look for each peer dependency<br/>in your profile or web client"}
   DEP -->|"Missing dependencies"| BAD["Incompatible<br/>The card lists<br/>missing dependencies"]
-  DEP -->|"All dependencies resolve"| GOOD["Ready to install"]
+  DEP -->|"All dependencies found"| GOOD["Ready to install"]
   BAD --> CLIENT["Client — the plugin shop in Settings<br/>Calls nine shop/* methods on the host<br/>No network or filesystem access"]
   GOOD --> CLIENT
   CLIENT ==>|"dsh plugin add"| PROF[("your dsh profile")]
@@ -165,11 +168,12 @@ Two details are useful to understand:
 
 - **Every rejected plugin is documented.** The build report records its name and
   explains which check it failed, so authors can investigate.
-- **Compatibility depends on your local environment.** The catalog records peer
-  dependency *names*, without version ranges. Nearly all dsh plugins declare `"*"`,
-  but the harness's prereleases do not satisfy ordinary version ranges. Checking
-  those ranges would incorrectly mark working plugins as incompatible. Instead,
-  the shop checks whether each dependency can be resolved in your profile.
+- **Compatibility depends on your local environment.** The catalog records the
+  *names* of the peer dependencies a plugin requires, without version ranges.
+  Nearly all dsh plugins declare `"*"`, but the harness's prereleases do not
+  satisfy ordinary version ranges. Checking those ranges would incorrectly mark
+  working plugins as incompatible. Instead, the shop checks whether each
+  dependency is available in your profile or provided by dsh's web client.
 
 ## ✅ Project principles
 

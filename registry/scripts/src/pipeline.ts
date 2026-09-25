@@ -19,6 +19,101 @@ export interface PipelineResult extends Artifacts {
 }
 
 /**
+ * Whether a build may publish github `peers`, decided from the raw value of
+ * `SHOP_EMIT_REPO_PEERS` alone.
+ *
+ * The flag has two readers and they must agree: `build.ts`, which withholds
+ * before its own gate passes, and `classify.ts`, which re-reads the same
+ * `repo-state.json` candidates a day later and gates them a third time. An
+ * inline `=== '1'` in each is two places to drift, and they had: classify
+ * gated candidates with peers still attached, so a repository whose peers
+ * alone cross the payload budget was listed by the build and dropped from
+ * `liveNames` by the classifier, which then pruned its `categories.yml` row —
+ * the entry listed as `other` every day until the flag flipped (design
+ * 2026-09-01-harness-compatibility section 9.8). Taking the value as a
+ * parameter rather than reading `process.env` keeps this module pure; the
+ * callers are the ones that read the environment.
+ * @param flag - `process.env.SHOP_EMIT_REPO_PEERS` as the caller read it.
+ * @returns whether the flag is the exact string `'1'`.
+ */
+export function repoPeersEmitted(flag: string | undefined): boolean {
+  return flag === '1'
+}
+
+/**
+ * The repository candidates this build may emit, with their `peers` withheld
+ * until the release that can read them is out.
+ *
+ * `peers` on a github entry is a record every shop judges — and a shop from
+ * 0.8.3 or earlier judges it by node resolution alone, which on the current
+ * harness badges platform seed words (design 2026-09-01-harness-compatibility
+ * §9.1). Measured on a seeded sample of 297 real github manifests
+ * (2026-09-24): such a client would badge about 15% of github entries, half of
+ * them for seed words alone. Publishing github peers before the shop that
+ * refines against the module table is `latest` would therefore raise an
+ * installed shop's false alarms rather than lower them — so emission waits on
+ * `SHOP_EMIT_REPO_PEERS`, flipped in the release commit that first promotes
+ * that shop, the same choreography `SHOP_HARVEST_REPOS`,
+ * `SHOP_HARVEST_SUBPACKAGES` and `SHOP_CATALOG_V5` followed.
+ *
+ * Only EMISSION is gated. The harvest reads peers and `repo-state.json` keeps
+ * them whatever this answers, so the record is as complete as the backfill has
+ * made it on the day the flag flips. Two callers apply this to their own copy
+ * of the same harvest: `build.ts`, after that file is written, and
+ * `classify.ts`, reading the file back a day later — and because
+ * `repo-state.json` keeps the peers it recorded, the classifier's copy has
+ * them attached until this strips them. Both must, or the payload budget
+ * measures two different candidates. Stripping before either gate pass also
+ * keeps that budget honest: it measures the bytes `emit` will write, and
+ * withheld peers are not written. npm entries are untouched — their peers
+ * already reach every shop.
+ * @param repoCandidates - the repository candidates this run harvested.
+ * @param emitRepoPeers - whether this build may publish github peers
+ *   ({@link repoPeersEmitted} decides it from the raw flag).
+ * @returns the candidates to gate and emit, and how many candidates had a
+ *   non-empty `peers` withheld — a report figure, never a listing decision.
+ */
+export function withholdRepoPeers(
+  repoCandidates: readonly RepoCandidate[],
+  emitRepoPeers: boolean,
+): { candidates: RepoCandidate[]; withheld: number } {
+  if (emitRepoPeers) return { candidates: [...repoCandidates], withheld: 0 }
+  let withheld = 0
+  const candidates = repoCandidates.map(candidate => {
+    if (candidate.peers === undefined) return candidate
+    if (candidate.peers.length > 0) withheld += 1
+    const { peers: _withheld, ...rest } = candidate
+    return rest
+  })
+  return { candidates, withheld }
+}
+
+/**
+ * Why the github declarations re-read stopped early, as a build-note
+ * fragment to append next to its counts — `''` when it did not.
+ *
+ * `RepoHarvestResult.rereadStopped` (github-client.ts) is `null` when
+ * the phase ran to its own budget or its queue simply emptied, so there is
+ * nothing to add. The two non-null values are `'time-budget'` (the phase's
+ * own time budget, {@link DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT} in
+ * github-client.ts, was spent) and `'failure-breaker'` (the host, not any one
+ * record, failed {@link DECLARATIONS_REREAD_MAX_CONSECUTIVE_FAILURES} times in
+ * a row — see that constant's doc in github-client.ts). Either way the counts
+ * already printed beside it (`rereadAttempted`, `rereadDeferred`, ...) say how
+ * much of the queue that left; this only says why.
+ * @param stopped - `RepoHarvestResult.rereadStopped`, verbatim.
+ * @returns `'; re-read stopped: time budget'`, `'; re-read stopped: failure
+ *   breaker'`, or `''` for `null`.
+ */
+export function describeRereadStopped(stopped: 'time-budget' | 'failure-breaker' | null): string {
+  switch (stopped) {
+    case null: return ''
+    case 'time-budget': return '; re-read stopped: time budget'
+    case 'failure-breaker': return '; re-read stopped: failure breaker'
+  }
+}
+
+/**
  * Registry rows that matched nothing this run, as report lines.
  *
  * A denial, a review or a clearance is matched EXACTLY (the repo keyspace

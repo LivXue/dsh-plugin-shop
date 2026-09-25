@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { gzipSync } from 'node:zlib'
-import { MAX_INFLATED_BYTES, verifyReleaseAsset } from '../src/release-asset.ts'
+import { MAX_INFLATED_BYTES, readPackedDeclarations, verifyReleaseAsset } from '../src/release-asset.ts'
 import { packedTarball, rawTarball } from './packed-tarball.ts'
 
 
@@ -82,14 +82,89 @@ describe('verifyReleaseAsset', () => {
     }
   })
 
-  it('carries nothing on an accepted verdict beyond ok and the figure', () => {
+  it('carries nothing on an accepted verdict beyond ok, the figure and the declarations', () => {
     // The acceptance cases above moved from `toEqual` to `toMatchObject`, and
     // `toMatchObject` accepts any extra key. This keeps the property `toEqual`
-    // used to carry — that an accepted verdict says exactly two things —
+    // used to carry — that an accepted verdict says exactly what it means to —
     // without restating what the fixture happens to pack.
+    //
+    // Changed when a rescued entry began declaring what its tarball declares
+    // (design 2026-09-01-harness-compatibility section 9.8): the verdict now
+    // also hands back the packed manifest's
+    // declaration inputs, which a rescued entry's `peers` and `compatibility`
+    // are projected from (the two tests below). Still nothing else.
     const verdict = verifyReleaseAsset(packedTarball('dsh-foo'), 'dsh-foo')
     expect(verdict.ok).toBe(true)
-    expect(Object.keys(verdict).sort()).toEqual(['installSize', 'ok'])
+    expect(Object.keys(verdict).sort()).toEqual(['declarations', 'installSize', 'ok'])
+  })
+
+  it('hands back the packed manifest\'s declaration inputs, unread, on an accepted verdict', () => {
+    // A rescued entry installs THIS archive, so what it requires is what the
+    // archive's own package.json declares — and the default-branch HEAD the
+    // candidate is projected from can be a different version saying something
+    // else (the live measurement is kept once, on `PackedDeclarations`).
+    // Handed over raw, not as peer names: this module is pure, and `peerNamesOf` and
+    // `compatibilityOf` are the one reader each for both channels, so reading
+    // them here would be the second reader that rule exists to prevent.
+    const peerDependencies = { '@deepseek-ai/dsh-client-runtime': '*', react: '^18' }
+    const peerDependenciesMeta = { react: { optional: true } }
+    const dsh = { bundle: { patch: './cordis.patch.yml' }, compatibility: { dsh: '>=0.1.5' } }
+    const verdict = verifyReleaseAsset(
+      packedTarball('dsh-foo', { peerDependencies, peerDependenciesMeta, dsh }), 'dsh-foo',
+    )
+    expect(verdict.ok).toBe(true)
+    if (verdict.ok) expect(verdict.declarations).toStrictEqual({ peerDependencies, peerDependenciesMeta, dsh })
+  })
+
+  it('hands back nothing for a declaration the packed manifest does not make', () => {
+    // Absent stays absent: `peerNamesOf` reads an undefined `peerDependencies`
+    // as "requires nothing", which is what this archive says.
+    const verdict = verifyReleaseAsset(packedTarball('dsh-foo'), 'dsh-foo')
+    expect(verdict.ok).toBe(true)
+    if (verdict.ok) {
+      expect(verdict.declarations.peerDependencies).toBeUndefined()
+      expect(verdict.declarations.peerDependenciesMeta).toBeUndefined()
+      expect(verdict.declarations.dsh).toEqual({ bundle: { patch: './cordis.patch.yml' } })
+    }
+  })
+
+  it('reads the declarations of a recorded asset without re-deciding whether it is a complete pack', () => {
+    // `readPackedDeclarations` serves the declarations re-read of a rescue
+    // that was already verified and still hashes to its pin. It must not
+    // re-run the build-completeness rules: a rule tightened since would leave
+    // the entry unstamped and its asset re-downloaded every run, and whether
+    // the rescue still lists is the full re-probe's question. This archive
+    // fails one of those rules — its patch is missing — and still declares.
+    const bytes = rawTarball({
+      'package/package.json': JSON.stringify({
+        name: 'dsh-foo',
+        dsh: { bundle: { patch: './missing.yml' } },
+        peerDependencies: { a: '*' },
+      }),
+    })
+    expect(verifyReleaseAsset(bytes, 'dsh-foo').ok).toBe(false)
+    const read = readPackedDeclarations(bytes, 'dsh-foo')
+    expect(read).toStrictEqual({
+      ok: true,
+      declarations: { peerDependencies: { a: '*' }, peerDependenciesMeta: undefined, dsh: { bundle: { patch: './missing.yml' } } },
+    })
+  })
+
+  it('still refuses to read declarations out of bytes that are not this package', () => {
+    // The identity checks are the part that DOES run again: a declaration
+    // read from another package's manifest, or from one of two roots, would
+    // describe something this entry does not install.
+    for (const bytes of [
+      packedTarball('dsh-something-else'),
+      rawTarball({ 'a/package.json': '{"name":"dsh-foo"}', 'b/package.json': '{"name":"dsh-foo"}' }),
+      Buffer.from('not a tarball'),
+    ]) {
+      const read = readPackedDeclarations(bytes, 'dsh-foo')
+      expect(read.ok).toBe(false)
+      // The same reason verifyReleaseAsset gives for the same bytes, because
+      // it is the same check.
+      if (!read.ok) expect(verifyReleaseAsset(bytes, 'dsh-foo')).toEqual({ ok: false, detail: read.detail })
+    }
   })
 
   it('refuses an asset packing a DIFFERENT package', () => {
@@ -597,8 +672,14 @@ describe('verifyReleaseAsset', () => {
   })
 
   it('never throws, whatever the bytes are', () => {
-    // The rescue is advisory: its fallback is the unchanged requires-build
-    // rejection, so nothing here may take the daily harvest down.
+    // The property is unchanged; its reason is not. This said "the rescue is
+    // advisory", which stopped being true when the probe began throwing on
+    // every transport failure (design 2026-09-01-harness-compatibility
+    // section 9.8). What a throw from HERE would do now is
+    // worse than crash: the probe no longer catches it, so it would surface as
+    // a `fetch-failed` — retried every run, forever — for bytes that DID arrive
+    // and are the author's to fix, when the answer owed is a refusal whose
+    // detail says why.
     for (const bytes of [Buffer.alloc(0), Buffer.alloc(512), gzipSync(Buffer.alloc(3))]) {
       expect(() => verifyReleaseAsset(bytes, 'dsh-foo')).not.toThrow()
     }

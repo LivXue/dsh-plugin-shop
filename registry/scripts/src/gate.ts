@@ -415,6 +415,11 @@ export function gate(
     // `unpackedSize` stays counted because it predates this change; dropping
     // it too would LOOSEN a bound that has been in force, which is a separate
     // decision from not tightening one.
+    //
+    // `compatibility` IS counted, unlike the size above: it is the author's own
+    // text, a range and a list of names copied from their manifest verbatim,
+    // which is exactly what this budget exists to measure.
+    ...(candidate.compatibility !== undefined ? { compatibility: candidate.compatibility } : {}),
   })
   if (payloadBytes > ENTRY_PAYLOAD_MAX_BYTES) {
     return reject(name, 'no-manifest',
