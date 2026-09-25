@@ -2228,6 +2228,8 @@
   added: 2026-09-21
 - name: "@drive9/drive9-dsh"
   added: 2026-08-25
+- name: "@drscrewdriver/dsh-tidychat"
+  added: 2026-09-25
 - name: "@dsh-agent-groups/monorepo"
   added: 2026-09-04
 - name: "@dsh-agent-toolkit/token-usage"
@@ -10506,6 +10508,8 @@
   added: 2026-09-01
 - name: "cnctem/dsh-acp"
   added: 2026-09-01
+- name: "cningan/dsh-startup-check"
+  added: 2026-09-25
 - name: "cnsmaple/dsh-open-in-editor"
   added: 2026-08-31
 - name: "cnwutianhao/dsh-safe-workflow"
@@ -11890,6 +11894,8 @@
   added: 2026-08-25
 - name: "dsh-action-parity"
   added: 2026-09-01
+- name: "dsh-actions"
+  added: 2026-09-25
 - name: "dsh-active-context-pruning"
   added: 2026-09-01
 - name: "dsh-active-listening"
@@ -15028,6 +15034,8 @@
   added: 2026-09-01
 - name: "dsh-command-md"
   added: 2026-09-04
+- name: "dsh-command-menu"
+  added: 2026-09-25
 - name: "dsh-command-monitor"
   added: 2026-09-25
 - name: "dsh-command-palette"
@@ -15490,6 +15498,8 @@
   added: 2026-08-28
 - name: "dsh-cornell-classic-theme"
   added: 2026-09-01
+- name: "dsh-coros-badge"
+  added: 2026-09-25
 - name: "dsh-correctover"
   added: 2026-08-25
 - name: "dsh-correlation"
@@ -19000,6 +19010,8 @@
   added: 2026-09-01
 - name: "dsh-hungary"
   added: 2026-09-01
+- name: "dsh-hunk-review"
+  added: 2026-09-25
 - name: "dsh-hunyuan"
   added: 2026-09-04
 - name: "dsh-huobi"
@@ -19478,6 +19490,8 @@
   added: 2026-09-23
 - name: "dsh-jev-guard"
   added: 2026-09-22
+- name: "dsh-jev-interceptor"
+  added: 2026-09-25
 - name: "dsh-jev-tools"
   added: 2026-09-21
 - name: "dsh-jev-verify"
@@ -21518,6 +21532,8 @@
   added: 2026-09-18
 - name: "dsh-model-collapse"
   added: 2026-08-27
+- name: "dsh-model-compare"
+  added: 2026-09-25
 - name: "dsh-model-compat-guard"
   added: 2026-09-02
 - name: "dsh-model-context-catalog"
@@ -23462,6 +23478,8 @@
   added: 2026-09-05
 - name: "dsh-plugin-capabilities"
   added: 2026-08-25
+- name: "dsh-plugin-cards"
+  added: 2026-09-25
 - name: "dsh-plugin-cas-kb"
   added: 2026-09-01
 - name: "dsh-plugin-catalog"
@@ -26990,6 +27008,8 @@
   added: 2026-09-04
 - name: "dsh-session-rescue"
   added: 2026-09-04
+- name: "dsh-session-retry"
+  added: 2026-09-25
 - name: "dsh-session-review"
   added: 2026-08-28
 - name: "dsh-session-rewind"
@@ -30088,6 +30108,8 @@
   added: 2026-09-04
 - name: "dsh-user-question-nav"
   added: 2026-09-04
+- name: "dsh-user-shell"
+  added: 2026-09-25
 - name: "dsh-user-steer"
   added: 2026-09-02
 - name: "dsh-useragent"
@@ -30216,6 +30238,8 @@
   added: 2026-08-31
 - name: "dsh-vibe-math"
   added: 2026-08-25
+- name: "dsh-vibe-mode"
+  added: 2026-09-25
 - name: "dsh-vibe-pack"
   added: 2026-09-04
 - name: "dsh-vibegap"
@@ -31336,6 +31360,8 @@
   added: 2026-09-04
 - name: "dsh-workbuddy-auth"
   added: 2026-09-14
+- name: "dsh-workbuddy-bridge"
+  added: 2026-09-25
 - name: "dsh-workbuddy-connect"
   added: 2026-08-25
 - name: "dsh-workbuddy-files"
@@ -34634,6 +34660,8 @@
   added: 2026-09-01
 - name: "kaalia0912/dsh-whale-musume-persona"
   added: 2026-08-31
+- name: "kaede0614/dsh-history-fictionologists"
+  added: 2026-09-25
 - name: "kaelorvyn/dsh-archived-sessions"
   added: 2026-09-10
 - name: "kagura-agent/dsh-memes"
@@ -45254,6 +45282,8 @@
   added: 2026-09-14
 - name: "ylinghao/dsh-codeui"
   added: 2026-09-01
+- name: "yll-kb/dsh-video-to-notes"
+  added: 2026-09-25
 - name: "ylw-a/dsh-file-review"
   added: 2026-09-02
 - name: "ylwl1997/dsh-browser"
