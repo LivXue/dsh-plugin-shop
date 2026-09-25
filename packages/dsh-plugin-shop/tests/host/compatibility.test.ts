@@ -76,11 +76,14 @@ describe('compatibilityMap', () => {
     expect(map([npm('web-ok', { profiles: ['web', 'acp'] })])).toEqual({})
   })
 
-  it('judges by what the profile IS, not by the name it was given', () => {
-    // The defect this rule exists for: `dsh --profile rescue
+  it('judges a custom-named profile by what it IS', () => {
+    // The defect the bundle rule exists for: `dsh --profile rescue
     // --from-default-profile web` builds a profile called `rescue` out of the
     // web bundles, and dsh records nothing about which template it came from.
-    // Comparing names would badge every plugin declaring `profiles: ["web"]`.
+    // Comparing names ALONE would badge every plugin declaring
+    // `profiles: ["web"]` on it. (A matching name is also enough since
+    // 2026-09-25 — the name-rule cases below — but `rescue` matches nothing,
+    // so bundles decide here, as they did before.)
     const rescue = withProfile('rescue', ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'])
     expect(map([npm('declares-web', { profiles: ['web'] })], rescue)).toEqual({})
     // And the same profile still fails a template it genuinely lacks.
@@ -180,6 +183,107 @@ describe('compatibilityMap', () => {
     expect(satisfies(RUNNING.dshVersion, range)).toBe(false)
     expect(map([npm('pre', { dsh: range })])).toEqual({})
   })
+
+  // What `includePrerelease` admits and refuses, as `compatibilityMap`'s doc
+  // comment states it — pinned here so that comment cannot go on claiming
+  // what semver no longer does. It claimed the option still refused "a later
+  // minor line", which a hand-written upper bound does not: under the option
+  // a prerelease is compared like any version, and sorts BELOW its own
+  // release. The rows are semver's behaviour, not a choice of this build.
+  it.each<[range: string, running: string, met: boolean]>([
+    // An upper bound written without `-0` admits the next line's prereleases…
+    ['<0.2.0', '0.2.0-rc.1', true],
+    ['>=0.1.0 <0.2.0', '0.2.0-rc.1', true],
+    // …and only a bound that desugars to `<0.2.0-0` refuses them.
+    ['^0.1.0', '0.2.0-rc.1', false],
+    ['~0.1.0', '0.2.0-rc.1', false],
+    ['0.1.x', '0.2.0-rc.1', false],
+    ['<0.2.0-0', '0.2.0-rc.1', false],
+    // A floor written without `-0` refuses its own prereleases, since
+    // `0.1.5` sorts above `0.1.5-rc.3`…
+    ['>=0.1.5', '0.1.5-rc.3', false],
+    ['^0.1.5', '0.1.5-rc.3', false],
+    ['0.1.5', '0.1.5-rc.3', false],
+    // …and `-0` on the floor admits every `0.1.5-rc.N`.
+    ['>=0.1.5-0', '0.1.5-rc.3', true],
+  ])('under includePrerelease, %s meets %s: %s', (range, running, met) => {
+    const runtime = { dshVersion: running, profile: { name: 'web', bundles: null } }
+    expect(compatibilityMap([npm('x', { dsh: range })], runtime, RC3_TEMPLATES))
+      .toEqual(met ? {} : { 'npm:x': { dsh: { range, running } } })
+  })
+})
+
+describe('compatibilityMap and Object.prototype', () => {
+  /** The five names a record built on `{}` answers from `Object.prototype`.
+   * Each was a legal-looking profile name that made `compatibilityMap` throw
+   * — `bundles.every is not a function` — out of `catalog()`, so one entry
+   * declaring it rejected every catalog call for every user on this build.
+   * Reproduced for all five, with the 0.1.5-rc.3 table and with an empty one. */
+  const PROTOTYPE_NAMES = ['constructor', '__proto__', 'toString', 'hasOwnProperty', 'valueOf']
+
+  /** A genuine unmet declaration, so each case also proves the call went on
+   * judging the rest of the catalog rather than merely not throwing. */
+  const acpOnly = npm('acp-only', { profiles: ['acp'] })
+  const ACP_UNMET = { 'npm:acp-only': { profile: { declared: ['acp'], running: 'web' } } }
+
+  describe.each<[label: string, templates: ProfileTemplates]>([
+    // A plain object literal, the shape a caller could hand in: only the
+    // own-key check stands between these names and `Object.prototype`.
+    ['the 0.1.5-rc.3 table as a plain object', RC3_TEMPLATES],
+    ['an empty plain object', {}],
+    // What `profileTemplatesOf` produces: a null-prototype record.
+    ['profileTemplatesOf over the 0.1.5-rc.3 export', profileTemplatesOf({
+      acp: { bundles: RC3_TEMPLATES.acp, patchReload: 'startup' },
+      web: { bundles: RC3_TEMPLATES.web, patchReload: 'live' },
+    })],
+  ])('with %s', (_label, templates) => {
+    it.each(PROTOTYPE_NAMES)('treats %s as an unknown name, alone or after another, and judges the rest', name => {
+      for (const profiles of [[name], ['nonexistent', name], ['acp', name]]) {
+        expect(() => compatibilityMap([npm('prototype-named', { profiles })], RUNNING, templates), profiles.join()).not.toThrow()
+        // Unknown means unjudged, and one unjudged name silences the list.
+        // The ACP_UNMET row is what the table can still judge: it says
+        // nothing when the table has no `acp`, which only the empty one lacks.
+        const expected = Object.hasOwn(templates, 'acp') ? ACP_UNMET : {}
+        expect(compatibilityMap([npm('prototype-named', { profiles }), acpOnly], RUNNING, templates), profiles.join())
+          .toEqual(expected)
+      }
+    })
+  })
+})
+
+describe('the profile half, by name', () => {
+  /** A harness release after 0.1.5-rc.3 whose `web` template grew a bundle.
+   * Hypothetical: the review of 2026-09-25 found no published app-boot that
+   * changed a template's bundle list. But profiles keep the bundle list they
+   * were created with, so the day one does, every existing `web` profile lacks
+   * the new bundle. */
+  const GROWN: ProfileTemplates = { ...RC3_TEMPLATES, web: [...RC3_TEMPLATES.web!, '@deepseek-ai/dsh-web-extra'] }
+  const declaresWeb = npm('@xmanrui/dsh-im', { profiles: ['web'] })
+
+  it('meets a declared name the running profile carries, whatever its bundles', () => {
+    // Before the name rule this badged `@xmanrui/dsh-im` on every existing
+    // `web` profile the day `web` gained a bundle, with copy saying it
+    // declares support for web and this dsh was launched with web. A shipped
+    // template's name is not the reader's choice: dsh builds a missing
+    // profile of that name from the template and installs only append to it.
+    expect(compatibilityMap([declaresWeb], withProfile('web', RC3_TEMPLATES.web!), GROWN)).toEqual({})
+    // Whatever its bundles means whatever: a `web` profile composing none of
+    // the template is still the `web` the author declared.
+    expect(compatibilityMap([declaresWeb], withProfile('web', []), RC3_TEMPLATES)).toEqual({})
+  })
+
+  it('still judges a custom-named profile with the same bundles by bundles — the documented residual', () => {
+    // `rescue` built from the old web bundles lacks the grown template's new
+    // bundle, and nothing else says what it is. `compatibilityMap`'s doc
+    // comment names this residual; this case is what makes the comment true.
+    expect(compatibilityMap([declaresWeb], withProfile('rescue', RC3_TEMPLATES.web!), GROWN)).toEqual({
+      'npm:@xmanrui/dsh-im': { profile: { declared: ['web'], running: 'rescue' } },
+    })
+  })
+
+  it('meets a custom-named profile that composes the template, as before', () => {
+    expect(compatibilityMap([declaresWeb], withProfile('rescue', GROWN.web!), GROWN)).toEqual({})
+  })
 })
 
 describe('compatibilityMap identity (G-1)', () => {
@@ -242,5 +346,28 @@ describe('profileTemplatesOf', () => {
     for (const value of [null, undefined, 'web', 42, ['web']]) {
       expect(profileTemplatesOf(value), String(value)).toEqual({})
     }
+  })
+
+  it('answers a record with no inherited keys, whatever it was given', () => {
+    // A declared profile is catalog input, and the table is indexed by it: a
+    // record built on `{}` answered `constructor` and its four siblings from
+    // Object.prototype (the `compatibilityMap and Object.prototype` cases).
+    // The empty answer too, since a caller cannot tell the two apart.
+    for (const templates of [profileTemplatesOf({ web: ['@deepseek-ai/dsh-base'] }), profileTemplatesOf(null)]) {
+      expect(Object.getPrototypeOf(templates)).toBeNull()
+      for (const name of ['constructor', '__proto__', 'toString', 'hasOwnProperty', 'valueOf']) {
+        expect(name in templates, name).toBe(false)
+      }
+    }
+  })
+
+  it('keeps a template the export names `__proto__` as an own key', () => {
+    // JSON.parse makes `__proto__` an ordinary own key, and assigning that key
+    // on a plain object replaces its prototype instead of adding a template —
+    // here the table's prototype would become an array. A null-prototype
+    // record has no such setter, so the name is just a name.
+    const templates = profileTemplatesOf(JSON.parse('{"__proto__": ["@deepseek-ai/dsh-base"], "web": ["@deepseek-ai/dsh-web-app"]}'))
+    expect(Object.keys(templates)).toEqual(['__proto__', 'web'])
+    expect(Object.getPrototypeOf(templates)).toBeNull()
   })
 })

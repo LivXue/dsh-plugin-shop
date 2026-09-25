@@ -2154,17 +2154,19 @@ describe('ShopGateway.catalog incompatibility', () => {
   })
 
   it('reports nothing, rather than throwing, when no profile anchor exists for a peer-bearing entry', async () => {
-    // Pairs the two conditions the catch in `catalog()` exists for: no
-    // `profileDir` (so `profileDirResolved()` throws and no resolver can be
-    // built) together with an entry that DOES declare peers (so there is
-    // something for a resolver to be asked about, if one existed). Neither
-    // condition alone exercises the catch's real job: the "no profileDir"
-    // tests in `describe('ShopGateway.catalog', ...)` above use an entry
-    // with no `peers` at all, so incompatibilityMap skips it before ever
-    // touching a resolver; every other test in this block injects
-    // `resolvePeer` directly, so the catch is never reached. Only this
-    // pairing proves a plugin we cannot judge is never accused — do not
-    // "simplify" this fixture back to either half.
+    // Pairs the two conditions the no-profile branch in `catalog()` exists
+    // for: no `profileDir` (so no profile directory can be discovered and no
+    // resolver can be anchored) together with an entry that DOES declare
+    // peers (so there is something for a resolver to be asked about, if one
+    // existed). Neither condition alone exercises that branch's real job: the
+    // "no profileDir" tests in `describe('ShopGateway.catalog', ...)` above
+    // use an entry with no `peers` at all, so incompatibilityMap skips it
+    // before ever touching a resolver; every other test in this block injects
+    // `resolvePeer` with a profile directory, so the branch is never taken.
+    // Only this pairing proves a plugin we cannot judge is never accused — do
+    // not "simplify" this fixture back to either half. (Until 2026-09-25 a
+    // catch around a throwing profile lookup did this job; the directory is
+    // now looked up once per call, and its absence answers directly.)
     const gateway = new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/',
       cacheDir: '/cache',
@@ -2177,6 +2179,22 @@ describe('ShopGateway.catalog incompatibility', () => {
 
     const result = await gateway.catalog({})
     expect(result.incompatible).toEqual({})
+  })
+
+  it('degrades a peer list it cannot read to no peer verdicts, rather than rejecting', async () => {
+    // `peers: 5` never survives the catalog's zod parse; injected through
+    // `loadCatalog` it reaches incompatibilityMap, which throws on it. The
+    // guard around that call is what keeps one such entry from rejecting
+    // catalog() for everyone. (The same guard on the harness map is the last
+    // case of `ShopGateway.catalog harness compatibility`.)
+    const malformed = { ...peered, name: 'malformed', peers: 5 } as unknown as CatalogEntry
+    const { gateway } = gatewayWithSnapshot(
+      { schemaVersion: 6, builtAt: '', entries: [peered, malformed], denied: [], stars: {} },
+      { resolvePeer: () => false },
+    )
+    const result = await gateway.catalog({})
+    expect(result.incompatible).toEqual({})
+    expect(result.plugins).toHaveLength(2)
   })
 
   it('asks again on every call, so a peer installed between two calls stops being reported', async () => {
@@ -2202,6 +2220,43 @@ describe('ShopGateway.catalog incompatibility', () => {
   })
 })
 
+/** `PROFILE_TEMPLATES` as dsh-app-boot 0.1.5-rc.3 exports it, verbatim: five
+ * templates, `acp` among them — which the app-boot this repository installs
+ * as a devDependency (0.1.1-rc.2: `web` and `headless` only) does not have. A
+ * verdict that judges `acp` can only have read the fixture's table. */
+const RC3_PROFILE_TEMPLATES = {
+  acp: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-acp-app'], patchReload: 'startup' },
+  web: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'], patchReload: 'live' },
+  headless: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-headless'], patchReload: 'startup' },
+  sdk: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-sdk-app'], patchReload: 'startup' },
+  'sdk-minimal': { bundles: ['@deepseek-ai/dsh-sdk-minimal'], patchReload: 'startup' },
+}
+
+/**
+ * A dsh installation to run the gateway inside, the production path: the
+ * gateway identifies the running harness from `restartScript` (`harness.ts`),
+ * and this returns one. `<root>/node_modules/@deepseek-ai/dsh` carries
+ * `manifest` and the `lib/bin.js` its `bin` names — never executed — with its
+ * own `@deepseek-ai/dsh-app-boot` nested under it, whose entry exports
+ * `templates` and nothing else. `tests/host/harness.test.ts` covers the
+ * reader's own rules; this is only the shape the gateway needs.
+ */
+function fixtureHarness(manifest: Record<string, unknown> = { version: '0.1.5-rc.3' }, templates: unknown = RC3_PROFILE_TEMPLATES): { root: string; script: string } {
+  const root = mkdtempSync(join(TEMP_ROOT, 'dsh-harness-'))
+  const dshDir = join(root, 'node_modules', '@deepseek-ai', 'dsh')
+  mkdirSync(join(dshDir, 'lib'), { recursive: true })
+  writeFileSync(join(dshDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh', type: 'module', bin: { dsh: 'lib/bin.js' }, ...manifest }))
+  writeFileSync(join(dshDir, 'lib', 'bin.js'), '')
+  const appBoot = join(dshDir, 'node_modules', '@deepseek-ai', 'dsh-app-boot')
+  mkdirSync(join(appBoot, 'lib'), { recursive: true })
+  writeFileSync(join(appBoot, 'package.json'), JSON.stringify({
+    name: '@deepseek-ai/dsh-app-boot', version: '0.1.5-rc.3', type: 'module',
+    main: 'lib/index.js', exports: { '.': { default: './lib/index.js' } },
+  }))
+  writeFileSync(join(appBoot, 'lib', 'index.js'), `export const PROFILE_TEMPLATES = ${JSON.stringify(templates)}\n`)
+  return { root, script: join(dshDir, 'lib', 'bin.js') }
+}
+
 describe('ShopGateway.catalog harness compatibility', () => {
   /** `@xmanrui/dsh-im@4.19.2`'s own `dsh.compatibility.dsh`, verbatim (design
    * 2026-09-01-harness-compatibility §8.2): five exact versions, none of them
@@ -2212,100 +2267,192 @@ describe('ShopGateway.catalog harness compatibility', () => {
     license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25',
     compatibility: { dsh: DSH_IM_RANGE, profiles: ['web'] },
   }
-  /** A range no harness on the 0.1 line satisfies, so a READABLE version would
-   * always add a `dsh` half — which is what makes its absence mean something.
+  /** A range no harness on the 0.1 line satisfies, so a READABLE version
+   * always adds a `dsh` half — which is what makes its absence mean something.
    *
-   * `headless` is a template this fixture profile does not compose: it is one
-   * of the two the pinned app-boot ships (`web`, `headless`), so the
-   * production table can judge it, and a web-bundled profile lacks
-   * `@deepseek-ai/dsh-headless`. `tui`, the name this used to declare, is no
-   * template at all — silence under §9.9, which would make these tests pass
-   * for the wrong reason. */
+   * `headless` is a template in the fixture harness's table, and one the
+   * fixture profile does not compose (its bundles are the web template's), so
+   * a readable table always adds a `profile` half too. `tui`, the name this
+   * used to declare, is no template at all — silence under §9.9, which would
+   * make these tests pass for the wrong reason. */
   const headlessOnly: CatalogEntry = { ...dshIm, name: 'dsh-headless-only', compatibility: { dsh: '0.9.0', profiles: ['headless'] } }
+  const HEADLESS_UNMET = { profile: { declared: ['headless'], running: 'web' } }
 
   it('carries the verdict, naming what the author declared and what is running', async () => {
-    // The gateway's own profile name reaches the copy, while the RANGE is what
-    // this declaration fails: its `web` is met, because the fixture profile
-    // composes the web template's bundles and a declared template is judged by
-    // what the profile IS, never by the name it was given (§9.9).
+    // The running version is the fixture dsh's own. The profile is named
+    // `tui`, a name no template carries, so its bundles decide `web`, and
+    // they are the web template's: met. The RANGE is what this declaration
+    // fails.
     const { gateway } = gatewayWithSnapshot(
       { schemaVersion: 5, builtAt: '', entries: [dshIm], denied: [], stars: {} },
-      { profile: 'tui', resolveDshVersion: () => '0.1.5-rc.3' },
+      { profile: 'tui', restartScript: fixtureHarness().script },
     )
     expect((await gateway.catalog({})).incompatibleHarness).toEqual({
       'npm:@xmanrui/dsh-im': { dsh: { range: DSH_IM_RANGE, running: '0.1.5-rc.3' } },
     })
   })
 
-  it('reads the running version where the harness resolves plugins from: the profile', async () => {
-    // Nothing injected for the version, so this is the production read — the
-    // load-time self-check's own resolver, at the same profile anchor, asked
-    // for `@deepseek-ai/dsh`. The fixture profile carries its own copy of the
-    // package, at a version published nowhere so that nothing but this
-    // fixture can be its source, and the verdict must name exactly that
-    // version: a wrong package name or a different anchor cannot.
-    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-harness-version-'))
-    const dshDir = join(profileDir, 'node_modules', '@deepseek-ai', 'dsh')
-    mkdirSync(dshDir, { recursive: true })
-    writeFileSync(join(dshDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh', version: '0.1.9-rc.3' }))
+  it('reads the running version from the dsh that runs, not from a copy the profile can import', async () => {
+    // The defect this replaced, reproduced with real installs: a listed plugin
+    // (`dsh-claude-tui@0.1.6`) depends on `@deepseek-ai/dsh` 0.1.2-rc.1, pnpm
+    // hoists that copy into `<profile>/node_modules`, and the verdict read it
+    // — "running 0.1.2-rc.1" on every card while 0.1.5-rc.3 ran. Until
+    // 2026-09-25 this test PINNED that read: it put a copy in the profile and
+    // expected the verdict to name it. The copy is here again, at the version
+    // the hoisted one had, and must change nothing: an entry declaring exactly
+    // that version is told what actually runs.
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-harness-hoisted-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'] } }, dependencies: {} }))
+    const hoisted = join(profileDir, 'node_modules', '@deepseek-ai', 'dsh')
+    mkdirSync(hoisted, { recursive: true })
+    writeFileSync(join(hoisted, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh', version: '0.1.2-rc.1' }))
+    const declaresHoisted: CatalogEntry = { ...dshIm, name: 'declares-hoisted', compatibility: { dsh: '0.1.2-rc.1' } }
     const { gateway } = gatewayWithSnapshot(
-      { schemaVersion: 5, builtAt: '', entries: [dshIm], denied: [], stars: {} },
-      { profileDir },
+      { schemaVersion: 5, builtAt: '', entries: [declaresHoisted], denied: [], stars: {} },
+      { profileDir, restartScript: fixtureHarness().script },
     )
     expect((await gateway.catalog({})).incompatibleHarness).toEqual({
-      'npm:@xmanrui/dsh-im': { dsh: { range: DSH_IM_RANGE, running: '0.1.9-rc.3' } },
+      'npm:declares-hoisted': { dsh: { range: '0.1.2-rc.1', running: '0.1.5-rc.3' } },
     })
   })
 
-  it('forms no range verdict, rather than throwing, when no profile anchor exists', async () => {
-    // No `profileDir` and no seam, so the production read runs and
-    // `profileDirResolved()` throws: nothing above this module is a profile.
-    // The version is then a fact nobody could read, so the range half stays
-    // silent and the catalog still answers. The declaration's profile list
-    // names `web`, the profile this gateway was given, so nothing else is
-    // owed either.
+  it("judges the profile half by the running dsh's own template table", async () => {
+    // `acp` is in 0.1.5-rc.3's table and not in the app-boot this repository
+    // installs (0.1.1-rc.2), which is what the shop's own `import * as appBoot`
+    // used to read — under a `link:` install, beside a 0.1.5-rc.3 dsh half.
+    const acpOnly: CatalogEntry = { ...dshIm, name: 'acp-only', compatibility: { profiles: ['acp'] } }
+    const { gateway } = gatewayWithSnapshot(
+      { schemaVersion: 5, builtAt: '', entries: [acpOnly], denied: [], stars: {} },
+      { restartScript: fixtureHarness().script },
+    )
+    expect((await gateway.catalog({})).incompatibleHarness).toEqual({
+      'npm:acp-only': { profile: { declared: ['acp'], running: 'web' } },
+    })
+  })
+
+  it('leaves both halves silent when the running script is not owned by @deepseek-ai/dsh', async () => {
+    // Nothing then says which harness runs: a test runner, another host. The
+    // default script under vitest is the runner's own worker entry (today
+    // tinypool's `dist/entry/process.js`) — the second gateway below — so
+    // every other catalog test in this file is silent on this map for the
+    // same reason. `headlessOnly` fails both halves against any readable
+    // harness, so only an unidentified one says nothing.
+    const host = mkdtempSync(join(TEMP_ROOT, 'dsh-harness-other-'))
+    writeFileSync(join(host, 'package.json'), JSON.stringify({ name: 'some-host', version: '1.0.0' }))
+    writeFileSync(join(host, 'main.js'), '')
+    const snapshot: CatalogSnapshot = { schemaVersion: 5, builtAt: '', entries: [headlessOnly], denied: [], stars: {} }
+    for (const options of [{ restartScript: join(host, 'main.js') }, {}]) {
+      const { gateway } = gatewayWithSnapshot(snapshot, options)
+      expect((await gateway.catalog({})).incompatibleHarness, JSON.stringify(options)).toEqual({})
+    }
+  })
+
+  it('judges the range half without a profile directory, and leaves the profile half silent', async () => {
+    // No `profileDir` and nothing above this module is a profile, so the
+    // profile's bundles are a fact nobody can read — while the running
+    // version never depended on the profile, and is judged. (Until
+    // 2026-09-25 the version was read from the profile anchor, so this case
+    // expected no verdict at all.)
     const gateway = new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/',
       cacheDir: '/cache',
       profile: 'web',
+      restartScript: fixtureHarness().script,
       loadCatalog: async () => ({
-        snapshot: { schemaVersion: 5, builtAt: '', entries: [dshIm], denied: [], stars: {} },
+        snapshot: { schemaVersion: 5, builtAt: '', entries: [headlessOnly], denied: [], stars: {} },
         stale: false,
       }) as CatalogResult,
     })
 
     const result = await gateway.catalog({})
-    expect(result.incompatibleHarness).toEqual({})
+    expect(result.incompatibleHarness).toEqual({ 'npm:dsh-headless-only': { dsh: { range: '0.9.0', running: '0.1.5-rc.3' } } })
+    expect(result.incompatible).toEqual({})
   })
 
   it.each([
-    ['answers null', (): string | null => null],
-    ['throws', (): string | null => { throw new Error('anchor unavailable') }],
-  ])('judges only the profile half when the version read %s', async (_label, resolveDshVersion) => {
+    ['declares no version', {}],
+    ['declares an empty one', { version: '' }],
+    ['declares one that is not semver', { version: 'nightly' }],
+  ])('judges only the profile half when the running dsh %s', async (_label, manifest) => {
     // An unknown silences its own half and no other (design §8.2): the
-    // profile is known whatever the version read does.
+    // template table is read whatever the version is.
     const { gateway } = gatewayWithSnapshot(
       { schemaVersion: 5, builtAt: '', entries: [headlessOnly], denied: [], stars: {} },
-      { resolveDshVersion },
+      { restartScript: fixtureHarness(manifest).script },
+    )
+    expect((await gateway.catalog({})).incompatibleHarness).toEqual({ 'npm:dsh-headless-only': HEADLESS_UNMET })
+  })
+
+  it('reads the running harness once per gateway', async () => {
+    // Which dsh this process is cannot change while it runs, and the read
+    // imports a module, so the gateway keeps it. The fixture is deleted after
+    // the first call: a second read would find nothing and name no version.
+    // (Until 2026-09-25 the version was re-read on every call, from the
+    // profile anchor — which is where a hoisted copy could move it.)
+    const harness = fixtureHarness()
+    const { gateway } = gatewayWithSnapshot(
+      { schemaVersion: 5, builtAt: '', entries: [headlessOnly], denied: [], stars: {} },
+      { restartScript: harness.script },
+    )
+    const both = { 'npm:dsh-headless-only': { dsh: { range: '0.9.0', running: '0.1.5-rc.3' }, ...HEADLESS_UNMET } }
+    expect((await gateway.catalog({})).incompatibleHarness).toEqual(both)
+
+    rmSync(harness.root, { recursive: true, force: true })
+    expect((await gateway.catalog({})).incompatibleHarness).toEqual(both)
+  })
+
+  it("reads the running profile's bundles again on every call", async () => {
+    // Only the harness is kept. What the profile composes moves under a
+    // running dsh — an install appends a bundle — so the profile half follows
+    // the manifest as it stands, and the same snapshot object is served twice.
+    const acpOnly: CatalogEntry = { ...dshIm, name: 'acp-only', compatibility: { profiles: ['acp'] } }
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-harness-bundles-'))
+    const writeBundles = (bundles: string[]): void =>
+      writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles } }, dependencies: {} }))
+    writeBundles(['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'])
+    const { gateway } = gatewayWithSnapshot(
+      { schemaVersion: 5, builtAt: '', entries: [acpOnly], denied: [], stars: {} },
+      { profileDir, restartScript: fixtureHarness().script },
+    )
+    expect(Object.keys((await gateway.catalog({})).incompatibleHarness)).toEqual(['npm:acp-only'])
+
+    writeBundles(['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@deepseek-ai/dsh-acp-app'])
+    expect((await gateway.catalog({})).incompatibleHarness).toEqual({})
+  })
+
+  it('answers the catalog when an entry declares a profile named after an Object.prototype member', async () => {
+    // One entry declaring `profiles: ["constructor"]` made every catalog()
+    // call reject for every user: the template table was a plain object, and
+    // `templates.constructor` is a function. It is an unknown name now —
+    // unjudged, silent — and the entry beside it is still judged.
+    const prototypeNamed: CatalogEntry = { ...dshIm, name: 'prototype-named', compatibility: { profiles: ['constructor'] } }
+    const acpOnly: CatalogEntry = { ...dshIm, name: 'acp-only', compatibility: { profiles: ['acp'] } }
+    const { gateway } = gatewayWithSnapshot(
+      { schemaVersion: 5, builtAt: '', entries: [prototypeNamed, acpOnly], denied: [], stars: {} },
+      { restartScript: fixtureHarness().script },
     )
     expect((await gateway.catalog({})).incompatibleHarness).toEqual({
-      'npm:dsh-headless-only': { profile: { declared: ['headless'], running: 'web' } },
+      'npm:acp-only': { profile: { declared: ['acp'], running: 'web' } },
     })
   })
 
-  it('reads the running version again on every call', async () => {
-    // Nothing is remembered against the snapshot, the same rule as the peer
-    // map: one snapshot object is served twice, and the second answer follows
-    // what the installation reports by then.
-    let version = '0.1.5-rc.3'
+  it('degrades a declaration it cannot judge to no harness verdicts, and keeps the peer map', async () => {
+    // `profiles: 5` never survives the catalog's zod parse; injected through
+    // `loadCatalog` it reaches compatibilityMap, which throws on it. That
+    // throw must cost this map and nothing else — the call resolves, the peer
+    // verdict beside it stands — the same rule as the peer map's own guard.
+    // The whole map goes, the genuine `acp-only` verdict with it: a shape the
+    // parse refuses means this snapshot is not one this build can judge.
+    const malformed = { ...dshIm, name: 'malformed', compatibility: { profiles: 5 } } as unknown as CatalogEntry
+    const acpOnly: CatalogEntry = { ...dshIm, name: 'acp-only', compatibility: { profiles: ['acp'] } }
+    const peered: CatalogEntry = { ...dshIm, name: 'peered', compatibility: undefined, peers: ['dsh-peer-installed-nowhere'] }
     const { gateway } = gatewayWithSnapshot(
-      { schemaVersion: 5, builtAt: '', entries: [dshIm], denied: [], stars: {} },
-      { resolveDshVersion: () => version },
+      { schemaVersion: 5, builtAt: '', entries: [acpOnly, malformed, peered], denied: [], stars: {} },
+      { restartScript: fixtureHarness().script, resolvePeer: () => false },
     )
-    expect(Object.keys((await gateway.catalog({})).incompatibleHarness)).toEqual(['npm:@xmanrui/dsh-im'])
-
-    version = '0.1.5-alpha.1' // one of the five the author lists
-    expect((await gateway.catalog({})).incompatibleHarness).toEqual({})
+    const result = await gateway.catalog({})
+    expect(result.incompatibleHarness).toEqual({})
+    expect(result.incompatible).toEqual({ 'npm:peered': ['dsh-peer-installed-nowhere'] })
   })
 })
 

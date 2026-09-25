@@ -182,10 +182,12 @@ const entrySchema = z.object({
   // The package's declared peer dependency names, riding every schemaVersion
   // (see SUPPORTED_SCHEMA_VERSION for the version-6 gate that never opened).
   // OPTIONAL on the consumer, and this is not a style preference: a package
-  // that declares no peers carries none, nor does a github entry until the
-  // harvest re-reads its repository (design 2026-09-01-harness-compatibility
-  // §8.1) — and making `added` required is exactly what made 0.5.0 refuse the
-  // published catalog for every user.
+  // that declares no peers carries none, and no github entry carries any yet
+  // — the registry harvests them from 2026-09-24 but withholds them from
+  // emission (`withholdRepoPeers`) until `SHOP_EMIT_REPO_PEERS` flips (design
+  // 2026-09-01-harness-compatibility §8.1, §9.8) — and making `added`
+  // required is exactly what made 0.5.0 refuse the published catalog for
+  // every user.
   peers: z.array(z.string()).optional(),
   // The author's own `dsh.compatibility` (same design, §8.2): a semver range
   // over `@deepseek-ai/dsh` versions and the profile names the plugin

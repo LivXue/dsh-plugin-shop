@@ -3,11 +3,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { readProfileManifest } from '@deepseek-ai/dsh-app-boot'
-// Namespace import, not a named one: `PROFILE_TEMPLATES` is read at runtime and
-// validated, because an app-boot that never grew the export must cost the
-// profile half its verdict and nothing more. A named import of an absent
-// export fails ESM linking, which would take the whole Host down instead.
-import * as appBoot from '@deepseek-ai/dsh-app-boot'
 import { lt, minVersion, valid } from 'semver'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -41,7 +36,8 @@ import {
   type PeerResolver,
   type PeerVersionResolver,
 } from './peers.ts'
-import { compatibilityMap, profileTemplatesOf, type HarnessVerdict, type ProfileTemplates } from './compatibility.ts'
+import { compatibilityMap, type HarnessVerdict } from './compatibility.ts'
+import { readRunningHarness, type RunningHarness } from './harness.ts'
 
 // Re-exported so the boundary type is reachable from the package's public
 // ./types subpath; the typert generator refuses remote parameter types it
@@ -108,7 +104,13 @@ export interface ShopGatewayOptions {
    * defaults to the real `process.argv` minus node and the script path. */
   restartArgv?: string[]
   /** The JS entry `shop/restart` re-runs; defaults to `process.argv[1]`, the
-   * script this dsh was started with. */
+   * script this dsh was started with. It is also what identifies the running
+   * harness for the `dsh.compatibility` verdict: the package that owns this
+   * script, through symlinks, is the dsh actually running, and its own
+   * app-boot supplies the profile templates (`harness.ts`). A script owned by
+   * anything else — a test runner, another host — leaves both halves of that
+   * verdict silent. Tests pass a fixture install here, which is the
+   * production path. */
   restartScript?: string
   /** Test-only injection: the exit the restart calls after the response is
    * delivered. Production uses `process.exit`. */
@@ -147,20 +149,6 @@ export interface ShopGatewayOptions {
   /** Test-only injection: the peer ranges the self-check judges against;
    * production reads them from the shipped package.json. */
   peerRanges?: Record<string, string>
-  /** Test-only injection: answers which `@deepseek-ai/dsh` version this
-   * installation runs, for the `dsh.compatibility` verdict — null when it
-   * cannot tell. Production asks the self-check's own resolver, at the same
-   * profile anchor. */
-  resolveDshVersion?: () => string | null
-  /** Test-only injection: the harness's own profile-template table, for the
-   * `dsh.compatibility` profile half — the bundles each profile template
-   * composes. Production reads `PROFILE_TEMPLATES` from the installed
-   * `@deepseek-ai/dsh-app-boot`; null when it cannot be read. */
-  profileTemplates?: () => unknown
-  /** Test-only injection: the bundles the running profile composes, or null
-   * when the profile manifest cannot be read. Production reads them from the
-   * same profile manifest every other read uses. */
-  profileBundles?: () => readonly string[] | null
   /** Test-only injection: the download phase's pump; production builds the
    * real one. A test gateway left with the real pump spawns `pnpm store add`
    * — a live registry request — from every install that finds a command
@@ -369,7 +357,9 @@ export interface ShopCatalogResult {
    * declared or every declared half is met. A half that cannot be judged —
    * the running version unreadable, a range semver cannot parse — is left out
    * while the other is still judged, so an unknown never reads as an
-   * accusation; same-named entries stay independent. */
+   * accusation; same-named entries stay independent. A process not started
+   * by dsh's CLI judges neither half: nothing then says which harness runs
+   * (`harness.ts`). */
   incompatibleHarness: Record<string, HarnessVerdict>
 }
 
@@ -451,6 +441,11 @@ export class ShopGateway extends TypertRemoteService {
   /** The user's own `registry=` from `~/.npmrc`, read at most once per
    * gateway. A wrapper distinguishes a genuine `null` from an unread value. */
   private npmRegistryCache: { value: string | null } | null = null
+  /** The harness this process runs, read at most once per gateway: which dsh
+   * is running cannot change while it runs, and the read imports a module. A
+   * promise, so concurrent first calls share one read; `readRunningHarness`
+   * never rejects, so there is no failure to retry. */
+  private harnessRead: Promise<RunningHarness> | null = null
   /** Install records, running and finished; a poll finds one here or reports not found. */
   private readonly installs = new Map<string, ReturnType<typeof startInstall>>()
   /** Every install id in insertion order, oldest first; finished-record eviction walks this from the front. */
@@ -560,14 +555,35 @@ export class ShopGateway extends TypertRemoteService {
     return discoverProfile(fileURLToPath(import.meta.url), this.bootBaseDir()).dir
   }
 
-  /** Where every "what does this installation provide?" question resolves
-   * from: the profile's own Loader root, which is where the harness resolves
-   * plugins from. One definition for the peer presence check, the load-time
-   * self-check and the compatibility verdict, so none of the three can drift
-   * onto a different notion of "the running installation". Throws when no
-   * profile directory can be discovered. */
-  private profileAnchor(): string {
-    return pathToFileURL(join(this.profileDirResolved(), 'cordis.yml')).href
+  /** Where every "what can this installation's plugins import?" question
+   * resolves from: the profile's own Loader root, which is where the harness
+   * resolves plugins from. One definition for the peer presence check and the
+   * load-time self-check, so neither can drift onto a different notion of
+   * "the installation". NOT where the running harness is read from: a copy
+   * of `@deepseek-ai/dsh` a plugin's dependencies hoist into the profile is
+   * importable from here and is not what runs (`harness.ts`). Throws when no
+   * profile directory can be discovered and none is given. */
+  private profileAnchor(profileDir: string = this.profileDirResolved()): string {
+    return pathToFileURL(join(profileDir, 'cordis.yml')).href
+  }
+
+  /** `profileDirResolved`, or null when no profile directory can be
+   * discovered — for the reads that answer "cannot tell" rather than fail. */
+  private profileDirOrNone(): string | null {
+    try {
+      return this.profileDirResolved()
+    } catch {
+      // Swallows the discovery failure: no profile above this module and none
+      // on the boot's baseUrl (the bare test constructions). Every caller
+      // reads null as "no verdict needing the profile can be formed".
+      return null
+    }
+  }
+
+  /** The harness this process runs, read once (see `harnessRead`). */
+  private runningHarness(): Promise<RunningHarness> {
+    this.harnessRead ??= readRunningHarness(this.restartScript)
+    return this.harnessRead
   }
 
   /** The inventory, through the wire remote: an envelope `{ ok, value }` or
@@ -907,22 +923,50 @@ export class ShopGateway extends TypertRemoteService {
     // missing peer from the shop is exactly the event that must clear its
     // badge, and a map kept per snapshot would go on naming that peer for as
     // long as the snapshot is served. Asking every time is cheap; design
-    // 2026-09-01-harness-compatibility §9.6 owns the measurement.
-    let incompatible: Record<string, string[]>
+    // 2026-09-01-harness-compatibility §9.6 owns the measurement. The one
+    // input kept is the running harness — which dsh this process is, and its
+    // template table — because a running process cannot change it.
+    const harness = await this.runningHarness()
+    // The profile directory, looked up ONCE: the peer resolver's anchor and
+    // the profile half's bundles are read from the same directory, so the two
+    // verdicts cannot describe two different profiles. None discovered (a
+    // bare construction that supplies neither `profileDir` nor a module
+    // location under a profile) means no verdict that needs one.
+    const profileDir = this.profileDirOrNone()
+    let incompatible: Record<string, string[]> = {}
+    if (profileDir !== null) {
+      try {
+        const resolve = this.options.resolvePeer ?? nodeResolver(this.profileAnchor(profileDir))
+        incompatible = incompatibilityMap(snapshot.entries, resolve)
+      } catch {
+        // Swallows anything incompatibilityMap throws on an entry shape this
+        // build did not expect — `peers: 5`, say, which is not iterable, and
+        // which the catalog's zod parse refuses, so only an injected snapshot
+        // can carry it. A plugin we cannot judge is never accused, so the
+        // whole map degrades to empty rather than one entry costing every
+        // reader the catalog. A resolver's own throws never reach here:
+        // incompatibilityMap turns those into no verdict for the entry.
+        incompatible = {}
+      }
+    }
+    let incompatibleHarness: Record<string, HarnessVerdict>
     try {
-      const resolve = this.options.resolvePeer ?? nodeResolver(this.profileAnchor())
-      incompatible = incompatibilityMap(snapshot.entries, resolve)
+      incompatibleHarness = compatibilityMap(snapshot.entries, {
+        dshVersion: harness.dshVersion,
+        profile: { name: this.profile, bundles: profileDir === null ? null : this.runningProfileBundles(profileDir) },
+      }, harness.templates)
     } catch {
-      // No profile anchor could be discovered (e.g. a bare test construction
-      // that supplies neither `profileDir` nor a resolvable module location,
-      // or the constructor's own stub-ctx case above) — no peer verdict is
-      // formable for anything in this snapshot. A plugin we cannot judge is
-      // never accused, so the whole map degrades straight to empty here
-      // rather than routing through a stand-in resolver that throws:
-      // incompatibilityMap would ask it up to once per distinct peer name in
-      // the snapshot — hundreds, per the design doc's own measurement — and
-      // catch every throw, only to arrive at this same empty map.
-      incompatible = {}
+      // Swallows anything compatibilityMap throws on a declaration this build
+      // did not expect — `profiles: 5`, say, which has no `includes`, and
+      // which the catalog's zod parse refuses, so only an injected snapshot
+      // can carry it. The rule is the peer map's: a declaration nobody can
+      // judge is never an accusation, and this call answers for the whole
+      // shelf, so one entry must not reject it. It did: before the template
+      // table lost its prototype, one entry declaring
+      // `profiles: ["constructor"]` made every catalog() call reject, for
+      // every user. The whole map degrades to empty; the peer map above
+      // stands.
+      incompatibleHarness = {}
     }
     return {
       schemaVersion: snapshot.schemaVersion,
@@ -933,79 +977,27 @@ export class ShopGateway extends TypertRemoteService {
       notAShop: snapshot.notAShop ?? [],
       stars: snapshot.stars,
       incompatible,
-      incompatibleHarness: compatibilityMap(snapshot.entries, {
-        dshVersion: this.runningDshVersion(),
-        profile: { name: this.profile, bundles: this.runningProfileBundles() },
-      }, this.profileTemplates()),
+      incompatibleHarness,
     }
   }
 
   /**
-   * The harness's own profile-template table: template name → the bundles it
-   * composes, which is what the profile half compares against (design
-   * 2026-09-01-harness-compatibility §9.9). Read from the installed
-   * `@deepseek-ai/dsh-app-boot` rather than copied, and normalized by
-   * `profileTemplatesOf`, which knows both shapes this export has had.
-   *
-   * An empty record — a harness without the export, or one whose shape this
-   * build does not know — costs the profile half its verdict and nothing else.
-   * A copied table would be the drift this whole check exists to remove.
-   */
-  private profileTemplates(): ProfileTemplates {
-    try {
-      if (this.options.profileTemplates !== undefined) return profileTemplatesOf(this.options.profileTemplates())
-      return profileTemplatesOf((appBoot as { PROFILE_TEMPLATES?: unknown }).PROFILE_TEMPLATES)
-    } catch {
-      // Swallows a harness whose export throws when read. Nothing else can
-      // reach it: `profileTemplatesOf` answers {} for every shape it does not
-      // know.
-      return {}
-    }
-  }
-
-  /**
-   * The bundles the running profile composes, or null when the profile
+   * The bundles the profile at `profileDir` composes, or null when its
    * manifest cannot be read — which is no verdict on the profile half rather
    * than an accusation. `dsh.profile.bundles` is the same list
    * `discoverProfile` uses to recognize a profile directory, read through the
    * harness's own parser so a profile this shop was booted inside is read the
    * way dsh reads it.
    */
-  private runningProfileBundles(): readonly string[] | null {
+  private runningProfileBundles(profileDir: string): readonly string[] | null {
     try {
-      if (this.options.profileBundles !== undefined) return this.options.profileBundles()
-      const bundles = readProfileManifest('dsh-plugin-shop', this.profileDirResolved()).dsh?.profile?.bundles
+      const bundles = readProfileManifest('dsh-plugin-shop', profileDir).dsh?.profile?.bundles
       if (!Array.isArray(bundles) || !bundles.every((bundle): bundle is string => typeof bundle === 'string')) return null
       return bundles
     } catch {
-      // Swallows a missing profile directory and an unreadable or malformed
-      // manifest: each means nobody can say what this profile composes, and
-      // the answer for that is silence on this half, never a warning.
-      return null
-    }
-  }
-
-  /**
-   * The `@deepseek-ai/dsh` version this installation provides, for the
-   * `dsh.compatibility` verdict: the load-time self-check's own resolver, at
-   * the anchor every other harness question resolves from, so this verdict
-   * and the peer checks cannot drift onto different notions of "the running
-   * installation" (design 2026-09-01-harness-compatibility §8.2).
-   *
-   * Null forms no verdict on the `dsh` half — never an accusation, and never
-   * a failed catalog.
-   */
-  private runningDshVersion(): string | null {
-    try {
-      if (this.options.resolveDshVersion !== undefined) return this.options.resolveDshVersion()
-      return nodeVersionResolver(this.profileAnchor())('@deepseek-ai/dsh')
-    } catch {
-      // Swallows a missing profile anchor — `profileDirResolved()` throws when
-      // no profile can be discovered — and anything a resolver throws, the
-      // injected one included. Each is a version nobody could read, and the
-      // answer for that is no verdict on its half; the profile half is still
-      // judged, because the profile this gateway was booted with is known
-      // either way.
+      // Swallows an unreadable or malformed manifest: nobody can then say what
+      // this profile composes, and the answer for that is silence on this
+      // half, never a warning.
       return null
     }
   }
