@@ -73,6 +73,11 @@ is measurable exactly, today, with no prediction at all.
 A name carrying the *other* harvest keyword is not at risk: both harvest
 keywords are in `PARTITION_KEYWORDS`, so their intersection cell reaches it.
 
+**Amendment (2026-09-25): no longer true; see the 2026-09-25 amendment to
+section 4.** The intersection cell crossed its own window, and under the
+2026-09-18 amendment to section 6 an oversized cell is not a reachable
+refinement.
+
 **Cost: no additional requests.** Every npm search object already carries
 `keywords` beside `maintainers` — verified live 2026-09-17 against
 `keywords:dsh-plugin`, whose objects expose `date, description, keywords,
@@ -534,6 +539,53 @@ full-cycle property, it is the only path to an owner the at-risk rule cannot
 see, and holding it at a fixed reservation would have moved its cycle from 6.8
 runs to 26 — long enough that a family event reddens the build before the
 rotation finds it, which is the event this axis exists for.
+
+### 2026-09-25 amendment: the shared cell crossed its window, and both sets filled in one run
+
+`keywords:deepseek-harness,dsh-plugin` is one set behind two query texts: each
+harvest keyword refines on the other. It measured 5,356 on 2026-09-25 against
+the 5,250 window, up from 3,373 on 2026-09-07. The 2026-09-18 amendment to
+section 6 counts only a two-keyword cell that fits its window as a reachable
+refinement, so the day it crossed, each keyword stopped counting the other as
+coverage, both at once. Read off each run's `publisher axis` line:
+
+| run | code | `deepseek-harness` at risk | `dsh-plugin` at risk | pinned, as the run read it |
+| --- | --- | ---: | ---: | --- |
+| 2026-09-23 push | `9a9e225` | 250 | 91 | 239 / 48 |
+| 2026-09-24 schedule | `71c325c` | 3,575 | 680 | 242 / 48 |
+| 2026-09-25 schedule | `960daf0` | 3,593 | 687 | 400 / 400 |
+
+No registry code changed between the first two runs. Seeding then did what
+section 2 says it does and pinned the new at-risk owners up to the bound, in
+the 2026-09-24 run alone (`156a5a3`): it seeded 1,439 and 435 owners against
+158 and 352 free slots, so the new pins are the alphabetically first of each,
+since `pinFor` adds in sorted order until full.
+
+**The floors now take the whole pool.** With both sets at 400, twice each is
+800, and two of those are the 1,600-probe pool: the 2026-09-22 amendment's
+`C <= P / 2` holds with no slack, so allocation by tail has nothing left to
+allocate. `deepseek-harness`'s rotation fell from 1,012 probes to 400.
+
+**And the sets will not drain.** Past the window `seedingComplete` is false,
+so a pin leaves only on a confirmed zero, at most `MAX_EVICTIONS_PER_RUN` a
+run (section 3's amendment). The asymmetry is deliberate, and it means the
+owners pinned that day stay pinned though most of their names are still
+inside some window. What this costs is a rotation held at its floor and a
+pinned half filled alphabetically from the owners seeded that day. Undoing it
+is a decision about the bound, the budget or the committed pins, which this
+section has taken twice and does not take a third time here.
+
+On 2026-09-25 the residual crossed `MAX_UNREACHABLE_RESIDUAL` (21 on `main`, 24
+on a PR dry run the same morning) and the build did not publish. That red was
+answered by refinements, not by the bound, the budget or the cap: nine
+entries, chosen against a recorded run that came up 25 short, which recover 16
+of those 25. The change's own dry run read a residual of 5 for
+`deepseek-harness` and 1 for `dsh-plugin` the same day, and the new entries
+also took at-risk names from 3,593 to 1,874 and from 687 to 602, since a name
+carrying one of them is reachable at any rank. `PARTITION_KEYWORDS`' comment
+records how they were measured and what each one brings in. It is a margin of
+days, and the pinned sets above are still full: the at-risk drop frees no
+slot, because a pin leaves only on a confirmed zero.
 
 ## 5. Module placement
 
