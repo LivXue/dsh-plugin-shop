@@ -885,13 +885,20 @@ export function parsePublisherAxisReport(value: unknown, where: string): Publish
  * anything, so shipping any of them would buy nothing, measured, for a probe
  * and a page every run: the `watch-skill` rule above.
  *
- * What it buys is days, not a fix. Nine of the 25 stay unaccounted for, so at
- * best the residual falls to about nine, and it read 20 on 2026-09-24 and 21
- * to 25 across three runs the next day. Each entry costs five `size=1` probes
- * a run on top of its pages: one per harvest keyword for its own cell, and
- * one per oversized parent for a deeper cell, which is three while
- * `deepseek-harness` has two of those and `dsh-plugin` one. The deeper ones
- * buy nothing whenever the entry's own cell fits the window, since
+ * What it buys is days, not a fix. The cover left nine of the 25 unaccounted
+ * for, and the dry run of this change read `enumerated 7757 of 7762` the
+ * same day: a residual of 5, and 1 for `dsh-plugin`. Four fewer than the
+ * cover predicts is inside what three runs on one unchanged state spread over
+ * that morning (21 to 25), so it is one day's draw and not a better list than
+ * measured. The residual had read 20 on 2026-09-24.
+ *
+ * Each entry costs five `size=1` probes a run on top of its pages: one per
+ * harvest keyword for its own cell, and one per oversized parent for a deeper
+ * cell, which is three while `deepseek-harness` has two of those and
+ * `dsh-plugin` one. Measured, the nine together cost about three minutes a
+ * run: the two enumerations took 47m43s in that dry run against 44m45s on the
+ * same committed state that morning without them. The deeper cells buy
+ * nothing whenever the entry's own cell fits the window, since
  * `keywords:K,P,R` is a subset of `keywords:K,R`; that redundancy predates
  * these entries and is left to a change of its own.
  *

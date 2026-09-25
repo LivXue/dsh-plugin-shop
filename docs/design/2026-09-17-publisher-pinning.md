@@ -579,9 +579,13 @@ On 2026-09-25 the residual crossed `MAX_UNREACHABLE_RESIDUAL` (21 on `main`, 24
 on a PR dry run the same morning) and the build did not publish. That red was
 answered by refinements, not by the bound, the budget or the cap: nine
 entries, chosen against a recorded run that came up 25 short, which recover 16
-of those 25. `PARTITION_KEYWORDS`' comment records how they were measured and
-what each one brings in. It is a margin of days, and the pinned sets above are
-still full.
+of those 25. The change's own dry run read a residual of 5 for
+`deepseek-harness` and 1 for `dsh-plugin` the same day, and the new entries
+also took at-risk names from 3,593 to 1,874 and from 687 to 602, since a name
+carrying one of them is reachable at any rank. `PARTITION_KEYWORDS`' comment
+records how they were measured and what each one brings in. It is a margin of
+days, and the pinned sets above are still full: the at-risk drop frees no
+slot, because a pin leaves only on a confirmed zero.
 
 ## 5. Module placement
 
