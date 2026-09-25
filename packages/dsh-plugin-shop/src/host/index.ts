@@ -109,9 +109,20 @@ export interface ShopGatewayOptions {
    * script, through symlinks, is the dsh actually running, and its own
    * app-boot supplies the profile templates (`harness.ts`). A script owned by
    * anything else — a test runner, another host — leaves both halves of that
-   * verdict silent. Tests pass a fixture install here, which is the
-   * production path. */
+   * verdict silent. The tests about where the running version comes from pass
+   * a fixture install here, which is the production path; the rest inject
+   * `readHarness`. */
   restartScript?: string
+  /** Test-only injection: how the running harness is read from
+   * `restartScript`; production uses `readRunningHarness`. It exists because
+   * an in-process test cannot import a module from another Windows drive
+   * under vitest's module runner, and a Windows runner has the checkout on D:
+   * and the temp dir, where every fixture harness lives, on C:. The read's
+   * import of the fixture's app-boot fails there, and the table reads empty.
+   * Production passes nothing, so the running dsh is read as before. Read
+   * once and kept either way (see `harnessRead`), so like the default it
+   * must never reject. */
+  readHarness?: (script: string | undefined) => Promise<RunningHarness>
   /** Test-only injection: the exit the restart calls after the response is
    * delivered. Production uses `process.exit`. */
   exit?: (code?: number) => void
@@ -582,7 +593,8 @@ export class ShopGateway extends TypertRemoteService {
 
   /** The harness this process runs, read once (see `harnessRead`). */
   private runningHarness(): Promise<RunningHarness> {
-    this.harnessRead ??= readRunningHarness(this.restartScript)
+    const read = this.options.readHarness ?? readRunningHarness
+    this.harnessRead ??= read(this.restartScript)
     return this.harnessRead
   }
 

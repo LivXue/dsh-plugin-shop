@@ -10,6 +10,8 @@ import type { InventoryEntry, LoaderEntryLike, RestartBlockedReason, ShopGateway
 import type { HotMountResult } from '../../src/host/hot.ts'
 import type { CatalogResult, CatalogSnapshot, LoadCatalogOptions } from '../../src/host/catalog.ts'
 import type { CatalogEntry } from '../../src/host/types.ts'
+import { profileTemplatesOf } from '../../src/host/compatibility.ts'
+import type { RunningHarness } from '../../src/host/harness.ts'
 import { startInstall } from '../../src/host/executor.ts'
 import { createPrefetcher, type Prefetcher } from '../../src/host/prefetch.ts'
 import { isTerminalInstallState } from '../../src/shared/install-state.ts'
@@ -2257,6 +2259,38 @@ function fixtureHarness(manifest: Record<string, unknown> = { version: '0.1.5-rc
   return { root, script: join(dshDir, 'lib', 'bin.js') }
 }
 
+/**
+ * A gateway `readHarness` that answers with the harness `fixtureHarness()`
+ * describes, without reading one: its version, `0.1.5-rc.3` unless a test
+ * passes the one the reader makes of another manifest, and the table
+ * `readRunningHarness` makes of `RC3_PROFILE_TEMPLATES`. `reads` records the
+ * script of every call.
+ *
+ * Why these tests inject rather than read. In-process, the gateway's own read
+ * imports the fixture's app-boot through vitest's module runner, and on a
+ * Windows runner, with the checkout on D: and the temp dir on C:, that import
+ * failed, so the table read empty and every test that needs one failed. The
+ * real read, the table and the lookup that finds it included, is covered by
+ * `tests/host/harness.test.ts`, which runs it under Node's own loader, in a
+ * child process, on every platform. What is left to test here is what the
+ * gateway does with the answer. The two tests whose point is where the
+ * running VERSION comes from still read for real, through `restartScript`:
+ * neither depends on that import, and both pass on every platform.
+ */
+function injectedHarness(dshVersion: string | null = '0.1.5-rc.3'): {
+  readHarness: (script: string | undefined) => Promise<RunningHarness>
+  reads: Array<string | undefined>
+} {
+  const reads: Array<string | undefined> = []
+  return {
+    readHarness: async script => {
+      reads.push(script)
+      return { dshVersion, templates: profileTemplatesOf(RC3_PROFILE_TEMPLATES) }
+    },
+    reads,
+  }
+}
+
 describe('ShopGateway.catalog harness compatibility', () => {
   /** `@xmanrui/dsh-im@4.19.2`'s own `dsh.compatibility.dsh`, verbatim (design
    * 2026-09-01-harness-compatibility §8.2): five exact versions, none of them
@@ -2282,10 +2316,11 @@ describe('ShopGateway.catalog harness compatibility', () => {
     // The running version is the fixture dsh's own. The profile is named
     // `tui`, a name no template carries, so its bundles decide `web`, and
     // they are the web template's: met. The RANGE is what this declaration
-    // fails.
+    // fails. Injected: without a readable table, `web` would be no template
+    // at all, and the profile half silent for that reason instead.
     const { gateway } = gatewayWithSnapshot(
       { schemaVersion: 5, builtAt: '', entries: [dshIm], denied: [], stars: {} },
-      { profile: 'tui', restartScript: fixtureHarness().script },
+      { profile: 'tui', readHarness: injectedHarness().readHarness },
     )
     expect((await gateway.catalog({})).incompatibleHarness).toEqual({
       'npm:@xmanrui/dsh-im': { dsh: { range: DSH_IM_RANGE, running: '0.1.5-rc.3' } },
@@ -2320,10 +2355,12 @@ describe('ShopGateway.catalog harness compatibility', () => {
     // `acp` is in 0.1.5-rc.3's table and not in the app-boot this repository
     // installs (0.1.1-rc.2), which is what the shop's own `import * as appBoot`
     // used to read — under a `link:` install, beside a 0.1.5-rc.3 dsh half.
+    // The table reaches the gateway through `readHarness`; that the reader
+    // takes it from the running dsh's own app-boot is harness.test.ts's case.
     const acpOnly: CatalogEntry = { ...dshIm, name: 'acp-only', compatibility: { profiles: ['acp'] } }
     const { gateway } = gatewayWithSnapshot(
       { schemaVersion: 5, builtAt: '', entries: [acpOnly], denied: [], stars: {} },
-      { restartScript: fixtureHarness().script },
+      { readHarness: injectedHarness().readHarness },
     )
     expect((await gateway.catalog({})).incompatibleHarness).toEqual({
       'npm:acp-only': { profile: { declared: ['acp'], running: 'web' } },
@@ -2352,12 +2389,13 @@ describe('ShopGateway.catalog harness compatibility', () => {
     // profile's bundles are a fact nobody can read — while the running
     // version never depended on the profile, and is judged. (Until
     // 2026-09-25 the version was read from the profile anchor, so this case
-    // expected no verdict at all.)
+    // expected no verdict at all.) Injected, so the table is readable and the
+    // profile half is silent for the missing directory alone.
     const gateway = new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/',
       cacheDir: '/cache',
       profile: 'web',
-      restartScript: fixtureHarness().script,
+      readHarness: injectedHarness().readHarness,
       loadCatalog: async () => ({
         snapshot: { schemaVersion: 5, builtAt: '', entries: [headlessOnly], denied: [], stars: {} },
         stale: false,
@@ -2370,35 +2408,38 @@ describe('ShopGateway.catalog harness compatibility', () => {
   })
 
   it.each([
-    ['declares no version', {}],
-    ['declares an empty one', { version: '' }],
-    ['declares one that is not semver', { version: 'nightly' }],
-  ])('judges only the profile half when the running dsh %s', async (_label, manifest) => {
+    ['declares no version', null],
+    ['declares an empty one', null],
+    ['declares one that is not semver', 'nightly'],
+  ])('judges only the profile half when the running dsh %s', async (_label, dshVersion) => {
     // An unknown silences its own half and no other (design §8.2): the
-    // template table is read whatever the version is.
+    // template table is read whatever the version is. Each row injects the
+    // version `readRunningHarness` makes of such a manifest: none for the
+    // first two, and `nightly` passed through for `compatibilityMap` to find
+    // no semver in. harness.test.ts pins that reading, and that the table is
+    // read beside each of them.
     const { gateway } = gatewayWithSnapshot(
       { schemaVersion: 5, builtAt: '', entries: [headlessOnly], denied: [], stars: {} },
-      { restartScript: fixtureHarness(manifest).script },
+      { readHarness: injectedHarness(dshVersion).readHarness },
     )
     expect((await gateway.catalog({})).incompatibleHarness).toEqual({ 'npm:dsh-headless-only': HEADLESS_UNMET })
   })
 
   it('reads the running harness once per gateway', async () => {
     // Which dsh this process is cannot change while it runs, and the read
-    // imports a module, so the gateway keeps it. The fixture is deleted after
-    // the first call: a second read would find nothing and name no version.
+    // imports a module, so the gateway keeps it: two calls, one read, counted
+    // at the injected reader.
     // (Until 2026-09-25 the version was re-read on every call, from the
     // profile anchor — which is where a hoisted copy could move it.)
-    const harness = fixtureHarness()
+    const harness = injectedHarness()
     const { gateway } = gatewayWithSnapshot(
       { schemaVersion: 5, builtAt: '', entries: [headlessOnly], denied: [], stars: {} },
-      { restartScript: harness.script },
+      { readHarness: harness.readHarness },
     )
     const both = { 'npm:dsh-headless-only': { dsh: { range: '0.9.0', running: '0.1.5-rc.3' }, ...HEADLESS_UNMET } }
     expect((await gateway.catalog({})).incompatibleHarness).toEqual(both)
-
-    rmSync(harness.root, { recursive: true, force: true })
     expect((await gateway.catalog({})).incompatibleHarness).toEqual(both)
+    expect(harness.reads).toHaveLength(1)
   })
 
   it("reads the running profile's bundles again on every call", async () => {
@@ -2412,7 +2453,7 @@ describe('ShopGateway.catalog harness compatibility', () => {
     writeBundles(['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'])
     const { gateway } = gatewayWithSnapshot(
       { schemaVersion: 5, builtAt: '', entries: [acpOnly], denied: [], stars: {} },
-      { profileDir, restartScript: fixtureHarness().script },
+      { profileDir, readHarness: injectedHarness().readHarness },
     )
     expect(Object.keys((await gateway.catalog({})).incompatibleHarness)).toEqual(['npm:acp-only'])
 
@@ -2429,7 +2470,7 @@ describe('ShopGateway.catalog harness compatibility', () => {
     const acpOnly: CatalogEntry = { ...dshIm, name: 'acp-only', compatibility: { profiles: ['acp'] } }
     const { gateway } = gatewayWithSnapshot(
       { schemaVersion: 5, builtAt: '', entries: [prototypeNamed, acpOnly], denied: [], stars: {} },
-      { restartScript: fixtureHarness().script },
+      { readHarness: injectedHarness().readHarness },
     )
     expect((await gateway.catalog({})).incompatibleHarness).toEqual({
       'npm:acp-only': { profile: { declared: ['acp'], running: 'web' } },
@@ -2443,12 +2484,13 @@ describe('ShopGateway.catalog harness compatibility', () => {
     // verdict beside it stands — the same rule as the peer map's own guard.
     // The whole map goes, the genuine `acp-only` verdict with it: a shape the
     // parse refuses means this snapshot is not one this build can judge.
+    // Injected, so the table is readable and `acp-only` alone would be judged.
     const malformed = { ...dshIm, name: 'malformed', compatibility: { profiles: 5 } } as unknown as CatalogEntry
     const acpOnly: CatalogEntry = { ...dshIm, name: 'acp-only', compatibility: { profiles: ['acp'] } }
     const peered: CatalogEntry = { ...dshIm, name: 'peered', compatibility: undefined, peers: ['dsh-peer-installed-nowhere'] }
     const { gateway } = gatewayWithSnapshot(
       { schemaVersion: 5, builtAt: '', entries: [acpOnly, malformed, peered], denied: [], stars: {} },
-      { restartScript: fixtureHarness().script, resolvePeer: () => false },
+      { readHarness: injectedHarness().readHarness, resolvePeer: () => false },
     )
     const result = await gateway.catalog({})
     expect(result.incompatibleHarness).toEqual({})

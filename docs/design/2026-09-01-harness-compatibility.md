@@ -252,6 +252,15 @@ counts.)
   non-`@deepseek-ai` peer — copied from `dsh-timeline`'s actual manifest
   rather than imagined. (`react` was present on 0.1.1-rc.2; on 0.1.5-rc.3
   the host cannot find it and the module table serves it — §9.1.)
+- **Host, running harness:** the gateway's verdicts that need a template
+  table are driven through its `readHarness` option, and
+  `readRunningHarness` itself is tested in a native Node child process.
+  (Amended 2026-09-25: on a Windows runner, whose checkout is on D: and
+  temp directory on C:, an in-process read under vitest's module runner
+  cannot import a fixture's app-boot from the other drive. The read then
+  yields no table, so a test expecting one fails and a test expecting none
+  passes for the wrong reason. Node's own loader, which production uses,
+  reads the same fixtures there.)
 - **Client:** the pure name-list → locale-key mapping, and each of the
   three renderings.
 - **E2E:** a live fixture package declaring a peer that cannot resolve,

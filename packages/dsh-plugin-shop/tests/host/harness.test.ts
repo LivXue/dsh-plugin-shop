@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { readRunningHarness } from '../../src/host/harness.ts'
+import { readRunningHarness, type RunningHarness } from '../../src/host/harness.ts'
 import { fileTempRoot } from './temp-root.ts'
 
 const TEMP_ROOT = fileTempRoot('harness')
@@ -75,24 +75,61 @@ function installAppBoot(nodeModules: string, templates: unknown, entry?: string)
   return dir
 }
 
+/** `harness.ts` as a file URL, which is how a child process imports it. */
+const HARNESS_MODULE = new URL('../../src/host/harness.ts', import.meta.url).href
+
+/**
+ * `readRunningHarness(script)` in a child `node`, under Node's own ESM loader,
+ * which is the loader production runs the host under, inside dsh. Every read
+ * whose fixture holds an app-boot entry runs in a child, whether it expects a
+ * table or none: here, or in the NODE_PATH test's own child at the bottom. A
+ * test with no app-boot in play reads in-process.
+ *
+ * In-process, the reader's `import()` of the fixture's entry runs through
+ * vitest's module runner. On a Windows runner, with the checkout on D: and
+ * `os.tmpdir()` on C:, that import failed in every test that expected a
+ * table: the version read right, and the table read `{}` because the reader
+ * swallows the failure, as designed. The tests expecting `{}` beside an
+ * app-boot passed there whatever the entry held. The NODE_PATH test at the
+ * bottom already read in a child, and on that runner it read a table from a
+ * fixture of the same shape under the same temp root. That comparison is what
+ * puts the fault in the test's loader, not in the reader.
+ *
+ * A child that does not exit 0 throws, with its stderr. Without that check, a
+ * child that crashed before printing would still fail at the parse, but one
+ * that crashed after printing would pass. `cwd` is the child's working
+ * directory.
+ */
+function readInChild(script: string, cwd?: string): RunningHarness {
+  const source = [
+    `const { readRunningHarness } = await import(${JSON.stringify(HARNESS_MODULE)})`,
+    `console.log(JSON.stringify(await readRunningHarness(${JSON.stringify(script)})))`,
+  ].join('\n')
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', source], { cwd, encoding: 'utf8' })
+  if (child.status !== 0) {
+    throw new Error(`readRunningHarness(${JSON.stringify(script)}) in a child: status ${child.status}, signal ${child.signal}, error ${child.error?.message ?? 'none'}\n${child.stderr}`)
+  }
+  return JSON.parse(child.stdout) as RunningHarness
+}
+
 describe('readRunningHarness', () => {
-  it('reads the version and the template table of the dsh that owns the script', async () => {
+  it('reads the version and the template table of the dsh that owns the script', () => {
     // npm's global layout: app-boot nested under the dsh package itself.
     const { dshDir, bin } = installDsh(mkdtempSync(join(TEMP_ROOT, 'nested-')))
     installAppBoot(join(dshDir, 'node_modules'), RC3_EXPORT)
 
-    expect(await readRunningHarness(bin)).toEqual({ dshVersion: '0.1.5-rc.3', templates: RC3_TABLE })
+    expect(readInChild(bin)).toEqual({ dshVersion: '0.1.5-rc.3', templates: RC3_TABLE })
   })
 
-  it('finds app-boot as a sibling of the dsh package, where pnpm and a hoisting install put it', async () => {
+  it('finds app-boot as a sibling of the dsh package, where pnpm and a hoisting install put it', () => {
     const root = mkdtempSync(join(TEMP_ROOT, 'sibling-'))
     const { bin } = installDsh(root)
     installAppBoot(join(root, 'node_modules'), MARKED_EXPORT)
 
-    expect(await readRunningHarness(bin)).toEqual({ dshVersion: '0.1.5-rc.3', templates: MARKED_EXPORT })
+    expect(readInChild(bin)).toEqual({ dshVersion: '0.1.5-rc.3', templates: MARKED_EXPORT })
   })
 
-  it('reads the copy dsh itself imports when there are two: the nested one', async () => {
+  it('reads the copy dsh itself imports when there are two: the nested one', () => {
     // Walking up from the dsh package meets its own node_modules first, as
     // dsh's own `import '@deepseek-ai/dsh-app-boot'` does; a copy hoisted
     // beside it from some other package's dependencies is not the one running.
@@ -101,10 +138,10 @@ describe('readRunningHarness', () => {
     installAppBoot(join(dshDir, 'node_modules'), RC3_EXPORT)
     installAppBoot(join(root, 'node_modules'), MARKED_EXPORT)
 
-    expect((await readRunningHarness(bin)).templates).toEqual(RC3_TABLE)
+    expect(readInChild(bin).templates).toEqual(RC3_TABLE)
   })
 
-  it.skipIf(process.platform === 'win32')('resolves a symlinked bin through realpath to the package that owns it', async () => {
+  it.skipIf(process.platform === 'win32')('resolves a symlinked bin through realpath to the package that owns it', () => {
     // `process.argv[1]` is the path the shell ran, and a global npm install
     // runs `<prefix>/bin/dsh`, a link into `<prefix>/lib/node_modules`. The
     // link's own directory is owned by no package; only its target is dsh's.
@@ -117,7 +154,7 @@ describe('readRunningHarness', () => {
     mkdirSync(dirname(shim), { recursive: true })
     symlinkSync(bin, shim)
 
-    expect(await readRunningHarness(shim)).toEqual({ dshVersion: '0.1.5-rc.3', templates: RC3_TABLE })
+    expect(readInChild(shim)).toEqual({ dshVersion: '0.1.5-rc.3', templates: RC3_TABLE })
   })
 
   it('knows nothing when there is no script, or none it can resolve', async () => {
@@ -127,22 +164,17 @@ describe('readRunningHarness', () => {
     }
   })
 
-  it('reads an empty script as none, not as the working directory', async () => {
+  it('reads an empty script as none, not as the working directory', () => {
     // `realpathSync('')` answers the working directory, so an empty path
     // would name whatever package dsh happened to be started inside. Run from
     // inside a real dsh fixture, which is what that would read.
     const { dshDir } = installDsh(mkdtempSync(join(TEMP_ROOT, 'empty-')))
     installAppBoot(join(dshDir, 'node_modules'), RC3_EXPORT)
-    const cwd = process.cwd()
-    process.chdir(join(dshDir, 'lib'))
-    try {
-      expect(await readRunningHarness('')).toEqual({ dshVersion: null, templates: {} })
-    } finally {
-      process.chdir(cwd)
-    }
+
+    expect(readInChild('', join(dshDir, 'lib'))).toEqual({ dshVersion: null, templates: {} })
   })
 
-  it('knows nothing when the script belongs to some other package', async () => {
+  it('knows nothing when the script belongs to some other package', () => {
     // A test runner, another host embedding the shop: nothing then says which
     // harness runs, and both halves of the verdict go silent. The owner here
     // sits beside a real dsh install with an app-boot, so neither half could
@@ -155,10 +187,10 @@ describe('readRunningHarness', () => {
     writeFileSync(join(runner, 'package.json'), JSON.stringify({ name: 'tinypool', version: '1.1.1' }))
     writeFileSync(join(runner, 'dist', 'entry', 'process.js'), '')
 
-    expect(await readRunningHarness(join(runner, 'dist', 'entry', 'process.js'))).toEqual({ dshVersion: null, templates: {} })
+    expect(readInChild(join(runner, 'dist', 'entry', 'process.js'))).toEqual({ dshVersion: null, templates: {} })
   })
 
-  it('stops at the first manifest above the script, and never climbs past it to a dsh', async () => {
+  it('stops at the first manifest above the script, and never climbs past it to a dsh', () => {
     // The package that OWNS the script is the nearest package.json at or above
     // it, and only that one — `owningEntry` in dsh-cli.ts follows the same
     // rule. A package vendored inside dsh's own tree owns its own scripts.
@@ -169,7 +201,7 @@ describe('readRunningHarness', () => {
     writeFileSync(join(vendored, 'package.json'), JSON.stringify({ name: 'bundled-helper', version: '1.0.0' }))
     writeFileSync(join(vendored, 'entry.js'), '')
 
-    expect(await readRunningHarness(join(vendored, 'entry.js'))).toEqual({ dshVersion: null, templates: {} })
+    expect(readInChild(join(vendored, 'entry.js'))).toEqual({ dshVersion: null, templates: {} })
   })
 
   it('walks past a package.json that is not a file, and stops at one it cannot parse', async () => {
@@ -186,7 +218,7 @@ describe('readRunningHarness', () => {
     expect(await readRunningHarness(stopped.bin)).toEqual({ dshVersion: null, templates: {} })
   })
 
-  it('reads a version only when the manifest carries a non-empty string, and keeps the templates either way', async () => {
+  it('reads a version only when the manifest carries a non-empty string, and keeps the templates either way', () => {
     // The version and the table are separate facts: a manifest without a
     // usable version costs the range half its verdict, not the profile half.
     // Whether a string is semver is `compatibilityMap`'s question, so
@@ -194,11 +226,11 @@ describe('readRunningHarness', () => {
     for (const [version, expected] of [[undefined, null], ['', null], [7, null], [null, null], ['nightly', 'nightly']] as const) {
       const { dshDir, bin } = installDsh(mkdtempSync(join(TEMP_ROOT, 'version-')), { version })
       installAppBoot(join(dshDir, 'node_modules'), MARKED_EXPORT)
-      expect(await readRunningHarness(bin), JSON.stringify(version)).toEqual({ dshVersion: expected, templates: MARKED_EXPORT })
+      expect(readInChild(bin), JSON.stringify(version)).toEqual({ dshVersion: expected, templates: MARKED_EXPORT })
     }
   })
 
-  it('keeps the version when the template table cannot be read', async () => {
+  it('keeps the version when the template table cannot be read', () => {
     // Every way app-boot can fail to supply a table — none installed, an entry
     // that throws on import, an export of the wrong name — costs the profile
     // half and nothing else.
@@ -210,7 +242,7 @@ describe('readRunningHarness', () => {
     for (const [label, stage] of cases) {
       const { dshDir, bin } = installDsh(mkdtempSync(join(TEMP_ROOT, 'no-table-')))
       stage(dshDir)
-      expect(await readRunningHarness(bin), label).toEqual({ dshVersion: '0.1.5-rc.3', templates: {} })
+      expect(readInChild(bin), label).toEqual({ dshVersion: '0.1.5-rc.3', templates: {} })
     }
   })
 
