@@ -1,5 +1,8 @@
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { diffRepoState, nextRepoState, parseRepoState, repoGoneDetail, serializeRepoState, staleFailureRepos } from '../src/repo-state.ts'
+import { DECLARATIONS_RULE, diffRepoState, nextRepoState, parseRepoState, repoGoneDetail, serializeRepoState, staleFailureRepos } from '../src/repo-state.ts'
 import type { RepoState, RepoStateEntry } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
 
@@ -23,9 +26,12 @@ function candidate(repo: string): RepoCandidate {
     // here, every fixture below would queue for a re-probe and the tests about
     // `pushedAt` and `assetVerified` would stop testing those.
     sizeProbed: true,
-    // And its manifest's peers were read — none, here. Absent, every fixture
-    // would queue for the one-time peers re-read instead, for the same reason.
+    // And its manifest's declarations were read — no peers, here — under the
+    // rule this build applies. Unstamped, every fixture would queue for the
+    // declarations re-read instead, for the same reason. (This was `peers: []`
+    // alone while the bare presence of `peers` was the marker.)
     peers: [],
+    declarationsRule: DECLARATIONS_RULE,
   }
 }
 
@@ -148,68 +154,104 @@ describe('repo-state', () => {
     expect(toFetch).toEqual([])
   })
 
-  it('diff: an unchanged repo whose candidates were recorded before peers were read is re-read once', () => {
-    // The same retroactivity hole as the two markers above, and this time
-    // nothing else would close it. Measured on the committed repo-state.json
-    // of 2026-09-24: 0 of 10,864 listable candidates still lacked
-    // `sizeProbed`, so with unchanged heads the diff queued NOTHING — the
-    // size backfill that re-read every repository once has finished. Without
-    // a marker of its own, peers would reach 10,629 repositories only as each
-    // happened to push.
+  /** `candidate()` with its declarations stamp removed or replaced. */
+  function stamped(repo: string, declarationsRule: number | undefined, extra: Partial<RepoCandidate> = {}): RepoCandidate {
+    const { declarationsRule: _current, ...rest } = candidate(repo)
+    return { ...rest, ...extra, ...(declarationsRule === undefined ? {} : { declarationsRule }) }
+  }
+  const unchanged = [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }]
+
+  it('diff: an unchanged repository whose listable candidate carries no stamp is re-read, not re-fetched', () => {
+    // Changed (R9). This test sent the repository to the FULL fetch queue on a
+    // presence-only marker (`peers` absent): head commit, recursive sizing tree,
+    // release probe and archive, subpackage discovery — to learn facts that sit
+    // in one package.json at the recorded commit (the cost is measured once, on
+    // DECLARATIONS_REREAD_BUDGET_DEFAULT). A repository whose ONLY need is the
+    // stamp now goes to a separate re-read queue, which harvestRepos serves
+    // with one manifest read per candidate.
+    //
+    // Why a re-read at all, unchanged: measured on the committed repo-state.json
+    // of 2026-09-24, 0 of 10,864 listable candidates still lacked `sizeProbed`,
+    // so with unchanged heads nothing else re-reads a dormant repository — and
+    // without a marker its declarations would change only as it happened to push.
     const unread: RepoState = {
-      'a/one': {
-        pushedAt: '2026-08-01T00:00:00Z',
-        commit,
-        candidates: [{ ...candidate('a/one'), peers: undefined }],
-      },
+      'a/one': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [stamped('a/one', undefined, { peers: undefined })] },
     }
-    const { toFetch } = diffRepoState(unread, [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }])
-    expect(toFetch.map(e => e.repo)).toEqual(['a/one'])
-    // A backfill, never a change: it must not displace a repository that
-    // actually pushed.
-    expect(toFetch[0]?.backfillOnly).toBe(true)
+    const { toFetch, toReread } = diffRepoState(unread, unchanged)
+    expect(toFetch).toEqual([])
+    expect(toReread).toEqual(['a/one'])
   })
 
-  it('diff: a candidate that records NO peers is left alone, so the re-read is once and not daily', () => {
+  it('diff: a candidate stamped with the current rule queues nothing, whatever its peers say', () => {
     // `[]` is a record — the manifest was read and requires nothing — and it
     // is what every re-read leaves behind for a peerless plugin. Keying the
-    // re-read on an EMPTY list would put every such repository in every
-    // run's queue forever, the reason `sizeProbed` is a marker too.
-    const { toFetch } = diffRepoState(state, [
+    // re-read on an EMPTY list would put every such repository in every run's
+    // queue forever, the reason `sizeProbed` is a marker too; the stamp is the
+    // marker now, and it is present here.
+    const { toFetch, toReread } = diffRepoState(state, [
       { repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' },
       { repo: 'b/two', pushedAt: '2026-08-01T00:00:00Z' },
     ])
     expect(state['a/one'].candidates[0]?.peers).toEqual([])
+    expect(state['a/one'].candidates[0]?.declarationsRule).toBe(DECLARATIONS_RULE)
     expect(toFetch).toEqual([])
+    expect(toReread).toEqual([])
   })
 
-  it('diff: a repo whose head moved is never labelled backfill, even if it also lacks peers', () => {
-    const both: RepoState = {
-      'a/one': {
-        pushedAt: '2026-07-01T00:00:00Z',
-        commit,
-        candidates: [{ ...candidate('a/one'), peers: undefined }],
-      },
+  it('diff: a candidate stamped by any other rule is re-read — the reader changed since', () => {
+    // The whole reason the marker is a version: `tier.ts` republishes carried
+    // declarations verbatim, so a candidate written under an older
+    // `peerNamesOf` would otherwise publish the old rule's answer forever. The
+    // comparison is equality, so a LATER stamp (a build rolled back) is
+    // re-read too. With the rule at 1 an older stamp is 0, which only this
+    // in-memory fixture can hold — `parseRepoState` refuses 0 below — and the
+    // point here is the diff's predicate, not the file's grammar.
+    for (const other of [DECLARATIONS_RULE - 1, DECLARATIONS_RULE + 1]) {
+      const stale: RepoState = { 'a/one': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [stamped('a/one', other)] } }
+      const { toFetch, toReread } = diffRepoState(stale, unchanged)
+      expect(toFetch, String(other)).toEqual([])
+      expect(toReread, String(other)).toEqual(['a/one'])
     }
-    const { toFetch } = diffRepoState(both, [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }])
-    expect(toFetch.map(e => e.backfillOnly)).toEqual([false])
   })
 
-  it('diff: a candidate that can never list does not queue its repository for peers', () => {
+  it('diff: a repository whose head moved takes the full fetch alone, even when it also lacks the stamp', () => {
+    // The full fetch re-projects every candidate and stamps it, so queueing
+    // the same repository for a re-read too would read its manifest twice.
+    const both: RepoState = {
+      'a/one': { pushedAt: '2026-07-01T00:00:00Z', commit, candidates: [stamped('a/one', undefined, { peers: undefined })] },
+    }
+    const { toFetch, toReread } = diffRepoState(both, [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }])
+    expect(toFetch.map(e => [e.repo, e.backfillOnly])).toEqual([['a/one', false]])
+    expect(toReread).toEqual([])
+  })
+
+  it('diff: a repository queued for a size probe or an unverified release is not also re-read', () => {
+    // Same rule for the full-fetch backfills: the stamp is the re-read's ONLY
+    // reason, and any reason to fetch the repository in full answers it too.
+    const cases: RepoCandidate[] = [
+      stamped('a/one', undefined, { sizeProbed: undefined }),
+      stamped('a/one', undefined, { requiresBuild: true, release: { tag: 'v1', url: 'https://x/y.tgz', sha256: 'a'.repeat(64) } }),
+    ]
+    for (const unstamped of cases) {
+      const { toFetch, toReread } = diffRepoState({ 'a/one': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [unstamped] } }, unchanged)
+      expect(toFetch.map(e => [e.repo, e.backfillOnly])).toEqual([['a/one', true]])
+      expect(toReread).toEqual([])
+    }
+  })
+
+  it('diff: a candidate that can never list queues its repository for nothing, stamp or no stamp', () => {
     // The predicate the size marker asks, for the reason its comment gives.
     // One of gateRepo's three unconditional rejections can reach no entry, so
-    // its peers would reach no reader either; counting it would queue a repo
-    // whose only candidate is bundle-less on every run for nothing. And the
-    // absence stays: should the gate ever loosen, the same predicate re-queues
-    // exactly the candidates the loosening made listable.
+    // its declarations would reach no reader either; counting it would queue a
+    // repo whose only candidate is bundle-less on every run for nothing. And
+    // the absence stays: should the gate ever loosen, the same predicate
+    // re-queues exactly the candidates the loosening made listable.
     const unlistable: RepoState = {
-      'a/one': {
-        pushedAt: '2026-08-01T00:00:00Z',
-        commit,
-        candidates: [{ ...candidate('a/one'), hasBundle: false, peers: undefined }],
-      },
+      'a/one': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [stamped('a/one', undefined, { hasBundle: false, peers: undefined })] },
     }
-    expect(diffRepoState(unlistable, [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }]).toFetch).toEqual([])
+    const { toFetch, toReread } = diffRepoState(unlistable, unchanged)
+    expect(toFetch).toEqual([])
+    expect(toReread).toEqual([])
   })
 
   it('diff: recorded repos absent from the search are gone', () => {
@@ -443,13 +485,42 @@ describe('a carried peers or compatibility record is checked on the way in', () 
       },
     }
     expect(parseRepoState(serializeRepoState(recorded))).toEqual(recorded)
-    // Absent is the marker that queues the re-read. A parse that filled in
-    // `[]` would record "requires nothing" for a manifest nobody read, and the
-    // repository would never be re-read at all.
-    const { peers: _unread, ...legacy } = candidate('a/one')
+    // A record from before either field existed carries neither `peers` nor a
+    // stamp. A parse that filled in `[]` would record "requires nothing" for a
+    // manifest nobody read; left absent, the missing stamp queues the re-read.
+    // (Changed with R9: this asserted a FULL fetch, when the absence of `peers`
+    // itself was the marker.)
+    const { peers: _unread, declarationsRule: _unstamped, ...legacy } = candidate('a/one')
     const parsed = parseRepoState(JSON.stringify({ 'a/one': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [legacy] } }))
     expect(parsed['a/one']?.candidates[0]).not.toHaveProperty('peers')
-    expect(diffRepoState(parsed, [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }]).toFetch).toHaveLength(1)
+    expect(parsed['a/one']?.candidates[0]).not.toHaveProperty('declarationsRule')
+    const { toFetch, toReread } = diffRepoState(parsed, [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }])
+    expect(toFetch).toEqual([])
+    expect(toReread).toEqual(['a/one'])
+  })
+
+  it('round-trips a well-formed declarations stamp, a later rule\'s included', () => {
+    for (const declarationsRule of [DECLARATIONS_RULE, DECLARATIONS_RULE + 6]) {
+      expect(parseRepoState(rowWith({ declarationsRule }))['a/one']?.candidates[0]?.declarationsRule).toBe(declarationsRule)
+    }
+  })
+
+  it.each([
+    ['zero', 0],
+    ['negative', -1],
+    ['fractional', 1.5],
+    ['past the safe-integer range', 2 ** 53],
+    ['a numeric string', '1'],
+    ['null', null],
+    ['a boolean', true],
+    ['an array', [1]],
+  ])('throws on a declarations stamp that is %s', (_label, declarationsRule) => {
+    // The stamp decides whether a carried record is re-read, and this build is
+    // its only writer, which writes a positive integer. Anything else means the
+    // file was edited or corrupted: a value that silently compared unequal
+    // would re-read the repository every run, and one that compared equal by
+    // accident would freeze its declarations under a rule nobody applied.
+    expect(() => parseRepoState(rowWith({ declarationsRule }))).toThrow('a/one has a candidate with a malformed declarationsRule stamp')
   })
 
   it.each([
@@ -499,6 +570,18 @@ describe('a carried peers or compatibility record is checked on the way in', () 
       const text = JSON.stringify({ 'a/one': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [value] } })
       expect(() => parseRepoState(text), JSON.stringify(value)).toThrow('a/one has a candidate that is not an object')
     }
+  })
+})
+
+describe('the committed harvest memory', () => {
+  it('still parses registry/repo-state.json, which the stamp check must not turn into a build that cannot start', () => {
+    // The file is a build input committed daily, and every record in it
+    // predates the stamp. `checkCarriedDeclarations` now reads one more field
+    // off each carried candidate; a check that refused the committed file would
+    // stop the next build before it harvested anything.
+    const committed = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'repo-state.json')
+    const parsed = parseRepoState(readFileSync(committed, 'utf8'))
+    expect(Object.keys(parsed).length).toBeGreaterThan(0)
   })
 })
 

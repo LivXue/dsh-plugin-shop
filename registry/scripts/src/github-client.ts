@@ -18,12 +18,12 @@ import { createHash } from 'node:crypto'
 import { truncateWholeCharacters } from './gate.ts'
 import { compatibilityOf, FetchTimeoutError, fetchWithRetry, peerNamesOf, withTimeout } from './npm-client.ts'
 import { canEverList } from './repo-gate.ts'
-import { diffRepoState, nextRepoState, type RepoSeen, type RepoState, type RepoToFetch } from './repo-state.ts'
+import { DECLARATIONS_RULE, diffRepoState, nextRepoState, type RepoSeen, type RepoState, type RepoStateEntry, type RepoToFetch } from './repo-state.ts'
 import { hasWorkspaceDeps, monorepoSignal, selectSubpackagePaths } from './subpackage-select.ts'
 import type { RepoCandidate } from './types.ts'
 import { readCappedBody } from './http-body.ts'
 import { treeInstallSize } from './tree-size.ts'
-import { verifyReleaseAsset } from './release-asset.ts'
+import { type PackedDeclarations, readPackedDeclarations, verifyReleaseAsset } from './release-asset.ts'
 
 const GITHUB_API = 'https://api.github.com'
 const RAW_GITHUB = 'https://raw.githubusercontent.com'
@@ -38,9 +38,11 @@ export const MAX_SEARCH_PAGES = Math.ceil(GITHUB_SEARCH_CAP / SEARCH_PAGE_SIZE)
 export const HARVEST_TOPICS: readonly string[] = ['dsh-plugin', 'deepseek-harness']
 
 /**
- * The largest release tarball the rescue probe will hold in memory. The
- * probe is advisory — an over-cap tarball is un-rescuable, same as an
- * absent one — so it must refuse the body rather than OOM the build.
+ * The largest release tarball the rescue probe will hold in memory. An
+ * over-cap tarball is un-rescuable, same as an absent one: refusing it is a
+ * decision WE make about an asset that answered, not a transport failure, so
+ * the probe answers "no release" for it rather than throwing — and it must
+ * refuse the body rather than OOM the build.
  */
 export const MAX_TARBALL_BYTES = 32 * 1024 * 1024
 
@@ -89,10 +91,16 @@ export const GITHUB_REQUEST_TIMEOUT_MS = 30_000
  * problem one size down. On the shared 30s bound a healthy 32 MB asset
  * would have to sustain 1.07 MB/s (8.5 Mbit/s) or be killed. At 300s the floor
  * is 109 KB/s (0.87 Mbit/s), far below any plausible runner-to-GitHub-CDN
- * throughput. Being wrong the other way is cheap and self-correcting: the
- * probe is advisory and degrades to no release. Being wrong THIS way is not —
- * a missed release rides through the state file and is not re-probed until the
- * repository is pushed to again.
+ * throughput.
+ *
+ * A deadline that fires throws: the probe decides whether a rescued repository
+ * is listed, so a killed download is a `fetch-failed` that keeps the recorded
+ * rescue and retries next run, never a "no release" (see
+ * `fetchLatestReleaseTarball`). That makes being wrong THIS way costly in a new
+ * way: a bound too tight for a healthy asset fails its repository on every run
+ * and counts each time toward the systematic-failure bound. The same deadline
+ * bounds the declarations re-read's download of a recorded asset, where a kill
+ * leaves the candidate unchanged and unstamped.
  */
 export const TARBALL_REQUEST_TIMEOUT_MS = 300_000
 
@@ -696,17 +704,39 @@ async function fetchHeadCommit(
  * candidate, so it re-probes only when the repo's `pushedAt` advances.
  * The tarball is downloaded once here and hashed: GitHub release assets are
  * immutable per URL (re-upload = new asset = new URL), so URL + sha256 is the
- * audit story. The probe is advisory — its fallback, the unchanged
- * `requires-build` rejection, is complete — so it returns null on any
- * failure and never throws.
+ * audit story.
  *
- * Three answers, not two. `null` is "nothing to rescue with and nothing to
- * say": no release, no tarball asset, a transport failure, or a body over
- * {@link MAX_TARBALL_BYTES}. `{ ok: false, detail }` is an asset that WAS
- * there and did not hold up under {@link verifyReleaseAsset} — that detail is
- * published to the author and persisted, so the rejection standing in the
- * rescue's place can say why rather than blaming a build script. `{ ok: true }`
- * carries the pin.
+ * NOT advisory, and it throws rather than degrading. It used to return null on
+ * any failure, on the reasoning that its fallback — the unchanged
+ * `requires-build` rejection — was complete. It is complete only for a
+ * repository with nothing recorded. For a recorded rescue this probe DECIDES
+ * whether the entry is listed: the root it re-projects is `requires-build`,
+ * `nextRepoState` swaps a fetched repository's candidates wholesale, and so a
+ * null from one 403 or one dropped download replaced a verified rescue with a
+ * root the gate rejects as "Declares a prepare/prepack build script ...
+ * Publish to npm" — while the verified tarball was still there, and with
+ * nothing to re-queue the repository until it pushed again. So every transport
+ * failure throws now and lands in harvestRepos' catch with the others: a
+ * `fetch-failed` row, nothing persisted, the recorded rescue standing, and a
+ * retry next run. The cost is stated rather than hidden: a CI egress allowlist
+ * that permits api.github.com and blocks the asset's redirect host now fails
+ * every repository on this path, and enough of them trip the systematic-failure
+ * bound and stop the build — where it used to delist every rescued entry and
+ * go green.
+ *
+ * Three answers, not two, and `null` is now narrow. It is a DEFINITE "nothing
+ * to rescue with": a 404 from `releases/latest` (no release), a release that
+ * names no tarball asset, an asset past {@link MAX_TARBALL_BYTES} (a refusal we
+ * make about an asset that answered), or a 404 for the asset itself.
+ * `{ ok: false, detail }` is an asset that WAS there and did not hold up under
+ * {@link verifyReleaseAsset} — that detail is published to the author and
+ * persisted, so the rejection standing in the rescue's place can say why rather
+ * than blaming a build script. `{ ok: true }` carries the pin, and the packed
+ * manifest's own declaration inputs, because the entry installs THIS archive
+ * and not the default branch the candidate was projected from.
+ * @throws on every transport failure: a non-ok status other than 404 from
+ *   either request (after its retry ladder), a request that throws, a body that
+ *   fails mid-read, a deadline, or a releases body that is not JSON.
  */
 async function fetchLatestReleaseTarball(
   owner: string,
@@ -718,83 +748,120 @@ async function fetchLatestReleaseTarball(
   timeoutMs: number = GITHUB_REQUEST_TIMEOUT_MS,
   tarballTimeoutMs: number = TARBALL_REQUEST_TIMEOUT_MS,
 ): Promise<
-  | { ok: true; tag: string; url: string; sha256: string; installSize: number }
+  | { ok: true; tag: string; url: string; sha256: string; installSize: number; declarations: PackedDeclarations }
   /** An asset existed and was refused; the detail reaches the author. */
   | { ok: false; detail: string }
-  /** Nothing to rescue with, and nothing to say about it. */
+  /** Nothing to rescue with, definitely — see above for the four ways. */
   | null
 > {
-  // The whole probe is advisory, so no failure inside it may crash the
-  // harvest: every transport or read failure degrades to null, the
-  // stars-sidecar rule ("any failure publishes without stars; the step
-  // never throws").
+  const url = `${GITHUB_API}/repos/${owner}/${slug}/releases/latest`
+  const response = await fetchRobust(url, fetchImpl, sleep, token, timeoutMs)
+  // GitHub's own answer that this repository has no published release, and
+  // the only status here that says anything about the repository.
+  if (response.status === 404) return null
+  if (!response.ok) {
+    throw new Error(`github api returned ${response.status} reading the latest release of ${owner}/${slug}`)
+  }
+  let body: { tag_name?: unknown; assets?: unknown } | null
   try {
-    const url = `${GITHUB_API}/repos/${owner}/${slug}/releases/latest`
-    const response = await fetchRobust(url, fetchImpl, sleep, token, timeoutMs)
-    if (!response.ok) return null
-    let body: { tag_name?: unknown; assets?: unknown }
-    try {
-      body = await response.json() as typeof body
-    } catch {
-      // Swallows an unreadable release body: a release we cannot read is a
-      // release we cannot rescue — the same as an absent one.
-      return null
-    }
-    if (typeof body.tag_name !== 'string' || !Array.isArray(body.assets)) return null
-    const asset = body.assets
-      .map(a => (a as { browser_download_url?: unknown }).browser_download_url)
-      .find((u): u is string => typeof u === 'string' && /\.(?:tgz|tar\.gz)$/i.test(u))
-    if (asset === undefined) return null
-    // The asset alone gets the larger bound: the two requests above read a
-    // few hundred bytes of GitHub's own JSON, and lending them 300s would
-    // hand a stalled metadata call ten times the budget it needs.
-    //
-    // And it deliberately does NOT go through fetchRobust. That ladder retries
-    // a throw four times with backoff, which is right for a few hundred bytes
-    // over a flaky h2 connection and ruinous at 300s an attempt: a stalled
-    // asset host -- the CI egress allowlist the catch below names, where
-    // api.github.com is permitted and the asset's separate redirect host is
-    // not -- cost 4 x 300s + 14s = 21 minutes per repository. Against the live
-    // state file, 303 of 13,120 candidates carry a release, so a 2000-repo run
-    // puts ~46 on this path: ~243 minutes at REPO_CONCURRENCY 4, twice the
-    // whole job bound, for a probe that degrades to "no release" anyway. One
-    // bounded attempt costs at most 5 minutes, so the same total is ~58 --
-    // still the largest single thing the harvest can spend on advisory data,
-    // and the place to put an aggregate budget if it is ever seen for real.
-    // fetchWithRetry still absorbs a 429 or a 5xx, which answer immediately
-    // and then wait out its ladder rather than this deadline.
-    const assetResponse = await fetchWithRetry(asset, withTimeout(fetchImpl, tarballTimeoutMs, 'github'), sleep, token)
-    if (!assetResponse.ok) return null
-    const bytes = await readTarballBody(assetResponse)
-    if (bytes === null) return null
-    // The bytes are already in hand for the hash, so verifying that they ARE
-    // this package costs nothing more. Until this check the rescue carried the
-    // repo tree's name onto an asset nobody had opened.
-    const verdict = verifyReleaseAsset(bytes, bundleName)
-    if (!verdict.ok) return { ok: false, detail: verdict.detail }
-    const sha256 = createHash('sha256').update(bytes).digest('hex')
-    return { ok: true, tag: body.tag_name, url: asset, sha256, installSize: verdict.installSize }
-  } catch {
-    // Swallows the transport failures every null-returning path above leaves
-    // open: the releases call, and the asset download — the largest body read
-    // in this file, capped at MAX_TARBALL_BYTES — whose stream can drop after
-    // the headers arrived. The probe has nothing load-bearing; a permanent
-    // failure, say a CI egress
-    // allowlist that permits api.github.com but blocks the asset redirect
-    // host, must leave the unchanged `requires-build` rejection standing
-    // rather than take the whole daily catalog down.
-    return null
+    body = await response.json() as typeof body
+  } catch (error) {
+    // A body that failed mid-read and one that arrived and is not JSON both
+    // land here, and both throw: neither is GitHub saying anything about this
+    // repository's releases — a proxy's error page wearing a 200 is the likely
+    // second — and answering "no release" for them is exactly the durable
+    // delisting this probe no longer does. A deadline keeps its own error, for
+    // the reason readSearchBody gives.
+    if (error instanceof FetchTimeoutError) throw error
+    throw new Error(`github api answered ${response.status} for the latest release of ${owner}/${slug} with a body that is not JSON`)
+  }
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    throw new Error(`github api answered ${response.status} for the latest release of ${owner}/${slug} with a body that is not a release object`)
+  }
+  if (typeof body.tag_name !== 'string' || !Array.isArray(body.assets)) return null
+  const asset = body.assets
+    .map(a => (a as { browser_download_url?: unknown } | null)?.browser_download_url)
+    .find((u): u is string => typeof u === 'string' && /\.(?:tgz|tar\.gz)$/i.test(u))
+  if (asset === undefined) return null
+  const download = await downloadReleaseAsset(asset, fetchImpl, sleep, token, tarballTimeoutMs)
+  if (download.outcome !== 'bytes') return null
+  // The bytes are already in hand for the hash, so verifying that they ARE
+  // this package costs nothing more. Until this check the rescue carried the
+  // repo tree's name onto an asset nobody had opened.
+  const verdict = verifyReleaseAsset(download.bytes, bundleName)
+  if (!verdict.ok) return { ok: false, detail: verdict.detail }
+  const sha256 = createHash('sha256').update(download.bytes).digest('hex')
+  return {
+    ok: true,
+    tag: body.tag_name,
+    url: asset,
+    sha256,
+    installSize: verdict.installSize,
+    declarations: verdict.declarations,
   }
 }
 
+/** What one release-asset download answered, when it answered at all. */
+type AssetDownload =
+  | { outcome: 'bytes'; bytes: Uint8Array }
+  /** A 404: there is no such asset. */
+  | { outcome: 'not-found' }
+  /** Past {@link MAX_TARBALL_BYTES}: a refusal of ours, see readTarballBody. */
+  | { outcome: 'over-cap' }
+
+/**
+ * Download one release asset, once, under the tarball deadline and body cap.
+ *
+ * Shared by the rescue probe and the declarations re-read, so the one path
+ * that reads up to 32 MB is bounded one way wherever it runs. Each caller
+ * decides what a non-`bytes` outcome means: the probe reads both as "no
+ * release", while the re-read reads anything but the recorded bytes as a
+ * failure that changes nothing.
+ *
+ * The asset alone gets the larger bound: the metadata requests around it read
+ * a few hundred bytes of GitHub's own JSON, and lending them 300s would hand a
+ * stalled metadata call ten times the budget it needs.
+ *
+ * And it deliberately does NOT go through fetchRobust. That ladder retries a
+ * throw four times with backoff, which is right for a few hundred bytes over a
+ * flaky h2 connection and ruinous at 300s an attempt: a stalled asset host —
+ * a CI egress allowlist that permits api.github.com and blocks the asset's
+ * separate redirect host — cost 4 x 300s + 14s = 21 minutes per repository.
+ * Against the live state file, 303 of 13,120 candidates carry a release, so a
+ * 2000-repo run puts ~46 on this path: ~243 minutes at REPO_CONCURRENCY 4,
+ * twice the whole job bound. One bounded attempt costs at most 5 minutes, so
+ * the same total is ~58 — still the largest single thing the harvest can
+ * spend, and the place to put an aggregate budget if it is ever seen for real.
+ * The single attempt matters more now that a failed download throws: every
+ * repository behind a blocked asset host reaches harvestRepos' catch, and it
+ * must get there in one deadline rather than four. fetchWithRetry still
+ * absorbs a 429 or a 5xx, which answer immediately and then wait out its
+ * ladder rather than this deadline.
+ * @param url - the asset URL, as the releases API or the recorded pin gives it.
+ * @throws on any status but an ok one or a 404 (a 5xx after fetchWithRetry's
+ *   ladder), a request that throws, a body that fails mid-read, or a deadline.
+ */
+async function downloadReleaseAsset(
+  url: string,
+  fetchImpl: typeof fetch,
+  sleep: (ms: number) => Promise<void>,
+  token: string | undefined,
+  tarballTimeoutMs: number,
+): Promise<AssetDownload> {
+  const response = await fetchWithRetry(url, withTimeout(fetchImpl, tarballTimeoutMs, 'github'), sleep, token)
+  if (response.status === 404) return { outcome: 'not-found' }
+  if (!response.ok) throw new Error(`github returned ${response.status} downloading the release asset ${url}`)
+  const bytes = await readTarballBody(response)
+  return bytes === null ? { outcome: 'over-cap' } : { outcome: 'bytes', bytes }
+}
 
 /**
  * Read an asset body with a hard cap, returning null when it exceeds
- * {@link MAX_TARBALL_BYTES}. The probe is advisory, so an over-cap tarball is
- * un-rescuable, same as an absent one — it must refuse the body rather than
- * hold a giant asset in memory. A `content-length` over the cap is refused
- * before any byte is read; everything else is measured by
- * {@link readCappedBody} as it arrives.
+ * {@link MAX_TARBALL_BYTES}. An over-cap tarball is un-rescuable, same as an
+ * absent one — a refusal we make, so it must refuse the body rather than hold
+ * a giant asset in memory. A `content-length` over the cap is refused before
+ * any byte is read; everything else is measured by {@link readCappedBody} as it
+ * arrives, and a body that fails mid-read throws out of it, uncaught here.
  */
 async function readTarballBody(response: Response): Promise<Uint8Array | null> {
   const length = Number(response.headers.get('content-length'))
@@ -841,7 +908,7 @@ function projectCandidate(
   // its own author-readable rejection instead of letting it vanish. The
   // ROOT's own bad name is handled in fetchRepoCandidate below.
   if (!isBundleName(m.name)) return null
-  return {
+  const candidate: RepoCandidate = {
     name: m.name,
     repo: meta.fullName,
     commit: head.sha,
@@ -852,21 +919,44 @@ function projectCandidate(
     hasBundle: m.dsh?.bundle !== undefined,
     requiresBuild: typeof scripts.prepare === 'string' || typeof scripts.prepack === 'string',
     hasWorkspaceDeps: hasWorkspaceDeps(manifest),
-    // Always written, `[]` included: its absence on a carried candidate is
-    // what queues the repository for a re-read (repo-state.ts), so a candidate
-    // projected here must never lack it. `manifest` is this candidate's own —
-    // the subpackage's for a subpackage, never the root's.
-    peers: peerNamesOf(m),
     catalog: m.dsh?.catalog ?? null,
     description: meta.description ?? (typeof m.description === 'string' ? m.description : null),
     ...(subdir !== undefined ? { subdir } : {}),
-    // Read in the SAME projection that writes `peers`, which is what lets
-    // `peers` stand as this field's re-read marker too (RepoCandidate).
-    ...(() => {
-      const compatibility = compatibilityOf(m.dsh)
-      return compatibility === undefined ? {} : { compatibility }
-    })(),
   }
+  // `peers` (`[]` included), `compatibility` and the rule stamp, always and
+  // together: a missing stamp is what queues a carried repository for a
+  // re-read (repo-state.ts), and a stamp beside peers that were never read
+  // would freeze them. `manifest` is this candidate's own — the subpackage's
+  // for a subpackage, never the root's.
+  writeDeclarations(candidate, m)
+  return candidate
+}
+
+/**
+ * Write one manifest's declarations onto a candidate: `peers` and
+ * `compatibility`, each through the one reader it has on both channels, and
+ * the {@link DECLARATIONS_RULE} stamp that says which rule wrote them.
+ *
+ * The one writer, and every place that writes a candidate's declarations goes
+ * through it: the projection, a rescued root overwriting the ones its HEAD
+ * projection wrote with its tarball's, and the manifest-only re-read. So the
+ * stamp can never be written without the two fields, nor the fields without
+ * the stamp, and the places that decide WHERE declarations come from cannot
+ * drift in how they are read. `compatibility` is removed when nothing usable
+ * survives — absent means "declares none", and leaving the previous source's
+ * value would publish a declaration this manifest never made.
+ * @param candidate - the candidate to write onto, mutated in place.
+ * @param declarations - the manifest (or its three declaration inputs).
+ */
+function writeDeclarations(
+  candidate: RepoCandidate,
+  declarations: { peerDependencies?: unknown; peerDependenciesMeta?: unknown; dsh?: unknown },
+): void {
+  candidate.peers = peerNamesOf(declarations)
+  const compatibility = compatibilityOf(declarations.dsh)
+  if (compatibility === undefined) delete candidate.compatibility
+  else candidate.compatibility = compatibility
+  candidate.declarationsRule = DECLARATIONS_RULE
 }
 
 /**
@@ -936,6 +1026,9 @@ type ManifestRead =
  * appears.
  * @param response - a manifest response, already known to be `ok`.
  * @returns the parsed manifest, or an author-readable reason it was refused.
+ * @throws whatever reading the body throws — a deadline, a connection reset
+ *   mid-body, any stream error. Those are the transport failing, and
+ *   `unreadable` is reserved for bytes that arrived whole and do not parse.
  */
 async function readManifest(
   response: Response,
@@ -954,21 +1047,17 @@ async function readManifest(
     // off the bytes as they arrive, below.
     return { ok: false, reason: 'too-large', detail: `package.json is larger than ${MAX_MANIFEST_BYTES} bytes, so it is not read.` }
   }
-  let bytes: Uint8Array | null
-  try {
-    bytes = await readCappedBody(response, MAX_MANIFEST_BYTES)
-  } catch (error) {
-    // A deadline is not an unreadable manifest. `unreadable` becomes a
-    // `no-manifest`, which harvestRepos PERSISTS in repo-state.json as a dead
-    // end and publishes under the repository's name — a false and durable
-    // accusation when the truth is that OUR request ran out of time. Now that
-    // the deadline reaches the body, this catch can see one, so it rethrows:
-    // the stall lands in harvestRepos' catch with every other transient
-    // failure, sanitized, counted, and recorded nowhere.
-    if (error instanceof FetchTimeoutError) throw error
-    // Same rule as npm: an unreadable body is a rejection, not a crash.
-    return { ok: false, reason: 'unreadable', detail: 'package.json was unreadable.' }
-  }
+  // No catch, and that is the rule rather than an omission. `unreadable`
+  // becomes a `no-manifest`, which harvestRepos PERSISTS in repo-state.json as
+  // a dead end and publishes under the repository's name — so it may only ever
+  // describe bytes that reached us. A read that throws never delivered them:
+  // this used to rethrow a deadline alone and call everything else
+  // "package.json was unreadable.", and a connection reset mid-body surfaces
+  // from undici as a plain `TypeError: terminated`, not as a deadline. That
+  // wrote a durable, false verdict for a repository whose manifest never
+  // arrived. Every throw here now lands in harvestRepos' catch with the other
+  // transport failures: sanitized, counted, and recorded nowhere.
+  const bytes = await readCappedBody(response, MAX_MANIFEST_BYTES)
   if (bytes === null) {
     // Over the cap by MEASUREMENT — the header understated it, or there was
     // none (a chunked response) — and the reader was cancelled the moment the
@@ -981,8 +1070,9 @@ async function readManifest(
   try {
     return { ok: true, manifest: JSON.parse(new TextDecoder().decode(bytes)) }
   } catch {
-    // A body that arrived but is not JSON is the same rejection as one that
-    // could not be read: nothing else reaches here, and neither is a crash.
+    // Swallows the one thing that can throw here, a JSON syntax error: the
+    // bytes arrived whole and are not a manifest. That is the only
+    // `unreadable` left — the author's to fix, and never a crash.
     return { ok: false, reason: 'unreadable', detail: 'package.json was unreadable.' }
   }
 }
@@ -1054,16 +1144,24 @@ async function probeSubpackageCandidates(
   if (!treeResponse.ok) {
     throw new Error(`github api returned ${treeResponse.status} listing the tree of ${owner}/${slug}`)
   }
+  // Read, then parse — two steps, because they have opposite failure policies
+  // and one `.json()` call cannot tell them apart. Reading is the transport:
+  // it is outside any catch, so a deadline, a connection reset mid-body or any
+  // other stream error propagates. Swallowing one made a tree we never
+  // received look like a monorepo with no subpackages, which silently dropped
+  // every subpackage entry the repository had — and a root with no bundle of
+  // its own then earned a persisted `no-manifest` saying it "declares no name
+  // and no installable subpackage", false and durable. `.json()` used to be
+  // guarded against a deadline alone, which is readManifest's old hole.
+  const treeText = await treeResponse.text()
   let treeBody: { tree?: unknown } = {}
   try {
-    const parsed = await treeResponse.json() as unknown
+    const parsed = JSON.parse(treeText) as unknown
     if (parsed !== null && typeof parsed === 'object') treeBody = parsed as typeof treeBody
-  } catch (error) {
-    // Same rule as readManifest's: swallowing a deadline here would make a
-    // stalled tree read look like a monorepo with no subpackages, and a root
-    // with no bundle of its own then earns a persisted `no-manifest` saying it
-    // "declares no name and no installable subpackage" — false, and durable.
-    if (error instanceof FetchTimeoutError) throw error
+  } catch {
+    // Swallows a JSON syntax error on a body that arrived whole — GitHub's own
+    // answer, and one this probe can read nothing out of — so there are no
+    // subpackages to find. Nothing else in this block can throw.
     return { candidates: [], failures: [], anyClaimed: false, probed: 0 }
   }
   // A truncated tree (>100k entries) may hide some subpackages; the repo is
@@ -1329,9 +1427,10 @@ async function projectRepoCandidates(
   }
   if (!manifestResponse.ok) {
     // ONLY a 404 is a verdict about the repository. Every other status is a
-    // failure of the transport this module owns — a 5xx, or the CI egress
-    // allowlist that permits api.github.com and not raw.githubusercontent.com
-    // that fetchLatestReleaseTarball's own catch names — and `no-manifest` was
+    // failure of the transport this module owns — a 5xx, or a CI egress
+    // allowlist that permits api.github.com and not raw.githubusercontent.com,
+    // the same shape fetchLatestReleaseTarball's comment gives for the asset
+    // host — and `no-manifest` was
     // returned for all of them. fetchWithRetry RETURNS rather than throws
     // whatever it could not resolve, so a 500 or a 403 arrived here as an
     // ordinary response, harvestRepos PERSISTED it for every repository with
@@ -1389,6 +1488,13 @@ async function projectRepoCandidates(
       // tree read below. Without the marker it would queue for a re-probe in
       // every run, spending backfill budget on a repo already measured.
       root.sizeProbed = true
+      // And what it requires is what the ARCHIVE declares, by the rule the two
+      // lines above apply to its name and size. `projectCandidate` wrote HEAD's
+      // declarations, and HEAD can be a different version: wyzh0117/dsh-notebook's
+      // 0.2.3 requires nothing while the v0.1.0 tarball it installs requires
+      // @deepseek-ai/dsh-client-runtime, and a HEAD-only `"dsh": ">=0.1.7-0"`
+      // badged an old tarball "Incompatible" on 0.1.5-rc.3.
+      writeDeclarations(root, release.declarations)
     } else if (release?.ok === false) {
       // An asset was there and did not hold up. The rescue does not apply, and
       // the standing rejection has to say that rather than blame the build
@@ -1463,6 +1569,32 @@ const REPO_CONCURRENCY = 4
 export const REPO_BACKFILL_BUDGET_DEFAULT = 2000
 
 /**
+ * The most repositories one run re-reads for their declarations alone, when
+ * {@link RepoHarvestOptions.rereadBudget} is unset.
+ *
+ * A budget of its own rather than a share of {@link REPO_BACKFILL_BUDGET_DEFAULT},
+ * because the two queues cost different things. A full fetch is a head commit,
+ * a manifest, a recursive sizing tree (bodies up to 24 MB), subpackage
+ * discovery and, for a rescued root, a release probe plus the archive — the
+ * backfill that sent every carried repository down that path for its `peers`
+ * would have spent about 21.5k REST calls and 411 archive downloads to learn
+ * facts that sit in one `package.json` at the recorded commit. A re-read is
+ * that one raw request per listable candidate (a rescued root downloads its
+ * recorded asset instead), with no REST call at all.
+ *
+ * The estimate this is sized from, against the committed repo-state.json of
+ * 2026-09-25: 10,864 listable candidates in 10,629 repositories, none stamped,
+ * 411 of them rescued. At 4,000 repositories a run the queue clears in three
+ * runs (4,000 + 4,000 + 2,629), at about 1.02 requests a repository, and each
+ * run reaches roughly 155 recorded assets. At REPO_CONCURRENCY 4 and a few
+ * hundred milliseconds a raw request, a full slice is a few minutes against
+ * the build job's 120-minute bound. It runs after the full fetches and never
+ * takes their budget, so a quiet day's backfill cannot displace a repository
+ * that pushed.
+ */
+export const DECLARATIONS_REREAD_BUDGET_DEFAULT = 4000
+
+/**
  * Parse the per-run fetch budget from its environment string.
  *
  * `Number()` fails open in three ways that all end in the same place — a
@@ -1510,6 +1642,13 @@ export interface RepoHarvestOptions {
    * to {@link MAX_TARBALL_BYTES}. Defaults to {@link TARBALL_REQUEST_TIMEOUT_MS}. */
   tarballTimeoutMs?: number
   /**
+   * Maximum repositories whose declarations are re-read this run — the pacing
+   * knob for the stamp backfill, separate from {@link budget} and never
+   * drawing on it. The rest defer to later runs. Defaults to
+   * {@link DECLARATIONS_REREAD_BUDGET_DEFAULT}.
+   */
+  rereadBudget?: number
+  /**
    * Pause before retrying the WHOLE harvest once, when the first attempt
    * throws. Unset means no retry.
    *
@@ -1553,6 +1692,34 @@ export interface RepoHarvestResult {
   carried: number
   deferred: number
   /**
+   * Repositories whose declarations this run re-read — the re-read queue's
+   * length after {@link RepoHarvestOptions.rereadBudget}, not a success count.
+   * Disjoint from {@link fetched}: a repository fetched in full is re-projected
+   * and stamped by that fetch, so it is never also re-read.
+   */
+  rereadAttempted: number
+  /** Candidates whose re-read succeeded: `peers`, `compatibility` and the
+   * stamp written, and nothing else about them changed. */
+  rereadUpdated: number
+  /**
+   * Candidates whose re-read failed — a throw, any non-ok status, a 404
+   * included, an unreadable, over-cap or foreign manifest. Each is left
+   * byte-identical and unstamped, so the next run asks again. Counted here and
+   * NOWHERE else: never a failure record, never a published row, and never
+   * part of {@link thrown}, because a failure that changes nothing is not
+   * evidence of a harvest that would publish something wrong.
+   */
+  rereadFailed: number
+  /**
+   * Rescued candidates whose recorded release asset no longer hashes to its
+   * recorded sha256. Not a failure, a finding: the release loses
+   * `assetVerified` and stays unstamped, so the next run sends the repository
+   * through the full re-probe (`hasUnverifiedRelease`).
+   */
+  rereadAssetChanged: number
+  /** Repositories queued for a re-read beyond {@link RepoHarvestOptions.rereadBudget}. */
+  rereadDeferred: number
+  /**
    * The first attempt's error message when {@link RepoHarvestOptions.retryAfterMs}
    * bought a second one, else null. Reported rather than swallowed: a harvest
    * that needed a retry is not the same event as one that did not.
@@ -1592,8 +1759,9 @@ export async function harvestRepos(options: RepoHarvestOptions): Promise<RepoHar
 
 /**
  * One harvest attempt: partition the search, diff against the recorded state,
- * re-fetch only new or changed repos (up to the budget), and carry the
- * untouched candidates over.
+ * re-fetch only new or changed repos (up to the budget), carry the untouched
+ * candidates over, and re-read the declarations of carried ones whose stamp is
+ * stale (up to the re-read budget).
  */
 async function harvestOnce(options: RepoHarvestOptions): Promise<Omit<RepoHarvestResult, 'firstAttemptError'>> {
   const {
@@ -1604,16 +1772,21 @@ async function harvestOnce(options: RepoHarvestOptions): Promise<Omit<RepoHarves
     probeSubpackages = true,
     timeoutMs = GITHUB_REQUEST_TIMEOUT_MS,
     tarballTimeoutMs = TARBALL_REQUEST_TIMEOUT_MS,
+    rereadBudget = DECLARATIONS_REREAD_BUDGET_DEFAULT,
   } = options
   if (token === undefined) {
-    return { candidates: [], failures: [], thrown: 0, seen: [], gone: [], nextState: state, skipped: true, searchStars: new Map(), windowCount: 0, fetched: 0, carried: 0, deferred: 0 }
+    return {
+      candidates: [], failures: [], thrown: 0, seen: [], gone: [], nextState: state, skipped: true,
+      searchStars: new Map(), windowCount: 0, fetched: 0, carried: 0, deferred: 0,
+      rereadAttempted: 0, rereadUpdated: 0, rereadFailed: 0, rereadAssetChanged: 0, rereadDeferred: 0,
+    }
   }
   const { seen, metas, windowCount } = await searchReposByTopic(fetchImpl, sleep, token)
   const searchStars = new Map<string, number>()
   for (const [repo, meta] of metas) {
     if (meta.stars !== null) searchStars.set(repo, meta.stars)
   }
-  const { toFetch, gone } = diffRepoState(state, seen, MAX_TREE_BYTES)
+  const { toFetch, toReread, gone } = diffRepoState(state, seen, MAX_TREE_BYTES)
   // Budget slice: sorted order keeps the deferral deterministic, and CHANGED
   // repositories are served before the backfill.
   //
@@ -1739,7 +1912,22 @@ async function harvestOnce(options: RepoHarvestOptions): Promise<Omit<RepoHarves
       + `Publishing this run would list none of them and blame each by name. First: ${thrownMessages[0] ?? '(none)'}`,
     )
   }
-  const nextState = nextRepoState(state, seen, fresh)
+  // The declarations re-read, after every full fetch and after the bound: it
+  // cannot trip that bound (its failures change nothing, so they are not
+  // evidence of a harvest about to publish something wrong), and a run the
+  // bound stops has no state to update. The queue is disjoint from the one
+  // above by construction — a full fetch stamps what it projects — and has a
+  // budget of its own. That is not the second budget the comment above argues
+  // against: this queue never competes with a changed repository for anything,
+  // so there is nothing to order; the budget exists because a re-read costs
+  // one raw request where a full fetch costs several REST calls and a sizing
+  // tree, and its one-time backlog is measured on
+  // DECLARATIONS_REREAD_BUDGET_DEFAULT.
+  const rereadQueue = [...toReread].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).slice(0, rereadBudget)
+  const reread = await rereadDeclarations(
+    nextRepoState(state, seen, fresh), rereadQueue, fetchImpl, sleep, token, timeoutMs, tarballTimeoutMs,
+  )
+  const nextState = reread.state
   const candidates = Object.values(nextState).flatMap(entry => entry.candidates)
   const carried = Object.keys(nextState).length - fresh.size
   // Carried deterministic failures keep flowing into the report every run —
@@ -1764,5 +1952,205 @@ async function harvestOnce(options: RepoHarvestOptions): Promise<Omit<RepoHarves
     fetched: queue.length,
     carried,
     deferred: toFetch.length - queue.length,
+    rereadAttempted: rereadQueue.length,
+    rereadUpdated: reread.updated,
+    rereadFailed: reread.failed,
+    rereadAssetChanged: reread.assetChanged,
+    rereadDeferred: toReread.length - rereadQueue.length,
   }
+}
+
+/** What one carried candidate's declarations re-read came to. */
+type RereadOutcome =
+  /** Read: the candidate with `peers`, `compatibility` and the stamp written. */
+  | { outcome: 'updated'; candidate: RepoCandidate }
+  /** The recorded asset no longer hashes to its pin: the candidate unverified. */
+  | { outcome: 'asset-changed'; candidate: RepoCandidate }
+  /** Anything else: the candidate stays exactly as recorded. */
+  | { outcome: 'failed'; reason: string }
+
+/**
+ * Re-read one carried candidate's declarations from what the entry installs,
+ * and from nothing else: the manifest at the RECORDED commit and subdir — never
+ * the branch, which may have moved — or, for a rescued root, the recorded
+ * release asset, checked against its recorded sha256 before a byte of it is
+ * believed.
+ *
+ * The candidate's own facts decide the path, because they are all the entry
+ * installs: `commit` for a commit-pinned entry, `release.url` + `sha256` for a
+ * rescued one. Nothing else is re-asked — not the head commit, not the size,
+ * not whether the release still verifies under today's rules, not whether the
+ * repository still has the same subpackages — so nothing else can change.
+ *
+ * Never throws. Every failure — a throw, ANY non-ok status, a 404 included, an
+ * unreadable or over-cap body, a manifest that is not this candidate's — comes
+ * back `failed`, and the caller then keeps the candidate exactly as recorded,
+ * unstamped, for the next run to ask again. A 404 is a failure here where it is
+ * a verdict on the full fetch: this path at this commit is where the candidate
+ * was projected FROM, and git content at a commit does not change, so a 404
+ * says the read went wrong rather than that the manifest is gone.
+ * @param owner - the repository owner, from the state key.
+ * @param slug - the repository name, from the state key.
+ * @param candidate - a carried, listable candidate whose stamp is stale.
+ */
+async function rereadCandidate(
+  owner: string,
+  slug: string,
+  candidate: RepoCandidate,
+  fetchImpl: typeof fetch,
+  sleep: (ms: number) => Promise<void>,
+  token: string | undefined,
+  timeoutMs: number,
+  tarballTimeoutMs: number,
+): Promise<RereadOutcome> {
+  try {
+    const release = candidate.release
+    if (release !== undefined) {
+      const download = await downloadReleaseAsset(release.url, fetchImpl, sleep, token, tarballTimeoutMs)
+      if (download.outcome === 'not-found') return { outcome: 'failed', reason: 'the recorded release asset answered 404' }
+      if (download.outcome === 'over-cap') {
+        return { outcome: 'failed', reason: `the recorded release asset is past the ${MAX_TARBALL_BYTES}-byte cap` }
+      }
+      if (createHash('sha256').update(download.bytes).digest('hex') !== release.sha256) {
+        // Definite, not a failure: these are not the bytes that were verified.
+        // Only `assetVerified` goes, which is what sends the repository through
+        // the full re-probe next run (`hasUnverifiedRelease`); the declarations
+        // are not stamped, because the pinned archive they describe is gone.
+        const { assetVerified: _unverified, ...unverified } = release
+        return { outcome: 'asset-changed', candidate: { ...candidate, release: unverified } }
+      }
+      const read = readPackedDeclarations(download.bytes, candidate.name)
+      if (!read.ok) return { outcome: 'failed', reason: read.detail }
+      const updated: RepoCandidate = { ...candidate }
+      writeDeclarations(updated, read.declarations)
+      return { outcome: 'updated', candidate: updated }
+    }
+    // The pin is what makes this the entry's own manifest. A record whose
+    // commit is not one would read some other ref — `main` would be the
+    // branch — so it is not read at all.
+    if (!/^[0-9a-f]{40}$/.test(candidate.commit)) {
+      return { outcome: 'failed', reason: 'the recorded commit is not a 40-character sha, so it pins nothing to read' }
+    }
+    const path = candidate.subdir === undefined ? 'package.json' : `${candidate.subdir}/package.json`
+    const response = await fetchRobust(`${RAW_GITHUB}/${owner}/${slug}/${candidate.commit}/${path}`, fetchImpl, sleep, token, timeoutMs)
+    if (!response.ok) return { outcome: 'failed', reason: `github raw returned ${response.status}` }
+    const read = await readManifest(response)
+    if (!read.ok) return { outcome: 'failed', reason: read.detail }
+    const manifest = read.manifest as { name?: unknown; peerDependencies?: unknown; peerDependenciesMeta?: unknown; dsh?: unknown } | null
+    if (typeof manifest !== 'object' || manifest === null || Array.isArray(manifest)) {
+      return { outcome: 'failed', reason: 'the manifest at the recorded commit is not a JSON object' }
+    }
+    // The candidate was projected from this very file, so its name must still
+    // be there; one that is not means the read reached something else, and
+    // its declarations would describe a package this entry does not install.
+    if (manifest.name !== candidate.name) {
+      return { outcome: 'failed', reason: 'the manifest at the recorded commit names a different package' }
+    }
+    const updated: RepoCandidate = { ...candidate }
+    writeDeclarations(updated, manifest)
+    return { outcome: 'updated', candidate: updated }
+  } catch (error) {
+    // Swallows every way the read can throw — a stalled or reset request, a
+    // body that fails mid-read, a deadline — because each is the transport
+    // and none may change the record: the caller keeps the candidate exactly
+    // as it was, and the missing stamp re-queues it. The message still reaches
+    // stderr through the caller.
+    return { outcome: 'failed', reason: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+/**
+ * Re-read one recorded repository's stale declarations, candidate by
+ * candidate, and hand back the entry to record — the recorded object itself
+ * when nothing moved, so a repository whose every re-read failed is not merely
+ * equal to what was recorded but identical to it.
+ *
+ * Only listable candidates whose stamp is stale are read, by the predicate the
+ * diff queued the repository on; the rest, a candidate that can never list
+ * included, are carried as they are. No candidate is added, removed or renamed
+ * and no failure record is written: a re-read can only ever refine a record.
+ * @param repo - the state key, `owner/slug`.
+ */
+async function rereadEntry(
+  repo: string,
+  entry: RepoStateEntry,
+  fetchImpl: typeof fetch,
+  sleep: (ms: number) => Promise<void>,
+  token: string | undefined,
+  timeoutMs: number,
+  tarballTimeoutMs: number,
+): Promise<{ entry: RepoStateEntry; updated: number; failed: number; assetChanged: number }> {
+  const [owner, slug] = repo.split('/')
+  let updated = 0
+  let failed = 0
+  let assetChanged = 0
+  const candidates: RepoCandidate[] = []
+  for (const candidate of entry.candidates) {
+    if (!canEverList(candidate) || candidate.declarationsRule === DECLARATIONS_RULE) {
+      candidates.push(candidate)
+      continue
+    }
+    const unit = candidate.subdir === undefined ? repo : `${repo}#${candidate.subdir}`
+    const result: RereadOutcome = owner === undefined || slug === undefined
+      ? { outcome: 'failed', reason: `unusable repository name ${repo}` }
+      : await rereadCandidate(owner, slug, candidate, fetchImpl, sleep, token, timeoutMs, tarballTimeoutMs)
+    if (result.outcome === 'failed') {
+      failed += 1
+      // A diagnostic for whoever reads the build, never a row: the entry is
+      // unchanged, so there is nothing to say about the repository.
+      process.stderr.write(`github: re-reading the declarations of ${unit} failed, left as recorded for the next run: ${result.reason}\n`)
+      candidates.push(candidate)
+      continue
+    }
+    if (result.outcome === 'asset-changed') {
+      assetChanged += 1
+      process.stderr.write(`github: re-reading ${unit}: its release asset no longer hashes to the recorded sha256, so the rescue is unverified for a full re-probe\n`)
+    } else {
+      updated += 1
+    }
+    candidates.push(result.candidate)
+  }
+  if (updated === 0 && assetChanged === 0) return { entry, updated, failed, assetChanged }
+  return { entry: { ...entry, candidates }, updated, failed, assetChanged }
+}
+
+/**
+ * Serve the declarations re-read queue against the state this run is about to
+ * record, {@link REPO_CONCURRENCY} repositories at a time, and hand back that
+ * state with each re-read entry in place. The input state is never mutated —
+ * harvestRepos retries a whole attempt with the SAME options, and a first
+ * attempt that had written into them would hand the second a different start.
+ * @param state - the next state as the full fetches left it.
+ * @param queue - repositories to re-read, already sorted and budgeted.
+ */
+async function rereadDeclarations(
+  state: RepoState,
+  queue: readonly string[],
+  fetchImpl: typeof fetch,
+  sleep: (ms: number) => Promise<void>,
+  token: string | undefined,
+  timeoutMs: number,
+  tarballTimeoutMs: number,
+): Promise<{ state: RepoState; updated: number; failed: number; assetChanged: number }> {
+  const next: RepoState = { ...state }
+  let updated = 0
+  let failed = 0
+  let assetChanged = 0
+  for (let i = 0; i < queue.length; i += REPO_CONCURRENCY) {
+    const batch = queue.slice(i, i + REPO_CONCURRENCY)
+    const results = await Promise.all(batch.map(async repo => {
+      // hasOwn: the key is a repository name the search returned.
+      const entry = Object.hasOwn(state, repo) ? state[repo] : undefined
+      if (entry === undefined) return undefined
+      return { repo, ...await rereadEntry(repo, entry, fetchImpl, sleep, token, timeoutMs, tarballTimeoutMs) }
+    }))
+    for (const result of results) {
+      if (result === undefined) continue
+      next[result.repo] = result.entry
+      updated += result.updated
+      failed += result.failed
+      assetChanged += result.assetChanged
+    }
+  }
+  return { state: next, updated, failed, assetChanged }
 }

@@ -18,6 +18,32 @@
 import { canEverList } from './repo-gate.ts'
 import type { RepoCandidate } from './types.ts'
 
+/**
+ * The version of the rule that writes a repository candidate's `peers` and
+ * `compatibility`, stamped beside them as {@link RepoCandidate.declarationsRule}.
+ *
+ * Bump it whenever `peerNamesOf` or `compatibilityOf` (npm-client.ts) changes
+ * what it returns, or whenever WHERE a candidate's declarations are read from
+ * changes — a release-rescued root reading its tarball's manifest instead of
+ * HEAD's was that kind of change. Every recorded listable candidate stamped
+ * with any other value is then re-read once, cheaply: one manifest at the
+ * recorded commit, or the recorded release asset (`harvestRepos` in
+ * github-client.ts, under its own per-run budget), and stamped again.
+ *
+ * A version, not the presence of `peers`, because `tier.ts` republishes a
+ * carried candidate's two fields verbatim, so a record is only as current as
+ * the rule that wrote it. The presence marker this replaced knew "read or not"
+ * and never "read under which rule": a reader change reached npm entries on
+ * the next build and never reached a dormant repository — a carried
+ * `['react', 'left-pad']` stayed as it was while npm's reader returned
+ * `['react']` — which broke `peerNamesOf`'s promise that the two channels
+ * cannot be recorded under two different rules.
+ *
+ * Compared for equality, so a stamp from a LATER rule — a build that was rolled
+ * back — is re-read as well rather than trusted.
+ */
+export const DECLARATIONS_RULE = 1
+
 /** One repository's recorded state. Exactly one of the outcome fields is
  * present: candidates for a usable fetch, or a failure reason. */
 export interface RepoStateEntry {
@@ -60,14 +86,20 @@ export interface RepoSeen {
  *
  * `backfillOnly` means nothing about the repository changed — it is queued to
  * re-ask a question about the commit already recorded (an unverified release,
- * a missing size probe, a manifest projected before its peers were read). The
- * distinction exists because the budget is smaller than the backlog: 13,443
- * recorded repositories entered the size backfill at once against a
- * `REPO_BACKFILL_BUDGET` of 2,000, and an undifferentiated queue sorted by NAME
- * served an unchanged repository being re-measured for a decoration ahead of a
- * repository that had actually published a fix. For roughly seven consecutive
- * runs, everything late in the alphabet would not have reached the catalog at
- * all. The peers re-read queues 10,629 at once (2026-09-24), the same shape.
+ * a missing size probe). The distinction exists because the budget is smaller
+ * than the backlog: 13,443 recorded repositories entered the size backfill at
+ * once against a `REPO_BACKFILL_BUDGET` of 2,000, and an undifferentiated queue
+ * sorted by NAME served an unchanged repository being re-measured for a
+ * decoration ahead of a repository that had actually published a fix. For
+ * roughly seven consecutive runs, everything late in the alphabet would not
+ * have reached the catalog at all.
+ *
+ * A repository whose only need is a current declarations stamp is NOT one of
+ * these: it goes to the diff's separate re-read queue, which harvestRepos
+ * serves with a manifest-only read under its own budget. That backfill queued
+ * 10,629 repositories at once (2026-09-24), and sending them down this path
+ * cost a head commit, a sizing tree, a release probe and subpackage discovery
+ * each, to learn what one package.json at the recorded commit says.
  */
 export interface RepoToFetch extends RepoSeen {
   backfillOnly: boolean
@@ -125,20 +157,26 @@ function reboundCarriedSize(candidate: RepoCandidate): RepoCandidate {
 }
 
 /**
- * Refuse a carried candidate whose `peers` or `compatibility` is a shape this
- * build never writes, and return it typed.
+ * Refuse a carried candidate whose `peers`, `compatibility` or declarations
+ * stamp is a shape this build never writes, and return it typed.
  *
- * Both ride the bare cast `parseRepoState` revives candidates with, and neither
- * is re-derived on the way out: `tier.ts` copies them into the published entry
- * as they stand. This build is their only writer, so a wrong shape means the
- * file was edited or corrupted by something else, and it throws — the rule for
- * a malformed registry file, as for a malformed `failure` record. `installSize`
+ * All three ride the bare cast `parseRepoState` revives candidates with, and
+ * none is re-derived on the way out: `tier.ts` copies the first two into the
+ * published entry as they stand, and the stamp decides whether they are ever
+ * read again. This build is their only writer, so a wrong shape means the file
+ * was edited or corrupted by something else, and it throws — the rule for a
+ * malformed registry file, as for a malformed `failure` record. `installSize`
  * is repaired instead (`reboundCarriedSize`) because a size is a decoration;
- * these two feed a warning published against someone's plugin, which is the
- * kind of output this project would rather stop than publish wrong. ABSENT is
- * not a wrong shape: it is the marker a record written before either field
- * existed carries, and it stays absent so that `diffRepoState` queues the
- * re-read.
+ * these feed a warning published against someone's plugin, which is the kind
+ * of output this project would rather stop than publish wrong. A stamp in
+ * particular has to be exact: one that compared unequal by accident would
+ * re-read its repository every run, and one that compared equal by accident
+ * would freeze its declarations under a rule nobody applied.
+ *
+ * ABSENT is not a wrong shape for any of the three. A record written before a
+ * field existed carries none of it, and it stays absent: a missing stamp is
+ * what queues `diffRepoState`'s re-read, and a missing `peers` is what that
+ * re-read fills in.
  *
  * Types only, not the harvest's length and count bounds. Those are applied
  * where the value is read (`peerNamesOf`, `compatibilityOf`), and a bound
@@ -152,12 +190,23 @@ function checkCarriedDeclarations(repo: string, candidate: unknown): RepoCandida
   if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) {
     throw new Error(`repo-state.json: ${repo} has a candidate that is not an object`)
   }
-  const { peers, compatibility } = candidate as { peers?: unknown; compatibility?: unknown }
+  const { peers, compatibility, declarationsRule } = candidate as {
+    peers?: unknown
+    compatibility?: unknown
+    declarationsRule?: unknown
+  }
   if (peers !== undefined && !isStringArray(peers)) {
     throw new Error(`repo-state.json: ${repo} has a candidate with a malformed peers record`)
   }
   if (compatibility !== undefined && !isCompatibilityRecord(compatibility)) {
     throw new Error(`repo-state.json: ${repo} has a candidate with a malformed compatibility record`)
+  }
+  // A positive integer, the only thing DECLARATIONS_RULE can be. Not compared
+  // with the current rule: a stamp from another rule is a record to re-read,
+  // not a corrupt one.
+  if (declarationsRule !== undefined
+    && !(typeof declarationsRule === 'number' && Number.isSafeInteger(declarationsRule) && declarationsRule > 0)) {
+    throw new Error(`repo-state.json: ${repo} has a candidate with a malformed declarationsRule stamp`)
   }
   return candidate as RepoCandidate
 }
@@ -274,9 +323,13 @@ export function serializeRepoState(state: RepoState): string {
 
 /**
  * Compare the search's view of the pool against the recorded state.
- * @returns `toFetch` — repos new or with a changed `pushed_at`; `gone` —
- *   recorded repos the search no longer returns (deleted, renamed, private —
- *   the catalog must drop them with the reason attached).
+ * @returns `toFetch` — repos new or with a changed `pushed_at`, plus the
+ *   full-fetch backfills (an unverified release, a missing size probe);
+ *   `toReread` — unchanged repos whose ONLY need is a current declarations
+ *   stamp, disjoint from `toFetch` because a full fetch re-projects and stamps
+ *   every candidate itself; `gone` — recorded repos the search no longer
+ *   returns (deleted, renamed, private — the catalog must drop them with the
+ *   reason attached).
  */
 export function diffRepoState(
   state: RepoState,
@@ -292,9 +345,10 @@ export function diffRepoState(
    * sizeless forever — and this project prefers the failure it can see.
    */
   treeCap: number = Number.POSITIVE_INFINITY,
-): { toFetch: RepoToFetch[]; gone: string[] } {
+): { toFetch: RepoToFetch[]; toReread: string[]; gone: string[] } {
   const seenByName = new Map(seen.map(entry => [entry.repo, entry]))
   const toFetch: RepoToFetch[] = []
+  const toReread: string[] = []
   for (const [repo, entry] of seenByName) {
     const recorded = state[repo]
     // A repo the search has never recorded, or one whose head moved, has
@@ -302,12 +356,17 @@ export function diffRepoState(
     // commit already recorded — worth asking, but never at a changed repo's
     // expense, which is what `backfillOnly` lets the caller enforce.
     const changed = recorded === undefined || recorded.pushedAt !== entry.pushedAt
-    if (changed || hasUnverifiedRelease(recorded) || lacksSizeProbe(recorded, treeCap) || lacksPeerRecord(recorded)) {
+    if (changed || hasUnverifiedRelease(recorded) || lacksSizeProbe(recorded, treeCap)) {
       toFetch.push({ ...entry, backfillOnly: !changed })
+    } else if (hasStaleDeclarations(recorded)) {
+      // Only when nothing above applies: every full fetch re-projects the
+      // manifest and stamps it, so a repository in both queues would be read
+      // twice for the same answer.
+      toReread.push(repo)
     }
   }
   const gone = Object.keys(state).filter(repo => !seenByName.has(repo))
-  return { toFetch, gone }
+  return { toFetch, toReread, gone }
 }
 
 /**
@@ -362,40 +421,46 @@ function lacksSizeProbe(recorded: RepoState[string], treeCap: number): boolean {
 }
 
 /**
- * Whether a recorded repo has listable candidates projected before their
- * manifest's `peers` were read.
+ * Whether a recorded repo has listable candidates whose `peers` and
+ * `compatibility` were not written under the current {@link DECLARATIONS_RULE}
+ * — never stamped at all included, which is every record from before the stamp.
  *
  * The same retroactivity hole as {@link lacksSizeProbe}, and this time nothing
  * else closes it. The size backfill re-read every recorded repository once,
  * and it is over: measured on the committed repo-state.json of 2026-09-24, 0
  * of 10,864 listable candidates still lacked `sizeProbed`, so with unchanged
- * heads the diff queued nothing at all. Without a marker of its own, `peers`
- * would reach the 10,629 repositories holding those candidates only as each
- * happened to push — for a dormant one, never — and the compatibility badge
- * would stay blind to them.
+ * heads the diff queued nothing at all. Without a marker of its own, the
+ * declarations would reach the 10,629 repositories holding those candidates
+ * only as each happened to push — for a dormant one, never — and the
+ * compatibility badge would stay blind to them.
  *
- * `peers` is its own marker: `projectCandidate` always writes it, `[]` when the
- * manifest requires nothing, so absence means "never read" and a re-read
- * leaves it present whatever it found. The queue is therefore once per
- * repository and self-terminating, served after changed repositories like the
- * size backfill was (`backfillOnly`). A full re-fetch re-projects the manifest,
- * so the same visit also reads `compatibility` — which is why that field has
- * no marker (see `RepoCandidate.compatibility`). Keying on an EMPTY list
- * instead would re-queue every peerless plugin on every run forever.
+ * The marker is a rule VERSION, where it used to be the bare presence of
+ * `peers`. Presence could say "read or not" and never "read under which rule",
+ * so a change to `peerNamesOf` or `compatibilityOf` reached npm entries on the
+ * next build and no dormant repository ever (see {@link DECLARATIONS_RULE}).
+ * Every projection writes the stamp beside `peers` — `[]` when the manifest
+ * requires nothing, so keying on an EMPTY list, which would re-queue every
+ * peerless plugin forever, is not the test — and a successful re-read writes
+ * it too, so the queue is once per repository per rule and self-terminating.
+ * One stamp serves both fields because one writer writes both.
  *
- * The one exception, which `lacksSizeProbe` states too: a re-fetch that throws
- * or answers `fetch-failed` persists nothing, so that repository queues again
- * next run. Bounded by the backfill budget, and newly reachable for unchanged,
- * fully-marked repositories — the failure mode is a slower backfill, not an
- * unbounded run.
+ * What it queues is a RE-READ, not a fetch: the diff's separate `toReread`,
+ * which harvestRepos serves after every full fetch with one manifest read per
+ * candidate at the recorded commit (or the recorded release asset), under its
+ * own budget. A re-read that fails changes nothing and persists nothing, so its
+ * repository simply queues again next run — never as a failure record, never
+ * as a published row, and never toward the systematic-failure bound. The
+ * failure mode is a slower backfill, bounded by that budget.
  *
  * Only candidates that could list, by {@link canEverList}, for the reason
- * `lacksSizeProbe` gives: a peers list on an entry that can never exist reaches
- * no reader, and asking the same predicate means a loosened gate rule re-queues
- * exactly the candidates it made listable.
+ * `lacksSizeProbe` gives: declarations on an entry that can never exist reach
+ * no reader, and asking the same predicate means a loosened gate rule
+ * re-queues exactly the candidates it made listable.
  */
-function lacksPeerRecord(recorded: RepoState[string]): boolean {
-  return (recorded.candidates ?? []).some(candidate => canEverList(candidate) && candidate.peers === undefined)
+function hasStaleDeclarations(recorded: RepoState[string]): boolean {
+  return (recorded.candidates ?? []).some(
+    candidate => canEverList(candidate) && candidate.declarationsRule !== DECLARATIONS_RULE,
+  )
 }
 
 /**
@@ -412,7 +477,9 @@ function lacksPeerRecord(recorded: RepoState[string]): boolean {
  * repo for one re-probe, after which the flag is present either way and the
  * repo returns to being re-fetched only when it changes. This is the same
  * shape as {@link staleFailureRepos}: state recorded under a rule that has
- * since changed is invalidated once, deliberately, rather than trusted.
+ * since changed is invalidated once, deliberately, rather than trusted. The
+ * declarations re-read removes the flag too, when the recorded asset no longer
+ * hashes to its pin — the verified bytes are gone, so the rescue is re-probed.
  *
  * Clearing the recorded `release` instead would have been wrong — the
  * candidate is REUSED verbatim for an unchanged repo, so it would delist all

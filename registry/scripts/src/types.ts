@@ -161,11 +161,17 @@ export interface RepoCandidate {
    * `parseRepoState` revives carried candidates from `repo-state.json` by a
    * cast, so every record written before this field existed has none at
    * runtime; a required type would be a lie that makes `peers.length` throw.
-   * `projectCandidate` always writes it — `[]` when the manifest requires
-   * nothing — so ABSENT means exactly "recorded before peers were read", and
-   * `repo-state.ts` queues such a repository for one re-read on that marker,
-   * the device `sizeProbed` uses. An entry with no `peers` carries no verdict,
-   * so the interim under-warns and never mis-warns.
+   * Every projection writes it — `[]` when the manifest requires nothing — so
+   * ABSENT means "recorded before peers were read". Absence is no longer the
+   * re-read marker, though: {@link RepoCandidate.declarationsRule} is, because
+   * presence could say whether peers were read and never under which rule, so
+   * a change to `peerNamesOf` reached npm entries and no dormant repository.
+   * An entry with no `peers` carries no verdict, so the interim under-warns and
+   * never mis-warns.
+   *
+   * A release-rescued root's peers are its TARBALL's, read from the archive
+   * the entry installs — never the default-branch HEAD it was projected from,
+   * which can be a different version requiring different things.
    */
   peers?: string[]
   /**
@@ -173,15 +179,30 @@ export interface RepoCandidate {
    * {@link Candidate.compatibility}; absent when the manifest declares nothing
    * usable. Persisted with the candidate, like everything on it.
    *
-   * It needs NO marker of its own, deliberately. `projectCandidate` writes it
-   * in the same call that writes {@link RepoCandidate.peers}, so a candidate
-   * carrying `peers` had its compatibility read too: `compatibility` absent
-   * beside `peers` present means "declares none", and `peers` absent means
-   * neither was read — which already queues the re-read. Do not add a second
-   * marker for this field, and do not retire `peers` as the first: without it
-   * a carried repository would gain its compatibility only when it pushed.
+   * It needs NO marker of its own, deliberately. One writer writes it beside
+   * {@link RepoCandidate.peers} and stamps both with
+   * {@link RepoCandidate.declarationsRule}, so a stamped candidate had its
+   * compatibility read under that rule too: `compatibility` absent beside a
+   * stamp means "declares none", and a missing or stale stamp queues the
+   * re-read that reads both. Do not add a second marker for this field. A
+   * release-rescued root's is its tarball's, like its peers.
    */
   compatibility?: Compatibility
+  /**
+   * The declaration rule that wrote {@link RepoCandidate.peers} and
+   * {@link RepoCandidate.compatibility} — `DECLARATIONS_RULE` in
+   * `repo-state.ts` at the time. A positive integer; `parseRepoState` refuses
+   * any other shape.
+   *
+   * The re-read marker for both fields. A listable candidate whose stamp is not
+   * the current rule — absent included, which is every record written before
+   * the stamp existed — queues its repository for one manifest-only re-read
+   * (`repo-state.ts`), and a successful re-read writes exactly the two fields
+   * and this stamp. Every projection writes it beside `peers`, and a release
+   * rescue beside the tarball's declarations, so a stamped candidate's two
+   * fields are as current as the stamp says.
+   */
+  declarationsRule?: number
   /**
    * The subpackage directory (e.g. `packages/foo`) when this candidate is a
    * monorepo subpackage rather than the repo root; absent for root entries.
@@ -259,10 +280,11 @@ export interface RepoCandidate {
      * That `verifyReleaseAsset` opened this asset and accepted it.
      *
      * Persisted so the record says which RULES produced it. Absent means the
-     * rescue predates the check — taken on release metadata alone — and
-     * `diffRepoState` queues that repo for one re-probe rather than trusting
-     * it, because `pushedAt` alone would let an unverified rescue stand
-     * forever on a repo that never pushes again.
+     * rescue predates the check — taken on release metadata alone — or that
+     * the declarations re-read found the recorded asset no longer hashing to
+     * `sha256`; either way `diffRepoState` queues that repo for one re-probe
+     * rather than trusting it, because `pushedAt` alone would let an
+     * unverified rescue stand forever on a repo that never pushes again.
      */
     assetVerified?: true
   }
@@ -387,9 +409,12 @@ export interface Entry {
    * {@link Candidate.peers}). The Host resolves them against the running
    * installation to tell the reader whether the plugin can run there; the
    * catalog records the requirement, never a verdict, because compatibility
-   * depends on who is reading. npm entries carry it; github entries carry it
-   * from 2026-09-24, each once its repository is re-read after that (see
-   * {@link RepoCandidate.peers}).
+   * depends on who is reading. npm entries carry it. github entries have it
+   * HARVESTED from 2026-09-24 — recorded in `repo-state.json` as each
+   * repository is fetched or re-read (see {@link RepoCandidate.peers}) — but
+   * PUBLISHED only once `SHOP_EMIT_REPO_PEERS` flips: until then
+   * `withholdRepoPeers` (`pipeline.ts`) strips them from what the build emits,
+   * because a shop from 0.8.3 or earlier would badge platform seed words.
    *
    * Additive and optional, so it rides every schemaVersion — see
    * {@link Entry.unpackedSize} for the reasoning. This said "Emitted only at

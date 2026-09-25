@@ -4,8 +4,8 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { BUNDLE_NAME_MAX_LENGTH, BUNDLE_NAME_RE, GITHUB_REQUEST_TIMEOUT_MS, MAX_MANIFEST_BYTES, MAX_TARBALL_BYTES, MAX_THROWN_FRACTION, MIN_THROWN_TO_BOUND, MAX_TREE_BYTES, REPO_BACKFILL_BUDGET_DEFAULT, SUBDIR_MAX_LENGTH, TARBALL_REQUEST_TIMEOUT_MS, TREE_REQUEST_TIMEOUT_MS, fetchRepoCandidate, harvestRepos, isBundleName, parseHarvestBudget, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
-import { diffRepoState, parseRepoState, serializeRepoState } from '../src/repo-state.ts'
+import { BUNDLE_NAME_MAX_LENGTH, BUNDLE_NAME_RE, DECLARATIONS_REREAD_BUDGET_DEFAULT, GITHUB_REQUEST_TIMEOUT_MS, MAX_MANIFEST_BYTES, MAX_TARBALL_BYTES, MAX_THROWN_FRACTION, MIN_THROWN_TO_BOUND, MAX_TREE_BYTES, REPO_BACKFILL_BUDGET_DEFAULT, SUBDIR_MAX_LENGTH, TARBALL_REQUEST_TIMEOUT_MS, TREE_REQUEST_TIMEOUT_MS, fetchRepoCandidate, harvestRepos, isBundleName, parseHarvestBudget, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
+import { DECLARATIONS_RULE, diffRepoState, parseRepoState, serializeRepoState } from '../src/repo-state.ts'
 import type { RepoState } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
 import { COMPATIBILITY_RANGE_MAX_LENGTH, compatibilityOf, FetchTimeoutError, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, peerNamesOf } from '../src/npm-client.ts'
@@ -545,6 +545,16 @@ describe('fetchRepoCandidate', () => {
       expect(candidate?.peers).toEqual(expected)
       expect(candidate?.peers).toEqual(peerNamesOf(manifest))
     }
+  })
+
+  it('stamps the candidate with the declaration rule its peers and compatibility were read under', async () => {
+    // The re-read marker (R9): a projection that wrote `peers` without the
+    // stamp would send its repository straight back through the re-read next
+    // run, and one that wrote the stamp without `peers` would freeze a record
+    // that was never read. So the two are written by one writer, together.
+    const candidate = await candidateFromManifest({ name: 'dsh-stamped', dsh: { bundle: {} }, peerDependencies: { a: '*' } })
+    expect(candidate?.peers).toEqual(['a'])
+    expect(candidate?.declarationsRule).toBe(DECLARATIONS_RULE)
   })
 
   it('records the manifest’s dsh.compatibility through the same reader, and nothing when it declares none', async () => {
@@ -1091,8 +1101,8 @@ describe('only a 404 is a verdict about the repository', () => {
   // throws alone, so it never fired for a single one of them.
   //
   // The failure mode is concrete: a CI egress allowlist that permits
-  // api.github.com but not raw.githubusercontent.com — the exact scenario
-  // fetchLatestReleaseTarball's own catch comment names — leaves the search
+  // api.github.com but not raw.githubusercontent.com — the shape
+  // fetchLatestReleaseTarball's comment names for the asset host — leaves the search
   // healthy, so nothing aborts, and writes off every repository new to the
   // state file with "No package.json at the repository root", which is simply
   // untrue. None of them is re-fetched until its `pushedAt` moves.
@@ -1331,6 +1341,64 @@ describe('release-tarball rescue probe', () => {
     }
   })
 
+  describe('a rescued root declares what its tarball declares', () => {
+    // Finding #4 of the PR #58 review. The entry installs the release TARBALL,
+    // but its `peers` and `compatibility` were projected from the default-
+    // branch HEAD — which can be a different version entirely. The live case:
+    // wyzh0117/dsh-notebook's HEAD (0.2.3) requires nothing while its pinned
+    // v0.1.0 tarball requires @deepseek-ai/dsh-client-runtime; and a HEAD-only
+    // `"dsh": ">=0.1.7-0"` made an old tarball read "Incompatible" on
+    // 0.1.5-rc.3. The name and `installSize` already came from the archive, so
+    // the declarations follow the rule the rescue already applies to them.
+    const headManifest = JSON.stringify({
+      name: 'dsh-repo-plugin',
+      scripts: { prepare: 'npm run build' },
+      peerDependencies: { 'peer-a': '*' },
+      dsh: { bundle: {}, compatibility: { dsh: '>=0.1.7-0' }, catalog: { category: 'tool', summary: { en: 'x' }, capabilities: [] } },
+    })
+
+    async function rescuedWith(packed: Uint8Array): Promise<RepoCandidate | undefined> {
+      const fetchImpl = stubFetch({
+        'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(headManifest, { status: 200 }),
+        'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': headResponse(),
+        'https://api.github.com/repos/someone/dsh-repo-plugin/releases/latest': new Response(JSON.stringify({
+          tag_name: 'v1.0.0',
+          assets: [{ browser_download_url: assetUrl }],
+        }), { status: 200 }),
+        [assetUrl]: new Response(packed, { status: 200 }),
+      })
+      const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+      if (!result.ok) throw new Error(`fixture repository was not projected: ${result.detail}`)
+      // The rescue has to have happened, or the assertions below would be
+      // reading HEAD's own declarations for an unrelated reason.
+      expect(result.candidates[0]?.release?.assetVerified).toBe(true)
+      return result.candidates[0]
+    }
+
+    it('takes the required peers from the tarball and drops a compatibility only HEAD declares', async () => {
+      const candidate = await rescuedWith(packedTarball('dsh-repo-plugin', {
+        peerDependencies: { 'peer-b': '*', 'peer-optional': '*' },
+        peerDependenciesMeta: { 'peer-optional': { optional: true } },
+      }))
+      expect(candidate?.peers).toEqual(['peer-b'])
+      // Removed, not left at HEAD's value: absent means "declares none", and
+      // this archive declares none.
+      expect(candidate !== undefined && 'compatibility' in candidate).toBe(false)
+      // Under the same stamp every projection writes (R9), so the tarball's
+      // declarations are not re-read into HEAD's by the next run's backfill.
+      expect(candidate?.declarationsRule).toBe(DECLARATIONS_RULE)
+    })
+
+    it('takes the compatibility the tarball declares in place of HEAD\'s', async () => {
+      const candidate = await rescuedWith(packedTarball('dsh-repo-plugin', {
+        dsh: { bundle: { patch: './cordis.patch.yml' }, compatibility: { profiles: ['web'] } },
+      }))
+      expect(candidate?.compatibility).toEqual({ profiles: ['web'] })
+      // And a tarball requiring nothing records nothing, whatever HEAD needs.
+      expect(candidate?.peers).toEqual([])
+    })
+  })
+
   it('sizes a release-rescued candidate from the tarball, never from the tree', async () => {
     // A release-pinned entry installs the ARCHIVE, so the repository tree at
     // that commit measures a different artifact — usually a larger one, since
@@ -1471,6 +1539,25 @@ describe('release-tarball rescue probe', () => {
     }
   })
 
+  it('reads past an asset entry that is not an object, rather than throwing on it', async () => {
+    // The probe lost its catch-all (R7), so an unguarded property read on a
+    // `null` entry in `assets` would now throw — a `fetch-failed` on every run
+    // for a body GitHub answered in full. The list is read totally instead:
+    // what is not an asset object names no asset, and the next entry is asked.
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(buildManifest, { status: 200 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': headResponse(),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/releases/latest': new Response(JSON.stringify({
+        tag_name: 'v1.0.0',
+        assets: [null, 'a string', { browser_download_url: assetUrl }],
+      }), { status: 200 }),
+      [assetUrl]: new Response(tarballBytes, { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.candidates[0]?.release?.sha256).toBe(expectedSha256)
+  })
+
   it('rescues a .TGZ asset — the asset-name match is case-insensitive', async () => {
     const upperAssetUrl = 'https://github.com/someone/dsh-repo-plugin/releases/download/v1.0.0/dsh-repo-plugin.TGZ'
     const fetchImpl = stubFetch({
@@ -1496,7 +1583,11 @@ describe('release-tarball rescue probe', () => {
     expect(MAX_TARBALL_BYTES).toBe(32 * 1024 * 1024)
   })
 
-  it('refuses a tarball whose content-length exceeds the cap — the probe degrades, never throws', async () => {
+  it('refuses a tarball whose content-length exceeds the cap — a refusal of ours, so no release rather than a throw', async () => {
+    // Retitled, not changed: this said "the probe degrades, never throws",
+    // which stopped being the probe's contract (R7) — every transport failure
+    // now throws. The cap is still null because it is not one: the asset
+    // answered, and declining to hold it is a decision WE make.
     const fetchImpl = stubFetch({
       'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(buildManifest, { status: 200 }),
       'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': headResponse(),
@@ -1520,9 +1611,10 @@ describe('release-tarball rescue probe', () => {
     }
   })
 
-  it('refuses a streamed tarball that exceeds the cap mid-download — the probe degrades, never throws', async () => {
+  it('refuses a streamed tarball that exceeds the cap mid-download — a refusal of ours, so no release rather than a throw', async () => {
     // A chunked body (no content-length) larger than the cap: the read must
     // stop at the cap and leave the probe null instead of buffering it all.
+    // Retitled for the reason the case above gives.
     const chunkSize = 1024 * 1024
     const overCapStream = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -1564,10 +1656,13 @@ describe('release-tarball rescue probe', () => {
     }
   })
 
-  it('degrades to no release when the tarball body cannot be read — the probe never throws', async () => {
-    // The response's body read is where a connection drop mid-download lands
-    // (the arrayBuffer is OUTSIDE fetchRobust's retry loop); it must leave
-    // the probe null, not crash the harvest.
+  it('throws when the tarball body cannot be read, rather than answering no release', async () => {
+    // Flipped (R7). This test pinned the old contract — a drop mid-download
+    // left the probe null, "not crash the harvest" — and that null is what
+    // delisted a recorded rescue: `nextRepoState` swaps the candidates, and the
+    // root it re-projected is `requires-build`. A throw is a `fetch-failed` in
+    // harvestRepos instead, which persists nothing and keeps the rescue; the
+    // harvest-level twin of this case is in the harvestRepos suite.
     const droppedMidDownload = {
       ok: true,
       status: 200,
@@ -1583,17 +1678,14 @@ describe('release-tarball rescue probe', () => {
       }), { status: 200 }),
       [assetUrl]: droppedMidDownload,
     })
-    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
-    expect(result.ok).toBe(true)
-    if (result.ok) {
-      expect(result.candidates[0]?.requiresBuild).toBe(true)
-      expect(result.candidates[0]?.release).toBeUndefined()
-    }
+    await expect(fetchRepoCandidate(meta, fetchImpl, sleep, 'token')).rejects.toThrow('connection dropped mid-download')
   })
 
-  it('degrades to no release when the releases call dies on transport — the probe never throws', async () => {
-    // The releases/latest request itself can throw on transport failure
-    // (fetchRobust's budget runs out, then the outer catch swallows).
+  it('throws when the releases call dies on transport, rather than answering no release', async () => {
+    // Flipped (R7), for the reason the case above gives. The releases/latest
+    // request throws once fetchRobust's four attempts are spent, and the probe
+    // no longer has a catch-all to turn that into "this repository has no
+    // release" — which is a fact only a 404 can state.
     const fetchImpl = (async (url: string | URL) => {
       const text = String(url)
       if (text.includes('/releases/latest')) throw new Error('UND_ERR_HEADERS_TIMEOUT')
@@ -1601,12 +1693,7 @@ describe('release-tarball rescue probe', () => {
       if (text.includes('/commits/main')) return headResponse()
       throw new Error(`unrouted: ${text}`)
     }) as unknown as typeof fetch
-    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
-    expect(result.ok).toBe(true)
-    if (result.ok) {
-      expect(result.candidates[0]?.requiresBuild).toBe(true)
-      expect(result.candidates[0]?.release).toBeUndefined()
-    }
+    await expect(fetchRepoCandidate(meta, fetchImpl, sleep, 'token')).rejects.toThrow('UND_ERR_HEADERS_TIMEOUT')
   })
 })
 
@@ -1629,10 +1716,12 @@ describe('harvestRepos', () => {
       // Without this every fixture below would queue for the one-time
       // backfill and stop testing the `pushedAt` carry it exists to test.
       sizeProbed: true,
-      // And its manifest's peers were read — none. Absent, every fixture
-      // would queue for the one-time peers re-read instead, for the same
-      // reason.
+      // And its manifest's declarations were read — no peers — under the rule
+      // this build applies. Unstamped, every fixture would queue for the
+      // declarations re-read instead, for the same reason. (This was
+      // `peers: []` alone while the bare presence of `peers` was the marker.)
       peers: [],
+      declarationsRule: DECLARATIONS_RULE,
     }
   }
   function entryOf(repo: string): RepoState[string] {
@@ -1778,31 +1867,43 @@ describe('harvestRepos', () => {
     expect(diffRepoState(result.nextState, seen).toFetch).toEqual([])
   })
 
-  it('re-reads a carried repository recorded before peers existed, once, and records what its manifest requires', async () => {
+  it('re-reads a carried repository recorded before its declarations were, once, and records what its manifest requires', async () => {
     // The peers twin of the case above, and the one that matters more: the
-    // size backfill is over, so this marker is the ONLY thing that re-reads
-    // an unchanged repository. It has to be a real re-projection of the
-    // manifest, not a carry — the carried candidate has no peers to carry.
-    const { peers: _unread, ...recorded } = candidateOf('a/unread')
+    // size backfill is over, so this marker is the ONLY thing that re-reads an
+    // unchanged repository. It has to be a real read of the manifest, not a
+    // carry — the carried candidate has no peers to carry.
+    //
+    // Changed (R9). This test drove the FULL fetch: the branch manifest, the
+    // head commit and the sizing tree, and `fetched` was 1. The marker is a
+    // rule stamp now, and a repository whose only need is the stamp takes a
+    // manifest-only re-read instead — one raw request, at the RECORDED commit,
+    // which is what the entry installs — so nothing but that manifest is routed.
+    const { peers: _unread, declarationsRule: _unstamped, ...recorded } = candidateOf('a/unread')
     const state: RepoState = { 'a/unread': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [recorded] } }
-    // Unchanged head: the ONLY reason this repo is queued is the missing peers.
+    // Unchanged head: the ONLY reason this repo is queued is the missing stamp.
     const seen = [{ repo: 'a/unread', pushedAt: '2026-08-01T00:00:00Z' }]
-    const routes = repoRoutes('a/unread', '2026-08-01T00:00:00.000Z')
-    routes['https://raw.githubusercontent.com/a/unread/main/package.json'] = new Response(JSON.stringify({
-      name: 'unread',
-      dsh: { bundle: {}, compatibility: { dsh: '>=0.1.5' } },
-      peerDependencies: { '@deepseek-ai/cordis': '*', react: '*' },
-      peerDependenciesMeta: { react: { optional: true } },
-    }), { status: 200 })
+    const routes = {
+      [`https://raw.githubusercontent.com/a/unread/${commit}/package.json`]: new Response(JSON.stringify({
+        name: 'unread',
+        dsh: { bundle: {}, compatibility: { dsh: '>=0.1.5' } },
+        peerDependencies: { '@deepseek-ai/cordis': '*', react: '*' },
+        peerDependenciesMeta: { react: { optional: true } },
+      }), { status: 200 }),
+    }
     const result = await harvestRepos({ state, budget: 5, fetchImpl: harvestFetch(seen, routes), sleep, token: 't' })
-    expect(result.fetched).toBe(1)
+    expect(result.fetched).toBe(0)
+    expect(result.rereadAttempted).toBe(1)
+    expect(result.rereadUpdated).toBe(1)
     const persisted = result.nextState['a/unread']?.candidates[0]
     expect(persisted?.peers).toEqual(['@deepseek-ai/cordis'])
-    // The same visit reads the declaration too — the reason it needs no
-    // marker of its own.
+    // The same read takes the declaration too — the reason it needs no marker
+    // of its own.
     expect(persisted?.compatibility).toEqual({ dsh: '>=0.1.5' })
+    expect(persisted?.declarationsRule).toBe(DECLARATIONS_RULE)
     // And once: the state this run WROTE queues nothing on the next diff.
-    expect(diffRepoState(result.nextState, seen).toFetch).toEqual([])
+    const next = diffRepoState(result.nextState, seen)
+    expect(next.toFetch).toEqual([])
+    expect(next.toReread).toEqual([])
   })
 
   /**
@@ -1981,6 +2082,520 @@ describe('harvestRepos', () => {
     expect(result.candidates.map(c => c.repo)).toEqual(['x/broken'])
     expect(result.nextState['x/broken']?.pushedAt).toBe('2026-07-01T00:00:00Z')
     expect(result.nextState['x/broken']?.failure).toBeUndefined()
+  })
+
+  describe('a body that fails mid-read is never recorded as a fact about the repository', () => {
+    // Every repository here is RECORDED and CHANGED: the state says 2026-07-01,
+    // the search says 2026-08-02, so it takes the full fetch — the path whose
+    // transport failures used to be written into repo-state.json as verdicts.
+    // `nextRepoState` swaps a fetched repository's candidates wholesale, so a
+    // failure that returned instead of throwing replaced a listed entry with
+    // whatever the failure produced, and nothing re-queued it until the next
+    // push. A throw lands in harvestRepos' catch instead: `fetch-failed`,
+    // nothing persisted, the recorded entry and its old `pushedAt` kept, and
+    // the mismatch schedules the retry.
+    const seenAt = '2026-08-02T00:00:00Z'
+    const headOk = () => new Response(JSON.stringify({ sha: commit, commit: { author: { date: '2026-08-02T00:00:00.000Z' } } }), { status: 200 })
+    const sizingOk = () => new Response(JSON.stringify({ truncated: false, tree: [{ path: 'index.js', type: 'blob', size: 10 }] }), { status: 200 })
+
+    /**
+     * A body that delivers `prefix` and then dies the way undici reports a
+     * connection reset mid-body: a `TypeError: terminated` out of the stream.
+     * Pull-driven on purpose — an error raised in `start` discards whatever
+     * was queued, which models a body that never began rather than one cut off.
+     */
+    function droppingBody(prefix: Uint8Array | string): ReadableStream<Uint8Array> {
+      const bytes = typeof prefix === 'string' ? new TextEncoder().encode(prefix) : prefix
+      let delivered = false
+      return new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (!delivered) {
+            delivered = true
+            controller.enqueue(bytes)
+            return
+          }
+          controller.error(new TypeError('terminated'))
+        },
+      })
+    }
+
+    /** Harvest with stderr captured: each throw writes a diagnostic line there. */
+    async function quietHarvest(state: RepoState, fetchImpl: typeof fetch): Promise<Awaited<ReturnType<typeof harvestRepos>>> {
+      const write = process.stderr.write.bind(process.stderr)
+      process.stderr.write = (() => true) as typeof process.stderr.write
+      try {
+        return await harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' })
+      } finally {
+        process.stderr.write = write
+      }
+    }
+
+    function expectKeptAsRecorded(result: Awaited<ReturnType<typeof harvestRepos>>, repo: string, recorded: RepoState[string]): void {
+      expect(result.failures).toEqual([{ repo, code: 'fetch-failed', detail: expect.stringContaining('not a judgement on the repository') }])
+      expect(result.thrown).toBe(1)
+      expect(result.nextState[repo]).toEqual(recorded)
+    }
+
+    it('keeps the recorded candidates when the root package.json body drops mid-read', async () => {
+      // A reset mid-body raised `TypeError: terminated`, which readManifest
+      // called `unreadable` — persisted as `no-manifest` "package.json was
+      // unreadable." under the repository's name, the one thing CLAUDE.md
+      // says `no-manifest` never means.
+      const recorded = { ...entryOf('x/dropped'), pushedAt: '2026-07-01T00:00:00Z' }
+      const fetchImpl = harvestFetch([{ repo: 'x/dropped', pushedAt: seenAt }], {
+        'https://raw.githubusercontent.com/x/dropped/main/package.json':
+          new Response(droppingBody('{"name":"dropped","dsh":{"bun'), { status: 200 }),
+        'https://api.github.com/repos/x/dropped/commits/main': headOk(),
+        [`https://api.github.com/repos/x/dropped/git/trees/${commit}`]: sizingOk(),
+      })
+      expectKeptAsRecorded(await quietHarvest({ 'x/dropped': recorded }, fetchImpl), 'x/dropped', recorded)
+    })
+
+    /** A monorepo whose one listed subpackage is recorded, with a nameless root. */
+    function monorepoRoutes(tree: Response, subManifest: Response): Record<string, Response> {
+      return {
+        'https://raw.githubusercontent.com/m/mono/main/packages/the-plugin/package.json': subManifest,
+        'https://raw.githubusercontent.com/m/mono/main/package.json':
+          new Response(JSON.stringify({ private: true, workspaces: ['packages/*'] }), { status: 200 }),
+        'https://api.github.com/repos/m/mono/commits/main': headOk(),
+        'https://api.github.com/repos/m/mono/git/trees/main?recursive=1': tree,
+        [`https://api.github.com/repos/m/mono/git/trees/${commit}`]: sizingOk(),
+      }
+    }
+    const recordedMonorepo = (): RepoState[string] => ({
+      pushedAt: '2026-07-01T00:00:00Z',
+      commit,
+      candidates: [{ ...candidateOf('m/mono'), name: 'the-plugin', subdir: 'packages/the-plugin' }],
+    })
+    const subpackageTree = () => new Response(JSON.stringify({
+      tree: [{ path: 'package.json' }, { path: 'packages/the-plugin/package.json' }],
+    }), { status: 200 })
+
+    it('keeps the recorded candidates when a subpackage package.json body drops mid-read', async () => {
+      // The subpackage read goes through readManifest too, so it had the same
+      // hole one level down — and a worse outcome: the lost subpackage left a
+      // nameless root with nothing, which earned the durable, published
+      // "declares no name and no installable subpackage".
+      const recorded = recordedMonorepo()
+      const fetchImpl = harvestFetch([{ repo: 'm/mono', pushedAt: seenAt }], monorepoRoutes(
+        subpackageTree(),
+        new Response(droppingBody('{"name":"the-plu'), { status: 200 }),
+      ))
+      expectKeptAsRecorded(await quietHarvest({ 'm/mono': recorded }, fetchImpl), 'm/mono', recorded)
+    })
+
+    it('keeps the recorded candidates when the subpackage tree body drops mid-read, rather than finding no subpackages', async () => {
+      // The discovery tree read caught every `.json()` failure but a deadline
+      // and answered "no subpackages" — so a reset mid-body silently dropped
+      // every subpackage entry the repository had. Reading and parsing are now
+      // two steps: a failed READ is the transport's, and only a body that
+      // arrived whole and is not JSON still means no subpackages (the
+      // subpackage-probe suite pins that side).
+      const recorded = recordedMonorepo()
+      const fetchImpl = harvestFetch([{ repo: 'm/mono', pushedAt: seenAt }], monorepoRoutes(
+        new Response(droppingBody('{"tree":[{"path":"pack'), { status: 200 }),
+        new Response(JSON.stringify({ name: 'the-plugin', dsh: { bundle: {} } }), { status: 200 }),
+      ))
+      expectKeptAsRecorded(await quietHarvest({ 'm/mono': recorded }, fetchImpl), 'm/mono', recorded)
+    })
+
+    describe('a recorded rescue whose repository changed', () => {
+      // The probe decides whether a rescued repository is listed at all: the
+      // root it re-projects is `requires-build`, and only a verified release
+      // makes it installable. So a probe that answered null for a 403 or a
+      // dropped download replaced a verified rescue with a root the gate
+      // rejects as "Declares a prepare/prepack build script ... Publish to
+      // npm" — reproduced end to end through harvestRepos — while the tarball
+      // it had verified was still there.
+      const assetUrl = 'https://github.com/r/rescued/releases/download/v1.0.0/rescued.tgz'
+      const tarball = packedTarball('rescued')
+      const sha256 = createHash('sha256').update(tarball).digest('hex')
+      const buildManifest = JSON.stringify({ name: 'rescued', scripts: { prepare: 'npm run build' }, dsh: { bundle: {} } })
+      const recordedRescue = (): RepoState[string] => ({
+        pushedAt: '2026-07-01T00:00:00Z',
+        commit,
+        candidates: [{
+          ...candidateOf('r/rescued'),
+          requiresBuild: true,
+          release: { tag: 'v1.0.0', url: assetUrl, sha256, assetVerified: true },
+          installSize: 1234,
+        }],
+      })
+      const releaseBody = () => new Response(JSON.stringify({ tag_name: 'v1.0.0', assets: [{ browser_download_url: assetUrl }] }), { status: 200 })
+
+      function rescueFetch(answer: { releases: () => Response; asset?: () => Response }): typeof fetch {
+        return (async (url: string | URL) => {
+          const text = String(url)
+          const searched = searchItems(text, [{ repo: 'r/rescued', pushedAt: seenAt }])
+          if (searched !== undefined) return searched
+          if (text === 'https://raw.githubusercontent.com/r/rescued/main/package.json') return new Response(buildManifest, { status: 200 })
+          if (text === 'https://api.github.com/repos/r/rescued/commits/main') return headOk()
+          if (text === 'https://api.github.com/repos/r/rescued/releases/latest') return answer.releases()
+          if (text === assetUrl && answer.asset !== undefined) return answer.asset()
+          throw new Error(`unrouted: ${text}`)
+        }) as unknown as typeof fetch
+      }
+
+      it.each([
+        ['releases/latest answers 403', { releases: () => new Response('rate limit exceeded', { status: 403 }) }],
+        ['releases/latest answers 200 with a body that is not JSON', { releases: () => new Response('<!doctype html><h1>502</h1>', { status: 200 }) }],
+        ['the asset download throws', { releases: releaseBody, asset: () => { throw new TypeError('fetch failed') } }],
+        ['the asset answers 500 after its retry ladder', { releases: releaseBody, asset: () => new Response('upstream error', { status: 500 }) }],
+        ['the asset body drops mid-download', { releases: releaseBody, asset: () => new Response(droppingBody(tarball.subarray(0, 64)), { status: 200 }) }],
+      ])('keeps the recorded rescue when %s', async (_label, answer) => {
+        const recorded = recordedRescue()
+        expectKeptAsRecorded(await quietHarvest({ 'r/rescued': recorded }, rescueFetch(answer)), 'r/rescued', recorded)
+      })
+
+      it.each([
+        ['releases/latest answers 404 — the repository has no release', { releases: () => new Response('Not Found', { status: 404 }) }],
+        ['the asset answers 404', { releases: releaseBody, asset: () => new Response('Not Found', { status: 404 }) }],
+      ])('drops the rescue when %s, which is an answer and not a failure', async (_label, answer) => {
+        // The other side: a definite "nothing to rescue with" must still retire
+        // the recorded release, or a repository that deleted its release would
+        // stay listed on a tarball that no longer exists.
+        const result = await quietHarvest({ 'r/rescued': recordedRescue() }, rescueFetch(answer))
+        expect(result.failures).toEqual([])
+        expect(result.thrown).toBe(0)
+        expect(result.nextState['r/rescued']?.pushedAt).toBe(seenAt)
+        expect(result.nextState['r/rescued']?.candidates[0]?.release).toBeUndefined()
+        expect(result.nextState['r/rescued']?.candidates[0]?.requiresBuild).toBe(true)
+      })
+    })
+  })
+
+  describe('the declarations re-read', () => {
+    // A repository whose ONLY need is the declarations stamp (R9): unchanged,
+    // size-probed, any release verified. It takes one manifest read per stale
+    // listable candidate — at the RECORDED commit, never the branch — or, for a
+    // rescued root, the recorded release asset, and nothing else about the
+    // entry may move. A failed read changes nothing at all, so it is retried
+    // next run; it is never a verdict, never a row, and never evidence of a
+    // broken harvest.
+    const commitA = 'c'.repeat(40)
+    const commitB = 'd'.repeat(40)
+    const quietAt = '2026-08-01T00:00:00Z'
+
+    /** A carried, listable, unstamped candidate recorded at `atCommit`. */
+    function unstamped(repo: string, atCommit: string, extra: Partial<RepoCandidate> = {}): RepoCandidate {
+      const { declarationsRule: _stale, peers: _unread, ...rest } = candidateOf(repo)
+      return { ...rest, commit: atCommit, version: atCommit, installSize: 4242, ...extra }
+    }
+
+    /** The fetch stub for a re-read: the search, then `answer` per URL, recording every request. */
+    function rereadFetch(
+      seen: readonly { repo: string; pushedAt: string }[],
+      answer: (url: string) => Response | undefined,
+    ): { fetchImpl: typeof fetch; requested: string[] } {
+      const requested: string[] = []
+      const fetchImpl = (async (url: string | URL) => {
+        const text = String(url)
+        const searched = searchItems(text, seen)
+        if (searched !== undefined) return searched
+        requested.push(text)
+        const answered = answer(text)
+        if (answered === undefined) throw new Error(`unrouted: ${text}`)
+        return answered
+      }) as unknown as typeof fetch
+      return { fetchImpl, requested }
+    }
+
+    async function quietly<T>(run: () => Promise<T>): Promise<{ value: T; stderr: string }> {
+      const lines: string[] = []
+      const write = process.stderr.write.bind(process.stderr)
+      process.stderr.write = ((chunk: string | Uint8Array) => { lines.push(String(chunk)); return true }) as typeof process.stderr.write
+      try {
+        return { value: await run(), stderr: lines.join('') }
+      } finally {
+        process.stderr.write = write
+      }
+    }
+
+    it('writes exactly peers, compatibility and the stamp, from the manifest at the recorded commit and subdir', async () => {
+      // A root whose recorded compatibility the manifest no longer declares
+      // (removed), and a subpackage whose manifest declares one (set). Two
+      // distinct commits, neither the branch, so the URLs prove which one
+      // was read: the entry installs the recorded commit, and the branch may
+      // have moved since.
+      const root = unstamped('a/root', commitA, { compatibility: { dsh: '>=0.1.5' } })
+      const sub = unstamped('b/mono', commitB, { name: 'the-plugin', subdir: 'packages/p' })
+      const state: RepoState = {
+        'a/root': { pushedAt: quietAt, commit: commitA, candidates: [root] },
+        'b/mono': { pushedAt: quietAt, commit: commitB, candidates: [sub] },
+      }
+      const seen = [{ repo: 'a/root', pushedAt: quietAt }, { repo: 'b/mono', pushedAt: quietAt }]
+      const { fetchImpl, requested } = rereadFetch(seen, url => {
+        if (url === `https://raw.githubusercontent.com/a/root/${commitA}/package.json`) {
+          return new Response(JSON.stringify({
+            name: 'root',
+            dsh: { bundle: {} },
+            peerDependencies: { '@deepseek-ai/cordis': '*', react: '*' },
+            peerDependenciesMeta: { react: { optional: true } },
+          }), { status: 200 })
+        }
+        if (url === `https://raw.githubusercontent.com/b/mono/${commitB}/packages/p/package.json`) {
+          return new Response(JSON.stringify({ name: 'the-plugin', dsh: { bundle: {}, compatibility: { profiles: ['web'] } } }), { status: 200 })
+        }
+        return undefined
+      })
+      const result = await harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' })
+      // One raw request per candidate and nothing else: no head commit, no
+      // sizing tree, no release probe, no subpackage discovery.
+      expect(requested.sort()).toEqual([
+        `https://raw.githubusercontent.com/a/root/${commitA}/package.json`,
+        `https://raw.githubusercontent.com/b/mono/${commitB}/packages/p/package.json`,
+      ])
+      const { compatibility: _removed, ...rootRest } = root
+      expect(result.nextState['a/root']).toEqual({
+        pushedAt: quietAt,
+        commit: commitA,
+        candidates: [{ ...rootRest, peers: ['@deepseek-ai/cordis'], declarationsRule: DECLARATIONS_RULE }],
+      })
+      expect(result.nextState['a/root']?.candidates[0]).not.toHaveProperty('compatibility')
+      expect(result.nextState['b/mono']).toEqual({
+        pushedAt: quietAt,
+        commit: commitB,
+        candidates: [{ ...sub, peers: [], compatibility: { profiles: ['web'] }, declarationsRule: DECLARATIONS_RULE }],
+      })
+      expect(result.failures).toEqual([])
+      expect(result.fetched).toBe(0)
+      expect(result.thrown).toBe(0)
+      expect([result.rereadAttempted, result.rereadUpdated, result.rereadFailed, result.rereadAssetChanged, result.rereadDeferred])
+        .toEqual([2, 2, 0, 0, 0])
+      // Self-terminating: what this run wrote queues nothing next run.
+      const next = diffRepoState(result.nextState, seen)
+      expect(next.toFetch).toEqual([])
+      expect(next.toReread).toEqual([])
+    })
+
+    it('re-reads only the listable candidates that need it, and leaves the others as they are', async () => {
+      // A current stamp is not re-asked, and a candidate that can never list
+      // is not read at all (the diff's `canEverList` rule, applied per
+      // candidate as well as per repository).
+      const stale = unstamped('m/mixed', commitA, { name: 'stale', subdir: 'packages/stale' })
+      const current = { ...unstamped('m/mixed', commitA, { name: 'current', subdir: 'packages/current' }), peers: ['x'], declarationsRule: DECLARATIONS_RULE }
+      const unlistable = unstamped('m/mixed', commitA, { name: 'bundleless', subdir: 'packages/bundleless', hasBundle: false })
+      const state: RepoState = { 'm/mixed': { pushedAt: quietAt, commit: commitA, candidates: [stale, current, unlistable] } }
+      const seen = [{ repo: 'm/mixed', pushedAt: quietAt }]
+      const { fetchImpl, requested } = rereadFetch(seen, url => (
+        url === `https://raw.githubusercontent.com/m/mixed/${commitA}/packages/stale/package.json`
+          ? new Response(JSON.stringify({ name: 'stale', dsh: { bundle: {} }, peerDependencies: { y: '*' } }), { status: 200 })
+          : undefined))
+      const result = await harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' })
+      expect(requested).toEqual([`https://raw.githubusercontent.com/m/mixed/${commitA}/packages/stale/package.json`])
+      expect(result.nextState['m/mixed']?.candidates).toEqual([
+        { ...stale, peers: ['y'], declarationsRule: DECLARATIONS_RULE },
+        current,
+        unlistable,
+      ])
+      expect(result.rereadUpdated).toBe(1)
+    })
+
+    describe('a rescued root', () => {
+      // A rescued entry installs its recorded asset, so that — not the commit —
+      // is what the re-read opens (R8). The pin is the check: the same URL can
+      // serve different bytes (an asset deleted and re-uploaded under its old
+      // name), and declarations read from bytes that are not the pin would
+      // describe an archive nobody verified.
+      const assetUrl = 'https://github.com/r/rescued/releases/download/v1.0.0/rescued.tgz'
+      const packed = packedTarball('rescued', {
+        peerDependencies: { 'peer-b': '*', 'peer-optional': '*' },
+        peerDependenciesMeta: { 'peer-optional': { optional: true } },
+      })
+      const sha256 = createHash('sha256').update(packed).digest('hex')
+      const recordedRescue = (pin: string): RepoState => ({
+        'r/rescued': {
+          pushedAt: quietAt,
+          commit: commitA,
+          candidates: [unstamped('r/rescued', commitA, {
+            name: 'rescued',
+            requiresBuild: true,
+            release: { tag: 'v1.0.0', url: assetUrl, sha256: pin, assetVerified: true },
+            // HEAD's, as the old projection wrote them: what this re-read must
+            // replace with the tarball's own.
+            compatibility: { dsh: '>=0.1.7-0' },
+          })],
+        },
+      })
+      const seen = [{ repo: 'r/rescued', pushedAt: quietAt }]
+
+      it('takes the declarations from the recorded asset when it still hashes to the pin', async () => {
+        const state = recordedRescue(sha256)
+        const { fetchImpl, requested } = rereadFetch(seen, url => (url === assetUrl ? new Response(packed, { status: 200 }) : undefined))
+        const result = await harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' })
+        // The asset alone: not the commit's manifest, not the releases API.
+        expect(requested).toEqual([assetUrl])
+        const recorded = state['r/rescued']?.candidates[0]
+        if (recorded === undefined) throw new Error('fixture has no candidate')
+        const { compatibility: _head, ...rest } = recorded
+        expect(result.nextState['r/rescued']?.candidates).toEqual([
+          { ...rest, peers: ['peer-b'], declarationsRule: DECLARATIONS_RULE },
+        ])
+        expect(result.rereadUpdated).toBe(1)
+      })
+
+      it('unverifies a recorded asset that no longer hashes to its pin, and does not stamp it', async () => {
+        // Not a read failure: the answer is definite — these are not the bytes
+        // that were verified — so the release loses `assetVerified`, which
+        // sends the repository through the full re-probe next run
+        // (`hasUnverifiedRelease`). Its declarations stay as they were.
+        const state = recordedRescue('f'.repeat(64))
+        const { fetchImpl } = rereadFetch(seen, url => (url === assetUrl ? new Response(packed, { status: 200 }) : undefined))
+        const { value: result } = await quietly(() => harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' }))
+        const recorded = state['r/rescued']?.candidates[0]
+        if (recorded === undefined || recorded.release === undefined) throw new Error('fixture has no release')
+        const { assetVerified: _was, ...unverified } = recorded.release
+        expect(result.nextState['r/rescued']?.candidates).toEqual([{ ...recorded, release: unverified }])
+        expect(result.nextState['r/rescued']?.candidates[0]).not.toHaveProperty('declarationsRule')
+        expect([result.rereadUpdated, result.rereadFailed, result.rereadAssetChanged]).toEqual([0, 0, 1])
+        const next = diffRepoState(result.nextState, seen)
+        expect(next.toFetch.map(e => [e.repo, e.backfillOnly])).toEqual([['r/rescued', true]])
+        expect(next.toReread).toEqual([])
+      })
+
+      it.each([
+        ['throws', () => { throw new TypeError('fetch failed') }],
+        ['answers 403', () => new Response('forbidden', { status: 403 })],
+        ['answers 404', () => new Response('Not Found', { status: 404 })],
+      ])('changes nothing when the recorded asset download %s', async (_label, asset) => {
+        const state = recordedRescue(sha256)
+        const { fetchImpl } = rereadFetch(seen, url => (url === assetUrl ? asset() : undefined))
+        const { value: result } = await quietly(() => harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' }))
+        expect(result.nextState['r/rescued']).toEqual(state['r/rescued'])
+        expect([result.rereadUpdated, result.rereadFailed, result.rereadAssetChanged]).toEqual([0, 1, 0])
+        expect(result.failures).toEqual([])
+      })
+    })
+
+    /**
+     * A body that delivers `prefix` and then dies as undici reports a
+     * connection reset: `TypeError: terminated` out of the stream.
+     */
+    function droppingResponse(prefix: string): Response {
+      let delivered = false
+      return new Response(new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (!delivered) {
+            delivered = true
+            controller.enqueue(new TextEncoder().encode(prefix))
+            return
+          }
+          controller.error(new TypeError('terminated'))
+        },
+      }), { status: 200 })
+    }
+
+    it.each([
+      ['a 403', () => new Response('forbidden', { status: 403 })],
+      ['a 404', () => new Response('404: Not Found', { status: 404 })],
+      ['a request that throws', () => { throw new TypeError('fetch failed') }],
+      ['a body that drops mid-read', () => droppingResponse('{"name":"quiet","peerDepend')],
+      ['a body that is not JSON', () => new Response('{ "name": "quiet", ', { status: 200 })],
+      ['a manifest that names another package', () => new Response(JSON.stringify({ name: 'someone-else', dsh: { bundle: {} } }), { status: 200 })],
+    ])('changes nothing, and says nothing about the repository, on %s', async (_label, manifest) => {
+      // A 404 included, which on the full fetch IS a verdict: the entry was
+      // projected from this very path at this very commit, and git content at
+      // a commit does not change, so a 404 here says the read went wrong — not
+      // that the manifest is gone. The candidate is byte-identical and
+      // unstamped, so the next run asks again; nothing is written as a
+      // failure, no row is published, and `thrown` — the systematic-failure
+      // bound's input — does not move.
+      const recorded = unstamped('q/quiet', commitA, { name: 'quiet' })
+      const state: RepoState = { 'q/quiet': { pushedAt: quietAt, commit: commitA, candidates: [recorded] } }
+      const seen = [{ repo: 'q/quiet', pushedAt: quietAt }]
+      const { fetchImpl } = rereadFetch(seen, url => (
+        url === `https://raw.githubusercontent.com/q/quiet/${commitA}/package.json` ? manifest() : undefined))
+      const { value: result } = await quietly(() => harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' }))
+      expect(result.nextState['q/quiet']).toEqual(state['q/quiet'])
+      expect(result.nextState['q/quiet']?.candidates[0]).not.toHaveProperty('declarationsRule')
+      expect(result.nextState['q/quiet']?.failure).toBeUndefined()
+      expect(result.failures).toEqual([])
+      expect(result.thrown).toBe(0)
+      expect([result.rereadAttempted, result.rereadUpdated, result.rereadFailed]).toEqual([1, 0, 1])
+      expect(diffRepoState(result.nextState, seen).toReread).toEqual(['q/quiet'])
+    })
+
+    it('never re-reads a record whose commit is not a sha, which would read some other ref', async () => {
+      // The URL is built from the recorded commit because that is what the
+      // entry installs. A record carrying `main` there — nothing this build
+      // writes, but the file is hand-editable — would read the BRANCH, whose
+      // manifest may declare something the installed commit never did. Routed
+      // to a perfectly good manifest, so only the refusal keeps it unread.
+      const recorded = unstamped('q/branchy', 'main', { name: 'branchy' })
+      const state: RepoState = { 'q/branchy': { pushedAt: quietAt, commit: 'main', candidates: [recorded] } }
+      const seen = [{ repo: 'q/branchy', pushedAt: quietAt }]
+      const { fetchImpl, requested } = rereadFetch(seen, url => (
+        url === 'https://raw.githubusercontent.com/q/branchy/main/package.json'
+          ? new Response(JSON.stringify({ name: 'branchy', dsh: { bundle: {} }, peerDependencies: { z: '*' } }), { status: 200 })
+          : undefined))
+      const { value: result } = await quietly(() => harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' }))
+      expect(requested).toEqual([])
+      expect(result.nextState['q/branchy']).toEqual(state['q/branchy'])
+      expect([result.rereadUpdated, result.rereadFailed]).toEqual([0, 1])
+    })
+
+    it('never trips the systematic-failure bound, however many re-reads fail', async () => {
+      // Twenty-five of twenty-five failing is past the floor and at 100% share,
+      // which would stop the build if these were full fetches. A re-read that
+      // fails changes nothing, so a blocked raw host costs a slower backfill —
+      // and the full-fetch half, which DOES make durable changes, is where
+      // that bound belongs.
+      const state: RepoState = {}
+      const seen: { repo: string; pushedAt: string }[] = []
+      for (let i = 0; i < 25; i += 1) {
+        const repo = `q/quiet-${String(i).padStart(2, '0')}`
+        state[repo] = { pushedAt: quietAt, commit: commitA, candidates: [unstamped(repo, commitA)] }
+        seen.push({ repo, pushedAt: quietAt })
+      }
+      const { fetchImpl } = rereadFetch(seen, () => new Response('blocked by egress policy', { status: 403 }))
+      const { value: result } = await quietly(() => harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' }))
+      expect(MIN_THROWN_TO_BOUND).toBeLessThanOrEqual(25)
+      expect(result.thrown).toBe(0)
+      expect(result.rereadFailed).toBe(25)
+      expect(result.nextState).toEqual(state)
+    })
+
+    it('re-reads at most its own budget, in name order, and defers the rest', async () => {
+      const state: RepoState = {}
+      const seen: { repo: string; pushedAt: string }[] = []
+      for (const repo of ['z/three', 'a/one', 'm/two']) {
+        state[repo] = { pushedAt: quietAt, commit: commitA, candidates: [unstamped(repo, commitA)] }
+        seen.push({ repo, pushedAt: quietAt })
+      }
+      const { fetchImpl, requested } = rereadFetch(seen, url => {
+        const name = new URL(url).pathname.split('/')[2] ?? ''
+        return new Response(JSON.stringify({ name, dsh: { bundle: {} } }), { status: 200 })
+      })
+      // A full-fetch budget of zero, so the re-read's own budget is the only
+      // thing under test: it is not a share of the other one.
+      const result = await harvestRepos({ state, budget: 0, rereadBudget: 2, fetchImpl, sleep, token: 't' })
+      // Which repositories, not the order their requests interleave in.
+      expect(requested.map(url => new URL(url).pathname.split('/').slice(1, 3).join('/')).sort()).toEqual(['a/one', 'm/two'])
+      expect([result.rereadAttempted, result.rereadUpdated, result.rereadDeferred]).toEqual([2, 2, 1])
+      expect(result.nextState['z/three']).toEqual(state['z/three'])
+    })
+
+    it('is never needed after a full fetch, which stamps what it projects', async () => {
+      // The full-fetch queue and the re-read queue are disjoint because the
+      // full fetch answers the re-read's question itself. Asserted end to end,
+      // on a CHANGED repository recorded before the stamp existed.
+      const { declarationsRule: _stale, peers: _unread, ...recorded } = candidateOf('a/pushed')
+      const state: RepoState = { 'a/pushed': { pushedAt: '2026-07-01T00:00:00Z', commit, candidates: [recorded] } }
+      const seen = [{ repo: 'a/pushed', pushedAt: '2026-08-02T00:00:00Z' }]
+      const result = await harvestRepos({ state, budget: 5, fetchImpl: harvestFetch(seen, repoRoutes('a/pushed')), sleep, token: 't' })
+      expect(result.fetched).toBe(1)
+      expect(result.rereadAttempted).toBe(0)
+      expect(result.nextState['a/pushed']?.candidates[0]?.declarationsRule).toBe(DECLARATIONS_RULE)
+      const next = diffRepoState(result.nextState, seen)
+      expect(next.toFetch).toEqual([])
+      expect(next.toReread).toEqual([])
+    })
+
+    it('defaults its budget to 4,000 repositories, a third of the queue the stamp opened', () => {
+      // A literal, so the constant cannot drift under a fixture computed from
+      // it. The arithmetic behind the number is on the constant.
+      expect(DECLARATIONS_REREAD_BUDGET_DEFAULT).toBe(4000)
+    })
   })
 
   it('records a no-manifest for a repo it has never seen before', async () => {
@@ -2436,6 +3051,33 @@ describe('subpackage probe', () => {
     }
   })
 
+  it('stamps each subpackage candidate beside its own peers', async () => {
+    // Every projection writes the stamp, a subpackage's included: an unstamped
+    // subpackage would re-queue its whole repository for a re-read every run.
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/monorepo/main/package.json': new Response(rootManifest, { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/commits/main': new Response(JSON.stringify({
+        sha: commit,
+        commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/git/trees/main?recursive=1': new Response(JSON.stringify({
+        tree: [{ path: 'package.json' }, { path: 'packages/one/package.json' }, { path: 'packages/two/package.json' }],
+      }), { status: 200 }),
+      'https://raw.githubusercontent.com/someone/monorepo/main/packages/one/package.json':
+        new Response(JSON.stringify({ name: 'one', dsh: { bundle: {} } }), { status: 200 }),
+      'https://raw.githubusercontent.com/someone/monorepo/main/packages/two/package.json':
+        new Response(JSON.stringify({ name: 'two', dsh: { bundle: {} }, peerDependencies: { b: '*' } }), { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.candidates.map(c => [c.subdir, c.peers, c.declarationsRule])).toEqual([
+        ['packages/one', [], DECLARATIONS_RULE],
+        ['packages/two', ['b'], DECLARATIONS_RULE],
+      ])
+    }
+  })
+
   it('refuses an over-cap subpackage manifest, the same as the root one', async () => {
     // The subpackage read is the SECOND manifest read in this file, and it was
     // uncapped while the root read had both checks. It is the worse of the two
@@ -2485,6 +3127,29 @@ describe('subpackage probe', () => {
         // no content-length, so the reason says discarded rather than unread.
         detail: 'package.json is larger than 1048576 bytes, so it was discarded without being parsed.',
       }])
+    }
+  })
+
+  it('still finds no subpackages in a tree body that arrived whole and is not JSON', async () => {
+    // The side of the discovery-tree split that stays a verdict. A body that
+    // FAILED mid-read now throws (the harvestRepos suite pins that); one that
+    // arrived whole and does not parse is GitHub's own answer, and it still
+    // means there are no subpackages to find, so the named root stands alone.
+    const namedRoot = JSON.stringify({ name: 'monorepo-root', private: true, workspaces: ['packages/*'] })
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/monorepo/main/package.json': new Response(namedRoot, { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/commits/main': new Response(JSON.stringify({
+        sha: commit,
+        commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/git/trees/main?recursive=1':
+        new Response('{"tree": [{"path": "packages/', { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.candidates.map(c => c.name)).toEqual(['monorepo-root'])
+      expect(result.subpackageFailures).toBeUndefined()
     }
   })
 
@@ -3007,7 +3672,12 @@ const EXCUSED_BODY_READS: readonly ExcusedBodyRead[] = [
       + 'is separately capped at MAX_TARBALL_BYTES',
   },
   {
-    snippet: 'const parsed = await treeResponse.json() as unknown',
+    // Re-keyed from `const parsed = await treeResponse.json() as unknown`:
+    // the discovery tree is now read as text and parsed separately, so a
+    // transport failure mid-body propagates while only a body that arrived and
+    // does not parse still means "no subpackages" (R7). The body and the
+    // reason it needs no byte cap are unchanged.
+    snippet: 'const treeText = await treeResponse.text()',
     reason: 'api.github.com git/trees: GitHub caps this at 100k entries and truncates, and only the `path` '
       + 'strings are read out of it — no repository-authored value is carried forward from this body',
   },
@@ -3334,16 +4004,15 @@ describe('body deadlines', () => {
 
   it('bounds a tarball that sends headers and then stalls its body', async () => {
     // The case a header-phase deadline cannot see, on the one path that reads
-    // up to MAX_TARBALL_BYTES. The rescue probe is advisory, so the bounded
-    // failure degrades to "no release" — the repo itself still lists.
+    // up to MAX_TARBALL_BYTES. Flipped (R7): the probe was advisory, so this
+    // bounded failure used to degrade to "no release" and re-project the root
+    // as `requires-build` — which delisted a recorded rescue. The deadline now
+    // throws, and harvestRepos records nothing. What this test is FOR is
+    // unchanged: the failure is bounded, and by the tarball's own deadline.
     const fetchImpl = routeBody(assetUrl, headersThenStalledBody(), releaseRoutes())
     const started = Date.now()
-    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token', true, 2000, 60)
-    expect(result.ok).toBe(true)
-    if (result.ok) {
-      expect(result.candidates[0]?.requiresBuild).toBe(true)
-      expect(result.candidates[0]?.release).toBeUndefined()
-    }
+    await expect(fetchRepoCandidate(meta, fetchImpl, sleep, 'token', true, 2000, 60))
+      .rejects.toThrow('github request exceeded 60ms')
     // Between the two deadlines on purpose: the metadata bound handed in above
     // is 2000ms, so a tarball read that ignored its own 60ms bound and fell
     // back on the metadata one would still finish — just not this fast.
@@ -3371,17 +4040,26 @@ describe('body deadlines', () => {
     }
   })
 
-  it('still calls a genuinely unreadable manifest body unreadable', async () => {
-    // The other side of the readManifest rethrow: only a DEADLINE is rethrown.
-    // A body that really did arrive broken is still the author's `no-manifest`
-    // — widening that rethrow to every error would silently turn a real
-    // verdict into a transient retry, forever.
-    const fetchImpl = routeBody(
-      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json',
-      headersThenBodyError(new Error('socket hang up')),
+  it('rethrows a manifest body that fails mid-read, and still calls one that arrived and does not parse unreadable', async () => {
+    // Flipped (R7). This test pinned the old line — only a DEADLINE was
+    // rethrown, and a body that "arrived broken" was the author's
+    // `no-manifest` — on the worry that widening the rethrow would turn a real
+    // verdict into a transient retry forever. But a stream that errors has not
+    // arrived: undici reports a connection reset mid-body as a plain
+    // `TypeError: terminated`, no FetchTimeoutError, and calling that
+    // "package.json was unreadable." persisted a false verdict about a
+    // repository whose bytes never reached us. Every throw while reading is
+    // the transport's now. The verdict the worry was about is the second half:
+    // bytes that arrived whole and do not parse are still `unreadable`.
+    const manifestUrl = 'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json'
+    const dropped = routeBody(manifestUrl, headersThenBodyError(new TypeError('terminated')), releaseRoutes())
+    await expect(fetchRepoCandidate(meta, dropped, sleep, 'token', false, 2000)).rejects.toThrow('terminated')
+    const garbled = routeBody(
+      manifestUrl,
+      (async () => new Response('{ "name": "dsh-repo-plugin", ', { status: 200 })) as unknown as typeof fetch,
       releaseRoutes(),
     )
-    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token', false, 2000)
+    const result = await fetchRepoCandidate(meta, garbled, sleep, 'token', false, 2000)
     expect(result.ok).toBe(false)
     if (!result.ok) {
       expect(result.code).toBe('no-manifest')
@@ -3397,8 +4075,13 @@ describe('body deadlines', () => {
     // not -- cost 4 x 300s + 14s backoff = 21 minutes per repository. Measured
     // against the live state file: 303 of 13,120 candidates carry a release,
     // so a 2000-repo run puts ~46 on this path, ~243 minutes at
-    // REPO_CONCURRENCY 4 -- twice the whole job bound, spent on an advisory
-    // rescue probe that degrades to "no release" anyway.
+    // REPO_CONCURRENCY 4 -- twice the whole job bound.
+    //
+    // Flipped (R7): the probe used to degrade the stall to "no release", and
+    // now it throws — a `fetch-failed` that keeps a recorded rescue rather than
+    // delisting it. The one-attempt bound matters MORE for that: every
+    // repository behind a blocked asset host now reaches harvestRepos' catch,
+    // and it must get there in one deadline, not four.
     let assetCalls = 0
     const routes = releaseRoutes()
     const fetchImpl = (async (url: string | URL) => {
@@ -3413,10 +4096,9 @@ describe('body deadlines', () => {
       throw new Error(`unrouted url: ${text}`)
     }) as unknown as typeof fetch
     const started = Date.now()
-    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token', true, 2000, 60)
+    await expect(fetchRepoCandidate(meta, fetchImpl, sleep, 'token', true, 2000, 60))
+      .rejects.toThrow('github request exceeded 60ms')
     expect(assetCalls).toBe(1)
-    expect(result.ok).toBe(true)
-    if (result.ok) expect(result.candidates[0]?.release).toBeUndefined()
     expect(Date.now() - started).toBeLessThan(1000)
   })
 
