@@ -42,6 +42,17 @@ export const WARM_TTL_MS = 5 * 60 * 1000
  * result, including an explicit refresh, replaces this timestamped stash. */
 let warmCatalog: { at: number; result: Promise<ShopCatalogResult> } | null = null
 
+/** Package names THIS PAGE has uninstalled since it loaded (finding #8): the
+ * module table can still hold a graph row or a `loadCache` record for one
+ * after a restart-free uninstall (module-table.ts's header explains why), so
+ * the refinement must never clear a name here on the table's say-so — the
+ * host's verdict stands unconditionally. Module-level so it survives the tab
+ * closing and reopening; reset in `apply` beside `warmCatalog`, because a
+ * re-applied bundle is a new page that has uninstalled nothing yet. An
+ * uninstall made from another tab, another window, or the CLI is never added
+ * here and stays unknown to this page until it reloads. */
+let pageRemoved = new Set<string>()
+
 /** Services required by the tab registration and the Remote mount.
  *
  * `remote.shop` is deliberately ABSENT: this package both mounts its own
@@ -93,6 +104,7 @@ export async function apply(ctx: ClientContext): Promise<void> {
   // Each boot starts its own warm fetch — a re-applied bundle must not
   // serve the previous boot's catalog.
   warmCatalog = null
+  pageRemoved = new Set()
   // Promise.resolve wraps the wire result so a stub or an ill-behaved
   // transport can never throw synchronously out of apply.
   const warmed = Promise.resolve(ns.catalog(undefined)).then(result => unwrap(result))
@@ -104,9 +116,25 @@ export async function apply(ctx: ClientContext): Promise<void> {
   // The host's own result: the stash when it is fresh, the wire otherwise.
   // Every result becomes the stash, refresh included. A plain open only
   // consumes it inside the host's own freshness window.
-  const hostCatalog = async (args?: { refresh?: boolean }): Promise<ShopCatalogResult> => {
+  //
+  // `reverdict` is not a network refresh: it is "judge again against the
+  // installation as it stands now", asked with the same plain call as a
+  // stash-expired open, so it gets the host's own snapshot and freshness
+  // window rather than forcing npm/registry work a refresh would. It always
+  // bypasses the stash (an install or uninstall just settled, so the stash
+  // predates it) and always becomes the new one. Every branch below builds
+  // its own literal for `ns.catalog(...)` rather than forwarding the
+  // caller's `args` — the host RPC accepts only `{ refresh?: boolean }`, and
+  // a client-only key like `reverdict` must never reach the wire, even by a
+  // future field added to `args` and forwarded by accident.
+  const hostCatalog = async (args?: { refresh?: boolean; reverdict?: boolean }): Promise<ShopCatalogResult> => {
+    if (args?.reverdict === true) {
+      const judged = unwrap(await ns.catalog(undefined))
+      warmCatalog = { at: Date.now(), result: Promise.resolve(judged) }
+      return judged
+    }
     if (args?.refresh === true) {
-      const refreshed = unwrap(await ns.catalog(args))
+      const refreshed = unwrap(await ns.catalog({ refresh: true }))
       warmCatalog = { at: Date.now(), result: Promise.resolve(refreshed) }
       return refreshed
     }
@@ -118,7 +146,7 @@ export async function apply(ctx: ClientContext): Promise<void> {
         // The stashed fetch failed; a fresh call is the retry.
       }
     }
-    const fresh = unwrap(await ns.catalog(args))
+    const fresh = unwrap(await ns.catalog(undefined))
     warmCatalog = { at: Date.now(), result: Promise.resolve(fresh) }
     return fresh
   }
@@ -140,7 +168,12 @@ export async function apply(ctx: ClientContext): Promise<void> {
   // (`refineAgainstModuleTable` answers `{}` there).
   const handOver = async (result: ShopCatalogResult): Promise<ShopCatalogResult> => ({
     ...result,
-    incompatible: await refineAgainstModuleTable(result.incompatible, ctx.get('modules') as unknown),
+    // `result.incompatible` is `?? {}`'d before it ever reaches the
+    // refinement: a host built at 0.5.4 or earlier answers without the field
+    // at all, and `refineIncompatible` reads it with an unguarded
+    // `Object.entries`, so an absent field would reject a function this
+    // module documents as never rejecting.
+    incompatible: await refineAgainstModuleTable(result.incompatible ?? {}, ctx.get('modules') as unknown, pageRemoved),
   })
 
   const injected = (): ShopTabInjected => ({
@@ -151,6 +184,7 @@ export async function apply(ctx: ClientContext): Promise<void> {
     installed: async () => unwrap(await ns.installed()),
     installedSpecs: async () => unwrap(await ns.installedSpecs()),
     uninstall: async args => unwrap(await ns.uninstallStart(args)),
+    noteUninstalled: name => { pageRemoved.add(name) },
     restart: async () => unwrap(await ns.restart()),
     version: async () => unwrap(await ns.version()),
     updateStart: async args => unwrap(await ns.updateStart(args)),

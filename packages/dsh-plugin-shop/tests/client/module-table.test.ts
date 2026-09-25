@@ -265,4 +265,58 @@ describe('refineAgainstModuleTable', () => {
     await refineAgainstModuleTable({ 'npm:a': ['@x/absent'] }, { ...table, loadCache: {} })
     expect(probe).not.toHaveBeenCalled()
   })
+
+})
+
+describe('refineAgainstModuleTable: the page-removed set', () => {
+  it('keeps the host verdict for a name this page uninstalled, even though the table still lists it as a row, and never asks the table to import it', async () => {
+    // dock-base has a client half and is still a graph row after a
+    // restart-free uninstall (0.1.7-rc.2's `prune` keeps referenced rows) —
+    // exactly the false "provided" the page-removed set exists to prevent.
+    const { table, probe } = fakeTable({ rows: ['dock-base'] })
+    const refined = await refineAgainstModuleTable(
+      { 'npm:needs-dock-base': ['dock-base', '@x/absent'] },
+      table,
+      new Set(['dock-base']),
+    )
+    expect(refined).toEqual({ 'npm:needs-dock-base': ['dock-base', '@x/absent'] })
+    expect(asked(probe)).toEqual(['@x/absent'])
+  })
+
+  it('normalizes a trailing /client before matching the removed set', async () => {
+    const { table } = fakeTable({ rows: ['dock-base'] })
+    const refined = await refineAgainstModuleTable(
+      { 'npm:a': ['dock-base/client'] },
+      table,
+      new Set(['dock-base']),
+    )
+    expect(refined).toEqual({ 'npm:a': ['dock-base/client'] })
+  })
+
+  it('surfaces a removed name even when the page has no usable table at all', async () => {
+    // The override must not depend on the oracle existing: a page-removed
+    // name is a fact this page already knows on its own account.
+    const refined = await refineAgainstModuleTable(
+      { 'npm:a': ['dock-base'] },
+      undefined,
+      new Set(['dock-base']),
+    )
+    expect(refined).toEqual({ 'npm:a': ['dock-base'] })
+  })
+
+  it('still judges every other name in the same entry normally', async () => {
+    const { table } = fakeTable({ rows: ['dock-base'] })
+    const refined = await refineAgainstModuleTable(
+      { 'npm:a': ['dock-base', 'react', '@x/absent'] },
+      table,
+      new Set(['dock-base']),
+    )
+    expect(refined).toEqual({ 'npm:a': ['dock-base', '@x/absent'] })
+  })
+
+  it('does not change behavior when the removed set is empty or omitted', async () => {
+    const { table } = fakeTable({ rows: ['@x/row-plugin'] })
+    const refined = await refineAgainstModuleTable({ 'npm:a': ['@x/row-plugin', '@x/absent'] }, table)
+    expect(refined).toEqual({ 'npm:a': ['@x/absent'] })
+  })
 })

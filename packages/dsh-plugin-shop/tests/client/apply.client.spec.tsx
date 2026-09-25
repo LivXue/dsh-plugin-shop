@@ -195,6 +195,26 @@ describe('shop client apply warm', () => {
   it("bounds the stash at the host's own freshness window", () => {
     expect(WARM_TTL_MS).toBe(5 * 60 * 1000)
   })
+
+  it('bypasses a fresh stash on reverdict, never sends a reverdict key over the wire, and stores the result as the new stash', async () => {
+    const second = { ...fakeCatalog, builtAt: '2026-08-28T00:00:00Z' }
+    const catalog = vi.fn()
+      .mockResolvedValueOnce({ ok: true, value: fakeCatalog })
+      .mockResolvedValue({ ok: true, value: second })
+    const { injected } = await boot({ catalog })
+    expect(catalog).toHaveBeenCalledTimes(1) // the boot-time warm
+    // A reverdict bypasses the still-fresh stash and goes to the wire, asking
+    // the host's own snapshot and freshness window again — never a network
+    // refresh, and never `{ reverdict: true }` itself, which the host RPC
+    // does not accept.
+    expect(await injected.catalog({ reverdict: true })).toEqual(second)
+    expect(catalog).toHaveBeenCalledTimes(2)
+    expect(catalog.mock.calls[1]).toEqual([undefined])
+    // And it becomes the new stash: a later plain open does not go to the
+    // wire again.
+    expect(await injected.catalog(undefined)).toEqual(second)
+    expect(catalog).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('shop client apply: the tab is handed the module table verdict', () => {
@@ -289,5 +309,58 @@ describe('shop client apply: the tab is handed the module table verdict', () => 
     expect(result.incompatible).toEqual({})
     // The author's own declaration is not the module table's to judge.
     expect(result.incompatibleHarness).toEqual(HOST.incompatibleHarness)
+  })
+})
+
+describe('shop client apply: the page-removed set and a bare incompatible result', () => {
+  const hostSaid = (incompatible: Record<string, string[]>) => ({
+    schemaVersion: 2, builtAt: '2026-09-24T00:00:00Z', stale: false,
+    plugins: [], denied: [], stars: {}, incompatible, incompatibleHarness: {},
+  })
+
+  it('keeps "missing dock-base" after noteUninstalled(\'dock-base\'), although the table still lists it as a row', async () => {
+    // dock-base has a client half and remains a graph row after a
+    // restart-free uninstall — exactly the false "provided" the page-removed
+    // set exists to prevent (module-table.ts's header, finding #8).
+    const table = {
+      version: 'client' as const,
+      manifest: {
+        rev: 'r1',
+        modules: [{ id: 'dock-base', url: '/plugin/dock-base?rev=r1', initialUrl: '/batch?rev=r1', rev: 'r1', inject: [], external: [] }],
+        plugins: [{ id: 'dock-base', inject: [], immediately: false }],
+      },
+      loadCache: new Map<string, unknown>(),
+      import: vi.fn(async () => ({})),
+    }
+    const HOST = hostSaid({ 'npm:needs-dock-base': ['dock-base'] })
+    const catalog = vi.fn().mockResolvedValue({ ok: true, value: HOST })
+    const { injected } = await boot({ catalog }, table)
+    // Without noteUninstalled, the row clears the entry.
+    expect((await injected.catalog(undefined)).incompatible).toEqual({})
+    injected.noteUninstalled?.('dock-base')
+    // The very same stashed host result, refined again: the page-removed set
+    // now overrides the row, with no wire call needed — a hand-over refines
+    // fresh every time regardless of which load path produced the underlying
+    // host result (the "on the way OUT, never on the way in" comment above).
+    expect((await injected.catalog(undefined)).incompatible).toEqual({ 'npm:needs-dock-base': ['dock-base'] })
+    expect(catalog).toHaveBeenCalledTimes(1)
+  })
+
+  it('hands over without rejecting when the host result carries no incompatible field at all', async () => {
+    // A host built at 0.5.4 or earlier: every other field is present, but
+    // this one predates it. A usable table is provided too, so the
+    // refinement cannot take its own no-table shortcut (oracle null and
+    // nothing removed) and must actually reach `Object.entries(incompatible)`
+    // — the unguarded read that `handOver`'s `?? {}` has to protect.
+    const table = {
+      version: 'client' as const,
+      manifest: { rev: 'r1', modules: [], plugins: [] },
+      loadCache: new Map<string, unknown>(),
+      import: vi.fn(async () => ({})),
+    }
+    const bare = { schemaVersion: 2, builtAt: '2026-09-24T00:00:00Z', stale: false, plugins: [], denied: [], stars: {}, incompatibleHarness: {} }
+    const catalog = vi.fn().mockResolvedValue({ ok: true, value: bare })
+    const { injected } = await boot({ catalog }, table)
+    await expect(injected.catalog(undefined)).resolves.toMatchObject({ incompatible: {} })
   })
 })

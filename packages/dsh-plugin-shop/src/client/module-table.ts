@@ -131,14 +131,28 @@ const CANNOT_RESOLVE = 'client-modules: cannot resolve'
  * Per spec, in the table's own order but with every side effect kept out:
  * 1. A graph row provides it, and `import` is NOT called — for a row it
  *    fetches the bundle and runs the module body, and a probe must never be
- *    what loads a plugin. `manifest.modules` is exactly the row index:
- *    `ClientModuleSystem`'s constructor builds `graphRows` from it and never
- *    changes it afterwards (read out of 0.1.5-rc.3).
+ *    what loads a plugin. `manifest.modules` is the row index, but it is not
+ *    fixed for the page's whole life on every harness build: on 0.1.5-rc.3
+ *    `this.manifest = options.manifest` is the constructor's only write, so a
+ *    row placed at boot stands unchanged; on 0.1.7-rc.2 (`next`)
+ *    `updateManifest` REPLACES it and `prune` keeps every row still
+ *    referenced, so a package this page uninstalled without a restart can
+ *    remain a row here — kept, not re-verified.
  * 2. A `loadCache` record provides it, again without `import`.
  * 3. Otherwise `import(spec, '', {})`, with the spec as written — the seed
  *    holds `react-dom/client` itself, not its stripped form. Resolving means a
  *    seed word, whose lookup has no side effect; rejecting with the
  *    "cannot resolve" message means absent; any other rejection is unknown.
+ *
+ * A kept-but-unmaterialized row is this function's own remaining blind spot:
+ * asked about here, it still reaches step 3's `import` probe, which fetches
+ * and runs it — the one side effect this module promises never to cause on
+ * its own account. `refineAgainstModuleTable`'s page-removed set is the fix
+ * for the one case a page can know about on its own — a name uninstalled
+ * through THIS shop, on THIS page, since it loaded — by bypassing this oracle
+ * for that name entirely rather than trusting a row that may only be kept. An
+ * uninstall made from another tab, another window, or the CLI is not in that
+ * set and stays unknown to this page until it reloads.
  *
  * One side-effect path remains: a registered page-local factory that is
  * neither a graph row nor yet materialized, which `import` materializes. That
@@ -196,13 +210,25 @@ export function moduleTableOracle(service: unknown): ModuleOracle | null {
  * silence is this project's documented degradation — an unavailable fact must
  * never read as an accusation. Never rejects, so a table in any state cannot
  * cost the reader the catalog.
+ *
+ * `removed` is the page-removed set (finding #8): package names this page has
+ * uninstalled since it loaded. Every name in it is reported missing exactly
+ * as the host said, WITHOUT ever reaching the table — not the rows check, not
+ * `loadCache`, not `import` — because a row or a cache record can outlive a
+ * restart-free uninstall (`moduleTableOracle`'s header), and the table's own
+ * "provided" would be precisely the false clear this set exists to prevent.
+ * The override does not depend on the oracle existing, which is why a removed
+ * name's entry can surface even when `service` offers no usable table at all.
  */
 export async function refineAgainstModuleTable(
   incompatible: Readonly<Record<string, readonly string[]>>,
   service: unknown,
+  removed: ReadonlySet<string> = new Set(),
   timeoutMs: number = MODULE_PROBE_TIMEOUT_MS,
 ): Promise<Record<string, string[]>> {
   const oracle = moduleTableOracle(service)
-  if (oracle === null) return {}
-  return refineIncompatible(incompatible, oracle, timeoutMs)
+  if (oracle === null && removed.size === 0) return {}
+  const withRemoved: ModuleOracle = async spec =>
+    (removed.has(stripClientSuffix(spec)) ? false : (oracle === null ? null : oracle(spec)))
+  return refineIncompatible(incompatible, withRemoved, timeoutMs)
 }

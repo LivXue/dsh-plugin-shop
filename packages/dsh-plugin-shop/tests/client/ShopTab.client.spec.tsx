@@ -2817,6 +2817,114 @@ describe('ShopTab uninstall flow recovery', () => {
   })
 })
 
+describe('ShopTab reverdicts after a mutation settles (finding #10, #8)', () => {
+  // §10 (R6): an install or uninstall changes what the host would judge —
+  // installing dock-base makes every entry that named it as a missing peer
+  // resolvable, so the badge must not survive on the strength of a catalog
+  // fetched before the mutation. `reverdict: true` asks again with the host's
+  // own snapshot and freshness window, never a network refresh (that is what
+  // the Refresh button is for), and it must never restart the unrelated
+  // version check (`version` stays tied only to explicit refresh/retry).
+
+  const installedRow: InstalledFixture = {
+    name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true,
+  }
+
+  it('reverdicts the catalog once an install settles done, replacing the stale badge, and does not re-check the version', async () => {
+    const before = { ...snapshot({ tier: 'verified' }), incompatible: { 'npm:dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] } }
+    const after = snapshot({ tier: 'verified' })
+    const { injected, catalog, version, installStatus } = bench(before)
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'restart' })
+    catalog.mockResolvedValueOnce(before).mockResolvedValue(after)
+    const noteUninstalled = vi.fn()
+    const { container } = renderTab({ ...injected, noteUninstalled })
+    await waitFor(() => expect(screen.getByText(en.incompatibleBadge)).toBeTruthy())
+    expect(catalog).toHaveBeenCalledTimes(1)
+    expect(catalog).toHaveBeenLastCalledWith(undefined)
+    expect(version).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(container.querySelector('[data-shop-install]')!)
+    await waitFor(() => expect(catalog).toHaveBeenLastCalledWith({ reverdict: true }), { timeout: 3000 })
+    // The new result replaced the old: the badge naming the peer disappears.
+    await waitFor(() => expect(screen.queryByText(en.incompatibleBadge)).toBeNull())
+    // The version check is unrelated to a catalog reverdict.
+    expect(version).toHaveBeenCalledTimes(1)
+    // An install has no counterpart in the page-removed set.
+    expect(noteUninstalled).not.toHaveBeenCalled()
+  })
+
+  it('reverdicts the catalog once an uninstall settles done, replacing the stale badge, and does not re-check the version', async () => {
+    const before = { ...snapshot(), incompatible: { 'npm:dsh-hello-plugin': ['@deepseek-ai/dsh-client-store'] } }
+    const after = snapshot()
+    const { injected, catalog, version, installStatus } = bench(before, [installedRow])
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'live' })
+    catalog.mockResolvedValueOnce(before).mockResolvedValue(after)
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText(en.incompatibleBadge)).toBeTruthy())
+    expect(version).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(container.querySelector('[data-shop-uninstall]')!)
+    await waitFor(() => expect(catalog).toHaveBeenLastCalledWith({ reverdict: true }), { timeout: 3000 })
+    await waitFor(() => expect(screen.queryByText(en.incompatibleBadge)).toBeNull())
+    expect(version).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the shelf on screen and shows no reload-failed note when a reverdict fails', async () => {
+    const { injected, catalog, installStatus } = bench(snapshot(), [installedRow])
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'live' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+
+    catalog.mockRejectedValueOnce(new Error('offline'))
+    fireEvent.click(container.querySelector('[data-shop-uninstall]')!)
+    await waitFor(() => expect(catalog).toHaveBeenLastCalledWith({ reverdict: true }), { timeout: 3000 })
+    // The shelf survives the failed reverdict...
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    // ...and unlike a failed Refresh, a reverdict was never a click the reader
+    // made, so there is nothing to report failing.
+    expect(screen.queryByText(en.refreshFailed)).toBeNull()
+  })
+
+  it('tells the client half which package it uninstalled, by the bare name, once the uninstall settles done (finding #8)', async () => {
+    // The flow registry these callbacks key on is the identity string
+    // (`npm:dsh-hello-plugin`), never the bare package name — a regression to
+    // passing that key straight through would defeat the page-removed set
+    // silently, because `module-table.ts` matches on the bare name.
+    const { injected, installStatus } = bench(snapshot(), [installedRow])
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'live' })
+    const noteUninstalled = vi.fn()
+    const { container } = renderTab({ ...injected, noteUninstalled })
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+
+    fireEvent.click(container.querySelector('[data-shop-uninstall]')!)
+    await waitFor(() => expect(noteUninstalled).toHaveBeenCalledWith('dsh-hello-plugin'), { timeout: 3000 })
+    expect(noteUninstalled).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not call noteUninstalled when the uninstall is refused', async () => {
+    const { injected, uninstall } = bench(snapshot(), [installedRow])
+    uninstall.mockResolvedValue({ ok: false, detail: 'the bundle is still present' })
+    const noteUninstalled = vi.fn()
+    const { container } = renderTab({ ...injected, noteUninstalled })
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+
+    fireEvent.click(container.querySelector('[data-shop-uninstall]')!)
+    await waitFor(() => expect(screen.getByText('the bundle is still present')).toBeTruthy())
+    expect(noteUninstalled).not.toHaveBeenCalled()
+  })
+
+  it('tolerates a host face that offers no noteUninstalled at all', async () => {
+    // Optional per the interface: a stub or an old host face may not provide
+    // it, and an uninstall must still settle normally.
+    const { injected, installStatus } = bench(snapshot(), [installedRow])
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'live' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-uninstall]')!)
+    await waitFor(() => expect(container.querySelector('[data-shop-uninstall-done]')).toBeTruthy(), { timeout: 3000 })
+  })
+})
+
 describe('ShopTab staleness cues', () => {
   it('drops the no-restart headline from a toggle that still needs a reload', async () => {
     // The toggle was the one flow whose headline did not vary with the

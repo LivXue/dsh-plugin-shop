@@ -20,7 +20,12 @@ const SHOP_REPO_URL = 'https://github.com/LivXue/dsh-plugin-shop'
  * wire envelope by `index.ts`; `catalog` throws on a wire error so the tab's
  * error state renders. */
 export interface ShopTabInjected {
-  catalog: (args?: { refresh?: boolean }) => Promise<ShopCatalogResult>
+  /** `reverdict: true` means "judge again against the installation as it
+   * stands now" — the host's own snapshot and freshness window, exactly like
+   * a plain open, never a network refresh. It is a client-only instruction:
+   * `index.ts` never lets it reach the host RPC, which accepts only
+   * `{ refresh?: boolean }`. */
+  catalog: (args?: { refresh?: boolean; reverdict?: boolean }) => Promise<ShopCatalogResult>
   install: (args: InstallArgs) => Promise<ShopInstallResult>
   installStatus: (args: { installId: string }) => Promise<ShopInstallStatusResult>
   setEnabled: (args: { name: string; enabled: boolean }) => Promise<ShopSetEnabledResult>
@@ -30,6 +35,13 @@ export interface ShopTabInjected {
    * say", never "nothing is installed". */
   installedSpecs: () => Promise<Record<string, string> | null>
   uninstall: (args: { name: string }) => Promise<ShopUninstallResult>
+  /** Tells the client half that this page uninstalled `name`, so the module
+   * table's refinement never vouches for it again (finding #8): a graph row
+   * or a `loadCache` record can outlive a restart-free uninstall, and would
+   * otherwise clear a badge the host is still right to show. Optional — a
+   * stub or an old host face may not offer it — and installs need no
+   * counterpart, since a reinstalled package resolves on the host again. */
+  noteUninstalled?: (name: string) => void
   restart: () => Promise<ShopRestartResult>
   version: () => Promise<ShopVersionResult>
   updateStart: (args: { version: string }) => Promise<ShopUpdateResult>
@@ -47,8 +59,14 @@ export type ShopTabProps =
 
 /** What the tab is trying to load, and with which catalog cache behavior:
  * a refresh forces the network re-fetch while the stale snapshot stays
- * visible (§10); a retry leaves the error state and starts from loading. */
-type LoadRequest = { kind: 'initial' } | { kind: 'refresh' } | { kind: 'retry' }
+ * visible (§10); a retry leaves the error state and starts from loading; a
+ * reverdict (finding #10) asks again with the host's own snapshot and
+ * freshness window — never a network refresh — after an install or uninstall
+ * settles `done`, so a badge computed before the mutation does not survive
+ * it. Like a refresh, the stale snapshot stays on screen while it runs, and a
+ * failed reverdict leaves the screen exactly as it was, with no note — it was
+ * never a click the reader made, so there is nothing to report failing. */
+type LoadRequest = { kind: 'initial' } | { kind: 'refresh' } | { kind: 'retry' } | { kind: 'reverdict' }
 
 type CatalogState =
   | { kind: 'loading' }
@@ -1039,7 +1057,7 @@ function OutdatedSection({ state, entriesByKey, missingByKey, harnessVerdicts, t
 /** The shop tab root: browse, search, refresh, and render one card per
  * entry. Data attributes on the e2e-relevant nodes follow the Task 3 list. */
 export function ShopTab(props: ShopTabProps): ReactNode {
-  const { t, catalog, install, installStatus, setEnabled, installed, installedSpecs, uninstall, restart, version, updateStart, reload: injectedReload } = props
+  const { t, catalog, install, installStatus, setEnabled, installed, installedSpecs, uninstall, noteUninstalled, restart, version, updateStart, reload: injectedReload } = props
   const [catalogState, setCatalogState] = useState<CatalogState>({ kind: 'loading' })
   const [installedState, setInstalledState] = useState<InstalledState>({ kind: 'loading' })
   /** The install gate's own input, or undefined while it is unknown — loading,
@@ -1072,8 +1090,16 @@ export function ShopTab(props: ShopTabProps): ReactNode {
   const [selfRestartGate, setSelfRestartGate] = useState(false)
   const selfUpdate = useUpdateSelf(updateStart, installStatus)
   const [request, setRequest] = useState<LoadRequest>({ kind: 'initial' })
-  // Mutations refresh only the installed projection; the catalog stays on
-  // screen and its network/cache policy remains driven by `request`.
+  // Bumped only by an explicit Retry/Refresh click, never by a reverdict —
+  // see the version-check effect below, which keys on this instead of
+  // `request` precisely so a mutation settling cannot restart it.
+  const [versionReload, setVersionReload] = useState(0)
+  // A settled mutation (install or uninstall, `done` only) refreshes the
+  // installed projection via `mutations`, AND separately asks the catalog to
+  // judge itself again by pushing `request` to `reverdict` (finding #10,
+  // `installSettled`/`uninstallSettled` below) — an entry's badges can depend
+  // on what is now installed, so the catalog no longer merely "stays on
+  // screen" across a mutation the way it does across an unrelated render.
   const [mutations, setMutations] = useState(0)
   const noteMutation = useCallback(() => { setMutations(current => current + 1) }, [])
   // Install and uninstall are mutually exclusive answers about one identity,
@@ -1088,6 +1114,12 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     // a previous uninstall's receipt is still the truth about this identity.
     if (outcome === 'done') uninstallResetRef.current(key)
     noteMutation()
+    // An install that lands can resolve another entry's missing peer, so the
+    // catalog is asked to judge again against the installation as it now
+    // stands (finding #10) — never on a FAILED install, which changed
+    // nothing. This is a judge-again, not a reader's click, so it never
+    // touches `versionReload`.
+    if (outcome === 'done') setRequest({ kind: 'reverdict' })
   }, [noteMutation])
   const flows = useInstallFlows(install, installStatus, installSettled)
   const uninstallSettled = useCallback((key: string, outcome: 'done' | 'failed') => {
@@ -1099,7 +1131,23 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     if (outcome !== 'done') return
     flows.flowFor(key).reset()
     noteMutation()
-  }, [flows, noteMutation])
+    // `key` is the composite identity (`entryKey`/`identityKey`:
+    // `npm:<name>` or `github:<repo>#<subdir>`), never the bare package name
+    // that `noteUninstalled` and the module table's page-removed set key on
+    // (finding #8) — look the entry up by identity and hand over its bare
+    // `.name`. No match (catalog not yet loaded, or the entry already gone)
+    // leaves nothing to tell; `noteUninstalled` is best-effort, not the
+    // uninstall's own record of truth.
+    const name = catalogState.kind === 'ready'
+      ? catalogState.result.plugins.find(entry => entryKey(entry) === key)?.name
+      : undefined
+    if (name !== undefined) noteUninstalled?.(name)
+    // Uninstalling can free another entry's blocked peer, or — via the
+    // page-removed set this unblocks on the client side — stop the module
+    // table vouching for the name just removed, so the catalog is asked to
+    // judge again too (finding #10).
+    setRequest({ kind: 'reverdict' })
+  }, [flows, noteMutation, catalogState, noteUninstalled])
   const uninstallFlows = useUninstallFlows(uninstall, installStatus, uninstallSettled)
   uninstallResetRef.current = uninstallFlows.resetFlow
   // A refresh deliberately leaves the current shelf on screen (§10), so the
@@ -1129,14 +1177,19 @@ export function ShopTab(props: ShopTabProps): ReactNode {
 
   useEffect(() => {
     let cancelled = false
-    // A refresh keeps the stale snapshot visible during the background
-    // re-fetch (§10); a retry leaves the error state and starts from loading.
-    if (request.kind !== 'refresh') {
+    // A refresh or a reverdict (finding #10) keeps the stale snapshot visible
+    // during the background re-fetch (§10); a retry leaves the error state
+    // and starts from loading.
+    if (request.kind !== 'refresh' && request.kind !== 'reverdict') {
       setCatalogState(current => (current.kind === 'ready' ? current : { kind: 'loading' }))
     }
     const load = async (): Promise<void> => {
       try {
-        const result = await catalog(request.kind === 'refresh' ? { refresh: true } : undefined)
+        const result = await catalog(
+          request.kind === 'refresh' ? { refresh: true }
+            : request.kind === 'reverdict' ? { reverdict: true }
+              : undefined,
+        )
         if (!cancelled) setCatalogState({ kind: 'ready', result })
       } catch {
         // The transport detail is private (it can name hosts and ports) and
@@ -1148,10 +1201,12 @@ export function ShopTab(props: ShopTabProps): ReactNode {
         // user is reading because a re-fetch failed would be a worse outcome
         // than the stale data. The note beside the control says so, since a
         // reload that silently changed nothing is indistinguishable from one
-        // that found no newer build.
+        // that found no newer build — except a reverdict, which was never a
+        // click the reader made, so there is nothing of the reader's to
+        // report failing; the shelf simply keeps the verdict it already had.
         if (cancelled) return
         setCatalogState(current => (current.kind === 'ready' ? current : { kind: 'error' }))
-        setReloadFailed(true)
+        if (request.kind !== 'reverdict') setReloadFailed(true)
       } finally {
         // Released on both outcomes: a reload that failed must hand the
         // button back rather than leave it disabled with nothing to retry.
@@ -1162,8 +1217,12 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     return () => { cancelled = true }
   }, [catalog, request])
 
-  // The shop's own version check runs alongside the catalog, reloading on
-  // refresh/retry too.
+  // The shop's own version check reloads on an explicit Retry/Refresh click
+  // (`versionReload`, bumped only by those two buttons) but NOT on a
+  // reverdict: a reverdict answers "what would the host judge about the
+  // installation right now," which has nothing to do with whether a newer
+  // dsh-plugin-shop build exists, so a mutation settling must never restart
+  // this check (finding #10).
   useEffect(() => {
     let cancelled = false
     const load = async (): Promise<void> => {
@@ -1176,7 +1235,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     }
     void load()
     return () => { cancelled = true }
-  }, [version, request])
+  }, [version, versionReload])
 
   // The on-demand check behind the version number, with the same advisory
   // failure rule as the mount check. A re-check that finds nothing newer
@@ -1500,7 +1559,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
     return (
       <div className={css.panel} data-shop-tab>
         <p className={css.stateLine}>{t('error')}</p>
-        <button type="button" className={css.actionButton} onClick={() => setRequest({ kind: 'retry' })}>
+        <button type="button" className={css.actionButton} onClick={() => { setRequest({ kind: 'retry' }); setVersionReload(current => current + 1) }}>
           {t('retry')}
         </button>
       </div>
@@ -1757,7 +1816,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
           className={css.catalogRefreshButton}
           data-shop-catalog-refresh
           disabled={reloading}
-          onClick={() => { setReloading(true); setReloadFailed(false); setRequest({ kind: 'refresh' }) }}
+          onClick={() => { setReloading(true); setReloadFailed(false); setRequest({ kind: 'refresh' }); setVersionReload(current => current + 1) }}
         >
           {reloading ? t('refreshing') : t('refresh')}
         </button>
