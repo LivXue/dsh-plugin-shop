@@ -227,6 +227,13 @@ export const MIN_UNREACHABLE_RECOVERY = 0.9
  * measure than its size suggests, and it is the second one taken against
  * issue #38 — the answer remains a partition or a probe rate that reaches the
  * residue, not a third raise.
+ *
+ * RED AGAIN 2026-09-25, AND ANSWERED WITHOUT A THIRD RAISE. The residual
+ * reached 21 on `main` and 24 on a PR dry run the same morning, after
+ * `keywords:deepseek-harness,dsh-plugin`, the cell each harvest keyword
+ * refines on the other with, crossed its own window. {@link
+ * PARTITION_KEYWORDS} records the entries that answered it and what each
+ * recovers; this value did not move.
  */
 export const MAX_UNREACHABLE_RESIDUAL = 20
 
@@ -839,6 +846,62 @@ export function parsePublisherAxisReport(value: unknown, where: string): Publish
  * the cells exist and answer: it is the residue that differs, not the
  * machinery.
  *
+ * THE SHARED CELL CROSSED ITS OWN WINDOW ON 2026-09-25, and nine entries were
+ * added for it. `keywords:deepseek-harness,dsh-plugin` is the one cell each
+ * harvest keyword refines on the other with; it measured 5,356 against
+ * {@link SEARCH_WINDOW} that morning, and 3,373 on 2026-09-07. An oversized
+ * cell is paged only to its own window and split only by deeper cells built
+ * from this same list, so a name tagged with nothing from this list beyond
+ * `dsh` and `dsh-plugin` passes out of reach once it ranks past both windows.
+ * The daily build went red at `enumerated 7734 of 7755` on `main`, a residual
+ * of 21 against {@link MAX_UNREACHABLE_RESIDUAL}'s 20.
+ *
+ * Measured, not inferred. {@link searchByKeywords} ran once with the
+ * committed publisher state and every search page it fetched recorded, and
+ * came up 7,734 of 7,759: a residual of 25. The candidates were the tags on
+ * the 41 names that run reached ONLY through a publisher probe, and the most
+ * frequent tags on the 845 it reached through no usable cell at all, less
+ * anything already in this list: 55 tags. Each was paged whole as
+ * `keywords:<keyword>,<tag>` and its names counted against that run's union
+ * for the same keyword. Sixteen of the 55 supply at least one name the run
+ * did not have, and a greedy cover over them is nine entries recovering 16 of
+ * the 25. `dsh-plugin`, 3 short and inside {@link MAX_SEARCH_SHORTFALL},
+ * gains one name, from `cordis-plugin`. Each line is a refinement and the
+ * names it brings in, marginal in greedy order, NOT a cell total:
+ *   cordis-plugin -> @lieliefengzhong/dsh-lan-access, dsh-wechat-scrape,
+ *     dsh-web-search-opencode-style (dsh-wechat-scrape is dsh-plugin's one too)
+ *   provider -> @yudong22/dsh-llm-workbuddy, dsh-browser-jev, dsh-browser-laya
+ *   agent-preset -> @dsh-xhl/dsh-codebuddy-preset, @shundoo-ai/dsh-cosmic
+ *   theme -> dafy-whale-theme, dsh-kanso-theme
+ *   ai-agent -> @tangxiaofeng7/dsh-sast, skillmesh-connect
+ *   llm -> dsh-custom-provider
+ *   ui -> pi-web-simple
+ *   usage -> dsh-chatgpt-oauth
+ *   sidebar -> @m4cd1r/dsh-notes
+ * The other seven tags that supplied a name are dominated by an entry above,
+ * apart from two exact ties the greedy broke by the order they were measured
+ * in: `coding-agent` supplies only pi-web-simple, as `ui` does, and `oauth`
+ * only dsh-chatgpt-oauth, as `usage` does. None of the remaining 39 supplied
+ * anything, so shipping any of them would buy nothing, measured, for a probe
+ * and a page every run: the `watch-skill` rule above.
+ *
+ * What it buys is days, not a fix. The cover left nine of the 25 unaccounted
+ * for, and the dry run of this change read `enumerated 7757 of 7762` the
+ * same day: a residual of 5, and 1 for `dsh-plugin`. Four fewer than the
+ * cover predicts is inside what three runs on one unchanged state spread over
+ * that morning (21 to 25), so it is one day's draw and not a better list than
+ * measured. The residual had read 20 on 2026-09-24.
+ *
+ * Each entry costs five `size=1` probes a run on top of its pages: one per
+ * harvest keyword for its own cell, and one per oversized parent for a deeper
+ * cell, which is three while `deepseek-harness` has two of those and
+ * `dsh-plugin` one. Measured, the nine together cost about three minutes a
+ * run: the two enumerations took 47m43s in that dry run against 44m45s on the
+ * same committed state that morning without them. The deeper cells buy
+ * nothing whenever the entry's own cell fits the window, since
+ * `keywords:K,P,R` is a subset of `keywords:K,R`; that redundancy predates
+ * these entries and is left to a change of its own.
+ *
  * Adding a keyword is the documented response to that throw; a cell is always
  * `keywords:<harvest-keyword>,<refinement>`, so a refinement can only narrow
  * the net a listing sees, never widen it — an addition is a coverage decision,
@@ -859,6 +922,8 @@ export const PARTITION_KEYWORDS: readonly string[] = [
   'hesi', 'memory', 'pi-extension', 'academic-writing', 'agent-virtualization',
   'agents', 'ai-review', 'approval', 'client-plugin', 'embedding',
   'remote', 'statistics', 'deepwatch',
+  'cordis-plugin', 'provider', 'agent-preset', 'theme', 'ai-agent',
+  'llm', 'ui', 'usage', 'sidebar',
 ]
 
 /**
