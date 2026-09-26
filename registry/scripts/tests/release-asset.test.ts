@@ -305,6 +305,65 @@ describe('verifyReleaseAsset', () => {
     }), 'dsh-foo')).toMatchObject({ ok: true })
   })
 
+  // ── a list-valued patch (dsh 0.1.7) ──────────────────────────────────────
+  // dsh 0.1.7 reads `dsh.bundle.patch` as one file or a list applied in
+  // order. The checks above ran only for the string form, so a list skipped
+  // both claims and a tarball missing every file it named passed.
+
+  it('refuses an asset missing any one file of a list-valued patch, and names that file', () => {
+    const verdict = verifyReleaseAsset(rawTarball({
+      'package/package.json': JSON.stringify({ name: 'dsh-foo', version: '1.0.0', dsh: { bundle: { patch: ['./host.yml', './web.yml'] } } }),
+      'package/host.yml': '- insert:\n    - id: foo\n      name: dsh-foo/host\n',
+    }), 'dsh-foo')
+    expect(verdict.ok).toBe(false)
+    if (!verdict.ok) expect(verdict.detail).toContain('"./web.yml" but the archive does not contain it')
+  })
+
+  it('refuses an asset whose list-valued patch inserts a module the archive does not ship', () => {
+    const verdict = verifyReleaseAsset(rawTarball({
+      'package/package.json': JSON.stringify({
+        name: 'dsh-foo', version: '1.0.0',
+        exports: { '.': { default: './dist/index.js' }, './web': { default: './dist/web.js' } },
+        dsh: { bundle: { patch: ['./host.yml', './web.yml'] } },
+      }),
+      'package/host.yml': '- insert:\n    - id: foo\n      name: dsh-foo\n',
+      'package/web.yml': '- insert:\n    - id: foo-web\n      name: dsh-foo/web\n',
+      'package/dist/index.js': 'export const x = 1',
+    }), 'dsh-foo')
+    expect(verdict.ok).toBe(false)
+    if (!verdict.ok) expect(verdict.detail).toContain('dist/web.js')
+  })
+
+  it('accepts an asset that ships every file of its list-valued patch and every module they insert', () => {
+    expect(verifyReleaseAsset(rawTarball({
+      'package/package.json': JSON.stringify({
+        name: 'dsh-foo', version: '1.0.0',
+        exports: { '.': { default: './dist/index.js' }, './web': { default: './dist/web.js' } },
+        dsh: { bundle: { patch: ['./host.yml', './web.yml'] } },
+      }),
+      'package/host.yml': '- insert:\n    - id: foo\n      name: dsh-foo\n',
+      'package/web.yml': '- insert:\n    - id: foo-web\n      name: dsh-foo/web\n',
+      'package/dist/index.js': 'export const x = 1',
+      'package/dist/web.js': 'export const y = 1',
+    }), 'dsh-foo')).toMatchObject({ ok: true })
+  })
+
+  // Each case wrapped: `it.each` spreads an array row into arguments, which
+  // would hand the list case in as its first element — a valid path.
+  it.each([[7], [['./cordis.patch.yml', 3]], [{ path: './cordis.patch.yml' }], [null]])(
+    'refuses dsh.bundle.patch: %o, which no dsh loads',
+    (patch: unknown) => {
+      // Neither a path nor a list of paths: dsh 0.1.7 throws on the bundle and
+      // 0.1.5 fails to join it onto a path, so the profile would not start.
+      const verdict = verifyReleaseAsset(rawTarball({
+        'package/package.json': JSON.stringify({ name: 'dsh-foo', version: '1.0.0', dsh: { bundle: { patch } } }),
+        'package/cordis.patch.yml': '- insert:\n    - id: foo\n      name: dsh-foo/host\n',
+      }), 'dsh-foo')
+      expect(verdict.ok).toBe(false)
+      if (!verdict.ok) expect(verdict.detail).toContain('neither a file path nor a list of file paths')
+    },
+  )
+
   // ── what the patch NAMES, not just the patch file ────────────────────────
   // The patch file shipping and the modules it inserts shipping are two
   // different claims, and the first does not imply the second.
