@@ -2,7 +2,11 @@
 
 Status: **implemented (2026-09-13).** Amended 2026-09-13 (§4.1): the
 uninstall receipt outlives the row it is attached to, which took three
-fixes to get right and is recorded so it is not rediscovered. The shop replaces its
+fixes to get right and is recorded so it is not rediscovered. Amended
+2026-09-26 (§3, §5, §6): an update — or a reinstall of a package this process
+already imported — no longer hot-mounts at all, because the mount re-ran the
+OLD module under the new version's name (`2026-09-26-market-borrowings.md`
+§1). The shop replaces its
 two-valued `needsRestart` with a three-valued `activation`, because a dsh
 plugin has two halves that go live by different routes and the shop has
 only ever reported on one of them. The authority spec
@@ -156,7 +160,8 @@ rule. All three inputs are gathered in the shell.
 
 | Flow | `hostLive` | `clientLive` | `hasClientHalf` read |
 |---|---|---|---|
-| Install / update | the hot-mount result | **false** — a hot mount does not enter the registry's composition (§1 amendment) | **before and after**, unioned |
+| Install of a package this process never imported | the hot-mount result | **false** — a hot mount does not enter the registry's composition (§1 amendment) | after the files land |
+| Update, or a reinstall of an imported package | **false**, and nothing is mounted — `already-loaded` (amended 2026-09-26) | not read | not read |
 | Uninstall | whether the fiber actually went away | true — a boot-composition row | **before** the uninstall |
 | Enable / disable | always true — the user layer is hot-reloaded | true — a boot-composition row | at the toggle |
 | Shop self-update | always false | not read | not read |
@@ -167,12 +172,25 @@ makes it true; an entry whose fiber outlives three disable attempts
 leaves the plugin RUNNING, and "removed and stopped immediately" is then
 a false statement about privilege rather than a cosmetic one.
 
-**The install read is a union of both versions.** `afterDone` runs once
-the new tarball has overwritten the manifest, so a read there answers
-about the new version alone — and an update REMOVING a browser half would
-report `live` while the open tab still runs the old one's bundle.
-`isUpdate` is what separates "no previous version" from `hasClientHalf`'s
-"could not tell", and is why both reads stay booleans.
+**The install read was a union of both versions — retired 2026-09-26.**
+`afterDone` runs once the new tarball has overwritten the manifest, so a
+read there answers about the new version alone — and an update REMOVING a
+browser half would have reported `live` while the open tab still ran the old
+one's bundle. The union existed for that one case. An update no longer
+mounts (next paragraph), so the only install that reads the browser half is
+one with no previous version in the tab, and the read of the old version is
+gone with the swap it served.
+
+**An update never mounts (amended 2026-09-26).** Node caches a module by its
+URL, a hoisted profile keeps every version of a package at one URL, and the
+harness evicts nothing under `node_modules/` — so the swap's mount imported
+the old module again and ran it under the new version's name, reported
+`live` (measured in `web-full-flow.e2e.ts`; the chain is
+`2026-09-26-market-borrowings.md` §1.1). An install of a package this process
+may already have imported — any update, and a reinstall after an in-session
+uninstall — therefore reports `restart` with the `already-loaded` reason and
+leaves the running instance untouched. That is `hostLive: false` in the
+table's sense: the host half the change describes is not running.
 
 **A hot-mounted browser half cannot be reloaded into.** This is the §1
 amendment's consequence, and it is where it lands in the model: the
@@ -316,11 +334,16 @@ drives a fake `dsh` whose `remove` really deletes the manifest, and
 asserts `live`. The client-declaring test stays, for the value it does
 establish — that a browser half reaches `reload` at all.
 
-The update path needs the opposite fixture, and has its own test: a
+The update path needed the opposite fixture, and had its own test: a
 package whose OLD version declares `dsh.client` and whose new one does
-not, which must still report `reload` because the open tab is running
-the old bundle. One manifest on disk cannot express two versions, so
-that test states them through the `hotFs` read seam.
+not, which had to report `restart` because the open tab was running the
+old bundle. One manifest on disk cannot express two versions, so that test
+stated them through the `hotFs` read seam. It was retired on 2026-09-26
+with the union read (§3): an update reports `already-loaded` whatever
+either version declares. What replaced it is an e2e case with a fixture at
+two versions, each activation recording the version held in its own module
+scope — the one assertion able to tell which code ran, where the loader
+inventory can only say that something runs.
 
 ## 6. The wire change
 
@@ -329,7 +352,11 @@ that test states them through the `hotFs` read seam.
 meaningful only under `restart`, and gains a `client-half` member — the
 one value in that set which does not report a mount FAILURE: the mount
 succeeded, and the browser half simply cannot be served without a
-restart (§1 amendment). `ShopSetEnabledResult` gains
+restart (§1 amendment). Amended 2026-09-26: it also gains `already-loaded`,
+the other value that reports no failure — no mount was attempted, because
+the process may already hold the package's module (§3). A client older
+than that member renders its generic restart line for it, which is true,
+merely less specific. `ShopSetEnabledResult` gains
 `activation`; it currently returns `{ ok: true }` and the client renders
 a hardcoded note, which is why enable/disable was wrong in a way no
 amount of host-side correctness could have fixed.

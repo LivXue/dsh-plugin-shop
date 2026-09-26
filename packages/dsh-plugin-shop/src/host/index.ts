@@ -165,6 +165,11 @@ export interface ShopGatewayOptions {
    * — a live registry request — from every install that finds a command
    * already queued for its profile. */
   prefetcher?: Prefetcher
+  /** Test-only injection: the record of packages this process may already
+   * have imported. Production shares one module-scope set across every
+   * gateway in the process (see `importedThisProcess`), which a test file
+   * building many gateways would otherwise share as well. */
+  importedModules?: Set<string>
 }
 
 /** `shop/installStart` result (§7.3): rejections are typed wire values with an
@@ -391,6 +396,26 @@ function ownDependencySpec(
   return Object.hasOwn(dependencies, name) ? dependencies[name] : undefined
 }
 
+/**
+ * Package names whose module this PROCESS may already hold in Node's module
+ * cache (design 2026-09-26-market-borrowings §1.2).
+ *
+ * A hot mount can only deliver code the process has not imported yet. The hot
+ * tree imports through the loader's `internal.import`, which is Node's own ESM
+ * loader and caches a module by its URL, and an install rewrites a package's
+ * files at the URL it already had (`nodeLinker: hoisted`). Once a name is in
+ * here, a mount of it would re-run the cached module under whatever version is
+ * now on disk.
+ *
+ * Module scope rather than a gateway field, because the cache it models is the
+ * process's: a gateway rebuilt inside a running dsh — a restarted shop fiber —
+ * must not forget what the process imported before it existed. Every gateway
+ * seeds it with the profile's dependencies at construction (the boot
+ * composition) and extends it with every name the hot path mounts. Nothing is
+ * ever removed: an uninstall disposes the fiber, not the module record.
+ */
+const importedThisProcess = new Set<string>()
+
 /** Remote-only service exposing the shop Remote methods of §7.3.
  *
  * @typert service shop */
@@ -431,6 +456,8 @@ export class ShopGateway extends TypertRemoteService {
   /** One pump for the whole gateway: batching is per profile and lives inside
    * it, so a second instance would race the first for the same store. */
   private readonly prefetcher: Prefetcher
+  /** What this process may already have imported (see `importedThisProcess`). */
+  private readonly imported: Set<string>
   /** The install gate runs against the last loaded snapshot, never a fresh
    * fetch per request (§7.2: the Host's cached snapshot is the truth). */
   /** Finished install records retained, so a poll sees the true terminal
@@ -492,6 +519,13 @@ export class ShopGateway extends TypertRemoteService {
     this.ppid = options.ppid ?? process.ppid
     this.fetchTarball = options.fetchTarball ?? ((url: string) => fetch(url))
     this.prefetcher = options.prefetcher ?? createPrefetcher()
+    this.imported = options.importedModules ?? importedThisProcess
+    // What the profile holds as this gateway is built is what the boot
+    // composed: imported, as far as the process's module cache is concerned.
+    // An unreadable manifest seeds nothing — an update is still recognized
+    // from the manifest at install time, so what goes unrecognized then is an
+    // uninstall followed by a reinstall, and only until the next boot.
+    for (const name of Object.keys(this.profileDependenciesOrNone() ?? {})) this.imported.add(name)
     try {
       // The ephemeral `hot-<n>.yml` inputs from a previous session must
       // never survive a boot: a crashed session's stale inputs would mount
@@ -635,8 +669,9 @@ export class ShopGateway extends TypertRemoteService {
    * down. A disable can land while the entry's init is still in flight: the
    * options flip but the finishing init brings the fiber up anyway, and a
    * plain re-update no-ops on the empty diff (dsh-market themes.ts:74-93).
-   * For an update swap this sequencing is mandatory, not defensive: two live
-   * instances of a service-providing plugin would collide at provision. */
+   * The uninstall path is the one caller: an update used to swap its running
+   * instance for a hot mount through here, and no longer mounts at all
+   * (design 2026-09-26-market-borrowings §1). */
   /** The package's owned entry ids, or none when its bundle patch cannot be
    * read. For the paths where a live disable is an optimization and the
    * operation must succeed regardless; `setEnabled` reports the failure
@@ -671,8 +706,8 @@ export class ShopGateway extends TypertRemoteService {
    * Through `ownDependencySpec` for the reason spelled out there: a bare index
    * read answers for `Object.prototype`, and `constructor` is a legal npm
    * name. The cost on this path is behavioural twice over — the gate would
-   * weigh a function as the installed spec, and a phantom `isUpdate` would run
-   * `liveDisableIds` against something absent.
+   * weigh a function as the installed spec, and a phantom `isUpdate` would
+   * refuse a hot mount to a package this process never imported.
    */
   private installedSpecOf(name: string): string | undefined {
     const dependencies = this.profileDependenciesOrNone()
@@ -1080,35 +1115,17 @@ export class ShopGateway extends TypertRemoteService {
     } else {
       spec = `${args.name}@${args.version}`
     }
-    // An update must bring the old instance down before the new one mounts:
-    // two live instances of a service-providing plugin would collide at
-    // provision (see liveDisableIds). The profile manifest's dependencies are
-    // the install's own record — the shop's managed bundle list.
-    // Exactly what the gate above already resolved: a defined spec that got
-    // this far has been proven to name this very install, so "the name is
-    // present" and "this is an update" are one fact, read once. The
-    // own-property discipline that used to live on this line now lives in
-    // `installedSpecOf`, which is where the read happens.
+    // Whether this process may already have imported the package — and so
+    // whether a hot mount could deliver the new code at all (design
+    // 2026-09-26-market-borrowings §1). An update always may: whatever version
+    // is installed was composed at boot or has been mounted since. The gate
+    // above already proved that a defined spec names this very install, so
+    // "the name is present" and "this is an update" are one fact, read once;
+    // the own-property discipline lives in `installedSpecOf`. The process
+    // record adds what the manifest cannot say: a name uninstalled earlier in
+    // this session, whose module is still in the cache.
     const isUpdate = installedSpec !== undefined
-    // Resolve the OLD version's entry ids now: `afterDone` runs once the new
-    // tarball has already overwritten the package's bundle patch on disk.
-    // Best-effort: the update must not fail because the version being
-    // REPLACED has an unreadable patch — no ids just means no live disable,
-    // and the hot path already falls back to restart activation.
-    const priorEntryIds = isUpdate ? this.ownedEntryIdsOrNone(args.name) : []
-    // And read the OLD version's browser half now, for exactly the same
-    // reason: `afterDone` runs once the new tarball has overwritten the
-    // manifest, so a read THERE answers about the new version alone. An
-    // update that REMOVES a client half would report `live` — nothing to do
-    // — while the open tab is still running the old one's bundle and the
-    // served graph no longer holds it. That is the withheld reload this
-    // design exists to prevent, reached from the other direction.
-    //
-    // A fresh install contributes nothing here: there is no previous version
-    // of this package in the open tab, so `isUpdate` is what separates "no
-    // old half" from `hasClientHalf`'s "could not tell", and is why the two
-    // reads can stay booleans rather than growing a third state.
-    const priorClientHalf = isUpdate && this.packageHasClientHalf(args.name)
+    const alreadyImported = isUpdate || this.imported.has(args.name)
     const running = startInstall({
       profile: this.profile,
       spec,
@@ -1137,16 +1154,24 @@ export class ShopGateway extends TypertRemoteService {
           + ' dsh refuses to load a plugin tree holding a duplicate entry id, so the profile would not start.'
           + ` It is on disk: run \`dsh plugin --profile ${this.profile} remove ${args.name}\` to undo this install.`
       },
-      // After the bundle lands, bring it up hot — unless this is an update,
-      // whose old instance must be down first (see liveDisableIds). A failed
-      // mount falls back to restart activation, never to a silent half-state.
+      // After the bundle lands, bring it up hot — unless this process may
+      // already hold its module (see `alreadyImported`). A failed mount falls
+      // back to restart activation, never to a silent half-state.
       afterDone: async () => {
+        // No mount, and no live disable of the running instance. A mount would
+        // import the package's URL again and Node would answer with the module
+        // it cached, re-running the old code under the new version's name
+        // (measured 2026-09-26, web-full-flow.e2e.ts). So the running instance
+        // keeps running until the restart that loads the new files — and a
+        // plugin the user had disabled stays disabled, which the swap this
+        // replaced did not guarantee: it mounted the new rows under a `mkt-`
+        // id that no user-layer row names.
+        if (alreadyImported) return { activation: 'restart' as const, restartReason: 'already-loaded' as const }
         const hot = this.hot ?? { mount: hotMount, unmount: hotUnmount }
-        if (isUpdate) {
-          // Sequencing: the old instance must be down before the new one
-          // mounts (see liveEntriesDown). A failure here falls back to restart.
-          await this.liveEntriesDown(priorEntryIds)
-        }
+        // Recorded before the mount rather than on its success: the import is
+        // what fills the cache, and a mount that fails after importing — an
+        // activation that throws, a timeout — has filled it all the same.
+        this.imported.add(args.name)
         const result = await hot.mount(
           { plugin: (plugin, config) => (this.ctx as unknown as { plugin(plugin: unknown, config: unknown): { await(): Promise<unknown>; dispose(): Promise<unknown> | void } }).plugin(plugin, config) },
           this.profileDirResolved(),
@@ -1161,11 +1186,12 @@ export class ShopGateway extends TypertRemoteService {
         // registry enumerates (activation.ts, measured 2026-09-14). So
         // `clientLive` is false here and a package with a browser half lands
         // on `restart`, carrying the reason that says its host half is
-        // already running — the generic restart line would deny that.
+        // already running — the generic restart line would deny that. Only
+        // the new version is read: a fresh install has no old one in the tab.
         const activation = activationOf({
           hostLive: true,
           clientLive: false,
-          hasClientHalf: priorClientHalf || this.packageHasClientHalf(args.name),
+          hasClientHalf: this.packageHasClientHalf(args.name),
         })
         return activation === 'restart' ? { activation, restartReason: 'client-half' as const } : { activation }
       },

@@ -50,6 +50,11 @@ export const zh = {
   hotTimeoutNotice: '热挂载超时；重启 dsh 后生效',
   hotMountFailedNotice: '热挂载失败；重启 dsh 后生效',
   hotClientHalfNotice: '已安装并在运行；它的界面要重启 dsh 才会更新——刷新页面取不到',
+  /** No mount was tried: this dsh already loaded the package once, and Node
+   * will not load a second copy from the same place (design
+   * 2026-09-26-market-borrowings §1). Covers an update and a reinstall alike,
+   * so it names the new files rather than a "new version". */
+  hotAlreadyLoadedNotice: '已安装；这次运行的 dsh 已经加载过这个插件，新装的文件要重启 dsh 后才会生效',
   installedNoRestartNotice: '已安装并热挂载；现在即可使用，无需重启',
   installedReloadNotice: '已生效；刷新页面即可看到',
   reload: '刷新页面',
@@ -178,6 +183,7 @@ export const en = {
   hotTimeoutNotice: 'hot-mount timed out; restart dsh to activate',
   hotMountFailedNotice: 'hot-mount failed; restart dsh to activate',
   hotClientHalfNotice: 'installed and running; its interface needs a restart of dsh — a reload cannot fetch it',
+  hotAlreadyLoadedNotice: 'installed; this dsh has already loaded the plugin once, so the files just installed take effect after a restart of dsh',
   installedNoRestartNotice: 'installed and hot-mounted; running now, no restart needed',
   installedReloadNotice: 'already applied; reload the page to see it',
   reload: 'Reload the page',

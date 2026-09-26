@@ -183,6 +183,13 @@ describe('activationNoticeKey', () => {
     expect(activationNoticeKey('restart', undefined)).toBe('installedRestartNotice')
   })
 
+  it('names the already-loaded reason, which says why no mount was tried', () => {
+    // The generic line would read "restart to activate" about a package whose
+    // OLD version may still be running; this copy says the new files wait
+    // for the restart.
+    expect(activationNoticeKey('restart', 'already-loaded')).toBe('hotAlreadyLoadedNotice')
+  })
+
   it('names the reload state, and ignores any reason riding along with it', () => {
     // A reason is meaningful only under `restart`; rendering one here would
     // tell a reader their reload failed.

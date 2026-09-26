@@ -4,21 +4,25 @@
  * data file it names — with the sha256 computed at startup, the same binding
  * the real publishing pipeline makes between the two files.
  *
- * Five community-tier, derived (§6.1) fixture entries. The first,
+ * Six community-tier, derived (§6.1) fixture entries. The first,
  * `dsh-e2e-fixture-plugin@1.0.0`, is a name that does not exist on npm (and
  * that the hot-mount local registry does not serve) — the browser install of
  * it fails with REAL pnpm stderr, the failed view and its recovery hint being
  * part of what this e2e proves; a name that resolved would make the install
- * succeed and sidestep that surface entirely. The other four,
- * `dsh-shop-e2e-live`, `dsh-shop-e2e-config`, `dsh-shop-e2e-peer`, and
- * `dsh-shop-e2e-client`, ARE served by the local registry
- * (tests/fixtures/local-registry.ts): the simple-patch fixture mounts
- * without a restart, the config-row fixture falls back to a restart, the
- * peer fixture carries every harness-compatibility verdict the shop can form
- * (below), and the client fixture additionally declares `dsh.client`
+ * succeed and sidestep that surface entirely. The other five,
+ * `dsh-shop-e2e-live`, `dsh-shop-e2e-config`, `dsh-shop-e2e-peer`,
+ * `dsh-shop-e2e-client`, and `dsh-shop-e2e-update`, ARE served by the local
+ * registry (tests/fixtures/local-registry.ts): the simple-patch fixture
+ * mounts without a restart, the config-row fixture falls back to a restart,
+ * the peer fixture carries every harness-compatibility verdict the shop can
+ * form (below), the client fixture additionally declares `dsh.client`
  * (activation-model design, §3) so a hot-mounted install has a browser half
- * and reports `reload` rather than `live` — the other three live fixtures are
- * host-only, so none of them can exercise that path.
+ * and reports `restart` with the client-half reason rather than `live` — the
+ * first three live fixtures are host-only, so none of them can exercise that
+ * path — and the update fixture is listed here at 2.0.0 while the e2e
+ * installs 1.0.0 before dsh boots, so its card offers an update of a package
+ * the running process has already imported (activation-model design, §3
+ * amendment 2026-09-26).
  *
  * The compatibility verdict is formed in two stages — the host's node
  * resolution, then the browser's module table (design 2026-09-01 §9) — and
@@ -58,7 +62,7 @@ export interface CatalogServer {
   close: () => Promise<void>
 }
 
-/** The five fixture entries. No `catalog` section: derived metadata, so the
+/** The six fixture entries. No `catalog` section: derived metadata, so the
  * shop presents each entry's derived summary (§6.1).
  * `publishedAt` stays fixed so the snapshot is deterministic per run. */
 const FIXTURE_ENTRIES = [
@@ -165,6 +169,20 @@ const FIXTURE_ENTRIES = [
     tier: 'community',
     metadata: 'derived',
     added: '2026-09-11',
+  },
+  {
+    // Offered at 2.0.0; the e2e installs 1.0.0 before dsh boots, so the
+    // profile manifest's `1.0.0` reads as behind this and the card offers the
+    // update the A1 case drives.
+    name: 'dsh-shop-e2e-update',
+    version: '2.0.0',
+    integrity: null,
+    publishedAt: '2026-09-26T00:00:00.000Z',
+    repository: 'https://github.com/octocat/dsh-shop-e2e-update',
+    license: null,
+    tier: 'community',
+    metadata: 'derived',
+    added: '2026-09-26',
   },
 ] as const
 

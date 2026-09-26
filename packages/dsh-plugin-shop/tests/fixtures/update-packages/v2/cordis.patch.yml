@@ -1,0 +1,6 @@
+# The same plain `- id:` / `name:` insert in both versions — the one form the
+# shop's hot tree CAN mount, so nothing but the update rule decides whether
+# an update of this package is hot-swapped.
+- insert:
+    - id: e2e-update
+      name: dsh-shop-e2e-update

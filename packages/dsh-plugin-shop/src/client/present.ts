@@ -34,6 +34,7 @@ export function activationNoticeKey(activation: Activation, restartReason: HotRe
     case 'timeout': return 'hotTimeoutNotice'
     case 'mount-failed': return 'hotMountFailedNotice'
     case 'client-half': return 'hotClientHalfNotice'
+    case 'already-loaded': return 'hotAlreadyLoadedNotice'
     default: return 'installedRestartNotice'
   }
 }
