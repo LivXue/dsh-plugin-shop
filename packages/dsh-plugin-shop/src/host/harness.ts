@@ -39,6 +39,39 @@ import { packageDirectory } from './peers.ts'
  * from. */
 const APP_BOOT = '@deepseek-ai/dsh-app-boot'
 
+/** One package's harness peers as the running dsh judges them: app-boot's
+ * `evaluatePluginCompatibility` result, the shape 0.1.7 returns. */
+export interface PeerIssue {
+  name: string
+  version: string
+  /** The dsh version the check judged against — app-boot's own. */
+  runtimeVersion: string
+  /** The refused peers, each with the range the package declared. */
+  peers: Record<string, string>
+  /** Whether the profile holds dsh's exact-version exemption for this
+   * package on this dsh, in which case dsh accepts the install anyway. */
+  exempted: boolean
+}
+
+/** The running dsh's own install-time check (app-boot, from 0.1.7): the rule
+ * it refuses an install by, and the exemptions a profile holds. Taken from the
+ * dsh that runs rather than reimplemented, so a verdict cannot drift from the
+ * refusal it predicts (design 2026-09-26-dsh-017-readiness, B1). */
+export interface PeerCheck {
+  /** `evaluatePluginCompatibility(manifest, exemptions, runtimeVersion)` with
+   * app-boot's own version as the runtime — the version dsh's installer
+   * judges by, since it passes none and the default reads app-boot's
+   * manifest. That version is read once, here, rather than per call: the
+   * default re-reads the file on every call, which measured 75 ms against
+   * 12 ms for 2,000 manifests on 0.1.7-rc.2. The incompatible harness peers
+   * of one manifest, or undefined when there are none. Throws for a manifest
+   * it cannot judge. */
+  evaluate(manifest: { name: string; version: string; peerDependencies: Record<string, string> }, exemptions: Record<string, string[]>): PeerIssue | undefined
+  /** `readProfileVersionExemptions(profileDir)`: exact `name@version` keys
+   * mapped to the dsh versions each is exempted on. */
+  exemptions(profileDir: string): Record<string, string[]>
+}
+
 /** The running side of the `dsh.compatibility` verdict. The gateway reads it
  * once and keeps it: a running process cannot change which dsh it is. */
 export interface RunningHarness {
@@ -56,11 +89,15 @@ export interface RunningHarness {
    * B4). Null whenever the app-boot could not be read — unknown, which forms
    * no verdict. */
   patchLists: boolean | null
+  /** That dsh's own install-time peer check, or null when its app-boot
+   * exports none (before 0.1.7, which refuses no install on peers) or could
+   * not be read — no verdict either way. */
+  peerCheck: PeerCheck | null
 }
 
 /** What is known when nothing says which harness runs. */
 function noHarness(): RunningHarness {
-  return { dshVersion: null, templates: profileTemplatesOf(undefined), patchLists: null }
+  return { dshVersion: null, templates: profileTemplatesOf(undefined), patchLists: null, peerCheck: null }
 }
 
 /** Whether `path` stats as a regular file. */
@@ -124,16 +161,52 @@ function owningPackage(start: string): { dir: string; manifest: unknown } | null
  * 0.1.5-rc.3 with all five templates.
  *
  * Throws for whatever that chain cannot do; `readRunningHarness` turns any
- * throw into an empty table and an unknown `patchLists`.
+ * throw into an empty table, an unknown `patchLists` and no peer check.
  */
-async function appBootFacts(dshDir: string): Promise<{ templates: ProfileTemplates; patchLists: boolean } | null> {
+async function appBootFacts(dshDir: string): Promise<{ templates: ProfileTemplates; patchLists: boolean; peerCheck: PeerCheck | null } | null> {
   const appBootDir = packageDirectory(dshDir, APP_BOOT)
   if (appBootDir === null) return null
   const entry = createRequire(import.meta.url).resolve(appBootDir)
-  const exported = await import(pathToFileURL(entry).href) as { PROFILE_TEMPLATES?: unknown; bundlePatchFiles?: unknown }
+  const exported = await import(pathToFileURL(entry).href) as {
+    PROFILE_TEMPLATES?: unknown
+    bundlePatchFiles?: unknown
+    evaluatePluginCompatibility?: unknown
+    readProfileVersionExemptions?: unknown
+  }
   return {
     templates: profileTemplatesOf(exported.PROFILE_TEMPLATES),
     patchLists: typeof exported.bundlePatchFiles === 'function',
+    peerCheck: peerCheckOf(exported, appBootDir),
+  }
+}
+
+/**
+ * The peer check an app-boot exports, bound to its own version (see
+ * `PeerCheck.evaluate`), or null when it exports only part of one — a rule
+ * without the exemptions would refuse what a profile has already allowed —
+ * or when its manifest carries no version, which is the one `evaluate`
+ * judges by. Never throws, so a check that cannot be formed costs the
+ * templates and the patch-list answer nothing.
+ */
+function peerCheckOf(exported: { evaluatePluginCompatibility?: unknown; readProfileVersionExemptions?: unknown }, appBootDir: string): PeerCheck | null {
+  const { evaluatePluginCompatibility: evaluate, readProfileVersionExemptions: exemptions } = exported
+  if (typeof evaluate !== 'function' || typeof exemptions !== 'function') return null
+  let version: unknown
+  try {
+    version = (JSON.parse(readFileSync(join(appBootDir, 'package.json'), 'utf8')) as { version?: unknown }).version
+  } catch {
+    // Swallows an app-boot manifest that cannot be read or parsed, including
+    // one that parses to null. The resolver read it a moment ago to find the
+    // entry, so this is a race or a hand edit; with no version there is
+    // nothing to judge by, and the answer is no check.
+    return null
+  }
+  if (typeof version !== 'string' || version.length === 0) return null
+  const runtime = version
+  const judge = evaluate as (manifest: unknown, exemptions: unknown, runtimeVersion: string) => PeerIssue | undefined
+  return {
+    evaluate: (manifest, profileExemptions) => judge(manifest, profileExemptions, runtime),
+    exemptions: exemptions as PeerCheck['exemptions'],
   }
 }
 
@@ -152,8 +225,9 @@ async function appBootFacts(dshDir: string): Promise<{ templates: ProfileTemplat
  *    nothing here can say which harness runs, and both halves of the verdict
  *    stay silent.
  * 3. `dshVersion` is that manifest's `version` when it is a non-empty string.
- * 4. `templates` and `patchLists` come from that dsh's own app-boot
- *    (`appBootFacts`). Any failure there costs both and keeps the version.
+ * 4. `templates`, `patchLists` and `peerCheck` come from that dsh's own
+ *    app-boot (`appBootFacts`). Any failure there costs all three and keeps
+ *    the version.
  *
  * Never throws and never rejects: a harness nobody could identify forms no
  * verdict, and must never be the reason the catalog fails to load.
@@ -177,7 +251,12 @@ export async function readRunningHarness(script: string | undefined): Promise<Ru
       // read apart and stands.
       facts = null
     }
-    return { dshVersion, templates: facts?.templates ?? profileTemplatesOf(undefined), patchLists: facts?.patchLists ?? null }
+    return {
+      dshVersion,
+      templates: facts?.templates ?? profileTemplatesOf(undefined),
+      patchLists: facts?.patchLists ?? null,
+      peerCheck: facts?.peerCheck ?? null,
+    }
   } catch {
     // Swallows a script `realpathSync` cannot resolve (missing, or not a
     // path at all) — the one other throw on this path. Nothing identifies the

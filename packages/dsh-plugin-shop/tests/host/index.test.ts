@@ -11,7 +11,7 @@ import type { HotContext, HotMountResult } from '../../src/host/hot.ts'
 import type { CatalogResult, CatalogSnapshot, LoadCatalogOptions } from '../../src/host/catalog.ts'
 import type { CatalogEntry } from '../../src/host/types.ts'
 import { profileTemplatesOf } from '../../src/host/compatibility.ts'
-import type { RunningHarness } from '../../src/host/harness.ts'
+import type { PeerCheck, RunningHarness } from '../../src/host/harness.ts'
 import { startInstall } from '../../src/host/executor.ts'
 import { createPrefetcher, type Prefetcher } from '../../src/host/prefetch.ts'
 import { isTerminalInstallState } from '../../src/shared/install-state.ts'
@@ -2060,7 +2060,7 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     // declaration that is neither a path nor a list stops every dsh. Both are
     // reported the way a duplicate entry id is: failed, with the undo.
     const harness = (patchLists: boolean | null) => async (): Promise<RunningHarness> =>
-      ({ dshVersion: '0.1.5-rc.3', templates: {}, patchLists })
+      ({ dshVersion: '0.1.5-rc.3', templates: {}, patchLists, peerCheck: null })
     const cases: Array<[unknown, boolean | null, string | null]> = [
       [['./host.yml', './web.yml'], false, 'dsh-plugin-shop: dsh-hello-plugin lists its bundle patch as several files, which dsh reads from 0.1.7 on;'
         + ' this dsh (0.1.5-rc.3) reads one and would not start with it installed.'
@@ -2516,11 +2516,93 @@ function injectedHarness(dshVersion: string | null = '0.1.5-rc.3'): {
   return {
     readHarness: async script => {
       reads.push(script)
-      return { dshVersion, templates: profileTemplatesOf(RC3_PROFILE_TEMPLATES), patchLists: false }
+      return { dshVersion, templates: profileTemplatesOf(RC3_PROFILE_TEMPLATES), patchLists: false, peerCheck: null }
     },
     reads,
   }
 }
+
+describe('ShopGateway.catalog: what the running dsh itself refuses', () => {
+  /** A package pinning the harness to one release, as dsh 0.1.7's installer
+   * refuses it: dsh's own rule answers, scripted — `harness.test.ts` covers
+   * taking the real one from the running app-boot, and this suite what the
+   * gateway does with its answer. */
+  const pinned: CatalogEntry = {
+    name: 'dsh-pinned', version: '1.2.0', integrity: null, publishedAt: null, repository: null,
+    license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-09-26',
+    dshPeers: { '@deepseek-ai/dsh': '0.1.5-rc.3' },
+  }
+
+  /** A harness whose peer check refuses `dsh-pinned@1.2.0` unless the
+   * exemptions it is handed carry that key for 0.1.7-rc.2 — the shape of
+   * dsh's rule, with `exemptions()` answering from `held` as the test sets
+   * it and recording the directory it was asked about. */
+  function refusingHarness(held: { record: Record<string, string[]> | 'throws' }) {
+    const asked: string[] = []
+    const check: PeerCheck = {
+      evaluate: (manifest, exemptions) => (manifest.name === 'dsh-pinned'
+        ? { name: manifest.name, version: manifest.version, runtimeVersion: '0.1.7-rc.2', peers: { ...manifest.peerDependencies }, exempted: exemptions[`${manifest.name}@${manifest.version}`]?.includes('0.1.7-rc.2') === true }
+        : undefined),
+      exemptions: dir => {
+        asked.push(dir)
+        if (held.record === 'throws') throw new Error('EACCES: compatibility.json')
+        return held.record
+      },
+    }
+    const harness: RunningHarness = { dshVersion: '0.1.7-rc.2', templates: profileTemplatesOf(RC3_PROFILE_TEMPLATES), patchLists: true, peerCheck: check }
+    return { readHarness: async () => harness, asked }
+  }
+
+  const REFUSAL = {
+    refused: { '@deepseek-ai/dsh': '0.1.5-rc.3' },
+    running: '0.1.7-rc.2',
+    allowCommand: 'dsh plugin --profile web allow-version dsh-pinned@1.2.0 --dsh-version 0.1.7-rc.2 --accept-risk',
+  }
+
+  it("carries dsh's refusal and the command that exempts it, beside what the author declared", async () => {
+    const declared: CatalogEntry = { ...pinned, compatibility: { dsh: '0.9.0' } }
+    const { readHarness, asked } = refusingHarness({ record: {} })
+    const { gateway } = gatewayWithSnapshot({ schemaVersion: 5, builtAt: '', entries: [declared], denied: [], stars: {} }, { readHarness })
+    expect((await gateway.catalog({})).incompatibleHarness).toEqual({
+      'npm:dsh-pinned': { dsh: { range: '0.9.0', running: '0.1.7-rc.2' }, peers: REFUSAL },
+    })
+    // The exemptions are the running profile's own, from the directory the
+    // other verdicts read.
+    expect(asked).toHaveLength(1)
+    expect(asked[0]).toMatch(/dsh-gateway-profile-/)
+  })
+
+  it('reads the exemptions again on every call, so running the command and pressing Refresh clears the card', async () => {
+    // The whole way out of a disabled button: dsh records the exemption, and
+    // the next catalog call must see it. A verdict remembered per snapshot
+    // would keep the button disabled for as long as the snapshot is served.
+    const held: { record: Record<string, string[]> } = { record: {} }
+    const { readHarness } = refusingHarness(held)
+    const { gateway } = gatewayWithSnapshot({ schemaVersion: 5, builtAt: '', entries: [pinned], denied: [], stars: {} }, { readHarness })
+    expect((await gateway.catalog({})).incompatibleHarness).toEqual({ 'npm:dsh-pinned': { peers: REFUSAL } })
+    held.record = { 'dsh-pinned@1.2.0': ['0.1.7-rc.2'] }
+    expect((await gateway.catalog({})).incompatibleHarness).toEqual({})
+  })
+
+  it('says nothing on a dsh that has no such check, which refuses no install on its peers', async () => {
+    const { gateway } = gatewayWithSnapshot(
+      { schemaVersion: 5, builtAt: '', entries: [pinned], denied: [], stars: {} },
+      { readHarness: injectedHarness().readHarness },
+    )
+    expect((await gateway.catalog({})).incompatibleHarness).toEqual({})
+  })
+
+  it('says nothing when the exemptions cannot be read, and the declared halves still stand', async () => {
+    // Without the exemptions an allowed install and a refused one look the
+    // same, and a disabled button nobody could justify is the worst answer.
+    const declared: CatalogEntry = { ...pinned, compatibility: { dsh: '0.9.0' } }
+    const { readHarness } = refusingHarness({ record: 'throws' })
+    const { gateway } = gatewayWithSnapshot({ schemaVersion: 5, builtAt: '', entries: [declared], denied: [], stars: {} }, { readHarness })
+    const result = await gateway.catalog({})
+    expect(result.incompatibleHarness).toEqual({ 'npm:dsh-pinned': { dsh: { range: '0.9.0', running: '0.1.7-rc.2' } } })
+    expect(result.plugins).toHaveLength(1)
+  })
+})
 
 describe('ShopGateway.catalog harness compatibility', () => {
   /** `@xmanrui/dsh-im@4.19.2`'s own `dsh.compatibility.dsh`, verbatim (design

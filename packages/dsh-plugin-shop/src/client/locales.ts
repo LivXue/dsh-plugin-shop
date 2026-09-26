@@ -48,6 +48,13 @@ export const zh = {
    * "unsupported" leaves the reader guessing which side is off. */
   harnessRangeDetail: '作者声明支持的 dsh 版本：{range}；本机运行的是 {running}。',
   harnessProfileDetail: '作者声明支持的 profile：{declared}；此 dsh 以 {running} profile 启动。',
+  /** dsh's OWN refusal (0.1.7 on), not the author's claim: the install button
+   * is disabled beside it (design 2026-09-26-dsh-017-readiness, B1). `{peers}`
+   * is each refused peer with the range the package declared. The remedy
+   * leads into the exemption command, rendered on its own line after it, and
+   * names the Refresh button by its label. */
+  harnessPeersDetail: '本机的 dsh {running} 会拒绝安装此插件：它要求 {peers}。',
+  harnessPeersRemedy: '若愿意承担崩溃或数据丢失的风险，可在终端运行以下命令，为这个确切版本授予豁免，然后点击“刷新”：',
   hotNoPatchNotice: '该插件没有可热挂载的补丁文件；重启 dsh 后生效',
   hotNotSimpleNotice: '该插件的补丁包含无法热挂载的配置；重启 dsh 后生效',
   hotHostUnsupportedNotice: '当前环境不支持热挂载；重启 dsh 后生效',
@@ -189,6 +196,8 @@ export const en = {
   incompatibleDetail: 'Missing components/plugins: {modules}\nThis plugin may be designed for another DSH version.',
   harnessRangeDetail: 'The author declares support for dsh {range}; this machine runs {running}.',
   harnessProfileDetail: 'The author declares support for the {declared} profile(s); this dsh was launched with the {running} profile.',
+  harnessPeersDetail: 'dsh {running} on this machine refuses to install this plugin: it requires {peers}.',
+  harnessPeersRemedy: 'To accept the risk of crashes or data loss for this exact version, run this in a terminal, then press Refresh:',
   hotNoPatchNotice: 'no patch file to hot-mount; restart dsh to activate',
   hotNotSimpleNotice: 'the patch has config rows that cannot be hot-mounted; restart dsh to activate',
   hotHostUnsupportedNotice: 'this harness cannot hot-mount; restart dsh to activate',

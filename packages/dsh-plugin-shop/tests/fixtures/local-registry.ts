@@ -17,7 +17,10 @@
  * The packument is the minimal shape pnpm accepts: `dist-tags.latest` plus a
  * `versions` map whose entries carry `dist.tarball` / `shasum` / `integrity`
  * taken from the `npm pack --json` output, so the bytes served are the exact
- * packed tarball.
+ * packed tarball — plus the fixture's own peer fields, which a real registry
+ * serves and dsh 0.1.7 reads from it before installing (`pnpm view <spec>
+ * name version peerDependencies`). Without them its preflight would judge a
+ * manifest with no peers, a path no real registry install takes.
  *
  * Several fixture directories may pack the SAME name at different versions —
  * the update e2e needs a package installed at one version and offered at
@@ -50,6 +53,9 @@ interface PackedFixture {
   shasum: string
   integrity: string
   tarball: Buffer
+  /** The fixture manifest's `peerDependencies` and `peerDependenciesMeta`,
+   * when it declares them. */
+  peers: Record<string, unknown>
 }
 
 function packFixture(root: string, dir: string): PackedFixture {
@@ -75,6 +81,11 @@ function packFixture(root: string, dir: string): PackedFixture {
   if (summary === undefined) {
     throw new Error(`npm pack produced no summary for ${dir}`)
   }
+  const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as Record<string, unknown>
+  const peers: Record<string, unknown> = {}
+  for (const field of ['peerDependencies', 'peerDependenciesMeta']) {
+    if (manifest[field] !== undefined) peers[field] = manifest[field]
+  }
   return {
     name: summary.name,
     version: summary.version,
@@ -82,11 +93,13 @@ function packFixture(root: string, dir: string): PackedFixture {
     shasum: summary.shasum,
     integrity: summary.integrity,
     tarball: readFileSync(join(root, summary.filename)),
+    peers,
   }
 }
 
-/** The minimal packument pnpm accepts for `name@version` resolution: every
- * packed version of one name, `latest` on the highest. */
+/** The minimal packument pnpm accepts for `name@version` resolution, with
+ * the peer fields dsh reads: every packed version of one name, `latest` on
+ * the highest. */
 function packument(versions: readonly PackedFixture[], baseUrl: string): string {
   const [latest] = [...versions].sort((a, b) => rcompare(a.version, b.version))
   if (latest === undefined) throw new Error('local-registry: a packument needs at least one version')
@@ -96,6 +109,7 @@ function packument(versions: readonly PackedFixture[], baseUrl: string): string 
     versions: Object.fromEntries(versions.map(fixture => [fixture.version, {
       name: fixture.name,
       version: fixture.version,
+      ...fixture.peers,
       dist: {
         tarball: `${baseUrl}${fixture.name}/-/${fixture.filename}`,
         shasum: fixture.shasum,

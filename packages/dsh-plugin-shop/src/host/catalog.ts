@@ -207,6 +207,12 @@ const entrySchema = z.object({
     dsh: z.string().optional(),
     profiles: z.array(z.string()).optional(),
   }).optional(),
+  // The package's peers on the harness itself with their ranges verbatim
+  // (design 2026-09-26-dsh-017-readiness, B1): what dsh 0.1.7 refuses an
+  // install on, handed to the running dsh's own check (`peerVerdictsOf`).
+  // Declared for the reason `compatibility` is, and typed like it: the
+  // registry writes strings only (`dshPeersOf`), the empty range included.
+  dshPeers: z.record(z.string(), z.string()).optional(),
   // npm's `dist.unpackedSize`, additive and optional for the same reason as
   // `publisher` — this schema strips a key it does not know, so old and new
   // hosts share one catalog, while bumping the version NUMBER would make

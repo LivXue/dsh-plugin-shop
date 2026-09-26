@@ -38,7 +38,7 @@ import {
   type PeerResolver,
   type PeerVersionResolver,
 } from './peers.ts'
-import { compatibilityMap, type HarnessVerdict } from './compatibility.ts'
+import { compatibilityMap, peerVerdictsOf, type HarnessVerdict, type PeerVerdict } from './compatibility.ts'
 import { readRunningHarness, type RunningHarness } from './harness.ts'
 
 // Re-exported so the boundary type is reachable from the package's public
@@ -379,8 +379,10 @@ export interface ShopCatalogResult {
   incompatible: Record<string, string[]>
   /** Install identity → what the entry's author declared in
    * `dsh.compatibility` that this installation does not meet (design
-   * 2026-09-01-harness-compatibility §8.2). A key is absent when nothing was
-   * declared or every declared half is met. A half that cannot be judged —
+   * 2026-09-01-harness-compatibility §8.2), and what the running dsh itself
+   * will refuse the install on (`peers`, from dsh 0.1.7; design
+   * 2026-09-26-dsh-017-readiness, B1). A key is absent when nothing was
+   * declared or every declared half is met, and dsh refuses nothing. A half that cannot be judged —
    * the running version unreadable, a range semver cannot parse — is left out
    * while the other is still judged, so an unknown never reads as an
    * accusation; same-named entries stay independent. A process not started
@@ -1005,8 +1007,9 @@ export class ShopGateway extends TypertRemoteService {
     // badge, and a map kept per snapshot would go on naming that peer for as
     // long as the snapshot is served. Asking every time is cheap; design
     // 2026-09-01-harness-compatibility §9.6 owns the measurement. The one
-    // input kept is the running harness — which dsh this process is, and its
-    // template table — because a running process cannot change it.
+    // input kept is the running harness — which dsh this process is, its
+    // template table and its peer check — because a running process cannot
+    // change it.
     const harness = await this.runningHarness()
     // The profile directory, looked up ONCE: the peer resolver's anchor and
     // the profile half's bundles are read from the same directory, so the two
@@ -1049,6 +1052,9 @@ export class ShopGateway extends TypertRemoteService {
       // stands.
       incompatibleHarness = {}
     }
+    for (const [key, peers] of Object.entries(this.refusedByHarness(snapshot.entries, harness, profileDir))) {
+      incompatibleHarness[key] = { ...incompatibleHarness[key], peers }
+    }
     return {
       schemaVersion: snapshot.schemaVersion,
       builtAt: snapshot.builtAt,
@@ -1059,6 +1065,30 @@ export class ShopGateway extends TypertRemoteService {
       stars: snapshot.stars,
       incompatible,
       incompatibleHarness,
+    }
+  }
+
+  /**
+   * The installs the running dsh will refuse on their harness peers
+   * (`peerVerdictsOf`), judged against the exemptions this profile holds —
+   * read on every call like the other verdicts, because recording one is
+   * exactly the event that must clear a card: the reader runs the command
+   * the card shows, presses Refresh, and the install is allowed. Empty when
+   * the running dsh has no such check (before 0.1.7) or no profile was
+   * found, and when either read throws: a refusal nobody could establish is
+   * never shown, least of all as a disabled button.
+   */
+  private refusedByHarness(entries: readonly CatalogEntry[], harness: RunningHarness, profileDir: string | null): Record<string, PeerVerdict> {
+    if (harness.peerCheck === null || profileDir === null) return {}
+    try {
+      return peerVerdictsOf(entries, harness.peerCheck, harness.peerCheck.exemptions(profileDir), this.profile)
+    } catch {
+      // Swallows the exemption read throwing. app-boot's reader turns an
+      // unreadable or malformed file into no exemptions rather than an error,
+      // so this is a failure it did not plan for; without the exemptions the
+      // shop cannot tell a refused install from an allowed one, and says
+      // nothing. `peerVerdictsOf` catches the rule's own throws per entry.
+      return {}
     }
   }
 

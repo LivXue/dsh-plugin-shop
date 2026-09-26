@@ -45,7 +45,10 @@
  * badge renders for a genuinely absent declared peer and for both halves of
  * an unmet `dsh.compatibility`, that a peer the browser's module table seeds
  * is never named — on that card, or as a badge on the seed-only live card —
- * and that the install, warn never block, still reaches done; the client install must
+ * that from dsh 0.1.7-rc.1 the harness peer dsh itself refuses disables the
+ * button until the command the card shows records dsh's exemption (and that
+ * an older dsh, which refuses nothing, disables nothing), and that the
+ * install, warn never block, still reaches done; the client install must
  * report done with activation `reload` and offer the reload panel, and the
  * reload must deliver its browser half: the served graph gains the package and
  * the page runs the fixture's client script. (This has flipped twice. It read
@@ -152,6 +155,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { chromium, type Browser, type Locator, type Page } from 'playwright'
+import { gte } from 'semver'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { dshCommand, resolveDshScript } from '../../src/host/dsh-cli.ts'
 import { startInstall } from '../../src/host/executor.ts'
@@ -644,6 +648,9 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
   let webUrl = ''
   /** What the launched dsh CLI answers to `--version`, read in beforeAll. */
   let launchedDshVersion = ''
+  /** The launched dsh CLI's own script, resolved in beforeAll, for a spec
+   * that runs a command the way a reader would in a terminal. */
+  let dshScript: ReturnType<typeof resolveDshScript> = null
   let dshProcess: ChildProcess | undefined
   let browser: Browser | undefined
   let page: Page | undefined
@@ -742,6 +749,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       { exists: path => existsSync(path), read: path => readFileSync(path, 'utf8') },
       { argv1: process.argv[1], path: process.env.PATH },
     )
+    dshScript = script
     const web = dshCommand({
       dshBin: 'dsh',
       args: ['--profile', 'web', '--no-open', '--port', String(await reservePort())],
@@ -1259,6 +1267,45 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         .toBe(zh.harnessRangeDetail.replace('{range}', '0.1.2-rc.1').replace('{running}', launchedDshVersion))
       expect(await card.locator('[data-shop-incompatible-detail="harness-profile"]').textContent())
         .toBe(zh.harnessProfileDetail.replace('{declared}', 'acp').replace('{running}', 'web'))
+
+      // dsh's OWN refusal (design 2026-09-26-dsh-017-readiness, B1). The same
+      // entry declares an optional peer on `@deepseek-ai/dsh` that no 0.1
+      // build satisfies: optional, so the required-peer verdict above is
+      // unchanged, and dsh's installer checks optional peers all the same.
+      // From 0.1.7-rc.1 — the first app-boot to export the check; every
+      // earlier published one, 0.1.7-alpha.2 included, has none (measured
+      // 2026-09-26) — dsh refuses that install before pnpm runs, so the card
+      // states the refusal with its button disabled. The verdict is the
+      // running app-boot's own rule on this profile's own exemptions, which
+      // only a real harness supplies. Below 0.1.7-rc.1 dsh refuses nothing on
+      // its peers, and a disabled button there would be the shop blocking an
+      // install dsh performs.
+      const refusal = card.locator('[data-shop-incompatible-detail="harness-peers"]')
+      const installButton = card.locator('[data-shop-install]')
+      if (gte(launchedDshVersion, '0.1.7-rc.1')) {
+        await refusal.waitFor({ state: 'visible', timeout: 15_000 })
+        expect(await refusal.textContent())
+          .toBe(zh.harnessPeersDetail.replace('{running}', launchedDshVersion).replace('{peers}', '@deepseek-ai/dsh 0.1.2-rc.1'))
+        const shown = await card.locator('[data-shop-allow-command]').textContent()
+        expect(shown).toBe(`dsh plugin --profile web allow-version dsh-shop-e2e-peer@1.0.0 --dsh-version ${launchedDshVersion} --accept-risk`)
+        expect(await installButton.isDisabled()).toBe(true)
+        // The way out, through the real CLI: the command exactly as the card
+        // shows it, then Refresh, and the host's next read of this profile's
+        // exemptions clears the refusal. The install that ends this spec then
+        // proves dsh honours the exemption it recorded, at its preflight and
+        // again after pnpm.
+        const [program, ...argv] = (shown ?? '').split(' ')
+        expect(program).toBe('dsh')
+        const allow = dshCommand({ dshBin: 'dsh', args: argv, platform: process.platform, execPath: process.execPath, script: dshScript })
+        const allowed = spawnSync(allow.command, allow.args, { encoding: 'utf8', env: { ...process.env, DSH_HOME: tmpHome } })
+        expect(allowed.status, `the exemption command failed:\n${allowed.stderr}`).toBe(0)
+        await dialog.locator('[data-shop-catalog-refresh]').click()
+        await refusal.waitFor({ state: 'detached', timeout: 15_000 })
+        expect(await installButton.isDisabled()).toBe(false)
+      } else {
+        expect(await refusal.count(), 'a harness that refuses nothing on its peers was shown a refusal').toBe(0)
+        expect(await installButton.isDisabled()).toBe(false)
+      }
 
       // And the seed-only card says nothing at all. Its two peers, `react` and
       // `react-dom`, have no package on disk, so node resolution alone would

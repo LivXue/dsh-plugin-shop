@@ -2,15 +2,19 @@
  * declarations the running installation does not meet (design
  * 2026-09-01-harness-compatibility §8.2, as amended §9.9). The presence check
  * in `peers.ts` infers from what a plugin imports; this reads what its author
- * wrote down.
+ * wrote down. And, from dsh 0.1.7 on, what dsh ITSELF refuses: the harness
+ * peers its installer rejects an install on (`peerVerdictsOf`, design
+ * 2026-09-26-dsh-017-readiness, B1).
  *
- * Pure: the running version, the running profile and the harness's own
- * template table arrive as arguments, so fixtures drive every verdict and the
- * reads of the installation stay outside — the running dsh and its template
- * table in `harness.ts`, the running profile's bundles in the gateway. */
+ * Pure: the running version, the running profile, the harness's own
+ * template table and its peer check arrive as arguments, so fixtures drive
+ * every verdict and the reads of the installation stay outside — the running
+ * dsh, its template table and its peer check in `harness.ts`, the running
+ * profile's bundles and exemptions in the gateway. */
 
-import { satisfies, valid, validRange } from 'semver'
+import { parse, satisfies, valid, validRange } from 'semver'
 import { identityKey, type EntryIdentity } from '../shared/identity.ts'
+import type { PeerCheck } from './harness.ts'
 
 /** What an author declared in `dsh.compatibility` that this installation does
  * not meet. Each half is present only when the author declared it AND it is
@@ -22,6 +26,22 @@ export interface HarnessVerdict {
   /** The declared profile templates, and the name of the profile this dsh was
    * booted with. */
   profile?: { declared: string[]; running: string }
+  /** What the running dsh refuses this install on — no author's claim, and
+   * the one half the shop blocks an install for (`PeerVerdict`). */
+  peers?: PeerVerdict
+}
+
+/**
+ * An install the running dsh will refuse (0.1.7 on): the harness peers it
+ * refuses, each with the range the package declared; the dsh version it
+ * judged them against; and the command that records dsh's exact-version
+ * exemption for this package on this dsh, after which dsh installs it. The
+ * command is null when dsh would refuse that too (`allowVersionCommand`).
+ */
+export interface PeerVerdict {
+  refused: Record<string, string>
+  running: string
+  allowCommand: string | null
 }
 
 /** The running profile as the profile half needs it: its name, for the copy,
@@ -223,4 +243,87 @@ function unmetProfile(
   // Every name was a template this profile does not compose only when nothing
   // was left unjudged. One unknown name makes the whole list an unknown.
   return unjudged ? null : declared
+}
+
+/**
+ * Install identity → the refusal the running dsh will make, for each entry
+ * whose harness peers it refuses and the profile has not exempted. A key is
+ * present only for a refusal, so an absent key means "dsh installs it, or we
+ * could not tell".
+ *
+ * The rule is dsh's own (`check`, from the running app-boot), handed the
+ * manifest dsh's installer reads before it installs a registry spec — `pnpm
+ * view <spec> name version peerDependencies`, measured in dsh-plugin-manager
+ * 0.1.7-rc.2 — with the catalog's `dshPeers` for the peers. Those are the
+ * only peers the rule reads, verbatim. What this cannot see errs toward
+ * silence, never toward a refusal dsh would not make: a malformed peer range
+ * elsewhere in the manifest, which dsh rejects only after installing, and
+ * the plugins a bundle's patch rows name, which it checks then too. Those
+ * reach the reader as the install's own failure (`installFailureDetail`).
+ *
+ * npm entries only. dsh keys an exemption by the INSTALLED manifest's
+ * `name@version`, and a github entry's catalog version is a commit: its
+ * exemption status cannot be read, and a refusal named here could never be
+ * cleared from the shop. dsh refuses such an install itself, and says how
+ * to exempt it.
+ *
+ * A throw from the check forms no verdict for that entry, as a resolver's
+ * throw does in `incompatibilityMap`.
+ */
+export function peerVerdictsOf(
+  entries: readonly (EntryIdentity & { version: string; dshPeers?: Record<string, string> })[],
+  check: PeerCheck,
+  exemptions: Record<string, string[]>,
+  profile: string,
+): Record<string, PeerVerdict> {
+  const out: Record<string, PeerVerdict> = {}
+  for (const entry of entries) {
+    if (entry.source !== 'npm' || entry.dshPeers === undefined) continue
+    let issue: ReturnType<PeerCheck['evaluate']>
+    try {
+      issue = check.evaluate({ name: entry.name, version: entry.version, peerDependencies: entry.dshPeers }, exemptions)
+    } catch {
+      // Swallows the rule refusing to judge: a runtime version app-boot
+      // cannot parse, or a manifest shape it rejects, which the catalog
+      // parse keeps out and only an injected snapshot could carry. An entry
+      // nobody can judge is never accused.
+      continue
+    }
+    if (issue === undefined || issue.exempted) continue
+    out[identityKey(entry)] = {
+      refused: { ...issue.peers },
+      running: issue.runtimeVersion,
+      allowCommand: allowVersionCommand(profile, issue),
+    }
+  }
+  return out
+}
+
+/** npm's package-name grammar as dsh's exemption records accept it, verbatim
+ * from app-boot 0.1.7-rc.2 (`PACKAGE_NAME` in profile-compatibility). */
+const EXEMPTION_PACKAGE_NAME = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/
+
+/** A version exactly as dsh's exemption records spell one: canonical semver,
+ * build metadata included (app-boot's `isExactPluginVersion`). */
+function isExactVersion(value: string): boolean {
+  const parsed = parse(value)
+  return parsed !== null && value === `${parsed.version}${parsed.build.length === 0 ? '' : `+${parsed.build.join('.')}`}`
+}
+
+/**
+ * The command that records dsh's exact-version exemption for one refused
+ * install, spelled as dsh's own CLI prints it after a refusal — or null when
+ * `dsh plugin allow-version` would refuse the package or either version,
+ * which it checks against the grammar above. The name and version come from
+ * the catalog, which is hostile input bound for a terminal, and the two
+ * grammars admit no whitespace, quote, `$`, backtick, `;`, `|`, `&`,
+ * redirection or bracket, so no catalog value can add a command to the line
+ * it is pasted into.
+ *
+ * The profile is written as it is, as dsh prints it: it is the reader's own
+ * choice of name, never catalog input.
+ */
+export function allowVersionCommand(profile: string, issue: { name: string; version: string; runtimeVersion: string }): string | null {
+  if (!EXEMPTION_PACKAGE_NAME.test(issue.name) || !isExactVersion(issue.version) || !isExactVersion(issue.runtimeVersion)) return null
+  return `dsh plugin --profile ${profile} allow-version ${issue.name}@${issue.version} --dsh-version ${issue.runtimeVersion} --accept-risk`
 }
