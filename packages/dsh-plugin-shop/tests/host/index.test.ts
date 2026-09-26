@@ -357,6 +357,31 @@ describe('ShopGateway', () => {
     expect(warnings).toEqual([])
   })
 
+  it("reads the declared peers' versions through dsh's pluginPackages where the harness has one", async () => {
+    // dsh 0.1.7 keeps no link farm, so the walk read no version for any of
+    // the shop's own peers there and this check could never speak (design
+    // 2026-09-01-harness-compatibility §11). Only the range table is
+    // injected; the resolver is the production one, reaching the service
+    // through the context as it does in dsh. The peer is a name installed
+    // nowhere, so the version found can only have come from the service.
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-peerversion-harness-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
+    const peer = '@dsh-shop-fixture/harness-served-peer'
+    const served = join(mkdtempSync(join(TEMP_ROOT, 'dsh-installation-')), 'node_modules', ...peer.split('/'))
+    mkdirSync(served, { recursive: true })
+    writeFileSync(join(served, 'package.json'), JSON.stringify({ name: peer, version: '0.2.0-rc.1' }))
+    const pluginPackages = { packageOf: (spec: string) => spec === peer ? { manifestPath: join(served, 'package.json') } : undefined }
+    const warnings: string[] = []
+    const ctx = {
+      get: (name: string) => name === 'pluginPackages' ? pluginPackages : undefined,
+      reflect: { provide: () => {} },
+      logger: { warn: (m: string) => warnings.push(m) },
+    } as never
+    new ShopGateway(ctx, { profile: 'web', profileDir, peerRanges: { [peer]: '^0.1.1-rc.2' } })
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain(`${peer} ^0.1.1-rc.2, found 0.2.0-rc.1`)
+  })
+
 })
 
 describe('ShopGateway.catalog', () => {
@@ -2450,6 +2475,44 @@ describe('ShopGateway.catalog incompatibility', () => {
     installed = true
     const after = await gateway.catalog({})
     expect(after.incompatible).toEqual({})
+  })
+
+  it("asks dsh's pluginPackages for a peer the profile's disk does not hold, and still names one nothing serves", async () => {
+    // dsh 0.1.7 serves its own packages to plugins through Node's module
+    // hooks and keeps no link farm, so the walk alone badged every plugin
+    // declaring one: 2,214 entries on 0.1.7-rc.2 against 570 on 0.1.5-rc.3
+    // (design 2026-09-01-harness-compatibility §11). No `resolvePeer` here —
+    // the production resolver is under test, with the service the context
+    // provides, asked from the profile anchor. Both peers are names installed
+    // nowhere, so each verdict can only be the service's and the walk's.
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-gateway-pluginpackages-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }))
+    const servedName = '@dsh-shop-fixture/harness-served'
+    const missingName = '@dsh-shop-fixture/served-by-nothing'
+    const served = join(mkdtempSync(join(TEMP_ROOT, 'dsh-installation-')), 'node_modules', ...servedName.split('/'))
+    mkdirSync(served, { recursive: true })
+    writeFileSync(join(served, 'package.json'), JSON.stringify({ name: servedName, version: '0.1.7-rc.2' }))
+    const anchors = new Set<string>()
+    const pluginPackages = {
+      packageOf: (spec: string, parentURL: string) => {
+        anchors.add(parentURL)
+        return spec === servedName ? { manifestPath: join(served, 'package.json') } : undefined
+      },
+    }
+    const ctx = { get: (name: string) => name === 'pluginPackages' ? pluginPackages : undefined, reflect: { provide: () => {} } } as never
+    const gateway = new ShopGateway(ctx, {
+      catalogUrl: 'https://shop.test/v1/',
+      cacheDir: '/cache',
+      profile: 'web',
+      profileDir,
+      loadCatalog: async () => ({
+        snapshot: { schemaVersion: 6, builtAt: '', entries: [{ ...peered, peers: [servedName, missingName] }], denied: [], stars: {} },
+        stale: false,
+      }) as CatalogResult,
+    })
+
+    expect((await gateway.catalog({})).incompatible).toEqual({ 'npm:dsh-timeline': [missingName] })
+    expect([...anchors]).toEqual([pathToFileURL(join(profileDir, 'cordis.yml')).href])
   })
 })
 

@@ -32,7 +32,11 @@
  *   whose absence broke a real user on 0.1.1-rc.2, and a platform seed word
  *   on the pinned 0.1.5-rc.3, so it must NOT be named — beside
  *   `@dsh-shop-e2e/absent-peer`, which nothing anywhere provides and so must
- *   be. It also declares a `dsh.compatibility` that the running harness does
+ *   be, and `@deepseek-ai/dsh-llm`, a host package the harness ships, which
+ *   must not be: 0.1.5 links it into the profile, 0.1.7 serves it through
+ *   its runtime resolution with no link farm, and only a real harness shows
+ *   the difference (design 2026-09-01-harness-compatibility §11). It also
+ *   declares a `dsh.compatibility` that the running harness does
  *   not meet on either half, so the declaration is proven through a real host
  *   parse: a consumer schema that stripped the key would lose exactly those
  *   two lines, whatever the peer badge did. And it declares a harness peer
@@ -153,7 +157,7 @@ const FIXTURE_ENTRIES = [
     tier: 'community',
     metadata: 'derived',
     added: '2026-08-31',
-    peers: ['@deepseek-ai/dsh-client-store', '@dsh-shop-e2e/absent-peer'],
+    peers: ['@deepseek-ai/dsh-client-store', '@deepseek-ai/dsh-llm', '@dsh-shop-e2e/absent-peer'],
     // Unmet on both halves by the harness the e2e boots: no 0.1.5 build
     // satisfies `0.1.2-rc.1`, and the e2e's `web` profile does not compose
     // the `acp` template — a declared profile is judged by the harness's own
@@ -162,13 +166,13 @@ const FIXTURE_ENTRIES = [
     // lacks. A name that is no template, `tui` included, would be silence.
     compatibility: { dsh: '0.1.2-rc.1', profiles: ['acp'] },
     // The package's peers on the harness, verbatim, as the registry harvests
-    // them: the required `dsh-client-store` (`*`, which every dsh accepts)
-    // and an OPTIONAL `@deepseek-ai/dsh` pinned to a release no 0.1 build
-    // satisfies. Optional, so `peers` above — required peers only — is
-    // unchanged; dsh's installer checks optional peers all the same, so from
-    // 0.1.7-rc.1 it refuses this install until the profile exempts it (design
-    // 2026-09-26-dsh-017-readiness, B1).
-    dshPeers: { '@deepseek-ai/dsh-client-store': '*', '@deepseek-ai/dsh': '0.1.2-rc.1' },
+    // them: the required `dsh-client-store` and `dsh-llm` (`*`, which every
+    // dsh accepts) and an OPTIONAL `@deepseek-ai/dsh` pinned to a release no
+    // 0.1 build satisfies. Optional, so `peers` above — required peers only —
+    // is unchanged; dsh's installer checks optional peers all the same, so
+    // from 0.1.7-rc.1 it refuses this install until the profile exempts it
+    // (design 2026-09-26-dsh-017-readiness, B1).
+    dshPeers: { '@deepseek-ai/dsh-client-store': '*', '@deepseek-ai/dsh-llm': '*', '@deepseek-ai/dsh': '0.1.2-rc.1' },
   },
   {
     name: 'dsh-shop-e2e-client',
