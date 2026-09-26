@@ -23,6 +23,10 @@ caches nothing; and §8 is described as built. **Amended 2026-09-26 (§10):
 one harness reason now blocks.** dsh 0.1.7 refuses an install whose
 harness peers do not accept it, and the shop disables that install — by
 dsh's own rule, on the profile's own exemptions — instead of warning.
+**Amended 2026-09-26 (§11): on dsh 0.1.7 the host asks the harness which
+packages it serves.** 0.1.7 keeps no link farm, so §9.5's walk read every
+harness package as missing there — 2,214 badged entries against 570 on
+0.1.5-rc.3 — until the host asked dsh's own `pluginPackages` first.
 
 ## 0. The incident
 
@@ -781,7 +785,8 @@ process first asked.
 
 The resolver no longer goes through `require.resolve`. It walks the
 `node_modules` directories upward from the profile anchor, exactly as
-Node's ESM resolver matches a bare package name:
+Node's ESM resolver matches a bare package name. (On dsh 0.1.7, which
+keeps no link farm, the harness is asked first; see §11.)
 
 - **present** means the walk's match holds a manifest. The walk visits
   each ancestor's `node_modules/<name>` in turn, and the first that stats
@@ -1267,3 +1272,72 @@ disabled one. A github entry gets no verdict (the exemption is keyed by a
 manifest version its catalog record does not carry); dsh refuses it after
 the attempt, and the failed install now names dsh's refusal and its
 exemption command instead of "pnpm failed".
+
+## 11. Amendment (2026-09-26): dsh 0.1.7 serves its packages without the link farm
+
+**What dsh changed.** §9.5's walk finds harness packages because
+dsh-app-boot 0.1.5 links the installation's dependency closure into
+`$DSH_HOME/profiles/node_modules` (`healProfilesModuleFallback`).
+0.1.7-rc.2 keeps no link farm. It computes the same closure — the dsh
+app's `dependencies` and `peerDependencies`, breadth first
+(`createRuntimeResolution`) — and installs it on Node's ESM and CommonJS
+resolvers, so a profile plugin's bare import of any package in it is
+re-parented at the package that declares it. Nothing is written to disk:
+a fresh `DSH_HOME` booted on 0.1.7-rc.2 has no `profiles/node_modules` at
+all, where the same boot on 0.1.5-rc.3 links 240 `@deepseek-ai` packages.
+
+**What it did to the verdict.** Measured with the shop's own
+`incompatibilityMap` over the live catalog of 2026-09-26 (12,236 entries
+in the data file), from a profile each harness booted: the host stage
+flags 2,503 entries on 0.1.7-rc.2 against 1,149 on 0.1.5-rc.3. The peers
+new to the list are packages the running dsh ships —
+`@deepseek-ai/dsh-tools` (1,038 entries), `dsh-llm` (735), `dsh-settings`
+(524), `dsh-session` (508), `dsh-agent` (410). After the browser stage the
+tab offered to hide 2,214 entries on 0.1.7-rc.2 against 570 on
+0.1.5-rc.3, and the fourth card on the shelf, `@openviking/dsh-memory-plugin`,
+named `dsh-llm`, `dsh-mcp-client` and `dsh-skill-filesystem` as missing.
+§7's self-check lost its input the same way: from a 0.1.7 profile the walk
+reaches none of the shop's own peers, so it had nothing to judge. The
+removals 0.1.7 did make are real, and small: 33 entries declare a package
+0.1.5 ships and 0.1.7 does not, 32 of them `@deepseek-ai/dsh-agent-presets`.
+
+**The fix: ask the harness first.** 0.1.7 registers that resolution as the
+`pluginPackages` service, whose `packageOf(specifier, parentURL)` answers
+which package an import from `parentURL` reaches, through the routing a
+plugin's own import takes. When the context provides it, the host asks it
+from the profile anchor, and §9.5's walk answers only behind it; on 0.1.5,
+which provides no such service, the walk alone answers, unchanged.
+Measured with a probe plugin in a real 0.1.7-rc.2 boot: `dsh-tools`,
+`dsh-llm`, `dsh-app-boot` and `dsh-client-store` resolve into the dsh
+install; `dsh-plugin-shop` and `zod` into the profile's own
+`node_modules`; `react` to nothing, which the browser stage still covers;
+and `dsh-agent-presets` to nothing, so its badge stays. With the fix, the
+same catalog on a real 0.1.7-rc.2 boot offers to hide 582 entries, against
+570 on 0.1.5-rc.3 — the difference being what 0.1.7 really removed.
+
+§9's rules hold on the new path:
+
+- **present** still means a manifest that stats as a file, stat-ed afresh
+  on every call. The service remembers a package it once found, and an
+  uninstalled peer must stop reading as present (§9.4).
+- **the version** is read from the manifest of the package the harness
+  reaches, never from another copy the walk finds. A manifest the harness
+  names but nobody can parse is no version.
+- **peer names are validated as bare package names before the service
+  sees them.** Catalog text never reaches the harness.
+- **a service that throws yields no verdict**, never the walk's answer: the
+  walk alone is exactly what read every harness package as missing.
+- **either answer can only clear a badge**, never raise one.
+
+**Testing.** The e2e peer fixture declares `@deepseek-ai/dsh-llm`, and its
+card must not name it on either harness: 0.1.5 supplies it through the link
+farm, 0.1.7 only through `pluginPackages`. With the host change removed the
+case fails on 0.1.7-rc.2, naming `dsh-llm` on the card. CI runs 0.1.5-rc.3
+only (remaining-work item 6), so only a local 0.1.7 run exercises the new
+branch — and only one launched as `2026-09-26-dsh-017-readiness.md`'s
+Testing section says, since the obvious way boots a 0.1.5.
+
+**Scope.** Measured on 0.1.7-rc.2 and 0.1.5-rc.3. By its code, 0.1.7's
+resolution also serves packages carried by the profile's selected bundles,
+and `packageOf` answers for those too; that was not measured. The browser
+stage (§9.1) is unchanged.

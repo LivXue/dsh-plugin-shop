@@ -3,9 +3,10 @@
 Status: **implemented 2026-09-26 on `feat/dsh-017-readiness`, not
 released.** It changes what the host reads — a catalog field and three RPC
 shapes — so it ships through `beta` first. It amends
-`2026-09-01-harness-compatibility.md` (§10: one harness reason now blocks)
-and `2026-09-11-activation-model.md` (the 2026-09-14 amendment is
-reversed) in the same change. English only, per convention.
+`2026-09-01-harness-compatibility.md` (§10: one harness reason now blocks;
+§11: the peer check asks the harness which packages it serves) and
+`2026-09-11-activation-model.md` (the 2026-09-14 amendment is reversed)
+in the same change. English only, per convention.
 
 dsh publishes two lines at once: `latest` is 0.1.5-rc.3 and `next` is
 0.1.7-rc.2. The shop has to work on both, so everything here was measured
@@ -273,6 +274,26 @@ release-rescued entry must ship each listed file and every module it
 inserts, and a declaration that is neither a path nor a list of paths is
 refused.
 
+## B5. The peer check read every harness package as missing
+
+0.1.5's app-boot links the installation's dependency closure into
+`$DSH_HOME/profiles/node_modules`, and that link farm is where the shop's
+peer walk found every harness package. 0.1.7 keeps none: it serves the
+same closure to plugins through Node's module hooks and writes nothing
+there. So on 0.1.7-rc.2 the walk read `@deepseek-ai/dsh-llm`,
+`@deepseek-ai/dsh-tools` and the rest of what the running dsh ships as
+missing, and the shop badged 2,214 live entries against 570 on
+0.1.5-rc.3 — the fourth card on the shelf among them. The load-time
+self-check of the shop's own peers lost its input the same way.
+
+The host now asks dsh's `pluginPackages` service first — `packageOf`, the
+resolution a plugin's own import goes through — from the profile anchor,
+and walks the disk only behind it; on 0.1.5, which has no such service,
+the walk alone answers as before. On a real 0.1.7-rc.2 boot the tab then
+offers to hide 582 entries, against 570 on 0.1.5-rc.3. The measurements
+and the rules the new path keeps are in
+`2026-09-01-harness-compatibility.md` §11.
+
 ## Testing
 
 - **Unit.** The codec rewrite on a fixture in the generator's printed
@@ -295,7 +316,21 @@ refused.
   preflight and again after pnpm. The fixture registry now serves
   `peerDependencies` in its packuments, as a real registry does; without
   them dsh's preflight would judge a manifest with no peers, a path no real
-  install takes.
+  install takes. The same fixture declares `@deepseek-ai/dsh-llm`, a host
+  package every dsh ships, and its card must not name it (B5): on 0.1.5 the
+  link farm supplies it, on 0.1.7 only `pluginPackages` does, and with the
+  host change removed the case fails on 0.1.7-rc.2.
+- **Which dsh the e2e boots.** It spawns the first `dsh` on `PATH`, and
+  `npx vitest` rewrites `PATH` before the run: it prepends node's own bin
+  directory — here the one holding the global 0.1.5-rc.3 — and every
+  ancestor's `node_modules/.bin`. A second harness put first on `PATH` in
+  front of `npx` is therefore never the one booted; measured, the "0.1.7"
+  runs behind this record's first draft booted 0.1.5, and the refusal
+  branch took its 0.1.5 side. Launch the file as
+  `node node_modules/vitest/vitest.mjs run tests/client/web-full-flow.e2e.ts`
+  with the harness first on `PATH`, and read the version from inside the
+  run: the card's harness-range line names the running dsh. So launched,
+  all seven cases pass on 0.1.7-rc.2 and on 0.1.5-rc.3.
 
 ## Release
 
@@ -306,5 +341,6 @@ ignores the field; the version still goes through `beta`, per the release
 rules.
 
 CI pins the harness at 0.1.5-rc.3, so it runs the refusal case's 0.1.5
-branch only. A second e2e leg on 0.1.7 would run the other branch and every
-B0 fix; it is a cost decision and is not taken here.
+branch only. A second e2e leg on 0.1.7 would run the other branch, every
+B0 fix and B5's badge assertion; it is a cost decision and is not taken
+here.

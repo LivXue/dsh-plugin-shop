@@ -83,7 +83,8 @@ These block a real launch, not the code.
    acknowledgement gate and no compatibility verdicts. What the shop should
    be beside it is a product question. **(b) CI pins the harness at
    0.1.5-rc.3**, so it never runs the 0.1.7 half of the e2e: the refusal
-   branch and every fix that made the 0.1.7 UI load. A second leg costs one
+   branch, the harness-package badge (readiness B5), and every fix that
+   made the 0.1.7 UI load. A second leg costs one
    more e2e job per `packages/**` change.
 
 ## P1 — the Host half (done 2026-08-25)
