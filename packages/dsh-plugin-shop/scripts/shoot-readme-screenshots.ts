@@ -52,9 +52,13 @@ const SHOP_VERSION = process.env.SHOP_VERSION ?? readmePin()
 const OUT = process.env.OUT_DIR ?? fileURLToPath(new URL('../../../docs/images', import.meta.url))
 const GATE_TARGET = '@ahggg/dsh-side-chat'
 
+// `plugins` is the Settings section the shop's tab lives under. dsh 0.1.5
+// labels it Plugins / 插件; 0.1.7 relabels the same section Built-in plugins /
+// 内置插件 (`dsh-client-ui-settings-plugins`), because the plain word now names
+// the sidebar's own plugin-manager page. Anchored, so it matches nothing else.
 const T = {
-  en: { settings: 'Settings', plugins: 'Plugins', shop: 'Plugin shop', install: 'Install', search: 'Search plugins' },
-  zh: { settings: '设置', plugins: '插件', shop: '插件商店', install: '安装', search: '搜索插件' },
+  en: { settings: 'Settings', plugins: /^(?:Plugins|Built-in plugins)$/, shop: 'Plugin shop', install: 'Install', search: 'Search plugins' },
+  zh: { settings: '设置', plugins: /^(?:插件|内置插件)$/, shop: '插件商店', install: '安装', search: '搜索插件' },
 } as const
 type Lang = keyof typeof T
 
@@ -132,7 +136,7 @@ async function openShop(page: Page, url: string, lang: Lang): Promise<void> {
   await page.getByRole('button', { name: t.settings, exact: true }).click({ timeout: 30_000 })
   const dialog = page.getByRole('dialog', { name: t.settings })
   await dialog.waitFor({ state: 'visible', timeout: 15_000 })
-  await dialog.getByRole('button', { name: t.plugins, exact: true }).click()
+  await dialog.getByRole('button', { name: t.plugins }).click()
   await dialog.getByRole('tab', { name: t.shop }).click()
   await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 30_000 })
   // The live catalog is a network fetch: wait for real entries, not the frame.
