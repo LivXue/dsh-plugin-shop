@@ -81,7 +81,11 @@ These block a real launch, not the code.
    installs, enables, disables and removes plugins and records dsh's
    exemptions. It overlaps what the shop does; it has no catalog, no
    acknowledgement gate and no compatibility verdicts. What the shop should
-   be beside it is a product question. **(b) CI pins the harness at
+   be beside it was a product question. **Decided 2026-09-26: direction A.**
+   The shop stays the catalog, the gates and the acknowledgement, and on a
+   harness offering `pluginManager` the mechanics go through that service;
+   designed in [2026-09-26-plugin-manager-delegation.md](../design/2026-09-26-plugin-manager-delegation.md),
+   proposed and not built. **(b) CI pins the harness at
    0.1.5-rc.3**, so it never runs the 0.1.7 half of the e2e: the refusal
    branch, the harness-package badge (readiness B5), and every fix that
    made the 0.1.7 UI load. A second leg costs one
