@@ -1334,8 +1334,8 @@ card must not name it on either harness: 0.1.5 supplies it through the link
 farm, 0.1.7 only through `pluginPackages`. With the host change removed the
 case fails on 0.1.7-rc.2, naming `dsh-llm` on the card. CI runs 0.1.5-rc.3
 only (remaining-work item 6), so only a local 0.1.7 run exercises the new
-branch — and only one launched as `2026-09-26-dsh-017-readiness.md`'s
-Testing section says, since the obvious way boots a 0.1.5.
+branch — one whose running version is read from inside the run
+(`2026-09-26-dsh-017-readiness.md`, Testing).
 
 **Scope.** Measured on 0.1.7-rc.2 and 0.1.5-rc.3. By its code, 0.1.7's
 resolution also serves packages carried by the profile's selected bundles,

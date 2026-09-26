@@ -320,17 +320,19 @@ and the rules the new path keeps are in
   package every dsh ships, and its card must not name it (B5): on 0.1.5 the
   link farm supplies it, on 0.1.7 only `pluginPackages` does, and with the
   host change removed the case fails on 0.1.7-rc.2.
-- **Which dsh the e2e boots.** It spawns the first `dsh` on `PATH`, and
-  `npx vitest` rewrites `PATH` before the run: it prepends node's own bin
-  directory — here the one holding the global 0.1.5-rc.3 — and every
-  ancestor's `node_modules/.bin`. A second harness put first on `PATH` in
-  front of `npx` is therefore never the one booted; measured, the "0.1.7"
-  runs behind this record's first draft booted 0.1.5, and the refusal
-  branch took its 0.1.5 side. Launch the file as
-  `node node_modules/vitest/vitest.mjs run tests/client/web-full-flow.e2e.ts`
-  with the harness first on `PATH`, and read the version from inside the
-  run: the card's harness-range line names the running dsh. So launched,
-  all seven cases pass on 0.1.7-rc.2 and on 0.1.5-rc.3.
+- **Which dsh the e2e boots.** On Linux it spawns the first bare `dsh` on
+  the vitest process's `PATH` (`resolveDshScript` only recognizes npm's
+  Windows layout), and `npx` prepends a `node_modules/.bin` for every
+  ancestor of the working directory. A `dsh` in any of those beats a
+  harness put first on `PATH`: from a checkout under `/tmp`, a stray
+  `/tmp/node_modules/.bin/dsh` (0.1.5-rc.1 on the machine this was measured
+  on) was booted in place of 0.1.7-rc.2. From this repository's own
+  checkout no ancestor holds one, and the runs behind this record booted
+  the harness they named. `node node_modules/vitest/vitest.mjs run
+  tests/client/web-full-flow.e2e.ts` rewrites no `PATH` at all. Either way,
+  read the version from inside the run — the card's harness-range line
+  names the running dsh. So verified, all seven cases pass on 0.1.7-rc.2
+  and on 0.1.5-rc.3.
 
 ## Release
 
