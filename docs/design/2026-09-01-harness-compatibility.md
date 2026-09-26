@@ -19,7 +19,10 @@ two-thirds false alarms** — 991 of the 1,493 entries it badged on the
 live catalog. §9 records the audit and what changed: the verdict now
 forms in two stages, the host and then the browser's module table; only
 required peers are recorded; the resolver looks packages up directly and
-caches nothing; and §8 is described as built.
+caches nothing; and §8 is described as built. **Amended 2026-09-26 (§10):
+one harness reason now blocks.** dsh 0.1.7 refuses an install whose
+harness peers do not accept it, and the shop disables that install — by
+dsh's own rule, on the profile's own exemptions — instead of warning.
 
 ## 0. The incident
 
@@ -225,7 +228,10 @@ One verdict, three renderings:
 **Warn, never block.** The install proceeds if the person confirms. The
 check is presence-only and this project does not know every way a plugin
 might legitimately work; refusing an install on our inference would make
-the shop wrong in a way the user cannot override.
+the shop wrong in a way the user cannot override. **Amended 2026-09-26
+(§10):** an install dsh itself will refuse is disabled. That is not our
+inference, and the override is dsh's own exemption, whose command the card
+shows.
 
 **No copy crosses the RPC.** The host publishes module names; the client
 renders sentences from its own dictionaries through dsh's locale service.
@@ -1225,3 +1231,39 @@ Warn, never block (§4). An unknown is silence, never an accusation
 the verdict (§2). §8.3's ranges stay deferred: 8.1 lands with this
 amendment, and the re-measurement §8.3 asks for waits until the §9.8
 backfill has re-read the channel.
+
+## 10. Amendment (2026-09-26): dsh's own refusal blocks
+
+dsh 0.1.7 refuses to install a plugin whose `@deepseek-ai/dsh` or
+`@deepseek-ai/dsh-*` peers do not accept the running dsh, until the
+profile records an exact-version exemption; at boot it disables an
+installed one the same way. It refuses before pnpm runs when it can read
+the manifest, which for a registry install it always can. The whole
+mechanism, measured, is in `2026-09-26-dsh-017-readiness.md` §B1.
+
+**The shop disables that install** rather than warning, and this is the one
+harness reason that does. §4's argument does not reach it. §4 refused to
+block on the shop's INFERENCE, which could be wrong in a way the reader
+cannot override. This verdict is dsh's: the rule is the running app-boot's
+own `evaluatePluginCompatibility`, applied to the catalog's `dshPeers` and
+the profile's own exemptions, read on every catalog call. It is the refusal
+dsh will make, given before pnpm instead of after — and a clickable button
+had no outcome but a failed card. The reader's override is dsh's
+exemption, whose command the card shows; after running it, Refresh enables
+the button.
+
+**It is not a range check of the kind §8.3 deferred.** The shop parses no
+range and decides nothing from one: the catalog records the ranges
+verbatim (npm entries only), and the running dsh judges them. §8.3's
+question — whether the SHOP should compare declared ranges against the
+harness — is unchanged and still deferred, for `peers` as for
+`compatibility`.
+
+**What does not change.** Every other harness reason warns: a missing
+peer, and an author's `dsh.compatibility`. An unknown is silence — no
+check on the running dsh, an unreadable exemption record, a rule that
+throws on an entry — and silence here means an enabled button, never a
+disabled one. A github entry gets no verdict (the exemption is keyed by a
+manifest version its catalog record does not carry); dsh refuses it after
+the attempt, and the failed install now names dsh's refusal and its
+exemption command instead of "pnpm failed".

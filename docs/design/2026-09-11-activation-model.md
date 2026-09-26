@@ -6,7 +6,12 @@ fixes to get right and is recorded so it is not rediscovered. Amended
 2026-09-26 (§3, §5, §6): an update — or a reinstall of a package this process
 already imported — no longer hot-mounts at all, because the mount re-ran the
 OLD module under the new version's name (`2026-09-26-market-borrowings.md`
-§1). The shop replaces its
+§1). Amended again 2026-09-26 (§1, §3, §5, §6): the 2026-09-14 amendment is
+reversed. A hot install of a package with a browser half reports `reload`
+again, because the shop now registers its hot tree under its own loader
+entry, which dsh's client registry composes; the measurement that moved
+these installs to `restart` was taken with the tree under the typert
+gateway (`2026-09-26-dsh-017-readiness.md` §B0.3). The shop replaces its
 two-valued `needsRestart` with a three-valued `activation`, because a dsh
 plugin has two halves that go live by different routes and the shop has
 only ever reported on one of them. The authority spec
@@ -122,6 +127,24 @@ mount the same rows again at the next boot — so nothing here depends on
 it. Recorded so the next person measuring the user layer does not spend
 the afternoon we spent.
 
+**Second amendment (2026-09-26): the 2026-09-14 row was an artifact of
+where the shop registered its hot tree, and its consequence is reversed.**
+cordis hands a service out with `ctx` rebound to the context that looked it
+up, so the shop's hot mount ran from the typert gateway's context: the
+loader made the tree the gateway entry's subtree, listed as
+`include:typert-gateway:mkt-<id>`, and the client registry never composed
+it. The probe this section opens with mounted from its own plugin's
+context, which is why it saw the row, and why the table above found a
+difference and put it down to WHEN the package reached disk. Registered
+from the context the shop was constructed with, the tree is the shop
+entry's subtree, and the same e2e now measures, on 0.1.5-rc.3 and
+0.1.7-rc.2 alike: across a reload after the hot mount, the served graph
+gains the package under a new `rev`, and the page runs the fixture's client
+script. The install path therefore reports `reload` again, and the
+`client-half` reason is deleted. The table above stands as a record of
+what the old attach point did; its conclusion — that a package arriving
+mid-session cannot enter the composition — was wrong.
+
 ## 2. What the model is
 
 `activation` answers one question — *what does the reader have to do
@@ -160,7 +183,7 @@ rule. All three inputs are gathered in the shell.
 
 | Flow | `hostLive` | `clientLive` | `hasClientHalf` read |
 |---|---|---|---|
-| Install of a package this process never imported | the hot-mount result | **false** — a hot mount does not enter the registry's composition (§1 amendment) | after the files land |
+| Install of a package this process never imported | the hot-mount result | **true** — the hot tree is the shop entry's subtree, which the registry composes (§1, second amendment; `false` from 2026-09-14 to 2026-09-26) | after the files land |
 | Update, or a reinstall of an imported package | **false**, and nothing is mounted — `already-loaded` (amended 2026-09-26) | not read | not read |
 | Uninstall | whether the fiber actually went away | true — a boot-composition row | **before** the uninstall |
 | Enable / disable | always true — the user layer is hot-reloaded | true — a boot-composition row | at the toggle |
@@ -192,13 +215,13 @@ uninstall — therefore reports `restart` with the `already-loaded` reason and
 leaves the running instance untouched. That is `hostLive: false` in the
 table's sense: the host half the change describes is not running.
 
-**A hot-mounted browser half cannot be reloaded into.** This is the §1
-amendment's consequence, and it is where it lands in the model: the
-install and update paths pass `clientLive: false`, so a package
-declaring `dsh.client` resolves to `restart` there. It carries the
-`client-half` reason, which is not a mount failure — the mount succeeded
-and the host half is running — and exists so the reader is not told
-"installed; restart dsh to activate" about a plugin they can already use.
+**A hot-mounted browser half is reloaded into (reversed 2026-09-26).**
+From 2026-09-14 the install path passed `clientLive: false`, so a package
+declaring `dsh.client` resolved to `restart` there, with a `client-half`
+reason. That rested on a measurement taken with the hot tree under the
+typert gateway (§1, second amendment). The install path now passes
+`clientLive: true`, a browser half resolves to `reload`, and the reason is
+gone.
 
 **The uninstall read must precede the uninstall.** The package's
 `package.json` is what declares `dsh.client`, and the uninstall deletes
@@ -291,11 +314,14 @@ e2e's live packages — `dsh-shop-e2e-live`, `dsh-shop-e2e-config`,
 and asserts nothing whatsoever about the browser half, which is exactly
 the blind spot both incidents came through. A fourth fixture declaring
 `dsh.client` is part of this change, and the flow that installs it
-asserts `activation === 'restart'`, the `client-half` copy, and the
-restart activation's offer — with no reload offered.
+asserts `activation === 'reload'` and the reload offer, with no restart
+offered. From 2026-09-14 to 2026-09-26 it asserted `restart`, the
+`client-half` copy and the restart offer (§1, second amendment).
 
 The offer half is read from the host rather than assumed (amended
-2026-09-14): `activation` is `restart` on every platform, but WHICH of
+2026-09-14; since 2026-09-26 it applies to the restart flows that remain,
+the config-row fixture and the update): `activation` is `restart` on every
+platform, but WHICH of
 the two the client may show is the host's `restartBlocked`, so the flow
 waits for the version check to resolve and then asserts the offer on a
 host that can restart and that reason's own notice on one that cannot.
@@ -312,7 +338,12 @@ suite that loads the fixture's browser half at all; without it the
 fixture's `client.js` and its `exports["./client"]` are executed by
 nothing, and the suite asserts only what the shop SAID. If those lines
 ever fail, the harness has begun composing hot mounts into the client
-registry, and the install path can go back to `reload`.
+registry, and the install path can go back to `reload`. **Amended
+2026-09-26:** they failed — because the shop's attach point changed, not
+the harness (§1, second amendment) — and the spec now pins the opposite:
+across the reload the graph's `rev` changes, the graph gains the fixture,
+and the page runs the fixture's client script. It is still the only thing
+in the suite that loads the fixture's browser half.
 
 `activationOf` is a three-row truth table and is tested as one.
 
@@ -356,7 +387,11 @@ restart (§1 amendment). Amended 2026-09-26: it also gains `already-loaded`,
 the other value that reports no failure — no mount was attempted, because
 the process may already hold the package's module (§3). A client older
 than that member renders its generic restart line for it, which is true,
-merely less specific. `ShopSetEnabledResult` gains
+merely less specific. Amended again 2026-09-26: `client-half` is removed
+with the rule it reported (§1, second amendment). Only a host older than
+that change can still send it — to a tab that outlived a self-update — and
+the client renders its generic restart line for a reason it does not
+know. `ShopSetEnabledResult` gains
 `activation`; it currently returns `{ ok: true }` and the client renders
 a hardcoded note, which is why enable/disable was wrong in a way no
 amount of host-side correctness could have fixed.
