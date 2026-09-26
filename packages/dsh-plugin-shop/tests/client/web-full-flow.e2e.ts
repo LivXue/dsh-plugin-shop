@@ -87,7 +87,8 @@
  *   is a race no timeout wins reliably. `expectNoDialog` is the tripwire.
  * - settings trigger: `page.getByRole('button', { name: '设置', exact: true })`
  * - settings modal: `page.getByRole('dialog', { name: '设置' })`
- * - plugins section: `dialog.getByRole('button', { name: '插件', exact: true })`
+ * - plugins section: `dialog.getByRole('button', { name: PLUGINS_SECTION })` —
+ *   插件 on 0.1.5-rc.3, 内置插件 on 0.1.7-rc.2 (see the constant)
  * - shop tab: `dialog.getByRole('tab', { name: '插件商店' })` — the panel
  *   renders lazily, only after the tab is activated
  * - shop panel + entry: `[data-shop-tab]`, `[data-shop-entry=<name>]`
@@ -191,6 +192,14 @@ async function expandGlobalPlane(dialog: Locator): Promise<void> {
 import { zh } from '../../src/client/locales.ts'
 import { startCatalogServer, type CatalogServer } from '../fixtures/catalog-server.ts'
 import { startLocalRegistry, type LocalRegistry } from '../fixtures/local-registry.ts'
+
+/** The Settings section that renders `settings.plugins.tab`, where the shop
+ * tab lives. Harness 0.1.5-rc.3 labels it 插件; 0.1.7-rc.2 relabels the same
+ * section 内置插件 (`dsh-client-ui-settings-plugins`, `nav`), because 插件 now
+ * names the sidebar's own plugin-manager page. The slot and the tab inside it
+ * are unchanged, so the one anchored alternation keeps every call site valid
+ * on both harnesses without matching anything else in the dialog. */
+const PLUGINS_SECTION = /^(?:插件|内置插件)$/
 
 /**
  * Stop dsh and everything it spawned.
@@ -840,7 +849,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
       const dialog = app.getByRole('dialog', { name: '设置' })
       await dialog.waitFor({ state: 'visible', timeout: 10_000 })
-      await dialog.getByRole('button', { name: '插件', exact: true }).click()
+      await dialog.getByRole('button', { name: PLUGINS_SECTION }).click()
       await dialog.getByRole('tab', { name: '插件商店' }).click() // panel renders lazily
       await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
 
@@ -1111,7 +1120,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
       const dialog3 = app.getByRole('dialog', { name: '设置' })
       await dialog3.waitFor({ state: 'visible', timeout: 10_000 })
-      await dialog3.getByRole('button', { name: '插件', exact: true }).click()
+      await dialog3.getByRole('button', { name: PLUGINS_SECTION }).click()
       await dialog3.getByRole('tab', { name: '插件列表' }).click()
       await expandGlobalPlane(dialog3)
       expect(await dialog3.locator('[data-plugin-entry="include:typert-gateway:mkt-e2e-live"]').count()).toBe(0)
@@ -1132,7 +1141,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
       const dialog = app.getByRole('dialog', { name: '设置' })
       await dialog.waitFor({ state: 'visible', timeout: 10_000 })
-      await dialog.getByRole('button', { name: '插件', exact: true }).click()
+      await dialog.getByRole('button', { name: PLUGINS_SECTION }).click()
       await dialog.getByRole('tab', { name: '插件商店' }).click()
       await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
       const card = dialog.locator('[data-shop-entry="dsh-shop-e2e-config"]')
@@ -1161,7 +1170,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
       const dialog2 = app.getByRole('dialog', { name: '设置' })
       await dialog2.waitFor({ state: 'visible', timeout: 10_000 })
-      await dialog2.getByRole('button', { name: '插件', exact: true }).click()
+      await dialog2.getByRole('button', { name: PLUGINS_SECTION }).click()
       await dialog2.getByRole('tab', { name: '插件列表' }).click()
       await expandGlobalPlane(dialog2)
       expect(await dialog2.locator('[data-plugin-entry="include:typert-gateway:mkt-e2e-config"]').count()).toBe(0)
@@ -1183,7 +1192,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
       const dialog = app.getByRole('dialog', { name: '设置' })
       await dialog.waitFor({ state: 'visible', timeout: 10_000 })
-      await dialog.getByRole('button', { name: '插件', exact: true }).click()
+      await dialog.getByRole('button', { name: PLUGINS_SECTION }).click()
       await dialog.getByRole('tab', { name: '插件商店' }).click()
       await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
       const card = dialog.locator('[data-shop-entry="dsh-shop-e2e-peer"]')
@@ -1324,7 +1333,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
       const dialog = app.getByRole('dialog', { name: '设置' })
       await dialog.waitFor({ state: 'visible', timeout: 10_000 })
-      await dialog.getByRole('button', { name: '插件', exact: true }).click()
+      await dialog.getByRole('button', { name: PLUGINS_SECTION }).click()
       await dialog.getByRole('tab', { name: '插件商店' }).click()
       await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
       const card = dialog.locator('[data-shop-entry="dsh-shop-e2e-client"]')
@@ -1424,7 +1433,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
       const dialog = app.getByRole('dialog', { name: '设置' })
       await dialog.waitFor({ state: 'visible', timeout: 10_000 })
-      await dialog.getByRole('button', { name: '插件', exact: true }).click()
+      await dialog.getByRole('button', { name: PLUGINS_SECTION }).click()
       await dialog.getByRole('tab', { name: '插件商店' }).click()
       await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
       const card = dialog.locator('[data-shop-entry="dsh-shop-e2e-update"]')
