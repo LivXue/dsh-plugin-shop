@@ -125,16 +125,27 @@ describe('assignTier', () => {
     // beside it: a new key at the END of the optional block rewrites every
     // entry once, which a new field must; putting it earlier would also move
     // the keys after it, for no gain. `compatibility` followed it by the same
-    // rule.
+    // rule, and `dshPeers` followed `compatibility`.
     const full = accepted('dsh-other-plugin', '1.0.0', 'declared', 'realauthor')
     full.candidate.peers = ['@deepseek-ai/dsh-client-store']
     full.candidate.unpackedSize = 847407
     full.candidate.compatibility = { dsh: '>=0.1.5', profiles: ['web'] }
+    full.candidate.dshPeers = { '@deepseek-ai/dsh-client-store': '^0.1.1-rc.2' }
     expect(Object.keys(assignTier(full, config))).toEqual([
       'name', 'version', 'integrity', 'publishedAt', 'repository', 'license',
       'metadata', 'catalog', 'source', 'added', 'publisher', 'peers',
-      'unpackedSize', 'installSize', 'compatibility', 'tier',
+      'unpackedSize', 'installSize', 'compatibility', 'dshPeers', 'tier',
     ])
+  })
+
+  it('carries the harness peers onto the entry verbatim, and omits them when there are none', () => {
+    // Judged on the reader's machine by the dsh that runs there, never here.
+    const input = accepted('dsh-other-plugin', '1.0.0')
+    input.candidate.dshPeers = { '@deepseek-ai/dsh-app-boot': '', '@deepseek-ai/dsh': '^0.1.7-0' }
+    const entry = assignTier(input, config)
+    expect(entry.dshPeers).toEqual({ '@deepseek-ai/dsh-app-boot': '', '@deepseek-ai/dsh': '^0.1.7-0' })
+    expect(entry.tier).toBe('community')
+    expect('dshPeers' in assignTier(accepted('dsh-other-plugin', '1.0.0'), config)).toBe(false)
   })
 
   it('carries the author’s compatibility declaration onto the entry, verbatim', () => {

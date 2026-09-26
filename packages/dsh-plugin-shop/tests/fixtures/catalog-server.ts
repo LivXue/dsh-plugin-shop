@@ -17,9 +17,8 @@
  * the peer fixture carries every harness-compatibility verdict the shop can
  * form (below), the client fixture additionally declares `dsh.client`
  * (activation-model design, §3) so a hot-mounted install has a browser half
- * and reports `restart` with the client-half reason rather than `live` — the
- * first three live fixtures are host-only, so none of them can exercise that
- * path — and the update fixture is listed here at 2.0.0 while the e2e
+ * and reports `reload` rather than `live` — the first three live fixtures are
+ * host-only, so none of them can exercise that path — and the update fixture is listed here at 2.0.0 while the e2e
  * installs 1.0.0 before dsh boots, so its card offers an update of a package
  * the running process has already imported (activation-model design, §3
  * amendment 2026-09-26).
@@ -36,7 +35,11 @@
  *   be. It also declares a `dsh.compatibility` that the running harness does
  *   not meet on either half, so the declaration is proven through a real host
  *   parse: a consumer schema that stripped the key would lose exactly those
- *   two lines, whatever the peer badge did.
+ *   two lines, whatever the peer badge did. And it declares a harness peer
+ *   dsh itself refuses from 0.1.7-rc.1 (`dshPeers`), whose refusal the card
+ *   states with its button disabled until the profile exempts it — on the
+ *   one card that is incompatible already, so the filter's count below does
+ *   not depend on which harness runs.
  * - `dsh-shop-e2e-live` declares only seed words (`react`, `react-dom`), which
  *   the host cannot resolve (they have no package on disk) and the module
  *   table serves. Before 2026-09-24 this was the false alarm on 755 live
@@ -158,6 +161,14 @@ const FIXTURE_ENTRIES = [
     // ships and whose bundles (`dsh-base`, `dsh-acp-app`) the web profile
     // lacks. A name that is no template, `tui` included, would be silence.
     compatibility: { dsh: '0.1.2-rc.1', profiles: ['acp'] },
+    // The package's peers on the harness, verbatim, as the registry harvests
+    // them: the required `dsh-client-store` (`*`, which every dsh accepts)
+    // and an OPTIONAL `@deepseek-ai/dsh` pinned to a release no 0.1 build
+    // satisfies. Optional, so `peers` above — required peers only — is
+    // unchanged; dsh's installer checks optional peers all the same, so from
+    // 0.1.7-rc.1 it refuses this install until the profile exempts it (design
+    // 2026-09-26-dsh-017-readiness, B1).
+    dshPeers: { '@deepseek-ai/dsh-client-store': '*', '@deepseek-ai/dsh': '0.1.2-rc.1' },
   },
   {
     name: 'dsh-shop-e2e-client',

@@ -7,11 +7,11 @@ import ShopGateway, { verifyTarballSha256 } from '../../src/host/index.ts'
 import { nodeVersionResolver } from '../../src/host/peers.ts'
 import { ownPeerRanges } from '../../src/own-version.ts'
 import type { InventoryEntry, LoaderEntryLike, RestartBlockedReason, ShopGatewayOptions, ShopInstallStatusResult } from '../../src/host/index.ts'
-import type { HotMountResult } from '../../src/host/hot.ts'
+import type { HotContext, HotMountResult } from '../../src/host/hot.ts'
 import type { CatalogResult, CatalogSnapshot, LoadCatalogOptions } from '../../src/host/catalog.ts'
 import type { CatalogEntry } from '../../src/host/types.ts'
 import { profileTemplatesOf } from '../../src/host/compatibility.ts'
-import type { RunningHarness } from '../../src/host/harness.ts'
+import type { PeerCheck, RunningHarness } from '../../src/host/harness.ts'
 import { startInstall } from '../../src/host/executor.ts'
 import { createPrefetcher, type Prefetcher } from '../../src/host/prefetch.ts'
 import { isTerminalInstallState } from '../../src/shared/install-state.ts'
@@ -1208,6 +1208,57 @@ describe('restart guard (Windows)', () => {
   })
 })
 
+describe('the desktop profile, which dsh refuses to manage from its CLI', () => {
+  // dsh's launcher refuses `--profile desktop`, in any letter case, for a
+  // launch and for `dsh plugin` alike: "profile "desktop" is managed
+  // exclusively by the Electron application" (`rejectElectronProfile`, the
+  // same in 0.1.5-rc.3 and 0.1.7-rc.2). Every mutation the shop makes goes
+  // through that CLI, so each is refused up front — before anything spawns,
+  // naming the app — instead of failing as "pnpm failed in the profile".
+  const INSTALL_DETAIL = 'dsh-plugin-shop: the desktop profile is managed by the DeepSeek Harness desktop app, and dsh'
+    + ' refuses to change it from the command line the shop runs; add and remove its plugins from the app instead'
+  const RESTART_DETAIL = 'dsh-plugin-shop: the desktop profile is managed by the DeepSeek Harness desktop app, and dsh'
+    + ' refuses to restart it from here; restart the app to apply the change'
+
+  const desktopGateway = (profile: string, dir: string, exit = vi.fn<() => void>()): ShopGateway => new ShopGateway(stubCtx(), {
+    ...gatewayOptions(), profile, dshBin: fakeDshRecording(dir, 0, { silent: true }), exit, restartExitDelayMs: 5,
+    fetchLatestVersion: async () => null,
+  })
+
+  for (const profile of ['desktop', 'Desktop']) {
+    it(`refuses an install, an uninstall and a self-update in the ${profile} profile without spawning`, async () => {
+      const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-desktop-'))
+      const gateway = desktopGateway(profile, dir)
+      expect(await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true }))
+        .toEqual({ ok: false, code: 'desktop-profile', detail: INSTALL_DETAIL })
+      expect(await gateway.uninstall({ name: 'dsh-hello-plugin' })).toEqual({ ok: false, detail: INSTALL_DETAIL })
+      expect(await gateway.updateStart({ version: '9.9.9' })).toEqual({ ok: false, detail: INSTALL_DETAIL })
+      // A spawned fixture would have created the calls log within this window.
+      await new Promise(resolve => setTimeout(resolve, 50))
+      expect(existsSync(join(dir, 'calls.log'))).toBe(false)
+    })
+  }
+
+  it("reports restartBlocked: 'desktop' ahead of every other reason, and restart refuses without exiting", async () => {
+    // First in the gate: the platform, the supervisor and the port only say
+    // how a restart would go, and in this profile none would be allowed.
+    const exit = vi.fn<() => void>()
+    const gateway = new ShopGateway(stubCtx(), {
+      ...gatewayOptions(), profile: 'desktop', platform: 'win32', exit, restartExitDelayMs: 5,
+      fetchLatestVersion: async () => null,
+    })
+    expect((await gateway.version()).restartBlocked).toBe('desktop')
+    expect(await gateway.restart()).toEqual({ ok: false, detail: RESTART_DETAIL })
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(exit).not.toHaveBeenCalled()
+  })
+
+  it('leaves every other profile alone, including one merely named like it', async () => {
+    const gateway = new ShopGateway(stubCtx(), { ...gatewayOptions(), profile: 'desktop-2', env: {}, ppid: 4321, fetchLatestVersion: async () => null })
+    expect((await gateway.version()).restartBlocked).toBeNull()
+  })
+})
+
 describe('ShopGateway.version', () => {
   // The running version is read from the package.json next to src/host —
   // the repo's own version. Keep the expectations on properties the gateway
@@ -1624,6 +1675,10 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
      * a package declares, which a real manifest on disk cannot express: the
      * old one is overwritten by the time `afterDone` runs. */
     hotFs?: ShopGatewayOptions['hotFs']
+    /** The context the gateway is built with — the shop's own, in a real boot. */
+    ctx?: object
+    /** Which harness the gateway believes it runs under. */
+    readHarness?: ShopGatewayOptions['readHarness']
   }): { gateway: ShopGateway; profileDir: string } {
     const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-hot-profile-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
@@ -1634,13 +1689,14 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     for (const name of Object.keys(options.dependencies ?? {})) {
       fixturePackage(profileDir, name, `- insert:\n    - id: ${name}-row\n      name: '${name}/host'\n`)
     }
-    const gateway = new ShopGateway(stubCtx(), {
+    const gateway = new ShopGateway((options.ctx ?? stubCtx()) as never, {
       ...gatewayOptions(),
       profileDir,
       loadCatalog: async () => ({ snapshot, stale: false }) as CatalogResult,
       hot: options.hot,
       loaderEntries: options.loaderEntries,
       hotFs: options.hotFs,
+      ...(options.readHarness !== undefined ? { readHarness: options.readHarness } : {}),
       ...(options.dshBin !== undefined ? { dshBin: options.dshBin(profileDir) } : {}),
     })
     return { gateway, profileDir }
@@ -1672,7 +1728,7 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     }))
   }
 
-  it('install reports activation restart when no manifest exists yet (the conservative fallback)', async () => {
+  it('install reports activation reload when no manifest exists yet (the conservative fallback)', async () => {
     const { gateway, profileDir } = hotGateway({
       hot: { mount: hotMount, unmount: hotUnmount },
       loaderEntries: () => [],
@@ -1684,14 +1740,13 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     expect(status.state).toBe('done')
     // No node_modules/dsh-hello-plugin/package.json exists in this fixture —
     // hasClientHalf's conservative fallback (unreadable manifest => assume a
-    // browser half) answers true, so this is not 'live'. And on the hot-mount
-    // path a browser half means `restart`, never `reload`: the mount adds to
-    // the live loader entries without entering the composition the client
-    // registry enumerates, so a reload has nothing to fetch (activation.ts).
+    // browser half) answers true, so this is not 'live'. A hot-mounted
+    // browser half is one reload away: the tree hangs off the shop's own
+    // loader entry, where the client registry composes it (activation.ts).
     // The dedicated tests below pin each case with an explicit manifest
     // instead of relying on the fallback.
-    expect(status.activation).toBe('restart')
-    expect(status.restartReason).toBe('client-half')
+    expect(status.activation).toBe('reload')
+    expect(status.restartReason).toBeUndefined()
     expect(hotMount).toHaveBeenCalledTimes(1)
     expect(hotMount).toHaveBeenCalledWith(expect.anything(), profileDir, 'dsh-hello-plugin')
   })
@@ -1945,7 +2000,7 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     expect(hotUnmount).not.toHaveBeenCalled()
   })
 
-  it('reports activation restart when a hot-mounted install has a browser half', async () => {
+  it('reports activation reload when a hot-mounted install has a browser half', async () => {
     const { gateway, profileDir } = hotGateway({ hot: { mount: hotMount, unmount: hotUnmount }, loaderEntries: () => [] })
     // fixturePackage cannot express `dsh.client`; write the manifest by hand
     // before the install call, matching the shape a real client-half
@@ -1960,12 +2015,88 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     if (!started.ok) return
     const status = await pollTerminal(gateway, started.installId)
     expect(status.state).toBe('done')
-    // The host half mounted and is running; its browser half is not in the
-    // graph a reloading tab is served, and cannot be put there without a
-    // restart. The reason distinguishes this from the four mount FAILURES,
-    // which would otherwise all read as one generic restart line.
-    expect(status.activation).toBe('restart')
-    expect(status.restartReason).toBe('client-half')
+    // The host half mounted and is running, and its browser half is in the
+    // graph the next page load is served — measured in the web e2e, where the
+    // reload after a hot mount runs the fixture's browser half. It read
+    // `restart` with a `client-half` reason until 2026-09-26, when the tree
+    // still hung off the RPC caller's context, where the registry never
+    // composed it.
+    expect(status.activation).toBe('reload')
+    expect(status.restartReason).toBeUndefined()
+  })
+
+  it('mounts the hot tree from the context the shop was built with, never from the calling one', async () => {
+    // cordis hands a service out with `ctx` rebound to the context that looked
+    // it up, so inside an RPC method `this.ctx` is the CALLER's — the typert
+    // gateway's, on 0.1.5-rc.3 and 0.1.7-rc.2 alike. A tree registered from
+    // there is owned by the gateway's fiber, listed under the gateway's loader
+    // entry, and never composed by dsh's client registry. It must be a child
+    // of the shop's own fiber. `Object.create` stands in for the rebinding:
+    // the same gateway, seen with another `ctx`.
+    const handle = { await: async () => {}, dispose: () => {} }
+    const own = { get: () => undefined, reflect: { provide: () => {} }, plugin: vi.fn(() => handle) }
+    const caller = { get: () => undefined, reflect: { provide: () => {} }, plugin: vi.fn(() => handle) }
+    const mount = vi.fn(async (ctx: HotContext): Promise<HotMountResult> => {
+      ctx.plugin('the-hot-tree', { path: 'hot-1.yml' })
+      return { ok: true, reason: null }
+    })
+    const { gateway, profileDir } = hotGateway({ ctx: own, hot: { mount, unmount: hotUnmount }, loaderEntries: () => [] })
+    landedFreshPackage(profileDir, 'dsh-hello-plugin')
+    const seenByCaller = Object.create(gateway, { ctx: { value: caller } }) as ShopGateway
+    const started = await seenByCaller.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
+    expect(started.ok).toBe(true)
+    if (!started.ok) return
+    const status = await pollTerminal(seenByCaller, started.installId)
+    expect(status.state).toBe('done')
+    expect(mount).toHaveBeenCalledTimes(1)
+    expect(own.plugin).toHaveBeenCalledWith('the-hot-tree', { path: 'hot-1.yml' })
+    expect(caller.plugin).not.toHaveBeenCalled()
+  })
+
+  it('fails an install whose bundle patch the running dsh cannot load, before anything mounts it', async () => {
+    // dsh 0.1.5 joins `dsh.bundle.patch` onto a path, so a LIST (which 0.1.7
+    // applies in order) stops the profile from starting at the next boot —
+    // after an install that succeeded and a hot mount that ran it. A
+    // declaration that is neither a path nor a list stops every dsh. Both are
+    // reported the way a duplicate entry id is: failed, with the undo.
+    const harness = (patchLists: boolean | null) => async (): Promise<RunningHarness> =>
+      ({ dshVersion: '0.1.5-rc.3', templates: {}, patchLists, peerCheck: null })
+    const cases: Array<[unknown, boolean | null, string | null]> = [
+      [['./host.yml', './web.yml'], false, 'dsh-plugin-shop: dsh-hello-plugin lists its bundle patch as several files, which dsh reads from 0.1.7 on;'
+        + ' this dsh (0.1.5-rc.3) reads one and would not start with it installed.'
+        + ' It is on disk: run `dsh plugin --profile web remove dsh-hello-plugin` to undo this install.'],
+      [['./host.yml', './web.yml'], true, null],
+      [['./host.yml', './web.yml'], null, null],
+      [7, null, 'dsh-plugin-shop: dsh-hello-plugin declares its bundle patch as neither a file path nor a list of them,'
+        + ' which dsh refuses to load, so the profile would not start.'
+        + ' It is on disk: run `dsh plugin --profile web remove dsh-hello-plugin` to undo this install.'],
+    ]
+    for (const [patch, patchLists, detail] of cases) {
+      const label = `${JSON.stringify(patch)} on patchLists=${String(patchLists)}`
+      const { gateway, profileDir } = hotGateway({
+        hot: { mount: hotMount, unmount: hotUnmount },
+        loaderEntries: () => [],
+        readHarness: harness(patchLists),
+      })
+      mkdirSync(join(profileDir, 'node_modules', 'dsh-hello-plugin'), { recursive: true })
+      writeFileSync(join(profileDir, 'node_modules', 'dsh-hello-plugin', 'package.json'), JSON.stringify({
+        name: 'dsh-hello-plugin',
+        dsh: { bundle: { patch } },
+      }))
+      const started = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
+      expect(started.ok, label).toBe(true)
+      if (!started.ok) return
+      const status = await pollTerminal(gateway, started.installId)
+      if (detail === null) {
+        expect(status.state, label).toBe('done')
+        expect(hotMount, label).toHaveBeenCalledTimes(1)
+      } else {
+        expect(status.state, label).toBe('failed')
+        expect(status.detail, label).toBe(detail)
+        expect(hotMount, label).not.toHaveBeenCalled()
+      }
+      hotMount.mockClear()
+    }
   })
 
   it('reports activation live when a hot-mounted install is host-only', async () => {
@@ -2129,7 +2260,7 @@ describe('ShopGateway.setEnabled entry ownership', () => {
     const gateway = new ShopGateway(stubCtx(), {
       profile: 'web', profileDir,
       inventory: { list: async () => ({ entries: [
-        { entryId: 'include:typert-gateway:mkt-fresh-entry', moduleName: 'dsh-fresh', enabled: true },
+        { entryId: 'include:shop:mkt-fresh-entry', moduleName: 'dsh-fresh', enabled: true },
       ] }) },
     })
     expect(await gateway.setEnabled({ name: 'dsh-fresh', enabled: false })).toEqual({ ok: true, activation: 'live' })
@@ -2385,11 +2516,93 @@ function injectedHarness(dshVersion: string | null = '0.1.5-rc.3'): {
   return {
     readHarness: async script => {
       reads.push(script)
-      return { dshVersion, templates: profileTemplatesOf(RC3_PROFILE_TEMPLATES) }
+      return { dshVersion, templates: profileTemplatesOf(RC3_PROFILE_TEMPLATES), patchLists: false, peerCheck: null }
     },
     reads,
   }
 }
+
+describe('ShopGateway.catalog: what the running dsh itself refuses', () => {
+  /** A package pinning the harness to one release, as dsh 0.1.7's installer
+   * refuses it: dsh's own rule answers, scripted — `harness.test.ts` covers
+   * taking the real one from the running app-boot, and this suite what the
+   * gateway does with its answer. */
+  const pinned: CatalogEntry = {
+    name: 'dsh-pinned', version: '1.2.0', integrity: null, publishedAt: null, repository: null,
+    license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-09-26',
+    dshPeers: { '@deepseek-ai/dsh': '0.1.5-rc.3' },
+  }
+
+  /** A harness whose peer check refuses `dsh-pinned@1.2.0` unless the
+   * exemptions it is handed carry that key for 0.1.7-rc.2 — the shape of
+   * dsh's rule, with `exemptions()` answering from `held` as the test sets
+   * it and recording the directory it was asked about. */
+  function refusingHarness(held: { record: Record<string, string[]> | 'throws' }) {
+    const asked: string[] = []
+    const check: PeerCheck = {
+      evaluate: (manifest, exemptions) => (manifest.name === 'dsh-pinned'
+        ? { name: manifest.name, version: manifest.version, runtimeVersion: '0.1.7-rc.2', peers: { ...manifest.peerDependencies }, exempted: exemptions[`${manifest.name}@${manifest.version}`]?.includes('0.1.7-rc.2') === true }
+        : undefined),
+      exemptions: dir => {
+        asked.push(dir)
+        if (held.record === 'throws') throw new Error('EACCES: compatibility.json')
+        return held.record
+      },
+    }
+    const harness: RunningHarness = { dshVersion: '0.1.7-rc.2', templates: profileTemplatesOf(RC3_PROFILE_TEMPLATES), patchLists: true, peerCheck: check }
+    return { readHarness: async () => harness, asked }
+  }
+
+  const REFUSAL = {
+    refused: { '@deepseek-ai/dsh': '0.1.5-rc.3' },
+    running: '0.1.7-rc.2',
+    allowCommand: 'dsh plugin --profile web allow-version dsh-pinned@1.2.0 --dsh-version 0.1.7-rc.2 --accept-risk',
+  }
+
+  it("carries dsh's refusal and the command that exempts it, beside what the author declared", async () => {
+    const declared: CatalogEntry = { ...pinned, compatibility: { dsh: '0.9.0' } }
+    const { readHarness, asked } = refusingHarness({ record: {} })
+    const { gateway } = gatewayWithSnapshot({ schemaVersion: 5, builtAt: '', entries: [declared], denied: [], stars: {} }, { readHarness })
+    expect((await gateway.catalog({})).incompatibleHarness).toEqual({
+      'npm:dsh-pinned': { dsh: { range: '0.9.0', running: '0.1.7-rc.2' }, peers: REFUSAL },
+    })
+    // The exemptions are the running profile's own, from the directory the
+    // other verdicts read.
+    expect(asked).toHaveLength(1)
+    expect(asked[0]).toMatch(/dsh-gateway-profile-/)
+  })
+
+  it('reads the exemptions again on every call, so running the command and pressing Refresh clears the card', async () => {
+    // The whole way out of a disabled button: dsh records the exemption, and
+    // the next catalog call must see it. A verdict remembered per snapshot
+    // would keep the button disabled for as long as the snapshot is served.
+    const held: { record: Record<string, string[]> } = { record: {} }
+    const { readHarness } = refusingHarness(held)
+    const { gateway } = gatewayWithSnapshot({ schemaVersion: 5, builtAt: '', entries: [pinned], denied: [], stars: {} }, { readHarness })
+    expect((await gateway.catalog({})).incompatibleHarness).toEqual({ 'npm:dsh-pinned': { peers: REFUSAL } })
+    held.record = { 'dsh-pinned@1.2.0': ['0.1.7-rc.2'] }
+    expect((await gateway.catalog({})).incompatibleHarness).toEqual({})
+  })
+
+  it('says nothing on a dsh that has no such check, which refuses no install on its peers', async () => {
+    const { gateway } = gatewayWithSnapshot(
+      { schemaVersion: 5, builtAt: '', entries: [pinned], denied: [], stars: {} },
+      { readHarness: injectedHarness().readHarness },
+    )
+    expect((await gateway.catalog({})).incompatibleHarness).toEqual({})
+  })
+
+  it('says nothing when the exemptions cannot be read, and the declared halves still stand', async () => {
+    // Without the exemptions an allowed install and a refused one look the
+    // same, and a disabled button nobody could justify is the worst answer.
+    const declared: CatalogEntry = { ...pinned, compatibility: { dsh: '0.9.0' } }
+    const { readHarness } = refusingHarness({ record: 'throws' })
+    const { gateway } = gatewayWithSnapshot({ schemaVersion: 5, builtAt: '', entries: [declared], denied: [], stars: {} }, { readHarness })
+    const result = await gateway.catalog({})
+    expect(result.incompatibleHarness).toEqual({ 'npm:dsh-pinned': { dsh: { range: '0.9.0', running: '0.1.7-rc.2' } } })
+    expect(result.plugins).toHaveLength(1)
+  })
+})
 
 describe('ShopGateway.catalog harness compatibility', () => {
   /** `@xmanrui/dsh-im@4.19.2`'s own `dsh.compatibility.dsh`, verbatim (design

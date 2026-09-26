@@ -71,6 +71,9 @@ export function assignTier(accepted: Accepted, config: RegistryConfig): Entry {
     // never judged: nothing here decides anything from the author's
     // declaration, because whether it holds depends on who is reading.
     ...(candidate.compatibility !== undefined ? { compatibility: candidate.compatibility } : {}),
+    // Newer still, so after it, and copied the same way: the running dsh
+    // judges these ranges on the reader's machine, and nothing here does.
+    ...(candidate.dshPeers !== undefined ? { dshPeers: candidate.dshPeers } : {}),
   }
   // Defence in depth: a github review is keyed by its repository now, so it
   // can no longer be reached by an npm name at all (config.ts). If one ever

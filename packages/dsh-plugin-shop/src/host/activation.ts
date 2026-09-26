@@ -36,18 +36,21 @@ export type Activation = 'live' | 'reload' | 'restart'
  * - A change to the BOOT COMPOSITION — a toggle, an uninstall — moves an
  *   entry the registry already enumerates, and the served graph follows it
  *   within seconds (§2, measured 2026-09-11). `true`.
- * - A HOT MOUNT — an install or an update — adds to the live loader entries
- *   without entering that composition, so the graph a tab reloads into does
- *   not contain the package. Measured 2026-09-14 against dsh 0.1.5-rc.1 in
- *   `web-full-flow.e2e.ts`: across a reload following a hot mount the graph
- *   is byte-identical, same `rev`, while the package's host half is live the
- *   whole time. `false` — and a `restart` is then the only honest answer,
- *   because there is nothing a reload could fetch.
+ * - A HOT MOUNT — an install — adds entries under the shop's own loader
+ *   entry, which the registry enumerates like any other: across a reload
+ *   following the mount the served graph gains the package and the page runs
+ *   its browser half (measured 2026-09-26 on 0.1.5-rc.3 and 0.1.7-rc.2, in
+ *   `web-full-flow.e2e.ts`). `true`.
  *
  * The asymmetry that decides every unknown still runs the same way: offering
  * a step that was not needed costs the reader one action, withholding one
- * that was needed is the defect this module exists to fix. What changed on
- * 2026-09-14 is which step is the needed one after a hot mount.
+ * that was needed is the defect this module exists to fix. Which step a hot
+ * mount needs has been measured twice. On 2026-09-14 the graph came back
+ * byte-identical across the reload, and installs moved to `restart` — but the
+ * shop then registered the tree from whichever context made the RPC call, the
+ * typert gateway's, and the registry never composed a tree hung there. Once
+ * the tree hung off the shop's own entry (2026-09-26), the same measurement
+ * found the package in the graph, and installs moved back to `reload`.
  */
 export function activationOf(input: { hostLive: boolean; clientLive: boolean; hasClientHalf: boolean }): Activation {
   if (!input.hostLive) return 'restart'

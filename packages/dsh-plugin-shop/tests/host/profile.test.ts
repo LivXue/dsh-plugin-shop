@@ -184,6 +184,49 @@ describe('ownedEntryIds', () => {
     expect(() => ownedEntryIds({ profileDir: dir, packageName: 'dsh-escapee' }))
       .toThrow(/outside its own directory/)
   })
+
+  /** A package declaring `dsh.bundle.patch` exactly as given, with the named
+   * files written beside its manifest. */
+  function listPatchPackage(profileDir: string, name: string, patch: unknown, files: Record<string, string>): void {
+    const dir = join(profileDir, 'node_modules', name)
+    for (const [file, text] of Object.entries(files)) {
+      mkdirSync(dirname(join(dir, file)), { recursive: true })
+      writeFileSync(join(dir, file), text)
+    }
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, dsh: { bundle: { patch } } }))
+  }
+
+  it('reads every file of a list-valued bundle patch, in order', () => {
+    // dsh 0.1.7 accepts `dsh.bundle.patch` as a list of files applied in order
+    // (app-boot `bundlePatchFiles`). Reading only the string form owned
+    // nothing for such a package, so its toggle answered "not installed".
+    const dir = fixtureProfile()
+    listPatchPackage(dir, 'dsh-split', ['./patches/host.yml', './patches/web.yml'], {
+      'patches/host.yml': '- insert:\n    - id: split-host\n      name: dsh-split/host\n',
+      'patches/web.yml': '- insert:\n    - id: split-web\n      name: dsh-split/web\n    - id: split-host\n      name: dsh-split/host\n',
+    })
+    expect(ownedEntryIds({ profileDir: dir, packageName: 'dsh-split' })).toEqual(['split-host', 'split-web'])
+  })
+
+  it('refuses a list-valued patch when any one of its files escapes the package directory', () => {
+    const dir = fixtureProfile()
+    listPatchPackage(dir, 'dsh-split-escapee', ['./cordis.patch.yml', '../../../evil.yml'], {
+      'cordis.patch.yml': '- insert:\n    - id: fine\n      name: dsh-split-escapee\n',
+    })
+    expect(() => ownedEntryIds({ profileDir: dir, packageName: 'dsh-split-escapee' }))
+      .toThrow(/outside its own directory: \.\.\/\.\.\/\.\.\/evil\.yml/)
+  })
+
+  it('owns nothing through a patch that is neither a path nor a list of paths, which dsh refuses to load', () => {
+    const dir = fixtureProfile()
+    listPatchPackage(dir, 'dsh-bad-list', ['./cordis.patch.yml', 3], {
+      'cordis.patch.yml': '- insert:\n    - id: never-read\n      name: dsh-bad-list\n',
+    })
+    listPatchPackage(dir, 'dsh-bad-scalar', 7, {})
+    expect(ownedEntryIds({ profileDir: dir, packageName: 'dsh-bad-list' })).toEqual([])
+    expect(ownedEntryIds({ profileDir: dir, packageName: 'dsh-bad-scalar' })).toEqual([])
+  })
 })
 
 describe('setUserLayerRows', () => {
@@ -368,12 +411,12 @@ describe('ownsEntryId', () => {
   })
 
   it('matches the shop\'s own hot spelling of the same row', () => {
-    expect(ownsEntryId(owned, 'include:typert-gateway:mkt-archify-skill-filesystem')).toBe(true)
+    expect(ownsEntryId(owned, 'include:shop:mkt-archify-skill-filesystem')).toBe(true)
   })
 
   it('does not claim an unrelated entry', () => {
     expect(ownsEntryId(owned, 'someone-elses-row')).toBe(false)
-    expect(ownsEntryId(owned, 'include:typert-gateway:mkt-someone-elses-row')).toBe(false)
+    expect(ownsEntryId(owned, 'include:shop:mkt-someone-elses-row')).toBe(false)
   })
 
   it('matches the spelling a REAL boot composes: every profile entry lives inside the root include', () => {

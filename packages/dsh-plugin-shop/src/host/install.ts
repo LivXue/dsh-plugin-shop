@@ -12,6 +12,7 @@ export type InstallRejectionCode =
   | 'tarball-integrity'
   | 'ambiguous-identity'
   | 'name-taken'
+  | 'desktop-profile'
 
 export interface InstallArgs {
   name: string

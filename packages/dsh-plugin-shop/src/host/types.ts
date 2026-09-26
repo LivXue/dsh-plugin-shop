@@ -69,6 +69,15 @@ export interface CatalogEntry {
    * running installation (`ShopCatalogResult.incompatibleHarness`). Additive
    * and optional, so it rides every schemaVersion. */
   compatibility?: { dsh?: string; profiles?: string[] }
+  /** The package's peers on the harness itself (`@deepseek-ai/dsh` and
+   * `@deepseek-ai/dsh-*`) with their ranges verbatim, optional ones and empty
+   * ranges included — what dsh 0.1.7 refuses an install on. The host hands
+   * them to the running dsh's own check (`peerVerdictsOf`). npm entries only:
+   * dsh keys the exemption that clears its refusal by the installed
+   * manifest's version, which a github entry's catalog version is not
+   * (registry `Entry.dshPeers`). Absent when the package declares none, or
+   * when its catalog predates the field. */
+  dshPeers?: Record<string, string>
   /** Wire-compatibility key, not a field to read — see {@link installSize},
    * which the catalog parse fills from this one. It names npm's OWN quantity
    * (`dist.unpackedSize`), so it is npm-only and the parse REFUSES one on a

@@ -24,7 +24,9 @@ import { restartCommand, startRestart, type RestartOutcome } from './restart.ts'
 import { fetchLatestVersion } from './self-update.ts'
 import { detectSupervisor } from './supervisor.ts'
 import { readRepoPins, writeRepoPins, type RepoPinFs } from './repo-pins.ts'
-import { collidingEntryId, discoverProfile, ownedEntries, ownedEntryIds, ownsEntryId, setUserLayerRows, type OwnedEntry } from './profile.ts'
+import { collidingEntryId, declaredBundlePatch, discoverProfile, ownedEntries, ownedEntryIds, ownsEntryId, setUserLayerRows, type OwnedEntry } from './profile.ts'
+import { patchDeclarationHazard } from './bundle-patch.ts'
+import { isDesktopProfile } from './dsh-cli.ts'
 import { identityKey, installedSpecMatches } from '../shared/identity.ts'
 import { isTerminalInstallState, type InstallState } from '../shared/install-state.ts'
 import { createPrefetcher, type Prefetcher } from './prefetch.ts'
@@ -36,7 +38,7 @@ import {
   type PeerResolver,
   type PeerVersionResolver,
 } from './peers.ts'
-import { compatibilityMap, type HarnessVerdict } from './compatibility.ts'
+import { compatibilityMap, peerVerdictsOf, type HarnessVerdict, type PeerVerdict } from './compatibility.ts'
 import { readRunningHarness, type RunningHarness } from './harness.ts'
 
 // Re-exported so the boundary type is reachable from the package's public
@@ -224,7 +226,7 @@ export type ShopRestartResult = RestartOutcome
  * restart was impossible after it had become possible. Static here, dynamic
  * there; the split is the whole reason this is a separate predicate rather
  * than a cache of `restart()`'s answer. */
-export type RestartBlockedReason = 'windows' | 'systemd' | 'port-zero'
+export type RestartBlockedReason = 'desktop' | 'windows' | 'systemd' | 'port-zero'
 
 /** Each blocked reason's author-readable refusal, written once.
  *
@@ -236,10 +238,18 @@ export type RestartBlockedReason = 'windows' | 'systemd' | 'port-zero'
  * service and to set an override that the platform check, being the first gate
  * of the three, could never reach. */
 const RESTART_BLOCKED_DETAIL: Record<RestartBlockedReason, string> = {
+  desktop: 'dsh-plugin-shop: the desktop profile is managed by the DeepSeek Harness desktop app, and dsh refuses to restart it from here; restart the app to apply the change',
   windows: 'dsh-plugin-shop: restart is not supported on Windows yet; restart dsh manually to apply the change',
   systemd: 'dsh-plugin-shop: restart is disabled because this process is a systemd service — a restart would kill the takeover helper along with the unit, and the service would not come back. Set allowRestart: true in the shop row config to override.',
   'port-zero': 'dsh-plugin-shop: restart is not supported when dsh was launched with --port 0; restart dsh manually',
 }
+
+/** Why the shop changes nothing in the desktop profile, for every mutation
+ * that spawns dsh's CLI: install, uninstall and self-update. dsh refuses
+ * the profile before any of them would run (`isDesktopProfile`), and the
+ * failure that surfaced instead read "pnpm failed in the profile". */
+const DESKTOP_PROFILE_DETAIL = 'dsh-plugin-shop: the desktop profile is managed by the DeepSeek Harness desktop app, and dsh'
+  + ' refuses to change it from the command line the shop runs; add and remove its plugins from the app instead'
 
 /** `shop/version` result (§7.3): the RUNNING shop version (from the shipped
  * package.json, not the manifest's range), the npm latest when the check
@@ -369,8 +379,10 @@ export interface ShopCatalogResult {
   incompatible: Record<string, string[]>
   /** Install identity → what the entry's author declared in
    * `dsh.compatibility` that this installation does not meet (design
-   * 2026-09-01-harness-compatibility §8.2). A key is absent when nothing was
-   * declared or every declared half is met. A half that cannot be judged —
+   * 2026-09-01-harness-compatibility §8.2), and what the running dsh itself
+   * will refuse the install on (`peers`, from dsh 0.1.7; design
+   * 2026-09-26-dsh-017-readiness, B1). A key is absent when nothing was
+   * declared or every declared half is met, and dsh refuses nothing. A half that cannot be judged —
    * the running version unreadable, a range semver cannot parse — is left out
    * while the other is still judged, so an unknown never reads as an
    * accusation; same-named entries stay independent. A process not started
@@ -421,6 +433,17 @@ const importedThisProcess = new Set<string>()
  * @typert service shop */
 export class ShopGateway extends TypertRemoteService {
   private readonly options: ShopGatewayOptions
+  /** The context this gateway was built with: the shop's own fiber. Inside an
+   * RPC method `this.ctx` is NOT that — cordis hands a service out with `ctx`
+   * rebound to the context that looked it up, so a call arriving over the
+   * wire sees the caller's, the typert gateway's (measured on 0.1.5-rc.3 and
+   * 0.1.7-rc.2). Anything whose PARENT matters is registered from here. The
+   * hot tree above all: registered from the gateway's context it was owned by
+   * the gateway's fiber rather than the shop's, was listed under the gateway's
+   * loader entry, and — the part a reader saw — sat where dsh's client
+   * registry never composed it, so a hot-installed browser half needed a
+   * restart that a reload now does (design 2026-09-26-dsh-017-readiness). */
+  private readonly home: Context
   /** The profile dsh installs into; discovered from this module's own
    * location when the caller does not supply one. */
   private readonly profile: string
@@ -491,6 +514,7 @@ export class ShopGateway extends TypertRemoteService {
 
   constructor(ctx: Context, options: ShopGatewayOptions = {}) {
     super(ctx, 'shop')
+    this.home = ctx
     this.options = options
     this.profile = options.profile ?? discoverProfile(fileURLToPath(import.meta.url), this.bootBaseDir()).name
     this.profileDir = options.profileDir
@@ -933,11 +957,16 @@ export class ShopGateway extends TypertRemoteService {
    * static does. One ordered list, read by `restart()` before it commits and
    * by `version()` so the client can say the same thing up front.
    *
-   * The order is the order the refusals were written in and is load-bearing
-   * for the copy a reader sees: Windows first, because the platform check has
-   * no override and reporting the systemd one there sends a Windows user to
-   * set `allowRestart: true`, which this gate would still refuse.
+   * The order is load-bearing for the copy a reader sees. The desktop
+   * profile first: dsh itself refuses to launch it, so no platform,
+   * supervisor or port could make a restart possible there. Then Windows,
+   * because the platform check has no override and reporting the systemd one
+   * there sends a Windows user to set `allowRestart: true`, which this gate
+   * would still refuse.
    *
+   * - `desktop`: dsh's CLI refuses `--profile desktop` ("managed exclusively
+   *   by the Electron application"), so the relaunch would exit at once and
+   *   leave nothing on the port; the app restarts it.
    * - `windows`: the handoff helper is a POSIX shell one-liner (restart.ts)
    *   and there is no `sh` on Windows. That spawn fails ASYNCHRONOUSLY, so
    *   committing would answer `ok: true`, exit this process, and leave nothing
@@ -949,6 +978,7 @@ export class ShopGateway extends TypertRemoteService {
    * - `port-zero`: the OS hands the NEW process a fresh port the browser
    *   cannot know, so a restart would strand the client on a dead origin. */
   private staticRestartBlock(): RestartBlockedReason | null {
+    if (isDesktopProfile(this.profile)) return 'desktop'
     if (!this.restartPlatformSupported()) return 'windows'
     if (detectSupervisor(this.env, { ppid: this.ppid }) === 'systemd' && !this.allowRestartConfigured()) return 'systemd'
     const portIndex = this.restartArgv.indexOf('--port')
@@ -977,8 +1007,9 @@ export class ShopGateway extends TypertRemoteService {
     // badge, and a map kept per snapshot would go on naming that peer for as
     // long as the snapshot is served. Asking every time is cheap; design
     // 2026-09-01-harness-compatibility §9.6 owns the measurement. The one
-    // input kept is the running harness — which dsh this process is, and its
-    // template table — because a running process cannot change it.
+    // input kept is the running harness — which dsh this process is, its
+    // template table and its peer check — because a running process cannot
+    // change it.
     const harness = await this.runningHarness()
     // The profile directory, looked up ONCE: the peer resolver's anchor and
     // the profile half's bundles are read from the same directory, so the two
@@ -1021,6 +1052,9 @@ export class ShopGateway extends TypertRemoteService {
       // stands.
       incompatibleHarness = {}
     }
+    for (const [key, peers] of Object.entries(this.refusedByHarness(snapshot.entries, harness, profileDir))) {
+      incompatibleHarness[key] = { ...incompatibleHarness[key], peers }
+    }
     return {
       schemaVersion: snapshot.schemaVersion,
       builtAt: snapshot.builtAt,
@@ -1031,6 +1065,30 @@ export class ShopGateway extends TypertRemoteService {
       stars: snapshot.stars,
       incompatible,
       incompatibleHarness,
+    }
+  }
+
+  /**
+   * The installs the running dsh will refuse on their harness peers
+   * (`peerVerdictsOf`), judged against the exemptions this profile holds —
+   * read on every call like the other verdicts, because recording one is
+   * exactly the event that must clear a card: the reader runs the command
+   * the card shows, presses Refresh, and the install is allowed. Empty when
+   * the running dsh has no such check (before 0.1.7) or no profile was
+   * found, and when either read throws: a refusal nobody could establish is
+   * never shown, least of all as a disabled button.
+   */
+  private refusedByHarness(entries: readonly CatalogEntry[], harness: RunningHarness, profileDir: string | null): Record<string, PeerVerdict> {
+    if (harness.peerCheck === null || profileDir === null) return {}
+    try {
+      return peerVerdictsOf(entries, harness.peerCheck, harness.peerCheck.exemptions(profileDir), this.profile)
+    } catch {
+      // Swallows the exemption read throwing. app-boot's reader turns an
+      // unreadable or malformed file into no exemptions rather than an error,
+      // so this is a failure it did not plan for; without the exemptions the
+      // shop cannot tell a refused install from an allowed one, and says
+      // nothing. `peerVerdictsOf` catches the rule's own throws per entry.
+      return {}
     }
   }
 
@@ -1067,6 +1125,7 @@ export class ShopGateway extends TypertRemoteService {
   // this on the real composition (§7.3 amendment, 2026-08-25).
   @Remote('installStart')
   async install(args: InstallArgs): Promise<ShopInstallResult> {
+    if (isDesktopProfile(this.profile)) return { ok: false, code: 'desktop-profile', detail: DESKTOP_PROFILE_DETAIL }
     const snapshot = await this.snapshotNow()
     // The manifest's dependency for this name, when it has one: the gate needs
     // it to tell an update of THIS plugin from a replacement of a different one
@@ -1132,6 +1191,9 @@ export class ShopGateway extends TypertRemoteService {
     // this session, whose module is still in the cache.
     const isUpdate = installedSpec !== undefined
     const alreadyImported = isUpdate || this.imported.has(args.name)
+    // Read before the spawn: the post-install check below is synchronous, and
+    // which dsh runs cannot change while it runs (see `harnessRead`).
+    const harness = await this.runningHarness()
     const running = startInstall({
       profile: this.profile,
       spec,
@@ -1155,10 +1217,24 @@ export class ShopGateway extends TypertRemoteService {
           packageName: args.name,
           dependencies: Object.keys(this.profileDependenciesOrNone() ?? {}),
         })
-        if (clash === null) return null
-        return `dsh-plugin-shop: ${args.name} declares the loader entry id "${clash.id}", which ${clash.holder} already declares.`
-          + ' dsh refuses to load a plugin tree holding a duplicate entry id, so the profile would not start.'
-          + ` It is on disk: run \`dsh plugin --profile ${this.profile} remove ${args.name}\` to undo this install.`
+        const undo = ` It is on disk: run \`dsh plugin --profile ${this.profile} remove ${args.name}\` to undo this install.`
+        if (clash !== null) {
+          return `dsh-plugin-shop: ${args.name} declares the loader entry id "${clash.id}", which ${clash.holder} already declares.`
+            + ' dsh refuses to load a plugin tree holding a duplicate entry id, so the profile would not start.' + undo
+        }
+        // The other way a landed bundle kills the next boot: a patch
+        // declaration this dsh cannot read (design
+        // 2026-09-26-dsh-017-readiness, B4).
+        const declared = declaredBundlePatch({ profileDir: this.profileDirResolved(), packageName: args.name })
+        switch (patchDeclarationHazard(declared, harness.patchLists)) {
+          case null: return null
+          case 'list-unsupported':
+            return `dsh-plugin-shop: ${args.name} lists its bundle patch as several files, which dsh reads from 0.1.7 on;`
+              + ` this dsh${harness.dshVersion === null ? '' : ` (${harness.dshVersion})`} reads one and would not start with it installed.` + undo
+          case 'malformed':
+            return `dsh-plugin-shop: ${args.name} declares its bundle patch as neither a file path nor a list of them,`
+              + ' which dsh refuses to load, so the profile would not start.' + undo
+        }
       },
       // After the bundle lands, bring it up hot — unless this process may
       // already hold its module (see `alreadyImported`). A failed mount falls
@@ -1179,27 +1255,27 @@ export class ShopGateway extends TypertRemoteService {
         // activation that throws, a timeout — has filled it all the same.
         this.imported.add(args.name)
         const result = await hot.mount(
-          { plugin: (plugin, config) => (this.ctx as unknown as { plugin(plugin: unknown, config: unknown): { await(): Promise<unknown>; dispose(): Promise<unknown> | void } }).plugin(plugin, config) },
+          { plugin: (plugin, config) => (this.home as unknown as { plugin(plugin: unknown, config: unknown): { await(): Promise<unknown>; dispose(): Promise<unknown> | void } }).plugin(plugin, config) },
           this.profileDirResolved(),
           args.name,
         )
         if (!result.ok) {
           return { activation: 'restart' as const, ...(result.reason !== null ? { restartReason: result.reason } : {}) }
         }
-        // The mount SUCCEEDED, so the host half is live. Its browser half is
-        // not, and cannot be made so by a reload: a hot mount adds to the
-        // live loader entries without entering the composition the client
-        // registry enumerates (activation.ts, measured 2026-09-14). So
-        // `clientLive` is false here and a package with a browser half lands
-        // on `restart`, carrying the reason that says its host half is
-        // already running — the generic restart line would deny that. Only
-        // the new version is read: a fresh install has no old one in the tab.
-        const activation = activationOf({
-          hostLive: true,
-          clientLive: false,
-          hasClientHalf: this.packageHasClientHalf(args.name),
-        })
-        return activation === 'restart' ? { activation, restartReason: 'client-half' as const } : { activation }
+        // The mount SUCCEEDED, so the host half is live — and the browser
+        // half is in the graph the next page load boots from: the tree hangs
+        // off the shop's own loader entry (`home`), where dsh's client
+        // registry enumerates it like any boot-composed entry (activation.ts,
+        // measured 2026-09-26 on 0.1.5-rc.3 and 0.1.7-rc.2). So a package with
+        // a browser half is one reload away, not one restart. Only the new
+        // version is read: a fresh install has no old one in the tab.
+        return {
+          activation: activationOf({
+            hostLive: true,
+            clientLive: true,
+            hasClientHalf: this.packageHasClientHalf(args.name),
+          }),
+        }
       },
     })
     if (entry.source === 'github') {
@@ -1384,6 +1460,7 @@ export class ShopGateway extends TypertRemoteService {
    * itself). The same install records/polling serve the client. */
   @Remote('uninstallStart')
   async uninstall(args: { name: string }): Promise<ShopUninstallResult> {
+    if (isDesktopProfile(this.profile)) return { ok: false, detail: DESKTOP_PROFILE_DETAIL }
     const snapshot = await this.snapshotNow()
     const named = snapshot.entries.filter(entry => entry.name === args.name)
     if (named.length === 0) {
@@ -1472,7 +1549,7 @@ export class ShopGateway extends TypertRemoteService {
         detail: 'dsh-plugin-shop: an install is still running in this profile; a restart now would boot the new dsh against a half-written profile. Wait for it to finish and try again.',
       }
     }
-    // The three static refusals, in the order `staticRestartBlock` states
+    // The static refusals, in the order `staticRestartBlock` states
     // them, and each one before anything is torn down. Asking it rather than
     // repeating its checks is what keeps the answer the client was given at
     // mount identical to the answer a press gets.
@@ -1533,6 +1610,7 @@ export class ShopGateway extends TypertRemoteService {
    * `dsh-plugin-shop@<version>` is built here, never from the wire. */
   @Remote('updateStart')
   async updateStart(args: { version: string }): Promise<ShopUpdateResult> {
+    if (isDesktopProfile(this.profile)) return { ok: false, detail: DESKTOP_PROFILE_DETAIL }
     if (valid(args.version) === null) {
       return { ok: false, detail: `dsh-plugin-shop: ${args.version} is not a valid version` }
     }

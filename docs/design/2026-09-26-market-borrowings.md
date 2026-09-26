@@ -274,8 +274,9 @@ clipboard write needs a permission path that the message does not.
   the restart copy and offer. At the host boundary, an update reports
   `already-loaded` without a live disable or a mount; an uninstall followed by
   a reinstall does too; a name present at construction is treated as
-  imported; a fresh install still mounts and reports `live` or the
-  `client-half` restart as before.
+  imported; a fresh install still mounts and reports `live`, or `reload`
+  for a package with a browser half (a `client-half` restart until
+  `2026-09-26-dsh-017-readiness.md` §B0.3 reversed it).
 - **§2**: a config row keeps its config through a disable and an enable;
   comments survive, the template header included; the last matching row is
   the one written; a row with a mismatched `name` is not a target; a new row

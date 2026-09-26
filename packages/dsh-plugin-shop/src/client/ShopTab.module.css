@@ -807,6 +807,49 @@
   color: var(--dsw-alias-state-error-primary);
 }
 
+/* The way out of dsh's own refusal: the lead-in, then the exemption command
+ * on its own line. */
+.remedy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.remedyLead {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-primary);
+}
+
+/* The exemption command, bound for a terminal unchanged: one click selects
+ * all of it, and it wraps anywhere rather than widening the card. A border,
+ * not a fill, marks the box: the bg layers are one white in the light theme. */
+.allowCommand {
+  display: block;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-base);
+  border: 1px solid var(--dsw-alias-border-l1);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: all;
+  color: var(--dsw-alias-label-primary);
+}
+
+/* A refused install on a surface that does not state its blockers — the
+ * outdated row — writes them out on their own full-width line under the
+ * disabled button, the command that clears dsh's refusal included. */
+.refusal {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-basis: 100%;
+}
+
 .capabilitiesBlock {
   display: flex;
   flex-direction: column;

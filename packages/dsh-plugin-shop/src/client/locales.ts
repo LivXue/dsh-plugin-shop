@@ -48,12 +48,18 @@ export const zh = {
    * "unsupported" leaves the reader guessing which side is off. */
   harnessRangeDetail: '作者声明支持的 dsh 版本：{range}；本机运行的是 {running}。',
   harnessProfileDetail: '作者声明支持的 profile：{declared}；此 dsh 以 {running} profile 启动。',
+  /** dsh's OWN refusal (0.1.7 on), not the author's claim: the install button
+   * is disabled beside it (design 2026-09-26-dsh-017-readiness, B1). `{peers}`
+   * is each refused peer with the range the package declared. The remedy
+   * leads into the exemption command, rendered on its own line after it, and
+   * names the Refresh button by its label. */
+  harnessPeersDetail: '本机的 dsh {running} 会拒绝安装此插件：它要求 {peers}。',
+  harnessPeersRemedy: '若愿意承担崩溃或数据丢失的风险，可在终端运行以下命令，为这个确切版本授予豁免，然后点击“刷新”：',
   hotNoPatchNotice: '该插件没有可热挂载的补丁文件；重启 dsh 后生效',
   hotNotSimpleNotice: '该插件的补丁包含无法热挂载的配置；重启 dsh 后生效',
   hotHostUnsupportedNotice: '当前环境不支持热挂载；重启 dsh 后生效',
   hotTimeoutNotice: '热挂载超时；重启 dsh 后生效',
   hotMountFailedNotice: '热挂载失败；重启 dsh 后生效',
-  hotClientHalfNotice: '已安装并在运行；它的界面要重启 dsh 才会更新——刷新页面取不到',
   /** No mount was tried: this dsh already loaded the package once, and Node
    * will not load a second copy from the same place (design
    * 2026-09-26-market-borrowings §1). Covers an update and a reinstall alike,
@@ -100,6 +106,7 @@ export const zh = {
   tarballIntegrityCode: '压缩包完整性校验失败',
   ambiguousIdentityCode: '无法确定是哪一个条目',
   nameTakenCode: '同名的另一个插件已安装',
+  desktopProfileCode: '由桌面版管理的 profile',
   nameTakenBadge: '名称被占用',
   nameTakenDetail: '已安装同名的另一个插件（{holder}）。\n两个同名插件声明相同的加载项 id，无法共存；安装它会替换掉已装的那个。',
   npmSource: 'npm 包',
@@ -132,6 +139,7 @@ export const zh = {
    * that answered and then died. */
   restartFailedLogNotice: '重启后服务器没有回来，或回来后没能保持运行。新进程的日志在 {log}；也可以手动启动：dsh web',
   restartTransportFailed: '重启请求未能送达。请稍后重试。',
+  restartBlockedDesktopNotice: '此 profile 由 DeepSeek Harness 桌面版管理，商店无法重启它。请重启桌面版，以应用更改。',
   restartBlockedWindowsNotice: '商店暂不支持在 Windows 上重启 dsh。请退出 dsh 后重新启动，以应用更改。',
   restartBlockedSystemdNotice: '当前 dsh 由 systemd 服务托管，商店无法安全地重启它。请手动重启服务，或在商店行配置中设置 allowRestart: true。',
   restartBlockedPortZeroNotice: '此 dsh 以 --port 0 启动，重启后会绑定到另一个端口，本页面无法跟上。请手动重启 dsh，以应用更改。',
@@ -188,12 +196,13 @@ export const en = {
   incompatibleDetail: 'Missing components/plugins: {modules}\nThis plugin may be designed for another DSH version.',
   harnessRangeDetail: 'The author declares support for dsh {range}; this machine runs {running}.',
   harnessProfileDetail: 'The author declares support for the {declared} profile(s); this dsh was launched with the {running} profile.',
+  harnessPeersDetail: 'dsh {running} on this machine refuses to install this plugin: it requires {peers}.',
+  harnessPeersRemedy: 'To accept the risk of crashes or data loss for this exact version, run this in a terminal, then press Refresh:',
   hotNoPatchNotice: 'no patch file to hot-mount; restart dsh to activate',
   hotNotSimpleNotice: 'the patch has config rows that cannot be hot-mounted; restart dsh to activate',
   hotHostUnsupportedNotice: 'this harness cannot hot-mount; restart dsh to activate',
   hotTimeoutNotice: 'hot-mount timed out; restart dsh to activate',
   hotMountFailedNotice: 'hot-mount failed; restart dsh to activate',
-  hotClientHalfNotice: 'installed and running; its interface needs a restart of dsh — a reload cannot fetch it',
   hotAlreadyLoadedNotice: 'installed; this dsh has already loaded the plugin once, so the files just installed take effect after a restart of dsh',
   installedNoRestartNotice: 'installed and hot-mounted; running now, no restart needed',
   installedReloadNotice: 'already applied; reload the page to see it',
@@ -225,6 +234,7 @@ export const en = {
   tarballIntegrityCode: 'tarball integrity check failed',
   ambiguousIdentityCode: 'Ambiguous entry',
   nameTakenCode: 'Another plugin holds this name',
+  desktopProfileCode: 'Managed by the desktop app',
   nameTakenBadge: 'Name taken',
   nameTakenDetail: 'A different plugin of this name is installed ({holder}).\nTwo plugins of one name declare the same loader entry id and cannot both load; installing this one would replace it.',
   npmSource: 'npm package',
@@ -249,6 +259,7 @@ export const en = {
   restartFailedNotice: 'The server did not come back after the restart. Start it manually: dsh web (see restart.log in the shop cache directory)',
   restartFailedLogNotice: 'The server did not come back after the restart, or did not stay up. The new process logs to {log}; you can also start it manually: dsh web',
   restartTransportFailed: 'The restart request could not be delivered. Please retry.',
+  restartBlockedDesktopNotice: 'This profile is managed by the DeepSeek Harness desktop app, so the shop cannot restart it. Restart the app to apply the change.',
   restartBlockedWindowsNotice: 'The shop cannot restart dsh on Windows yet. Quit dsh and start it again to apply the change.',
   restartBlockedSystemdNotice: 'This dsh process runs as a systemd service, so the shop cannot restart it safely. Restart the service manually, or set allowRestart: true in the shop row config.',
   restartBlockedPortZeroNotice: 'This dsh was launched with --port 0, so a restart would bind a different port and this page could not follow it. Restart dsh manually to apply the change.',

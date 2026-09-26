@@ -32,6 +32,7 @@ import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'nod
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { JSON_SCHEMA, Type, dump, load } from 'js-yaml'
+import { bundlePatchFiles } from './bundle-patch.ts'
 
 /** The loader's YAML dialect: `!!js` scalars round-trip as expression nodes
  * rather than throwing, so a patch carrying one is refused for its SHAPE
@@ -64,25 +65,19 @@ export interface PluginHandle {
  * Why a restart is needed after the hot path ran — a stable code the client
  * turns into copy in the reader's own dsh language.
  *
- * Five of the seven say the MOUNT could not activate, and distinguish
+ * Five of the six say the MOUNT could not activate, and distinguish
  * "restart will fix it" (`timeout`, `mount-failed`) from "this package can
  * never hot-mount" (`no-patch`, `not-simple`) and "this harness cannot"
  * (`host-unsupported`).
  *
- * `client-half` is one of the two that do not: the mount SUCCEEDED and the
- * host half is running, but the package declares `dsh.client` and a hot mount
- * does not enter the composition the client registry enumerates, so no reload
- * can fetch its browser half (measured 2026-09-14 — see `activation.ts`). It
- * exists so the reader is not told "installed; restart dsh to activate"
- * about a plugin that is demonstrably already running.
- *
- * `already-loaded` is the other: no mount was attempted, because this
- * process may already hold the package's module, and Node caches a module by
- * its URL — the new files sit at the old URL, so a mount would re-run the old
- * code under the new version's name (design 2026-09-26-market-borrowings §1).
- * The gateway decides it before calling `hotMount`, which never returns it.
+ * `already-loaded` is the one that does not: no mount was attempted, because
+ * this process may already hold the package's module, and Node caches a
+ * module by its URL — the new files sit at the old URL, so a mount would re-run
+ * the old code under the new version's name (design
+ * 2026-09-26-market-borrowings §1). The gateway decides it before calling
+ * `hotMount`, which never returns it.
  */
-export type HotRestartReason = 'no-patch' | 'not-simple' | 'host-unsupported' | 'timeout' | 'mount-failed' | 'client-half' | 'already-loaded'
+export type HotRestartReason = 'no-patch' | 'not-simple' | 'host-unsupported' | 'timeout' | 'mount-failed' | 'already-loaded'
 
 export interface HotMountResult {
   ok: boolean
@@ -211,19 +206,18 @@ function nextHotNumber(fs: HotFs, dir: string): number {
   return max + 1
 }
 
-/** Read the installed package's own `dsh` section to locate its bundle patch
- * (the Include input), or null when the package or the field is absent —
- * the "no patch file" rejection names this. */
-function readPkgDsh(fs: HotFs, packageDir: string): { patch: string } | null {
+/** The installed package's own `dsh.bundle.patch`, exactly as declared (the
+ * Include input), or undefined when the package, its manifest or the field
+ * is absent. */
+function declaredPatch(fs: HotFs, packageDir: string): unknown {
   try {
     const pkg = JSON.parse(fs.read(join(packageDir, 'package.json'))) as
       { dsh?: { bundle?: { patch?: unknown } } }
-    const patch = pkg.dsh?.bundle?.patch
-    return typeof patch === 'string' ? { patch } : null
+    return pkg.dsh?.bundle?.patch
   } catch {
-    // Unreadable or unparseable package.json, or no dsh.bundle.patch — the
-    // same outcome: the hot tree has no input to mount.
-    return null
+    // An unreadable or unparseable package.json declares nothing: the
+    // conventional patch name is tried, as for a package with no field.
+    return undefined
   }
 }
 
@@ -282,27 +276,38 @@ export async function hotMount(
     now = Date.now,
   } = deps
 
-  // The installed package's own bundle patch is the mount source: locate it
-  // through the package's dsh field (defaulting to the conventional name).
+  // The installed package's own bundle patch is the mount source: one file or
+  // a list applied in order (dsh 0.1.7), located through the package's dsh
+  // field. Only an ABSENT field means the conventional name; a declaration
+  // dsh refuses mounts nothing, because the next boot will not load it.
   const packageDir = join(profileDir, 'node_modules', packageName)
-  const dsh = readPkgDsh(fs, packageDir)
-  const patchFile = resolve(packageDir, dsh?.patch ?? 'cordis.patch.yml')
-  const inside = relative(packageDir, patchFile)
-  if (inside === '' || inside.startsWith('..') || isAbsolute(inside)) {
-    ctx.logger?.warn(`hot-mount ${packageName}: the declared bundle patch is outside the package directory — restart will activate it`)
+  const declared = declaredPatch(fs, packageDir)
+  const files = declared === undefined ? ['cordis.patch.yml'] : bundlePatchFiles(declared)
+  if (files === null || files.length === 0) {
+    ctx.logger?.warn(`hot-mount ${packageName}: the bundle patch is declared as neither a file path nor a list of them — restart will activate it`)
     return { ok: false, reason: 'no-patch' }
   }
-  let patchText: string
-  try {
-    patchText = fs.read(patchFile)
-  } catch {
-    ctx.logger?.warn(`hot-mount ${packageName}: no patch file to mount — restart will activate it`)
-    return { ok: false, reason: 'no-patch' }
-  }
-  const rows = parseSimplePatch(patchText)
-  if (rows === null) {
-    ctx.logger?.warn(`hot-mount ${packageName}: patch has rows that cannot be hot-mounted — restart will activate it`)
-    return { ok: false, reason: 'not-simple' }
+  const rows: HotRow[] = []
+  for (const file of files) {
+    const patchFile = resolve(packageDir, file)
+    const inside = relative(packageDir, patchFile)
+    if (inside === '' || inside.startsWith('..') || isAbsolute(inside)) {
+      ctx.logger?.warn(`hot-mount ${packageName}: the declared bundle patch is outside the package directory — restart will activate it`)
+      return { ok: false, reason: 'no-patch' }
+    }
+    let patchText: string
+    try {
+      patchText = fs.read(patchFile)
+    } catch {
+      ctx.logger?.warn(`hot-mount ${packageName}: no patch file to mount — restart will activate it`)
+      return { ok: false, reason: 'no-patch' }
+    }
+    const parsed = parseSimplePatch(patchText)
+    if (parsed === null) {
+      ctx.logger?.warn(`hot-mount ${packageName}: patch has rows that cannot be hot-mounted — restart will activate it`)
+      return { ok: false, reason: 'not-simple' }
+    }
+    rows.push(...parsed)
   }
 
   let treeClass = deps.hotTreeClass

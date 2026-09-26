@@ -10,6 +10,7 @@ import { join } from 'node:path'
 import type { Readable } from 'node:stream'
 import { StringDecoder } from 'node:string_decoder'
 import { readProfileManifest, resolveProfileDir } from '@deepseek-ai/dsh-app-boot'
+import { allowVersionCommand } from './compatibility.ts'
 import { dshCommand, resolveDshScript, DSH_PACKAGE, type DshCliFs } from './dsh-cli.ts'
 import type { HotRestartReason } from './hot.ts'
 import type { Activation } from './activation.ts'
@@ -219,6 +220,72 @@ const FAILURE_LOG_NOISE: readonly RegExp[] = [
   /^<anonymous(?:_script)?>/,
 ]
 
+/** The line dsh 0.1.7 opens a refused install with (dsh-plugin-manager's
+ * `rejected`), and the exemption command its CLI prints after it, one per
+ * refused package (`runPlugin`). */
+const REFUSAL_OPENER = 'dsh: installation rejected: '
+const REFUSAL_COMMAND = /^dsh: to accept the risk, run: dsh plugin --profile .+ allow-version (.+)@([^@\s]+) --dsh-version (\S+) --accept-risk$/
+const REFUSAL_FAILED = 'dsh: plugin command failed'
+/** Where dsh's warning turns from the refused peers to its risk statement
+ * and remedy (app-boot's `pluginCompatibilityWarning`); the detail states
+ * the risk once and gives the command instead. */
+const REFUSAL_WARNING_TAIL = ' Running it may cause crashes or data loss.'
+
+/**
+ * dsh's own refusal of an install (0.1.7 on) as one detail, or null when the
+ * log holds none. The install was dsh's to refuse, not pnpm's to fail: it
+ * refuses before pnpm runs, when it can read the manifest — a registry spec,
+ * which the catalog's peer verdict already predicts — and after pnpm
+ * succeeded otherwise, restoring the profile. Reading that as a pnpm failure
+ * sent the reader to `dsh plugin install`, which repairs nothing.
+ *
+ * The detail is what dsh refused, what it restored, and the command that
+ * records its exact-version exemption, rebuilt from what dsh printed through
+ * `allowVersionCommand` rather than repeated: dsh prints the INSTALLED
+ * manifest's own name into it, which a tarball or git package chooses
+ * itself, so only a name and versions dsh's exemption grammar accepts reach
+ * a line meant for a terminal. The profile is the one this install ran in.
+ * Anything dsh prints after `plugin command failed` — the diagnostics path,
+ * and a hint about git build scripts dsh prints after every failed git
+ * install — says nothing about this refusal.
+ */
+function refusalDetail(profile: string, usable: readonly string[]): string | null {
+  const start = usable.findIndex(line => line.startsWith(REFUSAL_OPENER))
+  if (start === -1) return null
+  const refusedAt = usable.slice(start)
+  const failedAt = refusedAt.findIndex(line => line.startsWith(REFUSAL_FAILED))
+  const block = failedAt === -1 ? refusedAt : refusedAt.slice(0, failedAt)
+  const warnings: string[] = []
+  const commands: string[] = []
+  let restoration: string | undefined
+  for (const [index, line] of block.entries()) {
+    const command = REFUSAL_COMMAND.exec(line)
+    if (command !== null) {
+      const [, name = '', version = '', runtimeVersion = ''] = command
+      const rebuilt = allowVersionCommand(profile, { name, version, runtimeVersion })
+      if (rebuilt !== null) commands.push(rebuilt)
+    } else if (index === 0) {
+      warnings.push(line.slice(REFUSAL_OPENER.length))
+    } else if (line.startsWith('dsh: ')) {
+      // dsh's `${restoration}.` line: the first of its own lines after the
+      // warnings, which carry no prefix of their own.
+      restoration ??= line.slice('dsh: '.length)
+    } else if (restoration === undefined) {
+      warnings.push(line)
+    }
+  }
+  const refused = warnings.map(warning => {
+    const tail = warning.indexOf(REFUSAL_WARNING_TAIL)
+    return tail === -1 ? warning : warning.slice(0, tail)
+  })
+  const parts = [`dsh refused the install: ${refused.join(' ')}`]
+  if (restoration !== undefined) parts.push(`${restoration.charAt(0).toUpperCase()}${restoration.slice(1)}`)
+  if (commands.length > 0) {
+    parts.push(`To accept the risk of crashes or data loss for ${commands.length === 1 ? 'this exact version' : 'these exact versions'}, run: ${commands.join('; ')} — then install again.`)
+  }
+  return parts.join(' ')
+}
+
 /**
  * The one log line worth putting in front of the user, plus the recovery hint.
  *
@@ -243,6 +310,9 @@ export function installFailureDetail(profile: string, log: readonly string[]): s
   const usable = log
     .map(line => line.replace(/\r+$/, ''))
     .filter(line => !FAILURE_LOG_NOISE.some(rx => rx.test(line)))
+  // dsh refusing the install is not pnpm failing, and has its own remedy.
+  const refusal = refusalDetail(profile, usable)
+  if (refusal !== null) return refusal
   const reversed = [...usable].reverse()
   const pick = reversed.find(line => /ERR_[A-Z][A-Z_]*/.test(line))
     ?? reversed.find(line => /(?:^|\s)\w*Error:/.test(line))

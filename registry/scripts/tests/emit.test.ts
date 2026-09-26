@@ -159,6 +159,23 @@ describe('emit publisher', () => {
     }
   })
 
+  it('publishes the harness peers at every schemaVersion, on both channels', () => {
+    const dshPeers = { '@deepseek-ai/dsh-app-boot': '^0.1.1-rc.2' }
+    const entries = [{ ...entry('dsh-a'), dshPeers }, { ...repoEntry('dsh-b', 'you/dsh-b'), dshPeers }]
+    for (const version of [SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION, CATALOG_SCHEMA_VERSION]) {
+      const { pluginsJson } = emit(entries, [], '2026-08-26T00:00:00.000Z', null, version)
+      const parsed = JSON.parse(pluginsJson) as { plugins: { dshPeers?: unknown }[] }
+      expect(parsed.plugins.map(p => p.dshPeers)).toEqual([dshPeers, dshPeers])
+    }
+  })
+
+  it('well-forms the KEYS of the harness peers, the first field whose keys are manifest text', () => {
+    const hostile = { ...entry('dsh-a'), dshPeers: { '@deepseek-ai/dsh-\ud800x': '^1\udc00' } }
+    const { pluginsJson } = emit([hostile], [], '2026-08-26T00:00:00.000Z')
+    const parsed = JSON.parse(pluginsJson) as { plugins: { dshPeers?: Record<string, string> }[] }
+    expect(parsed.plugins[0]?.dshPeers).toEqual({ '@deepseek-ai/dsh-\ufffdx': '^1\ufffd' })
+  })
+
   it('emits no compatibility key for an entry without one', () => {
     const { pluginsJson } = emit([entry('dsh-a'), repoEntry('dsh-b', 'you/dsh-b')], [], '2026-08-26T00:00:00.000Z')
     expect(pluginsJson).not.toContain('compatibility')

@@ -32,6 +32,17 @@ export const DSH_PACKAGE = '@deepseek-ai/dsh'
 const DSH_BIN_NAME = 'dsh'
 
 /**
+ * Whether dsh's CLI refuses this profile outright: `desktop`, in any letter
+ * case, "is managed exclusively by the Electron application" — refused for a
+ * launch and for `dsh plugin` alike (`rejectElectronProfile` in the CLI's
+ * `lib/bin.js`, the same in 0.1.5-rc.3 and 0.1.7-rc.2). Every command the
+ * shop spawns names a profile, so none of them can run for this one.
+ */
+export function isDesktopProfile(profile: string): boolean {
+  return profile.toLowerCase() === 'desktop'
+}
+
+/**
  * A `dshBin` that names a JavaScript entry rather than a program.
  *
  * Such a file cannot be spawned anywhere: Windows needs a PE image, and POSIX

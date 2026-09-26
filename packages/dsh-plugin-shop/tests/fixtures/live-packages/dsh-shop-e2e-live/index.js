@@ -8,8 +8,8 @@
 // `ctx.router` is absent from the dsh bundles), so a fixture this simple
 // cannot register a route from `apply()`. The inventory — the strict read of
 // what the loader actually mounted — lists this entry (id
-// `include:typert-gateway:mkt-e2e-live`: the shop mounts the hot tree from
-// its own ctx, a subtree of the gateway include, and the `mkt-` row id
+// `include:shop:mkt-e2e-live`: the shop mounts the hot tree from its own
+// context, as the subtree of its own loader entry, and the `mkt-` row id
 // survives at the end of the chain) as enabled, with its root fiber in the
 // active phase, while the fiber runs, and drops it once the shop's hot
 // uninstall disposes the fiber. The e2e asserts exactly those two facts.

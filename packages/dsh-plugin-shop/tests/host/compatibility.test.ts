@@ -1,6 +1,7 @@
 import { satisfies } from 'semver'
 import { describe, expect, it } from 'vitest'
-import { compatibilityMap, profileTemplatesOf, type ProfileTemplates } from '../../src/host/compatibility.ts'
+import { allowVersionCommand, compatibilityMap, peerVerdictsOf, profileTemplatesOf, type ProfileTemplates } from '../../src/host/compatibility.ts'
+import type { PeerCheck, PeerIssue } from '../../src/host/harness.ts'
 
 /** The harness's own `PROFILE_TEMPLATES` on 0.1.5-rc.3, copied verbatim from
  * `@deepseek-ai/dsh-app-boot/lib/index.js` — five templates, each a
@@ -371,5 +372,116 @@ describe('profileTemplatesOf', () => {
     const templates = profileTemplatesOf(JSON.parse('{"__proto__": ["@deepseek-ai/dsh-base"], "web": ["@deepseek-ai/dsh-web-app"]}'))
     expect(Object.keys(templates)).toEqual(['__proto__', 'web'])
     expect(Object.getPrototypeOf(templates)).toBeNull()
+  })
+})
+
+/**
+ * A peer check that answers from a script keyed by `name@version`, and
+ * records every manifest and exemption record it was handed. The rule itself
+ * is dsh's and is not restated here — a fixture that reimplemented it would
+ * agree with this module's reading of it by construction. What these tests
+ * own is what the shop asks, of which entries, and what it makes of the
+ * answer; the live-harness e2e runs the real rule.
+ */
+function scriptedCheck(answers: Record<string, PeerIssue | 'throws' | undefined>) {
+  const asked: Array<{ manifest: unknown; exemptions: unknown }> = []
+  const check: PeerCheck = {
+    evaluate(manifest, exemptions) {
+      asked.push({ manifest, exemptions })
+      const answer = answers[`${manifest.name}@${manifest.version}`]
+      if (answer === 'throws') throw new Error('Plugin manifest peerDependencies must be an object')
+      return answer
+    },
+    exemptions: () => { throw new Error('peerVerdictsOf is handed the exemptions, never reads them') },
+  }
+  return { check, asked }
+}
+
+/** What dsh 0.1.7-rc.2's `evaluatePluginCompatibility` answers for a package
+ * pinning the harness exactly to 0.1.5-rc.3 — the shape, not the rule. */
+function refusal(name: string, version: string, exempted = false): PeerIssue {
+  return { name, version, runtimeVersion: '0.1.7-rc.2', peers: { '@deepseek-ai/dsh': '0.1.5-rc.3' }, exempted }
+}
+
+const PINNED = { '@deepseek-ai/dsh': '0.1.5-rc.3', '@deepseek-ai/dsh-web-app': '^0.1.2' }
+
+describe('peerVerdictsOf', () => {
+  it('reports what the running dsh refuses, with the command that exempts it', () => {
+    const { check, asked } = scriptedCheck({ 'dsh-pinned@1.2.0': refusal('dsh-pinned', '1.2.0') })
+    const exemptions = { 'other@1.0.0': ['0.1.7-rc.2'] }
+    const verdicts = peerVerdictsOf([{ source: 'npm', name: 'dsh-pinned', version: '1.2.0', dshPeers: PINNED }], check, exemptions, 'web')
+    expect(verdicts).toEqual({
+      'npm:dsh-pinned': {
+        refused: { '@deepseek-ai/dsh': '0.1.5-rc.3' },
+        running: '0.1.7-rc.2',
+        allowCommand: 'dsh plugin --profile web allow-version dsh-pinned@1.2.0 --dsh-version 0.1.7-rc.2 --accept-risk',
+      },
+    })
+    // The manifest dsh's installer reads before a registry install, with the
+    // catalog's harness peers verbatim, and the profile's exemptions as read.
+    expect(asked).toEqual([{ manifest: { name: 'dsh-pinned', version: '1.2.0', peerDependencies: PINNED }, exemptions }])
+  })
+
+  it('says nothing about an install dsh accepts, or one the profile has exempted', () => {
+    const { check } = scriptedCheck({ 'exempted@1.0.0': refusal('exempted', '1.0.0', true) })
+    expect(peerVerdictsOf([
+      { source: 'npm', name: 'accepted', version: '1.0.0', dshPeers: { '@deepseek-ai/dsh': '*' } },
+      { source: 'npm', name: 'exempted', version: '1.0.0', dshPeers: PINNED },
+    ], check, {}, 'web')).toEqual({})
+  })
+
+  it('never asks about a github entry: its catalog version is a commit, and dsh keys an exemption by the manifest version', () => {
+    const commit = 'a'.repeat(40)
+    const { check, asked } = scriptedCheck({ [`dsh-git@${commit}`]: refusal('dsh-git', commit) })
+    expect(peerVerdictsOf([{ source: 'github', name: 'dsh-git', repo: 'owner/dsh-git', version: commit, dshPeers: PINNED }], check, {}, 'web')).toEqual({})
+    expect(asked).toEqual([])
+  })
+
+  it('never asks about an entry that declares no harness peers, or whose catalog predates them', () => {
+    const { check, asked } = scriptedCheck({})
+    expect(peerVerdictsOf([{ source: 'npm', name: 'plain', version: '1.0.0' }], check, {}, 'web')).toEqual({})
+    expect(asked).toEqual([])
+  })
+
+  it('accuses no entry the rule refuses to judge, and still judges the rest', () => {
+    const { check } = scriptedCheck({ 'broken@1.0.0': 'throws', 'dsh-pinned@1.2.0': refusal('dsh-pinned', '1.2.0') })
+    const verdicts = peerVerdictsOf([
+      { source: 'npm', name: 'broken', version: '1.0.0', dshPeers: PINNED },
+      { source: 'npm', name: 'dsh-pinned', version: '1.2.0', dshPeers: PINNED },
+    ], check, {}, 'web')
+    expect(Object.keys(verdicts)).toEqual(['npm:dsh-pinned'])
+  })
+
+  it('copies the refused peers rather than keeping the object the rule returned', () => {
+    const issue = refusal('dsh-pinned', '1.2.0')
+    const { check } = scriptedCheck({ 'dsh-pinned@1.2.0': issue })
+    const verdicts = peerVerdictsOf([{ source: 'npm', name: 'dsh-pinned', version: '1.2.0', dshPeers: PINNED }], check, {}, 'web')
+    issue.peers['@deepseek-ai/dsh-late'] = '0.0.1'
+    expect(verdicts['npm:dsh-pinned']?.refused).toEqual({ '@deepseek-ai/dsh': '0.1.5-rc.3' })
+  })
+})
+
+describe('allowVersionCommand', () => {
+  const issue = (name: string, version: string, runtimeVersion = '0.1.7-rc.2') => ({ name, version, runtimeVersion })
+
+  it('spells the exemption exactly as dsh prints it after a refusal', () => {
+    // dsh 0.1.7-rc.2's `runPlugin`: `dsh: to accept the risk, run: dsh plugin
+    // --profile ${profile} allow-version ${name}@${version} --dsh-version
+    // ${runtimeVersion} --accept-risk`.
+    expect(allowVersionCommand('web', issue('@scope/dsh-x', '2.0.0-beta.1+build.7')))
+      .toBe('dsh plugin --profile web allow-version @scope/dsh-x@2.0.0-beta.1+build.7 --dsh-version 0.1.7-rc.2 --accept-risk')
+  })
+
+  it('offers no command dsh would refuse, so nothing hostile reaches a terminal', () => {
+    // allow-version takes an exact npm name and exact canonical versions. A
+    // catalog value outside those is refused by dsh, and each of these would
+    // otherwise be pasted into a shell.
+    for (const name of ['Upper', 'a b', 'x;rm -rf ~', '$(id)', 'x`id`', '@scope', 'x|y', '"q"']) {
+      expect(allowVersionCommand('web', issue(name, '1.0.0')), name).toBeNull()
+    }
+    for (const version of ['^1.0.0', '1.0', 'v1.0.0', ' 1.0.0', '1.0.0 && id', '01.0.0', '']) {
+      expect(allowVersionCommand('web', issue('x', version)), JSON.stringify(version)).toBeNull()
+      expect(allowVersionCommand('web', issue('x', '1.0.0', version)), `runtime ${JSON.stringify(version)}`).toBeNull()
+    }
   })
 })

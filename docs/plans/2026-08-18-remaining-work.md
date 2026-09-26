@@ -74,6 +74,18 @@ These block a real launch, not the code.
    crossing date itself has moved again since this item's 2026-09-16
    reading — read it from the design doc's own header, which supersedes it,
    rather than trusting either figure without re-measuring.
+6. **dsh 0.1.7 — two open questions, raised 2026-09-26.** The shop is ready
+   for it ([2026-09-26-dsh-017-readiness.md](../design/2026-09-26-dsh-017-readiness.md))
+   and runs on 0.1.5-rc.3 and 0.1.7-rc.2 alike, but two things are not code
+   decisions. **(a) 0.1.7 ships its own Plugins page** in the sidebar, which
+   installs, enables, disables and removes plugins and records dsh's
+   exemptions. It overlaps what the shop does; it has no catalog, no
+   acknowledgement gate and no compatibility verdicts. What the shop should
+   be beside it is a product question. **(b) CI pins the harness at
+   0.1.5-rc.3**, so it never runs the 0.1.7 half of the e2e: the refusal
+   branch and every fix that made the 0.1.7 UI load. A second leg costs one
+   more e2e job per `packages/**` change.
+
 ## P1 — the Host half (done 2026-08-25)
 
 The shop's server side: `packages/dsh-plugin-shop/src/host/`, registering the `shop/*` Remote. Spec sections 5.3, 7.2, 7.3, and 9 define it. Exit criterion: the real-installation test in spec section 11.3 passes. Implemented per [2026-08-25-p1-host.md](2026-08-25-p1-host.md): all five `shop/*` methods, catalog fetch/verify/cache with stale degradation, the four rejection paths through the executor, per-profile mutex, hot setEnabled, and the CI gate. Kept below as the record of the constraints P1 was built under.
@@ -121,6 +133,7 @@ None of these block a merge. They are recorded so they are not rediscovered as i
 | repo | No coverage gate is configured, so untested branches are not caught by CI |
 | workflow | The `github-pages` environment has no `url:` wired to the deployment output, so the deployed URL does not surface in the GitHub UI |
 | workflow | The step named "Publish to Pages" only uploads the artifact; the actual publish is the deploy job's step. Misleading when debugging a failed publish |
+| `index.ts` hot mount | The loader keeps one `subtree` per entry, so a second hot mount in one session replaces the first as the shop entry's subtree: read from the loader's source, the first package keeps running but drops out of `loader.entries()` until the next boot. Not measured end to end (design 2026-09-26-dsh-017-readiness, B0.3) |
 
 ## Optional upstream PRs to DeepSeek Harness
 

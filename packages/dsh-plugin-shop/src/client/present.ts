@@ -33,7 +33,6 @@ export function activationNoticeKey(activation: Activation, restartReason: HotRe
     case 'host-unsupported': return 'hotHostUnsupportedNotice'
     case 'timeout': return 'hotTimeoutNotice'
     case 'mount-failed': return 'hotMountFailedNotice'
-    case 'client-half': return 'hotClientHalfNotice'
     case 'already-loaded': return 'hotAlreadyLoadedNotice'
     default: return 'installedRestartNotice'
   }
@@ -73,6 +72,7 @@ export function installPhaseKey(phase: 'downloading' | 'installing'): ShopLocale
  * could not have helped. */
 export function restartBlockedNoticeKey(reason: RestartBlockedReason): ShopLocaleKey {
   switch (reason) {
+    case 'desktop': return 'restartBlockedDesktopNotice'
     case 'windows': return 'restartBlockedWindowsNotice'
     case 'systemd': return 'restartBlockedSystemdNotice'
     case 'port-zero': return 'restartBlockedPortZeroNotice'
@@ -117,14 +117,18 @@ export function harnessVerdictOf(
  * facts its copy names — never the copy, which the tab localizes (§4: no copy
  * crosses the RPC).
  *
- * Two severities with two remedies. A taken name is a refusal the host WILL
- * make, and the fix is uninstalling a plugin. Everything else is about this
- * harness and is advisory — the host installs anyway: components node
- * resolution and the page's module table both lack, and an author's declared
- * range or profile list this dsh falls outside of.
+ * Refusals and warnings, each with its own remedy. Two are refusals, and
+ * disable the button (`refusesInstall`): a taken name, which the host WILL
+ * refuse and the reader fixes by uninstalling a plugin; and harness peers the
+ * running dsh WILL refuse (0.1.7 on), fixed by dsh's exact-version exemption,
+ * whose command the host sends when dsh would accept one. Everything else is
+ * about this harness and is advisory — the host installs anyway: components
+ * node resolution and the page's module table both lack, and an author's
+ * declared range or profile list this dsh falls outside of.
  */
 export type Blocker =
   | { kind: 'name-taken'; holder: string }
+  | { kind: 'harness-peers'; refused: Readonly<Record<string, string>>; running: string; allowCommand: string | null }
   | { kind: 'missing-peers'; modules: readonly string[] }
   | { kind: 'harness-range'; range: string; running: string }
   | { kind: 'harness-profile'; declared: readonly string[]; running: string }
@@ -134,13 +138,13 @@ export type BlockerKind = Blocker['kind']
 /**
  * Everything standing in one entry's way, in the order every surface renders
  * it — the card's detail lines, the badge's accessible name, the outdated
- * row's gate warning — and the one list the incompatible filter reads, through
- * `readsIncompatible`.
+ * row's refusal — and the one list the incompatible filter reads, through
+ * `readsIncompatible`, and the install button, through `refusesInstall`.
  *
- * The name conflict reads first: it is about a plugin the reader chose and
- * would lose. Then what this machine is measured to lack, then what the author
- * declared, range before profiles — the order the host's verdict carries its
- * halves.
+ * The refusals read first. The name conflict leads: it is about a plugin the
+ * reader chose and would lose. Then dsh's own refusal, then what this machine
+ * is measured to lack, then what the author declared, range before profiles —
+ * the order the host's verdict carries its halves.
  */
 export function blockersOf(
   missing: readonly string[],
@@ -149,6 +153,10 @@ export function blockersOf(
 ): Blocker[] {
   const blockers: Blocker[] = []
   if (nameTakenBy !== undefined) blockers.push({ kind: 'name-taken', holder: nameTakenBy })
+  if (harness?.peers !== undefined) {
+    const { refused, running, allowCommand } = harness.peers
+    blockers.push({ kind: 'harness-peers', refused, running, allowCommand })
+  }
   if (missing.length > 0) blockers.push({ kind: 'missing-peers', modules: missing })
   if (harness?.dsh !== undefined) blockers.push({ kind: 'harness-range', range: harness.dsh.range, running: harness.dsh.running })
   if (harness?.profile !== undefined) {
@@ -178,6 +186,35 @@ export function blockerBadgeKey(blockers: readonly { kind: BlockerKind }[]): Sho
  * the filter that names it. */
 export function readsIncompatible(blockers: readonly { kind: BlockerKind }[]): boolean {
   return blockerBadgeKey(blockers) === 'incompatibleBadge'
+}
+
+/**
+ * Whether this install is refused before it starts, so its button is
+ * disabled rather than opening the acknowledgement gate for an install that
+ * cannot proceed: by the host, for a taken name, or by the running dsh, for
+ * its harness peers.
+ *
+ * The second is the one harness reason that blocks (design
+ * 2026-09-26-dsh-017-readiness, B1, amending "warn, never block"): dsh 0.1.7
+ * refuses the install itself, before pnpm runs, and the shop cannot install
+ * past it. The verdict is dsh's own rule on the profile's own exemptions, so
+ * a disabled button is dsh's answer given early, never the shop's opinion —
+ * and recording the exemption the card shows is what enables it again.
+ */
+export function refusesInstall(blockers: readonly { kind: BlockerKind }[]): boolean {
+  return blockers.some(blocker => blocker.kind === 'name-taken' || blocker.kind === 'harness-peers')
+}
+
+/**
+ * The refused peers as the refusal's copy names them: each peer and the range
+ * the package declared, in the order dsh reported them. A blank range — which
+ * dsh refuses — is quoted, or the sentence would name the peer and nothing
+ * it asked for.
+ */
+export function refusedPeersText(refused: Readonly<Record<string, string>>): string {
+  return Object.entries(refused)
+    .map(([name, range]) => `${name} ${range.trim() === '' ? JSON.stringify(range) : range}`)
+    .join(', ')
 }
 
 /**
@@ -232,6 +269,7 @@ export function rejectionCodeKey(code: InstallRejectionCode): ShopLocaleKey {
     case 'tarball-integrity': return 'tarballIntegrityCode'
     case 'ambiguous-identity': return 'ambiguousIdentityCode'
     case 'name-taken': return 'nameTakenCode'
+    case 'desktop-profile': return 'desktopProfileCode'
   }
 }
 

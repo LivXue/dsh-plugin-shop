@@ -3,7 +3,7 @@ import {
   ACKNOWLEDGEMENT_EN, INSTALL_POLL_MS, SHOP_VISIBLE_BATCH, activationNoticeKey, categoryKey, displayVersion, entryKey, formatSize, formatStars,
   uninstallActivationNoticeKey,
   authorOf, blockerBadgeKey, blockersOf, harnessVerdictOf, hasGithubHome, heldBy, isCustomLicense, isShopLike, missingPeersOf,
-  nextVisibleCount, npmPageUrl, readsIncompatible,
+  nextVisibleCount, npmPageUrl, readsIncompatible, refusedPeersText, refusesInstall,
   installPhaseKey, reduceInstall, type InstallView,
   reviewHashPin, sortByStars, starsOf, tierKey,
   RESTART_STABLE_MS, RESTART_WAIT_MS, restartMonitorVerdict,
@@ -647,6 +647,15 @@ describe('missingPeersOf', () => {
  * what is running. `0.1.2-rc.1` is a range no 0.1.5 build satisfies. */
 const RANGE: HarnessVerdict = { dsh: { range: '0.1.2-rc.1', running: '0.1.5-rc.3' } }
 const PROFILE: HarnessVerdict = { profile: { declared: ['tui', 'cli'], running: 'web' } }
+/** dsh 0.1.7-rc.2's refusal of a package pinning the harness to 0.1.5-rc.3,
+ * as the host sends it. */
+const PEERS: HarnessVerdict = {
+  peers: {
+    refused: { '@deepseek-ai/dsh': '0.1.5-rc.3' },
+    running: '0.1.7-rc.2',
+    allowCommand: 'dsh plugin --profile web allow-version dsh-pinned@1.2.0 --dsh-version 0.1.7-rc.2 --accept-risk',
+  },
+}
 
 describe('harnessVerdictOf', () => {
   it('returns the verdict for this install identity', () => {
@@ -690,9 +699,45 @@ describe('blockersOf', () => {
     ])
   })
 
-  it('reads the name conflict first, then what is missing here, then what the author declared', () => {
-    expect(blockersOf(['@x/absent'], { ...RANGE, ...PROFILE }, 'CLAPEILL/dsh-foo').map(blocker => blocker.kind))
-      .toEqual(['name-taken', 'missing-peers', 'harness-range', 'harness-profile'])
+  it('reads the refusals first — the name conflict, then dsh\'s own — then what is missing here, then what the author declared', () => {
+    expect(blockersOf(['@x/absent'], { ...RANGE, ...PROFILE, ...PEERS }, 'CLAPEILL/dsh-foo').map(blocker => blocker.kind))
+      .toEqual(['name-taken', 'harness-peers', 'missing-peers', 'harness-range', 'harness-profile'])
+  })
+
+  it("carries dsh's refusal whole: what it refused, what runs, and the command that exempts it", () => {
+    expect(blockersOf([], PEERS, undefined)).toEqual([{
+      kind: 'harness-peers',
+      refused: { '@deepseek-ai/dsh': '0.1.5-rc.3' },
+      running: '0.1.7-rc.2',
+      allowCommand: 'dsh plugin --profile web allow-version dsh-pinned@1.2.0 --dsh-version 0.1.7-rc.2 --accept-risk',
+    }])
+  })
+})
+
+describe('refusesInstall', () => {
+  it('refuses for a taken name and for what dsh refuses, and for nothing else', () => {
+    expect(refusesInstall(blockersOf([], undefined, 'CLAPEILL/dsh-foo'))).toBe(true)
+    expect(refusesInstall(blockersOf([], PEERS, undefined))).toBe(true)
+    // Warn, never block, for everything the host installs anyway: a missing
+    // component, and an author's own declaration.
+    expect(refusesInstall(blockersOf(['@x/absent'], { ...RANGE, ...PROFILE }, undefined))).toBe(false)
+    expect(refusesInstall([])).toBe(false)
+  })
+
+  it('still refuses when dsh would accept no exemption, since dsh refuses the install all the same', () => {
+    expect(refusesInstall(blockersOf([], { peers: { ...PEERS.peers!, allowCommand: null } }, undefined))).toBe(true)
+  })
+})
+
+describe('refusedPeersText', () => {
+  it('names each refused peer with the range the package declared, in the order dsh gave', () => {
+    expect(refusedPeersText({ '@deepseek-ai/dsh': '0.1.5-rc.3', '@deepseek-ai/dsh-web-app': '~0.1.2' }))
+      .toBe('@deepseek-ai/dsh 0.1.5-rc.3, @deepseek-ai/dsh-web-app ~0.1.2')
+  })
+
+  it('quotes a blank range, which dsh refuses, so the sentence still says what was asked for', () => {
+    expect(refusedPeersText({ '@deepseek-ai/dsh': '', '@deepseek-ai/dsh-base': '  ' }))
+      .toBe('@deepseek-ai/dsh "", @deepseek-ai/dsh-base "  "')
   })
 })
 
@@ -709,6 +754,12 @@ describe('blockerBadgeKey and readsIncompatible', () => {
       expect(readsIncompatible(blockers)).toBe(true)
     }
     expect(readsIncompatible(blockersOf(['@x/absent'], undefined, undefined))).toBe(true)
+  })
+
+  it("reads \"Incompatible\" for dsh's own refusal, which the incompatible filter counts too", () => {
+    const blockers = blockersOf([], PEERS, undefined)
+    expect(blockerBadgeKey(blockers)).toBe('incompatibleBadge')
+    expect(readsIncompatible(blockers)).toBe(true)
   })
 
   it('lets a taken name decide the word whenever it holds', () => {
@@ -732,6 +783,11 @@ describe('the harness verdict copy', () => {
     expect(dict.harnessRangeDetail).toContain('{running}')
     expect(dict.harnessProfileDetail).toContain('{declared}')
     expect(dict.harnessProfileDetail).toContain('{running}')
+    // dsh's refusal names the version refusing and what the package asked
+    // for; the remedy leads into a command, so it must end by pointing at it.
+    expect(dict.harnessPeersDetail).toContain('{running}')
+    expect(dict.harnessPeersDetail).toContain('{peers}')
+    expect(dict.harnessPeersRemedy).toMatch(/[:：]$/)
   })
 })
 

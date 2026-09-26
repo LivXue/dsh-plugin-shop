@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { readRunningHarness, type RunningHarness } from '../../src/host/harness.ts'
@@ -100,17 +100,24 @@ const HARNESS_MODULE = new URL('../../src/host/harness.ts', import.meta.url).hre
  * that crashed after printing would pass. `cwd` is the child's working
  * directory.
  */
-function readInChild(script: string, cwd?: string): RunningHarness {
+function readInChild(script: string, cwd?: string): SerializedHarness {
+  // `peerCheck` holds the running app-boot's own functions, which JSON cannot
+  // carry, so the child reports whether there is one; the test that needs the
+  // functions calls them in its child instead.
   const source = [
     `const { readRunningHarness } = await import(${JSON.stringify(HARNESS_MODULE)})`,
-    `console.log(JSON.stringify(await readRunningHarness(${JSON.stringify(script)})))`,
+    `const harness = await readRunningHarness(${JSON.stringify(script)})`,
+    `console.log(JSON.stringify({ ...harness, peerCheck: harness.peerCheck !== null }))`,
   ].join('\n')
   const child = spawnSync(process.execPath, ['--input-type=module', '-e', source], { cwd, encoding: 'utf8' })
   if (child.status !== 0) {
     throw new Error(`readRunningHarness(${JSON.stringify(script)}) in a child: status ${child.status}, signal ${child.signal}, error ${child.error?.message ?? 'none'}\n${child.stderr}`)
   }
-  return JSON.parse(child.stdout) as RunningHarness
+  return JSON.parse(child.stdout) as SerializedHarness
 }
+
+/** A `RunningHarness` as a child process reports it: `peerCheck` as presence. */
+type SerializedHarness = Omit<RunningHarness, 'peerCheck'> & { peerCheck: boolean }
 
 describe('readRunningHarness', () => {
   it('reads the version and the template table of the dsh that owns the script', () => {
@@ -118,7 +125,7 @@ describe('readRunningHarness', () => {
     const { dshDir, bin } = installDsh(mkdtempSync(join(TEMP_ROOT, 'nested-')))
     installAppBoot(join(dshDir, 'node_modules'), RC3_EXPORT)
 
-    expect(readInChild(bin)).toEqual({ dshVersion: '0.1.5-rc.3', templates: RC3_TABLE })
+    expect(readInChild(bin)).toEqual({ dshVersion: '0.1.5-rc.3', templates: RC3_TABLE, patchLists: false, peerCheck: false })
   })
 
   it('finds app-boot as a sibling of the dsh package, where pnpm and a hoisting install put it', () => {
@@ -126,7 +133,7 @@ describe('readRunningHarness', () => {
     const { bin } = installDsh(root)
     installAppBoot(join(root, 'node_modules'), MARKED_EXPORT)
 
-    expect(readInChild(bin)).toEqual({ dshVersion: '0.1.5-rc.3', templates: MARKED_EXPORT })
+    expect(readInChild(bin)).toEqual({ dshVersion: '0.1.5-rc.3', templates: MARKED_EXPORT, patchLists: false, peerCheck: false })
   })
 
   it('reads the copy dsh itself imports when there are two: the nested one', () => {
@@ -154,13 +161,13 @@ describe('readRunningHarness', () => {
     mkdirSync(dirname(shim), { recursive: true })
     symlinkSync(bin, shim)
 
-    expect(readInChild(shim)).toEqual({ dshVersion: '0.1.5-rc.3', templates: RC3_TABLE })
+    expect(readInChild(shim)).toEqual({ dshVersion: '0.1.5-rc.3', templates: RC3_TABLE, patchLists: false, peerCheck: false })
   })
 
   it('knows nothing when there is no script, or none it can resolve', async () => {
     const missing = join(mkdtempSync(join(TEMP_ROOT, 'missing-')), 'lib', 'bin.js')
     for (const script of [undefined, missing, 'bad\0path']) {
-      expect(await readRunningHarness(script), JSON.stringify(script)).toEqual({ dshVersion: null, templates: {} })
+      expect(await readRunningHarness(script), JSON.stringify(script)).toEqual({ dshVersion: null, templates: {}, patchLists: null, peerCheck: null })
     }
   })
 
@@ -171,7 +178,7 @@ describe('readRunningHarness', () => {
     const { dshDir } = installDsh(mkdtempSync(join(TEMP_ROOT, 'empty-')))
     installAppBoot(join(dshDir, 'node_modules'), RC3_EXPORT)
 
-    expect(readInChild('', join(dshDir, 'lib'))).toEqual({ dshVersion: null, templates: {} })
+    expect(readInChild('', join(dshDir, 'lib'))).toEqual({ dshVersion: null, templates: {}, patchLists: null, peerCheck: false })
   })
 
   it('knows nothing when the script belongs to some other package', () => {
@@ -187,7 +194,7 @@ describe('readRunningHarness', () => {
     writeFileSync(join(runner, 'package.json'), JSON.stringify({ name: 'tinypool', version: '1.1.1' }))
     writeFileSync(join(runner, 'dist', 'entry', 'process.js'), '')
 
-    expect(readInChild(join(runner, 'dist', 'entry', 'process.js'))).toEqual({ dshVersion: null, templates: {} })
+    expect(readInChild(join(runner, 'dist', 'entry', 'process.js'))).toEqual({ dshVersion: null, templates: {}, patchLists: null, peerCheck: false })
   })
 
   it('stops at the first manifest above the script, and never climbs past it to a dsh', () => {
@@ -201,7 +208,7 @@ describe('readRunningHarness', () => {
     writeFileSync(join(vendored, 'package.json'), JSON.stringify({ name: 'bundled-helper', version: '1.0.0' }))
     writeFileSync(join(vendored, 'entry.js'), '')
 
-    expect(readInChild(join(vendored, 'entry.js'))).toEqual({ dshVersion: null, templates: {} })
+    expect(readInChild(join(vendored, 'entry.js'))).toEqual({ dshVersion: null, templates: {}, patchLists: null, peerCheck: false })
   })
 
   it('walks past a package.json that is not a file, and stops at one it cannot parse', async () => {
@@ -215,7 +222,7 @@ describe('readRunningHarness', () => {
 
     const stopped = installDsh(mkdtempSync(join(TEMP_ROOT, 'manifest-bad-')))
     writeFileSync(join(stopped.dshDir, 'lib', 'package.json'), '{not json')
-    expect(await readRunningHarness(stopped.bin)).toEqual({ dshVersion: null, templates: {} })
+    expect(await readRunningHarness(stopped.bin)).toEqual({ dshVersion: null, templates: {}, patchLists: null, peerCheck: null })
   })
 
   it('reads a version only when the manifest carries a non-empty string, and keeps the templates either way', () => {
@@ -226,7 +233,7 @@ describe('readRunningHarness', () => {
     for (const [version, expected] of [[undefined, null], ['', null], [7, null], [null, null], ['nightly', 'nightly']] as const) {
       const { dshDir, bin } = installDsh(mkdtempSync(join(TEMP_ROOT, 'version-')), { version })
       installAppBoot(join(dshDir, 'node_modules'), MARKED_EXPORT)
-      expect(readInChild(bin), JSON.stringify(version)).toEqual({ dshVersion: expected, templates: MARKED_EXPORT })
+      expect(readInChild(bin), JSON.stringify(version)).toEqual({ dshVersion: expected, templates: MARKED_EXPORT, patchLists: false, peerCheck: false })
     }
   })
 
@@ -234,16 +241,96 @@ describe('readRunningHarness', () => {
     // Every way app-boot can fail to supply a table — none installed, an entry
     // that throws on import, an export of the wrong name — costs the profile
     // half and nothing else.
-    const cases: Array<[string, (dshDir: string) => void]> = [
-      ['no app-boot', () => {}],
-      ['an entry that throws', dshDir => { installAppBoot(join(dshDir, 'node_modules'), null, 'throw new Error("app-boot fixture")\n') }],
-      ['no PROFILE_TEMPLATES export', dshDir => { installAppBoot(join(dshDir, 'node_modules'), null, 'export const SOMETHING_ELSE = {}\n') }],
+    // `patchLists` rides on the same read: an app-boot that loads answers it
+    // from its exports, one that does not leaves it unknown.
+    const cases: Array<[string, (dshDir: string) => void, boolean | null]> = [
+      ['no app-boot', () => {}, null],
+      ['an entry that throws', dshDir => { installAppBoot(join(dshDir, 'node_modules'), null, 'throw new Error("app-boot fixture")\n') }, null],
+      ['no PROFILE_TEMPLATES export', dshDir => { installAppBoot(join(dshDir, 'node_modules'), null, 'export const SOMETHING_ELSE = {}\n') }, false],
     ]
-    for (const [label, stage] of cases) {
+    for (const [label, stage, patchLists] of cases) {
       const { dshDir, bin } = installDsh(mkdtempSync(join(TEMP_ROOT, 'no-table-')))
       stage(dshDir)
-      expect(readInChild(bin), label).toEqual({ dshVersion: '0.1.5-rc.3', templates: {} })
+      expect(readInChild(bin), label).toEqual({ dshVersion: '0.1.5-rc.3', templates: {}, patchLists, peerCheck: false })
     }
+  })
+
+  it('reads whether the running dsh takes a list-valued bundle patch off its app-boot\'s exports', () => {
+    // dsh 0.1.7's app-boot exports `bundlePatchFiles`, which accepts a list;
+    // 0.1.5-rc.3's exports nothing of the kind and joins the declaration onto
+    // a path, so a list there stops the profile from starting. The export is
+    // the feature, which is sharper than a version comparison.
+    const { dshDir, bin } = installDsh(mkdtempSync(join(TEMP_ROOT, 'patch-lists-')), { version: '0.1.7-rc.2' })
+    installAppBoot(join(dshDir, 'node_modules'), null, [
+      `export const PROFILE_TEMPLATES = ${JSON.stringify(RC3_EXPORT)}`,
+      'export function bundlePatchFiles(bundle) { return typeof bundle.patch === "string" ? [bundle.patch] : bundle.patch }',
+      '',
+    ].join('\n'))
+
+    expect(readInChild(bin)).toEqual({ dshVersion: '0.1.7-rc.2', templates: RC3_TABLE, patchLists: true, peerCheck: false })
+  })
+
+  it('hands over the running dsh\'s own peer check, whose answers are app-boot\'s', () => {
+    // dsh 0.1.7's app-boot exports the rule it refuses an install by and the
+    // reader of the exemptions a profile holds. The shop's verdict calls THOSE,
+    // so it cannot drift from the refusal it predicts. The fixture's functions
+    // answer with values no shop code produces, so what the child prints can
+    // only have come from them.
+    //
+    // The runtime the rule is handed is app-boot's OWN version, read from its
+    // manifest — the fixture's is 0.1.5-rc.3 under a 0.1.7-rc.2 dsh, so the
+    // two cannot be confused. That is the version dsh's installer judges by:
+    // it passes none, and app-boot's default reads the same manifest.
+    const { dshDir, bin } = installDsh(mkdtempSync(join(TEMP_ROOT, 'peer-check-')), { version: '0.1.7-rc.2' })
+    installAppBoot(join(dshDir, 'node_modules'), null, [
+      `export const PROFILE_TEMPLATES = ${JSON.stringify(RC3_EXPORT)}`,
+      'export function evaluatePluginCompatibility(manifest, exemptions, runtimeVersion) {',
+      '  return { name: manifest.name, version: manifest.version, runtimeVersion: `fixture:${runtimeVersion}`, peers: manifest.peerDependencies, exempted: Object.hasOwn(exemptions, manifest.name) }',
+      '}',
+      'export function readProfileVersionExemptions(dir) { return { [dir]: ["fixture-runtime"] } }',
+      '',
+    ].join('\n'))
+    const source = [
+      `const { readRunningHarness } = await import(${JSON.stringify(HARNESS_MODULE)})`,
+      `const { peerCheck } = await readRunningHarness(${JSON.stringify(bin)})`,
+      `console.log(JSON.stringify({`,
+      `  issue: peerCheck.evaluate({ name: 'p', version: '1.0.0', peerDependencies: { '@deepseek-ai/dsh': '^9' } }, { p: ['x'] }),`,
+      `  exemptions: peerCheck.exemptions('/profile'),`,
+      `}))`,
+    ].join('\n')
+    const child = spawnSync(process.execPath, ['--input-type=module', '-e', source], { encoding: 'utf8' })
+    expect(child.status, child.stderr).toBe(0)
+    expect(JSON.parse(child.stdout)).toEqual({
+      issue: { name: 'p', version: '1.0.0', runtimeVersion: 'fixture:0.1.5-rc.3', peers: { '@deepseek-ai/dsh': '^9' }, exempted: true },
+      exemptions: { '/profile': ['fixture-runtime'] },
+    })
+    expect(readInChild(bin).peerCheck).toBe(true)
+  })
+
+  it('offers no peer check when app-boot exports only one of the two functions', () => {
+    // Half a check is no check: a verdict needs the rule AND the exemptions,
+    // or it would refuse what the profile has already allowed.
+    const { dshDir, bin } = installDsh(mkdtempSync(join(TEMP_ROOT, 'half-check-')))
+    installAppBoot(join(dshDir, 'node_modules'), null, 'export function evaluatePluginCompatibility() { return undefined }\n')
+    expect(readInChild(bin).peerCheck).toBe(false)
+  })
+
+  it('offers no peer check when app-boot\'s manifest names no version, and keeps what it read apart', () => {
+    // The rule judges by app-boot's own version; without one there is
+    // nothing to judge by. The template table and the patch-list answer come
+    // from the same import and do not depend on it.
+    const { dshDir, bin } = installDsh(mkdtempSync(join(TEMP_ROOT, 'versionless-check-')), { version: '0.1.7-rc.2' })
+    const appBoot = installAppBoot(join(dshDir, 'node_modules'), null, [
+      `export const PROFILE_TEMPLATES = ${JSON.stringify(RC3_EXPORT)}`,
+      'export function bundlePatchFiles(bundle) { return [bundle.patch] }',
+      'export function evaluatePluginCompatibility() { return undefined }',
+      'export function readProfileVersionExemptions() { return {} }',
+      '',
+    ].join('\n'))
+    const manifest = JSON.parse(readFileSync(join(appBoot, 'package.json'), 'utf8')) as Record<string, unknown>
+    delete manifest.version
+    writeFileSync(join(appBoot, 'package.json'), JSON.stringify(manifest))
+    expect(readInChild(bin)).toEqual({ dshVersion: '0.1.7-rc.2', templates: RC3_TABLE, patchLists: true, peerCheck: false })
   })
 
   it('never looks app-boot up through NODE_PATH', () => {
@@ -285,8 +372,8 @@ describe('readRunningHarness', () => {
     expect(child.status, child.stderr).toBe(0)
     expect(JSON.parse(child.stdout)).toEqual({
       cjs: true,
-      without: { dshVersion: '0.1.5-rc.3', templates: {} },
-      with: { dshVersion: '0.1.5-rc.3', templates: RC3_TABLE },
+      without: { dshVersion: '0.1.5-rc.3', templates: {}, patchLists: null, peerCheck: null },
+      with: { dshVersion: '0.1.5-rc.3', templates: RC3_TABLE, patchLists: false, peerCheck: null },
     })
   })
 })

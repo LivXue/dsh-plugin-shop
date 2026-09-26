@@ -420,6 +420,10 @@ export function gate(
     // text, a range and a list of names copied from their manifest verbatim,
     // which is exactly what this budget exists to measure.
     ...(candidate.compatibility !== undefined ? { compatibility: candidate.compatibility } : {}),
+    // Counted for the same reason: names and ranges copied verbatim. Measured
+    // against the catalog of 2026-09-26, the heaviest real list (62 peers)
+    // leaves that entry under half this budget.
+    ...(candidate.dshPeers !== undefined ? { dshPeers: candidate.dshPeers } : {}),
   })
   if (payloadBytes > ENTRY_PAYLOAD_MAX_BYTES) {
     return reject(name, 'no-manifest',

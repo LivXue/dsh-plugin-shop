@@ -323,6 +323,69 @@ describe('hotMount / hotUnmount', () => {
     expect(fs.exists(join(HOT_DIR, 'hot-1.yml'))).toBe(false)
   })
 
+  it('mounts every file of a list-valued bundle patch as one tree, in order', async () => {
+    // dsh 0.1.7 reads `dsh.bundle.patch` as a list of files applied in order
+    // (app-boot `bundlePatchFiles`); the hot tree replicates all of them.
+    const fs = memFs()
+    fs.write(join(PKG_DIR, 'package.json'), JSON.stringify({
+      name: 'dsh-hello-plugin', version: '1.0.0',
+      dsh: { bundle: { patch: ['./patches/host.yml', './patches/web.yml'] } },
+    }))
+    fs.write(join(PKG_DIR, 'patches', 'host.yml'), '- insert:\n    - id: hello-host\n      name: dsh-hello-plugin/host\n')
+    fs.write(join(PKG_DIR, 'patches', 'web.yml'), '- insert:\n    - id: hello-web\n      name: dsh-hello-plugin/web\n')
+    const ctx = testCtx({ await: async () => {}, dispose: async () => {} })
+    const result = await hotMount(ctx, PROFILE, 'dsh-hello-plugin', { hotTreeClass: FakeHotTree, fs, dir: HOT_DIR, timeoutMs: 1000 })
+    expect(result).toEqual({ ok: true, reason: null })
+    expect(fs.read(join(HOT_DIR, 'hot-1.yml')))
+      .toBe('- id: mkt-hello-host\n  name: dsh-hello-plugin/host\n- id: mkt-hello-web\n  name: dsh-hello-plugin/web\n')
+  })
+
+  it('restarts instead when any one file of a list-valued patch cannot be hot-mounted', async () => {
+    const fs = memFs()
+    fs.write(join(PKG_DIR, 'package.json'), JSON.stringify({
+      name: 'dsh-hello-plugin', version: '1.0.0',
+      dsh: { bundle: { patch: ['./host.yml', './config.yml'] } },
+    }))
+    fs.write(join(PKG_DIR, 'host.yml'), '- insert:\n    - id: hello\n      name: dsh-hello-plugin\n')
+    fs.write(join(PKG_DIR, 'config.yml'), '- insert:\n    - id: tuned\n      name: dsh-hello-plugin/tuned\n      config:\n        level: 3\n')
+    const ctx = testCtx({ await: async () => {}, dispose: async () => {} })
+    const result = await hotMount(ctx, PROFILE, 'dsh-hello-plugin', { hotTreeClass: FakeHotTree, fs, dir: HOT_DIR, timeoutMs: 1000 })
+    expect(result).toEqual({ ok: false, reason: 'not-simple' })
+    expect(fs.exists(join(HOT_DIR, 'hot-1.yml'))).toBe(false)
+  })
+
+  it('refuses a list-valued patch when any one of its files escapes the package directory', async () => {
+    const fs = memFs()
+    const hostile = resolve(PKG_DIR, '../../../../../etc/hostile.yml')
+    fs.write(join(PKG_DIR, 'package.json'), JSON.stringify({
+      name: 'dsh-hello-plugin', version: '1.0.0',
+      dsh: { bundle: { patch: ['./cordis.patch.yml', '../../../../../etc/hostile.yml'] } },
+    }))
+    fs.write(join(PKG_DIR, 'cordis.patch.yml'), '- insert:\n    - id: hello\n      name: dsh-hello-plugin\n')
+    fs.write(hostile, '- insert:\n    - id: pwned\n      name: hostile\n')
+    const ctx = testCtx({ await: async () => {}, dispose: async () => {} })
+    const result = await hotMount(ctx, PROFILE, 'dsh-hello-plugin', { hotTreeClass: FakeHotTree, fs, dir: HOT_DIR, timeoutMs: 1000 })
+    expect(result).toEqual({ ok: false, reason: 'no-patch' })
+    expect(fs.exists(join(HOT_DIR, 'hot-1.yml'))).toBe(false)
+  })
+
+  it('does not fall back to the default patch name for a declaration dsh itself refuses', async () => {
+    // Only an ABSENT `dsh.bundle.patch` means the conventional file. A
+    // present one that is neither a path nor a list of paths makes dsh throw
+    // on the bundle, so mounting cordis.patch.yml in its place would run a
+    // plugin the next boot cannot load.
+    const fs = memFs()
+    fs.write(join(PKG_DIR, 'package.json'), JSON.stringify({
+      name: 'dsh-hello-plugin', version: '1.0.0',
+      dsh: { bundle: { patch: ['./cordis.patch.yml', 3] } },
+    }))
+    fs.write(join(PKG_DIR, 'cordis.patch.yml'), '- insert:\n    - id: hello\n      name: dsh-hello-plugin\n')
+    const ctx = testCtx({ await: async () => {}, dispose: async () => {} })
+    const result = await hotMount(ctx, PROFILE, 'dsh-hello-plugin', { hotTreeClass: FakeHotTree, fs, dir: HOT_DIR, timeoutMs: 1000 })
+    expect(result).toEqual({ ok: false, reason: 'no-patch' })
+    expect(fs.exists(join(HOT_DIR, 'hot-1.yml'))).toBe(false)
+  })
+
   it('still reads a patch in a subdirectory of the package', async () => {
     const fs = memFs()
     fs.write(join(PKG_DIR, 'package.json'), JSON.stringify({

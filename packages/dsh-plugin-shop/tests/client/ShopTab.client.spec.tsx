@@ -395,6 +395,7 @@ describe('ShopTab', () => {
     ['needs-acknowledgement', 'dsh-plugin-shop: dsh-risky is community-tier; installation requires acknowledgement'],
     ['tarball-integrity', 'dsh-plugin-shop: the release tarball failed sha256 verification against the catalog record; refusing to install'],
     ['name-taken', 'dsh-plugin-shop: dsh-hello-plugin is already installed from CLAPEILL/dsh-hello-plugin.'],
+    ['desktop-profile', 'dsh-plugin-shop: the desktop profile is managed by the DeepSeek Harness desktop app, and dsh refuses to change it from the command line the shop runs; add and remove its plugins from the app instead'],
   ] as const)('renders the %s rejection detail verbatim', async (code, detail) => {
     const { injected, install } = bench(snapshot({ tier: 'verified' }))
     install.mockResolvedValue({ ok: false, code, detail })
@@ -823,6 +824,16 @@ describe('ShopTab', () => {
     // and the only one with no override — made that advice inert.
     expect(notice?.textContent).not.toContain('systemd')
     expect(notice?.textContent).not.toContain('allowRestart')
+  })
+
+  it("names the desktop app when the host reports restartBlocked: 'desktop'", async () => {
+    const { injected, version } = bench(snapshot({ tier: 'verified' }))
+    version.mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartBlocked: 'desktop' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText(en.install))
+    await waitFor(() => expect(container.querySelector('[data-shop-restart-disabled]')).toBeTruthy(), { timeout: 3000 })
+    expect(container.querySelector('[data-shop-restart-disabled]')?.textContent).toBe(en.restartBlockedDesktopNotice)
   })
 
   it("names --port 0 when the host reports restartBlocked: 'port-zero'", async () => {
@@ -2037,6 +2048,95 @@ describe('ShopTab', () => {
     fireEvent.click(row.querySelector('[data-shop-update]') as HTMLElement)
     const warning = row.querySelector('[data-shop-incompatible-warning]')
     expect(warning?.textContent).toBe(en.incompatibleDetail.replace('{modules}', '@deepseek-ai/dsh-client-store'))
+  })
+})
+
+describe("ShopTab refusal by the running dsh's own peer check (0.1.7)", () => {
+  // What the host sends when dsh 0.1.7 would refuse the install on its
+  // harness peers and the profile holds no exemption for this exact version:
+  // dsh's verdict, given early. Unlike an author's declaration it disables
+  // the button (design 2026-09-26-dsh-017-readiness, B1).
+  const COMMAND = 'dsh plugin --profile web allow-version dsh-hello-plugin@1.2.0 --dsh-version 0.1.7-rc.2 --accept-risk'
+  const PEERS: HarnessVerdict = { peers: { refused: { '@deepseek-ai/dsh': '0.1.5-rc.3' }, running: '0.1.7-rc.2', allowCommand: COMMAND } }
+  const peersLine = en.harnessPeersDetail.replace('{running}', '0.1.7-rc.2').replace('{peers}', '@deepseek-ai/dsh 0.1.5-rc.3')
+  const outdatedRow: InstalledFixture = { name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }
+
+  const withVerdict = (verdict: HarnessVerdict): ShopCatalogResult =>
+    ({ ...snapshot({ tier: 'community' }), incompatibleHarness: { 'npm:dsh-hello-plugin': verdict } })
+  const cardOf = (container: HTMLElement): HTMLElement =>
+    container.querySelector('[data-shop-entry="dsh-hello-plugin"]') as HTMLElement
+
+  it('disables Install on the card, naming what dsh refused and the command that exempts it', async () => {
+    const { injected, install } = bench(withVerdict(PEERS))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const card = cardOf(container)
+    expect(card.querySelector('[data-shop-incompatible-detail="harness-peers"]')?.textContent).toBe(peersLine)
+    const remedy = card.querySelector('[data-shop-remedy="harness-peers"]') as HTMLElement
+    expect(remedy.textContent).toContain(en.harnessPeersRemedy)
+    // Verbatim, on a line of its own: it goes to a terminal unchanged.
+    expect(remedy.querySelector('[data-shop-allow-command]')?.textContent).toBe(COMMAND)
+    expect(card.querySelector('[data-shop-blocker]')?.getAttribute('data-shop-blocker')).toBe('harness-peers')
+    expect(card.querySelector('[data-shop-blocker]')?.textContent).toBe(en.incompatibleBadge)
+
+    const button = card.querySelector('[data-shop-install]') as HTMLButtonElement
+    expect(button.disabled).toBe(true)
+    expect(button.hasAttribute('data-shop-refused')).toBe(true)
+    // No gate for an install that cannot proceed, and nothing reaches the host.
+    fireEvent.click(button)
+    expect(card.querySelector('[data-shop-confirm]')).toBeNull()
+    expect(install).not.toHaveBeenCalled()
+  })
+
+  it('still disables Install, with no command, when dsh would refuse the exemption too', async () => {
+    const { injected } = bench(withVerdict({ peers: { ...PEERS.peers!, allowCommand: null } }))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const card = cardOf(container)
+    expect(card.querySelector('[data-shop-incompatible-detail="harness-peers"]')?.textContent).toBe(peersLine)
+    expect(card.querySelector('[data-shop-remedy]')).toBeNull()
+    expect(card.querySelector('[data-shop-allow-command]')).toBeNull()
+    expect((card.querySelector('[data-shop-install]') as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('writes the refusal and its command out on the outdated row, whose disabled Update opens no gate', async () => {
+    // The row states no detail line, and the gate was where its reasons were
+    // written out; a disabled button opens none, so the refusal is printed
+    // beside it — or the only way to enable the button would sit in a title.
+    const { injected } = bench(withVerdict(PEERS), [outdatedRow])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText(en.updatableSection)).toBeTruthy())
+    const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]') as HTMLElement
+    expect((row.querySelector('[data-shop-update]') as HTMLButtonElement).disabled).toBe(true)
+    const refusal = row.querySelector('[data-shop-refusal]') as HTMLElement
+    expect(refusal.querySelector('[data-shop-incompatible-warning="harness-peers"]')?.textContent).toBe(peersLine)
+    expect(refusal.querySelector('[data-shop-allow-command]')?.textContent).toBe(COMMAND)
+    // The card for the same install states it once, in its own detail line.
+    const card = cardOf(container)
+    expect(card.querySelector('[data-shop-refusal]')).toBeNull()
+    expect(card.querySelectorAll('[data-shop-allow-command]')).toHaveLength(1)
+  })
+
+  it('prints no refusal on the outdated row for an advisory reason, which still opens the gate', async () => {
+    const { injected } = bench(withVerdict({ dsh: { range: '0.1.2-rc.1', running: '0.1.7-rc.2' } }), [outdatedRow])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText(en.updatableSection)).toBeTruthy())
+    const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]') as HTMLElement
+    expect(row.querySelector('[data-shop-refusal]')).toBeNull()
+    expect((row.querySelector('[data-shop-update]') as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('enables Install once Refresh finds the exemption recorded', async () => {
+    // The way out, end to end on the client: the reader runs the command, the
+    // host's next catalog call reads the exemption and sends no refusal.
+    const { injected, catalog } = bench(withVerdict(PEERS))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect((cardOf(container).querySelector('[data-shop-install]') as HTMLButtonElement).disabled).toBe(true)
+    catalog.mockResolvedValue({ ...snapshot({ tier: 'community' }), incompatibleHarness: {} })
+    fireEvent.click(container.querySelector('[data-shop-catalog-refresh]') as HTMLElement)
+    await waitFor(() => expect((cardOf(container).querySelector('[data-shop-install]') as HTMLButtonElement).disabled).toBe(false))
+    expect(cardOf(container).querySelector('[data-shop-incompatible-detail="harness-peers"]')).toBeNull()
   })
 })
 

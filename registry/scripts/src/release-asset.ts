@@ -118,6 +118,26 @@ function echo(value: unknown): string {
   return JSON.stringify(text.length > ECHO_MAX ? `${text.slice(0, ECHO_MAX)}…` : text)
 }
 
+/**
+ * The patch files a `dsh.bundle.patch` declares, read as dsh 0.1.7's app-boot
+ * (`bundlePatchFiles`) reads them: one for a string, the listed ones in order
+ * for a list of strings, null for anything else, which dsh refuses to load.
+ */
+function patchFilesOf(patch: unknown): string[] | null {
+  if (typeof patch === 'string') return [patch]
+  if (Array.isArray(patch) && patch.every(file => typeof file === 'string')) return patch as string[]
+  return null
+}
+
+/** What a refused `dsh.bundle.patch` is, in words — echoing it would print
+ * `[object Object]` or a comma-joined list, and a published detail has to be
+ * something its author recognizes. */
+function shapeOf(value: unknown): string {
+  if (value === null) return 'null'
+  if (Array.isArray(value)) return 'a list holding something other than a file path'
+  return typeof value === 'object' ? 'an object' : `a ${typeof value}`
+}
+
 /** `tar czf x.tgz ./package` emits `./package/…`, which `readTar` tolerates;
  * normalising here keeps the root rule below from seeing `.` as the root. */
 const normalize = (path: string): string => path.replace(/^\.\//, '')
@@ -527,13 +547,24 @@ export function verifyReleaseAsset(bytes: Uint8Array, bundleName: string): Relea
   // against the live catalog, all of which ship compiled output next to the
   // script. The patch-target rule refuses the incomplete pack it was aimed at
   // and delists none of the 169 the other rules accept (measured).
+  //
+  // One file, or — dsh 0.1.7 — a list applied in order, each held to both
+  // claims below; before lists were read here, a list skipped both.
   const patch = (bundle as { patch?: unknown }).patch
-  if (typeof patch === 'string') {
-    const target = normalize(`${root}/${patch.replace(/^\.\//, '')}`)
+  const patchFiles = patch === undefined ? [] : patchFilesOf(patch)
+  if (patchFiles === null) {
+    return {
+      ok: false,
+      detail: `the release asset declares dsh.bundle.patch as ${shapeOf(patch)}, which is neither a file path nor a list`
+        + ' of file paths, so dsh refuses to load the bundle and the profile would not start.',
+    }
+  }
+  for (const file of patchFiles) {
+    const target = normalize(`${root}/${file.replace(/^\.\//, '')}`)
     if (!paths.includes(target)) {
       return {
         ok: false,
-        detail: `the release asset declares dsh.bundle.patch ${echo(patch)} but the archive does not contain it,`
+        detail: `the release asset declares dsh.bundle.patch ${echo(file)} but the archive does not contain it,`
           + ' so this is a source tree or an incomplete pack rather than an installable package.'
           + ' `npm pack` from a built checkout includes it.',
       }
