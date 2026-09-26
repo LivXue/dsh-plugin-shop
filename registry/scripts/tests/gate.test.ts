@@ -564,6 +564,13 @@ describe('the per-entry size budget', () => {
     expect(reported({ compatibility: undefined })).toBe(reported({}))
   })
 
+  it('counts the harness peers against the budget, because emit writes them', () => {
+    // Names and ranges copied verbatim, like the declaration above.
+    const dshPeers = { '@deepseek-ai/dsh-client-runtime': '^0.1.1-rc.2', '@deepseek-ai/dsh': '' }
+    expect(reported({ dshPeers }) - reported({})).toBe(marginal('dshPeers', dshPeers))
+    expect(reported({ dshPeers: undefined })).toBe(reported({}))
+  })
+
   it('accepts the worst entry the live catalog could hold', () => {
     // Every maximum measured against the live published catalog, all in ONE
     // entry — they are independent observations, so this entry almost

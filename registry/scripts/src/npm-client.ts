@@ -1904,6 +1904,62 @@ export function compatibilityOf(dsh: unknown): Compatibility | undefined {
 }
 
 /**
+ * Longest range recorded for one harness peer ({@link dshPeersOf}), in UTF-16
+ * code units — the same figure as {@link COMPATIBILITY_RANGE_MAX_LENGTH}, for
+ * the same kind of value: a semver range a human wrote. A real one is a caret
+ * range of a dozen characters.
+ */
+export const DSH_PEER_RANGE_MAX_LENGTH = 256
+
+/**
+ * The manifest's peers on the harness itself — `@deepseek-ai/dsh` and every
+ * `@deepseek-ai/dsh-*` — with their ranges verbatim, in manifest order, or
+ * undefined when it declares none.
+ *
+ * This is what dsh 0.1.7 judges an install by (app-boot
+ * `evaluatePluginCompatibility`, design 2026-09-26-dsh-017-readiness, B1), so
+ * it keeps exactly what that check reads, including two things
+ * {@link peerNamesOf} drops: an OPTIONAL peer, because dsh ignores
+ * `peerDependenciesMeta`, and an EMPTY range, which dsh reads as
+ * unsatisfiable. The reader's machine decides whether a range holds, with the
+ * dsh that runs there; nothing is parsed here.
+ *
+ * Bounded by {@link PEERS_MAX_COUNT}, {@link PEER_NAME_MAX_LENGTH} and
+ * {@link DSH_PEER_RANGE_MAX_LENGTH}, and dropped, never rejected, like every
+ * other declaration the harvest bounds. A dropped peer can only HIDE a
+ * refusal, never invent one: dsh refuses when any harness peer fails, so a
+ * shorter record fails no more often — which is the direction the shop, which
+ * disables an install on this record, can afford to be wrong in. A range that
+ * is not a string records nothing for its peer: dsh throws on such a range
+ * whatever its name, so that install is refused at the reader's end, where
+ * the shop reports dsh's own words. The name filter is also what keeps the
+ * output safe to build as a plain object: no key outside the harness scope,
+ * `__proto__` included, is ever written.
+ *
+ * Read on the npm channel only; `Entry.dshPeers` says why a github entry
+ * records none. A reader added there would be a change `DECLARATIONS_RULE`
+ * (`repo-state.ts`) must be bumped for, under the rule {@link peerNamesOf}
+ * states.
+ * @param manifest - one npm version manifest, unvalidated.
+ * @returns the harness peers and their ranges, or undefined when there are none.
+ */
+export function dshPeersOf(manifest: { peerDependencies?: unknown }): Record<string, string> | undefined {
+  const declared = manifest.peerDependencies
+  if (declared === null || typeof declared !== 'object' || Array.isArray(declared)) return undefined
+  const out: Record<string, string> = {}
+  let kept = 0
+  for (const [name, range] of Object.entries(declared)) {
+    if (kept === PEERS_MAX_COUNT) break
+    if (name !== '@deepseek-ai/dsh' && !name.startsWith('@deepseek-ai/dsh-')) continue
+    if (name.length > PEER_NAME_MAX_LENGTH) continue
+    if (typeof range !== 'string' || range.length > DSH_PEER_RANGE_MAX_LENGTH) continue
+    out[name] = range
+    kept += 1
+  }
+  return kept === 0 ? undefined : out
+}
+
+/**
  * Project one npm packument into a candidate.
  * @param packument - the parsed registry document for one package.
  * @returns the candidate, or null when the document names no usable latest version.
@@ -2066,6 +2122,11 @@ export function toCandidate(packument: unknown): Candidate | null {
     ...(() => {
       const compatibility = compatibilityOf(manifest.dsh)
       return compatibility === undefined ? {} : { compatibility }
+    })(),
+    // Absent stays absent here too: most packages peer on no harness package.
+    ...(() => {
+      const dshPeers = dshPeersOf(manifest)
+      return dshPeers === undefined ? {} : { dshPeers }
     })(),
   }
 }

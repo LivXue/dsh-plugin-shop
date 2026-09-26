@@ -111,6 +111,13 @@ export interface Candidate {
    * See {@link Compatibility}.
    */
   compatibility?: Compatibility
+  /**
+   * The manifest's peers on the harness itself (`@deepseek-ai/dsh` and
+   * `@deepseek-ai/dsh-*`) with their ranges verbatim, optional ones and empty
+   * ranges included — what dsh 0.1.7 refuses an install on (`dshPeersOf`).
+   * Absent when the manifest declares none.
+   */
+  dshPeers?: Record<string, string>
 }
 
 /**
@@ -519,4 +526,20 @@ export interface Entry {
    * outlived the gate.
    */
   compatibility?: Compatibility
+  /**
+   * The package's peers on the harness itself with their ranges verbatim
+   * (see {@link Candidate.dshPeers}), present exactly when it declares any.
+   * The Host hands them to the running dsh's own check, which is what refuses
+   * an install on dsh 0.1.7; the catalog records the requirement, never a
+   * verdict. Additive and optional, so it rides every schemaVersion: no shop
+   * that predates it reads the key.
+   *
+   * npm entries only. dsh keys the exemption that clears its refusal by the
+   * INSTALLED manifest's `name@version`, and a github entry's catalog version
+   * is a commit, so the shop forms no verdict for one and a record here would
+   * be a key nothing reads. A verdict for github entries needs the manifest
+   * version as well; both would then be harvested under one
+   * `DECLARATIONS_RULE` bump (design 2026-09-26-dsh-017-readiness, B1).
+   */
+  dshPeers?: Record<string, string>
 }

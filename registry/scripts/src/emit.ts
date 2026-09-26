@@ -161,8 +161,9 @@ export function assertCatalogInvariants(entries: Entry[], builtAt: string): void
  */
 function toWellFormedEntry(entry: Entry): Entry {
   // The cast is unavoidable and sound: `wellFormed` preserves the shape of
-  // whatever it is handed exactly — same keys, same order, same array lengths
-  // — and only ever replaces a string with another string.
+  // whatever it is handed exactly — same keys (a well-formed one is its own
+  // image), same order, same array lengths — and only ever replaces a string
+  // with another string.
   return wellFormed(entry) as Entry
 }
 
@@ -170,7 +171,10 @@ function wellFormed(value: unknown): unknown {
   if (typeof value === 'string') return value.toWellFormed()
   if (Array.isArray(value)) return value.map(wellFormed)
   if (typeof value === 'object' && value !== null) {
-    return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, wellFormed(inner)]))
+    // Keys too: `dshPeers` is the first field whose KEYS are manifest text (a
+    // peer's name), and a lone surrogate in one reaches the artifact the same
+    // way one in a value would.
+    return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key.toWellFormed(), wellFormed(inner)]))
   }
   return value
 }
@@ -206,9 +210,10 @@ export function emit(
   // boundary — the classifier and the config keep `theme`, so flipping
   // SHOP_CATALOG_V5 at release time restores it without re-reviewing anything
   // (design §3.5). The additive fields (`added`, `tarball`, `replacement`,
-  // `peers`, `publisher`, `unpackedSize`, `installSize`, `compatibility`) ride
-  // EVERY version: an old client's zod strips a key it does not know
-  // (consumer-side zod is non-strict by design), so none of them needs a gate.
+  // `peers`, `publisher`, `unpackedSize`, `installSize`, `compatibility`,
+  // `dshPeers`) ride EVERY version: an old client's zod strips a key it does
+  // not know (consumer-side zod is non-strict by design), so none of them
+  // needs a gate.
   // Keep this list whole — it is the one place the "does a new field need a
   // version gate?" decision is recorded, and a reader who finds their field
   // missing cannot tell a deliberate gate from an omission. `peers` had one

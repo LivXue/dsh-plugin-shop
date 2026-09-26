@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { applyAxisReport, MAX_EVICTIONS_PER_RUN, MAX_PINNED_PER_KEYWORD, type PublisherState } from '../src/publisher-state.ts'
-import { type Cell, cellKey, cellQuery, COMPATIBILITY_PROFILES_MAX_COUNT, COMPATIBILITY_RANGE_MAX_LENGTH, FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, keywordsOf, KEYWORD_MAX_LENGTH, KEYWORDS_MAX_COUNT, maintainersOf, MAINTAINERS_MAX_COUNT, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describePublisherAxis, describeShortfall, parseKeywordShortfall, parsePublisherAxisReport, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, PROFILE_NAME_MAX_LENGTH, type PublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
+import { type Cell, cellKey, cellQuery, COMPATIBILITY_PROFILES_MAX_COUNT, COMPATIBILITY_RANGE_MAX_LENGTH, DSH_PEER_RANGE_MAX_LENGTH, dshPeersOf, FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, keywordsOf, KEYWORD_MAX_LENGTH, KEYWORDS_MAX_COUNT, maintainersOf, MAINTAINERS_MAX_COUNT, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describePublisherAxis, describeShortfall, parseKeywordShortfall, parsePublisherAxisReport, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, PROFILE_NAME_MAX_LENGTH, type PublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
 import { ENTRY_PAYLOAD_MAX_BYTES, entryPayloadBytes } from '../src/gate.ts'
 import { MAX_TARBALL_BYTES } from '../src/github-client.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
@@ -768,6 +768,106 @@ describe('the compatibility bounds', () => {
     expect(marginal(worst)).toBe(1588)
     expect(marginal(worst)).toBeLessThan(ENTRY_PAYLOAD_MAX_BYTES / 4)
     expect(marginal({ dsh: LIVE_LONGEST_RANGE, profiles: ['web'] })).toBe(179)
+  })
+})
+
+describe('dshPeersOf', () => {
+  // What dsh 0.1.7 judges an install by (app-boot `evaluatePluginCompatibility`):
+  // every peer named `@deepseek-ai/dsh` or `@deepseek-ai/dsh-*`, with its range
+  // verbatim. It keeps what that check reads and `peerNamesOf` drops.
+
+  it('keeps the harness peers with their ranges, in manifest order, and nothing else', () => {
+    expect(dshPeersOf({
+      peerDependencies: {
+        react: '^18.2.0',
+        '@deepseek-ai/dsh-client-runtime': '^0.1.1-rc.2',
+        '@deepseek-ai/cordis': '^4.0.1',
+        '@deepseek-ai/dsh': '>=0.1.5',
+        '@deepseek-ai/dshx': '1.0.0',
+      },
+    })).toEqual({ '@deepseek-ai/dsh-client-runtime': '^0.1.1-rc.2', '@deepseek-ai/dsh': '>=0.1.5' })
+  })
+
+  it('keeps an OPTIONAL harness peer, because dsh ignores peerDependenciesMeta', () => {
+    // dsh-plugin-shop 0.8.3 marks all five of its peers optional, and dsh 0.1.7
+    // still refuses it on a range it does not satisfy.
+    expect(dshPeersOf({
+      peerDependencies: { '@deepseek-ai/dsh-app-boot': '^0.1.1-rc.2' },
+      peerDependenciesMeta: { '@deepseek-ai/dsh-app-boot': { optional: true } },
+    } as { peerDependencies: unknown })).toEqual({ '@deepseek-ai/dsh-app-boot': '^0.1.1-rc.2' })
+  })
+
+  it('keeps an EMPTY range, which dsh reads as unsatisfiable, and a workspace one verbatim', () => {
+    expect(dshPeersOf({ peerDependencies: { '@deepseek-ai/dsh-a': '', '@deepseek-ai/dsh-b': 'workspace:^' } }))
+      .toEqual({ '@deepseek-ai/dsh-a': '', '@deepseek-ai/dsh-b': 'workspace:^' })
+  })
+
+  it('is absent, never empty, for a manifest with no harness peer or no usable peerDependencies', () => {
+    for (const peerDependencies of [undefined, null, 'x', ['@deepseek-ai/dsh'], {}, { react: '*' }]) {
+      expect(dshPeersOf({ peerDependencies }), JSON.stringify(peerDependencies)).toBeUndefined()
+    }
+  })
+
+  it('drops a peer past its bounds, or with a range that is not a string, and keeps the rest', () => {
+    const long = `@deepseek-ai/dsh-${'x'.repeat(PEER_NAME_MAX_LENGTH)}`
+    expect(dshPeersOf({
+      peerDependencies: {
+        [long]: '*',
+        '@deepseek-ai/dsh-range': 'x'.repeat(DSH_PEER_RANGE_MAX_LENGTH + 1),
+        '@deepseek-ai/dsh-number': 1,
+        '@deepseek-ai/dsh-kept': '^1.0.0',
+      },
+    })).toEqual({ '@deepseek-ai/dsh-kept': '^1.0.0' })
+  })
+
+  it('stops at PEERS_MAX_COUNT harness peers', () => {
+    const many = Object.fromEntries(Array.from({ length: PEERS_MAX_COUNT + 5 }, (_, i) => [`@deepseek-ai/dsh-p${i}`, '*']))
+    expect(Object.keys(dshPeersOf({ peerDependencies: many }) ?? {})).toHaveLength(PEERS_MAX_COUNT)
+  })
+
+  it('never writes a prototype key: the name filter admits only the harness scope', () => {
+    const hostile = JSON.parse('{"__proto__": "*", "@deepseek-ai/dsh-a": "*"}') as Record<string, unknown>
+    const peers = dshPeersOf({ peerDependencies: hostile })
+    expect(peers).toEqual({ '@deepseek-ai/dsh-a': '*' })
+    expect(Object.getPrototypeOf(peers)).toBe(Object.prototype)
+  })
+
+  it('is read by toCandidate into the candidate', () => {
+    const doc = {
+      name: 'dsh-peered',
+      'dist-tags': { latest: '1.0.0' },
+      time: { '1.0.0': '2026-09-26T00:00:00.000Z' },
+      versions: { '1.0.0': { dist: { integrity: 'sha512-x' }, peerDependencies: { '@deepseek-ai/dsh': '^0.1.7-0' } } },
+    }
+    expect(toCandidate(doc)?.dshPeers).toEqual({ '@deepseek-ai/dsh': '^0.1.7-0' })
+    const bare = { ...doc, versions: { '1.0.0': { dist: { integrity: 'sha512-x' } } } }
+    expect(toCandidate(bare) !== null && 'dshPeers' in toCandidate(bare)!).toBe(false)
+  })
+})
+
+describe('the dsh peer bounds', () => {
+  // Measured against the published catalog built 2026-09-26T09:28Z, 12,236
+  // entries: the most harness peers any entry REQUIRES is 62
+  // (@mstar-harness/dsh), and 2,239 entries require at least one. Optional
+  // ones are not in that catalog, so the true maximum can only be higher.
+  const LIVE_MAX_DSH_PEER_COUNT = 62
+
+  it('states the range bound as a literal and admits every real list', () => {
+    expect(DSH_PEER_RANGE_MAX_LENGTH).toBe(256)
+    expect(PEERS_MAX_COUNT).toBeGreaterThan(LIVE_MAX_DSH_PEER_COUNT * 2)
+  })
+
+  it('keeps the heaviest real list well inside the per-entry budget', () => {
+    // That entry's 62 harness peer names total 1,819 characters (29.3 each on
+    // average, 43 at most) and the whole entry emits 2,697 bytes today. Here:
+    // 62 names of 29 characters, each with a typical range, beside the same
+    // names in `peers` — both blocks together, which is what the new field
+    // adds to what the budget already measured. Under half of it, so no entry
+    // listed today is anywhere near being delisted by this field.
+    const names = Array.from({ length: LIVE_MAX_DSH_PEER_COUNT }, (_, i) => `@deepseek-ai/dsh-ui-${String(i).padStart(9, 'x')}`)
+    expect(names[0]).toHaveLength(29)
+    const dshPeers = Object.fromEntries(names.map(name => [name, '^0.1.1-rc.2']))
+    expect(entryPayloadBytes({ name: 'x', peers: names, dshPeers })).toBeLessThan(ENTRY_PAYLOAD_MAX_BYTES / 2)
   })
 })
 
