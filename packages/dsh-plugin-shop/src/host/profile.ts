@@ -1,37 +1,29 @@
 /** Profile directory discovery and user-layer writes (§8: hot enable/disable). */
 
-import { existsSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { loadOptionalPatches } from '@deepseek-ai/dsh-app-boot'
-import { DEFAULT_SCHEMA, Type, dump } from 'js-yaml'
+import { isMap, isSeq, parseDocument, type YAMLMap } from 'yaml'
 
 /** One id-targeted user-layer row (§8: the CLI hot-reloads this file). */
-export interface UserLayerRow { id: string; disabled: boolean }
+export interface UserLayerRow {
+  id: string
+  disabled: boolean
+  /** The module the entry mounts, when the caller knows it. A user-layer row
+   * that names a DIFFERENT module is one the harness skips
+   * (applyEntryPatches), so only this name lets a named row be written. */
+  name?: string
+}
 
 interface ProfileShape { dsh?: { profile?: { bundles?: unknown } } }
 
 interface PackageShape { dsh?: { bundle?: { patch?: unknown } } }
 
-/** The loader's `!!js` expression scalar, retained by app-boot as a small
- * shape rather than an executable value. js-yaml needs an explicit type to
- * write that shape back with the original tag. */
-interface JsExpr { __jsExpr: string }
-
-function isJsExpr(value: unknown): value is JsExpr {
-  return typeof value === 'object' && value !== null
-    && typeof (value as { __jsExpr?: unknown }).__jsExpr === 'string'
-}
-
-const JS_EXPR_TYPE = new Type('tag:yaml.org,2002:js', {
-  kind: 'scalar',
-  resolve: () => true,
-  construct: (data: string): JsExpr => ({ __jsExpr: data }),
-  predicate: isJsExpr,
-  represent: (value: object) => (value as JsExpr).__jsExpr,
-})
-
-/** js-yaml's default schema plus the user-layer `!!js` round trip. */
-const USER_LAYER_SCHEMA = DEFAULT_SCHEMA.extend([JS_EXPR_TYPE])
+/** The loader's `!!js` expression scalar, for the document edit: read as its
+ * source text and written back under its own tag, never evaluated — the
+ * loader evaluates it at entry activation. The same declaration the harness's
+ * own writer of this file uses (`@deepseek-ai/dsh-plugin-manager` 0.1.7). */
+const USER_LAYER_TAGS = [{ tag: 'tag:yaml.org,2002:js', resolve: (source: string) => source }]
 
 /**
  * Find the profile directory that owns `startPath`.
@@ -86,10 +78,10 @@ function realpathNearestExisting(startPath: string): string {
 }
 
 /**
- * Upsert one row of the profile's user layer (`cordis.patch.yml`). Enabling
- * removes the row so the bundle default rules again; disabling writes
- * `{ id, disabled: true }` (§8: the CLI's watchUserPatches applies the change
- * hot through HMR). Existing rows for other ids are preserved verbatim.
+ * Set one entry's `disabled` key in the profile's user layer
+ * (`cordis.patch.yml`) — {@link setUserLayerRows} for a single row, with the
+ * same rules: one key changes and nothing else does (§8: the CLI's
+ * watchUserPatches applies the change hot through HMR).
  */
 export function setUserLayerRow(options: { profileDir: string; row: UserLayerRow }): void {
   setUserLayerRows({ profileDir: options.profileDir, rows: [options.row] })
@@ -102,16 +94,82 @@ export function setUserLayerRow(options: { profileDir: string; row: UserLayerRow
  * {@link ownedEntryIds}), and they toggle together: writing them one at a
  * time would read-modify-write the file once per entry, so a crash between
  * two writes would leave the package half disabled.
+ *
+ * The edit changes one key and nothing else (design
+ * 2026-09-26-market-borrowings §2). The layer is validated by the harness's
+ * own parser first, so one it cannot load still throws and is never
+ * rewritten; it is then edited as a YAML document, which keeps every comment,
+ * every other row, every other key and every `!!js` scalar as the user wrote
+ * them. The whole-file rewrite this replaced dropped each toggled id's row —
+ * and with it a `config:` override the user had put there — and dumped the
+ * list back through a library that models no comments, so the first toggle
+ * erased the header dsh writes into every new profile.
+ *
+ * For each entry the row written is the LAST one carrying its id, when the
+ * harness is sure to apply it: applyEntryPatches applies rows in order and
+ * each key replaces the entry's value, so the last row that sets `disabled`
+ * decides it. A row with `insert` is an insertion into a group, never an
+ * override; a row naming another module is skipped by the harness; a named
+ * row whose module the caller did not say cannot be judged. In each of those
+ * cases a row is appended instead, which the harness applies last whatever
+ * came before it — so appending is never wrong, only less tidy.
+ *
+ * An enable writes `disabled: false` rather than deleting the row, which is
+ * what lost a user's row or the comment above it; it is also the harness's
+ * own convention for this file from 0.1.7. The file keeps its permission bits
+ * across the rename (a new one is created owner-only, as the harness's writer
+ * does), because a config override can hold a credential.
  */
 export function setUserLayerRows(options: { profileDir: string; rows: UserLayerRow[] }): void {
   const file = join(options.profileDir, 'cordis.patch.yml')
-  const existing = loadOptionalPatches('dsh-plugin-shop', file) ?? []
-  const touched = new Set(options.rows.map(row => row.id))
-  const others = existing.filter(row => !touched.has(row.id as string))
-  const next = [...others, ...options.rows.filter(row => row.disabled).map(row => ({ id: row.id, disabled: true }))]
+  // The harness's parser is still the authority on whether the layer loads:
+  // what it refuses is never rewritten.
+  loadOptionalPatches('dsh-plugin-shop', file)
+  let text = '[]\n'
+  let mode = 0o600
+  if (existsSync(file)) {
+    text = readFileSync(file, 'utf8')
+    mode = statSync(file).mode & 0o777
+  }
+  const document = parseDocument(text, { customTags: USER_LAYER_TAGS })
+  const parseError = document.errors[0]
+  if (parseError !== undefined) throw parseError
+  const list = document.contents
+  if (!isSeq(list)) throw new Error(`dsh-plugin-shop: ${file} is not a YAML list of patch rows`)
+  for (const row of options.rows) {
+    const target = lastRowFor(list.items, row.id)
+    if (target !== null && appliesTo(target, row.name)) {
+      target.set('disabled', row.disabled)
+      continue
+    }
+    // The template dsh writes is `[]`: an appended row would otherwise stay
+    // inside the brackets, and the file would stop being one row per line.
+    if (list.items.length === 0) list.flow = false
+    document.add({ id: row.id, disabled: row.disabled })
+  }
   const tmp = `${file}.tmp`
-  writeFileSync(tmp, dump(next, { noRefs: true, schema: USER_LAYER_SCHEMA }))
+  writeFileSync(tmp, document.toString({ lineWidth: 0 }), { mode })
+  // `mode` above applies only when the write CREATES the file, and a crashed
+  // earlier write may have left this one behind.
+  chmodSync(tmp, mode)
   renameSync(tmp, file)
+}
+
+/** The last override row carrying `id`, or null when there is none. A row
+ * with `insert` is an insertion into group `id`, not an override of it. */
+function lastRowFor(items: readonly unknown[], id: string): YAMLMap | null {
+  for (let index = items.length - 1; index >= 0; index--) {
+    const item = items[index]
+    if (isMap(item) && !item.has('insert') && item.get('id') === id) return item
+  }
+  return null
+}
+
+/** Whether the harness is sure to apply `row` to the entry mounting
+ * `moduleName`: a row with no `name`, or one naming that very module. */
+function appliesTo(row: YAMLMap, moduleName: string | undefined): boolean {
+  if (!row.has('name')) return true
+  return moduleName !== undefined && row.get('name') === moduleName
 }
 
 /**
@@ -136,6 +194,23 @@ export function setUserLayerRows(options: { profileDir: string; rows: UserLayerR
  * which only the inventory can answer.
  */
 export function ownedEntryIds(options: { profileDir: string; packageName: string }): string[] {
+  return ownedEntries(options).map(entry => entry.id)
+}
+
+/** One loader entry a package's bundle patch inserts: its id, and the module
+ * it mounts when the patch names one as a plain string. */
+export interface OwnedEntry { id: string; name: string | undefined }
+
+/**
+ * {@link ownedEntryIds} with the module each entry mounts beside its id. The
+ * name is what the harness judges a NAMED user-layer row by — a row naming a
+ * different module is skipped (applyEntryPatches) — so it is what lets the
+ * toggle write a user's own named row rather than append one beside it. It is
+ * read through the harness's parser, so a relative name arrives anchored to a
+ * file URL exactly as the composed entry carries it; an `!!js` name has no
+ * plain value and reads as undefined. Throws where `ownedEntryIds` does.
+ */
+export function ownedEntries(options: { profileDir: string; packageName: string }): OwnedEntry[] {
   const packageDir = join(options.profileDir, 'node_modules', ...options.packageName.split('/'))
   const manifestPath = join(packageDir, 'package.json')
   if (!existsSync(manifestPath)) return []
@@ -154,30 +229,32 @@ export function ownedEntryIds(options: { profileDir: string; packageName: string
   if (inside === '' || inside.startsWith('..') || isAbsolute(inside)) {
     throw new Error(`dsh-plugin-shop: ${options.packageName} declares a bundle patch outside its own directory: ${patchRelative}`)
   }
-  const ids: string[] = []
-  collectInsertedIds(loadOptionalPatches('dsh-plugin-shop', patchFile) ?? [], ids)
-  return [...new Set(ids)]
+  const entries: OwnedEntry[] = []
+  collectInsertedEntries(loadOptionalPatches('dsh-plugin-shop', patchFile) ?? [], entries)
+  // One per id, first spelling kept — the id is the identity, as before.
+  const seen = new Set<string>()
+  return entries.filter(entry => !seen.has(entry.id) && seen.add(entry.id) !== undefined)
 }
 
-/** Walk a patch list, appending the id of every INSERTED entry. A patch row
- * without `insert` targets an entry someone else composed — the loader's
+/** Walk a patch list, appending every INSERTED entry. A patch row without
+ * `insert` targets an entry someone else composed — the loader's
  * applyEntryPatches looks it up and skips it when absent, so it creates
  * nothing and owns nothing. An inserted GROUP owns its children, which the
  * loader reads from the group's own `config` array. */
-function collectInsertedIds(rows: readonly unknown[], into: string[]): void {
+function collectInsertedEntries(rows: readonly unknown[], into: OwnedEntry[]): void {
   for (const row of rows) {
     if (row === null || typeof row !== 'object') continue
     const inserted = (row as { insert?: unknown }).insert
-    if (Array.isArray(inserted)) collectEntryIds(inserted, into)
+    if (Array.isArray(inserted)) collectEntries(inserted, into)
   }
 }
 
-function collectEntryIds(entries: readonly unknown[], into: string[]): void {
+function collectEntries(entries: readonly unknown[], into: OwnedEntry[]): void {
   for (const entry of entries) {
     if (entry === null || typeof entry !== 'object') continue
-    const { id, group, config } = entry as { id?: unknown; group?: unknown; config?: unknown }
-    if (typeof id === 'string') into.push(id)
-    if (group === true && Array.isArray(config)) collectEntryIds(config, into)
+    const { id, name, group, config } = entry as { id?: unknown; name?: unknown; group?: unknown; config?: unknown }
+    if (typeof id === 'string') into.push({ id, name: typeof name === 'string' ? name : undefined })
+    if (group === true && Array.isArray(config)) collectEntries(config, into)
   }
 }
 

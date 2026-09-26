@@ -64,19 +64,25 @@ export interface PluginHandle {
  * Why a restart is needed after the hot path ran — a stable code the client
  * turns into copy in the reader's own dsh language.
  *
- * Four of the five say the MOUNT could not activate, and distinguish
+ * Five of the seven say the MOUNT could not activate, and distinguish
  * "restart will fix it" (`timeout`, `mount-failed`) from "this package can
  * never hot-mount" (`no-patch`, `not-simple`) and "this harness cannot"
  * (`host-unsupported`).
  *
- * `client-half` is the one that does not: the mount SUCCEEDED and the host
- * half is running, but the package declares `dsh.client` and a hot mount does
- * not enter the composition the client registry enumerates, so no reload can
- * fetch its browser half (measured 2026-09-14 — see `activation.ts`). It
+ * `client-half` is one of the two that do not: the mount SUCCEEDED and the
+ * host half is running, but the package declares `dsh.client` and a hot mount
+ * does not enter the composition the client registry enumerates, so no reload
+ * can fetch its browser half (measured 2026-09-14 — see `activation.ts`). It
  * exists so the reader is not told "installed; restart dsh to activate"
  * about a plugin that is demonstrably already running.
+ *
+ * `already-loaded` is the other: no mount was attempted, because this
+ * process may already hold the package's module, and Node caches a module by
+ * its URL — the new files sit at the old URL, so a mount would re-run the old
+ * code under the new version's name (design 2026-09-26-market-borrowings §1).
+ * The gateway decides it before calling `hotMount`, which never returns it.
  */
-export type HotRestartReason = 'no-patch' | 'not-simple' | 'host-unsupported' | 'timeout' | 'mount-failed' | 'client-half'
+export type HotRestartReason = 'no-patch' | 'not-simple' | 'host-unsupported' | 'timeout' | 'mount-failed' | 'client-half' | 'already-loaded'
 
 export interface HotMountResult {
   ok: boolean
@@ -321,13 +327,16 @@ export async function hotMount(
     return { ok: false, reason: 'mount-failed' }
   }
 
-  // A package re-mounted this session (update): stop the old tree before the
-  // new one activates — two live copies of one plugin would violate the
-  // update sequencing rule (cordis rejects the second provision anyway; this
-  // makes the ordering explicit). Registration precedes disposal on purpose:
-  // a dispose-first order would leave a both-dead window if the new mount
-  // then fails; this order accepts a brief both-registered window instead,
-  // the old handle awaited before the new activation is raced.
+  // A package re-mounted this session: stop the old tree before the new one
+  // activates — two live copies of one plugin would violate the update
+  // sequencing rule (cordis rejects the second provision anyway; this makes
+  // the ordering explicit). The gateway no longer re-mounts a name it has
+  // mounted before — the second import would serve the first one's cached
+  // module (design 2026-09-26-market-borrowings §1) — so this is a guard for
+  // any other caller, not a path the shop takes. Registration precedes
+  // disposal on purpose: a dispose-first order would leave a both-dead window
+  // if the new mount then fails; this order accepts a brief both-registered
+  // window instead, the old handle awaited before the new activation is raced.
   const previous = hotHandles.get(packageName)
   if (previous !== undefined) {
     try {

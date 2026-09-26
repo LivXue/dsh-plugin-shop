@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ACKNOWLEDGEMENT_EN, ACKNOWLEDGEMENT_ZH, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, rejectionCodeKey } from '../../src/client/present.ts'
+import { ACKNOWLEDGEMENT_EN, ACKNOWLEDGEMENT_ZH, RESTART_GRACE_MS, RESTART_STABLE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, rejectionCodeKey } from '../../src/client/present.ts'
 import { en, zh, type ShopLocaleKey } from '../../src/client/locales.ts'
 import { ShopTab, type ShopTabInjected, type ShopTabProps } from '../../src/client/ShopTab.tsx'
 import type { HarnessVerdict, ShopCatalogResult, ShopInstalledEntry } from '../../src/host/index.ts'
@@ -92,6 +92,67 @@ function renderTab(injected: ShopTabInjected) {
   }) as ShopTabProps['t']
   return render(<ShopTab {...({ t, ...injected } as unknown as ShopTabProps)} />)
 }
+
+describe('the tab survives the browser and its own render errors (C3)', () => {
+  it('tells the browser not to translate the tab, in each of its three states', async () => {
+    // A browser's page translation rewrites the text nodes React owns, and
+    // React's next commit throws on the ones it no longer finds (dsh-market
+    // #513). The shop renders no portals, so the root is its whole surface.
+    const slow = bench(snapshot())
+    let resolveCatalog: (value: ShopCatalogResult) => void = () => {}
+    slow.catalog.mockImplementation(() => new Promise(resolve => { resolveCatalog = resolve }))
+    const { container } = renderTab(slow.injected)
+    const root = (): Element | null => container.querySelector('[data-shop-tab]')
+    await waitFor(() => expect(root()?.getAttribute('aria-busy')).toBe('true'))
+    expect(root()?.getAttribute('translate')).toBe('no')
+    expect(root()?.classList.contains('notranslate')).toBe(true)
+    await act(async () => { resolveCatalog(snapshot()) })
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(root()?.getAttribute('translate')).toBe('no')
+    expect(root()?.classList.contains('notranslate')).toBe(true)
+    cleanup()
+
+    const failing = bench(snapshot())
+    failing.catalog.mockRejectedValue(new Error('offline'))
+    const second = renderTab(failing.injected)
+    await waitFor(() => expect(screen.getByText(en.error)).toBeTruthy())
+    const errorRoot = second.container.querySelector('[data-shop-tab]')
+    expect(errorRoot?.getAttribute('translate')).toBe('no')
+    expect(errorRoot?.classList.contains('notranslate')).toBe(true)
+  })
+
+  it('shows its own error and a way back when the tab throws while rendering', async () => {
+    // Without a boundary of its own, the harness's slot boundary catches the
+    // throw and renders an empty <div data-slot-error> until the page
+    // reloads: a blank tab, with no message and no retry.
+    const { injected } = bench(snapshot())
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let armed = true
+    const t = ((key: ShopLocaleKey, params?: Record<string, unknown>): string => {
+      // `search` is read only by the loaded view, so the throw lands after
+      // the catalog arrives, where a real render error would.
+      if (armed && key === 'search') throw new Error('the search label exploded')
+      const template = en[key]
+      if (params === undefined) return template
+      return template.replace(/\{(\w+)\}/g, (match, name: string) => (name in params ? String(params[name]) : match))
+    }) as ShopTabProps['t']
+    const { container } = render(<ShopTab {...({ t, ...injected } as unknown as ShopTabProps)} />)
+    await waitFor(() => expect(container.querySelector('[data-shop-crashed]')).toBeTruthy())
+    const crashed = container.querySelector('[data-shop-crashed]')!
+    expect(crashed.textContent).toContain(en.tabCrashed)
+    expect(crashed.textContent).toContain('the search label exploded')
+    expect(crashed.getAttribute('translate')).toBe('no')
+    // Not a working tab: nothing waiting for one may take this for it.
+    expect(container.querySelector('[data-shop-tab]')).toBeNull()
+    expect(logged.mock.calls.some(call => String(call[0]).includes('dsh-plugin-shop: the shop tab crashed'))).toBe(true)
+
+    // Retry remounts the tab from scratch.
+    armed = false
+    fireEvent.click(screen.getByRole('button', { name: en.retry }))
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(container.querySelector('[data-shop-crashed]')).toBeNull()
+  })
+})
 
 describe('ShopTab', () => {
   it('renders a derived entry with a tier badge and the plain-text summary', async () => {
@@ -833,6 +894,69 @@ describe('ShopTab', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(RESTART_WAIT_MS) })
     expect(fetchMock).toHaveBeenCalled()
     expect(screen.getByText(en.restartFailedNotice)).toBeTruthy()
+  })
+
+  /** Up to the moment the restart is confirmed, under fake timers with the
+   * origin probe stubbed; `reload` is the injected spy the monitor calls. */
+  async function confirmRestart(options: { fetch: ReturnType<typeof vi.fn>; logFile?: string }) {
+    const { injected, restart } = bench(snapshot({ tier: 'verified' }))
+    if (options.logFile !== undefined) restart.mockResolvedValue({ ok: true, logFile: options.logFile })
+    const reload = vi.fn()
+    const { container } = renderTab({ ...injected, reload })
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText(en.install))
+    await waitFor(() => expect(container.querySelector('[data-shop-restart]')).toBeTruthy(), { timeout: 3000 })
+    vi.useFakeTimers()
+    vi.stubGlobal('fetch', options.fetch)
+    fireEvent.click(container.querySelector('[data-shop-restart]')!)
+    fireEvent.click(screen.getByText(en.restartConfirm))
+    await act(async () => { await vi.advanceTimersByTimeAsync(100) })
+    expect(screen.getByText(en.restarting)).toBeTruthy()
+    return { reload }
+  }
+
+  it('reloads into the new server only once it has kept answering for the whole stable window', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => new Response('ok', { status: 200 }))
+    const { reload } = await confirmRestart({ fetch: fetchMock })
+    // Answering from the first probe after the grace period: seven seconds of
+    // it is still not the new server proving it will stay.
+    await act(async () => { await vi.advanceTimersByTimeAsync(RESTART_GRACE_MS + RESTART_STABLE_MS - 1_000) })
+    expect(fetchMock).toHaveBeenCalled()
+    expect(reload).not.toHaveBeenCalled()
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000) })
+    expect(reload).toHaveBeenCalledTimes(1)
+  })
+
+  it('never reloads into a server that answered once and went away', async () => {
+    // What a boot about to fail looks like from the page: the webserver entry
+    // binds the port and answers while a sibling plugin is still loading,
+    // then the tree audit kills the process. Reloading on that one answer is
+    // what left readers on a blank page.
+    const refused = new Error('connection refused')
+    const fetchMock = vi.fn().mockRejectedValue(refused)
+      .mockRejectedValueOnce(refused)
+      .mockImplementationOnce(async () => new Response('ok', { status: 200 }))
+    const { reload } = await confirmRestart({ fetch: fetchMock })
+    await act(async () => { await vi.advanceTimersByTimeAsync(RESTART_WAIT_MS + RESTART_STABLE_MS + 5_000) })
+    expect(reload).not.toHaveBeenCalled()
+    expect(screen.getByText(en.restartFailedNotice)).toBeTruthy()
+  })
+
+  it('never counts an error status as the new server being up', async () => {
+    // `fetch` resolves on any HTTP status; a proxy's 502 is not dsh answering.
+    const fetchMock = vi.fn().mockImplementation(async () => new Response('bad gateway', { status: 502 }))
+    const { reload } = await confirmRestart({ fetch: fetchMock })
+    await act(async () => { await vi.advanceTimersByTimeAsync(RESTART_WAIT_MS + RESTART_STABLE_MS + 5_000) })
+    expect(fetchMock).toHaveBeenCalled()
+    expect(reload).not.toHaveBeenCalled()
+    expect(screen.getByText(en.restartFailedNotice)).toBeTruthy()
+  })
+
+  it('names the log the host said the new process writes when the server never comes back', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error('connection refused'))
+    await confirmRestart({ fetch: fetchMock, logFile: '/home/you/.dsh/shop/restart.log' })
+    await act(async () => { await vi.advanceTimersByTimeAsync(RESTART_WAIT_MS + 2_000) })
+    expect(screen.getByText(en.restartFailedLogNotice.replace('{log}', '/home/you/.dsh/shop/restart.log'))).toBeTruthy()
   })
 
   it('offers the restart button after a successful uninstall', async () => {

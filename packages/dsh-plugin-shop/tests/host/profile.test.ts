@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
+import { chmodSync, mkdtempSync, mkdirSync, statSync, writeFileSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { collidingEntryId, discoverProfile, ownedEntryIds, ownsEntryId, setUserLayerRow, setUserLayerRows } from '../../src/host/profile.ts'
+import { load } from 'js-yaml'
+import { collidingEntryId, discoverProfile, ownedEntries, ownedEntryIds, ownsEntryId, setUserLayerRow, setUserLayerRows } from '../../src/host/profile.ts'
 import { fileTempRoot } from './temp-root.ts'
 
 const TEMP_ROOT = fileTempRoot('profile')
@@ -69,12 +70,17 @@ describe('setUserLayerRow', () => {
     expect(raw).toContain('disabled: true')
   })
 
-  it('removes the row when re-enabling, so the bundle default rules', () => {
+  it('writes disabled: false when re-enabling, instead of deleting the row', () => {
+    // Deleting the row was the rule until 2026-09-26 ("so the bundle default
+    // rules"), and deletion is what loses a row the user wrote or the comment
+    // above it; writing the key never removes a node. It is also dsh 0.1.7's
+    // own convention for this file, and it enables an entry whose bundle
+    // ships it disabled, which removing an override never could (design
+    // 2026-09-26-market-borrowings §2.2).
     const dir = fixtureProfile()
     writeFileSync(join(dir, 'cordis.patch.yml'), '- id: hello\n  disabled: true\n')
     setUserLayerRow({ profileDir: dir, row: { id: 'hello', disabled: false } })
-    const raw = readFileSync(join(dir, 'cordis.patch.yml'), 'utf8')
-    expect(raw).not.toContain('hello')
+    expect(readFileSync(join(dir, 'cordis.patch.yml'), 'utf8')).toBe('- id: hello\n  disabled: false\n')
   })
 
   it('replaces an existing row for the same id instead of duplicating', () => {
@@ -134,6 +140,33 @@ describe('ownedEntryIds', () => {
     expect(ownedEntryIds({ profileDir: dir, packageName: 'dsh-targeter' })).toEqual(['targeter-own'])
   })
 
+  it('also reads the module each inserted entry mounts, which a named user row is judged by', () => {
+    // An entry without a plain-string name (an `!!js` expression) has none to
+    // offer, and a group's children are read like any other entry.
+    const dir = fixtureProfile()
+    fixturePackage(dir, 'dsh-mixed', [
+      '- insert:',
+      '    - id: mixed-host',
+      '      name: dsh-mixed/host',
+      '    - id: mixed-dynamic',
+      '      name: !!js process.env.MIXED_MODULE',
+      '    - id: mixed-root',
+      '      name: cordis/group',
+      '      group: true',
+      '      config:',
+      '        - id: mixed-child',
+      '          name: dsh-mixed/child',
+      '',
+    ].join('\n'))
+    expect(ownedEntries({ profileDir: dir, packageName: 'dsh-mixed' })).toEqual([
+      { id: 'mixed-host', name: 'dsh-mixed/host' },
+      { id: 'mixed-dynamic', name: undefined },
+      { id: 'mixed-root', name: 'cordis/group' },
+      { id: 'mixed-child', name: 'dsh-mixed/child' },
+    ])
+    expect(ownedEntryIds({ profileDir: dir, packageName: 'dsh-mixed' })).toEqual(['mixed-host', 'mixed-dynamic', 'mixed-root', 'mixed-child'])
+  })
+
   it('returns no ids for a package that declares no bundle patch', () => {
     const dir = fixtureProfile()
     fixturePackage(dir, 'dsh-libonly', null)
@@ -162,14 +195,13 @@ describe('setUserLayerRows', () => {
     expect(written).toContain('b')
   })
 
-  it('drops every row of the package on enable while keeping unrelated rows', () => {
+  it('enables every row of the package in one pass and touches no other row', () => {
+    // It used to DROP the package's rows; see the re-enable case above.
     const dir = fixtureProfile()
     writeFileSync(join(dir, 'cordis.patch.yml'), '- id: a\n  disabled: true\n- id: b\n  disabled: true\n- id: other\n  disabled: true\n')
     setUserLayerRows({ profileDir: dir, rows: [{ id: 'a', disabled: false }, { id: 'b', disabled: false }] })
-    const written = readFileSync(join(dir, 'cordis.patch.yml'), 'utf8')
-    expect(written).not.toMatch(/id: a\b/)
-    expect(written).not.toMatch(/id: b\b/)
-    expect(written).toContain('other')
+    expect(readFileSync(join(dir, 'cordis.patch.yml'), 'utf8'))
+      .toBe('- id: a\n  disabled: false\n- id: b\n  disabled: false\n- id: other\n  disabled: true\n')
   })
 })
 
@@ -192,11 +224,139 @@ describe('setUserLayerRows and the !!js spelling (F-9)', () => {
     rmSync(profileDir, { recursive: true, force: true })
   })
 
-  it('still writes a plain row unchanged', () => {
+  it('still writes a plain row plainly', () => {
+    // `b` gains a row of its own since 2026-09-26: an enable writes
+    // `disabled: false` rather than removing what is not there.
     const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-jsexpr-plain-'))
     setUserLayerRows({ profileDir, rows: [{ id: 'a', disabled: true }, { id: 'b', disabled: false }] })
-    expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toBe('- id: a\n  disabled: true\n')
+    expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toBe('- id: a\n  disabled: true\n- id: b\n  disabled: false\n')
     rmSync(profileDir, { recursive: true, force: true })
+  })
+})
+
+/** The header dsh writes into a new profile's user layer, verbatim from a
+ * dsh 0.1.5-rc.3 `web` profile, over the empty list it starts as. */
+const TEMPLATE_HEADER = [
+  '# Your patch layer for this dsh profile, applied after every bundle layer:',
+  '# a top-level YAML array of loader patch entries (id-targeted config',
+  '# overrides, disables, and insert lists; `!!js` expressions allowed).',
+  '',
+].join('\n')
+
+describe('setUserLayerRows edits one key and keeps everything the user wrote (A4)', () => {
+  const layer = (dir: string): string => readFileSync(join(dir, 'cordis.patch.yml'), 'utf8')
+  const rows = (dir: string): unknown => load(layer(dir))
+
+  it('a disable keeps the row\'s own config, and so does the enable after it', () => {
+    // The row this file exists for: an id-targeted config override. The old
+    // rewrite dropped the whole row on the disable and wrote nothing back on
+    // the enable, so the override was gone for good after one round trip.
+    const dir = fixtureProfile()
+    writeFileSync(join(dir, 'cordis.patch.yml'), '- id: provider\n  config:\n    endpoint: https://example.test\n')
+    setUserLayerRows({ profileDir: dir, rows: [{ id: 'provider', disabled: true }] })
+    expect(rows(dir)).toEqual([{ id: 'provider', config: { endpoint: 'https://example.test' }, disabled: true }])
+    setUserLayerRows({ profileDir: dir, rows: [{ id: 'provider', disabled: false }] })
+    expect(rows(dir)).toEqual([{ id: 'provider', config: { endpoint: 'https://example.test' }, disabled: false }])
+  })
+
+  it('keeps the header dsh writes at profile init through a disable and an enable', () => {
+    // js-yaml models no comments, so the first toggle used to erase this. The
+    // empty flow list under it becomes a block list on the first append, so
+    // the file stays one row per line.
+    const dir = fixtureProfile()
+    writeFileSync(join(dir, 'cordis.patch.yml'), `${TEMPLATE_HEADER}[]\n`)
+    setUserLayerRows({ profileDir: dir, rows: [{ id: 'a', disabled: true }] })
+    expect(layer(dir)).toBe(`${TEMPLATE_HEADER}- id: a\n  disabled: true\n`)
+    setUserLayerRows({ profileDir: dir, rows: [{ id: 'a', disabled: false }] })
+    expect(layer(dir)).toBe(`${TEMPLATE_HEADER}- id: a\n  disabled: false\n`)
+  })
+
+  it('keeps the comments beside a row, the toggled one and its neighbours alike', () => {
+    const dir = fixtureProfile()
+    const text = [
+      '# my own notes',
+      '- id: a # the one being toggled',
+      '  config:',
+      '    apiKey: !!js process.env.KEY # read from the environment',
+      '# between the rows',
+      '- id: b',
+      '  disabled: true # parked for now',
+      '',
+    ].join('\n')
+    writeFileSync(join(dir, 'cordis.patch.yml'), text)
+    setUserLayerRows({ profileDir: dir, rows: [{ id: 'a', disabled: true }] })
+    expect(layer(dir)).toBe(text.replace(' # read from the environment\n', ' # read from the environment\n  disabled: true\n'))
+  })
+
+  it('writes the last row carrying the id, never an earlier one', () => {
+    // applyEntryPatches applies rows in order and each key REPLACES the
+    // target's value, so the last row that sets `disabled` decides it.
+    // Writing the first row here would leave the second's config untouched
+    // and the entry exactly as it was.
+    const dir = fixtureProfile()
+    writeFileSync(join(dir, 'cordis.patch.yml'), '- id: a\n  disabled: true\n- id: a\n  config:\n    x: 1\n')
+    setUserLayerRows({ profileDir: dir, rows: [{ id: 'a', disabled: false }] })
+    expect(rows(dir)).toEqual([{ id: 'a', disabled: true }, { id: 'a', config: { x: 1 }, disabled: false }])
+  })
+
+  it('writes a named row only when the name is the entry\'s own module', () => {
+    // A row naming a different module is one the harness skips, so a write
+    // to it changes nothing; the appended row is the one it will apply.
+    const dir = fixtureProfile()
+    writeFileSync(join(dir, 'cordis.patch.yml'), '- id: a\n  name: some-other-module\n  config:\n    x: 1\n')
+    setUserLayerRows({ profileDir: dir, rows: [{ id: 'a', name: 'mod-a', disabled: true }] })
+    expect(rows(dir)).toEqual([
+      { id: 'a', name: 'some-other-module', config: { x: 1 } },
+      { id: 'a', disabled: true },
+    ])
+    const matching = fixtureProfile()
+    writeFileSync(join(matching, 'cordis.patch.yml'), '- id: a\n  name: mod-a\n')
+    setUserLayerRows({ profileDir: matching, rows: [{ id: 'a', name: 'mod-a', disabled: true }] })
+    expect(rows(matching)).toEqual([{ id: 'a', name: 'mod-a', disabled: true }])
+  })
+
+  it('appends rather than guess when the last named row might be the one the harness applies', () => {
+    // Without the entry's module name the last row cannot be judged. Writing
+    // the unnamed row above it would be overridden by that named row the
+    // moment the harness applies it; an appended row is applied last either
+    // way, so appending is the one write that is always right.
+    const dir = fixtureProfile()
+    writeFileSync(join(dir, 'cordis.patch.yml'), '- id: a\n  config:\n    x: 1\n- id: a\n  name: mod-a\n  disabled: true\n')
+    setUserLayerRows({ profileDir: dir, rows: [{ id: 'a', disabled: false }] })
+    expect(rows(dir)).toEqual([
+      { id: 'a', config: { x: 1 } },
+      { id: 'a', name: 'mod-a', disabled: true },
+      { id: 'a', disabled: false },
+    ])
+  })
+
+  it('never writes into an insert row that shares the id', () => {
+    // A row with `insert` inserts into a group; the harness never reads its
+    // other keys as overrides of the entry.
+    const dir = fixtureProfile()
+    writeFileSync(join(dir, 'cordis.patch.yml'), '- id: a\n  insert:\n    - id: child\n      name: c\n')
+    setUserLayerRows({ profileDir: dir, rows: [{ id: 'a', disabled: true }] })
+    expect(rows(dir)).toEqual([{ id: 'a', insert: [{ id: 'child', name: 'c' }] }, { id: 'a', disabled: true }])
+  })
+
+  it('refuses a layer the harness itself cannot load, and leaves it as it was', () => {
+    const dir = fixtureProfile()
+    writeFileSync(join(dir, 'cordis.patch.yml'), 'this: is not: a patch list\n')
+    expect(() => setUserLayerRows({ profileDir: dir, rows: [{ id: 'a', disabled: true }] })).toThrow()
+    expect(layer(dir)).toBe('this: is not: a patch list\n')
+  })
+
+  it.skipIf(process.platform === 'win32')('keeps the file\'s permission bits, and creates a new one owner-only', () => {
+    // A user layer can hold a credential in a config override; a rewrite must
+    // not widen who can read it. POSIX only: Windows has no such bits.
+    const dir = fixtureProfile()
+    writeFileSync(join(dir, 'cordis.patch.yml'), '[]\n')
+    chmodSync(join(dir, 'cordis.patch.yml'), 0o640)
+    setUserLayerRows({ profileDir: dir, rows: [{ id: 'a', disabled: true }] })
+    expect(statSync(join(dir, 'cordis.patch.yml')).mode & 0o777).toBe(0o640)
+    const fresh = fixtureProfile()
+    setUserLayerRows({ profileDir: fresh, rows: [{ id: 'a', disabled: true }] })
+    expect(statSync(join(fresh, 'cordis.patch.yml')).mode & 0o777).toBe(0o600)
   })
 })
 

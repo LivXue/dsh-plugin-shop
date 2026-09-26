@@ -6,6 +6,7 @@ import {
   nextVisibleCount, npmPageUrl, readsIncompatible,
   installPhaseKey, reduceInstall, type InstallView,
   reviewHashPin, sortByStars, starsOf, tierKey,
+  RESTART_STABLE_MS, RESTART_WAIT_MS, restartMonitorVerdict,
 } from '../../src/client/present.ts'
 import { en, zh } from '../../src/client/locales.ts'
 import type { CatalogEntry, HarnessVerdict } from '../../src/host/index.ts'
@@ -173,6 +174,38 @@ describe('reduceInstall', () => {
   })
 })
 
+describe('restartMonitorVerdict', () => {
+  // `stableSinceMs` is when the current unbroken run of good answers began,
+  // or null when the last probe failed or none has succeeded yet. Times are
+  // milliseconds since the restart was committed.
+  it('waits while nothing has answered and the deadline has not passed', () => {
+    expect(restartMonitorVerdict({ elapsedMs: 10_000, stableSinceMs: null })).toBe('wait')
+    expect(restartMonitorVerdict({ elapsedMs: RESTART_WAIT_MS, stableSinceMs: null })).toBe('wait')
+  })
+
+  it('gives up once the deadline passes with no run of good answers under way', () => {
+    expect(restartMonitorVerdict({ elapsedMs: RESTART_WAIT_MS + 1, stableSinceMs: null })).toBe('failed')
+  })
+
+  it('does not trust one answer: the run has to last the whole stable window', () => {
+    // A boot that is about to fail can bind the port and answer before its
+    // tree audit kills it; reloading on that answer lands on a dead process.
+    expect(restartMonitorVerdict({ elapsedMs: 12_000, stableSinceMs: 12_000 })).toBe('wait')
+    expect(restartMonitorVerdict({ elapsedMs: 12_000 + RESTART_STABLE_MS - 1, stableSinceMs: 12_000 })).toBe('wait')
+    expect(restartMonitorVerdict({ elapsedMs: 12_000 + RESTART_STABLE_MS, stableSinceMs: 12_000 })).toBe('reload')
+  })
+
+  it('lets a run that began before the deadline finish after it', () => {
+    const began = RESTART_WAIT_MS - 1_000
+    expect(restartMonitorVerdict({ elapsedMs: RESTART_WAIT_MS + 1_000, stableSinceMs: began })).toBe('wait')
+    expect(restartMonitorVerdict({ elapsedMs: began + RESTART_STABLE_MS, stableSinceMs: began })).toBe('reload')
+  })
+
+  it('is 8 s of answers, the window dsh-market measured a dying boot inside', () => {
+    expect(RESTART_STABLE_MS).toBe(8_000)
+  })
+})
+
 describe('activationNoticeKey', () => {
   it('keeps the hot-mount reason codes on restart', () => {
     expect(activationNoticeKey('restart', 'not-simple')).toBe('hotNotSimpleNotice')
@@ -181,6 +214,13 @@ describe('activationNoticeKey', () => {
 
   it('falls back to the generic restart line when no reason came with it', () => {
     expect(activationNoticeKey('restart', undefined)).toBe('installedRestartNotice')
+  })
+
+  it('names the already-loaded reason, which says why no mount was tried', () => {
+    // The generic line would read "restart to activate" about a package whose
+    // OLD version may still be running; this copy says the new files wait
+    // for the restart.
+    expect(activationNoticeKey('restart', 'already-loaded')).toBe('hotAlreadyLoadedNotice')
   })
 
   it('names the reload state, and ignores any reason riding along with it', () => {

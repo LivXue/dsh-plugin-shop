@@ -21,16 +21,19 @@
  *
  * The hot-mount scenarios (market borrowings §4, Task 18) ride the same
  * composition: a local npm registry (tests/fixtures/local-registry.ts) serves
- * four live fixtures — `dsh-shop-e2e-live` (a plain `- id:` / `name:` patch,
+ * five live fixtures — `dsh-shop-e2e-live` (a plain `- id:` / `name:` patch,
  * the only form the hot tree can mount), `dsh-shop-e2e-config` (a config-row
  * patch, valid for the bundle layer but not hot-mountable), `dsh-shop-e2e-peer`
  * (the same hot-mountable patch as the live fixture, plus peers and a
  * `dsh.compatibility` declaration this harness does not meet — see
  * tests/fixtures/catalog-server.ts for the exact split), and
  * `dsh-shop-e2e-client` (the same hot-mountable patch again, plus a
- * `dsh.client` declaration — the other three are host-only, so none of them
+ * `dsh.client` declaration — the first three are host-only, so none of them
  * can prove the reload path, which is exactly the blind spot the 2026-09-11
- * activation-model reports came through). The profile's .npmrc points at the
+ * activation-model reports came through), and `dsh-shop-e2e-update` (the
+ * same patch once more, at two versions: 1.0.0 is installed before dsh boots
+ * and 2.0.0 is the catalog's, and each activation records the version of the
+ * code that actually ran). The profile's .npmrc points at the
  * registry once the profile exists (pnpm, unlike npm, never reads the
  * registry from env vars), so gateway-spawned pnpm resolves those installs
  * locally while the beforeAll `file:` installs keep the real registry. The
@@ -47,7 +50,11 @@
  * NOT offer the reload button — a hot mount puts no client half in the boot
  * graph, so a reload would fetch nothing. (That last sentence read the other
  * way round until the 2026-09-11 activation model measured it; the reload
- * path it described is the one this fixture disproved.)
+ * path it described is the one this fixture disproved.) The update must
+ * report `restart` with the already-loaded reason and leave the running
+ * instance alone: the process imported 1.0.0 at boot, Node will not import a
+ * second copy from the same URL, and a hot swap would re-run 1.0.0 under the
+ * new version's name — reported `live` until 2026-09-26.
  *
  * Both restart-offering flows above go through `expectRestartOffer`, which
  * reads the offer the HOST allows rather than assuming the POSIX one: on
@@ -645,6 +652,16 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
   const clientFixtureDir = fileURLToPath(
     new URL('../fixtures/live-packages/dsh-shop-e2e-client', import.meta.url),
   )
+  const updateFixtureDirs = ['v1', 'v2'].map(version => fileURLToPath(
+    new URL(`../fixtures/update-packages/${version}`, import.meta.url),
+  ))
+  /** The versions the update fixture's activations recorded, oldest first —
+   * each line is the MODULE-SCOPE version of the code that ran (see the
+   * fixture's header). Empty until the boot has activated it once. */
+  const updateActivations = (): string[] => {
+    const file = join(tmpHome, 'dsh-shop-e2e-update.activations')
+    return existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter(line => line !== '') : []
+  }
 
   beforeAll(async () => {
     catalogServer = await startCatalogServer()
@@ -652,7 +669,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
     // .npmrc points at it (written below, once the profile exists), so the
     // gateway's `dsh plugin add <name>@<version>` finds the fixtures locally
     // (and the failed-install name still 404s here, like it does on npm).
-    localRegistry = await startLocalRegistry([liveFixtureDir, configFixtureDir, peerFixtureDir, clientFixtureDir])
+    localRegistry = await startLocalRegistry([liveFixtureDir, configFixtureDir, peerFixtureDir, clientFixtureDir, ...updateFixtureDirs])
     tmpHome = mkdtempSync(join(tmpdir(), 'dsh-home-'))
 
     // The REAL install path: the same executor the gateway runs, spawning
@@ -682,6 +699,19 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       join(tmpHome, 'profiles', 'web', '.npmrc'),
       `registry=${localRegistry.baseUrl}\n`,
     )
+
+    // The update fixture's OLD version, through the same real install path and
+    // BEFORE dsh boots, so the boot composition imports it — the state every
+    // real update starts from. Registry-resolved rather than `file:`, so the
+    // manifest records a version the catalog's 2.0.0 reads as behind.
+    const oldVersion = startInstall({
+      profile: 'web',
+      spec: 'dsh-shop-e2e-update@1.0.0',
+      env: { ...localRegistryEnv(), DSH_HOME: tmpHome },
+      expectedName: 'dsh-shop-e2e-update',
+    })
+    const oldVersionStatus = await oldVersion.finished
+    expect(oldVersionStatus.state, oldVersionStatus.log.join('\n')).toBe('done')
 
     // The other pre-boot seed: neither onboarding dialog is ever raised, so no
     // case has to click one away and none can be blocked by one.
@@ -1214,7 +1244,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // The incompatible filter, against verdicts the real host and the real
       // module table formed: its count comes from their run, not from a
       // fixture that asserts the answer, and this fixture profile makes
-      // exactly one of the five shelf entries incompatible.
+      // exactly one of the six shelf entries incompatible.
       const filter = dialog.locator('[data-shop-hide-incompatible]')
       await filter.waitFor({ state: 'visible', timeout: 10_000 })
       expect(await filter.textContent()).toBe(zh.hideIncompatible.replace('{count}', '1'))
@@ -1378,6 +1408,61 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       expect(after.rev).toBe(before.rev)
       expect(after.ids).not.toContain('dsh-shop-e2e-client')
       expect(after.ids).toContain('dsh-plugin-shop')
+    },
+    120_000,
+  )
+
+  it(
+    'an update of a package this dsh already imported reports restart and leaves the imported version running',
+    async () => {
+      expect(page).toBeDefined()
+      const app = page!
+
+      // The previous spec ended on a page reload, so no dialog is open: wait
+      // for the app's own chrome, then open the shop tab from scratch.
+      await app.waitForSelector('[class*="frame"]', { timeout: 30_000 })
+      await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
+      const dialog = app.getByRole('dialog', { name: '设置' })
+      await dialog.waitFor({ state: 'visible', timeout: 10_000 })
+      await dialog.getByRole('button', { name: '插件', exact: true }).click()
+      await dialog.getByRole('tab', { name: '插件商店' }).click()
+      await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
+      const card = dialog.locator('[data-shop-entry="dsh-shop-e2e-update"]')
+      await card.waitFor({ state: 'visible', timeout: 15_000 })
+
+      // The boot imported 1.0.0 and nothing else: the only code this process
+      // has run for the package, and the baseline the update is measured
+      // against.
+      const booted = updateActivations()
+      expect(booted.length, 'the boot never activated the update fixture').toBeGreaterThan(0)
+      expect(new Set(booted)).toEqual(new Set(['1.0.0']))
+
+      // Update through the real wire: the §9.3 gate, then the poll to done.
+      await card.locator('[data-shop-update]').click()
+      await card.locator('[data-shop-confirm]').waitFor({ state: 'visible', timeout: 10_000 })
+      await card.locator('[data-shop-confirm]').click()
+      const notice = card.locator('[data-shop-restart-notice]')
+      await notice.waitFor({ state: 'visible', timeout: 60_000 })
+
+      // The update landed on disk...
+      const onDisk = JSON.parse(readFileSync(
+        join(tmpHome, 'profiles', 'web', 'node_modules', 'dsh-shop-e2e-update', 'package.json'), 'utf8',
+      )) as { version?: string }
+      expect(onDisk.version).toBe('2.0.0')
+      // ...and nothing was activated because of it. Until 2026-09-26 the shop
+      // swapped the running entry for a hot mount here and reported `live`:
+      // the mount imported the package's URL again, Node answered from its
+      // module cache, and the line that activation appended read 1.0.0 — the
+      // old code, running under the new version's name. Checked before the
+      // notice, so a regression prints what actually ran and not only what
+      // the shop said.
+      const during = updateActivations().slice(booted.length)
+      expect(during, `activations the update caused (module-scope versions): ${JSON.stringify(during)}`).toEqual([])
+
+      // What the reader is told instead: restart, and why.
+      expect(await notice.textContent()).toBe(zh.hotAlreadyLoadedNotice)
+      await expectRestartOffer(dialog, card)
+      expect(await card.locator('[data-shop-reload]').count()).toBe(0)
     },
     120_000,
   )

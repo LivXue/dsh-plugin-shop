@@ -59,7 +59,7 @@ function fixturePrefetcher(): Prefetcher {
 // appends to `dsh.profile.bundles`, so a fixture carrying only the bundle row
 // models an install that never happened. It used to pass anyway, which is
 // how a stricter confirm could not be told from a broken one.
-const INSTALLED_BY_FIXTURE = ['dsh-hello-plugin', 'dsh-repo-plugin', 'sub-plugin', 'dsh-rescued', 'dsh-plugin-shop']
+const INSTALLED_BY_FIXTURE = ['dsh-hello-plugin', 'dsh-repo-plugin', 'sub-plugin', 'dsh-rescued', 'dsh-plugin-shop', 'dsh-lifetime-probe']
 const shopHome = mkdtempSync(join(TEMP_ROOT, 'dsh-gateway-home-'))
 process.env.DSH_HOME = shopHome
 mkdirSync(join(shopHome, 'profiles', 'web'), { recursive: true })
@@ -451,6 +451,8 @@ function gatewayWithSnapshot(snapshot: CatalogSnapshot, options: Partial<ShopGat
     loadCatalog: async () => ({ snapshot, stale: false }) as CatalogResult,
     dshBin: bin,
     prefetcher: fixturePrefetcher(),
+    // Its own record of what "this process" imported (see gatewayOptions).
+    importedModules: new Set<string>(),
     ...options,
   })
   return { gateway, callsLog: join(dir, 'calls.log') }
@@ -672,14 +674,17 @@ describe('ShopGateway.setEnabled', () => {
     expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toContain('hello-row')
   })
 
-  it('setEnabled on an enabled plugin removes the disable row', async () => {
+  it('setEnabled on a disabled plugin writes disabled: false on its row', async () => {
+    // It REMOVED the row until 2026-09-26; removing is what lost a row the
+    // user wrote, or the comment above it (design
+    // 2026-09-26-market-borrowings §2.2).
     const profileDir = toggleProfile()
     fixturePackage(profileDir, 'dsh-hello-fixture', "- insert:\n    - id: hello-row\n      name: 'dsh-hello-fixture'\n")
     writeFileSync(join(profileDir, 'cordis.patch.yml'), '- id: hello-row\n  disabled: true\n')
     const gateway = new ShopGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: async () => ({ entries: [{ entryId: 'hello-row', moduleName: 'dsh-hello-fixture', enabled: false }] }) } })
     const result = await gateway.setEnabled({ name: 'dsh-hello-fixture', enabled: true })
     expect(result.ok).toBe(true)
-    expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).not.toContain('hello-row')
+    expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toBe('- id: hello-row\n  disabled: false\n')
   })
 
   it('refuses to toggle the shop itself or a framework bundle', async () => {
@@ -997,11 +1002,15 @@ describe('ShopGateway.restart', () => {
     })
   }
 
-  it('commits the handoff with { ok: true } and exits after the response', async () => {
+  it('commits the handoff, names the log the new process writes, and exits after the response', async () => {
+    // The log's path depends on DSH_HOME and on the shop row's cacheDir, which
+    // only the host knows; the client names it when the new server does not
+    // come back (design 2026-09-26-market-borrowings §3).
     const exit = vi.fn<() => void>()
-    const gateway = restartingGateway({ exit })
+    const cacheDir = mkdtempSync(join(TEMP_ROOT, 'dsh-restart-cache-'))
+    const gateway = restartingGateway({ exit, cacheDir })
     const result = await gateway.restart()
-    expect(result).toEqual({ ok: true })
+    expect(result).toEqual({ ok: true, logFile: join(cacheDir, 'restart.log') })
     // The exit is delayed past the RPC round-trip, then fires.
     await new Promise(resolve => setTimeout(resolve, 50))
     expect(exit).toHaveBeenCalledWith(0)
@@ -1051,7 +1060,7 @@ describe('ShopGateway.restart', () => {
       exit, restartExitDelayMs: 1, restartParentPid: 1_000_000_000,
       restartArgv: ['web', '--no-open'], restartScript: script,
     })
-    expect(await gateway.restart()).toEqual({ ok: true })
+    expect(await gateway.restart()).toMatchObject({ ok: true })
     await vi.waitFor(() => { expect(existsSync(marker)).toBe(true) }, { timeout: 5000 })
     expect(readFileSync(marker, 'utf8')).toContain('web --no-open')
     rmSync(dir, { recursive: true, force: true })
@@ -1085,6 +1094,12 @@ function gatewayOptions() {
     // only a refusal `restart()` raises, an unpinned argv would let the way
     // the suite was invoked decide what these cases observe.
     restartArgv: ['web'],
+    // One record per gateway of the packages "this process" has imported.
+    // The production default is a module-scope set every gateway in the
+    // process shares — which, in this file, is every case — and a name one
+    // case seeds would turn another case's fresh install into a restart. The
+    // one case about that sharing opts out of this explicitly.
+    importedModules: new Set<string>(),
   }
 }
 
@@ -1644,6 +1659,19 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     return status
   }
 
+  /** What a FRESH install puts on disk, written before the call because the
+   * fixture CLI writes nothing: the package's own host-only manifest, and
+   * deliberately NOT the profile manifest's dependency. `fixturePackage`
+   * writes that too, and a dependency present BEFORE the install is exactly
+   * what makes it an update. */
+  function landedFreshPackage(profileDir: string, name: string): void {
+    mkdirSync(join(profileDir, 'node_modules', name), { recursive: true })
+    writeFileSync(join(profileDir, 'node_modules', name, 'package.json'), JSON.stringify({
+      name,
+      dsh: { bundle: { patch: './cordis.patch.yml' } },
+    }))
+  }
+
   it('install reports activation restart when no manifest exists yet (the conservative fallback)', async () => {
     const { gateway, profileDir } = hotGateway({
       hot: { mount: hotMount, unmount: hotUnmount },
@@ -1668,23 +1696,21 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     expect(hotMount).toHaveBeenCalledWith(expect.anything(), profileDir, 'dsh-hello-plugin')
   })
 
-  it('an update disables the live boot entry before the new instance mounts, retrying until the fiber is down', async () => {
-    const order: string[] = []
+  it('an update reports restart, already-loaded, and leaves the running instance alone', async () => {
+    // This process imported the package when it booted, and Node caches a
+    // module by its URL. The update rewrites the files at that same URL, so a
+    // hot mount would re-run the cached OLD module under the new version's
+    // name — measured, in web-full-flow.e2e.ts. So nothing is disabled and
+    // nothing is mounted: the instance that is running keeps running until
+    // the restart that loads the new files. (This case used to pin the swap
+    // that did the disabling, retries included.)
     const entry: LoaderEntryLike = {
       id: 'dsh-hello-plugin-row',
       options: { name: 'dsh-hello-plugin/host' },
       fiber: {},
-      update: vi.fn(async () => {
-        order.push('disable')
-        // The first two updates leave the fiber up (a finishing init still
-        // in flight); the third clears it, so liveDisable stops retrying.
-        if (order.filter(call => call === 'disable').length >= 3) entry.fiber = undefined
-      }),
+      update: vi.fn(async () => {}),
     }
-    const mount = vi.fn(async () => {
-      order.push('mount')
-      return { ok: true, reason: null }
-    })
+    const mount = vi.fn(async (): Promise<HotMountResult> => ({ ok: true, reason: null }))
     const { gateway } = hotGateway({
       dependencies: { 'dsh-hello-plugin': '1.2.0' },
       hot: { mount, unmount: hotUnmount },
@@ -1695,10 +1721,93 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     if (!started.ok) return
     const status = await pollTerminal(gateway, started.installId)
     expect(status.state).toBe('done')
-    expect(status.activation).toBe('live')
-    expect(entry.update).toHaveBeenCalledTimes(3)
-    expect(entry.update).toHaveBeenCalledWith({ disabled: true }, false, true)
-    expect(order).toEqual(['disable', 'disable', 'disable', 'mount'])
+    expect(status.activation).toBe('restart')
+    expect(status.restartReason).toBe('already-loaded')
+    expect(entry.update).not.toHaveBeenCalled()
+    expect(mount).not.toHaveBeenCalled()
+  })
+
+  it('a package the profile held at boot is still treated as imported after it leaves the manifest', async () => {
+    // An uninstall followed by a reinstall in one session. The manifest no
+    // longer names the package, so this is not an update — but the module the
+    // boot imported is still in Node's cache: an uninstall disposes the fiber,
+    // never the module record. Only the record seeded at construction knows.
+    const mount = vi.fn(async (): Promise<HotMountResult> => ({ ok: true, reason: null }))
+    const { gateway, profileDir } = hotGateway({
+      dependencies: { 'dsh-hello-plugin': '1.2.0' },
+      hot: { mount, unmount: hotUnmount },
+      loaderEntries: () => [],
+    })
+    // What the uninstall leaves behind: the same profile without the package.
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
+      name: 'dsh-profile-web',
+      dsh: { profile: { bundles: [] } },
+      dependencies: {},
+    }))
+    const started = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
+    expect(started.ok).toBe(true)
+    if (!started.ok) return
+    const status = await pollTerminal(gateway, started.installId)
+    expect(status.state).toBe('done')
+    expect(status.activation).toBe('restart')
+    expect(status.restartReason).toBe('already-loaded')
+    expect(mount).not.toHaveBeenCalled()
+  })
+
+  it('a package the hot path mounted is treated as imported on the next install', async () => {
+    const mount = vi.fn(async (): Promise<HotMountResult> => ({ ok: true, reason: null }))
+    const { gateway, profileDir } = hotGateway({ hot: { mount, unmount: hotUnmount }, loaderEntries: () => [] })
+    landedFreshPackage(profileDir, 'dsh-hello-plugin')
+    const first = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
+    expect(first.ok).toBe(true)
+    if (!first.ok) return
+    expect((await pollTerminal(gateway, first.installId)).activation).toBe('live')
+    // The fixture CLI writes no manifest, so the second install is not an
+    // update either: what stops a second mount is the first mount's import.
+    const second = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
+    expect(second.ok).toBe(true)
+    if (!second.ok) return
+    const status = await pollTerminal(gateway, second.installId)
+    expect(status.state).toBe('done')
+    expect(status.activation).toBe('restart')
+    expect(status.restartReason).toBe('already-loaded')
+    expect(mount).toHaveBeenCalledTimes(1)
+  })
+
+  it('what one gateway recorded, a gateway built later in the same process still knows', async () => {
+    // Module scope, not a gateway field: a shop fiber restarted inside a
+    // running dsh builds a new gateway, and the process has not forgotten
+    // what it imported. So neither gateway here takes gatewayOptions()' own
+    // set; both use the production default, and the name is unique to this
+    // case because nothing ever leaves that set.
+    const probe: CatalogEntry = { name: 'dsh-lifetime-probe', version: '1.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-09-26' }
+    const profileAt = (dependencies: Record<string, string>): string => {
+      const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-lifetime-profile-'))
+      writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies }))
+      return profileDir
+    }
+    const mount = vi.fn(async (): Promise<HotMountResult> => ({ ok: true, reason: null }))
+    const build = (profileDir: string): ShopGateway => new ShopGateway(stubCtx(), {
+      ...gatewayOptions(),
+      importedModules: undefined,
+      profileDir,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [probe], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      hot: { mount, unmount: hotUnmount },
+      loaderEntries: () => [],
+    })
+    // The first gateway is built over a profile holding the probe, as the
+    // boot's shop would be...
+    build(profileAt({ 'dsh-lifetime-probe': '1.0.0' }))
+    // ...and a later one over the same process, after the probe was removed.
+    const later = build(profileAt({}))
+    const started = await later.install({ name: 'dsh-lifetime-probe', version: '1.0.0', acknowledged: true })
+    expect(started.ok).toBe(true)
+    if (!started.ok) return
+    const status = await pollTerminal(later, started.installId)
+    expect(status.state).toBe('done')
+    expect(status.activation).toBe('restart')
+    expect(status.restartReason).toBe('already-loaded')
+    expect(mount).not.toHaveBeenCalled()
   })
 
   it('a failed hot mount reports done with activation restart and the restart reason', async () => {
@@ -1824,51 +1933,6 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     expect(entry.update).toHaveBeenCalledTimes(3)
   })
 
-  it('reports activation restart when an update removes the package browser half', async () => {
-    const hotFs = memHotFs()
-    const mount = vi.fn(async (_ctx: unknown, dir: string, name: string): Promise<HotMountResult> => {
-      // By the time the mount runs, the new tarball has overwritten the
-      // manifest — and this version declares no browser half any more.
-      hotFs.write(join(dir, 'node_modules', name, 'package.json'), JSON.stringify({ name }))
-      return { ok: true, reason: null }
-    })
-    const { gateway, profileDir } = hotGateway({
-      // Same spelling as the sibling update test: the fake CLI rewrites no
-      // manifest, and the post-install confirm reads DSH_HOME's fixture
-      // profile — which lists dsh-hello-plugin and not dsh-goodbye-plugin.
-      dependencies: { 'dsh-hello-plugin': '1.2.0' },
-      hot: { mount, unmount: hotUnmount },
-      loaderEntries: () => [],
-      hotFs,
-    })
-    // The version on disk when the update starts HAS a browser half, and
-    // the open tab is running that bundle right now.
-    hotFs.write(join(profileDir, 'node_modules', 'dsh-hello-plugin', 'package.json'), JSON.stringify({
-      name: 'dsh-hello-plugin',
-      dsh: { client: { inject: [], platform: 'web' } },
-    }))
-
-    const started = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
-    expect(started.ok).toBe(true)
-    if (!started.ok) return
-    const status = await pollTerminal(gateway, started.installId)
-    expect(status.state).toBe('done')
-    // Reading only in `afterDone` answers about the NEW version — `live`,
-    // "nothing to do" — while the tab still holds the old bundle. The union
-    // of the two reads is what separates this from `live`, and it is still
-    // load-bearing after the hot-mount path moved from `reload` to
-    // `restart`: without it this case answers "nothing to do" about a tab
-    // that is showing a browser half the server no longer intends.
-    //
-    // `restart` rather than `reload` deliberately, and conservatively: a
-    // reload might well drop the old bundle here, but the only thing
-    // measured on this path is that a reload does NOT deliver a hot-mounted
-    // one (2026-09-14), so the step known to work is the one offered.
-    expect(status.activation).toBe('restart')
-    expect(status.restartReason).toBe('client-half')
-    expect(mount).toHaveBeenCalledTimes(1)
-  })
-
   it('self-update still reports activation restart — no hot path is wired', async () => {
     const { gateway } = hotGateway({ hot: { mount: hotMount, unmount: hotUnmount } })
     const started = await gateway.updateStart({ version: '9.9.9' })
@@ -1905,11 +1969,14 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
   })
 
   it('reports activation live when a hot-mounted install is host-only', async () => {
-    const { gateway } = hotGateway({
-      dependencies: { 'dsh-hello-plugin': '1.2.0' },
+    // The host-only manifest lands in node_modules alone: listing the
+    // package in the profile manifest, as this case used to, made it an
+    // UPDATE — which no longer mounts at all.
+    const { gateway, profileDir } = hotGateway({
       hot: { mount: hotMount, unmount: hotUnmount },
       loaderEntries: () => [],
     })
+    landedFreshPackage(profileDir, 'dsh-hello-plugin')
     const started = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
     expect(started.ok).toBe(true)
     if (!started.ok) return
@@ -1995,6 +2062,37 @@ describe('ShopGateway.setEnabled entry ownership', () => {
     expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toContain('archify-skill-filesystem')
   })
 
+  it('writes the user\'s own named row for the entry, because it knows which module the entry mounts', async () => {
+    // A row naming the entry's module is one the harness applies, so it is
+    // the row to write — but only the package's own patch says which module
+    // that is. Without it the toggle could not tell this row from one the
+    // harness skips, and would append a second row beside it.
+    const profileDir = toggleProfile()
+    fixturePackage(profileDir, '@tt-a1i/archify-dsh', archifyPatch)
+    writeFileSync(join(profileDir, 'cordis.patch.yml'), [
+      '- id: archify-skill-filesystem',
+      "  name: '@deepseek-ai/dsh-skill-filesystem'",
+      '  config:',
+      '    root: ~/notes',
+      '',
+    ].join('\n'))
+    const gateway = new ShopGateway(stubCtx(), {
+      profile: 'web', profileDir,
+      inventory: { list: async () => ({ entries: [
+        { entryId: 'include:archify-skill-filesystem', moduleName: '@deepseek-ai/dsh-skill-filesystem', enabled: true },
+      ] }) },
+    })
+    expect(await gateway.setEnabled({ name: '@tt-a1i/archify-dsh', enabled: false })).toEqual({ ok: true, activation: 'live' })
+    expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toBe([
+      '- id: archify-skill-filesystem',
+      "  name: '@deepseek-ai/dsh-skill-filesystem'",
+      '  config:',
+      '    root: ~/notes',
+      '  disabled: true',
+      '',
+    ].join('\n'))
+  })
+
   it('toggles a package the REAL harness composed — the live ids carry the root include prefix', async () => {
     // dsh's app-boot mounts the whole profile as one root Include, so the
     // inventory reports `include:<id>` for every entry a bundle patch
@@ -2040,7 +2138,9 @@ describe('ShopGateway.setEnabled entry ownership', () => {
     expect(written).not.toContain('mkt-')
   })
 
-  it('re-enabling drops the row again', async () => {
+  it('re-enabling writes disabled: false on the same row, in the config id space', async () => {
+    // It dropped the row until 2026-09-26 (see the enable case above). The
+    // id is still the CONFIG id, never the live `include:` spelling.
     const profileDir = toggleProfile()
     fixturePackage(profileDir, '@tt-a1i/archify-dsh', archifyPatch)
     writeFileSync(join(profileDir, 'cordis.patch.yml'), '- id: archify-skill-filesystem\n  disabled: true\n')
@@ -2051,7 +2151,7 @@ describe('ShopGateway.setEnabled entry ownership', () => {
       ] }) },
     })
     expect(await gateway.setEnabled({ name: '@tt-a1i/archify-dsh', enabled: true })).toEqual({ ok: true, activation: 'live' })
-    expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).not.toContain('archify-skill-filesystem')
+    expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toBe('- id: archify-skill-filesystem\n  disabled: false\n')
   })
 
   it('toggles every entry of a package that inserts several', async () => {
@@ -2670,7 +2770,7 @@ describe('restart while an install is running (F-5)', () => {
       // is still on its way to touching the profile.
       expect(isTerminalInstallState(gateway.installStatus({ installId: started.installId }).state)).toBe(true)
     }, { timeout: 5000 })
-    expect(await gateway.restart()).toEqual({ ok: true })
+    expect(await gateway.restart()).toMatchObject({ ok: true })
   })
 })
 

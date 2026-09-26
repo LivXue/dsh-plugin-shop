@@ -1,0 +1,7 @@
+{
+  "name": "dsh-shop-e2e-update",
+  "version": "2.0.0",
+  "private": true,
+  "main": "index.js",
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+}

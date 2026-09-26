@@ -9,6 +9,10 @@ export const zh = {
   error: '暂时无法读取目录。',
   installedError: '暂时无法读取已安装列表。',
   retry: '重试',
+  /** The shop's own error boundary caught a render error; the error's message
+   * follows on its own line, and Retry remounts the tab (design
+   * 2026-09-26-market-borrowings §4). */
+  tabCrashed: '插件商店在显示这一页时出错了。',
   search: '搜索插件',
   all: '全部',
   catalog: '插件目录',
@@ -50,6 +54,11 @@ export const zh = {
   hotTimeoutNotice: '热挂载超时；重启 dsh 后生效',
   hotMountFailedNotice: '热挂载失败；重启 dsh 后生效',
   hotClientHalfNotice: '已安装并在运行；它的界面要重启 dsh 才会更新——刷新页面取不到',
+  /** No mount was tried: this dsh already loaded the package once, and Node
+   * will not load a second copy from the same place (design
+   * 2026-09-26-market-borrowings §1). Covers an update and a reinstall alike,
+   * so it names the new files rather than a "new version". */
+  hotAlreadyLoadedNotice: '已安装；这次运行的 dsh 已经加载过这个插件，新装的文件要重启 dsh 后才会生效',
   installedNoRestartNotice: '已安装并热挂载；现在即可使用，无需重启',
   installedReloadNotice: '已生效；刷新页面即可看到',
   reload: '刷新页面',
@@ -116,6 +125,12 @@ export const zh = {
   restartConfirm: '重启',
   restarting: '正在重启，服务器就绪后页面会自动刷新…',
   restartFailedNotice: '重启后服务器没有回来。请手动启动：dsh web（新进程的日志在商店缓存目录的 restart.log）',
+  /** The same failure, when the host said where the new process writes —
+   * which is where a boot that died explains itself (design
+   * 2026-09-26-market-borrowings §3). "Or did not stay up": the page now
+   * waits for the new server to keep answering, so this also covers a boot
+   * that answered and then died. */
+  restartFailedLogNotice: '重启后服务器没有回来，或回来后没能保持运行。新进程的日志在 {log}；也可以手动启动：dsh web',
   restartTransportFailed: '重启请求未能送达。请稍后重试。',
   restartBlockedWindowsNotice: '商店暂不支持在 Windows 上重启 dsh。请退出 dsh 后重新启动，以应用更改。',
   restartBlockedSystemdNotice: '当前 dsh 由 systemd 服务托管，商店无法安全地重启它。请手动重启服务，或在商店行配置中设置 allowRestart: true。',
@@ -141,6 +156,7 @@ export const en = {
   error: 'The catalog is temporarily unavailable.',
   installedError: 'The installed list is temporarily unavailable.',
   retry: 'Retry',
+  tabCrashed: 'The plugin shop hit an error while showing this page.',
   search: 'Search plugins',
   all: 'All',
   catalog: 'Plugin catalog',
@@ -178,6 +194,7 @@ export const en = {
   hotTimeoutNotice: 'hot-mount timed out; restart dsh to activate',
   hotMountFailedNotice: 'hot-mount failed; restart dsh to activate',
   hotClientHalfNotice: 'installed and running; its interface needs a restart of dsh — a reload cannot fetch it',
+  hotAlreadyLoadedNotice: 'installed; this dsh has already loaded the plugin once, so the files just installed take effect after a restart of dsh',
   installedNoRestartNotice: 'installed and hot-mounted; running now, no restart needed',
   installedReloadNotice: 'already applied; reload the page to see it',
   reload: 'Reload the page',
@@ -230,6 +247,7 @@ export const en = {
   restartConfirm: 'Restart',
   restarting: 'Restarting; the page will refresh once the server is back…',
   restartFailedNotice: 'The server did not come back after the restart. Start it manually: dsh web (see restart.log in the shop cache directory)',
+  restartFailedLogNotice: 'The server did not come back after the restart, or did not stay up. The new process logs to {log}; you can also start it manually: dsh web',
   restartTransportFailed: 'The restart request could not be delivered. Please retry.',
   restartBlockedWindowsNotice: 'The shop cannot restart dsh on Windows yet. Quit dsh and start it again to apply the change.',
   restartBlockedSystemdNotice: 'This dsh process runs as a systemd service, so the shop cannot restart it safely. Restart the service manually, or set allowRestart: true in the shop row config.',

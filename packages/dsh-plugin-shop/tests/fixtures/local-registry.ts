@@ -15,9 +15,16 @@
  * arriving through the local registry.
  *
  * The packument is the minimal shape pnpm accepts: `dist-tags.latest` plus a
- * `versions` map whose entry carries `dist.tarball` / `shasum` / `integrity`
+ * `versions` map whose entries carry `dist.tarball` / `shasum` / `integrity`
  * taken from the `npm pack --json` output, so the bytes served are the exact
  * packed tarball.
+ *
+ * Several fixture directories may pack the SAME name at different versions —
+ * the update e2e needs a package installed at one version and offered at
+ * another. They are served as one packument listing every version, with
+ * `latest` on the highest, which is the shape a real registry answers with.
+ * Keying the fixtures by name alone would have let the last directory
+ * silently replace the others.
  */
 
 import { spawnSync } from 'node:child_process'
@@ -26,6 +33,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { rcompare } from 'semver'
 import { npmCommand } from './node-cli.ts'
 
 export interface LocalRegistry {
@@ -77,21 +85,23 @@ function packFixture(root: string, dir: string): PackedFixture {
   }
 }
 
-/** The minimal packument pnpm accepts for `name@version` resolution. */
-function packument(fixture: PackedFixture, baseUrl: string): string {
-  const version = {
-    name: fixture.name,
-    version: fixture.version,
-    dist: {
-      tarball: `${baseUrl}${fixture.name}/-/${fixture.filename}`,
-      shasum: fixture.shasum,
-      integrity: fixture.integrity,
-    },
-  }
+/** The minimal packument pnpm accepts for `name@version` resolution: every
+ * packed version of one name, `latest` on the highest. */
+function packument(versions: readonly PackedFixture[], baseUrl: string): string {
+  const [latest] = [...versions].sort((a, b) => rcompare(a.version, b.version))
+  if (latest === undefined) throw new Error('local-registry: a packument needs at least one version')
   return JSON.stringify({
-    name: fixture.name,
-    'dist-tags': { latest: fixture.version },
-    versions: { [fixture.version]: version },
+    name: latest.name,
+    'dist-tags': { latest: latest.version },
+    versions: Object.fromEntries(versions.map(fixture => [fixture.version, {
+      name: fixture.name,
+      version: fixture.version,
+      dist: {
+        tarball: `${baseUrl}${fixture.name}/-/${fixture.filename}`,
+        shasum: fixture.shasum,
+        integrity: fixture.integrity,
+      },
+    }])),
   })
 }
 
@@ -102,8 +112,14 @@ export async function startLocalRegistry(fixtureDirs: string[]): Promise<LocalRe
   // One scratch root holds the packed tarballs for the server's lifetime;
   // teardown removes it with the fixture dirs.
   const root = mkdtempSync(join(tmpdir(), 'dsh-registry-'))
-  const fixtures = fixtureDirs.map(dir => packFixture(root, dir))
-  const byName = new Map(fixtures.map(fixture => [fixture.name, fixture] as const))
+  const byName = new Map<string, PackedFixture[]>()
+  for (const fixture of fixtureDirs.map(dir => packFixture(root, dir))) {
+    const versions = byName.get(fixture.name) ?? []
+    if (versions.some(packed => packed.version === fixture.version)) {
+      throw new Error(`local-registry: ${fixture.name}@${fixture.version} is packed from two fixture directories`)
+    }
+    byName.set(fixture.name, [...versions, fixture])
+  }
 
   const server: Server = createServer(async (req, res) => {
     const url = req.url ?? ''
@@ -114,13 +130,14 @@ export async function startLocalRegistry(fixtureDirs: string[]): Promise<LocalRe
     // 404s too, so the failure mode is unchanged).
     const name = segments[1]
     if (name !== undefined) {
-      const fixture = byName.get(name)
-      if (fixture !== undefined && segments.length === 2) {
+      const versions = byName.get(name)
+      if (versions !== undefined && segments.length === 2) {
         res.writeHead(200, { 'content-type': 'application/json' })
-        res.end(packument(fixture, serverBase))
+        res.end(packument(versions, serverBase))
         return
       }
-      if (fixture !== undefined && segments[2] === '-' && segments[3] === fixture.filename) {
+      const fixture = segments[2] === '-' ? versions?.find(packed => packed.filename === segments[3]) : undefined
+      if (fixture !== undefined) {
         res.writeHead(200, { 'content-type': 'application/octet-stream' })
         res.end(fixture.tarball)
         return
