@@ -311,8 +311,36 @@ export const INSTALL_POLL_MS = 1000
 export const RESTART_GRACE_MS = 3000
 
 /** §8 restart handoff: how long the client waits for the new server to
- * answer before reporting the manual restart command. */
+ * START answering before reporting the manual restart command. A run of good
+ * answers that began inside it may finish after it (see
+ * `restartMonitorVerdict`). */
 export const RESTART_WAIT_MS = 30000
+
+/** §8 restart handoff: how long the new server must keep answering before the
+ * page reloads into it (design 2026-09-26-market-borrowings §3). The Loader
+ * mounts entries concurrently, so a boot that is about to fail can bind the
+ * port and answer before the settled tree is audited and the process exits;
+ * dsh-market measured that window inside 8 s. */
+export const RESTART_STABLE_MS = 8000
+
+/**
+ * The restart monitor's decision after a probe of the origin.
+ *
+ * `stableSinceMs` is when the current unbroken run of good answers began —
+ * null when the last probe failed, or none has succeeded yet — and both times
+ * count from the moment the restart was committed. One answer is not enough:
+ * reloading on it is what landed a reader on a boot that died a moment later,
+ * a blank page in place of the notice naming the log. So the page reloads
+ * only once the run has lasted `RESTART_STABLE_MS`, and the monitor gives up
+ * only when no run is under way past `RESTART_WAIT_MS` — which bounds the
+ * whole wait at the sum of the two, since a run that began in time either
+ * completes or breaks after the deadline.
+ */
+export function restartMonitorVerdict(input: { elapsedMs: number; stableSinceMs: number | null }): 'wait' | 'reload' | 'failed' {
+  if (input.stableSinceMs !== null && input.elapsedMs - input.stableSinceMs >= RESTART_STABLE_MS) return 'reload'
+  if (input.stableSinceMs === null && input.elapsedMs > RESTART_WAIT_MS) return 'failed'
+  return 'wait'
+}
 
 /** How long the check-update button reports "up to date" after a re-check
  * finds no newer release, before reverting to its idle label. */

@@ -1002,11 +1002,15 @@ describe('ShopGateway.restart', () => {
     })
   }
 
-  it('commits the handoff with { ok: true } and exits after the response', async () => {
+  it('commits the handoff, names the log the new process writes, and exits after the response', async () => {
+    // The log's path depends on DSH_HOME and on the shop row's cacheDir, which
+    // only the host knows; the client names it when the new server does not
+    // come back (design 2026-09-26-market-borrowings §3).
     const exit = vi.fn<() => void>()
-    const gateway = restartingGateway({ exit })
+    const cacheDir = mkdtempSync(join(TEMP_ROOT, 'dsh-restart-cache-'))
+    const gateway = restartingGateway({ exit, cacheDir })
     const result = await gateway.restart()
-    expect(result).toEqual({ ok: true })
+    expect(result).toEqual({ ok: true, logFile: join(cacheDir, 'restart.log') })
     // The exit is delayed past the RPC round-trip, then fires.
     await new Promise(resolve => setTimeout(resolve, 50))
     expect(exit).toHaveBeenCalledWith(0)
@@ -1056,7 +1060,7 @@ describe('ShopGateway.restart', () => {
       exit, restartExitDelayMs: 1, restartParentPid: 1_000_000_000,
       restartArgv: ['web', '--no-open'], restartScript: script,
     })
-    expect(await gateway.restart()).toEqual({ ok: true })
+    expect(await gateway.restart()).toMatchObject({ ok: true })
     await vi.waitFor(() => { expect(existsSync(marker)).toBe(true) }, { timeout: 5000 })
     expect(readFileSync(marker, 'utf8')).toContain('web --no-open')
     rmSync(dir, { recursive: true, force: true })
@@ -2766,7 +2770,7 @@ describe('restart while an install is running (F-5)', () => {
       // is still on its way to touching the profile.
       expect(isTerminalInstallState(gateway.installStatus({ installId: started.installId }).state)).toBe(true)
     }, { timeout: 5000 })
-    expect(await gateway.restart()).toEqual({ ok: true })
+    expect(await gateway.restart()).toMatchObject({ ok: true })
   })
 })
 

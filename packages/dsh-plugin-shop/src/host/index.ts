@@ -1480,6 +1480,7 @@ export class ShopGateway extends TypertRemoteService {
     if (blocked !== null) {
       return { ok: false, detail: RESTART_BLOCKED_DETAIL[blocked] }
     }
+    let logFile: string
     try {
       const { cacheDir } = this.rowConfig()
       const { command, args } = restartCommand({
@@ -1489,11 +1490,12 @@ export class ShopGateway extends TypertRemoteService {
         execArgv: process.execArgv,
         script: this.restartScript,
       })
+      logFile = join(cacheDir, 'restart.log')
       startRestart({
         command,
         args,
         parentPid: this.restartParentPid,
-        logFile: join(cacheDir, 'restart.log'),
+        logFile,
         env: process.env,
       })
     } catch (error) {
@@ -1503,9 +1505,10 @@ export class ShopGateway extends TypertRemoteService {
     }
     // The response must reach the browser before this process exits; the
     // helper holds the child back until this pid is gone, so the port is
-    // free when the new dsh binds.
+    // free when the new dsh binds. It names the log the new process writes,
+    // for the page to point at if that process never stays up.
     setTimeout(() => this.exit(0), this.restartExitDelayMs)
-    return { ok: true }
+    return { ok: true, logFile }
   }
 
   /** The shop's own version and whether npm has a newer one (§7.3). The

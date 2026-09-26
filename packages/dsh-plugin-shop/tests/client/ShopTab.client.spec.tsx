@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ACKNOWLEDGEMENT_EN, ACKNOWLEDGEMENT_ZH, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, rejectionCodeKey } from '../../src/client/present.ts'
+import { ACKNOWLEDGEMENT_EN, ACKNOWLEDGEMENT_ZH, RESTART_GRACE_MS, RESTART_STABLE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, rejectionCodeKey } from '../../src/client/present.ts'
 import { en, zh, type ShopLocaleKey } from '../../src/client/locales.ts'
 import { ShopTab, type ShopTabInjected, type ShopTabProps } from '../../src/client/ShopTab.tsx'
 import type { HarnessVerdict, ShopCatalogResult, ShopInstalledEntry } from '../../src/host/index.ts'
@@ -833,6 +833,69 @@ describe('ShopTab', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(RESTART_WAIT_MS) })
     expect(fetchMock).toHaveBeenCalled()
     expect(screen.getByText(en.restartFailedNotice)).toBeTruthy()
+  })
+
+  /** Up to the moment the restart is confirmed, under fake timers with the
+   * origin probe stubbed; `reload` is the injected spy the monitor calls. */
+  async function confirmRestart(options: { fetch: ReturnType<typeof vi.fn>; logFile?: string }) {
+    const { injected, restart } = bench(snapshot({ tier: 'verified' }))
+    if (options.logFile !== undefined) restart.mockResolvedValue({ ok: true, logFile: options.logFile })
+    const reload = vi.fn()
+    const { container } = renderTab({ ...injected, reload })
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText(en.install))
+    await waitFor(() => expect(container.querySelector('[data-shop-restart]')).toBeTruthy(), { timeout: 3000 })
+    vi.useFakeTimers()
+    vi.stubGlobal('fetch', options.fetch)
+    fireEvent.click(container.querySelector('[data-shop-restart]')!)
+    fireEvent.click(screen.getByText(en.restartConfirm))
+    await act(async () => { await vi.advanceTimersByTimeAsync(100) })
+    expect(screen.getByText(en.restarting)).toBeTruthy()
+    return { reload }
+  }
+
+  it('reloads into the new server only once it has kept answering for the whole stable window', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => new Response('ok', { status: 200 }))
+    const { reload } = await confirmRestart({ fetch: fetchMock })
+    // Answering from the first probe after the grace period: seven seconds of
+    // it is still not the new server proving it will stay.
+    await act(async () => { await vi.advanceTimersByTimeAsync(RESTART_GRACE_MS + RESTART_STABLE_MS - 1_000) })
+    expect(fetchMock).toHaveBeenCalled()
+    expect(reload).not.toHaveBeenCalled()
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000) })
+    expect(reload).toHaveBeenCalledTimes(1)
+  })
+
+  it('never reloads into a server that answered once and went away', async () => {
+    // What a boot about to fail looks like from the page: the webserver entry
+    // binds the port and answers while a sibling plugin is still loading,
+    // then the tree audit kills the process. Reloading on that one answer is
+    // what left readers on a blank page.
+    const refused = new Error('connection refused')
+    const fetchMock = vi.fn().mockRejectedValue(refused)
+      .mockRejectedValueOnce(refused)
+      .mockImplementationOnce(async () => new Response('ok', { status: 200 }))
+    const { reload } = await confirmRestart({ fetch: fetchMock })
+    await act(async () => { await vi.advanceTimersByTimeAsync(RESTART_WAIT_MS + RESTART_STABLE_MS + 5_000) })
+    expect(reload).not.toHaveBeenCalled()
+    expect(screen.getByText(en.restartFailedNotice)).toBeTruthy()
+  })
+
+  it('never counts an error status as the new server being up', async () => {
+    // `fetch` resolves on any HTTP status; a proxy's 502 is not dsh answering.
+    const fetchMock = vi.fn().mockImplementation(async () => new Response('bad gateway', { status: 502 }))
+    const { reload } = await confirmRestart({ fetch: fetchMock })
+    await act(async () => { await vi.advanceTimersByTimeAsync(RESTART_WAIT_MS + RESTART_STABLE_MS + 5_000) })
+    expect(fetchMock).toHaveBeenCalled()
+    expect(reload).not.toHaveBeenCalled()
+    expect(screen.getByText(en.restartFailedNotice)).toBeTruthy()
+  })
+
+  it('names the log the host said the new process writes when the server never comes back', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error('connection refused'))
+    await confirmRestart({ fetch: fetchMock, logFile: '/home/you/.dsh/shop/restart.log' })
+    await act(async () => { await vi.advanceTimersByTimeAsync(RESTART_WAIT_MS + 2_000) })
+    expect(screen.getByText(en.restartFailedLogNotice.replace('{log}', '/home/you/.dsh/shop/restart.log'))).toBeTruthy()
   })
 
   it('offers the restart button after a successful uninstall', async () => {

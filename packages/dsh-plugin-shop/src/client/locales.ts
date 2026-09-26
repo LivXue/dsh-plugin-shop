@@ -121,6 +121,12 @@ export const zh = {
   restartConfirm: '重启',
   restarting: '正在重启，服务器就绪后页面会自动刷新…',
   restartFailedNotice: '重启后服务器没有回来。请手动启动：dsh web（新进程的日志在商店缓存目录的 restart.log）',
+  /** The same failure, when the host said where the new process writes —
+   * which is where a boot that died explains itself (design
+   * 2026-09-26-market-borrowings §3). "Or did not stay up": the page now
+   * waits for the new server to keep answering, so this also covers a boot
+   * that answered and then died. */
+  restartFailedLogNotice: '重启后服务器没有回来，或回来后没能保持运行。新进程的日志在 {log}；也可以手动启动：dsh web',
   restartTransportFailed: '重启请求未能送达。请稍后重试。',
   restartBlockedWindowsNotice: '商店暂不支持在 Windows 上重启 dsh。请退出 dsh 后重新启动，以应用更改。',
   restartBlockedSystemdNotice: '当前 dsh 由 systemd 服务托管，商店无法安全地重启它。请手动重启服务，或在商店行配置中设置 allowRestart: true。',
@@ -236,6 +242,7 @@ export const en = {
   restartConfirm: 'Restart',
   restarting: 'Restarting; the page will refresh once the server is back…',
   restartFailedNotice: 'The server did not come back after the restart. Start it manually: dsh web (see restart.log in the shop cache directory)',
+  restartFailedLogNotice: 'The server did not come back after the restart, or did not stay up. The new process logs to {log}; you can also start it manually: dsh web',
   restartTransportFailed: 'The restart request could not be delivered. Please retry.',
   restartBlockedWindowsNotice: 'The shop cannot restart dsh on Windows yet. Quit dsh and start it again to apply the change.',
   restartBlockedSystemdNotice: 'This dsh process runs as a systemd service, so the shop cannot restart it safely. Restart the service manually, or set allowRestart: true in the shop row config.',

@@ -16,9 +16,12 @@ import { spawn } from 'node:child_process'
 /** `shop/restart` result: committed, or a typed refusal issued BEFORE
  * anything is torn down. Once `ok` is returned the old process WILL exit —
  * the client monitors the new server and reports a failed boot with the
- * manual command. */
+ * manual command and `logFile`, the file the new process's output goes to:
+ * where a boot that died explains itself, at a path that depends on DSH_HOME
+ * and the shop row's `cacheDir`, which only the host knows. A host older than
+ * the field answers without it, so the client reads it as optional. */
 export type RestartOutcome =
-  | { ok: true }
+  | { ok: true; logFile?: string }
   | { ok: false; detail: string }
 
 /** Spawn the two-phase handoff. The helper is a POSIX shell wrapper that

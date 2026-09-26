@@ -7,7 +7,7 @@
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, HarnessVerdict, InstallArgs, RestartBlockedReason, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
-import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, readsIncompatible, rejectionCodeKey, restartBlockedNoticeKey, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
+import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, readsIncompatible, rejectionCodeKey, restartBlockedNoticeKey, restartMonitorVerdict, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
 import { useInstallFlows, type InstallFlow } from './useInstall.ts'
 import { useUninstallFlows, type UninstallFlow } from './useUninstall.ts'
 import { useUpdateSelf } from './useUpdateSelf.ts'
@@ -729,9 +729,12 @@ function UninstallPanel({ name, t, restart, restartBlocked, reload, flow }: {
  * once the NEW server answers. A refused restart renders the host's
  * published detail; a server that never comes back names the manual
  * command. */
-function RestartPanel({ t, restart, gate }: {
+function RestartPanel({ t, restart, reload, gate }: {
   t: ShopTabProps['t']
   restart: ShopTabInjected['restart']
+  /** The tab's reload trigger: a real page reload in production, a spy in
+   * tests — the same one the §4 offer uses. */
+  reload: () => void
   /** When given, the TRIGGER lives elsewhere — the version row — and this
    * panel renders only the confirmation and the outcome. Restarting drops
    * every live conversation, so moving the button must not move it past the
@@ -745,7 +748,10 @@ function RestartPanel({ t, restart, gate }: {
     if (gate === undefined) setOwnGateOpen(open)
     else if (!open) gate.close()
   }
-  const [state, setState] = useState<{ kind: 'idle' } | { kind: 'restarting' } | { kind: 'failed'; detail: string }>({ kind: 'idle' })
+  // `logFile` is where the new process writes, as the host reported it; a
+  // host older than that field sends none, and the failure notice then keeps
+  // its generic wording.
+  const [state, setState] = useState<{ kind: 'idle' } | { kind: 'restarting'; logFile?: string } | { kind: 'failed'; detail: string }>({ kind: 'idle' })
 
   const onConfirm = async (): Promise<void> => {
     setGateOpen(false)
@@ -755,7 +761,7 @@ function RestartPanel({ t, restart, gate }: {
         setState({ kind: 'failed', detail: result.detail })
         return
       }
-      setState({ kind: 'restarting' })
+      setState({ kind: 'restarting', ...(typeof result.logFile === 'string' ? { logFile: result.logFile } : {}) })
     } catch {
       // Transport failure: the request never reached the host, and the wire
       // detail is private (hosts and ports) — the localized line is its
@@ -764,28 +770,53 @@ function RestartPanel({ t, restart, gate }: {
     }
   }
 
-  // The origin monitor: while restarting, poll the current URL after the
-  // grace period (the host exits within it, so an answer is the NEW server)
-  // and reload into it. If it never answers within the wait, the honest
-  // failure names the manual command.
+  // The origin monitor: while restarting, probe the current URL once the
+  // grace period is over (the host exits within it, so an answer is the NEW
+  // server), and reload into it only after it has KEPT answering for the
+  // stable window. A boot that is about to fail can bind the port and answer
+  // before its plugin tree is audited and it exits; reloading on that one
+  // answer left the reader on a blank page instead of the notice naming the
+  // log (design 2026-09-26-market-borrowings §3). `restartMonitorVerdict`
+  // decides; this effect only probes. Probes never overlap: each is scheduled
+  // one poll interval after the previous one settled.
   useEffect(() => {
     if (state.kind !== 'restarting') return
+    const { logFile } = state
     const started = Date.now()
-    const timer = setInterval(() => {
-      const elapsed = Date.now() - started
-      if (elapsed < RESTART_GRACE_MS) return
-      // Success reloads into the new server; a rejection just means the new
-      // server is not up yet — keep polling until the wait expires.
-      void fetch(window.location.href, { cache: 'no-store' }).then(() => {
-        window.location.reload()
-      }, () => {})
-      if (elapsed > RESTART_WAIT_MS) {
-        clearInterval(timer)
-        setState({ kind: 'failed', detail: t('restartFailedNotice') })
+    let stableSince: number | null = null
+    let stopped = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const probe = async (): Promise<void> => {
+      if (Date.now() - started >= RESTART_GRACE_MS) {
+        let up = false
+        try {
+          // A fetch resolves on ANY status, and a proxy's 502 is not dsh
+          // answering: only a 2xx counts.
+          up = (await fetch(window.location.href, { cache: 'no-store' })).ok
+        } catch {
+          // Refused or reset: the new server is not up — yet, or any more.
+        }
+        if (stopped) return
+        const elapsed = Date.now() - started
+        stableSince = up ? (stableSince ?? elapsed) : null
+        const verdict = restartMonitorVerdict({ elapsedMs: elapsed, stableSinceMs: stableSince })
+        if (verdict === 'reload') {
+          reload()
+          return
+        }
+        if (verdict === 'failed') {
+          setState({ kind: 'failed', detail: logFile === undefined ? t('restartFailedNotice') : t('restartFailedLogNotice', { log: logFile }) })
+          return
+        }
       }
-    }, INSTALL_POLL_MS)
-    return () => clearInterval(timer)
-  }, [state, t])
+      timer = setTimeout(() => { void probe() }, INSTALL_POLL_MS)
+    }
+    timer = setTimeout(() => { void probe() }, INSTALL_POLL_MS)
+    return () => {
+      stopped = true
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }, [state, t, reload])
 
   if (state.kind === 'restarting') {
     return <p className={css.notice} data-shop-restarting>{t('restarting')}</p>
@@ -853,7 +884,7 @@ function ActivationOffer({ activation, t, restart, restartBlocked, reload, where
   if (activation === 'reload') return <ReloadPanel t={t} reload={reload} where={where} />
   if (activation !== 'restart') return null
   return restartBlocked === null
-    ? <RestartPanel t={t} restart={restart} />
+    ? <RestartPanel t={t} restart={restart} reload={reload} />
     : <p className={css.notice} data-shop-restart-disabled>{t(restartBlockedNoticeKey(restartBlocked))}</p>
 }
 
@@ -1731,6 +1762,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
               <RestartPanel
                 t={t}
                 restart={restart}
+                reload={reload}
                 gate={{ open: selfRestartGate, close: () => setSelfRestartGate(false) }}
               />
             )}
