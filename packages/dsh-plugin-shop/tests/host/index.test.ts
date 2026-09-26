@@ -674,14 +674,17 @@ describe('ShopGateway.setEnabled', () => {
     expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toContain('hello-row')
   })
 
-  it('setEnabled on an enabled plugin removes the disable row', async () => {
+  it('setEnabled on a disabled plugin writes disabled: false on its row', async () => {
+    // It REMOVED the row until 2026-09-26; removing is what lost a row the
+    // user wrote, or the comment above it (design
+    // 2026-09-26-market-borrowings §2.2).
     const profileDir = toggleProfile()
     fixturePackage(profileDir, 'dsh-hello-fixture', "- insert:\n    - id: hello-row\n      name: 'dsh-hello-fixture'\n")
     writeFileSync(join(profileDir, 'cordis.patch.yml'), '- id: hello-row\n  disabled: true\n')
     const gateway = new ShopGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: async () => ({ entries: [{ entryId: 'hello-row', moduleName: 'dsh-hello-fixture', enabled: false }] }) } })
     const result = await gateway.setEnabled({ name: 'dsh-hello-fixture', enabled: true })
     expect(result.ok).toBe(true)
-    expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).not.toContain('hello-row')
+    expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toBe('- id: hello-row\n  disabled: false\n')
   })
 
   it('refuses to toggle the shop itself or a framework bundle', async () => {
@@ -2055,6 +2058,37 @@ describe('ShopGateway.setEnabled entry ownership', () => {
     expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toContain('archify-skill-filesystem')
   })
 
+  it('writes the user\'s own named row for the entry, because it knows which module the entry mounts', async () => {
+    // A row naming the entry's module is one the harness applies, so it is
+    // the row to write — but only the package's own patch says which module
+    // that is. Without it the toggle could not tell this row from one the
+    // harness skips, and would append a second row beside it.
+    const profileDir = toggleProfile()
+    fixturePackage(profileDir, '@tt-a1i/archify-dsh', archifyPatch)
+    writeFileSync(join(profileDir, 'cordis.patch.yml'), [
+      '- id: archify-skill-filesystem',
+      "  name: '@deepseek-ai/dsh-skill-filesystem'",
+      '  config:',
+      '    root: ~/notes',
+      '',
+    ].join('\n'))
+    const gateway = new ShopGateway(stubCtx(), {
+      profile: 'web', profileDir,
+      inventory: { list: async () => ({ entries: [
+        { entryId: 'include:archify-skill-filesystem', moduleName: '@deepseek-ai/dsh-skill-filesystem', enabled: true },
+      ] }) },
+    })
+    expect(await gateway.setEnabled({ name: '@tt-a1i/archify-dsh', enabled: false })).toEqual({ ok: true, activation: 'live' })
+    expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toBe([
+      '- id: archify-skill-filesystem',
+      "  name: '@deepseek-ai/dsh-skill-filesystem'",
+      '  config:',
+      '    root: ~/notes',
+      '  disabled: true',
+      '',
+    ].join('\n'))
+  })
+
   it('toggles a package the REAL harness composed — the live ids carry the root include prefix', async () => {
     // dsh's app-boot mounts the whole profile as one root Include, so the
     // inventory reports `include:<id>` for every entry a bundle patch
@@ -2100,7 +2134,9 @@ describe('ShopGateway.setEnabled entry ownership', () => {
     expect(written).not.toContain('mkt-')
   })
 
-  it('re-enabling drops the row again', async () => {
+  it('re-enabling writes disabled: false on the same row, in the config id space', async () => {
+    // It dropped the row until 2026-09-26 (see the enable case above). The
+    // id is still the CONFIG id, never the live `include:` spelling.
     const profileDir = toggleProfile()
     fixturePackage(profileDir, '@tt-a1i/archify-dsh', archifyPatch)
     writeFileSync(join(profileDir, 'cordis.patch.yml'), '- id: archify-skill-filesystem\n  disabled: true\n')
@@ -2111,7 +2147,7 @@ describe('ShopGateway.setEnabled entry ownership', () => {
       ] }) },
     })
     expect(await gateway.setEnabled({ name: '@tt-a1i/archify-dsh', enabled: true })).toEqual({ ok: true, activation: 'live' })
-    expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).not.toContain('archify-skill-filesystem')
+    expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toBe('- id: archify-skill-filesystem\n  disabled: false\n')
   })
 
   it('toggles every entry of a package that inserts several', async () => {

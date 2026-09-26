@@ -81,6 +81,17 @@ list is a different product surface and stays out.
   proposed; the framework parser is the authority on the file's shape
   (including `!!js` expressions), so editing through it beats hand-rolled
   text surgery.
+  **Amended 2026-09-26 (`2026-09-26-market-borrowings.md` §2): the parser
+  stays the authority for READING, and the write is now a document edit.**
+  The whole-file rewrite dropped each toggled id's row — taking a `config:`
+  override the user had put there with it — and dumped the list back through
+  `js-yaml`, which models no comments, so the first toggle erased the header
+  dsh writes into every new profile. The layer is still validated by
+  `loadOptionalPatches` first, then edited with `yaml` (a real parser that
+  keeps comments, not text surgery): only the `disabled` key of the last row
+  the harness applies to the entry changes, or a row is appended, and an
+  enable writes `disabled: false` rather than deleting the row — the
+  harness's own convention for this file from 0.1.7.
 - **Entry id**: resolved from the Loader plugin inventory service
   (`pluginInventory`, entryId + moduleName + enabled), not raw
   `loader.entries()` — the inventory already reports the real enabled

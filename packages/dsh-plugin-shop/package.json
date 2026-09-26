@@ -82,6 +82,7 @@
   "dependencies": {
     "js-yaml": "^4.2.0",
     "semver": "^7.6.3",
+    "yaml": "^2.5.1",
     "zod": "^4.4.3"
   },
   "peerDependencies": {

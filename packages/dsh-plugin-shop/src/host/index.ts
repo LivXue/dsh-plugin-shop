@@ -24,7 +24,7 @@ import { restartCommand, startRestart, type RestartOutcome } from './restart.ts'
 import { fetchLatestVersion } from './self-update.ts'
 import { detectSupervisor } from './supervisor.ts'
 import { readRepoPins, writeRepoPins, type RepoPinFs } from './repo-pins.ts'
-import { collidingEntryId, discoverProfile, ownedEntryIds, ownsEntryId, setUserLayerRow, setUserLayerRows } from './profile.ts'
+import { collidingEntryId, discoverProfile, ownedEntries, ownedEntryIds, ownsEntryId, setUserLayerRows, type OwnedEntry } from './profile.ts'
 import { identityKey, installedSpecMatches } from '../shared/identity.ts'
 import { isTerminalInstallState, type InstallState } from '../shared/install-state.ts'
 import { createPrefetcher, type Prefetcher } from './prefetch.ts'
@@ -781,11 +781,12 @@ export class ShopGateway extends TypertRemoteService {
     return allDown
   }
 
-  /** Enable or disable one installed plugin, hot (§8): a disable writes the
-   * row to the user layer, an enable drops it again so the bundle default
-   * rules — the CLI's watchUserPatches applies either through HMR. The shop's
-   * own row and the framework's bundles are never toggleable: disabling the
-   * host chain would break HMR itself. */
+  /** Enable or disable one installed plugin, hot (§8): the write sets the
+   * `disabled` key of each owned entry's row in the user layer and changes
+   * nothing else there (design 2026-09-26-market-borrowings §2) — the CLI's
+   * watchUserPatches applies it through HMR. The shop's own row and the
+   * framework's bundles are never toggleable: disabling the host chain would
+   * break HMR itself. */
   @Remote('setEnabled')
   async setEnabled(args: { name: string; enabled: boolean }): Promise<ShopSetEnabledResult> {
     if (args.name === 'dsh-plugin-shop' || args.name.startsWith('@deepseek-ai/')) {
@@ -804,16 +805,16 @@ export class ShopGateway extends TypertRemoteService {
     // reason, not as a throw: an escaped exception crosses the RPC as a bare
     // transport failure, and the client can only render "please retry" for it
     // — the one rejection on this path with no author-readable detail.
-    let owned: string[]
+    let owned: OwnedEntry[]
     try {
-      owned = ownedEntryIds({ profileDir, packageName: args.name })
+      owned = ownedEntries({ profileDir, packageName: args.name })
     } catch (error) {
       return { ok: false, detail: `dsh-plugin-shop: ${args.name} has a bundle patch that could not be read: ${String(error)}` }
     }
     if (owned.length === 0) {
       return { ok: false, detail: `dsh-plugin-shop: ${args.name} contributes no plugin entries, so there is nothing to enable or disable` }
     }
-    const ownedSet = new Set(owned)
+    const ownedSet = new Set(owned.map(entry => entry.id))
     // Liveness is read from the LIVE ids, which carry the namespace of every
     // tree composed above the entry (see ownsEntryId).
     const live = (await this.listInventory()).filter(entry => ownsEntryId(ownedSet, entry.entryId))
@@ -828,8 +829,13 @@ export class ShopGateway extends TypertRemoteService {
     // good, because the restart composes that plugin under its bare id.
     //
     // Every entry the package owns toggles together: a package that inserts a
-    // host row and a client row is one plugin to the person clicking.
-    setUserLayerRows({ profileDir, rows: owned.map(id => ({ id, disabled: !args.enabled })) })
+    // host row and a client row is one plugin to the person clicking. Each
+    // row carries the module its entry mounts, which is what lets the write
+    // land on a row the user named rather than beside it.
+    setUserLayerRows({
+      profileDir,
+      rows: owned.map(({ id, name }) => ({ id, disabled: !args.enabled, ...(name !== undefined ? { name } : {}) })),
+    })
     // The user layer is hot-reloaded by the harness, so the host half is
     // already in its new state; a package with a browser half still needs
     // the open tab to reload (design 2026-09-11-activation-model §3).
