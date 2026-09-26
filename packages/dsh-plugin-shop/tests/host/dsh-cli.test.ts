@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { delimiter, join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { dshCommand, jsEntryCommand, resolveDshScript, type DshCliFs } from '../../src/host/dsh-cli.ts'
+import { dshCommand, isDesktopProfile, jsEntryCommand, resolveDshScript, type DshCliFs } from '../../src/host/dsh-cli.ts'
 import { fileTempRoot } from './temp-root.ts'
 
 const TEMP_ROOT = fileTempRoot('dsh-cli')
@@ -28,6 +28,14 @@ function npmGlobal(options: { bin?: unknown; entry?: string | null } = {}): { sh
   if (entry !== null) writeFileSync(join(packageDir, entry), '#!/usr/bin/env node\n')
   return { shimDir, entry: join(packageDir, 'lib', 'bin.js') }
 }
+
+describe('isDesktopProfile', () => {
+  it('matches the profile dsh refuses, in any letter case, and nothing merely like it', () => {
+    // dsh's own check is `profile.toLowerCase() === "desktop"`.
+    for (const profile of ['desktop', 'Desktop', 'DESKTOP']) expect(isDesktopProfile(profile), profile).toBe(true)
+    for (const profile of ['web', 'desktop-2', 'my-desktop', ' desktop', '']) expect(isDesktopProfile(profile), profile).toBe(false)
+  })
+})
 
 describe('dshCommand', () => {
   const args = ['plugin', '--profile', 'web', 'add', 'dsh-hello-plugin@1.2.0'] as const

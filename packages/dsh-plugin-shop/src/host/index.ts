@@ -26,6 +26,7 @@ import { detectSupervisor } from './supervisor.ts'
 import { readRepoPins, writeRepoPins, type RepoPinFs } from './repo-pins.ts'
 import { collidingEntryId, declaredBundlePatch, discoverProfile, ownedEntries, ownedEntryIds, ownsEntryId, setUserLayerRows, type OwnedEntry } from './profile.ts'
 import { patchDeclarationHazard } from './bundle-patch.ts'
+import { isDesktopProfile } from './dsh-cli.ts'
 import { identityKey, installedSpecMatches } from '../shared/identity.ts'
 import { isTerminalInstallState, type InstallState } from '../shared/install-state.ts'
 import { createPrefetcher, type Prefetcher } from './prefetch.ts'
@@ -225,7 +226,7 @@ export type ShopRestartResult = RestartOutcome
  * restart was impossible after it had become possible. Static here, dynamic
  * there; the split is the whole reason this is a separate predicate rather
  * than a cache of `restart()`'s answer. */
-export type RestartBlockedReason = 'windows' | 'systemd' | 'port-zero'
+export type RestartBlockedReason = 'desktop' | 'windows' | 'systemd' | 'port-zero'
 
 /** Each blocked reason's author-readable refusal, written once.
  *
@@ -237,10 +238,18 @@ export type RestartBlockedReason = 'windows' | 'systemd' | 'port-zero'
  * service and to set an override that the platform check, being the first gate
  * of the three, could never reach. */
 const RESTART_BLOCKED_DETAIL: Record<RestartBlockedReason, string> = {
+  desktop: 'dsh-plugin-shop: the desktop profile is managed by the DeepSeek Harness desktop app, and dsh refuses to restart it from here; restart the app to apply the change',
   windows: 'dsh-plugin-shop: restart is not supported on Windows yet; restart dsh manually to apply the change',
   systemd: 'dsh-plugin-shop: restart is disabled because this process is a systemd service — a restart would kill the takeover helper along with the unit, and the service would not come back. Set allowRestart: true in the shop row config to override.',
   'port-zero': 'dsh-plugin-shop: restart is not supported when dsh was launched with --port 0; restart dsh manually',
 }
+
+/** Why the shop changes nothing in the desktop profile, for every mutation
+ * that spawns dsh's CLI: install, uninstall and self-update. dsh refuses
+ * the profile before any of them would run (`isDesktopProfile`), and the
+ * failure that surfaced instead read "pnpm failed in the profile". */
+const DESKTOP_PROFILE_DETAIL = 'dsh-plugin-shop: the desktop profile is managed by the DeepSeek Harness desktop app, and dsh'
+  + ' refuses to change it from the command line the shop runs; add and remove its plugins from the app instead'
 
 /** `shop/version` result (§7.3): the RUNNING shop version (from the shipped
  * package.json, not the manifest's range), the npm latest when the check
@@ -946,11 +955,16 @@ export class ShopGateway extends TypertRemoteService {
    * static does. One ordered list, read by `restart()` before it commits and
    * by `version()` so the client can say the same thing up front.
    *
-   * The order is the order the refusals were written in and is load-bearing
-   * for the copy a reader sees: Windows first, because the platform check has
-   * no override and reporting the systemd one there sends a Windows user to
-   * set `allowRestart: true`, which this gate would still refuse.
+   * The order is load-bearing for the copy a reader sees. The desktop
+   * profile first: dsh itself refuses to launch it, so no platform,
+   * supervisor or port could make a restart possible there. Then Windows,
+   * because the platform check has no override and reporting the systemd one
+   * there sends a Windows user to set `allowRestart: true`, which this gate
+   * would still refuse.
    *
+   * - `desktop`: dsh's CLI refuses `--profile desktop` ("managed exclusively
+   *   by the Electron application"), so the relaunch would exit at once and
+   *   leave nothing on the port; the app restarts it.
    * - `windows`: the handoff helper is a POSIX shell one-liner (restart.ts)
    *   and there is no `sh` on Windows. That spawn fails ASYNCHRONOUSLY, so
    *   committing would answer `ok: true`, exit this process, and leave nothing
@@ -962,6 +976,7 @@ export class ShopGateway extends TypertRemoteService {
    * - `port-zero`: the OS hands the NEW process a fresh port the browser
    *   cannot know, so a restart would strand the client on a dead origin. */
   private staticRestartBlock(): RestartBlockedReason | null {
+    if (isDesktopProfile(this.profile)) return 'desktop'
     if (!this.restartPlatformSupported()) return 'windows'
     if (detectSupervisor(this.env, { ppid: this.ppid }) === 'systemd' && !this.allowRestartConfigured()) return 'systemd'
     const portIndex = this.restartArgv.indexOf('--port')
@@ -1080,6 +1095,7 @@ export class ShopGateway extends TypertRemoteService {
   // this on the real composition (§7.3 amendment, 2026-08-25).
   @Remote('installStart')
   async install(args: InstallArgs): Promise<ShopInstallResult> {
+    if (isDesktopProfile(this.profile)) return { ok: false, code: 'desktop-profile', detail: DESKTOP_PROFILE_DETAIL }
     const snapshot = await this.snapshotNow()
     // The manifest's dependency for this name, when it has one: the gate needs
     // it to tell an update of THIS plugin from a replacement of a different one
@@ -1414,6 +1430,7 @@ export class ShopGateway extends TypertRemoteService {
    * itself). The same install records/polling serve the client. */
   @Remote('uninstallStart')
   async uninstall(args: { name: string }): Promise<ShopUninstallResult> {
+    if (isDesktopProfile(this.profile)) return { ok: false, detail: DESKTOP_PROFILE_DETAIL }
     const snapshot = await this.snapshotNow()
     const named = snapshot.entries.filter(entry => entry.name === args.name)
     if (named.length === 0) {
@@ -1502,7 +1519,7 @@ export class ShopGateway extends TypertRemoteService {
         detail: 'dsh-plugin-shop: an install is still running in this profile; a restart now would boot the new dsh against a half-written profile. Wait for it to finish and try again.',
       }
     }
-    // The three static refusals, in the order `staticRestartBlock` states
+    // The static refusals, in the order `staticRestartBlock` states
     // them, and each one before anything is torn down. Asking it rather than
     // repeating its checks is what keeps the answer the client was given at
     // mount identical to the answer a press gets.
@@ -1563,6 +1580,7 @@ export class ShopGateway extends TypertRemoteService {
    * `dsh-plugin-shop@<version>` is built here, never from the wire. */
   @Remote('updateStart')
   async updateStart(args: { version: string }): Promise<ShopUpdateResult> {
+    if (isDesktopProfile(this.profile)) return { ok: false, detail: DESKTOP_PROFILE_DETAIL }
     if (valid(args.version) === null) {
       return { ok: false, detail: `dsh-plugin-shop: ${args.version} is not a valid version` }
     }

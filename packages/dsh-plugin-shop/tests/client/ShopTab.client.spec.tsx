@@ -395,6 +395,7 @@ describe('ShopTab', () => {
     ['needs-acknowledgement', 'dsh-plugin-shop: dsh-risky is community-tier; installation requires acknowledgement'],
     ['tarball-integrity', 'dsh-plugin-shop: the release tarball failed sha256 verification against the catalog record; refusing to install'],
     ['name-taken', 'dsh-plugin-shop: dsh-hello-plugin is already installed from CLAPEILL/dsh-hello-plugin.'],
+    ['desktop-profile', 'dsh-plugin-shop: the desktop profile is managed by the DeepSeek Harness desktop app, and dsh refuses to change it from the command line the shop runs; add and remove its plugins from the app instead'],
   ] as const)('renders the %s rejection detail verbatim', async (code, detail) => {
     const { injected, install } = bench(snapshot({ tier: 'verified' }))
     install.mockResolvedValue({ ok: false, code, detail })
@@ -823,6 +824,16 @@ describe('ShopTab', () => {
     // and the only one with no override — made that advice inert.
     expect(notice?.textContent).not.toContain('systemd')
     expect(notice?.textContent).not.toContain('allowRestart')
+  })
+
+  it("names the desktop app when the host reports restartBlocked: 'desktop'", async () => {
+    const { injected, version } = bench(snapshot({ tier: 'verified' }))
+    version.mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartBlocked: 'desktop' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText(en.install))
+    await waitFor(() => expect(container.querySelector('[data-shop-restart-disabled]')).toBeTruthy(), { timeout: 3000 })
+    expect(container.querySelector('[data-shop-restart-disabled]')?.textContent).toBe(en.restartBlockedDesktopNotice)
   })
 
   it("names --port 0 when the host reports restartBlocked: 'port-zero'", async () => {

@@ -72,6 +72,7 @@ export function installPhaseKey(phase: 'downloading' | 'installing'): ShopLocale
  * could not have helped. */
 export function restartBlockedNoticeKey(reason: RestartBlockedReason): ShopLocaleKey {
   switch (reason) {
+    case 'desktop': return 'restartBlockedDesktopNotice'
     case 'windows': return 'restartBlockedWindowsNotice'
     case 'systemd': return 'restartBlockedSystemdNotice'
     case 'port-zero': return 'restartBlockedPortZeroNotice'
@@ -231,6 +232,7 @@ export function rejectionCodeKey(code: InstallRejectionCode): ShopLocaleKey {
     case 'tarball-integrity': return 'tarballIntegrityCode'
     case 'ambiguous-identity': return 'ambiguousIdentityCode'
     case 'name-taken': return 'nameTakenCode'
+    case 'desktop-profile': return 'desktopProfileCode'
   }
 }
 

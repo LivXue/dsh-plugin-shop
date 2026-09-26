@@ -1208,6 +1208,57 @@ describe('restart guard (Windows)', () => {
   })
 })
 
+describe('the desktop profile, which dsh refuses to manage from its CLI', () => {
+  // dsh's launcher refuses `--profile desktop`, in any letter case, for a
+  // launch and for `dsh plugin` alike: "profile "desktop" is managed
+  // exclusively by the Electron application" (`rejectElectronProfile`, the
+  // same in 0.1.5-rc.3 and 0.1.7-rc.2). Every mutation the shop makes goes
+  // through that CLI, so each is refused up front — before anything spawns,
+  // naming the app — instead of failing as "pnpm failed in the profile".
+  const INSTALL_DETAIL = 'dsh-plugin-shop: the desktop profile is managed by the DeepSeek Harness desktop app, and dsh'
+    + ' refuses to change it from the command line the shop runs; add and remove its plugins from the app instead'
+  const RESTART_DETAIL = 'dsh-plugin-shop: the desktop profile is managed by the DeepSeek Harness desktop app, and dsh'
+    + ' refuses to restart it from here; restart the app to apply the change'
+
+  const desktopGateway = (profile: string, dir: string, exit = vi.fn<() => void>()): ShopGateway => new ShopGateway(stubCtx(), {
+    ...gatewayOptions(), profile, dshBin: fakeDshRecording(dir, 0, { silent: true }), exit, restartExitDelayMs: 5,
+    fetchLatestVersion: async () => null,
+  })
+
+  for (const profile of ['desktop', 'Desktop']) {
+    it(`refuses an install, an uninstall and a self-update in the ${profile} profile without spawning`, async () => {
+      const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-desktop-'))
+      const gateway = desktopGateway(profile, dir)
+      expect(await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true }))
+        .toEqual({ ok: false, code: 'desktop-profile', detail: INSTALL_DETAIL })
+      expect(await gateway.uninstall({ name: 'dsh-hello-plugin' })).toEqual({ ok: false, detail: INSTALL_DETAIL })
+      expect(await gateway.updateStart({ version: '9.9.9' })).toEqual({ ok: false, detail: INSTALL_DETAIL })
+      // A spawned fixture would have created the calls log within this window.
+      await new Promise(resolve => setTimeout(resolve, 50))
+      expect(existsSync(join(dir, 'calls.log'))).toBe(false)
+    })
+  }
+
+  it("reports restartBlocked: 'desktop' ahead of every other reason, and restart refuses without exiting", async () => {
+    // First in the gate: the platform, the supervisor and the port only say
+    // how a restart would go, and in this profile none would be allowed.
+    const exit = vi.fn<() => void>()
+    const gateway = new ShopGateway(stubCtx(), {
+      ...gatewayOptions(), profile: 'desktop', platform: 'win32', exit, restartExitDelayMs: 5,
+      fetchLatestVersion: async () => null,
+    })
+    expect((await gateway.version()).restartBlocked).toBe('desktop')
+    expect(await gateway.restart()).toEqual({ ok: false, detail: RESTART_DETAIL })
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(exit).not.toHaveBeenCalled()
+  })
+
+  it('leaves every other profile alone, including one merely named like it', async () => {
+    const gateway = new ShopGateway(stubCtx(), { ...gatewayOptions(), profile: 'desktop-2', env: {}, ppid: 4321, fetchLatestVersion: async () => null })
+    expect((await gateway.version()).restartBlocked).toBeNull()
+  })
+})
+
 describe('ShopGateway.version', () => {
   // The running version is read from the package.json next to src/host —
   // the repo's own version. Keep the expectations on properties the gateway
