@@ -421,6 +421,17 @@ const importedThisProcess = new Set<string>()
  * @typert service shop */
 export class ShopGateway extends TypertRemoteService {
   private readonly options: ShopGatewayOptions
+  /** The context this gateway was built with: the shop's own fiber. Inside an
+   * RPC method `this.ctx` is NOT that — cordis hands a service out with `ctx`
+   * rebound to the context that looked it up, so a call arriving over the
+   * wire sees the caller's, the typert gateway's (measured on 0.1.5-rc.3 and
+   * 0.1.7-rc.2). Anything whose PARENT matters is registered from here. The
+   * hot tree above all: registered from the gateway's context it was owned by
+   * the gateway's fiber rather than the shop's, was listed under the gateway's
+   * loader entry, and — the part a reader saw — sat where dsh's client
+   * registry never composed it, so a hot-installed browser half needed a
+   * restart that a reload now does (design 2026-09-26-dsh-017-readiness). */
+  private readonly home: Context
   /** The profile dsh installs into; discovered from this module's own
    * location when the caller does not supply one. */
   private readonly profile: string
@@ -491,6 +502,7 @@ export class ShopGateway extends TypertRemoteService {
 
   constructor(ctx: Context, options: ShopGatewayOptions = {}) {
     super(ctx, 'shop')
+    this.home = ctx
     this.options = options
     this.profile = options.profile ?? discoverProfile(fileURLToPath(import.meta.url), this.bootBaseDir()).name
     this.profileDir = options.profileDir
@@ -1179,27 +1191,27 @@ export class ShopGateway extends TypertRemoteService {
         // activation that throws, a timeout — has filled it all the same.
         this.imported.add(args.name)
         const result = await hot.mount(
-          { plugin: (plugin, config) => (this.ctx as unknown as { plugin(plugin: unknown, config: unknown): { await(): Promise<unknown>; dispose(): Promise<unknown> | void } }).plugin(plugin, config) },
+          { plugin: (plugin, config) => (this.home as unknown as { plugin(plugin: unknown, config: unknown): { await(): Promise<unknown>; dispose(): Promise<unknown> | void } }).plugin(plugin, config) },
           this.profileDirResolved(),
           args.name,
         )
         if (!result.ok) {
           return { activation: 'restart' as const, ...(result.reason !== null ? { restartReason: result.reason } : {}) }
         }
-        // The mount SUCCEEDED, so the host half is live. Its browser half is
-        // not, and cannot be made so by a reload: a hot mount adds to the
-        // live loader entries without entering the composition the client
-        // registry enumerates (activation.ts, measured 2026-09-14). So
-        // `clientLive` is false here and a package with a browser half lands
-        // on `restart`, carrying the reason that says its host half is
-        // already running — the generic restart line would deny that. Only
-        // the new version is read: a fresh install has no old one in the tab.
-        const activation = activationOf({
-          hostLive: true,
-          clientLive: false,
-          hasClientHalf: this.packageHasClientHalf(args.name),
-        })
-        return activation === 'restart' ? { activation, restartReason: 'client-half' as const } : { activation }
+        // The mount SUCCEEDED, so the host half is live — and the browser
+        // half is in the graph the next page load boots from: the tree hangs
+        // off the shop's own loader entry (`home`), where dsh's client
+        // registry enumerates it like any boot-composed entry (activation.ts,
+        // measured 2026-09-26 on 0.1.5-rc.3 and 0.1.7-rc.2). So a package with
+        // a browser half is one reload away, not one restart. Only the new
+        // version is read: a fresh install has no old one in the tab.
+        return {
+          activation: activationOf({
+            hostLive: true,
+            clientLive: true,
+            hasClientHalf: this.packageHasClientHalf(args.name),
+          }),
+        }
       },
     })
     if (entry.source === 'github') {

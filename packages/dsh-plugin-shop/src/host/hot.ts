@@ -64,25 +64,19 @@ export interface PluginHandle {
  * Why a restart is needed after the hot path ran — a stable code the client
  * turns into copy in the reader's own dsh language.
  *
- * Five of the seven say the MOUNT could not activate, and distinguish
+ * Five of the six say the MOUNT could not activate, and distinguish
  * "restart will fix it" (`timeout`, `mount-failed`) from "this package can
  * never hot-mount" (`no-patch`, `not-simple`) and "this harness cannot"
  * (`host-unsupported`).
  *
- * `client-half` is one of the two that do not: the mount SUCCEEDED and the
- * host half is running, but the package declares `dsh.client` and a hot mount
- * does not enter the composition the client registry enumerates, so no reload
- * can fetch its browser half (measured 2026-09-14 — see `activation.ts`). It
- * exists so the reader is not told "installed; restart dsh to activate"
- * about a plugin that is demonstrably already running.
- *
- * `already-loaded` is the other: no mount was attempted, because this
- * process may already hold the package's module, and Node caches a module by
- * its URL — the new files sit at the old URL, so a mount would re-run the old
- * code under the new version's name (design 2026-09-26-market-borrowings §1).
- * The gateway decides it before calling `hotMount`, which never returns it.
+ * `already-loaded` is the one that does not: no mount was attempted, because
+ * this process may already hold the package's module, and Node caches a
+ * module by its URL — the new files sit at the old URL, so a mount would re-run
+ * the old code under the new version's name (design
+ * 2026-09-26-market-borrowings §1). The gateway decides it before calling
+ * `hotMount`, which never returns it.
  */
-export type HotRestartReason = 'no-patch' | 'not-simple' | 'host-unsupported' | 'timeout' | 'mount-failed' | 'client-half' | 'already-loaded'
+export type HotRestartReason = 'no-patch' | 'not-simple' | 'host-unsupported' | 'timeout' | 'mount-failed' | 'already-loaded'
 
 export interface HotMountResult {
   ok: boolean

@@ -46,11 +46,12 @@
  * an unmet `dsh.compatibility`, that a peer the browser's module table seeds
  * is never named — on that card, or as a badge on the seed-only live card —
  * and that the install, warn never block, still reaches done; the client install must
- * report done with activation `restart` and the client-half reason, and must
- * NOT offer the reload button — a hot mount puts no client half in the boot
- * graph, so a reload would fetch nothing. (That last sentence read the other
- * way round until the 2026-09-11 activation model measured it; the reload
- * path it described is the one this fixture disproved.) The update must
+ * report done with activation `reload` and offer the reload panel, and the
+ * reload must deliver its browser half: the served graph gains the package and
+ * the page runs the fixture's client script. (This has flipped twice. It read
+ * `restart` with a client-half reason from 2026-09-14 to 2026-09-26, on a
+ * measurement taken while the shop hung the hot tree off the typert gateway's
+ * context, where dsh's client registry never composed it.) The update must
  * report `restart` with the already-loaded reason and leave the running
  * instance alone: the process imported 1.0.0 at boot, Node will not import a
  * second copy from the same URL, and a hot swap would re-run 1.0.0 under the
@@ -105,9 +106,8 @@
  *   no-restart copy for activation `live`, the reload copy for `reload`, or
  *   the host's reason code localized under `restart`), alongside the offer
  *   that matches the activation: the §4 reload panel `[data-shop-reload]`,
- *   whose value names which change made the page stale (a boot-composition
- *   change only — a hot mount reports `restart`, see the client-half spec),
- *   (activation `reload`), the §8 offer `[data-shop-restart]` (activation
+ *   whose value names which change made the page stale (`install`,
+ *   `uninstall` or `toggle`) (activation `reload`), the §8 offer `[data-shop-restart]` (activation
  *   `restart` && the host can restart), or `[data-shop-restart-disabled]`
  *   (activation `restart` && the host cannot restart); `live` offers neither
  * - uninstall: `[data-shop-uninstall]`; done view `[data-shop-uninstall-done]`
@@ -126,7 +126,10 @@
  *   and phase dot are read through the ACCESSIBILITY contract: the tag through
  *   the card button's `aria-label` (`<title>, <entryId>, 已启用`) and the dot
  *   through `role=img` named by the localized phase (运行中 for active; the
- *   inner `StateDot` is `aria-hidden` and contributes nothing).
+ *   inner `StateDot` is `aria-hidden` and contributes nothing). 0.1.7-rc.2
+ *   dots only the transitional phases (pending, loading, unloading) and names
+ *   the active one as text in the card's opened details, so the one active
+ *   read in this file opens the card and accepts either form.
  *   NOT through the tag's and dot's own data attributes. Those belong to the
  *   design system rather than to the inventory, and they have now moved twice
  *   underneath this file — `data-enabled=true`, then `data-kind=enabled` and
@@ -1049,19 +1052,48 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // bundles no plugin-side HTTP router for the fixture to register on
       // (see the fixture's index.js comment). The hot entry carries the
       // mkt- prefixed row id at the end of its inventory id chain — the shop
-      // registers the hot tree with its own ctx, a subtree of the gateway
-      // include, so the loader lists it as `include:typert-gateway:mkt-e2e-live`
-      // — plus the enabled tag and the active phase dot.
-      await dialog.getByRole('tab', { name: '插件列表' }).click()
-      await expandGlobalPlane(dialog)
-      const liveEntry = dialog.locator('[data-plugin-entry="include:typert-gateway:mkt-e2e-live"]')
-      await liveEntry.waitFor({ state: 'visible', timeout: 15_000 })
-      await liveEntry.getByRole('button', { name: /已启用/ }).waitFor({ state: 'visible', timeout: 15_000 })
-      await liveEntry.getByRole('img', { name: '运行中' }).waitFor({ state: 'visible', timeout: 15_000 })
+      // registers the hot tree from its own context, so the tree is the
+      // subtree of the shop's own loader entry and the loader lists it as
+      // `include:shop:mkt-e2e-live` — plus the enabled tag and the active
+      // phase dot. It read `include:typert-gateway:…` until 2026-09-26,
+      // while the tree was still registered from whichever context made the
+      // RPC call (ShopGateway's `home` field).
+      //
+      // Read on a FRESH page. 0.1.7-rc.2 keeps a Settings tab it has shown
+      // mounted — hidden, holding the snapshot it fetched when first shown —
+      // and 插件列表 is the section's first tab, so this dialog fetched it
+      // when the first spec opened Settings, before anything was installed.
+      // Clicking back to it shows that list. A new page opens Settings from
+      // nothing on either harness.
+      const probe = await browser!.newPage({ locale: 'zh-CN', viewport: { width: 1680, height: 1000 } })
+      try {
+        await probe.goto(webUrl, { waitUntil: 'load' })
+        await probe.waitForSelector('[class*="frame"]', { timeout: 30_000 })
+        await probe.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
+        const inventory = probe.getByRole('dialog', { name: '设置' })
+        await inventory.waitFor({ state: 'visible', timeout: 10_000 })
+        await inventory.getByRole('button', { name: PLUGINS_SECTION }).click()
+        await inventory.getByRole('tab', { name: '插件列表' }).click()
+        await expandGlobalPlane(inventory)
+        const liveEntry = inventory.locator('[data-plugin-entry="include:shop:mkt-e2e-live"]')
+        await liveEntry.waitFor({ state: 'visible', timeout: 15_000 })
+        const cardButton = liveEntry.getByRole('button', { name: /已启用/ })
+        await cardButton.waitFor({ state: 'visible', timeout: 15_000 })
+        // The active phase. 0.1.5-rc.3 names it on a dot beside the tag;
+        // 0.1.7-rc.2 dots only the transitional phases (pending, loading,
+        // unloading) and names the active one in the card's opened details
+        // instead. The card is opened on both, and either reading counts.
+        await cardButton.click()
+        await liveEntry.getByRole('img', { name: '运行中' }).or(liveEntry.getByText('运行中', { exact: true }))
+          .first().waitFor({ state: 'visible', timeout: 15_000 })
+      } finally {
+        await probe.close()
+      }
 
-      // The settled mutation re-reads installed() in place. Switching back
-      // to the already-mounted shop must expose the installed actions without
-      // closing Settings or pressing Refresh (G-9).
+      // The settled mutation re-reads installed() in place. Switching away
+      // and back to the already-mounted shop must expose the installed
+      // actions without closing Settings or pressing Refresh (G-9).
+      await dialog.getByRole('tab', { name: '插件列表' }).click()
       await dialog.getByRole('tab', { name: '插件商店' }).click()
       await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
       const card2 = dialog.locator('[data-shop-entry="dsh-shop-e2e-live"]')
@@ -1123,7 +1155,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await dialog3.getByRole('button', { name: PLUGINS_SECTION }).click()
       await dialog3.getByRole('tab', { name: '插件列表' }).click()
       await expandGlobalPlane(dialog3)
-      expect(await dialog3.locator('[data-plugin-entry="include:typert-gateway:mkt-e2e-live"]').count()).toBe(0)
+      expect(await dialog3.locator('[data-plugin-entry="include:shop:mkt-e2e-live"]').count()).toBe(0)
     },
     120_000,
   )
@@ -1173,7 +1205,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await dialog2.getByRole('button', { name: PLUGINS_SECTION }).click()
       await dialog2.getByRole('tab', { name: '插件列表' }).click()
       await expandGlobalPlane(dialog2)
-      expect(await dialog2.locator('[data-plugin-entry="include:typert-gateway:mkt-e2e-config"]').count()).toBe(0)
+      expect(await dialog2.locator('[data-plugin-entry="include:shop:mkt-e2e-config"]').count()).toBe(0)
     },
     120_000,
   )
@@ -1320,7 +1352,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
   )
 
   it(
-    'a hot-mounted package with a browser half reports restart, and the reload it does not offer would deliver nothing',
+    'a hot-mounted package with a browser half reports reload, and the reload delivers its browser half',
     async () => {
       expect(page).toBeDefined()
       const app = page!
@@ -1348,65 +1380,63 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await card.locator('[data-shop-confirm]').waitFor({ state: 'visible', timeout: 10_000 })
       await card.locator('[data-shop-confirm]').click()
 
-      // activation `restart`, and the measurement under it is why.
+      // activation `reload`, and the measurement under it is why.
       //
       // The host half hot-mounts live, exactly like the plain live fixture —
       // the sibling spec reads that shape straight out of the loader
       // inventory. What this fixture adds is a `dsh.client` declaration, and
-      // a browser half does not arrive by the same route: it reaches a tab
-      // only through `window.__DSH_BOOT__`, which the harness composes from
-      // the BOOT composition. A hot mount adds to the live loader entries
-      // without entering that, so there is nothing for a reload to fetch.
+      // a browser half arrives by another route: it reaches a tab only
+      // through `window.__DSH_BOOT__`, which dsh's client registry composes
+      // from the loader entries it enumerates. The shop hangs the hot tree off
+      // its own loader entry, so the registry composes the package as it
+      // mounts — into the graph the NEXT page load is served, while the tab
+      // already open predates it.
       //
-      // The done view must therefore render the client-half restart copy and
-      // the restart activation's offer — never the no-restart line (the §0
-      // `dsh-theme-endfield` report: told nothing was needed, needed a
-      // restart) and never the reload offer, which would send the reader to
-      // press a button that provably changes nothing. WHICH offer the restart
-      // activation shows is the host's call, not this case's; `activation` is
-      // `restart` either way, and that is what this case is about.
+      // The done view must therefore render the reload copy and the reload
+      // panel — never the no-restart line (the §0 `dsh-theme-endfield`
+      // report: told nothing was needed, needed more) and never a restart
+      // offer, which would cost the reader every running session for a step a
+      // reload covers.
       const notice = card.locator('[data-shop-restart-notice]')
       await notice.waitFor({ state: 'visible', timeout: 60_000 })
-      expect(await notice.textContent()).toBe(zh.hotClientHalfNotice)
-      // Measured 2026-09-14 on Windows 11, dsh 0.1.5-rc.1: an unconditional
-      // wait for `[data-shop-restart]` here sat red for its full 10s on a host
-      // behaving exactly as designed, which is why this goes through the
-      // helper rather than naming one platform's outcome.
-      await expectRestartOffer(dialog, card)
-      // Platform-independent, and the half this case is actually about: a hot
-      // mount puts no client half in the boot graph, so a reload would fetch
-      // nothing and must never be offered.
-      expect(await card.locator('[data-shop-reload]').count()).toBe(0)
+      expect(await notice.textContent()).toBe(zh.installedReloadNotice)
+      await card.locator('[data-shop-reload="install"]').waitFor({ state: 'visible', timeout: 10_000 })
+      // Both restart offers, not just the enabled one: a host that cannot
+      // restart renders the disabled notice instead, and counting only one of
+      // them would pass a `restart` activation on that host.
+      expect(await card.locator('[data-shop-restart], [data-shop-restart-disabled]').count()).toBe(0)
 
-      // The measurement the paragraph above rests on, taken here rather than
-      // asserted from the design, because the design said the opposite until
-      // this ran: §2 measured a runtime disable, a runtime enable, and that
-      // the hot-mounted row's bundle URL answers 200 — never that the
-      // package enters the graph a tab boots from, which is what would make
-      // anything request that URL.
+      // The measurement the activation rests on, taken here rather than
+      // asserted from the design, because the design has said both things.
       //
-      // 2026-09-14, dsh 0.1.5-rc.1: across a reload following the hot mount
-      // the served graph is BYTE-IDENTICAL — same `rev`, the fixture's
-      // client half absent before and after — while its host half is live
-      // the whole time. The shop's own client half IS in the graph, and the
-      // shop is boot-composed rather than hot-mounted; that control is what
-      // separates "this graph carries no client halves" from "it carries
-      // every one except a hot-mounted one".
+      // 2026-09-26, dsh 0.1.5-rc.3 and 0.1.7-rc.2: across a reload following
+      // the hot mount the served graph gains `dsh-shop-e2e-client` under a
+      // new `rev`, and the page runs the fixture's client script, which sets
+      // `window.__dshShopE2eClient` as it evaluates. The shop's own client
+      // half is in the graph before and after — it is boot-composed, the
+      // control that separates "the graph moved" from "the graph gained this
+      // package".
+      //
+      // 2026-09-14 took the same measurement and found the graph
+      // BYTE-IDENTICAL, which moved installs to `restart`. The shop then
+      // registered the tree from whichever context made the RPC call, the
+      // typert gateway's, and the registry never composed a tree hung there.
       //
       // This is also the only thing in the suite that executes the fixture's
       // browser half at all. Without it `dsh-shop-e2e-client/client.js` and
       // its `exports["./client"]` are loaded by nothing, and the suite stayed
       // green while asserting only what the shop SAID.
       //
-      // If these lines ever fail, the harness has started composing hot
-      // mounts into the client registry — and that is the signal to move the
-      // install path back to `reload`, not to relax the assertion.
+      // If these lines ever fail, the harness has stopped composing a hot
+      // mount into the client registry — and that is the signal to move the
+      // install path back to `restart`, not to relax the assertion.
       const boot = async (): Promise<{ rev: string; ids: string[] }> => app.evaluate(() => {
         const graph = (window as unknown as { __DSH_BOOT__?: { rev?: string; entries?: Array<{ id?: string }> } }).__DSH_BOOT__
         return { rev: graph?.rev ?? '', ids: (graph?.entries ?? []).map(entry => entry.id ?? '') }
       })
       const before = await boot()
       expect(before.ids).not.toContain('dsh-shop-e2e-client')
+      expect(before.ids).toContain('dsh-plugin-shop')
       await app.reload({ waitUntil: 'domcontentloaded' })
       await app.waitForFunction(
         () => (window as unknown as { __DSH_BOOT__?: unknown }).__DSH_BOOT__ !== undefined,
@@ -1414,9 +1444,14 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         { timeout: 30_000 },
       )
       const after = await boot()
-      expect(after.rev).toBe(before.rev)
-      expect(after.ids).not.toContain('dsh-shop-e2e-client')
+      expect(after.rev).not.toBe(before.rev)
+      expect(after.ids).toContain('dsh-shop-e2e-client')
       expect(after.ids).toContain('dsh-plugin-shop')
+      await app.waitForFunction(
+        () => (window as unknown as { __dshShopE2eClient?: unknown }).__dshShopE2eClient === true,
+        undefined,
+        { timeout: 30_000 },
+      )
     },
     120_000,
   )

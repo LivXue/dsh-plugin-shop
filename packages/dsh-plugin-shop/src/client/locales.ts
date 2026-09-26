@@ -53,7 +53,6 @@ export const zh = {
   hotHostUnsupportedNotice: '当前环境不支持热挂载；重启 dsh 后生效',
   hotTimeoutNotice: '热挂载超时；重启 dsh 后生效',
   hotMountFailedNotice: '热挂载失败；重启 dsh 后生效',
-  hotClientHalfNotice: '已安装并在运行；它的界面要重启 dsh 才会更新——刷新页面取不到',
   /** No mount was tried: this dsh already loaded the package once, and Node
    * will not load a second copy from the same place (design
    * 2026-09-26-market-borrowings §1). Covers an update and a reinstall alike,
@@ -193,7 +192,6 @@ export const en = {
   hotHostUnsupportedNotice: 'this harness cannot hot-mount; restart dsh to activate',
   hotTimeoutNotice: 'hot-mount timed out; restart dsh to activate',
   hotMountFailedNotice: 'hot-mount failed; restart dsh to activate',
-  hotClientHalfNotice: 'installed and running; its interface needs a restart of dsh — a reload cannot fetch it',
   hotAlreadyLoadedNotice: 'installed; this dsh has already loaded the plugin once, so the files just installed take effect after a restart of dsh',
   installedNoRestartNotice: 'installed and hot-mounted; running now, no restart needed',
   installedReloadNotice: 'already applied; reload the page to see it',

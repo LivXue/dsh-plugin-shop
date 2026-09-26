@@ -368,12 +368,12 @@ describe('ownsEntryId', () => {
   })
 
   it('matches the shop\'s own hot spelling of the same row', () => {
-    expect(ownsEntryId(owned, 'include:typert-gateway:mkt-archify-skill-filesystem')).toBe(true)
+    expect(ownsEntryId(owned, 'include:shop:mkt-archify-skill-filesystem')).toBe(true)
   })
 
   it('does not claim an unrelated entry', () => {
     expect(ownsEntryId(owned, 'someone-elses-row')).toBe(false)
-    expect(ownsEntryId(owned, 'include:typert-gateway:mkt-someone-elses-row')).toBe(false)
+    expect(ownsEntryId(owned, 'include:shop:mkt-someone-elses-row')).toBe(false)
   })
 
   it('matches the spelling a REAL boot composes: every profile entry lives inside the root include', () => {

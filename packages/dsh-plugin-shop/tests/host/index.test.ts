@@ -7,7 +7,7 @@ import ShopGateway, { verifyTarballSha256 } from '../../src/host/index.ts'
 import { nodeVersionResolver } from '../../src/host/peers.ts'
 import { ownPeerRanges } from '../../src/own-version.ts'
 import type { InventoryEntry, LoaderEntryLike, RestartBlockedReason, ShopGatewayOptions, ShopInstallStatusResult } from '../../src/host/index.ts'
-import type { HotMountResult } from '../../src/host/hot.ts'
+import type { HotContext, HotMountResult } from '../../src/host/hot.ts'
 import type { CatalogResult, CatalogSnapshot, LoadCatalogOptions } from '../../src/host/catalog.ts'
 import type { CatalogEntry } from '../../src/host/types.ts'
 import { profileTemplatesOf } from '../../src/host/compatibility.ts'
@@ -1624,6 +1624,8 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
      * a package declares, which a real manifest on disk cannot express: the
      * old one is overwritten by the time `afterDone` runs. */
     hotFs?: ShopGatewayOptions['hotFs']
+    /** The context the gateway is built with — the shop's own, in a real boot. */
+    ctx?: object
   }): { gateway: ShopGateway; profileDir: string } {
     const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-hot-profile-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
@@ -1634,7 +1636,7 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     for (const name of Object.keys(options.dependencies ?? {})) {
       fixturePackage(profileDir, name, `- insert:\n    - id: ${name}-row\n      name: '${name}/host'\n`)
     }
-    const gateway = new ShopGateway(stubCtx(), {
+    const gateway = new ShopGateway((options.ctx ?? stubCtx()) as never, {
       ...gatewayOptions(),
       profileDir,
       loadCatalog: async () => ({ snapshot, stale: false }) as CatalogResult,
@@ -1672,7 +1674,7 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     }))
   }
 
-  it('install reports activation restart when no manifest exists yet (the conservative fallback)', async () => {
+  it('install reports activation reload when no manifest exists yet (the conservative fallback)', async () => {
     const { gateway, profileDir } = hotGateway({
       hot: { mount: hotMount, unmount: hotUnmount },
       loaderEntries: () => [],
@@ -1684,14 +1686,13 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     expect(status.state).toBe('done')
     // No node_modules/dsh-hello-plugin/package.json exists in this fixture —
     // hasClientHalf's conservative fallback (unreadable manifest => assume a
-    // browser half) answers true, so this is not 'live'. And on the hot-mount
-    // path a browser half means `restart`, never `reload`: the mount adds to
-    // the live loader entries without entering the composition the client
-    // registry enumerates, so a reload has nothing to fetch (activation.ts).
+    // browser half) answers true, so this is not 'live'. A hot-mounted
+    // browser half is one reload away: the tree hangs off the shop's own
+    // loader entry, where the client registry composes it (activation.ts).
     // The dedicated tests below pin each case with an explicit manifest
     // instead of relying on the fallback.
-    expect(status.activation).toBe('restart')
-    expect(status.restartReason).toBe('client-half')
+    expect(status.activation).toBe('reload')
+    expect(status.restartReason).toBeUndefined()
     expect(hotMount).toHaveBeenCalledTimes(1)
     expect(hotMount).toHaveBeenCalledWith(expect.anything(), profileDir, 'dsh-hello-plugin')
   })
@@ -1945,7 +1946,7 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     expect(hotUnmount).not.toHaveBeenCalled()
   })
 
-  it('reports activation restart when a hot-mounted install has a browser half', async () => {
+  it('reports activation reload when a hot-mounted install has a browser half', async () => {
     const { gateway, profileDir } = hotGateway({ hot: { mount: hotMount, unmount: hotUnmount }, loaderEntries: () => [] })
     // fixturePackage cannot express `dsh.client`; write the manifest by hand
     // before the install call, matching the shape a real client-half
@@ -1960,12 +1961,42 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     if (!started.ok) return
     const status = await pollTerminal(gateway, started.installId)
     expect(status.state).toBe('done')
-    // The host half mounted and is running; its browser half is not in the
-    // graph a reloading tab is served, and cannot be put there without a
-    // restart. The reason distinguishes this from the four mount FAILURES,
-    // which would otherwise all read as one generic restart line.
-    expect(status.activation).toBe('restart')
-    expect(status.restartReason).toBe('client-half')
+    // The host half mounted and is running, and its browser half is in the
+    // graph the next page load is served — measured in the web e2e, where the
+    // reload after a hot mount runs the fixture's browser half. It read
+    // `restart` with a `client-half` reason until 2026-09-26, when the tree
+    // still hung off the RPC caller's context, where the registry never
+    // composed it.
+    expect(status.activation).toBe('reload')
+    expect(status.restartReason).toBeUndefined()
+  })
+
+  it('mounts the hot tree from the context the shop was built with, never from the calling one', async () => {
+    // cordis hands a service out with `ctx` rebound to the context that looked
+    // it up, so inside an RPC method `this.ctx` is the CALLER's — the typert
+    // gateway's, on 0.1.5-rc.3 and 0.1.7-rc.2 alike. A tree registered from
+    // there is owned by the gateway's fiber, listed under the gateway's loader
+    // entry, and never composed by dsh's client registry. It must be a child
+    // of the shop's own fiber. `Object.create` stands in for the rebinding:
+    // the same gateway, seen with another `ctx`.
+    const handle = { await: async () => {}, dispose: () => {} }
+    const own = { get: () => undefined, reflect: { provide: () => {} }, plugin: vi.fn(() => handle) }
+    const caller = { get: () => undefined, reflect: { provide: () => {} }, plugin: vi.fn(() => handle) }
+    const mount = vi.fn(async (ctx: HotContext): Promise<HotMountResult> => {
+      ctx.plugin('the-hot-tree', { path: 'hot-1.yml' })
+      return { ok: true, reason: null }
+    })
+    const { gateway, profileDir } = hotGateway({ ctx: own, hot: { mount, unmount: hotUnmount }, loaderEntries: () => [] })
+    landedFreshPackage(profileDir, 'dsh-hello-plugin')
+    const seenByCaller = Object.create(gateway, { ctx: { value: caller } }) as ShopGateway
+    const started = await seenByCaller.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
+    expect(started.ok).toBe(true)
+    if (!started.ok) return
+    const status = await pollTerminal(seenByCaller, started.installId)
+    expect(status.state).toBe('done')
+    expect(mount).toHaveBeenCalledTimes(1)
+    expect(own.plugin).toHaveBeenCalledWith('the-hot-tree', { path: 'hot-1.yml' })
+    expect(caller.plugin).not.toHaveBeenCalled()
   })
 
   it('reports activation live when a hot-mounted install is host-only', async () => {
@@ -2129,7 +2160,7 @@ describe('ShopGateway.setEnabled entry ownership', () => {
     const gateway = new ShopGateway(stubCtx(), {
       profile: 'web', profileDir,
       inventory: { list: async () => ({ entries: [
-        { entryId: 'include:typert-gateway:mkt-fresh-entry', moduleName: 'dsh-fresh', enabled: true },
+        { entryId: 'include:shop:mkt-fresh-entry', moduleName: 'dsh-fresh', enabled: true },
       ] }) },
     })
     expect(await gateway.setEnabled({ name: 'dsh-fresh', enabled: false })).toEqual({ ok: true, activation: 'live' })

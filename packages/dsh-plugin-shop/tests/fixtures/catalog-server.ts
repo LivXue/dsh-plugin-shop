@@ -17,9 +17,8 @@
  * the peer fixture carries every harness-compatibility verdict the shop can
  * form (below), the client fixture additionally declares `dsh.client`
  * (activation-model design, §3) so a hot-mounted install has a browser half
- * and reports `restart` with the client-half reason rather than `live` — the
- * first three live fixtures are host-only, so none of them can exercise that
- * path — and the update fixture is listed here at 2.0.0 while the e2e
+ * and reports `reload` rather than `live` — the first three live fixtures are
+ * host-only, so none of them can exercise that path — and the update fixture is listed here at 2.0.0 while the e2e
  * installs 1.0.0 before dsh boots, so its card offers an update of a package
  * the running process has already imported (activation-model design, §3
  * amendment 2026-09-26).
