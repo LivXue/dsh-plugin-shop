@@ -49,11 +49,18 @@ export interface RunningHarness {
   /** That dsh's own `PROFILE_TEMPLATES`, normalized by `profileTemplatesOf`;
    * empty whenever the table could not be read. */
   templates: ProfileTemplates
+  /** Whether that dsh reads a LIST-valued `dsh.bundle.patch`: its app-boot
+   * exports `bundlePatchFiles`, which 0.1.7 does and 0.1.5 does not. A dsh
+   * without it joins the declaration onto a path, so a package declaring a
+   * list stops the profile from starting (design 2026-09-26-dsh-017-readiness,
+   * B4). Null whenever the app-boot could not be read — unknown, which forms
+   * no verdict. */
+  patchLists: boolean | null
 }
 
 /** What is known when nothing says which harness runs. */
 function noHarness(): RunningHarness {
-  return { dshVersion: null, templates: profileTemplatesOf(undefined) }
+  return { dshVersion: null, templates: profileTemplatesOf(undefined), patchLists: null }
 }
 
 /** Whether `path` stats as a regular file. */
@@ -97,7 +104,9 @@ function owningPackage(start: string): { dir: string; manifest: unknown } | null
 }
 
 /**
- * The template table of the app-boot the dsh at `dshDir` imports.
+ * What the app-boot the dsh at `dshDir` imports says about that dsh: its
+ * template table, and whether it reads a list-valued bundle patch. Null when
+ * no app-boot is on the resolution path.
  *
  * Found with the node_modules walk the peer check uses (`packageDirectory`)
  * from the dsh package directory — the copy nested under dsh first, then one
@@ -115,14 +124,17 @@ function owningPackage(start: string): { dir: string; manifest: unknown } | null
  * 0.1.5-rc.3 with all five templates.
  *
  * Throws for whatever that chain cannot do; `readRunningHarness` turns any
- * throw into an empty table.
+ * throw into an empty table and an unknown `patchLists`.
  */
-async function templatesOf(dshDir: string): Promise<ProfileTemplates> {
+async function appBootFacts(dshDir: string): Promise<{ templates: ProfileTemplates; patchLists: boolean } | null> {
   const appBootDir = packageDirectory(dshDir, APP_BOOT)
-  if (appBootDir === null) return profileTemplatesOf(undefined)
+  if (appBootDir === null) return null
   const entry = createRequire(import.meta.url).resolve(appBootDir)
-  const exported = await import(pathToFileURL(entry).href) as { PROFILE_TEMPLATES?: unknown }
-  return profileTemplatesOf(exported.PROFILE_TEMPLATES)
+  const exported = await import(pathToFileURL(entry).href) as { PROFILE_TEMPLATES?: unknown; bundlePatchFiles?: unknown }
+  return {
+    templates: profileTemplatesOf(exported.PROFILE_TEMPLATES),
+    patchLists: typeof exported.bundlePatchFiles === 'function',
+  }
 }
 
 /**
@@ -140,8 +152,8 @@ async function templatesOf(dshDir: string): Promise<ProfileTemplates> {
  *    nothing here can say which harness runs, and both halves of the verdict
  *    stay silent.
  * 3. `dshVersion` is that manifest's `version` when it is a non-empty string.
- * 4. `templates` come from that dsh's own app-boot (`templatesOf`). Any
- *    failure there costs the table and keeps the version.
+ * 4. `templates` and `patchLists` come from that dsh's own app-boot
+ *    (`appBootFacts`). Any failure there costs both and keeps the version.
  *
  * Never throws and never rejects: a harness nobody could identify forms no
  * verdict, and must never be the reason the catalog fails to load.
@@ -154,17 +166,18 @@ export async function readRunningHarness(script: string | undefined): Promise<Ru
     const { name, version } = owner.manifest as { name?: unknown; version?: unknown }
     if (name !== DSH_PACKAGE) return noHarness()
     const dshVersion = typeof version === 'string' && version.length > 0 ? version : null
-    let templates: ProfileTemplates
+    let facts: Awaited<ReturnType<typeof appBootFacts>>
     try {
-      templates = await templatesOf(owner.dir)
+      facts = await appBootFacts(owner.dir)
     } catch {
       // Swallows every way the running dsh's app-boot can fail to supply a
       // table — a resolver that cannot enter it, an entry that throws on
-      // import. The profile half then has no templates to judge by, which is
-      // silence; the version was read apart and stands.
-      templates = profileTemplatesOf(undefined)
+      // import. The profile half then has no templates to judge by, and the
+      // patch-list question has no answer, which is silence; the version was
+      // read apart and stands.
+      facts = null
     }
-    return { dshVersion, templates }
+    return { dshVersion, templates: facts?.templates ?? profileTemplatesOf(undefined), patchLists: facts?.patchLists ?? null }
   } catch {
     // Swallows a script `realpathSync` cannot resolve (missing, or not a
     // path at all) — the one other throw on this path. Nothing identifies the

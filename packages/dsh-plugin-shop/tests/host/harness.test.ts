@@ -118,7 +118,7 @@ describe('readRunningHarness', () => {
     const { dshDir, bin } = installDsh(mkdtempSync(join(TEMP_ROOT, 'nested-')))
     installAppBoot(join(dshDir, 'node_modules'), RC3_EXPORT)
 
-    expect(readInChild(bin)).toEqual({ dshVersion: '0.1.5-rc.3', templates: RC3_TABLE })
+    expect(readInChild(bin)).toEqual({ dshVersion: '0.1.5-rc.3', templates: RC3_TABLE, patchLists: false })
   })
 
   it('finds app-boot as a sibling of the dsh package, where pnpm and a hoisting install put it', () => {
@@ -126,7 +126,7 @@ describe('readRunningHarness', () => {
     const { bin } = installDsh(root)
     installAppBoot(join(root, 'node_modules'), MARKED_EXPORT)
 
-    expect(readInChild(bin)).toEqual({ dshVersion: '0.1.5-rc.3', templates: MARKED_EXPORT })
+    expect(readInChild(bin)).toEqual({ dshVersion: '0.1.5-rc.3', templates: MARKED_EXPORT, patchLists: false })
   })
 
   it('reads the copy dsh itself imports when there are two: the nested one', () => {
@@ -154,13 +154,13 @@ describe('readRunningHarness', () => {
     mkdirSync(dirname(shim), { recursive: true })
     symlinkSync(bin, shim)
 
-    expect(readInChild(shim)).toEqual({ dshVersion: '0.1.5-rc.3', templates: RC3_TABLE })
+    expect(readInChild(shim)).toEqual({ dshVersion: '0.1.5-rc.3', templates: RC3_TABLE, patchLists: false })
   })
 
   it('knows nothing when there is no script, or none it can resolve', async () => {
     const missing = join(mkdtempSync(join(TEMP_ROOT, 'missing-')), 'lib', 'bin.js')
     for (const script of [undefined, missing, 'bad\0path']) {
-      expect(await readRunningHarness(script), JSON.stringify(script)).toEqual({ dshVersion: null, templates: {} })
+      expect(await readRunningHarness(script), JSON.stringify(script)).toEqual({ dshVersion: null, templates: {}, patchLists: null })
     }
   })
 
@@ -171,7 +171,7 @@ describe('readRunningHarness', () => {
     const { dshDir } = installDsh(mkdtempSync(join(TEMP_ROOT, 'empty-')))
     installAppBoot(join(dshDir, 'node_modules'), RC3_EXPORT)
 
-    expect(readInChild('', join(dshDir, 'lib'))).toEqual({ dshVersion: null, templates: {} })
+    expect(readInChild('', join(dshDir, 'lib'))).toEqual({ dshVersion: null, templates: {}, patchLists: null })
   })
 
   it('knows nothing when the script belongs to some other package', () => {
@@ -187,7 +187,7 @@ describe('readRunningHarness', () => {
     writeFileSync(join(runner, 'package.json'), JSON.stringify({ name: 'tinypool', version: '1.1.1' }))
     writeFileSync(join(runner, 'dist', 'entry', 'process.js'), '')
 
-    expect(readInChild(join(runner, 'dist', 'entry', 'process.js'))).toEqual({ dshVersion: null, templates: {} })
+    expect(readInChild(join(runner, 'dist', 'entry', 'process.js'))).toEqual({ dshVersion: null, templates: {}, patchLists: null })
   })
 
   it('stops at the first manifest above the script, and never climbs past it to a dsh', () => {
@@ -201,7 +201,7 @@ describe('readRunningHarness', () => {
     writeFileSync(join(vendored, 'package.json'), JSON.stringify({ name: 'bundled-helper', version: '1.0.0' }))
     writeFileSync(join(vendored, 'entry.js'), '')
 
-    expect(readInChild(join(vendored, 'entry.js'))).toEqual({ dshVersion: null, templates: {} })
+    expect(readInChild(join(vendored, 'entry.js'))).toEqual({ dshVersion: null, templates: {}, patchLists: null })
   })
 
   it('walks past a package.json that is not a file, and stops at one it cannot parse', async () => {
@@ -215,7 +215,7 @@ describe('readRunningHarness', () => {
 
     const stopped = installDsh(mkdtempSync(join(TEMP_ROOT, 'manifest-bad-')))
     writeFileSync(join(stopped.dshDir, 'lib', 'package.json'), '{not json')
-    expect(await readRunningHarness(stopped.bin)).toEqual({ dshVersion: null, templates: {} })
+    expect(await readRunningHarness(stopped.bin)).toEqual({ dshVersion: null, templates: {}, patchLists: null })
   })
 
   it('reads a version only when the manifest carries a non-empty string, and keeps the templates either way', () => {
@@ -226,7 +226,7 @@ describe('readRunningHarness', () => {
     for (const [version, expected] of [[undefined, null], ['', null], [7, null], [null, null], ['nightly', 'nightly']] as const) {
       const { dshDir, bin } = installDsh(mkdtempSync(join(TEMP_ROOT, 'version-')), { version })
       installAppBoot(join(dshDir, 'node_modules'), MARKED_EXPORT)
-      expect(readInChild(bin), JSON.stringify(version)).toEqual({ dshVersion: expected, templates: MARKED_EXPORT })
+      expect(readInChild(bin), JSON.stringify(version)).toEqual({ dshVersion: expected, templates: MARKED_EXPORT, patchLists: false })
     }
   })
 
@@ -234,16 +234,33 @@ describe('readRunningHarness', () => {
     // Every way app-boot can fail to supply a table — none installed, an entry
     // that throws on import, an export of the wrong name — costs the profile
     // half and nothing else.
-    const cases: Array<[string, (dshDir: string) => void]> = [
-      ['no app-boot', () => {}],
-      ['an entry that throws', dshDir => { installAppBoot(join(dshDir, 'node_modules'), null, 'throw new Error("app-boot fixture")\n') }],
-      ['no PROFILE_TEMPLATES export', dshDir => { installAppBoot(join(dshDir, 'node_modules'), null, 'export const SOMETHING_ELSE = {}\n') }],
+    // `patchLists` rides on the same read: an app-boot that loads answers it
+    // from its exports, one that does not leaves it unknown.
+    const cases: Array<[string, (dshDir: string) => void, boolean | null]> = [
+      ['no app-boot', () => {}, null],
+      ['an entry that throws', dshDir => { installAppBoot(join(dshDir, 'node_modules'), null, 'throw new Error("app-boot fixture")\n') }, null],
+      ['no PROFILE_TEMPLATES export', dshDir => { installAppBoot(join(dshDir, 'node_modules'), null, 'export const SOMETHING_ELSE = {}\n') }, false],
     ]
-    for (const [label, stage] of cases) {
+    for (const [label, stage, patchLists] of cases) {
       const { dshDir, bin } = installDsh(mkdtempSync(join(TEMP_ROOT, 'no-table-')))
       stage(dshDir)
-      expect(readInChild(bin), label).toEqual({ dshVersion: '0.1.5-rc.3', templates: {} })
+      expect(readInChild(bin), label).toEqual({ dshVersion: '0.1.5-rc.3', templates: {}, patchLists })
     }
+  })
+
+  it('reads whether the running dsh takes a list-valued bundle patch off its app-boot\'s exports', () => {
+    // dsh 0.1.7's app-boot exports `bundlePatchFiles`, which accepts a list;
+    // 0.1.5-rc.3's exports nothing of the kind and joins the declaration onto
+    // a path, so a list there stops the profile from starting. The export is
+    // the feature, which is sharper than a version comparison.
+    const { dshDir, bin } = installDsh(mkdtempSync(join(TEMP_ROOT, 'patch-lists-')), { version: '0.1.7-rc.2' })
+    installAppBoot(join(dshDir, 'node_modules'), null, [
+      `export const PROFILE_TEMPLATES = ${JSON.stringify(RC3_EXPORT)}`,
+      'export function bundlePatchFiles(bundle) { return typeof bundle.patch === "string" ? [bundle.patch] : bundle.patch }',
+      '',
+    ].join('\n'))
+
+    expect(readInChild(bin)).toEqual({ dshVersion: '0.1.7-rc.2', templates: RC3_TABLE, patchLists: true })
   })
 
   it('never looks app-boot up through NODE_PATH', () => {
@@ -285,8 +302,8 @@ describe('readRunningHarness', () => {
     expect(child.status, child.stderr).toBe(0)
     expect(JSON.parse(child.stdout)).toEqual({
       cjs: true,
-      without: { dshVersion: '0.1.5-rc.3', templates: {} },
-      with: { dshVersion: '0.1.5-rc.3', templates: RC3_TABLE },
+      without: { dshVersion: '0.1.5-rc.3', templates: {}, patchLists: null },
+      with: { dshVersion: '0.1.5-rc.3', templates: RC3_TABLE, patchLists: false },
     })
   })
 })

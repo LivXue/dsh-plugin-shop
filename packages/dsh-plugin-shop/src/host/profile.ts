@@ -4,6 +4,7 @@ import { chmodSync, existsSync, readFileSync, realpathSync, renameSync, statSync
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { loadOptionalPatches } from '@deepseek-ai/dsh-app-boot'
 import { isMap, isSeq, parseDocument, type YAMLMap } from 'yaml'
+import { bundlePatchFiles } from './bundle-patch.ts'
 
 /** One id-targeted user-layer row (§8: the CLI hot-reloads this file). */
 export interface UserLayerRow {
@@ -214,26 +215,48 @@ export function ownedEntries(options: { profileDir: string; packageName: string 
   const packageDir = join(options.profileDir, 'node_modules', ...options.packageName.split('/'))
   const manifestPath = join(packageDir, 'package.json')
   if (!existsSync(manifestPath)) return []
-  let patchRelative: unknown
+  let declared: unknown
   try {
-    patchRelative = (JSON.parse(readFileSync(manifestPath, 'utf8')) as PackageShape).dsh?.bundle?.patch
+    declared = (JSON.parse(readFileSync(manifestPath, 'utf8')) as PackageShape).dsh?.bundle?.patch
   } catch (error) {
     throw new Error(`dsh-plugin-shop: failed to read ${manifestPath}: ${String(error)}`)
   }
-  if (typeof patchRelative !== 'string') return []
-  // The path comes from an untrusted package manifest and is about to be
-  // read: confine it to the package's own directory rather than trusting a
-  // `../` spelling to be a typo.
-  const patchFile = resolve(packageDir, patchRelative)
-  const inside = relative(packageDir, patchFile)
-  if (inside === '' || inside.startsWith('..') || isAbsolute(inside)) {
-    throw new Error(`dsh-plugin-shop: ${options.packageName} declares a bundle patch outside its own directory: ${patchRelative}`)
-  }
+  // One file, or a list applied in order (dsh 0.1.7); a declaration dsh
+  // refuses composes nothing, so it owns nothing.
+  const files = bundlePatchFiles(declared)
+  if (files === null) return []
   const entries: OwnedEntry[] = []
-  collectInsertedEntries(loadOptionalPatches('dsh-plugin-shop', patchFile) ?? [], entries)
+  for (const file of files) {
+    // The path comes from an untrusted package manifest and is about to be
+    // read: confine it to the package's own directory rather than trusting a
+    // `../` spelling to be a typo.
+    const patchFile = resolve(packageDir, file)
+    const inside = relative(packageDir, patchFile)
+    if (inside === '' || inside.startsWith('..') || isAbsolute(inside)) {
+      throw new Error(`dsh-plugin-shop: ${options.packageName} declares a bundle patch outside its own directory: ${file}`)
+    }
+    collectInsertedEntries(loadOptionalPatches('dsh-plugin-shop', patchFile) ?? [], entries)
+  }
   // One per id, first spelling kept — the id is the identity, as before.
   const seen = new Set<string>()
   return entries.filter(entry => !seen.has(entry.id) && seen.add(entry.id) !== undefined)
+}
+
+/**
+ * An installed package's own `dsh.bundle.patch`, exactly as declared, or
+ * undefined when the package, its manifest or the field is absent — or the
+ * manifest cannot be read, which no post-install check can judge either.
+ */
+export function declaredBundlePatch(options: { profileDir: string; packageName: string }): unknown {
+  const manifestPath = join(options.profileDir, 'node_modules', ...options.packageName.split('/'), 'package.json')
+  try {
+    return (JSON.parse(readFileSync(manifestPath, 'utf8')) as PackageShape).dsh?.bundle?.patch
+  } catch {
+    // Swallows an absent or unparseable manifest: nothing then says what the
+    // package declares, and the install's own confirm has already judged
+    // whether it landed.
+    return undefined
+  }
 }
 
 /** Walk a patch list, appending every INSERTED entry. A patch row without

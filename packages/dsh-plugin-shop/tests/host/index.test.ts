@@ -1626,6 +1626,8 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     hotFs?: ShopGatewayOptions['hotFs']
     /** The context the gateway is built with — the shop's own, in a real boot. */
     ctx?: object
+    /** Which harness the gateway believes it runs under. */
+    readHarness?: ShopGatewayOptions['readHarness']
   }): { gateway: ShopGateway; profileDir: string } {
     const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-hot-profile-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
@@ -1643,6 +1645,7 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
       hot: options.hot,
       loaderEntries: options.loaderEntries,
       hotFs: options.hotFs,
+      ...(options.readHarness !== undefined ? { readHarness: options.readHarness } : {}),
       ...(options.dshBin !== undefined ? { dshBin: options.dshBin(profileDir) } : {}),
     })
     return { gateway, profileDir }
@@ -1997,6 +2000,52 @@ describe('hot paths — install / uninstall / update through the afterDone seam'
     expect(mount).toHaveBeenCalledTimes(1)
     expect(own.plugin).toHaveBeenCalledWith('the-hot-tree', { path: 'hot-1.yml' })
     expect(caller.plugin).not.toHaveBeenCalled()
+  })
+
+  it('fails an install whose bundle patch the running dsh cannot load, before anything mounts it', async () => {
+    // dsh 0.1.5 joins `dsh.bundle.patch` onto a path, so a LIST (which 0.1.7
+    // applies in order) stops the profile from starting at the next boot —
+    // after an install that succeeded and a hot mount that ran it. A
+    // declaration that is neither a path nor a list stops every dsh. Both are
+    // reported the way a duplicate entry id is: failed, with the undo.
+    const harness = (patchLists: boolean | null) => async (): Promise<RunningHarness> =>
+      ({ dshVersion: '0.1.5-rc.3', templates: {}, patchLists })
+    const cases: Array<[unknown, boolean | null, string | null]> = [
+      [['./host.yml', './web.yml'], false, 'dsh-plugin-shop: dsh-hello-plugin lists its bundle patch as several files, which dsh reads from 0.1.7 on;'
+        + ' this dsh (0.1.5-rc.3) reads one and would not start with it installed.'
+        + ' It is on disk: run `dsh plugin --profile web remove dsh-hello-plugin` to undo this install.'],
+      [['./host.yml', './web.yml'], true, null],
+      [['./host.yml', './web.yml'], null, null],
+      [7, null, 'dsh-plugin-shop: dsh-hello-plugin declares its bundle patch as neither a file path nor a list of them,'
+        + ' which dsh refuses to load, so the profile would not start.'
+        + ' It is on disk: run `dsh plugin --profile web remove dsh-hello-plugin` to undo this install.'],
+    ]
+    for (const [patch, patchLists, detail] of cases) {
+      const label = `${JSON.stringify(patch)} on patchLists=${String(patchLists)}`
+      const { gateway, profileDir } = hotGateway({
+        hot: { mount: hotMount, unmount: hotUnmount },
+        loaderEntries: () => [],
+        readHarness: harness(patchLists),
+      })
+      mkdirSync(join(profileDir, 'node_modules', 'dsh-hello-plugin'), { recursive: true })
+      writeFileSync(join(profileDir, 'node_modules', 'dsh-hello-plugin', 'package.json'), JSON.stringify({
+        name: 'dsh-hello-plugin',
+        dsh: { bundle: { patch } },
+      }))
+      const started = await gateway.install({ name: 'dsh-hello-plugin', version: '1.2.0', acknowledged: true })
+      expect(started.ok, label).toBe(true)
+      if (!started.ok) return
+      const status = await pollTerminal(gateway, started.installId)
+      if (detail === null) {
+        expect(status.state, label).toBe('done')
+        expect(hotMount, label).toHaveBeenCalledTimes(1)
+      } else {
+        expect(status.state, label).toBe('failed')
+        expect(status.detail, label).toBe(detail)
+        expect(hotMount, label).not.toHaveBeenCalled()
+      }
+      hotMount.mockClear()
+    }
   })
 
   it('reports activation live when a hot-mounted install is host-only', async () => {
@@ -2416,7 +2465,7 @@ function injectedHarness(dshVersion: string | null = '0.1.5-rc.3'): {
   return {
     readHarness: async script => {
       reads.push(script)
-      return { dshVersion, templates: profileTemplatesOf(RC3_PROFILE_TEMPLATES) }
+      return { dshVersion, templates: profileTemplatesOf(RC3_PROFILE_TEMPLATES), patchLists: false }
     },
     reads,
   }

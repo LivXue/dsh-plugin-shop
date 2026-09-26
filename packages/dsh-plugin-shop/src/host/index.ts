@@ -24,7 +24,8 @@ import { restartCommand, startRestart, type RestartOutcome } from './restart.ts'
 import { fetchLatestVersion } from './self-update.ts'
 import { detectSupervisor } from './supervisor.ts'
 import { readRepoPins, writeRepoPins, type RepoPinFs } from './repo-pins.ts'
-import { collidingEntryId, discoverProfile, ownedEntries, ownedEntryIds, ownsEntryId, setUserLayerRows, type OwnedEntry } from './profile.ts'
+import { collidingEntryId, declaredBundlePatch, discoverProfile, ownedEntries, ownedEntryIds, ownsEntryId, setUserLayerRows, type OwnedEntry } from './profile.ts'
+import { patchDeclarationHazard } from './bundle-patch.ts'
 import { identityKey, installedSpecMatches } from '../shared/identity.ts'
 import { isTerminalInstallState, type InstallState } from '../shared/install-state.ts'
 import { createPrefetcher, type Prefetcher } from './prefetch.ts'
@@ -1144,6 +1145,9 @@ export class ShopGateway extends TypertRemoteService {
     // this session, whose module is still in the cache.
     const isUpdate = installedSpec !== undefined
     const alreadyImported = isUpdate || this.imported.has(args.name)
+    // Read before the spawn: the post-install check below is synchronous, and
+    // which dsh runs cannot change while it runs (see `harnessRead`).
+    const harness = await this.runningHarness()
     const running = startInstall({
       profile: this.profile,
       spec,
@@ -1167,10 +1171,24 @@ export class ShopGateway extends TypertRemoteService {
           packageName: args.name,
           dependencies: Object.keys(this.profileDependenciesOrNone() ?? {}),
         })
-        if (clash === null) return null
-        return `dsh-plugin-shop: ${args.name} declares the loader entry id "${clash.id}", which ${clash.holder} already declares.`
-          + ' dsh refuses to load a plugin tree holding a duplicate entry id, so the profile would not start.'
-          + ` It is on disk: run \`dsh plugin --profile ${this.profile} remove ${args.name}\` to undo this install.`
+        const undo = ` It is on disk: run \`dsh plugin --profile ${this.profile} remove ${args.name}\` to undo this install.`
+        if (clash !== null) {
+          return `dsh-plugin-shop: ${args.name} declares the loader entry id "${clash.id}", which ${clash.holder} already declares.`
+            + ' dsh refuses to load a plugin tree holding a duplicate entry id, so the profile would not start.' + undo
+        }
+        // The other way a landed bundle kills the next boot: a patch
+        // declaration this dsh cannot read (design
+        // 2026-09-26-dsh-017-readiness, B4).
+        const declared = declaredBundlePatch({ profileDir: this.profileDirResolved(), packageName: args.name })
+        switch (patchDeclarationHazard(declared, harness.patchLists)) {
+          case null: return null
+          case 'list-unsupported':
+            return `dsh-plugin-shop: ${args.name} lists its bundle patch as several files, which dsh reads from 0.1.7 on;`
+              + ` this dsh${harness.dshVersion === null ? '' : ` (${harness.dshVersion})`} reads one and would not start with it installed.` + undo
+          case 'malformed':
+            return `dsh-plugin-shop: ${args.name} declares its bundle patch as neither a file path nor a list of them,`
+              + ' which dsh refuses to load, so the profile would not start.' + undo
+        }
       },
       // After the bundle lands, bring it up hot — unless this process may
       // already hold its module (see `alreadyImported`). A failed mount falls
