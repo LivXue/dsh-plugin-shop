@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "main": "index.js",
-  "peerDependencies": { "@deepseek-ai/dsh-client-store": "*", "@dsh-shop-e2e/absent-peer": "*", "@deepseek-ai/dsh": "0.1.2-rc.1" },
+  "peerDependencies": { "@deepseek-ai/dsh-client-store": "*", "@deepseek-ai/dsh-llm": "*", "@dsh-shop-e2e/absent-peer": "*", "@deepseek-ai/dsh": "0.1.2-rc.1" },
   "peerDependenciesMeta": { "@deepseek-ai/dsh": { "optional": true } },
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },

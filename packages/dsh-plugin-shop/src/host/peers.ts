@@ -191,7 +191,9 @@ export function packageResolver(fromDir: string, fs: PackageLookupFs): PeerResol
  * (`findPackageDir`, `packageDirectory`). From `<profile>/cordis.yml` the
  * walk reads `<profile>/node_modules`, then `$DSH_HOME/profiles/node_modules`
  * — the link farm dsh-app-boot's `healProfilesModuleFallback` keeps, pointing
- * into the global dsh install — and so on up to the root, past any candidate
+ * into the global dsh install, on 0.1.5; 0.1.7 keeps none, and on a harness
+ * that serves its packages another way `harnessPackageResolver` asks it in
+ * front of this walk — and so on up to the root, past any candidate
  * it cannot stat, as Node's reader walks past one (measured on Node 26.6.0
  * with a looping link in front of a real copy: the import loads the copy).
  * The one shape where this and the loader knowingly disagree is a directory
@@ -240,6 +242,69 @@ export function packageResolver(fromDir: string, fs: PackageLookupFs): PeerResol
  */
 export function nodeResolver(baseUrl: string): PeerResolver {
   return packageResolver(anchorDirectory(baseUrl), NODE_LOOKUP_FS)
+}
+
+/**
+ * The one method of dsh's `pluginPackages` service the peer check reads: the
+ * harness's own answer to "which package does this import reach?".
+ *
+ * dsh 0.1.7 stopped mirroring its installation into
+ * `$DSH_HOME/profiles/node_modules`. It serves those packages to every
+ * profile through Node's module hooks instead — its runtime resolution
+ * routes a plugin's bare import of any package in the installation's
+ * dependency closure to the package that declares it — so the walk
+ * `nodeResolver` makes, which reads the disk around the profile, finds none
+ * of them. Measured on 0.1.7-rc.2 against the live catalog, the walk read
+ * `@deepseek-ai/dsh-tools` as missing for 1,038 entries, and the shop badged
+ * 2,214 where 0.1.5-rc.3 badges 570 (design
+ * 2026-09-01-harness-compatibility §11). `packageOf` answers from that
+ * resolution for the importer `parentURL` names; 0.1.5 has no such service.
+ *
+ * Typed loosely because the answer crosses in from the harness: only a
+ * string `manifestPath` is used.
+ */
+export interface HarnessPackageLookup {
+  packageOf(specifier: string, parentURL: string): { manifestPath?: unknown } | undefined
+}
+
+/**
+ * The manifest of the package the harness reaches for `spec` from
+ * `parentURL`, or null when it reaches none, or one whose manifest no longer
+ * stats as a file. The stat is fresh on every call for the reason §9.4 gives:
+ * the service remembers a package it once found, and an uninstalled peer
+ * must stop reading as present. Throws what the service throws, and a
+ * TypeError for a name that is not a bare package name — which never reaches
+ * the service, because peer names are catalog text.
+ */
+function harnessManifest(lookup: HarnessPackageLookup, spec: string, parentURL: string, fs: PackageLookupFs): string | null {
+  if (!isBarePackageName(spec)) throw new TypeError(`not a bare package name: ${JSON.stringify(spec)}`)
+  const manifestPath = lookup.packageOf(spec, parentURL)?.manifestPath
+  return typeof manifestPath === 'string' && isFileAt(fs, manifestPath) ? manifestPath : null
+}
+
+/**
+ * Presence on a harness that serves its packages through its runtime
+ * resolution (`HarnessPackageLookup`): present when the harness reaches a
+ * package for `spec` from `parentURL`, the profile anchor, and otherwise
+ * whatever `walk` answers — `nodeResolver` over the same anchor, in
+ * production. Asking the harness first asks the loader's own question, since
+ * a plugin's import goes through the same resolution. The walk stays behind
+ * it because either answer can only clear a badge, never raise one, and a
+ * false badge is the failure this module exists to avoid.
+ *
+ * Throws, which `incompatibilityMap` turns into no verdict for the entries
+ * declaring `spec`, for a name that is not a bare package name and for
+ * anything the service throws. A harness that cannot answer is silence:
+ * falling back to the walk alone would read every package it serves as
+ * missing.
+ */
+export function harnessPackageResolver(
+  walk: PeerResolver,
+  lookup: HarnessPackageLookup,
+  parentURL: string,
+  fs: PackageLookupFs = NODE_LOOKUP_FS,
+): PeerResolver {
+  return spec => harnessManifest(lookup, spec, parentURL, fs) !== null || walk(spec)
 }
 
 /**
@@ -317,21 +382,26 @@ export function packageVersionResolver(fromDir: string, fs: PackageLookupFs): Pe
       // Null already means no verdict here, so nothing needs it apart.
       return null
     }
-    if (dir === null) return null
-    let manifest: unknown
-    try {
-      manifest = JSON.parse(fs.readFile(join(dir, 'package.json')))
-    } catch {
-      // Swallows a manifest that is unreadable, malformed, or gone since the
-      // lookup stat-ed it: a fact we cannot read is not a mismatch, and this
-      // check must never be the reason a load fails.
-      return null
-    }
-    const version = typeof manifest === 'object' && manifest !== null
-      ? (manifest as { version?: unknown }).version
-      : undefined
-    return typeof version === 'string' && version.length > 0 ? version : null
+    return dir === null ? null : manifestVersion(fs, join(dir, 'package.json'))
   }
+}
+
+/** The non-empty `version` string of the manifest at `manifestPath`, or null
+ * for anything else. */
+function manifestVersion(fs: PackageLookupFs, manifestPath: string): string | null {
+  let manifest: unknown
+  try {
+    manifest = JSON.parse(fs.readFile(manifestPath))
+  } catch {
+    // Swallows a manifest that is unreadable, malformed, or gone since the
+    // lookup stat-ed it: a fact we cannot read is not a mismatch, and this
+    // check must never be the reason a load fails.
+    return null
+  }
+  const version = typeof manifest === 'object' && manifest !== null
+    ? (manifest as { version?: unknown }).version
+    : undefined
+  return typeof version === 'string' && version.length > 0 ? version : null
 }
 
 /**
@@ -360,6 +430,38 @@ export function packageVersionResolver(fromDir: string, fs: PackageLookupFs): Pe
  */
 export function nodeVersionResolver(baseUrl: string): PeerVersionResolver {
   return packageVersionResolver(anchorDirectory(baseUrl), NODE_LOOKUP_FS)
+}
+
+/**
+ * `harnessPackageResolver`'s twin for versions: read afresh from the manifest
+ * of the package the harness reaches for `spec` — the copy a plugin's import
+ * loads, which the walk cannot see on dsh 0.1.7 — and `walk`'s answer only
+ * when the harness reaches none. A manifest the harness names but nobody can
+ * read or parse answers null, never the walk's version: the walk may match
+ * another copy, and the version must describe the copy presence found (see
+ * `nodeVersionResolver`).
+ *
+ * Null for a name that is not a bare package name and for a service that
+ * throws, as null is already this resolver's no-verdict signal.
+ */
+export function harnessPackageVersionResolver(
+  walk: PeerVersionResolver,
+  lookup: HarnessPackageLookup,
+  parentURL: string,
+  fs: PackageLookupFs = NODE_LOOKUP_FS,
+): PeerVersionResolver {
+  return spec => {
+    let manifestPath: string | null
+    try {
+      manifestPath = harnessManifest(lookup, spec, parentURL, fs)
+    } catch {
+      // Swallows a name that is not a bare package name and whatever the
+      // service throws. Neither leaves a version anyone can vouch for, and
+      // the walk would read the disk this harness no longer serves from.
+      return null
+    }
+    return manifestPath === null ? walk(spec) : manifestVersion(fs, manifestPath)
+  }
 }
 
 /**

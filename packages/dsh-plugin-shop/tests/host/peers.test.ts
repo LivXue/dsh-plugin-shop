@@ -5,6 +5,8 @@ import { pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
   createPeerVersionCheck,
+  harnessPackageResolver,
+  harnessPackageVersionResolver,
   incompatibilityMap,
   nodeResolver,
   nodeVersionResolver,
@@ -13,6 +15,7 @@ import {
   packageVersionResolver,
   peerVersionMismatches,
   peerVersionWarning,
+  type HarnessPackageLookup,
   type PackageLookupFs,
   type PeerVersionResolver,
 } from '../../src/host/peers.ts'
@@ -1040,6 +1043,130 @@ describe('packageResolver and packageVersionResolver over an injected filesystem
     const fs = fakeFs({})
     expect(() => packageDirectory(profile, '../x', fs)).toThrow(TypeError)
     expect(packageDirectory(profile, spec, fs)).toBeNull()
+  })
+})
+
+describe('harnessPackageResolver and harnessPackageVersionResolver (dsh 0.1.7 pluginPackages)', () => {
+  // dsh 0.1.7 keeps no link farm: it serves the installation's packages to a
+  // profile through Node's module hooks, so a package it serves exists
+  // nowhere the walk from the profile looks. Each case lays that out on a
+  // real disk — the served copy under a separate "installation" directory,
+  // the profile beside it with no link farm — and answers `packageOf` the way
+  // the service does: the served package's manifest path, or undefined.
+  // Every name is one installed nowhere else (see the note above
+  // `installAt`), so the walk's false is this layout's, not the machine's.
+  const served = '@dsh-peers-fixture/harness-only'
+
+  function harnessServing(spec: string, version: string): { anchor: string; profile: string; manifestPath: string; lookup: HarnessPackageLookup & { asked: string[] } } {
+    const { profile, anchor } = dshHome()
+    const installation = mkdtempSync(join(TEMP_ROOT, 'installation-'))
+    const manifestPath = join(installAt(installation, spec, { name: spec, version }), 'package.json')
+    const asked: string[] = []
+    const lookup = {
+      asked,
+      packageOf: (specifier: string, parentURL: string) => {
+        asked.push(specifier)
+        expect(parentURL).toBe(anchor)
+        return specifier === spec ? { manifestPath } : undefined
+      },
+    }
+    return { anchor, profile, manifestPath, lookup }
+  }
+
+  it('reads a package the harness serves as present where the walk finds nothing, and clears its badge', () => {
+    // The defect as measured on 0.1.7-rc.2: the walk alone badged every
+    // plugin declaring a harness package — 2,214 entries against 570 on
+    // 0.1.5-rc.3 (design 2026-09-01-harness-compatibility §11).
+    const { anchor, lookup } = harnessServing(served, '0.1.7-rc.2')
+    const entries = [{ source: 'npm' as const, name: 'p', peers: [served] }]
+    expect(nodeResolver(anchor)(served)).toBe(false)
+    expect(incompatibilityMap(entries, nodeResolver(anchor))).toEqual({ 'npm:p': [served] })
+
+    const resolve = harnessPackageResolver(nodeResolver(anchor), lookup, anchor)
+    expect(resolve(served)).toBe(true)
+    expect(incompatibilityMap(entries, resolve)).toEqual({})
+  })
+
+  it('still names a peer neither the harness nor the walk finds', () => {
+    // The badge the change must keep: 0.1.7 removed packages 0.1.5 shipped
+    // (`@deepseek-ai/dsh-agent-presets`, measured), and a plugin declaring one
+    // is as broken as the badge says.
+    const { anchor, lookup } = harnessServing(served, '0.1.7-rc.2')
+    const missing = '@dsh-peers-fixture/served-by-nothing'
+    const resolve = harnessPackageResolver(nodeResolver(anchor), lookup, anchor)
+    expect(resolve(missing)).toBe(false)
+    expect(incompatibilityMap([{ source: 'npm', name: 'p', peers: [served, missing] }], resolve))
+      .toEqual({ 'npm:p': [missing] })
+  })
+
+  it('reads a peer the harness still names, but whose manifest is gone, as missing', () => {
+    // The service remembers a package it found; the resolver stats the
+    // manifest itself on every call, so an uninstall clears presence without
+    // a restart (§9.4, the same rule the walk keeps).
+    const { anchor, manifestPath, lookup } = harnessServing(served, '0.1.7-rc.2')
+    const resolve = harnessPackageResolver(nodeResolver(anchor), lookup, anchor)
+    expect(resolve(served)).toBe(true)
+    rmSync(manifestPath)
+    expect(resolve(served)).toBe(false)
+  })
+
+  it('falls back to the walk for a package the harness does not reach', () => {
+    const { anchor, profile, lookup } = harnessServing(served, '0.1.7-rc.2')
+    const local = '@dsh-peers-fixture/profile-local'
+    installAt(profile, local, { name: local, version: '1.0.0' })
+    expect(harnessPackageResolver(nodeResolver(anchor), lookup, anchor)(local)).toBe(true)
+    expect(harnessPackageVersionResolver(nodeVersionResolver(anchor), lookup, anchor)(local)).toBe('1.0.0')
+  })
+
+  it('gives no verdict for a name that is not a bare package name, and never hands it to the harness', () => {
+    const { anchor, lookup } = harnessServing(served, '0.1.7-rc.2')
+    const resolve = harnessPackageResolver(nodeResolver(anchor), lookup, anchor)
+    expect(() => resolve('../x')).toThrow(TypeError)
+    expect(harnessPackageVersionResolver(nodeVersionResolver(anchor), lookup, anchor)('../x')).toBeNull()
+    expect(incompatibilityMap([{ source: 'npm', name: 'p', peers: ['../x'] }], resolve)).toEqual({})
+    expect(lookup.asked).toEqual([])
+  })
+
+  it('gives no verdict when the harness throws, rather than falling back to the walk', () => {
+    // The walk alone is exactly what reads every served package as missing,
+    // so a harness that cannot answer is silence, never the walk's accusation.
+    const { anchor } = harnessServing(served, '0.1.7-rc.2')
+    const broken: HarnessPackageLookup = { packageOf: () => { throw new Error('profile resolution: disposed') } }
+    const resolve = harnessPackageResolver(nodeResolver(anchor), broken, anchor)
+    expect(() => resolve(served)).toThrow('disposed')
+    expect(incompatibilityMap([{ source: 'npm', name: 'p', peers: [served] }], resolve)).toEqual({})
+    expect(harnessPackageVersionResolver(nodeVersionResolver(anchor), broken, anchor)(served)).toBeNull()
+  })
+
+  it('ignores an answer that carries no manifest path, and asks the walk', () => {
+    const { anchor, profile } = harnessServing(served, '0.1.7-rc.2')
+    const odd: HarnessPackageLookup = { packageOf: () => ({ manifestPath: 42 }) }
+    expect(harnessPackageResolver(nodeResolver(anchor), odd, anchor)(served)).toBe(false)
+    installAt(profile, served, { name: served, version: '2.0.0' })
+    expect(harnessPackageResolver(nodeResolver(anchor), odd, anchor)(served)).toBe(true)
+  })
+
+  it('reads the version from the copy the harness reaches, never from another copy the walk finds', () => {
+    // The self-check's input on 0.1.7: without the harness, the walk read no
+    // version for any of the shop's own peers, and the check went silent.
+    const { anchor, profile, manifestPath, lookup } = harnessServing(served, '0.1.7-rc.2')
+    installAt(profile, served, { name: served, version: '9.9.9' })
+    const version = harnessPackageVersionResolver(nodeVersionResolver(anchor), lookup, anchor)
+    expect(version(served)).toBe('0.1.7-rc.2')
+
+    // A manifest the harness names but nobody can parse is no version, not
+    // the walk's 9.9.9.
+    writeFileSync(manifestPath, '{ not json')
+    expect(version(served)).toBeNull()
+  })
+
+  it("answers the walk's version when the harness reaches nothing", () => {
+    const { anchor, profile } = harnessServing(served, '0.1.7-rc.2')
+    const other = '@dsh-peers-fixture/walk-only'
+    installAt(profile, other, { name: other, version: '3.1.0' })
+    const none: HarnessPackageLookup = { packageOf: () => undefined }
+    expect(harnessPackageVersionResolver(nodeVersionResolver(anchor), none, anchor)(other)).toBe('3.1.0')
+    expect(harnessPackageVersionResolver(nodeVersionResolver(anchor), none, anchor)(served)).toBeNull()
   })
 })
 

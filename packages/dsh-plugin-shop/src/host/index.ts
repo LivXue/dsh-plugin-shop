@@ -32,9 +32,12 @@ import { isTerminalInstallState, type InstallState } from '../shared/install-sta
 import { createPrefetcher, type Prefetcher } from './prefetch.ts'
 import {
   createPeerVersionCheck,
+  harnessPackageResolver,
+  harnessPackageVersionResolver,
   incompatibilityMap,
   nodeResolver,
   nodeVersionResolver,
+  type HarnessPackageLookup,
   type PeerResolver,
   type PeerVersionResolver,
 } from './peers.ts'
@@ -580,7 +583,7 @@ export class ShopGateway extends TypertRemoteService {
     try {
       createPeerVersionCheck({
         ranges: this.options.peerRanges ?? ownPeerRanges(),
-        resolve: this.options.resolvePeerVersion ?? nodeVersionResolver(this.profileAnchor()),
+        resolve: this.options.resolvePeerVersion ?? this.peerVersionResolver(this.profileAnchor()),
         warn: message => {
           const logger = (this.ctx as { logger?: { warn(message: string): void } }).logger
           if (logger === undefined) console.warn(message)
@@ -634,6 +637,34 @@ export class ShopGateway extends TypertRemoteService {
    * profile directory can be discovered and none is given. */
   private profileAnchor(profileDir: string = this.profileDirResolved()): string {
     return pathToFileURL(join(profileDir, 'cordis.yml')).href
+  }
+
+  /** dsh's `pluginPackages` service, when the running harness provides one
+   * (0.1.7 and later), else null. Read on each use, like `pluginInventory`.
+   * It is how such a harness serves its own packages to plugins, which no
+   * walk of the profile's disk can see (design
+   * 2026-09-01-harness-compatibility §11). */
+  private harnessPackages(): HarnessPackageLookup | null {
+    const service = (this.ctx as { get?: (name: string) => unknown }).get?.('pluginPackages')
+    return typeof (service as { packageOf?: unknown } | null | undefined)?.packageOf === 'function'
+      ? service as HarnessPackageLookup
+      : null
+  }
+
+  /** "Does this installation provide `spec`?", asked from `anchor`: the
+   * harness's own resolution in front of the walk where the harness has one,
+   * the walk alone where it has not. */
+  private peerResolver(anchor: string): PeerResolver {
+    const walk = nodeResolver(anchor)
+    const packages = this.harnessPackages()
+    return packages === null ? walk : harnessPackageResolver(walk, packages, anchor)
+  }
+
+  /** `peerResolver`'s twin for the versions the load-time self-check reads. */
+  private peerVersionResolver(anchor: string): PeerVersionResolver {
+    const walk = nodeVersionResolver(anchor)
+    const packages = this.harnessPackages()
+    return packages === null ? walk : harnessPackageVersionResolver(walk, packages, anchor)
   }
 
   /** `profileDirResolved`, or null when no profile directory can be
@@ -1020,7 +1051,7 @@ export class ShopGateway extends TypertRemoteService {
     let incompatible: Record<string, string[]> = {}
     if (profileDir !== null) {
       try {
-        const resolve = this.options.resolvePeer ?? nodeResolver(this.profileAnchor(profileDir))
+        const resolve = this.options.resolvePeer ?? this.peerResolver(this.profileAnchor(profileDir))
         incompatible = incompatibilityMap(snapshot.entries, resolve)
       } catch {
         // Swallows anything incompatibilityMap throws on an entry shape this

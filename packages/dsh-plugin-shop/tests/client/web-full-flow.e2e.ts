@@ -1249,9 +1249,16 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // harness it is a platform seed word, the client's module table serves
       // it, and it must NOT be named. Until 2026-09-24 this spec asserted the
       // opposite, and so asserted a false alarm as the correct answer.
+      // `@deepseek-ai/dsh-llm` is a host package the harness ships, and must
+      // not be named either: 0.1.5 links it into this profile's DSH_HOME,
+      // while 0.1.7 keeps no link farm and serves it only through its runtime
+      // resolution, which the host asks through `pluginPackages` (design
+      // 2026-09-01-harness-compatibility §11). Before that, on 0.1.7 this card
+      // named it, as 2,214 live cards named some harness package.
       await card.locator('[data-shop-blocker]').waitFor({ state: 'visible', timeout: 15_000 })
       expect(await card.textContent()).toContain('@dsh-shop-e2e/absent-peer')
       expect(await card.textContent(), 'a peer the module table seeds was reported missing').not.toContain('@deepseek-ai/dsh-client-store')
+      expect(await card.textContent(), 'a package the harness ships was reported missing').not.toContain('@deepseek-ai/dsh-llm')
       expect(await card.locator('[data-shop-blocker]').textContent()).toBe(zh.incompatibleBadge)
 
       // The same entry declares a `dsh.compatibility` that fails both halves.
