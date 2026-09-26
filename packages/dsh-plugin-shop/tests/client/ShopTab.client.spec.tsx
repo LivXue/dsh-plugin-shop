@@ -93,6 +93,67 @@ function renderTab(injected: ShopTabInjected) {
   return render(<ShopTab {...({ t, ...injected } as unknown as ShopTabProps)} />)
 }
 
+describe('the tab survives the browser and its own render errors (C3)', () => {
+  it('tells the browser not to translate the tab, in each of its three states', async () => {
+    // A browser's page translation rewrites the text nodes React owns, and
+    // React's next commit throws on the ones it no longer finds (dsh-market
+    // #513). The shop renders no portals, so the root is its whole surface.
+    const slow = bench(snapshot())
+    let resolveCatalog: (value: ShopCatalogResult) => void = () => {}
+    slow.catalog.mockImplementation(() => new Promise(resolve => { resolveCatalog = resolve }))
+    const { container } = renderTab(slow.injected)
+    const root = (): Element | null => container.querySelector('[data-shop-tab]')
+    await waitFor(() => expect(root()?.getAttribute('aria-busy')).toBe('true'))
+    expect(root()?.getAttribute('translate')).toBe('no')
+    expect(root()?.classList.contains('notranslate')).toBe(true)
+    await act(async () => { resolveCatalog(snapshot()) })
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(root()?.getAttribute('translate')).toBe('no')
+    expect(root()?.classList.contains('notranslate')).toBe(true)
+    cleanup()
+
+    const failing = bench(snapshot())
+    failing.catalog.mockRejectedValue(new Error('offline'))
+    const second = renderTab(failing.injected)
+    await waitFor(() => expect(screen.getByText(en.error)).toBeTruthy())
+    const errorRoot = second.container.querySelector('[data-shop-tab]')
+    expect(errorRoot?.getAttribute('translate')).toBe('no')
+    expect(errorRoot?.classList.contains('notranslate')).toBe(true)
+  })
+
+  it('shows its own error and a way back when the tab throws while rendering', async () => {
+    // Without a boundary of its own, the harness's slot boundary catches the
+    // throw and renders an empty <div data-slot-error> until the page
+    // reloads: a blank tab, with no message and no retry.
+    const { injected } = bench(snapshot())
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let armed = true
+    const t = ((key: ShopLocaleKey, params?: Record<string, unknown>): string => {
+      // `search` is read only by the loaded view, so the throw lands after
+      // the catalog arrives, where a real render error would.
+      if (armed && key === 'search') throw new Error('the search label exploded')
+      const template = en[key]
+      if (params === undefined) return template
+      return template.replace(/\{(\w+)\}/g, (match, name: string) => (name in params ? String(params[name]) : match))
+    }) as ShopTabProps['t']
+    const { container } = render(<ShopTab {...({ t, ...injected } as unknown as ShopTabProps)} />)
+    await waitFor(() => expect(container.querySelector('[data-shop-crashed]')).toBeTruthy())
+    const crashed = container.querySelector('[data-shop-crashed]')!
+    expect(crashed.textContent).toContain(en.tabCrashed)
+    expect(crashed.textContent).toContain('the search label exploded')
+    expect(crashed.getAttribute('translate')).toBe('no')
+    // Not a working tab: nothing waiting for one may take this for it.
+    expect(container.querySelector('[data-shop-tab]')).toBeNull()
+    expect(logged.mock.calls.some(call => String(call[0]).includes('dsh-plugin-shop: the shop tab crashed'))).toBe(true)
+
+    // Retry remounts the tab from scratch.
+    armed = false
+    fireEvent.click(screen.getByRole('button', { name: en.retry }))
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(container.querySelector('[data-shop-crashed]')).toBeNull()
+  })
+})
+
 describe('ShopTab', () => {
   it('renders a derived entry with a tier badge and the plain-text summary', async () => {
     const { injected } = bench(snapshot())

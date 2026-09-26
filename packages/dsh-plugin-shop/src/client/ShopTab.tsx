@@ -4,17 +4,26 @@
  * details — never markup, so hostile npm descriptions cannot inject (spec
  * §11.3.4): no render path here may ever use dangerouslySetInnerHTML. */
 
-import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Component, memo, useCallback, useEffect, useId, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, HarnessVerdict, InstallArgs, RestartBlockedReason, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
 import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, readsIncompatible, rejectionCodeKey, restartBlockedNoticeKey, restartMonitorVerdict, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
 import { useInstallFlows, type InstallFlow } from './useInstall.ts'
 import { useUninstallFlows, type UninstallFlow } from './useUninstall.ts'
 import { useUpdateSelf } from './useUpdateSelf.ts'
+import { en, type ShopLocaleKey } from './locales.ts'
 import css from './ShopTab.module.css'
 
 /** The project's home on GitHub, linked from the toolbar. */
 const SHOP_REPO_URL = 'https://github.com/LivXue/dsh-plugin-shop'
+
+/** The class of every root the tab renders, the crash fallback's included:
+ * the panel, plus `notranslate`, which with `translate="no"` keeps a browser's
+ * page translation out of the text nodes React owns. Translation rewrites
+ * those nodes, and React's next commit throws on the ones it no longer finds
+ * (design 2026-09-26-market-borrowings §4). The tab renders no portals, so its
+ * root is its whole surface. */
+const PANEL_ROOT = `${css.panel} notranslate`
 
 /** The tab's Remote face: the Host result types, already unwrapped from the
  * wire envelope by `index.ts`; `catalog` throws on a wire error so the tab's
@@ -1089,9 +1098,69 @@ function OutdatedSection({ state, entriesByKey, missingByKey, harnessVerdicts, t
   )
 }
 
-/** The shop tab root: browse, search, refresh, and render one card per
- * entry. Data attributes on the e2e-relevant nodes follow the Task 3 list. */
+/**
+ * The shop's own error boundary (design 2026-09-26-market-borrowings §4).
+ *
+ * The harness catches a crashing slot entry as well, but renders an empty
+ * `<div data-slot-error>` that stays until the page reloads: a blank tab, with
+ * no message and no way back. This one says what happened and offers a Retry
+ * that remounts the tab from scratch. Its fallback carries no `data-shop-tab`,
+ * so a crashed tab cannot satisfy anything waiting for a working one. A class,
+ * because React offers error boundaries in no other form.
+ */
+class ShopErrorBoundary extends Component<{ t: ShopTabProps['t']; children: ReactNode }, { error: Error | null }> {
+  override state: { error: Error | null } = { error: null }
+
+  static getDerivedStateFromError(error: unknown): { error: Error } {
+    return { error: error instanceof Error ? error : new Error(String(error)) }
+  }
+
+  override componentDidCatch(error: unknown, info: ErrorInfo): void {
+    console.error('dsh-plugin-shop: the shop tab crashed', error, info.componentStack)
+  }
+
+  override render(): ReactNode {
+    const { error } = this.state
+    // React unmounted the tree that threw when it caught the error, so
+    // rendering the children again after a Retry mounts them from scratch.
+    if (error === null) return this.props.children
+    // The copy goes through `t` like everywhere else, but this is the one
+    // render that must not fail with it: a locale service that throws is a
+    // plausible cause of the very crash being reported.
+    const say = (key: ShopLocaleKey, fallback: string): string => {
+      try {
+        return this.props.t(key)
+      } catch {
+        // Swallows the locale failure itself: the English copy stands in.
+        return fallback
+      }
+    }
+    return (
+      <div className={PANEL_ROOT} translate="no" data-shop-crashed role="alert">
+        <p className={css.stateLine}>{say('tabCrashed', en.tabCrashed)}</p>
+        <p className={css.failedDetail}>{error.message}</p>
+        <button type="button" className={css.actionButton} onClick={() => this.setState({ error: null })}>
+          {say('retry', en.retry)}
+        </button>
+      </div>
+    )
+  }
+}
+
+/** The tab as the settings slot registers it (`index.ts`): the body inside the
+ * shop's own error boundary. Exported under the name the body used to carry,
+ * so nothing can register the tab without the boundary. */
 export function ShopTab(props: ShopTabProps): ReactNode {
+  return (
+    <ShopErrorBoundary t={props.t}>
+      <ShopTabBody {...props} />
+    </ShopErrorBoundary>
+  )
+}
+
+/** The shop tab body: browse, search, refresh, and render one card per
+ * entry. Data attributes on the e2e-relevant nodes follow the Task 3 list. */
+function ShopTabBody(props: ShopTabProps): ReactNode {
   const { t, catalog, install, installStatus, setEnabled, installed, installedSpecs, uninstall, noteUninstalled, restart, version, updateStart, reload: injectedReload } = props
   const [catalogState, setCatalogState] = useState<CatalogState>({ kind: 'loading' })
   const [installedState, setInstalledState] = useState<InstalledState>({ kind: 'loading' })
@@ -1619,7 +1688,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
 
   if (catalogState.kind === 'loading') {
     return (
-      <div className={css.panel} data-shop-tab aria-busy="true">
+      <div className={PANEL_ROOT} translate="no" data-shop-tab aria-busy="true">
         <p className={css.srOnly}>{t('loading')}</p>
         <div className={css.skeletonGrid} data-shop-skeleton aria-hidden="true">
           {Array.from({ length: 8 }, (_, i) => (
@@ -1636,7 +1705,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
   }
   if (catalogState.kind === 'error') {
     return (
-      <div className={css.panel} data-shop-tab>
+      <div className={PANEL_ROOT} translate="no" data-shop-tab>
         <p className={css.stateLine}>{t('error')}</p>
         <button type="button" className={css.actionButton} onClick={() => { setRequest({ kind: 'retry' }); setVersionReload(current => current + 1) }}>
           {t('retry')}
@@ -1646,7 +1715,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
   }
   const { result } = catalogState
   return (
-    <div className={css.panel} data-shop-tab>
+    <div className={PANEL_ROOT} translate="no" data-shop-tab>
       <div className={css.toolbar}>
         <input
           type="search"

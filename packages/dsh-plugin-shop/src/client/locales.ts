@@ -9,6 +9,10 @@ export const zh = {
   error: '暂时无法读取目录。',
   installedError: '暂时无法读取已安装列表。',
   retry: '重试',
+  /** The shop's own error boundary caught a render error; the error's message
+   * follows on its own line, and Retry remounts the tab (design
+   * 2026-09-26-market-borrowings §4). */
+  tabCrashed: '插件商店在显示这一页时出错了。',
   search: '搜索插件',
   all: '全部',
   catalog: '插件目录',
@@ -152,6 +156,7 @@ export const en = {
   error: 'The catalog is temporarily unavailable.',
   installedError: 'The installed list is temporarily unavailable.',
   retry: 'Retry',
+  tabCrashed: 'The plugin shop hit an error while showing this page.',
   search: 'Search plugins',
   all: 'All',
   catalog: 'Plugin catalog',
