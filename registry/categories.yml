@@ -725,6 +725,8 @@
   category: ui
 - name: "@clustrai/trading-console"
   category: tool
+- name: "@cningan/dsh-startup-check"
+  category: tool
 - name: "@cnzgray/dsh-claude-auto-memory"
   category: integration
 - name: "@cnzgray/dsh-claude-marketplace-bridge"
@@ -2367,6 +2369,10 @@
   category: ui
 - name: "@harzva/dsh-terminal"
   category: ui
+- name: "@having5548/dsh-backup"
+  category: tool
+- name: "@having5548/dsh-notify"
+  category: ui
 - name: "@hawk2048/oh-my-dsh"
   category: workflow
 - name: "@hawkongz/dsh-task-reminder"
@@ -2858,6 +2864,8 @@
 - name: "@klarkxy/dsh-ai-services"
   category: provider
 - name: "@klarkxy/dsh-current-title"
+  category: tool
+- name: "@klarkxy/dsh-dev-index"
   category: tool
 - name: "@klarkxy/dsh-fusion"
   category: workflow
@@ -4739,6 +4747,10 @@
   category: workflow
 - name: "@weibaohui/dsh-fde-tools"
   category: tool
+- name: "@weibaohui/dsh-fireworks"
+  category: ui
+- name: "@weibaohui/dsh-flow"
+  category: ui
 - name: "@weibaohui/dsh-git-server"
   category: tool
 - name: "@weibaohui/dsh-process"
@@ -4821,16 +4833,6 @@
   category: ui
 - name: "@windypro-rourou/dsh-logcat"
   category: tool
-- name: "@wingsky-1/dsh-lan-proxy"
-  category: tool
-- name: "@wingsky-1/dsh-mcp-manager"
-  category: tool
-- name: "@wingsky-1/dsh-notifier"
-  category: ui
-- name: "@wingsky-1/dsh-provider-usage"
-  category: ui
-- name: "@wingsky-1/dsh-worktree-sidebar"
-  category: ui
 - name: "@winterchenhuan/dsh-shadow-mind"
   category: workflow
 - name: "@winterchenhuan/dsh-skills-viewer"
@@ -6731,6 +6733,8 @@
   category: ui
 - name: "dsh-ask-guard"
   category: tool
+- name: "dsh-ask-highlight"
+  category: ui
 - name: "dsh-ask-in-sidebar"
   category: ui
 - name: "dsh-ask-leader"
@@ -11561,6 +11565,8 @@
   category: ui
 - name: "dsh-history"
   category: ui
+- name: "dsh-history-fictionologists"
+  category: tool
 - name: "dsh-history-terms"
   category: tool
 - name: "dsh-history-tree"
@@ -12122,8 +12128,6 @@
 - name: "dsh-jev-decide"
   category: tool
 - name: "dsh-jev-guard"
-  category: tool
-- name: "dsh-jev-interceptor"
   category: tool
 - name: "dsh-jev-plugin"
   category: tool
@@ -15315,6 +15319,8 @@
   category: tool
 - name: "dsh-plugin-android-apk"
   category: tool
+- name: "dsh-plugin-android-emulator"
+  category: tool
 - name: "dsh-plugin-anti-rot"
   category: tool
 - name: "dsh-plugin-api-quota"
@@ -16081,6 +16087,8 @@
   category: ui
 - name: "dsh-plugin-sirchmunk"
   category: integration
+- name: "dsh-plugin-skill-gate"
+  category: tool
 - name: "dsh-plugin-skill-manager"
   category: tool
 - name: "dsh-plugin-skill-manager-gui"
@@ -20409,6 +20417,8 @@
   category: tool
 - name: "dsh-tweaks"
   category: tool
+- name: "dsh-type-tune"
+  category: ui
 - name: "dsh-typelens"
   category: tool
 - name: "dsh-typesafe"
@@ -20825,6 +20835,8 @@
   category: tool
 - name: "dsh-vertex-gemini"
   category: provider
+- name: "dsh-vertical-layout"
+  category: ui
 - name: "dsh-vertical-org"
   category: tool
 - name: "dsh-vet-visit"
