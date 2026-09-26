@@ -1,6 +1,7 @@
 # Market borrowings, second review — design
 
-Status: **batch 1 decided (2026-09-26): §1–§4.** A second review of three
+Status: **batch 1 decided and implemented (2026-09-26): §1–§4**, one commit
+per section on `fix/borrowings-batch-1`. A second review of three
 dsh plugin markets — [dsh-market/dsh-market](https://github.com/dsh-market/dsh-market)
 (reviewed once before, `2026-08-31-market-borrowings.md`),
 [bradeGithub/DSH-Plugins-Marketplace](https://github.com/bradeGithub/DSH-Plugins-Marketplace)
