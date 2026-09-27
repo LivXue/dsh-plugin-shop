@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ACKNOWLEDGEMENT_EN, ACKNOWLEDGEMENT_ZH, RESTART_GRACE_MS, RESTART_STABLE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, rejectionCodeKey } from '../../src/client/present.ts'
 import { en, zh, type ShopLocaleKey } from '../../src/client/locales.ts'
 import { ShopTab, type ShopTabInjected, type ShopTabProps } from '../../src/client/ShopTab.tsx'
-import { resetRestartMonitor } from '../../src/client/restart-monitor.ts'
+import { registerRestartCarrier, resetRestartMonitor } from '../../src/client/restart-monitor.ts'
 import type { HarnessVerdict, ShopCatalogResult, ShopInstalledEntry } from '../../src/host/index.ts'
 
 afterEach(() => {
@@ -872,6 +872,57 @@ describe('ShopTab', () => {
     expect(screen.getByText(en.restarting)).toBeTruthy()
   })
 
+  it('offers no second press while the host has not answered the first', async () => {
+    const { injected, restart } = bench(snapshot({ tier: 'verified' }))
+    restart.mockImplementation(() => new Promise(() => {}))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText(en.install))
+    await waitFor(() => expect(container.querySelector('[data-shop-restart]')).toBeTruthy(), { timeout: 3000 })
+    fireEvent.click(container.querySelector('[data-shop-restart]')!)
+    fireEvent.click(screen.getByText(en.restartConfirm))
+    // The request is the page's from the confirm on, not from the answer: a
+    // panel re-offering Restart while the host has not answered invited a
+    // second press into a process that may already be exiting.
+    await waitFor(() => expect(container.querySelector('[data-shop-restarting]')).toBeTruthy())
+    expect(container.querySelector('button[data-shop-restart]')).toBeNull()
+    expect(restart).toHaveBeenCalledTimes(1)
+  })
+
+  it('offers the restart again after the host refused it, and asks again on the next confirm', async () => {
+    const { injected, restart } = bench(snapshot({ tier: 'verified' }))
+    const detail = 'dsh-plugin-shop: an install is still running in this profile; a restart now would boot the new dsh against a half-written profile. Wait for it to finish and try again.'
+    restart.mockResolvedValueOnce({ ok: false, detail })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText(en.install))
+    await waitFor(() => expect(container.querySelector('[data-shop-restart]')).toBeTruthy(), { timeout: 3000 })
+    fireEvent.click(container.querySelector('[data-shop-restart]')!)
+    fireEvent.click(screen.getByText(en.restartConfirm))
+    await waitFor(() => expect(screen.getByText(detail)).toBeTruthy())
+    // A refusal answers that press, not every press, and this one says to
+    // try again. It used to REPLACE the offer, leaving nothing to press.
+    fireEvent.click(container.querySelector('button[data-shop-restart]')!)
+    fireEvent.click(screen.getByText(en.restartConfirm))
+    await waitFor(() => expect(restart).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.getByText(en.restarting)).toBeTruthy())
+    expect(screen.queryByText(detail)).toBeNull()
+  })
+
+  it('names an undelivered restart request in its own words, and offers the restart again', async () => {
+    const { injected, restart } = bench(snapshot({ tier: 'verified' }))
+    restart.mockRejectedValueOnce(new Error('shop remote: WIRE: boom'))
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(screen.getByText(en.install))
+    await waitFor(() => expect(container.querySelector('[data-shop-restart]')).toBeTruthy(), { timeout: 3000 })
+    fireEvent.click(container.querySelector('[data-shop-restart]')!)
+    fireEvent.click(screen.getByText(en.restartConfirm))
+    await waitFor(() => expect(screen.getByText(en.restartTransportFailed)).toBeTruthy())
+    expect(screen.queryByText('WIRE')).toBeNull() // the private transport detail stays out of the UI
+    expect(container.querySelector('button[data-shop-restart]')).toBeTruthy()
+  })
+
   it('renders the host detail when the restart fails and leaves the restarting state', async () => {
     const { injected, restart } = bench(snapshot({ tier: 'verified' }))
     restart.mockResolvedValue({ ok: false, detail: 'dsh-plugin-shop: restart is not supported when dsh was launched with --port 0; restart dsh manually' })
@@ -1208,6 +1259,25 @@ describe('ShopTab', () => {
     await waitFor(() => expect(restart).toHaveBeenCalled())
   })
 
+  it('reopens the confirmation from the version row after the host refused the restart', async () => {
+    const { injected, version, restart } = bench(snapshot())
+    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: null, pendingVersion: '0.4.4' })
+    const detail = 'dsh-plugin-shop: an install is still running in this profile; a restart now would boot the new dsh against a half-written profile. Wait for it to finish and try again.'
+    restart.mockResolvedValueOnce({ ok: false, detail })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(container.querySelector('[data-shop-self-update-done]')).toBeTruthy())
+    const row = (): Element => container.querySelector('[data-shop-version]')!.parentElement!
+    fireEvent.click(row().querySelector('[data-shop-restart]')!)
+    fireEvent.click(container.querySelector('[data-shop-restart-confirm]')!)
+    await waitFor(() => expect(screen.getByText(detail)).toBeTruthy())
+    // The refusal rendered ahead of the gate, so the row kept its Restart and
+    // pressing it opened nothing.
+    fireEvent.click(row().querySelector('[data-shop-restart]')!)
+    await waitFor(() => expect(container.querySelector('[data-shop-restart-confirm]')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-restart-confirm]')!)
+    await waitFor(() => expect(restart).toHaveBeenCalledTimes(2))
+  })
+
   it('hides the restart offer in the self-update panel when restart is unsupported', async () => {
     const { injected, version } = bench(snapshot())
     version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: 'systemd', pendingVersion: null })
@@ -1291,6 +1361,42 @@ describe('ShopTab', () => {
       expect(screen.getByText(en.restarting)).toBeTruthy()
       expect(replacement.container.querySelector('button[data-shop-restart]')).toBeNull()
       expect(next.restart).not.toHaveBeenCalled()
+    })
+
+    it('asks the host again through the tab that replaces one swapped out mid-request', async () => {
+      // The same swap, landing INSIDE the restart's round trip: dsh's dispose
+      // aborts the call, so the tab that pressed never hears whether the host
+      // committed (restart-monitor.ts). Measured 2026-09-27 on dsh 0.1.7-rc.2
+      // with the request held for two seconds: the host never restarted, and
+      // the replacement tab offered Restart as if nothing had been pressed.
+      const first = bench(snapshot())
+      first.version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: null, pendingVersion: '0.4.4' })
+      first.restart.mockImplementation(() => new Promise(() => {}))
+      // What the client half's apply does for every module instance (index.ts).
+      const withdrawFirst = registerRestartCarrier(first.restart)
+      const reload = vi.fn()
+      const view = renderTab({ ...first.injected, reload })
+      await waitFor(() => expect(view.container.querySelector('[data-shop-self-update-done]')).toBeTruthy())
+      vi.useFakeTimers()
+      vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => new Response('ok', { status: 200 })))
+      fireEvent.click(view.container.querySelector('[data-shop-version]')!.parentElement!.querySelector('[data-shop-restart]')!)
+      fireEvent.click(view.container.querySelector('[data-shop-restart-confirm]')!)
+      await act(async () => { await vi.advanceTimersByTimeAsync(100) })
+      expect(first.restart).toHaveBeenCalledTimes(1)
+      // The swap: the old instance withdraws its path as its mount goes, its
+      // tab unmounts, and the fresh instance registers before its tab mounts.
+      withdrawFirst()
+      view.unmount()
+      const next = bench(snapshot())
+      next.version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: null, pendingVersion: '0.4.4' })
+      registerRestartCarrier(next.restart)
+      const replacement = renderTab(next.injected)
+      await act(async () => { await vi.advanceTimersByTimeAsync(100) })
+      expect(next.restart).toHaveBeenCalledTimes(1)
+      expect(screen.getByText(en.restarting)).toBeTruthy()
+      expect(replacement.container.querySelector('button[data-shop-restart]')).toBeNull()
+      await act(async () => { await vi.advanceTimersByTimeAsync(RESTART_GRACE_MS + RESTART_STABLE_MS + 2_000) })
+      expect(reload).toHaveBeenCalledTimes(1)
     })
 
     it('names the failure in the replacement tab when the new server never comes back', async () => {

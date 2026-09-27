@@ -821,6 +821,27 @@ The monitor that §8 and its 2026-09-26 amendment describe lived in the tab's `R
 - The new tab offers the restart through §7.3's `pendingVersion` inference.
 - If the restart was confirmed in the old tab before the swap, the page may still need one manual reload.
 
+**Amendment (2026-09-27, the restart request): the request belongs to the page too, and `shop/restart` answers a repeat with the restart it committed.** The amendment above left one window open: a swap that lands inside the restart's own round trip. On dsh 0.1.5-rc.3 and 0.1.7-rc.2 alike a unary Remote call is an HTTP POST (`api/shop/restart`) whose fetch carries the calling mount's abort signal. Disposing the mount aborts the call, and an answer that arrives after the mount went inactive is rewritten to "no longer mounted". The tab that pressed then learns nothing, whether or not the host committed. Measured 2026-09-27 on dsh 0.1.7-rc.2, updating the published 0.8.4-beta.0 with the bundle rewritten again at the confirm:
+
+- Of two runs without a hold, one lost the restart. The swap landed about 30 ms after the confirm, the host never restarted, and the replacement tab offered Restart as if nothing had been pressed.
+- With the request held for 2 s, the browser aborted it (`net::ERR_ABORTED`) and it never reached the host.
+- With the response held for 2 s, the host committed and restarted, but the page stayed on the old process. It showed the old version and a Restart that restarted dsh a second time.
+
+A natural self-update does not open this window: it swaps once, at the end of the update, before Restart is offered. It takes a second rewrite of the shop's own bundle inside the round trip.
+
+**The fix.**
+- Each module instance registers its path to the host on the page store (`registerRestartCarrier`, from the client half's `apply`). Its teardown withdraws that path before it disposes the mount, so the abort always lands on a request the page already knows to ask again.
+- A confirm records the request on the page before anything is awaited. Every offer renders it as under way, and a second press joins it.
+- A request whose path is withdrawn mid-call is asked again through the newest live path: at once if one is registered, or as soon as one is.
+- A withdrawn path can still decide by a commit, which is the truth about the host however late it arrives. Its refusal or failure is superseded by the re-issue.
+- A re-issue that cannot reach a host is followed as a restart, because the first ask may have committed and taken its host down with it.
+- `shop/restart` answers every call after a commit with the same `{ ok: true, logFile }`, ahead of every refusal. A re-issue inside the exit delay reaches the same process, and a second commit would start a second takeover helper racing the first for the port, and a second exit.
+- A refusal renders above the restart offer instead of replacing it. Before, a refused press left nothing to press: the version row's Restart opened a gate that rendered behind the refusal, and an entry card lost its button.
+
+With the fix, each of those three reloaded on its own on both dsh versions, with one restart each, and so did the natural flow. In the response-held run the re-issue reached the process that had committed and got its answer back.
+
+**What is left.** A re-issue still reaches the NEW process when the replacement registers only after the old process has exited and the new one has booted, which takes seconds. The new process then restarts once more, which costs a few seconds and nothing the first restart did not. Like the amendment above, the fix takes effect for updates made from a version that carries it: in the first update from 0.8.4-beta.0 or earlier, the old tab makes the request.
+
 ## 9. Security model
 
 ### 9.1 Threat model
@@ -874,6 +895,7 @@ Wording such as "this plugin comes from the community, please install with care"
 | Concurrent installs into one profile | The later caller waits | Per-profile mutex |
 | Restart refused (Windows, a systemd unit, or `--port 0`) | `shop/version` reports `restartBlocked: <reason>` and the client hides the restart offer, naming THAT reason's manual remedy; `shop/restart` returns the typed refusal | Refuse before anything is torn down; `allowRestart: true` in the shop row config overrides the systemd reason only |
 | A self-update swaps the shop's own tab out (dsh client HMR rebuilds the rewritten bundle mid-update) | The replacement tab offers the restart from `pendingVersion`, or shows the restart already under way; the page still reloads into the new server | The restart monitor belongs to the page, not to the tab (§8, 2026-09-27 amendment) |
+| The swap lands inside the restart's own round trip (dsh aborts a call with its mount) | The page asks again through the replacement's mount and follows the restart; a repeat reaching the process that committed gets the same answer | The request belongs to the page, and `shop/restart` is idempotent once committed (§8, 2026-09-27 restart-request amendment) |
 
 ## 11. Testing and acceptance
 

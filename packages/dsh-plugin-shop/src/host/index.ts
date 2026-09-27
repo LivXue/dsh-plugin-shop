@@ -495,6 +495,11 @@ export class ShopGateway extends TypertRemoteService {
   private readonly exit: (code?: number) => void
   private readonly restartExitDelayMs: number
   private readonly restartParentPid: number
+  /** The restart this process committed, once it has: every later
+   * `shop/restart` answers with it. A page that lost the first answer to an
+   * HMR swap asks again (client/restart-monitor.ts), and inside the exit
+   * delay that ask reaches this same process. */
+  private committedRestart: { logFile: string } | null = null
   private readonly latestVersion: () => Promise<string | null>
   private readonly pinFs: RepoPinFs
   private readonly allowRestart?: boolean
@@ -1678,6 +1683,12 @@ export class ShopGateway extends TypertRemoteService {
    * new server answers. Refusals are issued before anything is torn down. */
   @Remote('restart')
   async restart(): Promise<ShopRestartResult> {
+    // Asked again after committing: the same answer, and nothing started
+    // twice — a second takeover helper would race the first for the port, and
+    // a second timer is a second exit. Ahead of every refusal, because the
+    // commit is irrevocable: refusing a repeat over an install begun since
+    // would tell the page nothing is under way while this process exits.
+    if (this.committedRestart !== null) return { ok: true, logFile: this.committedRestart.logFile }
     // A running install owns the profile: `pnpm` may be rewriting its
     // package.json, lockfile and node_modules. Exiting now would hand the
     // takeover helper a half-written profile, so refuse before anything is
@@ -1723,6 +1734,7 @@ export class ShopGateway extends TypertRemoteService {
     // helper holds the child back until this pid is gone, so the port is
     // free when the new dsh binds. It names the log the new process writes,
     // for the page to point at if that process never stays up.
+    this.committedRestart = { logFile }
     setTimeout(() => this.exit(0), this.restartExitDelayMs)
     return { ok: true, logFile }
   }
