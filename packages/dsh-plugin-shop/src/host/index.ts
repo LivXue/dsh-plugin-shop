@@ -4,7 +4,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { readProfileManifest } from '@deepseek-ai/dsh-app-boot'
 import { lt, minVersion, valid } from 'semver'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -16,7 +16,7 @@ import type { CatalogOrigin } from './origin.ts'
 import { npmrcRegistry } from './npmrc.ts'
 import type { CatalogEntry, DeniedEntry } from './types.ts'
 import { validateInstall, type InstallArgs, type InstallRejectionCode } from './install.ts'
-import { startInstall, startUninstall, type InstallStatus } from './executor.ts'
+import { INSTALL_TIMEOUT_MS, startInstall, startUninstall, type InstallStatus, type RunningInstall } from './executor.ts'
 import { cleanHotDir, hotMount, hotUnmount, nodeHotFs, type HotFs } from './hot.ts'
 import { activationOf, type Activation } from './activation.ts'
 import { hasClientHalf } from './client-half.ts'
@@ -43,7 +43,8 @@ import {
 } from './peers.ts'
 import { compatibilityMap, peerVerdictsOf, type HarnessVerdict, type PeerVerdict } from './compatibility.ts'
 import { readRunningHarness, type RunningHarness } from './harness.ts'
-import { asPluginManager, type PluginManagerLike } from './plugin-manager.ts'
+import { ManagerLogs, startManagerOperation } from './manager-runner.ts'
+import { asPluginManager, managerOutcome, readChange, type ManagerOutcome, type PluginManagerLike } from './plugin-manager.ts'
 
 // Re-exported so the boundary type is reachable from the package's public
 // ./types subpath; the typert generator refuses remote parameter types it
@@ -443,8 +444,12 @@ function ownDependencySpec(
  * process's: a gateway rebuilt inside a running dsh — a restarted shop fiber —
  * must not forget what the process imported before it existed. Every gateway
  * seeds it with the profile's dependencies at construction (the boot
- * composition) and extends it with every name the hot path mounts. Nothing is
- * ever removed: an uninstall disposes the fiber, not the module record.
+ * composition) and extends it with every name the hot path mounts. It extends
+ * it again with every name one of its own installs through dsh's
+ * `pluginManager` brought to the enable stage, and with the profile's
+ * dependencies whenever that service reports an install: dsh's own Plugins
+ * page installs through it, and the report names no package. Nothing is ever
+ * removed: an uninstall disposes the fiber, not the module record.
  */
 const importedThisProcess = new Set<string>()
 
@@ -506,6 +511,9 @@ export class ShopGateway extends TypertRemoteService {
   private readonly prefetcher: Prefetcher
   /** What this process may already have imported (see `importedThisProcess`). */
   private readonly imported: Set<string>
+  /** Routes the output dsh's `pluginManager` streams to the record whose
+   * request id it carries (see the constructor). */
+  private readonly managerLogs: ManagerLogs
   /** The install gate runs against the last loaded snapshot, never a fresh
    * fetch per request (§7.2: the Host's cached snapshot is the truth). */
   /** Finished install records retained, so a poll sees the true terminal
@@ -532,8 +540,9 @@ export class ShopGateway extends TypertRemoteService {
    * promise, so concurrent first calls share one read; `readRunningHarness`
    * never rejects, so there is no failure to retry. */
   private harnessRead: Promise<RunningHarness> | null = null
-  /** Install records, running and finished; a poll finds one here or reports not found. */
-  private readonly installs = new Map<string, ReturnType<typeof startInstall>>()
+  /** Install records, running and finished, from the CLI and from dsh's
+   * `pluginManager` alike; a poll finds one here or reports not found. */
+  private readonly installs = new Map<string, RunningInstall>()
   /** Every install id in insertion order, oldest first; finished-record eviction walks this from the front. */
   private readonly installOrder: string[] = []
 
@@ -574,7 +583,24 @@ export class ShopGateway extends TypertRemoteService {
     // An unreadable manifest seeds nothing — an update is still recognized
     // from the manifest at install time, so what goes unrecognized then is an
     // uninstall followed by a reinstall, and only until the next boot.
-    for (const name of Object.keys(this.profileDependenciesOrNone() ?? {})) this.imported.add(name)
+    this.recordDependenciesImported()
+    this.managerLogs = new ManagerLogs()
+    // The service streams each pnpm run as it happens. A context without `on`
+    // (a unit test's stub) streams nothing, and a record then takes the
+    // service's final output instead.
+    const on = (this.ctx as { on?: (event: string, listener: (payload: unknown) => void) => unknown }).on
+    on?.call(this.ctx, 'plugin-manager/install-log', payload => {
+      const chunk = payload as { requestId?: unknown; text?: unknown; stream?: unknown } | null | undefined
+      this.managerLogs.chunk(chunk?.requestId, chunk?.text, chunk?.stream)
+    })
+    // dsh's own Plugins page installs through the same service, and the
+    // event dsh sends after every install names no package (measured on
+    // 0.1.7-rc.2). So the record is read again from the profile manifest,
+    // which now holds whatever dsh installed. Of the service's changes only
+    // an install adds a name to the manifest, so it is the only one read.
+    on?.call(this.ctx, 'plugin-manager/changed', payload => {
+      if ((payload as { reason?: unknown } | null | undefined)?.reason === 'install') this.recordDependenciesImported()
+    })
     try {
       // The ephemeral `hot-<n>.yml` inputs from a previous session must
       // never survive a boot: a crashed session's stale inputs would mount
@@ -796,6 +822,14 @@ export class ShopGateway extends TypertRemoteService {
   private installedSpecOf(name: string): string | undefined {
     const dependencies = this.profileDependenciesOrNone()
     return dependencies === undefined ? undefined : ownDependencySpec(dependencies, name)
+  }
+
+  /** Add every dependency the profile manifest holds to the `imported`
+   * record (see `importedThisProcess`): each is a package dsh's loader may
+   * have loaded in this process, at boot or by an install since. An
+   * unreadable manifest adds nothing. */
+  private recordDependenciesImported(): void {
+    for (const name of Object.keys(this.profileDependenciesOrNone() ?? {})) this.imported.add(name)
   }
 
   private ownedEntryIdsOrNone(packageName: string): string[] {
@@ -1315,6 +1349,27 @@ export class ShopGateway extends TypertRemoteService {
     // Read before the spawn: the post-install check below is synchronous, and
     // which dsh runs cannot change while it runs (see `harnessRead`).
     const harness = await this.runningHarness()
+    const manager = this.pluginManager()
+    if (manager !== null) {
+      const running = this.startManagerInstall(manager, spec, `install ${spec}`, raw => {
+        // An answer that stopped at stage `install`, a pnpm failure or a
+        // refusal, imported nothing. One that reached `enable` has filled
+        // Node's module cache, whether dsh composed the package or failed to
+        // enable it, so the next install of this name in this process must not
+        // read as live. An update imports nothing new: dsh answers it without
+        // loading the new files (spec section 2), and `alreadyImported`
+        // already holds for it.
+        if (!isUpdate && readChange(raw).stage === 'enable') this.imported.add(args.name)
+        return managerOutcome(raw, {
+          profile: this.profile, name: args.name, operation: isUpdate ? 'update' : 'install',
+          alreadyImported, hasClientHalf: this.packageHasClientHalf(args.name),
+          desktop: isDesktopProfile(this.profile), timeoutMs: INSTALL_TIMEOUT_MS,
+        })
+      }, () => this.postInstallHazard(args.name, harness, ' It is on disk: uninstall it from the shop to undo this install.'))
+      this.recordGithubPin(entry)
+      this.track(running)
+      return { ok: true, installId: running.installId, state: running.status().state }
+    }
     const running = startInstall({
       profile: this.profile,
       spec,
@@ -1332,31 +1387,9 @@ export class ShopGateway extends TypertRemoteService {
       // And, now that the files are on disk, the one collision the name gate
       // cannot see. Reporting it beats a done install that kills the next
       // boot; the package stays on disk, so the detail says how to undo it.
-      alsoConfirm: () => {
-        const clash = collidingEntryId({
-          profileDir: this.profileDirResolved(),
-          packageName: args.name,
-          dependencies: Object.keys(this.profileDependenciesOrNone() ?? {}),
-        })
-        const undo = ` It is on disk: run \`dsh plugin --profile ${this.profile} remove ${args.name}\` to undo this install.`
-        if (clash !== null) {
-          return `dsh-plugin-shop: ${args.name} declares the loader entry id "${clash.id}", which ${clash.holder} already declares.`
-            + ' dsh refuses to load a plugin tree holding a duplicate entry id, so the profile would not start.' + undo
-        }
-        // The other way a landed bundle kills the next boot: a patch
-        // declaration this dsh cannot read (design
-        // 2026-09-26-dsh-017-readiness, B4).
-        const declared = declaredBundlePatch({ profileDir: this.profileDirResolved(), packageName: args.name })
-        switch (patchDeclarationHazard(declared, harness.patchLists)) {
-          case null: return null
-          case 'list-unsupported':
-            return `dsh-plugin-shop: ${args.name} lists its bundle patch as several files, which dsh reads from 0.1.7 on;`
-              + ` this dsh${harness.dshVersion === null ? '' : ` (${harness.dshVersion})`} reads one and would not start with it installed.` + undo
-          case 'malformed':
-            return `dsh-plugin-shop: ${args.name} declares its bundle patch as neither a file path nor a list of them,`
-              + ' which dsh refuses to load, so the profile would not start.' + undo
-        }
-      },
+      alsoConfirm: () => this.postInstallHazard(
+        args.name, harness, ` It is on disk: run \`dsh plugin --profile ${this.profile} remove ${args.name}\` to undo this install.`,
+      ),
       // After the bundle lands, bring it up hot — unless this process may
       // already hold its module (see `alreadyImported`). A failed mount falls
       // back to restart activation, never to a silent half-state.
@@ -1399,18 +1432,93 @@ export class ShopGateway extends TypertRemoteService {
         }
       },
     })
-    if (entry.source === 'github') {
-      // Remember the pinned commit: the manifest records only
-      // `github:owner/slug`, so the pins file is how `installed()` reports
-      // outdated honestly. A failed install leaves a pin behind, but the
-      // manifest presence gate keeps it invisible.
-      const pins = readRepoPins(this.pinFs, this.pinsPath())
-      writeRepoPins(this.pinFs, this.pinsPath(), { ...pins, [identityKey(entry)]: entry.version })
+    this.recordGithubPin(entry)
+    this.track(running)
+    return { ok: true, installId: running.installId, state: running.status().state }
+  }
+
+  /**
+   * What would stop the profile from starting now that `name`'s files are on
+   * disk, or null: an entry id another installed package already declares,
+   * or a bundle patch declaration this dsh cannot read. Neither is knowable
+   * before the files land. The package stays on disk either way, so each
+   * detail ends with `undo`, the sentence that says how to take the install
+   * back on the path that made it.
+   */
+  private postInstallHazard(name: string, harness: RunningHarness, undo: string): string | null {
+    const clash = collidingEntryId({
+      profileDir: this.profileDirResolved(),
+      packageName: name,
+      dependencies: Object.keys(this.profileDependenciesOrNone() ?? {}),
+    })
+    if (clash !== null) {
+      return `dsh-plugin-shop: ${name} declares the loader entry id "${clash.id}", which ${clash.holder} already declares.`
+        + ' dsh refuses to load a plugin tree holding a duplicate entry id, so the profile would not start.' + undo
     }
+    // The other way a landed bundle kills the next boot: a patch
+    // declaration this dsh cannot read (design
+    // 2026-09-26-dsh-017-readiness, B4).
+    const declared = declaredBundlePatch({ profileDir: this.profileDirResolved(), packageName: name })
+    switch (patchDeclarationHazard(declared, harness.patchLists)) {
+      case null: return null
+      case 'list-unsupported':
+        return `dsh-plugin-shop: ${name} lists its bundle patch as several files, which dsh reads from 0.1.7 on;`
+          + ` this dsh${harness.dshVersion === null ? '' : ` (${harness.dshVersion})`} reads one and would not start with it installed.` + undo
+      case 'malformed':
+        return `dsh-plugin-shop: ${name} declares its bundle patch as neither a file path nor a list of them,`
+          + ' which dsh refuses to load, so the profile would not start.' + undo
+    }
+  }
+
+  /** Remember a github entry's pinned commit: the manifest records only
+   * `github:owner/slug`, so the pins file is how `installed()` reports
+   * outdated honestly. A failed install leaves a pin behind, but the
+   * manifest presence gate keeps it invisible. */
+  private recordGithubPin(entry: CatalogEntry): void {
+    if (entry.source !== 'github') return
+    const pins = readRepoPins(this.pinFs, this.pinsPath())
+    writeRepoPins(this.pinFs, this.pinsPath(), { ...pins, [identityKey(entry)]: entry.version })
+  }
+
+  /**
+   * One install-shaped operation through dsh's `pluginManager` (design
+   * 2026-09-26-plugin-manager-delegation, section 6): `installBundle(spec)`
+   * under the record's own id as its request id, so the output dsh streams
+   * for it reaches this record, in the profile's queue with the download
+   * phase the CLI path has. At the shop's deadline dsh is asked to cancel it;
+   * a service that offers no `cancelInstall` gets no deadline, and its record
+   * settles when dsh answers. `install` and `updateStart` differ only in the
+   * mechanism line and in how they read the answer.
+   */
+  private startManagerInstall(
+    manager: PluginManagerLike,
+    spec: string,
+    mechanism: string,
+    outcome: (raw: unknown) => ManagerOutcome,
+    alsoConfirm?: () => string | null,
+  ): RunningInstall {
+    // Bound here, because the runner calls it apart from the service.
+    const cancel = manager.cancelInstall?.bind(manager)
+    return startManagerOperation({
+      profile: this.profile,
+      requestId: randomUUID(),
+      mechanism,
+      logs: this.managerLogs,
+      run: requestId => manager.installBundle(spec, { requestId }),
+      ...(cancel !== undefined ? { cancel } : {}),
+      outcome,
+      ...(alsoConfirm !== undefined ? { alsoConfirm } : {}),
+      prefetcher: this.prefetcher,
+      spec,
+    })
+  }
+
+  /** Keep a started record where `installStatus`, the restart gate and
+   * eviction find it, then bound the finished ones. */
+  private track(running: RunningInstall): void {
     this.installs.set(running.installId, running)
     this.installOrder.push(running.installId)
     this.evictFinishedInstalls()
-    return { ok: true, installId: running.installId, state: running.status().state }
   }
 
   /** Bound retained finished records at MAX_FINISHED_INSTALLS, evicting the
@@ -1653,9 +1761,7 @@ export class ShopGateway extends TypertRemoteService {
     if (forgot) {
       writeRepoPins(this.pinFs, this.pinsPath(), pins)
     }
-    this.installs.set(running.installId, running)
-    this.installOrder.push(running.installId)
-    this.evictFinishedInstalls()
+    this.track(running)
     return { ok: true, installId: running.installId }
   }
 
@@ -1774,18 +1880,29 @@ export class ShopGateway extends TypertRemoteService {
     if (valid(args.version) === null) {
       return { ok: false, detail: `dsh-plugin-shop: ${args.version} is not a valid version` }
     }
+    const spec = `dsh-plugin-shop@${args.version}`
+    const manager = this.pluginManager()
+    if (manager !== null) {
+      // The host half running here is the shop's own, so its update never
+      // goes live: dsh answers with a restart and loads nothing (measured on
+      // 0.1.7-rc.2).
+      const running = this.startManagerInstall(manager, spec, `update ${spec}`, raw => managerOutcome(raw, {
+        profile: this.profile, name: 'dsh-plugin-shop', operation: 'update', alreadyImported: true,
+        hasClientHalf: true, desktop: isDesktopProfile(this.profile), timeoutMs: INSTALL_TIMEOUT_MS,
+      }))
+      this.track(running)
+      return { ok: true, installId: running.installId, state: running.status().state }
+    }
     const running = startInstall({
       profile: this.profile,
-      spec: `dsh-plugin-shop@${args.version}`,
+      spec,
       dshBin: this.dshBin,
       expectedName: 'dsh-plugin-shop',
       // The self-update runs through the same executor, so a queued update
       // gets the same download phase as a queued plugin install.
       prefetcher: this.prefetcher,
     })
-    this.installs.set(running.installId, running)
-    this.installOrder.push(running.installId)
-    this.evictFinishedInstalls()
+    this.track(running)
     return { ok: true, installId: running.installId, state: running.status().state }
   }
 }

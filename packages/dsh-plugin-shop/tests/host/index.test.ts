@@ -12,7 +12,7 @@ import type { CatalogResult, CatalogSnapshot, LoadCatalogOptions } from '../../s
 import type { CatalogEntry } from '../../src/host/types.ts'
 import { profileTemplatesOf } from '../../src/host/compatibility.ts'
 import type { PeerCheck, RunningHarness } from '../../src/host/harness.ts'
-import { startInstall } from '../../src/host/executor.ts'
+import { INSTALL_TIMEOUT_MS, inProfileQueue, startInstall } from '../../src/host/executor.ts'
 import { createPrefetcher, type Prefetcher } from '../../src/host/prefetch.ts'
 import { isTerminalInstallState } from '../../src/shared/install-state.ts'
 import { fakeDsh, fakeDshRecording, fakeDshRemovingManifest } from '../fixtures/fake-dsh.ts'
@@ -3394,5 +3394,312 @@ describe('a queued install is live, not finished', () => {
       await new Promise(resolve => setTimeout(resolve, 10))
     }
     await holder.finished
+  })
+})
+
+describe("installs and updates through dsh's pluginManager", () => {
+  const managed: CatalogEntry = { name: 'dsh-managed', version: '1.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-09-27' }
+  // A second name, for the installs dsh makes without the shop.
+  const other: CatalogEntry = { ...managed, name: 'dsh-other' }
+  const commit = 'e'.repeat(40)
+  const managedRepo: CatalogEntry = {
+    ...managed, name: 'dsh-managed-repo', version: commit, integrity: commit, metadata: 'declared',
+    repository: 'https://github.com/someone/dsh-managed-repo', source: 'github', repo: 'someone/dsh-managed-repo',
+  }
+  // dsh's answers as measured on 0.1.7-rc.2 (spec section 2, and the O1 and
+  // O4 measurements of 2026-09-27): an install of a name the profile did not
+  // hold, and one of a name it did, which carries no `warnings` key.
+  const applied = { changed: true, application: 'applied', stage: 'enable', target: 'dsh-managed', enabled: true, bundle: 'dsh-managed', registries: [null], packageResult: { exitCode: 0, output: 'Packages: +1\n', truncated: false, logPath: '/l' }, warnings: [] }
+  const restartRequired = { changed: true, application: 'restart-required', stage: 'enable', target: 'dsh-managed', enabled: true, bundle: 'dsh-managed', registries: [null], packageResult: { exitCode: 0, output: 'Packages: +1\n', truncated: false, logPath: '/l' } }
+  const managedPatch = "- insert:\n    - id: managed-row\n      name: 'dsh-managed'\n"
+  /** The patch of each package the fake can land: a row of its own apiece. */
+  const patches = new Map([['dsh-managed', managedPatch], ['dsh-other', "- insert:\n    - id: other-row\n      name: 'dsh-other'\n"]])
+
+  /** The profile manifest holding `dependencies`, each one selected, as
+   * `dsh plugin add` and dsh's own installer leave it. */
+  function writeManifest(profileDir: string, dependencies: Record<string, string>): void {
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: Object.keys(dependencies) } }, dependencies }))
+  }
+
+  /** A gateway whose pluginManager records its calls, streams each install's
+   * output through `plugin-manager/install-log` (one stdout line unless
+   * `output` says otherwise), and, when `lands`, puts the package the spec
+   * names on disk as a real install does before it answers. When `hangs`, an
+   * install answers only once dsh's `cancelInstall` stops it. The context
+   * keeps every listener the gateway registers, and `emit` calls one as dsh
+   * would.
+   *
+   * Every gateway gets a record of its own of what "this process" imported:
+   * the process-wide default would carry a name one case installed into every
+   * later case, and the cases reading `live` would then depend on the order
+   * they run in. A case passes `importedModules` to share one between two
+   * gateways. The CLI stand-ins are this file's own (see its header), so a
+   * case that fell back to the CLI fails on its own assertions instead of
+   * running a real dsh or pnpm. */
+  function managedGateway(result: object, options: {
+    dependencies?: Record<string, string>
+    profile?: string
+    lands?: boolean
+    hangs?: boolean
+    importedModules?: Set<string>
+    output?: (spec: string) => Array<{ stream: string; text: string }>
+    prefetcher?: Prefetcher
+  } = {}): { gateway: ShopGateway; calls: unknown[][]; profileDir: string; cacheDir: string; emit: (event: string, payload: unknown) => void } {
+    const {
+      dependencies = {}, profile = 'web', lands = true, hangs = false, importedModules = new Set<string>(),
+      output = (spec: string) => [{ stream: 'stdout', text: `+ ${spec}\n` }], prefetcher = fixturePrefetcher(),
+    } = options
+    const profileDir = toggleProfile()
+    writeManifest(profileDir, dependencies)
+    const cacheDir = mkdtempSync(join(TEMP_ROOT, 'dsh-managed-cache-'))
+    const calls: unknown[][] = []
+    const listeners = new Map<string, (payload: unknown) => void>()
+    const service = {
+      /** The installs waiting for `cancelInstall`, by request id. */
+      stalled: new Map<string, () => void>(),
+      installBundle(spec: string, request: { requestId: string }): Promise<unknown> {
+        calls.push(['installBundle', spec, request.requestId])
+        for (const chunk of output(spec)) {
+          listeners.get('plugin-manager/install-log')?.({ requestId: request.requestId, jobId: 'j', argv: ['pnpm', 'add', spec], cwd: profileDir, ...chunk })
+        }
+        if (hangs) {
+          return new Promise(resolve => {
+            // dsh's answer once it has stopped an install: nothing landed.
+            this.stalled.set(request.requestId, () => resolve({
+              changed: false, application: 'cancelled', stage: 'install', target: spec, enabled: true, registries: [null],
+              packageResult: { exitCode: null, output: '', truncated: false, logPath: '/l' },
+            }))
+          })
+        }
+        const name = /^(.+)@[^@/]+$/.exec(spec)?.[1]
+        const patch = name === undefined ? undefined : patches.get(name)
+        if (lands && name !== undefined && patch !== undefined) fixturePackage(profileDir, name, patch)
+        return Promise.resolve(result)
+      },
+      removeBundle: async () => { throw new Error('this case must not call removeBundle') },
+      setPluginEnabled: async () => { throw new Error('this case must not call setPluginEnabled') },
+      setBundleEnabled: async () => { throw new Error('this case must not call setBundleEnabled') },
+      // A method that reads `this`, as dsh's own does: the shop has to call
+      // it on the service, never as a bare function.
+      async cancelInstall(requestId: string): Promise<unknown> {
+        calls.push(['cancelInstall', requestId])
+        const stop = this.stalled.get(requestId)
+        if (stop === undefined) return { status: 'not-running' }
+        stop()
+        return { status: 'cancelled' }
+      },
+    }
+    const ctx = {
+      get: (name: string) => name === 'pluginManager' ? service : undefined,
+      on: (event: string, listener: (payload: unknown) => void) => { listeners.set(event, listener) },
+      reflect: { provide: () => {} },
+    } as never
+    const gateway = new ShopGateway(ctx, {
+      catalogUrl: 'https://shop.test/v1/', cacheDir, profile, profileDir,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries: [managed, other, managedRepo], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      importedModules,
+      prefetcher,
+      dshBin: fakeDshRecording(mkdtempSync(join(TEMP_ROOT, 'dsh-managed-cli-')), 0, { silent: true }),
+    })
+    const emit = (event: string, payload: unknown): void => {
+      const listener = listeners.get(event)
+      // A missing listener fails the case rather than passing it: a case that
+      // asserts an event changes nothing would otherwise hold without one.
+      if (listener === undefined) throw new Error(`the gateway does not listen for ${event}`)
+      listener(payload)
+    }
+    return { gateway, calls, profileDir, cacheDir, emit }
+  }
+
+  const finish = async (gateway: ShopGateway, installId: string): Promise<ShopInstallStatusResult> => {
+    await vi.waitFor(() => expect(isTerminalInstallState(gateway.installStatus({ installId }).state)).toBe(true), { timeout: 5000 })
+    return gateway.installStatus({ installId })
+  }
+
+  /** Install `entry` at its catalog version, acknowledged, and wait for the record to settle. */
+  const installAndSettle = async (gateway: ShopGateway, entry: CatalogEntry): Promise<ShopInstallStatusResult> => {
+    const started = await gateway.install({ name: entry.name, version: entry.version, acknowledged: true })
+    if (!started.ok) throw new Error(started.detail)
+    return finish(gateway, started.installId)
+  }
+
+  it('installs through installBundle, with the catalog spec and the record id as request id', async () => {
+    const { gateway, calls } = managedGateway(applied)
+    const started = await gateway.install({ name: 'dsh-managed', version: '1.0.0', acknowledged: true })
+    if (!started.ok) throw new Error(started.detail)
+    const status = await finish(gateway, started.installId)
+    expect(calls).toEqual([['installBundle', 'dsh-managed@1.0.0', started.installId]])
+    expect(status).toMatchObject({ state: 'done', activation: 'live' })
+    expect(status.log).toEqual(["via dsh's plugin manager: install dsh-managed@1.0.0", '+ dsh-managed@1.0.0'])
+  })
+
+  it('reads an update as a restart the package already loaded', async () => {
+    const { gateway } = managedGateway(restartRequired, { dependencies: { 'dsh-managed': '0.9.0' } })
+    const started = await gateway.install({ name: 'dsh-managed', version: '1.0.0', acknowledged: true })
+    if (!started.ok) throw new Error(started.detail)
+    expect(await finish(gateway, started.installId)).toMatchObject({ state: 'done', activation: 'restart', restartReason: 'already-loaded' })
+  })
+
+  it('updates the shop itself through installBundle', async () => {
+    const { gateway, calls } = managedGateway({ ...restartRequired, target: 'dsh-plugin-shop', bundle: 'dsh-plugin-shop' })
+    const started = await gateway.updateStart({ version: '9.9.9' })
+    if (!started.ok) throw new Error(started.detail)
+    const status = await finish(gateway, started.installId)
+    expect(calls[0]?.slice(0, 2)).toEqual(['installBundle', 'dsh-plugin-shop@9.9.9'])
+    // The host half running here is the shop's own, so dsh answers with a
+    // restart and loads nothing (open item O4, measured).
+    expect(status).toMatchObject({ state: 'done', activation: 'restart', restartReason: 'already-loaded' })
+    expect(status.log[0]).toBe("via dsh's plugin manager: update dsh-plugin-shop@9.9.9")
+  })
+
+  it('asks for a restart on a reinstall in one session, whatever dsh answered', async () => {
+    // Open item O1, measured on 0.1.7-rc.2: after removeBundle and a new
+    // installBundle both answered `applied`, the re-created entry ran the
+    // module Node had cached, because every version of a name loads from one
+    // path under `nodeLinker: hoisted`. `applied` does not say the new code runs.
+    const { gateway, profileDir } = managedGateway(applied)
+    expect(await installAndSettle(gateway, managed)).toMatchObject({ state: 'done', activation: 'live' })
+    // What the uninstall leaves behind: the profile without the package.
+    writeManifest(profileDir, {})
+    expect(await installAndSettle(gateway, managed)).toMatchObject({ state: 'done', activation: 'restart', restartReason: 'already-loaded' })
+  })
+
+  it('leaves the name unimported when an install never reached the enable stage', async () => {
+    // pnpm failed, so dsh put the profile back and loaded nothing. The answer
+    // is the one dsh 0.1.7-rc.2 gives a failed `pnpm add`: it throws the
+    // output as a plain error, which it codes `operation-error`.
+    const pnpmFailed = {
+      changed: false, application: 'failed', stage: 'install', target: 'dsh-managed@1.0.0', enabled: true, registries: [null], pendingBuilds: [],
+      packageResult: { exitCode: 1, output: 'ERR_PNPM_FETCH_404', truncated: false, logPath: '/l', kind: 'not-found' },
+      error: { code: 'operation-error', diagnostic: 'ERR_PNPM_FETCH_404' },
+    }
+    // The fake answers every install of one gateway alike, so the second
+    // install runs on a second gateway sharing the first one's record, as
+    // every gateway in one process does.
+    const imported = new Set<string>()
+    const failing = managedGateway(pnpmFailed, { lands: false, importedModules: imported })
+    expect((await installAndSettle(failing.gateway, managed)).state).toBe('failed')
+    const later = managedGateway(applied, { importedModules: imported })
+    expect(await installAndSettle(later.gateway, managed)).toMatchObject({ state: 'done', activation: 'live' })
+  })
+
+  it('reads a name dsh installed but could not enable as imported', async () => {
+    // The enable stage is where dsh loads the package, so a failure there has
+    // filled Node's cache all the same. dsh leaves such a package installed.
+    const notEnabled = {
+      changed: true, application: 'failed', stage: 'enable', target: 'dsh-managed', enabled: true, bundle: 'dsh-managed', registries: [null],
+      packageResult: { exitCode: 0, output: 'Packages: +1\n', truncated: false, logPath: '/l' },
+      error: { code: 'operation-error', diagnostic: 'duplicate entry id' },
+    }
+    const imported = new Set<string>()
+    const failing = managedGateway(notEnabled, { importedModules: imported })
+    expect((await installAndSettle(failing.gateway, managed)).state).toBe('failed')
+    const later = managedGateway(applied, { importedModules: imported })
+    expect(await installAndSettle(later.gateway, managed)).toMatchObject({ state: 'done', activation: 'restart', restartReason: 'already-loaded' })
+  })
+
+  it('reads a name dsh installed outside the shop as imported', async () => {
+    // dsh's own Plugins page installs through the same service, and the
+    // `plugin-manager/changed` event it sends names no package (measured), so
+    // the shop reads the profile manifest again.
+    const { gateway, profileDir, emit } = managedGateway({ ...applied, target: 'dsh-other', bundle: 'dsh-other' })
+    writeManifest(profileDir, { 'dsh-other': '1.0.0' })
+    emit('plugin-manager/changed', { reason: 'install' })
+    writeManifest(profileDir, {})
+    expect(await installAndSettle(gateway, other)).toMatchObject({ state: 'done', activation: 'restart', restartReason: 'already-loaded' })
+  })
+
+  it('reads the manifest again for no changed event but an install', async () => {
+    const { gateway, profileDir, emit } = managedGateway({ ...applied, target: 'dsh-other', bundle: 'dsh-other' })
+    writeManifest(profileDir, { 'dsh-other': '1.0.0' })
+    emit('plugin-manager/changed', { reason: 'remove' })
+    writeManifest(profileDir, {})
+    expect(await installAndSettle(gateway, other)).toMatchObject({ state: 'done', activation: 'live' })
+  })
+
+  it("keeps dsh's stdout and stderr lines apart when their chunks interleave", async () => {
+    const { gateway } = managedGateway(applied, {
+      output: () => [
+        { stream: 'stdout', text: 'Progress: resolved 1, reused 0, down' },
+        { stream: 'stderr', text: ' WARN  deprecated dsh-old@1.0.0\n' },
+        { stream: 'stdout', text: 'loaded 1, added 1\n' },
+      ],
+    })
+    expect((await installAndSettle(gateway, managed)).log).toEqual([
+      "via dsh's plugin manager: install dsh-managed@1.0.0",
+      ' WARN  deprecated dsh-old@1.0.0',
+      'Progress: resolved 1, reused 0, downloaded 1, added 1',
+    ])
+  })
+
+  it('cancels an install still running at the deadline, through the service itself', async () => {
+    // A profile of its own: an install the deadline fails to stop never
+    // settles, and would hold the queue of every later case in `web`.
+    const { gateway, calls } = managedGateway(applied, { hangs: true, profile: 'deadline' })
+    // Only the two timer functions the deadline uses: the queue, the fake
+    // CLI and vitest's own polling keep the real clock.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const started = await gateway.install({ name: 'dsh-managed', version: '1.0.0', acknowledged: true })
+      if (!started.ok) throw new Error(started.detail)
+      await vi.waitFor(() => expect(calls).toHaveLength(1), { timeout: 5000 })
+      await vi.advanceTimersByTimeAsync(INSTALL_TIMEOUT_MS)
+      const status = await finish(gateway, started.installId)
+      expect(calls).toEqual([['installBundle', 'dsh-managed@1.0.0', started.installId], ['cancelInstall', started.installId]])
+      expect(status.state).toBe('failed')
+      expect(status.detail).toMatch(/^dsh-plugin-shop: the command did not finish within \d+s and was stopped\./)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('waits behind a command already running in the profile, warming the store for the catalog spec', async () => {
+    const requested: Array<{ profile: string; spec: string }> = []
+    const prefetcher: Prefetcher = {
+      request: ({ profile, spec }) => { requested.push({ profile, spec }); return { started: true } },
+      release: () => {},
+    }
+    // A profile of its own, and the holder freed whatever happens: a held
+    // queue would stall every later case in `web`.
+    const { gateway, calls } = managedGateway(applied, { prefetcher, profile: 'queued' })
+    let free!: () => void
+    const holder = inProfileQueue('queued', () => new Promise<void>(resolve => { free = resolve }))
+    try {
+      const started = await gateway.install({ name: 'dsh-managed', version: '1.0.0', acknowledged: true })
+      if (!started.ok) throw new Error(started.detail)
+      expect(started.state).toBe('downloading')
+      expect(requested).toEqual([{ profile: 'queued', spec: 'dsh-managed@1.0.0' }])
+      expect(calls).toEqual([])
+      free()
+      await holder.finished
+      expect(await finish(gateway, started.installId)).toMatchObject({ state: 'done', activation: 'live' })
+    } finally {
+      free()
+    }
+  })
+
+  it('installs a github entry through installBundle and records its commit pin', async () => {
+    // The manifest records only `github:owner/slug`, so the pins file is how
+    // `installed()` tells outdated: this path writes it as the CLI one does.
+    const { gateway, calls, cacheDir } = managedGateway({ ...applied, target: 'dsh-managed-repo', bundle: 'dsh-managed-repo' })
+    const started = await gateway.install({ name: 'dsh-managed-repo', version: commit, acknowledged: true })
+    if (!started.ok) throw new Error(started.detail)
+    await finish(gateway, started.installId)
+    expect(calls).toEqual([['installBundle', `github:someone/dsh-managed-repo#${commit}`, started.installId]])
+    expect(JSON.parse(readFileSync(join(cacheDir, 'github-pins.json'), 'utf8'))).toEqual({ 'github:someone/dsh-managed-repo#': commit })
+  })
+
+  it("fails an install whose landed package would stop the profile, with the shop's uninstall as the undo", async () => {
+    // The shop's own check on the landed files runs on this path too. The
+    // undo names the shop rather than a `dsh plugin` command, which dsh's CLI
+    // refuses in the desktop profile.
+    const { gateway, profileDir } = managedGateway(applied)
+    fixturePackage(profileDir, 'dsh-holder', "- insert:\n    - id: managed-row\n      name: 'dsh-holder'\n")
+    expect(await installAndSettle(gateway, managed)).toMatchObject({
+      state: 'failed',
+      detail: 'dsh-plugin-shop: dsh-managed declares the loader entry id "managed-row", which dsh-holder already declares.'
+        + ' dsh refuses to load a plugin tree holding a duplicate entry id, so the profile would not start.'
+        + ' It is on disk: uninstall it from the shop to undo this install.',
+    })
   })
 })
