@@ -3718,4 +3718,65 @@ describe("installs and updates through dsh's pluginManager", () => {
         + ' It is on disk: uninstall it from the shop to undo this install.',
     })
   })
+
+  it('uninstalls through removeBundle, with the mechanism line and the final output', async () => {
+    const calls: unknown[][] = []
+    const service = {
+      installBundle: async () => { throw new Error('this case must not call installBundle') },
+      removeBundle: async (name: string) => {
+        calls.push(['removeBundle', name])
+        return { changed: true, application: 'applied', stage: 'remove', target: name, warnings: [], packageResult: { exitCode: 0, output: 'Packages: -1', truncated: false, logPath: '/l' } }
+      },
+      setPluginEnabled: async () => { throw new Error('this case must not call setPluginEnabled') },
+      setBundleEnabled: async () => { throw new Error('this case must not call setBundleEnabled') },
+    }
+    const profileDir = toggleProfile()
+    fixturePackage(profileDir, 'dsh-managed', managedPatch)
+    const gateway = new ShopGateway(
+      { get: (name: string) => name === 'pluginManager' ? service : undefined, reflect: { provide: () => {} } } as never,
+      {
+        catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir,
+        loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries: [managed], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      },
+    )
+    const started = await gateway.uninstall({ name: 'dsh-managed' })
+    if (!started.ok) throw new Error(started.detail)
+    const status = await finish(gateway, started.installId)
+    expect(calls).toEqual([['removeBundle', 'dsh-managed']])
+    expect(status).toMatchObject({ state: 'done', activation: 'live' })
+    expect(status.log).toEqual(["via dsh's plugin manager: remove dsh-managed", 'Packages: -1'])
+  })
+
+  // R20: the brief's case above answers `applied`, which reads `live` for
+  // an install and an uninstall alike, so it does not by itself prove the
+  // wiring hands managerOutcome an uninstall operation. This refusal reads
+  // differently for each operation, and pins that it is read as one.
+  it('reads a refused removeBundle answer as an uninstall refusal, not an install one', async () => {
+    const calls: unknown[][] = []
+    const service = {
+      installBundle: async () => { throw new Error('this case must not call installBundle') },
+      removeBundle: async (name: string) => {
+        calls.push(['removeBundle', name])
+        return { changed: false, application: 'failed', stage: 'remove', target: name, error: { code: 'bundle-in-use', diagnostic: 'still mounted' } }
+      },
+      setPluginEnabled: async () => { throw new Error('this case must not call setPluginEnabled') },
+      setBundleEnabled: async () => { throw new Error('this case must not call setBundleEnabled') },
+    }
+    const profileDir = toggleProfile()
+    fixturePackage(profileDir, 'dsh-managed', managedPatch)
+    const gateway = new ShopGateway(
+      { get: (name: string) => name === 'pluginManager' ? service : undefined, reflect: { provide: () => {} } } as never,
+      {
+        catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir,
+        loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries: [managed], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      },
+    )
+    const started = await gateway.uninstall({ name: 'dsh-managed' })
+    if (!started.ok) throw new Error(started.detail)
+    const status = await finish(gateway, started.installId)
+    expect(status.state).toBe('failed')
+    expect(status.detail).toBe(
+      'dsh-plugin-shop: dsh refused the uninstall of dsh-managed (bundle-in-use): the bundle was switched off, but some of its plugins are still running. dsh reported: still mounted.',
+    )
+  })
 })

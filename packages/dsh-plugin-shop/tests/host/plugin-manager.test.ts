@@ -118,6 +118,14 @@ describe('managerOutcome', () => {
       + ' run: dsh plugin --profile web allow-version dsh-managed@1.0.0 --dsh-version 0.1.7-rc.2 --accept-risk - then install again.')
   })
 
+  // R28: dsh keeps only the last 16 KB of a pnpm run's output, so a long
+  // refusal block can lose its opener; a truncated output must not be read
+  // as proof that nothing happened.
+  it('says nothing about restoration when a truncated output could have said anything', () => {
+    const cut = { ...refused, packageResult: { ...refused.packageResult, truncated: true } }
+    expect(managerOutcome(cut, context).detail).not.toContain('Nothing was')
+  })
+
   it("passes on dsh's own pre-check words once, never beside the shop's", () => {
     // dsh's pre-check refuses before pnpm runs and says so itself (:514).
     const precheck = rejectedWith(warningFor('dsh-managed'), 'nothing was installed')
@@ -321,6 +329,14 @@ describe('managerOutcome', () => {
     expect(managerOutcome(removed, uninstall)).toEqual({ state: 'done', activation: 'live' })
   })
 
+  // R28: rule 3's unknown-kind detail ends with pnpm's raw log line, which
+  // usually carries no punctuation of its own, so the switched-off note
+  // below used to run straight into it.
+  it('breaks the sentence before the switched-off note when the detail has no terminal punctuation', () => {
+    const outdated = removalFailed('unknown', 'ERR_PNPM_OUTDATED_LOCKFILE  Cannot install with "frozen-lockfile" because pnpm-lock.yaml is not up to date with package.json', { changed: true, warnings: [] })
+    expect(managerOutcome(outdated, uninstall).detail).toContain('package.json. dsh-managed is still installed, but dsh has switched it off.')
+  })
+
   it('scrubs the dsh plugin command out of an unknown failure log before installFailureDetail reads it', () => {
     // installFailureDetail's own rule ("dsh refusing the install is not pnpm
     // failing, and has its own remedy") reads the rejection block ahead of
@@ -349,7 +365,7 @@ describe('forDesktopReader', () => {
   it('keeps an untouched line exactly as it was, and a null diagnostic stays null', () => {
     const change: ManagerChange = {
       application: 'failed', stage: 'remove', errorCode: 'operation-error', diagnostic: null,
-      incompatible: [], kind: null, output: 'ERR_PNPM_SOMETHING went wrong', pendingBuilds: [], failedAt: null, changed: null,
+      incompatible: [], kind: null, output: 'ERR_PNPM_SOMETHING went wrong', pendingBuilds: [], failedAt: null, changed: null, truncated: false,
     }
     const scrubbed = forDesktopReader(change)
     expect(scrubbed.diagnostic).toBeNull()
@@ -363,7 +379,7 @@ describe('forDesktopReader', () => {
   it('drops only the sentence naming the command from a mixed line', () => {
     const change: ManagerChange = {
       application: 'failed', stage: 'remove', errorCode: 'operation-error', diagnostic: rejection,
-      incompatible: [], kind: null, output: '', pendingBuilds: [], failedAt: null, changed: null,
+      incompatible: [], kind: null, output: '', pendingBuilds: [], failedAt: null, changed: null, truncated: false,
     }
     const scrubbed = forDesktopReader(change)
     expect(scrubbed.diagnostic).not.toContain('dsh plugin')
@@ -374,7 +390,7 @@ describe('forDesktopReader', () => {
   it("keeps what dsh's restoration line says it restored, and drops only the clause naming the command", () => {
     const change: ManagerChange = {
       application: 'failed', stage: 'remove', errorCode: 'operation-error', diagnostic: null,
-      incompatible: [], kind: null, output: `dsh: ${NOT_REPAIRED}.`, pendingBuilds: [], failedAt: null, changed: null,
+      incompatible: [], kind: null, output: `dsh: ${NOT_REPAIRED}.`, pendingBuilds: [], failedAt: null, changed: null, truncated: false,
     }
     expect(forDesktopReader(change).output).toBe('dsh: restored package.json and pnpm-lock.yaml, but node_modules could not be reinstalled.')
   })
@@ -382,7 +398,7 @@ describe('forDesktopReader', () => {
   it('keeps the clauses that name no command with the sentence terminator, and drops a line whose every clause does', () => {
     const change: ManagerChange = {
       application: 'failed', stage: 'install', errorCode: 'operation-error', diagnostic: "ERR_X boom; run 'dsh plugin install'.\nrun 'dsh plugin install'.\nnext",
-      incompatible: [], kind: null, output: '', pendingBuilds: [], failedAt: null, changed: null,
+      incompatible: [], kind: null, output: '', pendingBuilds: [], failedAt: null, changed: null, truncated: false,
     }
     expect(forDesktopReader(change).diagnostic).toBe('ERR_X boom.\nnext')
   })

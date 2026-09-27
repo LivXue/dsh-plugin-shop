@@ -51,6 +51,10 @@ export interface ManagerChange {
   /** Whether the profile's files differ from before the operation (dsh's
    * `diskState`, which covers package.json). */
   changed: boolean | null
+  /** dsh keeps only the last 16 KB of a pnpm run's output; true when this
+   * answer's `packageResult.output` was cut short, so an absence in it
+   * proves nothing. */
+  truncated: boolean
 }
 
 const text = (value: unknown): string | null => typeof value === 'string' ? value : null
@@ -92,6 +96,7 @@ export function readChange(raw: unknown): ManagerChange {
       : [],
     failedAt: text(result.failedAt),
     changed: typeof result.changed === 'boolean' ? result.changed : null,
+    truncated: run.truncated === true,
   }
 }
 
@@ -238,7 +243,8 @@ function versionRefusalDetail(context: OutcomeContext, change: ManagerChange): s
   const refused = change.incompatible.map(issue =>
     `${issue.name}@${issue.version} declares ${Object.entries(issue.peers).map(([peer, range]) => `${peer} ${range}`).join(', ')},`
     + ` which dsh ${issue.runtimeVersion} does not satisfy`)
-  const restored = restorationSentence(change.output) ?? (context.operation === 'uninstall' ? null : 'Nothing was installed.')
+  const restored = restorationSentence(change.output)
+    ?? (context.operation === 'uninstall' || change.truncated ? null : 'Nothing was installed.')
   const base = `dsh-plugin-shop: dsh refused the ${context.operation}: ${refused.join('; ')}.${restored === null ? '' : ` ${restored}`}`
   if (context.desktop) {
     return `${base} dsh's CLI, which grants version exemptions, does not manage the desktop profile, and this shop grants none.`
@@ -282,7 +288,9 @@ export function managerOutcome(raw: unknown, context: OutcomeContext): ManagerOu
   // shop's own, so no scrub applies to it.
   if (context.operation === 'uninstall' && outcome.state === 'failed' && change.changed === true) {
     const switchedOff = `${context.name} is still installed, but dsh has switched it off.`
-    return { ...outcome, detail: outcome.detail === undefined ? switchedOff : `${outcome.detail} ${switchedOff}` }
+    if (outcome.detail === undefined) return { ...outcome, detail: switchedOff }
+    const needsPeriod = !/[.!?]$/.test(outcome.detail)
+    return { ...outcome, detail: `${outcome.detail}${needsPeriod ? '.' : ''} ${switchedOff}` }
   }
   return outcome
 }

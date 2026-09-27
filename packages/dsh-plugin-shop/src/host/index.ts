@@ -1478,6 +1478,24 @@ export class ShopGateway extends TypertRemoteService {
     writeRepoPins(this.pinFs, this.pinsPath(), { ...pins, [identityKey(entry)]: entry.version })
   }
 
+  /** Forget an uninstalled package's pins: its own, and its identity pin when
+   * a catalog row matched the installed spec. Both uninstall paths call this
+   * at the same point, right after their operation starts, so a stale pin
+   * never outlives the uninstall in the shop's cache either way. */
+  private forgetPins(name: string, installedEntry: CatalogEntry | undefined): void {
+    const pins = readRepoPins(this.pinFs, this.pinsPath())
+    const stalePins = [name, ...(installedEntry === undefined ? [] : [identityKey(installedEntry)])]
+    let forgot = false
+    for (const key of stalePins) {
+      if (pins[key] === undefined) continue
+      delete pins[key]
+      forgot = true
+    }
+    if (forgot) {
+      writeRepoPins(this.pinFs, this.pinsPath(), pins)
+    }
+  }
+
   /** What `managerOutcome` reads dsh's answer against. The gateway's own
    * facts are set here once, for every operation through the service: the
    * profile, whether it is the desktop one, and the deadline a timeout
@@ -1728,6 +1746,25 @@ export class ShopGateway extends TypertRemoteService {
     // verdict into a constant. Same ordering constraint, same reason, as
     // `priorEntryIds` above.
     const hadClientHalf = this.packageHasClientHalf(args.name)
+    const manager = this.pluginManager()
+    if (manager !== null) {
+      // removeBundle deselects the bundle and reloads itself, refusing with
+      // bundle-in-use if a fiber survives — so this branch skips the CLI
+      // path's own afterDone teardown below. It carries no request id the
+      // way installBundle does, so the record takes its final output rather
+      // than a stream.
+      const running = startManagerOperation({
+        profile: this.profile,
+        requestId: randomUUID(),
+        mechanism: `remove ${args.name}`,
+        logs: this.managerLogs,
+        run: () => manager.removeBundle(args.name),
+        outcome: raw => managerOutcome(raw, this.outcomeContext(args.name, 'uninstall', false, hadClientHalf)),
+      })
+      this.forgetPins(args.name, installedEntry)
+      this.track(running)
+      return { ok: true, installId: running.installId }
+    }
     const running = startUninstall({
       profile: this.profile,
       name: args.name,
@@ -1754,19 +1791,7 @@ export class ShopGateway extends TypertRemoteService {
         return { activation: activationOf({ hostLive: stopped, clientLive: true, hasClientHalf: hadClientHalf }) }
       },
     })
-    // Forget the commit pin alongside the dependency; a stale pin would
-    // otherwise outlive the uninstall in the shop's cache.
-    const pins = readRepoPins(this.pinFs, this.pinsPath())
-    const stalePins = [args.name, ...(installedEntry === undefined ? [] : [identityKey(installedEntry)])]
-    let forgot = false
-    for (const key of stalePins) {
-      if (pins[key] === undefined) continue
-      delete pins[key]
-      forgot = true
-    }
-    if (forgot) {
-      writeRepoPins(this.pinFs, this.pinsPath(), pins)
-    }
+    this.forgetPins(args.name, installedEntry)
     this.track(running)
     return { ok: true, installId: running.installId }
   }
