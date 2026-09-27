@@ -185,6 +185,32 @@ switched off that way would show as enabled here. That belongs to the 0.1.7
 hand-off (§6, B2), not to this fix: on the pinned 0.1.5-rc.3 nothing writes
 `bundles` that way.
 
+**Resolved 2026-09-27.** Measured on 0.1.7-rc.2: `setBundleEnabled(name,
+false)` takes the package out of `dsh.profile.bundles` and keeps it
+installed, and `pluginInventory` then holds no entry for it at all. So
+"nothing live" cannot tell a deselected bundle from one not composed until a
+restart, and the selection has to be read on its own.
+
+- `installed()` reads it through `runningProfileBundles`. A package missing
+  from the list is disabled whatever the inventory says, and an unreadable
+  list decides nothing.
+- `setEnabled` on a deselected package:
+  - Off writes the plugin-level rows, since nothing of it runs.
+  - On selects the bundle through dsh's own `pluginManager.setBundleEnabled`,
+    the writer behind the switch that deselected it, then clears the
+    plugin-level rows. `restart-required` becomes a restart, and a refusal
+    comes back as a detail with nothing written.
+  - Without that service, the detail names the list and the way back instead
+    of the restart it used to advise. It does not print
+    `dsh plugin add <name>`: that selects the bundle again on 0.1.5-rc.3 and
+    does not on 0.1.7-rc.2 (measured the same day), and it lets pnpm float a
+    registry package to `latest`.
+
+Switching off stays per plugin, for the reasons of section 2.2 and because a bundle
+switched back on is appended to the end of the list, which moves its
+configuration precedence. The broader hand-off to the service is
+[2026-09-26-plugin-manager-delegation.md](2026-09-26-plugin-manager-delegation.md).
+
 ## 3. A restart is trusted only once the new server keeps answering
 
 ### 3.1 The defect
