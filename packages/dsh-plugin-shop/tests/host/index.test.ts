@@ -3216,7 +3216,11 @@ describe('restart while an install is running (F-5)', () => {
     const gateway = new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: mkdtempSync(join(TEMP_ROOT, 'dsh-restart-idle-cache-')),
       profile: 'web', profileDir, dshBin: quick, exit, restartArgv: ['web'],
-      restartExitDelayMs: 1, restartParentPid: 1,
+      // A pid that cannot exist, like every sibling case. Pid 1 always exists,
+      // and `kill -0 1` succeeds for root, so the detached helper polled it
+      // forever: each run of this file left one `sh` forking `sleep 0.2` five
+      // times a second, and 351 had piled up on one machine by 2026-09-27.
+      restartExitDelayMs: 1, restartParentPid: 1_000_000_000,
       // Pinned like the guard cases above it: this one is about the INSTALL
       // gate releasing, and inheriting the host platform would have Windows'
       // restart refusal answer first and hide whether the gate released at
