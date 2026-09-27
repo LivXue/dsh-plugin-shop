@@ -286,6 +286,40 @@ function refusalDetail(profile: string, usable: readonly string[]): string | nul
   return parts.join(' ')
 }
 
+/** What Rust's allocator prints before it aborts, which is how pnpm 12's
+ * native binary dies when it cannot get the memory it asked for. Anchored at
+ * both ends: node's own heap exhaustion ("Allocation failed - JavaScript heap
+ * out of memory") is a different crash, from pnpm 11 or dsh itself, and the
+ * pnpm 12 remedy below would be wrong for it. */
+const NATIVE_ALLOCATION_ABORT = /^memory allocation of \d+ bytes failed$/
+
+/**
+ * pnpm 12 aborting out of memory as one detail, or null when the log holds no
+ * such abort.
+ *
+ * The known cause is pnpm/pnpm#15362, fixed in pnpm 12.7.0: the native peer
+ * check intersected the ranges of a missing peer, doubling the intersection
+ * for every package that wanted it. dsh writes `autoInstallPeers: false` into
+ * every profile, so every `@deepseek-ai/dsh*` peer stays missing and plugins
+ * that share one trip it. Reported on Windows with 8 GB, reproduced on Linux
+ * through the real CLI of dsh 0.1.5-rc.3 and 0.1.7-rc.2 (2026-09-27). The
+ * install aborted, so running it again on the same profile aborts again:
+ * the detail names the way out instead of the usual recovery hint.
+ *
+ * Not every such abort is that bug (pnpm/pnpm#15867 is another one, with the
+ * same words), so the detail says what to do if the reader's pnpm already has
+ * the fix.
+ */
+function nativeAllocationAbortDetail(usable: readonly string[]): string | null {
+  const abort = usable.find(line => NATIVE_ALLOCATION_ABORT.test(line.trim()))
+  if (abort === undefined) return null
+  return `pnpm crashed: its native binary ran out of memory (${abort.trim()}), which is not caused by this plugin.`
+    + ' pnpm 12 before 12.7.0 has a known bug that exhausts memory when many packages share a missing peer,'
+    + ' which every dsh profile has, because dsh keeps peers uninstalled (autoInstallPeers: false; pnpm/pnpm#15362).'
+    + ' Upgrade pnpm to 12.7.0 or later, or use pnpm 11, then install again.'
+    + ' If your pnpm is already 12.7.0 or later, report the line above to pnpm.'
+}
+
 /**
  * The one log line worth putting in front of the user, plus the recovery hint.
  *
@@ -313,6 +347,11 @@ export function installFailureDetail(profile: string, log: readonly string[]): s
   // dsh refusing the install is not pnpm failing, and has its own remedy.
   const refusal = refusalDetail(profile, usable)
   if (refusal !== null) return refusal
+  // Nor is pnpm crashing. Ahead of the picker, which prefers any ERR_ line:
+  // an abort ends the run wherever it lands, so a code printed before it did
+  // not decide the outcome.
+  const abort = nativeAllocationAbortDetail(usable)
+  if (abort !== null) return abort
   const reversed = [...usable].reverse()
   const pick = reversed.find(line => /ERR_[A-Z][A-Z_]*/.test(line))
     ?? reversed.find(line => /(?:^|\s)\w*Error:/.test(line))

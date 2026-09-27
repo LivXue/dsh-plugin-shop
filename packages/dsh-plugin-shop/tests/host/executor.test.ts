@@ -1030,6 +1030,75 @@ describe('installFailureDetail', () => {
   })
 })
 
+describe("installFailureDetail on pnpm 12's out-of-memory abort", () => {
+  // pnpm/pnpm#15362: pnpm 12's native binary intersects the ranges of a
+  // missing peer, the intersection doubled for every package wanting it, and
+  // dsh keeps every profile's peers missing (it writes `autoInstallPeers:
+  // false`). Fixed in pnpm 12.7.0; npm's `latest` was still 12.6.0 when this
+  // was written.
+  //
+  // Both logs are verbatim from the real dsh CLI on 2026-09-27, pnpm 12.6.0
+  // under an 8 GiB address-space cap, adding forty local packages that each
+  // want `oom-missing-peer` with their own overlapping range
+  // (`>=1.0.<i> || ^1.<i>.0`). Identical ranges did NOT abort: pnpm collapses
+  // them. Only the profile paths are shortened, and the forty `+ oom-p<i>`
+  // lines pnpm never got to print are, of course, absent.
+  const aborted = (dshTail: string): string[] => [
+    'Packages are hard linked from the content-addressable store to the virtual store.',
+    '  Content-addressable store is at: /tmp/.pnpm-store/v11',
+    '  Virtual store is at:             node_modules/.pnpm',
+    'memory allocation of 671088640 bytes failed',
+    'note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace',
+    dshTail,
+  ]
+  const on015 = aborted('dsh: pnpm failed in profile directory /root/probe/profiles/web')
+  const on017 = aborted('dsh: plugin command failed; diagnostics: /root/probe/profiles/web/.plugin-manager/logs/operation-AoFbTW/pnpm.log')
+
+  it.each([
+    ['0.1.5-rc.3', on015],
+    ['0.1.7-rc.2', on017],
+  ])('names the abort and its way out, not the line pnpm happened to end on (dsh %s)', (_harness, log) => {
+    const detail = installFailureDetail('web', log)
+    // What happened, in the words a person can search for.
+    expect(detail).toContain('memory allocation of 671088640 bytes failed')
+    // Whose fault it is, and the two ways around it.
+    expect(detail).toMatch(/not caused by this plugin/)
+    expect(detail).toMatch(/12\.7\.0/)
+    expect(detail).toMatch(/pnpm 11/)
+    expect(detail).toContain('pnpm/pnpm#15362')
+    // Without the rule, 0.1.5's detail ends on the backtrace note and 0.1.7's
+    // on dsh's diagnostics line.
+    expect(detail).not.toMatch(/RUST_BACKTRACE/)
+    expect(detail).not.toMatch(/diagnostics:/)
+    // And neither may send the reader to re-run an install that will abort
+    // again on the same profile.
+    expect(detail).not.toMatch(/Run: dsh plugin --profile web install/)
+  })
+
+  it("leaves node's own heap exhaustion to the picker: a different crash with a different remedy", () => {
+    // pnpm 11 is JavaScript, and V8 runs out of heap in its own words. The
+    // pnpm 12 advice would be wrong there, so a pattern loose enough to match
+    // "Allocation failed" or "out of memory" must fail this case.
+    const log = [
+      '<--- Last few GCs --->',
+      'FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory',
+      'dsh: pnpm failed in profile directory /root/probe/profiles/web',
+    ]
+    const detail = installFailureDetail('web', log)
+    expect(detail).not.toContain('pnpm/pnpm#15362')
+    expect(detail).toMatch(/Run: dsh plugin --profile web install/)
+  })
+
+  it('names the abort even when a pnpm error code came before it', () => {
+    // Constructed, not captured: the abort ends the run wherever it lands, so
+    // an earlier code line did not decide the outcome. The picker prefers any
+    // ERR_ line, so the rule must run before it.
+    const log = [...on015]
+    log.splice(3, 0, '[ERR_PNPM_PEER_DEP_ISSUES] Unmet peer dependencies')
+    expect(installFailureDetail('web', log)).toContain('pnpm/pnpm#15362')
+  })
+})
+
 describe('the install deadline and the process group (F-1)', () => {
   // The grandchild INHERITS stdout, which is the whole point: it holds the
   // pipe open after its parent has exited, and the executor must settle on

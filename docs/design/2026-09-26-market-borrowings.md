@@ -1,7 +1,8 @@
 # Market borrowings, second review — design
 
 Status: **batch 1 decided and implemented (2026-09-26): §1–§4**, one commit
-per section on `fix/borrowings-batch-1`. A second review of three
+per section on `fix/borrowings-batch-1`. **C7 decided and implemented
+2026-09-27: §7.** A second review of three
 dsh plugin markets — [dsh-market/dsh-market](https://github.com/dsh-market/dsh-market)
 (reviewed once before, `2026-08-31-market-borrowings.md`),
 [bradeGithub/DSH-Plugins-Marketplace](https://github.com/bradeGithub/DSH-Plugins-Marketplace)
@@ -293,7 +294,7 @@ clipboard write needs a permission path that the message does not.
 ## 6. The other twenty
 
 Recorded so the next batch starts from the list rather than from the
-competitors again. None of these is decided.
+competitors again. None of these is decided unless its row says so.
 
 | Item | What | Nature |
 |---|---|---|
@@ -308,7 +309,7 @@ competitors again. None of these is decided.
 | C4 | `windowsHide`, `GIT_TERMINAL_PROMPT=0` and ssh `BatchMode` on spawned installs | host |
 | C5 | archived GitHub repositories | gate |
 | C6 | npm packages with install scripts | gate / client |
-| C7 | classify pnpm's out-of-memory failure | host |
+| C7 | classify pnpm's out-of-memory failure: **decided and implemented, §7** | host |
 | C8 | a label saying where a displayed version came from | client |
 | C9 | debounce the search box | client |
 | C10 | a GitHub install stranded when an npm package shadows the name | host |
@@ -317,3 +318,64 @@ competitors again. None of these is decided.
 | C13 | a mutation-test gate for the pure core | tests |
 | C14 | a left-rail panel entry (`panellist.id` must equal `main.key`) | client |
 | C15 | static per-plugin pages | catalog |
+
+## 7. C7: pnpm 12 aborting out of memory
+
+Decided and implemented 2026-09-27.
+
+### 7.1 The defect
+
+pnpm 12's native binary can abort while it checks peers. It prints
+`memory allocation of <N> bytes failed` and Rust's backtrace note, and on
+Windows exits 3221226505 (0xC0000409). The cause is pnpm/pnpm#15362: the peer
+check intersected the ranges of a missing peer, and the intersection doubled
+for every package that wanted it. dsh writes `autoInstallPeers: false` into
+every profile's `pnpm-workspace.yaml` (dsh-app-boot, 0.1.5-rc.3 and 0.1.7-rc.2
+alike), so every `@deepseek-ai/dsh*` peer stays missing and plugins that share
+one trip it. pnpm fixed it in 12.7.0, released 2026-09-25 under `next-12`.
+npm's `latest` was still 12.6.0, from before the fix, when this was written.
+
+`installFailureDetail` found no `ERR_` line and no thrown error in such a log,
+so it reported the last line that survived its noise filter: the backtrace
+note on 0.1.5, and dsh's `plugin command failed; diagnostics: <path>` on
+0.1.7. Both came with the usual hint to run `dsh plugin install`, which aborts
+again on the same profile.
+
+### 7.2 Reproduction
+
+On 2026-09-27, through the real CLI of dsh 0.1.5-rc.3 and of 0.1.7-rc.2, with
+pnpm 12.6.0 capped at 8 GiB of address space (the reporter's machine size):
+adding forty local packages that each want `oom-missing-peer` with their own
+overlapping range, `>=1.0.<i> || ^1.<i>.0`, aborted on both harnesses with
+`memory allocation of 671088640 bytes failed`. Forty packages sharing one
+identical range did not abort, and neither did a profile holding only the
+shop: pnpm collapses identical ranges, and a small profile never doubles far
+enough. That is why dsh-market could not reproduce it on macOS, and why most
+people on 12.6.0 will not see it.
+
+### 7.3 The rule
+
+A log line that is exactly Rust's allocation-abort message replaces the
+detail. The rule runs after dsh's own refusal and before the picker, which
+prefers any `ERR_` line: an abort ends the run wherever it lands, so a code
+printed before it did not decide the outcome. The detail quotes the line,
+says the plugin did not cause it, names the known bug and the release that
+fixes it, and gives the way out: pnpm 12.7.0 or later, or pnpm 11. It also
+says what to do when the reader's pnpm already has the fix, because
+pnpm/pnpm#15867 aborts in the same words for a different reason. The recovery
+hint is dropped, and nothing retries: the same install aborts again.
+
+The pattern is anchored at both ends. V8's own heap exhaustion, "Allocation
+failed - JavaScript heap out of memory", comes from pnpm 11 or from dsh
+itself, and the pnpm 12 remedy would be wrong for it.
+
+dsh 0.1.7's own classifier has the same gap: `classifyInstallFailure` files
+this abort as `unknown`, so its Plugins page shows the raw failure too.
+Remaining-work U5 records the upstream change.
+
+### 7.4 Testing
+
+Both captured logs, V8's heap exhaustion as the negative, and a constructed
+log with an `ERR_` line before the abort. Four mutations were each caught by
+at least one case: a loose pattern, the rule yielding to an `ERR_` line, the
+rule never consulted, and the recovery hint kept.

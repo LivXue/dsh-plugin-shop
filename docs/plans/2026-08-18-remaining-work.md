@@ -149,6 +149,7 @@ None of these block anything. Each removes a workaround.
 | U2 | Move settings-namespace exposure from `WEB_SETTINGS_NAMESPACES` to `settings.register()` | Out-of-tree plugins can expose their own configuration card. That file already lists this as deferred work |
 | U3 | Let out-of-tree plugins register forwarded events | Install progress becomes a push instead of a poll |
 | U4 | Give `pluginInventory` a write path | The shop stops orchestrating profile mutation itself |
+| U5 | Teach `classifyInstallFailure` (dsh-plugin-manager) pnpm 12's allocation abort, `memory allocation of N bytes failed` | dsh's own Plugins page names pnpm/pnpm#15362 and its fix instead of `unknown` ([market borrowings §7](../design/2026-09-26-market-borrowings.md)) |
 
 ## Working habits this repository earned the hard way
 
