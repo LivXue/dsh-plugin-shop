@@ -58,7 +58,7 @@ describe('startManagerOperation', () => {
     })
     const status = await running.finished
     expect(status.state).toBe('failed')
-    expect(status.detail).toContain('a local path must be absolute')
+    expect(status.detail).toBe("dsh-plugin-shop: dsh's plugin manager failed: plugin-manager: a local path must be absolute: ./x")
     expect(inProfileQueue('runner-5', async () => {}).ahead).toBe(0)
   })
 
@@ -70,7 +70,7 @@ describe('startManagerOperation', () => {
     })
     const status = await running.finished
     expect(status.state).toBe('failed')
-    expect(status.detail).toContain('ENOENT')
+    expect(status.detail).toBe('dsh-plugin-shop: the shop could not check what dsh installed: ENOENT: no such file, package.json')
     expect(inProfileQueue('runner-6', async () => {}).ahead).toBe(0)
   })
 
@@ -109,10 +109,11 @@ describe('startManagerOperation', () => {
   it('keeps waiting when the cancellation comes too late, and settles once', async () => {
     let finish!: (value: unknown) => void
     const outcome = vi.fn((): ManagerOutcome => done)
+    const cancel = vi.fn(async () => ({ status: 'too-late' }))
     const running = startManagerOperation({
       profile: 'runner-9', requestId: 'r9', mechanism: 'install x', logs: new ManagerLogs(), timeoutMs: 30,
       run: () => new Promise(resolve => { finish = resolve }),
-      cancel: async () => ({ status: 'too-late' }),
+      cancel,
       outcome,
     })
     await new Promise(resolve => setTimeout(resolve, 60))
@@ -120,6 +121,7 @@ describe('startManagerOperation', () => {
     finish({ application: 'applied' })
     expect((await running.finished).state).toBe('done')
     expect(outcome).toHaveBeenCalledOnce()
+    expect(cancel).toHaveBeenCalledWith('r9')
   })
 
   it('turns a done install into a failure when the post-install check objects', async () => {
@@ -186,5 +188,144 @@ describe('startManagerOperation', () => {
     })
     const status = await running.finished
     expect(status.log).toEqual([`${MECHANISM_PREFIX} install dsh-a@1.0.0`, '+ dsh-a 1.0.0'])
+  })
+
+  it('keeps the mechanism line first no matter how long the log grows', async () => {
+    const logs = new ManagerLogs()
+    const running = startManagerOperation({
+      profile: 'runner-14', requestId: 'r14', mechanism: 'install x', logs,
+      run: async requestId => {
+        for (let i = 0; i < 250; i++) logs.chunk(requestId, `line ${i}\n`)
+        return {}
+      },
+      outcome: () => done,
+    })
+    const status = await running.finished
+    expect(status.log[0]).toBe(`${MECHANISM_PREFIX} install x`)
+    expect(status.log.length).toBe(201)
+    expect(status.log[status.log.length - 1]).toBe('line 249')
+  })
+
+  it('fails the record instead of throwing when reading the answer itself throws', async () => {
+    const running = startManagerOperation({
+      profile: 'runner-15', requestId: 'r15', mechanism: 'install x', logs: new ManagerLogs(),
+      run: async () => ({ get packageResult(): never { throw new Error('getter boom') } }),
+      outcome: () => done,
+    })
+    const status = await running.finished
+    expect(status.state).toBe('failed')
+    expect(status.detail).toBe("dsh-plugin-shop: the shop could not read dsh's answer: getter boom")
+    expect(inProfileQueue('runner-15', async () => {}).ahead).toBe(0)
+  })
+
+  it('never leaves the record running when the rejection cannot describe itself', async () => {
+    const running = startManagerOperation({
+      profile: 'runner-16', requestId: 'r16', mechanism: 'install x', logs: new ManagerLogs(),
+      run: async () => { throw Object.create(null) },
+      outcome: () => done,
+    })
+    const status = await running.finished
+    expect(status.state).toBe('failed')
+    expect(status.detail).toBe("dsh-plugin-shop: dsh's plugin manager failed: [object Object]")
+    expect(inProfileQueue('runner-16', async () => {}).ahead).toBe(0)
+  })
+
+  it('keeps stdout and stderr as separate line assemblers', async () => {
+    const logs = new ManagerLogs()
+    const running = startManagerOperation({
+      profile: 'runner-17', requestId: 'r17', mechanism: 'install x', logs,
+      run: async requestId => {
+        logs.chunk(requestId, 'Progress: res', 'stdout')
+        logs.chunk(requestId, 'WARN deprecated y\n', 'stderr')
+        logs.chunk(requestId, 'olved 1\n', 'stdout')
+        return {}
+      },
+      outcome: () => done,
+    })
+    const status = await running.finished
+    expect(status.log).toEqual([`${MECHANISM_PREFIX} install x`, 'WARN deprecated y', 'Progress: resolved 1'])
+  })
+
+  it('fails the record with the answer-reading detail when outcome() itself throws', async () => {
+    const running = startManagerOperation({
+      profile: 'runner-18', requestId: 'r18', mechanism: 'install x', logs: new ManagerLogs(),
+      run: async () => ({}),
+      outcome: () => { throw new Error('cannot classify this answer') },
+    })
+    const status = await running.finished
+    expect(status.state).toBe('failed')
+    expect(status.detail).toBe("dsh-plugin-shop: the shop could not read dsh's answer: cannot classify this answer")
+  })
+
+  it('flushes a partial streamed line before the record fails', async () => {
+    const logs = new ManagerLogs()
+    const running = startManagerOperation({
+      profile: 'runner-19', requestId: 'r19', mechanism: 'install x', logs,
+      run: async requestId => {
+        logs.chunk(requestId, 'ERR_PNPM_X boom')
+        throw new Error('install failed')
+      },
+      outcome: () => done,
+    })
+    const status = await running.finished
+    expect(status.state).toBe('failed')
+    expect(status.log).toContain('ERR_PNPM_X boom')
+  })
+
+  it('does not start the cancellation deadline until the operation is actually running', async () => {
+    let release!: () => void
+    const blocked = new Promise<void>(resolve => { release = resolve })
+    inProfileQueue('runner-20', () => blocked)
+    const cancel = vi.fn(async () => ({ status: 'cancelled' }))
+    const running = startManagerOperation({
+      profile: 'runner-20', requestId: 'r20', mechanism: 'install x', logs: new ManagerLogs(), timeoutMs: 30,
+      run: async () => ({}),
+      cancel,
+      outcome: () => done,
+    })
+    await new Promise(resolve => setTimeout(resolve, 60))
+    expect(cancel).not.toHaveBeenCalled()
+    release()
+    await running.finished
+    expect(cancel).not.toHaveBeenCalled()
+  })
+
+  it('clears the cancellation deadline once the answer has already arrived', async () => {
+    const cancel = vi.fn(async () => ({ status: 'cancelled' }))
+    const running = startManagerOperation({
+      profile: 'runner-21', requestId: 'r21', mechanism: 'install x', logs: new ManagerLogs(), timeoutMs: 20,
+      run: async () => ({}),
+      cancel,
+      outcome: () => done,
+    })
+    await running.finished
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(cancel).not.toHaveBeenCalled()
+  })
+
+  it('ignores a chunk whose text is not a string', async () => {
+    const logs = new ManagerLogs()
+    const running = startManagerOperation({
+      profile: 'runner-22', requestId: 'r22', mechanism: 'install x', logs,
+      run: async requestId => { logs.chunk(requestId, 42); return {} },
+      outcome: () => done,
+    })
+    const status = await running.finished
+    expect(status.log).toEqual([`${MECHANISM_PREFIX} install x`])
+  })
+
+  it('does not let a synchronously throwing cancel escape the timer as an unhandled error', async () => {
+    let finish!: (value: unknown) => void
+    const cancel = vi.fn(() => { throw new Error('sync') })
+    const running = startManagerOperation({
+      profile: 'runner-23', requestId: 'r23', mechanism: 'install x', logs: new ManagerLogs(), timeoutMs: 20,
+      run: () => new Promise(resolve => { finish = resolve }),
+      cancel,
+      outcome: () => done,
+    })
+    await new Promise(resolve => setTimeout(resolve, 45))
+    finish({})
+    expect((await running.finished).state).toBe('done')
+    expect(cancel).toHaveBeenCalledWith('r23')
   })
 })

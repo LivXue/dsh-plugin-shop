@@ -7,7 +7,7 @@
  */
 import {
   createBoundedLog, inProfileQueue, INSTALL_TIMEOUT_MS, lineSink, requestDownloadPhase,
-  type InstallStatus, type RunningInstall,
+  type InstallStatus, type LineSink, type RunningInstall,
 } from './executor.ts'
 import { readChange, type ManagerOutcome } from './plugin-manager.ts'
 import type { Prefetcher } from './prefetch.ts'
@@ -19,18 +19,20 @@ import { isTerminalInstallState, type InstallState } from '../shared/install-sta
 export const MECHANISM_PREFIX = "via dsh's plugin manager:"
 
 /** Routes the service's `plugin-manager/install-log` chunks to the record
- * whose request id they carry. A chunk for any other id is dropped. */
+ * whose request id they carry. A chunk for any other id is dropped. dsh
+ * tags each chunk with the stream it came from; a non-string stream reads
+ * as `stdout`, matching a harness that predates the tag. */
 export class ManagerLogs {
-  private readonly sinks = new Map<string, (text: string) => void>()
+  private readonly sinks = new Map<string, (text: string, stream: string) => void>()
 
-  open(requestId: string, sink: (text: string) => void): () => void {
+  open(requestId: string, sink: (text: string, stream: string) => void): () => void {
     this.sinks.set(requestId, sink)
     return () => { this.sinks.delete(requestId) }
   }
 
-  chunk(requestId: unknown, text: unknown): void {
+  chunk(requestId: unknown, text: unknown, stream?: unknown): void {
     if (typeof requestId !== 'string' || typeof text !== 'string') return
-    this.sinks.get(requestId)?.(text)
+    this.sinks.get(requestId)?.(text, typeof stream === 'string' ? stream : 'stdout')
   }
 }
 
@@ -52,19 +54,38 @@ export interface ManagerOperationOptions {
   timeoutMs?: number
 }
 
-const messageOf = (error: unknown): string => error instanceof Error ? error.message : String(error)
+/** Total: every value must describe itself somehow, even one whose own
+ * description throws (a null-prototype object has no `toString`). Only an
+ * `Error` gets its `message`; everything else falls back to a diagnostic
+ * string, so describing the error is never itself the reason a settle
+ * fails. */
+const messageOf = (error: unknown): string => {
+  if (error instanceof Error) return error.message
+  try {
+    return String(error)
+  } catch {
+    return Object.prototype.toString.call(error)
+  }
+}
 
 export function startManagerOperation(options: ManagerOperationOptions): RunningInstall {
   const { profile, requestId, mechanism, logs, run, cancel, outcome, alsoConfirm, prefetcher, spec, env } = options
   const timeoutMs = options.timeoutMs ?? INSTALL_TIMEOUT_MS
+  const mechanismLine = `${MECHANISM_PREFIX} ${mechanism}`
   const log = createBoundedLog()
   let state: InstallState = 'running'
   let settled: ManagerOutcome | null = null
   let streamed = false
 
+  // The mechanism line is kept outside the bounded buffer and prepended
+  // here, never pushed through `append`: it is the one line the shop's log
+  // panel and the 0.1.7 e2e require regardless of how long the record's own
+  // log grows, and a long log is typical of exactly the failures worth
+  // naming a mechanism for. A record may therefore carry one line over
+  // MAX_LOG_LINES.
   const status = (): InstallStatus => ({
     state,
-    log: log.lines(),
+    log: [mechanismLine, ...log.lines()],
     ...(settled?.state === 'done' && settled.activation !== undefined ? { activation: settled.activation } : {}),
     ...(settled?.state === 'done' && settled.restartReason !== undefined ? { restartReason: settled.restartReason } : {}),
     ...(settled?.detail !== undefined ? { detail: settled.detail } : {}),
@@ -75,13 +96,24 @@ export function startManagerOperation(options: ManagerOperationOptions): Running
     if (isTerminalInstallState(state)) return
     log.push(line)
   }
-  append(`${MECHANISM_PREFIX} ${mechanism}`)
-  // The assembler the CLI capture uses: a line split across chunks reads as
-  // one, and CRLF ends a line.
-  const lines = lineSink(append)
-  const close = logs.open(requestId, text => {
+  // One assembler per stream, as the CLI capture keeps (`lineSink` per
+  // stream in executor.ts): stdout and stderr chunks arrive interleaved,
+  // and assembling them through a single sink would splice one stream's
+  // partial line into the other's. dsh runs a request's pnpm jobs one
+  // after another, so a stream key is enough; no job key is needed.
+  const streams = new Map<string, LineSink>()
+  const streamFor = (stream: string): LineSink => {
+    let sink = streams.get(stream)
+    if (sink === undefined) {
+      sink = lineSink(append)
+      streams.set(stream, sink)
+    }
+    return sink
+  }
+  const flushStreams = (): void => { for (const sink of streams.values()) sink.flush() }
+  const close = logs.open(requestId, (text, stream) => {
     streamed = true
-    lines.write(Buffer.from(text, 'utf8'))
+    streamFor(stream).write(Buffer.from(text, 'utf8'))
   })
 
   const queued = inProfileQueue(profile, async (): Promise<InstallStatus> => {
@@ -89,7 +121,12 @@ export function startManagerOperation(options: ManagerOperationOptions): Running
     let deadline: ReturnType<typeof setTimeout> | undefined
     if (cancel !== undefined) {
       deadline = setTimeout(() => {
-        cancel(requestId).catch(() => {
+        // `cancel` may itself throw synchronously, not just return a
+        // rejected promise; deferring the call into a microtask turns that
+        // throw into a rejection this `.catch` handles, never a raw
+        // uncaughtException, which the executor treats as fatal to every
+        // install in flight.
+        Promise.resolve().then(() => cancel(requestId)).catch(() => {
           // A failed cancellation leaves the call running; its answer still
           // settles the record below, and nothing else waits on this promise.
         })
@@ -99,29 +136,42 @@ export function startManagerOperation(options: ManagerOperationOptions): Running
     try {
       raw = await run(requestId)
     } catch (error) {
-      lines.flush()
+      // run() rejects for a lock/disposal error the service raises, or an
+      // InvalidInstallSpecError validated up front; returning (not
+      // rethrowing) settles the record and frees this profile's queue slot.
+      flushStreams()
       settled = { state: 'failed', detail: `dsh-plugin-shop: dsh's plugin manager failed: ${messageOf(error)}` }
       state = 'failed'
       return status()
     } finally {
       clearTimeout(deadline)
     }
-    lines.flush()
-    if (!streamed) {
-      for (const line of readChange(raw).output.split(/\r?\n/)) if (line !== '') append(line)
-    }
     let result: ManagerOutcome
     try {
+      // Everything that reads the answer shares this one try: the success
+      // flush, the streamed-fallback replay and `outcome` itself all fail
+      // the same way, and any of them throwing must still settle the
+      // record rather than leave it running forever.
+      flushStreams()
+      if (!streamed) {
+        for (const line of readChange(raw).output.split(/\r?\n/)) if (line !== '') append(line)
+      }
       result = outcome(raw)
-      if (result.state === 'done' && alsoConfirm !== undefined) {
+    } catch (error) {
+      settled = { state: 'failed', detail: `dsh-plugin-shop: the shop could not read dsh's answer: ${messageOf(error)}` }
+      state = 'failed'
+      return status()
+    }
+    if (result.state === 'done' && alsoConfirm !== undefined) {
+      try {
         const objection = alsoConfirm()
         if (objection !== null) result = { state: 'failed', detail: objection }
+      } catch (error) {
+        // The shop's own post-install check threw (it cannot read the
+        // package, say), not the answer itself being unreadable: a
+        // distinct message, so a published reason is never misattributed.
+        result = { state: 'failed', detail: `dsh-plugin-shop: the shop could not check what dsh installed: ${messageOf(error)}` }
       }
-    } catch (error) {
-      // The shop's own reading of the answer threw (a post-install check that
-      // cannot read the package, say). The record must still settle: a record
-      // left running holds the profile's queue and the client's poll forever.
-      result = { state: 'failed', detail: `dsh-plugin-shop: the shop could not check what dsh installed: ${messageOf(error)}` }
     }
     settled = result
     state = result.state
@@ -140,9 +190,11 @@ export function startManagerOperation(options: ManagerOperationOptions): Running
     if (prefetcher !== undefined && spec !== undefined) prefetcher.release(profile, spec)
   })
   void finished.catch(() => {
-    // The task catches its own failures, so this never rejects today; the
-    // handler keeps a future throw from becoming an unhandled rejection that
-    // would take the host down (the same guard as spawnPluginCli's).
+    // Every throw inside the queued task above is now caught there (the
+    // run() rejection catch and the answer-reading catch), so this never
+    // rejects; the handler only keeps a future throw from becoming an
+    // unhandled rejection that would take the host down (the same guard as
+    // spawnPluginCli's).
   })
   return { installId: requestId, status, finished }
 }
