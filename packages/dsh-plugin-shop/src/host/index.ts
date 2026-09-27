@@ -1280,7 +1280,7 @@ export class ShopGateway extends TypertRemoteService {
   // this on the real composition (§7.3 amendment, 2026-08-25).
   @Remote('installStart')
   async install(args: InstallArgs): Promise<ShopInstallResult> {
-    if (isDesktopProfile(this.profile)) return { ok: false, code: 'desktop-profile', detail: DESKTOP_PROFILE_DETAIL }
+    if (isDesktopProfile(this.profile) && this.pluginManager() === null) return { ok: false, code: 'desktop-profile', detail: DESKTOP_PROFILE_DETAIL }
     const snapshot = await this.snapshotNow()
     // The manifest's dependency for this name, when it has one: the gate needs
     // it to tell an update of THIS plugin from a replacement of a different one
@@ -1719,7 +1719,7 @@ export class ShopGateway extends TypertRemoteService {
    * itself). The same install records/polling serve the client. */
   @Remote('uninstallStart')
   async uninstall(args: { name: string }): Promise<ShopUninstallResult> {
-    if (isDesktopProfile(this.profile)) return { ok: false, detail: DESKTOP_PROFILE_DETAIL }
+    if (isDesktopProfile(this.profile) && this.pluginManager() === null) return { ok: false, detail: DESKTOP_PROFILE_DETAIL }
     const snapshot = await this.snapshotNow()
     const named = snapshot.entries.filter(entry => entry.name === args.name)
     if (named.length === 0) {
@@ -1907,7 +1907,7 @@ export class ShopGateway extends TypertRemoteService {
    * `dsh-plugin-shop@<version>` is built here, never from the wire. */
   @Remote('updateStart')
   async updateStart(args: { version: string }): Promise<ShopUpdateResult> {
-    if (isDesktopProfile(this.profile)) return { ok: false, detail: DESKTOP_PROFILE_DETAIL }
+    if (isDesktopProfile(this.profile) && this.pluginManager() === null) return { ok: false, detail: DESKTOP_PROFILE_DETAIL }
     if (valid(args.version) === null) {
       return { ok: false, detail: `dsh-plugin-shop: ${args.version} is not a valid version` }
     }

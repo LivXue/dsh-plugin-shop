@@ -3779,4 +3779,87 @@ describe("installs and updates through dsh's pluginManager", () => {
       'dsh-plugin-shop: dsh refused the uninstall of dsh-managed (bundle-in-use): the bundle was switched off, but some of its plugins are still running. dsh reported: still mounted.',
     )
   })
+
+  it('routes a desktop install to the service when the harness offers one', async () => {
+    const { gateway, calls } = managedGateway(applied, { profile: 'Desktop' })
+    const started = await gateway.install({ name: 'dsh-managed', version: '1.0.0', acknowledged: true })
+    if (!started.ok) throw new Error(started.detail)
+    await finish(gateway, started.installId)
+    expect(calls).toHaveLength(1)
+  })
+
+  it('hands a desktop reader no dsh plugin command when the service refuses', async () => {
+    // Review Focus 5: every detail a desktop reader reaches comes through
+    // managerOutcome with `desktop: true`.
+    const refusal = {
+      changed: false, application: 'failed', stage: 'install', target: 'dsh-managed@1.0.0', registries: [null],
+      error: { code: 'incompatible-version', incompatible: [{ name: 'dsh-managed', version: '1.0.0', runtimeVersion: '0.1.7-rc.2', peers: { '@deepseek-ai/dsh': '0.1.2-rc.1' } }] },
+    }
+    const { gateway } = managedGateway(refusal, { profile: 'desktop', lands: false })
+    const started = await gateway.install({ name: 'dsh-managed', version: '1.0.0', acknowledged: true })
+    if (!started.ok) throw new Error(started.detail)
+    const status = await finish(gateway, started.installId)
+    expect(status.state).toBe('failed')
+    expect(status.detail).not.toContain('dsh plugin')
+  })
+
+  it('still refuses every desktop mutation without the service', async () => {
+    const gateway = new ShopGateway(stubCtx(), { profile: 'desktop', profileDir: toggleProfile() })
+    expect(await gateway.install({ name: 'dsh-managed', version: '1.0.0', acknowledged: true })).toMatchObject({ ok: false, code: 'desktop-profile' })
+    expect((await gateway.uninstall({ name: 'dsh-managed' })).ok).toBe(false)
+    expect((await gateway.updateStart({ version: '9.9.9' })).ok).toBe(false)
+  })
+
+  // R25 (Review Focus 5, at the gateway, once per mutation path): the
+  // service can fail a desktop mutation too, through a plain pnpm run gone
+  // wrong rather than a version refusal — dsh 0.1.7-rc.2's own shape for
+  // that answer.
+  const rollback = "ERR_PNPM_SOMETHING broke\ndsh: restored package.json and pnpm-lock.yaml, but node_modules could not be reinstalled; run 'dsh plugin install'.\n"
+  const pnpmFailed = (stage: string, target: string): object => ({
+    changed: false, application: 'failed', stage, target, registries: [null],
+    error: { code: 'operation-error', diagnostic: rollback },
+    packageResult: { exitCode: 1, output: rollback, truncated: false, logPath: '/l', kind: 'unknown' },
+  })
+
+  it('fails a desktop install without naming dsh plugin, when the service reports a failed pnpm run', async () => {
+    const { gateway } = managedGateway(pnpmFailed('install', 'dsh-managed@1.0.0'), { profile: 'desktop', lands: false })
+    const started = await gateway.install({ name: 'dsh-managed', version: '1.0.0', acknowledged: true })
+    if (!started.ok) throw new Error(started.detail)
+    const status = await finish(gateway, started.installId)
+    expect(status.state).toBe('failed')
+    expect(status.detail).not.toContain('dsh plugin')
+    expect(status.detail).toContain('ERR_PNPM_SOMETHING broke')
+  })
+
+  it('fails a desktop uninstall without naming dsh plugin, when the service reports a failed pnpm run', async () => {
+    const service = {
+      installBundle: async () => { throw new Error('this case must not call installBundle') },
+      removeBundle: async () => pnpmFailed('remove', 'dsh-managed'),
+      setPluginEnabled: async () => { throw new Error('this case must not call setPluginEnabled') },
+      setBundleEnabled: async () => { throw new Error('this case must not call setBundleEnabled') },
+    }
+    const profileDir = toggleProfile()
+    fixturePackage(profileDir, 'dsh-managed', managedPatch)
+    const gateway = new ShopGateway(
+      { get: (name: string) => name === 'pluginManager' ? service : undefined, reflect: { provide: () => {} } } as never,
+      {
+        catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'desktop', profileDir,
+        loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries: [managed], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      },
+    )
+    const started = await gateway.uninstall({ name: 'dsh-managed' })
+    if (!started.ok) throw new Error(started.detail)
+    const status = await finish(gateway, started.installId)
+    expect(status.state).toBe('failed')
+    expect(status.detail).not.toContain('dsh plugin')
+  })
+
+  it('fails a desktop self-update without naming dsh plugin, when the service reports a failed pnpm run', async () => {
+    const { gateway } = managedGateway(pnpmFailed('install', 'dsh-plugin-shop@9.9.9'), { profile: 'desktop', lands: false })
+    const started = await gateway.updateStart({ version: '9.9.9' })
+    if (!started.ok) throw new Error(started.detail)
+    const status = await finish(gateway, started.installId)
+    expect(status.state).toBe('failed')
+    expect(status.detail).not.toContain('dsh plugin')
+  })
 })
