@@ -50,8 +50,14 @@ const refused = {
   error: { code: 'incompatible-version', incompatible: [{ name: 'dsh-managed', version: '1.0.0', runtimeVersion: '0.1.7-rc.2', peers: { '@deepseek-ai/dsh': '0.1.2-rc.1' } }] },
   packageResult: { exitCode: 1, output: '', truncated: false, logPath: '/l', kind: 'unknown' },
 }
+// A failed pnpm run as dsh 0.1.7-rc.2 answers it: runPnpm classifies the
+// run's `kind`, then installBundle and removeBundle throw its output as a
+// plain Error, which managementError codes `operation-error` with that whole
+// output as the diagnostic (dsh-plugin-manager lib/index.js :1776, :1858,
+// :1108).
 const pnpmFailed = (kind: string, output: string, extra: object = {}) => ({
   changed: false, application: 'failed', stage: 'install', target: 'dsh-managed@1.0.0', registries: [null], ...extra,
+  error: { code: 'operation-error', diagnostic: output },
   packageResult: { exitCode: 1, output, truncated: false, logPath: '/l', kind },
 })
 
@@ -60,7 +66,9 @@ const pnpmFailed = (kind: string, output: string, extra: object = {}) => ({
 // (`run 'dsh plugin install'`), concatenated as removeBundle's pnpm failure
 // would surface them through packageResult.output and error.diagnostic alike.
 const rejection = "\ndsh: installation rejected: Plugin dsh-sibling@1.0.0 is incompatible with dsh 0.1.7-rc.2: peerDependencies {\"@deepseek-ai/dsh\":\"0.1.2-rc.1\"}. Running it may cause crashes or data loss. Update the plugin or install a plugin version compatible with this dsh runtime. To accept this risk explicitly, grant the exact-version exemption for dsh-sibling@1.0.0 on dsh 0.1.7-rc.2 with `dsh plugin allow-version` or the plugin manager, then retry the installation or restart dsh. Exact-version exemption: not active.\ndsh: restored package.json and pnpm-lock.yaml, but node_modules could not be reinstalled; run 'dsh plugin install'.\n"
-const removeRejected = { changed: false, application: 'failed', stage: 'remove', target: 'dsh-managed', error: { code: 'operation-error', diagnostic: rejection }, packageResult: { exitCode: 1, output: rejection, truncated: false, logPath: '/l', incompatible: [{ name: 'dsh-sibling', version: '1.0.0', runtimeVersion: '0.1.7-rc.2', peers: { '@deepseek-ai/dsh': '0.1.2-rc.1' } }] } }
+// The run keeps the structured list of what its compatibility scan rejected,
+// and its `kind` is `unknown`, the class dsh gives a log no pattern matches.
+const removeRejected = { changed: false, application: 'failed', stage: 'remove', target: 'dsh-managed', error: { code: 'operation-error', diagnostic: rejection }, packageResult: { exitCode: 1, output: rejection, truncated: false, logPath: '/l', kind: 'unknown', incompatible: [{ name: 'dsh-sibling', version: '1.0.0', runtimeVersion: '0.1.7-rc.2', peers: { '@deepseek-ai/dsh': '0.1.2-rc.1' } }] } }
 
 describe('managerOutcome', () => {
   it('builds the refusal from the structured list, with the exemption command', () => {
@@ -112,6 +120,33 @@ describe('managerOutcome', () => {
       .toBe('dsh-plugin-shop: the install failed at the host the package is fetched from: the network failed.')
     expect(managerOutcome(pnpmFailed('disk-full', 'ENOSPC'), context).detail)
       .toBe('dsh-plugin-shop: the install failed: the disk is full.')
+  })
+
+  // What pnpm printed for the web e2e's 404 through dsh 0.1.7-rc.2 on
+  // 2026-09-27, the lines that name it.
+  const registry404 = '[ERR_PNPM_FETCH_404] GET http://127.0.0.1:46237/dsh-e2e-fixture-plugin: Not Found - 404\n'
+    + 'dsh-e2e-fixture-plugin is not in the npm registry, or you have no permission to fetch it.\n'
+
+  it("reads dsh's answer to a registry 404 as the sentence for it, and embeds none of its output", () => {
+    expect(managerOutcome(pnpmFailed('not-found', registry404, { failedAt: 'registry' }), context))
+      .toEqual({ state: 'failed', detail: 'dsh-plugin-shop: the install failed at the registry: no such package was found.' })
+  })
+
+  it('names the operation that failed: the same 404 in an uninstall', () => {
+    const removal = pnpmFailed('not-found', registry404, { stage: 'remove', target: 'dsh-managed', failedAt: 'registry' })
+    expect(managerOutcome(removal, { ...context, operation: 'uninstall' }).detail)
+      .toBe('dsh-plugin-shop: the uninstall failed at the registry: no such package was found.')
+  })
+
+  it('tells an update held on build scripts to update again, not to install again', () => {
+    const outcome = managerOutcome(pnpmFailed('build-blocked', 'ERR_PNPM_IGNORED_BUILDS', { pendingBuilds: ['esbuild'] }), { ...context, operation: 'update' })
+    expect(outcome.detail).toBe('dsh-plugin-shop: pnpm is holding the build scripts of esbuild, which it blocks by default:'
+      + ' run `pnpm approve-builds` in the profile directory to allow them, then update again.')
+  })
+
+  it('reads a pnpm failure the same way when dsh does not wrap it in an error, as a later harness may not', () => {
+    const { error: _wrapped, ...unwrapped } = pnpmFailed('not-found', registry404, { failedAt: 'registry' })
+    expect(managerOutcome(unwrapped, context).detail).toBe('dsh-plugin-shop: the install failed at the registry: no such package was found.')
   })
 
   it('carries a management code with the sentence dsh source gives it, and dsh diagnostic', () => {
@@ -175,16 +210,22 @@ describe('managerOutcome', () => {
     expect(outcome.detail).toContain('"deferred"')
   })
 
-  it('scrubs the dsh plugin command from a desktop uninstall refusal, but keeps it verbatim on web', () => {
-    // Fix round 1, Important: dsh's own rejection text names `dsh plugin
-    // allow-version` and `dsh plugin install`, and dsh refuses every
-    // `plugin` subcommand on the desktop profile.
-    const app = managerOutcome(removeRejected, { ...desktop, operation: 'uninstall' })
-    expect(app.detail).not.toContain('dsh plugin')
-    expect(app.detail).toContain('is incompatible with dsh 0.1.7-rc.2')
-    expect(app.detail).toContain('Exact-version exemption: not active')
-    const web = managerOutcome(removeRejected, { ...context, operation: 'uninstall' })
-    expect(web.detail).toContain('dsh plugin allow-version')
+  it("reads a removal dsh rejected over a sibling's peers as the version refusal: no command on desktop, the shop's own on web", () => {
+    // Rewritten for R22 (2026-09-27). This rejection read through rule 4,
+    // as dsh's own text with its `dsh plugin` sentences scrubbed for a
+    // desktop reader. dsh codes it `operation-error`, but the run kept the
+    // structured list its compatibility scan rejected, so it now reads
+    // through the version refusal built from that list, as an
+    // `incompatible-version` refusal does: none of dsh's text reaches either
+    // reader, and on web the shop builds the exemption command itself.
+    const app = managerOutcome(removeRejected, { ...desktop, operation: 'uninstall' }).detail ?? ''
+    expect(app).not.toContain('dsh plugin')
+    expect(app).toContain('dsh-sibling@1.0.0')
+    expect(app).toContain('@deepseek-ai/dsh 0.1.2-rc.1')
+    expect(app).toContain('Nothing was removed.')
+    const web = managerOutcome(removeRejected, { ...context, operation: 'uninstall' }).detail ?? ''
+    expect(web).toContain('dsh plugin --profile web allow-version dsh-sibling@1.0.0 --dsh-version 0.1.7-rc.2 --accept-risk')
+    expect(web).toContain('then uninstall again.')
   })
 
   it('scrubs the dsh plugin command out of an unknown failure log before installFailureDetail reads it', () => {
@@ -194,7 +235,8 @@ describe('managerOutcome', () => {
     // never reaches the final detail either way — this is not the scrub's
     // doing. What the scrub must still do is keep the `dsh plugin` sentence
     // out of what that block reads, since it reads change.output directly,
-    // never through plugin-manager.ts's own codeReason path case (a) covers.
+    // never through plugin-manager.ts's own codeReason path, which the
+    // CLI-step case below covers.
     const detail = managerOutcome(pnpmFailed('unknown', `ERR_PNPM_SOMETHING went wrong${rejection}`), desktop).detail ?? ''
     expect(detail).not.toContain('dsh plugin')
     expect(detail).toContain('is incompatible with dsh 0.1.7-rc.2')

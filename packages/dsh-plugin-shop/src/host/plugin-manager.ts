@@ -186,11 +186,15 @@ const WHERE: Record<string, string> = {
  * the CLI would refuse for that profile. */
 const DESKTOP_FAILURE_HINT = 'pnpm failed in the profile'
 
+/** The refusal of a package the running dsh rejects on its peers, for the
+ * operation dsh refused: an install, an update, or an uninstall whose pnpm
+ * run touched an incompatible sibling. */
 function versionRefusalDetail(context: OutcomeContext, incompatible: readonly ManagerIncompatible[]): string {
   const refused = incompatible.map(issue =>
     `${issue.name}@${issue.version} declares ${Object.entries(issue.peers).map(([peer, range]) => `${peer} ${range}`).join(', ')},`
     + ` which dsh ${issue.runtimeVersion} does not satisfy`)
-  const base = `dsh-plugin-shop: dsh refused the install: ${refused.join('; ')}. Nothing was installed.`
+  const nothing = context.operation === 'uninstall' ? 'Nothing was removed.' : 'Nothing was installed.'
+  const base = `dsh-plugin-shop: dsh refused the ${context.operation}: ${refused.join('; ')}. ${nothing}`
   if (context.desktop) {
     return `${base} dsh's CLI, which grants version exemptions, does not manage the desktop profile, and this shop grants none.`
   }
@@ -199,7 +203,7 @@ function versionRefusalDetail(context: OutcomeContext, incompatible: readonly Ma
     .filter((command): command is string => command !== null)
   if (commands.length === 0) return base
   return `${base} To accept the risk of crashes or data loss for ${commands.length === 1 ? 'this exact version' : 'these exact versions'},`
-    + ` run: ${commands.join('; ')} - then install again.`
+    + ` run: ${commands.join('; ')} - then ${context.operation} again.`
 }
 
 /** The sentence a management code gets, plus dsh's own diagnostic. The
@@ -224,7 +228,12 @@ function cancelledDetail(context: OutcomeContext): string {
  * matches wins. */
 export function managerOutcome(raw: unknown, context: OutcomeContext): ManagerOutcome {
   const change = context.desktop ? forDesktopReader(readChange(raw)) : readChange(raw)
-  if (change.errorCode === 'incompatible-version') {
+  // A pnpm run whose own compatibility scan rejected a package, a removal
+  // that touched an incompatible sibling, reaches the caller as a plain
+  // error, coded `operation-error`, with the structured list kept on
+  // packageResult: the same refusal as `incompatible-version`, read from the
+  // same list.
+  if (change.errorCode === 'incompatible-version' || (change.errorCode === 'operation-error' && change.incompatible.length > 0)) {
     return { state: 'failed', detail: versionRefusalDetail(context, change.incompatible) }
   }
   if (change.application === 'failed' && change.stage === 'enable') {
@@ -235,16 +244,24 @@ export function managerOutcome(raw: unknown, context: OutcomeContext): ManagerOu
         + `${codeReason(change, code)} Uninstall it from the shop to undo the install.`,
     }
   }
-  if (change.application === 'failed' && change.errorCode === null) {
+  // A failed pnpm run. dsh classifies its `kind`, then throws its output as a
+  // plain error, which it codes `operation-error` with that whole output as
+  // the diagnostic (dsh-plugin-manager 0.1.7-rc.2, installBundle and
+  // removeBundle). An answer without that wrapper reads the same way, for a
+  // harness that stops adding it. The diagnostic is never embedded here: the
+  // kind names what happened, and an unknown kind gets an excerpt of the
+  // output through installFailureDetail.
+  if (change.application === 'failed' && change.kind !== null
+    && (change.errorCode === null || change.errorCode === 'operation-error')) {
     if (change.kind === 'build-blocked') {
       const held = change.pendingBuilds.length > 0 ? change.pendingBuilds.join(', ') : 'a dependency'
       return {
         state: 'failed',
         detail: `dsh-plugin-shop: pnpm is holding the build scripts of ${held}, which it blocks by default:`
-          + ' run `pnpm approve-builds` in the profile directory to allow them, then install again.',
+          + ` run \`pnpm approve-builds\` in the profile directory to allow them, then ${context.operation} again.`,
       }
     }
-    const sentence = change.kind === null ? undefined : KIND_SENTENCE[change.kind]
+    const sentence = KIND_SENTENCE[change.kind]
     if (sentence !== undefined) {
       const where = change.failedAt === null ? '' : WHERE[change.failedAt] ?? ''
       return { state: 'failed', detail: `dsh-plugin-shop: the ${context.operation} failed${where}: ${sentence}.` }
