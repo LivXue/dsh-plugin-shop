@@ -1603,3 +1603,16 @@ describe('a chained task that rejects', () => {
     }
   })
 })
+
+describe('installFailureDetail with a caller hint', () => {
+  it('opens with the caller hint in place of the CLI command', () => {
+    const detail = installFailureDetail('desktop', ['ERR_PNPM_FOO boom'], 'pnpm failed in the profile')
+    expect(detail).toMatch(/^pnpm failed in the profile /)
+    expect(detail).toContain('ERR_PNPM_FOO boom')
+    expect(detail).not.toContain('dsh plugin')
+  })
+
+  it('keeps the CLI command when no hint is given', () => {
+    expect(installFailureDetail('web', ['ERR_PNPM_FOO boom'])).toContain('Run: dsh plugin --profile web install')
+  })
+})

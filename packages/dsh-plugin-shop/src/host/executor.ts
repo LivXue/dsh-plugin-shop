@@ -334,8 +334,11 @@ function nativeAllocationAbortDetail(usable: readonly string[]): string | null {
  * Scanning from the end: a pnpm error code first, then any thrown error, then
  * the last line that is not noise.
  */
-export function installFailureDetail(profile: string, log: readonly string[]): string {
-  const hint = `pnpm failed in the profile. Run: dsh plugin --profile ${profile} install`
+export function installFailureDetail(
+  profile: string,
+  log: readonly string[],
+  hint = `pnpm failed in the profile. Run: dsh plugin --profile ${profile} install`,
+): string {
   // Strip a trailing carriage return before filtering. The capture loop
   // normalizes now, so this is belt and braces — but every pattern in
   // FAILURE_LOG_NOISE anchors with `$`, which without /m matches only at end
