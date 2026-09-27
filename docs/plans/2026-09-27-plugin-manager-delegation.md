@@ -12,11 +12,13 @@
 
 ## Preconditions
 
-Start from `main` after these are merged:
+All three are merged into `main` (2026-09-27):
 
-1. #64, the 0.1.7 CI leg, with its e2e fixes for 0.1.7's first run (the no-default-workspace seed and `waitForFirstRun`). Without it no automated run reaches the service path, and 0.1.7 e2e runs are not stable.
-2. #65, the pnpm 12 abort hint. Task 2 routes the service's `unknown` failures through `installFailureDetail`, where that hint lives.
-3. #67, the bundle switch. It introduces `pluginManager()`, `BundleSelector` and `setDeselectedEnabled` in `src/host/index.ts`, which Task 1 generalizes.
+1. #64 (`94a83e9`), the 0.1.7 CI leg, with its e2e fixes for 0.1.7's first run (the no-default-workspace seed and `waitForFirstRun`). Without it no automated run reaches the service path, and 0.1.7 e2e runs are not stable.
+2. #65 (`bc2c158`), the pnpm 12 abort hint. Task 2 routes the service's `unknown` failures through `installFailureDetail`, where that hint lives.
+3. #67 (`762c9a4`), the bundle switch. It introduces `pluginManager()`, `BundleSelector` and `setDeselectedEnabled` in `src/host/index.ts`, which Task 1 generalizes. It also adds the e2e file's last case, which switches a bundle off on dsh 0.1.7's own Plugins page and back on from the shop, so the file holds eight cases: 8/8 on 0.1.7-rc.2, and on 0.1.5-rc.3 seven pass and that case skips.
+
+The implementation branch starts from this plan's own branch, `docs/plugin-manager-delegation` (#66), rebased on that `main`, so the spec and this plan are in it. Its PR is stacked on #66.
 
 ## Global Constraints
 
@@ -56,12 +58,12 @@ Inputs the spec implies but no rule names, most likely to bite first. Each has a
 
 **Files:** none changed.
 
-- [ ] **Step 1: Branch from the merged main**
+- [ ] **Step 1: Branch from this plan's branch**
 
 ```bash
-git fetch github
-git switch -c feat/plugin-manager-delegation github/main
-git log --oneline -8   # must show the merges of #64, #65 and #67
+git fetch origin
+git switch -c feat/plugin-manager-delegation origin/docs/plugin-manager-delegation
+git log --oneline -6   # this plan's two commits, then the merges of #67, #65 and #64 below them
 ```
 
 - [ ] **Step 2: Record the baseline on both harnesses**
@@ -74,7 +76,7 @@ PATH=<0.1.7-rc.2 prefix>/bin:$PATH DSH_SHOP_REQUIRE_E2E=1 DSH_SHOP_EXPECT_DSH=0.
 PATH=<0.1.5-rc.3 prefix>/bin:$PATH DSH_SHOP_REQUIRE_E2E=1 DSH_SHOP_EXPECT_DSH=0.1.5-rc.3 node node_modules/vitest/vitest.mjs run
 ```
 
-Expected: all green, except that under machine load `the install deadline and the process group (F-1)`, `retains at most 32 finished installs` and `sortByStars cost (G-5)` can exceed their bounds (all three pass alone). Write the totals down; Task 11 compares against them.
+Expected: all green, the e2e file 8/8 on 0.1.7-rc.2 and 7 passed with 1 skipped on 0.1.5-rc.3, except that under machine load `the install deadline and the process group (F-1)`, `retains at most 32 finished installs` and `sortByStars cost (G-5)` can exceed their bounds (all three pass alone). Write the totals down; Task 11 compares against them.
 
 ---
 
@@ -1673,14 +1675,21 @@ git commit -m "feat(shop): open the desktop profile through dsh's pluginManager 
 
 ---
 
-### Task 9: The client: the done note and a marked log line
+### Task 9: The client: the done note, a switch that owes a restart, and a marked log line
 
 **Files:**
 - Modify: `packages/dsh-plugin-shop/src/client/present.ts` (`InstallView`, `reduceInstall`)
-- Modify: `packages/dsh-plugin-shop/src/client/ShopTab.tsx` (the install panel's done view; the seven `css.logLine` renders)
+- Modify: `packages/dsh-plugin-shop/src/client/ShopTab.tsx` (the install panel's done view; `EnabledSwitch` and its two call sites; `ActivationOffer`'s `where`; the seven `css.logLine` renders)
+- Modify: `packages/dsh-plugin-shop/src/client/locales.ts` (one new key, both dictionaries)
 - Test: `packages/dsh-plugin-shop/tests/client/present.test.ts`, `packages/dsh-plugin-shop/tests/client/ShopTab.client.spec.tsx`
 
+**Interfaces:**
+- Consumes: `ActivationOffer` and `RestartPanel` (existing, in `ShopTab.tsx`); `restart` and `restartBlocked`, already in scope at both `EnabledSwitch` call sites.
+- Produces: the attributes `data-shop-done-note`, `data-shop-toggle-restart` and `data-shop-log-line`; the locale key `toggleRestartNote`.
+
 The wire already carries `detail` on any record (`installStatus` spreads `running.status()`); `reduceInstall` drops it on `done`. Carrying it is a client change only.
+
+A switch can answer `restart`: #67's bundle re-selection does when dsh answers `restart-required`, and so does Task 7's plugin-level switch. dsh answers that only when it runs without HMR. The switch today offers a reload for anything but `live` (`EnabledSwitch`'s `needsReload`), and a reload cannot compose what only a restart will. So a switch that owes a restart says so, and offers the restart through `ActivationOffer`, the one place the precedence between reload and restart is written.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1715,12 +1724,60 @@ In `tests/client/ShopTab.client.spec.tsx`, beside `offers the restart button aft
   })
 ```
 
+In the same file, beside `shows only the applied note after a toggle whose package is host-only`:
+
+```ts
+  it('offers a restart, not a reload, after a switch that only a restart applies', async () => {
+    const { injected, setEnabled } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
+    setEnabled.mockResolvedValue({ ok: true, activation: 'restart' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]')!
+    fireEvent.click(row.querySelector('[data-shop-toggle]')!)
+    await waitFor(() => expect(row.querySelector('[data-shop-toggle-restart]')).toBeTruthy())
+    expect(row.querySelector('[data-shop-toggle-restart]')?.textContent).toBe(en.toggleRestartNote)
+    expect(row.querySelector('[data-shop-restart]')).toBeTruthy()
+    expect(row.querySelector('[data-shop-reload]')).toBeNull()
+    expect(row.querySelector('[data-shop-hot-apply]')).toBeNull()
+  })
+
+  it('names why it cannot restart after a switch that needs one, when the host refuses restarts', async () => {
+    const { injected, setEnabled, version } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
+    setEnabled.mockResolvedValue({ ok: true, activation: 'restart' })
+    version.mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartBlocked: 'systemd' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]')!
+    fireEvent.click(row.querySelector('[data-shop-toggle]')!)
+    await waitFor(() => expect(row.querySelector('[data-shop-toggle-restart]')).toBeTruthy())
+    expect(row.querySelector('[data-shop-restart-disabled]')?.textContent).toBe(en.restartBlockedSystemdNotice)
+    expect(row.querySelector('[data-shop-restart]')).toBeNull()
+  })
+
+  it('keeps the restart cue when a later switch applies live', async () => {
+    // Sticky, like the reload cue: the host said the first change needs a
+    // restart, and a later live one does not say it no longer does.
+    const { injected, setEnabled } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
+    setEnabled.mockResolvedValueOnce({ ok: true, activation: 'restart' }).mockResolvedValueOnce({ ok: true, activation: 'live' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]')!
+    fireEvent.click(row.querySelector('[data-shop-toggle]')!)
+    await waitFor(() => expect(row.querySelector('[data-shop-toggle-restart]')).toBeTruthy())
+    fireEvent.click(row.querySelector('[data-shop-toggle]')!)
+    await waitFor(() => expect(setEnabled).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect((row.querySelector('[data-shop-toggle]') as HTMLButtonElement).disabled).toBe(false))
+    expect(row.querySelector('[data-shop-toggle-restart]')).toBeTruthy()
+    expect(row.querySelector('[data-shop-hot-apply]')).toBeNull()
+  })
+```
+
 - [ ] **Step 2: Run them and watch them fail**
 
-Run: `node node_modules/vitest/vitest.mjs run tests/client/present.test.ts tests/client/ShopTab.client.spec.tsx -t "host note"`
-Expected: FAIL, the note is dropped and the lines carry no attribute.
+Run: `node node_modules/vitest/vitest.mjs run tests/client/present.test.ts tests/client/ShopTab.client.spec.tsx -t "host note|a switch that|later switch applies live"`
+Expected: FAIL: the note is dropped, the lines carry no attribute, and a `restart` from a switch renders the reload offer.
 
-- [ ] **Step 3: Carry and render the note, and mark the lines**
+- [ ] **Step 3: Carry and render the note, owe the restart, and mark the lines**
 
 In `present.ts`, the `done` member of `InstallView` becomes `{ kind: 'done'; activation: Activation; log: string[]; restartReason?: HotRestartReason; detail?: string }`, and the done branch of `reduceInstall` adds, after the `restartReason` spread:
 
@@ -1738,6 +1795,46 @@ In `ShopTab.tsx`, in the install panel's `view.kind === 'done'` branch, directly
 
 and on each of the seven `<div key={index} className={css.logLine}>{line}</div>` renders, add `data-shop-log-line`.
 
+For the switch, in `locales.ts` add beside `hotApplyNote`, in the Chinese dictionary:
+
+```ts
+  toggleRestartNote: '已保存，重启 dsh 后生效',
+```
+
+and in the English one:
+
+```ts
+  toggleRestartNote: 'saved; it takes effect after dsh restarts',
+```
+
+In `ShopTab.tsx`, widen `ActivationOffer`'s `where` to `'install' | 'uninstall' | 'toggle'`. Give `EnabledSwitch` two props, `restart: ShopTabInjected['restart']` and `restartBlocked: RestartBlockedReason | null`, and pass `restart={restart} restartBlocked={restartBlocked}` at both call sites (the entry card and the outdated row). Replace its `needsReload` state with what the page owes, keeping the existing comment's reasoning and extending it:
+
+```tsx
+  // What THIS PAGE owes before it shows the truth: sticky, and a restart
+  // outranks a reload. A later toggle that FAILED changed nothing on the
+  // server, so it must not dismiss what an earlier one made necessary; and
+  // one that applied live does not say an earlier restart is no longer
+  // owed, so it cannot dismiss that either.
+  const [owed, setOwed] = useState<'nothing' | 'reload' | 'restart'>('nothing')
+```
+
+In `onToggle`, the line `if (result.activation !== 'live') setNeedsReload(true)` becomes:
+
+```tsx
+        if (result.activation === 'restart') setOwed('restart')
+        else if (result.activation !== 'live') setOwed(previous => (previous === 'restart' ? previous : 'reload'))
+```
+
+and in the render, the two lines that read `needsReload` become:
+
+```tsx
+      {toggle.kind === 'saved' && owed === 'nothing' && <p className={css.notice} data-shop-hot-apply>{t('hotApplyNote')}</p>}
+      {owed === 'restart' && <p className={css.notice} data-shop-toggle-restart>{t('toggleRestartNote')}</p>}
+      {owed !== 'nothing' && <ActivationOffer activation={owed} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} where="toggle" />}
+```
+
+`ActivationOffer` renders the same `ReloadPanel where="toggle"` for `reload` as before, so every existing toggle case keeps passing unchanged.
+
 - [ ] **Step 4: Run the two client files**
 
 Run: `node node_modules/vitest/vitest.mjs run tests/client/present.test.ts tests/client/ShopTab.client.spec.tsx`
@@ -1746,8 +1843,8 @@ Expected: PASS. If `ShopTab incremental ... expected 48 to be 96` fails, rerun: 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/client/present.ts src/client/ShopTab.tsx tests/client/present.test.ts tests/client/ShopTab.client.spec.tsx
-git commit -m "feat(shop): show a note the host attaches to a done install, and mark log lines for the e2e"
+git add src/client/present.ts src/client/ShopTab.tsx src/client/locales.ts tests/client/present.test.ts tests/client/ShopTab.client.spec.tsx
+git commit -m "feat(shop): show a done install's note, offer a restart for a switch that needs one, and mark log lines"
 ```
 
 ---
@@ -1757,7 +1854,7 @@ git commit -m "feat(shop): show a note the host attaches to a done install, and 
 **Files:**
 - Modify: `packages/dsh-plugin-shop/tests/client/web-full-flow.e2e.ts`
 
-After Tasks 5 to 8, every mutation on the 0.1.7 leg runs through the service, so three cases change what they may assert there, and the spec's section 9 asks for a switch case the file does not have. The 0.1.5 leg keeps asserting the CLI path, unchanged. Branch on one flag, set in `beforeAll` after `launchedDshVersion` is read:
+After Tasks 5 to 8, every mutation on the 0.1.7 leg runs through the service, so three cases change what they may assert there, and the spec's section 9 asks for a plugin-level switch case the file does not have. The 0.1.5 leg keeps asserting the CLI path, unchanged. The file's last case, from #67, already switches a bundle off on dsh's own Plugins page and back on from the shop, and re-selecting a deselected bundle already goes through `setBundleEnabled`: it needs no change, and must still pass on the manager path, where the update case before it has gone through `installBundle`. Branch on one flag, set in `beforeAll` after `launchedDshVersion` is read:
 
 ```ts
   /** Whether this harness offers dsh's pluginManager, so the shop's
@@ -1820,51 +1917,57 @@ Rename the case so its title is true on both legs: `'a fixture whose patch carri
 
 - [ ] **Step 5: A switch case, on the boot-composed update fixture**
 
-Add a case directly before the update case. It uses `dsh-shop-e2e-update`, which the boot composed and which has no browser half: on 0.1.5 the user layer reaches only boot-composed entries, and on 0.1.7 the service answers `unaddressable` for a tree the shop mounted itself. The update case reads its baseline activations at its own start, so the activations this case adds do not reach its assertions.
+Add a case directly before the update case. It uses `dsh-shop-e2e-update`, which the boot composed and which has no browser half: on 0.1.5 the user layer reaches only boot-composed entries, and on 0.1.7 the service answers `unaddressable` for a tree the shop mounted itself.
+
+It runs on a page of its own, as the bundle-switch case at the end of the file does. The update case opens Settings on the main page next, and 0.1.7 keeps a Settings tab it has shown mounted with the data and the filter it had, so this case leaves the main page untouched. At this point the package is outdated (1.0.0 installed, 2.0.0 in the catalog), so its switch is drawn twice, on its card and on its row in the updatable section: the locator is scoped to the card. The update case reads its baseline activations at its own start, so the activations this case adds do not reach its assertions.
 
 ```ts
   it(
     'switches a boot-composed plugin off and on, and it runs again',
     async () => {
-      expect(page).toBeDefined()
-      const app = page!
-
-      // The previous case ended on a page reload and waited out its first
-      // run (waitForFirstRun), so Settings opens from scratch here.
-      await app.waitForSelector('[class*="frame"]', { timeout: 30_000 })
-      await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
-      const dialog = app.getByRole('dialog', { name: '设置' })
-      await dialog.waitFor({ state: 'visible', timeout: 10_000 })
-      await dialog.getByRole('button', { name: PLUGINS_SECTION }).click()
-      await dialog.getByRole('tab', { name: '插件商店' }).click()
-      await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
-      await dialog.locator('[data-shop-category-installed]').click()
-
-      const row = dialog.locator('[data-shop-enabled-switch="dsh-shop-e2e-update"]')
-      const toggle = row.locator('[data-shop-toggle]')
-      await toggle.waitFor({ state: 'visible', timeout: 15_000 })
-      expect(await toggle.getAttribute('aria-checked')).toBe('true')
+      expect(browser).toBeDefined()
       const before = updateActivations().length
+      const fresh = await browser!.newPage({ locale: 'zh-CN', viewport: { width: 1680, height: 1000 } })
+      try {
+        await fresh.goto(webUrl, { waitUntil: 'load' })
+        await waitForFirstRun(fresh, launchedDshVersion)
+        await fresh.waitForSelector('[class*="frame"]', { timeout: 30_000 })
+        await fresh.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
+        const dialog = fresh.getByRole('dialog', { name: '设置' })
+        await dialog.waitFor({ state: 'visible', timeout: 10_000 })
+        await dialog.getByRole('button', { name: PLUGINS_SECTION }).click()
+        await dialog.getByRole('tab', { name: '插件商店' }).click()
+        await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
 
-      await toggle.click()
-      await row.locator('[data-shop-hot-apply]').waitFor({ state: 'visible', timeout: 15_000 })
-      expect(await toggle.getAttribute('aria-checked')).toBe('false')
-      if (managerPath) {
-        // Open item O3: dsh wrote the row itself, in place, not beside it.
-        const layer = readFileSync(join(tmpHome, 'profiles', 'web', 'cordis.patch.yml'), 'utf8')
-        expect(layer.match(/id: e2e-update\b/g)?.length, layer).toBe(1)
+        const row = dialog.locator('[data-shop-entry="dsh-shop-e2e-update"] [data-shop-enabled-switch="dsh-shop-e2e-update"]')
+        const toggle = row.locator('[data-shop-toggle]')
+        await toggle.waitFor({ state: 'visible', timeout: 15_000 })
+        expect(await toggle.getAttribute('aria-checked')).toBe('true')
+
+        await toggle.click()
+        await row.locator('[data-shop-hot-apply]').waitFor({ state: 'visible', timeout: 15_000 })
+        expect(await toggle.getAttribute('aria-checked')).toBe('false')
+        if (managerPath) {
+          // Open item O3: dsh wrote the row itself, in place, not beside it.
+          const layer = readFileSync(join(tmpHome, 'profiles', 'web', 'cordis.patch.yml'), 'utf8')
+          expect(layer.match(/id: e2e-update\b/g)?.length, layer).toBe(1)
+        }
+
+        // The fixture appends its module-scope version each time it
+        // activates, so a new line proves the entry went down and came back,
+        // on both legs.
+        await toggle.click()
+        await expect.poll(() => updateActivations().length, { timeout: 15_000 }).toBeGreaterThan(before)
+        expect(await toggle.getAttribute('aria-checked')).toBe('true')
+        expect(await row.locator('[data-shop-toggle-error]').count()).toBe(0)
+      } catch (error) {
+        // The page is closed below, before the afterEach that collects a
+        // failed case's evidence can see it.
+        await saveEvidence(fresh, evidenceDir(expect.getState().currentTestName?.split(' > ').pop() ?? 'switch'), 'fresh')
+        throw error
+      } finally {
+        await fresh.close()
       }
-
-      // The fixture appends its module-scope version each time it activates,
-      // so a new line proves the entry went down and came back, on both legs.
-      await toggle.click()
-      await expect.poll(() => updateActivations().length, { timeout: 15_000 }).toBeGreaterThan(before)
-      expect(await toggle.getAttribute('aria-checked')).toBe('true')
-      expect(await row.locator('[data-shop-toggle-error]').count()).toBe(0)
-
-      // The update case opens Settings from a closed dialog.
-      await app.keyboard.press('Escape')
-      await dialog.waitFor({ state: 'hidden', timeout: 10_000 })
     },
     120_000,
   )
@@ -1877,7 +1980,7 @@ PATH=<0.1.7-rc.2 prefix>/bin:$PATH DSH_SHOP_REQUIRE_E2E=1 DSH_SHOP_EXPECT_DSH=0.
 PATH=<0.1.5-rc.3 prefix>/bin:$PATH DSH_SHOP_REQUIRE_E2E=1 DSH_SHOP_EXPECT_DSH=0.1.5-rc.3 node node_modules/vitest/vitest.mjs run tests/client/web-full-flow.e2e.ts
 ```
 
-Expected: 8/8 on each.
+Expected: 9/9 on 0.1.7-rc.2. On 0.1.5-rc.3, eight pass and the bundle-switch case at the end skips, since that case needs 0.1.7's Plugins page.
 
 - [ ] **Step 7: Commit**
 
@@ -1916,7 +2019,7 @@ Expected: Task 0's totals plus the new cases, all green, except the load-sensiti
 ```bash
 git add docs
 git commit -m "docs(design): record the plugin manager hand-off as built, with what its open items measured"
-git push -u github feat/plugin-manager-delegation
+git push -u origin feat/plugin-manager-delegation
 ```
 
-The PR body lists each task, the measurements, and each departure from the spec. It does not release: the beta version is LivXue's to confirm.
+Open the PR stacked on #66: while #66 is open its base is `docs/plugin-manager-delegation`, so its diff is the implementation alone; if #66 has merged by then, its base is `main`. The PR body lists each task, the measurements, and each departure from the spec. It does not release: the beta version is LivXue's to confirm.
