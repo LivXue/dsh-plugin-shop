@@ -12,13 +12,38 @@ function ownManifest(): unknown {
   return JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'))
 }
 
-export function ownVersion(): string {
-  return (ownManifest() as { version: string }).version
+/**
+ * Read a version once and keep it: the answer to "which code is this".
+ *
+ * The file cannot answer that question later. A profile installs hoisted, so
+ * a self-update rewrites package.json in the directory the RUNNING code was
+ * loaded from, and every read after it names the version that will run after
+ * the next restart — which the version row then printed as the one running
+ * (design §7.3, 2026-09-27 amendment).
+ *
+ * A first read that throws is not kept: the module import must not fail over
+ * a version string, so the answer falls back to reading on demand, which is
+ * what the row always did.
+ */
+export function versionAtLoad(read: () => string): () => string {
+  let loaded: string | null
+  try {
+    loaded = read()
+  } catch {
+    // Swallows only the load-time read; the on-demand read below reports the
+    // same failure to its caller, which is the one place it can be handled.
+    loaded = null
+  }
+  return () => loaded ?? read()
 }
+
+/** The version of the code in this process, read when the module was first
+ * evaluated — at boot, before any self-update could rewrite the file. */
+export const runningVersion = versionAtLoad(() => (ownManifest() as { version: string }).version)
 
 /**
  * The peer ranges this build declares — the input to the load-time harness
- * self-check. Read from the same shipped manifest as `ownVersion`, so the
+ * self-check. Read from the same shipped manifest as `runningVersion`, so the
  * ranges checked are the ones this build was actually published with, never
  * a second copy that can drift from them.
  *

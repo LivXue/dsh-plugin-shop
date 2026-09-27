@@ -4,10 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ACKNOWLEDGEMENT_EN, ACKNOWLEDGEMENT_ZH, RESTART_GRACE_MS, RESTART_STABLE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, rejectionCodeKey } from '../../src/client/present.ts'
 import { en, zh, type ShopLocaleKey } from '../../src/client/locales.ts'
 import { ShopTab, type ShopTabInjected, type ShopTabProps } from '../../src/client/ShopTab.tsx'
+import { resetRestartMonitor } from '../../src/client/restart-monitor.ts'
 import type { HarnessVerdict, ShopCatalogResult, ShopInstalledEntry } from '../../src/host/index.ts'
 
 afterEach(() => {
   cleanup()
+  // The restart monitor belongs to the page, so unmounting the tab does not
+  // stop it — that is its whole point. Stop it here, before the next test
+  // mounts a tab that would read this one's restart.
+  resetRestartMonitor()
   // The restart-origin test drives fake timers and a stubbed fetch; leak
   // neither into the next test.
   vi.useRealTimers()
@@ -74,7 +79,7 @@ function bench(
     .mockResolvedValue(specs === undefined ? derived : specs)
   const uninstall = vi.fn<ShopTabInjected['uninstall']>().mockResolvedValue({ ok: true, installId: 'u1' })
   const restart = vi.fn<ShopTabInjected['restart']>().mockResolvedValue({ ok: true })
-  const version = vi.fn<ShopTabInjected['version']>().mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartBlocked: null })
+  const version = vi.fn<ShopTabInjected['version']>().mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartBlocked: null, pendingVersion: null })
   const updateStart = vi.fn<ShopTabInjected['updateStart']>().mockResolvedValue({ ok: true, installId: 's1', state: 'running' })
   const injected: ShopTabInjected = { catalog, install, installStatus, setEnabled, installed, installedSpecs, uninstall, restart, version, updateStart }
   return { catalog, install, installStatus, setEnabled, installed, installedSpecs, uninstall, restart, version, updateStart, injected }
@@ -799,7 +804,7 @@ describe('ShopTab', () => {
 
   it("hides the restart offer and shows that reason's notice when the host reports restartBlocked: 'systemd'", async () => {
     const { injected, version } = bench(snapshot({ tier: 'verified' }))
-    version.mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartBlocked: 'systemd' })
+    version.mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartBlocked: 'systemd', pendingVersion: null })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     fireEvent.click(screen.getByText(en.install))
@@ -812,7 +817,7 @@ describe('ShopTab', () => {
 
   it("names Windows, not systemd, when the host reports restartBlocked: 'windows'", async () => {
     const { injected, version } = bench(snapshot({ tier: 'verified' }))
-    version.mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartBlocked: 'windows' })
+    version.mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartBlocked: 'windows', pendingVersion: null })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     fireEvent.click(screen.getByText(en.install))
@@ -828,7 +833,7 @@ describe('ShopTab', () => {
 
   it("names the desktop app when the host reports restartBlocked: 'desktop'", async () => {
     const { injected, version } = bench(snapshot({ tier: 'verified' }))
-    version.mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartBlocked: 'desktop' })
+    version.mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartBlocked: 'desktop', pendingVersion: null })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     fireEvent.click(screen.getByText(en.install))
@@ -838,7 +843,7 @@ describe('ShopTab', () => {
 
   it("names --port 0 when the host reports restartBlocked: 'port-zero'", async () => {
     const { injected, version } = bench(snapshot({ tier: 'verified' }))
-    version.mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartBlocked: 'port-zero' })
+    version.mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartBlocked: 'port-zero', pendingVersion: null })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     fireEvent.click(screen.getByText(en.install))
@@ -981,7 +986,7 @@ describe('ShopTab', () => {
 
   it('hides the restart offer after an uninstall when restart is unsupported', async () => {
     const { injected, version } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }])
-    version.mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartBlocked: 'systemd' })
+    version.mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartBlocked: 'systemd', pendingVersion: null })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
     fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-uninstall]')!)
@@ -1017,7 +1022,7 @@ describe('ShopTab', () => {
 
   it('shows no update button when the version check has no answer', async () => {
     const { injected, version } = bench(snapshot())
-    version.mockResolvedValue({ installed: '0.4.4', latest: null, outdated: false, restartBlocked: null })
+    version.mockResolvedValue({ installed: '0.4.4', latest: null, outdated: false, restartBlocked: null, pendingVersion: null })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('v0.4.4')).toBeTruthy())
     expect(container.querySelector('[data-shop-update-self]')).toBeNull()
@@ -1026,8 +1031,8 @@ describe('ShopTab', () => {
   it('re-checks the version on demand from the check button next to it', async () => {
     const { injected, version } = bench(snapshot())
     version
-      .mockResolvedValueOnce({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartBlocked: null })
-      .mockResolvedValue({ installed: '0.4.4', latest: '0.4.5', outdated: true, restartBlocked: null })
+      .mockResolvedValueOnce({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartBlocked: null, pendingVersion: null })
+      .mockResolvedValue({ installed: '0.4.4', latest: '0.4.5', outdated: true, restartBlocked: null, pendingVersion: null })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('v0.4.4')).toBeTruthy())
     expect(container.querySelector('[data-shop-update-self]')).toBeNull()
@@ -1039,7 +1044,7 @@ describe('ShopTab', () => {
 
   it('reports up to date for a moment when the re-check finds nothing newer', async () => {
     const { injected, version } = bench(snapshot())
-    version.mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartBlocked: null })
+    version.mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartBlocked: null, pendingVersion: null })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('v0.4.4')).toBeTruthy())
     fireEvent.click(container.querySelector('[data-shop-check-update]')!)
@@ -1129,7 +1134,7 @@ describe('ShopTab', () => {
     // choose between "Check" and "Update" when only one of them was the thing
     // to do — and it was the row that already wraps at ordinary widths.
     const { injected, version } = bench(snapshot())
-    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: null })
+    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: null, pendingVersion: null })
     const { container } = renderTab(injected)
     await waitFor(() => expect(container.querySelector('[data-shop-update-self]')).toBeTruthy())
     expect(container.querySelector('[data-shop-check-update]')).toBeNull()
@@ -1137,7 +1142,7 @@ describe('ShopTab', () => {
 
   it('shows the update button for a newer release and drives the self-update to the restart offer', async () => {
     const { injected, version, updateStart } = bench(snapshot())
-    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: null })
+    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: null, pendingVersion: null })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('v0.4.3')).toBeTruthy())
     const button = container.querySelector('[data-shop-update-self]')
@@ -1157,7 +1162,7 @@ describe('ShopTab', () => {
     // in this file leaves this one revertible to `t('installing')` — which is
     // exactly the hole this pair closes.
     const { injected, version, updateStart, installStatus } = bench(snapshot())
-    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: null })
+    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: null, pendingVersion: null })
     updateStart.mockResolvedValue({ ok: true, installId: 's1', state: 'downloading' })
     installStatus.mockResolvedValue({ found: true, state: 'downloading', log: ['fetching'] })
     const { container } = renderTab(injected)
@@ -1174,7 +1179,7 @@ describe('ShopTab', () => {
     // has exactly one thing to do, and the row already wraps at ordinary
     // panel widths, so it must never carry two of them at once.
     const { injected, version, updateStart } = bench(snapshot())
-    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: null })
+    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: null, pendingVersion: null })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('v0.4.3')).toBeTruthy())
     fireEvent.click(container.querySelector('[data-shop-update-self]')!)
@@ -1191,7 +1196,7 @@ describe('ShopTab', () => {
     // must not move it past the gate: the row opens the same confirm, and
     // only that confirm calls the RPC.
     const { injected, version, restart } = bench(snapshot())
-    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: null })
+    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: null, pendingVersion: null })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('v0.4.3')).toBeTruthy())
     fireEvent.click(container.querySelector('[data-shop-update-self]')!)
@@ -1205,7 +1210,7 @@ describe('ShopTab', () => {
 
   it('hides the restart offer in the self-update panel when restart is unsupported', async () => {
     const { injected, version } = bench(snapshot())
-    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: 'systemd' })
+    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: 'systemd', pendingVersion: null })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('v0.4.3')).toBeTruthy())
     fireEvent.click(container.querySelector('[data-shop-update-self]')!)
@@ -1216,7 +1221,7 @@ describe('ShopTab', () => {
 
   it('names the reason in the self-update panel too, not only on an entry card', async () => {
     const { injected, version } = bench(snapshot())
-    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: 'windows' })
+    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: 'windows', pendingVersion: null })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('v0.4.3')).toBeTruthy())
     fireEvent.click(container.querySelector('[data-shop-update-self]')!)
@@ -1226,13 +1231,124 @@ describe('ShopTab', () => {
 
   it('renders the host detail when the self-update is refused', async () => {
     const { injected, version, updateStart } = bench(snapshot())
-    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: null })
+    version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: null, pendingVersion: null })
     updateStart.mockResolvedValue({ ok: false, detail: 'dsh-plugin-shop: 0.4.4 is not a valid version' })
     const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('v0.4.3')).toBeTruthy())
     fireEvent.click(container.querySelector('[data-shop-update-self]')!)
     await waitFor(() => expect(screen.getByText('dsh-plugin-shop: 0.4.4 is not a valid version')).toBeTruthy())
     expect(screen.getByText(en.updateFailed)).toBeTruthy()
+  })
+
+  describe('the restart handoff belongs to the page, not to the tab that started it', () => {
+    // dsh's client HMR (@deepseek-ai/dsh-client-hmr) stat-polls every client
+    // bundle and hot-swaps one whose file changed. A self-update rewrites this
+    // package's own lib/client.js, so the swap disposes this tab in the middle
+    // of the update and mounts a fresh instance — measured 2026-09-27 on dsh
+    // 0.1.5-rc.3, where the restart then never reloaded the page. Unmounting
+    // the tab below is that swap, as far as the page can tell.
+
+    /** A self-update driven to its landed state and the restart confirmed from
+     * the version row, under fake timers with the origin probe stubbed. */
+    async function selfUpdateThenRestart(probe: ReturnType<typeof vi.fn>) {
+      const { injected, version } = bench(snapshot())
+      version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: null, pendingVersion: null })
+      const reload = vi.fn()
+      const view = renderTab({ ...injected, reload })
+      await waitFor(() => expect(screen.getByText('v0.4.3')).toBeTruthy())
+      fireEvent.click(view.container.querySelector('[data-shop-update-self]')!)
+      await waitFor(() => expect(view.container.querySelector('[data-shop-self-update-done]')).toBeTruthy(), { timeout: 3000 })
+      vi.useFakeTimers()
+      vi.stubGlobal('fetch', probe)
+      fireEvent.click(view.container.querySelector('[data-shop-version]')!.parentElement!.querySelector('[data-shop-restart]')!)
+      fireEvent.click(view.container.querySelector('[data-shop-restart-confirm]')!)
+      await act(async () => { await vi.advanceTimersByTimeAsync(100) })
+      expect(screen.getByText(en.restarting)).toBeTruthy()
+      return { reload, view }
+    }
+
+    /** The tab the swap mounts in the old one's place, asking a host that now
+     * reports the landed update. */
+    async function replacementTab() {
+      const next = bench(snapshot())
+      next.version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: null, pendingVersion: '0.4.4' })
+      const view = renderTab(next.injected)
+      await act(async () => { await vi.advanceTimersByTimeAsync(100) })
+      return { next, view }
+    }
+
+    it('still reloads into the new server after the tab that confirmed the restart is swapped out', async () => {
+      const { reload, view } = await selfUpdateThenRestart(vi.fn().mockImplementation(async () => new Response('ok', { status: 200 })))
+      view.unmount()
+      await act(async () => { await vi.advanceTimersByTimeAsync(RESTART_GRACE_MS + RESTART_STABLE_MS + 2_000) })
+      expect(reload).toHaveBeenCalledTimes(1)
+    })
+
+    it('shows the restart under way in the tab that replaces it, and offers no second one', async () => {
+      const { view } = await selfUpdateThenRestart(vi.fn().mockRejectedValue(new Error('connection refused')))
+      view.unmount()
+      const { next, view: replacement } = await replacementTab()
+      expect(screen.getByText(en.restarting)).toBeTruthy()
+      expect(replacement.container.querySelector('button[data-shop-restart]')).toBeNull()
+      expect(next.restart).not.toHaveBeenCalled()
+    })
+
+    it('names the failure in the replacement tab when the new server never comes back', async () => {
+      const { view } = await selfUpdateThenRestart(vi.fn().mockRejectedValue(new Error('connection refused')))
+      view.unmount()
+      await replacementTab()
+      await act(async () => { await vi.advanceTimersByTimeAsync(RESTART_WAIT_MS + 2_000) })
+      expect(screen.getByText(en.restartFailedNotice)).toBeTruthy()
+    })
+  })
+
+  describe("a landed self-update is read from the host, not from the tab's memory", () => {
+    it('offers the restart, not the update, when the host reports an installed version it is not running', async () => {
+      // A page loaded after the update landed, or the tab the HMR swap
+      // mounted: neither saw the update run, so its own flow state is idle.
+      const { injected, version, restart } = bench(snapshot())
+      version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: null, pendingVersion: '0.4.4' })
+      const { container } = renderTab(injected)
+      await waitFor(() => expect(container.querySelector('[data-shop-self-update-done]')).toBeTruthy())
+      expect(container.querySelector('[data-shop-self-update-done]')?.textContent).toContain(en.installedRestartNotice)
+      const row = container.querySelector('[data-shop-version]')?.parentElement
+      // Offering the update again would reinstall what is already on disk.
+      expect(row?.querySelector('[data-shop-update-self]')).toBeNull()
+      fireEvent.click(row!.querySelector('[data-shop-restart]')!)
+      fireEvent.click(container.querySelector('[data-shop-restart-confirm]')!)
+      await waitFor(() => expect(restart).toHaveBeenCalledTimes(1))
+    })
+
+    it('reads a host that predates pendingVersion as an update still waiting for its restart', async () => {
+      // Only a client newer than its host meets this shape. The page is
+      // served from disk, so a newer client means a newer shop is installed
+      // than the one running: the first update from 0.8.3 or earlier, where
+      // the swap hands the new tab to the old host.
+      const { injected, version } = bench(snapshot())
+      version.mockResolvedValue({ installed: '0.4.4', latest: '0.4.4', outdated: false, restartBlocked: null })
+      const { container } = renderTab(injected)
+      await waitFor(() => expect(container.querySelector('[data-shop-self-update-done]')).toBeTruthy())
+      const row = container.querySelector('[data-shop-version]')?.parentElement
+      expect(row?.querySelector('[data-shop-restart]')).toBeTruthy()
+      expect(row?.querySelector('[data-shop-check-update]')).toBeNull()
+    })
+
+    it('keeps the plain check when the host runs what is installed', async () => {
+      const { injected } = bench(snapshot())
+      const { container } = renderTab(injected)
+      await waitFor(() => expect(container.querySelector('[data-shop-check-update]')).toBeTruthy())
+      expect(container.querySelector('[data-shop-self-update-done]')).toBeNull()
+      expect(container.querySelector('button[data-shop-restart]')).toBeNull()
+    })
+
+    it('names a blocked restart for a pending update exactly as for one it watched land', async () => {
+      const { injected, version } = bench(snapshot())
+      version.mockResolvedValue({ installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: 'systemd', pendingVersion: '0.4.4' })
+      const { container } = renderTab(injected)
+      await waitFor(() => expect(container.querySelector('[data-shop-self-update-done] [data-shop-restart-disabled]')).toBeTruthy())
+      expect(container.querySelector('[data-shop-self-update-done] [data-shop-restart-disabled]')?.textContent).toBe(en.restartBlockedSystemdNotice)
+      expect(container.querySelector('button[data-shop-restart]')).toBeNull()
+    })
   })
 
   it('renders the failed install with the host log and detail', async () => {

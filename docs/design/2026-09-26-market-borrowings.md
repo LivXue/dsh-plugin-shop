@@ -258,6 +258,12 @@ Every successful restart now reloads 8 s later than before. That is the price
 of never landing a reader on a dying boot, and the notice says a restart is in
 progress the whole time.
 
+**Follow-up (2026-09-27).** These rules are unchanged, but the monitor no
+longer lives in `RestartPanel`: a self-update rewrites the shop's own client
+bundle, dsh's client HMR swaps the tab out, and the swap's unmount stopped the
+monitor before the restart finished. It now belongs to the page
+(`client/restart-monitor.ts`; design §8, 2026-09-27 amendment).
+
 ## 4. A render error leaves a message and a way back
 
 ### 4.1 The defect

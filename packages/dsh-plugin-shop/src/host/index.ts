@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
-import { ownPeerRanges, ownVersion } from '../own-version.ts'
+import { ownPeerRanges, runningVersion } from '../own-version.ts'
 import { catalogOrigins, loadCatalog, type LoadCatalogOptions } from './catalog.ts'
 import type { CatalogResult, CatalogSnapshot } from './catalog.ts'
 import type { CatalogOrigin } from './origin.ts'
@@ -151,6 +151,9 @@ export interface ShopGatewayOptions {
   /** Test-only injection: the shop's latest-version lookup; production
    * fetches the npm packument. */
   fetchLatestVersion?: () => Promise<string | null>
+  /** Test-only injection: the version of the code this process loaded;
+   * production reads it once, when own-version.ts is first evaluated. */
+  runningVersion?: string
   /** How long the gateway waits after a successful restart response before
    * exiting the old process; test-only shortening, production uses 2s. */
   restartExitDelayMs?: number
@@ -272,6 +275,8 @@ const DESKTOP_PROFILE_DETAIL = 'dsh-plugin-shop: the desktop profile is managed 
  * could answer (`null` = no answer — advisory, never an error), and the
  * comparison verdict. */
 export interface ShopVersionResult {
+  /** The version of the code this process is running, read when it loaded.
+   * Not the file on disk now: a self-update rewrites that in place. */
   installed: string
   latest: string | null
   outdated: boolean
@@ -279,6 +284,17 @@ export interface ShopVersionResult {
    * its way. The client drops the restart offer on a reason and renders that
    * reason's own copy, keeping the pending-change notice either way. */
   restartBlocked: RestartBlockedReason | null
+  /**
+   * The version the profile has installed when it is not the one running —
+   * an update that landed and waits for a restart — or null when the running
+   * code is what is installed, or the installed copy could not be read.
+   *
+   * This host always sends it. Absent, it comes from a host older than the
+   * field, and the client reads that as a restart still pending: a client
+   * newer than its host exists only because the disk holds a newer shop than
+   * the process running (design §7.3, 2026-09-27 amendment).
+   */
+  pendingVersion?: string | null
 }
 
 /** `shop/updateStart` result (§7.3): the self-update spawn, or a typed
@@ -1717,13 +1733,39 @@ export class ShopGateway extends TypertRemoteService {
    * version (own-version.ts), not the manifest's range spec. */
   @Remote('version')
   async version(): Promise<ShopVersionResult> {
-    const installed = ownVersion()
+    const installed = this.options.runningVersion ?? runningVersion()
     const latest = await this.latestVersion()
     return {
       installed,
       latest,
       outdated: latest !== null && lt(installed, latest),
       restartBlocked: this.staticRestartBlock(),
+      pendingVersion: this.pendingVersion(installed),
+    }
+  }
+
+  /**
+   * The version of the shop the profile has installed, when it is not the
+   * one this process runs; null when they match or the copy cannot be read.
+   *
+   * Read from the profile's own copy — the directory `dsh plugin add` writes
+   * and the next boot loads — rather than from the file beside this module.
+   * For the hoisted install those are one directory, but a `link:` install
+   * runs from its link target, which an update replaces in the profile and
+   * never touches at the target, so reading beside the module would never see
+   * the update land.
+   *
+   * Unreadable is null, never a throw: the version check is advisory, and a
+   * missing field would tell the client this host predates it.
+   */
+  private pendingVersion(running: string): string | null {
+    try {
+      const manifest = JSON.parse(readFileSync(join(this.profileDirResolved(), 'node_modules', 'dsh-plugin-shop', 'package.json'), 'utf8')) as { version?: unknown }
+      return typeof manifest.version === 'string' && manifest.version !== running ? manifest.version : null
+    } catch {
+      // No discoverable profile (a bare test construction), no installed copy,
+      // or a manifest mid-write: nothing pending that this host can name.
+      return null
     }
   }
 
