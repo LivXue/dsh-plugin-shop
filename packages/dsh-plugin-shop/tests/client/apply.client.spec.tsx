@@ -6,6 +6,7 @@ import { act, cleanup, renderHook } from '@testing-library/react'
 import { apply, inject, NS, WARM_TTL_MS } from '../../src/client/index.ts'
 import { useInstallFlows } from '../../src/client/useInstall.ts'
 import type { ShopTabInjected } from '../../src/client/ShopTab.tsx'
+import { readRestartMonitor, requestRestart, resetRestartMonitor } from '../../src/client/restart-monitor.ts'
 import type { InstallArgs, ShopInstallResult } from '../../src/host/index.ts'
 
 // The published dsh client packages expose their browser bundles (a
@@ -16,7 +17,12 @@ const { Context } = loadModule<typeof import('@deepseek-ai/cordis')>('@deepseek-
 const { LocaleRuntime } = loadModule<typeof import('@deepseek-ai/dsh-client-locale/client')>('@deepseek-ai/dsh-client-locale')
 const { SlotRegistry } = loadModule<typeof import('@deepseek-ai/dsh-client-runtime/client')>('@deepseek-ai/dsh-client-runtime')
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  // Every boot registers its restart path on the page store, which outlives
+  // the test that booted it.
+  resetRestartMonitor()
+})
 
 /** One stubbed shop method: return the wire envelope of your choice. The
  * stub speaks the WIRE name `installStart` — index.ts unwraps
@@ -27,6 +33,7 @@ interface ShopStub {
   uninstallStart?: (args: { name: string }) => Promise<unknown>
   updateStart?: (args: { version: string }) => Promise<unknown>
   catalog?: () => Promise<unknown>
+  restart?: () => Promise<unknown>
 }
 
 /** Boot apply() against a stubbed remote and return the shop tab entry's
@@ -64,7 +71,7 @@ async function boot(shop: ShopStub = {}, modules?: unknown) {
     setEnabled: vi.fn(),
     installed: vi.fn(),
     uninstallStart: shop.uninstallStart ?? vi.fn(),
-    restart: vi.fn(),
+    restart: shop.restart ?? vi.fn(),
     version: vi.fn(),
     updateStart: shop.updateStart ?? vi.fn(),
   })
@@ -480,5 +487,35 @@ describe('shop client apply: the page-removed set and a bare incompatible result
     const catalog = vi.fn().mockResolvedValue({ ok: true, value: bare })
     const { injected } = await boot({ catalog }, table)
     await expect(injected.catalog(undefined)).resolves.toMatchObject({ incompatible: {} })
+  })
+})
+
+describe('shop client apply: the restart path it registers on the page', () => {
+  // A self-update's HMR swap disposes this fiber and applies a fresh module
+  // instance in its place. dsh's dispose aborts the restart call still in
+  // flight on this mount (restart-monitor.ts says how that was measured), so
+  // the page has to ask again through the replacement's mount.
+
+  it('withdraws its path before it tears the mount down, so the replacement asks before the old call is aborted', async () => {
+    const reissued = vi.fn(async () => ({ ok: true as const, value: { ok: true, logFile: '/home/you/.dsh/shop/restart.log' } }))
+    const old = await boot({ restart: () => new Promise(() => {}) })
+    void requestRestart({ reload: vi.fn(), restart: old.injected.restart })
+    expect(readRestartMonitor()).toEqual({ kind: 'requesting' })
+    const next = await boot({ restart: reissued })
+    let askedBeforeTeardown: number | undefined
+    old.disposer.mockImplementation(async () => { askedBeforeTeardown = reissued.mock.calls.length })
+    await old.ctx.fiber.dispose()
+    expect(old.disposer).toHaveBeenCalled()
+    expect(askedBeforeTeardown).toBe(1)
+    await vi.waitFor(() => { expect(readRestartMonitor()).toEqual({ kind: 'restarting', logFile: '/home/you/.dsh/shop/restart.log' }) })
+    await next.ctx.fiber.dispose()
+  })
+
+  it('carries the tab\'s restart on its own mount while it is the one registered', async () => {
+    const restart = vi.fn(async () => ({ ok: true as const, value: { ok: true } }))
+    const { ctx, injected } = await boot({ restart })
+    await expect(requestRestart({ reload: vi.fn(), restart: injected.restart })).resolves.toEqual({ kind: 'started' })
+    expect(restart).toHaveBeenCalledTimes(1)
+    await ctx.fiber.dispose()
   })
 })

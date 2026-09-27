@@ -262,7 +262,7 @@ progress the whole time.
 longer lives in `RestartPanel`: a self-update rewrites the shop's own client
 bundle, dsh's client HMR swaps the tab out, and the swap's unmount stopped the
 monitor before the restart finished. It now belongs to the page
-(`client/restart-monitor.ts`; design §8, 2026-09-27 amendment).
+(`client/restart-monitor.ts`; design §8, both 2026-09-27 amendments).
 
 ## 4. A render error leaves a message and a way back
 

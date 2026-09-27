@@ -12,10 +12,11 @@ import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { TypertRemoteNamespaceMap } from '@deepseek-ai/dsh-typert-protocol'
 import shopRemote from 'dsh-plugin-shop/remote'
-import type { ShopCatalogResult } from '../host/index.ts'
+import type { ShopCatalogResult, ShopRestartResult } from '../host/index.ts'
 import type { ShopLocaleKey } from './locales.ts'
 import { en, zh } from './locales.ts'
 import { refineAgainstModuleTable } from './module-table.ts'
+import { registerRestartCarrier } from './restart-monitor.ts'
 import { ShopTab, type ShopTabInjected } from './ShopTab.tsx'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -75,9 +76,18 @@ export async function apply(ctx: ClientContext): Promise<void> {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-plugin-shop: dictionaries')
 
   // `ctx.on('dispose')` never fires in cordis 4.0.1; an effect whose body
-  // returns the mount disposer is what actually runs it on teardown.
+  // returns the mount disposer is what actually runs it on teardown. The
+  // restart path registered below is withdrawn in that same teardown, and
+  // FIRST: disposing the mount aborts a restart call still in flight on it
+  // (dsh binds every call to its mount), and that abort has to find a
+  // request the page already knows to ask again, not one it would report as
+  // undeliverable (restart-monitor.ts).
   const dispose = await ctx.remote.$mount(shopRemote)
-  ctx.effect(() => dispose, 'dsh-plugin-shop: shop remote mount')
+  let withdrawRestart = (): void => {}
+  ctx.effect(() => () => {
+    withdrawRestart()
+    return dispose()
+  }, 'dsh-plugin-shop: shop remote mount')
 
   // The mount registered the `remote.shop` service on the gateway's fiber;
   // `ctx.remote.shop` would still refuse it here ("cannot get property
@@ -187,6 +197,12 @@ export async function apply(ctx: ClientContext): Promise<void> {
     incompatible: await refineAgainstModuleTable(result.incompatible ?? {}, ctx.get('modules') as unknown, pageRemoved),
   })
 
+  // The restart the tab is handed, registered as this instance's path to the
+  // host: when a self-update's HMR swap tears this mount down with a restart
+  // in flight, the page asks again through the instance that replaces it.
+  const restart = async (): Promise<ShopRestartResult> => unwrap(await ns.restart())
+  withdrawRestart = registerRestartCarrier(restart)
+
   const injected = (): ShopTabInjected => ({
     catalog: async args => handOver(await hostCatalog(args)),
     // Each mutator drops the stash the MOMENT it starts, not when it settles
@@ -207,7 +223,7 @@ export async function apply(ctx: ClientContext): Promise<void> {
     installedSpecs: async () => unwrap(await ns.installedSpecs()),
     uninstall: async args => { warmCatalog = null; return unwrap(await ns.uninstallStart(args)) },
     noteUninstalled: name => { pageRemoved.add(name) },
-    restart: async () => unwrap(await ns.restart()),
+    restart,
     version: async () => unwrap(await ns.version()),
     updateStart: async args => { warmCatalog = null; return unwrap(await ns.updateStart(args)) },
   })

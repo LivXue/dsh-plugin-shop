@@ -1175,6 +1175,46 @@ describe('ShopGateway.restart', () => {
     expect(exit).toHaveBeenCalledWith(0)
   })
 
+  it('answers every later press with the restart it already committed, and exits once', async () => {
+    // A page whose tab dsh's client HMR swapped out mid-request cannot tell
+    // whether that request reached the host, so it asks again through the
+    // module instance that replaced it (restart-monitor.ts). Measured
+    // 2026-09-27 on dsh 0.1.7-rc.2: the first request can commit while its
+    // answer is lost. An ask inside the exit delay then reaches this same
+    // process, and a second commit is a second exit timer and a second
+    // takeover helper racing the first for the port.
+    const exit = vi.fn<() => void>()
+    const cacheDir = mkdtempSync(join(TEMP_ROOT, 'dsh-restart-cache-'))
+    const gateway = restartingGateway({ exit, cacheDir })
+    const first = await gateway.restart()
+    expect(first).toEqual({ ok: true, logFile: join(cacheDir, 'restart.log') })
+    expect(await gateway.restart()).toEqual(first)
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(exit).toHaveBeenCalledTimes(1)
+  })
+
+  // POSIX-only for the reason the case below is: the marker is written by
+  // the process the `sh` helper exec's.
+  it.skipIf(process.platform === 'win32')('starts one takeover helper however many presses reach it', async () => {
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-restart-once-'))
+    const marker = join(dir, 'ran.log')
+    const script = join(dir, 'fake-bin.js')
+    writeFileSync(script, `require('node:fs').appendFileSync(${JSON.stringify(marker)}, 'ran\\n')\n`)
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: dir, profile: 'web',
+      exit: vi.fn(), restartExitDelayMs: 1, restartParentPid: 1_000_000_000,
+      restartArgv: ['web'], restartScript: script,
+    })
+    expect(await gateway.restart()).toMatchObject({ ok: true })
+    expect(await gateway.restart()).toMatchObject({ ok: true })
+    await vi.waitFor(() => { expect(existsSync(marker)).toBe(true) }, { timeout: 5000 })
+    // Each helper runs the fixture as soon as it starts (the parent pid is
+    // dead); a second one would have written its line well inside this.
+    await new Promise(resolve => setTimeout(resolve, 1000))
+    expect(readFileSync(marker, 'utf8')).toBe('ran\n')
+    rmSync(dir, { recursive: true, force: true })
+  })
+
   it('refuses --port 0 without exiting: the new port would strand the browser', async () => {
     const exit = vi.fn<() => void>()
     const gateway = restartingGateway({ exit, restartArgv: ['web', '--port', '0'] })

@@ -8,7 +8,7 @@ import { Component, memo, useCallback, useEffect, useId, useMemo, useRef, useSta
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, HarnessVerdict, InstallArgs, RestartBlockedReason, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
 import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, readsIncompatible, refusedPeersText, refusesInstall, rejectionCodeKey, restartBlockedNoticeKey, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
-import { readRestartMonitor, startRestartMonitor, subscribeRestartMonitor, type RestartMonitorState } from './restart-monitor.ts'
+import { readRestartMonitor, requestRestart, subscribeRestartMonitor, type RestartMonitorState } from './restart-monitor.ts'
 import { useInstallFlows, type InstallFlow } from './useInstall.ts'
 import { useUninstallFlows, type UninstallFlow } from './useUninstall.ts'
 import { useUpdateSelf } from './useUpdateSelf.ts'
@@ -791,12 +791,12 @@ function useRestartMonitor(): RestartMonitorState | null {
 /** The §8 restart flow (amendment 2026-08-27): after an install, update, or
  * uninstall reports done, this panel offers a restart of dsh. The
  * confirmation gate states the cost — the page disconnects and in-flight
- * conversations/tasks are interrupted — and on confirm the restart RPC
- * commits the two-phase handoff: the host exits, a helper re-runs dsh, and
- * the page's restart monitor (restart-monitor.ts) polls the origin after a
- * grace period, refreshing the page once the NEW server keeps answering.
- * A refused restart renders the host's published detail; a server that
- * never comes back names the manual command. */
+ * conversations/tasks are interrupted — and on confirm the page asks the host
+ * (restart-monitor.ts), which commits the two-phase handoff: the host exits,
+ * a helper re-runs dsh, and the page's monitor polls the origin after a grace
+ * period, refreshing the page once the NEW server keeps answering. A refused
+ * restart renders the host's published detail above the offer, which stays;
+ * a server that never comes back names the manual command. */
 function RestartPanel({ t, restart, reload, gate }: {
   t: ShopTabProps['t']
   restart: ShopTabInjected['restart']
@@ -816,34 +816,27 @@ function RestartPanel({ t, restart, reload, gate }: {
     if (gate === undefined) setOwnGateOpen(open)
     else if (!open) gate.close()
   }
-  // What THIS press was told when the host refused it or the request never
-  // arrived. A restart that did start belongs to the page, not to this panel
-  // (restart-monitor.ts): a self-update's HMR swap unmounts the panel that
-  // confirmed it, so every panel renders the page's restart instead.
+  // What THIS panel's last press was told when the host refused it or the
+  // request never arrived. The request itself belongs to the page, not to
+  // this panel (restart-monitor.ts): a self-update's HMR swap unmounts the
+  // panel that confirmed it, so every panel renders the page's restart.
   const [refusal, setRefusal] = useState<string | null>(null)
   const monitor = useRestartMonitor()
 
   const onConfirm = async (): Promise<void> => {
     setGateOpen(false)
-    try {
-      const result = await restart()
-      if (!result.ok) {
-        setRefusal(result.detail)
-        return
-      }
-      // `logFile` is where the new process writes, as the host reported it; a
-      // host older than that field sends none, and the failure notice then
-      // keeps its generic wording.
-      startRestartMonitor({ reload, ...(typeof result.logFile === 'string' ? { logFile: result.logFile } : {}) })
-    } catch {
-      // Transport failure: the request never reached the host, and the wire
-      // detail is private (hosts and ports) — the localized line is its
-      // readable face.
-      setRefusal(t('restartTransportFailed'))
-    }
+    setRefusal(null)
+    const outcome = await requestRestart({ reload, restart })
+    if (outcome.kind === 'refused') setRefusal(outcome.detail)
+    // The request never reached a host that could answer, and the wire
+    // detail is private (hosts and ports): the localized line is its face.
+    else if (outcome.kind === 'unreachable') setRefusal(t('restartTransportFailed'))
   }
 
-  if (monitor?.kind === 'restarting') {
+  // Asked for and not yet answered reads as under way too: re-offering the
+  // button meanwhile invited a second press into a process that may already
+  // be exiting.
+  if (monitor?.kind === 'requesting' || monitor?.kind === 'restarting') {
     return <p className={css.notice} data-shop-restarting>{t('restarting')}</p>
   }
   if (monitor?.kind === 'failed') {
@@ -852,9 +845,6 @@ function RestartPanel({ t, restart, reload, gate }: {
         {monitor.logFile === undefined ? t('restartFailedNotice') : t('restartFailedLogNotice', { log: monitor.logFile })}
       </p>
     )
-  }
-  if (refusal !== null) {
-    return <p className={css.failedDetail} data-shop-restart-error>{refusal}</p>
   }
   if (gateOpen) {
     return (
@@ -877,18 +867,26 @@ function RestartPanel({ t, restart, reload, gate }: {
       </div>
     )
   }
+  // A refusal answers one press, not every press — the likeliest, an install
+  // still running, asks to be tried again — so it sits above the offer rather
+  // than in its place. In its place, it left nothing to press: the row's
+  // Restart opened a gate that rendered behind it, and a card lost its button.
+  const refused = refusal === null ? null : <p className={css.failedDetail} data-shop-restart-error>{refusal}</p>
   // An external trigger owns the button; this panel is then only the gate and
-  // the outcome, and renders nothing while idle.
-  if (gate !== undefined) return null
+  // the outcome, and renders nothing more while idle.
+  if (gate !== undefined) return refused
   return (
-    <button
-      type="button"
-      className={css.restartButton}
-      data-shop-restart
-      onClick={() => setGateOpen(true)}
-    >
-      {t('restart')}
-    </button>
+    <>
+      {refused}
+      <button
+        type="button"
+        className={css.restartButton}
+        data-shop-restart
+        onClick={() => setGateOpen(true)}
+      >
+        {t('restart')}
+      </button>
+    </>
   )
 }
 
@@ -1782,7 +1780,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
                 * always ends in a restart; the button carries it, and the gate
                 * for it still renders in the panel below. While the update
                 * runs, Check returns and the progress panel is the
-                * affordance. Once the page has committed a restart, the row
+                * affordance. Once the page has asked for a restart, the row
                 * offers nothing: the panel below says it is under way or that
                 * it failed, a second press would only restart the process
                 * that is already going, and after a failure every offer
