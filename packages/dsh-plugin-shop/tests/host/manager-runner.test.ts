@@ -133,4 +133,58 @@ describe('startManagerOperation', () => {
     expect(status.activation).toBeUndefined()
     expect(status.detail).toContain('"dup"')
   })
+
+  it('drops a download-phase log line that arrives after the record has settled', async () => {
+    // Built outside the queued task itself so `release` is assigned the
+    // moment this promise is constructed, not on the microtask that later
+    // runs the task: this profile's earlier command is still "running" until
+    // release() is called, whenever the test calls it.
+    let release!: () => void
+    const blocked = new Promise<void>(resolve => { release = resolve })
+    inProfileQueue('runner-11', () => blocked)
+    // The download phase's pump reports through the same `log` the runner
+    // wires to `append`, not through ManagerLogs, so it can call back long
+    // after the record itself is done.
+    let capturedLog!: (line: string) => void
+    const prefetcher: Prefetcher = {
+      request: args => { capturedLog = args.log!; return { started: true } },
+      release: () => {},
+    }
+    const running = startManagerOperation({
+      profile: 'runner-11', requestId: 'r11', mechanism: 'install x@1.0.0', logs: new ManagerLogs(),
+      run: async () => ({}), outcome: () => done, prefetcher, spec: 'x@1.0.0',
+    })
+    release()
+    await running.finished
+    expect(running.status().log).toEqual([`${MECHANISM_PREFIX} install x@1.0.0`])
+    capturedLog('late pump line')
+    expect(running.status().log).toEqual([`${MECHANISM_PREFIX} install x@1.0.0`])
+  })
+
+  it('flushes a final streamed line that never got its own newline', async () => {
+    const logs = new ManagerLogs()
+    const running = startManagerOperation({
+      profile: 'runner-12', requestId: 'r12', mechanism: 'install dsh-a@1.0.0', logs,
+      // No trailing newline: the line sits in the assembler until flush().
+      run: async requestId => { logs.chunk(requestId, '+ dsh-a 1.0.0'); return {} },
+      outcome: () => done,
+    })
+    const status = await running.finished
+    expect(status.log).toEqual([`${MECHANISM_PREFIX} install dsh-a@1.0.0`, '+ dsh-a 1.0.0'])
+  })
+
+  it('does not replay the answer output for a line dsh already streamed', async () => {
+    const logs = new ManagerLogs()
+    const running = startManagerOperation({
+      profile: 'runner-13', requestId: 'r13', mechanism: 'install dsh-a@1.0.0', logs,
+      // The streamed chunk and the settled answer carry the identical line.
+      run: async requestId => {
+        logs.chunk(requestId, '+ dsh-a 1.0.0\n')
+        return { packageResult: { output: '+ dsh-a 1.0.0\n' } }
+      },
+      outcome: () => done,
+    })
+    const status = await running.finished
+    expect(status.log).toEqual([`${MECHANISM_PREFIX} install dsh-a@1.0.0`, '+ dsh-a 1.0.0'])
+  })
 })
