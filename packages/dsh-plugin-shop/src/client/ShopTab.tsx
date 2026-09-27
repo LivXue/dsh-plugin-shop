@@ -4,10 +4,11 @@
  * details — never markup, so hostile npm descriptions cannot inject (spec
  * §11.3.4): no render path here may ever use dangerouslySetInnerHTML. */
 
-import { Component, memo, useCallback, useEffect, useId, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from 'react'
+import { Component, memo, useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ErrorInfo, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, HarnessVerdict, InstallArgs, RestartBlockedReason, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
-import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, INSTALL_POLL_MS, RESTART_GRACE_MS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, readsIncompatible, refusedPeersText, refusesInstall, rejectionCodeKey, restartBlockedNoticeKey, restartMonitorVerdict, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
+import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, readsIncompatible, refusedPeersText, refusesInstall, rejectionCodeKey, restartBlockedNoticeKey, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
+import { readRestartMonitor, startRestartMonitor, subscribeRestartMonitor, type RestartMonitorState } from './restart-monitor.ts'
 import { useInstallFlows, type InstallFlow } from './useInstall.ts'
 import { useUninstallFlows, type UninstallFlow } from './useUninstall.ts'
 import { useUpdateSelf } from './useUpdateSelf.ts'
@@ -780,15 +781,22 @@ function UninstallPanel({ name, t, restart, restartBlocked, reload, flow }: {
   )
 }
 
+/** The page's restart, re-rendering whenever it changes state. Shared by
+ * every restart offer and by the version row, in this tab and in whatever
+ * tab an HMR swap mounts in its place. */
+function useRestartMonitor(): RestartMonitorState | null {
+  return useSyncExternalStore(subscribeRestartMonitor, readRestartMonitor)
+}
+
 /** The §8 restart flow (amendment 2026-08-27): after an install, update, or
  * uninstall reports done, this panel offers a restart of dsh. The
  * confirmation gate states the cost — the page disconnects and in-flight
  * conversations/tasks are interrupted — and on confirm the restart RPC
  * commits the two-phase handoff: the host exits, a helper re-runs dsh, and
- * this panel polls the origin after a grace period, refreshing the page
- * once the NEW server answers. A refused restart renders the host's
- * published detail; a server that never comes back names the manual
- * command. */
+ * the page's restart monitor (restart-monitor.ts) polls the origin after a
+ * grace period, refreshing the page once the NEW server keeps answering.
+ * A refused restart renders the host's published detail; a server that
+ * never comes back names the manual command. */
 function RestartPanel({ t, restart, reload, gate }: {
   t: ShopTabProps['t']
   restart: ShopTabInjected['restart']
@@ -808,81 +816,45 @@ function RestartPanel({ t, restart, reload, gate }: {
     if (gate === undefined) setOwnGateOpen(open)
     else if (!open) gate.close()
   }
-  // `logFile` is where the new process writes, as the host reported it; a
-  // host older than that field sends none, and the failure notice then keeps
-  // its generic wording.
-  const [state, setState] = useState<{ kind: 'idle' } | { kind: 'restarting'; logFile?: string } | { kind: 'failed'; detail: string }>({ kind: 'idle' })
+  // What THIS press was told when the host refused it or the request never
+  // arrived. A restart that did start belongs to the page, not to this panel
+  // (restart-monitor.ts): a self-update's HMR swap unmounts the panel that
+  // confirmed it, so every panel renders the page's restart instead.
+  const [refusal, setRefusal] = useState<string | null>(null)
+  const monitor = useRestartMonitor()
 
   const onConfirm = async (): Promise<void> => {
     setGateOpen(false)
     try {
       const result = await restart()
       if (!result.ok) {
-        setState({ kind: 'failed', detail: result.detail })
+        setRefusal(result.detail)
         return
       }
-      setState({ kind: 'restarting', ...(typeof result.logFile === 'string' ? { logFile: result.logFile } : {}) })
+      // `logFile` is where the new process writes, as the host reported it; a
+      // host older than that field sends none, and the failure notice then
+      // keeps its generic wording.
+      startRestartMonitor({ reload, ...(typeof result.logFile === 'string' ? { logFile: result.logFile } : {}) })
     } catch {
       // Transport failure: the request never reached the host, and the wire
       // detail is private (hosts and ports) — the localized line is its
       // readable face.
-      setState({ kind: 'failed', detail: t('restartTransportFailed') })
+      setRefusal(t('restartTransportFailed'))
     }
   }
 
-  // The origin monitor: while restarting, probe the current URL once the
-  // grace period is over (the host exits within it, so an answer is the NEW
-  // server), and reload into it only after it has KEPT answering for the
-  // stable window. A boot that is about to fail can bind the port and answer
-  // before its plugin tree is audited and it exits; reloading on that one
-  // answer left the reader on a blank page instead of the notice naming the
-  // log (design 2026-09-26-market-borrowings §3). `restartMonitorVerdict`
-  // decides; this effect only probes. Probes never overlap: each is scheduled
-  // one poll interval after the previous one settled.
-  useEffect(() => {
-    if (state.kind !== 'restarting') return
-    const { logFile } = state
-    const started = Date.now()
-    let stableSince: number | null = null
-    let stopped = false
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const probe = async (): Promise<void> => {
-      if (Date.now() - started >= RESTART_GRACE_MS) {
-        let up = false
-        try {
-          // A fetch resolves on ANY status, and a proxy's 502 is not dsh
-          // answering: only a 2xx counts.
-          up = (await fetch(window.location.href, { cache: 'no-store' })).ok
-        } catch {
-          // Refused or reset: the new server is not up — yet, or any more.
-        }
-        if (stopped) return
-        const elapsed = Date.now() - started
-        stableSince = up ? (stableSince ?? elapsed) : null
-        const verdict = restartMonitorVerdict({ elapsedMs: elapsed, stableSinceMs: stableSince })
-        if (verdict === 'reload') {
-          reload()
-          return
-        }
-        if (verdict === 'failed') {
-          setState({ kind: 'failed', detail: logFile === undefined ? t('restartFailedNotice') : t('restartFailedLogNotice', { log: logFile }) })
-          return
-        }
-      }
-      timer = setTimeout(() => { void probe() }, INSTALL_POLL_MS)
-    }
-    timer = setTimeout(() => { void probe() }, INSTALL_POLL_MS)
-    return () => {
-      stopped = true
-      if (timer !== undefined) clearTimeout(timer)
-    }
-  }, [state, t, reload])
-
-  if (state.kind === 'restarting') {
+  if (monitor?.kind === 'restarting') {
     return <p className={css.notice} data-shop-restarting>{t('restarting')}</p>
   }
-  if (state.kind === 'failed') {
-    return <p className={css.failedDetail} data-shop-restart-error>{state.detail}</p>
+  if (monitor?.kind === 'failed') {
+    return (
+      <p className={css.failedDetail} data-shop-restart-error>
+        {monitor.logFile === undefined ? t('restartFailedNotice') : t('restartFailedLogNotice', { log: monitor.logFile })}
+      </p>
+    )
+  }
+  if (refusal !== null) {
+    return <p className={css.failedDetail} data-shop-restart-error>{refusal}</p>
   }
   if (gateOpen) {
     return (
@@ -1244,6 +1216,18 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
   // per-plugin panels keep RestartPanel's own state.
   const [selfRestartGate, setSelfRestartGate] = useState(false)
   const selfUpdate = useUpdateSelf(updateStart, installStatus)
+  const restartMonitor = useRestartMonitor()
+  // A self-update that landed and waits for its restart. This tab's own flow
+  // knows only an update it watched finish, and the tab that watched one is
+  // exactly the tab dsh's client HMR throws away: the update rewrites this
+  // package's client bundle, so the swap mounts a fresh tab whose flow is
+  // idle — as is every tab of a page loaded after the update. The host's
+  // `pendingVersion` is the truth that outlives both. A host older than the
+  // field sends none, and that is read as pending too: a client newer than
+  // its host exists only because the disk holds a newer shop than the
+  // process running. A flow that is running or failed speaks for itself.
+  const hostPending = selfVersion !== null && selfVersion.pendingVersion !== null
+  const selfPending = selfUpdate.view.kind === 'done' || (selfUpdate.view.kind === 'idle' && hostPending)
   const [request, setRequest] = useState<LoadRequest>({ kind: 'initial' })
   // Bumped only by an explicit Retry/Refresh click, never by a reverdict —
   // see the version-check effect below, which keys on this instead of
@@ -1798,8 +1782,14 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
                 * always ends in a restart; the button carries it, and the gate
                 * for it still renders in the panel below. While the update
                 * runs, Check returns and the progress panel is the
-                * affordance. */}
-              {selfUpdate.view.kind === 'done' && restartBlocked === null ? (
+                * affordance. Once the page has committed a restart, the row
+                * offers nothing: the panel below says it is under way or that
+                * it failed, a second press would only restart the process
+                * that is already going, and after a failure every offer
+                * renders that notice ahead of its gate, so a Restart here
+                * would open nothing. An update that landed is never offered
+                * again — Update would reinstall what is on disk. */}
+              {restartMonitor !== null ? null : selfPending && restartBlocked === null ? (
                 <button
                   type="button"
                   className={css.restartSelfButton}
@@ -1808,7 +1798,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
                 >
                   {t('restart')}
                 </button>
-              ) : selfVersion.outdated && selfVersion.latest !== null && selfUpdate.view.kind === 'idle' ? (
+              ) : !selfPending && selfVersion.outdated && selfVersion.latest !== null && selfUpdate.view.kind === 'idle' ? (
                 <button
                   type="button"
                   className={css.updateSelfButton}
@@ -1872,7 +1862,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
           )}
         </div>
       )}
-      {selfUpdate.view.kind === 'done' && (
+      {selfPending && (
         <div className={css.selfUpdatePanel} data-shop-self-update-done>
           <div className={css.installedActions}>
             <p className={css.notice}>{t('installedRestartNotice')}</p>

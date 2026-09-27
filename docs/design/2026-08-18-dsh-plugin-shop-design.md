@@ -435,8 +435,8 @@ Implementation decisions:
 | `shop/installStatus` | `{ installId }` | `{ state, log[], activation?, restartReason? }` |
 | `shop/setEnabled` | `{ name, enabled }` | `{ ok, activation? }` |
 | `shop/uninstallStart` | `{ name }` | `{ installId }` |
-| `shop/restart` | none | `{ ok }` |
-| `shop/version` | none | `{ installed, latest, outdated, restartBlocked }` |
+| `shop/restart` | none | `{ ok, logFile? }` |
+| `shop/version` | none | `{ installed, latest, outdated, restartBlocked, pendingVersion }` |
 | `shop/updateStart` | `{ version }` | `{ installId }` |
 | `shop/installed` | none | `{ name, installed, latest, outdated }[]` |
 | `shop/installedSpecs` | none | `Record<name, spec>` or `null` |
@@ -776,6 +776,14 @@ is a wire field both halves read, and because the alternatives — a second
 field, or a source-dependent heading — buy a precision the reader cannot act
 on.
 
+**Amendment (2026-09-27): `shop/version` reports the version this process loaded, and `pendingVersion` names an update that landed but is not running yet.** The self-update amendment above shows "its own running version ... (read from the shipped package.json)". Those stopped being the same thing at the first update. A profile installs hoisted, so `dsh plugin add dsh-plugin-shop@<v>` rewrites package.json in the very directory the running code was loaded from, and every read after that named the version the NEXT boot will run. The row then showed the new version over old code (measured 2026-09-27 on dsh 0.1.5-rc.3, updating 0.8.2 to 0.8.3).
+
+- **`installed`** is now read once, when `own-version.ts` is first evaluated, which is at boot.
+- **`pendingVersion`** is the version in the profile's own installed copy (`node_modules/dsh-plugin-shop/package.json`) when it differs from `installed`. It is `null` when the two match, or when the copy cannot be read. That copy is the directory `dsh plugin add` writes and the next boot loads. A `link:` install runs from somewhere else, so reading beside the running module would never see an update land there.
+- **The client offers the restart from `pendingVersion`**, not only from a self-update it watched finish. The tab that watched one is the tab that §8's 2026-09-27 amendment says dsh discards.
+- **An absent field means an older host.** This host always sends it. The client reads a missing field as a restart still pending: the client is served from disk, so a client newer than its host exists only because the disk holds a newer shop than the running process. That inference is what gives the first update from 0.8.3 or earlier a restart offer after the swap.
+- **`outdated` still compares `installed` with `latest`.** When an update is pending, the row offers Restart instead of Update, since Update would reinstall what is already on disk.
+
 ## 8. When changes take effect
 
 | Operation | Restart required | Evidence |
@@ -798,6 +806,20 @@ The earlier ruling prescribed an opt-in flag, default off, loopback only. The au
 **Amendment (2026-09-26, design: 2026-09-26-market-borrowings.md §1): an update no longer goes live without a restart, and neither does a reinstall of a package this process already imported.** The 2026-08-31 exception above covered updates, and for them it could not hold: a profile installs hoisted, so a package's new version sits at its old file URL; the hot tree imports through Node's own ESM loader, which caches a module by URL; and the harness's HMR evicts nothing under `node_modules/`. The swap's mount therefore re-ran the OLD module under the new version's name while the shop reported `live` — measured 2026-09-26 in `web-full-flow.e2e.ts` on dsh 0.1.5-rc.3, with a fixture whose activations record the version held in their own module scope (disk 2.0.0, the one activation the update caused reporting 1.0.0). Such an install now reports `restart` with the `already-loaded` reason and leaves the running instance untouched; a fresh install of a package this process never imported still hot-mounts exactly as before. The wire contract grows by that one `restartReason` member (2026-09-11-activation-model.md §6).
 
 **Amendment (2026-09-26, design: 2026-09-26-market-borrowings.md §3): the browser trusts the new server only once it keeps answering, and the failure notice names the actual log.** The 2026-08-27 handoff refreshed on the first answer, and a boot that is about to fail can give one: the Loader mounts entries concurrently, so the webserver entry binds and serves while a sibling plugin is still loading, and the audit of the settled tree (`assertEntriesActivated`) then fails the process. The page reloaded into a process gone a moment later — the blank tab of the 2026-09-15 incident, in place of the notice this section promises. The monitor now counts only a 2xx answer, reloads once answers have run unbroken for 8 s (`RESTART_STABLE_MS`), and reports failure when no such run is under way 30 s in, so the longest wait is 38 s. `shop/restart` answers `{ ok: true, logFile }` with the path the new process writes to, and the failure notice names it; a host older than the field sends none, and the notice keeps its generic wording.
+
+**Amendment (2026-09-27): the restart monitor belongs to the page, because a self-update replaces the tab that held it.** The web bundle mounts `@deepseek-ai/dsh-client-hmr` unconditionally. Every 500 ms it checks the bundle file of each client graph row, and when one changes it pushes a `rebuilt` frame over the `/plugins/events` SSE route. The browser half then disposes that entry's fiber and re-applies a freshly imported module. A self-update rewrites the shop's own `lib/client.js`, so dsh swaps the shop's own tab out while the tab is still reporting the update.
+
+The monitor that §8 and its 2026-09-26 amendment describe lived in the tab's `RestartPanel` effect, so the swap's unmount stopped it. After the restart nothing reloaded the page. It kept the old process's answers while dsh's socket quietly reconnected to the new one. Measured 2026-09-27 on dsh 0.1.5-rc.3, updating 0.8.2 to 0.8.3:
+
+- The swap re-fetched `dsh-plugin-shop/client.js` half a second after the restart was confirmed, and the page was not reloaded within 120 s.
+- When the swap landed before the flow reported done, no restart was offered at all.
+- With `/plugins/events` blocked in the browser, the same flow reloaded within one probe of the new server binding. That isolates the swap as the cause.
+
+**The fix.** The monitor's state now lives on `globalThis` under a registry symbol, the one thing a swapped-in module instance shares with the one it replaced. Its probe loop runs on timers that no fiber owns. Every restart offer renders that state, so the replacement tab shows the restart in progress instead of offering another one, and names the failure if the server never comes back. The timing rules of the 2026-09-26 amendment are unchanged.
+
+**The first update from 0.8.3 or earlier is only partly covered.** The fix lives in the tab that confirms the restart, so it takes effect for updates made from a version that carries it. In the first update from 0.8.3 or earlier, the old monitor still dies with the old tab:
+- The new tab offers the restart through §7.3's `pendingVersion` inference.
+- If the restart was confirmed in the old tab before the swap, the page may still need one manual reload.
 
 ## 9. Security model
 
@@ -851,6 +873,7 @@ Wording such as "this plugin comes from the community, please install with care"
 | Profile does not exist | `dsh plugin` initializes it | Nothing to handle |
 | Concurrent installs into one profile | The later caller waits | Per-profile mutex |
 | Restart refused (Windows, a systemd unit, or `--port 0`) | `shop/version` reports `restartBlocked: <reason>` and the client hides the restart offer, naming THAT reason's manual remedy; `shop/restart` returns the typed refusal | Refuse before anything is torn down; `allowRestart: true` in the shop row config overrides the systemd reason only |
+| A self-update swaps the shop's own tab out (dsh client HMR rebuilds the rewritten bundle mid-update) | The replacement tab offers the restart from `pendingVersion`, or shows the restart already under way; the page still reloads into the new server | The restart monitor belongs to the page, not to the tab (§8, 2026-09-27 amendment) |
 
 ## 11. Testing and acceptance
 

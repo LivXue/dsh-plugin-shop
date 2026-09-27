@@ -1451,6 +1451,61 @@ describe('ShopGateway.version', () => {
     expect(result.latest).toBeNull()
     expect(result.outdated).toBe(false)
   })
+
+  /** A profile whose installed shop copy declares `installedCopy`, or holds
+   * no copy at all when it is null. */
+  const profileWithShopCopy = (installedCopy: string | null): string => {
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-version-copy-'))
+    if (installedCopy !== null) {
+      const copy = join(profileDir, 'node_modules', 'dsh-plugin-shop')
+      mkdirSync(copy, { recursive: true })
+      writeFileSync(join(copy, 'package.json'), JSON.stringify({ name: 'dsh-plugin-shop', version: installedCopy }))
+    }
+    return profileDir
+  }
+
+  it('reports the version this process loaded, and names the newer copy an update wrote under it', async () => {
+    // A profile installs hoisted, so a self-update rewrites the running
+    // package's own directory in place. Re-reading package.json there is
+    // what made the row claim the new version while the old code still ran,
+    // and left the client no way to tell a landed update from a finished one.
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web',
+      profileDir: profileWithShopCopy('1.1.0'), runningVersion: '1.0.0',
+      fetchLatestVersion: async () => '1.1.0',
+    })
+    const result = await gateway.version()
+    expect(result.installed).toBe('1.0.0')
+    expect(result.pendingVersion).toBe('1.1.0')
+    expect(result.outdated).toBe(true)
+  })
+
+  it('reports nothing pending when the installed copy is the version running', async () => {
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web',
+      profileDir: profileWithShopCopy('1.0.0'), runningVersion: '1.0.0',
+      fetchLatestVersion: async () => '1.0.0',
+    })
+    expect((await gateway.version()).pendingVersion).toBeNull()
+  })
+
+  it('reports nothing pending, rather than failing the check, when the installed copy cannot be read', async () => {
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web',
+      profileDir: profileWithShopCopy(null), runningVersion: '1.0.0',
+      fetchLatestVersion: async () => '1.0.0',
+    })
+    expect((await gateway.version()).pendingVersion).toBeNull()
+  })
+
+  it('sends pendingVersion even when no profile can be found, so its absence always means an older host', async () => {
+    // The client reads a MISSING field as a host older than it, and so as an
+    // update still waiting for its restart. That inference is only sound if
+    // this host never omits the field, including on the path where the
+    // profile lookup itself fails.
+    const result = await versionGateway('9.9.9').version()
+    expect(result).toHaveProperty('pendingVersion', null)
+  })
 })
 
 describe('ShopGateway.updateStart', () => {
@@ -3161,7 +3216,11 @@ describe('restart while an install is running (F-5)', () => {
     const gateway = new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: mkdtempSync(join(TEMP_ROOT, 'dsh-restart-idle-cache-')),
       profile: 'web', profileDir, dshBin: quick, exit, restartArgv: ['web'],
-      restartExitDelayMs: 1, restartParentPid: 1,
+      // A pid that cannot exist, like every sibling case. Pid 1 always exists,
+      // and `kill -0 1` succeeds for root, so the detached helper polled it
+      // forever: each run of this file left one `sh` forking `sleep 0.2` five
+      // times a second, and 351 had piled up on one machine by 2026-09-27.
+      restartExitDelayMs: 1, restartParentPid: 1_000_000_000,
       // Pinned like the guard cases above it: this one is about the INSTALL
       // gate releasing, and inheriting the host platform would have Windows'
       // restart refusal answer first and hide whether the gate released at

@@ -1,4 +1,4 @@
-/** `ownVersion()` is what the self-update check compares against
+/** `runningVersion()` is what the self-update check compares against
  * `dist-tags.latest` and what the client prints in the version row. It reads
  * `../package.json` relative to its OWN module url, and its correctness rests
  * on a layout claim in its header comment: the source tree and the bundled
@@ -8,10 +8,10 @@
  * kind.
  */
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { ownVersion } from '../../src/own-version.ts'
+import { runningVersion, versionAtLoad } from '../../src/own-version.ts'
 
 const packageRoot = join(import.meta.dirname, '..', '..')
 
@@ -19,13 +19,13 @@ function manifest(): { version: string; main: string } {
   return JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8')) as { version: string; main: string }
 }
 
-describe('ownVersion', () => {
+describe('runningVersion', () => {
   it('reports the version in the package that ships it', () => {
-    expect(ownVersion()).toBe(manifest().version)
+    expect(runningVersion()).toBe(manifest().version)
     // A semver, not a path or an empty string: the self-update comparison
     // feeds this to a semver compare, and a non-version silently disables the
     // check rather than failing it.
-    expect(ownVersion()).toMatch(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)
+    expect(runningVersion()).toMatch(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)
   })
 
   it('is one directory below the package root in both trees the module claims', () => {
@@ -39,5 +39,27 @@ describe('ownVersion', () => {
     expect(existsSync(join(packageRoot, 'src', 'own-version.ts'))).toBe(true)
     expect(existsSync(join(packageRoot, 'lib', 'index.js')), 'run tsdown: lib/ is a build output').toBe(true)
     expect(manifest().main).toBe('lib/index.js')
+  })
+})
+
+describe('versionAtLoad', () => {
+  it('keeps the version it read first, whatever the file says afterwards', () => {
+    // A profile installs hoisted: a self-update rewrites package.json under
+    // the RUNNING code. The version of that code is the one read before the
+    // rewrite, so a later read must not replace it.
+    const read = vi.fn<() => string>().mockReturnValueOnce('0.8.3').mockReturnValue('0.8.4')
+    const running = versionAtLoad(read)
+    expect(running()).toBe('0.8.3')
+    expect(running()).toBe('0.8.3')
+    expect(read).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls back to reading on demand when the first read failed', () => {
+    // A manifest unreadable at load must not take the module import down with
+    // it; the version row then answers from the file, as it always did.
+    const read = vi.fn<() => string>()
+      .mockImplementationOnce(() => { throw new Error('EACCES') })
+      .mockReturnValue('0.8.4')
+    expect(versionAtLoad(read)()).toBe('0.8.4')
   })
 })
