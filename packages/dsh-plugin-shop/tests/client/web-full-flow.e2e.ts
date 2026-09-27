@@ -160,6 +160,7 @@ import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { chromium, type Browser, type Locator, type Page } from 'playwright'
 import { gte } from 'semver'
+import { isSeq, parseDocument } from 'yaml'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { dshCommand, resolveDshScript } from '../../src/host/dsh-cli.ts'
 import { startInstall } from '../../src/host/executor.ts'
@@ -299,6 +300,36 @@ function seedOnboarding(home: string): void {
   writeFileSync(credentials,
     'version: 1\nrefs:\n  DEEPSEEK_API_KEY: sk-e2e-placeholder-not-a-key\n', { mode: 0o600 })
   chmodSync(credentials, 0o600)
+}
+
+/**
+ * Keep dsh 0.1.7 from opening its first-use workspace, on every platform.
+ *
+ * 0.1.7 creates `<Documents>/deepseek-harness/default-workspace` on first
+ * load, and from then on every page load that finds a workspace connects a
+ * blank session in it and navigates there (dsh-client-ui-workspace:
+ * `replaceMain` after `layout.beginNavigation()`). That navigation closes a
+ * Settings dialog opened a moment before it lands. It is how the first
+ * Windows 0.1.7-rc.2 runs failed, twice, in two different cases: Windows
+ * always answers a Documents folder, while a Linux runner's `xdg-user-dir`
+ * answers none, so creation failed there, nothing navigated, and the same
+ * cases passed.
+ *
+ * Pointing the workspace controller's `documentsDirectory` at a regular file
+ * makes creation fail everywhere: the state every Linux run and every local
+ * run has measured, now on Windows too. The path is absolute, as the
+ * controller's constructor requires. The row goes into the profile's user
+ * layer, which dsh wrote when the pre-boot installs created the profile.
+ */
+function seedNoDefaultWorkspace(home: string): void {
+  const blocker = join(home, 'documents-is-a-file')
+  writeFileSync(blocker, 'A file, so the first-use workspace cannot be created under it (seedNoDefaultWorkspace).\n')
+  const layer = join(home, 'profiles', 'web', 'cordis.patch.yml')
+  const document = parseDocument(readFileSync(layer, 'utf8'))
+  if (!isSeq(document.contents)) throw new Error(`${layer} is not a YAML list of patch rows`)
+  document.contents.flow = false
+  document.add({ id: 'workspace-controller', config: { documentsDirectory: blocker } })
+  writeFileSync(layer, document.toString({ lineWidth: 0 }))
 }
 
 /**
@@ -826,6 +857,8 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       expect(launchedDshVersion, `this leg installed dsh ${expectedDsh}, but the dsh on PATH answers ${launchedDshVersion}`)
         .toBe(expectedDsh)
     }
+    // Only 0.1.7 has the first-use workspace (see seedNoDefaultWorkspace).
+    if (gte(launchedDshVersion, '0.1.7-rc.1')) seedNoDefaultWorkspace(tmpHome)
     dshProcess = spawn(web.command, web.args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {
