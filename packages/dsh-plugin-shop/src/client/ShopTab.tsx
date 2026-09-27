@@ -1782,12 +1782,14 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
                 * always ends in a restart; the button carries it, and the gate
                 * for it still renders in the panel below. While the update
                 * runs, Check returns and the progress panel is the
-                * affordance. While the restart itself runs, the row offers
-                * nothing: the panel below says so, and a second press would
-                * only restart the process that is already going. An update
-                * that landed is never offered again — Update would reinstall
-                * what is on disk. */}
-              {restartMonitor?.kind === 'restarting' ? null : selfPending && restartBlocked === null ? (
+                * affordance. Once the page has committed a restart, the row
+                * offers nothing: the panel below says it is under way or that
+                * it failed, a second press would only restart the process
+                * that is already going, and after a failure every offer
+                * renders that notice ahead of its gate, so a Restart here
+                * would open nothing. An update that landed is never offered
+                * again — Update would reinstall what is on disk. */}
+              {restartMonitor !== null ? null : selfPending && restartBlocked === null ? (
                 <button
                   type="button"
                   className={css.restartSelfButton}

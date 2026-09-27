@@ -1296,9 +1296,12 @@ describe('ShopTab', () => {
     it('names the failure in the replacement tab when the new server never comes back', async () => {
       const { view } = await selfUpdateThenRestart(vi.fn().mockRejectedValue(new Error('connection refused')))
       view.unmount()
-      await replacementTab()
+      const { view: replacement } = await replacementTab()
       await act(async () => { await vi.advanceTimersByTimeAsync(RESTART_WAIT_MS + 2_000) })
       expect(screen.getByText(en.restartFailedNotice)).toBeTruthy()
+      // Every offer renders the page's failure ahead of its gate, so a Restart
+      // left in the row would open nothing when pressed.
+      expect(replacement.container.querySelector('button[data-shop-restart]')).toBeNull()
     })
   })
 
