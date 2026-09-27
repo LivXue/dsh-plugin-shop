@@ -69,18 +69,22 @@
  * playwright chromium installed (CI installs both; see .github/workflows).
  *
  * plugin.yml runs this on BOTH ubuntu-latest and windows-latest (its `test`
- * job is a matrix over the two), with `DSH_SHOP_REQUIRE_E2E` set on each, so
+ * job is a matrix over the two platforms and over the harnesses named below),
+ * with `DSH_SHOP_REQUIRE_E2E` set on each, so
  * every platform branch below is executed by CI rather than by hand. It was
  * not always: until 2026-09-14 the only automated leg was ubuntu, the win32
  * arms were asserted by nothing, and the divergence they now pin was found
  * as an opaque 10s timeout on a host behaving exactly as designed.
  *
- * Written against harness 0.1.5-rc.3 — the version `.github/workflows/plugin.yml`
- * installs globally, and therefore the one every selector below was measured
- * on. The two are held together mechanically: `repo-guards.test.ts` fails the
- * build if this line and that pin name different versions — the pin has moved
+ * Written against harnesses 0.1.5-rc.3 and 0.1.7-rc.2: the versions
+ * `.github/workflows/plugin.yml` installs globally, one per leg of its `dsh`
+ * matrix, and therefore the ones every selector below was measured on. The
+ * two are held together mechanically: `repo-guards.test.ts` fails the build
+ * if this line and that matrix name different versions. The pin has moved
  * twice already, and both times the mismatch surfaced as an opaque timeout
- * rather than as a diff someone could read.
+ * rather than as a diff someone could read. Each leg also names its harness
+ * in DSH_SHOP_EXPECT_DSH, and the boot below fails when the `dsh` it launched
+ * answers any other `--version`.
  *
  * Pinned selectors (all verified against the live app, zh-CN):
  * - the app root frame: `[class*="frame"]` — the frame class is CSS-module
@@ -149,14 +153,15 @@
  */
 
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { chromium, type Browser, type Locator, type Page } from 'playwright'
 import { gte } from 'semver'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { isSeq, parseDocument } from 'yaml'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { dshCommand, resolveDshScript } from '../../src/host/dsh-cli.ts'
 import { startInstall } from '../../src/host/executor.ts'
 
@@ -298,6 +303,40 @@ function seedOnboarding(home: string): void {
 }
 
 /**
+ * Keep dsh 0.1.7 from opening its first-use workspace, on every platform.
+ *
+ * 0.1.7 creates `<Documents>/deepseek-harness/default-workspace` on first
+ * load, and from then on every page load that finds a workspace connects a
+ * blank session in it and navigates there (dsh-client-ui-workspace:
+ * `replaceMain` after `layout.beginNavigation()`). That navigation closes a
+ * Settings dialog opened a moment before it lands. It is how the first
+ * Windows 0.1.7-rc.2 runs failed, twice, in two different cases: Windows
+ * always answers a Documents folder, while a Linux runner's `xdg-user-dir`
+ * answers none, so creation failed there, nothing navigated, and the same
+ * cases passed.
+ *
+ * Pointing the workspace controller's `documentsDirectory` at a regular file
+ * makes creation fail everywhere: the state every Linux run and every local
+ * run has measured, now on Windows too. The path is absolute, as the
+ * controller's constructor requires. The row goes into the profile's user
+ * layer, which dsh wrote when the pre-boot installs created the profile.
+ *
+ * The failure has a second use: 0.1.7 reports it in a toast on every page
+ * load, and that toast is the marker `waitForFirstRun` waits for. A seed that
+ * let creation succeed would fail every 0.1.7 case there, by name.
+ */
+function seedNoDefaultWorkspace(home: string): void {
+  const blocker = join(home, 'documents-is-a-file')
+  writeFileSync(blocker, 'A file, so the first-use workspace cannot be created under it (seedNoDefaultWorkspace).\n')
+  const layer = join(home, 'profiles', 'web', 'cordis.patch.yml')
+  const document = parseDocument(readFileSync(layer, 'utf8'))
+  if (!isSeq(document.contents)) throw new Error(`${layer} is not a YAML list of patch rows`)
+  document.contents.flow = false
+  document.add({ id: 'workspace-controller', config: { documentsDirectory: blocker } })
+  writeFileSync(layer, document.toString({ lineWidth: 0 }))
+}
+
+/**
  * Refuse to continue while any dialog covers the page.
  *
  * The tripwire for `seedOnboarding`: a seed that stops working (a dsh release
@@ -318,6 +357,50 @@ async function expectNoDialog(app: Page): Promise<void> {
     const label = (await one.getAttribute('aria-label'))
       ?? ((await one.textContent().catch(() => '')) ?? '').replace(/\s+/g, ' ').slice(0, 80)
     throw new Error(`a dialog is covering the page before the flow starts: ${JSON.stringify(label)}`)
+  }
+}
+
+/** What dsh 0.1.7 says in a `role="alert"` toast when it cannot create the
+ * default workspace (dsh-client-ui-workspace, `defaultWorkspace.failed`). */
+const DEFAULT_WORKSPACE_FAILED = '无法创建默认工作区'
+
+/**
+ * On a page just loaded, wait until dsh 0.1.7 has done the first-run work
+ * that closes an open Settings dialog.
+ *
+ * 0.1.7's Settings shell closes itself when an onboarding step appears while
+ * it is open (dsh-client-ui-settings-general, SettingsRoot: `if (appeared &&
+ * open) close()`). Its steps are registered on every page load, and one
+ * appears when the host first answers the sessions list and onboarding
+ * becomes active. Under `seedOnboarding` the steps show nothing, so nothing
+ * visible marks that moment, but a case that opens Settings before it loses
+ * the dialog under its next click. The push run of a914f87 failed that way
+ * three times, on ubuntu and Windows, each in the first Settings visit after
+ * a page load, while the pull request run of the same commit passed all four
+ * legs: the answer usually lands first, and on a loaded runner it did not.
+ *
+ * One consequence of that answer is visible. Once the sessions and workspace
+ * lists have both answered, 0.1.7 tries to create the default workspace,
+ * which `seedNoDefaultWorkspace` makes fail, and says so in a toast. The
+ * toast needs a host round trip after the answer, so once it is visible the
+ * close is spent. Measured 2026-09-27 on 0.1.7-rc.2 by holding the host's
+ * WebSocket messages back 4 s after the page connected: Settings, opened at
+ * once, closed as the messages landed, and the toast followed 74 ms later.
+ *
+ * The toast is held for 3 s, so the wait starts right after the load that
+ * raises it, never later.
+ */
+async function waitForFirstRun(page: Page, dshVersion: string): Promise<void> {
+  if (!gte(dshVersion, '0.1.7-rc.1')) return
+  try {
+    await page.getByRole('alert').filter({ hasText: DEFAULT_WORKSPACE_FAILED })
+      .waitFor({ state: 'visible', timeout: 30_000 })
+  } catch (error) {
+    throw new Error(
+      `dsh ${dshVersion} raised no "${DEFAULT_WORKSPACE_FAILED}" alert after the page loaded, so the onboarding close`
+        + ' that closes Settings cannot be waited out (waitForFirstRun)',
+      { cause: error },
+    )
   }
 }
 
@@ -641,6 +724,30 @@ describe('the P2 exit criterion is allowed to skip only where that is honest', (
   })
 })
 
+/** Where a failed case leaves its evidence: a screenshot and the visible text
+ * of each page it had open, and dsh's own output. plugin.yml uploads the
+ * directory when a leg fails, and nothing writes it while every case passes.
+ * Added 2026-09-27: the first run of the Windows 0.1.7-rc.2 leg failed two
+ * cases with nothing to read but locator timeouts, on a runner no one can
+ * open. */
+const E2E_EVIDENCE_DIR = fileURLToPath(new URL('../../test-results/e2e/', import.meta.url))
+
+/** One case's evidence directory, named after the case. */
+function evidenceDir(caseName: string): string {
+  return join(E2E_EVIDENCE_DIR, caseName.replace(/[^A-Za-z0-9]+/g, '-').slice(0, 80))
+}
+
+/** Save what `open` shows under `name`. Best effort, because evidence must
+ * never be what fails a case. */
+async function saveEvidence(open: Page, dir: string, name: string): Promise<void> {
+  mkdirSync(dir, { recursive: true })
+  await open.screenshot({ path: join(dir, `${name}.png`), fullPage: true }).catch(() => {
+    // A crashed or closed page cannot be shot; its text below still says why.
+  })
+  const text = await open.evaluate(() => document.body.innerText).catch((error: unknown) => `innerText failed: ${String(error)}`)
+  writeFileSync(join(dir, `${name}.txt`), `${open.url()}\n\n${text}`)
+}
+
 describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
   let catalogServer: CatalogServer | undefined
   let localRegistry: LocalRegistry | undefined
@@ -654,6 +761,20 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
   let dshProcess: ChildProcess | undefined
   let browser: Browser | undefined
   let page: Page | undefined
+  /** Everything the booted dsh printed, in order, for a failed case's
+   * evidence (see E2E_EVIDENCE_DIR). */
+  const dshLog: string[] = []
+
+  afterEach(async context => {
+    if (context.task.result?.state !== 'fail') return
+    const dir = evidenceDir(context.task.name)
+    const pages = browser?.contexts().flatMap(browserContext => browserContext.pages()) ?? []
+    for (const [index, open] of pages.entries()) await saveEvidence(open, dir, `page-${index}`)
+    mkdirSync(dir, { recursive: true })
+    // The URL dsh prints carries its session token. Dead with the runner, but
+    // an uploaded artifact is public, so it goes out redacted.
+    writeFileSync(join(dir, 'dsh.log'), dshLog.map(line => line.replace(/token=[^&\s]+/g, 'token=<redacted>')).join('\n'))
+  })
 
   const shopPackageDir = fileURLToPath(new URL('../../', import.meta.url))
   const helloFixtureDir = fileURLToPath(
@@ -774,6 +895,18 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
     expect(versionAnswer.status, `dsh --version failed:\n${versionAnswer.stderr}`).toBe(0)
     launchedDshVersion = versionAnswer.stdout.trim()
     expect(launchedDshVersion, 'dsh --version printed no version').toMatch(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)
+    // The harness this leg installed, when plugin.yml names one. Checked
+    // before anything boots: every version branch below keys on
+    // `launchedDshVersion`, and a different harness on PATH turns them
+    // vacuous while the run stays green (2026-09-26: a /tmp checkout booted a
+    // stray 0.1.5-rc.1 in place of the 0.1.7-rc.2 it had installed).
+    const expectedDsh = process.env.DSH_SHOP_EXPECT_DSH
+    if (expectedDsh !== undefined && expectedDsh !== '') {
+      expect(launchedDshVersion, `this leg installed dsh ${expectedDsh}, but the dsh on PATH answers ${launchedDshVersion}`)
+        .toBe(expectedDsh)
+    }
+    // Only 0.1.7 has the first-use workspace (see seedNoDefaultWorkspace).
+    if (gte(launchedDshVersion, '0.1.7-rc.1')) seedNoDefaultWorkspace(tmpHome)
     dshProcess = spawn(web.command, web.args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {
@@ -804,6 +937,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         for (const line of chunk.toString().split('\n')) {
           if (line === '') continue
           stdout.push(line)
+          dshLog.push(`out ${line}`)
           const match = /dsh web: (http:\/\/\S+)/.exec(line)
           if (match?.[1] !== undefined) {
             clearTimeout(timeout)
@@ -812,7 +946,11 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         }
       })
       dshProcess?.stderr?.on('data', (chunk: Buffer) => {
-        for (const line of chunk.toString().split('\n')) if (line !== '') stderr.push(line)
+        for (const line of chunk.toString().split('\n')) {
+          if (line === '') continue
+          stderr.push(line)
+          dshLog.push(`err ${line}`)
+        }
       })
       dshProcess?.on('exit', code => {
         clearTimeout(timeout)
@@ -851,6 +989,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // Onboarding is seeded OFF rather than clicked through (`seedOnboarding`),
       // so nothing is dismissed here — only checked.
       await app.goto(webUrl, { waitUntil: 'load' })
+      await waitForFirstRun(app, launchedDshVersion)
       await app.waitForSelector('[class*="frame"]', { timeout: 30_000 })
       await app.getByRole('button', { name: '设置', exact: true })
         .waitFor({ state: 'visible', timeout: 30_000 })
@@ -1076,6 +1215,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       const probe = await browser!.newPage({ locale: 'zh-CN', viewport: { width: 1680, height: 1000 } })
       try {
         await probe.goto(webUrl, { waitUntil: 'load' })
+        await waitForFirstRun(probe, launchedDshVersion)
         await probe.waitForSelector('[class*="frame"]', { timeout: 30_000 })
         await probe.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
         const inventory = probe.getByRole('dialog', { name: '设置' })
@@ -1094,6 +1234,11 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         await cardButton.click()
         await liveEntry.getByRole('img', { name: '运行中' }).or(liveEntry.getByText('运行中', { exact: true }))
           .first().waitFor({ state: 'visible', timeout: 15_000 })
+      } catch (error) {
+        // The probe is closed below, before the afterEach that collects a
+        // failed case's evidence can see it.
+        await saveEvidence(probe, evidenceDir(expect.getState().currentTestName?.split(' > ').pop() ?? 'hot-mount'), 'probe')
+        throw error
       } finally {
         await probe.close()
       }
@@ -1492,6 +1637,9 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       expect(before.ids).not.toContain('dsh-shop-e2e-client')
       expect(before.ids).toContain('dsh-plugin-shop')
       await app.reload({ waitUntil: 'domcontentloaded' })
+      // The next case opens Settings on this page, so its first run is waited
+      // out here, while the toast that marks it is still up.
+      await waitForFirstRun(app, launchedDshVersion)
       await app.waitForFunction(
         () => (window as unknown as { __DSH_BOOT__?: unknown }).__DSH_BOOT__ !== undefined,
         undefined,

@@ -346,3 +346,13 @@ CI pins the harness at 0.1.5-rc.3, so it runs the refusal case's 0.1.5
 branch only. A second e2e leg on 0.1.7 would run the other branch, every
 B0 fix and B5's badge assertion; it is a cost decision and is not taken
 here.
+
+Taken 2026-09-27. plugin.yml's `test` job gained a `dsh` axis,
+`['0.1.5-rc.3', '0.1.7-rc.2']`, so each platform runs both harnesses. Each
+leg also sets `DSH_SHOP_EXPECT_DSH` to its harness, and both exit criteria
+fail when the `dsh` they launch answers any other `--version`. That turns
+the trap under Testing above, a stray `dsh` earlier on `PATH`, from a
+silently vacuous run into a red one. The four jobs run in parallel, so a
+run takes no longer than the slowest, the Windows leg. Before 0.1.7-rc.2
+was listed, the whole package suite passed on it locally, both exit
+criteria included, and so did the 0.1.5-rc.3 run beside it.

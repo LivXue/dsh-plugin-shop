@@ -623,7 +623,7 @@ describe('what git is allowed to pick up', () => {
 })
 
 describe('the harness pin and the e2e contract move together', () => {
-  it('names one harness version in plugin.yml and in the e2e contract header', () => {
+  it("names the same harness versions in plugin.yml's matrix and in the e2e contract header", () => {
     // The e2e drives the real `dsh` on PATH, so a harness release can break it
     // with nothing changed in this repository — and it has, twice: 0.1.2-rc.1
     // split 插件列表 and collapsed the Loader plane, 0.1.5-rc.1 moved the
@@ -634,20 +634,49 @@ describe('the harness pin and the e2e contract move together', () => {
     // the design system's private data-*, which is what stops the NEXT rename
     // from mattering; this guard is what stops the two files from disagreeing
     // about which harness that contract was measured against.
+    //
+    // Since 2026-09-27 the pin is a list: the `test` job's `dsh` matrix axis
+    // installs one exact harness per leg, and the header names every one of
+    // them. Each leg installs exactly its own entry, so a hard-coded version
+    // on the install line would put one harness under every leg's name.
     const workflow = parse(read('.github/workflows/plugin.yml')) as {
-      jobs: Record<string, { steps: { run?: string }[] }>
+      jobs: Record<string, { strategy?: { matrix?: { dsh?: unknown } }; steps: { run?: string }[] }>
     }
-    const runs = (workflow.jobs.test?.steps ?? []).map(step => step.run ?? '')
-    const pinned = runs
-      .map(run => /npm install -g @deepseek-ai\/dsh@(\S+)/.exec(run)?.[1])
-      .find(version => version !== undefined)
-    expect(pinned, 'plugin.yml installs no pinned @deepseek-ai/dsh').toBeDefined()
+    const pinned = workflow.jobs.test?.strategy?.matrix?.dsh
+    expect(Array.isArray(pinned) && pinned.length > 0, 'plugin.yml has no `dsh` matrix axis to pin the harness').toBe(true)
+    for (const version of pinned as unknown[]) {
+      // Exact versions only: a range or a dist-tag moves under the suite, and
+      // the header could never name what a run actually got.
+      expect(version, `plugin.yml pins the harness to ${String(version)}, which is not one exact version`)
+        .toMatch(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)
+    }
+    const installs = (workflow.jobs.test?.steps ?? [])
+      .map(step => step.run ?? '')
+      .filter(run => run.includes('@deepseek-ai/dsh@'))
+    expect(installs, 'plugin.yml must install the harness once, from the matrix')
+      .toEqual(['npm install -g @deepseek-ai/dsh@${{ matrix.dsh }}'])
 
     const e2e = read('packages/dsh-plugin-shop/tests/client/web-full-flow.e2e.ts')
-    const declared = /Written against harness (\S+?) —/.exec(e2e)?.[1]
-    expect(declared, 'web-full-flow.e2e.ts declares no harness version').toBeDefined()
-    expect(declared, `plugin.yml pins ${pinned}, the e2e contract is written against ${declared}`)
-      .toBe(pinned)
+    const header = /Written against harness(?:es)? ([^:]+?):/.exec(e2e)?.[1]
+    expect(header, 'web-full-flow.e2e.ts declares no harness version').toBeDefined()
+    const declared = (header ?? '').split(/,\s*|\s+and\s+/).filter(version => version !== '')
+    expect([...declared].sort(), `plugin.yml pins ${String(pinned)}, the e2e contract is written against ${declared.join(', ')}`)
+      .toEqual([...(pinned as string[])].sort())
+  })
+
+  it('tells each leg which harness it installed, so the exit criteria can check the one they boot', () => {
+    // The e2e and the real install boot the first `dsh` on PATH, and on
+    // 2026-09-26 a run under a /tmp checkout booted a stray 0.1.5-rc.1 in
+    // place of the harness it had installed: every version branch went vacuous
+    // and the run stayed green. DSH_SHOP_EXPECT_DSH is how each leg names the
+    // harness it installed; both exit criteria fail when the one they launched
+    // answers a different `--version`. Unwired, that check is silent.
+    const workflow = parse(read('.github/workflows/plugin.yml')) as {
+      jobs: Record<string, { steps: { run?: string; env?: Record<string, string> }[] }>
+    }
+    const suite = (workflow.jobs.test?.steps ?? []).find(step => (step.run ?? '').includes('packages/dsh-plugin-shop test'))
+    expect(suite?.env?.DSH_SHOP_EXPECT_DSH, 'plugin.yml does not tell the package suite which harness it installed')
+      .toBe('${{ matrix.dsh }}')
   })
 })
 

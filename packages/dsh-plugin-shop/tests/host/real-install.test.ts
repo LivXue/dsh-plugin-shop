@@ -27,7 +27,11 @@ const TEMP_ROOT = fileTempRoot('real-install')
 // ENOENT there, so `hasDsh` was false on every Windows machine and the P1
 // exit criterion silently skipped — the one test that would have caught the
 // defect was disabled by it.
-const hasDsh = (() => {
+//
+// The probe keeps what `--version` answered: it is the harness the install
+// below will spawn, through the same resolution, and the leg's expectation
+// is checked against it.
+const launchedDsh = ((): string | null => {
   const { command, args } = dshCommand({
     dshBin: 'dsh',
     args: ['--version'],
@@ -39,14 +43,16 @@ const hasDsh = (() => {
     ),
   })
   try {
-    return spawnSync(command, args, { stdio: 'ignore' }).status === 0
+    const answer = spawnSync(command, args, { encoding: 'utf8' })
+    return answer.status === 0 ? answer.stdout.trim() : null
   } catch {
     // spawnSync throws rather than reporting when the binary cannot be
     // started at all (a Windows .cmd shim throws EINVAL); either way the CLI
     // is unusable from here and the case skips.
-    return false
+    return null
   }
 })()
+const hasDsh = launchedDsh !== null
 
 /**
  * When set, a skipped exit-criterion case is a FAILURE rather than a silent
@@ -75,6 +81,17 @@ describe('real installation', () => {
         + 'case below would have skipped and the run would still have exited 0. '
         + 'Either install the harness or unset the variable.',
     ).toBe(true)
+  })
+
+  it('launches the harness this CI leg installed, when the environment names one', () => {
+    // Not `skipIf`, for the same reason as the case above. plugin.yml names
+    // each leg's harness in DSH_SHOP_EXPECT_DSH, and the install below spawns
+    // whichever `dsh` wins on PATH: on 2026-09-26 that was a stray 0.1.5-rc.1
+    // under a /tmp checkout, in place of the harness the run had installed.
+    const expected = process.env.DSH_SHOP_EXPECT_DSH
+    if (expected === undefined || expected === '') return
+    expect(launchedDsh, `this leg installed dsh ${expected}, but the dsh on PATH answers ${String(launchedDsh)}`)
+      .toBe(expected)
   })
 
   const tmpHome = mkdtempSync(join(TEMP_ROOT, 'dsh-home-'))

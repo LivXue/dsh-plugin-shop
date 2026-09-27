@@ -43,13 +43,22 @@ jobs:
     # second copy of that pin, which is the drift this repository keeps
     # writing guards against.
     #
-    # `fail-fast: false` because the two platforms answer different questions.
-    # Cancelling Windows the moment Linux goes red throws away the only signal
-    # this matrix was added to produce.
+    # The `dsh` axis, added 2026-09-27, is that pin. Each version is a
+    # harness the e2e was RUN against before it was listed here, and each leg
+    # installs exactly its own entry. 0.1.5-rc.3 is npm's `latest`; 0.1.7-rc.2
+    # runs the half of the suite 0.1.5 never reaches (the refusal branch, the
+    # 0.1.7 UI fixes, the harness-package badge), which no automated leg ran
+    # before. repo-guards.test.ts reads this list and holds it equal to the
+    # e2e contract header's.
+    #
+    # `fail-fast: false` because the legs answer different questions.
+    # Cancelling Windows the moment Linux goes red, or one harness the moment
+    # the other does, throws away the signal this matrix was added to produce.
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        dsh: ['0.1.5-rc.3', '0.1.7-rc.2']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -143,7 +152,13 @@ jobs:
       # against rc.3 first: all six web-full-flow cases pass under
       # DSH_SHOP_REQUIRE_E2E=1, which is what the e2e's contract header
       # attests and what repo-guards.test.ts checks this line against.
-      - run: npm install -g @deepseek-ai/dsh@0.1.5-rc.3
+      #
+      # 0.1.7-rc.2 JOINED IT 2026-09-27 as a second ceiling, on the same terms:
+      # the whole package suite, both exit criteria included, was run against
+      # it before it was listed, with the version each test launched read from
+      # inside the run. The version now comes from the `dsh` matrix axis above,
+      # one per leg, and is the list the guard compares with the header.
+      - run: npm install -g @deepseek-ai/dsh@${{ matrix.dsh }}
       - run: dsh --version
       # The web full-flow e2e (P2 exit criterion) needs a playwright browser;
       # without --with-deps for now — the ubuntu-latest image already carries
@@ -159,5 +174,23 @@ jobs:
           # `dsh` hidden from PATH the suite reported `1 skipped` and exited 0,
           # so a green run was not evidence either criterion had executed.
           DSH_SHOP_REQUIRE_E2E: '1'
+          # And each criterion must boot THIS leg's harness. Both launch the
+          # first `dsh` on PATH, and on 2026-09-26 a run from a /tmp checkout
+          # booted a stray 0.1.5-rc.1 in place of the harness it had installed,
+          # green throughout. With this set, a launched `dsh --version` that
+          # answers anything else fails the run.
+          DSH_SHOP_EXPECT_DSH: ${{ matrix.dsh }}
+      # What a failed e2e case saw: a screenshot and the visible text of each
+      # page it had open, and dsh's own output (web-full-flow.e2e.ts,
+      # E2E_EVIDENCE_DIR). Only a failed case writes it and only a failed leg
+      # uploads it. A Windows or 0.1.7 leg is a runner no one can open, and a
+      # locator timeout alone says nothing about what the page showed.
+      - if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-evidence-${{ matrix.os }}-${{ matrix.dsh }}
+          path: packages/dsh-plugin-shop/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
       - run: pnpm -C packages/dsh-plugin-shop typecheck
       - run: pnpm -C packages/dsh-plugin-shop build
