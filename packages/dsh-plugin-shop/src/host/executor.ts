@@ -35,12 +35,12 @@ const MAX_LOG_BYTES = 64 * 1024
 
 /** Bound one dsh command so a stalled install cannot hold the profile queue
  * forever. Tests can pass a shorter value; production stays generous. */
-const INSTALL_TIMEOUT_MS = Number(process.env.DSH_SHOP_INSTALL_TIMEOUT_MS) || 15 * 60 * 1000
+export const INSTALL_TIMEOUT_MS = Number(process.env.DSH_SHOP_INSTALL_TIMEOUT_MS) || 15 * 60 * 1000
 
 /** Grace period for output already buffered after the child exits. */
 const PIPE_DRAIN_MS = 500
 
-interface RunningInstall {
+export interface RunningInstall {
   installId: string
   status: () => InstallStatus
   finished: Promise<InstallStatus>
@@ -75,6 +75,34 @@ function chain<T>(profile: string, task: () => Promise<T>): Promise<T> {
   const next = previous.then(task, task)
   profileQueues.set(profile, next.catch(() => {}))
   return next
+}
+
+/** Run `task` in `profile`'s queue, after every command already in it: the
+ * queue `spawnPluginCli` uses, shared with the plugin manager's runner so the
+ * two paths are never concurrent in one profile. `ahead` is how many commands
+ * were queued or running when the slot was taken. */
+export function inProfileQueue<T>(profile: string, task: () => Promise<T>): { ahead: number; finished: Promise<T> } {
+  const ahead = enterQueue(profile)
+  const finished = chain(profile, task).finally(() => { leaveQueue(profile) })
+  return { ahead, finished }
+}
+
+/** An install record's log: the newest lines within MAX_LOG_LINES and
+ * MAX_LOG_BYTES, never dropping the newest one. */
+export function createBoundedLog(): { push(line: string): void; lines(): string[] } {
+  const lines: string[] = []
+  let bytes = 0
+  return {
+    push(line: string): void {
+      lines.push(line)
+      bytes += Buffer.byteLength(line)
+      while ((lines.length > MAX_LOG_LINES || bytes > MAX_LOG_BYTES) && lines.length > 1) {
+        const oldest = lines.shift()
+        if (oldest !== undefined) bytes -= Buffer.byteLength(oldest)
+      }
+    },
+    lines: () => [...lines],
+  }
 }
 
 /**
@@ -551,6 +579,66 @@ export function shellSafeTarget(target: string, platform: NodeJS.Platform): stri
   return `"${target}"`
 }
 
+const DOWNLOAD_PHASE_FAILED_PREFIX = 'dsh-plugin-shop: the download phase could not start — '
+const DOWNLOAD_PHASE_NO_PNPM = 'dsh-plugin-shop: no download phase — pnpm not found on PATH'
+const DOWNLOAD_PHASE_UNSUPPORTED = 'dsh-plugin-shop: no download phase for this spec form; the install fetches it directly'
+
+// Only an install with something ahead of it has anything to overlap with.
+// `ahead` is a depth, not `profileQueues.has(profile)` — see `profileDepth`.
+//
+// `spec: target` is the RAW operand, deliberately: it is what the pump hands
+// pnpm, and this runs after the operand passed both gates above. The gate is
+// what makes the pump's own quoting sound — `prefetch.ts` spawns through a
+// shell on win32 and relies on `UNSAFE_TARGET` having refused `"` — and a
+// quoted `spawnArgv[1]` would reach `pnpm store add` as a literal string and
+// silently warm nothing.
+//
+// `append` is handed over as the log, and the pump calls it from its own
+// microtask and child handlers — so it must not throw, or the throw escapes
+// as an uncaughtException and takes the host process and every install in
+// flight with it, which is the one failure that could decide whether an
+// install succeeds. It cannot, for the caller this is wired to: the gateway
+// passes neither `onStatus` nor anything else that can fail, leaving a push
+// and a byte count. A caller that passed BOTH a `prefetcher` and a throwing
+// `onStatus` would reopen that hole.
+//
+// The `catch` is the whole of "best-effort" at this seam, and it is load-
+// bearing rather than defensive. This block runs AFTER the queue slot was
+// taken and BEFORE the chained task exists, so a synchronous throw here —
+// `resolveProfileDir` refuses an invalid profile name, and the pump can
+// throw on a call it cannot even build — would do two things this feature
+// may never do: escape `spawnPluginCli` and fail an install the prefetch is
+// not allowed to fail, and skip `chain` entirely, so `leaveQueue` would
+// never run and this profile's depth would stay `+1` for the life of the
+// process — every later install in it reading `ahead > 0`, earning a
+// pointless prefetch and a `Downloading…` label that is simply false. The
+// `catch` announces the failure in the install's own log rather than
+// swallowing it, the same announcement the pump makes for a batch it could
+// not start.
+/**
+ * Ask the pump to warm `spec` while an operation waits its turn, and say in
+ * that operation's log why there is no download phase when there is none.
+ * Shared by the CLI executor and the plugin manager runner.
+ */
+export function requestDownloadPhase(options: {
+  prefetcher: Prefetcher
+  profile: string
+  spec: string
+  env?: NodeJS.ProcessEnv
+  log: (line: string) => void
+}): PrefetchRequest | null {
+  const { prefetcher, profile, spec, env, log } = options
+  let prefetch: PrefetchRequest
+  try {
+    prefetch = prefetcher.request({ profile, spec, cwd: resolveProfileDir(profile, env?.DSH_HOME), env, log })
+  } catch (error) {
+    log(`${DOWNLOAD_PHASE_FAILED_PREFIX}${(error as Error).message}`)
+    return null
+  }
+  if (!prefetch.started) log(prefetch.reason === 'no-pnpm' ? DOWNLOAD_PHASE_NO_PNPM : DOWNLOAD_PHASE_UNSUPPORTED)
+  return prefetch
+}
+
 /** Run one `dsh plugin --profile <profile> <verb> <target>` and track it.
  * Never rolls back; a failure surfaces stderr verbatim plus the recovery hint
  * (§10). The shop never passes build-script flags: `allowBuilds` stays the
@@ -607,8 +695,7 @@ function spawnPluginCli(options: {
   const spawnArgv = [...argv]
   spawnArgv[1] = shellSafeTarget(target, platform)
   const installId = randomUUID()
-  const log: string[] = []
-  let logBytes = 0
+  const log = createBoundedLog()
   // The queue slot is taken here, synchronously with the call: `ahead` is how
   // many commands this profile already has queued or running, and it is the
   // only signal that says whether a download phase has anything to overlap.
@@ -623,7 +710,7 @@ function spawnPluginCli(options: {
 
   const status = (): InstallStatus => ({
     state,
-    log: [...log],
+    log: log.lines(),
     ...(state === 'done' ? { activation: activationOnDone, ...(restartReason !== undefined ? { restartReason } : {}) } : {}),
     ...(detail !== undefined ? { detail } : {}),
   })
@@ -636,13 +723,6 @@ function spawnPluginCli(options: {
     // would drop it. Late output from a SETTLED command is still refused.
     if (isTerminalInstallState(state)) return
     log.push(line)
-    logBytes += Buffer.byteLength(line)
-    // Drop oldest until both caps hold; the newest line is never dropped,
-    // even when a single pathological line alone exceeds the byte cap.
-    while ((log.length > MAX_LOG_LINES || logBytes > MAX_LOG_BYTES) && log.length > 1) {
-      const oldest = log.shift()
-      if (oldest !== undefined) logBytes -= Buffer.byteLength(oldest)
-    }
     onStatus?.(status())
   }
 
@@ -653,61 +733,11 @@ function spawnPluginCli(options: {
     return status()
   }
 
-  // Only an install with something ahead of it has anything to overlap with.
-  // `ahead` is a depth, not `profileQueues.has(profile)` — see `profileDepth`.
-  //
-  // `spec: target` is the RAW operand, deliberately: it is what the pump hands
-  // pnpm, and this runs after the operand passed both gates above. The gate is
-  // what makes the pump's own quoting sound — `prefetch.ts` spawns through a
-  // shell on win32 and relies on `UNSAFE_TARGET` having refused `"` — and a
-  // quoted `spawnArgv[1]` would reach `pnpm store add` as a literal string and
-  // silently warm nothing.
-  //
-  // `append` is handed over as the log, and the pump calls it from its own
-  // microtask and child handlers — so it must not throw, or the throw escapes
-  // as an uncaughtException and takes the host process and every install in
-  // flight with it, which is the one failure that could decide whether an
-  // install succeeds. It cannot, for the caller this is wired to: the gateway
-  // passes neither `onStatus` nor anything else that can fail, leaving a push
-  // and a byte count. A caller that passed BOTH a `prefetcher` and a throwing
-  // `onStatus` would reopen that hole.
-  //
-  // The `catch` is the whole of "best-effort" at this seam, and it is load-
-  // bearing rather than defensive. This block runs AFTER the queue slot was
-  // taken and BEFORE the chained task exists, so a synchronous throw here —
-  // `resolveProfileDir` refuses an invalid profile name, and the pump can
-  // throw on a call it cannot even build — would do two things this feature
-  // may never do: escape `spawnPluginCli` and fail an install the prefetch is
-  // not allowed to fail, and skip `chain` entirely, so `leaveQueue` would
-  // never run and this profile's depth would stay `+1` for the life of the
-  // process — every later install in it reading `ahead > 0`, earning a
-  // pointless prefetch and a `Downloading…` label that is simply false. The
-  // `catch` announces the failure in the install's own log rather than
-  // swallowing it, the same announcement the pump makes for a batch it could
-  // not start.
   let prefetch: PrefetchRequest | null = null
   if (ahead > 0 && prefetcher !== undefined) {
-    try {
-      prefetch = prefetcher.request({
-        profile,
-        spec: target,
-        // The profile directory decides which store pnpm picks, so the batch
-        // runs where dsh runs pnpm rather than where the shop happens to sit.
-        cwd: resolveProfileDir(profile, env?.DSH_HOME),
-        env,
-        log: append,
-      })
-    } catch (error) {
-      append(`dsh-plugin-shop: the download phase could not start — ${(error as Error).message}`)
-    }
+    prefetch = requestDownloadPhase({ prefetcher, profile, spec: target, env, log: append })
   }
-  if (prefetch?.started === true) {
-    state = 'downloading'
-  } else if (prefetch !== null) {
-    append(prefetch.reason === 'no-pnpm'
-      ? 'dsh-plugin-shop: no download phase — pnpm not found on PATH'
-      : 'dsh-plugin-shop: no download phase for this spec form; the install fetches it directly')
-  }
+  if (prefetch?.started === true) state = 'downloading'
 
   const finished = chain(profile, () => new Promise<InstallStatus>((resolve) => {
     // The phase flip: this install now holds the queue, so the serial turn it
@@ -779,7 +809,7 @@ function spawnPluginCli(options: {
         }
       } else {
         state = 'failed'
-        detail = installFailureDetail(profile, log)
+        detail = installFailureDetail(profile, log.lines())
       }
       onStatus?.(status())
       resolve(status())
