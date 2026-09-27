@@ -87,7 +87,7 @@ describe('two catalog entries share one name (G-1)', () => {
   function gatewayWithBoth(dir: string, dependencies: Record<string, string>): ShopGateway {
     const bin = fakeDshRecording(dir, 0, { silent: true })
     const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-dup-profile-'))
-    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies }))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: Object.keys(dependencies) } }, dependencies }))
     return new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
       loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [alice, bob], denied: [], stars: {} }, stale: false }) as CatalogResult,
@@ -143,7 +143,7 @@ describe('two catalog entries share one name (G-1)', () => {
     const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-dup-npm-'))
     const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-dup-npm-profile-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
-      name: 'dsh-profile-web', dsh: { profile: { bundles: [] } },
+      name: 'dsh-profile-web', dsh: { profile: { bundles: ['dsh-foo'] } },
       dependencies: { 'dsh-foo': 'github:bob/dsh-foo' },
     }))
     const npmTwin: CatalogEntry = {
@@ -200,9 +200,17 @@ function fixturePackage(profileDir: string, name: string, patch: string | null, 
   writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, dsh }))
   if (patch !== null) writeFileSync(join(dir, 'cordis.patch.yml'), patch)
   // An install writes the dependency too, and installed-ness is read from it.
+  // It also selects a bundle it installed, as `dsh plugin add` does: a
+  // package missing from `dsh.profile.bundles` is one dsh composes none of,
+  // and the shop reads it as switched off.
   const manifestPath = join(profileDir, 'package.json')
-  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { dependencies?: Record<string, string> }
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+    dependencies?: Record<string, string>
+    dsh?: { profile?: { bundles?: string[] } }
+  }
   manifest.dependencies = { ...manifest.dependencies, [name]: '1.0.0' }
+  const bundles = manifest.dsh?.profile?.bundles
+  if (patch !== null && bundles !== undefined && !bundles.includes(name)) bundles.push(name)
   writeFileSync(manifestPath, JSON.stringify(manifest))
 }
 
@@ -765,7 +773,9 @@ describe('ShopGateway.installed', () => {
 
   function gatewayWithManifest(dependencies: Record<string, string>): ShopGateway {
     const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-installed-'))
-    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies }))
+    // Installed means selected: `dsh plugin add` puts a bundle it installs in
+    // dsh.profile.bundles, and the shop reads a missing one as switched off.
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: Object.keys(dependencies) } }, dependencies }))
     return new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
       loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [], stars: {} }, stale: false }) as CatalogResult,
@@ -791,13 +801,13 @@ describe('ShopGateway.installed', () => {
 
   it('carries the inventory enabled state onto the installed rows', async () => {
     const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-installed-inv-'))
-    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: { 'dsh-one': '^1.0.0' } }))
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: ['dsh-one'] } }, dependencies: { 'dsh-one': '^1.0.0' } }))
     // The disabled state is read through the ids dsh-one's own bundle patch
     // inserts — the entry's module name is deliberately NOT the package name,
     // the shape that made the module-name lookup report every such package as
     // enabled no matter what the inventory said.
     fixturePackage(dir, 'dsh-one', "- insert:\n    - id: one-row\n      name: 'dsh-one/host'\n")
-    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: { 'dsh-one': '^1.0.0' } }))
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: ['dsh-one'] } }, dependencies: { 'dsh-one': '^1.0.0' } }))
     const gateway = new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
       loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [], stars: {} }, stale: false }) as CatalogResult,
@@ -813,9 +823,9 @@ describe('ShopGateway.installed', () => {
     // `enabledOf` fell through to its "nothing live, assume enabled" default
     // — a plugin the person had disabled kept rendering with its switch on.
     const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-installed-inc-'))
-    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: { 'dsh-one': '^1.0.0' } }))
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: ['dsh-one'] } }, dependencies: { 'dsh-one': '^1.0.0' } }))
     fixturePackage(dir, 'dsh-one', "- insert:\n    - id: one-row\n      name: 'dsh-one/host'\n")
-    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: { 'dsh-one': '^1.0.0' } }))
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: ['dsh-one'] } }, dependencies: { 'dsh-one': '^1.0.0' } }))
     const gateway = new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
       loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [], stars: {} }, stale: false }) as CatalogResult,
@@ -848,7 +858,7 @@ describe('ShopGateway.installed', () => {
 
   it('lazily loads the catalog when installed() is called without a prior catalog()', async () => {
     const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-installed-'))
-    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: { 'dsh-one': '^1.0.0' } }))
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: ['dsh-one'] } }, dependencies: { 'dsh-one': '^1.0.0' } }))
     let loadCalls = 0
     const gateway = new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
@@ -860,6 +870,130 @@ describe('ShopGateway.installed', () => {
     const installed = await gateway.installed()
     expect(loadCalls).toBe(1)
     expect(installed).toEqual([{ name: 'dsh-one', source: 'npm', installed: '^1.0.0', latest: '2.0.0', outdated: true, enabled: true }])
+  })
+})
+
+describe("the bundle switch of dsh 0.1.7's own Plugins page", () => {
+  // Measured 2026-09-26 on 0.1.7-rc.2: `pluginManager.setBundleEnabled(name,
+  // false)` takes the package out of `dsh.profile.bundles` and keeps it
+  // installed. Nothing of it is then composed, so `pluginInventory` holds NO
+  // entry for it, and `installed()` read that silence as "enabled": the shop
+  // showed the switch on, and switching it on answered "restart dsh to
+  // compose them", which no restart does for a bundle nobody selects.
+  const entries = [
+    { name: 'dsh-one', version: '2.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25' },
+  ]
+  const helloPatch = "- insert:\n    - id: hello-row\n      name: 'dsh-hello-fixture'\n"
+
+  /** A profile holding `name` as a dependency, with the bundle list given. */
+  function profileWith(name: string, patch: string, bundles: string[]): string {
+    const profileDir = toggleProfile()
+    fixturePackage(profileDir, name, patch)
+    const manifestPath = join(profileDir, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { dsh: { profile: { bundles: string[] } } }
+    manifest.dsh.profile.bundles = bundles
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    return profileDir
+  }
+
+  /** dsh 0.1.7's `pluginManager`, answering `setBundleEnabled` with `result`
+   * in the full ChangeResult shape the real service returned when probed. */
+  function managerAnswering(result: object): { calls: unknown[][]; service: object } {
+    const calls: unknown[][] = []
+    return {
+      calls,
+      service: {
+        setBundleEnabled: async (...args: unknown[]) => {
+          calls.push(args)
+          return result
+        },
+      },
+    }
+  }
+  const withManager = (service: object): never =>
+    ({ get: (name: string) => name === 'pluginManager' ? service : undefined, reflect: { provide: () => {} } }) as never
+  const applied = { changed: true, application: 'applied', stage: 'enable', target: 'dsh-hello-fixture', enabled: true, warnings: [] }
+
+  function installedGateway(bundles: string[]): ShopGateway {
+    const dir = profileWith('dsh-one', "- insert:\n    - id: one-row\n      name: 'dsh-one/host'\n", bundles)
+    return new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [], stars: {} }, stale: false }) as CatalogResult,
+      // Silent, as the real inventory is about a bundle nothing composes.
+      inventory: { list: async () => ({ entries: [] }) },
+    })
+  }
+
+  it('reports a package whose bundle dsh deselected as disabled, though the inventory says nothing of it', async () => {
+    const gateway = installedGateway(['@deepseek-ai/dsh-base'])
+    await gateway.catalog({})
+    expect(await gateway.installed()).toEqual([{ name: 'dsh-one', source: 'npm', installed: '1.0.0', latest: '2.0.0', outdated: true, enabled: false }])
+  })
+
+  it('still reads a selected package with no live entry as enabled', async () => {
+    // The verdict comes from the selection, not from the inventory's silence:
+    // a bundle installed this session and not composed until a restart is
+    // selected, and must not read as switched off.
+    const gateway = installedGateway(['@deepseek-ai/dsh-base', 'dsh-one'])
+    await gateway.catalog({})
+    expect(await gateway.installed()).toEqual([{ name: 'dsh-one', source: 'npm', installed: '1.0.0', latest: '2.0.0', outdated: true, enabled: true }])
+  })
+
+  it("selects a deselected package again through dsh's pluginManager, and clears its plugin-level switch", async () => {
+    const profileDir = profileWith('dsh-hello-fixture', helloPatch, ['@deepseek-ai/dsh-base'])
+    writeFileSync(join(profileDir, 'cordis.patch.yml'), '- id: hello-row\n  disabled: true\n')
+    const manager = managerAnswering(applied)
+    const gateway = new ShopGateway(withManager(manager.service), { profile: 'web', profileDir, inventory: { list: async () => ({ entries: [] }) } })
+    const result = await gateway.setEnabled({ name: 'dsh-hello-fixture', enabled: true })
+    expect(result).toEqual({ ok: true, activation: 'live' })
+    expect(manager.calls).toEqual([['dsh-hello-fixture', true]])
+    expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toBe('- id: hello-row\n  disabled: false\n')
+  })
+
+  it('says restart when dsh reports the reselected bundle needs one', async () => {
+    const profileDir = profileWith('dsh-hello-fixture', helloPatch, [])
+    const manager = managerAnswering({ ...applied, application: 'restart-required' })
+    const gateway = new ShopGateway(withManager(manager.service), { profile: 'web', profileDir, inventory: { list: async () => ({ entries: [] }) } })
+    expect(await gateway.setEnabled({ name: 'dsh-hello-fixture', enabled: true })).toEqual({ ok: true, activation: 'restart' })
+  })
+
+  it("passes dsh's refusal through when it will not select the bundle, and writes nothing", async () => {
+    const profileDir = profileWith('dsh-hello-fixture', helloPatch, [])
+    const manager = managerAnswering({
+      changed: false, application: 'failed', stage: 'enable', target: 'dsh-hello-fixture', enabled: true,
+      error: { code: 'incompatible-version', incompatible: [{ name: 'dsh-hello-fixture', version: '1.0.0', runtimeVersion: '0.1.7-rc.2', peers: { '@deepseek-ai/dsh': '0.1.2-rc.1' } }] },
+    })
+    const gateway = new ShopGateway(withManager(manager.service), { profile: 'web', profileDir, inventory: { list: async () => ({ entries: [] }) } })
+    const result = await gateway.setEnabled({ name: 'dsh-hello-fixture', enabled: true })
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.detail).toContain('incompatible-version')
+    expect(existsSync(join(profileDir, 'cordis.patch.yml'))).toBe(false)
+  })
+
+  it('refuses on a harness without pluginManager by naming the bundle list, not a restart', async () => {
+    // dsh 0.1.5 has no such service, and its CLI is no way back on 0.1.7:
+    // measured 2026-09-27, `dsh plugin add <name>` re-selects a deselected
+    // bundle on 0.1.5-rc.3 and does not on 0.1.7-rc.2. Nor does the detail
+    // print that command, which would let pnpm float a registry package to
+    // `latest`.
+    const profileDir = profileWith('dsh-hello-fixture', helloPatch, [])
+    const gateway = new ShopGateway(stubCtx(), { profile: 'web', profileDir, inventory: { list: async () => ({ entries: [] }) } })
+    const result = await gateway.setEnabled({ name: 'dsh-hello-fixture', enabled: true })
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.detail).toContain('dsh.profile.bundles')
+    expect(result.detail).not.toMatch(/restart dsh to compose/)
+    expect(existsSync(join(profileDir, 'cordis.patch.yml'))).toBe(false)
+  })
+
+  it('switches a deselected package off at the plugin level without asking dsh to select it', async () => {
+    const profileDir = profileWith('dsh-hello-fixture', helloPatch, [])
+    const manager = managerAnswering(applied)
+    const gateway = new ShopGateway(withManager(manager.service), { profile: 'web', profileDir, inventory: { list: async () => ({ entries: [] }) } })
+    expect(await gateway.setEnabled({ name: 'dsh-hello-fixture', enabled: false })).toEqual({ ok: true, activation: 'live' })
+    expect(manager.calls).toEqual([])
+    expect(readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')).toContain('disabled: true')
   })
 })
 
@@ -876,7 +1010,7 @@ describe('forwards-only outdated', () => {
 
   function gatewayWithManifest(dependencies: Record<string, string>): ShopGateway {
     const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-forwards-'))
-    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies }))
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: Object.keys(dependencies) } }, dependencies }))
     return new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: '/cache', profile: 'web', profileDir: dir,
       loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries, denied: [], stars: {} }, stale: false }) as CatalogResult,
@@ -916,7 +1050,7 @@ describe('forwards-only outdated', () => {
     writeFileSync(join(dir, 'cache/github-pins.json'), JSON.stringify({ 'github:carol/dsh-three#': aheadPin }))
     const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-forwards-gh-profile-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
-      name: 'dsh-profile-web', dsh: { profile: { bundles: [] } },
+      name: 'dsh-profile-web', dsh: { profile: { bundles: ['dsh-three'] } },
       dependencies: { 'dsh-three': 'github:carol/dsh-three' },
     }))
     const repoEntry: CatalogEntry = {
@@ -1403,7 +1537,7 @@ describe('ShopGateway github entries', () => {
     const oldCommit = 'a'.repeat(40)
     writeFileSync(join(dir, 'cache/github-pins.json'), JSON.stringify({ 'dsh-repo-plugin': oldCommit }))
     const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-github-profile-'))
-    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: [] } }, dependencies: { 'dsh-repo-plugin': 'github:someone/dsh-repo-plugin' } }))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', dsh: { profile: { bundles: ['dsh-repo-plugin'] } }, dependencies: { 'dsh-repo-plugin': 'github:someone/dsh-repo-plugin' } }))
     const gateway = new ShopGateway(stubCtx(), {
       catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
       loadCatalog: async () => ({ snapshot: { schemaVersion: 3, builtAt: '', entries: [repoEntry], denied: [], stars: {} }, stale: false }) as CatalogResult,
@@ -1615,7 +1749,7 @@ describe('release-rescued tarball install', () => {
     writeFileSync(join(dir, 'cache/github-pins.json'), JSON.stringify({ 'github:owner/slug#': 'v1.0.0' }))
     const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-tarball-outdated-profile-'))
     writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
-      name: 'dsh-profile-web', dsh: { profile: { bundles: [] } },
+      name: 'dsh-profile-web', dsh: { profile: { bundles: ['dsh-rescued'] } },
       dependencies: { 'dsh-rescued': TARBALL_URL },
     }))
     const newer: CatalogEntry = {

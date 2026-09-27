@@ -77,6 +77,19 @@ export interface LoaderEntryLike {
   update(options: { disabled: boolean | null }, create?: boolean, force?: boolean): Promise<void>
 }
 
+/** The slice of dsh 0.1.7's `pluginManager` service this gateway calls,
+ * structurally: the build compiles against the 0.1.1-rc.2 harness floor,
+ * where the package does not exist. `setBundleEnabled` is what dsh's own
+ * Plugins page calls for its bundle switch, and it answers with the saved
+ * change and how it applied (design 2026-09-26-plugin-manager-delegation,
+ * section 2). */
+export interface BundleSelector {
+  setBundleEnabled(name: string, enabled: boolean): Promise<{
+    application?: unknown
+    error?: { code?: unknown; diagnostic?: unknown }
+  }>
+}
+
 /** Test-only injection points; production callers pass nothing. */
 export interface ShopGatewayOptions {
   catalogUrl?: string
@@ -651,6 +664,18 @@ export class ShopGateway extends TypertRemoteService {
       : null
   }
 
+  /** dsh's `pluginManager` service, when the running harness provides one
+   * (0.1.7 and later), else null. Read on each use, like `pluginPackages`.
+   * It is the only way back for a bundle its Plugins page deselected: the
+   * 0.1.7 CLI does not select an installed package again on `add`, while
+   * 0.1.5's does (both measured 2026-09-27). */
+  private pluginManager(): BundleSelector | null {
+    const service = (this.ctx as { get?: (name: string) => unknown }).get?.('pluginManager')
+    return typeof (service as { setBundleEnabled?: unknown } | null | undefined)?.setBundleEnabled === 'function'
+      ? service as BundleSelector
+      : null
+  }
+
   /** "Does this installation provide `spec`?", asked from `anchor`: the
    * harness's own resolution in front of the walk where the harness has one,
    * the walk alone where it has not. */
@@ -869,6 +894,14 @@ export class ShopGateway extends TypertRemoteService {
     if (owned.length === 0) {
       return { ok: false, detail: `dsh-plugin-shop: ${args.name} contributes no plugin entries, so there is nothing to enable or disable` }
     }
+    // A bundle the profile does not select is composed by no restart. dsh
+    // 0.1.7's Plugins page deselects one with its bundle switch and keeps the
+    // package installed; nothing of it is then live, and the live-entry check
+    // below would advise the restart that cannot help.
+    const selected = this.runningProfileBundles(profileDir)
+    if (selected !== null && !selected.includes(args.name)) {
+      return this.setDeselectedEnabled(args.name, args.enabled, profileDir, owned)
+    }
     const ownedSet = new Set(owned.map(entry => entry.id))
     // Liveness is read from the LIVE ids, which carry the namespace of every
     // tree composed above the entry (see ownsEntryId).
@@ -897,6 +930,59 @@ export class ShopGateway extends TypertRemoteService {
     // `clientLive: true` — a toggle moves a row the client registry already
     // enumerates, and the served graph follows it (§2, measured 2026-09-11).
     return { ok: true, activation: activationOf({ hostLive: true, clientLive: true, hasClientHalf: this.packageHasClientHalf(args.name) }) }
+  }
+
+  /**
+   * `setEnabled` for an installed package whose bundle the profile does not
+   * select.
+   *
+   * Switching it off writes the plugin-level rows and nothing else: none of
+   * it runs, and the rows keep it off if dsh selects the bundle again.
+   * Switching it on selects the bundle through dsh's own `pluginManager`, the
+   * writer behind the switch that deselected it, and then clears the
+   * plugin-level rows as an ordinary enable does. A harness without that
+   * service gets the way back in words instead. `dsh plugin add <name>` is
+   * not printed: it selects the bundle again only on 0.1.5, and it lets pnpm
+   * float a registry package to `latest`.
+   */
+  private async setDeselectedEnabled(
+    name: string,
+    enabled: boolean,
+    profileDir: string,
+    owned: readonly OwnedEntry[],
+  ): Promise<ShopSetEnabledResult> {
+    const rows = owned.map(({ id, name: moduleName }) => ({ id, disabled: !enabled, ...(moduleName !== undefined ? { name: moduleName } : {}) }))
+    if (!enabled) {
+      setUserLayerRows({ profileDir, rows })
+      return { ok: true, activation: 'live' }
+    }
+    const manager = this.pluginManager()
+    if (manager === null) {
+      return {
+        ok: false,
+        detail: `dsh-plugin-shop: ${name} is installed but switched off at the bundle level: dsh.profile.bundles in`
+          + ` ${join(profileDir, 'package.json')} does not list it, so dsh composes none of it, and a restart will not change that.`
+          + ` This dsh has no pluginManager service to select it again: add "${name}" back to that list and restart dsh,`
+          + ' or uninstall it and install it again from the shop.',
+      }
+    }
+    let change: Awaited<ReturnType<BundleSelector['setBundleEnabled']>>
+    try {
+      change = await manager.setBundleEnabled(name, true)
+    } catch (error) {
+      // The service threw rather than answering: nothing says the bundle was
+      // selected, so the switch stays off and the reason travels as a detail
+      // rather than as a transport failure the client can only call "retry".
+      return { ok: false, detail: `dsh-plugin-shop: dsh could not select ${name} again: ${String(error)}` }
+    }
+    if (change.application === 'failed' || change.application === 'cancelled' || change.error !== undefined) {
+      const code = typeof change.error?.code === 'string' ? change.error.code : String(change.application)
+      const diagnostic = typeof change.error?.diagnostic === 'string' ? `: ${change.error.diagnostic}` : ''
+      return { ok: false, detail: `dsh-plugin-shop: dsh refused to select ${name} again (${code})${diagnostic}` }
+    }
+    setUserLayerRows({ profileDir, rows })
+    if (change.application === 'restart-required') return { ok: true, activation: 'restart' }
+    return { ok: true, activation: activationOf({ hostLive: true, clientLive: true, hasClientHalf: this.packageHasClientHalf(name) }) }
   }
 
   private rowConfig(): { catalogUrl: string; cacheDir: string } {
@@ -1405,10 +1491,16 @@ export class ShopGateway extends TypertRemoteService {
     } catch {
       // pluginInventory is not mounted; `enabled` stays the default below.
     }
-    /** A package is enabled when every entry it owns and that is live is
-     * enabled. Keyed by entry id, never by module name — the entry a package
-     * inserts may mount a different package's module (see ownedEntryIds). */
+    // The bundles the profile selects. Read apart from the inventory, and
+    // first: a deselected bundle has no live entry at all, which the
+    // inventory cannot tell from one not composed until a restart.
+    const selected = this.runningProfileBundles(this.profileDirResolved())
+    /** A package is enabled when the profile selects its bundle and every
+     * entry it owns and that is live is enabled. Keyed by entry id, never by
+     * module name: the entry a package inserts may mount a different
+     * package's module (see ownedEntryIds). */
     const enabledOf = (name: string): boolean => {
+      if (selected !== null && !selected.includes(name)) return false
       if (!haveInventory) return true
       let owned: string[]
       try {

@@ -1712,4 +1712,77 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
     },
     120_000,
   )
+
+  it(
+    "reads a bundle dsh's own Plugins page switched off as off, and turns it back on through dsh",
+    async context => {
+      // dsh 0.1.5 has no bundle switch: nothing there takes a package out of
+      // `dsh.profile.bundles` while it stays installed (design
+      // 2026-09-26-market-borrowings, section 2.3).
+      if (!gte(launchedDshVersion, '0.1.7-rc.1')) context.skip()
+      expect(browser).toBeDefined()
+
+      const profileDir = join(tmpHome, 'profiles', 'web')
+      const selected = (): string[] =>
+        (JSON.parse(readFileSync(join(profileDir, 'package.json'), 'utf8')) as { dsh?: { profile?: { bundles?: string[] } } })
+          .dsh?.profile?.bundles ?? []
+      expect(selected()).toContain('dsh-shop-e2e-update')
+      const activationsBefore = updateActivations().length
+
+      // A page of its own: the previous case left Settings open on the main
+      // one, and 0.1.7 keeps a Settings tab it has shown mounted with the
+      // data it read then (see the hot-mount case's probe).
+      const fresh = await browser!.newPage({ locale: 'zh-CN', viewport: { width: 1680, height: 1000 } })
+      try {
+        await fresh.goto(webUrl, { waitUntil: 'load' })
+        await waitForFirstRun(fresh, launchedDshVersion)
+        await fresh.waitForSelector('[class*="frame"]', { timeout: 30_000 })
+
+        // Off, with the switch a person uses: the bundle switch on the card
+        // dsh's own Plugins page shows for the package. dsh takes the package
+        // out of the selection and leaves it installed.
+        await fresh.getByRole('button', { name: '插件', exact: true }).click({ timeout: 15_000 })
+        const dshSwitch = fresh.getByRole('switch', { name: '启用 dsh-shop-e2e-update' })
+        await dshSwitch.waitFor({ state: 'visible', timeout: 15_000 })
+        expect(await dshSwitch.getAttribute('aria-checked')).toBe('true')
+        await dshSwitch.click()
+        await expect.poll(selected, { timeout: 15_000 }).not.toContain('dsh-shop-e2e-update')
+        await expect.poll(() => dshSwitch.getAttribute('aria-checked'), { timeout: 15_000 }).toBe('false')
+        expect(existsSync(join(profileDir, 'node_modules', 'dsh-shop-e2e-update', 'package.json'))).toBe(true)
+
+        // The shop reads it as off. dsh keeps no inventory entry for a
+        // deselected bundle, and before 2026-09-27 the shop read that silence
+        // as "enabled".
+        await fresh.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
+        const dialog = fresh.getByRole('dialog', { name: '设置' })
+        await dialog.waitFor({ state: 'visible', timeout: 10_000 })
+        await dialog.getByRole('button', { name: PLUGINS_SECTION }).click()
+        await dialog.getByRole('tab', { name: '插件商店' }).click()
+        await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
+        await dialog.locator('[data-shop-category-installed]').click()
+        const row = dialog.locator('[data-shop-enabled-switch="dsh-shop-e2e-update"]')
+        const toggle = row.locator('[data-shop-toggle]')
+        await toggle.waitFor({ state: 'visible', timeout: 15_000 })
+        expect(await toggle.getAttribute('aria-checked')).toBe('false')
+
+        // On, from the shop, which asks dsh's plugin manager to select the
+        // bundle again. The package runs again: its fixture appends a line on
+        // every activation.
+        await toggle.click()
+        await row.locator('[data-shop-hot-apply]').waitFor({ state: 'visible', timeout: 15_000 })
+        expect(await toggle.getAttribute('aria-checked')).toBe('true')
+        expect(await row.locator('[data-shop-toggle-error]').count()).toBe(0)
+        expect(selected()).toContain('dsh-shop-e2e-update')
+        await expect.poll(() => updateActivations().length, { timeout: 15_000 }).toBeGreaterThan(activationsBefore)
+      } catch (error) {
+        // The page is closed below, before the afterEach that collects a
+        // failed case's evidence can see it.
+        await saveEvidence(fresh, evidenceDir(expect.getState().currentTestName?.split(' > ').pop() ?? 'bundle-switch'), 'fresh')
+        throw error
+      } finally {
+        await fresh.close()
+      }
+    },
+    120_000,
+  )
 })
