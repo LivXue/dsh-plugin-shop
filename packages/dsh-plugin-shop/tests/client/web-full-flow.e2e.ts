@@ -69,18 +69,22 @@
  * playwright chromium installed (CI installs both; see .github/workflows).
  *
  * plugin.yml runs this on BOTH ubuntu-latest and windows-latest (its `test`
- * job is a matrix over the two), with `DSH_SHOP_REQUIRE_E2E` set on each, so
+ * job is a matrix over the two platforms and over the harnesses named below),
+ * with `DSH_SHOP_REQUIRE_E2E` set on each, so
  * every platform branch below is executed by CI rather than by hand. It was
  * not always: until 2026-09-14 the only automated leg was ubuntu, the win32
  * arms were asserted by nothing, and the divergence they now pin was found
  * as an opaque 10s timeout on a host behaving exactly as designed.
  *
- * Written against harness 0.1.5-rc.3 — the version `.github/workflows/plugin.yml`
- * installs globally, and therefore the one every selector below was measured
- * on. The two are held together mechanically: `repo-guards.test.ts` fails the
- * build if this line and that pin name different versions — the pin has moved
+ * Written against harnesses 0.1.5-rc.3 and 0.1.7-rc.2: the versions
+ * `.github/workflows/plugin.yml` installs globally, one per leg of its `dsh`
+ * matrix, and therefore the ones every selector below was measured on. The
+ * two are held together mechanically: `repo-guards.test.ts` fails the build
+ * if this line and that matrix name different versions. The pin has moved
  * twice already, and both times the mismatch surfaced as an opaque timeout
- * rather than as a diff someone could read.
+ * rather than as a diff someone could read. Each leg also names its harness
+ * in DSH_SHOP_EXPECT_DSH, and the boot below fails when the `dsh` it launched
+ * answers any other `--version`.
  *
  * Pinned selectors (all verified against the live app, zh-CN):
  * - the app root frame: `[class*="frame"]` — the frame class is CSS-module
@@ -774,6 +778,16 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
     expect(versionAnswer.status, `dsh --version failed:\n${versionAnswer.stderr}`).toBe(0)
     launchedDshVersion = versionAnswer.stdout.trim()
     expect(launchedDshVersion, 'dsh --version printed no version').toMatch(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)
+    // The harness this leg installed, when plugin.yml names one. Checked
+    // before anything boots: every version branch below keys on
+    // `launchedDshVersion`, and a different harness on PATH turns them
+    // vacuous while the run stays green (2026-09-26: a /tmp checkout booted a
+    // stray 0.1.5-rc.1 in place of the 0.1.7-rc.2 it had installed).
+    const expectedDsh = process.env.DSH_SHOP_EXPECT_DSH
+    if (expectedDsh !== undefined && expectedDsh !== '') {
+      expect(launchedDshVersion, `this leg installed dsh ${expectedDsh}, but the dsh on PATH answers ${launchedDshVersion}`)
+        .toBe(expectedDsh)
+    }
     dshProcess = spawn(web.command, web.args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {

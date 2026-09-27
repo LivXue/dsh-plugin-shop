@@ -86,6 +86,9 @@ These block a real launch, not the code.
    branch, the harness-package badge (readiness B5), and every fix that
    made the 0.1.7 UI load. A second leg costs one
    more e2e job per `packages/**` change.
+   **Done 2026-09-27:** a `dsh` matrix axis runs 0.1.5-rc.3 and 0.1.7-rc.2 on
+   both platforms, and each leg checks that the harness it boots is the one
+   it installed (readiness, Release).
 
 ## P1 — the Host half (done 2026-08-25)
 
