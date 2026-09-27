@@ -180,5 +180,17 @@ jobs:
           # green throughout. With this set, a launched `dsh --version` that
           # answers anything else fails the run.
           DSH_SHOP_EXPECT_DSH: ${{ matrix.dsh }}
+      # What a failed e2e case saw: a screenshot and the visible text of each
+      # page it had open, and dsh's own output (web-full-flow.e2e.ts,
+      # E2E_EVIDENCE_DIR). Only a failed case writes it and only a failed leg
+      # uploads it. A Windows or 0.1.7 leg is a runner no one can open, and a
+      # locator timeout alone says nothing about what the page showed.
+      - if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-evidence-${{ matrix.os }}-${{ matrix.dsh }}
+          path: packages/dsh-plugin-shop/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
       - run: pnpm -C packages/dsh-plugin-shop typecheck
       - run: pnpm -C packages/dsh-plugin-shop build

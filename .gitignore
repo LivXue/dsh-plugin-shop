@@ -15,6 +15,9 @@ dist/
 # records that intent and keeps it visible to git.
 *.tgz
 !packages/dsh-plugin-shop/tests/fixtures/catalog-package.tgz
+# Evidence a failed e2e case leaves behind (web-full-flow.e2e.ts,
+# E2E_EVIDENCE_DIR); CI uploads it, and it never belongs in a commit.
+packages/dsh-plugin-shop/test-results/
 # Agent scratch state can contain a shadow git repository and must not enter
 # the project history.
 .raven/

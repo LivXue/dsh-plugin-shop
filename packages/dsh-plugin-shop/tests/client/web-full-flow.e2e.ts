@@ -153,14 +153,14 @@
  */
 
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { chromium, type Browser, type Locator, type Page } from 'playwright'
 import { gte } from 'semver'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { dshCommand, resolveDshScript } from '../../src/host/dsh-cli.ts'
 import { startInstall } from '../../src/host/executor.ts'
 
@@ -645,6 +645,30 @@ describe('the P2 exit criterion is allowed to skip only where that is honest', (
   })
 })
 
+/** Where a failed case leaves its evidence: a screenshot and the visible text
+ * of each page it had open, and dsh's own output. plugin.yml uploads the
+ * directory when a leg fails, and nothing writes it while every case passes.
+ * Added 2026-09-27: the first run of the Windows 0.1.7-rc.2 leg failed two
+ * cases with nothing to read but locator timeouts, on a runner no one can
+ * open. */
+const E2E_EVIDENCE_DIR = fileURLToPath(new URL('../../test-results/e2e/', import.meta.url))
+
+/** One case's evidence directory, named after the case. */
+function evidenceDir(caseName: string): string {
+  return join(E2E_EVIDENCE_DIR, caseName.replace(/[^A-Za-z0-9]+/g, '-').slice(0, 80))
+}
+
+/** Save what `open` shows under `name`. Best effort, because evidence must
+ * never be what fails a case. */
+async function saveEvidence(open: Page, dir: string, name: string): Promise<void> {
+  mkdirSync(dir, { recursive: true })
+  await open.screenshot({ path: join(dir, `${name}.png`), fullPage: true }).catch(() => {
+    // A crashed or closed page cannot be shot; its text below still says why.
+  })
+  const text = await open.evaluate(() => document.body.innerText).catch((error: unknown) => `innerText failed: ${String(error)}`)
+  writeFileSync(join(dir, `${name}.txt`), `${open.url()}\n\n${text}`)
+}
+
 describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
   let catalogServer: CatalogServer | undefined
   let localRegistry: LocalRegistry | undefined
@@ -658,6 +682,20 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
   let dshProcess: ChildProcess | undefined
   let browser: Browser | undefined
   let page: Page | undefined
+  /** Everything the booted dsh printed, in order, for a failed case's
+   * evidence (see E2E_EVIDENCE_DIR). */
+  const dshLog: string[] = []
+
+  afterEach(async context => {
+    if (context.task.result?.state !== 'fail') return
+    const dir = evidenceDir(context.task.name)
+    const pages = browser?.contexts().flatMap(browserContext => browserContext.pages()) ?? []
+    for (const [index, open] of pages.entries()) await saveEvidence(open, dir, `page-${index}`)
+    mkdirSync(dir, { recursive: true })
+    // The URL dsh prints carries its session token. Dead with the runner, but
+    // an uploaded artifact is public, so it goes out redacted.
+    writeFileSync(join(dir, 'dsh.log'), dshLog.map(line => line.replace(/token=[^&\s]+/g, 'token=<redacted>')).join('\n'))
+  })
 
   const shopPackageDir = fileURLToPath(new URL('../../', import.meta.url))
   const helloFixtureDir = fileURLToPath(
@@ -818,6 +856,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         for (const line of chunk.toString().split('\n')) {
           if (line === '') continue
           stdout.push(line)
+          dshLog.push(`out ${line}`)
           const match = /dsh web: (http:\/\/\S+)/.exec(line)
           if (match?.[1] !== undefined) {
             clearTimeout(timeout)
@@ -826,7 +865,11 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         }
       })
       dshProcess?.stderr?.on('data', (chunk: Buffer) => {
-        for (const line of chunk.toString().split('\n')) if (line !== '') stderr.push(line)
+        for (const line of chunk.toString().split('\n')) {
+          if (line === '') continue
+          stderr.push(line)
+          dshLog.push(`err ${line}`)
+        }
       })
       dshProcess?.on('exit', code => {
         clearTimeout(timeout)
@@ -1108,6 +1151,11 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         await cardButton.click()
         await liveEntry.getByRole('img', { name: '运行中' }).or(liveEntry.getByText('运行中', { exact: true }))
           .first().waitFor({ state: 'visible', timeout: 15_000 })
+      } catch (error) {
+        // The probe is closed below, before the afterEach that collects a
+        // failed case's evidence can see it.
+        await saveEvidence(probe, evidenceDir(expect.getState().currentTestName?.split(' > ').pop() ?? 'hot-mount'), 'probe')
+        throw error
       } finally {
         await probe.close()
       }
