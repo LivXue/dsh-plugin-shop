@@ -765,6 +765,114 @@ describe('ShopGateway.setEnabled', () => {
   })
 })
 
+describe("switches through dsh's pluginManager", () => {
+  const applied = { changed: true, application: 'applied', stage: 'enable', target: 'x', enabled: false, warnings: [] }
+
+  function switchingGateway(
+    answers: object[],
+    options: { profile?: string } = {},
+  ): { gateway: ShopGateway; calls: unknown[][]; profileDir: string } {
+    const { profile = 'web' } = options
+    const calls: unknown[][] = []
+    const service = {
+      installBundle: async () => { throw new Error('this case must not call installBundle') },
+      removeBundle: async () => { throw new Error('this case must not call removeBundle') },
+      setBundleEnabled: async () => { throw new Error('this case must not call setBundleEnabled') },
+      setPluginEnabled: async (id: string, enabled: boolean) => {
+        calls.push([id, enabled])
+        return answers[calls.length - 1] ?? answers[answers.length - 1]
+      },
+    }
+    const profileDir = toggleProfile()
+    fixturePackage(profileDir, 'dsh-two-rows', "- insert:\n    - id: host-row\n      name: 'dsh-two-rows/host'\n    - id: client-row\n      name: 'dsh-two-rows/client'\n")
+    const gateway = new ShopGateway(
+      { get: (name: string) => name === 'pluginManager' ? service : undefined, reflect: { provide: () => {} } } as never,
+      {
+        profile, profileDir,
+        inventory: { list: async () => ({ entries: [
+          { entryId: 'include:host-row', moduleName: 'dsh-two-rows/host', enabled: true },
+          { entryId: 'include:client-row', moduleName: 'dsh-two-rows/client', enabled: true },
+        ] }) },
+      },
+    )
+    return { gateway, calls, profileDir }
+  }
+
+  it('switches every live entry the package owns through setPluginEnabled, by live id, and writes no row itself', async () => {
+    const { gateway, calls, profileDir } = switchingGateway([applied])
+    expect(await gateway.setEnabled({ name: 'dsh-two-rows', enabled: false })).toMatchObject({ ok: true })
+    expect(calls).toEqual([['include:host-row', false], ['include:client-row', false]])
+    expect(existsSync(join(profileDir, 'cordis.patch.yml'))).toBe(false)
+  })
+
+  it('reports the first entry dsh refused, with the sentence for its code, and stops there', async () => {
+    const { gateway, calls } = switchingGateway([{ ...applied, application: 'failed', error: { code: 'management-required' } }])
+    const result = await gateway.setEnabled({ name: 'dsh-two-rows', enabled: false })
+    expect(result).toEqual({ ok: false, detail: 'dsh-plugin-shop: dsh refused to switch dsh-two-rows (management-required): the plugin belongs to dsh itself.' })
+    expect(calls).toHaveLength(1)
+  })
+
+  it('asks for a restart when any entry needs one', async () => {
+    const { gateway } = switchingGateway([applied, { ...applied, application: 'restart-required' }])
+    expect(await gateway.setEnabled({ name: 'dsh-two-rows', enabled: false })).toEqual({ ok: true, activation: 'restart' })
+  })
+
+  it('pins a refusal diagnostic to exactly one trailing period', async () => {
+    const { gateway } = switchingGateway([{ ...applied, application: 'failed', error: { code: 'unaddressable', diagnostic: 'not a root row.' } }])
+    const result = await gateway.setEnabled({ name: 'dsh-two-rows', enabled: false })
+    expect(result).toEqual({
+      ok: false,
+      detail: "dsh-plugin-shop: dsh refused to switch dsh-two-rows (unaddressable): the plugin is not a row of the profile's own patch, so dsh cannot address it. dsh reported: not a root row.",
+    })
+  })
+
+  it('gives a desktop reader a refusal detail with no dsh-CLI language in it', async () => {
+    const { gateway } = switchingGateway(
+      [{ ...applied, application: 'failed', error: { code: 'operation-error', diagnostic: 'Use `dsh plugin allow-version` to grant it.' } }],
+      { profile: 'desktop' },
+    )
+    const result = await gateway.setEnabled({ name: 'dsh-two-rows', enabled: false })
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.detail).not.toContain('dsh plugin')
+  })
+
+  it('says how many of the package plugins had already switched before dsh refused one', async () => {
+    const { gateway, calls } = switchingGateway([applied, { ...applied, application: 'failed', error: { code: 'management-required' } }])
+    const result = await gateway.setEnabled({ name: 'dsh-two-rows', enabled: false })
+    expect(result).toEqual({
+      ok: false,
+      detail: 'dsh-plugin-shop: dsh refused to switch dsh-two-rows (management-required): the plugin belongs to dsh itself. 1 of its 2 plugins had already switched off.',
+    })
+    expect(calls).toHaveLength(2)
+  })
+
+  it('publishes what a thrown answer says, without an Error: prefix', async () => {
+    const profileDir = toggleProfile()
+    fixturePackage(profileDir, 'dsh-two-rows', "- insert:\n    - id: host-row\n      name: 'dsh-two-rows/host'\n    - id: client-row\n      name: 'dsh-two-rows/client'\n")
+    const gateway = new ShopGateway(
+      {
+        get: (name: string) => name === 'pluginManager' ? {
+          installBundle: async () => { throw new Error('this case must not call installBundle') },
+          removeBundle: async () => { throw new Error('this case must not call removeBundle') },
+          setBundleEnabled: async () => { throw new Error('this case must not call setBundleEnabled') },
+          setPluginEnabled: async () => { throw new Error('lock held') },
+        } : undefined,
+        reflect: { provide: () => {} },
+      } as never,
+      {
+        profile: 'web', profileDir,
+        inventory: { list: async () => ({ entries: [
+          { entryId: 'include:host-row', moduleName: 'dsh-two-rows/host', enabled: true },
+          { entryId: 'include:client-row', moduleName: 'dsh-two-rows/client', enabled: true },
+        ] }) },
+      },
+    )
+    const result = await gateway.setEnabled({ name: 'dsh-two-rows', enabled: false })
+    expect(result).toEqual({ ok: false, detail: 'dsh-plugin-shop: dsh could not switch dsh-two-rows: lock held' })
+  })
+})
+
 describe('ShopGateway.installed', () => {
   const entries = [
     { name: 'dsh-one', version: '2.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25' },
@@ -981,6 +1089,34 @@ describe("the bundle switch of dsh 0.1.7's own Plugins page", () => {
     if (result.ok) return
     expect(result.detail).toContain('incompatible-version')
     expect(existsSync(join(profileDir, 'cordis.patch.yml'))).toBe(false)
+  })
+
+  it('reports the diagnostic dsh gave for refusing to reselect the bundle', async () => {
+    const profileDir = profileWith('dsh-hello-fixture', helloPatch, [])
+    const manager = managerAnswering({
+      changed: false, application: 'failed', stage: 'enable', target: 'dsh-hello-fixture', enabled: true,
+      error: { code: 'bundle-in-use', diagnostic: 'still mounted' },
+    })
+    const gateway = new ShopGateway(withManager(manager.service), { profile: 'web', profileDir, inventory: { list: async () => ({ entries: [] }) } })
+    const result = await gateway.setEnabled({ name: 'dsh-hello-fixture', enabled: true })
+    expect(result).toEqual({
+      ok: false,
+      detail: 'dsh-plugin-shop: dsh refused to select dsh-hello-fixture again (bundle-in-use): the bundle was switched off, but some of its plugins are still running. dsh reported: still mounted.',
+    })
+    expect(existsSync(join(profileDir, 'cordis.patch.yml'))).toBe(false)
+  })
+
+  it('gives a desktop reader no dsh-CLI language when reselecting the bundle fails', async () => {
+    const profileDir = profileWith('dsh-hello-fixture', helloPatch, [])
+    const manager = managerAnswering({
+      changed: false, application: 'failed', stage: 'enable', target: 'dsh-hello-fixture', enabled: true,
+      error: { code: 'management-required', diagnostic: 'Use `dsh plugin allow-version` to grant it.' },
+    })
+    const gateway = new ShopGateway(withManager(manager.service), { profile: 'desktop', profileDir, inventory: { list: async () => ({ entries: [] }) } })
+    const result = await gateway.setEnabled({ name: 'dsh-hello-fixture', enabled: true })
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.detail).not.toContain('dsh plugin')
   })
 
   it('refuses on a harness without pluginManager by naming the bundle list, not a restart', async () => {

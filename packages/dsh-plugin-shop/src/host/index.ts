@@ -43,8 +43,8 @@ import {
 } from './peers.ts'
 import { compatibilityMap, peerVerdictsOf, type HarnessVerdict, type PeerVerdict } from './compatibility.ts'
 import { readRunningHarness, type RunningHarness } from './harness.ts'
-import { ManagerLogs, startManagerOperation } from './manager-runner.ts'
-import { asPluginManager, managerOutcome, readChange, type ManagerOutcome, type OutcomeContext, type PluginManagerLike } from './plugin-manager.ts'
+import { ManagerLogs, messageOf, startManagerOperation } from './manager-runner.ts'
+import { asPluginManager, codeReason, forDesktopReader, managerOutcome, readChange, type ManagerOutcome, type OutcomeContext, type PluginManagerLike } from './plugin-manager.ts'
 
 // Re-exported so the boundary type is reachable from the package's public
 // ./types subpath; the typert generator refuses remote parameter types it
@@ -947,6 +947,38 @@ export class ShopGateway extends TypertRemoteService {
     if (live.length === 0) {
       return { ok: false, detail: `dsh-plugin-shop: ${args.name} is installed but its entries are not in the running plugin tree; restart dsh to compose them` }
     }
+    // dsh 0.1.7+: switch every live entry through the service, by its LIVE
+    // id — the same row the writer below would touch, applied in place
+    // (measured 2026-09-27 on 0.1.7-rc.2). The loop is sequential and there
+    // is no rollback: a refusal partway through says how many entries had
+    // already switched, because this path never reaches the writer's own row
+    // write and nothing else would report it.
+    const manager = this.pluginManager()
+    if (manager !== null) {
+      let restart = false
+      let switched = 0
+      for (const entry of live) {
+        let raw: unknown
+        try {
+          raw = await manager.setPluginEnabled(entry.entryId, args.enabled)
+        } catch (error) {
+          // The service threw rather than answering: nothing says the entry
+          // switched, and the reason travels as a detail, not as a transport
+          // failure the client can only call "retry".
+          return { ok: false, detail: `dsh-plugin-shop: dsh could not switch ${args.name}: ${messageOf(error)}` }
+        }
+        const change = isDesktopProfile(this.profile) ? forDesktopReader(readChange(raw)) : readChange(raw)
+        if (change.application === 'failed' || change.application === 'cancelled' || change.errorCode !== null) {
+          const code = change.errorCode ?? change.application ?? 'failed'
+          const already = switched > 0 ? ` ${switched} of its ${live.length} plugins had already switched ${args.enabled ? 'on' : 'off'}.` : ''
+          return { ok: false, detail: `dsh-plugin-shop: dsh refused to switch ${args.name} (${code})${codeReason(change, code)}${already}` }
+        }
+        switched += 1
+        if (change.application === 'restart-required') restart = true
+      }
+      if (restart) return { ok: true, activation: 'restart' }
+      return { ok: true, activation: activationOf({ hostLive: true, clientLive: true, hasClientHalf: this.packageHasClientHalf(args.name) }) }
+    }
     // The row names the CONFIG id — the id the package's own patch inserted —
     // never the live id it was found by. The user layer is applied by the
     // harness's applyEntryPatches, which looks each row's id up among the ids
@@ -1004,19 +1036,19 @@ export class ShopGateway extends TypertRemoteService {
           + ' or uninstall it and install it again from the shop.',
       }
     }
-    let change: { application?: unknown; error?: { code?: unknown; diagnostic?: unknown } }
+    let raw: unknown
     try {
-      change = (await manager.setBundleEnabled(name, true)) as typeof change
+      raw = await manager.setBundleEnabled(name, true)
     } catch (error) {
       // The service threw rather than answering: nothing says the bundle was
       // selected, so the switch stays off and the reason travels as a detail
       // rather than as a transport failure the client can only call "retry".
-      return { ok: false, detail: `dsh-plugin-shop: dsh could not select ${name} again: ${String(error)}` }
+      return { ok: false, detail: `dsh-plugin-shop: dsh could not select ${name} again: ${messageOf(error)}` }
     }
-    if (change.application === 'failed' || change.application === 'cancelled' || change.error !== undefined) {
-      const code = typeof change.error?.code === 'string' ? change.error.code : String(change.application)
-      const diagnostic = typeof change.error?.diagnostic === 'string' ? `: ${change.error.diagnostic}` : ''
-      return { ok: false, detail: `dsh-plugin-shop: dsh refused to select ${name} again (${code})${diagnostic}` }
+    const change = isDesktopProfile(this.profile) ? forDesktopReader(readChange(raw)) : readChange(raw)
+    if (change.application === 'failed' || change.application === 'cancelled' || change.errorCode !== null) {
+      const code = change.errorCode ?? change.application ?? 'failed'
+      return { ok: false, detail: `dsh-plugin-shop: dsh refused to select ${name} again (${code})${codeReason(change, code)}` }
     }
     setUserLayerRows({ profileDir, rows })
     if (change.application === 'restart-required') return { ok: true, activation: 'restart' }

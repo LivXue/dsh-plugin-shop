@@ -59,7 +59,7 @@ export interface ManagerOperationOptions {
  * `Error` gets its `message`; everything else falls back to a diagnostic
  * string, so describing the error is never itself the reason a settle
  * fails. */
-const messageOf = (error: unknown): string => {
+export const messageOf = (error: unknown): string => {
   if (error instanceof Error) return error.message
   try {
     return String(error)
