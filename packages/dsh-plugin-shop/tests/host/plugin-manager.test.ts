@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { asPluginManager, managerOutcome, type OutcomeContext } from '../../src/host/plugin-manager.ts'
+import { asPluginManager, forDesktopReader, managerOutcome, type ManagerChange, type OutcomeContext } from '../../src/host/plugin-manager.ts'
 
 const fn = async (): Promise<unknown> => ({})
 const complete = { installBundle: fn, removeBundle: fn, setPluginEnabled: fn, setBundleEnabled: fn, cancelInstall: fn }
@@ -54,6 +54,13 @@ const pnpmFailed = (kind: string, output: string, extra: object = {}) => ({
   changed: false, application: 'failed', stage: 'install', target: 'dsh-managed@1.0.0', registries: [null], ...extra,
   packageResult: { exitCode: 1, output, truncated: false, logPath: '/l', kind },
 })
+
+// Measured on dsh 0.1.7-rc.2 source: dsh-app-boot's pluginCompatibilityWarning
+// (the `dsh plugin allow-version` sentence) and the install rollback message
+// (`run 'dsh plugin install'`), concatenated as removeBundle's pnpm failure
+// would surface them through packageResult.output and error.diagnostic alike.
+const rejection = "\ndsh: installation rejected: Plugin dsh-sibling@1.0.0 is incompatible with dsh 0.1.7-rc.2: peerDependencies {\"@deepseek-ai/dsh\":\"0.1.2-rc.1\"}. Running it may cause crashes or data loss. Update the plugin or install a plugin version compatible with this dsh runtime. To accept this risk explicitly, grant the exact-version exemption for dsh-sibling@1.0.0 on dsh 0.1.7-rc.2 with `dsh plugin allow-version` or the plugin manager, then retry the installation or restart dsh. Exact-version exemption: not active.\ndsh: restored package.json and pnpm-lock.yaml, but node_modules could not be reinstalled; run 'dsh plugin install'.\n"
+const removeRejected = { changed: false, application: 'failed', stage: 'remove', target: 'dsh-managed', error: { code: 'operation-error', diagnostic: rejection }, packageResult: { exitCode: 1, output: rejection, truncated: false, logPath: '/l', incompatible: [{ name: 'dsh-sibling', version: '1.0.0', runtimeVersion: '0.1.7-rc.2', peers: { '@deepseek-ai/dsh': '0.1.2-rc.1' } }] } }
 
 describe('managerOutcome', () => {
   it('builds the refusal from the structured list, with the exemption command', () => {
@@ -166,5 +173,60 @@ describe('managerOutcome', () => {
     const outcome = managerOutcome({ ...applied, application: 'deferred' }, context)
     expect(outcome.state).toBe('failed')
     expect(outcome.detail).toContain('"deferred"')
+  })
+
+  it('scrubs the dsh plugin command from a desktop uninstall refusal, but keeps it verbatim on web', () => {
+    // Fix round 1, Important: dsh's own rejection text names `dsh plugin
+    // allow-version` and `dsh plugin install`, and dsh refuses every
+    // `plugin` subcommand on the desktop profile.
+    const app = managerOutcome(removeRejected, { ...desktop, operation: 'uninstall' })
+    expect(app.detail).not.toContain('dsh plugin')
+    expect(app.detail).toContain('is incompatible with dsh 0.1.7-rc.2')
+    expect(app.detail).toContain('Exact-version exemption: not active')
+    const web = managerOutcome(removeRejected, { ...context, operation: 'uninstall' })
+    expect(web.detail).toContain('dsh plugin allow-version')
+  })
+
+  it('scrubs the dsh plugin command out of an unknown failure log before installFailureDetail reads it', () => {
+    // installFailureDetail's own rule ("dsh refusing the install is not pnpm
+    // failing, and has its own remedy") reads the rejection block ahead of
+    // any ERR_ code, on the web profile just the same, so ERR_PNPM_SOMETHING
+    // never reaches the final detail either way — this is not the scrub's
+    // doing. What the scrub must still do is keep the `dsh plugin` sentence
+    // out of what that block reads, since it reads change.output directly,
+    // never through plugin-manager.ts's own codeReason path case (a) covers.
+    const detail = managerOutcome(pnpmFailed('unknown', `ERR_PNPM_SOMETHING went wrong${rejection}`), desktop).detail ?? ''
+    expect(detail).not.toContain('dsh plugin')
+    expect(detail).toContain('is incompatible with dsh 0.1.7-rc.2')
+  })
+
+  it('reads a diagnostic that is only a CLI step as absent once scrubbed, for a desktop reader', () => {
+    const cliOnly = { changed: false, application: 'failed', stage: 'remove', target: 'dsh-managed', error: { code: 'operation-error', diagnostic: "run 'dsh plugin install'." } }
+    const detail = managerOutcome(cliOnly, desktop).detail ?? ''
+    expect(detail).toBe('dsh-plugin-shop: dsh refused the install of dsh-managed (operation-error): dsh hit an unexpected error.')
+    expect(detail).not.toContain('dsh reported:')
+  })
+})
+
+describe('forDesktopReader', () => {
+  it('keeps an untouched line exactly as it was, and a null diagnostic stays null', () => {
+    const change: ManagerChange = {
+      application: 'failed', stage: 'remove', errorCode: 'operation-error', diagnostic: null,
+      incompatible: [], kind: null, output: 'ERR_PNPM_SOMETHING went wrong', pendingBuilds: [], failedAt: null,
+    }
+    const scrubbed = forDesktopReader(change)
+    expect(scrubbed.diagnostic).toBeNull()
+    expect(scrubbed.output).toBe('ERR_PNPM_SOMETHING went wrong')
+  })
+
+  it('drops only the sentence naming the command from a mixed line, and the whole line when that is all it says', () => {
+    const change: ManagerChange = {
+      application: 'failed', stage: 'remove', errorCode: 'operation-error', diagnostic: rejection,
+      incompatible: [], kind: null, output: '', pendingBuilds: [], failedAt: null,
+    }
+    const scrubbed = forDesktopReader(change)
+    expect(scrubbed.diagnostic).not.toContain('dsh plugin')
+    expect(scrubbed.diagnostic).toContain('is incompatible with dsh 0.1.7-rc.2')
+    expect(scrubbed.diagnostic).toContain('Exact-version exemption: not active')
   })
 })

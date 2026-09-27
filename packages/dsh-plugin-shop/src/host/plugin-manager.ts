@@ -91,6 +91,50 @@ export function readChange(raw: unknown): ManagerChange {
   }
 }
 
+/** True when `sentence` names a `dsh plugin` command. */
+function namesCliCommand(sentence: string): boolean {
+  return sentence.includes('dsh plugin')
+}
+
+/** Splits `line` into sentences, each still carrying whatever whitespace
+ * followed its `.`, `!` or `?`, so joining every piece back together
+ * reproduces `line` exactly. A line with no terminal punctuation at all is
+ * one sentence spanning the whole line. */
+function sentencesIn(line: string): string[] {
+  return line.match(/[\s\S]*?[.!?]+(?:\s+|$)|[\s\S]+$/g) ?? []
+}
+
+/** `line`, with every sentence that names a `dsh plugin` command removed. A
+ * line with nothing to remove is returned unchanged (so it stays exactly
+ * what it was); one that loses every sentence is dropped (null). */
+function scrubLine(line: string): string | null {
+  const sentences = sentencesIn(line)
+  if (sentences.length === 0) return line
+  const kept = sentences.filter(sentence => !namesCliCommand(sentence))
+  return kept.length === 0 ? null : kept.join('')
+}
+
+function scrubText(value: string): string {
+  return value.split('\n').map(scrubLine).filter((line): line is string => line !== null).join('\n')
+}
+
+/** `change`, with every sentence naming a `dsh plugin` command removed from
+ * `diagnostic` and `output`: dsh's CLI refuses every `plugin` subcommand for
+ * the desktop profile, so a sentence dsh wrote assuming that command exists
+ * must not reach a reader there. Two dsh texts this exists for: dsh-app-boot's
+ * `pluginCompatibilityWarning` ("... with `dsh plugin allow-version` or the
+ * plugin manager ...") and the install rollback message ("run 'dsh plugin
+ * install'"). Scrubbing line by line keeps every other line untouched; a
+ * diagnostic left empty afterward reads as absent, the same way `codeReason`
+ * already treats one. */
+export function forDesktopReader(change: ManagerChange): ManagerChange {
+  return {
+    ...change,
+    diagnostic: change.diagnostic === null ? null : scrubText(change.diagnostic),
+    output: scrubText(change.output),
+  }
+}
+
 export interface ManagerOutcome { state: 'done' | 'failed'; activation?: Activation; restartReason?: HotRestartReason; detail?: string }
 
 export interface OutcomeContext {
@@ -142,7 +186,7 @@ const WHERE: Record<string, string> = {
  * the CLI would refuse for that profile. */
 const DESKTOP_FAILURE_HINT = 'pnpm failed in the profile'
 
-function refusalDetail(context: OutcomeContext, incompatible: readonly ManagerIncompatible[]): string {
+function versionRefusalDetail(context: OutcomeContext, incompatible: readonly ManagerIncompatible[]): string {
   const refused = incompatible.map(issue =>
     `${issue.name}@${issue.version} declares ${Object.entries(issue.peers).map(([peer, range]) => `${peer} ${range}`).join(', ')},`
     + ` which dsh ${issue.runtimeVersion} does not satisfy`)
@@ -179,9 +223,9 @@ function cancelledDetail(context: OutcomeContext): string {
  * 2026-09-26-plugin-manager-delegation, section 5. The first rule that
  * matches wins. */
 export function managerOutcome(raw: unknown, context: OutcomeContext): ManagerOutcome {
-  const change = readChange(raw)
+  const change = context.desktop ? forDesktopReader(readChange(raw)) : readChange(raw)
   if (change.errorCode === 'incompatible-version') {
-    return { state: 'failed', detail: refusalDetail(context, change.incompatible) }
+    return { state: 'failed', detail: versionRefusalDetail(context, change.incompatible) }
   }
   if (change.application === 'failed' && change.stage === 'enable') {
     const code = change.errorCode ?? 'failed'
