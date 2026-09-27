@@ -509,6 +509,11 @@
   by: human
   reason: "KPM'H 纪代插件市场（Hub）：侧边栏一键启动的独立全屏市场页，支持多源目录（GitHub/npm/awesome）、一键安装、已装管理与卸载、孤儿插件扫描、通用安全防线（审计/入口校验/运行时兼容/自动修补）。"
 
+- name: "safer-dsh-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: A plugin marketplace for DeepSeek Harness with official installation and optional AI review of installed plugins"
+
 - name: "smart-dsh-market"
   market: true
   by: human
