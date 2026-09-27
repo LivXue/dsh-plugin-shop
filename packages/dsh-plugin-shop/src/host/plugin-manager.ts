@@ -6,7 +6,7 @@
  */
 import { activationOf, type Activation } from './activation.ts'
 import { allowVersionCommand } from './compatibility.ts'
-import { installFailureDetail, installTimeoutDetail } from './executor.ts'
+import { installFailureDetail, installTimeoutDetail, REFUSAL_OPENER } from './executor.ts'
 import type { HotRestartReason } from './hot.ts'
 
 /** The operations the shop calls. `cancelInstall` is optional because only
@@ -48,6 +48,9 @@ export interface ManagerChange {
   output: string
   pendingBuilds: string[]
   failedAt: string | null
+  /** Whether the profile's files differ from before the operation (dsh's
+   * `diskState`, which covers package.json). */
+  changed: boolean | null
 }
 
 const text = (value: unknown): string | null => typeof value === 'string' ? value : null
@@ -88,6 +91,7 @@ export function readChange(raw: unknown): ManagerChange {
       ? result.pendingBuilds.filter((name): name is string => typeof name === 'string')
       : [],
     failedAt: text(result.failedAt),
+    changed: typeof result.changed === 'boolean' ? result.changed : null,
   }
 }
 
@@ -104,13 +108,35 @@ function sentencesIn(line: string): string[] {
   return line.match(/[\s\S]*?[.!?]+(?:\s+|$)|[\s\S]+$/g) ?? []
 }
 
-/** `line`, with every sentence that names a `dsh plugin` command removed. A
- * line with nothing to remove is returned unchanged (so it stays exactly
- * what it was); one that loses every sentence is dropped (null). */
+/** Where `sentence`'s terminator starts: its closing punctuation and the
+ * whitespace after it. Scanned back from the end, so no run in dsh's output
+ * can make it slow. */
+function terminatorStart(sentence: string): number {
+  let end = sentence.length
+  while (end > 0 && /\s/.test(sentence.charAt(end - 1))) end -= 1
+  while (end > 0 && '.!?'.includes(sentence.charAt(end - 1))) end -= 1
+  return end
+}
+
+/** `sentence`, with every clause that names a `dsh plugin` command removed.
+ * A clause is a run between `; ` separators, and what is kept keeps the
+ * sentence's terminator. A sentence with nothing to remove is returned
+ * unchanged; one that loses every clause is dropped (null). */
+function scrubSentence(sentence: string): string | null {
+  if (!namesCliCommand(sentence)) return sentence
+  const end = terminatorStart(sentence)
+  const kept = sentence.slice(0, end).split('; ').filter(clause => !namesCliCommand(clause))
+  return kept.length === 0 ? null : `${kept.join('; ')}${sentence.slice(end)}`
+}
+
+/** `line`, with every clause that names a `dsh plugin` command removed (see
+ * `scrubSentence`). A line with nothing to remove is returned unchanged (so
+ * it stays exactly what it was); one that loses every sentence is dropped
+ * (null). */
 function scrubLine(line: string): string | null {
   const sentences = sentencesIn(line)
   if (sentences.length === 0) return line
-  const kept = sentences.filter(sentence => !namesCliCommand(sentence))
+  const kept = sentences.map(scrubSentence).filter((sentence): sentence is string => sentence !== null)
   return kept.length === 0 ? null : kept.join('')
 }
 
@@ -118,15 +144,18 @@ function scrubText(value: string): string {
   return value.split('\n').map(scrubLine).filter((line): line is string => line !== null).join('\n')
 }
 
-/** `change`, with every sentence naming a `dsh plugin` command removed from
+/** `change`, with every clause naming a `dsh plugin` command removed from
  * `diagnostic` and `output`: dsh's CLI refuses every `plugin` subcommand for
- * the desktop profile, so a sentence dsh wrote assuming that command exists
- * must not reach a reader there. Two dsh texts this exists for: dsh-app-boot's
+ * the desktop profile, so a step dsh wrote assuming that command exists must
+ * not reach a reader there. Two dsh texts this exists for: dsh-app-boot's
  * `pluginCompatibilityWarning` ("... with `dsh plugin allow-version` or the
- * plugin manager ...") and the install rollback message ("run 'dsh plugin
- * install'"). Scrubbing line by line keeps every other line untouched; a
- * diagnostic left empty afterward reads as absent, the same way `codeReason`
- * already treats one. */
+ * plugin manager ..."), whose sentence goes whole, and the restoration line
+ * after a failed repair ("..., but node_modules could not be reinstalled;
+ * run 'dsh plugin install'"), which keeps what it says dsh restored. A
+ * clause is a run between `; ` separators within a sentence; a sentence left
+ * with no clause is dropped, and so is a line left with no sentence. Every
+ * other line stays untouched, and a diagnostic left empty afterward reads as
+ * absent, the same way `codeReason` already treats one. */
 export function forDesktopReader(change: ManagerChange): ManagerChange {
   return {
     ...change,
@@ -186,19 +215,35 @@ const WHERE: Record<string, string> = {
  * the CLI would refuse for that profile. */
 const DESKTOP_FAILURE_HINT = 'pnpm failed in the profile'
 
+/** What dsh says it restored after refusing, from its own restoration line:
+ * the first `dsh: ` line after the one opening the refusal
+ * (dsh-plugin-manager's `rejected`), read as the CLI path's `refusalDetail`
+ * reads it, capitalized and ending in dsh's own period. Null when the output
+ * holds no such line, being empty or cut short. */
+function restorationSentence(output: string): string | null {
+  const lines = output.split(/\r?\n/)
+  const start = lines.findIndex(line => line.startsWith(REFUSAL_OPENER))
+  if (start === -1) return null
+  const line = lines.slice(start + 1).find(later => later.startsWith('dsh: '))
+  const said = line?.slice('dsh: '.length).trim() ?? ''
+  return said === '' ? null : `${said.charAt(0).toUpperCase()}${said.slice(1)}`
+}
+
 /** The refusal of a package the running dsh rejects on its peers, for the
  * operation dsh refused: an install, an update, or an uninstall whose pnpm
- * run touched an incompatible sibling. */
-function versionRefusalDetail(context: OutcomeContext, incompatible: readonly ManagerIncompatible[]): string {
-  const refused = incompatible.map(issue =>
+ * run touched an incompatible sibling. What dsh restored is dsh's to say,
+ * so its restoration line is passed on. Without one, an install or update
+ * says what dsh's own pre-check says, and an uninstall says nothing of it. */
+function versionRefusalDetail(context: OutcomeContext, change: ManagerChange): string {
+  const refused = change.incompatible.map(issue =>
     `${issue.name}@${issue.version} declares ${Object.entries(issue.peers).map(([peer, range]) => `${peer} ${range}`).join(', ')},`
     + ` which dsh ${issue.runtimeVersion} does not satisfy`)
-  const nothing = context.operation === 'uninstall' ? 'Nothing was removed.' : 'Nothing was installed.'
-  const base = `dsh-plugin-shop: dsh refused the ${context.operation}: ${refused.join('; ')}. ${nothing}`
+  const restored = restorationSentence(change.output) ?? (context.operation === 'uninstall' ? null : 'Nothing was installed.')
+  const base = `dsh-plugin-shop: dsh refused the ${context.operation}: ${refused.join('; ')}.${restored === null ? '' : ` ${restored}`}`
   if (context.desktop) {
     return `${base} dsh's CLI, which grants version exemptions, does not manage the desktop profile, and this shop grants none.`
   }
-  const commands = incompatible
+  const commands = change.incompatible
     .map(issue => allowVersionCommand(context.profile, issue))
     .filter((command): command is string => command !== null)
   if (commands.length === 0) return base
@@ -224,17 +269,33 @@ function cancelledDetail(context: OutcomeContext): string {
 }
 
 /** A `ChangeResult` as the shop's terminal install record: design
- * 2026-09-26-plugin-manager-delegation, section 5. The first rule that
- * matches wins. */
+ * 2026-09-26-plugin-manager-delegation, section 5, read by the first rule
+ * that matches. A removal that failed after dsh changed the profile says,
+ * after whichever rule read it, that the package is still installed and
+ * switched off. */
 export function managerOutcome(raw: unknown, context: OutcomeContext): ManagerOutcome {
   const change = context.desktop ? forDesktopReader(readChange(raw)) : readChange(raw)
+  const outcome = outcomeByRule(change, context)
+  // removeBundle switches an enabled bundle off before pnpm runs, and
+  // nothing switches it back on, so a removal that failed with the profile's
+  // files changed left the package installed and off. The sentence is the
+  // shop's own, so no scrub applies to it.
+  if (context.operation === 'uninstall' && outcome.state === 'failed' && change.changed === true) {
+    const switchedOff = `${context.name} is still installed, but dsh has switched it off.`
+    return { ...outcome, detail: outcome.detail === undefined ? switchedOff : `${outcome.detail} ${switchedOff}` }
+  }
+  return outcome
+}
+
+/** The section 5 rules, in order; the first that matches wins. */
+function outcomeByRule(change: ManagerChange, context: OutcomeContext): ManagerOutcome {
   // A pnpm run whose own compatibility scan rejected a package, a removal
   // that touched an incompatible sibling, reaches the caller as a plain
   // error, coded `operation-error`, with the structured list kept on
   // packageResult: the same refusal as `incompatible-version`, read from the
   // same list.
   if (change.errorCode === 'incompatible-version' || (change.errorCode === 'operation-error' && change.incompatible.length > 0)) {
-    return { state: 'failed', detail: versionRefusalDetail(context, change.incompatible) }
+    return { state: 'failed', detail: versionRefusalDetail(context, change) }
   }
   if (change.application === 'failed' && change.stage === 'enable') {
     const code = change.errorCode ?? 'failed'

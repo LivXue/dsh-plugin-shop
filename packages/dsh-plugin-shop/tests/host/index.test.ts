@@ -3444,10 +3444,11 @@ describe("installs and updates through dsh's pluginManager", () => {
     importedModules?: Set<string>
     output?: (spec: string) => Array<{ stream: string; text: string }>
     prefetcher?: Prefetcher
+    pinFs?: ShopGatewayOptions['pinFs']
   } = {}): { gateway: ShopGateway; calls: unknown[][]; profileDir: string; cacheDir: string; emit: (event: string, payload: unknown) => void } {
     const {
       dependencies = {}, profile = 'web', lands = true, hangs = false, importedModules = new Set<string>(),
-      output = (spec: string) => [{ stream: 'stdout', text: `+ ${spec}\n` }], prefetcher = fixturePrefetcher(),
+      output = (spec: string) => [{ stream: 'stdout', text: `+ ${spec}\n` }], prefetcher = fixturePrefetcher(), pinFs,
     } = options
     const profileDir = toggleProfile()
     writeManifest(profileDir, dependencies)
@@ -3500,6 +3501,7 @@ describe("installs and updates through dsh's pluginManager", () => {
       importedModules,
       prefetcher,
       dshBin: fakeDshRecording(mkdtempSync(join(TEMP_ROOT, 'dsh-managed-cli-')), 0, { silent: true }),
+      ...(pinFs !== undefined ? { pinFs } : {}),
     })
     const emit = (event: string, payload: unknown): void => {
       const listener = listeners.get(event)
@@ -3609,7 +3611,7 @@ describe("installs and updates through dsh's pluginManager", () => {
     expect(await installAndSettle(gateway, other)).toMatchObject({ state: 'done', activation: 'restart', restartReason: 'already-loaded' })
   })
 
-  it('reads the manifest again for no changed event but an install', async () => {
+  it('re-reads the manifest only for an install event', async () => {
     const { gateway, profileDir, emit } = managedGateway({ ...applied, target: 'dsh-other', bundle: 'dsh-other' })
     writeManifest(profileDir, { 'dsh-other': '1.0.0' })
     emit('plugin-manager/changed', { reason: 'remove' })
@@ -3687,6 +3689,20 @@ describe("installs and updates through dsh's pluginManager", () => {
     await finish(gateway, started.installId)
     expect(calls).toEqual([['installBundle', `github:someone/dsh-managed-repo#${commit}`, started.installId]])
     expect(JSON.parse(readFileSync(join(cacheDir, 'github-pins.json'), 'utf8'))).toEqual({ 'github:someone/dsh-managed-repo#': commit })
+  })
+
+  it('tracks the record before it writes the github pin, so a write that throws leaves nothing running unseen', async () => {
+    // The pin write is the one step after the start that can throw. The RPC
+    // then fails, but the operation is already queued, so its record must be
+    // where installStatus and the restart gate look for it.
+    const failingPins = { exists: () => false, read: () => '{}', write: () => { throw new Error('EACCES: github-pins.json') } }
+    const { gateway, calls } = managedGateway({ ...applied, target: 'dsh-managed-repo', bundle: 'dsh-managed-repo' }, { pinFs: failingPins })
+    await expect(gateway.install({ name: 'dsh-managed-repo', version: commit, acknowledged: true })).rejects.toThrow('EACCES: github-pins.json')
+    await vi.waitFor(() => expect(calls).toHaveLength(1), { timeout: 5000 })
+    const installId = calls[0]?.[2]
+    if (typeof installId !== 'string') throw new Error('installBundle was called without a request id')
+    expect(gateway.installStatus({ installId }).found).toBe(true)
+    expect((await finish(gateway, installId)).state).toBe('done')
   })
 
   it("fails an install whose landed package would stop the profile, with the shop's uninstall as the undo", async () => {

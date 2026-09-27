@@ -44,7 +44,7 @@ import {
 import { compatibilityMap, peerVerdictsOf, type HarnessVerdict, type PeerVerdict } from './compatibility.ts'
 import { readRunningHarness, type RunningHarness } from './harness.ts'
 import { ManagerLogs, startManagerOperation } from './manager-runner.ts'
-import { asPluginManager, managerOutcome, readChange, type ManagerOutcome, type PluginManagerLike } from './plugin-manager.ts'
+import { asPluginManager, managerOutcome, readChange, type ManagerOutcome, type OutcomeContext, type PluginManagerLike } from './plugin-manager.ts'
 
 // Re-exported so the boundary type is reachable from the package's public
 // ./types subpath; the typert generator refuses remote parameter types it
@@ -1360,14 +1360,12 @@ export class ShopGateway extends TypertRemoteService {
         // loading the new files (spec section 2), and `alreadyImported`
         // already holds for it.
         if (!isUpdate && readChange(raw).stage === 'enable') this.imported.add(args.name)
-        return managerOutcome(raw, {
-          profile: this.profile, name: args.name, operation: isUpdate ? 'update' : 'install',
-          alreadyImported, hasClientHalf: this.packageHasClientHalf(args.name),
-          desktop: isDesktopProfile(this.profile), timeoutMs: INSTALL_TIMEOUT_MS,
-        })
+        return managerOutcome(raw, this.outcomeContext(args.name, isUpdate ? 'update' : 'install', alreadyImported, this.packageHasClientHalf(args.name)))
       }, () => this.postInstallHazard(args.name, harness, ' It is on disk: uninstall it from the shop to undo this install.'))
-      this.recordGithubPin(entry)
+      // Tracked first: the operation is already queued, so a pin write that
+      // throws must not leave it running where no poll or restart gate sees it.
       this.track(running)
+      this.recordGithubPin(entry)
       return { ok: true, installId: running.installId, state: running.status().state }
     }
     const running = startInstall({
@@ -1478,6 +1476,14 @@ export class ShopGateway extends TypertRemoteService {
     if (entry.source !== 'github') return
     const pins = readRepoPins(this.pinFs, this.pinsPath())
     writeRepoPins(this.pinFs, this.pinsPath(), { ...pins, [identityKey(entry)]: entry.version })
+  }
+
+  /** What `managerOutcome` reads dsh's answer against. The gateway's own
+   * facts are set here once, for every operation through the service: the
+   * profile, whether it is the desktop one, and the deadline a timeout
+   * detail names. */
+  private outcomeContext(name: string, operation: OutcomeContext['operation'], alreadyImported: boolean, hasClientHalf: boolean): OutcomeContext {
+    return { profile: this.profile, name, operation, alreadyImported, hasClientHalf, desktop: isDesktopProfile(this.profile), timeoutMs: INSTALL_TIMEOUT_MS }
   }
 
   /**
@@ -1886,10 +1892,8 @@ export class ShopGateway extends TypertRemoteService {
       // The host half running here is the shop's own, so its update never
       // goes live: dsh answers with a restart and loads nothing (measured on
       // 0.1.7-rc.2).
-      const running = this.startManagerInstall(manager, spec, `update ${spec}`, raw => managerOutcome(raw, {
-        profile: this.profile, name: 'dsh-plugin-shop', operation: 'update', alreadyImported: true,
-        hasClientHalf: true, desktop: isDesktopProfile(this.profile), timeoutMs: INSTALL_TIMEOUT_MS,
-      }))
+      const running = this.startManagerInstall(manager, spec, `update ${spec}`, raw =>
+        managerOutcome(raw, this.outcomeContext('dsh-plugin-shop', 'update', true, true)))
       this.track(running)
       return { ok: true, installId: running.installId, state: running.status().state }
     }

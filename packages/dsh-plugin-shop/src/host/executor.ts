@@ -250,8 +250,9 @@ const FAILURE_LOG_NOISE: readonly RegExp[] = [
 
 /** The line dsh 0.1.7 opens a refused install with (dsh-plugin-manager's
  * `rejected`), and the exemption command its CLI prints after it, one per
- * refused package (`runPlugin`). */
-const REFUSAL_OPENER = 'dsh: installation rejected: '
+ * refused package (`runPlugin`). The opener is exported for the plugin
+ * manager's answer, whose output carries the same block. */
+export const REFUSAL_OPENER = 'dsh: installation rejected: '
 const REFUSAL_COMMAND = /^dsh: to accept the risk, run: dsh plugin --profile .+ allow-version (.+)@([^@\s]+) --dsh-version (\S+) --accept-risk$/
 const REFUSAL_FAILED = 'dsh: plugin command failed'
 /** Where dsh's warning turns from the refused peers to its risk statement
