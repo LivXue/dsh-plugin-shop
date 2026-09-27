@@ -43,6 +43,7 @@ import {
 } from './peers.ts'
 import { compatibilityMap, peerVerdictsOf, type HarnessVerdict, type PeerVerdict } from './compatibility.ts'
 import { readRunningHarness, type RunningHarness } from './harness.ts'
+import { asPluginManager, type PluginManagerLike } from './plugin-manager.ts'
 
 // Re-exported so the boundary type is reachable from the package's public
 // ./types subpath; the typert generator refuses remote parameter types it
@@ -75,19 +76,6 @@ export interface LoaderEntryLike {
   options: { name?: string }
   fiber?: unknown
   update(options: { disabled: boolean | null }, create?: boolean, force?: boolean): Promise<void>
-}
-
-/** The slice of dsh 0.1.7's `pluginManager` service this gateway calls,
- * structurally: the build compiles against the 0.1.1-rc.2 harness floor,
- * where the package does not exist. `setBundleEnabled` is what dsh's own
- * Plugins page calls for its bundle switch, and it answers with the saved
- * change and how it applied (design 2026-09-26-plugin-manager-delegation,
- * section 2). */
-export interface BundleSelector {
-  setBundleEnabled(name: string, enabled: boolean): Promise<{
-    application?: unknown
-    error?: { code?: unknown; diagnostic?: unknown }
-  }>
 }
 
 /** Test-only injection points; production callers pass nothing. */
@@ -685,16 +673,11 @@ export class ShopGateway extends TypertRemoteService {
       : null
   }
 
-  /** dsh's `pluginManager` service, when the running harness provides one
-   * (0.1.7 and later), else null. Read on each use, like `pluginPackages`.
-   * It is the only way back for a bundle its Plugins page deselected: the
-   * 0.1.7 CLI does not select an installed package again on `add`, while
-   * 0.1.5's does (both measured 2026-09-27). */
-  private pluginManager(): BundleSelector | null {
-    const service = (this.ctx as { get?: (name: string) => unknown }).get?.('pluginManager')
-    return typeof (service as { setBundleEnabled?: unknown } | null | undefined)?.setBundleEnabled === 'function'
-      ? service as BundleSelector
-      : null
+  /** dsh's `pluginManager` service, when the running harness provides all of
+   * it (0.1.7 and later), else null. Read on each use, like `pluginPackages`.
+   * Design 2026-09-26-plugin-manager-delegation, section 3.1. */
+  private pluginManager(): PluginManagerLike | null {
+    return asPluginManager((this.ctx as { get?: (name: string) => unknown }).get?.('pluginManager'))
   }
 
   /** "Does this installation provide `spec`?", asked from `anchor`: the
@@ -987,9 +970,9 @@ export class ShopGateway extends TypertRemoteService {
           + ' or uninstall it and install it again from the shop.',
       }
     }
-    let change: Awaited<ReturnType<BundleSelector['setBundleEnabled']>>
+    let change: { application?: unknown; error?: { code?: unknown; diagnostic?: unknown } }
     try {
-      change = await manager.setBundleEnabled(name, true)
+      change = (await manager.setBundleEnabled(name, true)) as typeof change
     } catch (error) {
       // The service threw rather than answering: nothing says the bundle was
       // selected, so the switch stays off and the reason travels as a detail

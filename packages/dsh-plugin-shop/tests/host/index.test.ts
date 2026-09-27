@@ -910,8 +910,20 @@ describe("the bundle switch of dsh 0.1.7's own Plugins page", () => {
       },
     }
   }
+  /** A pluginManager: `partial`'s operations, and every other one the shop's
+   * detection requires, each rejecting so a stray call fails the case. */
+  const completeService = (partial: object): object => {
+    const refuse = (method: string) => async (): Promise<never> => { throw new Error(`this case must not call ${method}`) }
+    return {
+      installBundle: refuse('installBundle'),
+      removeBundle: refuse('removeBundle'),
+      setPluginEnabled: refuse('setPluginEnabled'),
+      setBundleEnabled: refuse('setBundleEnabled'),
+      ...partial,
+    }
+  }
   const withManager = (service: object): never =>
-    ({ get: (name: string) => name === 'pluginManager' ? service : undefined, reflect: { provide: () => {} } }) as never
+    ({ get: (name: string) => name === 'pluginManager' ? completeService(service) : undefined, reflect: { provide: () => {} } }) as never
   const applied = { changed: true, application: 'applied', stage: 'enable', target: 'dsh-hello-fixture', enabled: true, warnings: [] }
 
   function installedGateway(bundles: string[]): ShopGateway {
