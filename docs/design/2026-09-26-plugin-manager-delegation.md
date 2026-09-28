@@ -320,11 +320,19 @@ service in place of a refusal.
   defect once, and the suite must fail.
 - **The e2e, on the 0.1.7 leg.** Remaining item 5 adds that leg and comes
   first. Install, switch off and on, update to the restart prompt, and
-  uninstall, all through the service. Each case asserts the mechanism line of
-  section 6 in the shop's log panel, so a silent fall back to the CLI fails
-  the case instead of passing it. dsh's own trace, a non-empty `pnpm.log`,
-  is recorded in section 2 but not asserted: it is a harness internal. The
-  0.1.5 leg keeps covering the CLI path unchanged.
+  uninstall, all through the service. The install, update and uninstall cases
+  assert the mechanism line of section 6 in the shop's log panel, so a silent
+  fall back to the CLI fails the case instead of passing it. dsh's own trace, a
+  non-empty `pnpm.log`, is recorded in section 2 but not asserted: it is a
+  harness internal. The 0.1.5 leg keeps covering the CLI path unchanged.
+- **The uninstall case.** It asserts the line in the log panel of the
+  uninstall's done view. Since this branch, that view keeps its log, as an
+  install's done view does. dsh's removal settles about 1.3 s after the click,
+  before the client's first 1 s poll, so the running view never shows the line.
+- **The switch case.** It asserts no mechanism line, because a switch makes no
+  record and has no log panel. Unit tests pin its route. On 0.1.7 the e2e
+  proves the switch went through dsh in two ways: the entry goes down and comes
+  back, and the user layer holds exactly one row for it (O3).
 - **Desktop.** Unit tests only, and the PR says it is unmeasured.
 
 ## 10. Open items, measured before the step that needs them
