@@ -257,6 +257,12 @@ const WHERE: Record<string, string> = {
   'spec-host': ' at the host the package is fetched from',
 }
 
+/** An own-property read of one of the three tables above. They are object
+ * literals, so a bare index read answers for Object.prototype, and a code of
+ * `toString` would publish a function's source as dsh's reason (R43). */
+const lookup = (table: Readonly<Record<string, string>>, key: string): string | undefined =>
+  Object.hasOwn(table, key) ? table[key] : undefined
+
 /** The pnpm-failure hint a desktop reader gets: it names no command, which
  * the CLI would refuse for that profile. */
 const DESKTOP_FAILURE_HINT = 'pnpm failed in the profile'
@@ -303,7 +309,7 @@ function versionRefusalDetail(context: OutcomeContext, change: ManagerChange): s
  * already ends in a period is not doubled; empty after that reads as
  * absent. Exported: Task 7 builds the same tail for a non-terminal notice. */
 export function codeReason(change: ManagerChange, code: string): string {
-  const sentence = CODE_SENTENCE[code]
+  const sentence = lookup(CODE_SENTENCE, code)
   const diagnostic = change.diagnostic !== null ? change.diagnostic.trim().replace(/\.$/, '') : ''
   const said = diagnostic !== '' ? ` dsh reported: ${diagnostic}.` : ''
   return `${sentence !== undefined ? `: ${sentence}` : ''}.${said}`
@@ -408,9 +414,9 @@ function outcomeByRule(change: ManagerChange, context: OutcomeContext): ManagerO
           + ' before pnpm runs, and that check did not finish within its bound (5 s by default), so pnpm never ran.',
       }
     }
-    const sentence = KIND_SENTENCE[change.kind]
+    const sentence = lookup(KIND_SENTENCE, change.kind)
     if (sentence !== undefined) {
-      const where = change.failedAt === null ? '' : WHERE[change.failedAt] ?? ''
+      const where = change.failedAt === null ? '' : lookup(WHERE, change.failedAt) ?? ''
       return { state: 'failed', detail: `dsh-plugin-shop: the ${context.operation} failed${where}: ${sentence}.` }
     }
     const lines = change.output.split(/\r?\n/).filter(line => line !== '')

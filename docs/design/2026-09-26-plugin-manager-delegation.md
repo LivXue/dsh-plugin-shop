@@ -207,7 +207,9 @@ matches wins.
    Amended 2026-09-28. The detail says dsh refused the operation, except
    for `operation-error`, dsh's code for any error that is not one of its
    refusals (`managementError`), where it says dsh could not perform it. A
-   switch and a re-selection word it the same way.
+   switch and a re-selection word it the same way. A code, a `kind` or a
+   `failedAt` named for a key every object inherits, such as `toString`,
+   reads as one this shop has no sentence for.
 5. `application === 'cancelled'`: `failed`, with the timeout detail
    (section 6).
 

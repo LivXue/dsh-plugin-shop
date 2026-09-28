@@ -263,6 +263,19 @@ describe('managerOutcome', () => {
     expect(outcome.detail).toBe('dsh-plugin-shop: dsh could not uninstall dsh-managed (operation-error): dsh hit an unexpected error. dsh reported: EBUSY: node_modules.')
   })
 
+  it('reads a code, a kind or a place named for an Object.prototype key as one it has no sentence for', () => {
+    // R43: the three sentence tables are object literals, and a bare index
+    // read answers for Object.prototype, so a code of `toString` published a
+    // function's source as dsh's reason.
+    expect(managerOutcome({ changed: false, application: 'failed', stage: 'install', target: 'x', error: { code: 'toString' } }, context))
+      .toEqual({ state: 'failed', detail: 'dsh-plugin-shop: dsh refused the install of dsh-managed (toString).' })
+    // An unknown kind gets installFailureDetail's excerpt of the output.
+    expect(managerOutcome(pnpmFailed('toString', 'ERR_PNPM_SOMETHING went wrong'), context).detail)
+      .toBe('pnpm failed in the profile. Run: dsh plugin --profile web install \u2014 ERR_PNPM_SOMETHING went wrong')
+    expect(managerOutcome(pnpmFailed('disk-full', 'ENOSPC', { failedAt: 'constructor' }), context).detail)
+      .toBe('dsh-plugin-shop: the install failed: the disk is full.')
+  })
+
   it('still reports a code this shop has no sentence for', () => {
     const outcome = managerOutcome({ changed: false, application: 'failed', stage: 'install', target: 'x', error: { code: 'brand-new-code' } }, context)
     expect(outcome).toEqual({ state: 'failed', detail: 'dsh-plugin-shop: dsh refused the install of dsh-managed (brand-new-code).' })
