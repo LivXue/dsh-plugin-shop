@@ -65,6 +65,18 @@
  * Windows `shop/restart` is refused before anything is torn down, so the card
  * carries that refusal's notice in the button's place.
  *
+ * All of the above is the CLI path, which the 0.1.5 leg keeps asserting. On
+ * 0.1.7 every change the shop makes goes through dsh's own `pluginManager`
+ * (design 2026-09-26-plugin-manager-delegation), and `managerPath` says which
+ * leg is running. There the failed install reads dsh's `not-found` sentence
+ * rather than the recovery hint; dsh composes a bundle itself, at the root of
+ * its plugin tree, so the live entry is `include:e2e-live` rather than one
+ * under the shop; and the config fixture, which the shop's own hot tree
+ * cannot mount, is composed live too. The failed install, the hot-mount
+ * case's install and uninstall, and the update also read the line the shop
+ * writes first into each such record, `via dsh's plugin manager: <operation>
+ * <spec>`, so a silent fall back to the CLI fails them instead of passing.
+ *
  * Skipped unless the machine has both the real `dsh` CLI on PATH and a
  * playwright chromium installed (CI installs both; see .github/workflows).
  *
@@ -737,6 +749,10 @@ function evidenceDir(caseName: string): string {
   return join(E2E_EVIDENCE_DIR, caseName.replace(/[^A-Za-z0-9]+/g, '-').slice(0, 80))
 }
 
+/** The session token dsh prints in its URL, out of anything the evidence
+ * writes: an uploaded artifact is public. */
+const redact = (text: string): string => text.replace(/token=[^&\s]+/g, 'token=<redacted>')
+
 /** Save what `open` shows under `name`. Best effort, because evidence must
  * never be what fails a case. */
 async function saveEvidence(open: Page, dir: string, name: string): Promise<void> {
@@ -745,7 +761,7 @@ async function saveEvidence(open: Page, dir: string, name: string): Promise<void
     // A crashed or closed page cannot be shot; its text below still says why.
   })
   const text = await open.evaluate(() => document.body.innerText).catch((error: unknown) => `innerText failed: ${String(error)}`)
-  writeFileSync(join(dir, `${name}.txt`), `${open.url()}\n\n${text}`)
+  writeFileSync(join(dir, `${name}.txt`), `${redact(open.url())}\n\n${redact(text)}`)
 }
 
 describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
@@ -755,6 +771,9 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
   let webUrl = ''
   /** What the launched dsh CLI answers to `--version`, read in beforeAll. */
   let launchedDshVersion = ''
+  /** Whether this harness offers dsh's pluginManager, so the shop's
+   * mutations go through it (design 2026-09-26-plugin-manager-delegation). */
+  let managerPath = false
   /** The launched dsh CLI's own script, resolved in beforeAll, for a spec
    * that runs a command the way a reader would in a terminal. */
   let dshScript: ReturnType<typeof resolveDshScript> = null
@@ -773,7 +792,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
     mkdirSync(dir, { recursive: true })
     // The URL dsh prints carries its session token. Dead with the runner, but
     // an uploaded artifact is public, so it goes out redacted.
-    writeFileSync(join(dir, 'dsh.log'), dshLog.map(line => line.replace(/token=[^&\s]+/g, 'token=<redacted>')).join('\n'))
+    writeFileSync(join(dir, 'dsh.log'), dshLog.map(line => redact(line)).join('\n'))
   })
 
   const shopPackageDir = fileURLToPath(new URL('../../', import.meta.url))
@@ -801,6 +820,50 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
   const updateActivations = (): string[] => {
     const file = join(tmpHome, 'dsh-shop-e2e-update.activations')
     return existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter(line => line !== '') : []
+  }
+
+  /**
+   * Require the Loader entry `entryId` live: listed in the loader inventory,
+   * tagged as enabled, and in the active phase. Written once for the two
+   * cases that read it, so both read liveness the same way.
+   *
+   * Read on a FRESH page. 0.1.7-rc.2 keeps a Settings tab it has shown
+   * mounted (hidden, holding the snapshot it fetched when first shown),
+   * and 插件列表 is the section's first tab, so the main page's dialog,
+   * opened before the install, fetched it then. Clicking back to it shows
+   * that list. A new page opens Settings from nothing on either harness.
+   */
+  const expectLiveInInventory = async (entryId: string): Promise<void> => {
+    const probe = await browser!.newPage({ locale: 'zh-CN', viewport: { width: 1680, height: 1000 } })
+    try {
+      await probe.goto(webUrl, { waitUntil: 'load' })
+      await waitForFirstRun(probe, launchedDshVersion)
+      await probe.waitForSelector('[class*="frame"]', { timeout: 30_000 })
+      await probe.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
+      const inventory = probe.getByRole('dialog', { name: '设置' })
+      await inventory.waitFor({ state: 'visible', timeout: 10_000 })
+      await inventory.getByRole('button', { name: PLUGINS_SECTION }).click()
+      await inventory.getByRole('tab', { name: '插件列表' }).click()
+      await expandGlobalPlane(inventory)
+      const liveEntry = inventory.locator(`[data-plugin-entry="${entryId}"]`)
+      await liveEntry.waitFor({ state: 'visible', timeout: 15_000 })
+      const cardButton = liveEntry.getByRole('button', { name: /已启用/ })
+      await cardButton.waitFor({ state: 'visible', timeout: 15_000 })
+      // The active phase. 0.1.5-rc.3 names it on a dot beside the tag;
+      // 0.1.7-rc.2 dots only the transitional phases (pending, loading,
+      // unloading) and names the active one in the card's opened details
+      // instead. The card is opened on both, and either reading counts.
+      await cardButton.click()
+      await liveEntry.getByRole('img', { name: '运行中' }).or(liveEntry.getByText('运行中', { exact: true }))
+        .first().waitFor({ state: 'visible', timeout: 15_000 })
+    } catch (error) {
+      // The probe is closed below, before the afterEach that collects a
+      // failed case's evidence can see it.
+      await saveEvidence(probe, evidenceDir(expect.getState().currentTestName?.split(' > ').pop() ?? 'inventory'), 'probe')
+      throw error
+    } finally {
+      await probe.close()
+    }
   }
 
   beforeAll(async () => {
@@ -905,6 +968,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       expect(launchedDshVersion, `this leg installed dsh ${expectedDsh}, but the dsh on PATH answers ${launchedDshVersion}`)
         .toBe(expectedDsh)
     }
+    managerPath = gte(launchedDshVersion, '0.1.7-rc.1')
     // Only 0.1.7 has the first-use workspace (see seedNoDefaultWorkspace).
     if (gte(launchedDshVersion, '0.1.7-rc.1')) seedNoDefaultWorkspace(tmpHome)
     dshProcess = spawn(web.command, web.args, {
@@ -1142,9 +1206,23 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // stderr line.
       await card.locator('[data-shop-confirm]').click()
       await card.getByText('安装失败').waitFor({ timeout: 60_000 })
-      await card
-        .getByText(/pnpm failed in the profile\. Run: dsh plugin --profile web install —/)
-        .waitFor({ timeout: 15_000 })
+      if (managerPath) {
+        // Through the service, dsh classifies the 404 as `not-found` and the
+        // detail is rule 3's sentence (design
+        // 2026-09-26-plugin-manager-delegation, section 5). The optional "at
+        // the registry" admits both `failedAt` answers dsh may give for a
+        // registry spec. The service never falls from a private registry to
+        // a public one (section 8), so the local registry's 404 is the only
+        // answer and this leg makes no internet request.
+        await card.getByText(/^dsh-plugin-shop: the install failed( at the registry)?: no such package was found\.$/)
+          .waitFor({ state: 'visible', timeout: 60_000 })
+        expect(await card.locator('[data-shop-log-line]').first().textContent())
+          .toBe("via dsh's plugin manager: install dsh-e2e-fixture-plugin@1.0.0")
+      } else {
+        await card
+          .getByText(/pnpm failed in the profile\. Run: dsh plugin --profile web install —/)
+          .waitFor({ timeout: 15_000 })
+      }
 
       // The manifest-level half of the flow (the P1 pattern): both file:
       // installs landed in `dsh.profile.bundles`; the failed fixture name did
@@ -1193,55 +1271,26 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // instead, so counting `[data-shop-restart]` alone would be satisfied by
       // exactly the regression this line refuses — on Windows, silently.
       expect(await card.locator('[data-shop-restart], [data-shop-restart-disabled]').count()).toBe(0)
+      if (managerPath) {
+        expect(await card.locator('[data-shop-log-line]').first().textContent())
+          .toBe("via dsh's plugin manager: install dsh-shop-e2e-live@1.0.0")
+      }
 
       // Liveness through the loader inventory — the strict read of what is
       // actually mounted. A route-based probe is unavailable: the harness
       // bundles no plugin-side HTTP router for the fixture to register on
-      // (see the fixture's index.js comment). The hot entry carries the
-      // mkt- prefixed row id at the end of its inventory id chain — the shop
-      // registers the hot tree from its own context, so the tree is the
-      // subtree of the shop's own loader entry and the loader lists it as
-      // `include:shop:mkt-e2e-live` — plus the enabled tag and the active
+      // (see the fixture's index.js comment). On the CLI path the hot entry
+      // carries the mkt- prefixed row id at the end of its inventory id chain
+      // (the shop registers the hot tree from its own context, so the tree
+      // is the subtree of the shop's own loader entry and the loader lists it
+      // as `include:shop:mkt-e2e-live`), plus the enabled tag and the active
       // phase dot. It read `include:typert-gateway:…` until 2026-09-26,
       // while the tree was still registered from whichever context made the
-      // RPC call (ShopGateway's `home` field).
-      //
-      // Read on a FRESH page. 0.1.7-rc.2 keeps a Settings tab it has shown
-      // mounted — hidden, holding the snapshot it fetched when first shown —
-      // and 插件列表 is the section's first tab, so this dialog fetched it
-      // when the first spec opened Settings, before anything was installed.
-      // Clicking back to it shows that list. A new page opens Settings from
-      // nothing on either harness.
-      const probe = await browser!.newPage({ locale: 'zh-CN', viewport: { width: 1680, height: 1000 } })
-      try {
-        await probe.goto(webUrl, { waitUntil: 'load' })
-        await waitForFirstRun(probe, launchedDshVersion)
-        await probe.waitForSelector('[class*="frame"]', { timeout: 30_000 })
-        await probe.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
-        const inventory = probe.getByRole('dialog', { name: '设置' })
-        await inventory.waitFor({ state: 'visible', timeout: 10_000 })
-        await inventory.getByRole('button', { name: PLUGINS_SECTION }).click()
-        await inventory.getByRole('tab', { name: '插件列表' }).click()
-        await expandGlobalPlane(inventory)
-        const liveEntry = inventory.locator('[data-plugin-entry="include:shop:mkt-e2e-live"]')
-        await liveEntry.waitFor({ state: 'visible', timeout: 15_000 })
-        const cardButton = liveEntry.getByRole('button', { name: /已启用/ })
-        await cardButton.waitFor({ state: 'visible', timeout: 15_000 })
-        // The active phase. 0.1.5-rc.3 names it on a dot beside the tag;
-        // 0.1.7-rc.2 dots only the transitional phases (pending, loading,
-        // unloading) and names the active one in the card's opened details
-        // instead. The card is opened on both, and either reading counts.
-        await cardButton.click()
-        await liveEntry.getByRole('img', { name: '运行中' }).or(liveEntry.getByText('运行中', { exact: true }))
-          .first().waitFor({ state: 'visible', timeout: 15_000 })
-      } catch (error) {
-        // The probe is closed below, before the afterEach that collects a
-        // failed case's evidence can see it.
-        await saveEvidence(probe, evidenceDir(expect.getState().currentTestName?.split(' > ').pop() ?? 'hot-mount'), 'probe')
-        throw error
-      } finally {
-        await probe.close()
-      }
+      // RPC call (ShopGateway's `home` field). Through dsh's plugin manager,
+      // dsh composes the bundle itself, at the root of its plugin tree, so
+      // the entry is the fixture's own row, beside the boot-composed ones.
+      const liveId = managerPath ? 'include:e2e-live' : 'include:shop:mkt-e2e-live'
+      await expectLiveInInventory(liveId)
 
       // The settled mutation re-reads installed() in place. Switching away
       // and back to the already-mounted shop must expose the installed
@@ -1291,6 +1340,12 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // again and the card immediately returns to the Install action.
       await card2.locator('[data-shop-uninstall]').click()
       await card2.locator('[data-shop-install]').waitFor({ state: 'visible', timeout: 60_000 })
+      if (managerPath) {
+        // The install's record left the card when the uninstall settled, so
+        // the uninstall receipt's log is the only one on it.
+        expect(await card2.locator('[data-shop-log-line]').first().textContent())
+          .toBe("via dsh's plugin manager: remove dsh-shop-e2e-live")
+      }
       expect(await card2.locator('[data-shop-uninstall]').count()).toBe(0)
       // Both offers, for the reason the install-side twin above states: this
       // is the only assertion that an uninstall did not report `restart`.
@@ -1308,13 +1363,13 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       await dialog3.getByRole('button', { name: PLUGINS_SECTION }).click()
       await dialog3.getByRole('tab', { name: '插件列表' }).click()
       await expandGlobalPlane(dialog3)
-      expect(await dialog3.locator('[data-plugin-entry="include:shop:mkt-e2e-live"]').count()).toBe(0)
+      expect(await dialog3.locator(`[data-plugin-entry="${liveId}"]`).count()).toBe(0)
     },
     120_000,
   )
 
   it(
-    'falls back to a restart for a fixture whose patch carries a config row: the localized reason and the restart offer, nothing live',
+    'a fixture whose patch carries a config row: the restart offer on the CLI path, and what dsh answers through its plugin manager',
     async () => {
       expect(page).toBeDefined()
       const app = page!
@@ -1332,33 +1387,47 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       const card = dialog.locator('[data-shop-entry="dsh-shop-e2e-config"]')
       await card.waitFor({ state: 'visible', timeout: 15_000 })
 
-      // Install: the same gate and poll. The config-row patch is a valid
-      // bundle-layer patch the hot tree cannot replicate, so the install
-      // reports done with activation `restart` and the host's published
-      // localized reason (parseSimplePatch rejects the row; the reason
-      // renders verbatim on the notice).
+      // Install: the same gate and poll.
       await card.locator('[data-shop-install]').click()
       await card.locator('[data-shop-confirm]').waitFor({ state: 'visible', timeout: 10_000 })
       await card.locator('[data-shop-confirm]').click()
       const notice = card.locator('[data-shop-restart-notice]')
       await notice.waitFor({ state: 'visible', timeout: 60_000 })
-      expect(await notice.textContent()).toContain('该插件的补丁包含无法热挂载的配置；重启 dsh 后生效')
-      // The §8 restart offer for a restart-required install, as the host
-      // allows it on THIS platform — see `expectRestartOffer`.
-      await expectRestartOffer(dialog, card)
 
-      // Nothing is live: a fresh settings mount takes a fresh inventory
-      // snapshot, and the config fixture has no hot entry in it.
-      // `expandGlobalPlane`'s postcondition is again what separates that from
-      // a Loader plane that simply has not rendered.
-      await dialog.locator('.VOzbGW_close').click()
-      await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
-      const dialog2 = app.getByRole('dialog', { name: '设置' })
-      await dialog2.waitFor({ state: 'visible', timeout: 10_000 })
-      await dialog2.getByRole('button', { name: PLUGINS_SECTION }).click()
-      await dialog2.getByRole('tab', { name: '插件列表' }).click()
-      await expandGlobalPlane(dialog2)
-      expect(await dialog2.locator('[data-plugin-entry="include:shop:mkt-e2e-config"]').count()).toBe(0)
+      if (managerPath) {
+        // Through dsh's plugin manager, dsh composes the bundle itself,
+        // config row and all, so its answer decides. 0.1.7-rc.2 answers
+        // `applied`, and the fixture has no browser half: the install is
+        // live, offers no restart, and dsh lists the row at the root of its
+        // plugin tree, as the hot-mount case's fixture.
+        expect(await notice.textContent()).toContain('已安装并热挂载')
+        // Both offers, for the reason the hot-mount case states.
+        expect(await card.locator('[data-shop-restart], [data-shop-restart-disabled]').count()).toBe(0)
+        await expectLiveInInventory('include:e2e-config')
+      } else {
+        // The config-row patch is a valid bundle-layer patch the shop's hot
+        // tree cannot replicate, so the install reports done with activation
+        // `restart` and the host's published localized reason
+        // (parseSimplePatch rejects the row; the reason renders verbatim on
+        // the notice).
+        expect(await notice.textContent()).toContain('该插件的补丁包含无法热挂载的配置；重启 dsh 后生效')
+        // The section 8 restart offer for a restart-required install, as the
+        // host allows it on THIS platform; see `expectRestartOffer`.
+        await expectRestartOffer(dialog, card)
+
+        // Nothing is live: a fresh settings mount takes a fresh inventory
+        // snapshot, and the config fixture has no hot entry in it.
+        // `expandGlobalPlane`'s postcondition is again what separates that
+        // from a Loader plane that simply has not rendered.
+        await dialog.locator('.VOzbGW_close').click()
+        await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
+        const dialog2 = app.getByRole('dialog', { name: '设置' })
+        await dialog2.waitFor({ state: 'visible', timeout: 10_000 })
+        await dialog2.getByRole('button', { name: PLUGINS_SECTION }).click()
+        await dialog2.getByRole('tab', { name: '插件列表' }).click()
+        await expandGlobalPlane(dialog2)
+        expect(await dialog2.locator('[data-plugin-entry="include:shop:mkt-e2e-config"]').count()).toBe(0)
+      }
     },
     120_000,
   )
@@ -1371,7 +1440,8 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
 
       // Close the dialog left open by the previous spec, then reopen on the
       // shop tab for the peer fixture's card (same reopen sequence as the
-      // previous spec's start: the settings modal was left on 插件列表).
+      // previous spec's start: the settings modal was left on 插件列表 on the
+      // CLI path, and on the shop tab through the plugin manager).
       const dialog0 = app.getByRole('dialog', { name: '设置' })
       await dialog0.locator('.VOzbGW_close').click()
       await app.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
@@ -1659,6 +1729,72 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
   )
 
   it(
+    'switches a boot-composed plugin off and on, and it runs again',
+    async () => {
+      // The update fixture, because the boot composed it and it has no
+      // browser half: on 0.1.5 the user layer reaches only boot-composed
+      // entries, and on 0.1.7 the service answers `unaddressable` for a tree
+      // the shop mounted itself. The update case reads its baseline
+      // activations at its own start, so the lines this case adds never
+      // reach its assertions.
+      expect(browser).toBeDefined()
+      const before = updateActivations().length
+      // A page of its own, as the bundle-switch case at the end has: the
+      // update case opens Settings on the main page next, and 0.1.7 keeps a
+      // Settings tab it has shown mounted with the data and the filter it
+      // had.
+      const fresh = await browser!.newPage({ locale: 'zh-CN', viewport: { width: 1680, height: 1000 } })
+      try {
+        await fresh.goto(webUrl, { waitUntil: 'load' })
+        await waitForFirstRun(fresh, launchedDshVersion)
+        await fresh.waitForSelector('[class*="frame"]', { timeout: 30_000 })
+        await fresh.getByRole('button', { name: '设置', exact: true }).click({ timeout: 15_000 })
+        const dialog = fresh.getByRole('dialog', { name: '设置' })
+        await dialog.waitFor({ state: 'visible', timeout: 10_000 })
+        await dialog.getByRole('button', { name: PLUGINS_SECTION }).click()
+        await dialog.getByRole('tab', { name: '插件商店' }).click()
+        await dialog.locator('[data-shop-tab]').waitFor({ state: 'visible', timeout: 15_000 })
+
+        // The package is outdated here (1.0.0 installed, 2.0.0 in the
+        // catalog), so its switch is drawn twice, on its card and on its row
+        // in the updatable section. This is the card's.
+        const row = dialog.locator('[data-shop-entry="dsh-shop-e2e-update"] [data-shop-enabled-switch="dsh-shop-e2e-update"]')
+        const toggle = row.locator('[data-shop-toggle]')
+        await toggle.waitFor({ state: 'visible', timeout: 15_000 })
+        expect(await toggle.getAttribute('aria-checked')).toBe('true')
+
+        await toggle.click()
+        await row.locator('[data-shop-hot-apply]').waitFor({ state: 'visible', timeout: 15_000 })
+        expect(await toggle.getAttribute('aria-checked')).toBe('false')
+        if (managerPath) {
+          // Open item O3: dsh wrote the row itself, in place, not beside it.
+          const layer = readFileSync(join(tmpHome, 'profiles', 'web', 'cordis.patch.yml'), 'utf8')
+          expect(layer.match(/id: e2e-update\b/g)?.length, layer).toBe(1)
+        }
+
+        // The fixture appends its module-scope version each time it
+        // activates, so a new line proves the entry went down and came back,
+        // on both legs.
+        await toggle.click()
+        await expect.poll(() => updateActivations().length, { timeout: 15_000 }).toBeGreaterThan(before)
+        // Polled, not read once: the fixture activates while dsh reloads, so
+        // its line can land before the switch's answer does, and the switch
+        // flips only on that answer.
+        await expect.poll(() => toggle.getAttribute('aria-checked'), { timeout: 15_000 }).toBe('true')
+        expect(await row.locator('[data-shop-toggle-error]').count()).toBe(0)
+      } catch (error) {
+        // The page is closed below, before the afterEach that collects a
+        // failed case's evidence can see it.
+        await saveEvidence(fresh, evidenceDir(expect.getState().currentTestName?.split(' > ').pop() ?? 'switch'), 'fresh')
+        throw error
+      } finally {
+        await fresh.close()
+      }
+    },
+    120_000,
+  )
+
+  it(
     'an update of a package this dsh already imported reports restart and leaves the imported version running',
     async () => {
       expect(page).toBeDefined()
@@ -1704,6 +1840,10 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // the shop said.
       const during = updateActivations().slice(booted.length)
       expect(during, `activations the update caused (module-scope versions): ${JSON.stringify(during)}`).toEqual([])
+      if (managerPath) {
+        expect(await card.locator('[data-shop-log-line]').first().textContent())
+          .toBe("via dsh's plugin manager: install dsh-shop-e2e-update@2.0.0")
+      }
 
       // What the reader is told instead: restart, and why.
       expect(await notice.textContent()).toBe(zh.hotAlreadyLoadedNotice)

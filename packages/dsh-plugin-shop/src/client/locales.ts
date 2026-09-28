@@ -152,6 +152,7 @@ export const zh = {
   enabledSwitch: '启用',
   toggleFailed: '设置失败，请重试。',
   hotApplyNote: '已生效，无需重启',
+  toggleRestartNote: '已保存，重启 dsh 后生效',
 } satisfies Record<string, string>
 
 /** Shop locale key union. */
@@ -272,4 +273,5 @@ export const en = {
   enabledSwitch: 'Enable',
   toggleFailed: 'Failed to update. Please retry.',
   hotApplyNote: 'applied without a restart',
+  toggleRestartNote: 'saved; it takes effect after dsh restarts',
 } satisfies Record<ShopLocaleKey, string>

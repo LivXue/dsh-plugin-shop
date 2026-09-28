@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { activationFailureDetail, shellSafeTarget, installFailureDetail, installTimeoutDetail, killTree, lineSink, spawnFailureDetail, startInstall, startUninstall, type InstallStatus } from '../../src/host/executor.ts'
+import { activationFailureDetail, shellSafeTarget, installFailureDetail, installTimeoutDetail, killTree, lineSink, spawnFailureDetail, startInstall, startUninstall, createBoundedLog, inProfileQueue, requestDownloadPhase, type InstallStatus } from '../../src/host/executor.ts'
 import type { HotRestartReason } from '../../src/host/hot.ts'
 import type { Activation } from '../../src/host/activation.ts'
 import { createPrefetcher, type Prefetcher } from '../../src/host/prefetch.ts'
@@ -1601,5 +1601,83 @@ describe('a chained task that rejects', () => {
     } finally {
       process.off('unhandledRejection', onRejection)
     }
+  })
+})
+
+describe('installFailureDetail with a caller hint', () => {
+  it('opens with the caller hint in place of the CLI command', () => {
+    const detail = installFailureDetail('desktop', ['ERR_PNPM_FOO boom'], 'pnpm failed in the profile')
+    expect(detail).toMatch(/^pnpm failed in the profile /)
+    expect(detail).toContain('ERR_PNPM_FOO boom')
+    expect(detail).not.toContain('dsh plugin')
+  })
+
+  it('keeps the CLI command when no hint is given', () => {
+    expect(installFailureDetail('web', ['ERR_PNPM_FOO boom'])).toContain('Run: dsh plugin --profile web install')
+  })
+})
+
+describe('inProfileQueue', () => {
+  it('runs a task after every command already queued for the same profile', async () => {
+    const order: string[] = []
+    let release!: () => void
+    const first = inProfileQueue('queue-share', () => new Promise<void>(resolve => { release = () => { order.push('first'); resolve() } }))
+    const second = inProfileQueue('queue-share', async () => { order.push('second') })
+    expect(first.ahead).toBe(0)
+    expect(second.ahead).toBe(1)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    release()
+    await second.finished
+    expect(order).toEqual(['first', 'second'])
+  })
+
+  it('frees the slot when a task rejects', async () => {
+    const failed = inProfileQueue('queue-reject', async () => { throw new Error('boom') })
+    await expect(failed.finished).rejects.toThrow('boom')
+    expect(inProfileQueue('queue-reject', async () => {}).ahead).toBe(0)
+  })
+})
+
+describe('createBoundedLog', () => {
+  it('keeps the newest lines within the line cap', () => {
+    const log = createBoundedLog()
+    for (let i = 0; i < 205; i++) log.push(`line ${i}`)
+    expect(log.lines()).toHaveLength(200)
+    expect(log.lines()[0]).toBe('line 5')
+  })
+
+  it('never drops the newest line, even alone over the byte cap', () => {
+    const log = createBoundedLog()
+    log.push('x'.repeat(70 * 1024))
+    expect(log.lines()).toHaveLength(1)
+  })
+})
+
+describe('requestDownloadPhase', () => {
+  const prefetcher = (answer: ReturnType<Prefetcher['request']> | Error): Prefetcher => ({
+    request: () => { if (answer instanceof Error) throw answer; return answer },
+    release: () => {},
+  })
+
+  it('returns a started request and logs nothing of its own', () => {
+    const lines: string[] = []
+    expect(requestDownloadPhase({ prefetcher: prefetcher({ started: true }), profile: 'web', spec: 'a@1.0.0', log: line => lines.push(line) }))
+      .toEqual({ started: true })
+    expect(lines).toEqual([])
+  })
+
+  it('says why there is no download phase when pnpm is missing', () => {
+    const lines: string[] = []
+    requestDownloadPhase({ prefetcher: prefetcher({ started: false, reason: 'no-pnpm' }), profile: 'web', spec: 'a@1.0.0', log: line => lines.push(line) })
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toMatch(/pnpm not found on PATH/)
+  })
+
+  it('logs a request that throws and returns null, never rethrowing', () => {
+    const lines: string[] = []
+    expect(requestDownloadPhase({ prefetcher: prefetcher(new Error('cannot build')), profile: 'web', spec: 'a@1.0.0', log: line => lines.push(line) }))
+      .toBeNull()
+    expect(lines[0]).toMatch(/the download phase could not start/)
+    expect(lines[0]).toContain('cannot build')
   })
 })

@@ -253,10 +253,10 @@ rejection code, an uninstall and a self-update with a detail pointing at
 the app, and `desktop` leads the restart gate, so the card shows the app's
 own copy in place of the restart offer.
 
-Amended 2026-09-26, not yet built: where dsh offers its `pluginManager`
-service, the desktop profile's mutations go through it and only the restart
-stays refused. The refusals above then stand only where the service is
-absent. See
+Amended 2026-09-26, built on branch `feat/plugin-manager-delegation`: where
+dsh offers its `pluginManager` service, the desktop profile's mutations go
+through it and only the restart stays refused. The refusals above then stand
+only where the service is absent. See
 [2026-09-26-plugin-manager-delegation.md](2026-09-26-plugin-manager-delegation.md)
 section 7.
 

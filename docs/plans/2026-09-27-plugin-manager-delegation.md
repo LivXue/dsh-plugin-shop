@@ -879,7 +879,7 @@ git commit -m "refactor(shop): share the profile queue, the bounded log and the 
 - Consumes: `inProfileQueue`, `createBoundedLog`, `requestDownloadPhase`, `INSTALL_TIMEOUT_MS`, `RunningInstall` (Task 3); `lineSink`, `InstallStatus` (existing); `ManagerOutcome`, `readChange` (Task 2); `Prefetcher` from `prefetch.ts`.
 - Produces:
   - `const MECHANISM_PREFIX = "via dsh's plugin manager:"`
-  - `class ManagerLogs { open(requestId: string, sink: (text: string) => void): () => void; chunk(requestId: unknown, text: unknown): void }`
+  - `class ManagerLogs { open(requestId: string, sink: (text: string, stream: string) => void): () => void; chunk(requestId: unknown, text: unknown, stream?: unknown): void }`
   - `interface ManagerOperationOptions`
   - `function startManagerOperation(options: ManagerOperationOptions): RunningInstall`
 

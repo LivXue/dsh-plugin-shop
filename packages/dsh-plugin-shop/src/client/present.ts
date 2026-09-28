@@ -316,7 +316,7 @@ export type InstallView =
   | { kind: 'idle' }
   | { kind: 'rejected'; code: InstallRejectionCode; detail: string }
   | { kind: 'running'; installId: string; log: string[]; phase: 'downloading' | 'installing' }
-  | { kind: 'done'; activation: Activation; log: string[]; restartReason?: HotRestartReason }
+  | { kind: 'done'; activation: Activation; log: string[]; restartReason?: HotRestartReason; detail?: string }
   | { kind: 'failed'; detail: string; log: string[] }
 
 /** One event the install view reacts to. */
@@ -438,6 +438,9 @@ export function reduceInstall(state: InstallView, event: InstallEvent): InstallV
           // inspecting was the one that showed nothing (reported 2026-09-06).
           log: status.log,
           ...(status.restartReason !== undefined ? { restartReason: status.restartReason } : {}),
+          // A note the host attached to a success (the plugin manager's
+          // `overridden`). Host copy, rendered as it came, like a failure's.
+          ...(status.detail !== undefined ? { detail: status.detail } : {}),
         }
       }
       return { kind: 'failed', detail: status.detail ?? '', log: status.log }

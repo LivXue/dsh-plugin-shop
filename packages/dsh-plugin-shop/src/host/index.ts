@@ -4,7 +4,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { readProfileManifest } from '@deepseek-ai/dsh-app-boot'
 import { lt, minVersion, valid } from 'semver'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -16,7 +16,7 @@ import type { CatalogOrigin } from './origin.ts'
 import { npmrcRegistry } from './npmrc.ts'
 import type { CatalogEntry, DeniedEntry } from './types.ts'
 import { validateInstall, type InstallArgs, type InstallRejectionCode } from './install.ts'
-import { startInstall, startUninstall, type InstallStatus } from './executor.ts'
+import { gateOperand, INSTALL_TIMEOUT_MS, startInstall, startUninstall, type InstallStatus, type RunningInstall } from './executor.ts'
 import { cleanHotDir, hotMount, hotUnmount, nodeHotFs, type HotFs } from './hot.ts'
 import { activationOf, type Activation } from './activation.ts'
 import { hasClientHalf } from './client-half.ts'
@@ -43,6 +43,8 @@ import {
 } from './peers.ts'
 import { compatibilityMap, peerVerdictsOf, type HarnessVerdict, type PeerVerdict } from './compatibility.ts'
 import { readRunningHarness, type RunningHarness } from './harness.ts'
+import { ManagerLogs, messageOf, startManagerOperation } from './manager-runner.ts'
+import { asPluginManager, codeReason, forDesktopReader, managerOutcome, readChange, thrownTail, type ManagerChange, type ManagerOutcome, type OutcomeContext, type PluginManagerLike } from './plugin-manager.ts'
 
 // Re-exported so the boundary type is reachable from the package's public
 // ./types subpath; the typert generator refuses remote parameter types it
@@ -75,19 +77,6 @@ export interface LoaderEntryLike {
   options: { name?: string }
   fiber?: unknown
   update(options: { disabled: boolean | null }, create?: boolean, force?: boolean): Promise<void>
-}
-
-/** The slice of dsh 0.1.7's `pluginManager` service this gateway calls,
- * structurally: the build compiles against the 0.1.1-rc.2 harness floor,
- * where the package does not exist. `setBundleEnabled` is what dsh's own
- * Plugins page calls for its bundle switch, and it answers with the saved
- * change and how it applied (design 2026-09-26-plugin-manager-delegation,
- * section 2). */
-export interface BundleSelector {
-  setBundleEnabled(name: string, enabled: boolean): Promise<{
-    application?: unknown
-    error?: { code?: unknown; diagnostic?: unknown }
-  }>
 }
 
 /** Test-only injection points; production callers pass nothing. */
@@ -269,6 +258,17 @@ const RESTART_BLOCKED_DETAIL: Record<RestartBlockedReason, string> = {
  * failure that surfaced instead read "pnpm failed in the profile". */
 const DESKTOP_PROFILE_DETAIL = 'dsh-plugin-shop: the desktop profile is managed by the DeepSeek Harness desktop app, and dsh'
   + ' refuses to change it from the command line the shop runs; add and remove its plugins from the app instead'
+
+/** Why a switch through dsh's `pluginManager` waits for an operation this
+ * gateway started: dsh holds its profile lock for a whole install or removal
+ * (`change()` wraps pnpm) and makes any other change wait for it up to its
+ * `lockWaitMs`, 120 s, so a switch clicked mid-install would spin for two
+ * minutes and then fail on the lock. The check is F-5's, `hasRunningCommand`.
+ * The shop's own row writer takes no dsh lock, so what it writes alone (the
+ * CLI path's switch, and switching a deselected package off) is not
+ * refused. */
+const switchWhileBusyDetail = (name: string): string => 'dsh-plugin-shop: an install, update or uninstall is still running'
+  + ` in this profile, and dsh holds the profile until it ends; switch ${name} after it finishes.`
 
 /** `shop/version` result (§7.3): the RUNNING shop version (from the shipped
  * package.json, not the manifest's range), the npm latest when the check
@@ -455,8 +455,12 @@ function ownDependencySpec(
  * process's: a gateway rebuilt inside a running dsh — a restarted shop fiber —
  * must not forget what the process imported before it existed. Every gateway
  * seeds it with the profile's dependencies at construction (the boot
- * composition) and extends it with every name the hot path mounts. Nothing is
- * ever removed: an uninstall disposes the fiber, not the module record.
+ * composition) and extends it with every name the hot path mounts. It extends
+ * it again with every name one of its own installs through dsh's
+ * `pluginManager` brought to the enable stage, and with the profile's
+ * dependencies whenever that service reports an install: dsh's own Plugins
+ * page installs through it, and the report names no package. Nothing is ever
+ * removed: an uninstall disposes the fiber, not the module record.
  */
 const importedThisProcess = new Set<string>()
 
@@ -518,6 +522,9 @@ export class ShopGateway extends TypertRemoteService {
   private readonly prefetcher: Prefetcher
   /** What this process may already have imported (see `importedThisProcess`). */
   private readonly imported: Set<string>
+  /** Routes the output dsh's `pluginManager` streams to the record whose
+   * request id it carries (see the constructor). */
+  private readonly managerLogs: ManagerLogs
   /** The install gate runs against the last loaded snapshot, never a fresh
    * fetch per request (§7.2: the Host's cached snapshot is the truth). */
   /** Finished install records retained, so a poll sees the true terminal
@@ -544,8 +551,9 @@ export class ShopGateway extends TypertRemoteService {
    * promise, so concurrent first calls share one read; `readRunningHarness`
    * never rejects, so there is no failure to retry. */
   private harnessRead: Promise<RunningHarness> | null = null
-  /** Install records, running and finished; a poll finds one here or reports not found. */
-  private readonly installs = new Map<string, ReturnType<typeof startInstall>>()
+  /** Install records, running and finished, from the CLI and from dsh's
+   * `pluginManager` alike; a poll finds one here or reports not found. */
+  private readonly installs = new Map<string, RunningInstall>()
   /** Every install id in insertion order, oldest first; finished-record eviction walks this from the front. */
   private readonly installOrder: string[] = []
 
@@ -586,7 +594,24 @@ export class ShopGateway extends TypertRemoteService {
     // An unreadable manifest seeds nothing — an update is still recognized
     // from the manifest at install time, so what goes unrecognized then is an
     // uninstall followed by a reinstall, and only until the next boot.
-    for (const name of Object.keys(this.profileDependenciesOrNone() ?? {})) this.imported.add(name)
+    this.recordDependenciesImported()
+    this.managerLogs = new ManagerLogs()
+    // The service streams each pnpm run as it happens. A context without `on`
+    // (a unit test's stub) streams nothing, and a record then takes the
+    // service's final output instead.
+    const on = (this.ctx as { on?: (event: string, listener: (payload: unknown) => void) => unknown }).on
+    on?.call(this.ctx, 'plugin-manager/install-log', payload => {
+      const chunk = payload as { requestId?: unknown; text?: unknown; stream?: unknown } | null | undefined
+      this.managerLogs.chunk(chunk?.requestId, chunk?.text, chunk?.stream)
+    })
+    // dsh's own Plugins page installs through the same service, and the
+    // event dsh sends after every install names no package (measured on
+    // 0.1.7-rc.2). So the record is read again from the profile manifest,
+    // which now holds whatever dsh installed. Of the service's changes only
+    // an install adds a name to the manifest, so it is the only one read.
+    on?.call(this.ctx, 'plugin-manager/changed', payload => {
+      if ((payload as { reason?: unknown } | null | undefined)?.reason === 'install') this.recordDependenciesImported()
+    })
     try {
       // The ephemeral `hot-<n>.yml` inputs from a previous session must
       // never survive a boot: a crashed session's stale inputs would mount
@@ -685,16 +710,15 @@ export class ShopGateway extends TypertRemoteService {
       : null
   }
 
-  /** dsh's `pluginManager` service, when the running harness provides one
-   * (0.1.7 and later), else null. Read on each use, like `pluginPackages`.
-   * It is the only way back for a bundle its Plugins page deselected: the
-   * 0.1.7 CLI does not select an installed package again on `add`, while
-   * 0.1.5's does (both measured 2026-09-27). */
-  private pluginManager(): BundleSelector | null {
-    const service = (this.ctx as { get?: (name: string) => unknown }).get?.('pluginManager')
-    return typeof (service as { setBundleEnabled?: unknown } | null | undefined)?.setBundleEnabled === 'function'
-      ? service as BundleSelector
-      : null
+  /** dsh's `pluginManager` service, when the running harness provides all of
+   * it (0.1.7 and later), else null. Never cached across calls, like
+   * `pluginPackages`, but read once per RPC, at its start, and passed down:
+   * read again after an await, a service disposed in between would let a
+   * desktop mutation past the desktop gate and onto the CLI path, which dsh
+   * refuses for that profile. Design 2026-09-26-plugin-manager-delegation,
+   * section 3.1. */
+  private pluginManager(): PluginManagerLike | null {
+    return asPluginManager((this.ctx as { get?: (name: string) => unknown }).get?.('pluginManager'))
   }
 
   /** "Does this installation provide `spec`?", asked from `anchor`: the
@@ -815,6 +839,14 @@ export class ShopGateway extends TypertRemoteService {
     return dependencies === undefined ? undefined : ownDependencySpec(dependencies, name)
   }
 
+  /** Add every dependency the profile manifest holds to the `imported`
+   * record (see `importedThisProcess`): each is a package dsh's loader may
+   * have loaded in this process, at boot or by an install since. An
+   * unreadable manifest adds nothing. */
+  private recordDependenciesImported(): void {
+    for (const name of Object.keys(this.profileDependenciesOrNone() ?? {})) this.imported.add(name)
+  }
+
   private ownedEntryIdsOrNone(packageName: string): string[] {
     try {
       return ownedEntryIds({ profileDir: this.profileDirResolved(), packageName })
@@ -893,6 +925,8 @@ export class ShopGateway extends TypertRemoteService {
     if (args.name === 'dsh-plugin-shop' || args.name.startsWith('@deepseek-ai/')) {
       return { ok: false, detail: `dsh-plugin-shop: ${args.name} is part of the harness chain and cannot be toggled from the shop` }
     }
+    // Read once, and passed to the deselected branch (see `pluginManager`).
+    const manager = this.pluginManager()
     const profileDir = this.profileDirResolved()
     // Installed-ness is the profile manifest's dependencies — the same truth
     // `installed()` renders the row from. Reading it from a different source
@@ -921,7 +955,7 @@ export class ShopGateway extends TypertRemoteService {
     // below would advise the restart that cannot help.
     const selected = this.runningProfileBundles(profileDir)
     if (selected !== null && !selected.includes(args.name)) {
-      return this.setDeselectedEnabled(args.name, args.enabled, profileDir, owned)
+      return this.setDeselectedEnabled(args.name, args.enabled, profileDir, owned, manager)
     }
     const ownedSet = new Set(owned.map(entry => entry.id))
     // Liveness is read from the LIVE ids, which carry the namespace of every
@@ -929,6 +963,45 @@ export class ShopGateway extends TypertRemoteService {
     const live = (await this.listInventory()).filter(entry => ownsEntryId(ownedSet, entry.entryId))
     if (live.length === 0) {
       return { ok: false, detail: `dsh-plugin-shop: ${args.name} is installed but its entries are not in the running plugin tree; restart dsh to compose them` }
+    }
+    // dsh 0.1.7+: switch every live entry through the service, by its LIVE
+    // id, the same row the writer below would touch, applied in place
+    // (measured 2026-09-27 on 0.1.7-rc.2). The loop is sequential and there
+    // is no rollback: a failure partway through says how many entries had
+    // already switched, because this path never reaches the writer's own row
+    // write and nothing else would report it.
+    if (manager !== null) {
+      if (this.hasRunningCommand()) return { ok: false, detail: switchWhileBusyDetail(args.name) }
+      let restart = false
+      let switched = 0
+      // A failure partway through says how many entries had already switched
+      // (R21), whatever failed: a refusal, an override or a throw. The
+      // failure's own sentence is ended first, since a thrown message
+      // carries no period of its own.
+      const failed = (detail: string): ShopSetEnabledResult => {
+        if (switched === 0) return { ok: false, detail }
+        const sentence = /[.!?]$/.test(detail) ? detail : `${detail}.`
+        return { ok: false, detail: `${sentence} ${switched} of its ${live.length} plugins had already switched ${args.enabled ? 'on' : 'off'}.` }
+      }
+      for (const entry of live) {
+        let raw: unknown
+        try {
+          raw = await manager.setPluginEnabled(entry.entryId, args.enabled)
+        } catch (error) {
+          // The service threw rather than answering: nothing says the entry
+          // switched, and the reason travels as a detail, not as a transport
+          // failure the client can only call "retry".
+          return failed(`dsh-plugin-shop: dsh could not switch ${args.name}${thrownTail(messageOf(error), isDesktopProfile(this.profile))}`)
+        }
+        const { change, failure } = this.readManagerAnswer(raw, {
+          act: `switch ${args.name}`, request: `the switch for ${args.name}`, stays: args.enabled ? 'off' : 'on',
+        })
+        if (failure !== null) return failed(failure)
+        switched += 1
+        if (change.application === 'restart-required') restart = true
+      }
+      if (restart) return { ok: true, activation: 'restart' }
+      return { ok: true, activation: activationOf({ hostLive: true, clientLive: true, hasClientHalf: this.packageHasClientHalf(args.name) }) }
     }
     // The row names the CONFIG id — the id the package's own patch inserted —
     // never the live id it was found by. The user layer is applied by the
@@ -971,13 +1044,13 @@ export class ShopGateway extends TypertRemoteService {
     enabled: boolean,
     profileDir: string,
     owned: readonly OwnedEntry[],
+    manager: PluginManagerLike | null,
   ): Promise<ShopSetEnabledResult> {
     const rows = owned.map(({ id, name: moduleName }) => ({ id, disabled: !enabled, ...(moduleName !== undefined ? { name: moduleName } : {}) }))
     if (!enabled) {
       setUserLayerRows({ profileDir, rows })
       return { ok: true, activation: 'live' }
     }
-    const manager = this.pluginManager()
     if (manager === null) {
       return {
         ok: false,
@@ -987,23 +1060,64 @@ export class ShopGateway extends TypertRemoteService {
           + ' or uninstall it and install it again from the shop.',
       }
     }
-    let change: Awaited<ReturnType<BundleSelector['setBundleEnabled']>>
+    if (this.hasRunningCommand()) return { ok: false, detail: switchWhileBusyDetail(name) }
+    let raw: unknown
     try {
-      change = await manager.setBundleEnabled(name, true)
+      raw = await manager.setBundleEnabled(name, true)
     } catch (error) {
       // The service threw rather than answering: nothing says the bundle was
       // selected, so the switch stays off and the reason travels as a detail
       // rather than as a transport failure the client can only call "retry".
-      return { ok: false, detail: `dsh-plugin-shop: dsh could not select ${name} again: ${String(error)}` }
+      return { ok: false, detail: `dsh-plugin-shop: dsh could not select ${name} again${thrownTail(messageOf(error), isDesktopProfile(this.profile))}` }
     }
-    if (change.application === 'failed' || change.application === 'cancelled' || change.error !== undefined) {
-      const code = typeof change.error?.code === 'string' ? change.error.code : String(change.application)
-      const diagnostic = typeof change.error?.diagnostic === 'string' ? `: ${change.error.diagnostic}` : ''
-      return { ok: false, detail: `dsh-plugin-shop: dsh refused to select ${name} again (${code})${diagnostic}` }
-    }
+    const { change, failure } = this.readManagerAnswer(raw, { act: `select ${name} again`, request: `the selection of ${name}`, stays: 'off' })
+    if (failure !== null) return { ok: false, detail: failure }
     setUserLayerRows({ profileDir, rows })
     if (change.application === 'restart-required') return { ok: true, activation: 'restart' }
     return { ok: true, activation: activationOf({ hostLive: true, clientLive: true, hasClientHalf: this.packageHasClientHalf(name) }) }
+  }
+
+  /**
+   * dsh's answer to a switch or a bundle selection, read the one way both
+   * callers need it (R32): the change, scrubbed for a desktop reader, and the
+   * detail that fails the request, or null when dsh applied it. `act` is what
+   * was asked, as "switch <name>", `request` names the request itself, as
+   * "the switch for <name>", and `stays` is the state the plugin keeps when
+   * the request does not take effect. An application this shop does not know
+   * fails rather than reading as applied: a later harness may answer
+   * something new.
+   *
+   * `overridden` fails too (R39). dsh answers it when, after it wrote the row
+   * and reloaded, the live entry still differs from the request
+   * (dsh-plugin-manager 0.1.7-rc.2, setPluginEnabled), and its README names
+   * what outranks the profile's own patch: home and invocation patches keep
+   * their higher priority. The change is saved and the plugin runs as it
+   * did, so a success would flip the client's switch over a plugin that did
+   * not change, and that switch never re-reads the live state.
+   * setBundleEnabled never answers it; a selection reads it the same way.
+   */
+  private readManagerAnswer(raw: unknown, words: { act: string; request: string; stays: 'on' | 'off' }): { change: ManagerChange; failure: string | null } {
+    const change = isDesktopProfile(this.profile) ? forDesktopReader(readChange(raw)) : readChange(raw)
+    if (change.application === 'failed' || change.application === 'cancelled' || change.errorCode !== null) {
+      const code = change.errorCode ?? change.application ?? 'failed'
+      // `operation-error` is what dsh codes any error that is not one of its
+      // refusals (managementError), so it reads "could not", not "refused".
+      const verb = code === 'operation-error' ? 'could not' : 'refused to'
+      return { change, failure: `dsh-plugin-shop: dsh ${verb} ${words.act} (${code})${codeReason(change, code)}` }
+    }
+    if (change.application === 'overridden') {
+      return {
+        change,
+        failure: `dsh-plugin-shop: dsh saved ${words.request}, but a home or invocation patch, which outranks the profile's own, keeps it ${words.stays}.`,
+      }
+    }
+    if (change.application === 'applied' || change.application === 'restart-required') {
+      return { change, failure: null }
+    }
+    return {
+      change,
+      failure: `dsh-plugin-shop: dsh answered ${words.request} with "${change.application ?? 'nothing'}", which this shop does not know how to read.`,
+    }
   }
 
   private rowConfig(): { catalogUrl: string; cacheDir: string } {
@@ -1263,7 +1377,10 @@ export class ShopGateway extends TypertRemoteService {
   // this on the real composition (§7.3 amendment, 2026-08-25).
   @Remote('installStart')
   async install(args: InstallArgs): Promise<ShopInstallResult> {
-    if (isDesktopProfile(this.profile)) return { ok: false, code: 'desktop-profile', detail: DESKTOP_PROFILE_DETAIL }
+    // Read once, before the awaits: the desktop gate and the choice of path
+    // must see the same service (see `pluginManager`).
+    const manager = this.pluginManager()
+    if (isDesktopProfile(this.profile) && manager === null) return { ok: false, code: 'desktop-profile', detail: DESKTOP_PROFILE_DETAIL }
     const snapshot = await this.snapshotNow()
     // The manifest's dependency for this name, when it has one: the gate needs
     // it to tell an update of THIS plugin from a replacement of a different one
@@ -1332,6 +1449,24 @@ export class ShopGateway extends TypertRemoteService {
     // Read before the spawn: the post-install check below is synchronous, and
     // which dsh runs cannot change while it runs (see `harnessRead`).
     const harness = await this.runningHarness()
+    if (manager !== null) {
+      const running = this.startManagerInstall(manager, spec, `install ${spec}`, raw => {
+        // An answer that stopped at stage `install`, a pnpm failure or a
+        // refusal, imported nothing. One that reached `enable` has filled
+        // Node's module cache, whether dsh composed the package or failed to
+        // enable it, so the next install of this name in this process must not
+        // read as live. An update imports nothing new: dsh answers it without
+        // loading the new files (spec section 2), and `alreadyImported`
+        // already holds for it.
+        if (!isUpdate && readChange(raw).stage === 'enable') this.imported.add(args.name)
+        return managerOutcome(raw, this.outcomeContext(args.name, isUpdate ? 'update' : 'install', alreadyImported, this.packageHasClientHalf(args.name)))
+      }, () => this.postInstallHazard(args.name, harness, ' It is on disk: uninstall it from the shop to undo this install.'))
+      // Tracked first: the operation is already queued, so a pin write that
+      // throws must not leave it running where no poll or restart gate sees it.
+      this.track(running)
+      this.recordGithubPin(entry)
+      return { ok: true, installId: running.installId, state: running.status().state }
+    }
     const running = startInstall({
       profile: this.profile,
       spec,
@@ -1349,31 +1484,9 @@ export class ShopGateway extends TypertRemoteService {
       // And, now that the files are on disk, the one collision the name gate
       // cannot see. Reporting it beats a done install that kills the next
       // boot; the package stays on disk, so the detail says how to undo it.
-      alsoConfirm: () => {
-        const clash = collidingEntryId({
-          profileDir: this.profileDirResolved(),
-          packageName: args.name,
-          dependencies: Object.keys(this.profileDependenciesOrNone() ?? {}),
-        })
-        const undo = ` It is on disk: run \`dsh plugin --profile ${this.profile} remove ${args.name}\` to undo this install.`
-        if (clash !== null) {
-          return `dsh-plugin-shop: ${args.name} declares the loader entry id "${clash.id}", which ${clash.holder} already declares.`
-            + ' dsh refuses to load a plugin tree holding a duplicate entry id, so the profile would not start.' + undo
-        }
-        // The other way a landed bundle kills the next boot: a patch
-        // declaration this dsh cannot read (design
-        // 2026-09-26-dsh-017-readiness, B4).
-        const declared = declaredBundlePatch({ profileDir: this.profileDirResolved(), packageName: args.name })
-        switch (patchDeclarationHazard(declared, harness.patchLists)) {
-          case null: return null
-          case 'list-unsupported':
-            return `dsh-plugin-shop: ${args.name} lists its bundle patch as several files, which dsh reads from 0.1.7 on;`
-              + ` this dsh${harness.dshVersion === null ? '' : ` (${harness.dshVersion})`} reads one and would not start with it installed.` + undo
-          case 'malformed':
-            return `dsh-plugin-shop: ${args.name} declares its bundle patch as neither a file path nor a list of them,`
-              + ' which dsh refuses to load, so the profile would not start.' + undo
-        }
-      },
+      alsoConfirm: () => this.postInstallHazard(
+        args.name, harness, ` It is on disk: run \`dsh plugin --profile ${this.profile} remove ${args.name}\` to undo this install.`,
+      ),
       // After the bundle lands, bring it up hot — unless this process may
       // already hold its module (see `alreadyImported`). A failed mount falls
       // back to restart activation, never to a silent half-state.
@@ -1416,18 +1529,126 @@ export class ShopGateway extends TypertRemoteService {
         }
       },
     })
-    if (entry.source === 'github') {
-      // Remember the pinned commit: the manifest records only
-      // `github:owner/slug`, so the pins file is how `installed()` reports
-      // outdated honestly. A failed install leaves a pin behind, but the
-      // manifest presence gate keeps it invisible.
-      const pins = readRepoPins(this.pinFs, this.pinsPath())
-      writeRepoPins(this.pinFs, this.pinsPath(), { ...pins, [identityKey(entry)]: entry.version })
+    this.recordGithubPin(entry)
+    this.track(running)
+    return { ok: true, installId: running.installId, state: running.status().state }
+  }
+
+  /**
+   * What would stop the profile from starting now that `name`'s files are on
+   * disk, or null: an entry id another installed package already declares,
+   * or a bundle patch declaration this dsh cannot read. Neither is knowable
+   * before the files land. The package stays on disk either way, so each
+   * detail ends with `undo`, the sentence that says how to take the install
+   * back on the path that made it.
+   */
+  private postInstallHazard(name: string, harness: RunningHarness, undo: string): string | null {
+    const clash = collidingEntryId({
+      profileDir: this.profileDirResolved(),
+      packageName: name,
+      dependencies: Object.keys(this.profileDependenciesOrNone() ?? {}),
+    })
+    if (clash !== null) {
+      return `dsh-plugin-shop: ${name} declares the loader entry id "${clash.id}", which ${clash.holder} already declares.`
+        + ' dsh refuses to load a plugin tree holding a duplicate entry id, so the profile would not start.' + undo
     }
+    // The other way a landed bundle kills the next boot: a patch
+    // declaration this dsh cannot read (design
+    // 2026-09-26-dsh-017-readiness, B4).
+    const declared = declaredBundlePatch({ profileDir: this.profileDirResolved(), packageName: name })
+    switch (patchDeclarationHazard(declared, harness.patchLists)) {
+      case null: return null
+      case 'list-unsupported':
+        return `dsh-plugin-shop: ${name} lists its bundle patch as several files, which dsh reads from 0.1.7 on;`
+          + ` this dsh${harness.dshVersion === null ? '' : ` (${harness.dshVersion})`} reads one and would not start with it installed.` + undo
+      case 'malformed':
+        return `dsh-plugin-shop: ${name} declares its bundle patch as neither a file path nor a list of them,`
+          + ' which dsh refuses to load, so the profile would not start.' + undo
+    }
+  }
+
+  /** Remember a github entry's pinned commit: the manifest records only
+   * `github:owner/slug`, so the pins file is how `installed()` reports
+   * outdated honestly. A failed install leaves a pin behind, but the
+   * manifest presence gate keeps it invisible. */
+  private recordGithubPin(entry: CatalogEntry): void {
+    if (entry.source !== 'github') return
+    const pins = readRepoPins(this.pinFs, this.pinsPath())
+    writeRepoPins(this.pinFs, this.pinsPath(), { ...pins, [identityKey(entry)]: entry.version })
+  }
+
+  /** Forget an uninstalled package's pins: its own, and its identity pin when
+   * a catalog row matched the installed spec. Both uninstall paths call this
+   * once their operation has started, so a stale pin never outlives the
+   * uninstall in the shop's cache either way. The plugin manager path tracks
+   * its record first, so a write here that throws cannot hide an operation
+   * already queued. */
+  private forgetPins(name: string, installedEntry: CatalogEntry | undefined): void {
+    const pins = readRepoPins(this.pinFs, this.pinsPath())
+    const stalePins = [name, ...(installedEntry === undefined ? [] : [identityKey(installedEntry)])]
+    let forgot = false
+    for (const key of stalePins) {
+      if (pins[key] === undefined) continue
+      delete pins[key]
+      forgot = true
+    }
+    if (forgot) {
+      writeRepoPins(this.pinFs, this.pinsPath(), pins)
+    }
+  }
+
+  /** What `managerOutcome` reads dsh's answer against. The gateway's own
+   * facts are set here once, for every operation through the service: the
+   * profile, whether it is the desktop one, and the deadline a timeout
+   * detail names. */
+  private outcomeContext(name: string, operation: OutcomeContext['operation'], alreadyImported: boolean, hasClientHalf: boolean): OutcomeContext {
+    return { profile: this.profile, name, operation, alreadyImported, hasClientHalf, desktop: isDesktopProfile(this.profile), timeoutMs: INSTALL_TIMEOUT_MS }
+  }
+
+  /**
+   * One install-shaped operation through dsh's `pluginManager` (design
+   * 2026-09-26-plugin-manager-delegation, section 6): `installBundle(spec)`
+   * under the record's own id as its request id, so the output dsh streams
+   * for it reaches this record, in the profile's queue with the download
+   * phase the CLI path has. At the shop's deadline dsh is asked to cancel it;
+   * a service that offers no `cancelInstall` gets no deadline, and its record
+   * settles when dsh answers. `install` and `updateStart` differ only in the
+   * mechanism line and in how they read the answer.
+   */
+  private startManagerInstall(
+    manager: PluginManagerLike,
+    spec: string,
+    mechanism: string,
+    outcome: (raw: unknown) => ManagerOutcome,
+    alsoConfirm?: () => string | null,
+  ): RunningInstall {
+    // The operand gate the CLI path runs in spawnPluginCli (R41): the spec
+    // goes to installBundle and to the download phase, whose pump relies on
+    // the gate. It throws as that path does, before anything is queued.
+    gateOperand(spec)
+    // Bound here, because the runner calls it apart from the service.
+    const cancel = manager.cancelInstall?.bind(manager)
+    return startManagerOperation({
+      profile: this.profile,
+      requestId: randomUUID(),
+      mechanism,
+      logs: this.managerLogs,
+      run: requestId => manager.installBundle(spec, { requestId }),
+      ...(cancel !== undefined ? { cancel } : {}),
+      outcome,
+      ...(alsoConfirm !== undefined ? { alsoConfirm } : {}),
+      prefetcher: this.prefetcher,
+      spec,
+      desktop: isDesktopProfile(this.profile),
+    })
+  }
+
+  /** Keep a started record where `installStatus`, the restart gate and
+   * eviction find it, then bound the finished ones. */
+  private track(running: RunningInstall): void {
     this.installs.set(running.installId, running)
     this.installOrder.push(running.installId)
     this.evictFinishedInstalls()
-    return { ok: true, installId: running.installId, state: running.status().state }
   }
 
   /** Bound retained finished records at MAX_FINISHED_INSTALLS, evicting the
@@ -1604,7 +1825,9 @@ export class ShopGateway extends TypertRemoteService {
    * itself). The same install records/polling serve the client. */
   @Remote('uninstallStart')
   async uninstall(args: { name: string }): Promise<ShopUninstallResult> {
-    if (isDesktopProfile(this.profile)) return { ok: false, detail: DESKTOP_PROFILE_DETAIL }
+    // Read once, before the await (see `pluginManager`).
+    const manager = this.pluginManager()
+    if (isDesktopProfile(this.profile) && manager === null) return { ok: false, detail: DESKTOP_PROFILE_DETAIL }
     const snapshot = await this.snapshotNow()
     const named = snapshot.entries.filter(entry => entry.name === args.name)
     if (named.length === 0) {
@@ -1631,6 +1854,28 @@ export class ShopGateway extends TypertRemoteService {
     // verdict into a constant. Same ordering constraint, same reason, as
     // `priorEntryIds` above.
     const hadClientHalf = this.packageHasClientHalf(args.name)
+    if (manager !== null) {
+      // removeBundle deselects the bundle and reloads itself, refusing with
+      // bundle-in-use if a fiber survives, so this branch skips the CLI
+      // path's own afterDone teardown below. It carries no request id the
+      // way installBundle does, so the record takes its final output rather
+      // than a stream.
+      const running = startManagerOperation({
+        profile: this.profile,
+        requestId: randomUUID(),
+        mechanism: `remove ${args.name}`,
+        logs: this.managerLogs,
+        run: () => manager.removeBundle(args.name),
+        outcome: raw => managerOutcome(raw, this.outcomeContext(args.name, 'uninstall', false, hadClientHalf)),
+        desktop: isDesktopProfile(this.profile),
+      })
+      // Tracked first, as the manager install is: the operation is already
+      // queued, so a pin write that throws must not leave it running where no
+      // poll or restart gate sees it.
+      this.track(running)
+      this.forgetPins(args.name, installedEntry)
+      return { ok: true, installId: running.installId }
+    }
     const running = startUninstall({
       profile: this.profile,
       name: args.name,
@@ -1657,22 +1902,8 @@ export class ShopGateway extends TypertRemoteService {
         return { activation: activationOf({ hostLive: stopped, clientLive: true, hasClientHalf: hadClientHalf }) }
       },
     })
-    // Forget the commit pin alongside the dependency; a stale pin would
-    // otherwise outlive the uninstall in the shop's cache.
-    const pins = readRepoPins(this.pinFs, this.pinsPath())
-    const stalePins = [args.name, ...(installedEntry === undefined ? [] : [identityKey(installedEntry)])]
-    let forgot = false
-    for (const key of stalePins) {
-      if (pins[key] === undefined) continue
-      delete pins[key]
-      forgot = true
-    }
-    if (forgot) {
-      writeRepoPins(this.pinFs, this.pinsPath(), pins)
-    }
-    this.installs.set(running.installId, running)
-    this.installOrder.push(running.installId)
-    this.evictFinishedInstalls()
+    this.forgetPins(args.name, installedEntry)
+    this.track(running)
     return { ok: true, installId: running.installId }
   }
 
@@ -1787,22 +2018,32 @@ export class ShopGateway extends TypertRemoteService {
    * `dsh-plugin-shop@<version>` is built here, never from the wire. */
   @Remote('updateStart')
   async updateStart(args: { version: string }): Promise<ShopUpdateResult> {
-    if (isDesktopProfile(this.profile)) return { ok: false, detail: DESKTOP_PROFILE_DETAIL }
+    // Read once (see `pluginManager`).
+    const manager = this.pluginManager()
+    if (isDesktopProfile(this.profile) && manager === null) return { ok: false, detail: DESKTOP_PROFILE_DETAIL }
     if (valid(args.version) === null) {
       return { ok: false, detail: `dsh-plugin-shop: ${args.version} is not a valid version` }
     }
+    const spec = `dsh-plugin-shop@${args.version}`
+    if (manager !== null) {
+      // The host half running here is the shop's own, so its update never
+      // goes live: dsh answers with a restart and loads nothing (measured on
+      // 0.1.7-rc.2).
+      const running = this.startManagerInstall(manager, spec, `update ${spec}`, raw =>
+        managerOutcome(raw, this.outcomeContext('dsh-plugin-shop', 'update', true, true)))
+      this.track(running)
+      return { ok: true, installId: running.installId, state: running.status().state }
+    }
     const running = startInstall({
       profile: this.profile,
-      spec: `dsh-plugin-shop@${args.version}`,
+      spec,
       dshBin: this.dshBin,
       expectedName: 'dsh-plugin-shop',
       // The self-update runs through the same executor, so a queued update
       // gets the same download phase as a queued plugin install.
       prefetcher: this.prefetcher,
     })
-    this.installs.set(running.installId, running)
-    this.installOrder.push(running.installId)
-    this.evictFinishedInstalls()
+    this.track(running)
     return { ok: true, installId: running.installId, state: running.status().state }
   }
 }
