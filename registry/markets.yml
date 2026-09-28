@@ -189,6 +189,11 @@
   by: human
   reason: "可安装的 DeepSeek Harness 插件市场，替换设置里的插件页"
 
+- name: "@stolyarovmn/dsh-ui-registry-aggregator"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: Federated plugin registry aggregator for DeepSeek Harness: combine trusted sources, search one index, and install through the native Plugin Manager."
+
 - name: "@thewaifu/dsh-market"
   market: true
   by: llm
