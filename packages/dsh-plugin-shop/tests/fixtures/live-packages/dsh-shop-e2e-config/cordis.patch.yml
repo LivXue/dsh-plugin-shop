@@ -1,4 +1,12 @@
-- id: e2e-config
-  name: dsh-shop-e2e-config
-  config:
-    greeting: hi
+# An `insert` list, the shape every published dsh plugin uses, whose one row
+# carries a `config:` block. The shop's hot tree replicates plain `id`/`name`
+# rows only, so on the CLI path parseSimplePatch refuses this row and the
+# install asks for a restart. Through dsh's plugin manager, dsh composes the
+# row itself. It was a bare `- id:` row until 2026-09-28, and a bare row
+# targets an entry the bundle layer already composed and creates nothing (see
+# dsh-shop-e2e-live's patch), so neither a restart nor dsh ever ran it.
+- insert:
+    - id: e2e-config
+      name: dsh-shop-e2e-config
+      config:
+        greeting: hi

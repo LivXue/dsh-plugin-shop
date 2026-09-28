@@ -5,4 +5,6 @@
 // reason ("restart required") instead of mounting it. The apply never runs
 // in the hot path (the mount is refused before the module is imported); it
 // runs at the next boot, when the bundle layer activates the row normally.
+// Through dsh's plugin manager (0.1.7) dsh composes the row itself, and the
+// apply runs at once.
 module.exports = { apply() {} }
