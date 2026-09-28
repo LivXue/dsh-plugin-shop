@@ -75,6 +75,15 @@ Read from the service source (0.1.7-rc.2, `lib/index.js`), not measured:
 - The CLI also writes `.plugin-manager/logs/operation-*`, but its `pnpm.log`
   is empty (the CLI inherits the terminal and captures nothing), while a
   service run's `pnpm.log` holds pnpm's output. Measured on the same day.
+- For a git spec whose host is github.com, `installBundle` first runs
+  `git ls-remote` against the repository, bounded by
+  `githubConnectionTimeoutMs` (5 s by default), before pnpm starts. Of the
+  shop's three spec forms only the `github:` one is such a spec. A timeout
+  there answers `kind: 'timeout'` with `failedAt: 'spec-host'`, and pnpm
+  never runs; pnpm's own timeouts never carry `failedAt`. The CLI path has no
+  such check: the dsh CLI imports only
+  `@deepseek-ai/dsh-plugin-manager/operations`, which does not include it.
+  Read from dsh-plugin-manager 0.1.7-rc.2's source on 2026-09-28.
 
 ## 3. The boundary
 
@@ -100,6 +109,10 @@ Everything before the mutation, and everything the client sees:
   pre-check, and the desktop check in its new form, section 7), and its spec
   construction: `name@version`, `github:owner/slug#commit[&path:subdir]`, or
   the release tarball URL. `parseInstallSpec` accepts all three forms.
+  Amended 2026-09-28: the CLI executor's operand gate, which refuses a
+  flag-like operand and one holding shell punctuation, runs on both paths.
+  The manager path runs it before the spec reaches `installBundle` or the
+  download phase, whose pump relies on it.
 - The github commit pins, written at install and forgotten at uninstall.
 - `alsoConfirm`'s checks on the landed files, the entry-id collision and the
   patch-declaration hazard. They are the shop's own policy and run on both
@@ -180,6 +193,10 @@ matches wins.
    `new Error(run.output)`). So this rule matches a failed answer carrying
    `kind` only when `error.code` is absent or `operation-error`, and it
    never embeds that diagnostic.
+
+   Amended 2026-09-28. `timeout` with `failedAt: 'spec-host'` is dsh's
+   repository check (section 2), not pnpm, and its sentence says that the
+   check did not finish within its bound and that pnpm never ran.
 4. Any other `error.code` (`unknown-plugin`, `invalid-spec`,
    `ambiguous-install`, `not-bundle`, `not-removable`, `stop-profile`,
    `bundle-in-use`, `stale-approval`, `management-required`, `unaddressable`,
@@ -192,8 +209,17 @@ matches wins.
    runs.
 
    Amended 2026-09-27. That note reaches an install's reader through the
-   client's done view. A switch reads `overridden` as plain success with no
-   note, because `ShopSetEnabledResult` has no field for one.
+   client's done view.
+
+   Amended 2026-09-28. A switch reads `overridden` as a failed switch,
+   because dsh saved the row but the live state did not change: dsh answers
+   it when the entry still differs from the request after its write and
+   reload (`setPluginEnabled`), and its README names what outranks the
+   profile's own patch, home and invocation patches. The detail says that
+   dsh saved the switch but such a patch keeps the plugin on or off, and adds
+   the n-of-m sentence below when other entries had already switched. Read
+   as success, it flipped the client's switch and reported the change
+   applied while the plugin ran as before.
 8. `applied`: `done`. For an install, `activationOf({ hostLive: true,
    clientLive: true, hasClientHalf })`, the verdict a successful hot mount
    gives today, unless the `imported` record holds the name, in which case

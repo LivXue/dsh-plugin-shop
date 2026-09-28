@@ -542,6 +542,28 @@ function dshScript(): string | null {
 const UNSAFE_TARGET = /[\s"'`|<>^$();\\{}]|[\u0000-\u001f\u007f]/
 
 /**
+ * The operand gate, one function for every caller: it refuses, by throwing,
+ * an operand the dsh CLI would parse as a flag, and one carrying the shell
+ * punctuation `UNSAFE_TARGET` names. A legitimate operand (a catalog name for
+ * a removal; a `name@version`, `github:` or tarball spec for an install)
+ * never begins with `-`, so the first refusal cannot reject a real install or
+ * uninstall, and failing loudly beats letting the CLI reinterpret an operand
+ * as an option. `spawnPluginCli` runs it before it spawns anything or takes a
+ * queue slot; the gateway's plugin manager path runs it before a spec reaches
+ * `installBundle` or the download phase, whose pump relies on it (see
+ * `requestDownloadPhase`). Returns the operand, known to be present.
+ */
+export function gateOperand(target: string | undefined): string {
+  if (target === undefined || target.startsWith('-')) {
+    throw new Error(`dsh-plugin-shop: refusing to spawn with a flag-like operand: ${target ?? '(none)'}`)
+  }
+  if (UNSAFE_TARGET.test(target)) {
+    throw new Error(`dsh-plugin-shop: refusing to spawn with an unsafe operand: ${JSON.stringify(target)}`)
+  }
+  return target
+}
+
+/**
  * The operand as the downstream dsh must receive it for pnpm to see it whole.
  *
  * dsh spawns pnpm with `shell: process.platform === 'win32'`
@@ -584,38 +606,41 @@ const DOWNLOAD_PHASE_FAILED_PREFIX = 'dsh-plugin-shop: the download phase could 
 const DOWNLOAD_PHASE_NO_PNPM = 'dsh-plugin-shop: no download phase — pnpm not found on PATH'
 const DOWNLOAD_PHASE_UNSUPPORTED = 'dsh-plugin-shop: no download phase for this spec form; the install fetches it directly'
 
-// Only an install with something ahead of it has anything to overlap with.
-// `ahead` is a depth, not `profileQueues.has(profile)` — see `profileDepth`.
+// Both callers ask only for an operation with something ahead of it: with
+// nothing ahead there is nothing to overlap with. `ahead` is a depth, not
+// `profileQueues.has(profile)`; see `profileDepth`.
 //
-// `spec: target` is the RAW operand, deliberately: it is what the pump hands
-// pnpm, and this runs after the operand passed both gates above. The gate is
-// what makes the pump's own quoting sound — `prefetch.ts` spawns through a
-// shell on win32 and relies on `UNSAFE_TARGET` having refused `"` — and a
-// quoted `spawnArgv[1]` would reach `pnpm store add` as a literal string and
+// `spec` is the RAW operand, deliberately: it is what the pump hands pnpm,
+// and each caller has passed it through `gateOperand` first, `spawnPluginCli`
+// before it takes its queue slot and the gateway's plugin manager path before
+// it starts the operation. The gate is what makes the pump's own quoting
+// sound: `prefetch.ts` spawns through a shell on win32 and relies on
+// `UNSAFE_TARGET` having refused `"`. A spec already quoted for dsh's shell
+// (`shellSafeTarget`) would reach `pnpm store add` as a literal string and
 // silently warm nothing.
 //
-// `append` is handed over as the log, and the pump calls it from its own
-// microtask and child handlers — so it must not throw, or the throw escapes
-// as an uncaughtException and takes the host process and every install in
-// flight with it, which is the one failure that could decide whether an
-// install succeeds. It cannot, for the caller this is wired to: the gateway
-// passes neither `onStatus` nor anything else that can fail, leaving a push
-// and a byte count. A caller that passed BOTH a `prefetcher` and a throwing
-// `onStatus` would reopen that hole.
+// The pump calls `log` from its own microtask and child handlers, so it must
+// not throw, or the throw escapes as an uncaughtException and takes the host
+// process and every install in flight with it, which is the one failure that
+// could decide whether an install succeeds. Neither caller's can: each hands
+// over its own `append`, a push and a byte count. The CLI executor's also
+// calls `onStatus`, which the gateway never passes; a caller that passed BOTH
+// a `prefetcher` and a throwing `onStatus` would reopen that hole.
 //
 // The `catch` is the whole of "best-effort" at this seam, and it is load-
-// bearing rather than defensive. This block runs AFTER the queue slot was
-// taken and BEFORE the chained task exists, so a synchronous throw here —
-// `resolveProfileDir` refuses an invalid profile name, and the pump can
-// throw on a call it cannot even build — would do two things this feature
-// may never do: escape `spawnPluginCli` and fail an install the prefetch is
-// not allowed to fail, and skip `chain` entirely, so `leaveQueue` would
-// never run and this profile's depth would stay `+1` for the life of the
-// process — every later install in it reading `ahead > 0`, earning a
-// pointless prefetch and a `Downloading…` label that is simply false. The
-// `catch` announces the failure in the install's own log rather than
-// swallowing it, the same announcement the pump makes for a batch it could
-// not start.
+// bearing rather than defensive: `resolveProfileDir` refuses an invalid
+// profile name, and the pump can throw on a call it cannot even build. The
+// CLI executor calls this after its queue slot was taken and before its
+// chained task exists, so an escaped throw would fail an install the
+// prefetch is not allowed to fail and skip `chain` entirely: `leaveQueue`
+// would never run, and this profile's depth would stay `+1` for the life of
+// the process, every later install in it reading `ahead > 0` and earning a
+// pointless prefetch and a "Downloading" label that is simply false. The
+// plugin manager runner calls it after its task is chained, so an escaped
+// throw would leave that operation queued with no record returned for
+// anything to track. The `catch` announces the failure in the operation's own
+// log rather than swallowing it, the same announcement the pump makes for a
+// batch it could not start.
 /**
  * Ask the pump to warm `spec` while an operation waits its turn, and say in
  * that operation's log why there is no download phase when there is none.
@@ -687,18 +712,9 @@ function spawnPluginCli(options: {
     profile, argv, dshBin, env, platform = process.platform,
     beforeSpawn, prefetcher, confirm, afterDone, onStatus, timeoutMs = INSTALL_TIMEOUT_MS,
   } = options
-  // Argv smuggling guard: an operand that begins with `-` would be parsed as
-  // a flag by the CLI. A legitimate target — a catalog name for remove, a
-  // `name@version` spec for add — never begins with `-`, so refusing here
-  // cannot reject a real install or uninstall. Failing loudly beats letting
-  // the CLI reinterpret an operand as an option.
-  const target = argv[1]
-  if (target === undefined || target.startsWith('-')) {
-    throw new Error(`dsh-plugin-shop: refusing to spawn with a flag-like operand: ${target ?? '(none)'}`)
-  }
-  if (UNSAFE_TARGET.test(target)) {
-    throw new Error(`dsh-plugin-shop: refusing to spawn with an unsafe operand: ${JSON.stringify(target)}`)
-  }
+  // Argv smuggling and shell punctuation, refused before anything spawns or
+  // queues (see `gateOperand`).
+  const target = gateOperand(argv[1])
   // Only now, once the operand has passed the gate above, is it quoted for
   // the shell dsh puts it through on Windows. See `shellSafeTarget`.
   const spawnArgv = [...argv]

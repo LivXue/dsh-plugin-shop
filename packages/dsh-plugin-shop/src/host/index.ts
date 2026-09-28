@@ -16,7 +16,7 @@ import type { CatalogOrigin } from './origin.ts'
 import { npmrcRegistry } from './npmrc.ts'
 import type { CatalogEntry, DeniedEntry } from './types.ts'
 import { validateInstall, type InstallArgs, type InstallRejectionCode } from './install.ts'
-import { INSTALL_TIMEOUT_MS, startInstall, startUninstall, type InstallStatus, type RunningInstall } from './executor.ts'
+import { gateOperand, INSTALL_TIMEOUT_MS, startInstall, startUninstall, type InstallStatus, type RunningInstall } from './executor.ts'
 import { cleanHotDir, hotMount, hotUnmount, nodeHotFs, type HotFs } from './hot.ts'
 import { activationOf, type Activation } from './activation.ts'
 import { hasClientHalf } from './client-half.ts'
@@ -967,7 +967,9 @@ export class ShopGateway extends TypertRemoteService {
           // failure the client can only call "retry".
           return { ok: false, detail: `dsh-plugin-shop: dsh could not switch ${args.name}: ${messageOf(error)}` }
         }
-        const { change, failure } = this.readManagerAnswer(raw, { act: `switch ${args.name}`, request: `the switch for ${args.name}` })
+        const { change, failure } = this.readManagerAnswer(raw, {
+          act: `switch ${args.name}`, request: `the switch for ${args.name}`, stays: args.enabled ? 'off' : 'on',
+        })
         if (failure !== null) {
           const already = switched > 0 ? ` ${switched} of its ${live.length} plugins had already switched ${args.enabled ? 'on' : 'off'}.` : ''
           return { ok: false, detail: `${failure}${already}` }
@@ -1044,7 +1046,7 @@ export class ShopGateway extends TypertRemoteService {
       // rather than as a transport failure the client can only call "retry".
       return { ok: false, detail: `dsh-plugin-shop: dsh could not select ${name} again: ${messageOf(error)}` }
     }
-    const { change, failure } = this.readManagerAnswer(raw, { act: `select ${name} again`, request: `the selection of ${name}` })
+    const { change, failure } = this.readManagerAnswer(raw, { act: `select ${name} again`, request: `the selection of ${name}`, stays: 'off' })
     if (failure !== null) return { ok: false, detail: failure }
     setUserLayerRows({ profileDir, rows })
     if (change.application === 'restart-required') return { ok: true, activation: 'restart' }
@@ -1055,17 +1057,34 @@ export class ShopGateway extends TypertRemoteService {
    * dsh's answer to a switch or a bundle selection, read the one way both
    * callers need it (R32): the change, scrubbed for a desktop reader, and the
    * detail that fails the request, or null when dsh applied it. `act` is what
-   * was asked, as "switch <name>", and `request` names the request itself,
-   * as "the switch for <name>". An application this shop does not know fails
-   * rather than reading as applied: a later harness may answer something new.
+   * was asked, as "switch <name>", `request` names the request itself, as
+   * "the switch for <name>", and `stays` is the state the plugin keeps when
+   * the request does not take effect. An application this shop does not know
+   * fails rather than reading as applied: a later harness may answer
+   * something new.
+   *
+   * `overridden` fails too (R39). dsh answers it when, after it wrote the row
+   * and reloaded, the live entry still differs from the request
+   * (dsh-plugin-manager 0.1.7-rc.2, setPluginEnabled), and its README names
+   * what outranks the profile's own patch: home and invocation patches keep
+   * their higher priority. The change is saved and the plugin runs as it
+   * did, so a success would flip the client's switch over a plugin that did
+   * not change, and that switch never re-reads the live state.
+   * setBundleEnabled never answers it; a selection reads it the same way.
    */
-  private readManagerAnswer(raw: unknown, words: { act: string; request: string }): { change: ManagerChange; failure: string | null } {
+  private readManagerAnswer(raw: unknown, words: { act: string; request: string; stays: 'on' | 'off' }): { change: ManagerChange; failure: string | null } {
     const change = isDesktopProfile(this.profile) ? forDesktopReader(readChange(raw)) : readChange(raw)
     if (change.application === 'failed' || change.application === 'cancelled' || change.errorCode !== null) {
       const code = change.errorCode ?? change.application ?? 'failed'
       return { change, failure: `dsh-plugin-shop: dsh refused to ${words.act} (${code})${codeReason(change, code)}` }
     }
-    if (change.application === 'applied' || change.application === 'restart-required' || change.application === 'overridden') {
+    if (change.application === 'overridden') {
+      return {
+        change,
+        failure: `dsh-plugin-shop: dsh saved ${words.request}, but a home or invocation patch, which outranks the profile's own, keeps it ${words.stays}.`,
+      }
+    }
+    if (change.application === 'applied' || change.application === 'restart-required') {
       return { change, failure: null }
     }
     return {
@@ -1574,6 +1593,10 @@ export class ShopGateway extends TypertRemoteService {
     outcome: (raw: unknown) => ManagerOutcome,
     alsoConfirm?: () => string | null,
   ): RunningInstall {
+    // The operand gate the CLI path runs in spawnPluginCli (R41): the spec
+    // goes to installBundle and to the download phase, whose pump relies on
+    // the gate. It throws as that path does, before anything is queued.
+    gateOperand(spec)
     // Bound here, because the runner calls it apart from the service.
     const cancel = manager.cancelInstall?.bind(manager)
     return startManagerOperation({

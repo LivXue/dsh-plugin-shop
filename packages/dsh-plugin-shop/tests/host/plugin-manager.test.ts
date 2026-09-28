@@ -177,6 +177,16 @@ describe('managerOutcome', () => {
       .toBe('dsh-plugin-shop: the install failed at the host the package is fetched from: the network failed.')
     expect(managerOutcome(pnpmFailed('disk-full', 'ENOSPC'), context).detail)
       .toBe('dsh-plugin-shop: the install failed: the disk is full.')
+    // R40: for a GitHub repository dsh runs `git ls-remote` before pnpm,
+    // bounded at 5 s by default, and a timeout there answers failedAt
+    // `spec-host` with the check's own log as the output. pnpm's own timeouts
+    // never carry failedAt (dsh-plugin-manager 0.1.7-rc.2, installBundle).
+    const repositoryCheck = { failedAt: 'spec-host', registries: [], target: `github:someone/dsh-managed#${'e'.repeat(40)}` }
+    expect(managerOutcome(pnpmFailed('timeout', 'dsh: connection to github.com timed out after 5000ms\n', repositoryCheck), context).detail)
+      .toBe('dsh-plugin-shop: the install failed at the host the package is fetched from: dsh checks that a GitHub repository is reachable'
+        + ' before pnpm runs, and that check did not finish within its bound (5 s by default), so pnpm never ran.')
+    expect(managerOutcome(pnpmFailed('timeout', 'Progress: resolved 1\n'), context).detail)
+      .toBe("dsh-plugin-shop: the install failed: pnpm did not finish within dsh's own time bound.")
   })
 
   // What pnpm printed for the web e2e's 404 through dsh 0.1.7-rc.2 on

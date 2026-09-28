@@ -360,6 +360,18 @@ function outcomeByRule(change: ManagerChange, context: OutcomeContext): ManagerO
           + ` run \`pnpm approve-builds\` in the profile directory to allow them, then ${context.operation} again.`,
       }
     }
+    // For a GitHub repository dsh runs `git ls-remote` before pnpm, bounded
+    // by its githubConnectionTimeoutMs (5000 ms by default), and a timeout
+    // there answers failedAt `spec-host`. pnpm's own timeouts never carry
+    // failedAt, so this pair is that check and nothing else
+    // (dsh-plugin-manager 0.1.7-rc.2, checkGithubConnection, installBundle).
+    if (change.kind === 'timeout' && change.failedAt === 'spec-host') {
+      return {
+        state: 'failed',
+        detail: `dsh-plugin-shop: the ${context.operation} failed at the host the package is fetched from: dsh checks that a GitHub repository is reachable`
+          + ' before pnpm runs, and that check did not finish within its bound (5 s by default), so pnpm never ran.',
+      }
+    }
     const sentence = KIND_SENTENCE[change.kind]
     if (sentence !== undefined) {
       const where = change.failedAt === null ? '' : WHERE[change.failedAt] ?? ''

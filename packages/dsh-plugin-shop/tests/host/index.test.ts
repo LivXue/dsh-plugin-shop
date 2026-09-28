@@ -768,11 +768,16 @@ describe('ShopGateway.setEnabled', () => {
 describe("switches through dsh's pluginManager", () => {
   const applied = { changed: true, application: 'applied', stage: 'enable', target: 'x', enabled: false, warnings: [] }
 
+  /** A gateway whose pluginManager answers the nth `setPluginEnabled` with
+   * `answers[n]`, or the last answer once they run out, and throws an answer
+   * that is an Error. The package is `dsh-two-rows`, whose two live entries
+   * switch one after the other, or with `oneRow` `dsh-one-row`, which has
+   * one. */
   function switchingGateway(
-    answers: object[],
-    options: { profile?: string } = {},
+    answers: Array<object | Error>,
+    options: { profile?: string; oneRow?: boolean } = {},
   ): { gateway: ShopGateway; calls: unknown[][]; profileDir: string } {
-    const { profile = 'web' } = options
+    const { profile = 'web', oneRow = false } = options
     const calls: unknown[][] = []
     const service = {
       installBundle: async () => { throw new Error('this case must not call installBundle') },
@@ -780,20 +785,23 @@ describe("switches through dsh's pluginManager", () => {
       setBundleEnabled: async () => { throw new Error('this case must not call setBundleEnabled') },
       setPluginEnabled: async (id: string, enabled: boolean) => {
         calls.push([id, enabled])
-        return answers[calls.length - 1] ?? answers[answers.length - 1]
+        const answer = answers[calls.length - 1] ?? answers[answers.length - 1]
+        if (answer instanceof Error) throw answer
+        return answer
       },
     }
     const profileDir = toggleProfile()
-    fixturePackage(profileDir, 'dsh-two-rows', "- insert:\n    - id: host-row\n      name: 'dsh-two-rows/host'\n    - id: client-row\n      name: 'dsh-two-rows/client'\n")
-    const gateway = new ShopGateway(
-      { get: (name: string) => name === 'pluginManager' ? service : undefined, reflect: { provide: () => {} } } as never,
-      {
-        profile, profileDir,
-        inventory: { list: async () => ({ entries: [
+    if (oneRow) fixturePackage(profileDir, 'dsh-one-row', "- insert:\n    - id: one-row\n      name: 'dsh-one-row/host'\n")
+    else fixturePackage(profileDir, 'dsh-two-rows', "- insert:\n    - id: host-row\n      name: 'dsh-two-rows/host'\n    - id: client-row\n      name: 'dsh-two-rows/client'\n")
+    const entries = oneRow
+      ? [{ entryId: 'include:one-row', moduleName: 'dsh-one-row/host', enabled: false }]
+      : [
           { entryId: 'include:host-row', moduleName: 'dsh-two-rows/host', enabled: true },
           { entryId: 'include:client-row', moduleName: 'dsh-two-rows/client', enabled: true },
-        ] }) },
-      },
+        ]
+    const gateway = new ShopGateway(
+      { get: (name: string) => name === 'pluginManager' ? service : undefined, reflect: { provide: () => {} } } as never,
+      { profile, profileDir, inventory: { list: async () => ({ entries }) } },
     )
     return { gateway, calls, profileDir }
   }
@@ -815,6 +823,29 @@ describe("switches through dsh's pluginManager", () => {
   it('asks for a restart when any entry needs one', async () => {
     const { gateway } = switchingGateway([applied, { ...applied, application: 'restart-required' }])
     expect(await gateway.setEnabled({ name: 'dsh-two-rows', enabled: false })).toEqual({ ok: true, activation: 'restart' })
+  })
+
+  // R39: dsh answers `overridden` when the entry's state still differs from
+  // the request after it wrote the row and reloaded (dsh-plugin-manager
+  // 0.1.7-rc.2, setPluginEnabled), and its README names what outranks the
+  // profile's own patch: home and invocation patches. Saved, not applied.
+  it('fails a switch dsh saved but a higher-priority patch overrides, saying the plugin stays as it was', async () => {
+    const { gateway, calls } = switchingGateway([{ ...applied, enabled: true, application: 'overridden' }], { oneRow: true })
+    expect(await gateway.setEnabled({ name: 'dsh-one-row', enabled: true })).toEqual({
+      ok: false,
+      detail: "dsh-plugin-shop: dsh saved the switch for dsh-one-row, but a home or invocation patch, which outranks the profile's own, keeps it off.",
+    })
+    expect(calls).toEqual([['include:one-row', true]])
+  })
+
+  it('says how many plugins had already switched when a later one is overridden', async () => {
+    const { gateway, calls } = switchingGateway([applied, { ...applied, application: 'overridden' }])
+    expect(await gateway.setEnabled({ name: 'dsh-two-rows', enabled: false })).toEqual({
+      ok: false,
+      detail: "dsh-plugin-shop: dsh saved the switch for dsh-two-rows, but a home or invocation patch, which outranks the profile's own, keeps it on."
+        + ' 1 of its 2 plugins had already switched off.',
+    })
+    expect(calls).toHaveLength(2)
   })
 
   it('fails a switch dsh answers with an application it does not know, naming it, and stops there', async () => {
@@ -3594,7 +3625,8 @@ describe("installs and updates through dsh's pluginManager", () => {
    * they run in. A case passes `importedModules` to share one between two
    * gateways. The CLI stand-ins are this file's own (see its header), so a
    * case that fell back to the CLI fails on its own assertions instead of
-   * running a real dsh or pnpm. */
+   * running a real dsh or pnpm. `entries` join the catalog, straight from
+   * the injected loadCatalog and so past catalog.ts's validation. */
   function managedGateway(result: object, options: {
     dependencies?: Record<string, string>
     profile?: string
@@ -3604,10 +3636,11 @@ describe("installs and updates through dsh's pluginManager", () => {
     output?: (spec: string) => Array<{ stream: string; text: string }>
     prefetcher?: Prefetcher
     pinFs?: ShopGatewayOptions['pinFs']
+    entries?: CatalogEntry[]
   } = {}): { gateway: ShopGateway; calls: unknown[][]; profileDir: string; cacheDir: string; emit: (event: string, payload: unknown) => void } {
     const {
       dependencies = {}, profile = 'web', lands = true, hangs = false, importedModules = new Set<string>(),
-      output = (spec: string) => [{ stream: 'stdout', text: `+ ${spec}\n` }], prefetcher = fixturePrefetcher(), pinFs,
+      output = (spec: string) => [{ stream: 'stdout', text: `+ ${spec}\n` }], prefetcher = fixturePrefetcher(), pinFs, entries = [],
     } = options
     const profileDir = toggleProfile()
     writeManifest(profileDir, dependencies)
@@ -3656,7 +3689,7 @@ describe("installs and updates through dsh's pluginManager", () => {
     } as never
     const gateway = new ShopGateway(ctx, {
       catalogUrl: 'https://shop.test/v1/', cacheDir, profile, profileDir,
-      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries: [managed, other, managedRepo], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries: [managed, other, managedRepo, ...entries], denied: [], stars: {} }, stale: false }) as CatalogResult,
       importedModules,
       prefetcher,
       dshBin: fakeDshRecording(mkdtempSync(join(TEMP_ROOT, 'dsh-managed-cli-')), 0, { silent: true }),
@@ -3837,6 +3870,33 @@ describe("installs and updates through dsh's pluginManager", () => {
     } finally {
       free()
     }
+  })
+
+  it('refuses a flag-like or unsafe spec before dsh or the download phase sees it', async () => {
+    // R41: prefetch.ts takes the operand gate as the caller's guarantee, and
+    // spawns through a shell on win32. catalog.ts's validation keeps such a
+    // spec out of the real catalog; the injected loadCatalog does not, so
+    // this reaches the gate itself.
+    const flagLike: CatalogEntry = { ...managed, name: '-managed' }
+    const unsafe: CatalogEntry = { ...managed, name: 'dsh-unsafe', version: '1.0.0;x' }
+    const requested: string[] = []
+    const prefetcher: Prefetcher = { request: ({ spec }) => { requested.push(spec); return { started: true } }, release: () => {} }
+    const { gateway, calls } = managedGateway(applied, { entries: [flagLike, unsafe], prefetcher, profile: 'gated' })
+    // A command already holds the profile, so an install that got past the
+    // gate would ask the download phase to warm its spec at once.
+    let free!: () => void
+    const holder = inProfileQueue('gated', () => new Promise<void>(resolve => { free = resolve }))
+    try {
+      await expect(gateway.install({ name: '-managed', version: '1.0.0', acknowledged: true }))
+        .rejects.toThrow('dsh-plugin-shop: refusing to spawn with a flag-like operand: -managed@1.0.0')
+      await expect(gateway.install({ name: 'dsh-unsafe', version: '1.0.0;x', acknowledged: true }))
+        .rejects.toThrow('dsh-plugin-shop: refusing to spawn with an unsafe operand: "dsh-unsafe@1.0.0;x"')
+      expect(requested).toEqual([])
+    } finally {
+      free()
+    }
+    await holder.finished
+    expect(calls).toEqual([])
   })
 
   it('installs a github entry through installBundle and records its commit pin', async () => {
