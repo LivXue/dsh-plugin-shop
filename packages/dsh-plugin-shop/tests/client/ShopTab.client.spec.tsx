@@ -678,6 +678,28 @@ describe('ShopTab', () => {
     expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-reload]')).toBeNull()
   })
 
+  it('keeps the uninstall log on its done view, the mechanism line first', async () => {
+    // The install's done view keeps its log (see "keeps the install log
+    // visible after the install succeeds"); an uninstall's did not, and a
+    // removal through dsh's plugin manager settles before the first poll, so
+    // its log was never on screen at all.
+    const { injected, installStatus, installed } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }])
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: ["via dsh's plugin manager: remove dsh-hello-plugin", '- dsh-hello-plugin 1.2.0'], activation: 'live' })
+    // The row drops once the uninstall lands, as a real host reports it, so
+    // the card is back on its Install button and the receipt beside it holds
+    // the card's only log.
+    installed
+      .mockResolvedValueOnce([{ name: 'dsh-hello-plugin', source: 'npm', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }])
+      .mockResolvedValue([])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-uninstall]')!)
+    await waitFor(() => expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-install]')).toBeTruthy(), { timeout: 3000 })
+    expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-uninstall-done]')).toBeTruthy()
+    const lines = [...container.querySelectorAll('[data-shop-entry="dsh-hello-plugin"] [data-shop-log-line]')].map(line => line.textContent)
+    expect(lines).toEqual(["via dsh's plugin manager: remove dsh-hello-plugin", '- dsh-hello-plugin 1.2.0'])
+  })
+
   it('offers a reload, not a restart, when an uninstall reports reload', async () => {
     const { injected, installStatus, installed } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }])
     installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'reload' })

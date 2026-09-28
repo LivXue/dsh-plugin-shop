@@ -726,6 +726,13 @@ function UninstallPanel({ name, t, restart, restartBlocked, reload, flow }: {
   if (view.kind === 'done') {
     return (
       <div className={css.installedActions}>
+        {/* The log outlives the uninstall, for the reason the install panel's
+            done view gives for its own. */}
+        {view.log.length > 0 && (
+          <div className={css.log}>
+            {view.log.map((line, index) => <div key={index} className={css.logLine} data-shop-log-line>{line}</div>)}
+          </div>
+        )}
         <p className={css.notice} data-shop-uninstall-done>{t(uninstallActivationNoticeKey(view.activation))}</p>
         {/* A `live` uninstall is already done — the plugin stopped
             immediately and the boot composition picks the removal up at the

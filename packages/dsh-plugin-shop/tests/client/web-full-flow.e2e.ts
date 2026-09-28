@@ -73,10 +73,9 @@
  * its plugin tree, so the live entry is `include:e2e-live` rather than one
  * under the shop; and the config fixture, which the shop's own hot tree
  * cannot mount, is composed live too. The failed install, the hot-mount
- * install and the update also read the line the shop writes first into each
- * such record, `via dsh's plugin manager: <operation> <spec>`, so a silent
- * fall back to the CLI fails them instead of passing. The uninstall's line
- * never reaches the screen (see the hot-mount case).
+ * case's install and uninstall, and the update also read the line the shop
+ * writes first into each such record, `via dsh's plugin manager: <operation>
+ * <spec>`, so a silent fall back to the CLI fails them instead of passing.
  *
  * Skipped unless the machine has both the real `dsh` CLI on PATH and a
  * playwright chromium installed (CI installs both; see .github/workflows).
@@ -1339,15 +1338,14 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
 
       // Uninstall: no gate. Once the poll reaches done, installed() runs
       // again and the card immediately returns to the Install action.
-      //
-      // Unlike the install's and the update's, the uninstall's mechanism
-      // line is not read here. Its done receipt renders no log, and the
-      // running view that does render one is never polled in time: measured
-      // 2026-09-28 on 0.1.7-rc.2, dsh's removal settled before the client's
-      // first status poll, the Install action was back 1.3 s after the
-      // click, and a wait for the line never saw it.
       await card2.locator('[data-shop-uninstall]').click()
       await card2.locator('[data-shop-install]').waitFor({ state: 'visible', timeout: 60_000 })
+      if (managerPath) {
+        // The install's record left the card when the uninstall settled, so
+        // the uninstall receipt's log is the only one on it.
+        expect(await card2.locator('[data-shop-log-line]').first().textContent())
+          .toBe("via dsh's plugin manager: remove dsh-shop-e2e-live")
+      }
       expect(await card2.locator('[data-shop-uninstall]').count()).toBe(0)
       // Both offers, for the reason the install-side twin above states: this
       // is the only assertion that an uninstall did not report `restart`.
