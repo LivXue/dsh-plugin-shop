@@ -1,8 +1,8 @@
 # Delegating package operations to dsh's plugin manager: design
 
-Status: proposed 2026-09-26, not built. Of the three directions for remaining
-work item 6(a), LivXue chose A on 2026-09-26, and option (a) of section 7 the
-same day. This amends
+Status: Built, on branch `feat/plugin-manager-delegation`. Of the three
+directions for remaining work item 6(a), LivXue chose A on 2026-09-26, and
+option (a) of section 7 the same day. This amends
 [2026-09-26-dsh-017-readiness.md](2026-09-26-dsh-017-readiness.md) B3: its
 desktop refusal now stands only where the service described here is absent.
 
@@ -150,6 +150,16 @@ matches wins.
 1. `error.code === 'incompatible-version'`: `failed`, with readiness B1's
    detail built from `error.incompatible` through `allowVersionCommand`.
    Nothing is parsed.
+
+   Amended 2026-09-27. The rule also matches `operation-error` when
+   `error.incompatible` is a non-empty list: a removal whose post-run
+   compatibility scan refused a sibling reports this way too. The detail
+   passes on dsh's own restoration line ("nothing was installed",
+   "restored ...", or "... could not be reinstalled ...") rather than
+   asserting one. With no such line, an install or an update says "Nothing
+   was installed." unless dsh truncated the output; an uninstall asserts
+   nothing. The wording follows the operation: "refused the `<operation>`",
+   "then `<operation>` again".
 2. `application === 'failed'` and `stage === 'enable'`: `failed`. The package
    is installed but dsh could not enable it; the detail carries dsh's error
    and how to undo the install (section 7 says what that is in the desktop
@@ -163,6 +173,13 @@ matches wins.
      `failedAt` when present.
    - `unknown`: `installFailureDetail` over `packageResult.output`. The pnpm
      out-of-memory hint (remaining item 6) lives there, so both paths get it.
+
+   Amended 2026-09-27. dsh reports every failed pnpm run as
+   `operation-error`, with `packageResult.kind` set and the whole pnpm
+   output as its diagnostic (`installBundle` and `removeBundle` both throw
+   `new Error(run.output)`). So this rule matches a failed answer carrying
+   `kind` only when `error.code` is absent or `operation-error`, and it
+   never embeds that diagnostic.
 4. Any other `error.code` (`unknown-plugin`, `invalid-spec`,
    `ambiguous-install`, `not-bundle`, `not-removable`, `stop-profile`,
    `bundle-in-use`, `stale-approval`, `management-required`, `unaddressable`,
@@ -173,16 +190,34 @@ matches wins.
 7. `overridden`: `done`, with a note that the change is saved and a
    higher-priority layer (the home or invocation patch) decides whether it
    runs.
+
+   Amended 2026-09-27. That note reaches an install's reader through the
+   client's done view. A switch reads `overridden` as plain success with no
+   note, because `ShopSetEnabledResult` has no field for one.
 8. `applied`: `done`. For an install, `activationOf({ hostLive: true,
    clientLive: true, hasClientHalf })`, the verdict a successful hot mount
    gives today, unless the `imported` record holds the name, in which case
    `restart` with `already-loaded` (open item O1). For an uninstall, `hostLive`
    is true.
 
+A failed uninstall whose answer carries `changed: true` gets one more
+sentence, added 2026-09-27: the package is still installed, but dsh has
+switched it off. dsh deselects an enabled bundle before `pnpm remove` runs
+and never re-selects it, so a failure past that point leaves the entry
+disabled rather than as it was.
+
 A call that throws before it yields a result, such as an
 `InvalidInstallSpecError` or a transport failure, becomes `failed` with the
 error's message. `alsoConfirm` runs after a done install, as on the CLI path,
 and turns it into `failed` with its own detail.
+
+Switching is not one of these eight rules: `setEnabled` calls
+`setPluginEnabled` per live entry and builds a `ShopSetEnabledResult`
+directly (section 4). Amended 2026-09-27: a refusal after n of the m live
+entries have already switched says "<n> of its <m> plugins had already
+switched <on|off>." Nothing already applied is rolled back; the next
+`installed()` call shows the live state. The bundle re-selection path from
+#67 reads dsh's answer the same way.
 
 ## 6. Progress, time and the queue
 
@@ -208,6 +243,17 @@ and turns it into `failed` with its own detail.
   own profile lock (`lockWaitMs`, 120 s) orders them against dsh's page and
   the CLI.
 
+Amended 2026-09-27, matching what shipped:
+- `install-state` events are not subscribed. Only `install-log` is routed,
+  one line assembler per stream.
+- The mechanism line named above stays outside the bounded log, so it is
+  always a record's first line. A record may carry one line over the line
+  cap because of it.
+- A record settles only when the service call settles. The shop's deadline
+  cancels through `cancelInstall` and keeps waiting when dsh answers
+  `too-late`, as above. A harness without `cancelInstall` gets no shop
+  deadline at all.
+
 ## 7. The desktop profile
 
 Decision (a), 2026-09-26. In a profile named `desktop` in any letter case
@@ -223,6 +269,20 @@ refuses that profile. Two details print one today. The undo in
 Readiness B1's `allow-version` command names dsh's Settings, Plugins page,
 where the service's own exemption flow (`setVersionExemption`) is offered. The
 shop still grants no exemption itself.
+
+Amended 2026-09-27. Four details printed a `dsh plugin` command, not the two
+named above: the undo in `alsoConfirm`; readiness B1's `allow-version`
+refusal; `installTimeoutDetail`; and `installFailureDetail`'s hint. None of
+them reaches a desktop reader now. dsh's Plugins page offers no version
+exemption, and the shop grants none; the desktop refusal says so and points
+nowhere else.
+
+dsh's own texts can still name a `dsh plugin` command, in
+`pluginCompatibilityWarning` and in the rollback line "run 'dsh plugin
+install'". A desktop reader's detail drops them at clause level: a sentence
+splits at `"; "`, only the clauses naming a `dsh plugin` command drop, and
+the rest keeps its terminator. The shop's own sentences are never scrubbed
+this way, and the record's log stays dsh's verbatim record.
 
 The evidence, and where it stops. The package's own README says
 application-owned profiles supply their bundled package manager through
@@ -272,14 +332,46 @@ service in place of a refusal.
 - **O1.** Whether an uninstall followed by a reinstall in one session,
   through the service, loads a fresh module or the one Node cached. Until
   measured, the `imported` override in section 5 stands.
+
+  Measured 2026-09-27, on 0.1.7-rc.2: after `removeBundle` and
+  `installBundle` of v2 both answered `applied`, the re-created entry ran
+  the module Node had cached. The profile uses `nodeLinker: hoisted`, so
+  every version of a name loads from the same URL. Disk and `listBundles`
+  said 2.0.0.
+
+  Decided: the `alreadyImported` rule (a restart, reason `already-loaded`)
+  stays. The manager path records a name as imported when dsh's answer
+  reached stage `enable`. It re-reads the manifest into that record on
+  `plugin-manager/changed` with `reason: 'install'`. That event names no
+  package, and dsh's own Plugins page installs through the same service.
 - **O2.** Whether `applied` makes a browser half one tab reload away, as a
   hot mount does today (`clientLive: true`).
+
+  Measured 2026-09-27: the e2e's browser-half case passes through the
+  service, so `applied` does put a browser half one reload away. Nothing
+  changed.
 - **O3.** Whether a row the shop wrote on 0.1.5 (block style, with a module
   name assertion) is updated in place when the service toggles it on 0.1.7.
   dsh matches rows by id and by any module-name assertion, so it is expected
   to be.
+
+  Measured 2026-09-27, on 0.1.7-rc.2: `setPluginEnabled('include:<id>',
+  enabled)` updated that row in place and appended none, whether or not the
+  row carried `name`. The 0.1.5 shop's writer writes no `name`. dsh leaves
+  the user layer at mode 0600, and it appends in flow style to the CLI's
+  empty `[]` template.
+
+  Decided: switching goes through the service.
 - **O4.** Whether the shop's own update, made through the service while the
   shop is the caller, settles its call before the restart it asks for.
+
+  Measured 2026-09-27, on 0.1.7-rc.2: `installBundle` on the shop's own
+  package settled in the caller with `restart-required` after about 1.3 s.
+  The running instance was neither disposed nor re-composed, and the new
+  version ran only after a restart.
+
+  Decided: the self-update record reaches `done` with a restart before
+  anything restarts. No special handling.
 
 ## 11. Out of scope
 
