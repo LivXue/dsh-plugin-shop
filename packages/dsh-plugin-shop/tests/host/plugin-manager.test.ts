@@ -402,4 +402,41 @@ describe('forDesktopReader', () => {
     }
     expect(forDesktopReader(change).diagnostic).toBe('ERR_X boom.\nnext')
   })
+
+  /** A failed removal whose pnpm output is `output`. */
+  const outputOf = (output: string): ManagerChange => ({
+    application: 'failed', stage: 'remove', errorCode: 'operation-error', diagnostic: null,
+    incompatible: [], kind: null, output, pendingBuilds: [], failedAt: null, changed: null, truncated: false,
+  })
+
+  // The sentence splitter is a left-to-right scan since the final fix wave;
+  // it was a regex. Each line names `dsh plugin` where a sentence boundary in
+  // the wrong place would change what the scrub keeps, so these pin the
+  // pieces the regex yielded.
+  it.each([
+    ['a dot before a letter ends no sentence (a.b. c)', 'dsh plugin a.b. c', 'c'],
+    ['a run before a letter ends no sentence (x...y)', 'dsh plugin x...y\nkept.', 'kept.'],
+    ['an empty line gives no sentence and stays', 'dsh plugin one.\n\nlast', '\nlast'],
+    ['a line with no punctuation is one sentence', 'no punctuation\ndsh plugin no punctuation', 'no punctuation'],
+    ['a sentence carries the whitespace after its run (ends. )', 'ends. dsh plugin run.', 'ends. '],
+    ['a kept clause keeps the terminator and the whitespace after it', 'keep; dsh plugin x. ', 'keep. '],
+    ['a CRLF line keeps its carriage return with its sentence', 'a. dsh plugin b.\r\nkept.\r\n', 'a. \nkept.\r\n'],
+    ['each of . ! and ? ends a sentence', 'one! dsh plugin two? three', 'one! three'],
+  ])('splits sentences as it always has: %s', (_case, output, scrubbed) => {
+    expect(forDesktopReader(outputOf(output)).output).toBe(scrubbed)
+  })
+
+  it('scrubs a line holding a 64,000-character run of dots within half a second', () => {
+    // The regex backtracked quadratically on a run of `.` not followed by
+    // whitespace: about 300 ms at dsh's 16 KB output cap and seconds here. It
+    // blocks the event loop, so vitest's timeout cannot interrupt it; this
+    // budget is what fails. Every line reaches the splitter, and naming `dsh
+    // plugin` also sends this one through terminatorStart.
+    const line = `dsh plugin ${'.'.repeat(64_000)}x`
+    const started = performance.now()
+    const scrubbed = forDesktopReader(outputOf(`${line}\nkept.`))
+    const elapsed = performance.now() - started
+    expect(scrubbed.output).toBe('kept.')
+    expect(elapsed).toBeLessThan(500)
+  })
 })

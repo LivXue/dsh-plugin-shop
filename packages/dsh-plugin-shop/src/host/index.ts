@@ -44,7 +44,7 @@ import {
 import { compatibilityMap, peerVerdictsOf, type HarnessVerdict, type PeerVerdict } from './compatibility.ts'
 import { readRunningHarness, type RunningHarness } from './harness.ts'
 import { ManagerLogs, messageOf, startManagerOperation } from './manager-runner.ts'
-import { asPluginManager, codeReason, forDesktopReader, managerOutcome, readChange, type ManagerOutcome, type OutcomeContext, type PluginManagerLike } from './plugin-manager.ts'
+import { asPluginManager, codeReason, forDesktopReader, managerOutcome, readChange, type ManagerChange, type ManagerOutcome, type OutcomeContext, type PluginManagerLike } from './plugin-manager.ts'
 
 // Re-exported so the boundary type is reachable from the package's public
 // ./types subpath; the typert generator refuses remote parameter types it
@@ -967,11 +967,10 @@ export class ShopGateway extends TypertRemoteService {
           // failure the client can only call "retry".
           return { ok: false, detail: `dsh-plugin-shop: dsh could not switch ${args.name}: ${messageOf(error)}` }
         }
-        const change = isDesktopProfile(this.profile) ? forDesktopReader(readChange(raw)) : readChange(raw)
-        if (change.application === 'failed' || change.application === 'cancelled' || change.errorCode !== null) {
-          const code = change.errorCode ?? change.application ?? 'failed'
+        const { change, failure } = this.readManagerAnswer(raw, { act: `switch ${args.name}`, request: `the switch for ${args.name}` })
+        if (failure !== null) {
           const already = switched > 0 ? ` ${switched} of its ${live.length} plugins had already switched ${args.enabled ? 'on' : 'off'}.` : ''
-          return { ok: false, detail: `dsh-plugin-shop: dsh refused to switch ${args.name} (${code})${codeReason(change, code)}${already}` }
+          return { ok: false, detail: `${failure}${already}` }
         }
         switched += 1
         if (change.application === 'restart-required') restart = true
@@ -1045,14 +1044,34 @@ export class ShopGateway extends TypertRemoteService {
       // rather than as a transport failure the client can only call "retry".
       return { ok: false, detail: `dsh-plugin-shop: dsh could not select ${name} again: ${messageOf(error)}` }
     }
-    const change = isDesktopProfile(this.profile) ? forDesktopReader(readChange(raw)) : readChange(raw)
-    if (change.application === 'failed' || change.application === 'cancelled' || change.errorCode !== null) {
-      const code = change.errorCode ?? change.application ?? 'failed'
-      return { ok: false, detail: `dsh-plugin-shop: dsh refused to select ${name} again (${code})${codeReason(change, code)}` }
-    }
+    const { change, failure } = this.readManagerAnswer(raw, { act: `select ${name} again`, request: `the selection of ${name}` })
+    if (failure !== null) return { ok: false, detail: failure }
     setUserLayerRows({ profileDir, rows })
     if (change.application === 'restart-required') return { ok: true, activation: 'restart' }
     return { ok: true, activation: activationOf({ hostLive: true, clientLive: true, hasClientHalf: this.packageHasClientHalf(name) }) }
+  }
+
+  /**
+   * dsh's answer to a switch or a bundle selection, read the one way both
+   * callers need it (R32): the change, scrubbed for a desktop reader, and the
+   * detail that fails the request, or null when dsh applied it. `act` is what
+   * was asked, as "switch <name>", and `request` names the request itself,
+   * as "the switch for <name>". An application this shop does not know fails
+   * rather than reading as applied: a later harness may answer something new.
+   */
+  private readManagerAnswer(raw: unknown, words: { act: string; request: string }): { change: ManagerChange; failure: string | null } {
+    const change = isDesktopProfile(this.profile) ? forDesktopReader(readChange(raw)) : readChange(raw)
+    if (change.application === 'failed' || change.application === 'cancelled' || change.errorCode !== null) {
+      const code = change.errorCode ?? change.application ?? 'failed'
+      return { change, failure: `dsh-plugin-shop: dsh refused to ${words.act} (${code})${codeReason(change, code)}` }
+    }
+    if (change.application === 'applied' || change.application === 'restart-required' || change.application === 'overridden') {
+      return { change, failure: null }
+    }
+    return {
+      change,
+      failure: `dsh-plugin-shop: dsh answered ${words.request} with "${change.application ?? 'nothing'}", which this shop does not know how to read.`,
+    }
   }
 
   private rowConfig(): { catalogUrl: string; cacheDir: string } {
@@ -1512,8 +1531,10 @@ export class ShopGateway extends TypertRemoteService {
 
   /** Forget an uninstalled package's pins: its own, and its identity pin when
    * a catalog row matched the installed spec. Both uninstall paths call this
-   * at the same point, right after their operation starts, so a stale pin
-   * never outlives the uninstall in the shop's cache either way. */
+   * once their operation has started, so a stale pin never outlives the
+   * uninstall in the shop's cache either way. The plugin manager path tracks
+   * its record first, so a write here that throws cannot hide an operation
+   * already queued. */
   private forgetPins(name: string, installedEntry: CatalogEntry | undefined): void {
     const pins = readRepoPins(this.pinFs, this.pinsPath())
     const stalePins = [name, ...(installedEntry === undefined ? [] : [identityKey(installedEntry)])]
@@ -1793,8 +1814,11 @@ export class ShopGateway extends TypertRemoteService {
         run: () => manager.removeBundle(args.name),
         outcome: raw => managerOutcome(raw, this.outcomeContext(args.name, 'uninstall', false, hadClientHalf)),
       })
-      this.forgetPins(args.name, installedEntry)
+      // Tracked first, as the manager install is: the operation is already
+      // queued, so a pin write that throws must not leave it running where no
+      // poll or restart gate sees it.
       this.track(running)
+      this.forgetPins(args.name, installedEntry)
       return { ok: true, installId: running.installId }
     }
     const running = startUninstall({

@@ -631,7 +631,15 @@ export function requestDownloadPhase(options: {
   const { prefetcher, profile, spec, env, log } = options
   let prefetch: PrefetchRequest
   try {
-    prefetch = prefetcher.request({ profile, spec, cwd: resolveProfileDir(profile, env?.DSH_HOME), env, log })
+    prefetch = prefetcher.request({
+      profile,
+      spec,
+      // The profile directory decides which store pnpm picks, so the batch
+      // runs where dsh runs pnpm rather than where the shop happens to sit.
+      cwd: resolveProfileDir(profile, env?.DSH_HOME),
+      env,
+      log,
+    })
   } catch (error) {
     log(`${DOWNLOAD_PHASE_FAILED_PREFIX}${(error as Error).message}`)
     return null

@@ -217,7 +217,10 @@ directly (section 4). Amended 2026-09-27: a refusal after n of the m live
 entries have already switched says "<n> of its <m> plugins had already
 switched <on|off>." Nothing already applied is rolled back; the next
 `installed()` call shows the live state. The bundle re-selection path from
-#67 reads dsh's answer the same way.
+#67 reads dsh's answer the same way. Amended 2026-09-28: both read it
+through one helper, and an `application` this shop does not know fails the
+switch or the re-selection with a detail naming it, as an install's answer
+does when no rule above matches.
 
 ## 6. Progress, time and the queue
 
@@ -232,8 +235,9 @@ switched <on|off>." Nothing already applied is rolled back; the next
   target, for example `install dsh-foo@1.2.0`. The shop's log panel shows it,
   which tells a person reading a failure which path ran, and gives the e2e a
   shop-owned way to prove it (section 9).
-- Removal and switching carry no request id. Their records take the final
-  `packageResult.output`, as does an install whose chunks never arrived.
+- Removal carries no request id, so its record takes the final
+  `packageResult.output`, as does an install whose chunks never arrived. A
+  switch makes no record at all (section 5).
 - The existing `INSTALL_TIMEOUT_MS` bounds a service install as it bounds a
   CLI one. On expiry the runner calls `cancelInstall(requestId)`. `cancelled`
   fails the record with today's timeout detail. `too-late` means dsh is

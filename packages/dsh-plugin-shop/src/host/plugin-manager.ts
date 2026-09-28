@@ -105,12 +105,42 @@ function namesCliCommand(sentence: string): boolean {
   return sentence.includes('dsh plugin')
 }
 
+const isTerminal = (character: string): boolean => character === '.' || character === '!' || character === '?'
+const isSpace = (character: string): boolean => /\s/.test(character)
+
 /** Splits `line` into sentences, each still carrying whatever whitespace
  * followed its `.`, `!` or `?`, so joining every piece back together
- * reproduces `line` exactly. A line with no terminal punctuation at all is
- * one sentence spanning the whole line. */
+ * reproduces `line` exactly. A sentence ends after a run of terminal
+ * punctuation that whitespace or the end of the line follows; the text after
+ * the last such run is one more piece, so a line with no terminal
+ * punctuation at all is one sentence spanning the whole line, and an empty
+ * line gives none. One pass from left to right: the regex this replaced
+ * backtracked quadratically on a long run of punctuation with no whitespace
+ * after it, and dsh's output holds up to 16 KB of whatever pnpm printed. */
 function sentencesIn(line: string): string[] {
-  return line.match(/[\s\S]*?[.!?]+(?:\s+|$)|[\s\S]+$/g) ?? []
+  const pieces: string[] = []
+  let start = 0
+  let index = 0
+  while (index < line.length) {
+    if (!isTerminal(line.charAt(index))) {
+      index += 1
+      continue
+    }
+    let runEnd = index
+    while (runEnd < line.length && isTerminal(line.charAt(runEnd))) runEnd += 1
+    if (runEnd < line.length && !isSpace(line.charAt(runEnd))) {
+      // Followed by something else, as in `a.b` or `x...y`: no sentence ends.
+      index = runEnd
+      continue
+    }
+    let end = runEnd
+    while (end < line.length && isSpace(line.charAt(end))) end += 1
+    pieces.push(line.slice(start, end))
+    start = end
+    index = end
+  }
+  if (start < line.length) pieces.push(line.slice(start))
+  return pieces
 }
 
 /** Where `sentence`'s terminator starts: its closing punctuation and the

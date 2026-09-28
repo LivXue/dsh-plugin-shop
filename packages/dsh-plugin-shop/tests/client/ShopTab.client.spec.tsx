@@ -1908,6 +1908,22 @@ describe('ShopTab', () => {
     expect(row.querySelector('[data-shop-reload]')).toBeNull()
   })
 
+  it('keeps the restart cue when a later switch fails', async () => {
+    // R34: a failed switch changed nothing on the host, so it cannot dismiss
+    // the restart an earlier one made necessary.
+    const { injected, setEnabled } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
+    setEnabled.mockResolvedValueOnce({ ok: true, activation: 'restart' }).mockResolvedValueOnce({ ok: false, detail: 'dsh-plugin-shop: dsh refused to switch dsh-hello-plugin (unknown-plugin).' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]')!
+    fireEvent.click(row.querySelector('[data-shop-toggle]')!)
+    await waitFor(() => expect(row.querySelector('[data-shop-toggle-restart]')).toBeTruthy())
+    fireEvent.click(row.querySelector('[data-shop-toggle]')!)
+    await waitFor(() => expect(row.querySelector('[data-shop-toggle-error]')?.textContent).toBe('dsh-plugin-shop: dsh refused to switch dsh-hello-plugin (unknown-plugin).'))
+    expect(row.querySelector('[data-shop-toggle-restart]')).toBeTruthy()
+    expect(row.querySelector('[data-shop-restart]')).toBeTruthy()
+  })
+
   it('renders a disabled installed plugin with its switch off', async () => {
     const { injected } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.0.0', outdated: false, enabled: false }])
     const { container } = renderTab(injected)

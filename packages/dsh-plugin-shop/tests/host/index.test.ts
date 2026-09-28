@@ -817,6 +817,17 @@ describe("switches through dsh's pluginManager", () => {
     expect(await gateway.setEnabled({ name: 'dsh-two-rows', enabled: false })).toEqual({ ok: true, activation: 'restart' })
   })
 
+  it('fails a switch dsh answers with an application it does not know, naming it, and stops there', async () => {
+    // R42.3: a later harness answering something new must not read as a
+    // switch that applied.
+    const { gateway, calls } = switchingGateway([{ ...applied, application: 'deferred' }])
+    expect(await gateway.setEnabled({ name: 'dsh-two-rows', enabled: false })).toEqual({
+      ok: false,
+      detail: 'dsh-plugin-shop: dsh answered the switch for dsh-two-rows with "deferred", which this shop does not know how to read.',
+    })
+    expect(calls).toHaveLength(1)
+  })
+
   it('pins a refusal diagnostic to exactly one trailing period', async () => {
     const { gateway } = switchingGateway([{ ...applied, application: 'failed', error: { code: 'unaddressable', diagnostic: 'not a root row.' } }])
     const result = await gateway.setEnabled({ name: 'dsh-two-rows', enabled: false })
@@ -1075,6 +1086,18 @@ describe("the bundle switch of dsh 0.1.7's own Plugins page", () => {
     const manager = managerAnswering({ ...applied, application: 'restart-required' })
     const gateway = new ShopGateway(withManager(manager.service), { profile: 'web', profileDir, inventory: { list: async () => ({ entries: [] }) } })
     expect(await gateway.setEnabled({ name: 'dsh-hello-fixture', enabled: true })).toEqual({ ok: true, activation: 'restart' })
+  })
+
+  it('fails a reselection dsh answers with an application it does not know, naming it, and writes nothing', async () => {
+    // R42.3, through the same answer reader as a switch.
+    const profileDir = profileWith('dsh-hello-fixture', helloPatch, [])
+    const manager = managerAnswering({ ...applied, application: 'deferred' })
+    const gateway = new ShopGateway(withManager(manager.service), { profile: 'web', profileDir, inventory: { list: async () => ({ entries: [] }) } })
+    expect(await gateway.setEnabled({ name: 'dsh-hello-fixture', enabled: true })).toEqual({
+      ok: false,
+      detail: 'dsh-plugin-shop: dsh answered the selection of dsh-hello-fixture with "deferred", which this shop does not know how to read.',
+    })
+    expect(existsSync(join(profileDir, 'cordis.patch.yml'))).toBe(false)
   })
 
   it("passes dsh's refusal through when it will not select the bundle, and writes nothing", async () => {
@@ -3839,6 +3862,51 @@ describe("installs and updates through dsh's pluginManager", () => {
     if (typeof installId !== 'string') throw new Error('installBundle was called without a request id')
     expect(gateway.installStatus({ installId }).found).toBe(true)
     expect((await finish(gateway, installId)).state).toBe('done')
+  })
+
+  it('tracks an uninstall before it forgets the pins, so a write that throws leaves nothing running unseen', async () => {
+    // forgetPins writes only when the pins file holds one of the package's
+    // pins, and that write is the one step after the start that can throw.
+    // The RPC then fails, but removeBundle is already queued, so its record
+    // must be where the restart gate looks for running operations. It carries
+    // no request id, so the gate (F-5) is what observes it.
+    let release!: (answer: unknown) => void
+    const removing = new Promise(resolve => { release = resolve })
+    const service = {
+      installBundle: async () => { throw new Error('this case must not call installBundle') },
+      removeBundle: vi.fn(() => removing),
+      setPluginEnabled: async () => { throw new Error('this case must not call setPluginEnabled') },
+      setBundleEnabled: async () => { throw new Error('this case must not call setBundleEnabled') },
+    }
+    const pinned = { exists: () => true, read: () => JSON.stringify({ 'dsh-managed': '1.0.0' }), write: () => { throw new Error('EACCES: github-pins.json') } }
+    const profileDir = toggleProfile()
+    fixturePackage(profileDir, 'dsh-managed', managedPatch)
+    // A profile of its own: the held removeBundle holds this profile's queue.
+    const profile = 'forget-pins'
+    const gateway = new ShopGateway(
+      { get: (name: string) => name === 'pluginManager' ? service : undefined, reflect: { provide: () => {} } } as never,
+      {
+        catalogUrl: 'https://shop.test/v1/', cacheDir: mkdtempSync(join(TEMP_ROOT, 'dsh-forget-pins-cache-')), profile, profileDir,
+        loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries: [managed], denied: [], stars: {} }, stale: false }) as CatalogResult,
+        pinFs: pinned,
+        // The F-5 cases' safety net, for the order in which the gate does not
+        // hold: a permitted restart starts the takeover helper and schedules
+        // the exit, so the exit is a spy, the pid the helper waits on is past
+        // pid_max, and what it runs is a fixture dsh.
+        exit: vi.fn(), restartParentPid: 1_000_000_000, restartExitDelayMs: 1, restartArgv: ['web'], platform: 'linux',
+        dshBin: fakeDshRecording(mkdtempSync(join(TEMP_ROOT, 'dsh-forget-pins-cli-')), 0, { silent: true }),
+      },
+    )
+    await expect(gateway.uninstall({ name: 'dsh-managed' })).rejects.toThrow('EACCES: github-pins.json')
+    await vi.waitFor(() => expect(service.removeBundle).toHaveBeenCalledOnce(), { timeout: 5000 })
+    expect(await gateway.restart()).toEqual({
+      ok: false,
+      detail: 'dsh-plugin-shop: an install is still running in this profile; a restart now would boot the new dsh against a half-written profile. Wait for it to finish and try again.',
+    })
+    release({ changed: true, application: 'applied', stage: 'remove', target: 'dsh-managed', warnings: [], packageResult: { exitCode: 0, output: 'Packages: -1', truncated: false, logPath: '/l' } })
+    // The queue runs one operation at a time, so a task queued behind the
+    // removal finishes only once the removal has settled.
+    await inProfileQueue(profile, async () => {}).finished
   })
 
   it("fails an install whose landed package would stop the profile, with the shop's uninstall as the undo", async () => {
