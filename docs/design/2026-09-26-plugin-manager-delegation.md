@@ -230,14 +230,14 @@ matches wins.
    client's done view.
 
    Amended 2026-09-28. A switch reads `overridden` as a failed switch,
-   because dsh saved the row but the live state did not change: dsh answers
+   because dsh saved the row but the live state did not change. dsh answers
    it when the entry still differs from the request after its write and
    reload (`setPluginEnabled`), and its README names what outranks the
-   profile's own patch, home and invocation patches. The detail says that
-   dsh saved the switch but such a patch keeps the plugin on or off, and adds
-   the n-of-m sentence below when other entries had already switched. Read
-   as success, it flipped the client's switch and reported the change
-   applied while the plugin ran as before.
+   profile's own patch: home and invocation patches keep their higher
+   priority. The detail says that dsh saved the switch but such a patch
+   keeps the plugin on or off, and adds the n-of-m sentence below when other
+   entries had already switched. Read as success, it flipped the client's
+   switch and reported the change applied while the plugin ran as before.
 8. `applied`: `done`. For an install, `activationOf({ hostLive: true,
    clientLive: true, hasClientHalf })`, the verdict a successful hot mount
    gives today, unless the `imported` record holds the name, in which case
@@ -295,9 +295,10 @@ switching a deselected package off, which the shop's writer does alone.
   switch makes no record at all (section 5).
 - The existing `INSTALL_TIMEOUT_MS` bounds a service install as it bounds a
   CLI one. On expiry the runner calls `cancelInstall(requestId)`. `cancelled`
-  fails the record with today's timeout detail (amended 2026-09-28: with a
-  detail of its own, section 5 rule 5). `too-late` means dsh is applying the
-  bundle, and the runner keeps waiting for its result.
+  fails the record; amended 2026-09-28, with a detail of its own that says
+  what dsh did (section 5, rule 5) rather than today's timeout detail.
+  `too-late` means dsh is applying the bundle, and the runner keeps waiting
+  for its result.
 - Service operations run in the same per-profile chain as CLI ones: one at a
   time, `downloading` while queued, the prefetcher unchanged. The service's
   own profile lock (`lockWaitMs`, 120 s) orders them against dsh's page and
