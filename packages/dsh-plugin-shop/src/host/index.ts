@@ -44,7 +44,7 @@ import {
 import { compatibilityMap, peerVerdictsOf, type HarnessVerdict, type PeerVerdict } from './compatibility.ts'
 import { readRunningHarness, type RunningHarness } from './harness.ts'
 import { ManagerLogs, messageOf, startManagerOperation } from './manager-runner.ts'
-import { asPluginManager, codeReason, forDesktopReader, managerOutcome, readChange, type ManagerChange, type ManagerOutcome, type OutcomeContext, type PluginManagerLike } from './plugin-manager.ts'
+import { asPluginManager, codeReason, forDesktopReader, managerOutcome, readChange, thrownTail, type ManagerChange, type ManagerOutcome, type OutcomeContext, type PluginManagerLike } from './plugin-manager.ts'
 
 // Re-exported so the boundary type is reachable from the package's public
 // ./types subpath; the typert generator refuses remote parameter types it
@@ -957,6 +957,15 @@ export class ShopGateway extends TypertRemoteService {
     if (manager !== null) {
       let restart = false
       let switched = 0
+      // A failure partway through says how many entries had already switched
+      // (R21), whatever failed: a refusal, an override or a throw. The
+      // failure's own sentence is ended first, since a thrown message
+      // carries no period of its own.
+      const failed = (detail: string): ShopSetEnabledResult => {
+        if (switched === 0) return { ok: false, detail }
+        const sentence = /[.!?]$/.test(detail) ? detail : `${detail}.`
+        return { ok: false, detail: `${sentence} ${switched} of its ${live.length} plugins had already switched ${args.enabled ? 'on' : 'off'}.` }
+      }
       for (const entry of live) {
         let raw: unknown
         try {
@@ -965,15 +974,12 @@ export class ShopGateway extends TypertRemoteService {
           // The service threw rather than answering: nothing says the entry
           // switched, and the reason travels as a detail, not as a transport
           // failure the client can only call "retry".
-          return { ok: false, detail: `dsh-plugin-shop: dsh could not switch ${args.name}: ${messageOf(error)}` }
+          return failed(`dsh-plugin-shop: dsh could not switch ${args.name}${thrownTail(messageOf(error), isDesktopProfile(this.profile))}`)
         }
         const { change, failure } = this.readManagerAnswer(raw, {
           act: `switch ${args.name}`, request: `the switch for ${args.name}`, stays: args.enabled ? 'off' : 'on',
         })
-        if (failure !== null) {
-          const already = switched > 0 ? ` ${switched} of its ${live.length} plugins had already switched ${args.enabled ? 'on' : 'off'}.` : ''
-          return { ok: false, detail: `${failure}${already}` }
-        }
+        if (failure !== null) return failed(failure)
         switched += 1
         if (change.application === 'restart-required') restart = true
       }
@@ -1044,7 +1050,7 @@ export class ShopGateway extends TypertRemoteService {
       // The service threw rather than answering: nothing says the bundle was
       // selected, so the switch stays off and the reason travels as a detail
       // rather than as a transport failure the client can only call "retry".
-      return { ok: false, detail: `dsh-plugin-shop: dsh could not select ${name} again: ${messageOf(error)}` }
+      return { ok: false, detail: `dsh-plugin-shop: dsh could not select ${name} again${thrownTail(messageOf(error), isDesktopProfile(this.profile))}` }
     }
     const { change, failure } = this.readManagerAnswer(raw, { act: `select ${name} again`, request: `the selection of ${name}`, stays: 'off' })
     if (failure !== null) return { ok: false, detail: failure }
@@ -1610,6 +1616,7 @@ export class ShopGateway extends TypertRemoteService {
       ...(alsoConfirm !== undefined ? { alsoConfirm } : {}),
       prefetcher: this.prefetcher,
       spec,
+      desktop: isDesktopProfile(this.profile),
     })
   }
 
@@ -1836,6 +1843,7 @@ export class ShopGateway extends TypertRemoteService {
         logs: this.managerLogs,
         run: () => manager.removeBundle(args.name),
         outcome: raw => managerOutcome(raw, this.outcomeContext(args.name, 'uninstall', false, hadClientHalf)),
+        desktop: isDesktopProfile(this.profile),
       })
       // Tracked first, as the manager install is: the operation is already
       // queued, so a pin write that throws must not leave it running where no

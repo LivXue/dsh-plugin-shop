@@ -199,6 +199,15 @@ export function forDesktopReader(change: ManagerChange): ManagerChange {
   }
 }
 
+/** The end of a detail that passes on what a service call threw: `: ` and
+ * the message, scrubbed for a desktop reader as `forDesktopReader` scrubs
+ * dsh's answer, since a thrown message is dsh's text as well. A message left
+ * with nothing to say ends the detail with a period instead. */
+export function thrownTail(message: string, desktop: boolean): string {
+  const said = desktop ? scrubText(message) : message
+  return said.trim() === '' ? '.' : `: ${said}`
+}
+
 export interface ManagerOutcome { state: 'done' | 'failed'; activation?: Activation; restartReason?: HotRestartReason; detail?: string }
 
 export interface OutcomeContext {

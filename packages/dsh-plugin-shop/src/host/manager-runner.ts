@@ -9,7 +9,7 @@ import {
   createBoundedLog, inProfileQueue, INSTALL_TIMEOUT_MS, lineSink, requestDownloadPhase,
   type InstallStatus, type LineSink, type RunningInstall,
 } from './executor.ts'
-import { readChange, type ManagerOutcome } from './plugin-manager.ts'
+import { readChange, thrownTail, type ManagerOutcome } from './plugin-manager.ts'
 import type { Prefetcher } from './prefetch.ts'
 import { isTerminalInstallState, type InstallState } from '../shared/install-state.ts'
 
@@ -52,24 +52,34 @@ export interface ManagerOperationOptions {
   spec?: string
   env?: NodeJS.ProcessEnv
   timeoutMs?: number
+  /** The desktop profile, whose readers can run no `dsh plugin` command: a
+   * message the service call throws is scrubbed as dsh's answer is. */
+  desktop?: boolean
 }
 
-/** Total: every value must describe itself somehow, even one whose own
- * description throws (a null-prototype object has no `toString`). Only an
- * `Error` gets its `message`; everything else falls back to a diagnostic
- * string, so describing the error is never itself the reason a settle
- * fails. */
+/** What every value this cannot describe reads as. */
+const UNREADABLE = 'an error with no readable message'
+
+/** What a thrown value says about itself, and total: describing an error is
+ * never itself the reason a settle fails. An `Error` gives its `message`,
+ * anything else `String(value)`. A message that is not a string, or a
+ * description that throws anywhere, reads as one fixed string: a Proxy whose
+ * getPrototypeOf trap throws defeats `instanceof` itself, a `message` getter
+ * can throw, and a null-prototype object has no conversion to a string. */
 export const messageOf = (error: unknown): string => {
-  if (error instanceof Error) return error.message
   try {
-    return String(error)
+    const said: unknown = error instanceof Error ? error.message : String(error)
+    if (typeof said === 'string') return said
   } catch {
-    return Object.prototype.toString.call(error)
+    // Describing the value threw: the `instanceof` walk, the `message`
+    // getter or `String`. The fixed string below says so, and nothing else
+    // in this function can throw.
   }
+  return UNREADABLE
 }
 
 export function startManagerOperation(options: ManagerOperationOptions): RunningInstall {
-  const { profile, requestId, mechanism, logs, run, cancel, outcome, alsoConfirm, prefetcher, spec, env } = options
+  const { profile, requestId, mechanism, logs, run, cancel, outcome, alsoConfirm, prefetcher, spec, env, desktop = false } = options
   const timeoutMs = options.timeoutMs ?? INSTALL_TIMEOUT_MS
   const mechanismLine = `${MECHANISM_PREFIX} ${mechanism}`
   const log = createBoundedLog()
@@ -139,8 +149,9 @@ export function startManagerOperation(options: ManagerOperationOptions): Running
       // run() rejects for a lock/disposal error the service raises, or an
       // InvalidInstallSpecError validated up front; returning (not
       // rethrowing) settles the record and frees this profile's queue slot.
+      // The message is dsh's text, so a desktop reader gets it scrubbed.
       flushStreams()
-      settled = { state: 'failed', detail: `dsh-plugin-shop: dsh's plugin manager failed: ${messageOf(error)}` }
+      settled = { state: 'failed', detail: `dsh-plugin-shop: dsh's plugin manager failed${thrownTail(messageOf(error), desktop)}` }
       state = 'failed'
       return status()
     } finally {

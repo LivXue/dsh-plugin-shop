@@ -235,7 +235,10 @@ disabled rather than as it was.
 A call that throws before it yields a result, such as an
 `InvalidInstallSpecError` or a transport failure, becomes `failed` with the
 error's message. `alsoConfirm` runs after a done install, as on the CLI path,
-and turns it into `failed` with its own detail.
+and turns it into `failed` with its own detail. Amended 2026-09-28: a thrown
+value whose message is not a string, or whose description itself throws,
+reads as one fixed string, so its record always settles; before, such a
+value left the record running and F-5 refusing every restart.
 
 Switching is not one of these eight rules: `setEnabled` calls
 `setPluginEnabled` per live entry and builds a `ShopSetEnabledResult`
@@ -246,7 +249,9 @@ switched <on|off>." Nothing already applied is rolled back; the next
 #67 reads dsh's answer the same way. Amended 2026-09-28: both read it
 through one helper, and an `application` this shop does not know fails the
 switch or the re-selection with a detail naming it, as an install's answer
-does when no rule above matches.
+does when no rule above matches. The n-of-m sentence follows any failure
+partway through, a thrown answer and an override included, not only a
+refusal.
 
 ## 6. Progress, time and the queue
 
@@ -312,7 +317,10 @@ dsh's own texts can still name a `dsh plugin` command, in
 install'". A desktop reader's detail drops them at clause level: a sentence
 splits at `"; "`, only the clauses naming a `dsh plugin` command drop, and
 the rest keeps its terminator. The shop's own sentences are never scrubbed
-this way, and the record's log stays dsh's verbatim record.
+this way, and the record's log stays dsh's verbatim record. Amended
+2026-09-28: a message a service call throws is dsh's text too, and reaches a
+desktop reader scrubbed the same way, in an operation's record and in the
+details of a switch and a bundle re-selection.
 
 The evidence, and where it stops. The package's own README says
 application-owned profiles supply their bundled package manager through

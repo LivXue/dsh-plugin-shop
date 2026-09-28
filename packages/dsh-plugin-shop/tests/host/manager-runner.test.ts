@@ -218,6 +218,9 @@ describe('startManagerOperation', () => {
     expect(inProfileQueue('runner-15', async () => {}).ahead).toBe(0)
   })
 
+  // The detail was `[object Object]` until R42.1 made messageOf total with
+  // one fixed string: its fallback, Object.prototype.toString, can throw as
+  // well (a revoked Proxy), so it was not the last resort it looked like.
   it('never leaves the record running when the rejection cannot describe itself', async () => {
     const running = startManagerOperation({
       profile: 'runner-16', requestId: 'r16', mechanism: 'install x', logs: new ManagerLogs(),
@@ -226,8 +229,44 @@ describe('startManagerOperation', () => {
     })
     const status = await running.finished
     expect(status.state).toBe('failed')
-    expect(status.detail).toBe("dsh-plugin-shop: dsh's plugin manager failed: [object Object]")
+    expect(status.detail).toBe("dsh-plugin-shop: dsh's plugin manager failed: an error with no readable message")
     expect(inProfileQueue('runner-16', async () => {}).ahead).toBe(0)
+  })
+
+  // R42.1: describing each of these threw inside the catch, before the record
+  // settled, so it stayed `running` for good and F-5 refused every restart
+  // after it. dsh itself never throws such values.
+  it.each([
+    ['a Proxy whose getPrototypeOf trap throws', 'runner-24', () => new Proxy({}, { getPrototypeOf: () => { throw new Error('trap') } })],
+    ['an Error whose message is a Symbol', 'runner-25', () => Object.defineProperty(new Error('x'), 'message', { value: Symbol('boom') })],
+    ['an Error whose message getter throws', 'runner-26', () => Object.defineProperty(new Error('x'), 'message', { get: () => { throw new Error('getter') } })],
+  ])('settles the record failed when the rejection is %s', async (_value, profile, rejection) => {
+    const running = startManagerOperation({
+      profile, requestId: profile, mechanism: 'install x', logs: new ManagerLogs(),
+      run: async () => { throw rejection() },
+      outcome: () => done,
+    })
+    const status = await running.finished.catch(() => running.status())
+    expect(status.state).toBe('failed')
+    expect(status.detail).toBe("dsh-plugin-shop: dsh's plugin manager failed: an error with no readable message")
+    expect(inProfileQueue(profile, async () => {}).ahead).toBe(0)
+  })
+
+  it("keeps a thrown message's dsh plugin clause from a desktop reader, as dsh's answer is kept", async () => {
+    // R42.4, the scrub forDesktopReader applies to dsh's answer.
+    const rejection = new Error("plugin-manager: the profile is locked; run 'dsh plugin install'")
+    const desktop = startManagerOperation({
+      profile: 'runner-27', requestId: 'r27', mechanism: 'install x', logs: new ManagerLogs(), desktop: true,
+      run: async () => { throw rejection },
+      outcome: () => done,
+    })
+    expect((await desktop.finished).detail).toBe("dsh-plugin-shop: dsh's plugin manager failed: plugin-manager: the profile is locked")
+    const web = startManagerOperation({
+      profile: 'runner-28', requestId: 'r28', mechanism: 'install x', logs: new ManagerLogs(),
+      run: async () => { throw rejection },
+      outcome: () => done,
+    })
+    expect((await web.finished).detail).toBe("dsh-plugin-shop: dsh's plugin manager failed: plugin-manager: the profile is locked; run 'dsh plugin install'")
   })
 
   it('keeps stdout and stderr as separate line assemblers', async () => {

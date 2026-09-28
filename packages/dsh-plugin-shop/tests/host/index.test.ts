@@ -913,6 +913,26 @@ describe("switches through dsh's pluginManager", () => {
     const result = await gateway.setEnabled({ name: 'dsh-two-rows', enabled: false })
     expect(result).toEqual({ ok: false, detail: 'dsh-plugin-shop: dsh could not switch dsh-two-rows: lock held' })
   })
+
+  it('says how many plugins had already switched when dsh throws on a later one', async () => {
+    // R42.2: a thrown answer partway through keeps R21's sentence, after a
+    // period that ends the thrown message's own.
+    const { gateway, calls } = switchingGateway([applied, new Error('lock held')])
+    expect(await gateway.setEnabled({ name: 'dsh-two-rows', enabled: false })).toEqual({
+      ok: false,
+      detail: 'dsh-plugin-shop: dsh could not switch dsh-two-rows: lock held. 1 of its 2 plugins had already switched off.',
+    })
+    expect(calls).toHaveLength(2)
+  })
+
+  it("keeps a thrown message's dsh plugin clause from a desktop reader", async () => {
+    // R42.4: a thrown message is scrubbed as dsh's answer is.
+    const { gateway } = switchingGateway([new Error("the profile is locked; run 'dsh plugin install'")], { profile: 'desktop' })
+    expect(await gateway.setEnabled({ name: 'dsh-two-rows', enabled: false })).toEqual({
+      ok: false,
+      detail: 'dsh-plugin-shop: dsh could not switch dsh-two-rows: the profile is locked',
+    })
+  })
 })
 
 describe('ShopGateway.installed', () => {
@@ -1158,6 +1178,17 @@ describe("the bundle switch of dsh 0.1.7's own Plugins page", () => {
       detail: 'dsh-plugin-shop: dsh refused to select dsh-hello-fixture again (bundle-in-use): the bundle was switched off, but some of its plugins are still running. dsh reported: still mounted.',
     })
     expect(existsSync(join(profileDir, 'cordis.patch.yml'))).toBe(false)
+  })
+
+  it("keeps a thrown message's dsh plugin clause from a desktop reader when reselecting the bundle", async () => {
+    // R42.4, the reselection's catch.
+    const profileDir = profileWith('dsh-hello-fixture', helloPatch, [])
+    const service = { setBundleEnabled: async () => { throw new Error("the profile is locked; run 'dsh plugin install'") } }
+    const gateway = new ShopGateway(withManager(service), { profile: 'desktop', profileDir, inventory: { list: async () => ({ entries: [] }) } })
+    expect(await gateway.setEnabled({ name: 'dsh-hello-fixture', enabled: true })).toEqual({
+      ok: false,
+      detail: 'dsh-plugin-shop: dsh could not select dsh-hello-fixture again: the profile is locked',
+    })
   })
 
   it('gives a desktop reader no dsh-CLI language when reselecting the bundle fails', async () => {
@@ -3626,7 +3657,9 @@ describe("installs and updates through dsh's pluginManager", () => {
    * gateways. The CLI stand-ins are this file's own (see its header), so a
    * case that fell back to the CLI fails on its own assertions instead of
    * running a real dsh or pnpm. `entries` join the catalog, straight from
-   * the injected loadCatalog and so past catalog.ts's validation. */
+   * the injected loadCatalog and so past catalog.ts's validation. With
+   * `rejectsWith`, installBundle and removeBundle throw it instead of
+   * answering. */
   function managedGateway(result: object, options: {
     dependencies?: Record<string, string>
     profile?: string
@@ -3637,10 +3670,11 @@ describe("installs and updates through dsh's pluginManager", () => {
     prefetcher?: Prefetcher
     pinFs?: ShopGatewayOptions['pinFs']
     entries?: CatalogEntry[]
+    rejectsWith?: Error
   } = {}): { gateway: ShopGateway; calls: unknown[][]; profileDir: string; cacheDir: string; emit: (event: string, payload: unknown) => void } {
     const {
       dependencies = {}, profile = 'web', lands = true, hangs = false, importedModules = new Set<string>(),
-      output = (spec: string) => [{ stream: 'stdout', text: `+ ${spec}\n` }], prefetcher = fixturePrefetcher(), pinFs, entries = [],
+      output = (spec: string) => [{ stream: 'stdout', text: `+ ${spec}\n` }], prefetcher = fixturePrefetcher(), pinFs, entries = [], rejectsWith,
     } = options
     const profileDir = toggleProfile()
     writeManifest(profileDir, dependencies)
@@ -3652,6 +3686,7 @@ describe("installs and updates through dsh's pluginManager", () => {
       stalled: new Map<string, () => void>(),
       installBundle(spec: string, request: { requestId: string }): Promise<unknown> {
         calls.push(['installBundle', spec, request.requestId])
+        if (rejectsWith !== undefined) return Promise.reject(rejectsWith)
         for (const chunk of output(spec)) {
           listeners.get('plugin-manager/install-log')?.({ requestId: request.requestId, jobId: 'j', argv: ['pnpm', 'add', spec], cwd: profileDir, ...chunk })
         }
@@ -3669,7 +3704,10 @@ describe("installs and updates through dsh's pluginManager", () => {
         if (lands && name !== undefined && patch !== undefined) fixturePackage(profileDir, name, patch)
         return Promise.resolve(result)
       },
-      removeBundle: async () => { throw new Error('this case must not call removeBundle') },
+      removeBundle: async (name: string) => {
+        calls.push(['removeBundle', name])
+        throw rejectsWith ?? new Error('this case must not call removeBundle')
+      },
       setPluginEnabled: async () => { throw new Error('this case must not call setPluginEnabled') },
       setBundleEnabled: async () => { throw new Error('this case must not call setBundleEnabled') },
       // A method that reads `this`, as dsh's own does: the shop has to call
@@ -4065,6 +4103,19 @@ describe("installs and updates through dsh's pluginManager", () => {
     const status = await finish(gateway, started.installId)
     expect(status.state).toBe('failed')
     expect(status.detail).not.toContain('dsh plugin')
+  })
+
+  it("keeps a thrown message's dsh plugin clause from a desktop reader, for an install and an uninstall", async () => {
+    // R42.4: the runner scrubs a thrown message for a desktop reader as
+    // managerOutcome scrubs dsh's answer, and both calls into the runner say
+    // which reader it has.
+    const rejection = new Error("plugin-manager: the profile is locked; run 'dsh plugin install'")
+    const scrubbed = "dsh-plugin-shop: dsh's plugin manager failed: plugin-manager: the profile is locked"
+    const { gateway } = managedGateway(applied, { profile: 'desktop', lands: false, rejectsWith: rejection, dependencies: { 'dsh-other': '1.0.0' } })
+    expect(await installAndSettle(gateway, managed)).toMatchObject({ state: 'failed', detail: scrubbed })
+    const removal = await gateway.uninstall({ name: 'dsh-other' })
+    if (!removal.ok) throw new Error(removal.detail)
+    expect(await finish(gateway, removal.installId)).toMatchObject({ state: 'failed', detail: scrubbed })
   })
 
   it('still refuses every desktop mutation without the service', async () => {
