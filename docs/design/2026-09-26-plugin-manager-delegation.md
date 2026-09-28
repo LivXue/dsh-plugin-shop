@@ -93,7 +93,9 @@ The gateway asks `ctx.get('pluginManager')` at each operation, as it asks for
 `pluginPackages` and `pluginInventory`. It takes the service path when
 `installBundle`, `removeBundle`, `setPluginEnabled` and `setBundleEnabled` are
 all functions. It never consults a version number: a capability is what the
-harness offers.
+harness offers. Amended 2026-09-28: it asks once per RPC, at the start, and
+passes the answer down. Asked again after an await, a service disposed in
+between let a desktop mutation past the desktop gate and onto the CLI path.
 
 The shop declares the slice it calls as a structural interface,
 `PluginManagerLike`, instead of importing the package's types. The build
@@ -251,7 +253,13 @@ through one helper, and an `application` this shop does not know fails the
 switch or the re-selection with a detail naming it, as an install's answer
 does when no rule above matches. The n-of-m sentence follows any failure
 partway through, a thrown answer and an override included, not only a
-refusal.
+refusal. A switch or a re-selection through the service is refused while an
+operation this shop started is running or queued in the profile, the check
+F-5 makes, with a detail saying to switch after it finishes: dsh holds its
+profile lock for a whole install (`change()` wraps pnpm), and a switch would
+wait for it up to its lock timeout, `lockWaitMs`, 120 s, and then fail. The
+CLI path is unchanged, because its writer takes no dsh lock; nor is
+switching a deselected package off, which the shop's writer does alone.
 
 ## 6. Progress, time and the queue
 

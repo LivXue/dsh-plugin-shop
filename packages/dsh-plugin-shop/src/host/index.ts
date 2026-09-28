@@ -259,6 +259,17 @@ const RESTART_BLOCKED_DETAIL: Record<RestartBlockedReason, string> = {
 const DESKTOP_PROFILE_DETAIL = 'dsh-plugin-shop: the desktop profile is managed by the DeepSeek Harness desktop app, and dsh'
   + ' refuses to change it from the command line the shop runs; add and remove its plugins from the app instead'
 
+/** Why a switch through dsh's `pluginManager` waits for an operation this
+ * gateway started: dsh holds its profile lock for a whole install or removal
+ * (`change()` wraps pnpm) and makes any other change wait for it up to its
+ * `lockWaitMs`, 120 s, so a switch clicked mid-install would spin for two
+ * minutes and then fail on the lock. The check is F-5's, `hasRunningCommand`.
+ * The shop's own row writer takes no dsh lock, so what it writes alone (the
+ * CLI path's switch, and switching a deselected package off) is not
+ * refused. */
+const switchWhileBusyDetail = (name: string): string => 'dsh-plugin-shop: an install, update or uninstall is still running'
+  + ` in this profile, and dsh holds the profile until it ends; switch ${name} after it finishes.`
+
 /** `shop/version` result (§7.3): the RUNNING shop version (from the shipped
  * package.json, not the manifest's range), the npm latest when the check
  * could answer (`null` = no answer — advisory, never an error), and the
@@ -700,8 +711,12 @@ export class ShopGateway extends TypertRemoteService {
   }
 
   /** dsh's `pluginManager` service, when the running harness provides all of
-   * it (0.1.7 and later), else null. Read on each use, like `pluginPackages`.
-   * Design 2026-09-26-plugin-manager-delegation, section 3.1. */
+   * it (0.1.7 and later), else null. Never cached across calls, like
+   * `pluginPackages`, but read once per RPC, at its start, and passed down:
+   * read again after an await, a service disposed in between would let a
+   * desktop mutation past the desktop gate and onto the CLI path, which dsh
+   * refuses for that profile. Design 2026-09-26-plugin-manager-delegation,
+   * section 3.1. */
   private pluginManager(): PluginManagerLike | null {
     return asPluginManager((this.ctx as { get?: (name: string) => unknown }).get?.('pluginManager'))
   }
@@ -910,6 +925,8 @@ export class ShopGateway extends TypertRemoteService {
     if (args.name === 'dsh-plugin-shop' || args.name.startsWith('@deepseek-ai/')) {
       return { ok: false, detail: `dsh-plugin-shop: ${args.name} is part of the harness chain and cannot be toggled from the shop` }
     }
+    // Read once, and passed to the deselected branch (see `pluginManager`).
+    const manager = this.pluginManager()
     const profileDir = this.profileDirResolved()
     // Installed-ness is the profile manifest's dependencies — the same truth
     // `installed()` renders the row from. Reading it from a different source
@@ -938,7 +955,7 @@ export class ShopGateway extends TypertRemoteService {
     // below would advise the restart that cannot help.
     const selected = this.runningProfileBundles(profileDir)
     if (selected !== null && !selected.includes(args.name)) {
-      return this.setDeselectedEnabled(args.name, args.enabled, profileDir, owned)
+      return this.setDeselectedEnabled(args.name, args.enabled, profileDir, owned, manager)
     }
     const ownedSet = new Set(owned.map(entry => entry.id))
     // Liveness is read from the LIVE ids, which carry the namespace of every
@@ -953,8 +970,8 @@ export class ShopGateway extends TypertRemoteService {
     // is no rollback: a refusal partway through says how many entries had
     // already switched, because this path never reaches the writer's own row
     // write and nothing else would report it.
-    const manager = this.pluginManager()
     if (manager !== null) {
+      if (this.hasRunningCommand()) return { ok: false, detail: switchWhileBusyDetail(args.name) }
       let restart = false
       let switched = 0
       // A failure partway through says how many entries had already switched
@@ -1027,13 +1044,13 @@ export class ShopGateway extends TypertRemoteService {
     enabled: boolean,
     profileDir: string,
     owned: readonly OwnedEntry[],
+    manager: PluginManagerLike | null,
   ): Promise<ShopSetEnabledResult> {
     const rows = owned.map(({ id, name: moduleName }) => ({ id, disabled: !enabled, ...(moduleName !== undefined ? { name: moduleName } : {}) }))
     if (!enabled) {
       setUserLayerRows({ profileDir, rows })
       return { ok: true, activation: 'live' }
     }
-    const manager = this.pluginManager()
     if (manager === null) {
       return {
         ok: false,
@@ -1043,6 +1060,7 @@ export class ShopGateway extends TypertRemoteService {
           + ' or uninstall it and install it again from the shop.',
       }
     }
+    if (this.hasRunningCommand()) return { ok: false, detail: switchWhileBusyDetail(name) }
     let raw: unknown
     try {
       raw = await manager.setBundleEnabled(name, true)
@@ -1356,7 +1374,10 @@ export class ShopGateway extends TypertRemoteService {
   // this on the real composition (§7.3 amendment, 2026-08-25).
   @Remote('installStart')
   async install(args: InstallArgs): Promise<ShopInstallResult> {
-    if (isDesktopProfile(this.profile) && this.pluginManager() === null) return { ok: false, code: 'desktop-profile', detail: DESKTOP_PROFILE_DETAIL }
+    // Read once, before the awaits: the desktop gate and the choice of path
+    // must see the same service (see `pluginManager`).
+    const manager = this.pluginManager()
+    if (isDesktopProfile(this.profile) && manager === null) return { ok: false, code: 'desktop-profile', detail: DESKTOP_PROFILE_DETAIL }
     const snapshot = await this.snapshotNow()
     // The manifest's dependency for this name, when it has one: the gate needs
     // it to tell an update of THIS plugin from a replacement of a different one
@@ -1425,7 +1446,6 @@ export class ShopGateway extends TypertRemoteService {
     // Read before the spawn: the post-install check below is synchronous, and
     // which dsh runs cannot change while it runs (see `harnessRead`).
     const harness = await this.runningHarness()
-    const manager = this.pluginManager()
     if (manager !== null) {
       const running = this.startManagerInstall(manager, spec, `install ${spec}`, raw => {
         // An answer that stopped at stage `install`, a pnpm failure or a
@@ -1802,7 +1822,9 @@ export class ShopGateway extends TypertRemoteService {
    * itself). The same install records/polling serve the client. */
   @Remote('uninstallStart')
   async uninstall(args: { name: string }): Promise<ShopUninstallResult> {
-    if (isDesktopProfile(this.profile) && this.pluginManager() === null) return { ok: false, detail: DESKTOP_PROFILE_DETAIL }
+    // Read once, before the await (see `pluginManager`).
+    const manager = this.pluginManager()
+    if (isDesktopProfile(this.profile) && manager === null) return { ok: false, detail: DESKTOP_PROFILE_DETAIL }
     const snapshot = await this.snapshotNow()
     const named = snapshot.entries.filter(entry => entry.name === args.name)
     if (named.length === 0) {
@@ -1829,7 +1851,6 @@ export class ShopGateway extends TypertRemoteService {
     // verdict into a constant. Same ordering constraint, same reason, as
     // `priorEntryIds` above.
     const hadClientHalf = this.packageHasClientHalf(args.name)
-    const manager = this.pluginManager()
     if (manager !== null) {
       // removeBundle deselects the bundle and reloads itself, refusing with
       // bundle-in-use if a fiber survives — so this branch skips the CLI
@@ -1994,12 +2015,13 @@ export class ShopGateway extends TypertRemoteService {
    * `dsh-plugin-shop@<version>` is built here, never from the wire. */
   @Remote('updateStart')
   async updateStart(args: { version: string }): Promise<ShopUpdateResult> {
-    if (isDesktopProfile(this.profile) && this.pluginManager() === null) return { ok: false, detail: DESKTOP_PROFILE_DETAIL }
+    // Read once (see `pluginManager`).
+    const manager = this.pluginManager()
+    if (isDesktopProfile(this.profile) && manager === null) return { ok: false, detail: DESKTOP_PROFILE_DETAIL }
     if (valid(args.version) === null) {
       return { ok: false, detail: `dsh-plugin-shop: ${args.version} is not a valid version` }
     }
     const spec = `dsh-plugin-shop@${args.version}`
-    const manager = this.pluginManager()
     if (manager !== null) {
       // The host half running here is the shop's own, so its update never
       // goes live: dsh answers with a restart and loads nothing (measured on
