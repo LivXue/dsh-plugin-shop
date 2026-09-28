@@ -204,6 +204,32 @@ describe('managerOutcome', () => {
     expect(managerOutcome(removal, uninstall).detail).toBe('dsh-plugin-shop: the uninstall failed: permission was denied.')
   })
 
+  it("says an update found no version matching the one it asked for, not the catalog's", () => {
+    // R42.9: an update of the shop itself takes its version from npm's
+    // dist-tags (updateStart), not from the catalog.
+    expect(managerOutcome(pnpmFailed('no-matching-version', 'ERR_PNPM_NO_MATCHING_VERSION', { failedAt: 'registry' }), { ...context, operation: 'update' }).detail)
+      .toBe('dsh-plugin-shop: the update failed at the registry: no version matching the requested one was found.')
+  })
+
+  // R42.10: the app bundles its own package manager, so `pnpm approve-builds`
+  // is no step for a desktop reader. dsh's own Plugins page offers "Allow
+  // these scripts and retry" on the failed screen of an install it runs
+  // (dsh-client-ui-plugin-manager 0.1.7-rc.2: lib/client.js, and its README),
+  // so the detail names it, but only for an install whose held builds dsh
+  // listed: that page's Add plugin dialog refuses a name already installed,
+  // so it cannot rerun an update, and with no name listed it offers no such
+  // button.
+  it("names dsh's Plugins page to a desktop reader whose install pnpm held on build scripts, and no pnpm command", () => {
+    const held = pnpmFailed('build-blocked', 'ERR_PNPM_IGNORED_BUILDS', { pendingBuilds: ['esbuild'] })
+    expect(managerOutcome(held, desktop).detail).toBe(
+      'dsh-plugin-shop: pnpm is holding the build scripts of esbuild, which it blocks by default, and this shop never allows them.'
+      + ' dsh\'s Plugins page offers "Allow these scripts and retry" when an install it runs stops on them.')
+    expect(managerOutcome(held, { ...desktop, operation: 'update' }).detail).toBe(
+      'dsh-plugin-shop: pnpm is holding the build scripts of esbuild, which it blocks by default, and this shop never allows them.')
+    expect(managerOutcome(pnpmFailed('build-blocked', 'ERR_PNPM_IGNORED_BUILDS'), desktop).detail).toBe(
+      'dsh-plugin-shop: pnpm is holding the build scripts of a dependency, which it blocks by default, and this shop never allows them.')
+  })
+
   it('tells an update held on build scripts to update again, not to install again', () => {
     const outcome = managerOutcome(pnpmFailed('build-blocked', 'ERR_PNPM_IGNORED_BUILDS', { pendingBuilds: ['esbuild'] }), { ...context, operation: 'update' })
     expect(outcome.detail).toBe('dsh-plugin-shop: pnpm is holding the build scripts of esbuild, which it blocks by default:'
@@ -230,20 +256,30 @@ describe('managerOutcome', () => {
     expect(outcome.detail).toBe('dsh-plugin-shop: dsh refused the uninstall of dsh-managed (bundle-in-use): the bundle was switched off, but some of its plugins are still running. dsh reported: still mounted.')
   })
 
+  it('says dsh could not, rather than that it refused, for the code of an unexpected error', () => {
+    // R42.11: `operation-error` is what dsh codes any error that is not one
+    // of its refusals (managementError), so "refused" misnamed it.
+    const outcome = managerOutcome({ changed: false, application: 'failed', stage: 'remove', target: 'dsh-managed', error: { code: 'operation-error', diagnostic: 'EBUSY: node_modules' } }, uninstall)
+    expect(outcome.detail).toBe('dsh-plugin-shop: dsh could not uninstall dsh-managed (operation-error): dsh hit an unexpected error. dsh reported: EBUSY: node_modules.')
+  })
+
   it('still reports a code this shop has no sentence for', () => {
     const outcome = managerOutcome({ changed: false, application: 'failed', stage: 'install', target: 'x', error: { code: 'brand-new-code' } }, context)
     expect(outcome).toEqual({ state: 'failed', detail: 'dsh-plugin-shop: dsh refused the install of dsh-managed (brand-new-code).' })
   })
 
-  it('reads a cancelled install as the timeout, with the command outside the desktop profile only', () => {
+  // R42.8. This case used to pin the CLI path's timeout detail on web, with
+  // its `dsh plugin --profile web install`. dsh answers `cancelled` only once
+  // pnpm, or its repository check, has exited and package.json and
+  // pnpm-lock.yaml are back as they were (dsh-plugin-manager 0.1.7-rc.2,
+  // cancelInstall), so that command no longer involves the package at all.
+  it('says what dsh did with a cancelled install, and names no command on web or on desktop', () => {
     const cancelled = { changed: false, application: 'cancelled', stage: 'install', target: 'x' }
-    const web = managerOutcome(cancelled, context)
-    expect(web.state).toBe('failed')
-    expect(web.detail).toContain('did not finish within 900s')
-    expect(web.detail).toContain('dsh plugin --profile web install')
-    const app = managerOutcome(cancelled, desktop)
-    expect(app.detail).toContain('did not finish within 900s')
-    expect(app.detail).not.toContain('dsh plugin')
+    const said = 'dsh-plugin-shop: the install did not finish within 900s, so the shop cancelled it.'
+      + " dsh stopped it, restored the profile's package.json and pnpm-lock.yaml, and installed nothing. Try the install again from the shop."
+    expect(managerOutcome(cancelled, context)).toEqual({ state: 'failed', detail: said })
+    expect(managerOutcome(cancelled, desktop)).toEqual({ state: 'failed', detail: said })
+    expect(managerOutcome(cancelled, { ...context, operation: 'update' }).detail).toContain('Try the update again from the shop.')
   })
 
   it('asks for a restart when dsh does, and names an update as already loaded', () => {
@@ -366,7 +402,9 @@ describe('managerOutcome', () => {
   it('reads a diagnostic that is only a CLI step as absent once scrubbed, for a desktop reader', () => {
     const cliOnly = { changed: false, application: 'failed', stage: 'remove', target: 'dsh-managed', error: { code: 'operation-error', diagnostic: "run 'dsh plugin install'." } }
     const detail = managerOutcome(cliOnly, desktop).detail ?? ''
-    expect(detail).toBe('dsh-plugin-shop: dsh refused the install of dsh-managed (operation-error): dsh hit an unexpected error.')
+    // "could not install" since R42.11, a wording fix: the case is about the
+    // scrubbed diagnostic reading as absent.
+    expect(detail).toBe('dsh-plugin-shop: dsh could not install dsh-managed (operation-error): dsh hit an unexpected error.')
     expect(detail).not.toContain('dsh reported:')
   })
 })

@@ -859,6 +859,15 @@ describe("switches through dsh's pluginManager", () => {
     expect(calls).toHaveLength(1)
   })
 
+  it('says dsh could not switch, rather than that it refused, on an unexpected error', async () => {
+    // R42.11, through the answer reader a reselection shares.
+    const { gateway } = switchingGateway([{ ...applied, application: 'failed', error: { code: 'operation-error', diagnostic: 'EACCES: cordis.patch.yml' } }])
+    expect(await gateway.setEnabled({ name: 'dsh-two-rows', enabled: false })).toEqual({
+      ok: false,
+      detail: 'dsh-plugin-shop: dsh could not switch dsh-two-rows (operation-error): dsh hit an unexpected error. dsh reported: EACCES: cordis.patch.yml.',
+    })
+  })
+
   it('pins a refusal diagnostic to exactly one trailing period', async () => {
     const { gateway } = switchingGateway([{ ...applied, application: 'failed', error: { code: 'unaddressable', diagnostic: 'not a root row.' } }])
     const result = await gateway.setEnabled({ name: 'dsh-two-rows', enabled: false })
@@ -3941,7 +3950,8 @@ describe("installs and updates through dsh's pluginManager", () => {
       const status = await finish(gateway, started.installId)
       expect(calls).toEqual([['installBundle', 'dsh-managed@1.0.0', started.installId], ['cancelInstall', started.installId]])
       expect(status.state).toBe('failed')
-      expect(status.detail).toMatch(/^dsh-plugin-shop: the command did not finish within \d+s and was stopped\./)
+      // What dsh did, not the CLI path's timeout detail (R42.8).
+      expect(status.detail).toMatch(/^dsh-plugin-shop: the install did not finish within \d+s, so the shop cancelled it\. dsh stopped it, restored the profile's package\.json and pnpm-lock\.yaml, and installed nothing\./)
     } finally {
       vi.useRealTimers()
     }

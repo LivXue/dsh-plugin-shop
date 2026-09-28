@@ -203,8 +203,22 @@ matches wins.
    `ambiguous-install`, `not-bundle`, `not-removable`, `stop-profile`,
    `bundle-in-use`, `stale-approval`, `management-required`, `unaddressable`,
    `operation-error`): `failed`, one sentence each plus `error.diagnostic`.
+
+   Amended 2026-09-28. The detail says dsh refused the operation, except
+   for `operation-error`, dsh's code for any error that is not one of its
+   refusals (`managementError`), where it says dsh could not perform it. A
+   switch and a re-selection word it the same way.
 5. `application === 'cancelled'`: `failed`, with the timeout detail
    (section 6).
+
+   Amended 2026-09-28. Not the CLI path's timeout detail, whose
+   `dsh plugin --profile <p> install` no longer involves the package: dsh
+   answers `cancelled` only once its repository check or pnpm has exited and
+   package.json and pnpm-lock.yaml are restored (`cancelInstall`, and
+   `InstallCancelledError`, thrown after the restore). The detail says the
+   shop cancelled the operation at its deadline, that dsh stopped it,
+   restored those two files and installed nothing, and to try again from the
+   shop. It names no command, on web or on desktop.
 6. `restart-required`: `done`, activation `restart`.
 7. `overridden`: `done`, with a note that the change is saved and a
    higher-priority layer (the home or invocation patch) decides whether it
@@ -279,8 +293,9 @@ switching a deselected package off, which the shop's writer does alone.
   switch makes no record at all (section 5).
 - The existing `INSTALL_TIMEOUT_MS` bounds a service install as it bounds a
   CLI one. On expiry the runner calls `cancelInstall(requestId)`. `cancelled`
-  fails the record with today's timeout detail. `too-late` means dsh is
-  applying the bundle, and the runner keeps waiting for its result.
+  fails the record with today's timeout detail (amended 2026-09-28: with a
+  detail of its own, section 5 rule 5). `too-late` means dsh is applying the
+  bundle, and the runner keeps waiting for its result.
 - Service operations run in the same per-profile chain as CLI ones: one at a
   time, `downloading` while queued, the prefetcher unchanged. The service's
   own profile lock (`lockWaitMs`, 120 s) orders them against dsh's page and
@@ -329,6 +344,19 @@ this way, and the record's log stays dsh's verbatim record. Amended
 2026-09-28: a message a service call throws is dsh's text too, and reaches a
 desktop reader scrubbed the same way, in an operation's record and in the
 details of a switch and a bundle re-selection.
+
+Amended 2026-09-28. Nor may a detail hand a desktop reader a `pnpm` command:
+the app supplies its own bundled package manager (the evidence paragraph
+below). Rule 3's `build-blocked` detail names `pnpm approve-builds` on web
+only. On desktop it says the shop never allows build scripts, and for an
+install whose held builds dsh listed it adds that dsh's Plugins page offers
+"Allow these scripts and retry" when an install it runs stops on them, read
+from dsh-client-ui-plugin-manager 0.1.7-rc.2 (its README, and
+`installApproveAndRetry` in `lib/client.js`) on 2026-09-28. That button sits
+on the failed screen of the page's own Add plugin dialog, which refuses a
+name the profile already holds, so an update's detail does not name it; nor
+does one where dsh listed no held build, since the page then offers no such
+button.
 
 The evidence, and where it stops. The package's own README says
 application-owned profiles supply their bundled package manager through

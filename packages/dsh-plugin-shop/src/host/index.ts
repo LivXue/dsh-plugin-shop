@@ -1100,7 +1100,10 @@ export class ShopGateway extends TypertRemoteService {
     const change = isDesktopProfile(this.profile) ? forDesktopReader(readChange(raw)) : readChange(raw)
     if (change.application === 'failed' || change.application === 'cancelled' || change.errorCode !== null) {
       const code = change.errorCode ?? change.application ?? 'failed'
-      return { change, failure: `dsh-plugin-shop: dsh refused to ${words.act} (${code})${codeReason(change, code)}` }
+      // `operation-error` is what dsh codes any error that is not one of its
+      // refusals (managementError), so it reads "could not", not "refused".
+      const verb = code === 'operation-error' ? 'could not' : 'refused to'
+      return { change, failure: `dsh-plugin-shop: dsh ${verb} ${words.act} (${code})${codeReason(change, code)}` }
     }
     if (change.application === 'overridden') {
       return {

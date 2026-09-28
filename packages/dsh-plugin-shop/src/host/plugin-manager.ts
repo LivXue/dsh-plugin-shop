@@ -6,7 +6,7 @@
  */
 import { activationOf, type Activation } from './activation.ts'
 import { allowVersionCommand } from './compatibility.ts'
-import { installFailureDetail, installTimeoutDetail, REFUSAL_OPENER } from './executor.ts'
+import { installFailureDetail, REFUSAL_OPENER } from './executor.ts'
 import type { HotRestartReason } from './hot.ts'
 
 /** The operations the shop calls. `cancelInstall` is optional because only
@@ -243,7 +243,9 @@ const KIND_SENTENCE: Record<string, string> = {
   'pnpm-missing': 'pnpm could not be started',
   timeout: "pnpm did not finish within dsh's own time bound",
   'not-found': 'no such package was found',
-  'no-matching-version': "no version matching the catalog's was found",
+  // The requested version, not the catalog's: an update of the shop itself
+  // asks for the version npm's dist-tags name.
+  'no-matching-version': 'no version matching the requested one was found',
   network: 'the network failed',
   'disk-full': 'the disk is full',
   permission: 'permission was denied',
@@ -307,10 +309,34 @@ export function codeReason(change: ManagerChange, code: string): string {
   return `${sentence !== undefined ? `: ${sentence}` : ''}.${said}`
 }
 
+/** A desktop reader's detail for build scripts pnpm held. The app bundles
+ * its own package manager, so `pnpm approve-builds` is no step for this
+ * reader, and the shop never allows build scripts itself. dsh's own Plugins
+ * page offers "Allow these scripts and retry" on the failed screen of an
+ * install it runs, listing the held packages (dsh-client-ui-plugin-manager
+ * 0.1.7-rc.2: `installApproveAndRetry` in lib/client.js, and its README), so
+ * that is named, but only for an install whose held builds dsh listed. Its
+ * Add plugin dialog refuses a name the profile already holds, so it cannot
+ * rerun an update, and with no name listed it offers no such button. */
+function desktopBuildsDetail(context: OutcomeContext, change: ManagerChange, held: string): string {
+  const base = `dsh-plugin-shop: pnpm is holding the build scripts of ${held}, which it blocks by default, and this shop never allows them.`
+  if (context.operation !== 'install' || change.pendingBuilds.length === 0) return base
+  return `${base} dsh's Plugins page offers "Allow these scripts and retry" when an install it runs stops on them.`
+}
+
+/** What a `cancelled` answer means, for every reader: the shop's deadline
+ * asked dsh to stop the operation, and dsh answers `cancelled` only once its
+ * repository check or pnpm has exited and package.json and pnpm-lock.yaml
+ * are back as they were (dsh-plugin-manager 0.1.7-rc.2: cancelInstall, and
+ * InstallCancelledError, thrown after the files are restored). Nothing was
+ * installed, so the detail names no command: the CLI's `install`, which the
+ * CLI path's own timeout detail names, would no longer involve the package.
+ * Only installBundle can be cancelled, so the operation is an install or an
+ * update. */
 function cancelledDetail(context: OutcomeContext): string {
-  if (!context.desktop) return installTimeoutDetail(context.profile, context.timeoutMs)
   const seconds = Math.max(1, Math.round(context.timeoutMs / 1000))
-  return `dsh-plugin-shop: the ${context.operation} did not finish within ${seconds}s, and the shop cancelled it.`
+  return `dsh-plugin-shop: the ${context.operation} did not finish within ${seconds}s, so the shop cancelled it.`
+    + ` dsh stopped it, restored the profile's package.json and pnpm-lock.yaml, and installed nothing. Try the ${context.operation} again from the shop.`
 }
 
 /** A `ChangeResult` as the shop's terminal install record: design
@@ -363,6 +389,7 @@ function outcomeByRule(change: ManagerChange, context: OutcomeContext): ManagerO
     && (change.errorCode === null || change.errorCode === 'operation-error')) {
     if (change.kind === 'build-blocked') {
       const held = change.pendingBuilds.length > 0 ? change.pendingBuilds.join(', ') : 'a dependency'
+      if (context.desktop) return { state: 'failed', detail: desktopBuildsDetail(context, change, held) }
       return {
         state: 'failed',
         detail: `dsh-plugin-shop: pnpm is holding the build scripts of ${held}, which it blocks by default:`
@@ -395,10 +422,12 @@ function outcomeByRule(change: ManagerChange, context: OutcomeContext): ManagerO
     }
   }
   if (change.errorCode !== null) {
-    return {
-      state: 'failed',
-      detail: `dsh-plugin-shop: dsh refused the ${context.operation} of ${context.name} (${change.errorCode})${codeReason(change, change.errorCode)}`,
-    }
+    // `operation-error` is what dsh codes any error that is not one of its
+    // refusals (managementError), so it reads "could not", not "refused".
+    const said = change.errorCode === 'operation-error'
+      ? `could not ${context.operation} ${context.name}`
+      : `refused the ${context.operation} of ${context.name}`
+    return { state: 'failed', detail: `dsh-plugin-shop: dsh ${said} (${change.errorCode})${codeReason(change, change.errorCode)}` }
   }
   if (change.application === 'cancelled') {
     return { state: 'failed', detail: cancelledDetail(context) }
