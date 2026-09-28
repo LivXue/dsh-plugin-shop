@@ -1867,6 +1867,25 @@ describe('ShopTab', () => {
     expect(row.querySelector('[data-shop-hot-apply]')).toBeNull()
   })
 
+  it('keeps the restart cue when a later switch needs only a reload', async () => {
+    // Sticky in the direction that matters: a reload cannot compose what
+    // only a restart will, so a later reload must not replace an owed
+    // restart.
+    const { injected, setEnabled } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
+    setEnabled.mockResolvedValueOnce({ ok: true, activation: 'restart' }).mockResolvedValueOnce({ ok: true, activation: 'reload' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]')!
+    fireEvent.click(row.querySelector('[data-shop-toggle]')!)
+    await waitFor(() => expect(row.querySelector('[data-shop-toggle-restart]')).toBeTruthy())
+    fireEvent.click(row.querySelector('[data-shop-toggle]')!)
+    await waitFor(() => expect(setEnabled).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect((row.querySelector('[data-shop-toggle]') as HTMLButtonElement).disabled).toBe(false))
+    expect(row.querySelector('[data-shop-toggle-restart]')).toBeTruthy()
+    expect(row.querySelector('[data-shop-restart]')).toBeTruthy()
+    expect(row.querySelector('[data-shop-reload]')).toBeNull()
+  })
+
   it('renders a disabled installed plugin with its switch off', async () => {
     const { injected } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.0.0', outdated: false, enabled: false }])
     const { container } = renderTab(injected)
