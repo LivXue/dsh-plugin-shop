@@ -318,6 +318,17 @@ describe('reduceInstall on a done status', () => {
     const after = reduceInstall(before, { type: 'status', status: { found: true, state: 'done', log: [] } })
     expect(after).toMatchObject({ kind: 'done', activation: 'restart' })
   })
+
+  it('carries the host note on a done status, and adds no key without one', () => {
+    const before: InstallView = { kind: 'running', installId: 'i1', log: [], phase: 'installing' }
+    const noted = reduceInstall(before, {
+      type: 'status',
+      status: { found: true, state: 'done', log: [], activation: 'live', detail: 'Saved, but a higher-priority layer decides whether it runs.' },
+    })
+    expect(noted).toEqual({ kind: 'done', activation: 'live', log: [], detail: 'Saved, but a higher-priority layer decides whether it runs.' })
+    const plain = reduceInstall(before, { type: 'status', status: { found: true, state: 'done', log: [], activation: 'live' } })
+    expect('detail' in plain).toBe(false)
+  })
 })
 
 describe('isShopLike', () => {

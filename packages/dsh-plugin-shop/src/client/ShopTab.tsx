@@ -341,7 +341,7 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, ha
             )}
             {/* The hot enable/disable switch (§8) sits on every installed
              * row — current or outdated — and reads the inventory state. */}
-            <EnabledSwitch row={installed} t={t} setEnabled={setEnabled} reload={reload} />
+            <EnabledSwitch row={installed} t={t} setEnabled={setEnabled} restart={restart} restartBlocked={restartBlocked} reload={reload} />
             <UninstallPanel name={entry.name} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} flow={uninstallFlow} />
           </>
         )}
@@ -542,7 +542,7 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
         <p className={css.installing}>{t(installPhaseKey(view.phase))}</p>
         {view.log.length > 0 && (
           <div className={css.log}>
-            {view.log.map((line, index) => <div key={index} className={css.logLine}>{line}</div>)}
+            {view.log.map((line, index) => <div key={index} className={css.logLine} data-shop-log-line>{line}</div>)}
           </div>
         )}
       </div>
@@ -558,7 +558,7 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
             as the log having been lost (reported 2026-09-06). */}
         {view.log.length > 0 && (
           <div className={css.log}>
-            {view.log.map((line, index) => <div key={index} className={css.logLine}>{line}</div>)}
+            {view.log.map((line, index) => <div key={index} className={css.logLine} data-shop-log-line>{line}</div>)}
           </div>
         )}
         <p className={css.notice} data-shop-restart-notice>
@@ -574,6 +574,7 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
               live that nothing had changed and to try again. */}
           {t(activationNoticeKey(view.activation, view.restartReason))}
         </p>
+        {view.detail !== undefined && <p className={css.notice} data-shop-done-note>{view.detail}</p>}
         <ActivationOffer activation={view.activation} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} where="install" />
       </div>
     )
@@ -583,7 +584,7 @@ function InstallPanel({ target, tier, blockers, blockersStated = false, variant 
       <div className={css.installPanel}>
         <p className={css.failedHeading}>{t('installFailed')}</p>
         <div className={css.log}>
-          {view.log.map((line, index) => <div key={index} className={css.logLine}>{line}</div>)}
+          {view.log.map((line, index) => <div key={index} className={css.logLine} data-shop-log-line>{line}</div>)}
         </div>
         {/* An empty detail marks a TRANSPORT failure (the install registry's
             start mapping):
@@ -716,7 +717,7 @@ function UninstallPanel({ name, t, restart, restartBlocked, reload, flow }: {
         <p className={css.installing}>{t('uninstalling')}</p>
         {view.log.length > 0 && (
           <div className={css.log}>
-            {view.log.map((line, index) => <div key={index} className={css.logLine}>{line}</div>)}
+            {view.log.map((line, index) => <div key={index} className={css.logLine} data-shop-log-line>{line}</div>)}
           </div>
         )}
       </div>
@@ -750,7 +751,7 @@ function UninstallPanel({ name, t, restart, restartBlocked, reload, flow }: {
       <div className={css.installPanel}>
         <p className={css.failedHeading}>{t('uninstallFailed')}</p>
         <div className={css.log}>
-          {view.log.map((line, index) => <div key={index} className={css.logLine}>{line}</div>)}
+          {view.log.map((line, index) => <div key={index} className={css.logLine} data-shop-log-line>{line}</div>)}
         </div>
         {/* Same transport rule as the install panel: an empty detail is a
             TRANSPORT failure and falls back to the localized line; a
@@ -909,7 +910,7 @@ function ActivationOffer({ activation, t, restart, restartBlocked, reload, where
   restart: ShopTabInjected['restart']
   restartBlocked: RestartBlockedReason | null
   reload: () => void
-  where: 'install' | 'uninstall'
+  where: 'install' | 'uninstall' | 'toggle'
 }): ReactNode {
   if (activation === 'reload') return <ReloadPanel t={t} reload={reload} where={where} />
   if (activation !== 'restart') return null
@@ -942,19 +943,22 @@ function ReloadPanel({ t, reload, where }: { t: ShopTabProps['t']; reload: () =>
  * transport throw renders the localized failure line — its private detail
  * (which can name hosts and ports) never reaches the UI.
  */
-function EnabledSwitch({ row, t, setEnabled, reload }: {
+function EnabledSwitch({ row, t, setEnabled, restart, restartBlocked, reload }: {
   row: ShopInstalledEntry
   t: ShopTabProps['t']
   setEnabled: ShopTabInjected['setEnabled']
+  restart: ShopTabInjected['restart']
+  restartBlocked: RestartBlockedReason | null
   reload: () => void
 }): ReactNode {
   const [enabled, setEnabledState] = useState(row.enabled)
   const [toggle, setToggle] = useState<{ kind: 'idle' } | { kind: 'saving' } | { kind: 'saved' } | { kind: 'error'; detail: string }>({ kind: 'idle' })
-  // Whether THIS PAGE is now stale: sticky, and deliberately not a field of
-  // `toggle`. A later toggle that FAILED changed nothing on the server, so it
-  // must not dismiss a reload an earlier one made necessary — the tab is
-  // still showing the state from before that first, successful toggle.
-  const [needsReload, setNeedsReload] = useState(false)
+  // What THIS PAGE owes before it shows the truth: sticky, and a restart
+  // outranks a reload. A later toggle that FAILED changed nothing on the
+  // server, so it must not dismiss what an earlier one made necessary; and
+  // one that applied live does not say an earlier restart is no longer
+  // owed, so it cannot dismiss that either.
+  const [owed, setOwed] = useState<'nothing' | 'reload' | 'restart'>('nothing')
 
   const onToggle = async (): Promise<void> => {
     if (toggle.kind === 'saving') return
@@ -972,7 +976,8 @@ function EnabledSwitch({ row, t, setEnabled, reload }: {
         // cheaper outcome, because that publishes a success claim the host
         // never made — here, "applied without a restart" over a tab that is
         // still showing the plugin the toggle just turned off.
-        if (result.activation !== 'live') setNeedsReload(true)
+        if (result.activation === 'restart') setOwed('restart')
+        else if (result.activation !== 'live') setOwed(previous => (previous === 'restart' ? previous : 'reload'))
       } else {
         // The host's business failure carries an author- and user-readable
         // detail (§7.3); surface it verbatim. A missing detail falls back to
@@ -1008,8 +1013,9 @@ function EnabledSwitch({ row, t, setEnabled, reload }: {
         * is a first line asserting the change took effect, about the very
         * thing the reader can see has not. `reloadNote` carries both halves
         * in the right order, so it is the whole message in that case. */}
-      {toggle.kind === 'saved' && !needsReload && <p className={css.notice} data-shop-hot-apply>{t('hotApplyNote')}</p>}
-      {needsReload && <ReloadPanel t={t} reload={reload} where="toggle" />}
+      {toggle.kind === 'saved' && owed === 'nothing' && <p className={css.notice} data-shop-hot-apply>{t('hotApplyNote')}</p>}
+      {owed === 'restart' && <p className={css.notice} data-shop-toggle-restart>{t('toggleRestartNote')}</p>}
+      {owed !== 'nothing' && <ActivationOffer activation={owed} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} where="toggle" />}
       {toggle.kind === 'error' && <p className={css.failedDetail} data-shop-toggle-error>{toggle.detail}</p>}
     </div>
   )
@@ -1040,7 +1046,7 @@ function OutdatedRow({ row, tier, missing, harness, t, setEnabled, flowFor, rest
         </span>
       </div>
       <div className={css.outdatedActions}>
-        <EnabledSwitch row={row} t={t} setEnabled={setEnabled} reload={reload} />
+        <EnabledSwitch row={row} t={t} setEnabled={setEnabled} restart={restart} restartBlocked={restartBlocked} reload={reload} />
         <InstallPanel
           target={{ name: row.name, version: row.latest, source: row.source, repo: row.repo, subdir: row.subdir }}
           tier={tier} variant="update" blockers={stateBlockers(blockersOf(missing, harness, undefined), t)}
@@ -1855,7 +1861,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
           <p className={css.installing}>{t(installPhaseKey(selfUpdate.view.phase))}</p>
           {selfUpdate.view.log.length > 0 && (
             <div className={css.log}>
-              {selfUpdate.view.log.map((line, index) => <div key={index} className={css.logLine}>{line}</div>)}
+              {selfUpdate.view.log.map((line, index) => <div key={index} className={css.logLine} data-shop-log-line>{line}</div>)}
             </div>
           )}
         </div>
@@ -1885,7 +1891,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
           <p className={css.failedHeading}>{t('updateFailed')}</p>
           {selfUpdate.view.log.length > 0 && (
             <div className={css.log}>
-              {selfUpdate.view.log.map((line, index) => <div key={index} className={css.logLine}>{line}</div>)}
+              {selfUpdate.view.log.map((line, index) => <div key={index} className={css.logLine} data-shop-log-line>{line}</div>)}
             </div>
           )}
           {/* Same transport rule as the install panel: an empty detail is a
