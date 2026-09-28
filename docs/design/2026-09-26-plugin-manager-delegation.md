@@ -391,7 +391,11 @@ service in place of a refusal.
   missing. Event routing by request id, including a chunk for an unknown id.
   The timeout arm in both outcomes. Desktop routed with the service and
   refused without it. The `imported` override. Each guard is reverted to the
-  defect once, and the suite must fail.
+  defect once, and the suite must fail. Amended 2026-09-28: one case routes
+  `install-log` and `changed` through a real cordis `Context`, from the
+  context that provides the service to the one the gateway is built in. Every
+  other case hands the gateway a stub whose listeners it calls by hand, which
+  a subscription cordis never delivered would pass.
 - **The e2e, on the 0.1.7 leg.** Remaining item 5 adds that leg and comes
   first. Install, switch off and on, update to the restart prompt, and
   uninstall, all through the service. The install, update and uninstall cases

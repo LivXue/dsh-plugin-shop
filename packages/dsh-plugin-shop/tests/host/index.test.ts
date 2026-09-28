@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { Context } from '@deepseek-ai/cordis'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -21,6 +22,17 @@ import { fileTempRoot } from './temp-root.ts'
 import { memHotFs } from './mem-fs.ts'
 
 const TEMP_ROOT = fileTempRoot('index')
+
+// The two events dsh's pluginManager declares on cordis (dsh-plugin-manager
+// 0.1.7-rc.2, lib/types/types.d.ts), for the case that emits them through a
+// real Context. Declared here rather than imported: this package compiles
+// against the harness floor, where that package does not exist.
+declare module '@deepseek-ai/cordis' {
+  interface Events {
+    'plugin-manager/install-log'(chunk: { requestId?: string; jobId: string; argv: string[]; cwd: string; stream: string; text: string }): void
+    'plugin-manager/changed'(change: { reason: string }): void
+  }
+}
 
 /**
  * The gateway's own download phase, pinned to a fixture `pnpm` for this whole
@@ -4268,5 +4280,68 @@ describe("installs and updates through dsh's pluginManager", () => {
     const status = await finish(gateway, started.installId)
     expect(status.state).toBe('failed')
     expect(status.detail).not.toContain('dsh plugin')
+  })
+})
+
+describe("dsh's pluginManager events, through a real cordis Context", () => {
+  // R42.13. Every other gateway case hands the gateway a stub context whose
+  // `on` keeps each listener for the case to call by hand, so a subscription
+  // cordis never delivers would pass them all: an install whose chunks never
+  // arrive falls back to the answer's final output, and nothing else reads
+  // `changed`. Here one plugin provides the service and emits from its own
+  // context, as dsh's pluginManager emits from its owner's, and the gateway
+  // is built in another plugin's context of the same root.
+  it('routes install-log chunks to the record, and changed re-reads the manifest into the imported record (O1)', async () => {
+    const entry = (name: string): CatalogEntry => ({
+      name, version: '1.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-09-28',
+    })
+    const profileDir = toggleProfile()
+    const root = new Context()
+    let emitter!: Context
+    const service = {
+      async installBundle(spec: string, request: { requestId: string }): Promise<unknown> {
+        const name = spec.slice(0, spec.lastIndexOf('@'))
+        emitter.emit('plugin-manager/install-log', { requestId: request.requestId, jobId: 'j', argv: ['pnpm', 'add', spec], cwd: profileDir, stream: 'stdout', text: `streamed ${spec}\n` })
+        fixturePackage(profileDir, name, `- insert:\n    - id: ${name}-row\n      name: '${name}'\n`)
+        return {
+          changed: true, application: 'applied', stage: 'enable', target: name, enabled: true, bundle: name, registries: [null], warnings: [],
+          packageResult: { exitCode: 0, output: `final output of ${spec}\n`, truncated: false, logPath: '/l' },
+        }
+      },
+      removeBundle: async () => { throw new Error('this case must not call removeBundle') },
+      setPluginEnabled: async () => { throw new Error('this case must not call setPluginEnabled') },
+      setBundleEnabled: async () => { throw new Error('this case must not call setBundleEnabled') },
+    }
+    await root.plugin((ctx: Context) => {
+      emitter = ctx
+      ctx.provide('pluginManager', service)
+    }).await()
+    let gateway!: ShopGateway
+    await root.plugin((ctx: Context) => {
+      gateway = new ShopGateway(ctx, {
+        catalogUrl: 'https://shop.test/v1/', cacheDir: mkdtempSync(join(TEMP_ROOT, 'dsh-cordis-cache-')), profile: 'cordis', profileDir,
+        loadCatalog: async () => ({ snapshot: { schemaVersion: 2, builtAt: '', entries: [entry('dsh-cordis-a'), entry('dsh-cordis-b')], denied: [], stars: {} }, stale: false }) as CatalogResult,
+        importedModules: new Set<string>(),
+        prefetcher: fixturePrefetcher(),
+      })
+    }).await()
+    const settle = async (name: string): Promise<ShopInstallStatusResult> => {
+      const started = await gateway.install({ name, version: '1.0.0', acknowledged: true })
+      if (!started.ok) throw new Error(started.detail)
+      await vi.waitFor(() => expect(isTerminalInstallState(gateway.installStatus({ installId: started.installId }).state)).toBe(true), { timeout: 5000 })
+      return gateway.installStatus({ installId: started.installId })
+    }
+    // The line dsh streamed, never the final output a record falls back to.
+    expect(await settle('dsh-cordis-a')).toMatchObject({
+      state: 'done', activation: 'live', log: ["via dsh's plugin manager: install dsh-cordis-a@1.0.0", 'streamed dsh-cordis-a@1.0.0'],
+    })
+    // dsh's own Plugins page installs dsh-cordis-b, which puts it in Node's
+    // module cache, and it leaves the manifest again, as an uninstall would.
+    const manifestPath = join(profileDir, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { dependencies: Record<string, string> }
+    writeFileSync(manifestPath, JSON.stringify({ ...manifest, dependencies: { ...manifest.dependencies, 'dsh-cordis-b': '1.0.0' } }))
+    emitter.emit('plugin-manager/changed', { reason: 'install' })
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    expect(await settle('dsh-cordis-b')).toMatchObject({ state: 'done', activation: 'restart', restartReason: 'already-loaded' })
   })
 })
