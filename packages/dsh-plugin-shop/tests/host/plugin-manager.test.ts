@@ -387,7 +387,7 @@ describe('managerOutcome', () => {
     // installFailureDetail's own rule ("dsh refusing the install is not pnpm
     // failing, and has its own remedy") reads the rejection block ahead of
     // any ERR_ code, on the web profile just the same, so ERR_PNPM_SOMETHING
-    // never reaches the final detail either way — this is not the scrub's
+    // never reaches the final detail either way; this is not the scrub's
     // doing. What the scrub must still do is keep the `dsh plugin` sentence
     // out of what that block reads, since it reads change.output directly,
     // never through plugin-manager.ts's own codeReason path, which the

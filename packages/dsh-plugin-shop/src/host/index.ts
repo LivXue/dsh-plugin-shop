@@ -965,9 +965,9 @@ export class ShopGateway extends TypertRemoteService {
       return { ok: false, detail: `dsh-plugin-shop: ${args.name} is installed but its entries are not in the running plugin tree; restart dsh to compose them` }
     }
     // dsh 0.1.7+: switch every live entry through the service, by its LIVE
-    // id — the same row the writer below would touch, applied in place
+    // id, the same row the writer below would touch, applied in place
     // (measured 2026-09-27 on 0.1.7-rc.2). The loop is sequential and there
-    // is no rollback: a refusal partway through says how many entries had
+    // is no rollback: a failure partway through says how many entries had
     // already switched, because this path never reaches the writer's own row
     // write and nothing else would report it.
     if (manager !== null) {
@@ -1856,7 +1856,7 @@ export class ShopGateway extends TypertRemoteService {
     const hadClientHalf = this.packageHasClientHalf(args.name)
     if (manager !== null) {
       // removeBundle deselects the bundle and reloads itself, refusing with
-      // bundle-in-use if a fiber survives — so this branch skips the CLI
+      // bundle-in-use if a fiber survives, so this branch skips the CLI
       // path's own afterDone teardown below. It carries no request id the
       // way installBundle does, so the record takes its final output rather
       // than a stream.

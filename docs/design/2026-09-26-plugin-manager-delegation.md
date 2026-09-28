@@ -311,6 +311,11 @@ Amended 2026-09-27, matching what shipped:
   cancels through `cancelInstall` and keeps waiting when dsh answers
   `too-late`, as above. A harness without `cancelInstall` gets no shop
   deadline at all.
+- Amended 2026-09-28. So a service call that never settles keeps its record
+  running, and F-5 keeps refusing a restart, even after dsh answered
+  `too-late`, when the files are already written and F-5's reason for
+  refusing no longer holds. The shop has no second deadline for that case:
+  the refusal lasts until the call settles or dsh itself restarts.
 
 ## 7. The desktop profile
 

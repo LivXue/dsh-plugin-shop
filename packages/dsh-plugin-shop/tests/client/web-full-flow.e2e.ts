@@ -828,7 +828,7 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
    * cases that read it, so both read liveness the same way.
    *
    * Read on a FRESH page. 0.1.7-rc.2 keeps a Settings tab it has shown
-   * mounted — hidden, holding the snapshot it fetched when first shown —
+   * mounted (hidden, holding the snapshot it fetched when first shown),
    * and 插件列表 is the section's first tab, so the main page's dialog,
    * opened before the install, fetched it then. Clicking back to it shows
    * that list. A new page opens Settings from nothing on either harness.
@@ -1281,9 +1281,9 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       // bundles no plugin-side HTTP router for the fixture to register on
       // (see the fixture's index.js comment). On the CLI path the hot entry
       // carries the mkt- prefixed row id at the end of its inventory id chain
-      // — the shop registers the hot tree from its own context, so the tree
+      // (the shop registers the hot tree from its own context, so the tree
       // is the subtree of the shop's own loader entry and the loader lists it
-      // as `include:shop:mkt-e2e-live` — plus the enabled tag and the active
+      // as `include:shop:mkt-e2e-live`), plus the enabled tag and the active
       // phase dot. It read `include:typert-gateway:…` until 2026-09-26,
       // while the tree was still registered from whichever context made the
       // RPC call (ShopGateway's `home` field). Through dsh's plugin manager,
@@ -1411,8 +1411,8 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
         // (parseSimplePatch rejects the row; the reason renders verbatim on
         // the notice).
         expect(await notice.textContent()).toContain('该插件的补丁包含无法热挂载的配置；重启 dsh 后生效')
-        // The §8 restart offer for a restart-required install, as the host
-        // allows it on THIS platform — see `expectRestartOffer`.
+        // The section 8 restart offer for a restart-required install, as the
+        // host allows it on THIS platform; see `expectRestartOffer`.
         await expectRestartOffer(dialog, card)
 
         // Nothing is live: a fresh settings mount takes a fresh inventory

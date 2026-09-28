@@ -4231,7 +4231,7 @@ describe("installs and updates through dsh's pluginManager", () => {
 
   // R25 (Review Focus 5, at the gateway, once per mutation path): the
   // service can fail a desktop mutation too, through a plain pnpm run gone
-  // wrong rather than a version refusal — dsh 0.1.7-rc.2's own shape for
+  // wrong rather than a version refusal: dsh 0.1.7-rc.2's own shape for
   // that answer.
   const rollback = "ERR_PNPM_SOMETHING broke\ndsh: restored package.json and pnpm-lock.yaml, but node_modules could not be reinstalled; run 'dsh plugin install'.\n"
   const pnpmFailed = (stage: string, target: string): object => ({
