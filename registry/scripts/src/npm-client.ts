@@ -84,8 +84,10 @@ export const MAX_SEARCH_SHORTFALL = 3
  * partition that breaks takes the rate to near zero and still fails loudly;
  * the API's own ceiling leaves a small residual with the rate high. Note the
  * strictness DECAYS as the tail grows — a 0.9 floor permits 10% of it — so
- * above a tail of {@link MAX_UNREACHABLE_RESIDUAL} / (1 - this floor) = 140
- * names every rate violation already violates that cap and the rate decides
+ * above a tail of {@link MAX_UNREACHABLE_RESIDUAL} / (1 - this floor) names
+ * (derived, not restated: it read 140 here when the cap was 14, and stayed
+ * at 140 through the raise to 20) every rate violation already violates
+ * that cap and the rate decides
  * nothing but which message prints. The keyword this was written for is
  * ALREADY past that crossover — {@link PARTITION_KEYWORDS} carries the
  * reading, and it moves within a day, so it is not restated here — which
@@ -242,8 +244,31 @@ export const MIN_UNREACHABLE_RECOVERY = 0.9
  * Twelve {@link PARTITION_KEYWORDS} entries and seventeen re-seated pins
  * answered it, recorded there and in the publisher-pinning design doc's
  * 2026-10-03 amendment; this value did not move.
+ *
+ * RAISED TO 60 ON 2026-10-03: THE THIRD RAISE, TAKEN AS A STOPGAP BY THE
+ * MAINTAINER'S CHOICE. The pins and entries above held for seven hours: the
+ * merge's own run read `enumerated 6704 of 6731`, a residual of 27, where
+ * its dry runs had read 14 and 15. Measured off npm's replication change
+ * feed, seven `dsh-plugin` packages published between 13:30 and 16:40 UTC
+ * that day were out of every cell's reach, carrying only niche tags, from
+ * four publishers none of whom was pinned or in the run's rotation slice,
+ * and two of whom no search page had ever shown: a new package ranks at the
+ * bottom, past every window, the moment it is published. A National Day
+ * holiday was running, and per-incident pins and entries cannot keep pace.
+ *
+ * WHAT 60 COSTS. A build may now publish up to 60 names short per keyword,
+ * reported as a count and not as names. The measured residue is mostly
+ * packages days old, never listed; but a listed package that sinks out of
+ * reach is delisted, which 3 of the 12 residue names the 2026-10-03 owner
+ * sweep found would have been. {@link MIN_UNREACHABLE_RECOVERY} still
+ * refuses a partition that breaks, at a tenth of each keyword's tail.
+ *
+ * WHAT IT IS FOR: days, not a policy. It is a runway for reaching new
+ * packages through the change feed, which sees a package by when it was
+ * published rather than by its rank, and so reaches exactly the residue that
+ * ranks cannot. Lower it when that lands; issue #38 stays open beside it.
  */
-export const MAX_UNREACHABLE_RESIDUAL = 20
+export const MAX_UNREACHABLE_RESIDUAL = 60
 
 /** One keyword that enumerated fewer names than its own total promised. */
 export interface KeywordShortfall {

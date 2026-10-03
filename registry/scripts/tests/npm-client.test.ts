@@ -2428,7 +2428,8 @@ describe('searchByKeywords', () => {
     })
 
     it('accepts the residual cap exactly', async () => {
-      // 740/750 is healthy and leaves exactly MAX_UNREACHABLE_RESIDUAL missing.
+      // 750 out of reach, recovering all but exactly MAX_UNREACHABLE_RESIDUAL:
+      // above the rate floor at any cap up to 75, so only the cap decides.
       await expect(searchByKeywords(pastWindow(6000, 750 - MAX_UNREACHABLE_RESIDUAL)))
         .resolves.toHaveLength(SEARCH_WINDOW + 750 - MAX_UNREACHABLE_RESIDUAL)
     })
@@ -2458,13 +2459,19 @@ describe('searchByKeywords', () => {
       // failure this guards against is the SILENCE.
       const names = await searchByKeywords(pastWindow(5407, 142))
       expect(names).toHaveLength(SEARCH_WINDOW + 142)
-      // Still refused once the gap outgrows the new cap, so the bound has
-      // moved rather than gone. The fixture needs a LARGER tail to isolate
-      // the cap: at 157 a 21-name gap is 86.6% recovery and the rate floor
-      // refuses it first, with a different message. 250 out of reach
-      // recovering 229 is 91.6%, above the floor, so the cap is what speaks.
-      await expect(searchByKeywords(pastWindow(SEARCH_WINDOW + 250, 229)))
-        .rejects.toThrow(new RegExp(`a tail shortfall of 21, past the ${MAX_UNREACHABLE_RESIDUAL} names a build may publish short`))
+      // Still refused once the gap outgrows the cap, so the bound has moved
+      // rather than gone. Derived from the cap rather than written out: this
+      // fixture read "250 out of reach recovering 229" while the cap was 20,
+      // and a raise turned its 21-name gap into a passing one. The tail has
+      // to be large enough that the gap still clears the rate floor, or the
+      // floor refuses it first with a different message; 50 above the
+      // crossover's own size keeps the rate just above it (600 of 661,
+      // 0.908, at a cap of 60), and the assertion below checks that.
+      const overCap = MAX_UNREACHABLE_RESIDUAL + 1
+      const tail = Math.ceil(overCap / (1 - MIN_UNREACHABLE_RECOVERY)) + 50
+      expect((tail - overCap) / tail).toBeGreaterThan(MIN_UNREACHABLE_RECOVERY)
+      await expect(searchByKeywords(pastWindow(SEARCH_WINDOW + tail, tail - overCap)))
+        .rejects.toThrow(new RegExp(`a tail shortfall of ${overCap}, past the ${MAX_UNREACHABLE_RESIDUAL} names a build may publish short`))
     })
 
     it('refuses when the residual outgrows what may be published short', async () => {
@@ -2524,7 +2531,13 @@ describe('searchByKeywords', () => {
       // raise cannot happen by widening a bound that no longer means
       // anything: it has to edit this line, and this line says what is gone.
       // The floor above is still a measurement and still holds.
-      expect(MAX_UNREACHABLE_RESIDUAL).toBe(20)
+      //
+      // THE THIRD RAISE, 20 -> 60, 2026-10-03, chosen by the maintainer as a
+      // stopgap while new packages are reached some other way (see the
+      // constant's own comment). What is gone now is any claim that the cap
+      // tracks a measured magnitude: 60 is runway, sized against a holiday's
+      // inflow of packages no cell can reach, and it is meant to come down.
+      expect(MAX_UNREACHABLE_RESIDUAL).toBe(60)
     })
 
     it('keeps the prose copies of the cap in step with the constant', () => {
