@@ -898,10 +898,11 @@ describe('PARTITION_KEYWORDS', () => {
     // checking nothing. Deliberately an exact count and not a lower bound, so
     // growing the note is a decision somebody makes rather than something that
     // slides. 12 for the 2026-09-04 round, `deepwatch` for the 2026-09-07
-    // window crossing, and nine for the 2026-09-25 crossing of the cell the two
-    // harvest keywords share, each measured against a recorded run rather than
-    // read off a tag list.
-    expect(credited).toHaveLength(22)
+    // window crossing, nine for the 2026-09-25 crossing of the cell the two
+    // harvest keywords share, and twelve for the 2026-09-29 crossing of
+    // `keywords:dsh-plugin,dsh`, each measured against a recorded run rather
+    // than read off a tag list.
+    expect(credited).toHaveLength(34)
     for (const keyword of credited) {
       expect(
         PARTITION_KEYWORDS,
