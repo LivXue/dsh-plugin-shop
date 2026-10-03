@@ -269,6 +269,11 @@
   by: llm
   reason: "Judged a dsh plugin market from: 为 DeepSeek Harness (DSH) 插件生态打造的现代化桌面端解决方案。万物皆「插件」，桌面本身也是「插件」。"
 
+- name: "dsh-compat-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: DSH 插件市场：浏览官方与社区插件，装之前先给出兼容性结论，一键交给官方安装管线。Plugin market for DeepSeek Harness: browse official and community DSH plugins with a compatibility verdict, and install them through the official plugin manager."
+
 - name: "dsh-desktop-market"
   market: true
   by: human
