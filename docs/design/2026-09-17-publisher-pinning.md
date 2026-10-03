@@ -587,6 +587,90 @@ records how they were measured and what each one brings in. It is a margin of
 days, and the pinned sets above are still full: the at-risk drop frees no
 slot, because a pin leaves only on a confirmed zero.
 
+### 2026-10-03 amendment: `dsh-plugin,dsh` crossed its window, and the pins were re-seated by hand
+
+`keywords:dsh-plugin,dsh` measured 4,973 on 2026-09-25 and 5,518 on 2026-10-03
+against the 5,250 window, so it crossed about 2026-09-29. Under the 2026-09-18
+amendment to section 6 it stopped counting as a reachable refinement for
+`dsh-plugin` from the next run, as the shared cell had on 2026-09-24. Read off
+each scheduled run's `publisher axis` and shortfall lines, with no registry
+code change between them:
+
+| run | `dsh-plugin` at risk | pinned / rotated supplied | `dsh-plugin` short | `deepseek-harness` short |
+| --- | ---: | ---: | ---: | ---: |
+| 2026-09-28 | 587 | 15 / 2 | 3 | 8 |
+| 2026-09-29 | 591 | 15 / 4 | 10 | 20 |
+| 2026-09-30 | 1,988 | 19 / 3 | 14 | 25, threw |
+| 2026-10-01 | 2,011 | 17 / 3 | 18 | 24, threw |
+| 2026-10-02 | 2,028 | 20 / 1 | 25, threw | not reached |
+| 2026-10-03 | 2,042 | 21 / 1 | 35, threw | not reached |
+
+`dsh-plugin` is enumerated first, so from 2026-10-02 its throw hid the other
+keyword entirely. The live catalog stayed at the build of 2026-09-29.
+
+**Nothing in the mechanism could recover.** Both sets have been full since
+2026-09-24 (the amendment above), so the 1,267 owners `dsh-plugin` seeded on
+2026-10-03 were all refused and its rotation sat at its floor of 400. A red run
+commits nothing, so every run from 2026-09-30 on started that rotation at the
+same cursor and probed the same slice: a red build re-runs its losing draw, as
+#38's 2026-09-16 comment records. Of `dsh-plugin`'s 400 pins, 14 supplied
+anything.
+
+**Measured.** `searchByKeywords` ran once locally on the committed state with
+every search page recorded, and `MAX_UNREACHABLE_RESIDUAL` raised in a copy of
+the module so that `dsh-plugin`'s throw would not hide `deepseek-harness`; the
+cap gates only that throw, so no probe or cell changed. It came up 6,645 of
+6,681 and 8,371 of 8,404: residuals of 36 and 33. Then the whole vocabulary was
+probed once, `keywords:<K> maintainer:<u>` for each of 4,240 owners and both
+keywords. No run can afford that and it is affordable once: 8,480 `size=1`
+requests in under three hours, npm holding this endpoint to roughly 1.3
+requests a second per address. An owner whose cell total exceeds the names the
+run's union carries under that owner holds names the run did not reach, and
+paging those cells names them. The 800 owners the run itself probed answered
+the same totals in the sweep.
+
+| keyword | short | found by the sweep | their owners |
+| --- | ---: | ---: | ---: |
+| `dsh-plugin` | 36 | 12 | 8 |
+| `deepseek-harness` | 33 | 10 | 9 |
+
+None of the 22 carries a refinement whose cell fits, and three, one owner's
+family, carry `dsh-plugin` and nothing else: the shape #38 predicted. The
+other 24 and 23 belong to owners no search page has shown. Every package they
+hold sits past every window, so neither the vocabulary nor a sweep of it can
+name them.
+
+**The decision the section above left open was taken (LivXue, 2026-10-03):
+the committed pins were re-seated by hand.** Each of the 17 owners replaces
+one pin, so both sets stay at the 400 bound and nothing in section 3 can undo
+the swap: a residue owner never answers zero, and with no free slot seeding
+pins nothing. Evicted, in order: the two pins whose cells answered zero, which
+the build would have evicted itself; then pins that supplied nothing and whose
+every visible name ranks inside the window, best-ranked first, which put the
+worst rank among those 15 at 257. No pin that supplied a name or owns one past
+the window was touched: 14 and 54 such pins for `dsh-plugin`, 37 and 65 for
+`deepseek-harness`.
+
+Rank entered once, as each name's measured current position, to choose which
+in-window pins to give up. Section 2's rule is unchanged: a name is at risk by
+tag, and seeding still fills free slots in sorted order.
+
+**Refinements took what the measurement could reach beyond the pins:** twelve
+`PARTITION_KEYWORDS` entries recovering 10 and 9 names the pins do not, chosen
+and costed in that constant's comment. Together the prediction is 14 for each
+keyword against the cap of 20.
+
+**What it does not fix.** The remaining 14 are invisible by construction, and
+each day's drift lands on top of them. `keywords:dsh-plugin,dsh,
+deepseek-harness`, the deeper cell that still reaches names tagged with exactly
+those three, measured 4,422 on 2026-09-25 and 4,906 on 2026-10-03 and crosses
+about 2026-10-08, after which only owners' cells reach those names. A hand
+swap does not scale to that, and #38's answer has to land before it: pins kept
+for what they supply, and an owner a rotated cell earned taking a free slot
+before an at-risk owner seeded in sorted order. Today `npm-client.ts` merges
+the two into one sorted list, so an earned owner is pinned only if it sorts
+early enough.
+
 ## 5. Module placement
 
 The at-risk rule and the probe order are policy and belong in the pure core,

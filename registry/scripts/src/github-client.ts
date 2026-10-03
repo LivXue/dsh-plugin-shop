@@ -608,16 +608,63 @@ export async function partitionTopic(
 }
 
 /**
+ * How many repositories, summed over one run's windows, the search index may
+ * COUNT without SERVING before the harvest stops anyway.
+ *
+ * Measured 2026-10-03: `topic:dsh-plugin stars:0 created:2026-09-01..
+ * 2026-09-09` answered `total_count` 588 and served 587 items, all distinct,
+ * `incomplete_results: false`, on every paging for over two hours, while the
+ * other 96 windows of the run served exactly what they counted. The re-probe
+ * below could not absorb it, because the count never moved: an index entry
+ * with no servable item behind it, of the kind a deleted or hidden repository
+ * leaves until the index catches up. Every build failed on it.
+ *
+ * Tolerated only when CONFIRMED: the window is paged a second time, and both
+ * pagings must serve the same repositories. A first paging that lost an item
+ * to churn is repaired by the second, and two pagings that disagree are
+ * churn, which still throws. A confirmed gap is reported, never silent:
+ * {@link describeSearchPhantoms} puts it on the build report's GitHub line.
+ *
+ * Counted per RUN rather than per window, so an index that stops serving a
+ * whole class of query still stops the build. 3 is `MAX_SEARCH_SHORTFALL`'s
+ * figure on the npm half, which bounds the same kind of count noise there;
+ * the one measured case is 1. What a tolerated phantom costs is exactly what
+ * it says: a repository the search does not serve is not harvested, so one
+ * the state still records publishes `repo-gone` and is dropped, and is
+ * fetched again whenever the search serves it again.
+ */
+export const MAX_SEARCH_PHANTOMS = 3
+
+/** One window the index counted larger than two pagings of it served. */
+export interface SearchPhantom {
+  query: string
+  /** The window's answered total: the lower of its two probes. */
+  counted: number
+  /** What each of the two pagings served. */
+  served: number
+}
+
+/** The build report's account of the tolerated phantoms, one clause. */
+export function describeSearchPhantoms(phantoms: readonly SearchPhantom[]): string {
+  const missing = phantoms.reduce((sum, phantom) => sum + phantom.counted - phantom.served, 0)
+  const windows = phantoms.map(phantom => `${phantom.query} counts ${phantom.counted}, serves ${phantom.served}`)
+  return `the search index counts ${missing} repositor${missing === 1 ? 'y' : 'ies'} it does not serve, tolerated under ${MAX_SEARCH_PHANTOMS} (${windows.join('; ')})`
+}
+
+/**
  * List every repository carrying one of the harvest topics, through the
  * partitioned windows. Deduplicated and sorted.
- * @returns the repos the search saw (with `pushedAt`), and the window count.
+ * @returns the repos the search saw (with `pushedAt`), the window count, and
+ *   the windows tolerated under {@link MAX_SEARCH_PHANTOMS}.
  */
 export async function searchReposByTopic(
   fetchImpl: typeof fetch = fetch,
   sleep: (ms: number) => Promise<void> = async (ms: number) => { await new Promise(resolve => setTimeout(resolve, ms)) },
   token: string | undefined = undefined,
-): Promise<{ seen: RepoSeen[]; metas: Map<string, RepoMeta>; windowCount: number }> {
+): Promise<{ seen: RepoSeen[]; metas: Map<string, RepoMeta>; windowCount: number; phantoms: SearchPhantom[] }> {
   const byName = new Map<string, RepoMeta>()
+  const phantoms: SearchPhantom[] = []
+  let phantomTotal = 0
   let windowCount = 0
   for (const topic of HARVEST_TOPICS) {
     const plans = await partitionTopic(topic, query => probeTotal(query, fetchImpl, sleep, token))
@@ -634,28 +681,34 @@ export async function searchReposByTopic(
       // Parsed plus skipped: an item we could not read still occupies a slot,
       // and counting only the parsed ones is precisely what let one `null`
       // item end a 250-repository window after 99 of them.
-      let enumerated = 0
-      for (let page = 1; ; page += 1) {
-        if (page > MAX_SEARCH_PAGES) {
-          // The window outgrew the cap between its probe and its pages. The
-          // old bound stopped here in silence and published the first 1,000 —
-          // the same defect as the short-page break, one line down.
-          throw new Error(
-            `github search for ${query} needs page ${page}, past the ${MAX_SEARCH_PAGES} pages the ${GITHUB_SEARCH_CAP}-result cap allows: it enumerated ${enumerated} of ${probed} measured at partition time, so the window has grown past the cap since and the partition is stale`,
-          )
+      const pageWindow = async (): Promise<{ enumerated: number; names: Set<string> }> => {
+        let enumerated = 0
+        const names = new Set<string>()
+        for (let page = 1; ; page += 1) {
+          if (page > MAX_SEARCH_PAGES) {
+            // The window outgrew the cap between its probe and its pages. The
+            // old bound stopped here in silence and published the first 1,000 —
+            // the same defect as the short-page break, one line down.
+            throw new Error(
+              `github search for ${query} needs page ${page}, past the ${MAX_SEARCH_PAGES} pages the ${GITHUB_SEARCH_CAP}-result cap allows: it enumerated ${enumerated} of ${probed} measured at partition time, so the window has grown past the cap since and the partition is stale`,
+            )
+          }
+          const { metas, skipped, total } = await searchPage(query, page, fetchImpl, sleep, token)
+          for (const meta of metas) {
+            names.add(meta.fullName)
+            if (!byName.has(meta.fullName)) byName.set(meta.fullName, meta)
+          }
+          enumerated += metas.length + skipped
+          // Stop on the total the API answered for THIS page — which tracks a
+          // window that shrank mid-run — never on a short page. An empty page is
+          // the other terminator: there is nothing further to ask for, and the
+          // coverage check below is what decides whether that is acceptable.
+          if (metas.length + skipped === 0 || enumerated >= total) break
         }
-        const { metas, skipped, total } = await searchPage(query, page, fetchImpl, sleep, token)
-        for (const meta of metas) {
-          if (!byName.has(meta.fullName)) byName.set(meta.fullName, meta)
-        }
-        enumerated += metas.length + skipped
-        // Stop on the total the API answered for THIS page — which tracks a
-        // window that shrank mid-run — never on a short page. An empty page is
-        // the other terminator: there is nothing further to ask for, and the
-        // coverage check below is what decides whether that is acceptable.
-        if (metas.length + skipped === 0 || enumerated >= total) break
+        return { enumerated, names }
       }
-      if (enumerated < probed) {
+      const first = await pageWindow()
+      if (first.enumerated < probed) {
         // Safe by CHECK, the shape searchByKeywords uses on the npm half, and
         // for the same reason: the API has no way to prove a window was read
         // whole. The re-probe absorbs churn — these windows are `stars:0` and
@@ -665,10 +718,30 @@ export async function searchReposByTopic(
         // shortfall path, so a healthy run costs no extra request.
         const after = await probeTotal(query, fetchImpl, sleep, token)
         const required = Math.min(probed, after)
-        if (enumerated < required) {
-          throw new Error(
-            `github search for ${query} enumerated ${enumerated} of ${required} results; the window ended before its answered total, so the harvest would be silently short — and every repository it lost publishes repo-gone under its own name and is dropped from the committed state`,
-          )
+        if (first.enumerated < required) {
+          // Still short against a count that did not move: page it once more.
+          // Its repositories are already in `byName`, so a first paging that
+          // lost one to churn is repaired by the union. Two pagings serving
+          // the same repositories and the same count are a gap in the index,
+          // tolerated under MAX_SEARCH_PHANTOMS; two that disagree are churn,
+          // which no tolerance covers. Like the re-probe, paid for only here.
+          const second = await pageWindow()
+          const union = new Set([...first.names, ...second.names])
+          const served = Math.max(first.enumerated, second.enumerated, union.size)
+          if (served < required) {
+            const stable = second.enumerated === first.enumerated && union.size === first.names.size
+            const gap = required - served
+            if (!stable || phantomTotal + gap > MAX_SEARCH_PHANTOMS) {
+              const why = stable
+                ? `two pagings agree on the gap, but it brings this run's counted-but-unserved repositories to ${phantomTotal + gap}, past the ${MAX_SEARCH_PHANTOMS} the index may account for`
+                : `two pagings served ${first.enumerated} and ${second.enumerated}, so it is not one stable gap`
+              throw new Error(
+                `github search for ${query} enumerated ${served} of ${required} results; the window ended before its answered total, so the harvest would be silently short — and every repository it lost publishes repo-gone under its own name and is dropped from the committed state (${why})`,
+              )
+            }
+            phantomTotal += gap
+            phantoms.push({ query, counted: required, served })
+          }
         }
       }
     }
@@ -676,7 +749,7 @@ export async function searchReposByTopic(
   const seen = [...byName.entries()]
     .map(([repo, meta]) => ({ repo, pushedAt: meta.pushedAt }))
     .sort((a, b) => (a.repo < b.repo ? -1 : a.repo > b.repo ? 1 : 0))
-  return { seen, metas: byName, windowCount }
+  return { seen, metas: byName, windowCount, phantoms }
 }
 
 /**
@@ -1859,6 +1932,9 @@ export interface RepoHarvestResult {
    */
   searchStars: Map<string, number>
   windowCount: number
+  /** Windows the index counted larger than two pagings of them served,
+   * tolerated under {@link MAX_SEARCH_PHANTOMS} and reported by the build. */
+  searchPhantoms: SearchPhantom[]
   /** Repositories this run ATTEMPTED to fetch — the queue length, not a
    * success count. See {@link RepoHarvestResult.thrown} for why the build note
    * reports both: a run where every attempt threw once read "300 fetched". */
@@ -1990,12 +2066,12 @@ async function harvestOnce(options: RepoHarvestOptions): Promise<Omit<RepoHarves
   if (token === undefined) {
     return {
       candidates: [], failures: [], thrown: 0, seen: [], gone: [], nextState: state, skipped: true,
-      searchStars: new Map(), windowCount: 0, fetched: 0, carried: 0, deferred: 0,
+      searchStars: new Map(), windowCount: 0, searchPhantoms: [], fetched: 0, carried: 0, deferred: 0,
       rereadAttempted: 0, rereadUpdated: 0, rereadFailed: 0, rereadAssetChanged: 0, rereadDeferred: 0,
       rereadStopped: null,
     }
   }
-  const { seen, metas, windowCount } = await searchReposByTopic(fetchImpl, sleep, token)
+  const { seen, metas, windowCount, phantoms } = await searchReposByTopic(fetchImpl, sleep, token)
   const searchStars = new Map<string, number>()
   for (const [repo, meta] of metas) {
     if (meta.stars !== null) searchStars.set(repo, meta.stars)
@@ -2167,6 +2243,7 @@ async function harvestOnce(options: RepoHarvestOptions): Promise<Omit<RepoHarves
     skipped: false,
     searchStars,
     windowCount,
+    searchPhantoms: phantoms,
     fetched: queue.length,
     carried,
     deferred: toFetch.length - queue.length,

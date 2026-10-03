@@ -234,6 +234,14 @@ export const MIN_UNREACHABLE_RECOVERY = 0.9
  * refines on the other with, crossed its own window. {@link
  * PARTITION_KEYWORDS} records the entries that answered it and what each
  * recovers; this value did not move.
+ *
+ * RED AGAIN FROM 2026-09-30, AND AGAIN ANSWERED WITHOUT A RAISE.
+ * `keywords:dsh-plugin,dsh` crossed its own window about 2026-09-29 and four
+ * scheduled builds failed in a row; measured locally on 2026-10-03 the
+ * residual stood at 36 for `dsh-plugin` and 33 for `deepseek-harness`.
+ * Twelve {@link PARTITION_KEYWORDS} entries and seventeen re-seated pins
+ * answered it, recorded there and in the publisher-pinning design doc's
+ * 2026-10-03 amendment; this value did not move.
  */
 export const MAX_UNREACHABLE_RESIDUAL = 20
 
@@ -902,6 +910,62 @@ export function parsePublisherAxisReport(value: unknown, where: string): Publish
  * `keywords:K,P,R` is a subset of `keywords:K,R`; that redundancy predates
  * these entries and is left to a change of its own.
  *
+ * `keywords:dsh-plugin,dsh` CROSSED ITS OWN WINDOW ABOUT 2026-09-29, and
+ * twelve entries were added for it beside a pinned-set change. It measured
+ * 4,973 on 2026-09-25 and 5,518 on 2026-10-03 against {@link
+ * SEARCH_WINDOW}; once oversized it is paged only to its own window, so a
+ * `dsh-plugin` name tagged from this list with only `dsh` passes out of reach
+ * once it ranks past that window and the keyword's own. The daily build went
+ * red from 2026-09-30. On 2026-10-03 it threw at `enumerated 6642 of 6677`
+ * for `dsh-plugin`, and `deepseek-harness`, enumerated second, was not
+ * reached at all.
+ *
+ * Measured as on 2026-09-25, with one change: {@link
+ * MAX_UNREACHABLE_RESIDUAL} raised in a copy of this module so that the first
+ * keyword's throw would not hide the second, which alters nothing a cell or a
+ * probe does. The recorded run came up 6,645 of 6,681 for `dsh-plugin` and
+ * 8,371 of 8,404 for `deepseek-harness`: residuals of 36 and 33. A sweep of
+ * the whole publisher vocabulary against that run then named the owners of
+ * 12 and 10 of those, and they were pinned rather than refined on; the
+ * publisher-pinning design doc's 2026-10-03 amendment records it. The
+ * candidates here were the tags on the 91 names the run reached only through
+ * a publisher probe, less anything already in this list: 241 tags, each
+ * paged as `keywords:<keyword>,<tag>` for both keywords and counted against
+ * the run's union. 37 supplied a name the run did not have; 24 of those
+ * supply only names a pin now reaches, and `web-search` supplies exactly what
+ * `keenable` does, a tie broken alphabetically. A greedy cover over the rest
+ * is twelve entries recovering 10 names for `dsh-plugin` and 9 for
+ * `deepseek-harness`. Each line is a refinement and the names it brings in,
+ * marginal in greedy order, for both keywords unless one is named:
+ *   code-review -> dsh-open-code-review
+ *   keenable -> @keenable/dsh-keenable
+ *   live2d -> dsh-plugin-live2d-stage
+ *   multimodal -> better-model-provider
+ *   skill -> dsh-brewreel
+ *   terminal -> @ljwei-stak/dsh-mv-cli
+ *   writing -> dsh-writing-workbench
+ *   annotation -> dsh-grsai-canvas (dsh-plugin)
+ *   protocol -> dsh-remote-wire (deepseek-harness)
+ *   session -> dsh-session-handoff (dsh-plugin)
+ *   skills -> @asher191919/dsh-skills-hub (dsh-plugin)
+ *   windows -> @bio_laser/dsh-desktop-shell (deepseek-harness)
+ *
+ * Pins and entries together leave a predicted 14 for each keyword against
+ * the cap of 20. The rest belongs to publishers no search page has shown,
+ * because every package they own sits past every window, and carries no tag
+ * the 241 candidates matched, so nothing this module queries can name it.
+ * That is a margin of days, and a dated one: `keywords:dsh-plugin,dsh,
+ * deepseek-harness`, the deeper cell that still reaches names tagged with
+ * exactly those three, measured 4,422 on 2026-09-25 and 4,906 on 2026-10-03
+ * and crosses about 2026-10-08. No entry can reach those names once it does;
+ * only their owners' cells can.
+ *
+ * Each entry costs six `size=1` probes a run on top of its pages: one per
+ * harvest keyword for its own cell, and one per oversized parent for a
+ * deeper cell, of which each keyword now has two. Every cell above fits one
+ * page. The deeper cells stay redundant whenever the entry's own cell fits,
+ * as recorded above.
+ *
  * Adding a keyword is the documented response to that throw; a cell is always
  * `keywords:<harvest-keyword>,<refinement>`, so a refinement can only narrow
  * the net a listing sees, never widen it — an addition is a coverage decision,
@@ -924,6 +988,9 @@ export const PARTITION_KEYWORDS: readonly string[] = [
   'remote', 'statistics', 'deepwatch',
   'cordis-plugin', 'provider', 'agent-preset', 'theme', 'ai-agent',
   'llm', 'ui', 'usage', 'sidebar',
+  'code-review', 'keenable', 'live2d', 'multimodal', 'skill',
+  'terminal', 'writing', 'annotation', 'protocol', 'session',
+  'skills', 'windows',
 ]
 
 /**

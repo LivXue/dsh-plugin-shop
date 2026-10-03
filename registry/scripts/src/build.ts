@@ -16,7 +16,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSyn
 import { basename, join } from 'node:path'
 import { loadRegistryConfig, serializeFirstSeen } from './config.ts'
 import { fetchStarCounts } from './github-stars.ts'
-import { HARVEST_TOPICS, REPO_BACKFILL_BUDGET_DEFAULT, harvestRepos, parseHarvestBudget } from './github-client.ts'
+import { HARVEST_TOPICS, REPO_BACKFILL_BUDGET_DEFAULT, describeSearchPhantoms, harvestRepos, parseHarvestBudget } from './github-client.ts'
 import { parseRepoState, repoGoneDetail, serializeRepoState } from './repo-state.ts'
 import { githubOwnerName } from './github-repo.ts'
 import { fetchCandidates, searchByKeywords, describePublisherAxis, describeShortfall, HARVEST_KEYWORDS, parseKeywordShortfall, parsePublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall, type PublisherAxisReport } from './npm-client.ts'
@@ -273,6 +273,10 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     // nothing for null so a healthy run's line does not grow a clause that
     // says nothing.
     repoNote = `${repos.windowCount} windows, ${repos.seen.length} repos seen, ${repos.fetched} fetched (${repos.thrown} threw), ${repos.carried} carried, ${repos.deferred} deferred; declaration re-reads: ${repos.rereadAttempted} repos (${repos.rereadUpdated} updated, ${repos.rereadFailed} failed, ${repos.rereadAssetChanged} asset changed), ${repos.rereadDeferred} deferred${describeRereadStopped(repos.rereadStopped)}`
+    // A tolerated index gap is named on the report's GitHub line: the harvest
+    // published without repositories the search counted, and says which
+    // windows and by how much.
+    if (repos.searchPhantoms.length > 0) repoNote = `${repoNote}; ${describeSearchPhantoms(repos.searchPhantoms)}`
     process.stderr.write(`github: ${repoNote}\n`)
   }
 

@@ -104,6 +104,23 @@ impure-shell split:
   enter the committed harvest memory — daily data stays in the sidecar
   alone.
 
+**Amendment (2026-10-03): a count the index holds with nothing behind it is
+tolerated, small and reported.** A window that pages short of its answered
+`total_count` throws, after one re-probe absorbs a window that shrank
+mid-run. On 2026-10-03 `topic:dsh-plugin stars:0 created:2026-09-01..
+2026-09-09` counted 588 and served 587 distinct items with
+`incomplete_results: false` on every paging for hours, while the other 96
+windows served what they counted, and every build failed on it. So a window
+still short after the re-probe is paged a second time. If both pagings serve
+the same repositories, the gap is the index's, not the paging's, and it is
+tolerated while the run's total of such gaps stays within
+`MAX_SEARCH_PHANTOMS` (3, the npm half's `MAX_SEARCH_SHORTFALL` figure);
+the build report's GitHub line names each window and its gap. Two pagings
+that disagree are churn and still throw, as does a run past the bound. A
+repository the search does not serve is not harvested either way: one the
+state still records publishes `repo-gone`, and is fetched again whenever the
+search serves it again.
+
 ## 4. Gate — the anti-80%
 
 Every candidate repository passes through, in order, each failure producing an

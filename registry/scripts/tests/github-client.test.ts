@@ -4,7 +4,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { BUNDLE_NAME_MAX_LENGTH, BUNDLE_NAME_RE, DECLARATIONS_REREAD_BUDGET_DEFAULT, DECLARATIONS_REREAD_FAILURE_LINES, DECLARATIONS_REREAD_MAX_CONSECUTIVE_FAILURES, DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT, GITHUB_REQUEST_TIMEOUT_MS, MAX_MANIFEST_BYTES, MAX_TARBALL_BYTES, MAX_THROWN_FRACTION, MIN_THROWN_TO_BOUND, MAX_TREE_BYTES, REPO_BACKFILL_BUDGET_DEFAULT, SUBDIR_MAX_LENGTH, TARBALL_REQUEST_TIMEOUT_MS, TREE_REQUEST_TIMEOUT_MS, fetchRepoCandidate, harvestRepos, isBundleName, parseHarvestBudget, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
+import { BUNDLE_NAME_MAX_LENGTH, BUNDLE_NAME_RE, DECLARATIONS_REREAD_BUDGET_DEFAULT, DECLARATIONS_REREAD_FAILURE_LINES, DECLARATIONS_REREAD_MAX_CONSECUTIVE_FAILURES, DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT, GITHUB_REQUEST_TIMEOUT_MS, MAX_MANIFEST_BYTES, MAX_SEARCH_PHANTOMS, MAX_TARBALL_BYTES, MAX_THROWN_FRACTION, MIN_THROWN_TO_BOUND, MAX_TREE_BYTES, REPO_BACKFILL_BUDGET_DEFAULT, SUBDIR_MAX_LENGTH, TARBALL_REQUEST_TIMEOUT_MS, TREE_REQUEST_TIMEOUT_MS, describeSearchPhantoms, fetchRepoCandidate, harvestRepos, isBundleName, parseHarvestBudget, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
 import { DECLARATIONS_RULE, diffRepoState, parseRepoState, serializeRepoState } from '../src/repo-state.ts'
 import type { RepoState } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
@@ -284,6 +284,106 @@ describe('a window is enumerated whole, or the harvest stops', () => {
     expect(seen).toHaveLength(249)
     // The re-probe is what absorbed it, so it must actually have happened.
     expect(probes).toBe(2)
+  })
+
+  /**
+   * A search stub that serves each PAGING of a window differently:
+   * `itemsFor(query, paging)` with paging 1 for the first. The probe answers
+   * `countFor(query)` every time and every page carries the same total, so
+   * the count never moves and the re-probe cannot absorb anything.
+   */
+  function pagingStub(
+    countFor: (query: string) => number,
+    itemsFor: (query: string, paging: number) => readonly unknown[],
+  ): { fetchImpl: typeof fetch; pagings: (query: string) => number } {
+    const started = new Map<string, number>()
+    const fetchImpl = (async (url: string | URL) => {
+      const search = new URL(String(url))
+      const query = search.searchParams.get('q') ?? ''
+      const total = countFor(query)
+      if (search.searchParams.get('per_page') === '1') {
+        return new Response(JSON.stringify({ total_count: total }), { status: 200 })
+      }
+      const page = Number(search.searchParams.get('page') ?? '1')
+      if (page === 1) started.set(query, (started.get(query) ?? 0) + 1)
+      const items = itemsFor(query, started.get(query) ?? 1)
+      const start = (page - 1) * SEARCH_PAGE_SIZE
+      return new Response(
+        JSON.stringify({ total_count: total, items: items.slice(start, start + SEARCH_PAGE_SIZE) }),
+        { status: 200 },
+      )
+    }) as unknown as typeof fetch
+    return { fetchImpl, pagings: query => started.get(query) ?? 0 }
+  }
+
+  it('tolerates a gap two pagings agree on, as an index phantom, and reports it', async () => {
+    // Measured 2026-10-03: one window answered total_count 588 and served 587
+    // distinct items, incomplete_results false, on every paging for hours, and
+    // every build failed on it. The count never moved, so the re-probe could
+    // not absorb it; a second paging serving the same items is what tells an
+    // index entry with nothing behind it from a repository the paging lost.
+    const items = repoItems(250)
+    const { fetchImpl, pagings } = pagingStub(
+      query => (dshPlugin(query) ? 251 : 0),
+      query => (dshPlugin(query) ? items : []),
+    )
+    const { seen, phantoms } = await searchReposByTopic(fetchImpl, sleep, 'token')
+    expect(seen).toHaveLength(250)
+    expect(phantoms).toEqual([{ query: 'topic:dsh-plugin', counted: 251, served: 250 }])
+    expect(pagings('topic:dsh-plugin')).toBe(2)
+    expect(describeSearchPhantoms(phantoms)).toBe(
+      `the search index counts 1 repository it does not serve, tolerated under ${MAX_SEARCH_PHANTOMS} (topic:dsh-plugin counts 251, serves 250)`)
+  })
+
+  it('repairs a repository the first paging lost, and records no phantom', async () => {
+    // The case the second paging must not mistake for an index gap: churn hid
+    // an item from one paging, and the next one serves it.
+    const items = repoItems(250)
+    const lossy = items.filter((_, i) => i !== 150)
+    const { fetchImpl, pagings } = pagingStub(
+      query => (dshPlugin(query) ? 250 : 0),
+      (query, paging) => (dshPlugin(query) ? (paging === 1 ? lossy : items) : []),
+    )
+    const { seen, phantoms } = await searchReposByTopic(fetchImpl, sleep, 'token')
+    expect(seen).toHaveLength(250)
+    expect(phantoms).toEqual([])
+    expect(pagings('topic:dsh-plugin')).toBe(2)
+  })
+
+  it('still throws when two pagings of a short window disagree', async () => {
+    // Not one stable gap but churn, which is what the guard exists for.
+    const items = repoItems(250)
+    const { fetchImpl } = pagingStub(
+      query => (dshPlugin(query) ? 250 : 0),
+      (query, paging) => (dshPlugin(query) ? items.slice(0, paging === 1 ? 249 : 248) : []),
+    )
+    await expect(searchReposByTopic(fetchImpl, sleep, 'token'))
+      .rejects.toThrow(/enumerated 249 of 250 .*two pagings served 249 and 248/)
+  })
+
+  it('tolerates a run total at the allowance and throws one past it', async () => {
+    // Per RUN, not per window: two windows each within the allowance still
+    // stop the build once their sum is past it, which keeps an index that
+    // stopped serving a whole class of query loud.
+    const items = repoItems(250)
+    const atBound = pagingStub(
+      query => (dshPlugin(query) ? 250 + MAX_SEARCH_PHANTOMS : 0),
+      query => (dshPlugin(query) ? items : []),
+    )
+    const { phantoms } = await searchReposByTopic(atBound.fetchImpl, sleep, 'token')
+    expect(phantoms).toEqual([{ query: 'topic:dsh-plugin', counted: 250 + MAX_SEARCH_PHANTOMS, served: 250 }])
+
+    const harness = (query: string) => query.includes('topic:deepseek-harness')
+    const gap = Math.ceil((MAX_SEARCH_PHANTOMS + 1) / 2)
+    expect(gap).toBeLessThanOrEqual(MAX_SEARCH_PHANTOMS)
+    expect(2 * gap).toBeGreaterThan(MAX_SEARCH_PHANTOMS)
+    const other = repoItems(250, 'other')
+    const pastBound = pagingStub(
+      query => (dshPlugin(query) || harness(query) ? 250 + gap : 0),
+      query => (dshPlugin(query) ? items : harness(query) ? other : []),
+    )
+    await expect(searchReposByTopic(pastBound.fetchImpl, sleep, 'token'))
+      .rejects.toThrow(new RegExp(`topic:deepseek-harness .*past the ${MAX_SEARCH_PHANTOMS} the index may account for`))
   })
 
   it('throws when GitHub says the page it answered is incomplete', async () => {
