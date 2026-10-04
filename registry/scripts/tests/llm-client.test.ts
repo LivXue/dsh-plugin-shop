@@ -265,7 +265,8 @@ describe('the classification step is bounded in aggregate', () => {
     // The finding this exists for. Adding the timeout retry multiplied a
     // stalled gateway by RETRY_LIMIT: for the 2724-name backfill that is
     // 137 batches / CONCURRENCY 4 x 4 attempts x 600s ~= 1400 minutes, inside
-    // a 120-minute job, in a step that runs BEFORE build:catalog — so
+    // a job bounded at a small fraction of that, in a step that runs BEFORE
+    // build:catalog — so
     // classification alone would consume the run and the catalog would never
     // be built. Losing 20 names to a discard is the supported outcome; losing
     // the day's catalog is not.

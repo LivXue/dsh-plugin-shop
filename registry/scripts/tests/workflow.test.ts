@@ -957,17 +957,20 @@ describe('every job in the workflow is bounded', () => {
 
   it('leaves room for the whole harvest, and still fails well short of the platform kill', () => {
     // The other side of the bound. A number that merely exists is not a
-    // useful one: too small kills a healthy fifty-minute run every morning,
-    // and too large is the six-hour default it was added to beat.
+    // useful one: too small kills a healthy run every morning, and too large
+    // is the six-hour default it was added to beat.
     //
     // Both endpoints are literals rather than fractions of the configured
     // value: a band computed from the number it bounds could never detect
-    // that number moving.
+    // that number moving. The lower one was 60, written when a healthy run
+    // took fifty minutes; by 2026-10-04 healthy runs took 104 and 110, so a
+    // 60 that this test accepted would have killed every one of them. It is
+    // now the smallest whole-hour bound above those readings.
     const minutes = timeoutMinutes('build')
     if (typeof minutes !== 'number') {
       throw new Error('daily.yml: jobs.build.timeout-minutes is not a number, so the build job is unbounded')
     }
-    expect(minutes).toBeGreaterThanOrEqual(60)
+    expect(minutes).toBeGreaterThanOrEqual(120)
     expect(minutes).toBeLessThan(360)
   })
 })

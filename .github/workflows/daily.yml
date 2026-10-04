@@ -67,7 +67,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     # A full healthy run -- install, tests, classify, harvest, stars, emit --
-    # takes well over an hour, so this does not constrain one.
+    # is now close to two hours, so this bound is sized against it rather than
+    # far above it; it was 120 until 2026-10-04, when that left about ten.
     # DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT's comment in
     # registry/scripts/src/github-client.ts owns the measured per-run
     # durations; they are not restated here.
@@ -82,12 +83,13 @@ jobs:
     # 10. Neither cap is the constant, though: a budget check cannot interrupt
     # an in-flight request, so each overruns by one request deadline. Classify
     # is 15 + 10 = 25 per call and it makes two, so 50; stars is 10 + 0.5. The
-    # optional data can therefore take ~60 of these 120 minutes, not ~40,
-    # leaving ~60 for the harvest.
+    # optional data can therefore take ~60 of these 180 minutes, not ~40,
+    # leaving ~120 for the harvest. At 120 this left ~60, and the harvest
+    # outgrew it: the owner comment above keeps what it measures now.
     #
     # The declarations re-read is a third bounded phase, but unlike the two
     # above it runs INSIDE the harvest rather than in front of it, so it
-    # spends from that ~60 rather than adding to the split above. It bounds
+    # spends from that ~120 rather than adding to the split above. It bounds
     # itself at DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT, plus the reads
     # still in flight when that runs out, each at most one asset read
     # (TARBALL_REQUEST_TIMEOUT_MS). The first constant's comment in
@@ -99,18 +101,18 @@ jobs:
     # plus backoff, 134s -- except on the release-rescue path, where the asset
     # download's own 300s deadline puts it near 7.5 minutes (it is one attempt,
     # not four: see TARBALL_REQUEST_TIMEOUT_MS). At REPO_CONCURRENCY = 4
-    # against a 2000 budget a total GitHub stall drains only ~212 repositories
-    # inside 120 minutes --
+    # against a 2000 budget a total GitHub stall drains only ~320 repositories
+    # inside 180 minutes --
     # and MAX_THROWN_FRACTION, which would otherwise stop the build loudly, is
     # evaluated only once the queue has drained, so it is unreachable in that
     # state. Under a pool-wide stall the run still dies here with no report, no
-    # state commit and no catalog. This caps the wasted runner time at two
+    # state commit and no catalog. This caps the wasted runner time at three
     # hours instead of six; it does not turn that outcome into a reported one.
     # An in-harvest budget, of the kind classify and stars now carry, is what
     # that would take. The declarations re-read now has one
     # (DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT); the full-fetch queue this
     # paragraph describes still does not.
-    timeout-minutes: 120
+    timeout-minutes: 180
     permissions:
       # read, not write. This job installs dependencies, calls a plaintext LLM
       # gateway and fetches thousands of third-party manifests; the ambient
