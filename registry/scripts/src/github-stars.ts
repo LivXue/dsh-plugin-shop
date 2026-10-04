@@ -45,8 +45,9 @@ export const STARS_REQUEST_TIMEOUT_MS = 30_000
  * As with classify, the real cap is this plus one {@link
  * STARS_REQUEST_TIMEOUT_MS}, because the check cannot interrupt an in-flight
  * request: ~10.5 minutes. Together with classify's true 50, the advisory steps
- * cap near 60 of the job's 120 minutes rather than the 40 an earlier version
- * of this comment claimed, leaving ~60 for the harvest.
+ * cap near 60 of the job's 180 minutes (120 until 2026-10-04) rather than the
+ * 40 an earlier version of this comment claimed; daily.yml's comment keeps
+ * the rest of that split.
  */
 export const STARS_BUDGET_MS = 10 * 60_000
 

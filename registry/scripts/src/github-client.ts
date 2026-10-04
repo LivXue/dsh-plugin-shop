@@ -949,7 +949,7 @@ type AssetDownload =
  * Against the committed state file of 2026-09-25, 441 of its 17,849
  * repositories reach this download (411 rescued, 30 whose asset was refused),
  * so a 2000-repository run puts ~49 on this path: ~250 minutes at
- * REPO_CONCURRENCY 4, twice the whole 120-minute job bound. One bounded attempt
+ * REPO_CONCURRENCY 4, past the build job's whole bound. One bounded attempt
  * costs at most 5 minutes, so the same total is ~62 — still the largest single
  * thing the full fetch can spend, and the place to put an aggregate budget if
  * it is ever seen for real. (The declarations re-read has one: see
@@ -1737,7 +1737,8 @@ export const DECLARATIONS_REREAD_BUDGET_DEFAULT = 4000
  * The longest the declarations re-read may keep STARTING reads in one run,
  * when {@link RepoHarvestOptions.rereadTimeBudgetMs} is unset: 10 minutes.
  *
- * daily.yml bounds the build job at 120 minutes (`timeout-minutes`), and a job
+ * daily.yml bounds the build job at 180 minutes (`timeout-minutes`; 120 until
+ * 2026-10-04, see below), and a job
  * that reaches it is killed and commits no state: the next run meets the same
  * slice, and the catalog stops publishing. So the budget, and the read still in
  * flight when it runs out, must fit in what the rest of the job leaves. Build
@@ -1757,6 +1758,23 @@ export const DECLARATIONS_REREAD_BUDGET_DEFAULT = 4000
  * + 10m      this budget, spent in full
  * +  5m      at most one batch in flight when it runs out
  * = 101m25s  18m35s inside the 120-minute bound.
+ *
+ * RE-MEASURED 2026-10-04, AND THE SUM NO LONGER FIT 120. The two runs after
+ * that day's harvest fixes took 104m09s and 109m35s, and each re-read 0
+ * repositories, so neither ran this phase:
+ *
+ *   109m35s  the build job without this phase
+ * + 10m      this budget, spent in full
+ * +  5m      at most one batch in flight when it runs out
+ * = 124m35s  4m35s PAST the 120-minute bound.
+ *
+ * The second of those runs, phase by phase: npm enumeration 56m04s,
+ * repository candidates 2m48s, classifier 8m15s (298 names pending), GitHub
+ * half 40m44s, stars 0m49s. The harvest alone is now about 100 minutes, where
+ * daily.yml's split left it ~60, and it grows a few minutes a day with the
+ * ecosystem. So the bound moved to 180 that day: the sum above sits 55m25s
+ * inside it, and the advisory steps' full ~60 on top of a 100-minute harvest
+ * still fits.
  *
  * Why one batch in flight costs at most 5 minutes: the phase asks before
  * every read, not only every batch, so each repository in the last batch has

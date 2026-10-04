@@ -2904,7 +2904,7 @@ describe('harvestRepos', () => {
       // holding a stalled read waits out a whole deadline —
       // for a rescued root, TARBALL_REQUEST_TIMEOUT_MS. Against the committed
       // file a stalled asset host made the first 4,000-repository slice cost
-      // about 9.5 hours and the second about 14, against a 120-minute job, and
+      // about 9.5 hours and the second about 14, far past the job's bound, and
       // a killed job commits no state: the next run meets the same slice and
       // the catalog stops publishing. The phase now has a wall clock of its own.
       //
