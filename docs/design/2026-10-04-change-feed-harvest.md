@@ -264,7 +264,10 @@ retry pass repeats none of its requests.
    state's `seq`, so successive runs check different owners when there
    are more than the budget. Page `keywords:K maintainer:U` for each.
    - A feed-only name of U that the cell serves is **verified**.
-   - One the cell does not serve **disagrees**.
+   - One the cell does not serve is paged once more, and **disagrees**
+     only when that second complete paging omits it too: npm has
+     answered an empty result for a real cell before, and the publisher
+     axis confirms a zero before it evicts for the same reason.
    - A name with a `null` owner, an owner beyond the budget, or an
      owner whose cell could not be paged in full is **unverified**. A
      paging hiccup never counts as a disagreement.
@@ -288,6 +291,10 @@ selects, probes, earns and evicts exactly as before; the feed only
 fills what the axis left. Running it first, so that the probe pool is
 spent only on residue the filter cannot see, is the #38 follow-up. It
 changes eviction dynamics, so it is not part of this change.
+
+Verification pages are search pages, so the maintainers they carry join
+the publisher vocabulary as every page's do; at-risk seeding does not
+see them, because they are paged without `harvested`.
 
 With today's residue (12 owners per keyword) every feed-only name is
 verified, so every credited name is one that npm search served:
@@ -434,6 +441,7 @@ crossing grows the residue's owners past the budget.
   - verified, unverified and disagreeing names are credited or not as
     section 4.5 says;
   - more than `FEED_MAX_DISAGREEMENTS` throws;
+  - a disagreement counts only after a second complete paging;
   - an unavailable feed reproduces today's result exactly;
   - the retry pass repeats no verification request;
   - the per-keyword count is the feed step's own delta on

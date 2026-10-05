@@ -1009,6 +1009,9 @@ Recorded so a later reader does not mistake an omission for an oversight.
 - **It does not replace `PARTITION_KEYWORDS`.** On `keywords:deepseek-harness`'s tail the refinement list recovers 99.4% and this axis 60.5%; removing it would make coverage worse. That ordering is measured on the first keyword only: on `keywords:dsh-plugin` no refinement reaches the uncovered set at all, so the two axes divide the work differently there — see "The second keyword is why this plan has a date". Neither replaces the other on either keyword.
 - **It does not pursue the replication feed.** `replicate.npmjs.com` is alive and is the only provably complete route, at 165,689 changes/day — two orders of magnitude above an npm-side run today. That is its own project, and the follow-up amendment records the price so the next discussion starts from it.
 
+  -> Pursued 2026-10-04 in its filtered form:
+  `docs/design/2026-10-04-change-feed-harvest.md`.
+
 ## Verification the whole plan is done
 
 - `pnpm exec vitest run` — registry suite green.

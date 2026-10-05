@@ -860,3 +860,8 @@ malformed `pinned` throwing and sorted serialization.
   cap is the wall and both axes are queries. The replication feed remains the
   only covering route and remains priced in the design doc's 2026-09-08
   follow-up.
+
+  Amended 2026-10-04: the feed is now read in its filtered form, which
+  is not covering either -- it misses names without the filter words --
+  but reaches the residue this axis cannot; see
+  `2026-10-04-change-feed-harvest.md`.
