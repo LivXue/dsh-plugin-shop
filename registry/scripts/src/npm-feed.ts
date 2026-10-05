@@ -1,6 +1,6 @@
 /**
  * npm's replication change feed, read FORWARD from the committed cursor,
- * and the `/latest` manifest of every id it selects. Impure: this module
+ * and the full packument of every id it selects. Impure: this module
  * reaches the network. Every decision it applies lives in feed-state.ts.
  *
  * Forward only, because the feed offers nothing else: `descending=true`
@@ -12,10 +12,10 @@
  * @module npm-feed
  */
 import {
-  applyFeedReads, carrierCounts, classifyManifest, parseFeedPage, selectFeedIds,
+  applyFeedReads, carrierCounts, classifyPackument, parseFeedPage, selectFeedIds,
   type FeedRead, type FeedRow, type FeedRunReport, type FeedState,
 } from './feed-state.ts'
-import { fetchWithRetry, readJsonCapped, withTimeout } from './npm-client.ts'
+import { fetchWithRetry, MAX_PACKUMENT_BYTES, readJsonCapped, withTimeout } from './npm-client.ts'
 
 export const FEED_URL = 'https://replicate.npmjs.com/registry'
 const REGISTRY = 'https://registry.npmjs.org'
@@ -29,11 +29,20 @@ export const FEED_PAGE_BUDGET = 200
 /** Cap on one head or page body. The largest page measured was 1,078,874 bytes. */
 export const FEED_PAGE_MAX_BYTES = 8 * 1024 * 1024
 
-/** Cap on one `/latest` manifest. They average 2.5 KB; github-client caps a package.json at 1 MiB. */
-export const FEED_MANIFEST_MAX_BYTES = 1024 * 1024
+/**
+ * Cap on one packument: the candidate fetch's own, for the same document. A
+ * run reads the FULL packument, not `/latest`, for two measured reasons
+ * (PR #74): its top-level `maintainers` are today's owners where `/latest`
+ * carries the publish's -- 9 of 50 long-lived packages differed -- and from a
+ * GitHub runner the CDN serves packuments where `/latest` crawls: the dry
+ * run fetched 9,403 packuments in 136 s but started only 1,124 `/latest`
+ * reads in 20 minutes.
+ */
+export const FEED_PACKUMENT_MAX_BYTES = MAX_PACKUMENT_BYTES
 
-/** Concurrent manifest reads: 600 at 16 answered 25.8 a second with no 429 (measured 2026-10-04). */
-export const FEED_READ_CONCURRENCY = 16
+/** Concurrent packument reads: the candidate fetch's HARVEST_CONCURRENCY, which read ~69 a
+ * second from a GitHub runner on 2026-10-05. */
+export const FEED_READ_CONCURRENCY = 8
 
 /**
  * The most ids one run may select, pending names included. Paging stops
@@ -43,13 +52,13 @@ export const FEED_READ_CONCURRENCY = 16
  * FIRST page is always taken: a backlog of reads that keep failing can slow
  * the cursor, never stop it, and grows by at most one page's ids a run
  * meanwhile (both from the 2026-10-05 security reviews). The bootstrap
- * selects 17,779; a run reads about 31,000 within FEED_READ_TIME_BUDGET_MS
- * at the rate measured on 2026-10-04.
+ * selects ~17,900; a run reads about 80,000 packuments within
+ * FEED_READ_TIME_BUDGET_MS at the runner rate measured on 2026-10-05.
  */
 export const FEED_MAX_SELECTED = 25_000
 
-/** Wall-clock budget for one run's manifest reads. The bootstrap's 17,779 take ~11.5 minutes
- * at the measured rate, a day's ~700 about 30 seconds; what is not started becomes pending. */
+/** Wall-clock budget for one run's packument reads. The bootstrap's ~17,900 take ~4.5 minutes
+ * at the runner rate, a day's ~700 about 10 seconds; what is not started becomes pending. */
 export const FEED_READ_TIME_BUDGET_MS = 20 * 60_000
 
 /** Per-attempt bound. Matches npm-client's: the same registry host, the same reason. */
@@ -66,7 +75,7 @@ export interface HarvestFeedOptions {
   readonly harvestKeywords: readonly string[]
   readonly fetchImpl?: typeof fetch
   readonly sleep?: (ms: number) => Promise<void>
-  /** The npm token, sent to the registry's `/latest` reads; the feed host takes none. */
+  /** The npm token, sent to the registry's packument reads; the feed host takes none. */
   readonly token?: string
   /** Monotonic clock for the read budget; a seam, so a test can spend twenty minutes in none. */
   readonly now?: () => number
@@ -119,8 +128,8 @@ async function getJson(url: string, timed: typeof fetch, sleep: (ms: number) => 
   }
 }
 
-/** Read one `/latest` manifest and say what it established. Never throws. */
-async function readLatest(
+/** Read one full packument and say what it established. Never throws. */
+async function readPackument(
   name: string,
   timed: typeof fetch,
   sleep: (ms: number) => Promise<void>,
@@ -129,7 +138,7 @@ async function readLatest(
 ): Promise<FeedRead> {
   let response: Response
   try {
-    response = await fetchWithRetry(`${REGISTRY}/${encodeURIComponent(name)}/latest`, timed, sleep, token)
+    response = await fetchWithRetry(`${REGISTRY}/${encodeURIComponent(name)}`, timed, sleep, token)
   } catch (error) {
     return { kind: 'failed', name, reason: message(error) }
   }
@@ -143,17 +152,17 @@ async function readLatest(
   if (!response.ok) return { kind: 'failed', name, reason: `the registry answered ${response.status}` }
   let body: Awaited<ReturnType<typeof readJsonCapped>>
   try {
-    body = await readJsonCapped(response, FEED_MANIFEST_MAX_BYTES)
+    body = await readJsonCapped(response, FEED_PACKUMENT_MAX_BYTES)
   } catch (error) {
     // A deadline that lands mid-body, or a stream that errors: a statement
-    // about the transport, not about the manifest, so the name is retried.
+    // about the transport, not about the package, so the name is retried.
     return { kind: 'failed', name, reason: message(error) }
   }
   // A body past the cap is the author's own content -- CLAUDE.md lists
   // "refused for its size" as no-manifest -- so it is not a carrier. Were it
   // a failure, any author could keep a name pending, and the cursor waiting
   // on it, forever (2026-10-05 security review). npm serializes every
-  // manifest as JSON, though, so a body that is not JSON -- the
+  // packument as JSON, though, so a body that is not JSON -- the
   // `<!doctype html>` 200 this registry has served before -- is an edge
   // answering in npm's place, and is retried.
   if (!body.ok) {
@@ -161,11 +170,35 @@ async function readLatest(
       ? { kind: 'not-carrier', name }
       : { kind: 'failed', name, reason: 'the registry answered a body that is not JSON' }
   }
-  return classifyManifest(name, body.value, harvestKeywords)
+  return classifyPackument(name, body.value, harvestKeywords)
+}
+
+export interface ConfirmCarriersOptions {
+  readonly harvestKeywords: readonly string[]
+  readonly fetchImpl?: typeof fetch
+  readonly sleep?: (ms: number) => Promise<void>
+  readonly token?: string
+  readonly timeoutMs?: number
 }
 
 /**
- * Read the feed forward from `prior.seq` and the manifests it selects, and
+ * Re-read the current packument of each name two complete pagings of its
+ * owner's cell omitted (spec section 4.5): what the search step needs to
+ * tell a former owner, or a package that stopped carrying the keyword since
+ * it was read, from a real disagreement. A handful of names a run, so one
+ * at a time. Never throws: a failure is a `failed` read, which leaves the
+ * name unverified.
+ */
+export async function confirmCarriers(names: readonly string[], options: ConfirmCarriersOptions): Promise<Map<string, FeedRead>> {
+  const { harvestKeywords, fetchImpl = fetch, sleep = defaultSleep, token, timeoutMs = FEED_REQUEST_TIMEOUT_MS } = options
+  const timed = withTimeout(fetchImpl, timeoutMs, 'npm change feed')
+  const reads = new Map<string, FeedRead>()
+  for (const name of names) reads.set(name, await readPackument(name, timed, sleep, token, harvestKeywords))
+  return reads
+}
+
+/**
+ * Read the feed forward from `prior.seq` and the packuments it selects, and
  * return the next state (spec section 4.4). Never throws for a feed
  * problem: an unreadable head or first page, or a cursor past the head,
  * makes the feed unavailable and returns `prior` unchanged; a later page
@@ -256,7 +289,7 @@ export async function harvestFeed(prior: FeedState, options: HarvestFeedOptions)
       if (name === undefined) return
       reads[index] = now() - started >= readBudgetMs
         ? { kind: 'unreached', name }
-        : await readLatest(name, timed, sleep, token, harvestKeywords)
+        : await readPackument(name, timed, sleep, token, harvestKeywords)
     }
   }
   await Promise.all(Array.from({ length: Math.min(FEED_READ_CONCURRENCY, selection.read.length) }, worker))

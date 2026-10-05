@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
-  applyFeedReads, bootstrapFeedState, carrierCounts, classifyManifest, describeFeedCoverage, describeFeedRun,
+  applyConfirmations, applyFeedReads, bootstrapFeedState, carrierCounts, classifyManifest, classifyPackument, describeFeedCoverage, describeFeedRun,
   FEED_BOOTSTRAP_SEQ, FEED_NAME_PATTERN, FEED_PACKAGE_NAME_MAX_LENGTH, feedCarriersByKeyword, isDeprecated,
   isFeedPackageName, parseFeedCoverage, parseFeedPage, parseFeedRunReport, parseFeedState, planFeedVerification,
   selectFeedIds, serializeFeedState, type FeedCoverage, type FeedRow, type FeedRunReport, type FeedState,
@@ -80,6 +80,46 @@ describe('classifyManifest', () => {
   it('stores a null owner when no maintainer name passes the username grammar', () => {
     const read = classifyManifest('dsh-x', manifest({ maintainers: [{ name: 'Bob Smith' }, 'alice', null] }), KEYWORDS)
     expect(read).toMatchObject({ kind: 'carrier', carrier: { owner: null } })
+  })
+})
+
+describe('classifyPackument', () => {
+  const packument = (overrides: Record<string, unknown> = {}, latest: Record<string, unknown> = {}): Record<string, unknown> => ({
+    name: 'dsh-x',
+    'dist-tags': { latest: '2.0.0' },
+    versions: {
+      '1.0.0': { name: 'dsh-x', version: '1.0.0', keywords: ['dsh-plugin'], maintainers: [{ name: 'substack' }] },
+      '2.0.0': { name: 'dsh-x', version: '2.0.0', keywords: ['dsh-plugin'], maintainers: [{ name: 'substack' }], ...latest },
+    },
+    maintainers: [{ name: 'chevex' }, { name: 'bcoe' }],
+    ...overrides,
+  })
+
+  it('takes the owner from the CURRENT maintainers, not the ones the version recorded when it was published', () => {
+    // `optimist`'s latest version names substack; its owners today are bcoe
+    // and chevex -- 9 of 50 long-lived packages differ (PR #74 review).
+    expect(classifyPackument('dsh-x', packument(), KEYWORDS)).toEqual({
+      kind: 'carrier', name: 'dsh-x', carrier: { owner: 'bcoe', keywords: ['dsh-plugin'] },
+    })
+  })
+
+  it('reads keywords and deprecation off the latest version alone', () => {
+    expect(classifyPackument('dsh-x', packument({}, { keywords: ['tool'] }), KEYWORDS)).toEqual({ kind: 'not-carrier', name: 'dsh-x' })
+    expect(classifyPackument('dsh-x', packument({}, { deprecated: 'Use dsh-y.' }), KEYWORDS)).toEqual({ kind: 'not-carrier', name: 'dsh-x' })
+  })
+
+  it.each([
+    ['no latest dist-tag', { 'dist-tags': {} }],
+    ['a latest tag naming no version', { 'dist-tags': { latest: '9.9.9' } }],
+    ['a latest tag naming an inherited key', { 'dist-tags': { latest: '__proto__' } }],
+    ['versions that are not an object', { versions: [] }],
+    ['the packument of another package', { name: 'dsh-y' }],
+  ])('reports %s as failed, never as a non-carrier', (_what, overrides) => {
+    expect(classifyPackument('dsh-x', packument(overrides), KEYWORDS)).toMatchObject({ kind: 'failed', name: 'dsh-x' })
+  })
+
+  it.each([[null], ['text'], [['dsh-x']]])('reports a body that is not a packument (%j) as failed', (body) => {
+    expect(classifyPackument('dsh-x', body, KEYWORDS)).toMatchObject({ kind: 'failed', name: 'dsh-x' })
   })
 })
 
@@ -367,6 +407,25 @@ describe('applyFeedReads', () => {
   })
 })
 
+describe('applyConfirmations', () => {
+  it('stores what a confirmation learned, and nothing from one that could not be read', () => {
+    const held = { owner: 'alice', keywords: ['dsh-plugin'] }
+    const prior: FeedState = { seq: 10, carriers: new Map([['dsh-a', held], ['dsh-b', held], ['dsh-c', held]]), pending: [] }
+    const next = applyConfirmations(prior, [
+      { kind: 'carrier', name: 'dsh-a', carrier: { owner: 'bob', keywords: ['dsh-plugin'] } },
+      { kind: 'not-carrier', name: 'dsh-b' },
+      { kind: 'failed', name: 'dsh-c', reason: 'the registry answered 503' },
+    ])
+    expect(next.seq).toBe(10)
+    expect(next.carriers.get('dsh-a')).toEqual({ owner: 'bob', keywords: ['dsh-plugin'] })
+    expect(next.carriers.has('dsh-b')).toBe(false)
+    // A confirmation is a second opinion: one that failed leaves the first
+    // standing, and does not make the name pending.
+    expect(next.carriers.get('dsh-c')).toEqual(held)
+    expect(next.pending).toEqual([])
+  })
+})
+
 describe('feedCarriersByKeyword and carrierCounts', () => {
   const state: FeedState = {
     seq: 1,
@@ -438,7 +497,7 @@ const unavailableReport: FeedRunReport = {
 }
 const coverage: FeedCoverage = {
   keyword: 'deepseek-harness', feedOnly: 16, supplied: 17, ownersVerified: 12, ownersTotal: 12,
-  verified: 16, unverified: 0, disagreed: [],
+  verified: 16, unverified: 0, withdrawn: 0, disagreed: [],
 }
 
 describe('describeFeedRun', () => {
@@ -467,6 +526,11 @@ describe('describeFeedRun', () => {
 describe('describeFeedCoverage', () => {
   it('states what the feed supplied and how much of it was verified', () => {
     expect(describeFeedCoverage(coverage)).toBe('keywords:deepseek-harness feed supplied 17 (owners verified 12 of 12)')
+  })
+
+  it('counts withdrawn names', () => {
+    expect(describeFeedCoverage({ ...coverage, verified: 14, withdrawn: 2 }))
+      .toBe('keywords:deepseek-harness feed supplied 17 (owners verified 12 of 12; 2 withdrawn)')
   })
 
   it('names unverified and disagreeing names, escaped', () => {
@@ -500,11 +564,14 @@ describe('parseFeedRunReport', () => {
 describe('parseFeedCoverage', () => {
   it('round-trips a record', () => {
     expect(parseFeedCoverage(JSON.parse(JSON.stringify(coverage)), 'harvest.json', KEYWORDS)).toEqual(coverage)
+    const withWithdrawn = { ...coverage, verified: 14, withdrawn: 2 }
+    expect(parseFeedCoverage(JSON.parse(JSON.stringify(withWithdrawn)), 'harvest.json', KEYWORDS)).toEqual(withWithdrawn)
   })
 
   it.each([
     ['a keyword that is not a harvest keyword', { keyword: 'dsh' }],
     ['parts that do not add up', { verified: 15 }],
+    ['a withdrawn count that breaks the sum', { withdrawn: 1 }],
     ['more owners verified than held', { ownersVerified: 13 }],
     ['less supplied than credited', { supplied: 15 }],
     ['a disagreed name outside the rule', { disagreed: ['DSH-X'], verified: 15 }],

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { FeedState } from '../src/feed-state.ts'
-import { FEED_FETCH_ATTEMPTS, FEED_MANIFEST_MAX_BYTES, FEED_MAX_SELECTED, FEED_PAGE_LIMIT, harvestFeed } from '../src/npm-feed.ts'
+import { confirmCarriers, FEED_FETCH_ATTEMPTS, FEED_MAX_SELECTED, FEED_PACKUMENT_MAX_BYTES, FEED_PAGE_LIMIT, harvestFeed } from '../src/npm-feed.ts'
 
 const KEYWORDS: readonly string[] = ['dsh-plugin', 'deepseek-harness']
 const instant = async (_ms: number): Promise<void> => {}
@@ -25,15 +25,24 @@ function route(handlers: readonly Handler[]): { fetchImpl: typeof fetch; calls: 
 const isHead = (url: string): boolean => url === 'https://replicate.npmjs.com/registry/'
 const isPage = (since: number) => (url: string): boolean =>
   url === `https://replicate.npmjs.com/registry/_changes?since=${since}&limit=${FEED_PAGE_LIMIT}`
-const isLatest = (name: string) => (url: string): boolean =>
-  url === `https://registry.npmjs.org/${encodeURIComponent(name)}/latest`
+/** Where a run reads a selected id: its FULL packument, which carries today's
+ * owners (`/latest` carries the publish's) and which a CI runner fetched ~75x
+ * faster than `/latest` on the PR #74 dry run. */
+const isPackument = (name: string) => (url: string): boolean =>
+  url === `https://registry.npmjs.org/${encodeURIComponent(name)}`
 const page = (rows: readonly { seq: number; id: string; deleted?: boolean }[], lastSeq: number): Response =>
   json({
     results: rows.map(r => ({ seq: r.seq, id: r.id, changes: [{ rev: '1-a' }], ...(r.deleted === true ? { deleted: true } : {}) })),
     last_seq: lastSeq,
   })
-const manifest = (name: string, keywords: readonly string[] = ['dsh-plugin']): Response =>
-  json({ name, version: '1.0.0', keywords, maintainers: [{ name: 'alice' }] })
+/** A full packument whose latest version lists `keywords`, owned by alice. */
+const packumentOf = (name: string, keywords: readonly string[] = ['dsh-plugin'], latest: Record<string, unknown> = {}): Response =>
+  json({
+    name,
+    'dist-tags': { latest: '1.0.0' },
+    versions: { '1.0.0': { name, version: '1.0.0', keywords, maintainers: [{ name: 'alice' }], ...latest } },
+    maintainers: [{ name: 'alice' }],
+  })
 const at = (seq: number, carriers: Record<string, string[]> = {}, pending: string[] = []): FeedState => ({
   seq,
   carriers: new Map(Object.entries(carriers).map(([name, keywords]) => [name, { owner: 'alice', keywords }])),
@@ -46,19 +55,19 @@ const fullPage = (from: number, idAt: (i: number) => string = i => `pkg-${i}`) =
 const routeByUrl = (answer: (url: string) => Response): typeof fetch =>
   (async (input: string | URL) => answer(String(input))) as unknown as typeof fetch
 const REGISTRY_PREFIX = 'https://registry.npmjs.org/'
-const latestName = (url: string): string => decodeURIComponent(url.slice(REGISTRY_PREFIX.length, -'/latest'.length))
+const packumentName = (url: string): string => decodeURIComponent(url.slice(REGISTRY_PREFIX.length))
 
 describe('harvestFeed', () => {
   it('reads forward from the cursor to a short page, then reads the manifests it selected', async () => {
     const { fetchImpl, calls } = route([
       [isHead, () => json({ db_name: 'registry', update_seq: 300 })],
       [isPage(100), () => page([{ seq: 150, id: 'dsh-a' }, { seq: 160, id: 'react' }], 160)],
-      [isLatest('dsh-a'), () => manifest('dsh-a')],
+      [isPackument('dsh-a'), () => packumentOf('dsh-a')],
     ])
     const { next, report } = await harvestFeed(at(100), { harvestKeywords: KEYWORDS, fetchImpl, sleep: instant })
     expect(next.seq).toBe(160)
     expect(next.carriers.get('dsh-a')).toEqual({ owner: 'alice', keywords: ['dsh-plugin'] })
-    expect(calls.some(c => c.url.includes('/react/latest'))).toBe(false)
+    expect(calls.some(c => c.url === 'https://registry.npmjs.org/react')).toBe(false)
     expect(report).toEqual({
       available: true, note: '', fromSeq: 100, toSeq: 160, pages: 1, selected: 1, read: 1, failed: 0,
       unreached: 0, refused: 0, pending: 0, carriers: { 'dsh-plugin': 1, 'deepseek-harness': 0 },
@@ -70,7 +79,7 @@ describe('harvestFeed', () => {
       [isHead, () => json({ update_seq: 99_999 })],
       [isPage(100), () => page(fullPage(100), 100 + FEED_PAGE_LIMIT)],
       [isPage(100 + FEED_PAGE_LIMIT), () => page([{ seq: 100 + FEED_PAGE_LIMIT + 1, id: 'dsh-last' }], 100 + FEED_PAGE_LIMIT + 1)],
-      [isLatest('dsh-last'), () => manifest('dsh-last')],
+      [isPackument('dsh-last'), () => packumentOf('dsh-last')],
     ])
     const { next, report } = await harvestFeed(at(100), { harvestKeywords: KEYWORDS, fetchImpl, sleep: instant })
     expect(report.pages).toBe(2)
@@ -82,7 +91,7 @@ describe('harvestFeed', () => {
     const { fetchImpl } = route([
       [isHead, () => json({ update_seq: 99_999 })],
       [isPage(100), () => page(fullPage(100, i => (i === 0 ? 'dsh-first' : `pkg-${i}`)), 100 + FEED_PAGE_LIMIT)],
-      [isLatest('dsh-first'), () => manifest('dsh-first')],
+      [isPackument('dsh-first'), () => packumentOf('dsh-first')],
     ])
     const { next, report } = await harvestFeed(at(100), { harvestKeywords: KEYWORDS, fetchImpl, sleep: instant, pageBudget: 1 })
     expect(report.note).toBe('stopped at the 1-page budget')
@@ -111,7 +120,7 @@ describe('harvestFeed', () => {
         return json({ update_seq: 300 })
       }],
       [isPage(100), () => page([{ seq: 101, id: 'dsh-a' }], 101)],
-      [isLatest('dsh-a'), () => manifest('dsh-a')],
+      [isPackument('dsh-a'), () => packumentOf('dsh-a')],
     ])
     const { next, report } = await harvestFeed(at(100), { harvestKeywords: KEYWORDS, fetchImpl, sleep: instant })
     expect(heads).toBe(2)
@@ -128,7 +137,7 @@ describe('harvestFeed', () => {
         if (asked === 1) throw new TypeError('fetch failed')
         return page([{ seq: 101, id: 'dsh-a' }], 101)
       }],
-      [isLatest('dsh-a'), () => manifest('dsh-a')],
+      [isPackument('dsh-a'), () => packumentOf('dsh-a')],
     ])
     const { report } = await harvestFeed(at(100), { harvestKeywords: KEYWORDS, fetchImpl, sleep: instant })
     expect(asked).toBe(2)
@@ -143,7 +152,7 @@ describe('harvestFeed', () => {
         asked += 1
         return asked === 1 ? new Response('<!doctype html>', { status: 200 }) : page([{ seq: 101, id: 'dsh-a' }], 101)
       }],
-      [isLatest('dsh-a'), () => manifest('dsh-a')],
+      [isPackument('dsh-a'), () => packumentOf('dsh-a')],
     ])
     const { report } = await harvestFeed(at(100), { harvestKeywords: KEYWORDS, fetchImpl, sleep: instant })
     expect(asked).toBe(2)
@@ -195,7 +204,7 @@ describe('harvestFeed', () => {
       [isHead, () => json({ update_seq: 99_999 })],
       [isPage(100), () => page(fullPage(100, i => (i === 5 ? 'dsh-early' : `pkg-${i}`)), 100 + FEED_PAGE_LIMIT)],
       [isPage(100 + FEED_PAGE_LIMIT), () => json({}, 500)],
-      [isLatest('dsh-early'), () => manifest('dsh-early')],
+      [isPackument('dsh-early'), () => packumentOf('dsh-early')],
     ])
     const { next, report } = await harvestFeed(at(100), { harvestKeywords: KEYWORDS, fetchImpl, sleep: instant })
     expect(report.available).toBe(true)
@@ -208,23 +217,22 @@ describe('harvestFeed', () => {
     const { fetchImpl, calls } = route([
       [isHead, () => json({ update_seq: 300 })],
       [isPage(100), () => page([{ seq: 101, id: '@scope/dsh-x' }], 101)],
-      [isLatest('@scope/dsh-x'), () => manifest('@scope/dsh-x')],
+      [isPackument('@scope/dsh-x'), () => packumentOf('@scope/dsh-x')],
     ])
     const { next } = await harvestFeed(at(100), { harvestKeywords: KEYWORDS, fetchImpl, sleep: instant })
-    expect(calls.map(c => c.url)).toContain('https://registry.npmjs.org/%40scope%2Fdsh-x/latest')
+    expect(calls.map(c => c.url)).toContain('https://registry.npmjs.org/%40scope%2Fdsh-x')
     expect(next.carriers.has('@scope/dsh-x')).toBe(true)
   })
 
   it.each([
-    // Only an answer ABOUT THE PACKAGE drops it: a 404, or a manifest that
+    // Only an answer ABOUT THE PACKAGE drops it: a 404, or a packument that
     // was read and is not a carrier. Everything else is a statement about the
     // request -- CLAUDE.md: `no-manifest` means the manifest was read, or a
     // 404 answered for it, never that a request failed -- so the carrier
     // keeps its status, is read again next run, and is counted as failed.
     ['a 404 removes a held carrier', () => json('Not Found', 404), false, false],
-    ['a manifest without the keyword removes it', () => manifest('dsh-held', ['tool']), false, false],
-    ['a deprecated manifest removes it',
-      () => json({ name: 'dsh-held', keywords: ['dsh-plugin'], deprecated: 'Use dsh-y.', maintainers: [{ name: 'alice' }] }), false, false],
+    ['a packument whose latest version lacks the keyword removes it', () => packumentOf('dsh-held', ['tool']), false, false],
+    ['a deprecated latest version removes it', () => packumentOf('dsh-held', ['dsh-plugin'], { deprecated: 'Use dsh-y.' }), false, false],
     ['a 403 keeps it, pending: a blocking edge says nothing about the package', () => json({}, 403), true, true],
     ['a 200 that is not JSON keeps it, pending: an edge answering in npm\'s place',
       () => new Response('<!doctype html>', { status: 200 }), true, true],
@@ -233,15 +241,15 @@ describe('harvestFeed', () => {
     // would let any author keep a name pending, and the cursor waiting on
     // it, forever (2026-10-05 security review).
     ['a body over the cap removes it: its size is the author\'s own content',
-      () => new Response('{}', { status: 200, headers: { 'content-length': String(FEED_MANIFEST_MAX_BYTES + 1) } }), false, false],
+      () => new Response('{}', { status: 200, headers: { 'content-length': String(FEED_PACKUMENT_MAX_BYTES + 1) } }), false, false],
     ['a 200 whose JSON is null keeps it, pending', () => json(null), true, true],
     ['a 503 after retries keeps it, pending', () => json({}, 503), true, true],
-    ['the manifest of another package keeps it, pending', () => manifest('dsh-other'), true, true],
+    ['the packument of another package keeps it, pending', () => packumentOf('dsh-other'), true, true],
   ] as const)('%s', async (_what, respond, held, pending) => {
     const { fetchImpl } = route([
       [isHead, () => json({ update_seq: 300 })],
       [isPage(100), () => page([{ seq: 101, id: 'dsh-held' }], 101)],
-      [isLatest('dsh-held'), respond],
+      [isPackument('dsh-held'), respond],
     ])
     const { next, report } = await harvestFeed(at(100, { 'dsh-held': ['dsh-plugin'] }), { harvestKeywords: KEYWORDS, fetchImpl, sleep: instant })
     expect(next.carriers.has('dsh-held')).toBe(held)
@@ -256,7 +264,7 @@ describe('harvestFeed', () => {
     ])
     const { next } = await harvestFeed(at(100, { 'dsh-held': ['dsh-plugin'] }), { harvestKeywords: KEYWORDS, fetchImpl, sleep: instant })
     expect(next.carriers.has('dsh-held')).toBe(false)
-    expect(calls.some(c => c.url.endsWith('/latest'))).toBe(false)
+    expect(calls.some(c => c.url.startsWith(REGISTRY_PREFIX))).toBe(false)
   })
 
   it('leaves what it could not start within the read budget pending, and still advances the cursor', async () => {
@@ -284,7 +292,7 @@ describe('harvestFeed', () => {
         fetchImpl: routeByUrl(url => {
           if (isHead(url)) return json({ update_seq: head })
           if (url.includes('/_changes?')) return page([], 100)
-          asked.add(latestName(url))
+          asked.add(packumentName(url))
           return json({}, 403)
         }),
       })
@@ -303,7 +311,7 @@ describe('harvestFeed', () => {
         if (isHead(url)) return json({ update_seq: 99_999 })
         if (isPage(100)(url)) return page(fullPage(100, i => (i < 3 ? `dsh-a${i}` : `pkg-${i}`)), second)
         if (isPage(second)(url)) return page(fullPage(second, i => (i < 3 ? `dsh-b${i}` : `pkg-${i}`)), second + FEED_PAGE_LIMIT)
-        return manifest(latestName(url))
+        return packumentOf(packumentName(url))
       }),
     })
     // The first page's 3 ids fit under 4; the second page's 3 more would not.
@@ -326,7 +334,7 @@ describe('harvestFeed', () => {
         if (isHead(url)) return json({ update_seq: 99_999 })
         if (isPage(100)(url)) return page(fullPage(100, i => (i === 0 ? 'dsh-new0' : `pkg-${i}`)), second)
         if (isPage(second)(url)) return page([{ seq: second + 1, id: 'dsh-new1' }], second + 1)
-        return manifest(latestName(url))
+        return packumentOf(packumentName(url))
       }),
     })
     expect(report).toMatchObject({ pages: 1, selected: 4, toSeq: second })
@@ -343,8 +351,8 @@ describe('harvestFeed', () => {
       fetchImpl: routeByUrl(url => {
         if (isHead(url)) return json({ update_seq: 300 })
         if (isPage(100)(url)) return page([{ seq: 101, id: 'dsh-new0' }], 101)
-        const name = latestName(url)
-        return name === 'dsh-new0' ? manifest(name) : json({}, 503)
+        const name = packumentName(url)
+        return name === 'dsh-new0' ? packumentOf(name) : json({}, 503)
       }),
     })
     expect(report).toMatchObject({ pages: 1, toSeq: 101, selected: 6, failed: 5 })
@@ -361,12 +369,49 @@ describe('harvestFeed', () => {
     const { fetchImpl, calls } = route([
       [isHead, () => json({ update_seq: 300 })],
       [isPage(100), () => page([{ seq: 101, id: 'dsh-a' }], 101)],
-      [isLatest('dsh-a'), () => manifest('dsh-a')],
+      [isPackument('dsh-a'), () => packumentOf('dsh-a')],
     ])
     await harvestFeed(at(100), { harvestKeywords: KEYWORDS, fetchImpl, sleep: instant, token: 'secret' })
     expect(calls.length).toBe(3)
     for (const call of calls) {
       expect(call.auth).toBe(call.url.startsWith('https://registry.npmjs.org/') ? 'Bearer secret' : null)
     }
+  })
+})
+
+describe('confirmCarriers', () => {
+  /** A full packument whose latest version recorded `former` at publish, and
+   * whose owners today are `owners`. */
+  const full = (name: string, owners: readonly string[], latest: Record<string, unknown> = {}): Response => json({
+    name,
+    'dist-tags': { latest: '1.0.0' },
+    versions: { '1.0.0': { name, version: '1.0.0', keywords: ['dsh-plugin'], maintainers: [{ name: 'former' }], ...latest } },
+    maintainers: owners.map(owner => ({ name: owner })),
+  })
+
+  it('reads each full packument, with the token, and reports the current owner', async () => {
+    const { fetchImpl, calls } = route([[isPackument('@scope/dsh-x'), () => full('@scope/dsh-x', ['bob'])]])
+    const reads = await confirmCarriers(['@scope/dsh-x'], { harvestKeywords: KEYWORDS, fetchImpl, sleep: instant, token: 'secret' })
+    expect(reads.get('@scope/dsh-x')).toEqual({ kind: 'carrier', name: '@scope/dsh-x', carrier: { owner: 'bob', keywords: ['dsh-plugin'] } })
+    expect(calls).toEqual([{ url: 'https://registry.npmjs.org/%40scope%2Fdsh-x', auth: 'Bearer secret' }])
+  })
+
+  it.each([
+    ['a 404 is gone', () => json('Not Found', 404), 'gone'],
+    ['a deprecated latest version is not a carrier', () => full('dsh-x', ['bob'], { deprecated: 'Use dsh-y.' }), 'not-carrier'],
+    ['a 503 after retries is failed', () => json({}, 503), 'failed'],
+    ['a body that is not JSON is failed', () => new Response('<!doctype html>', { status: 200 }), 'failed'],
+  ] as const)('%s', async (_what, respond, kind) => {
+    const { fetchImpl } = route([[isPackument('dsh-x'), respond]])
+    const reads = await confirmCarriers(['dsh-x'], { harvestKeywords: KEYWORDS, fetchImpl, sleep: instant })
+    expect(reads.get('dsh-x')?.kind).toBe(kind)
+  })
+
+  it('reports a thrown request as failed rather than throwing', async () => {
+    const { fetchImpl } = route([[isPackument('dsh-x'), () => {
+      throw new TypeError('fetch failed')
+    }]])
+    const reads = await confirmCarriers(['dsh-x'], { harvestKeywords: KEYWORDS, fetchImpl, sleep: instant })
+    expect(reads.get('dsh-x')).toMatchObject({ kind: 'failed' })
   })
 })

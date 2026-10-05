@@ -7,7 +7,7 @@ import { type Cell, cellKey, cellQuery, COMPATIBILITY_PROFILES_MAX_COUNT, COMPAT
 import { ENTRY_PAYLOAD_MAX_BYTES, entryPayloadBytes } from '../src/gate.ts'
 import { MAX_TARBALL_BYTES } from '../src/github-client.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
-import { FEED_MAX_DISAGREEMENTS, type FeedCoverage, type FeedInput } from '../src/feed-state.ts'
+import { FEED_MAX_DISAGREEMENTS, type FeedCoverage, type FeedInput, type FeedRead } from '../src/feed-state.ts'
 
 describe('HARVEST_KEYWORDS', () => {
   it('leads with the ecosystem keyword and adds the harness keyword, neither branded', () => {
@@ -3517,7 +3517,7 @@ describe('searchByKeywords', () => {
       expect(names).toContain(missing[0])
       expect(forHarness(coverage)).toEqual({
         keyword: 'deepseek-harness', feedOnly: overCap, supplied: overCap,
-        ownersVerified: 1, ownersTotal: 1, verified: overCap, unverified: 0, disagreed: [],
+        ownersVerified: 1, ownersTotal: 1, verified: overCap, unverified: 0, withdrawn: 0, disagreed: [],
       })
     })
 
@@ -3595,6 +3595,79 @@ describe('searchByKeywords', () => {
       const names = await run(feedFixture(5407, 150, ['beyond150', 'beyond151']).fetchImpl, feedOf(['beyond150'], 'alice', coverage))
       expect(names).toContain('beyond151')
       expect(forHarness(coverage)).toMatchObject({ feedOnly: 1, supplied: 2, verified: 1 })
+    })
+
+    describe('a twice-omitted name is confirmed against its current packument', () => {
+      // `/latest` carries the maintainers recorded when the version was
+      // published, not today's owners -- 9 of 50 long-lived packages differ,
+      // `optimist` among them -- so a stored owner can be a former maintainer
+      // whose cell rightly omits the package (PR #74 review). What the full
+      // packument says decides whether a twice-omitted name disagrees.
+      /** The over-cap shape, with two owner cells: alice's and bob's. */
+      const twoOwners = (aliceServes: readonly string[], bobServes: readonly string[]) => {
+        const beyond = Array.from({ length: tail }, (_, i) => `beyond${i}`)
+        const window = Array.from({ length: SEARCH_WINDOW }, (_, i) => `w${i}`)
+        const served: Record<string, readonly string[]> = {
+          'keywords:deepseek-harness,dsh': ['w0', ...beyond.slice(0, recovered)],
+          'keywords:deepseek-harness maintainer:alice': aliceServes,
+          'keywords:deepseek-harness maintainer:bob': bobServes,
+        }
+        return stubSearch(
+          query => (query === 'keywords:deepseek-harness' ? total : served[query]?.length ?? 0),
+          (query, from) => query === 'keywords:deepseek-harness'
+            ? (from > MAX_SEARCH_FROM ? [] : window.slice(from, from + 250))
+            : (served[query] ?? []).slice(from, from + 250),
+        ).fetchImpl
+      }
+      const confirmWith = (answer: (name: string) => FeedRead) => {
+        const calls: string[][] = []
+        const confirm = async (names: readonly string[]) => {
+          calls.push([...names])
+          return new Map(names.map(name => [name, answer(name)] as const))
+        }
+        return { confirm, calls }
+      }
+      const carrierOf = (owner: string | null, keywords: readonly string[] = ['deepseek-harness']) =>
+        (name: string): FeedRead => ({ kind: 'carrier', name, carrier: { owner, keywords } })
+
+      it('re-verifies with a current owner when the stored one is a former maintainer', async () => {
+        const { confirm, calls } = confirmWith(carrierOf('bob'))
+        const coverage: FeedCoverage[] = []
+        const names = await run(twoOwners([], missing), { ...feedOf(missing, 'alice', coverage), confirm })
+        expect(calls).toEqual([missing])
+        expect(names).toHaveLength(total)
+        expect(forHarness(coverage)).toMatchObject({ ownersVerified: 1, verified: overCap, unverified: 0, withdrawn: 0, disagreed: [] })
+      })
+
+      it.each([
+        ['is no longer a carrier at all', (name: string): FeedRead => ({ kind: 'not-carrier', name })],
+        ['is gone', (name: string): FeedRead => ({ kind: 'gone', name })],
+        ['no longer carries this keyword', carrierOf('alice', ['dsh-plugin'])],
+      ])('withdraws a name whose current packument %s, neither crediting nor counting it', async (_what, answer) => {
+        const moved = missing.slice(0, FEED_MAX_DISAGREEMENTS + 1)
+        const { confirm } = confirmWith(answer)
+        const coverage: FeedCoverage[] = []
+        const names = await run(twoOwners(missing.slice(moved.length), []), { ...feedOf(missing, 'alice', coverage), confirm })
+        for (const name of moved) expect(names).not.toContain(name)
+        expect(forHarness(coverage)).toMatchObject({ verified: overCap - moved.length, withdrawn: moved.length, disagreed: [] })
+      })
+
+      it('still counts a disagreement when the current packument confirms both the owner and the keyword', async () => {
+        const phantoms = missing.slice(0, FEED_MAX_DISAGREEMENTS + 1)
+        const { confirm, calls } = confirmWith(carrierOf('alice'))
+        await expect(run(twoOwners(missing.slice(phantoms.length), []), { ...feedOf(missing, 'alice'), confirm }))
+          .rejects.toThrow(/membership rule no longer describes npm search/)
+        expect(calls).toEqual([phantoms])
+      })
+
+      it('leaves a name unverified when its packument cannot be read', async () => {
+        const unread = missing.slice(0, FEED_MAX_DISAGREEMENTS + 1)
+        const { confirm } = confirmWith(name => ({ kind: 'failed', name, reason: 'the registry answered 503' }))
+        const coverage: FeedCoverage[] = []
+        const names = await run(twoOwners(missing.slice(unread.length), []), { ...feedOf(missing, 'alice', coverage), confirm })
+        expect(names).toHaveLength(total)
+        expect(forHarness(coverage)).toMatchObject({ ownersVerified: 0, verified: overCap - unread.length, unverified: unread.length, disagreed: [] })
+      })
     })
 
     it('confirms a disagreement by paging the owner once more, so one empty answer disagrees with nothing', async () => {

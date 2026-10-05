@@ -115,7 +115,7 @@ export interface FeedState {
   readonly pending: readonly string[]
 }
 
-/** What reading one `/latest` manifest established. */
+/** What reading one package's packument established. */
 export type FeedRead =
   | { readonly kind: 'carrier'; readonly name: string; readonly carrier: FeedCarrier }
   // The package's manifest, read, and not a carrier: no harvest keyword,
@@ -134,10 +134,10 @@ export type FeedRead =
   | { readonly kind: 'unreached'; readonly name: string }
 
 /**
- * Apply the membership rule (spec section 4.3) to one parsed `/latest`
- * manifest. A package carries a harvest keyword when the manifest names
- * it, lists the keyword by exact code-unit equality -- as npm search and
- * `isAtRisk` compare -- and is not deprecated.
+ * Apply the membership rule (spec section 4.3) to one manifest -- the view
+ * `classifyPackument` builds from a packument. A package carries a harvest
+ * keyword when the manifest names it, lists the keyword by exact code-unit
+ * equality -- as npm search and `isAtRisk` compare -- and is not deprecated.
  */
 export function classifyManifest(name: string, manifest: unknown, harvestKeywords: readonly string[]): FeedRead {
   // npm serializes every manifest as an object carrying its name, so a body
@@ -161,6 +161,39 @@ export function classifyManifest(name: string, manifest: unknown, harvestKeyword
     .filter(isMaintainerName)
     .sort(compareStrings)
   return { kind: 'carrier', name, carrier: { owner: owners[0] ?? null, keywords } }
+}
+
+/**
+ * Apply the membership rule to a FULL packument: the latest version's
+ * keywords and deprecation, and the packument's top-level maintainers, which
+ * are today's owners. `/latest` carries the maintainers recorded when that
+ * version was published -- 9 of 50 long-lived packages differed on
+ * 2026-10-05, `optimist` among them -- so an owner read there can be a
+ * former one whose `maintainer:` cell rightly omits the package (PR #74
+ * review). A body that is not this package's packument is a failed read.
+ */
+export function classifyPackument(name: string, packument: unknown, harvestKeywords: readonly string[]): FeedRead {
+  const failed = (reason: string): FeedRead => ({ kind: 'failed', name, reason })
+  if (packument === null || typeof packument !== 'object' || Array.isArray(packument)) {
+    return failed('the registry answered a body that is not a packument')
+  }
+  const p = packument as { name?: unknown; 'dist-tags'?: unknown; versions?: unknown; maintainers?: unknown }
+  if (p.name !== name) return failed('the registry answered the packument of another package')
+  const tags = p['dist-tags']
+  const latest = tags !== null && typeof tags === 'object' ? (tags as { latest?: unknown }).latest : undefined
+  const versions = p.versions
+  // Object.hasOwn, so a `latest` of "__proto__" finds no version rather than
+  // the prototype.
+  if (typeof latest !== 'string' || versions === null || typeof versions !== 'object' || Array.isArray(versions)
+    || !Object.hasOwn(versions, latest)) {
+    return failed('the registry answered a packument with no latest version')
+  }
+  const version = (versions as Record<string, unknown>)[latest]
+  if (version === null || typeof version !== 'object' || Array.isArray(version)) {
+    return failed('the registry answered a packument with no latest version')
+  }
+  const v = version as { keywords?: unknown; deprecated?: unknown }
+  return classifyManifest(name, { name, keywords: v.keywords, deprecated: v.deprecated, maintainers: p.maintainers }, harvestKeywords)
 }
 
 /** The state a run starts from when `registry/feed-state.json` is absent. */
@@ -372,6 +405,16 @@ export function applyFeedReads(prior: FeedState, reads: readonly FeedRead[], nex
   return { seq: nextSeq, carriers, pending: [...pending].sort(compareStrings) }
 }
 
+/**
+ * Store what confirming twice-omitted names learned (spec section 4.5):
+ * today's owner, or that a name stopped being a carrier. A confirmation that
+ * could not be read is a second opinion that never arrived, so it changes
+ * nothing -- it does not even make the name pending -- and the cursor stays.
+ */
+export function applyConfirmations(state: FeedState, reads: readonly FeedRead[]): FeedState {
+  return applyFeedReads(state, reads.filter(read => read.kind !== 'failed' && read.kind !== 'unreached'), state.seq)
+}
+
 /** Carriers per harvest keyword, for the report. */
 export function carrierCounts(state: FeedState, harvestKeywords: readonly string[]): Record<string, number> {
   const counts: Record<string, number> = {}
@@ -469,7 +512,12 @@ export interface FeedCoverage {
   readonly ownersTotal: number
   readonly verified: number
   readonly unverified: number
-  /** Feed-only names their owner's cell did not serve: neither listed nor
+  /** Feed-only names two complete pagings omitted whose current packument
+   * shows they no longer carry this keyword -- deprecated, the keyword
+   * dropped, or gone: neither credited nor disagreeing. */
+  readonly withdrawn: number
+  /** Feed-only names two complete pagings of a current owner's cell omitted
+   * though the packument still lists the keyword: neither listed nor
    * credited. Sorted. */
   readonly disagreed: readonly string[]
 }
@@ -509,6 +557,12 @@ export interface FeedInput {
   /** Called once per harvest keyword with what the feed step did, BEFORE
    * any throw, so the line reaches the log on the run that needs it. */
   readonly onCoverage?: (coverage: FeedCoverage) => void
+  /**
+   * Re-reads names two complete pagings of their owner's cell omitted, from
+   * their CURRENT packument (spec section 4.5). Absent -- `NO_FEED`, and
+   * tests that do not exercise it -- such a name disagrees outright.
+   */
+  readonly confirm?: (names: readonly string[]) => Promise<ReadonlyMap<string, FeedRead>>
 }
 
 /** No feed: `searchByKeywords` behaves exactly as it did before the feed existed. */
@@ -532,6 +586,7 @@ export function describeFeedRun(report: FeedRunReport): string {
 export function describeFeedCoverage(coverage: FeedCoverage): string {
   const parts = [`owners verified ${coverage.ownersVerified} of ${coverage.ownersTotal}`]
   if (coverage.unverified > 0) parts.push(`${coverage.unverified} unverified`)
+  if (coverage.withdrawn > 0) parts.push(`${coverage.withdrawn} withdrawn`)
   if (coverage.disagreed.length > 0) {
     parts.push(`${coverage.disagreed.length} disagreed: ${coverage.disagreed.map(escapeCell).join(', ')}`)
   }
@@ -608,10 +663,10 @@ export function parseFeedCoverage(value: unknown, where: string, harvestKeywords
     keyword,
     feedOnly: count('feedOnly'), supplied: count('supplied'),
     ownersVerified: count('ownersVerified'), ownersTotal: count('ownersTotal'),
-    verified: count('verified'), unverified: count('unverified'),
+    verified: count('verified'), unverified: count('unverified'), withdrawn: count('withdrawn'),
     disagreed,
   }
-  if (coverage.verified + coverage.unverified + coverage.disagreed.length !== coverage.feedOnly) {
+  if (coverage.verified + coverage.unverified + coverage.withdrawn + coverage.disagreed.length !== coverage.feedOnly) {
     return fail('splits its feed-only names into parts that do not add up')
   }
   if (coverage.ownersVerified > coverage.ownersTotal) return fail('verified more owners than it holds')

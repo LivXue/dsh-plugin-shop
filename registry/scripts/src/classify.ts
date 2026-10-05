@@ -20,14 +20,14 @@ import { mergeCategoryRows, serializeCategoryRows } from './categories.ts'
 import { selectPending } from './classify-select.ts'
 import { loadRegistryConfig } from './config.ts'
 import { escapeCell } from './emit.ts'
-import { bootstrapFeedState, describeFeedCoverage, describeFeedRun, feedCarriersByKeyword, parseFeedState, serializeFeedState, type FeedCoverage, type FeedInput } from './feed-state.ts'
+import { applyConfirmations, bootstrapFeedState, describeFeedCoverage, describeFeedRun, feedCarriersByKeyword, parseFeedState, serializeFeedState, type FeedCoverage, type FeedInput, type FeedRead } from './feed-state.ts'
 import { compareStrings } from './identity.ts'
 import { classifyPackages } from './llm-client.ts'
 import { judgeMarkets, type MarketItem } from './market-judge.ts'
 import { selectMarketPending } from './market-select.ts'
 import { mergeMarketRows, serializeMarketRows } from './markets.ts'
 import { fetchCandidates, searchByKeywords, describePublisherAxis, describeShortfall, HARVEST_KEYWORDS, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall, type PublisherAxisReport } from './npm-client.ts'
-import { harvestFeed } from './npm-feed.ts'
+import { confirmCarriers, harvestFeed } from './npm-feed.ts'
 import { repoPeersEmitted, withholdRepoPeers } from './pipeline.ts'
 import { parsePublisherState } from './publisher-state.ts'
 import { parseRepoState } from './repo-state.ts'
@@ -138,12 +138,21 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
   const feedRun = await harvestFeed(priorFeed, { harvestKeywords: HARVEST_KEYWORDS, token: npmToken })
   process.stderr.write(`classify: ${describeFeedRun(feedRun.report)}\n`)
   const feedCoverage: FeedCoverage[] = []
+  const feedConfirmations: FeedRead[] = []
   const feedInput: FeedInput = {
     carriers: feedRun.report.available ? feedCarriersByKeyword(feedRun.next, HARVEST_KEYWORDS) : new Map(),
     seed: feedRun.next.seq,
     onCoverage: coverage => {
       feedCoverage.push(coverage)
       process.stderr.write(`classify: ${describeFeedCoverage(coverage)}\n`)
+    },
+    // A name two complete pagings of its owner's cell omitted is re-read from
+    // its current packument before it can disagree (spec section 4.5); what
+    // that learns is kept for the state below.
+    confirm: async names => {
+      const reads = await confirmCarriers(names, { harvestKeywords: HARVEST_KEYWORDS, token: npmToken })
+      for (const read of reads.values()) feedConfirmations.push(read)
+      return reads
     },
   }
   const names = await searchByKeywords(
@@ -164,6 +173,9 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
     report => { axis.push(report); process.stderr.write(`classify: ${describePublisherAxis(report)}\n`) },
     feedInput,
   )
+  // What the confirmations learned -- today's owner, or that a name stopped
+  // carrying its keyword -- is in the state the next run starts from.
+  const feedNext = applyConfirmations(feedRun.next, feedConfirmations)
   process.stderr.write(`classify: harvested ${names.length} candidate(s)\n`)
   const { candidates, rejections } = await fetchCandidates(names, fetch, npmToken, npmBackupRegistry)
 
@@ -260,7 +272,7 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
   // rule.
   const publishers = [...sawPublishers].sort(compareStrings)
   writeFileSync(join(DIST_DIR, 'harvest.json'),
-    `${JSON.stringify({ candidates, rejections, shortfalls, publishers, publisherAxis: axis, feed: { state: serializeFeedState(feedRun.next), report: feedRun.report, coverage: feedCoverage } })}\n`)
+    `${JSON.stringify({ candidates, rejections, shortfalls, publishers, publisherAxis: axis, feed: { state: serializeFeedState(feedNext), report: feedRun.report, coverage: feedCoverage } })}\n`)
   const sortedDiscards = [...discarded].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
   const reportLines = [
     '# Classification report',

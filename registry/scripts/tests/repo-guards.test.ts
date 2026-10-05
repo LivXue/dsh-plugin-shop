@@ -303,7 +303,7 @@ describe('what CI publishes to Pages', () => {
     // rides the handoff the published report cannot say this build is missing
     // packages. The write and the read have to move together.
     expect(read('registry/scripts/src/classify.ts'))
-      .toContain('JSON.stringify({ candidates, rejections, shortfalls, publishers, publisherAxis: axis, feed: { state: serializeFeedState(feedRun.next), report: feedRun.report, coverage: feedCoverage } })')
+      .toContain('JSON.stringify({ candidates, rejections, shortfalls, publishers, publisherAxis: axis, feed: { state: serializeFeedState(feedNext), report: feedRun.report, coverage: feedCoverage } })')
     // The change feed's next state rides the same handoff: build.ts is the
     // only writer of registry/feed-state.json, and CI never runs its search.
     expect(read('registry/scripts/src/build.ts')).toContain('parsed.feed')

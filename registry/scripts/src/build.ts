@@ -15,13 +15,13 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { loadRegistryConfig, serializeFirstSeen } from './config.ts'
-import { bootstrapFeedState, describeFeedCoverage, describeFeedRun, feedCarriersByKeyword, parseFeedCoverage, parseFeedRunReport, parseFeedState, serializeFeedState, type FeedInput, type FeedState } from './feed-state.ts'
+import { applyConfirmations, bootstrapFeedState, describeFeedCoverage, describeFeedRun, feedCarriersByKeyword, parseFeedCoverage, parseFeedRunReport, parseFeedState, serializeFeedState, type FeedInput, type FeedRead, type FeedState } from './feed-state.ts'
 import { fetchStarCounts } from './github-stars.ts'
 import { HARVEST_TOPICS, REPO_BACKFILL_BUDGET_DEFAULT, describeSearchPhantoms, harvestRepos, parseHarvestBudget } from './github-client.ts'
 import { parseRepoState, repoGoneDetail, serializeRepoState } from './repo-state.ts'
 import { githubOwnerName } from './github-repo.ts'
 import { fetchCandidates, searchByKeywords, describePublisherAxis, describeShortfall, HARVEST_KEYWORDS, parseKeywordShortfall, parsePublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall, type PublisherAxisReport } from './npm-client.ts'
-import { harvestFeed } from './npm-feed.ts'
+import { confirmCarriers, harvestFeed } from './npm-feed.ts'
 import { applyAxisReport, MAX_EVICTIONS_PER_RUN, MAX_PINNED_PER_KEYWORD, mergePublishers, parsePublisherState, retainPinned, serializePublisherState } from './publisher-state.ts'
 import { pagesArtifactNames } from './pages-artifacts.ts'
 import { describeRereadStopped, repoPeersEmitted, runPipeline, selectEntries, withholdRepoPeers } from './pipeline.ts'
@@ -140,10 +140,18 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     const feedRun = await harvestFeed(priorFeed, { harvestKeywords: HARVEST_KEYWORDS, token: npmToken })
     nextFeed = feedRun.next
     feedParts.push(describeFeedRun(feedRun.report))
+    const feedConfirmations: FeedRead[] = []
     const feedInput: FeedInput = {
       carriers: feedRun.report.available ? feedCarriersByKeyword(feedRun.next, HARVEST_KEYWORDS) : new Map(),
       seed: feedRun.next.seq,
       onCoverage: coverage => { feedParts.push(describeFeedCoverage(coverage)) },
+      // A name two complete pagings of its owner's cell omitted is re-read
+      // from its current packument before it can disagree (spec 4.5).
+      confirm: async names => {
+        const reads = await confirmCarriers(names, { harvestKeywords: HARVEST_KEYWORDS, token: npmToken })
+        for (const read of reads.values()) feedConfirmations.push(read)
+        return reads
+      },
     }
     const shortfalls: KeywordShortfall[] = []
     const names = await searchByKeywords(
@@ -155,6 +163,7 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
       report => axis.push(report),
       feedInput,
     )
+    nextFeed = applyConfirmations(feedRun.next, feedConfirmations)
     for (const s of shortfalls) {
       npmParts.push(describeShortfall(s))
       process.stderr.write(`npm: ${describeShortfall(s)}\n`)

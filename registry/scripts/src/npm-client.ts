@@ -2650,41 +2650,70 @@ export async function searchByKeywords(
       const before = forKeyword.size
       const verified: string[] = []
       const unverified: string[] = [...plan.unverified]
+      const withdrawn: string[] = []
       const disagreed: string[] = []
-      // Owners whose every feed-only name reached a verdict -- the figure the
-      // report prints as "owners verified". Not `plan.owners.length`: an
-      // owner whose cell failed was ASKED, not verified, and the report line
-      // is the only place a degraded verification shows.
-      let ownersVerified = 0
-      for (const owner of plan.owners) {
-        const names = plan.namesOf.get(owner) ?? []
+      /** Check `names` against `owner`'s cell: served, omitted by two complete
+       * pagings, or unknown because a paging failed or served short. */
+      const checkCell = async (owner: string, names: readonly string[]): Promise<{ served: string[]; omitted: string[]; unknown: string[] }> => {
         const first = await pageOwnerCell(owner)
-        if (!first.complete) {
-          unverified.push(...names)
-          continue
-        }
+        if (!first.complete) return { served: [], omitted: [], unknown: [...names] }
         const absent = names.filter(name => !first.served.has(name))
-        verified.push(...names.filter(name => first.served.has(name)))
-        if (absent.length === 0) {
-          ownersVerified += 1
-          continue
-        }
+        const served = names.filter(name => first.served.has(name))
+        if (absent.length === 0) return { served, omitted: [], unknown: [] }
         // A disagreement is CONFIRMED before it counts, for the reason the
         // publisher axis confirms a zero before it evicts: npm has answered
         // an empty result for a real cell, and acting on one sample would
         // turn a registry hiccup into a thrown build. One more request, and
         // only for an owner with a name its first paging did not serve.
         const second = await pageOwnerCell(owner)
-        if (!second.complete) {
-          unverified.push(...absent)
-          continue
-        }
-        ownersVerified += 1
-        for (const name of absent) {
-          if (second.served.has(name)) verified.push(name)
-          else disagreed.push(name)
+        if (!second.complete) return { served, omitted: [], unknown: absent }
+        return {
+          served: [...served, ...absent.filter(name => second.served.has(name))],
+          omitted: absent.filter(name => !second.served.has(name)),
+          unknown: [],
         }
       }
+      /** Each name two complete pagings omitted, with the owner it was checked against. */
+      const omittedBy = new Map<string, string>()
+      for (const owner of plan.owners) {
+        const result = await checkCell(owner, plan.namesOf.get(owner) ?? [])
+        verified.push(...result.served)
+        unverified.push(...result.unknown)
+        for (const name of result.omitted) omittedBy.set(name, owner)
+      }
+      // Then the CURRENT packument decides (PR #74 review). The owner a run
+      // stored can be a former maintainer -- the state may predate an owner
+      // change -- and the package may have stopped carrying the keyword since
+      // it was read; neither is the membership rule failing. Without a
+      // `confirm`, such a name disagrees outright.
+      const confirm = feed.confirm
+      if (omittedBy.size > 0 && confirm === undefined) {
+        disagreed.push(...omittedBy.keys())
+      } else if (omittedBy.size > 0 && confirm !== undefined) {
+        const omitted = [...omittedBy.keys()].sort(compareStrings)
+        const current = await confirm(omitted)
+        const recheck = new Map<string, string[]>()
+        for (const name of omitted) {
+          const read = current.get(name)
+          if (read === undefined || read.kind === 'failed' || read.kind === 'unreached') unverified.push(name)
+          else if (read.kind !== 'carrier' || !read.carrier.keywords.includes(keyword)) withdrawn.push(name)
+          else if (read.carrier.owner === null) unverified.push(name)
+          else if (read.carrier.owner === omittedBy.get(name)) disagreed.push(name)
+          else recheck.set(read.carrier.owner, [...(recheck.get(read.carrier.owner) ?? []), name])
+        }
+        for (const [owner, names] of [...recheck].sort(([x], [y]) => compareStrings(x, y))) {
+          const result = await checkCell(owner, names)
+          verified.push(...result.served)
+          unverified.push(...result.unknown)
+          disagreed.push(...result.omitted)
+        }
+      }
+      // Owners whose every feed-only name reached a verdict -- the figure the
+      // report prints as "owners verified". Not `plan.owners.length`: an
+      // owner whose cell failed was ASKED, not verified, and the report line
+      // is the only place a degraded verification shows.
+      const undecided = new Set(unverified)
+      const ownersVerified = plan.owners.filter(owner => (plan.namesOf.get(owner) ?? []).every(name => !undecided.has(name))).length
       feedCredited = [...verified, ...unverified].sort(compareStrings)
       for (const name of feedCredited) {
         forKeyword.add(name)
@@ -2698,11 +2727,12 @@ export async function searchByKeywords(
         ownersTotal: plan.ownersTotal,
         verified: verified.length,
         unverified: unverified.length,
+        withdrawn: withdrawn.length,
         disagreed: disagreed.sort(compareStrings),
       }
       feed.onCoverage?.(coverage)
       if (disagreed.length > FEED_MAX_DISAGREEMENTS) {
-        throw new Error(`the change feed holds ${disagreed.length} name(s) carrying ${keywordQuery([keyword])} that two complete pagings of their owner's search cell did not serve, past the ${FEED_MAX_DISAGREEMENTS} one run may absorb: its membership rule no longer describes npm search, and crediting through it would cancel missing names one for one`)
+        throw new Error(`the change feed holds ${disagreed.length} name(s) carrying ${keywordQuery([keyword])} that two complete pagings of a current owner's search cell did not serve, past the ${FEED_MAX_DISAGREEMENTS} one run may absorb: its membership rule no longer describes npm search, and crediting through it would cancel missing names one for one`)
       }
     }
     const enumerate = async (): Promise<void> => {

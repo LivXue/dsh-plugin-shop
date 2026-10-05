@@ -87,12 +87,23 @@ Scripts and raw data: `.claude/worktrees/.scratch-dsh-cell/`
   291 of the 311 matches the build did not hold in one day carried no
   harvest keyword. Each costs one small read.
 
-**The manifest.**
+**The manifest and the packument.**
 
 - `GET /<name>/latest` (scoped names with `%2F`) averages 2.5 KB. 600
   reads at 16 concurrent took 23.2 s (25.8 a second), with no error
-  and no 429.
-- It carries `name`, `keywords`, `deprecated` and `maintainers[].name`.
+  and no 429 -- from a workstation.
+- It carries `name`, `keywords`, `deprecated` and `maintainers[].name`,
+  but those maintainers are the publish's, not today's: 9 of 50
+  long-lived packages differ from the packument's top-level
+  `maintainers` (`optimist`: `substack` against `bcoe` and `chevex`);
+  0 of 352 dsh carriers changed in one day did (2026-10-05, PR #74
+  review).
+- From a GitHub runner `/latest` crawls where the packument does not:
+  the PR #74 dry run started 1,124 `/latest` reads in 20 minutes (16
+  concurrent, 41 failed), while the same job fetched 9,403 full
+  packuments in 136 s (8 concurrent, about 69 a second). A young dsh
+  plugin's packument is about 16 KB. A run therefore reads the full
+  packument (section 4.3).
 - `_npmUser.name` can be a bot's display name -- "GitHub Actions" for
   `@khorsheed/dsh-room-tool` -- so it is not an owner. The same trap
   as `publisher.username` in search objects.
@@ -155,9 +166,10 @@ dsh-plugin, 1 for deepseek-harness).
   the name filter, merging a run's reads, choosing owners to verify,
   parsing and serializing.
 - **`npm-feed.ts`** (new, impure; it reaches the network): reads the
-  feed head, the feed pages and `/latest` manifests. Requests go
-  through `withTimeout` and `fetchWithRetry` from `npm-client.ts`;
-  bodies through `readCappedBody`.
+  feed head, the feed pages and full packuments, and re-reads the
+  packument of a name verification omitted (`confirmCarriers`).
+  Requests go through `withTimeout` and `fetchWithRetry` from
+  `npm-client.ts`; bodies through `readCappedBody`.
 - **`npm-client.ts`:** `searchByKeywords` takes a `feed` argument and
   runs the feed step at the end of `enumerate()` (section 4.5).
 - **`classify.ts` and `build.ts`:** read `registry/feed-state.json`,
@@ -216,16 +228,22 @@ dsh-plugin, 1 for deepseek-harness).
 
 ### 4.3 The membership rule
 
-A package carries harvest keyword `K` when its `/latest` manifest:
+A package carries harvest keyword `K` when its full packument, read at
+`/<name>`:
 
 1. names the package that was requested;
-2. lists `K` in `keywords` by exact code-unit equality, as `isAtRisk`
-   compares;
-3. is not deprecated by `isDeprecated`: a non-empty message or a bare
-   `true`, the semantics `fetchCandidate` already uses.
+2. has a `latest` dist-tag naming one of its own versions, and that
+   version lists `K` in `keywords` by exact code-unit equality, as
+   `isAtRisk` compares;
+3. and that version is not deprecated by `isDeprecated`: a non-empty
+   message or a bare `true`, the semantics `fetchCandidate` already
+   uses.
 
-Its owner is the code-unit-smallest `maintainers[].name` that
-`isMaintainerName` accepts.
+Its owner is the code-unit-smallest of the packument's top-level
+`maintainers[].name` -- today's owners -- that `isMaintainerName`
+accepts. Amended 2026-10-05: the rule first read `/latest`, whose
+maintainers are the publish's and which a GitHub runner fetched about
+75 times slower (section 2).
 
 This rule is the search index's membership as far as it has been
 measured: exact keyword, latest version, deprecated packages excluded.
@@ -259,8 +277,8 @@ Where it is wrong, section 4.5 is the guard.
    in a fixed order and the list had no bound, so failing reads or a
    flood could starve the same names forever and grow the file
    without limit.
-4. **Reads.** `FEED_READ_CONCURRENCY` reads at a time, until done or
-   `FEED_READ_TIME_BUDGET_MS`. Names not reached become pending.
+4. **Reads.** `FEED_READ_CONCURRENCY` packument reads at a time, until
+   done or `FEED_READ_TIME_BUDGET_MS`. Names not reached become pending.
 5. **Merge** (pure). A carrier is set, replacing its keywords and
    owner. A non-carrier, a 404 or a deletion removes the name. A
    failed read keeps the name's previous status and makes it pending.
@@ -283,18 +301,30 @@ retry pass repeats none of its requests.
    state's `seq`, so successive runs check different owners when there
    are more than the budget. Page `keywords:K maintainer:U` for each.
    - A feed-only name of U that the cell serves is **verified**.
-   - One the cell does not serve is paged once more, and **disagrees**
-     only when that second complete paging omits it too: npm has
+   - One the cell does not serve is paged once more, because npm has
      answered an empty result for a real cell before, and the publisher
-     axis confirms a zero before it evicts for the same reason.
+     axis confirms a zero before it evicts for the same reason. A name
+     that second complete paging omits too is confirmed against its
+     CURRENT packument, because the stored owner may predate an owner
+     change and the package may have changed since it was read (PR #74
+     review): if its latest version no longer lists K, is deprecated,
+     or the package is gone, it is **withdrawn**; if the packument names
+     a different owner, the name is re-verified against that owner's
+     cell by the same two-paging rule; if the packument cannot be read,
+     it is **unverified**. Only a name a current owner's cell omits
+     twice while the packument still lists K **disagrees**.
    - A name with a `null` owner, an owner beyond the budget, or an
      owner whose cell could not be paged in full is **unverified**. A
      paging hiccup never counts as a disagreement.
    - Any other name a verification cell serves joins `forKeyword` as
      an ordinary search-served name.
 3. **Credit.** Verified and unverified names join `forKeyword`
-   (coverage) and `seen` (candidates). Disagreeing names join neither,
-   and the report names them.
+   (coverage) and `seen` (candidates). Withdrawn and disagreeing names
+   join neither; the report counts the first and names the second.
+   What a confirmation learned -- today's owner, or that a name stopped
+   being a carrier -- is applied to the next state
+   (`applyConfirmations`); a confirmation that could not be read
+   changes nothing.
 4. **Throw** when more than `FEED_MAX_DISAGREEMENTS` names of one
    keyword disagree in one run. The membership rule then no longer
    describes the search index, and crediting through it would cancel
@@ -334,22 +364,24 @@ crossing grows the residue's owners past the budget.
   in order, so the pages already read form a consistent prefix; the
   run proceeds with it, the cursor at its last row, and the report
   says where it stopped.
-- **`/latest` answers 404, or the row is marked deleted:** gone,
+- **The packument answers 404, or the row is marked deleted:** gone,
   removed.
-- **`/latest` is the package's manifest, read, and is not a carrier**
-  (no harvest keyword, deprecated, or past `FEED_MANIFEST_MAX_BYTES`):
+- **The packument is read and is not a carrier** (no harvest keyword,
+  deprecated, or past `FEED_PACKUMENT_MAX_BYTES`):
   removed. This is the `no-manifest` side of the `no-manifest` /
   `fetch-failed` line; the size is the author's own content, which
   CLAUDE.md lists as `no-manifest`, and as a failure it would let any
   author keep a name pending, and the cursor waiting on it, forever.
 - **Anything else** -- a transport failure, a deadline, any non-2xx but
   a 404 (a 403 from a blocking edge included), a body that is not JSON
-  or not a manifest, or the manifest of another package: failed. The
+  or not a packument, or the packument of another package: failed. The
   previous status is kept, the name is pending, and the run line
   counts it. Amended 2026-10-05 after review: a non-JSON body and any
   4xx but a 404 were first specified as removals, which lets a blocked
   or misbehaving edge delete carriers durably and report nothing.
 - **A name is not reached within the time budget:** pending.
+- **A confirmation read fails:** the name is unverified, and the state
+  keeps what it held.
 - **A package is deprecated between the read and the packument fetch:**
   the gate's existing `deprecated` rejection handles it.
 - **More than `FEED_MAX_DISAGREEMENTS` disagreements for a keyword:**
@@ -362,11 +394,13 @@ crossing grows the residue's owners past the budget.
   (F failed, U pending); carriers: dsh-plugin X, deepseek-harness Y`
   -- or `change feed unavailable: <reason>`.
 - Per keyword, beside the publisher-axis line: `feed supplied N
-  (owners verified V of T; D disagreed: <names>)`. N is the feed
-  step's own delta on `forKeyword`: credited feed-only names plus any
-  other name a verification cell served. V counts the owners whose
-  every feed-only name reached a verdict, T every owner holding one; an
-  owner whose cell failed or served short was asked, not verified.
+  (owners verified V of T; U unverified; W withdrawn; D disagreed:
+  <names>)`, each count after the first printed only when non-zero.
+  N is the feed step's own delta on `forKeyword`: credited feed-only
+  names plus any other name a verification cell served. V counts the
+  owners whose every feed-only name reached a verdict, T every owner
+  holding one; an owner whose cell failed or served short was asked,
+  not verified.
 - `enumerated` in the shortfall line includes credited feed names; the
   per-keyword line says how many.
 - Names in the report are escaped like every other npm-sourced string.
@@ -399,16 +433,17 @@ crossing grows the residue's owners past the budget.
 - `FEED_PAGE_BUDGET = 200` pages a run -- the bootstrap needs 62, a
   day needs 4.
 - `FEED_MAX_SELECTED = 25_000` ids a run, pending included, the first
-  page always taken -- the bootstrap selects 17,779, and a run reads
-  about 31,000 within its time budget at the measured rate.
+  page always taken -- the bootstrap selects ~17,900, and a run reads
+  about 80,000 packuments within its time budget at the runner rate.
 - `FEED_PAGE_MAX_BYTES = 8 MiB` -- the largest page measured was
   1,078,874 bytes.
-- `FEED_MANIFEST_MAX_BYTES = 1 MiB` -- manifests average 2.5 KB, and
-  `github-client.ts` caps a `package.json` at 1 MiB.
-- `FEED_READ_CONCURRENCY = 16` -- 25.8 reads a second and no 429 were
-  measured at 16.
-- `FEED_READ_TIME_BUDGET_MS = 20 min` -- the bootstrap's 17,779 reads
-  take about 11.5 minutes at the measured rate; a day's ~700 about 30
+- `FEED_PACKUMENT_MAX_BYTES` -- the candidate fetch's
+  `MAX_PACKUMENT_BYTES` (16 MiB), for the same document.
+- `FEED_READ_CONCURRENCY = 8` -- the candidate fetch's
+  `HARVEST_CONCURRENCY`, which read about 69 packuments a second from
+  a GitHub runner on 2026-10-05.
+- `FEED_READ_TIME_BUDGET_MS = 20 min` -- the bootstrap's ~17,900 reads
+  take about 4.5 minutes at the runner rate; a day's ~700 about 10
   seconds.
 - `FEED_NAME_PATTERN = /dsh|deepseek|cordis/i` -- recall in section 2.
 - `FEED_BOOTSTRAP_SEQ = 117_350_000` -- just before 2026-07-01T00:00Z,
@@ -471,15 +506,17 @@ crossing grows the residue's owners past the budget.
 - **Impure, with a fake fetch** (`npm-feed.test.ts`): forward paging to
   a short page; the page budget; the head check; a failing later page
   keeps the prefix; a failing first page is "unavailable"; both body
-  caps; every `/latest` outcome; the time budget to pending; deleted
-  rows; scoped-name encoding.
+  caps; every packument outcome; `confirmCarriers`; the time budget to
+  pending; deleted rows; scoped-name encoding.
 - **`searchByKeywords`** (`npm-client.test.ts`):
   - the 2026-10-04 shape -- a residual over the cap that throws
     without the feed and publishes with it;
   - verified, unverified and disagreeing names are credited or not as
     section 4.5 says;
   - more than `FEED_MAX_DISAGREEMENTS` throws;
-  - a disagreement counts only after a second complete paging;
+  - a disagreement counts only after a second complete paging, and a
+    twice-omitted name is withdrawn, re-verified or left unverified as
+    its current packument says;
   - an unavailable feed reproduces today's result exactly;
   - the retry pass repeats no verification request;
   - the per-keyword count is the feed step's own delta on
@@ -492,10 +529,13 @@ crossing grows the residue's owners past the budget.
 ## 8. Acceptance
 
 - `pnpm test` and `pnpm typecheck` are green.
-- The PR's dry run bootstraps from `FEED_BOOTSTRAP_SEQ` (about 13
+- The PR's dry run bootstraps from `FEED_BOOTSTRAP_SEQ` (about 5
   extra minutes, once), prints the feed line, verifies without
   throwing, and reads both residuals at noise, 5 or under. Its build
-  job stays inside `timeout-minutes`.
+  job stays inside `timeout-minutes`. The first dry run (2026-10-05,
+  run 37324032525) failed this: `/latest` reads crawled on the runner
+  (1,124 of 17,887 in 20 minutes), so the feed supplied 4 / 2 names
+  and the residuals read 25 / 28; reads moved to the packument.
 - After the merge, the first `main` run commits a non-empty
   `registry/feed-state.json`, and the next run reads about 4 pages.
 
