@@ -211,6 +211,13 @@ const EXCUSED_REGISTRY_DIR_USES: readonly ExcusedUse[] = [
       + 'sole writer, already covered by its own check above. A write here would be '
       + 'overwritten by the build one step later and look like it had worked',
   },
+  {
+    module: 'classify.ts',
+    snippet: "const feedStatePath = join(REGISTRY_DIR, 'feed-state.json')",
+    reason: 'classify.ts only reads feed-state.json, to run the change feed; it carries '
+      + 'the next state in dist/harvest.json instead, and build.ts is the sole writer, '
+      + 'already covered by its own check above',
+  },
 ]
 
 function lineContaining(source: string, index: number): string {
@@ -337,7 +344,7 @@ describe('the daily workflow stages every registry file the build writes', () =>
     // If a refactor changes how the writes are spelled, this fails rather than
     // letting the guards below pass vacuously.
     expect(registryWrites(buildTs))
-      .toEqual(['first-seen.yml', 'publisher-state.json', 'repo-state.json', 'snapshots/manifest.lock'])
+      .toEqual(['feed-state.json', 'first-seen.yml', 'publisher-state.json', 'repo-state.json', 'snapshots/manifest.lock'])
     expect(registryWrites(classifyTs)).toEqual(['categories.yml', 'markets.yml'])
   })
 

@@ -20,12 +20,14 @@ import { mergeCategoryRows, serializeCategoryRows } from './categories.ts'
 import { selectPending } from './classify-select.ts'
 import { loadRegistryConfig } from './config.ts'
 import { escapeCell } from './emit.ts'
+import { bootstrapFeedState, describeFeedCoverage, describeFeedRun, feedCarriersByKeyword, parseFeedState, serializeFeedState, type FeedCoverage, type FeedInput } from './feed-state.ts'
 import { compareStrings } from './identity.ts'
 import { classifyPackages } from './llm-client.ts'
 import { judgeMarkets, type MarketItem } from './market-judge.ts'
 import { selectMarketPending } from './market-select.ts'
 import { mergeMarketRows, serializeMarketRows } from './markets.ts'
-import { fetchCandidates, searchByKeywords, describePublisherAxis, describeShortfall, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall, type PublisherAxisReport } from './npm-client.ts'
+import { fetchCandidates, searchByKeywords, describePublisherAxis, describeShortfall, HARVEST_KEYWORDS, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall, type PublisherAxisReport } from './npm-client.ts'
+import { harvestFeed } from './npm-feed.ts'
 import { repoPeersEmitted, withholdRepoPeers } from './pipeline.ts'
 import { parsePublisherState } from './publisher-state.ts'
 import { parseRepoState } from './repo-state.ts'
@@ -123,6 +125,27 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
   // for build.ts to spend — `--harvest-from` never calls searchByKeywords
   // itself, so a pin earned here would otherwise reach no one.
   const axis: PublisherAxisReport[] = []
+  // The change feed (spec 2026-10-04), read BEFORE the search: the feed
+  // step inside searchByKeywords credits its carriers before `required` is
+  // measured. Read-only here for the reason publisher-state.json is: build.ts
+  // owns the file and runs after this step, so the next state rides the
+  // handoff instead. An unavailable feed credits nothing, which is today's
+  // harvest exactly.
+  const feedStatePath = join(REGISTRY_DIR, 'feed-state.json')
+  const priorFeed = existsSync(feedStatePath)
+    ? parseFeedState(readFileSync(feedStatePath, 'utf8'), HARVEST_KEYWORDS)
+    : bootstrapFeedState()
+  const feedRun = await harvestFeed(priorFeed, { harvestKeywords: HARVEST_KEYWORDS, token: npmToken })
+  process.stderr.write(`classify: ${describeFeedRun(feedRun.report)}\n`)
+  const feedCoverage: FeedCoverage[] = []
+  const feedInput: FeedInput = {
+    carriers: feedRun.report.available ? feedCarriersByKeyword(feedRun.next, HARVEST_KEYWORDS) : new Map(),
+    seed: feedRun.next.seq,
+    onCoverage: coverage => {
+      feedCoverage.push(coverage)
+      process.stderr.write(`classify: ${describeFeedCoverage(coverage)}\n`)
+    },
+  }
   const names = await searchByKeywords(
     fetch, undefined, npmToken, undefined, undefined,
     // Written AS THEY FIRE, not collected and printed after the call returns.
@@ -139,6 +162,7 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
     priorPublishers,
     PUBLISHER_PROBE_BUDGET_DEFAULT,
     report => { axis.push(report); process.stderr.write(`classify: ${describePublisherAxis(report)}\n`) },
+    feedInput,
   )
   process.stderr.write(`classify: harvested ${names.length} candidate(s)\n`)
   const { candidates, rejections } = await fetchCandidates(names, fetch, npmToken, npmBackupRegistry)
@@ -236,7 +260,7 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
   // rule.
   const publishers = [...sawPublishers].sort(compareStrings)
   writeFileSync(join(DIST_DIR, 'harvest.json'),
-    `${JSON.stringify({ candidates, rejections, shortfalls, publishers, publisherAxis: axis })}\n`)
+    `${JSON.stringify({ candidates, rejections, shortfalls, publishers, publisherAxis: axis, feed: { state: serializeFeedState(feedRun.next), report: feedRun.report, coverage: feedCoverage } })}\n`)
   const sortedDiscards = [...discarded].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
   const reportLines = [
     '# Classification report',

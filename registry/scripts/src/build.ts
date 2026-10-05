@@ -15,11 +15,13 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { loadRegistryConfig, serializeFirstSeen } from './config.ts'
+import { bootstrapFeedState, describeFeedCoverage, describeFeedRun, feedCarriersByKeyword, parseFeedCoverage, parseFeedRunReport, parseFeedState, serializeFeedState, type FeedInput, type FeedState } from './feed-state.ts'
 import { fetchStarCounts } from './github-stars.ts'
 import { HARVEST_TOPICS, REPO_BACKFILL_BUDGET_DEFAULT, describeSearchPhantoms, harvestRepos, parseHarvestBudget } from './github-client.ts'
 import { parseRepoState, repoGoneDetail, serializeRepoState } from './repo-state.ts'
 import { githubOwnerName } from './github-repo.ts'
 import { fetchCandidates, searchByKeywords, describePublisherAxis, describeShortfall, HARVEST_KEYWORDS, parseKeywordShortfall, parsePublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall, type PublisherAxisReport } from './npm-client.ts'
+import { harvestFeed } from './npm-feed.ts'
 import { applyAxisReport, MAX_EVICTIONS_PER_RUN, MAX_PINNED_PER_KEYWORD, mergePublishers, parsePublisherState, retainPinned, serializePublisherState } from './publisher-state.ts'
 import { pagesArtifactNames } from './pages-artifacts.ts'
 import { describeRereadStopped, repoPeersEmitted, runPipeline, selectEntries, withholdRepoPeers } from './pipeline.ts'
@@ -105,6 +107,15 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     ? parsePublisherState(readFileSync(publisherStatePath, 'utf8'))
     : { publishers: [] }
   const sawPublishers = new Set<string>()
+  // The change feed's committed state (spec 2026-10-04, section 4.8). This
+  // module is its only writer, after the pipeline, beside
+  // publisher-state.json.
+  const feedStatePath = join(REGISTRY_DIR, 'feed-state.json')
+  const priorFeed = existsSync(feedStatePath)
+    ? parseFeedState(readFileSync(feedStatePath, 'utf8'), HARVEST_KEYWORDS)
+    : bootstrapFeedState()
+  let nextFeed: FeedState | undefined
+  const feedParts: string[] = []
   // What the publisher axis did per keyword, from whichever source this run
   // has: the live search below, or the handoff's `publisherAxis` in the
   // `--harvest-from` branch. Spent once, after the branch, so both paths pin
@@ -126,6 +137,14 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     // whole keyword. Larger gaps require healthy recovery beyond one window
     // and must fit MAX_UNREACHABLE_RESIDUAL. The record carries both terms
     // for the report without claiming the missing names' cause is known.
+    const feedRun = await harvestFeed(priorFeed, { harvestKeywords: HARVEST_KEYWORDS, token: npmToken })
+    nextFeed = feedRun.next
+    feedParts.push(describeFeedRun(feedRun.report))
+    const feedInput: FeedInput = {
+      carriers: feedRun.report.available ? feedCarriersByKeyword(feedRun.next, HARVEST_KEYWORDS) : new Map(),
+      seed: feedRun.next.seq,
+      onCoverage: coverage => { feedParts.push(describeFeedCoverage(coverage)) },
+    }
     const shortfalls: KeywordShortfall[] = []
     const names = await searchByKeywords(
       fetch, undefined, npmToken, undefined, undefined,
@@ -134,6 +153,7 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
       priorPublishers,
       PUBLISHER_PROBE_BUDGET_DEFAULT,
       report => axis.push(report),
+      feedInput,
     )
     for (const s of shortfalls) {
       npmParts.push(describeShortfall(s))
@@ -146,7 +166,7 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   } else {
     const parsed = JSON.parse(readFileSync(harvestFrom, 'utf8')) as {
       candidates?: unknown; rejections?: unknown; shortfalls?: unknown; publishers?: unknown
-      publisherAxis?: unknown
+      publisherAxis?: unknown; feed?: unknown
     }
     if (!Array.isArray(parsed.candidates) || !Array.isArray(parsed.rejections)) {
       throw new Error(`--harvest-from ${harvestFrom}: expected { candidates, rejections } arrays`)
@@ -187,6 +207,25 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
       }
       for (const raw of parsed.publisherAxis) {
         axis.push(parsePublisherAxisReport(raw, `--harvest-from ${harvestFrom}`))
+      }
+    }
+    if (parsed.feed === undefined) {
+      feedParts.push('no change-feed record in this handoff: registry/feed-state.json was left as it was')
+    } else {
+      const feed = parsed.feed as { state?: unknown; report?: unknown; coverage?: unknown } | null
+      if (feed === null || typeof feed !== 'object' || typeof feed.state !== 'string' || !Array.isArray(feed.coverage)) {
+        throw new Error(`--harvest-from ${harvestFrom}: expected \`feed\` to carry a serialized \`state\`, a \`report\` and a \`coverage\` array`)
+      }
+      const state = parseFeedState(feed.state, HARVEST_KEYWORDS)
+      // Review Focus 4: an older handoff would move the cursor backwards,
+      // and a carrier learned since would be un-learned until it changed.
+      if (state.seq < priorFeed.seq) {
+        throw new Error(`--harvest-from ${harvestFrom}: its change-feed state is at seq ${state.seq}, behind the committed ${priorFeed.seq}; writing it would move the cursor backwards`)
+      }
+      nextFeed = state
+      feedParts.push(describeFeedRun(parseFeedRunReport(feed.report, `--harvest-from ${harvestFrom}`, HARVEST_KEYWORDS)))
+      for (const raw of feed.coverage as unknown[]) {
+        feedParts.push(describeFeedCoverage(parseFeedCoverage(raw, `--harvest-from ${harvestFrom}`, HARVEST_KEYWORDS)))
       }
     }
     process.stderr.write(`reusing harvest: ${candidates.length} npm candidate(s)\n`)
@@ -465,12 +504,15 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   }
   for (const part of axisParts) process.stderr.write(`npm: ${part}\n`)
   writeFileSync(publisherStatePath, serializePublisherState(nextPublishers))
+  if (nextFeed !== undefined) writeFileSync(feedStatePath, serializeFeedState(nextFeed))
+  for (const part of feedParts) process.stderr.write(`npm: ${part}\n`)
   process.stderr.write(
     `npm: publisher vocabulary ${priorPublishers.publishers.length} -> ${nextPublishers.publishers.length}\n`)
   const npmLine = npmParts.length === 0 ? '' : `\nnpm search shortfall (tolerated, packages missing from this build):\n${npmParts.map(part => `- ${part}\n`).join('')}`
   const axisLine = axisParts.length === 0 ? '' : `\npublisher axis (per-keyword pinning and probing, not itself a shortfall):\n${axisParts.map(part => `- ${part}\n`).join('')}`
   const repoLine = repoNote === '' ? '' : `\nGitHub: ${repoNote}\n`
-  writeFileSync(join(OUT_DIR, 'report.md'), `${artifacts.report}\nStars: ${starsNote}\n${npmLine}${axisLine}${repoLine}`)
+  const feedLine = feedParts.length === 0 ? '' : `\nchange feed (npm, by publication time):\n${feedParts.map(part => `- ${part}\n`).join('')}`
+  writeFileSync(join(OUT_DIR, 'report.md'), `${artifacts.report}\nStars: ${starsNote}\n${npmLine}${axisLine}${feedLine}${repoLine}`)
 
   // Pages gets a directory staged from scratch, holding exactly the artifacts
   // the spec lists. `dist/v1` is NOT cleaned and is not what deploys: the
