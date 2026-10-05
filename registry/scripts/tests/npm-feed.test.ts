@@ -228,8 +228,12 @@ describe('harvestFeed', () => {
     ['a 403 keeps it, pending: a blocking edge says nothing about the package', () => json({}, 403), true, true],
     ['a 200 that is not JSON keeps it, pending: an edge answering in npm\'s place',
       () => new Response('<!doctype html>', { status: 200 }), true, true],
-    ['a body over the cap keeps it, pending',
-      () => new Response('{}', { status: 200, headers: { 'content-length': String(FEED_MANIFEST_MAX_BYTES + 1) } }), true, true],
+    // A body past the cap is the author's own content -- CLAUDE.md lists
+    // "refused for its size" as no-manifest -- and calling it a failure
+    // would let any author keep a name pending, and the cursor waiting on
+    // it, forever (2026-10-05 security review).
+    ['a body over the cap removes it: its size is the author\'s own content',
+      () => new Response('{}', { status: 200, headers: { 'content-length': String(FEED_MANIFEST_MAX_BYTES + 1) } }), false, false],
     ['a 200 whose JSON is null keeps it, pending', () => json(null), true, true],
     ['a 503 after retries keeps it, pending', () => json({}, 503), true, true],
     ['the manifest of another package keeps it, pending', () => manifest('dsh-other'), true, true],
@@ -309,20 +313,43 @@ describe('harvestFeed', () => {
     expect([...next.carriers.keys()].sort()).toEqual(['dsh-a0', 'dsh-a1', 'dsh-a2'])
   })
 
-  it('counts pending names toward the bound, so a backlog holds the cursor back until it drains', async () => {
+  it('counts pending names toward the bound for every page after the first', async () => {
+    // Replaces "a backlog holds the cursor back until it drains": holding the
+    // FIRST page back let a backlog of failing reads stop the feed for good
+    // (2026-10-05 security review). Pending still counts toward the bound,
+    // so it is the second page that waits here: 3 pending and 1 new fit
+    // under 4, one more would not.
+    const second = 100 + FEED_PAGE_LIMIT
     const { next, report } = await harvestFeed(at(100, {}, ['dsh-p0', 'dsh-p1', 'dsh-p2']), {
       harvestKeywords: KEYWORDS, sleep: instant, maxSelected: 4,
       fetchImpl: routeByUrl(url => {
-        if (isHead(url)) return json({ update_seq: 300 })
-        if (isPage(100)(url)) return page([{ seq: 101, id: 'dsh-new0' }, { seq: 102, id: 'dsh-new1' }], 102)
+        if (isHead(url)) return json({ update_seq: 99_999 })
+        if (isPage(100)(url)) return page(fullPage(100, i => (i === 0 ? 'dsh-new0' : `pkg-${i}`)), second)
+        if (isPage(second)(url)) return page([{ seq: second + 1, id: 'dsh-new1' }], second + 1)
         return manifest(latestName(url))
       }),
     })
-    // 3 pending and 2 new make 5, past 4: the page waits, the backlog is read.
-    expect(report).toMatchObject({ pages: 0, selected: 3, fromSeq: 100, toSeq: 100 })
-    expect(report.note).toBe('stopped after 0 page(s): the next page would take this run past 4 selected ids')
-    expect([...next.carriers.keys()].sort()).toEqual(['dsh-p0', 'dsh-p1', 'dsh-p2'])
-    expect(next.pending).toEqual([])
+    expect(report).toMatchObject({ pages: 1, selected: 4, toSeq: second })
+    expect(report.note).toBe('stopped after 1 page(s): the next page would take this run past 4 selected ids')
+    expect([...next.carriers.keys()].sort()).toEqual(['dsh-new0', 'dsh-p0', 'dsh-p1', 'dsh-p2'])
+  })
+
+  it('always takes the first page, so a backlog can slow the cursor but never stop it', async () => {
+    // Five pending names that fail every run, already past a bound of 4: had
+    // the bound held the first page back, nothing but the backlog would ever
+    // be read again and the cursor would never move.
+    const { next, report } = await harvestFeed(at(100, {}, ['dsh-p0', 'dsh-p1', 'dsh-p2', 'dsh-p3', 'dsh-p4']), {
+      harvestKeywords: KEYWORDS, sleep: instant, maxSelected: 4,
+      fetchImpl: routeByUrl(url => {
+        if (isHead(url)) return json({ update_seq: 300 })
+        if (isPage(100)(url)) return page([{ seq: 101, id: 'dsh-new0' }], 101)
+        const name = latestName(url)
+        return name === 'dsh-new0' ? manifest(name) : json({}, 503)
+      }),
+    })
+    expect(report).toMatchObject({ pages: 1, toSeq: 101, selected: 6, failed: 5 })
+    expect(next.seq).toBe(101)
+    expect(next.carriers.has('dsh-new0')).toBe(true)
   })
 
   it('bounds a run high enough to take the measured bootstrap in one run', () => {

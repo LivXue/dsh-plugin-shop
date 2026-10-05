@@ -37,12 +37,14 @@ export const FEED_READ_CONCURRENCY = 16
 
 /**
  * The most ids one run may select, pending names included. Paging stops
- * before a page that would take the selection past it, and that page waits
- * for the next run, cursor and all -- so neither a flood of matching ids nor
- * a backlog of failing reads can grow the state, or one run's work, past
- * what a run can read (2026-10-05 security review). The bootstrap selects
- * 17,779; a run reads about 31,000 within FEED_READ_TIME_BUDGET_MS at the
- * rate measured on 2026-10-04.
+ * before a later page that would take the selection past it, and that page
+ * waits for the next run, cursor and all -- so a flood of matching ids
+ * cannot grow the state, or one run's work, past what a run can read. The
+ * FIRST page is always taken: a backlog of reads that keep failing can slow
+ * the cursor, never stop it, and grows by at most one page's ids a run
+ * meanwhile (both from the 2026-10-05 security reviews). The bootstrap
+ * selects 17,779; a run reads about 31,000 within FEED_READ_TIME_BUDGET_MS
+ * at the rate measured on 2026-10-04.
  */
 export const FEED_MAX_SELECTED = 25_000
 
@@ -147,11 +149,17 @@ async function readLatest(
     // about the transport, not about the manifest, so the name is retried.
     return { kind: 'failed', name, reason: message(error) }
   }
-  // npm serializes every manifest as JSON well under the cap, so a body past
-  // it or not JSON -- the `<!doctype html>` 200 this registry has served
-  // before -- is not the package's manifest either.
+  // A body past the cap is the author's own content -- CLAUDE.md lists
+  // "refused for its size" as no-manifest -- so it is not a carrier. Were it
+  // a failure, any author could keep a name pending, and the cursor waiting
+  // on it, forever (2026-10-05 security review). npm serializes every
+  // manifest as JSON, though, so a body that is not JSON -- the
+  // `<!doctype html>` 200 this registry has served before -- is an edge
+  // answering in npm's place, and is retried.
   if (!body.ok) {
-    return { kind: 'failed', name, reason: body.reason === 'too-large' ? `the registry answered a body over ${FEED_MANIFEST_MAX_BYTES} bytes` : 'the registry answered a body that is not JSON' }
+    return body.reason === 'too-large'
+      ? { kind: 'not-carrier', name }
+      : { kind: 'failed', name, reason: 'the registry answered a body that is not JSON' }
   }
   return classifyManifest(name, body.value, harvestKeywords)
 }
@@ -224,7 +232,7 @@ export async function harvestFeed(prior: FeedState, options: HarvestFeedOptions)
       break
     }
     const adding = selectFeedIds(page.rows, prior).read.filter(name => !selecting.has(name))
-    if (selecting.size + adding.length > maxSelected) {
+    if (pages > 0 && selecting.size + adding.length > maxSelected) {
       note = `stopped after ${pages} page(s): the next page would take this run past ${maxSelected} selected ids`
       break
     }

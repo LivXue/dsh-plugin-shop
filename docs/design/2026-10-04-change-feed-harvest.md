@@ -235,11 +235,15 @@ Where it is wrong, section 4.5 is the guard.
    unavailable for the run.
 2. **Rows.** Page `_changes?since=seq&limit=10000` until a short page
    or `FEED_PAGE_BUDGET` pages. Keep each id's last row. Skip ids that
-   begin with `_`. Stop, too, before a page whose ids would take this
-   run's selection -- pending names included -- past
+   begin with `_`. Stop, too, before a page after the first whose ids
+   would take this run's selection -- pending names included -- past
    `FEED_MAX_SELECTED`; that page waits for the next run, cursor and
-   all, so neither a flood of matching ids nor a backlog of failing
-   reads can grow the state past what one run can read.
+   all, so a flood of matching ids cannot grow the state past what one
+   run can read. The first page is always taken: a backlog of reads
+   that keep failing can slow the cursor, never stop it, and grows by
+   at most one page's ids a run meanwhile. (A second security review
+   on 2026-10-05 found that holding the first page back too stopped the
+   feed for good once a backlog filled the bound.)
 3. **Selection.** Read an id when it matches `FEED_NAME_PATTERN`, or
    is a carrier or pending -- so an entry on the list is re-read
    whenever it changes, even if the pattern is ever narrowed. Every
@@ -329,17 +333,19 @@ crossing grows the residue's owners past the budget.
   says where it stopped.
 - **`/latest` answers 404, or the row is marked deleted:** gone,
   removed.
-- **`/latest` is the package's manifest, read and parsed, and is not a
-  carrier** (no harvest keyword, or deprecated): removed. This is the
-  `no-manifest` side of the `no-manifest` / `fetch-failed` line.
+- **`/latest` is the package's manifest, read, and is not a carrier**
+  (no harvest keyword, deprecated, or past `FEED_MANIFEST_MAX_BYTES`):
+  removed. This is the `no-manifest` side of the `no-manifest` /
+  `fetch-failed` line; the size is the author's own content, which
+  CLAUDE.md lists as `no-manifest`, and as a failure it would let any
+  author keep a name pending, and the cursor waiting on it, forever.
 - **Anything else** -- a transport failure, a deadline, any non-2xx but
-  a 404 (a 403 from a blocking edge included), a body past
-  `FEED_MANIFEST_MAX_BYTES` or not JSON, a body that is not a manifest,
-  or the manifest of another package: failed. The previous status is
-  kept, the name is pending, and the run line counts it. Amended
-  2026-10-05 after review: an over-cap or non-JSON body, and any 4xx
-  but a 404, were first specified as removals, which lets a blocked or
-  misbehaving edge delete carriers durably and report nothing.
+  a 404 (a 403 from a blocking edge included), a body that is not JSON
+  or not a manifest, or the manifest of another package: failed. The
+  previous status is kept, the name is pending, and the run line
+  counts it. Amended 2026-10-05 after review: a non-JSON body and any
+  4xx but a 404 were first specified as removals, which lets a blocked
+  or misbehaving edge delete carriers durably and report nothing.
 - **A name is not reached within the time budget:** pending.
 - **A package is deprecated between the read and the packument fetch:**
   the gate's existing `deprecated` rejection handles it.
@@ -389,9 +395,9 @@ crossing grows the residue's owners past the budget.
 - `FEED_PAGE_LIMIT = 10_000` -- the API's maximum; 20,000 answers 400.
 - `FEED_PAGE_BUDGET = 200` pages a run -- the bootstrap needs 62, a
   day needs 4.
-- `FEED_MAX_SELECTED = 25_000` ids a run, pending included -- the
-  bootstrap selects 17,779, and a run reads about 31,000 within its
-  time budget at the measured rate.
+- `FEED_MAX_SELECTED = 25_000` ids a run, pending included, the first
+  page always taken -- the bootstrap selects 17,779, and a run reads
+  about 31,000 within its time budget at the measured rate.
 - `FEED_PAGE_MAX_BYTES = 8 MiB` -- the largest page measured was
   1,078,874 bytes.
 - `FEED_MANIFEST_MAX_BYTES = 1 MiB` -- manifests average 2.5 KB, and

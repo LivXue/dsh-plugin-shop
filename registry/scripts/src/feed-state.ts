@@ -118,17 +118,17 @@ export interface FeedState {
 /** What reading one `/latest` manifest established. */
 export type FeedRead =
   | { readonly kind: 'carrier'; readonly name: string; readonly carrier: FeedCarrier }
-  // The package's manifest, read and parsed, and not a carrier: no harvest
-  // keyword, or deprecated. The `no-manifest` side of the line CLAUDE.md
-  // draws, so the name is dropped.
+  // The package's manifest, read, and not a carrier: no harvest keyword,
+  // deprecated, or past the size cap -- the author's own content, which
+  // CLAUDE.md lists as no-manifest. That side of the line drops the name.
   | { readonly kind: 'not-carrier'; readonly name: string }
   // A 404, or a row the feed marks deleted.
   | { readonly kind: 'gone'; readonly name: string }
   // Anything that is not the package's manifest: a transport failure, a
   // deadline, any non-2xx but a 404 (a 403 from a blocking edge included),
-  // a body past the cap or not JSON, a body that is not a manifest, or the
-  // manifest of another package. The `fetch-failed` side: the name keeps
-  // its previous status and is read again next run.
+  // a body that is not JSON or not a manifest, or the manifest of another
+  // package. The `fetch-failed` side: the name keeps its previous status
+  // and is read again next run.
   | { readonly kind: 'failed'; readonly name: string; readonly reason: string }
   // Not started within the run's read budget. Kept, retried.
   | { readonly kind: 'unreached'; readonly name: string }
