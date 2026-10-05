@@ -4084,6 +4084,7 @@ describe('every network module bounds its requests with withTimeout', () => {
     expect(files).toContain('github-client.ts')
     expect(files).toContain('llm-client.ts')
     expect(files).toContain('github-stars.ts')
+    expect(files).toContain('npm-feed.ts')
   })
 
   it('detects a raw invocation at all, so the prohibition below cannot pass by matching nothing', () => {
@@ -4100,7 +4101,7 @@ describe('every network module bounds its requests with withTimeout', () => {
       if (file === 'npm-client.ts') {
         expect(
           codeLines(source).some(line => /export function withTimeout\(/.test(line.text)),
-          'npm-client.ts owns withTimeout and must keep exporting it: the other three network '
+          'npm-client.ts owns withTimeout and must keep exporting it: the other network '
             + 'modules import their deadline from here rather than each growing a copy.',
         ).toBe(true)
         continue

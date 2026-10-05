@@ -4239,6 +4239,7 @@ const githubClientSource = srcOf('github-client.ts')
 const SCANNED_SOURCES: readonly { file: string; source: string }[] = [
   { file: 'github-client.ts', source: githubClientSource },
   { file: 'npm-client.ts', source: srcOf('npm-client.ts') },
+  { file: 'npm-feed.ts', source: srcOf('npm-feed.ts') },
   { file: 'http-body.ts', source: srcOf('http-body.ts') },
 ]
 

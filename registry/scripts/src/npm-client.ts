@@ -1371,7 +1371,7 @@ export const MAX_PACKUMENT_BYTES = 16 * 1024 * 1024
  * @returns the parsed value, or which of the two ways it was unusable — the
  *   callers want different consequences from the same fact.
  */
-async function readJsonCapped(
+export async function readJsonCapped(
   response: Response,
   cap: number,
 ): Promise<{ ok: true; value: unknown } | { ok: false; reason: 'too-large' | 'not-json' }> {
