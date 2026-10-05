@@ -55,6 +55,11 @@ either label. The READMEs' "Settings → Plugins → Plugin shop" depends on
 the reader's dsh, not on the shop's version, so it stays until dsh 0.1.7
 reaches `latest`, and changes then together with the screenshots.
 
+Amended 2026-10-05: 0.2.0-rc.2 reached `latest` on 2026-09-29 and keeps the
+label. The change waits for the next promotion commit, because the
+screenshots can only be reshot from a published shop that 0.2 loads
+(`2026-10-05-dsh-020-readiness.md`, Release).
+
 ### B0.3 The hot tree hangs off the shop's own entry
 
 cordis hands a service out with `ctx` rebound to the context that looked

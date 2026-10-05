@@ -45,11 +45,13 @@ jobs:
     #
     # The `dsh` axis, added 2026-09-27, is that pin. Each version is a
     # harness the e2e was RUN against before it was listed here, and each leg
-    # installs exactly its own entry. 0.1.5-rc.3 is npm's `latest`; 0.1.7-rc.2
-    # runs the half of the suite 0.1.5 never reaches (the refusal branch, the
-    # 0.1.7 UI fixes, the harness-package badge), which no automated leg ran
-    # before. repo-guards.test.ts reads this list and holds it equal to the
-    # e2e contract header's.
+    # installs exactly its own entry. 0.2.0-rc.2 has been npm's `latest` since
+    # 2026-09-29, and its `next` too. 0.1.5-rc.3, `latest` before it, is the
+    # only leg left on the CLI path. 0.1.7-rc.2 and 0.2.0-rc.2 run the half of
+    # the suite 0.1.5 never reaches (the refusal branch, the 0.1.7 UI fixes,
+    # the harness-package badge), each on its own version of dsh's settings UI.
+    # repo-guards.test.ts reads this list, holds it equal to the e2e contract
+    # header's, and fails when the shop's own harness peers refuse an entry.
     #
     # `fail-fast: false` because the legs answer different questions.
     # Cancelling Windows the moment Linux goes red, or one harness the moment
@@ -58,7 +60,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        dsh: ['0.1.5-rc.3', '0.1.7-rc.2']
+        dsh: ['0.1.5-rc.3', '0.1.7-rc.2', '0.2.0-rc.2']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -158,6 +160,13 @@ jobs:
       # it before it was listed, with the version each test launched read from
       # inside the run. The version now comes from the `dsh` matrix axis above,
       # one per leg, and is the list the guard compares with the header.
+      #
+      # 0.2.0-rc.2 JOINED THEM 2026-10-05 as a third, on the same terms, and
+      # it could not have joined unchanged. That dsh refuses the shop itself
+      # unless the shop's harness peers admit 0.2, and its first-run notice
+      # (预览版说明) compares a new acknowledgement version that a seed written
+      # for 0.1 does not carry. The run behind this entry passed after both
+      # changes (design 2026-10-05-dsh-020-readiness).
       - run: npm install -g @deepseek-ai/dsh@${{ matrix.dsh }}
       - run: dsh --version
       # The web full-flow e2e (P2 exit criterion) needs a playwright browser;

@@ -93,6 +93,15 @@ These block a real launch, not the code.
    **Done 2026-09-27:** a `dsh` matrix axis runs 0.1.5-rc.3 and 0.1.7-rc.2 on
    both platforms, and each leg checks that the harness it boots is the one
    it installed (readiness, Release).
+7. **dsh 0.2 — ready, not released, 2026-10-05.** npm's `latest` became
+   0.2.0-rc.2 on 2026-09-29, and that dsh skips the shop at boot, because
+   the shop's harness peers read `^0.1.1-rc.2`. The peers now admit the 0.2
+   line and CI runs a third harness
+   ([2026-10-05-dsh-020-readiness.md](../design/2026-10-05-dsh-020-readiness.md)).
+   Open: the beta and its promotion — the promotion commit carries the
+   README pins, the six screenshots and the "Built-in plugins" path — and a
+   release note telling 0.2 readers to reinstall the shop once, since a
+   shop dsh skips cannot update itself.
 
 ## P1 — the Host half (done 2026-08-25)
 

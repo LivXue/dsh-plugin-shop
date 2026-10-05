@@ -340,6 +340,15 @@ every future rc bump into a false alarm. `includePrerelease` keeps
 discrimination on both sides, which is the same reason §3's no-verdict
 rule exists: one false warning teaches a reader to ignore every warning.
 
+**Amended 2026-10-05.** The table measures the range the shop declared
+until then. The three harness peers now declare `>=0.1.1-rc.2 <0.3.0-0`,
+after the suite ran on 0.2.0-rc.2 and 0.2.1-alpha.1
+(`2026-10-05-dsh-020-readiness.md`). Against that range one cell flips: the
+`0.2.0-rc.1` row satisfies under `includePrerelease`. Every strict verdict
+stands, because strict semver admits a prerelease only on a comparator's
+own [major.minor.patch], 0.1.1 and 0.3.0 here. The minor-line move this check
+warns of is now 0.3.
+
 **Warn once, loudly; never throw.** One message per load naming each
 mismatch with its declared range and the version found. Refusing to load
 would cost the user the entire shop, which is worse than a degraded one,

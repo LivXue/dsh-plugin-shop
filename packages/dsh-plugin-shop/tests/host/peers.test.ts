@@ -230,24 +230,25 @@ describe('nodeResolver', () => {
 const DECLARED: Record<string, string> = {
   '@deepseek-ai/cordis': '^4.0.1',
   '@deepseek-ai/cordis-plugin-include': '^1.0.6',
-  '@deepseek-ai/dsh-app-boot': '^0.1.1-rc.2',
-  '@deepseek-ai/dsh-home-paths': '^0.1.1-rc.2',
-  '@deepseek-ai/dsh-typert-protocol': '^0.1.1-rc.2',
+  '@deepseek-ai/dsh-app-boot': '>=0.1.1-rc.2 <0.3.0-0',
+  '@deepseek-ai/dsh-home-paths': '>=0.1.1-rc.2 <0.3.0-0',
+  '@deepseek-ai/dsh-typert-protocol': '>=0.1.1-rc.2 <0.3.0-0',
 }
 
-/** The versions those peers actually resolve at, re-measured 2026-09-10 by a
+/** The versions those peers actually resolve at, re-measured 2026-10-05 by a
  * bare `require` of each package out of the tree the harness npm calls
- * `latest` — NOT a reading of this repo's lockfile, which pins the harness dev
- * deps a line behind on purpose (`.github/workflows/plugin.yml` owns why).
+ * `latest`, 0.2.0-rc.2 — NOT a reading of this repo's lockfile, which pins the
+ * harness dev deps at the floor on purpose (`.github/workflows/plugin.yml`
+ * owns why).
  *
  * One table, used by every case that means "the real install". There were two
  * the first time this moved, and only one of them was re-measured. */
 const INSTALLED: Record<string, string> = {
-  '@deepseek-ai/cordis': '4.0.2',
-  '@deepseek-ai/cordis-plugin-include': '1.0.7',
-  '@deepseek-ai/dsh-app-boot': '0.1.5-rc.1',
-  '@deepseek-ai/dsh-home-paths': '0.1.5-rc.1',
-  '@deepseek-ai/dsh-typert-protocol': '0.1.5-rc.1',
+  '@deepseek-ai/cordis': '4.0.4',
+  '@deepseek-ai/cordis-plugin-include': '1.0.9',
+  '@deepseek-ai/dsh-app-boot': '0.2.0-rc.2',
+  '@deepseek-ai/dsh-home-paths': '0.2.0-rc.2',
+  '@deepseek-ai/dsh-typert-protocol': '0.2.0-rc.2',
 }
 
 /** A resolver over a fixed table: a name the table does not carry yields no
@@ -258,24 +259,26 @@ const versions = (table: Record<string, string>): PeerVersionResolver =>
 describe('peerVersionMismatches', () => {
   it('is silent for the versions installed today', () => {
     // The three harness rows are the discriminating ones: the harness ships
-    // nothing but -rc versions, so strict semver rejects all three against
-    // `^0.1.1-rc.2`, and this test is what fails if the comparison ever
-    // regresses to strict mode. The two cordis peers are plain releases that
-    // satisfy it either way — they are here because INSTALLED is the real
-    // shape, not because they carry a case of their own.
+    // nothing but -rc versions, and strict semver admits a prerelease only on
+    // a comparator's own [major.minor.patch] — 0.1.1 and 0.3.0 here — so it
+    // rejects all three against `>=0.1.1-rc.2 <0.3.0-0`, and this test is what
+    // fails if the comparison ever regresses to strict mode. The two cordis
+    // peers are plain releases that satisfy it either way — they are here
+    // because INSTALLED is the real shape, not because they carry a case of
+    // their own.
     //
     // Every version here exists, which is what makes it a measurement and
-    // also what makes it perishable: the two cases below carry the boundary
-    // and the moving-harness properties, so neither depends on what npm
-    // happens to be serving on the day someone re-measures this one.
+    // also what makes it perishable: the cases below carry the boundary and
+    // the moving-harness properties, so none depends on what npm happens to
+    // be serving on the day someone re-measures this one.
     expect(peerVersionMismatches(DECLARED, versions(INSTALLED))).toEqual([])
   })
 
   it('accepts a peer resolving at exactly its declared floor', () => {
     // `^4.0.1` and `^1.0.6` are the only non-prerelease ranges DECLARED
-    // carries, and INSTALLED now sits one patch above both — so nothing else
-    // in this file covers a found version EQUAL to its floor, the boundary a
-    // comparator regressed to an exclusive lower bound would break.
+    // carries, and INSTALLED sits above both — so nothing else in this file
+    // covers a found version EQUAL to its floor, the boundary a comparator
+    // regressed to an exclusive lower bound would break.
     expect(peerVersionMismatches(DECLARED, versions({
       ...INSTALLED,
       '@deepseek-ai/cordis': '4.0.1',
@@ -283,8 +286,22 @@ describe('peerVersionMismatches', () => {
     }))).toEqual([])
   })
 
+  it('accepts the harness floor the build compiles against', () => {
+    // The workspace resolves the harness dev deps at 0.1.1-rc.2 and compiles
+    // against them, which is the claim the lower end of DECLARED's harness
+    // range makes (`.github/workflows/plugin.yml`: compile at the floor, run
+    // the e2e at the ceilings). Widening the range to the 0.2 line must not
+    // cost the floor it has always admitted.
+    expect(peerVersionMismatches(DECLARED, versions({
+      ...INSTALLED,
+      '@deepseek-ai/dsh-app-boot': '0.1.1-rc.2',
+      '@deepseek-ai/dsh-home-paths': '0.1.1-rc.2',
+      '@deepseek-ai/dsh-typert-protocol': '0.1.1-rc.2',
+    }))).toEqual([])
+  })
+
   it('accepts an rc ahead of the installed one on the same minor line', () => {
-    // Deliberately hypothetical: `0.1.9-rc.3` is published nowhere and stands
+    // Deliberately hypothetical: `0.2.9-rc.3` is published nowhere and stands
     // for whatever the next rc is. The harness moving forward underneath a
     // fixed range is the event §7 of the harness-compatibility design doc
     // (docs/design/2026-09-01-harness-compatibility.md) was written after, and
@@ -292,15 +309,19 @@ describe('peerVersionMismatches', () => {
     // a single version.
     expect(peerVersionMismatches(DECLARED, versions({
       ...INSTALLED,
-      '@deepseek-ai/dsh-typert-protocol': '0.1.9-rc.3',
+      '@deepseek-ai/dsh-typert-protocol': '0.2.9-rc.3',
     }))).toEqual([])
   })
 
   it('reports a minor-line move — the real breaking change', () => {
+    // On 0.x the next minor line is semver's breaking move, and DECLARED's
+    // harness range stops before 0.3. Until 2026-10-05 it stopped before 0.2;
+    // it admitted that line once the suite had run on 0.2.0-rc.2 and
+    // 0.2.1-alpha.1 (design 2026-10-05-dsh-020-readiness).
     expect(peerVersionMismatches(
-      { '@deepseek-ai/dsh-app-boot': '^0.1.1-rc.2' },
-      versions({ '@deepseek-ai/dsh-app-boot': '0.2.0-rc.1' }),
-    )).toEqual([{ spec: '@deepseek-ai/dsh-app-boot', range: '^0.1.1-rc.2', found: '0.2.0-rc.1' }])
+      { '@deepseek-ai/dsh-app-boot': '>=0.1.1-rc.2 <0.3.0-0' },
+      versions({ '@deepseek-ai/dsh-app-boot': '0.3.0-rc.1' }),
+    )).toEqual([{ spec: '@deepseek-ai/dsh-app-boot', range: '>=0.1.1-rc.2 <0.3.0-0', found: '0.3.0-rc.1' }])
   })
 
   it('reports a version older than the pinned prerelease', () => {
@@ -323,8 +344,8 @@ describe('peerVersionMismatches', () => {
     // nothing at all: absence is not a version violation, and the presence
     // machinery (incompatibilityMap) is what covers it.
     expect(peerVersionMismatches(DECLARED, versions({
-      '@deepseek-ai/dsh-home-paths': '0.2.0-rc.1',
-    }))).toEqual([{ spec: '@deepseek-ai/dsh-home-paths', range: '^0.1.1-rc.2', found: '0.2.0-rc.1' }])
+      '@deepseek-ai/dsh-home-paths': '0.3.0-rc.1',
+    }))).toEqual([{ spec: '@deepseek-ai/dsh-home-paths', range: '>=0.1.1-rc.2 <0.3.0-0', found: '0.3.0-rc.1' }])
   })
 
   it('treats a throwing resolver as no verdict rather than as a violation', () => {
