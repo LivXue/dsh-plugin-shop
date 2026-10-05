@@ -12,6 +12,7 @@ import { readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { satisfies } from 'semver'
 import { describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
 import vitestConfig from '../../../vitest.config.ts'
@@ -677,6 +678,40 @@ describe('the harness pin and the e2e contract move together', () => {
     const suite = (workflow.jobs.test?.steps ?? []).find(step => (step.run ?? '').includes('packages/dsh-plugin-shop test'))
     expect(suite?.env?.DSH_SHOP_EXPECT_DSH, 'plugin.yml does not tell the package suite which harness it installed')
       .toBe('${{ matrix.dsh }}')
+  })
+
+  it("declares harness peers that admit every harness plugin.yml pins, by dsh's own rule", () => {
+    // From 0.1.7-rc.1, dsh refuses to install a plugin whose
+    // `@deepseek-ai/dsh` or `@deepseek-ai/dsh-*` peers its runtime does not
+    // satisfy, and skips one at boot, without a word on stdout. Optional peers
+    // count: dsh never reads `peerDependenciesMeta` (app-boot's
+    // `evaluatePluginCompatibility`, design 2026-09-26-dsh-017-readiness B1.1).
+    // The shop is such a plugin. npm's `latest` moved to 0.2.0-rc.2 on
+    // 2026-09-29 while the shop's three harness peers still read
+    // `^0.1.1-rc.2`, so for a week every fresh dsh skipped the shop at boot
+    // (design 2026-10-05-dsh-020-readiness).
+    //
+    // The runtime dsh compares is app-boot's own version, which ships in
+    // lockstep with dsh (measured equal for every harness pinned here), under
+    // `includePrerelease`. A pinned harness the shop's manifest refuses is one
+    // the e2e cannot even install into. This fails first and names the peer;
+    // otherwise that leg's beforeAll dies on dsh's refusal.
+    const manifest = JSON.parse(read('packages/dsh-plugin-shop/package.json')) as {
+      peerDependencies?: Record<string, string>
+    }
+    const harnessPeers = Object.entries(manifest.peerDependencies ?? {})
+      .filter(([name]) => name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-'))
+    expect(harnessPeers.length, 'the shop declares no harness peer, so there is nothing for dsh to refuse')
+      .toBeGreaterThan(0)
+    const workflow = parse(read('.github/workflows/plugin.yml')) as {
+      jobs: Record<string, { strategy?: { matrix?: { dsh?: string[] } } }>
+    }
+    const pinned = workflow.jobs.test?.strategy?.matrix?.dsh ?? []
+    expect(pinned.length, 'plugin.yml pins no harness').toBeGreaterThan(0)
+    const refused = pinned.flatMap(runtime => harnessPeers
+      .filter(([, range]) => !satisfies(runtime, range, { includePrerelease: true }))
+      .map(([name, range]) => `${name} ${range} refuses dsh ${runtime}`))
+    expect(refused).toEqual([])
   })
 })
 

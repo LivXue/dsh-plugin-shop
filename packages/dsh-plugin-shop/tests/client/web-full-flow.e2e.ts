@@ -88,7 +88,7 @@
  * arms were asserted by nothing, and the divergence they now pin was found
  * as an opaque 10s timeout on a host behaving exactly as designed.
  *
- * Written against harnesses 0.1.5-rc.3 and 0.1.7-rc.2: the versions
+ * Written against harnesses 0.1.5-rc.3, 0.1.7-rc.2 and 0.2.0-rc.2: the versions
  * `.github/workflows/plugin.yml` installs globally, one per leg of its `dsh`
  * matrix, and therefore the ones every selector below was measured on. The
  * two are held together mechanically: `repo-guards.test.ts` fails the build
