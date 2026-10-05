@@ -281,7 +281,8 @@ export function parseFeedPage(value: unknown): { readonly rows: readonly FeedRow
 
 /** Which names one run reads, and which it drops without a read. */
 export interface FeedSelection {
-  /** Names to read this run: every pending name first, then each changed id once. */
+  /** Names to read this run -- every pending name and each changed id,
+   * once -- in code-unit order rotated by the seed. */
   readonly read: readonly string[]
   /** Held or pending names the feed marks deleted: gone without a read. */
   readonly gone: readonly string[]
@@ -294,8 +295,14 @@ export interface FeedSelection {
  * matches, or one the state already holds or has pending -- so a held
  * carrier is re-read whenever it changes, even if the pattern is ever
  * narrowed -- plus every pending name, changed or not.
+ *
+ * One list, rotated by `seed` (the run's feed head, which moves every run),
+ * rather than pending names first in a fixed order: a run whose read budget
+ * cannot cover the list must not leave the same names last on every run.
+ * Fixed, the order read the same failing names first each time and could
+ * starve the rest forever (2026-10-05 security review).
  */
-export function selectFeedIds(rows: readonly FeedRow[], prior: FeedState): FeedSelection {
+export function selectFeedIds(rows: readonly FeedRow[], prior: FeedState, seed = 0): FeedSelection {
   // The feed is live, so one id can appear on two pages of one run when
   // its package changed again mid-read: only its last row counts.
   const last = new Map<string, FeedRow>()
@@ -322,8 +329,10 @@ export function selectFeedIds(rows: readonly FeedRow[], prior: FeedState): FeedS
     if (!pending.has(id)) changed.push(id)
   }
   const goneSet = new Set(gone)
+  const all = [...[...pending].filter(name => !goneSet.has(name)), ...changed].sort(compareStrings)
+  const offset = all.length === 0 ? 0 : seed % all.length
   return {
-    read: [...[...pending].filter(name => !goneSet.has(name)).sort(compareStrings), ...changed.sort(compareStrings)],
+    read: [...all.slice(offset), ...all.slice(0, offset)],
     gone: gone.sort(compareStrings),
     refused,
   }

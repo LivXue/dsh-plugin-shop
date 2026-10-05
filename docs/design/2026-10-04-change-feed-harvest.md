@@ -185,7 +185,9 @@ dsh-plugin, 1 for deepseek-harness).
   it carries (sorted) and one owner, or `null` when no maintainer name
   passes the username grammar.
 - `pending`: names whose read failed or was not reached within the
-  time budget. They are read first on the next run.
+  time budget. They are read again on the next run, with its changed
+  ids, and the selection bound in section 4.4 keeps the list within
+  what one run can read.
 - One carrier per line, keys sorted by code unit, one trailing
   newline. A day's churn is then a few hundred lines rather than a
   reformatted file. About 8,000 carriers are expected, near 0.6 MB;
@@ -233,13 +235,23 @@ Where it is wrong, section 4.5 is the guard.
    unavailable for the run.
 2. **Rows.** Page `_changes?since=seq&limit=10000` until a short page
    or `FEED_PAGE_BUDGET` pages. Keep each id's last row. Skip ids that
-   begin with `_`.
+   begin with `_`. Stop, too, before a page whose ids would take this
+   run's selection -- pending names included -- past
+   `FEED_MAX_SELECTED`; that page waits for the next run, cursor and
+   all, so neither a flood of matching ids nor a backlog of failing
+   reads can grow the state past what one run can read.
 3. **Selection.** Read an id when it matches `FEED_NAME_PATTERN`, or
    is a carrier or pending -- so an entry on the list is re-read
    whenever it changes, even if the pattern is ever narrowed. Every
    pending name is read whether or not it changed. A row marked
    `deleted: true` is gone without a read; an unmarked unpublish
-   answers 404 and is gone the same way.
+   answers 404 and is gone the same way. The names are read in
+   code-unit order rotated by the head's `update_seq`, so a run that
+   cannot read them all never leaves the same names last. Amended
+   2026-10-05 after a security review: pending names were read first
+   in a fixed order and the list had no bound, so failing reads or a
+   flood could starve the same names forever and grow the file
+   without limit.
 4. **Reads.** `FEED_READ_CONCURRENCY` reads at a time, until done or
    `FEED_READ_TIME_BUDGET_MS`. Names not reached become pending.
 5. **Merge** (pure). A carrier is set, replacing its keywords and
@@ -377,6 +389,9 @@ crossing grows the residue's owners past the budget.
 - `FEED_PAGE_LIMIT = 10_000` -- the API's maximum; 20,000 answers 400.
 - `FEED_PAGE_BUDGET = 200` pages a run -- the bootstrap needs 62, a
   day needs 4.
+- `FEED_MAX_SELECTED = 25_000` ids a run, pending included -- the
+  bootstrap selects 17,779, and a run reads about 31,000 within its
+  time budget at the measured rate.
 - `FEED_PAGE_MAX_BYTES = 8 MiB` -- the largest page measured was
   1,078,874 bytes.
 - `FEED_MANIFEST_MAX_BYTES = 1 MiB` -- manifests average 2.5 KB, and

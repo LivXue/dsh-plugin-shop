@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { FeedState } from '../src/feed-state.ts'
-import { FEED_FETCH_ATTEMPTS, FEED_MANIFEST_MAX_BYTES, FEED_PAGE_LIMIT, harvestFeed } from '../src/npm-feed.ts'
+import { FEED_FETCH_ATTEMPTS, FEED_MANIFEST_MAX_BYTES, FEED_MAX_SELECTED, FEED_PAGE_LIMIT, harvestFeed } from '../src/npm-feed.ts'
 
 const KEYWORDS: readonly string[] = ['dsh-plugin', 'deepseek-harness']
 const instant = async (_ms: number): Promise<void> => {}
@@ -41,6 +41,12 @@ const at = (seq: number, carriers: Record<string, string[]> = {}, pending: strin
 })
 const fullPage = (from: number, idAt: (i: number) => string = i => `pkg-${i}`) =>
   Array.from({ length: FEED_PAGE_LIMIT }, (_, i) => ({ seq: from + 1 + i, id: idAt(i) }))
+
+/** Answers every request from one function of its URL. */
+const routeByUrl = (answer: (url: string) => Response): typeof fetch =>
+  (async (input: string | URL) => answer(String(input))) as unknown as typeof fetch
+const REGISTRY_PREFIX = 'https://registry.npmjs.org/'
+const latestName = (url: string): string => decodeURIComponent(url.slice(REGISTRY_PREFIX.length, -'/latest'.length))
 
 describe('harvestFeed', () => {
   it('reads forward from the cursor to a short page, then reads the manifests it selected', async () => {
@@ -260,6 +266,68 @@ describe('harvestFeed', () => {
     expect(report).toMatchObject({ selected: 2, read: 0, unreached: 2, pending: 2 })
     expect(next.pending).toEqual(['dsh-a', 'dsh-b'])
     expect(next.seq).toBe(102)
+  })
+
+  it('reads every pending name within two runs when the read budget covers only half of them', async () => {
+    // The 2026-10-05 security review's starvation case: four pending names
+    // that fail every run, and a budget that starts two reads a run. In a
+    // fixed order the same two are read forever and the other two never.
+    const asked = new Set<string>()
+    const run = async (prior: FeedState, head: number) => {
+      let tick = 0
+      return harvestFeed(prior, {
+        harvestKeywords: KEYWORDS, sleep: instant, now: () => tick++, readBudgetMs: 2.5,
+        fetchImpl: routeByUrl(url => {
+          if (isHead(url)) return json({ update_seq: head })
+          if (url.includes('/_changes?')) return page([], 100)
+          asked.add(latestName(url))
+          return json({}, 403)
+        }),
+      })
+    }
+    const first = await run(at(100, {}, ['dsh-p0', 'dsh-p1', 'dsh-p2', 'dsh-p3']), 300)
+    expect(first.report).toMatchObject({ read: 2, unreached: 2, pending: 4 })
+    await run(first.next, 302)
+    expect([...asked].sort()).toEqual(['dsh-p0', 'dsh-p1', 'dsh-p2', 'dsh-p3'])
+  })
+
+  it('leaves a page for the next run, cursor and all, when it would take the run past the selection bound', async () => {
+    const second = 100 + FEED_PAGE_LIMIT
+    const { next, report } = await harvestFeed(at(100), {
+      harvestKeywords: KEYWORDS, sleep: instant, maxSelected: 4,
+      fetchImpl: routeByUrl(url => {
+        if (isHead(url)) return json({ update_seq: 99_999 })
+        if (isPage(100)(url)) return page(fullPage(100, i => (i < 3 ? `dsh-a${i}` : `pkg-${i}`)), second)
+        if (isPage(second)(url)) return page(fullPage(second, i => (i < 3 ? `dsh-b${i}` : `pkg-${i}`)), second + FEED_PAGE_LIMIT)
+        return manifest(latestName(url))
+      }),
+    })
+    // The first page's 3 ids fit under 4; the second page's 3 more would not.
+    expect(report).toMatchObject({ pages: 1, selected: 3 })
+    expect(report.note).toBe('stopped after 1 page(s): the next page would take this run past 4 selected ids')
+    expect(next.seq).toBe(second)
+    expect([...next.carriers.keys()].sort()).toEqual(['dsh-a0', 'dsh-a1', 'dsh-a2'])
+  })
+
+  it('counts pending names toward the bound, so a backlog holds the cursor back until it drains', async () => {
+    const { next, report } = await harvestFeed(at(100, {}, ['dsh-p0', 'dsh-p1', 'dsh-p2']), {
+      harvestKeywords: KEYWORDS, sleep: instant, maxSelected: 4,
+      fetchImpl: routeByUrl(url => {
+        if (isHead(url)) return json({ update_seq: 300 })
+        if (isPage(100)(url)) return page([{ seq: 101, id: 'dsh-new0' }, { seq: 102, id: 'dsh-new1' }], 102)
+        return manifest(latestName(url))
+      }),
+    })
+    // 3 pending and 2 new make 5, past 4: the page waits, the backlog is read.
+    expect(report).toMatchObject({ pages: 0, selected: 3, fromSeq: 100, toSeq: 100 })
+    expect(report.note).toBe('stopped after 0 page(s): the next page would take this run past 4 selected ids')
+    expect([...next.carriers.keys()].sort()).toEqual(['dsh-p0', 'dsh-p1', 'dsh-p2'])
+    expect(next.pending).toEqual([])
+  })
+
+  it('bounds a run high enough to take the measured bootstrap in one run', () => {
+    // 17,779 ids selected from FEED_BOOTSTRAP_SEQ to the head (spec section 2).
+    expect(FEED_MAX_SELECTED).toBeGreaterThanOrEqual(17_779)
   })
 
   it('sends the npm token to the registry and never to the feed host', async () => {

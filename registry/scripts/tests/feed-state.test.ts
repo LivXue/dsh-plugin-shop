@@ -262,9 +262,17 @@ describe('selectFeedIds', () => {
     expect(selectFeedIds([row(1, 'probe-kit')], state({ 'probe-kit': ['dsh-plugin'] })).read).toEqual(['probe-kit'])
   })
 
-  it('reads every pending name first, changed or not, then the changed ids in code-unit order', () => {
-    expect(selectFeedIds([row(1, 'dsh-c'), row(2, 'dsh-b')], state({}, ['dsh-z', 'dsh-y'])).read)
-      .toEqual(['dsh-y', 'dsh-z', 'dsh-b', 'dsh-c'])
+  it('reads pending and changed names together, in code-unit order rotated by the seed', () => {
+    // Replaces "every pending name first, then the changed ids": a fixed
+    // order read the same failing names first on every run and could leave
+    // the same tail unread forever (2026-10-05 security review). The seed is
+    // the run's feed head, which moves every run. Four names: seed 1 starts
+    // at the second, seed 6 at the third (6 mod 4 = 2).
+    const rows = [row(1, 'dsh-c'), row(2, 'dsh-b')]
+    const prior = state({}, ['dsh-z', 'dsh-y'])
+    expect(selectFeedIds(rows, prior).read).toEqual(['dsh-b', 'dsh-c', 'dsh-y', 'dsh-z'])
+    expect(selectFeedIds(rows, prior, 1).read).toEqual(['dsh-c', 'dsh-y', 'dsh-z', 'dsh-b'])
+    expect(selectFeedIds(rows, prior, 6).read).toEqual(['dsh-y', 'dsh-z', 'dsh-b', 'dsh-c'])
   })
 
   it('reads a pending name that also changed only once', () => {

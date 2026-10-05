@@ -35,6 +35,17 @@ export const FEED_MANIFEST_MAX_BYTES = 1024 * 1024
 /** Concurrent manifest reads: 600 at 16 answered 25.8 a second with no 429 (measured 2026-10-04). */
 export const FEED_READ_CONCURRENCY = 16
 
+/**
+ * The most ids one run may select, pending names included. Paging stops
+ * before a page that would take the selection past it, and that page waits
+ * for the next run, cursor and all -- so neither a flood of matching ids nor
+ * a backlog of failing reads can grow the state, or one run's work, past
+ * what a run can read (2026-10-05 security review). The bootstrap selects
+ * 17,779; a run reads about 31,000 within FEED_READ_TIME_BUDGET_MS at the
+ * rate measured on 2026-10-04.
+ */
+export const FEED_MAX_SELECTED = 25_000
+
 /** Wall-clock budget for one run's manifest reads. The bootstrap's 17,779 take ~11.5 minutes
  * at the measured rate, a day's ~700 about 30 seconds; what is not started becomes pending. */
 export const FEED_READ_TIME_BUDGET_MS = 20 * 60_000
@@ -60,6 +71,7 @@ export interface HarvestFeedOptions {
   readonly timeoutMs?: number
   readonly pageBudget?: number
   readonly readBudgetMs?: number
+  readonly maxSelected?: number
 }
 
 function defaultSleep(ms: number): Promise<void> {
@@ -157,6 +169,7 @@ export async function harvestFeed(prior: FeedState, options: HarvestFeedOptions)
     // A duration, so a monotonic clock: an NTP step must not expire it.
     now = () => performance.now(),
     timeoutMs = FEED_REQUEST_TIMEOUT_MS, pageBudget = FEED_PAGE_BUDGET, readBudgetMs = FEED_READ_TIME_BUDGET_MS,
+    maxSelected = FEED_MAX_SELECTED,
   } = options
   const timed = withTimeout(fetchImpl, timeoutMs, 'npm change feed')
   const unavailable = (note: string): FeedHarvest => ({
@@ -183,6 +196,10 @@ export async function harvestFeed(prior: FeedState, options: HarvestFeedOptions)
   }
 
   const rows: FeedRow[] = []
+  // Every id this run would read, pending names included: what the bound
+  // counts. A superset of the final selection -- an id a later page deletes
+  // still counts -- which can only ever stop paging early.
+  const selecting = new Set(prior.pending)
   let seq = prior.seq
   let pages = 0
   let note = ''
@@ -206,13 +223,19 @@ export async function harvestFeed(prior: FeedState, options: HarvestFeedOptions)
       note = `stopped after ${pages} page(s): a page has an unexpected shape`
       break
     }
+    const adding = selectFeedIds(page.rows, prior).read.filter(name => !selecting.has(name))
+    if (selecting.size + adding.length > maxSelected) {
+      note = `stopped after ${pages} page(s): the next page would take this run past ${maxSelected} selected ids`
+      break
+    }
+    for (const name of adding) selecting.add(name)
     for (const row of page.rows) rows.push(row)
     pages += 1
     seq = page.lastSeq
     if (page.rows.length < FEED_PAGE_LIMIT) break
   }
 
-  const selection = selectFeedIds(rows, prior)
+  const selection = selectFeedIds(rows, prior, updateSeq)
   const results: FeedRead[] = selection.gone.map((name): FeedRead => ({ kind: 'gone', name }))
   const reads: (FeedRead | undefined)[] = new Array<FeedRead | undefined>(selection.read.length)
   const started = now()
