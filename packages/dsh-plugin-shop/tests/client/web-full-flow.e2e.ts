@@ -101,10 +101,11 @@
  * Pinned selectors (all verified against the live app, zh-CN):
  * - the app root frame: `[class*="frame"]` — the frame class is CSS-module
  *   hashed, and the live app's root element carries a class containing `frame`
- * - the two first-run dialogs (内测声明, then 添加一个 API Key 开始使用) are NOT
- *   selectors this suite uses any more: `seedOnboarding` turns both off before
- *   dsh boots, because they mask the page until dismissed and dismissing them
- *   is a race no timeout wins reliably. `expectNoDialog` is the tripwire.
+ * - the two first-run dialogs (内测声明 — 预览版说明 from 0.2.0-rc.1 — then
+ *   添加一个 API Key 开始使用) are NOT selectors this suite uses any more:
+ *   `seedOnboarding` turns both off before dsh boots, because they mask the
+ *   page until dismissed and dismissing them is a race no timeout wins
+ *   reliably. `expectNoDialog` is the tripwire.
  * - settings trigger: `page.getByRole('button', { name: '设置', exact: true })`
  * - settings modal: `page.getByRole('dialog', { name: '设置' })`
  * - plugins section: `dialog.getByRole('button', { name: PLUGINS_SECTION })` —
@@ -216,6 +217,7 @@ async function expandGlobalPlane(dialog: Locator): Promise<void> {
 import { zh } from '../../src/client/locales.ts'
 import { startCatalogServer, type CatalogServer } from '../fixtures/catalog-server.ts'
 import { startLocalRegistry, type LocalRegistry } from '../fixtures/local-registry.ts'
+import { welcomeNoticeVersion } from '../fixtures/onboarding.ts'
 
 /** The Settings section that renders `settings.plugins.tab`, where the shop
  * tab lives. Harness 0.1.5-rc.3 labels it 插件; 0.1.7-rc.2 relabels the same
@@ -266,9 +268,16 @@ function stopProcessTree(pid: number): void {
  *
  * The same recipe `scripts/shoot-readme-screenshots.ts` uses, and for a reason
  * this file learned the hard way: a configured provider suppresses "add an API
- * key to get started", and `welcomeNoticeVersion` suppresses the 内测声明
+ * key to get started", and `welcomeNoticeVersion` suppresses the first-run
  * notice. The key is an obvious placeholder — nothing here ever sends a model
  * request, and the profile is a temp directory removed in `afterAll`.
+ *
+ * The notice's value depends on the harness: dsh compares it for exact
+ * equality, and 0.2.0-rc.1 replaced 内测声明 with 预览版说明 under a new
+ * version (`welcomeNoticeVersion` in tests/fixtures/onboarding.ts owns the
+ * table), so beforeAll seeds it only once `dsh --version` has answered. Seeded
+ * with 0.1's value, 0.2.0-rc.2 raised the notice and eight of nine cases
+ * failed behind it (2026-10-05).
  *
  * What this replaces is what made CI red on 2026-09-14 (run 34858951558, five
  * of six cases): the first case used to dismiss the API-key dialog behind a 5s
@@ -299,13 +308,13 @@ function stopProcessTree(pid: number): void {
  * anyway, because a POSIX-only `if` here would be a second platform branch
  * guarding something Windows already ignores.
  */
-function seedOnboarding(home: string): void {
+function seedOnboarding(home: string, dshVersion: string): void {
   writeFileSync(join(home, 'settings.yaml'), [
     'agent-default-model:',
     '  provider: deepseek-official',
     '  model: deepseek-v4-pro',
     'ui-onboarding:',
-    '  welcomeNoticeVersion: 2026-08-13.1',
+    `  welcomeNoticeVersion: ${welcomeNoticeVersion(dshVersion)}`,
     '',
   ].join('\n'))
   const credentials = join(home, '.credentials.yaml')
@@ -916,10 +925,6 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
     const oldVersionStatus = await oldVersion.finished
     expect(oldVersionStatus.state, oldVersionStatus.log.join('\n')).toBe('done')
 
-    // The other pre-boot seed: neither onboarding dialog is ever raised, so no
-    // case has to click one away and none can be blocked by one.
-    seedOnboarding(tmpHome)
-
     // Boot the real web profile against the fixture catalog on a port
     // reserved up front (see `reservePort`: `--port 0` is itself a restart
     // refusal the host advertises, and booting under it would cost this file
@@ -968,6 +973,11 @@ describe.skipIf(!hasDsh || !hasChromium)('web full flow', () => {
       expect(launchedDshVersion, `this leg installed dsh ${expectedDsh}, but the dsh on PATH answers ${launchedDshVersion}`)
         .toBe(expectedDsh)
     }
+    // The other pre-boot seed: neither onboarding dialog is ever raised, so no
+    // case has to click one away and none can be blocked by one. Here rather
+    // than with the installs above, because the notice's value is this
+    // harness's own (see seedOnboarding).
+    seedOnboarding(tmpHome, launchedDshVersion)
     managerPath = gte(launchedDshVersion, '0.1.7-rc.1')
     // Only 0.1.7 has the first-use workspace (see seedNoDefaultWorkspace).
     if (gte(launchedDshVersion, '0.1.7-rc.1')) seedNoDefaultWorkspace(tmpHome)

@@ -28,6 +28,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium, type Browser, type Page } from 'playwright'
+import { welcomeNoticeVersion } from '../tests/fixtures/onboarding.ts'
 
 /** The version the READMEs tell a reader to install, read from a README
  * rather than restated here.
@@ -62,9 +63,10 @@ const T = {
 } as const
 type Lang = keyof typeof T
 
-function seedSettings(home: string, lang: Lang, theme: 'light' | 'dark'): void {
+function seedSettings(home: string, lang: Lang, theme: 'light' | 'dark', notice: string): void {
   // A configured provider suppresses "Add an API key to get started";
-  // welcomeNoticeVersion suppresses the 内测声明 notice. The key is an obvious
+  // welcomeNoticeVersion suppresses the first-run notice, at the version the
+  // dsh on PATH compares (tests/fixtures/onboarding.ts). The key is an obvious
   // placeholder — these captures never send a model request, and the profile
   // is a temp directory removed at the end.
   writeFileSync(join(home, 'settings.yaml'), [
@@ -72,7 +74,7 @@ function seedSettings(home: string, lang: Lang, theme: 'light' | 'dark'): void {
     '  provider: deepseek-official',
     '  model: deepseek-v4-pro',
     'ui-onboarding:',
-    '  welcomeNoticeVersion: 2026-08-13.1',
+    `  welcomeNoticeVersion: ${notice}`,
     'locale:',
     `  preference: ${lang}`,
     'ui-theme:',
@@ -148,7 +150,13 @@ async function main(): Promise<void> {
   const home = mkdtempSync(join(tmpdir(), 'dsh-shot-home-'))
   let browser: Browser | undefined
   try {
-    seedSettings(home, 'en', 'light')
+    // dsh compares the notice's acknowledgement for exact equality, and 0.2
+    // moved it, so the seed is the one the dsh this script boots carries: the
+    // first on PATH, like every spawn here.
+    const dsh = spawnSync('dsh', ['--version'], { encoding: 'utf8' })
+    if (dsh.status !== 0) throw new Error(`dsh --version failed:\n${dsh.stdout}\n${dsh.stderr}`)
+    const notice = welcomeNoticeVersion(dsh.stdout.trim())
+    seedSettings(home, 'en', 'light', notice)
     console.log(`installing dsh-plugin-shop@${SHOP_VERSION} — the version the READMEs tell a reader to run`)
     const add = spawnSync('dsh', ['plugin', '--profile', 'web', 'add', `dsh-plugin-shop@${SHOP_VERSION}`],
       { env: { ...process.env, DSH_HOME: home }, encoding: 'utf8' })
@@ -163,7 +171,7 @@ async function main(): Promise<void> {
     ] as const
 
     for (const step of plan) {
-      seedSettings(home, step.lang, step.theme)
+      seedSettings(home, step.lang, step.theme, notice)
       const { url, proc } = await bootWeb(home)
       try {
         const t = T[step.lang]
