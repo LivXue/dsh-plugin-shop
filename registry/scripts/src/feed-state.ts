@@ -10,6 +10,7 @@
  * Spec: docs/design/2026-10-04-change-feed-harvest.md.
  * @module feed-state
  */
+import { escapeCell } from './emit.ts'
 import { compareStrings } from './identity.ts'
 import { isMaintainerName } from './publisher-state.ts'
 
@@ -491,3 +492,108 @@ export interface FeedInput {
 
 /** No feed: `searchByKeywords` behaves exactly as it did before the feed existed. */
 export const NO_FEED: FeedInput = { carriers: new Map(), seed: 0 }
+
+/** One skimmable line for the build report and the CI log (spec section 4.7). */
+export function describeFeedRun(report: FeedRunReport): string {
+  if (!report.available) {
+    return `change feed unavailable: ${escapeCell(report.note)}; no feed name was listed or credited`
+  }
+  const carriers = Object.keys(report.carriers).sort(compareStrings)
+    .map(keyword => `${escapeCell(keyword)} ${report.carriers[keyword] ?? 0}`)
+    .join(', ')
+  const stopped = report.note === '' ? '' : `, ${escapeCell(report.note)}`
+  return `change feed: seq ${report.fromSeq} -> ${report.toSeq} (${report.pages} page(s)${stopped}); `
+    + `read ${report.read} of ${report.selected} selected (${report.failed} failed, ${report.unreached} not reached, `
+    + `${report.refused} refused); ${report.pending} pending; carriers: ${carriers}`
+}
+
+/** One line per keyword, beside the publisher-axis line (spec section 4.7). */
+export function describeFeedCoverage(coverage: FeedCoverage): string {
+  const parts = [`owners verified ${coverage.ownersVerified} of ${coverage.ownersTotal}`]
+  if (coverage.unverified > 0) parts.push(`${coverage.unverified} unverified`)
+  if (coverage.disagreed.length > 0) {
+    parts.push(`${coverage.disagreed.length} disagreed: ${coverage.disagreed.map(escapeCell).join(', ')}`)
+  }
+  return `keywords:${escapeCell(coverage.keyword)} feed supplied ${coverage.supplied} (${parts.join('; ')})`
+}
+
+const isCount = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+
+/**
+ * Read a run report back off a `--harvest-from` handoff. Every field is
+ * interpolated into a PUBLISHED build report, so a record that does not
+ * carry it -- or carries a contradiction -- throws, as
+ * `parseKeywordShortfall` does.
+ */
+export function parseFeedRunReport(value: unknown, where: string, harvestKeywords: readonly string[]): FeedRunReport {
+  const fail = (what: string): never => {
+    throw new Error(`${where}: change-feed report ${what}; re-run the harvest that wrote it`)
+  }
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return fail('is not an object')
+  const r = value as Record<string, unknown>
+  const count = (field: string): number => {
+    const n = r[field]
+    return isCount(n) ? n : fail(`has no integer \`${field}\``)
+  }
+  const available = r.available
+  if (typeof available !== 'boolean') return fail('has no boolean `available`')
+  const note = r.note
+  if (typeof note !== 'string') return fail('has no string `note`')
+  const rawCarriers = r.carriers
+  if (rawCarriers === null || typeof rawCarriers !== 'object' || Array.isArray(rawCarriers)) return fail('has no `carriers` object')
+  const carriers: Record<string, number> = {}
+  for (const keyword of harvestKeywords) {
+    const n = (rawCarriers as Record<string, unknown>)[keyword]
+    carriers[keyword] = isCount(n) ? n : fail(`has no carrier count for \`${keyword}\``)
+  }
+  const report: FeedRunReport = {
+    available, note,
+    fromSeq: count('fromSeq'), toSeq: count('toSeq'), pages: count('pages'),
+    selected: count('selected'), read: count('read'), failed: count('failed'),
+    unreached: count('unreached'), refused: count('refused'), pending: count('pending'),
+    carriers,
+  }
+  if (report.toSeq < report.fromSeq) return fail(`moves the cursor backwards (${report.fromSeq} -> ${report.toSeq})`)
+  if (report.read + report.unreached !== report.selected) return fail('counts reads that do not add up to what it selected')
+  if (report.failed > report.read) return fail('reports more failed reads than reads')
+  if (!report.available && (report.pages > 0 || report.selected > 0 || report.toSeq !== report.fromSeq)) {
+    return fail('reports reading a feed it calls unavailable')
+  }
+  return report
+}
+
+/** Read one coverage record back off a `--harvest-from` handoff; see `parseFeedRunReport`. */
+export function parseFeedCoverage(value: unknown, where: string, harvestKeywords: readonly string[]): FeedCoverage {
+  const fail = (what: string): never => {
+    throw new Error(`${where}: change-feed coverage record ${what}; re-run the harvest that wrote it`)
+  }
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return fail('is not an object')
+  const c = value as Record<string, unknown>
+  const count = (field: string): number => {
+    const n = c[field]
+    return isCount(n) ? n : fail(`has no integer \`${field}\``)
+  }
+  const keyword = c.keyword
+  if (typeof keyword !== 'string' || !harvestKeywords.includes(keyword)) return fail('has no harvest `keyword`')
+  const rawDisagreed = c.disagreed
+  if (!Array.isArray(rawDisagreed)) return fail('has no `disagreed` array')
+  const disagreed: string[] = []
+  for (const name of rawDisagreed as unknown[]) {
+    if (!isFeedPackageName(name)) return fail('names a disagreeing package outside the package-name rule')
+    disagreed.push(name)
+  }
+  const coverage: FeedCoverage = {
+    keyword,
+    feedOnly: count('feedOnly'), supplied: count('supplied'),
+    ownersVerified: count('ownersVerified'), ownersTotal: count('ownersTotal'),
+    verified: count('verified'), unverified: count('unverified'),
+    disagreed,
+  }
+  if (coverage.verified + coverage.unverified + coverage.disagreed.length !== coverage.feedOnly) {
+    return fail('splits its feed-only names into parts that do not add up')
+  }
+  if (coverage.ownersVerified > coverage.ownersTotal) return fail('verified more owners than it holds')
+  if (coverage.supplied < coverage.verified + coverage.unverified) return fail('supplied fewer names than it credited')
+  return coverage
+}

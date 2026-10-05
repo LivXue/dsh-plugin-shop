@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
-  applyFeedReads, bootstrapFeedState, carrierCounts, classifyManifest, FEED_BOOTSTRAP_SEQ, FEED_NAME_PATTERN,
-  FEED_PACKAGE_NAME_MAX_LENGTH, feedCarriersByKeyword, isDeprecated, isFeedPackageName, parseFeedPage, parseFeedState,
-  planFeedVerification, selectFeedIds, serializeFeedState, type FeedRow, type FeedState,
+  applyFeedReads, bootstrapFeedState, carrierCounts, classifyManifest, describeFeedCoverage, describeFeedRun,
+  FEED_BOOTSTRAP_SEQ, FEED_NAME_PATTERN, FEED_PACKAGE_NAME_MAX_LENGTH, feedCarriersByKeyword, isDeprecated,
+  isFeedPackageName, parseFeedCoverage, parseFeedPage, parseFeedRunReport, parseFeedState, planFeedVerification,
+  selectFeedIds, serializeFeedState, type FeedCoverage, type FeedRow, type FeedRunReport, type FeedState,
 } from '../src/feed-state.ts'
 
 const KEYWORDS: readonly string[] = ['dsh-plugin', 'deepseek-harness']
@@ -400,5 +401,92 @@ describe('planFeedVerification', () => {
 
   it('treats a name with no recorded owner as unverified', () => {
     expect(planFeedVerification(['n-unknown'], owners, 16, 0).unverified).toEqual(['n-unknown'])
+  })
+})
+
+const runReport: FeedRunReport = {
+  available: true, note: '', fromSeq: 100, toSeq: 160, pages: 1, selected: 3, read: 3, failed: 1,
+  unreached: 0, refused: 2, pending: 1, carriers: { 'dsh-plugin': 7, 'deepseek-harness': 5 },
+}
+const unavailableReport: FeedRunReport = {
+  ...runReport, available: false, note: 'the feed head could not be read: x', toSeq: 100, pages: 0,
+  selected: 0, read: 0, failed: 0, refused: 0,
+}
+const coverage: FeedCoverage = {
+  keyword: 'deepseek-harness', feedOnly: 16, supplied: 17, ownersVerified: 12, ownersTotal: 12,
+  verified: 16, unverified: 0, disagreed: [],
+}
+
+describe('describeFeedRun', () => {
+  it('states the cursor, the reads and the carriers', () => {
+    expect(describeFeedRun(runReport)).toBe(
+      'change feed: seq 100 -> 160 (1 page(s)); read 3 of 3 selected (1 failed, 0 not reached, 2 refused); '
+        + '1 pending; carriers: deepseek-harness 5, dsh-plugin 7')
+  })
+
+  it('says where paging stopped', () => {
+    expect(describeFeedRun({ ...runReport, note: 'stopped at the 200-page budget' }))
+      .toContain('(1 page(s), stopped at the 200-page budget)')
+  })
+
+  it('says nothing was listed or credited when the feed was unavailable', () => {
+    expect(describeFeedRun(unavailableReport))
+      .toBe('change feed unavailable: the feed head could not be read: x; no feed name was listed or credited')
+  })
+
+  it('escapes the note, which can quote a server', () => {
+    expect(describeFeedRun({ ...unavailableReport, note: 'a|b\nc' }))
+      .toBe('change feed unavailable: a\\|b c; no feed name was listed or credited')
+  })
+})
+
+describe('describeFeedCoverage', () => {
+  it('states what the feed supplied and how much of it was verified', () => {
+    expect(describeFeedCoverage(coverage)).toBe('keywords:deepseek-harness feed supplied 17 (owners verified 12 of 12)')
+  })
+
+  it('names unverified and disagreeing names, escaped', () => {
+    expect(describeFeedCoverage({ ...coverage, verified: 13, unverified: 1, disagreed: ['dsh-a', 'dsh-b'] }))
+      .toBe('keywords:deepseek-harness feed supplied 17 (owners verified 12 of 12; 1 unverified; 2 disagreed: dsh-a, dsh-b)')
+  })
+})
+
+describe('parseFeedRunReport', () => {
+  it('round-trips a report', () => {
+    expect(parseFeedRunReport(JSON.parse(JSON.stringify(runReport)), 'harvest.json', KEYWORDS)).toEqual(runReport)
+    expect(parseFeedRunReport(JSON.parse(JSON.stringify(unavailableReport)), 'harvest.json', KEYWORDS)).toEqual(unavailableReport)
+  })
+
+  it.each([
+    ['no available flag', { available: undefined }],
+    ['a fractional count', { pages: 1.5 }],
+    ['a negative count', { failed: -1 }],
+    ['no note', { note: 7 }],
+    ['a missing keyword count', { carriers: { 'dsh-plugin': 1 } }],
+    ['a cursor moving backwards', { toSeq: 99 }],
+    ['reads that do not add up', { read: 2 }],
+    ['more failures than reads', { failed: 4 }],
+    ['an unavailable feed that read pages', { available: false }],
+  ])('throws on %s', (_what, patch) => {
+    expect(() => parseFeedRunReport({ ...runReport, ...patch }, 'harvest.json', KEYWORDS))
+      .toThrow(/harvest\.json: change-feed report/)
+  })
+})
+
+describe('parseFeedCoverage', () => {
+  it('round-trips a record', () => {
+    expect(parseFeedCoverage(JSON.parse(JSON.stringify(coverage)), 'harvest.json', KEYWORDS)).toEqual(coverage)
+  })
+
+  it.each([
+    ['a keyword that is not a harvest keyword', { keyword: 'dsh' }],
+    ['parts that do not add up', { verified: 15 }],
+    ['more owners verified than held', { ownersVerified: 13 }],
+    ['less supplied than credited', { supplied: 15 }],
+    ['a disagreed name outside the rule', { disagreed: ['DSH-X'], verified: 15 }],
+    ['a disagreed list that is not an array', { disagreed: 'dsh-a' }],
+  ])('throws on %s', (_what, patch) => {
+    expect(() => parseFeedCoverage({ ...coverage, ...patch }, 'harvest.json', KEYWORDS))
+      .toThrow(/harvest\.json: change-feed coverage record/)
   })
 })
