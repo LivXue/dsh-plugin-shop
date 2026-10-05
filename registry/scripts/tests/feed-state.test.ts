@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
-  bootstrapFeedState, classifyManifest, FEED_BOOTSTRAP_SEQ, FEED_NAME_PATTERN, FEED_PACKAGE_NAME_MAX_LENGTH,
-  isDeprecated, isFeedPackageName, parseFeedState, serializeFeedState, type FeedState,
+  applyFeedReads, bootstrapFeedState, carrierCounts, classifyManifest, FEED_BOOTSTRAP_SEQ, FEED_NAME_PATTERN,
+  FEED_PACKAGE_NAME_MAX_LENGTH, feedCarriersByKeyword, isDeprecated, isFeedPackageName, parseFeedPage, parseFeedState,
+  planFeedVerification, selectFeedIds, serializeFeedState, type FeedRow, type FeedState,
 } from '../src/feed-state.ts'
 
 const KEYWORDS: readonly string[] = ['dsh-plugin', 'deepseek-harness']
@@ -201,5 +202,203 @@ describe('the state file', () => {
     expect(fresh.seq).toBe(FEED_BOOTSTRAP_SEQ)
     expect(fresh.carriers.size).toBe(0)
     expect(fresh.pending).toEqual([])
+  })
+})
+
+describe('parseFeedPage', () => {
+  it('reads rows and the next cursor off a page', () => {
+    expect(parseFeedPage({
+      results: [{ seq: 5, id: 'dsh-a', changes: [{ rev: '1-x' }] }, { seq: 7, id: 'gone-b', deleted: true, changes: [] }],
+      last_seq: 7,
+    })).toEqual({ rows: [{ seq: 5, id: 'dsh-a', deleted: false }, { seq: 7, id: 'gone-b', deleted: true }], lastSeq: 7 })
+  })
+
+  it('reads only a literal true as deleted', () => {
+    expect(parseFeedPage({ results: [{ seq: 1, id: 'a', deleted: 'yes' }], last_seq: 1 })?.rows[0]?.deleted).toBe(false)
+  })
+
+  it.each([
+    ['null', null],
+    ['an array', []],
+    ['no results', { last_seq: 1 }],
+    ['results that are not an array', { results: {}, last_seq: 1 }],
+    ['a string cursor, the CouchDB 2 shape', { results: [], last_seq: '1-g1AAAA' }],
+    ['a row with no seq', { results: [{ id: 'a' }], last_seq: 1 }],
+    ['a row with a string seq', { results: [{ seq: '1', id: 'a' }], last_seq: 1 }],
+    ['a row with no id', { results: [{ seq: 1 }], last_seq: 1 }],
+    ['a row that is not an object', { results: [7], last_seq: 1 }],
+  ])('refuses %s', (_what, page) => {
+    expect(parseFeedPage(page)).toBeNull()
+  })
+})
+
+describe('selectFeedIds', () => {
+  const state = (carriers: Record<string, string[]> = {}, pending: string[] = []): FeedState => ({
+    seq: 0,
+    carriers: new Map(Object.entries(carriers).map(([name, keywords]) => [name, { owner: 'alice', keywords }])),
+    pending,
+  })
+  const row = (seq: number, id: string, deleted = false): FeedRow => ({ seq, id, deleted })
+
+  it('reads an id the name filter matches, and only those', () => {
+    expect(selectFeedIds([row(1, 'dsh-a'), row(2, 'react')], state())).toEqual({ read: ['dsh-a'], gone: [], refused: 0 })
+  })
+
+  it('reads an id once when it appears on two pages, at its last row', () => {
+    // Review Focus 2: the feed is live, so a package republished mid-read
+    // shows up again further on, and a deletion then a republish is a read.
+    expect(selectFeedIds([row(1, 'dsh-a'), row(9, 'dsh-a')], state())).toEqual({ read: ['dsh-a'], gone: [], refused: 0 })
+    expect(selectFeedIds([row(1, 'dsh-a', true), row(9, 'dsh-a')], state({ 'dsh-a': ['dsh-plugin'] })).read)
+      .toEqual(['dsh-a'])
+  })
+
+  it('re-reads a held carrier that changed even though the filter does not match it', () => {
+    expect(selectFeedIds([row(1, 'probe-kit')], state({ 'probe-kit': ['dsh-plugin'] })).read).toEqual(['probe-kit'])
+  })
+
+  it('reads every pending name first, changed or not, then the changed ids in code-unit order', () => {
+    expect(selectFeedIds([row(1, 'dsh-c'), row(2, 'dsh-b')], state({}, ['dsh-z', 'dsh-y'])).read)
+      .toEqual(['dsh-y', 'dsh-z', 'dsh-b', 'dsh-c'])
+  })
+
+  it('reads a pending name that also changed only once', () => {
+    expect(selectFeedIds([row(1, 'dsh-y')], state({}, ['dsh-y'])).read).toEqual(['dsh-y'])
+  })
+
+  it('marks a held carrier the feed deleted as gone, without a read', () => {
+    expect(selectFeedIds([row(1, 'dsh-a', true)], state({ 'dsh-a': ['dsh-plugin'] })))
+      .toEqual({ read: [], gone: ['dsh-a'], refused: 0 })
+  })
+
+  it('marks a deleted pending name gone and does not read it', () => {
+    expect(selectFeedIds([row(1, 'dsh-p', true)], state({}, ['dsh-p']))).toEqual({ read: [], gone: ['dsh-p'], refused: 0 })
+  })
+
+  it('ignores the deletion of a package it never held', () => {
+    expect(selectFeedIds([row(1, 'dsh-a', true)], state())).toEqual({ read: [], gone: [], refused: 0 })
+  })
+
+  it('refuses, and counts, a matching id outside the package-name rule', () => {
+    // Review Focus 1: a legacy capitalized name must never be read into the
+    // state, or the next run's strict parse throws.
+    expect(selectFeedIds([row(1, 'DSH-Legacy'), row(2, 'dsh-ok')], state()))
+      .toEqual({ read: ['dsh-ok'], gone: [], refused: 1 })
+  })
+
+  it('skips design documents', () => {
+    expect(selectFeedIds([row(1, '_design/dsh')], state()).read).toEqual([])
+  })
+})
+
+describe('applyFeedReads', () => {
+  const prior: FeedState = {
+    seq: 10,
+    carriers: new Map([['dsh-held', { owner: 'alice', keywords: ['dsh-plugin'] }]]),
+    pending: ['dsh-pend'],
+  }
+
+  it('sets a carrier and clears it from pending', () => {
+    const next = applyFeedReads(prior, [
+      { kind: 'carrier', name: 'dsh-pend', carrier: { owner: 'bob', keywords: ['deepseek-harness'] } },
+    ], 20)
+    expect(next.carriers.get('dsh-pend')).toEqual({ owner: 'bob', keywords: ['deepseek-harness'] })
+    expect(next.pending).toEqual([])
+    expect(next.seq).toBe(20)
+  })
+
+  it.each(['not-carrier', 'gone'] as const)('removes a held name read as %s', (kind) => {
+    expect(applyFeedReads(prior, [{ kind, name: 'dsh-held' }], 20).carriers.has('dsh-held')).toBe(false)
+  })
+
+  it('keeps a held carrier whose read failed, and makes it pending', () => {
+    const next = applyFeedReads(prior, [{ kind: 'failed', name: 'dsh-held', reason: 'the registry answered 503' }], 20)
+    expect(next.carriers.get('dsh-held')).toEqual({ owner: 'alice', keywords: ['dsh-plugin'] })
+    expect(next.pending).toEqual(['dsh-held', 'dsh-pend'])
+  })
+
+  it('makes an unreached name pending', () => {
+    expect(applyFeedReads(prior, [{ kind: 'unreached', name: 'dsh-new' }], 20).pending).toEqual(['dsh-new', 'dsh-pend'])
+  })
+
+  it('never stores a name outside the package-name rule, so the next parse cannot throw', () => {
+    // Review Focus 1, at the writer: whatever reaches the merge, the file
+    // it produces parses.
+    const next = applyFeedReads(prior, [
+      { kind: 'carrier', name: 'DSH-Legacy', carrier: { owner: null, keywords: ['dsh-plugin'] } },
+      { kind: 'failed', name: 'Bad Name', reason: 'x' },
+    ], 20)
+    expect(next.carriers.has('DSH-Legacy')).toBe(false)
+    expect(next.pending).toEqual(['dsh-pend'])
+    expect(() => parseFeedState(serializeFeedState(next), KEYWORDS)).not.toThrow()
+  })
+
+  it('refuses to move the cursor backwards', () => {
+    expect(() => applyFeedReads(prior, [], 9)).toThrow(/cannot move from 10 to 9/)
+  })
+
+  it('leaves the prior state untouched', () => {
+    applyFeedReads(prior, [{ kind: 'gone', name: 'dsh-held' }], 20)
+    expect(prior.carriers.has('dsh-held')).toBe(true)
+  })
+})
+
+describe('feedCarriersByKeyword and carrierCounts', () => {
+  const state: FeedState = {
+    seq: 1,
+    carriers: new Map([
+      ['dsh-b', { owner: null, keywords: ['dsh-plugin'] }],
+      ['dsh-a', { owner: 'alice', keywords: ['deepseek-harness', 'dsh-plugin'] }],
+    ]),
+    pending: [],
+  }
+
+  it('groups carriers by harvest keyword with their owners, in code-unit order of name', () => {
+    const byKeyword = feedCarriersByKeyword(state, KEYWORDS)
+    expect([...(byKeyword.get('dsh-plugin') ?? [])]).toEqual([['dsh-a', 'alice'], ['dsh-b', null]])
+    expect([...(byKeyword.get('deepseek-harness') ?? [])]).toEqual([['dsh-a', 'alice']])
+  })
+
+  it('holds an empty map for a keyword nothing carries', () => {
+    expect(feedCarriersByKeyword(bootstrapFeedState(), KEYWORDS).get('dsh-plugin')?.size).toBe(0)
+  })
+
+  it('counts carriers per keyword', () => {
+    expect(carrierCounts(state, KEYWORDS)).toEqual({ 'dsh-plugin': 2, 'deepseek-harness': 1 })
+  })
+})
+
+describe('planFeedVerification', () => {
+  const owners = new Map<string, string | null>([
+    ['n-a1', 'a'], ['n-a2', 'a'], ['n-b', 'b'], ['n-c', 'c'], ['n-d', 'd'], ['n-e', 'e'], ['n-null', null],
+  ])
+  const all = ['n-a1', 'n-a2', 'n-b', 'n-c', 'n-d', 'n-e', 'n-null']
+
+  it('checks every owner when they fit the budget, and leaves an ownerless name unverified', () => {
+    const plan = planFeedVerification(all, owners, 16, 0)
+    expect(plan.owners).toEqual(['a', 'b', 'c', 'd', 'e'])
+    expect(plan.namesOf.get('a')).toEqual(['n-a1', 'n-a2'])
+    expect(plan.unverified).toEqual(['n-null'])
+    expect(plan.ownersTotal).toBe(5)
+  })
+
+  it('rotates the owners it checks by the seed, wrapping round', () => {
+    // Five owners a..e: seed 3 starts at d; seed 4 starts at e and wraps
+    // to a; 4 + 5,000 is 4 again modulo 5.
+    expect(planFeedVerification(all, owners, 2, 3).owners).toEqual(['d', 'e'])
+    expect(planFeedVerification(all, owners, 2, 4).owners).toEqual(['e', 'a'])
+    expect(planFeedVerification(all, owners, 2, 5004).owners).toEqual(['e', 'a'])
+  })
+
+  it('leaves the names of every owner it does not check unverified', () => {
+    expect(planFeedVerification(all, owners, 2, 3).unverified).toEqual(['n-a1', 'n-a2', 'n-b', 'n-c', 'n-null'])
+  })
+
+  it('checks nothing with a zero budget or no feed-only names', () => {
+    expect(planFeedVerification(all, owners, 0, 0).owners).toEqual([])
+    expect(planFeedVerification([], owners, 16, 0)).toEqual({ owners: [], namesOf: new Map(), unverified: [], ownersTotal: 0 })
+  })
+
+  it('treats a name with no recorded owner as unverified', () => {
+    expect(planFeedVerification(['n-unknown'], owners, 16, 0).unverified).toEqual(['n-unknown'])
   })
 })

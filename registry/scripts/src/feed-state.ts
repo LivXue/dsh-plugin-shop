@@ -236,3 +236,258 @@ export function serializeFeedState(state: FeedState): string {
   const block = (lines: readonly string[]): string => (lines.length === 0 ? '' : `\n${lines.join(',\n')}\n  `)
   return `{\n  "seq": ${state.seq},\n  "carriers": {${block(carriers)}},\n  "pending": [${block(pending)}]\n}\n`
 }
+
+/** One row of the change feed: a package at its latest change in the range read. */
+export interface FeedRow {
+  readonly seq: number
+  readonly id: string
+  readonly deleted: boolean
+}
+
+const isSeq = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+
+/**
+ * Read one `_changes` page, or null when its shape is not the one
+ * measured on 2026-10-04 (spec section 2). All or nothing: rows are
+ * applied in order, so a page with one unreadable row would advance the
+ * cursor past a change nobody read.
+ */
+export function parseFeedPage(value: unknown): { readonly rows: readonly FeedRow[]; readonly lastSeq: number } | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
+  const page = value as { results?: unknown; last_seq?: unknown }
+  const lastSeq = page.last_seq
+  if (!Array.isArray(page.results) || !isSeq(lastSeq)) return null
+  const rows: FeedRow[] = []
+  for (const raw of page.results as unknown[]) {
+    if (raw === null || typeof raw !== 'object') return null
+    const row = raw as { seq?: unknown; id?: unknown; deleted?: unknown }
+    const seq = row.seq
+    const id = row.id
+    if (!isSeq(seq) || typeof id !== 'string') return null
+    rows.push({ seq, id, deleted: row.deleted === true })
+  }
+  return { rows, lastSeq }
+}
+
+/** Which names one run reads, and which it drops without a read. */
+export interface FeedSelection {
+  /** Names to read this run: every pending name first, then each changed id once. */
+  readonly read: readonly string[]
+  /** Held or pending names the feed marks deleted: gone without a read. */
+  readonly gone: readonly string[]
+  /** Ids the name filter matched that the package-name rule refuses. */
+  readonly refused: number
+}
+
+/**
+ * Choose what to read (spec section 4.4, step 3): an id the name filter
+ * matches, or one the state already holds or has pending -- so a held
+ * carrier is re-read whenever it changes, even if the pattern is ever
+ * narrowed -- plus every pending name, changed or not.
+ */
+export function selectFeedIds(rows: readonly FeedRow[], prior: FeedState): FeedSelection {
+  // The feed is live, so one id can appear on two pages of one run when
+  // its package changed again mid-read: only its last row counts.
+  const last = new Map<string, FeedRow>()
+  for (const row of rows) {
+    const held = last.get(row.id)
+    if (held === undefined || row.seq >= held.seq) last.set(row.id, row)
+  }
+  const pending = new Set(prior.pending)
+  const gone: string[] = []
+  const changed: string[] = []
+  let refused = 0
+  for (const [id, row] of last) {
+    if (id.startsWith('_')) continue
+    const known = prior.carriers.has(id) || pending.has(id)
+    if (!known && !FEED_NAME_PATTERN.test(id)) continue
+    if (!isFeedPackageName(id)) {
+      refused += 1
+      continue
+    }
+    if (row.deleted) {
+      if (known) gone.push(id)
+      continue
+    }
+    if (!pending.has(id)) changed.push(id)
+  }
+  const goneSet = new Set(gone)
+  return {
+    read: [...[...pending].filter(name => !goneSet.has(name)).sort(compareStrings), ...changed.sort(compareStrings)],
+    gone: gone.sort(compareStrings),
+    refused,
+  }
+}
+
+/**
+ * Merge one run's reads into the state (spec section 4.4, step 5). Pure:
+ * the prior state is not modified. Pending names hold what the cursor has
+ * passed, which is what makes advancing it safe.
+ */
+export function applyFeedReads(prior: FeedState, reads: readonly FeedRead[], nextSeq: number): FeedState {
+  if (!Number.isSafeInteger(nextSeq) || nextSeq < prior.seq) {
+    throw new Error(`the change-feed cursor cannot move from ${prior.seq} to ${nextSeq}`)
+  }
+  const carriers = new Map(prior.carriers)
+  const pending = new Set(prior.pending)
+  for (const read of reads) {
+    // The writer applies the parser's own rule, so nothing written here can
+    // make the next run's parse throw (spec section 4.2).
+    if (!isFeedPackageName(read.name)) continue
+    switch (read.kind) {
+      case 'carrier':
+        carriers.set(read.name, read.carrier)
+        pending.delete(read.name)
+        break
+      case 'not-carrier':
+      case 'gone':
+        carriers.delete(read.name)
+        pending.delete(read.name)
+        break
+      case 'failed':
+      case 'unreached':
+        pending.add(read.name)
+        break
+    }
+  }
+  return { seq: nextSeq, carriers, pending: [...pending].sort(compareStrings) }
+}
+
+/** Carriers per harvest keyword, for the report. */
+export function carrierCounts(state: FeedState, harvestKeywords: readonly string[]): Record<string, number> {
+  const counts: Record<string, number> = {}
+  for (const keyword of harvestKeywords) counts[keyword] = 0
+  for (const carrier of state.carriers.values()) {
+    for (const keyword of carrier.keywords) counts[keyword] = (counts[keyword] ?? 0) + 1
+  }
+  return counts
+}
+
+/**
+ * The carriers `searchByKeywords` may credit: per harvest keyword, each
+ * carrier's owner, in code-unit order of name.
+ */
+export function feedCarriersByKeyword(
+  state: FeedState,
+  harvestKeywords: readonly string[],
+): Map<string, Map<string, string | null>> {
+  const byKeyword = new Map<string, Map<string, string | null>>()
+  for (const keyword of harvestKeywords) byKeyword.set(keyword, new Map())
+  for (const [name, carrier] of [...state.carriers].sort(([a], [b]) => compareStrings(a, b))) {
+    for (const keyword of carrier.keywords) byKeyword.get(keyword)?.set(name, carrier.owner)
+  }
+  return byKeyword
+}
+
+/** Which owners' cells one keyword pages to verify its feed-only names. */
+export interface FeedVerificationPlan {
+  /** Owners whose `keywords:K maintainer:U` cell is paged, in order. */
+  readonly owners: readonly string[]
+  /** Each chosen owner's feed-only names, sorted. */
+  readonly namesOf: ReadonlyMap<string, readonly string[]>
+  /** Feed-only names not checked this run: no owner, or an owner past the budget. */
+  readonly unverified: readonly string[]
+  /** Distinct owners holding feed-only names. */
+  readonly ownersTotal: number
+}
+
+/**
+ * Choose up to `budget` owners in code-unit order, rotated by `seed` (the
+ * next state's `seq`), so successive runs check different owners when
+ * there are more than the budget (spec section 4.5).
+ */
+export function planFeedVerification(
+  feedOnly: readonly string[],
+  ownerOf: ReadonlyMap<string, string | null>,
+  budget: number,
+  seed: number,
+): FeedVerificationPlan {
+  const byOwner = new Map<string, string[]>()
+  const unverified: string[] = []
+  for (const name of [...feedOnly].sort(compareStrings)) {
+    const owner = ownerOf.get(name) ?? null
+    if (owner === null) {
+      unverified.push(name)
+      continue
+    }
+    const names = byOwner.get(owner)
+    if (names === undefined) byOwner.set(owner, [name])
+    else names.push(name)
+  }
+  const all = [...byOwner.keys()].sort(compareStrings)
+  const take = Math.min(Math.max(0, budget), all.length)
+  const offset = all.length === 0 ? 0 : seed % all.length
+  const owners: string[] = []
+  for (let i = 0; i < take; i += 1) {
+    const owner = all[(offset + i) % all.length]
+    if (owner !== undefined) owners.push(owner)
+  }
+  const chosen = new Set(owners)
+  for (const owner of all) {
+    if (!chosen.has(owner)) unverified.push(...(byOwner.get(owner) ?? []))
+  }
+  return {
+    owners,
+    namesOf: new Map(owners.map((owner): [string, string[]] => [owner, byOwner.get(owner) ?? []])),
+    unverified: unverified.sort(compareStrings),
+    ownersTotal: all.length,
+  }
+}
+
+/** What the feed step did for one keyword in one run (spec section 4.7). */
+export interface FeedCoverage {
+  readonly keyword: string
+  /** Carriers of the keyword no search cell had served when the step ran. */
+  readonly feedOnly: number
+  /** The step's own delta on the keyword's union: credited names plus any
+   * other name a verification cell served. */
+  readonly supplied: number
+  readonly ownersVerified: number
+  readonly ownersTotal: number
+  readonly verified: number
+  readonly unverified: number
+  /** Feed-only names their owner's cell did not serve: neither listed nor
+   * credited. Sorted. */
+  readonly disagreed: readonly string[]
+}
+
+/** What one run's feed read did (spec section 4.7). */
+export interface FeedRunReport {
+  /** False when the head or the first page could not be read, or the
+   * stored cursor is past the head: nothing from the feed is listed or
+   * credited, and the run is today's search-only harvest. */
+  readonly available: boolean
+  /** Why the feed is unavailable, or where paging stopped early; empty when
+   * it read to the head. */
+  readonly note: string
+  readonly fromSeq: number
+  readonly toSeq: number
+  readonly pages: number
+  /** Names chosen to read, pending first. */
+  readonly selected: number
+  /** Of those, the reads that were started: `selected - unreached`. */
+  readonly read: number
+  readonly failed: number
+  readonly unreached: number
+  /** Matching ids the package-name rule refused. */
+  readonly refused: number
+  /** Pending names after the merge. */
+  readonly pending: number
+  /** Carriers per harvest keyword after the merge. */
+  readonly carriers: Readonly<Record<string, number>>
+}
+
+/** What `searchByKeywords` takes from the feed. */
+export interface FeedInput {
+  /** Per harvest keyword, each carrier's owner. Empty when the feed is unavailable. */
+  readonly carriers: ReadonlyMap<string, ReadonlyMap<string, string | null>>
+  /** Rotation seed for `planFeedVerification`: the next state's `seq`. */
+  readonly seed: number
+  /** Called once per harvest keyword with what the feed step did, BEFORE
+   * any throw, so the line reaches the log on the run that needs it. */
+  readonly onCoverage?: (coverage: FeedCoverage) => void
+}
+
+/** No feed: `searchByKeywords` behaves exactly as it did before the feed existed. */
+export const NO_FEED: FeedInput = { carriers: new Map(), seed: 0 }
