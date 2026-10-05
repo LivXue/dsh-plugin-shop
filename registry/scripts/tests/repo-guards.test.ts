@@ -683,13 +683,13 @@ describe('the harness pin and the e2e contract move together', () => {
   it("declares harness peers that admit every harness plugin.yml pins, by dsh's own rule", () => {
     // From 0.1.7-rc.1, dsh refuses to install a plugin whose
     // `@deepseek-ai/dsh` or `@deepseek-ai/dsh-*` peers its runtime does not
-    // satisfy, and skips one at boot, without a word on stdout. Optional peers
-    // count: dsh never reads `peerDependenciesMeta` (app-boot's
-    // `evaluatePluginCompatibility`, design 2026-09-26-dsh-017-readiness B1.1).
-    // The shop is such a plugin. npm's `latest` moved to 0.2.0-rc.2 on
-    // 2026-09-29 while the shop's three harness peers still read
-    // `^0.1.1-rc.2`, so for a week every fresh dsh skipped the shop at boot
-    // (design 2026-10-05-dsh-020-readiness).
+    // satisfy, and skips an installed one at boot, which it reports as one
+    // stderr line and nowhere in the web UI. Optional peers count: dsh never
+    // reads `peerDependenciesMeta` (app-boot's `evaluatePluginCompatibility`,
+    // design 2026-09-26-dsh-017-readiness B1.1). The shop is such a plugin.
+    // npm's `latest` moved to 0.2.0-rc.2 on 2026-09-29 while the shop's three
+    // harness peers still read `^0.1.1-rc.2`, so for a week every fresh dsh
+    // skipped the shop at boot (design 2026-10-05-dsh-020-readiness).
     //
     // The runtime dsh compares is app-boot's own version, which ships in
     // lockstep with dsh (measured equal for every harness pinned here), under

@@ -109,7 +109,7 @@
  * - settings trigger: `page.getByRole('button', { name: '设置', exact: true })`
  * - settings modal: `page.getByRole('dialog', { name: '设置' })`
  * - plugins section: `dialog.getByRole('button', { name: PLUGINS_SECTION })` —
- *   插件 on 0.1.5-rc.3, 内置插件 on 0.1.7-rc.2 (see the constant)
+ *   插件 on 0.1.5-rc.3, 内置插件 from 0.1.7-rc.2 on (see the constant)
  * - shop tab: `dialog.getByRole('tab', { name: '插件商店' })` — the panel
  *   renders lazily, only after the tab is activated
  * - shop panel + entry: `[data-shop-tab]`, `[data-shop-entry=<name>]`
