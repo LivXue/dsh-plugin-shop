@@ -208,8 +208,11 @@ dsh-plugin, 1 for deepseek-harness).
   today.
 - A missing file is the bootstrap state
   `{seq: FEED_BOOTSTRAP_SEQ, carriers: {}, pending: []}`, so a fresh
-  clone or a deleted file heals in one run. This change commits no
-  state file; the first `main` run writes it.
+  clone or a deleted file heals in one run. This change commits the
+  bootstrap state itself, so the snapshot step's `git add` always finds
+  the file -- one missing pathspec makes `git add` stage nothing, and
+  the step runs under `bash -e` (PR #74 review) -- and the first run's
+  starting cursor is visible in the repository.
 
 ### 4.3 The membership rule
 

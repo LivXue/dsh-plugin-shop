@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
   applyFeedReads, bootstrapFeedState, carrierCounts, classifyManifest, describeFeedCoverage, describeFeedRun,
@@ -201,6 +204,14 @@ describe('the state file', () => {
 
   it('names the file and the way out in every error', () => {
     expect(() => parseFeedState('{', KEYWORDS)).toThrow(/registry\/feed-state\.json: .*delete it to re-read the feed/)
+  })
+
+  it('parses the state file the repository commits', () => {
+    // Committed from the start (PR #74 review), so the daily snapshot's
+    // `git add` always finds it; whatever the bot writes there next must
+    // stay parseable, or the next classify run throws.
+    const raw = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'feed-state.json'), 'utf8')
+    expect(() => parseFeedState(raw, KEYWORDS)).not.toThrow()
   })
 
   it('starts a bootstrap at FEED_BOOTSTRAP_SEQ holding nothing', () => {
