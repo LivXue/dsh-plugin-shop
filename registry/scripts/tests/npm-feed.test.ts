@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { FeedState } from '../src/feed-state.ts'
-import { FEED_MANIFEST_MAX_BYTES, FEED_PAGE_LIMIT, harvestFeed } from '../src/npm-feed.ts'
+import { FEED_FETCH_ATTEMPTS, FEED_MANIFEST_MAX_BYTES, FEED_PAGE_LIMIT, harvestFeed } from '../src/npm-feed.ts'
 
 const KEYWORDS: readonly string[] = ['dsh-plugin', 'deepseek-harness']
 const instant = async (_ms: number): Promise<void> => {}
@@ -92,6 +92,80 @@ describe('harvestFeed', () => {
     expect(report).toMatchObject({ available: false, fromSeq: 100, toSeq: 100, pages: 0, selected: 0 })
     expect(report.note).toMatch(/feed head could not be read/)
     expect(calls.some(c => c.url.includes('_changes'))).toBe(false)
+  })
+
+  it('retries a thrown head request before calling the feed unavailable', async () => {
+    // fetchWithRetry retries statuses, never throws: without this, one
+    // connection reset on the head makes the feed unavailable for the day.
+    let heads = 0
+    const { fetchImpl } = route([
+      [isHead, () => {
+        heads += 1
+        if (heads === 1) throw new TypeError('fetch failed')
+        return json({ update_seq: 300 })
+      }],
+      [isPage(100), () => page([{ seq: 101, id: 'dsh-a' }], 101)],
+      [isLatest('dsh-a'), () => manifest('dsh-a')],
+    ])
+    const { next, report } = await harvestFeed(at(100), { harvestKeywords: KEYWORDS, fetchImpl, sleep: instant })
+    expect(heads).toBe(2)
+    expect(report.available).toBe(true)
+    expect(next.carriers.has('dsh-a')).toBe(true)
+  })
+
+  it('retries a thrown feed page, so one reset does not end the read', async () => {
+    let asked = 0
+    const { fetchImpl } = route([
+      [isHead, () => json({ update_seq: 300 })],
+      [isPage(100), () => {
+        asked += 1
+        if (asked === 1) throw new TypeError('fetch failed')
+        return page([{ seq: 101, id: 'dsh-a' }], 101)
+      }],
+      [isLatest('dsh-a'), () => manifest('dsh-a')],
+    ])
+    const { report } = await harvestFeed(at(100), { harvestKeywords: KEYWORDS, fetchImpl, sleep: instant })
+    expect(asked).toBe(2)
+    expect(report).toMatchObject({ available: true, pages: 1, note: '' })
+  })
+
+  it('retries a feed page that answers a body that is not JSON: an edge answering in npm\'s place', async () => {
+    let asked = 0
+    const { fetchImpl } = route([
+      [isHead, () => json({ update_seq: 300 })],
+      [isPage(100), () => {
+        asked += 1
+        return asked === 1 ? new Response('<!doctype html>', { status: 200 }) : page([{ seq: 101, id: 'dsh-a' }], 101)
+      }],
+      [isLatest('dsh-a'), () => manifest('dsh-a')],
+    ])
+    const { report } = await harvestFeed(at(100), { harvestKeywords: KEYWORDS, fetchImpl, sleep: instant })
+    expect(asked).toBe(2)
+    expect(report.available).toBe(true)
+  })
+
+  it('calls the feed unavailable once every attempt at the head has thrown', async () => {
+    let heads = 0
+    const { fetchImpl } = route([[isHead, () => {
+      heads += 1
+      throw new TypeError('fetch failed')
+    }]])
+    const { report } = await harvestFeed(at(100), { harvestKeywords: KEYWORDS, fetchImpl, sleep: instant })
+    expect(FEED_FETCH_ATTEMPTS).toBeGreaterThan(1)
+    expect(heads).toBe(FEED_FETCH_ATTEMPTS)
+    expect(report.available).toBe(false)
+    expect(report.note).toMatch(/feed head could not be read: fetch failed/)
+  })
+
+  it('never asks an answer twice: a 404 on the head is one request', async () => {
+    let heads = 0
+    const { fetchImpl } = route([[isHead, () => {
+      heads += 1
+      return json('Not Found', 404)
+    }]])
+    const { report } = await harvestFeed(at(100), { harvestKeywords: KEYWORDS, fetchImpl, sleep: instant })
+    expect(heads).toBe(1)
+    expect(report.available).toBe(false)
   })
 
   it('is unavailable when the stored cursor is past the head, naming the re-seed', async () => {

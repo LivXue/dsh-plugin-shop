@@ -303,9 +303,11 @@ crossing grows the residue's owners past the budget.
 
 ### 4.6 Failure semantics
 
-- **The head, or the first page, cannot be read** (transport failure
-  after retries, over `FEED_PAGE_MAX_BYTES`, not JSON, wrong shape),
-  **or `seq` is past `update_seq`:** the feed is unavailable. The state
+- **The head, or the first page, cannot be read** (a thrown request or
+  a body that is not JSON, after `FEED_FETCH_ATTEMPTS` attempts; a
+  status after `fetchWithRetry`'s ladder; a body over
+  `FEED_PAGE_MAX_BYTES`; or a wrong shape), **or `seq` is past
+  `update_seq`:** the feed is unavailable. The state
   is unchanged; no feed name is listed or credited; the report says
   why. The run is then today's search-only harvest, and the residual
   check decides whether it publishes.
@@ -393,6 +395,11 @@ crossing grows the residue's owners past the budget.
   produced 28 disagreements out of 47.
 - Requests use `REQUEST_TIMEOUT_MS` per attempt and `fetchWithRetry`'s
   ladder, which honours `Retry-After`.
+- `FEED_FETCH_ATTEMPTS = 3` -- a head or page request that throws, or
+  answers a body that is not JSON, is asked again, 2 and then 4
+  seconds apart; `fetchWithRetry` retries statuses only, so one reset
+  would otherwise make the feed unavailable for the day (2026-10-05
+  review).
 
 ## 5. Invariants amended
 

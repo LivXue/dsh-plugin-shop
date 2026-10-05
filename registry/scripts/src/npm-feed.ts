@@ -68,13 +68,41 @@ function defaultSleep(ms: number): Promise<void> {
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
+/**
+ * Attempts at one head or page request that THREW -- a connection reset,
+ * DNS, a deadline, mid-body included -- or answered a 200 that is not JSON.
+ * `fetchWithRetry` retries statuses and never throws, so without this one
+ * reset on the head or the first page made the feed unavailable for the day
+ * (2026-10-05 review). Manifest reads need none: a failed one is pending and
+ * read again next run.
+ */
+export const FEED_FETCH_ATTEMPTS = 3
+
+/** The pause before the second attempt, doubled before the third. */
+const FEED_FETCH_RETRY_DELAY_MS = 2_000
+
+/** What the feed host said about the request -- a status the status ladder
+ * already outlasted, or a body past the cap -- so asking again buys nothing. */
+class FeedAnswerError extends Error {}
+
 /** GET one JSON body under a cap, or throw a sentence saying why not. */
 async function getJson(url: string, timed: typeof fetch, sleep: (ms: number) => Promise<void>, cap: number): Promise<unknown> {
-  const response = await fetchWithRetry(url, timed, sleep, undefined)
-  if (!response.ok) throw new Error(`${url} answered ${response.status}`)
-  const body = await readJsonCapped(response, cap)
-  if (!body.ok) throw new Error(`${url} answered a body that is ${body.reason === 'too-large' ? `over ${cap} bytes` : 'not JSON'}`)
-  return body.value
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      const response = await fetchWithRetry(url, timed, sleep, undefined)
+      if (!response.ok) throw new FeedAnswerError(`${url} answered ${response.status}`)
+      const body = await readJsonCapped(response, cap)
+      if (body.ok) return body.value
+      // Not JSON is an edge answering in npm's place -- the `<!doctype html>`
+      // 200 this registry has served before -- so it is asked again like a
+      // throw. Past the cap is the body itself, so it is not.
+      if (body.reason === 'too-large') throw new FeedAnswerError(`${url} answered a body over ${cap} bytes`)
+      throw new Error(`${url} answered a body that is not JSON`)
+    } catch (error) {
+      if (error instanceof FeedAnswerError || attempt >= FEED_FETCH_ATTEMPTS) throw error
+      await sleep(FEED_FETCH_RETRY_DELAY_MS * 2 ** (attempt - 1))
+    }
+  }
 }
 
 /** Read one `/latest` manifest and say what it established. Never throws. */
