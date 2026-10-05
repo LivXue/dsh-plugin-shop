@@ -2651,6 +2651,11 @@ export async function searchByKeywords(
       const verified: string[] = []
       const unverified: string[] = [...plan.unverified]
       const disagreed: string[] = []
+      // Owners whose every feed-only name reached a verdict -- the figure the
+      // report prints as "owners verified". Not `plan.owners.length`: an
+      // owner whose cell failed was ASKED, not verified, and the report line
+      // is the only place a degraded verification shows.
+      let ownersVerified = 0
       for (const owner of plan.owners) {
         const names = plan.namesOf.get(owner) ?? []
         const first = await pageOwnerCell(owner)
@@ -2660,16 +2665,23 @@ export async function searchByKeywords(
         }
         const absent = names.filter(name => !first.served.has(name))
         verified.push(...names.filter(name => first.served.has(name)))
-        if (absent.length === 0) continue
+        if (absent.length === 0) {
+          ownersVerified += 1
+          continue
+        }
         // A disagreement is CONFIRMED before it counts, for the reason the
         // publisher axis confirms a zero before it evicts: npm has answered
         // an empty result for a real cell, and acting on one sample would
         // turn a registry hiccup into a thrown build. One more request, and
         // only for an owner with a name its first paging did not serve.
         const second = await pageOwnerCell(owner)
+        if (!second.complete) {
+          unverified.push(...absent)
+          continue
+        }
+        ownersVerified += 1
         for (const name of absent) {
-          if (!second.complete) unverified.push(name)
-          else if (second.served.has(name)) verified.push(name)
+          if (second.served.has(name)) verified.push(name)
           else disagreed.push(name)
         }
       }
@@ -2682,7 +2694,7 @@ export async function searchByKeywords(
         keyword,
         feedOnly: feedOnly.length,
         supplied: forKeyword.size - before,
-        ownersVerified: plan.owners.length,
+        ownersVerified,
         ownersTotal: plan.ownersTotal,
         verified: verified.length,
         unverified: unverified.length,

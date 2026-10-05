@@ -3541,7 +3541,9 @@ describe('searchByKeywords', () => {
       const coverage: FeedCoverage[] = []
       const names = await run(feedFixture(total, recovered, missing, true).fetchImpl, feedOf(missing, 'alice', coverage))
       expect(names).toHaveLength(total)
-      expect(forHarness(coverage)).toMatchObject({ verified: 0, unverified: overCap, disagreed: [] })
+      // An owner whose cell was asked but never answered in full was not
+      // verified, and the report must not say it was.
+      expect(forHarness(coverage)).toMatchObject({ ownersVerified: 0, ownersTotal: 1, verified: 0, unverified: overCap, disagreed: [] })
     })
 
     it('counts the names of an owner whose cell serves short of its total as unverified', async () => {
@@ -3549,7 +3551,7 @@ describe('searchByKeywords', () => {
       // paged in full and proves nothing about the 61st.
       const coverage: FeedCoverage[] = []
       await run(feedFixture(total, recovered, missing.slice(1), false, overCap).fetchImpl, feedOf(missing, 'alice', coverage))
-      expect(forHarness(coverage)).toMatchObject({ verified: 0, unverified: overCap, disagreed: [] })
+      expect(forHarness(coverage)).toMatchObject({ ownersVerified: 0, verified: 0, unverified: overCap, disagreed: [] })
     })
 
     it('changes nothing when the feed holds nothing', async () => {
@@ -3614,7 +3616,7 @@ describe('searchByKeywords', () => {
       const names = await run(fetchImpl, feedOf(missing, 'alice', coverage))
       expect(ownerPages).toBe(2)
       expect(names).toHaveLength(total)
-      expect(forHarness(coverage)).toMatchObject({ verified: overCap, unverified: 0, disagreed: [] })
+      expect(forHarness(coverage)).toMatchObject({ ownersVerified: 1, verified: overCap, unverified: 0, disagreed: [] })
     })
 
     it('leaves names unverified when the confirming paging fails, never counting them as disagreeing', async () => {
@@ -3635,7 +3637,7 @@ describe('searchByKeywords', () => {
       const coverage: FeedCoverage[] = []
       const names = await run(fetchImpl, feedOf(missing, 'alice', coverage))
       expect(names).toHaveLength(total)
-      expect(forHarness(coverage)).toMatchObject({ verified: 0, unverified: overCap, disagreed: [] })
+      expect(forHarness(coverage)).toMatchObject({ ownersVerified: 0, verified: 0, unverified: overCap, disagreed: [] })
     })
   })
 })

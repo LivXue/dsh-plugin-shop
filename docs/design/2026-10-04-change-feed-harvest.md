@@ -343,7 +343,9 @@ crossing grows the residue's owners past the budget.
 - Per keyword, beside the publisher-axis line: `feed supplied N
   (owners verified V of T; D disagreed: <names>)`. N is the feed
   step's own delta on `forKeyword`: credited feed-only names plus any
-  other name a verification cell served.
+  other name a verification cell served. V counts the owners whose
+  every feed-only name reached a verdict, T every owner holding one; an
+  owner whose cell failed or served short was asked, not verified.
 - `enumerated` in the shortfall line includes credited feed names; the
   per-keyword line says how many.
 - Names in the report are escaped like every other npm-sourced string.

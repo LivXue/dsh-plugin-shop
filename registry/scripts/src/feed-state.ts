@@ -452,7 +452,11 @@ export interface FeedCoverage {
   /** The step's own delta on the keyword's union: credited names plus any
    * other name a verification cell served. */
   readonly supplied: number
+  /** Owners whose every feed-only name reached a verdict: served by their
+   * cell, or omitted by two complete pagings of it. An owner whose cell
+   * failed or served short was asked, not verified. */
   readonly ownersVerified: number
+  /** Distinct owners holding feed-only names, checked this run or not. */
   readonly ownersTotal: number
   readonly verified: number
   readonly unverified: number
