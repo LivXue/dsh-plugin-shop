@@ -2,6 +2,7 @@ import { readCappedBody } from './http-body.ts'
 import { compareStrings } from './identity.ts'
 import { escapeCell } from './emit.ts'
 import { allocateProbeBudgets, atRiskNameCount, atRiskOwners, cursorFor, isMaintainerName, isPinnableKeyword, MAX_PINNED_PER_KEYWORD, probeOrder, type AxisOutcome, type HarvestedName, type PublisherState } from './publisher-state.ts'
+import { isDeprecated } from './feed-state.ts'
 import type { Candidate, Compatibility, Rejection } from './types.ts'
 
 /**
@@ -2108,20 +2109,6 @@ function normalizeLicense(license: unknown, licenses: unknown): string | null {
     }
   }
   return null
-}
-
-/**
- * Whether npm reports this version deprecated.
- *
- * `npm deprecate <pkg> ""` is the documented un-deprecate, and it leaves
- * `deprecated: ""` behind — so the presence of the key says nothing. A
- * non-empty message means deprecated; so does a bare `true`, which some
- * manifests carry and which we must not read as "fine" (audit B-5).
- * @param deprecated - the manifest `deprecated` value, unvalidated.
- */
-function isDeprecated(deprecated: unknown): boolean {
-  if (deprecated === true) return true
-  return typeof deprecated === 'string' && deprecated.trim() !== ''
 }
 
 export function toCandidate(packument: unknown): Candidate | null {
