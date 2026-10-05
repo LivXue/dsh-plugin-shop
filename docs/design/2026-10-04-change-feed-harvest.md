@@ -315,12 +315,17 @@ crossing grows the residue's owners past the budget.
   says where it stopped.
 - **`/latest` answers 404, or the row is marked deleted:** gone,
   removed.
-- **`/latest` is read but exceeds `FEED_MANIFEST_MAX_BYTES` or is not
-  JSON:** not a carrier, removed. The manifest was read; this is the
+- **`/latest` is the package's manifest, read and parsed, and is not a
+  carrier** (no harvest keyword, or deprecated): removed. This is the
   `no-manifest` side of the `no-manifest` / `fetch-failed` line.
-- **`/latest` fails in transport, times out, answers 5xx or 429 after
-  retries, or returns a manifest for a different name:** failed. The
-  previous status is kept and the name is pending.
+- **Anything else** -- a transport failure, a deadline, any non-2xx but
+  a 404 (a 403 from a blocking edge included), a body past
+  `FEED_MANIFEST_MAX_BYTES` or not JSON, a body that is not a manifest,
+  or the manifest of another package: failed. The previous status is
+  kept, the name is pending, and the run line counts it. Amended
+  2026-10-05 after review: an over-cap or non-JSON body, and any 4xx
+  but a 404, were first specified as removals, which lets a blocked or
+  misbehaving edge delete carriers durably and report nothing.
 - **A name is not reached within the time budget:** pending.
 - **A package is deprecated between the read and the packument fetch:**
   the gate's existing `deprecated` rejection handles it.

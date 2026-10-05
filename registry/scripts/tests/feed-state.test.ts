@@ -54,12 +54,17 @@ describe('classifyManifest', () => {
     expect(classifyManifest('dsh-x', manifest({ name: 'dsh-y' }), KEYWORDS)).toMatchObject({ kind: 'failed', name: 'dsh-x' })
   })
 
-  it('reads a manifest with no name as not a carrier', () => {
-    expect(classifyManifest('dsh-x', manifest({ name: undefined }), KEYWORDS)).toEqual({ kind: 'not-carrier', name: 'dsh-x' })
+  it('reports a body naming no package as failed: it is not a manifest, so it says nothing about the package', () => {
+    // npm serializes every manifest with its name. A body without one is an
+    // edge or a cache answering in npm's place, and CLAUDE.md's line holds:
+    // dropping a name means the manifest was read, never that a request failed.
+    expect(classifyManifest('dsh-x', manifest({ name: undefined }), KEYWORDS)).toMatchObject({ kind: 'failed', name: 'dsh-x' })
   })
 
-  it.each([null, 'text', 42, ['dsh-plugin']])('reads a body that is not an object (%j) as not a carrier', (body) => {
-    expect(classifyManifest('dsh-x', body, KEYWORDS)).toEqual({ kind: 'not-carrier', name: 'dsh-x' })
+  // Each row wrapped in its own array: vitest spreads an inner array into
+  // arguments, so a bare ['dsh-plugin'] row would test the string instead.
+  it.each([[null], ['text'], [42], [['dsh-plugin']]])('reports a body that is not an object (%j) as failed, not as a non-carrier', (body) => {
+    expect(classifyManifest('dsh-x', body, KEYWORDS)).toMatchObject({ kind: 'failed', name: 'dsh-x' })
   })
 
   it('takes the code-unit-smallest maintainer username as owner, never _npmUser', () => {

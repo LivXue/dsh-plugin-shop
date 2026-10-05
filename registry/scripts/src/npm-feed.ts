@@ -92,14 +92,13 @@ async function readLatest(
     return { kind: 'failed', name, reason: message(error) }
   }
   if (response.status === 404) return { kind: 'gone', name }
-  // A 429 or 5xx here is what fetchWithRetry's ladder could not outlast:
-  // the server could not answer THIS time, so the name is read again next
-  // run. Any other non-2xx is an answer about the resource -- the
-  // `no-manifest` side of the line CLAUDE.md draws -- and not a carrier.
-  if (response.status === 429 || response.status >= 500) {
-    return { kind: 'failed', name, reason: `the registry answered ${response.status}` }
-  }
-  if (!response.ok) return { kind: 'not-carrier', name }
+  // Only a 404 is an answer about the package. Every other non-2xx -- a 429
+  // or 5xx the ladder could not outlast, but also a 403 from a blocking
+  // edge -- is a statement about this request, so the name keeps its status
+  // and is read again next run. CLAUDE.md: `no-manifest` means the manifest
+  // was read, or a 404 answered for it, never that a request failed; a
+  // blocked host once wrote that verdict into a durable record.
+  if (!response.ok) return { kind: 'failed', name, reason: `the registry answered ${response.status}` }
   let body: Awaited<ReturnType<typeof readJsonCapped>>
   try {
     body = await readJsonCapped(response, FEED_MANIFEST_MAX_BYTES)
@@ -108,7 +107,12 @@ async function readLatest(
     // about the transport, not about the manifest, so the name is retried.
     return { kind: 'failed', name, reason: message(error) }
   }
-  if (!body.ok) return { kind: 'not-carrier', name }
+  // npm serializes every manifest as JSON well under the cap, so a body past
+  // it or not JSON -- the `<!doctype html>` 200 this registry has served
+  // before -- is not the package's manifest either.
+  if (!body.ok) {
+    return { kind: 'failed', name, reason: body.reason === 'too-large' ? `the registry answered a body over ${FEED_MANIFEST_MAX_BYTES} bytes` : 'the registry answered a body that is not JSON' }
+  }
   return classifyManifest(name, body.value, harvestKeywords)
 }
 

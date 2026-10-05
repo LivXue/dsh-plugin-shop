@@ -136,12 +136,21 @@ describe('harvestFeed', () => {
   })
 
   it.each([
+    // Only an answer ABOUT THE PACKAGE drops it: a 404, or a manifest that
+    // was read and is not a carrier. Everything else is a statement about the
+    // request -- CLAUDE.md: `no-manifest` means the manifest was read, or a
+    // 404 answered for it, never that a request failed -- so the carrier
+    // keeps its status, is read again next run, and is counted as failed.
     ['a 404 removes a held carrier', () => json('Not Found', 404), false, false],
-    ['a 403 removes it: an answer about the resource', () => json({}, 403), false, false],
-    ['a manifest that is not JSON removes it', () => new Response('<!doctype html>', { status: 200 }), false, false],
-    ['a manifest over the cap removes it',
-      () => new Response('{}', { status: 200, headers: { 'content-length': String(FEED_MANIFEST_MAX_BYTES + 1) } }), false, false],
     ['a manifest without the keyword removes it', () => manifest('dsh-held', ['tool']), false, false],
+    ['a deprecated manifest removes it',
+      () => json({ name: 'dsh-held', keywords: ['dsh-plugin'], deprecated: 'Use dsh-y.', maintainers: [{ name: 'alice' }] }), false, false],
+    ['a 403 keeps it, pending: a blocking edge says nothing about the package', () => json({}, 403), true, true],
+    ['a 200 that is not JSON keeps it, pending: an edge answering in npm\'s place',
+      () => new Response('<!doctype html>', { status: 200 }), true, true],
+    ['a body over the cap keeps it, pending',
+      () => new Response('{}', { status: 200, headers: { 'content-length': String(FEED_MANIFEST_MAX_BYTES + 1) } }), true, true],
+    ['a 200 whose JSON is null keeps it, pending', () => json(null), true, true],
     ['a 503 after retries keeps it, pending', () => json({}, 503), true, true],
     ['the manifest of another package keeps it, pending', () => manifest('dsh-other'), true, true],
   ] as const)('%s', async (_what, respond, held, pending) => {
@@ -150,9 +159,10 @@ describe('harvestFeed', () => {
       [isPage(100), () => page([{ seq: 101, id: 'dsh-held' }], 101)],
       [isLatest('dsh-held'), respond],
     ])
-    const { next } = await harvestFeed(at(100, { 'dsh-held': ['dsh-plugin'] }), { harvestKeywords: KEYWORDS, fetchImpl, sleep: instant })
+    const { next, report } = await harvestFeed(at(100, { 'dsh-held': ['dsh-plugin'] }), { harvestKeywords: KEYWORDS, fetchImpl, sleep: instant })
     expect(next.carriers.has('dsh-held')).toBe(held)
     expect(next.pending.includes('dsh-held')).toBe(pending)
+    expect(report.failed).toBe(pending ? 1 : 0)
   })
 
   it('removes a held carrier the feed marks deleted, without a read', async () => {

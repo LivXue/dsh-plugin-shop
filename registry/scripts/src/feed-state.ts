@@ -118,14 +118,17 @@ export interface FeedState {
 /** What reading one `/latest` manifest established. */
 export type FeedRead =
   | { readonly kind: 'carrier'; readonly name: string; readonly carrier: FeedCarrier }
-  // Read, and not a carrier: no harvest keyword, deprecated, another 4xx,
-  // too large, or not JSON. The manifest was read -- the `no-manifest`
-  // side of the line CLAUDE.md draws -- so the name is dropped.
+  // The package's manifest, read and parsed, and not a carrier: no harvest
+  // keyword, or deprecated. The `no-manifest` side of the line CLAUDE.md
+  // draws, so the name is dropped.
   | { readonly kind: 'not-carrier'; readonly name: string }
   // A 404, or a row the feed marks deleted.
   | { readonly kind: 'gone'; readonly name: string }
-  // A transport failure, a deadline, a 5xx or 429 after retries, or the
-  // manifest of another package: the `fetch-failed` side. Kept, retried.
+  // Anything that is not the package's manifest: a transport failure, a
+  // deadline, any non-2xx but a 404 (a 403 from a blocking edge included),
+  // a body past the cap or not JSON, a body that is not a manifest, or the
+  // manifest of another package. The `fetch-failed` side: the name keeps
+  // its previous status and is read again next run.
   | { readonly kind: 'failed'; readonly name: string; readonly reason: string }
   // Not started within the run's read budget. Kept, retried.
   | { readonly kind: 'unreached'; readonly name: string }
@@ -137,9 +140,14 @@ export type FeedRead =
  * `isAtRisk` compare -- and is not deprecated.
  */
 export function classifyManifest(name: string, manifest: unknown, harvestKeywords: readonly string[]): FeedRead {
-  if (manifest === null || typeof manifest !== 'object' || Array.isArray(manifest)) return { kind: 'not-carrier', name }
+  // npm serializes every manifest as an object carrying its name, so a body
+  // that is not one is an edge or a cache answering in npm's place. It says
+  // nothing about the package, so the name is retried, never dropped.
+  if (manifest === null || typeof manifest !== 'object' || Array.isArray(manifest)) {
+    return { kind: 'failed', name, reason: 'the registry answered a body that is not a manifest' }
+  }
   const m = manifest as { name?: unknown; keywords?: unknown; deprecated?: unknown; maintainers?: unknown }
-  if (typeof m.name !== 'string') return { kind: 'not-carrier', name }
+  if (typeof m.name !== 'string') return { kind: 'failed', name, reason: 'the registry answered a manifest that names no package' }
   // The manifest of another package is a statement about the transport (a
   // cache answering the wrong key), not about this package, so it is
   // retried rather than believed -- the packument reader's own rule.
