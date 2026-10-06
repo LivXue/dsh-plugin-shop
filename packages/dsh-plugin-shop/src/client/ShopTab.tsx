@@ -57,6 +57,12 @@ export interface ShopTabInjected {
   noteUninstalled?: (name: string) => void
   restart: () => Promise<ShopRestartResult>
   version: () => Promise<ShopVersionResult>
+  /** Be told when the version answers start coming from another dsh process
+   * — dsh restarted under the page, which nothing reloads — with the first
+   * answer from it; returns the unsubscribe. The receipts a restart settles
+   * are the tab's to clear (design §8, 2026-10-06 amendment). Optional: a
+   * stub may not offer it. */
+  onRestarted?: (listener: (fresh: ShopVersionResult) => void) => () => void
   updateStart: (args: { version: string }) => Promise<ShopUpdateResult>
   /** The §4 reload trigger, defaulted once at the tab root to a real page
    * reload. Injected so a test can observe it without touching jsdom's
