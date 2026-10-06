@@ -573,6 +573,14 @@ export interface FeedCoverage {
    * though the packument still lists the keyword: neither listed nor
    * credited. Sorted. */
   readonly disagreed: readonly string[]
+  /** The keyword's final count, after any retry pass: every name a search
+   * cell served or the feed credited. */
+  readonly enumerated: number
+  /** The total npm search promised for the keyword: the smallest it
+   * answered during the run, which the count is measured against. A
+   * credited name npm does not count takes `enumerated` past it, so the
+   * line shows a keyword made whole by crediting (PR #74 review). */
+  readonly required: number
 }
 
 /** What one run's feed read did (spec section 4.7). */
@@ -607,8 +615,9 @@ export interface FeedInput {
   readonly carriers: ReadonlyMap<string, ReadonlyMap<string, string | null>>
   /** Rotation seed for `planFeedVerification`: the next state's `seq`. */
   readonly seed: number
-  /** Called once per harvest keyword with what the feed step did, BEFORE
-   * any throw, so the line reaches the log on the run that needs it. */
+  /** Called once per harvest keyword with what the feed step did, once the
+   * keyword's count is final and BEFORE the feed's own throw or any
+   * shortfall throw, so the line reaches the log on the run that needs it. */
   readonly onCoverage?: (coverage: FeedCoverage) => void
   /**
    * Re-reads names two complete pagings of their owner's cell omitted, from
@@ -643,7 +652,12 @@ export function describeFeedCoverage(coverage: FeedCoverage): string {
   if (coverage.disagreed.length > 0) {
     parts.push(`${coverage.disagreed.length} disagreed: ${coverage.disagreed.map(escapeCell).join(', ')}`)
   }
-  return `keywords:${escapeCell(coverage.keyword)} feed supplied ${coverage.supplied} (${parts.join('; ')})`
+  const { enumerated, required } = coverage
+  const gap = enumerated > required ? ` (${enumerated - required} over)`
+    : enumerated < required ? ` (${required - enumerated} short)`
+    : ''
+  return `keywords:${escapeCell(coverage.keyword)} feed supplied ${coverage.supplied} (${parts.join('; ')}); `
+    + `enumerated ${enumerated} of ${required}${gap}`
 }
 
 const isCount = (value: unknown): value is number =>
@@ -718,11 +732,13 @@ export function parseFeedCoverage(value: unknown, where: string, harvestKeywords
     ownersVerified: count('ownersVerified'), ownersTotal: count('ownersTotal'),
     verified: count('verified'), unverified: count('unverified'), withdrawn: count('withdrawn'),
     disagreed,
+    enumerated: count('enumerated'), required: count('required'),
   }
   if (coverage.verified + coverage.unverified + coverage.withdrawn + coverage.disagreed.length !== coverage.feedOnly) {
     return fail('splits its feed-only names into parts that do not add up')
   }
   if (coverage.ownersVerified > coverage.ownersTotal) return fail('verified more owners than it holds')
   if (coverage.supplied < coverage.verified + coverage.unverified) return fail('supplied fewer names than it credited')
+  if (coverage.enumerated < coverage.supplied) return fail('supplied more names than the keyword enumerated')
   return coverage
 }

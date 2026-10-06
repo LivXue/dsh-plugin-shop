@@ -343,7 +343,9 @@ retry pass repeats none of its requests.
 4. **Throw** when more than `FEED_MAX_DISAGREEMENTS` names of one
    keyword disagree in one run. The membership rule then no longer
    describes the search index, and crediting through it would cancel
-   genuinely missing names one for one.
+   genuinely missing names one for one. The step's report line waits
+   for the keyword's final count (section 4.7) and the throw waits for
+   the line, so a run that throws still logs it.
 
 The step runs before `required` is measured. A residual the feed
 closes therefore no longer sends the keyword through the second
@@ -412,14 +414,21 @@ crossing grows the residue's owners past the budget.
   -- or `change feed unavailable: <reason>`.
 - Per keyword, beside the publisher-axis line: `feed supplied N
   (owners verified V of T; U unverified; W withdrawn; D disagreed:
-  <names>)`, each count after the first printed only when non-zero.
-  N is the feed step's own delta on `forKeyword`: credited feed-only
-  names plus any other name a verification cell served. V counts the
-  owners whose every feed-only name reached a verdict, T every owner
-  holding one; an owner whose cell failed or served short was asked,
-  not verified.
-- `enumerated` in the shortfall line includes credited feed names; the
-  per-keyword line says how many.
+  <names>); enumerated E of R (G over | G short)`, each count in the
+  parentheses after the first printed only when non-zero, and the gap
+  only when E is not R. N is the feed step's own delta on
+  `forKeyword`: credited feed-only names plus any other name a
+  verification cell served. V counts the owners whose every feed-only
+  name reached a verdict, T every owner holding one; an owner whose
+  cell failed or served short was asked, not verified. E is the
+  keyword's final count, after any retry pass, and R the total it is
+  measured against.
+- E includes credited feed names, so a keyword the feed closes reads
+  whole whether its credits were verified or not. The count is printed
+  on every run, whole or short, so a keyword made whole by crediting
+  shows it beside its U unverified names. Amended 2026-10-06 after the
+  PR #74 review: only a short keyword printed a count, and silence was
+  the only sign of a whole one.
 - Names in the report are escaped like every other npm-sourced string.
 
 ### 4.8 CI, handoff and guards

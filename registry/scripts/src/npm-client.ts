@@ -2616,6 +2616,9 @@ export async function searchByKeywords(
      * search page's do.
      */
     let feedCredited: readonly string[] | undefined
+    /** What the feed step did, held until the keyword's count is final: its
+     * line carries that count, and its throw waits for the line. */
+    let feedStep: Omit<FeedCoverage, 'enumerated' | 'required'> | undefined
     /** Page one owner's cell under this keyword into the union. Complete
      * when it served every name its own total promised; a failure is
      * incomplete, never an empty answer. */
@@ -2725,7 +2728,7 @@ export async function searchByKeywords(
         forKeyword.add(name)
         seen.add(name)
       }
-      const coverage: FeedCoverage = {
+      feedStep = {
         keyword,
         feedOnly: feedOnly.length,
         supplied: forKeyword.size - before,
@@ -2735,10 +2738,6 @@ export async function searchByKeywords(
         unverified: unverified.length,
         withdrawn: withdrawn.length,
         disagreed: disagreed.sort(compareStrings),
-      }
-      feed.onCoverage?.(coverage)
-      if (disagreed.length > FEED_MAX_DISAGREEMENTS) {
-        throw new Error(`the change feed holds ${disagreed.length} name(s) carrying ${keywordQuery([keyword])} that two complete pagings of a current owner's search cell did not serve, past the ${FEED_MAX_DISAGREEMENTS} one run may absorb: its membership rule no longer describes npm search, and crediting through it would cancel missing names one for one`)
       }
     }
     const enumerate = async (): Promise<void> => {
@@ -2879,6 +2878,18 @@ export async function searchByKeywords(
       evicted,
       atRiskNames: atRiskNameCount(harvestedNames, keyword, reachable),
     })
+    // The feed step's line waits for the keyword's final count and sets its
+    // credits beside it (spec section 4.7): a keyword the feed closes reads
+    // whole, and only the count says how much of that was credited rather
+    // than served. The step's throw waits for the line, so a run that
+    // throws still logs it; a search request failing on the retry pass
+    // above throws first, as it would with no feed.
+    if (feedStep !== undefined) {
+      feed.onCoverage?.({ ...feedStep, enumerated: forKeyword.size, required })
+      if (feedStep.disagreed.length > FEED_MAX_DISAGREEMENTS) {
+        throw new Error(`the change feed holds ${feedStep.disagreed.length} name(s) carrying ${keywordQuery([keyword])} that two complete pagings of a current owner's search cell did not serve, past the ${FEED_MAX_DISAGREEMENTS} one run may absorb: its membership rule no longer describes npm search, and crediting through it would cancel missing names one for one`)
+      }
+    }
     if (shortfall <= 0) continue // whole, even when the keyword is past the window
     // Every refinement cell this keyword PAGED, the oversized ones included.
     // `cells.length` alone understates the partition in both messages below,

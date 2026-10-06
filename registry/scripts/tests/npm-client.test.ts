@@ -3518,7 +3518,41 @@ describe('searchByKeywords', () => {
       expect(forHarness(coverage)).toEqual({
         keyword: 'deepseek-harness', feedOnly: overCap, supplied: overCap,
         ownersVerified: 1, ownersTotal: 1, verified: overCap, unverified: 0, withdrawn: 0, disagreed: [],
+        enumerated: total, required: total,
       })
+    })
+
+    it('says when credits take the count past the total npm promised', async () => {
+      // PR #74 review: a keyword reads whole when credits close it, so the
+      // line says what it was enumerated against on every run. Two ownerless
+      // carriers npm does not count are credited unverified: 5,252 of 5,250.
+      const coverage: FeedCoverage[] = []
+      await run(feedFixture(SEARCH_WINDOW, 0).fetchImpl, feedOf(['dsh-ghost-a', 'dsh-ghost-b'], null, coverage))
+      expect(forHarness(coverage)).toMatchObject({ unverified: 2, enumerated: 5252, required: 5250 })
+    })
+
+    it('reports the final count, after the retry pass, the same as the shortfall line', async () => {
+      // 5,407 names, the cells recover 150 past the window and the feed
+      // three more: 5,403, short, so the keyword enumerates again. The
+      // probe after that retry answers 5,406 -- one unpublished mid-run --
+      // so a line written before the retry would say 5,407.
+      const held = ['beyond150', 'beyond151', 'beyond152']
+      const fixture = feedFixture(5407, 150, held)
+      let probes = 0
+      const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+        const params = new URL(String(url)).searchParams
+        if (params.get('text') === 'keywords:deepseek-harness' && params.get('size') === '1') {
+          probes += 1
+          if (probes === 3) return new Response(JSON.stringify({ total: 5406, objects: [] }), { status: 200 })
+        }
+        return fixture.fetchImpl(url, init)
+      }) as unknown as typeof fetch
+      const coverage: FeedCoverage[] = []
+      const shortfalls: KeywordShortfall[] = []
+      await run(fetchImpl, feedOf(held, 'alice', coverage), s => shortfalls.push(s))
+      expect(probes).toBe(3)
+      expect(forHarness(coverage)).toMatchObject({ verified: 3, enumerated: 5403, required: 5406 })
+      expect(shortfalls).toEqual([expect.objectContaining({ keyword: 'deepseek-harness', enumerated: 5403, required: 5406 })])
     })
 
     it('neither lists nor credits a name its owner cell does not serve, and names it', async () => {
@@ -3533,7 +3567,10 @@ describe('searchByKeywords', () => {
       const coverage: FeedCoverage[] = []
       await expect(run(feedFixture(SEARCH_WINDOW, 0).fetchImpl, feedOf(phantoms, 'alice', coverage)))
         .rejects.toThrow(/membership rule no longer describes npm search/)
-      expect(forHarness(coverage)?.disagreed).toEqual(phantoms)
+      // The line waits for the keyword's count and the throw waits for the
+      // line, so the run that throws still logs both: nothing disagreeing
+      // was credited, so the count is the window's 5,250 of 5,250.
+      expect(forHarness(coverage)).toMatchObject({ disagreed: phantoms, enumerated: 5250, required: 5250 })
     })
 
     it('counts the names of an owner whose cell fails as unverified, never as disagreeing', async () => {

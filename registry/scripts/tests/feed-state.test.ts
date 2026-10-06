@@ -555,7 +555,7 @@ const unavailableReport: FeedRunReport = {
 }
 const coverage: FeedCoverage = {
   keyword: 'deepseek-harness', feedOnly: 16, supplied: 17, ownersVerified: 12, ownersTotal: 12,
-  verified: 16, unverified: 0, withdrawn: 0, disagreed: [],
+  verified: 16, unverified: 0, withdrawn: 0, disagreed: [], enumerated: 8530, required: 8530,
 }
 
 describe('describeFeedRun', () => {
@@ -582,18 +582,31 @@ describe('describeFeedRun', () => {
 })
 
 describe('describeFeedCoverage', () => {
-  it('states what the feed supplied and how much of it was verified', () => {
-    expect(describeFeedCoverage(coverage)).toBe('keywords:deepseek-harness feed supplied 17 (owners verified 12 of 12)')
+  it('states what the feed supplied, how much of it was verified, and the keyword\'s final count', () => {
+    expect(describeFeedCoverage(coverage))
+      .toBe('keywords:deepseek-harness feed supplied 17 (owners verified 12 of 12); enumerated 8530 of 8530')
   })
 
   it('counts withdrawn names', () => {
     expect(describeFeedCoverage({ ...coverage, verified: 14, withdrawn: 2 }))
-      .toBe('keywords:deepseek-harness feed supplied 17 (owners verified 12 of 12; 2 withdrawn)')
+      .toBe('keywords:deepseek-harness feed supplied 17 (owners verified 12 of 12; 2 withdrawn); enumerated 8530 of 8530')
   })
 
   it('names unverified and disagreeing names, escaped', () => {
     expect(describeFeedCoverage({ ...coverage, verified: 13, unverified: 1, disagreed: ['dsh-a', 'dsh-b'] }))
-      .toBe('keywords:deepseek-harness feed supplied 17 (owners verified 12 of 12; 1 unverified; 2 disagreed: dsh-a, dsh-b)')
+      .toBe('keywords:deepseek-harness feed supplied 17 (owners verified 12 of 12; 1 unverified; 2 disagreed: dsh-a, dsh-b); enumerated 8530 of 8530')
+  })
+
+  it('says by how much the count passed the total, beside the unverified names that may explain it', () => {
+    // PR #74 review: a keyword reads whole when credits close it, so a
+    // whole keyword says what it was enumerated against, every run.
+    expect(describeFeedCoverage({ ...coverage, verified: 13, unverified: 3, enumerated: 8533 }))
+      .toBe('keywords:deepseek-harness feed supplied 17 (owners verified 12 of 12; 3 unverified); enumerated 8533 of 8530 (3 over)')
+  })
+
+  it('says by how much a short keyword fell under the total', () => {
+    expect(describeFeedCoverage({ ...coverage, enumerated: 8519 }))
+      .toBe('keywords:deepseek-harness feed supplied 17 (owners verified 12 of 12); enumerated 8519 of 8530 (11 short)')
   })
 })
 
@@ -634,6 +647,9 @@ describe('parseFeedCoverage', () => {
     ['less supplied than credited', { supplied: 15 }],
     ['a disagreed name outside the rule', { disagreed: ['DSH-X'], verified: 15 }],
     ['a disagreed list that is not an array', { disagreed: 'dsh-a' }],
+    ['no enumerated count', { enumerated: undefined }],
+    ['a fractional required count', { required: 8530.5 }],
+    ['more supplied than enumerated', { enumerated: 16 }],
   ])('throws on %s', (_what, patch) => {
     expect(() => parseFeedCoverage({ ...coverage, ...patch }, 'harvest.json', KEYWORDS))
       .toThrow(/harvest\.json: change-feed coverage record/)

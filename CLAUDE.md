@@ -100,7 +100,8 @@ This project would rather stop than publish something plausible and wrong. Concr
   disagrees; more than `FEED_MAX_DISAGREEMENTS` disagreements throw,
   because a credited name npm does not count cancels a missing one. A
   name no cell could check is credited unverified, and the report says
-  so. An
+  so beside the keyword's final count against npm's total, so a keyword
+  made whole by crediting shows it. An
   unavailable feed is today's search-only harvest. The cap stays at 60
   until two `main` runs have published with the feed; lowering it is
   its own change.
