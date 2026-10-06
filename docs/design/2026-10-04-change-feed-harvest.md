@@ -320,6 +320,14 @@ retry pass repeats none of its requests.
      cell by the same two-paging rule; if the packument cannot be read,
      it is **unverified**. Only a name a current owner's cell omits
      twice while the packument still lists K **disagrees**.
+   - At most `FEED_MAX_CONFIRMATIONS` twice-omitted names of K are
+     confirmed in a run, in code-unit order rotated by the next state's
+     `seq`; a name past the bound is **unverified**, as a name past the
+     owner budget is. A confirmation is one packument read and, for a
+     changed owner, two pagings of that owner's cell, so the bound keeps
+     the step's cost from growing with one owner's holdings. Amended
+     2026-10-06: the PR #74 Windows review found this the one per-run
+     cost the step left unbounded.
    - A name with a `null` owner, an owner beyond the budget, or an
      owner whose cell could not be paged in full is **unverified**. A
      paging hiccup never counts as a disagreement.
@@ -463,6 +471,9 @@ crossing grows the residue's owners past the budget.
   lag on a name published minutes before the read. A systematic drift
   exceeds it at once: crediting deprecated packages would have
   produced 28 disagreements out of 47.
+- `FEED_MAX_CONFIRMATIONS = 32` per keyword per run -- the first
+  `main` run withdrew nothing and disagreed with nothing on either
+  keyword; 32 leaves room for one owner's names going missing at once.
 - Requests use `REQUEST_TIMEOUT_MS` per attempt and `fetchWithRetry`'s
   ladder, which honours `Retry-After`.
 - `FEED_FETCH_ATTEMPTS = 3` -- a head or page request that throws, or

@@ -2,7 +2,7 @@ import { readCappedBody } from './http-body.ts'
 import { compareStrings } from './identity.ts'
 import { escapeCell } from './emit.ts'
 import { allocateProbeBudgets, atRiskNameCount, atRiskOwners, cursorFor, isMaintainerName, isPinnableKeyword, MAX_PINNED_PER_KEYWORD, probeOrder, type AxisOutcome, type HarvestedName, type PublisherState } from './publisher-state.ts'
-import { FEED_MAX_DISAGREEMENTS, FEED_VERIFY_OWNERS, isDeprecated, NO_FEED, planFeedVerification, type FeedCoverage, type FeedInput } from './feed-state.ts'
+import { FEED_MAX_CONFIRMATIONS, FEED_MAX_DISAGREEMENTS, FEED_VERIFY_OWNERS, isDeprecated, NO_FEED, planConfirmations, planFeedVerification, type FeedCoverage, type FeedInput } from './feed-state.ts'
 import type { Candidate, Compatibility, Rejection } from './types.ts'
 
 /**
@@ -2690,10 +2690,16 @@ export async function searchByKeywords(
       if (omittedBy.size > 0 && confirm === undefined) {
         disagreed.push(...omittedBy.keys())
       } else if (omittedBy.size > 0 && confirm !== undefined) {
-        const omitted = [...omittedBy.keys()].sort(compareStrings)
-        const current = await confirm(omitted)
+        // Bounded like every other per-run cost of the feed: a confirmation
+        // is a serial packument read, and a changed owner adds two cell
+        // pagings below, so FEED_MAX_CONFIRMATIONS bounds both. A name past
+        // it is unverified, as a name past the owner budget is, and the
+        // rotation reaches it on a later run.
+        const confirmation = planConfirmations([...omittedBy.keys()], FEED_MAX_CONFIRMATIONS, feed.seed)
+        unverified.push(...confirmation.overflow)
+        const current = await confirm(confirmation.confirm)
         const recheck = new Map<string, string[]>()
-        for (const name of omitted) {
+        for (const name of confirmation.confirm) {
           const read = current.get(name)
           if (read === undefined || read.kind === 'failed' || read.kind === 'unreached') unverified.push(name)
           else if (read.kind !== 'carrier' || !read.carrier.keywords.includes(keyword)) withdrawn.push(name)

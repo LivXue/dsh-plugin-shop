@@ -7,7 +7,7 @@ import { type Cell, cellKey, cellQuery, COMPATIBILITY_PROFILES_MAX_COUNT, COMPAT
 import { ENTRY_PAYLOAD_MAX_BYTES, entryPayloadBytes } from '../src/gate.ts'
 import { MAX_TARBALL_BYTES } from '../src/github-client.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
-import { FEED_MAX_DISAGREEMENTS, type FeedCoverage, type FeedInput, type FeedRead } from '../src/feed-state.ts'
+import { FEED_MAX_CONFIRMATIONS, FEED_MAX_DISAGREEMENTS, type FeedCoverage, type FeedInput, type FeedRead } from '../src/feed-state.ts'
 
 describe('HARVEST_KEYWORDS', () => {
   it('leads with the ecosystem keyword and adds the harness keyword, neither branded', () => {
@@ -3631,10 +3631,16 @@ describe('searchByKeywords', () => {
         (name: string): FeedRead => ({ kind: 'carrier', name, carrier: { owner, keywords } })
 
       it('re-verifies with a current owner when the stored one is a former maintainer', async () => {
+        // Four names moved to bob, the shape the sibling tests use: one past
+        // FEED_MAX_DISAGREEMENTS, so a re-verified name counted as a
+        // disagreement would throw. This test first moved every missing
+        // name, which at a cap of 60 is more than FEED_MAX_CONFIRMATIONS
+        // confirms in one run; the bound has its own test below.
+        const moved = missing.slice(0, FEED_MAX_DISAGREEMENTS + 1)
         const { confirm, calls } = confirmWith(carrierOf('bob'))
         const coverage: FeedCoverage[] = []
-        const names = await run(twoOwners([], missing), { ...feedOf(missing, 'alice', coverage), confirm })
-        expect(calls).toEqual([missing])
+        const names = await run(twoOwners(missing.slice(moved.length), moved), { ...feedOf(missing, 'alice', coverage), confirm })
+        expect(calls).toEqual([moved])
         expect(names).toHaveLength(total)
         expect(forHarness(coverage)).toMatchObject({ ownersVerified: 1, verified: overCap, unverified: 0, withdrawn: 0, disagreed: [] })
       })
@@ -3658,6 +3664,25 @@ describe('searchByKeywords', () => {
         await expect(run(twoOwners(missing.slice(phantoms.length), []), { ...feedOf(missing, 'alice'), confirm }))
           .rejects.toThrow(/membership rule no longer describes npm search/)
         expect(calls).toEqual([phantoms])
+      })
+
+      it('confirms at most FEED_MAX_CONFIRMATIONS names a run and credits the rest unverified', async () => {
+        // The bound the PR #74 Windows review asked for: each confirmation
+        // is a serial packument read, and a changed owner adds two cell
+        // pagings, so an owner holding hundreds of omitted names made one
+        // run's cost unbounded. Past the bound a name is unverified, as a
+        // name past the owner budget is. Seed 0 and zero-padded names, so
+        // the names read are the first FEED_MAX_CONFIRMATIONS in code-unit
+        // order and the five after them are the overflow.
+        const held = Array.from({ length: FEED_MAX_CONFIRMATIONS + 5 }, (_, i) => `dsh-held-${String(i).padStart(2, '0')}`)
+        const { confirm, calls } = confirmWith(name => ({ kind: 'not-carrier', name }))
+        const coverage: FeedCoverage[] = []
+        const names = await run(feedFixture(SEARCH_WINDOW, 0).fetchImpl, { ...feedOf(held, 'alice', coverage), confirm })
+        expect(calls).toEqual([held.slice(0, FEED_MAX_CONFIRMATIONS)])
+        for (const name of held.slice(FEED_MAX_CONFIRMATIONS)) expect(names).toContain(name)
+        expect(forHarness(coverage)).toMatchObject({
+          feedOnly: held.length, ownersVerified: 0, verified: 0, withdrawn: FEED_MAX_CONFIRMATIONS, unverified: 5, disagreed: [],
+        })
       })
 
       it('leaves a name unverified when its packument cannot be read', async () => {

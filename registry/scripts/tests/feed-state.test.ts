@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import {
   applyConfirmations, applyFeedReads, bootstrapFeedState, carrierCounts, classifyManifest, classifyPackument, describeFeedCoverage, describeFeedRun,
   FEED_BOOTSTRAP_SEQ, FEED_NAME_PATTERN, FEED_PACKAGE_NAME_MAX_LENGTH, feedCarriersByKeyword, isDeprecated,
-  isFeedPackageName, parseFeedCoverage, parseFeedPage, parseFeedRunReport, parseFeedState, planFeedVerification,
+  isFeedPackageName, parseFeedCoverage, parseFeedPage, parseFeedRunReport, parseFeedState, planConfirmations, planFeedVerification,
   selectFeedIds, serializeFeedState, type FeedCoverage, type FeedRow, type FeedRunReport, type FeedState,
 } from '../src/feed-state.ts'
 
@@ -521,6 +521,27 @@ describe('planFeedVerification', () => {
 
   it('treats a name with no recorded owner as unverified', () => {
     expect(planFeedVerification(['n-unknown'], owners, 16, 0).unverified).toEqual(['n-unknown'])
+  })
+})
+
+describe('planConfirmations', () => {
+  const omitted = ['n-e', 'n-a', 'n-c', 'n-b', 'n-d']
+
+  it('confirms every name when they fit the budget', () => {
+    expect(planConfirmations(omitted, 32, 0)).toEqual({ confirm: ['n-a', 'n-b', 'n-c', 'n-d', 'n-e'], overflow: [] })
+  })
+
+  it('confirms the budget in code-unit order rotated by the seed, wrapping round, and returns the rest', () => {
+    // Five names a..e: seed 3 starts at d; seed 4 starts at e and wraps to
+    // a; 4 + 5,000 is 4 again modulo 5. Both halves come back sorted.
+    expect(planConfirmations(omitted, 2, 3)).toEqual({ confirm: ['n-d', 'n-e'], overflow: ['n-a', 'n-b', 'n-c'] })
+    expect(planConfirmations(omitted, 2, 4)).toEqual({ confirm: ['n-a', 'n-e'], overflow: ['n-b', 'n-c', 'n-d'] })
+    expect(planConfirmations(omitted, 2, 5004)).toEqual({ confirm: ['n-a', 'n-e'], overflow: ['n-b', 'n-c', 'n-d'] })
+  })
+
+  it('confirms nothing with a zero budget or no names', () => {
+    expect(planConfirmations(omitted, 0, 0)).toEqual({ confirm: [], overflow: ['n-a', 'n-b', 'n-c', 'n-d', 'n-e'] })
+    expect(planConfirmations([], 32, 7)).toEqual({ confirm: [], overflow: [] })
   })
 })
 

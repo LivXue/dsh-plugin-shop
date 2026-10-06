@@ -67,6 +67,19 @@ export const FEED_VERIFY_OWNERS = 16
  */
 export const FEED_MAX_DISAGREEMENTS = 3
 
+/**
+ * Twice-omitted names per keyword per run confirmed against their current
+ * packument (spec section 4.5). Each confirmation is one serial packument
+ * read, and a changed owner adds two pagings of that owner's cell, so this
+ * bounds the one per-run cost the step had left open (PR #74 Windows
+ * review): an owner holding hundreds of names could make a run read them
+ * all. A name past it is unverified, as a name past the owner budget is.
+ * The first `main` run withdrew nothing and disagreed with nothing on
+ * either keyword; 32 leaves room for one owner's names going missing at
+ * once.
+ */
+export const FEED_MAX_CONFIRMATIONS = 32
+
 /** Whether `value` is a name the feed may store (see FEED_PACKAGE_NAME). */
 export function isFeedPackageName(value: unknown): value is string {
   return typeof value === 'string'
@@ -508,6 +521,31 @@ export function planFeedVerification(
     namesOf: new Map(owners.map((owner): [string, string[]] => [owner, byOwner.get(owner) ?? []])),
     unverified: unverified.sort(compareStrings),
     ownersTotal: all.length,
+  }
+}
+
+/**
+ * Choose which twice-omitted names one keyword confirms this run: up to
+ * `budget` of them in code-unit order rotated by `seed` (the next state's
+ * `seq`), so a run that cannot confirm them all never leaves the same names
+ * unconfirmed (spec section 4.5). Both halves are sorted.
+ */
+export function planConfirmations(
+  omitted: readonly string[],
+  budget: number,
+  seed: number,
+): { readonly confirm: readonly string[]; readonly overflow: readonly string[] } {
+  const all = [...omitted].sort(compareStrings)
+  const take = Math.min(Math.max(0, budget), all.length)
+  const offset = all.length === 0 ? 0 : seed % all.length
+  const chosen = new Set<string>()
+  for (let i = 0; i < take; i += 1) {
+    const name = all[(offset + i) % all.length]
+    if (name !== undefined) chosen.add(name)
+  }
+  return {
+    confirm: all.filter(name => chosen.has(name)),
+    overflow: all.filter(name => !chosen.has(name)),
   }
 }
 
