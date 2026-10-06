@@ -10,8 +10,8 @@
  * new server answers; a boot that fails is diagnosed from the log file,
  * since nobody is attached to the child's pipes. */
 
-import { appendFileSync, openSync, closeSync } from 'node:fs'
-import { spawn } from 'node:child_process'
+import { appendFileSync, openSync, closeSync, writeSync } from 'node:fs'
+import { spawn, type ChildProcess } from 'node:child_process'
 
 /** `shop/restart` result: committed, or a typed refusal issued BEFORE
  * anything is torn down. Once `ok` is returned the old process WILL exit —
@@ -69,6 +69,14 @@ export function restartCommand(options: {
   return { command: dshBin, args: [...argv] }
 }
 
+/** One line of the handoff's own in the log, stamped in UTC ISO 8601 so a
+ * reader can line it up against the new process's output and the browser's
+ * clock. The helper stamps its line with `date -u` to the same shape, to the
+ * second. */
+function stamped(text: string): string {
+  return `${new Date().toISOString()} dsh-plugin-shop: ${text}\n`
+}
+
 export function startRestart(options: {
   /** The already-resolved command — see `restartCommand`. */
   command: string
@@ -82,26 +90,45 @@ export function startRestart(options: {
   // dsh child; the parent's own copy closes right after the spawn.
   const logFd = openSync(logFile, 'a')
   try {
-    const helper = spawn('sh', [
-      '-c',
-      // $1 is the parent pid; once `kill -0` fails the loop ends, the pid
-      // is shifted away, and "$@" is the dsh command line verbatim.
-      'while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; shift; exec "$@"',
-      'sh',
-      String(parentPid),
-      command,
-      ...args,
-    ], {
-      stdio: ['ignore', logFd, logFd],
-      env: env ?? process.env,
-      detached: true, // its own process group: survives this process's exit
-    })
+    // Written before the helper exists, so it precedes anything the helper or
+    // the new dsh writes. With the helper's own line below, it is what tells
+    // the two ways a page can end up reloaded into the process it asked to
+    // restart apart: a commit with no exit after it is an old process that
+    // never went, both and then a boot that died is a new dsh that failed
+    // (design §8, 2026-10-06 amendment).
+    writeSync(logFd, stamped(`restart committed; the new dsh starts once pid ${parentPid} exits: ${[command, ...args].join(' ')}`))
+    let helper: ChildProcess
+    try {
+      helper = spawn('sh', [
+        '-c',
+        // $1 is the parent pid; once `kill -0` fails the loop ends, the exit
+        // is stamped, the pid is shifted away, and "$@" is the dsh command
+        // line verbatim.
+        'while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; '
+          + 'echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) dsh-plugin-shop: pid $1 exited; starting the new dsh"; '
+          + 'shift; exec "$@"',
+        'sh',
+        String(parentPid),
+        command,
+        ...args,
+      ], {
+        stdio: ['ignore', logFd, logFd],
+        env: env ?? process.env,
+        detached: true, // its own process group: survives this process's exit
+      })
+    } catch (error) {
+      // Thrown rather than deferred: an argument Node refuses, or an errno it
+      // does not defer to the 'error' event. The caller refuses the restart,
+      // so the log must not end on a commit that started nothing.
+      writeSync(logFd, stamped(`the restart helper could not start: ${(error as Error).message}`))
+      throw error
+    }
     helper.on('error', (error) => {
       // Spawn failures arrive asynchronously, after the caller may already
       // have committed the handoff. Without a listener Node rethrows the
       // event as an uncaught exception; retain the diagnosis in the log.
       try {
-        appendFileSync(logFile, `dsh-plugin-shop: the restart helper could not start: ${error.message}\n`)
+        appendFileSync(logFile, stamped(`the restart helper could not start: ${error.message}`))
       } catch {
         // The log was writable when opened; if it disappears there is no
         // second reporting channel for this detached helper.

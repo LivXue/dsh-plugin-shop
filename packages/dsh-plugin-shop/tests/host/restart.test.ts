@@ -40,6 +40,15 @@ function fixtureDsh(marker: string): string {
  * on Windows is not even hypothetical. */
 const posixHandoff = it.skipIf(process.platform === 'win32')
 
+/** The handoff's own lines in the log, by what they record: the commit
+ * (written before the helper starts) and the old process's exit (written by
+ * the helper just before it starts the new dsh). Each opens with a UTC ISO
+ * 8601 stamp, so a reader can line them up against the new process's output
+ * and the browser's own clock. */
+const STAMP = String.raw`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z`
+const committedLine = (pid: number): RegExp => new RegExp(`^${STAMP} dsh-plugin-shop: restart committed; .*\\bpid ${pid}\\b`)
+const exitedLine = (pid: number): RegExp => new RegExp(`^${STAMP} dsh-plugin-shop: pid ${pid} exited\\b`)
+
 async function until(predicate: () => boolean, timeoutMs: number): Promise<void> {
   const start = Date.now()
   while (!predicate()) {
@@ -77,20 +86,69 @@ describe('startRestart', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
-  posixHandoff('holds the child back while the parent pid is alive', async () => {
+  posixHandoff('holds the child back while the parent pid is alive, and the log says it is waiting', async () => {
+    // A page reloaded into the process it asked to restart has to be
+    // explained from this file. The old process never exiting leaves the
+    // commit stamped and no exit after it; a new dsh that died in boot
+    // leaves both, then its own output (design §8, 2026-10-06 amendment).
     const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-restart-case-'))
     const marker = join(dir, 'calls.log')
+    const logFile = join(dir, 'restart.log')
     const sleeper = spawn('sh', ['-c', 'exec sleep 10'])
+    const parentPid = sleeper.pid!
     startRestart({
       command: fixtureDsh(marker),
       args: ['web'],
-      parentPid: sleeper.pid!,
-      logFile: join(dir, 'restart.log'),
+      parentPid,
+      logFile,
     })
     await new Promise(resolve => setTimeout(resolve, 1000))
     expect(existsSync(marker)).toBe(false)
+    const waiting = readFileSync(logFile, 'utf8').split('\n')
+    expect(waiting.some(line => committedLine(parentPid).test(line))).toBe(true)
+    expect(waiting.some(line => exitedLine(parentPid).test(line))).toBe(false)
     sleeper.kill()
     await until(() => existsSync(marker), 5000)
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  posixHandoff('stamps the commit and the old process exiting, in that order, ahead of the new process output', async () => {
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-restart-case-'))
+    const logFile = join(dir, 'restart.log')
+    const parentPid = await deadPid()
+    startRestart({
+      command: fixtureDsh(join(dir, 'calls.log')),
+      args: ['web'],
+      parentPid,
+      logFile,
+    })
+    await until(() => existsSync(logFile) && readFileSync(logFile, 'utf8').includes('dsh web:'), 5000)
+    const lines = readFileSync(logFile, 'utf8').split('\n')
+    const committed = lines.findIndex(line => committedLine(parentPid).test(line))
+    const exited = lines.findIndex(line => exitedLine(parentPid).test(line))
+    const output = lines.findIndex(line => line.includes('dsh web:'))
+    expect(committed).toBeGreaterThanOrEqual(0)
+    expect(exited).toBeGreaterThan(committed)
+    expect(output).toBeGreaterThan(exited)
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('ends the log on the failure, not on the commit, when the helper cannot even be spawned', () => {
+    // Node defers most spawn failures to an 'error' event, but throws some at
+    // once (an argument it refuses, an errno it does not defer). The caller
+    // then refuses the restart, and a log ending on "committed" would tell
+    // whoever reads it that a handoff was under way when none ever started.
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-restart-throw-'))
+    const logFile = join(dir, 'restart.log')
+    expect(() => startRestart({
+      command: 'dsh',
+      args: ['web\u0000'],
+      parentPid: 1,
+      logFile,
+    })).toThrow()
+    const lines = readFileSync(logFile, 'utf8').split('\n').filter(line => line !== '')
+    expect(lines.some(line => committedLine(1).test(line))).toBe(true)
+    expect(lines.at(-1)).toMatch(new RegExp(`^${STAMP} dsh-plugin-shop: the restart helper could not start: `))
     rmSync(dir, { recursive: true, force: true })
   })
 
