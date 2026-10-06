@@ -877,6 +877,21 @@ With the fix, each of those three reloaded on its own on both dsh versions, with
   - The helper stamps a second line once that pid is gone, just before it starts the new dsh.
   A commit with no exit line after it is an old process that never left. Both lines followed by a boot that died is a new dsh that failed.
 
+**Measured 2026-10-06** on dsh 0.1.5-rc.3, 0.1.7-rc.2 and 0.2.0-rc.2 (Linux). Each run installed this build from disk and updated it through the shop's own Update to a 9.9.9 copy of itself, served from a local registry:
+
+- **The shop's restart.** A new process answered, the row read 9.9.9, and no notice showed. The log carried the commit and the exit two seconds apart, which is the exit delay. The page reloaded 12.8–18.6 s after the confirm.
+- **dsh restarted from outside, the page left alone.** The open tab read 9.9.9 0.8–6.4 s after the new process announced its URL; 0.1.5-rc.3, whose reconnect is the slowest, took the 6.4 s. The finished update was gone, and nothing offered a restart.
+- **`process.exit` refused in the dsh web process.** A `--require` shim stood in for the macOS report. The page reloaded into the same pid 11.5–11.7 s after the confirm. The tab showed one notice, naming that pid and the log, and the log carried the commit and no exit.
+- **Control: the 0.8.5 build, on 0.2.0-rc.2.**
+  - After a restart from outside, the tab never read 9.9.9 within 90 s.
+  - With exit refused, the page reloaded into the same pid and showed the old version, with Restart offered again and no notice. That is the report's own symptom.
+
+**What is left.**
+- **The macOS cause is not established.** The report's evidence fits both readings: an old process that never exited, and a new dsh that died in boot while the old one kept the port. The stamped log tells the two apart next time.
+- **The verdict needs the committing host to name its boot.** It covers restarts committed by a host carrying this amendment, which means 0.8.6 on. In the first update from 0.8.5 or earlier, the reconnect refresh still works, decided by the running version, but no verdict follows a reload.
+- **CI does not exercise a restart from outside.** The e2e shares one dsh process across its cases, so the live measurements above are what covers that path. A dsh that stopped emitting `connection/reset` would put the page back where it was before this amendment, without breaking it.
+- **The notice names `dsh web`**, as the failure notice does. A launch with other arguments has to adapt the command.
+
 ## 9. Security model
 
 ### 9.1 Threat model
