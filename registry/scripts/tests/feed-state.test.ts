@@ -121,6 +121,43 @@ describe('classifyPackument', () => {
   it.each([[null], ['text'], [['dsh-x']]])('reports a body that is not a packument (%j) as failed', (body) => {
     expect(classifyPackument('dsh-x', body, KEYWORDS)).toMatchObject({ kind: 'failed', name: 'dsh-x' })
   })
+
+  /** npm's answer for a package whose every version was unpublished, as it
+   * served `@awiki/dsh` on 2026-10-06: a 200 with no `dist-tags` and no
+   * `versions`, the unpublish recorded in `time` (email replaced). */
+  const unpublished = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+    _id: 'dsh-x',
+    name: 'dsh-x',
+    _rev: '6-d0cd4305c39b49f4b90be56eeba169b4',
+    time: {
+      created: '2026-08-17T10:22:29.176Z',
+      modified: '2026-08-17T12:27:58.262Z',
+      '0.2.0-rc.2': '2026-08-17T10:22:29.516Z',
+      unpublished: { time: '2026-08-17T12:22:36.514Z', versions: ['0.2.0-rc.2'] },
+    },
+    maintainers: [{ email: 'alice@example.com', name: 'alice' }],
+    ...overrides,
+  })
+
+  it('reads npm\'s unpublished stub as gone, as it reads a 404', () => {
+    // An unpublish does not answer 404, as the spec first assumed: npm keeps
+    // the name's document and serves this stub. Read as failed, the first
+    // main run's two pending names were stubs and stayed pending, and a
+    // carrier unpublished after it was read kept its record -- credited
+    // unverified, every run, against a total that no longer counts it.
+    expect(classifyPackument('dsh-x', unpublished(), KEYWORDS)).toEqual({ kind: 'gone', name: 'dsh-x' })
+  })
+
+  it.each([
+    ['records no unpublish', { time: { created: '2026-08-17T10:22:29.176Z' } }],
+    ['has no time', { time: undefined }],
+    ['records an unpublish that is not an object', { time: { unpublished: '2026-08-17T12:22:36.514Z' } }],
+    ['still carries versions', { versions: {} }],
+    ['still carries dist-tags', { 'dist-tags': { latest: '0.2.0-rc.2' } }],
+    ['is the stub of another package', { name: 'dsh-y' }],
+  ])('keeps a versionless packument that %s failed: only npm\'s own stub says the versions are gone', (_what, overrides) => {
+    expect(classifyPackument('dsh-x', unpublished(overrides), KEYWORDS)).toMatchObject({ kind: 'failed', name: 'dsh-x' })
+  })
 })
 
 describe('isDeprecated', () => {

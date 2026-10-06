@@ -269,8 +269,14 @@ Where it is wrong, section 4.5 is the guard.
    is a carrier or pending -- so an entry on the list is re-read
    whenever it changes, even if the pattern is ever narrowed. Every
    pending name is read whether or not it changed. A row marked
-   `deleted: true` is gone without a read; an unmarked unpublish
-   answers 404 and is gone the same way. The names are read in
+   `deleted: true` is gone without a read. An unpublish the feed does
+   not mark answers 200 with npm's stub -- no `dist-tags`, no
+   `versions`, the unpublish recorded in `time` -- and is gone the
+   same way. Amended 2026-10-06: this said such an unpublish answers
+   404. It does not, and read as a failure the stub stayed pending for
+   good -- both of the first `main` run's pending names were stubs --
+   while a carrier unpublished after it was read would have been
+   credited unverified on every run. The names are read in
    code-unit order rotated by the head's `update_seq`, so a run that
    cannot read them all never leaves the same names last. Amended
    2026-10-05 after a security review: pending names were read first
@@ -280,7 +286,8 @@ Where it is wrong, section 4.5 is the guard.
 4. **Reads.** `FEED_READ_CONCURRENCY` packument reads at a time, until
    done or `FEED_READ_TIME_BUDGET_MS`. Names not reached become pending.
 5. **Merge** (pure). A carrier is set, replacing its keywords and
-   owner. A non-carrier, a 404 or a deletion removes the name. A
+   owner. A non-carrier, a 404, npm's unpublished stub or a deletion
+   removes the name. A
    failed read keeps the name's previous status and makes it pending.
    A successful read clears pending. `seq` becomes the `last_seq` of
    the last page processed. Pending names hold what the cursor has
@@ -364,8 +371,10 @@ crossing grows the residue's owners past the budget.
   in order, so the pages already read form a consistent prefix; the
   run proceeds with it, the cursor at its last row, and the report
   says where it stopped.
-- **The packument answers 404, or the row is marked deleted:** gone,
-  removed.
+- **The packument answers 404 or npm's unpublished stub, or the row is
+  marked deleted:** gone, removed. The stub is matched exactly -- no
+  `dist-tags`, no `versions`, and an object at `time.unpublished` --
+  so any other versionless body is still a failed read.
 - **The packument is read and is not a carrier** (no harvest keyword,
   deprecated, or past `FEED_PACKUMENT_MAX_BYTES`):
   removed. This is the `no-manifest` side of the `no-manifest` /

@@ -122,7 +122,7 @@ export type FeedRead =
   // deprecated, or past the size cap -- the author's own content, which
   // CLAUDE.md lists as no-manifest. That side of the line drops the name.
   | { readonly kind: 'not-carrier'; readonly name: string }
-  // A 404, or a row the feed marks deleted.
+  // A 404, a row the feed marks deleted, or npm's unpublished stub.
   | { readonly kind: 'gone'; readonly name: string }
   // Anything that is not the package's manifest: a transport failure, a
   // deadline, any non-2xx but a 404 (a 403 from a blocking edge included),
@@ -177,8 +177,23 @@ export function classifyPackument(name: string, packument: unknown, harvestKeywo
   if (packument === null || typeof packument !== 'object' || Array.isArray(packument)) {
     return failed('the registry answered a body that is not a packument')
   }
-  const p = packument as { name?: unknown; 'dist-tags'?: unknown; versions?: unknown; maintainers?: unknown }
+  const p = packument as { name?: unknown; 'dist-tags'?: unknown; versions?: unknown; maintainers?: unknown; time?: unknown }
   if (p.name !== name) return failed('the registry answered the packument of another package')
+  // An unpublish answers 200, not 404: npm keeps the name's document and
+  // serves a stub with no `dist-tags` and no `versions`, the unpublish
+  // recorded in `time`. That is npm's own statement that the package has no
+  // versions, so it is gone as a 404 is. Read as failed, it stayed pending
+  // forever, and a carrier unpublished after it was read was credited
+  // unverified every run (2026-10-06, the first main run). Only that exact
+  // shape: any other versionless body is still failed.
+  const time = p.time
+  const unpublished = time !== null && typeof time === 'object' && !Array.isArray(time)
+    ? (time as { unpublished?: unknown }).unpublished
+    : undefined
+  if (p.versions === undefined && p['dist-tags'] === undefined
+    && unpublished !== null && typeof unpublished === 'object' && !Array.isArray(unpublished)) {
+    return { kind: 'gone', name }
+  }
   const tags = p['dist-tags']
   const latest = tags !== null && typeof tags === 'object' ? (tags as { latest?: unknown }).latest : undefined
   const versions = p.versions
