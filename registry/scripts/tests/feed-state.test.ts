@@ -151,7 +151,10 @@ describe('classifyPackument', () => {
   it.each([
     ['records no unpublish', { time: { created: '2026-08-17T10:22:29.176Z' } }],
     ['has no time', { time: undefined }],
+    ['has a null time', { time: null }],
     ['records an unpublish that is not an object', { time: { unpublished: '2026-08-17T12:22:36.514Z' } }],
+    ['records an unpublish that is null', { time: { unpublished: null } }],
+    ['records an unpublish that is an array', { time: { unpublished: [] } }],
     ['still carries versions', { versions: {} }],
     ['still carries dist-tags', { 'dist-tags': { latest: '0.2.0-rc.2' } }],
     ['is the stub of another package', { name: 'dsh-y' }],

@@ -345,8 +345,11 @@ retry pass repeats none of its requests.
    keyword disagree in one run. The membership rule then no longer
    describes the search index, and crediting through it would cancel
    genuinely missing names one for one. The step's report line waits
-   for the keyword's final count (section 4.7) and the throw waits for
-   the line, so a run that throws still logs it.
+   for the keyword's final count (section 4.7) and this throw waits
+   for the line, as the shortfall throws do, so a run either of them
+   stops still logs it. A search request that fails after the step --
+   the probe for the total, or the retry pass -- throws first, as it
+   would with no feed.
 
 The step runs before `required` is measured. A residual the feed
 closes therefore no longer sends the keyword through the second

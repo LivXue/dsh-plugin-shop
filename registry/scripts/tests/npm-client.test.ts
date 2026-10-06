@@ -3516,11 +3516,13 @@ describe('searchByKeywords', () => {
       expect(forHarness(coverage)).toMatchObject({ unverified: 2, enumerated: 5252, required: 5250 })
     })
 
-    it('reports the final count, after the retry pass, the same as the shortfall line', async () => {
+    it('measures the count against the total read after the retry pass, as the shortfall line does', async () => {
       // 5,407 names, the cells recover 150 past the window and the feed
       // three more: 5,403, short, so the keyword enumerates again. The
-      // probe after that retry answers 5,406 -- one unpublished mid-run --
-      // so a line written before the retry would say 5,407.
+      // retry adds no name, so the count reads 5,403 either way; the total
+      // is what a line written before the retry would get wrong. The probe
+      // after the retry answers 5,406 -- one unpublished mid-run -- where
+      // the one before it answered 5,407.
       const held = ['beyond150', 'beyond151', 'beyond152']
       const fixture = feedFixture(5407, 150, held)
       let probes = 0
@@ -3558,6 +3560,17 @@ describe('searchByKeywords', () => {
       expect(forHarness(coverage)).toMatchObject({ disagreed: phantoms, enumerated: 5250, required: 5250 })
     })
 
+    it('still logs the line, with its count, on a run a shortfall then throws', async () => {
+      // The line waits for the keyword's final count, and the shortfall
+      // checks come after it. A feed holding nothing leaves the `overCap`
+      // names missing -- 15 at a cap of 14 -- so the cap throws, and the
+      // line is already out: 5,436 of 5,451.
+      const coverage: FeedCoverage[] = []
+      await expect(run(feedFixture(total, recovered, missing).fetchImpl, feedOf([], 'alice', coverage)))
+        .rejects.toThrow(new RegExp(`a tail shortfall of ${overCap}`))
+      expect(forHarness(coverage)).toMatchObject({ feedOnly: 0, enumerated: total - overCap, required: total })
+    })
+
     it('counts the names of an owner whose cell fails as unverified, never as disagreeing', async () => {
       // Review Focus 5.
       const coverage: FeedCoverage[] = []
@@ -3569,8 +3582,9 @@ describe('searchByKeywords', () => {
     })
 
     it('counts the names of an owner whose cell serves short of its total as unverified', async () => {
-      // Review Focus 5: the cell answers 61 but serves 60, so it was not
-      // paged in full and proves nothing about the 61st.
+      // Review Focus 5: the cell answers all `overCap` names but serves one
+      // fewer (15 and 14 at a cap of 14), so it was not paged in full and
+      // proves nothing about the one it left out.
       const coverage: FeedCoverage[] = []
       await run(feedFixture(total, recovered, missing.slice(1), false, overCap).fetchImpl, feedOf(missing, 'alice', coverage))
       expect(forHarness(coverage)).toMatchObject({ ownersVerified: 0, verified: 0, unverified: overCap, disagreed: [] })
@@ -3721,7 +3735,8 @@ describe('searchByKeywords', () => {
       // Ruling P1 (ledger): npm has answered an empty result for a real cell
       // before -- `probeStubTransientZero` above, and the publisher axis
       // re-probes a zero before it evicts. Alice's cell answers empty once,
-      // then serves all 61 names: they are verified and nothing throws.
+      // then serves all `overCap` names (15 at a cap of 14): they are
+      // verified and nothing throws.
       const fixture = feedFixture(total, recovered, missing)
       let ownerPages = 0
       const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
