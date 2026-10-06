@@ -435,8 +435,8 @@ Implementation decisions:
 | `shop/installStatus` | `{ installId }` | `{ state, log[], activation?, restartReason? }` |
 | `shop/setEnabled` | `{ name, enabled }` | `{ ok, activation? }` |
 | `shop/uninstallStart` | `{ name }` | `{ installId }` |
-| `shop/restart` | none | `{ ok, logFile? }` |
-| `shop/version` | none | `{ installed, latest, outdated, restartBlocked, pendingVersion }` |
+| `shop/restart` | none | `{ ok, logFile?, bootId?, pid? }` |
+| `shop/version` | none | `{ installed, latest, outdated, restartBlocked, pendingVersion, bootId }` |
 | `shop/updateStart` | `{ version }` | `{ installId }` |
 | `shop/installed` | none | `{ name, installed, latest, outdated }[]` |
 | `shop/installedSpecs` | none | `Record<name, spec>` or `null` |
@@ -795,6 +795,8 @@ on.
 - **An absent field means an older host.** This host always sends it. The client reads a missing field as a restart still pending: the client is served from disk, so a client newer than its host exists only because the disk holds a newer shop than the running process. That inference is what gives the first update from 0.8.3 or earlier a restart offer after the swap.
 - **`outdated` still compares `installed` with `latest`.** When an update is pending, the row offers Restart instead of Update, since Update would reinstall what is already on disk.
 
+**Amendment (2026-10-06): `shop/version` and `shop/restart` name the process that answers.** `bootId` is drawn once per process, when `own-version.ts` is first evaluated, and is fixed for that process's life. `shop/version` always sends it. A committed `shop/restart` answers `{ ok: true, logFile, bootId, pid }`, where `pid` is the process the takeover waits on, and a repeat gets the same answer. Both fields are optional on the wire: a host older than them sends neither, and the client judges nothing by an absent field. §8's 2026-10-06 amendment says what the client does with them.
+
 ## 8. When changes take effect
 
 | Operation | Restart required | Evidence |
@@ -852,6 +854,28 @@ A natural self-update does not open this window: it swaps once, at the end of th
 With the fix, each of those three reloaded on its own on both dsh versions, with one restart each, and so did the natural flow. In the response-held run the re-issue reached the process that had committed and got its answer back.
 
 **What is left.** A re-issue still reaches the NEW process when the replacement registers only after the old process has exited and the new one has booted, which takes seconds. The new process then restarts once more, which costs a few seconds and nothing the first restart did not. Like the amendment above, the fix takes effect for updates made from a version that carries it: in the first update from 0.8.4-beta.0 or earlier, the old tab makes the request.
+
+**Amendment (2026-10-06): the page checks which process answers it, after a restart's reload and after every reconnect.** Reported 2026-10-06 on macOS (dsh 0.2.0-rc.2, node 26.7.0): the shop's Update moved 0.8.5-beta.0 to 0.8.5, the restart was confirmed, the page reloaded, and the row still read v0.8.5-beta.0. The process serving the port had started at 16:13:48, before the 16:39 update, so the restart never replaced it. The last boot in its `restart.log` never announced a URL. The shop could say none of this, for two reasons:
+
+- **The monitor reloads into whatever answers.** It reloads once the origin has answered for 8 s without a break (the 2026-09-26 amendment above). A process that never exited answers that steadily too, so the reloaded page could not tell it from a new one, and the row printed the old version with nothing to say why.
+- **A page that is not reloaded keeps the old process's answers.** dsh's client reconnects to whatever server holds the origin and emits `connection/reset` on every connect, on 0.1.5-rc.3 through 0.2.0-rc.2, but reloads nothing. After a restart from a terminal, by a supervisor, or one whose own reload never came, an open tab kept showing the old version, an update still waiting for its restart, and every card still asking for one. Reproduced on 0.2.0-rc.2 by restarting dsh from outside after a self-update.
+
+**The fix.**
+- **Each process names itself.** `bootId` (§7.3) is drawn once per process. `shop/version` carries it, and a committed restart's answer carries it with the pid the takeover waits on.
+- **A commit is recorded for the page the reload produces.** The record names the committing process and lives in the tab's sessionStorage, because a reload clears `globalThis`. Every version answer the client half receives is judged against it (`noteBoot`):
+  - An answer from the same boot is a restart that never happened. The tab says so once, above everything, and names the pid to stop, the command that starts dsh (`dsh web`), and the log. No restart is offered in that state, because asking that process again only returns the restart it already committed.
+  - Any other answer means a process replaced it, and the record is spent.
+  - Nothing is judged while the page's own restart is under way, because the committing process answers until it exits.
+- **The client half asks `shop/version` again on every `connection/reset`.** An answer may come from another process. `answeredByAnotherProcess` decides by `bootId` where either answer carries one, and by the running version otherwise. When it does:
+  - the client half drops the warm catalog and tells the tab;
+  - the tab shows the version the new process runs;
+  - it clears every receipt that was waiting for a restart: the self-update's, each card's install and uninstall, and each switch's;
+  - it asks for the installed list and a fresh catalog verdict.
+  A reload that was owed stays owed, since nothing reloaded the page.
+- **`restart.log` records the handoff itself**, not only the new process's output:
+  - A UTC-stamped line records the commit, the pid the takeover waits on, and the command it runs.
+  - The helper stamps a second line once that pid is gone, just before it starts the new dsh.
+  A commit with no exit line after it is an old process that never left. Both lines followed by a boot that died is a new dsh that failed.
 
 ## 9. Security model
 
