@@ -185,9 +185,10 @@ export interface ConfirmCarriersOptions {
  * Re-read the current packument of each name two complete pagings of its
  * owner's cell omitted (spec section 4.5): what the search step needs to
  * tell a former owner, or a package that stopped carrying the keyword since
- * it was read, from a real disagreement. A handful of names a run, so one
- * at a time. Never throws: a failure is a `failed` read, which leaves the
- * name unverified.
+ * it was read, from a real disagreement. The search step passes at most
+ * `FEED_MAX_CONFIRMATIONS` names per keyword a run, so one at a time.
+ * Never throws: a failure is a `failed` read, which leaves the name
+ * unverified.
  */
 export async function confirmCarriers(names: readonly string[], options: ConfirmCarriersOptions): Promise<Map<string, FeedRead>> {
   const { harvestKeywords, fetchImpl = fetch, sleep = defaultSleep, token, timeoutMs = FEED_REQUEST_TIMEOUT_MS } = options

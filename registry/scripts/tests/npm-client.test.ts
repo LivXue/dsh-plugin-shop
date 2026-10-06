@@ -7,7 +7,7 @@ import { type Cell, cellKey, cellQuery, COMPATIBILITY_PROFILES_MAX_COUNT, COMPAT
 import { ENTRY_PAYLOAD_MAX_BYTES, entryPayloadBytes } from '../src/gate.ts'
 import { MAX_TARBALL_BYTES } from '../src/github-client.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
-import { FEED_MAX_DISAGREEMENTS, type FeedCoverage, type FeedInput, type FeedRead } from '../src/feed-state.ts'
+import { FEED_MAX_CONFIRMATIONS, FEED_MAX_DISAGREEMENTS, FEED_VERIFY_OWNERS, type FeedCoverage, type FeedInput, type FeedRead } from '../src/feed-state.ts'
 
 describe('HARVEST_KEYWORDS', () => {
   it('leads with the ecosystem keyword and adds the harness keyword, neither branded', () => {
@@ -2443,36 +2443,28 @@ describe('searchByKeywords', () => {
         .rejects.toThrow(/recovered 0 of 157/)
     })
 
-    it('PUBLISHES the fifteen-name partition gap it used to refuse', async () => {
-      // THE case the cap was originally sized for, inverted by the 2026-09-18
-      // raise, and kept as behaviour because the loss deserves a red test if
-      // it is ever undone by accident rather than on purpose.
+    it('refuses the fifteen-name partition gap at the live tail size', async () => {
+      // THE case the cap was sized for, as behaviour rather than as a bound
+      // on a constant. 157 out of reach, cells recover 142 -- the shape
+      // PARTITION_KEYWORDS took the day after it was documented as complete.
+      // The rate floor passes it (142/157 = 0.9045, above 0.9), so the cap
+      // is the only bound that refuses it, and the message names the tail.
       //
-      // 157 out of reach, cells recover 142 — the shape PARTITION_KEYWORDS
-      // took the day after it was documented as complete. The rate floor
-      // passes it (142/157 = 0.9045, above 0.9), so the cap was the only
-      // bound refusing it; an earlier 25 published it in silence and the
-      // bracket's ceiling existed to stop that recurring. At 20 it recurs:
-      // a real partition gap of exactly the size this repo has measured is
-      // now published, reported only as a count in the build report.
+      // RESTORED 2026-10-06. The 2026-09-18 raise to 20, and the 60 of the
+      // 2026-10-03 stopgap after it, published this gap in silence, and this
+      // test asserted that they did so that undoing it would be deliberate.
+      // It is: the change feed now harvests the residue no cell reaches by
+      // rank -- the first `main` run with it read both keywords whole -- so
+      // the cap is back under the gap it exists to refuse.
       //
-      // Asserted as the resolved harvest, not as a message, because the
-      // failure this guards against is the SILENCE.
-      const names = await searchByKeywords(pastWindow(5407, 142))
-      expect(names).toHaveLength(SEARCH_WINDOW + 142)
-      // Still refused once the gap outgrows the cap, so the bound has moved
-      // rather than gone. Derived from the cap rather than written out: this
-      // fixture read "250 out of reach recovering 229" while the cap was 20,
-      // and a raise turned its 21-name gap into a passing one. The tail has
-      // to be large enough that the gap still clears the rate floor, or the
-      // floor refuses it first with a different message; 50 above the
-      // crossover's own size keeps the rate just above it (600 of 661,
-      // 0.908, at a cap of 60), and the assertion below checks that.
-      const overCap = MAX_UNREACHABLE_RESIDUAL + 1
-      const tail = Math.ceil(overCap / (1 - MIN_UNREACHABLE_RECOVERY)) + 50
-      expect((tail - overCap) / tail).toBeGreaterThan(MIN_UNREACHABLE_RECOVERY)
-      await expect(searchByKeywords(pastWindow(SEARCH_WINDOW + tail, tail - overCap)))
-        .rejects.toThrow(new RegExp(`a tail shortfall of ${overCap}, past the ${MAX_UNREACHABLE_RESIDUAL} names a build may publish short`))
+      // The cap is interpolated, not spelled: the sibling bound test admits
+      // any value in [9, 15), and at 12 this gap is still correctly refused,
+      // so a literal would redden this test for a reason it does not assert.
+      await expect(searchByKeywords(pastWindow(5407, 142)))
+        .rejects.toThrow(new RegExp(`a tail shortfall of 15, past the ${MAX_UNREACHABLE_RESIDUAL} names a build may publish short`))
+      // The family event it must still absorb is `publishes when the
+      // partition recovers nearly all of what is out of reach`, which runs
+      // the same tail and additionally asserts the shortfall record.
     })
 
     it('refuses when the residual outgrows what may be published short', async () => {
@@ -2521,24 +2513,17 @@ describe('searchByKeywords', () => {
       // An earlier 25 sat outside the upper bound, on the reasoning that the
       // family needed 20-plus of headroom — it needed 9.
       expect(MAX_UNREACHABLE_RESIDUAL).toBeGreaterThanOrEqual(6 + MAX_SEARCH_SHORTFALL)
-      // THE UPPER BOUND WAS ABANDONED ON 2026-09-18, and this assertion is
-      // what it cost: the cap is now above the one real partition gap this
-      // repo has measured, so it absorbs a gap that size in silence. That was
-      // taken deliberately (see MAX_UNREACHABLE_RESIDUAL's own 2026-09-18
-      // amendment) to publish while publisher pinning accumulates a pinned
-      // set, which it cannot do from a standing start.
-      //
-      // Pinned to the exact value rather than left as a range, so a third
-      // raise cannot happen by widening a bound that no longer means
-      // anything: it has to edit this line, and this line says what is gone.
-      // The floor above is still a measurement and still holds.
-      //
-      // THE THIRD RAISE, 20 -> 60, 2026-10-03, chosen by the maintainer as a
-      // stopgap while new packages are reached some other way (see the
-      // constant's own comment). What is gone now is any claim that the cap
-      // tracks a measured magnitude: 60 is runway, sized against a holiday's
-      // inflow of packages no cell can reach, and it is meant to come down.
-      expect(MAX_UNREACHABLE_RESIDUAL).toBe(60)
+      // THE UPPER BOUND, RESTORED 2026-10-06. It was abandoned on 2026-09-18
+      // (20), to publish while publisher pinning accumulated a pinned set,
+      // and the 2026-10-03 stopgap (60) took the cap further from any
+      // measured magnitude; while it was gone this line pinned the exact
+      // value, so that a raise had to edit the line that said what was lost.
+      // The change feed now reaches new packages by publication time, which
+      // is the residue no cell reaches by rank, and the first `main` run with
+      // it read both keywords whole, so the cap is back inside the bracket
+      // and the bracket is what is asserted. A raise past 14 now fails here,
+      // against the gap it would absorb.
+      expect(MAX_UNREACHABLE_RESIDUAL).toBeLessThan(15)
     })
 
     it('keeps the prose copies of the cap in step with the constant', () => {
@@ -2562,18 +2547,16 @@ describe('searchByKeywords', () => {
       // losing the magnitudes that bound it is how 25 passed review once.
       for (const [name, doc] of [['CLAUDE.md', claude], ['the spec', spec]] as const) {
         expect(doc, `${name} lost the bracket floor`).toMatch(new RegExp(`at least \\*{0,2}${6 + MAX_SEARCH_SHORTFALL}\\b`))
-        // The ceiling is gone from the CODE, so requiring the docs to still
-        // recite it would pass on a document that never said it was
-        // abandoned — the old assertion does still match, because both docs
-        // keep `under 15` as history. What has to be pinned now is the
-        // SURRENDER: a reader has to learn from either document that a
-        // fifteen-name partition gap is absorbed in silence, since no bound
-        // refuses one any more.
-        expect(doc, `${name} does not say the 15-name gap is now absorbed`).toMatch(/absorbs (a|that) \*{0,2}15-name/)
+        // The ceiling is back in the CODE (2026-10-06), and `under 15`
+        // proves nothing on its own: both docs kept it as history all the
+        // while the ceiling was abandoned. While it was gone this pinned the
+        // SURRENDER -- that a fifteen-name gap was absorbed in silence. What
+        // a reader has to learn now is that it is refused again.
+        expect(doc, `${name} does not say the 15-name gap is refused again`).toMatch(/refuses (a|that) \*{0,2}15-name/)
       }
     })
 
-    it('no longer refuses the fifteen-name partition gap at any real tail', () => {
+    it('divides the labour: the rate cannot catch a partition gap, the cap can', () => {
       // A rate floor's strictness DECAYS with the tail — 0.9 permits 10% of
       // it — so above this crossover every rate violation is already a cap
       // violation and the rate decides nothing but which message prints.
@@ -2586,20 +2569,21 @@ describe('searchByKeywords', () => {
       const gap = 15
       const clearsFloorFrom = Math.round(gap / (1 - MIN_UNREACHABLE_RECOVERY))
       expect(clearsFloorFrom).toBe(150)
-      // THE DIVISION OF LABOUR HAS INVERTED, and this is the concrete cost
-      // of the 2026-09-18 raise. It used to read `clearsFloorFrom >
-      // crossover`: the gap cleared the rate floor only above a tail where
-      // the cap was already the binding bound, so something always refused
-      // it. With the cap above the gap itself that is no longer true — the
-      // crossover moved out past the tail at which the rate goes inert, and
-      // between them sits a band where NEITHER bound refuses a fifteen-name
-      // partition gap.
-      expect(clearsFloorFrom).toBeLessThan(crossover)
-      // Stated as behaviour rather than as arithmetic: at the live tail the
-      // gap passes both bounds. `deepseek-harness` measured 1,921 past the
-      // window on 2026-09-18, an order of magnitude beyond `clearsFloorFrom`.
+      // THE DIVISION OF LABOUR: that tail is past the crossover, so by the
+      // time a gap this size can satisfy the rate, the rate was already
+      // inert and the cap is the only bound left holding it. Asserted as a
+      // relation and not as `crossover === 140`, which would pin the cap to
+      // exactly 14; the relation holds across all of [9, 15). It inverted
+      // on 2026-09-18, when the cap rose above the gap itself and left a
+      // band of tails where NEITHER bound refused a fifteen-name gap, and
+      // it holds again since the cap came back down on 2026-10-06.
+      expect(clearsFloorFrom).toBeGreaterThan(crossover)
+      // Stated as behaviour too: at a live tail the gap clears the rate
+      // floor and only the cap refuses it. `deepseek-harness` measured 1,921
+      // past the window on 2026-09-18, an order of magnitude beyond
+      // `clearsFloorFrom`.
       const liveTail = 1921
-      expect(gap).toBeLessThanOrEqual(MAX_UNREACHABLE_RESIDUAL)
+      expect(gap).toBeGreaterThan(MAX_UNREACHABLE_RESIDUAL)
       expect((liveTail - gap) / liveTail).not.toBeLessThan(MIN_UNREACHABLE_RECOVERY)
       // And the rate really does wave it through there. Written the way
       // production writes it, `rate < floor`, because the complementary form
@@ -3498,9 +3482,10 @@ describe('searchByKeywords', () => {
     const run = (fetchImpl: typeof fetch, feed?: FeedInput, onShortfall?: (s: KeywordShortfall) => void) =>
       searchByKeywords(fetchImpl, async () => {}, undefined, undefined, undefined, onShortfall, undefined, undefined, undefined, undefined, feed)
     const forHarness = (coverage: readonly FeedCoverage[]) => coverage.find(c => c.keyword === 'deepseek-harness')
-    // The 2026-10-04 shape at today's cap: 661 names past the window, the
-    // cells recover 600, so 61 are missing. 600 / 661 = 0.908 clears the
-    // recovery floor, so the cap is what refuses it.
+    // The 2026-10-04 shape at today's cap, derived from it: at 14, 201
+    // names past the window and the cells recover 186, so 15 are missing.
+    // 186 / 201 = 0.925 clears the recovery floor, so the cap is what
+    // refuses it. (At the stopgap of 60 this read 661, 600 and 61.)
     const overCap = MAX_UNREACHABLE_RESIDUAL + 1
     const tail = Math.ceil(overCap / (1 - MIN_UNREACHABLE_RECOVERY)) + 50
     const total = SEARCH_WINDOW + tail
@@ -3517,8 +3502,44 @@ describe('searchByKeywords', () => {
       expect(names).toContain(missing[0])
       expect(forHarness(coverage)).toEqual({
         keyword: 'deepseek-harness', feedOnly: overCap, supplied: overCap,
-        ownersVerified: 1, ownersTotal: 1, verified: overCap, unverified: 0, withdrawn: 0, disagreed: [],
+        ownersVerified: 1, ownersTotal: 1, verified: overCap, unverified: 0, withdrawn: 0, unconfirmed: 0, disagreed: [],
+        enumerated: total, required: total,
       })
+    })
+
+    it('says when credits take the count past the total npm promised', async () => {
+      // PR #74 review: a keyword reads whole when credits close it, so the
+      // line says what it was enumerated against on every run. Two ownerless
+      // carriers npm does not count are credited unverified: 5,252 of 5,250.
+      const coverage: FeedCoverage[] = []
+      await run(feedFixture(SEARCH_WINDOW, 0).fetchImpl, feedOf(['dsh-ghost-a', 'dsh-ghost-b'], null, coverage))
+      expect(forHarness(coverage)).toMatchObject({ unverified: 2, enumerated: 5252, required: 5250 })
+    })
+
+    it('measures the count against the total read after the retry pass, as the shortfall line does', async () => {
+      // 5,407 names, the cells recover 150 past the window and the feed
+      // three more: 5,403, short, so the keyword enumerates again. The
+      // retry adds no name, so the count reads 5,403 either way; the total
+      // is what a line written before the retry would get wrong. The probe
+      // after the retry answers 5,406 -- one unpublished mid-run -- where
+      // the one before it answered 5,407.
+      const held = ['beyond150', 'beyond151', 'beyond152']
+      const fixture = feedFixture(5407, 150, held)
+      let probes = 0
+      const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+        const params = new URL(String(url)).searchParams
+        if (params.get('text') === 'keywords:deepseek-harness' && params.get('size') === '1') {
+          probes += 1
+          if (probes === 3) return new Response(JSON.stringify({ total: 5406, objects: [] }), { status: 200 })
+        }
+        return fixture.fetchImpl(url, init)
+      }) as unknown as typeof fetch
+      const coverage: FeedCoverage[] = []
+      const shortfalls: KeywordShortfall[] = []
+      await run(fetchImpl, feedOf(held, 'alice', coverage), s => shortfalls.push(s))
+      expect(probes).toBe(3)
+      expect(forHarness(coverage)).toMatchObject({ verified: 3, enumerated: 5403, required: 5406 })
+      expect(shortfalls).toEqual([expect.objectContaining({ keyword: 'deepseek-harness', enumerated: 5403, required: 5406 })])
     })
 
     it('neither lists nor credits a name its owner cell does not serve, and names it', async () => {
@@ -3533,7 +3554,72 @@ describe('searchByKeywords', () => {
       const coverage: FeedCoverage[] = []
       await expect(run(feedFixture(SEARCH_WINDOW, 0).fetchImpl, feedOf(phantoms, 'alice', coverage)))
         .rejects.toThrow(/membership rule no longer describes npm search/)
-      expect(forHarness(coverage)?.disagreed).toEqual(phantoms)
+      // The line waits for the keyword's count and the throw waits for the
+      // line, so the run that throws still logs both: nothing disagreeing
+      // was credited, so the count is the window's 5,250 of 5,250.
+      expect(forHarness(coverage)).toMatchObject({ disagreed: phantoms, enumerated: 5250, required: 5250 })
+    })
+
+    /** `count` names past the window, each owned by its own owner, whose
+     * `keywords:deepseek-harness maintainer:oNN` cell serves it and nothing
+     * else does. Two-digit owners, so code-unit order is numeric order. */
+    const ownedApart = (count: number) => {
+      const pad = (i: number) => String(i).padStart(2, '0')
+      const names = Array.from({ length: count }, (_, i) => `beyond-${pad(i)}`)
+      const servedBy = new Map<string, readonly string[]>(names.map((name, i) => [`keywords:deepseek-harness maintainer:o${pad(i)}`, [name]]))
+      const window = Array.from({ length: SEARCH_WINDOW }, (_, i) => `w${i}`)
+      const stub = stubSearch(
+        query => (query === 'keywords:deepseek-harness' ? SEARCH_WINDOW + count
+          : query === 'keywords:deepseek-harness,dsh' ? 1
+          : servedBy.get(query)?.length ?? 0),
+        (query, from) => {
+          if (query === 'keywords:deepseek-harness') return from > MAX_SEARCH_FROM ? [] : window.slice(from, from + 250)
+          if (query === 'keywords:deepseek-harness,dsh') return from === 0 ? ['w0'] : []
+          return (servedBy.get(query) ?? []).slice(from, from + 250)
+        },
+      )
+      const feed: FeedInput = {
+        carriers: new Map([['deepseek-harness', new Map(names.map((name, i) => [name, `o${pad(i)}`] as const))]]),
+        seed: 0,
+      }
+      const asked = (owner: string) => stub.urls.some(url => new URL(url).searchParams.get('text') === `keywords:deepseek-harness maintainer:${owner}`)
+      return { fetchImpl: stub.fetchImpl, feed, asked }
+    }
+
+    it('verifies every owner of a residue the size of the first main run\'s', async () => {
+      // Branch review: the first `main` run held feed-only names under 29
+      // and 30 owners and checked 16 of them, crediting the other owners'
+      // names unverified -- and the cap came down to 14 on that run's
+      // reading. Thirty owners, each with one name only its own cell
+      // serves: every one is checked, so nothing is credited blind.
+      const { fetchImpl, feed } = ownedApart(30)
+      const coverage: FeedCoverage[] = []
+      await run(fetchImpl, { ...feed, onCoverage: c => { coverage.push(c) } })
+      expect(forHarness(coverage)).toMatchObject({ feedOnly: 30, ownersVerified: 30, ownersTotal: 30, verified: 30, unverified: 0 })
+    })
+
+    it('rotates the owners it verifies by the feed\'s seq when there are more than the budget', async () => {
+      // One owner past FEED_VERIFY_OWNERS and seed 1: the rotation starts
+      // at o01 and leaves o00 for a later run. Passing 0 instead of the
+      // feed's seq would check o00 and leave the last owner unasked.
+      const count = FEED_VERIFY_OWNERS + 1
+      const { fetchImpl, feed, asked } = ownedApart(count)
+      const coverage: FeedCoverage[] = []
+      await run(fetchImpl, { ...feed, seed: 1, onCoverage: c => { coverage.push(c) } })
+      expect(asked('o00')).toBe(false)
+      expect(asked(`o${count - 1}`)).toBe(true)
+      expect(forHarness(coverage)).toMatchObject({ ownersVerified: FEED_VERIFY_OWNERS, ownersTotal: count, unverified: 1 })
+    })
+
+    it('still logs the line, with its count, on a run a shortfall then throws', async () => {
+      // The line waits for the keyword's final count, and the shortfall
+      // checks come after it. A feed holding nothing leaves the `overCap`
+      // names missing -- 15 at a cap of 14 -- so the cap throws, and the
+      // line is already out: 5,436 of 5,451.
+      const coverage: FeedCoverage[] = []
+      await expect(run(feedFixture(total, recovered, missing).fetchImpl, feedOf([], 'alice', coverage)))
+        .rejects.toThrow(new RegExp(`a tail shortfall of ${overCap}`))
+      expect(forHarness(coverage)).toMatchObject({ feedOnly: 0, enumerated: total - overCap, required: total })
     })
 
     it('counts the names of an owner whose cell fails as unverified, never as disagreeing', async () => {
@@ -3547,8 +3633,9 @@ describe('searchByKeywords', () => {
     })
 
     it('counts the names of an owner whose cell serves short of its total as unverified', async () => {
-      // Review Focus 5: the cell answers 61 but serves 60, so it was not
-      // paged in full and proves nothing about the 61st.
+      // Review Focus 5: the cell answers all `overCap` names but serves one
+      // fewer (15 and 14 at a cap of 14), so it was not paged in full and
+      // proves nothing about the one it left out.
       const coverage: FeedCoverage[] = []
       await run(feedFixture(total, recovered, missing.slice(1), false, overCap).fetchImpl, feedOf(missing, 'alice', coverage))
       expect(forHarness(coverage)).toMatchObject({ ownersVerified: 0, verified: 0, unverified: overCap, disagreed: [] })
@@ -3631,10 +3718,16 @@ describe('searchByKeywords', () => {
         (name: string): FeedRead => ({ kind: 'carrier', name, carrier: { owner, keywords } })
 
       it('re-verifies with a current owner when the stored one is a former maintainer', async () => {
+        // Four names moved to bob, the shape the sibling tests use: one past
+        // FEED_MAX_DISAGREEMENTS, so a re-verified name counted as a
+        // disagreement would throw. This test first moved every missing
+        // name, which at a cap of 60 is more than FEED_MAX_CONFIRMATIONS
+        // confirms in one run; the bound has its own test below.
+        const moved = missing.slice(0, FEED_MAX_DISAGREEMENTS + 1)
         const { confirm, calls } = confirmWith(carrierOf('bob'))
         const coverage: FeedCoverage[] = []
-        const names = await run(twoOwners([], missing), { ...feedOf(missing, 'alice', coverage), confirm })
-        expect(calls).toEqual([missing])
+        const names = await run(twoOwners(missing.slice(moved.length), moved), { ...feedOf(missing, 'alice', coverage), confirm })
+        expect(calls).toEqual([moved])
         expect(names).toHaveLength(total)
         expect(forHarness(coverage)).toMatchObject({ ownersVerified: 1, verified: overCap, unverified: 0, withdrawn: 0, disagreed: [] })
       })
@@ -3660,6 +3753,38 @@ describe('searchByKeywords', () => {
         expect(calls).toEqual([phantoms])
       })
 
+      it('confirms at most FEED_MAX_CONFIRMATIONS names a run and leaves the rest unconfirmed, uncredited', async () => {
+        // The bound the PR #74 Windows review asked for: each confirmation
+        // is a serial packument read, and a changed owner adds two cell
+        // pagings, so an owner holding hundreds of omitted names made one
+        // run's cost unbounded. A name past the bound is NOT credited: two
+        // complete pagings of its owner's cell already omitted it, so a
+        // blind credit would go to the one name the run has evidence
+        // against (branch review). It is counted apart, as unconfirmed, and
+        // the rotation reaches it on a later run. Seed 0 and zero-padded
+        // names, so the names read are the first FEED_MAX_CONFIRMATIONS in
+        // code-unit order and the five after them are the overflow.
+        const held = Array.from({ length: FEED_MAX_CONFIRMATIONS + 5 }, (_, i) => `dsh-held-${String(i).padStart(2, '0')}`)
+        const { confirm, calls } = confirmWith(name => ({ kind: 'not-carrier', name }))
+        const coverage: FeedCoverage[] = []
+        const names = await run(feedFixture(SEARCH_WINDOW, 0).fetchImpl, { ...feedOf(held, 'alice', coverage), confirm })
+        expect(calls).toEqual([held.slice(0, FEED_MAX_CONFIRMATIONS)])
+        for (const name of held.slice(FEED_MAX_CONFIRMATIONS)) expect(names).not.toContain(name)
+        expect(forHarness(coverage)).toMatchObject({
+          feedOnly: held.length, ownersVerified: 0, verified: 0, withdrawn: FEED_MAX_CONFIRMATIONS, unverified: 0, unconfirmed: 5, disagreed: [],
+        })
+      })
+
+      it('rotates the names it confirms by the feed\'s seq', async () => {
+        // Seed 5 over the bound test's 37 names: the rotation starts at the
+        // sixth, so the five before it are the ones left unconfirmed this
+        // run. Passing 0 instead of the feed's seq would leave the last five.
+        const held = Array.from({ length: FEED_MAX_CONFIRMATIONS + 5 }, (_, i) => `dsh-held-${String(i).padStart(2, '0')}`)
+        const { confirm, calls } = confirmWith(name => ({ kind: 'not-carrier', name }))
+        await run(feedFixture(SEARCH_WINDOW, 0).fetchImpl, { ...feedOf(held), seed: 5, confirm })
+        expect(calls).toEqual([held.slice(5)])
+      })
+
       it('leaves a name unverified when its packument cannot be read', async () => {
         const unread = missing.slice(0, FEED_MAX_DISAGREEMENTS + 1)
         const { confirm } = confirmWith(name => ({ kind: 'failed', name, reason: 'the registry answered 503' }))
@@ -3674,7 +3799,8 @@ describe('searchByKeywords', () => {
       // Ruling P1 (ledger): npm has answered an empty result for a real cell
       // before -- `probeStubTransientZero` above, and the publisher axis
       // re-probes a zero before it evicts. Alice's cell answers empty once,
-      // then serves all 61 names: they are verified and nothing throws.
+      // then serves all `overCap` names (15 at a cap of 14): they are
+      // verified and nothing throws.
       const fixture = feedFixture(total, recovered, missing)
       let ownerPages = 0
       const fetchImpl = (async (url: string | URL, init?: RequestInit) => {

@@ -53,10 +53,15 @@ const FEED_PACKAGE_NAME = /^(?:@[a-z0-9~-][a-z0-9._~-]*\/)?[a-z0-9~-][a-z0-9._~-
 
 /**
  * Owners whose `keywords:K maintainer:U` cell one run pages per keyword to
- * verify feed-only names. Today's residue has 12 owners per keyword, so
- * every feed-only name is verified until a crossing grows it past 16.
+ * verify feed-only names; past it the owners rotate by the feed's `seq`
+ * and the rest are credited unverified. It was 16, sized on 2026-10-04 by
+ * a residue of 12 owners per keyword. The first `main` run held feed-only
+ * names under 29 and 30 owners and so credited 13 and 14 owners' names
+ * unchecked, on the run the residual cap came down to 14 on (branch
+ * review). 64 checks every owner of that residue with room for it to
+ * double, at one search request an owner, two when a name is omitted.
  */
-export const FEED_VERIFY_OWNERS = 16
+export const FEED_VERIFY_OWNERS = 64
 
 /**
  * Feed-only names per keyword per run that may disagree with their
@@ -66,6 +71,21 @@ export const FEED_VERIFY_OWNERS = 16
  * out of 47 (spec section 2).
  */
 export const FEED_MAX_DISAGREEMENTS = 3
+
+/**
+ * Twice-omitted names per keyword per run confirmed against their current
+ * packument (spec section 4.5). Each confirmation is one serial packument
+ * read, and a changed owner adds two pagings of that owner's cell, so this
+ * bounds the one per-run cost the step had left open (PR #74 Windows
+ * review): an owner holding hundreds of names could make a run read them
+ * all. A name past it is unconfirmed and not credited: two complete
+ * pagings of its owner's cell already omitted it, so a blind credit would
+ * go to the one name the run has evidence against (branch review).
+ * The first `main` run withdrew nothing and disagreed with nothing on
+ * either keyword; 32 leaves room for one owner's names going missing at
+ * once.
+ */
+export const FEED_MAX_CONFIRMATIONS = 32
 
 /** Whether `value` is a name the feed may store (see FEED_PACKAGE_NAME). */
 export function isFeedPackageName(value: unknown): value is string {
@@ -122,7 +142,7 @@ export type FeedRead =
   // deprecated, or past the size cap -- the author's own content, which
   // CLAUDE.md lists as no-manifest. That side of the line drops the name.
   | { readonly kind: 'not-carrier'; readonly name: string }
-  // A 404, or a row the feed marks deleted.
+  // A 404, a row the feed marks deleted, or npm's unpublished stub.
   | { readonly kind: 'gone'; readonly name: string }
   // Anything that is not the package's manifest: a transport failure, a
   // deadline, any non-2xx but a 404 (a 403 from a blocking edge included),
@@ -177,8 +197,23 @@ export function classifyPackument(name: string, packument: unknown, harvestKeywo
   if (packument === null || typeof packument !== 'object' || Array.isArray(packument)) {
     return failed('the registry answered a body that is not a packument')
   }
-  const p = packument as { name?: unknown; 'dist-tags'?: unknown; versions?: unknown; maintainers?: unknown }
+  const p = packument as { name?: unknown; 'dist-tags'?: unknown; versions?: unknown; maintainers?: unknown; time?: unknown }
   if (p.name !== name) return failed('the registry answered the packument of another package')
+  // An unpublish answers 200, not 404: npm keeps the name's document and
+  // serves a stub with no `dist-tags` and no `versions`, the unpublish
+  // recorded in `time`. That is npm's own statement that the package has no
+  // versions, so it is gone as a 404 is. Read as failed, it stayed pending
+  // forever, and a carrier unpublished after it was read was credited
+  // unverified every run (2026-10-06, the first main run). Only that exact
+  // shape: any other versionless body is still failed.
+  const time = p.time
+  const unpublished = time !== null && typeof time === 'object' && !Array.isArray(time)
+    ? (time as { unpublished?: unknown }).unpublished
+    : undefined
+  if (p.versions === undefined && p['dist-tags'] === undefined
+    && unpublished !== null && typeof unpublished === 'object' && !Array.isArray(unpublished)) {
+    return { kind: 'gone', name }
+  }
   const tags = p['dist-tags']
   const latest = tags !== null && typeof tags === 'object' ? (tags as { latest?: unknown }).latest : undefined
   const versions = p.versions
@@ -496,6 +531,31 @@ export function planFeedVerification(
   }
 }
 
+/**
+ * Choose which twice-omitted names one keyword confirms this run: up to
+ * `budget` of them in code-unit order rotated by `seed` (the next state's
+ * `seq`), so a run that cannot confirm them all never leaves the same names
+ * unconfirmed (spec section 4.5). Both halves are sorted.
+ */
+export function planConfirmations(
+  omitted: readonly string[],
+  budget: number,
+  seed: number,
+): { readonly confirm: readonly string[]; readonly overflow: readonly string[] } {
+  const all = [...omitted].sort(compareStrings)
+  const take = Math.min(Math.max(0, budget), all.length)
+  const offset = all.length === 0 ? 0 : seed % all.length
+  const chosen = new Set<string>()
+  for (let i = 0; i < take; i += 1) {
+    const name = all[(offset + i) % all.length]
+    if (name !== undefined) chosen.add(name)
+  }
+  return {
+    confirm: all.filter(name => chosen.has(name)),
+    overflow: all.filter(name => !chosen.has(name)),
+  }
+}
+
 /** What the feed step did for one keyword in one run (spec section 4.7). */
 export interface FeedCoverage {
   readonly keyword: string
@@ -504,9 +564,14 @@ export interface FeedCoverage {
   /** The step's own delta on the keyword's union: credited names plus any
    * other name a verification cell served. */
   readonly supplied: number
-  /** Owners whose every feed-only name reached a verdict: served by their
-   * cell, or omitted by two complete pagings of it. An owner whose cell
-   * failed or served short was asked, not verified. */
+  /** Owners whose every feed-only name reached a verdict: served by a cell,
+   * or withdrawn or disagreeing once a confirmation read it. Two complete
+   * pagings omitting a name are the question, not the verdict, so a name
+   * that ended unverified or unconfirmed -- its cell failed or served
+   * short, or its confirmation was past FEED_MAX_CONFIRMATIONS, unread, or
+   * named no owner -- leaves its owner asked, not verified. The line's
+   * `unverified` and `unconfirmed` counts tell those causes apart (PR #76
+   * review). */
   readonly ownersVerified: number
   /** Distinct owners holding feed-only names, checked this run or not. */
   readonly ownersTotal: number
@@ -516,10 +581,23 @@ export interface FeedCoverage {
    * shows they no longer carry this keyword -- deprecated, the keyword
    * dropped, or gone: neither credited nor disagreeing. */
   readonly withdrawn: number
+  /** Feed-only names two complete pagings omitted that this run did not
+   * confirm, being past `FEED_MAX_CONFIRMATIONS`: not credited, because
+   * the one completed check is against them, and not disagreeing, because
+   * nothing confirmed it. A later run's rotation reaches them. */
+  readonly unconfirmed: number
   /** Feed-only names two complete pagings of a current owner's cell omitted
    * though the packument still lists the keyword: neither listed nor
    * credited. Sorted. */
   readonly disagreed: readonly string[]
+  /** The keyword's final count, after any retry pass: every name a search
+   * cell served or the feed credited. */
+  readonly enumerated: number
+  /** The total npm search promised for the keyword: the smallest it
+   * answered during the run, which the count is measured against. A
+   * credited name npm does not count takes `enumerated` past it, so the
+   * line shows a keyword made whole by crediting (PR #74 review). */
+  readonly required: number
 }
 
 /** What one run's feed read did (spec section 4.7). */
@@ -554,8 +632,9 @@ export interface FeedInput {
   readonly carriers: ReadonlyMap<string, ReadonlyMap<string, string | null>>
   /** Rotation seed for `planFeedVerification`: the next state's `seq`. */
   readonly seed: number
-  /** Called once per harvest keyword with what the feed step did, BEFORE
-   * any throw, so the line reaches the log on the run that needs it. */
+  /** Called once per harvest keyword with what the feed step did, once the
+   * keyword's count is final and BEFORE the feed's own throw or any
+   * shortfall throw, so the line reaches the log on the run that needs it. */
   readonly onCoverage?: (coverage: FeedCoverage) => void
   /**
    * Re-reads names two complete pagings of their owner's cell omitted, from
@@ -587,10 +666,16 @@ export function describeFeedCoverage(coverage: FeedCoverage): string {
   const parts = [`owners verified ${coverage.ownersVerified} of ${coverage.ownersTotal}`]
   if (coverage.unverified > 0) parts.push(`${coverage.unverified} unverified`)
   if (coverage.withdrawn > 0) parts.push(`${coverage.withdrawn} withdrawn`)
+  if (coverage.unconfirmed > 0) parts.push(`${coverage.unconfirmed} unconfirmed`)
   if (coverage.disagreed.length > 0) {
     parts.push(`${coverage.disagreed.length} disagreed: ${coverage.disagreed.map(escapeCell).join(', ')}`)
   }
-  return `keywords:${escapeCell(coverage.keyword)} feed supplied ${coverage.supplied} (${parts.join('; ')})`
+  const { enumerated, required } = coverage
+  const gap = enumerated > required ? ` (${enumerated - required} over)`
+    : enumerated < required ? ` (${required - enumerated} short)`
+    : ''
+  return `keywords:${escapeCell(coverage.keyword)} feed supplied ${coverage.supplied} (${parts.join('; ')}); `
+    + `enumerated ${enumerated} of ${required}${gap}`
 }
 
 const isCount = (value: unknown): value is number =>
@@ -664,12 +749,16 @@ export function parseFeedCoverage(value: unknown, where: string, harvestKeywords
     feedOnly: count('feedOnly'), supplied: count('supplied'),
     ownersVerified: count('ownersVerified'), ownersTotal: count('ownersTotal'),
     verified: count('verified'), unverified: count('unverified'), withdrawn: count('withdrawn'),
+    unconfirmed: count('unconfirmed'),
     disagreed,
+    enumerated: count('enumerated'), required: count('required'),
   }
-  if (coverage.verified + coverage.unverified + coverage.withdrawn + coverage.disagreed.length !== coverage.feedOnly) {
+  if (coverage.verified + coverage.unverified + coverage.withdrawn + coverage.unconfirmed + coverage.disagreed.length
+    !== coverage.feedOnly) {
     return fail('splits its feed-only names into parts that do not add up')
   }
   if (coverage.ownersVerified > coverage.ownersTotal) return fail('verified more owners than it holds')
   if (coverage.supplied < coverage.verified + coverage.unverified) return fail('supplied fewer names than it credited')
+  if (coverage.enumerated < coverage.supplied) return fail('supplied more names than the keyword enumerated')
   return coverage
 }

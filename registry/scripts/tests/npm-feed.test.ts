@@ -43,6 +43,21 @@ const packumentOf = (name: string, keywords: readonly string[] = ['dsh-plugin'],
     versions: { '1.0.0': { name, version: '1.0.0', keywords, maintainers: [{ name: 'alice' }], ...latest } },
     maintainers: [{ name: 'alice' }],
   })
+/** npm's answer for a package whose every version was unpublished, as it
+ * served `@awiki/dsh` on 2026-10-06: a 200 with no `dist-tags` and no
+ * `versions`, the unpublish recorded in `time` (email replaced). */
+const unpublishedOf = (name: string): Response => json({
+  _id: name,
+  name,
+  _rev: '6-d0cd4305c39b49f4b90be56eeba169b4',
+  time: {
+    created: '2026-08-17T10:22:29.176Z',
+    modified: '2026-08-17T12:27:58.262Z',
+    '0.2.0-rc.2': '2026-08-17T10:22:29.516Z',
+    unpublished: { time: '2026-08-17T12:22:36.514Z', versions: ['0.2.0-rc.2'] },
+  },
+  maintainers: [{ email: 'alice@example.com', name: 'alice' }],
+})
 const at = (seq: number, carriers: Record<string, string[]> = {}, pending: string[] = []): FeedState => ({
   seq,
   carriers: new Map(Object.entries(carriers).map(([name, keywords]) => [name, { owner: 'alice', keywords }])),
@@ -233,6 +248,10 @@ describe('harvestFeed', () => {
     ['a 404 removes a held carrier', () => json('Not Found', 404), false, false],
     ['a packument whose latest version lacks the keyword removes it', () => packumentOf('dsh-held', ['tool']), false, false],
     ['a deprecated latest version removes it', () => packumentOf('dsh-held', ['dsh-plugin'], { deprecated: 'Use dsh-y.' }), false, false],
+    // An unpublish answers 200 with a stub, not 404: npm's own statement
+    // that the package has no versions, so it removes the carrier as a 404
+    // does. Read as failed, the carrier stayed, credited unverified daily.
+    ['npm\'s unpublished stub removes it', () => unpublishedOf('dsh-held'), false, false],
     ['a 403 keeps it, pending: a blocking edge says nothing about the package', () => json({}, 403), true, true],
     ['a 200 that is not JSON keeps it, pending: an edge answering in npm\'s place',
       () => new Response('<!doctype html>', { status: 200 }), true, true],
@@ -255,6 +274,20 @@ describe('harvestFeed', () => {
     expect(next.carriers.has('dsh-held')).toBe(held)
     expect(next.pending.includes('dsh-held')).toBe(pending)
     expect(report.failed).toBe(pending ? 1 : 0)
+  })
+
+  it('clears a pending name whose packument is npm\'s unpublished stub', async () => {
+    // The first main run's exact shape: @awiki/dsh was published and
+    // unpublished two hours later, and every run since re-read its stub
+    // and counted a failure that no retry could clear.
+    const { fetchImpl } = route([
+      [isHead, () => json({ update_seq: 300 })],
+      [isPage(100), () => page([], 100)],
+      [isPackument('@awiki/dsh'), () => unpublishedOf('@awiki/dsh')],
+    ])
+    const { next, report } = await harvestFeed(at(100, {}, ['@awiki/dsh']), { harvestKeywords: KEYWORDS, fetchImpl, sleep: instant })
+    expect(next.pending).toEqual([])
+    expect(report).toMatchObject({ selected: 1, read: 1, failed: 0, pending: 0 })
   })
 
   it('removes a held carrier the feed marks deleted, without a read', async () => {
@@ -398,6 +431,7 @@ describe('confirmCarriers', () => {
 
   it.each([
     ['a 404 is gone', () => json('Not Found', 404), 'gone'],
+    ['npm\'s unpublished stub is gone', () => unpublishedOf('dsh-x'), 'gone'],
     ['a deprecated latest version is not a carrier', () => full('dsh-x', ['bob'], { deprecated: 'Use dsh-y.' }), 'not-carrier'],
     ['a 503 after retries is failed', () => json({}, 503), 'failed'],
     ['a body that is not JSON is failed', () => new Response('<!doctype html>', { status: 200 }), 'failed'],

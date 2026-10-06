@@ -2,7 +2,7 @@ import { readCappedBody } from './http-body.ts'
 import { compareStrings } from './identity.ts'
 import { escapeCell } from './emit.ts'
 import { allocateProbeBudgets, atRiskNameCount, atRiskOwners, cursorFor, isMaintainerName, isPinnableKeyword, MAX_PINNED_PER_KEYWORD, probeOrder, type AxisOutcome, type HarvestedName, type PublisherState } from './publisher-state.ts'
-import { FEED_MAX_DISAGREEMENTS, FEED_VERIFY_OWNERS, isDeprecated, NO_FEED, planFeedVerification, type FeedCoverage, type FeedInput } from './feed-state.ts'
+import { FEED_MAX_CONFIRMATIONS, FEED_MAX_DISAGREEMENTS, FEED_VERIFY_OWNERS, isDeprecated, NO_FEED, planConfirmations, planFeedVerification, type FeedCoverage, type FeedInput } from './feed-state.ts'
 import type { Candidate, Compatibility, Rejection } from './types.ts'
 
 /**
@@ -86,8 +86,8 @@ export const MAX_SEARCH_SHORTFALL = 3
  * the API's own ceiling leaves a small residual with the rate high. Note the
  * strictness DECAYS as the tail grows — a 0.9 floor permits 10% of it — so
  * above a tail of {@link MAX_UNREACHABLE_RESIDUAL} / (1 - this floor) names
- * (derived, not restated: it read 140 here when the cap was 14, and stayed
- * at 140 through the raise to 20) every rate violation already violates
+ * (derived, not restated: 140 at the cap of 14, and 600 at the 2026-10-03
+ * stopgap of 60) every rate violation already violates
  * that cap and the rate decides
  * nothing but which message prints. The keyword this was written for is
  * ALREADY past that crossover — {@link PARTITION_KEYWORDS} carries the
@@ -268,8 +268,30 @@ export const MIN_UNREACHABLE_RECOVERY = 0.9
  * packages through the change feed, which sees a package by when it was
  * published rather than by its rank, and so reaches exactly the residue that
  * ranks cannot. Lower it when that lands; issue #38 stays open beside it.
+ *
+ * LOWERED TO 14 ON 2026-10-06, AND THE BRACKET IS WHOLE AGAIN. The change
+ * feed landed (PR #74; design doc 2026-10-04): it reads new packages by
+ * publication time and credits the carriers no cell served, checking each
+ * against its owner's cell for up to FEED_VERIFY_OWNERS owners a keyword a
+ * run. The residuals were 29 for `dsh-plugin` and 22 for
+ * `deepseek-harness` on 2026-10-05, the day before it; its last PR dry
+ * run and its first `main` run (37412398137) both read 0 for both
+ * keywords. That run credited 15 and 16 names unverified: their 13 and 14
+ * owners were past the 16 then checked a run. FEED_VERIFY_OWNERS now
+ * covers every owner of that residue, so the reading 14 rests on is one
+ * search served rather than one credits made. 14 is the
+ * ceiling the bracket above allows: the floor of 9 holds, and a
+ * fifteen-name partition gap is refused again, which past a 150-name tail
+ * no other bound does.
+ *
+ * WHAT 14 COSTS. An unavailable feed leaves today's search-only harvest
+ * (design doc section 4.6), and search alone read 29 and 22 the day before
+ * the feed, so a day the feed cannot be read fails the build instead of
+ * publishing short. The cursor holds, and the next run reads both days. A
+ * family landing after the feed's read and before the search is still
+ * search's alone that run, as every new package was before the feed.
  */
-export const MAX_UNREACHABLE_RESIDUAL = 60
+export const MAX_UNREACHABLE_RESIDUAL = 14
 
 /** One keyword that enumerated fewer names than its own total promised. */
 export interface KeywordShortfall {
@@ -2616,6 +2638,9 @@ export async function searchByKeywords(
      * search page's do.
      */
     let feedCredited: readonly string[] | undefined
+    /** What the feed step did, held until the keyword's count is final: its
+     * line carries that count, and its throw waits for the line. */
+    let feedStep: Omit<FeedCoverage, 'enumerated' | 'required'> | undefined
     /** Page one owner's cell under this keyword into the union. Complete
      * when it served every name its own total promised; a failure is
      * incomplete, never an empty answer. */
@@ -2651,6 +2676,7 @@ export async function searchByKeywords(
       const verified: string[] = []
       const unverified: string[] = [...plan.unverified]
       const withdrawn: string[] = []
+      const unconfirmed: string[] = []
       const disagreed: string[] = []
       /** Check `names` against `owner`'s cell: served, omitted by two complete
        * pagings, or unknown because a paging failed or served short. */
@@ -2690,10 +2716,18 @@ export async function searchByKeywords(
       if (omittedBy.size > 0 && confirm === undefined) {
         disagreed.push(...omittedBy.keys())
       } else if (omittedBy.size > 0 && confirm !== undefined) {
-        const omitted = [...omittedBy.keys()].sort(compareStrings)
-        const current = await confirm(omitted)
+        // Bounded like every other per-run cost of the feed: a confirmation
+        // is a serial packument read, and a changed owner adds two cell
+        // pagings below, so FEED_MAX_CONFIRMATIONS bounds both. A name past
+        // it is unconfirmed and NOT credited -- unlike a name past the owner
+        // budget, which nothing checked, two complete pagings of its owner's
+        // cell already omitted it -- and the rotation reaches it on a later
+        // run.
+        const confirmation = planConfirmations([...omittedBy.keys()], FEED_MAX_CONFIRMATIONS, feed.seed)
+        unconfirmed.push(...confirmation.overflow)
+        const current = await confirm(confirmation.confirm)
         const recheck = new Map<string, string[]>()
-        for (const name of omitted) {
+        for (const name of confirmation.confirm) {
           const read = current.get(name)
           if (read === undefined || read.kind === 'failed' || read.kind === 'unreached') unverified.push(name)
           else if (read.kind !== 'carrier' || !read.carrier.keywords.includes(keyword)) withdrawn.push(name)
@@ -2712,14 +2746,14 @@ export async function searchByKeywords(
       // report prints as "owners verified". Not `plan.owners.length`: an
       // owner whose cell failed was ASKED, not verified, and the report line
       // is the only place a degraded verification shows.
-      const undecided = new Set(unverified)
+      const undecided = new Set([...unverified, ...unconfirmed])
       const ownersVerified = plan.owners.filter(owner => (plan.namesOf.get(owner) ?? []).every(name => !undecided.has(name))).length
       feedCredited = [...verified, ...unverified].sort(compareStrings)
       for (const name of feedCredited) {
         forKeyword.add(name)
         seen.add(name)
       }
-      const coverage: FeedCoverage = {
+      feedStep = {
         keyword,
         feedOnly: feedOnly.length,
         supplied: forKeyword.size - before,
@@ -2728,11 +2762,8 @@ export async function searchByKeywords(
         verified: verified.length,
         unverified: unverified.length,
         withdrawn: withdrawn.length,
+        unconfirmed: unconfirmed.length,
         disagreed: disagreed.sort(compareStrings),
-      }
-      feed.onCoverage?.(coverage)
-      if (disagreed.length > FEED_MAX_DISAGREEMENTS) {
-        throw new Error(`the change feed holds ${disagreed.length} name(s) carrying ${keywordQuery([keyword])} that two complete pagings of a current owner's search cell did not serve, past the ${FEED_MAX_DISAGREEMENTS} one run may absorb: its membership rule no longer describes npm search, and crediting through it would cancel missing names one for one`)
       }
     }
     const enumerate = async (): Promise<void> => {
@@ -2873,6 +2904,18 @@ export async function searchByKeywords(
       evicted,
       atRiskNames: atRiskNameCount(harvestedNames, keyword, reachable),
     })
+    // The feed step's line waits for the keyword's final count and sets its
+    // credits beside it (spec section 4.7): a keyword the feed closes reads
+    // whole, and only the count says how much of that was credited rather
+    // than served. The step's throw waits for the line, so a run that
+    // throws still logs it; a search request failing on the retry pass
+    // above throws first, as it would with no feed.
+    if (feedStep !== undefined) {
+      feed.onCoverage?.({ ...feedStep, enumerated: forKeyword.size, required })
+      if (feedStep.disagreed.length > FEED_MAX_DISAGREEMENTS) {
+        throw new Error(`the change feed holds ${feedStep.disagreed.length} name(s) carrying ${keywordQuery([keyword])} that two complete pagings of a current owner's search cell did not serve, past the ${FEED_MAX_DISAGREEMENTS} one run may absorb: its membership rule no longer describes npm search, and crediting through it would cancel missing names one for one`)
+      }
+    }
     if (shortfall <= 0) continue // whole, even when the keyword is past the window
     // Every refinement cell this keyword PAGED, the oversized ones included.
     // `cells.length` alone understates the partition in both messages below,

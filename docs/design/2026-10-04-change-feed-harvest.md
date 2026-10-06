@@ -4,7 +4,8 @@ Status: **specified (2026-10-04).** Approach A, chosen by LivXue on
 2026-10-04. Reads npm's replication change feed to find dsh plugins by
 publication time, so the residue that npm search ranks beyond every
 5,250-name window is harvested instead of tolerated, and the 60-name
-stopgap in `MAX_UNREACHABLE_RESIDUAL` can come down.
+stopgap in `MAX_UNREACHABLE_RESIDUAL` can come down. Built in PR #74
+(2026-10-06); the cap came down to 14 in the follow-up (section 5).
 
 ## 0. What breaks, and when
 
@@ -269,8 +270,14 @@ Where it is wrong, section 4.5 is the guard.
    is a carrier or pending -- so an entry on the list is re-read
    whenever it changes, even if the pattern is ever narrowed. Every
    pending name is read whether or not it changed. A row marked
-   `deleted: true` is gone without a read; an unmarked unpublish
-   answers 404 and is gone the same way. The names are read in
+   `deleted: true` is gone without a read. An unpublish the feed does
+   not mark answers 200 with npm's stub -- no `dist-tags`, no
+   `versions`, the unpublish recorded in `time` -- and is gone the
+   same way. Amended 2026-10-06: this said such an unpublish answers
+   404. It does not, and read as a failure the stub stayed pending for
+   good -- both of the first `main` run's pending names were stubs --
+   while a carrier unpublished after it was read would have been
+   credited unverified on every run. The names are read in
    code-unit order rotated by the head's `update_seq`, so a run that
    cannot read them all never leaves the same names last. Amended
    2026-10-05 after a security review: pending names were read first
@@ -280,7 +287,8 @@ Where it is wrong, section 4.5 is the guard.
 4. **Reads.** `FEED_READ_CONCURRENCY` packument reads at a time, until
    done or `FEED_READ_TIME_BUDGET_MS`. Names not reached become pending.
 5. **Merge** (pure). A carrier is set, replacing its keywords and
-   owner. A non-carrier, a 404 or a deletion removes the name. A
+   owner. A non-carrier, a 404, npm's unpublished stub or a deletion
+   removes the name. A
    failed read keeps the name's previous status and makes it pending.
    A successful read clears pending. `seq` becomes the `last_seq` of
    the last page processed. Pending names hold what the cursor has
@@ -313,14 +321,28 @@ retry pass repeats none of its requests.
      cell by the same two-paging rule; if the packument cannot be read,
      it is **unverified**. Only a name a current owner's cell omits
      twice while the packument still lists K **disagrees**.
+   - At most `FEED_MAX_CONFIRMATIONS` twice-omitted names of K are
+     confirmed in a run, in code-unit order rotated by the next state's
+     `seq`. A name past the bound is **unconfirmed**: not credited,
+     because the one completed check -- two complete pagings of its
+     owner's cell -- is against it, and not disagreeing, because nothing
+     confirmed it; a later run's rotation reaches it. A confirmation is
+     one packument read and, for a changed owner, two pagings of that
+     owner's cell, so the bound keeps the step's cost from growing with
+     one owner's holdings. Amended 2026-10-06: the PR #74 Windows review
+     found this the one per-run cost the step left unbounded, and a
+     review of the follow-up found that crediting the overflow, as names
+     past the owner budget are, credits names the run has evidence
+     against.
    - A name with a `null` owner, an owner beyond the budget, or an
      owner whose cell could not be paged in full is **unverified**. A
      paging hiccup never counts as a disagreement.
    - Any other name a verification cell serves joins `forKeyword` as
      an ordinary search-served name.
 3. **Credit.** Verified and unverified names join `forKeyword`
-   (coverage) and `seen` (candidates). Withdrawn and disagreeing names
-   join neither; the report counts the first and names the second.
+   (coverage) and `seen` (candidates). Withdrawn, unconfirmed and
+   disagreeing names join neither; the report counts the first two and
+   names the third.
    What a confirmation learned -- today's owner, or that a name stopped
    being a carrier -- is applied to the next state
    (`applyConfirmations`); a confirmation that could not be read
@@ -328,7 +350,12 @@ retry pass repeats none of its requests.
 4. **Throw** when more than `FEED_MAX_DISAGREEMENTS` names of one
    keyword disagree in one run. The membership rule then no longer
    describes the search index, and crediting through it would cancel
-   genuinely missing names one for one.
+   genuinely missing names one for one. The step's report line waits
+   for the keyword's final count (section 4.7) and this throw waits
+   for the line, as the shortfall throws do, so a run either of them
+   stops still logs it. A search request that fails after the step --
+   the probe for the total, or the retry pass -- throws first, as it
+   would with no feed.
 
 The step runs before `required` is measured. A residual the feed
 closes therefore no longer sends the keyword through the second
@@ -348,7 +375,13 @@ see them, because they are paged without `harvested`.
 With today's residue (12 owners per keyword) every feed-only name is
 verified, so every credited name is one that npm search served:
 approach B's guarantee at A's cost. Sampling takes over only when a
-crossing grows the residue's owners past the budget.
+crossing grows the residue's owners past the budget. Amended
+2026-10-06: it had already. The first `main` run held feed-only names
+under 29 and 30 owners against a budget of 16, so 13 and 14 owners'
+names were credited unverified -- on the run the residual cap came
+down to 14 on. The budget is now 64, which checks every owner of that
+residue with room for it to double; past it, sampling resumes and the
+line's `owners verified V of T` shows it.
 
 ### 4.6 Failure semantics
 
@@ -364,8 +397,10 @@ crossing grows the residue's owners past the budget.
   in order, so the pages already read form a consistent prefix; the
   run proceeds with it, the cursor at its last row, and the report
   says where it stopped.
-- **The packument answers 404, or the row is marked deleted:** gone,
-  removed.
+- **The packument answers 404 or npm's unpublished stub, or the row is
+  marked deleted:** gone, removed. The stub is matched exactly -- no
+  `dist-tags`, no `versions`, and an object at `time.unpublished` --
+  so any other versionless body is still a failed read.
 - **The packument is read and is not a carrier** (no harvest keyword,
   deprecated, or past `FEED_PACKUMENT_MAX_BYTES`):
   removed. This is the `no-manifest` side of the `no-manifest` /
@@ -394,15 +429,31 @@ crossing grows the residue's owners past the budget.
   (F failed, U pending); carriers: dsh-plugin X, deepseek-harness Y`
   -- or `change feed unavailable: <reason>`.
 - Per keyword, beside the publisher-axis line: `feed supplied N
-  (owners verified V of T; U unverified; W withdrawn; D disagreed:
-  <names>)`, each count after the first printed only when non-zero.
-  N is the feed step's own delta on `forKeyword`: credited feed-only
-  names plus any other name a verification cell served. V counts the
-  owners whose every feed-only name reached a verdict, T every owner
-  holding one; an owner whose cell failed or served short was asked,
-  not verified.
-- `enumerated` in the shortfall line includes credited feed names; the
-  per-keyword line says how many.
+  (owners verified V of T; U unverified; W withdrawn; C unconfirmed;
+  D disagreed: <names>); enumerated E of R (G over | G short)`, each
+  count in the parentheses after the first printed only when non-zero,
+  and the gap only when E is not R. N is the feed step's own delta on
+  `forKeyword`: credited feed-only names plus any other name a
+  verification cell served. V counts the owners whose every feed-only
+  name reached a verdict, T every owner holding one; an owner whose
+  cell failed or served short was asked, not verified, and so was one
+  with a name left unconfirmed, or whose confirmation could not be read
+  -- two pagings omitting a name are the question, not the verdict. U
+  and C tell those causes apart (amended 2026-10-06, PR #76 review). E
+  is the keyword's final count, after any retry pass, and R the total
+  it is measured against.
+- E includes credited feed names, so a keyword the feed closes reads
+  whole whether its credits were verified or not. The count is printed
+  on every run, whole or short, so a keyword made whole by crediting
+  shows it beside its U unverified names. Amended 2026-10-06 after the
+  PR #74 review: only a short keyword printed a count, and silence was
+  the only sign of a whole one.
+- R is the smallest total npm answered during the run, which absorbs a
+  package unpublished mid-run and therefore understates when packages
+  are published mid-run instead. So a healthy run can read a few
+  `over`: names a cell served after the total was read, and credits npm
+  does not count. `over` is noise to read beside U; `short` is the
+  deficit, and only it is bounded by the cap.
 - Names in the report are escaped like every other npm-sourced string.
 
 ### 4.8 CI, handoff and guards
@@ -448,12 +499,17 @@ crossing grows the residue's owners past the budget.
 - `FEED_NAME_PATTERN = /dsh|deepseek|cordis/i` -- recall in section 2.
 - `FEED_BOOTSTRAP_SEQ = 117_350_000` -- just before 2026-07-01T00:00Z,
   ahead of the first dsh package.
-- `FEED_VERIFY_OWNERS = 16` per keyword -- today's residue has 12
-  owners per keyword.
+- `FEED_VERIFY_OWNERS = 64` per keyword -- the first `main` run's
+  residue had 29 and 30 owners (2026-10-06). It was 16, against 12
+  owners measured on 2026-10-04. One search request an owner, two when
+  a name is omitted.
 - `FEED_MAX_DISAGREEMENTS = 3` per keyword per run -- room for index
   lag on a name published minutes before the read. A systematic drift
   exceeds it at once: crediting deprecated packages would have
   produced 28 disagreements out of 47.
+- `FEED_MAX_CONFIRMATIONS = 32` per keyword per run -- the first
+  `main` run withdrew nothing and disagreed with nothing on either
+  keyword; 32 leaves room for one owner's names going missing at once.
 - Requests use `REQUEST_TIMEOUT_MS` per attempt and `fetchWithRetry`'s
   ladder, which honours `Retry-After`.
 - `FEED_FETCH_ATTEMPTS = 3` -- a head or page request that throws, or
@@ -473,6 +529,13 @@ crossing grows the residue's owners past the budget.
 - CLAUDE.md's failing-loudly paragraph gains the feed. The cap stays
   at 60 in this change; lowering it is a separate change once two
   `main` runs have published with the feed, at a value LivXue sets.
+  Amended 2026-10-06: the follow-up lowers it to 14, the ceiling of the
+  bracket the 2026-08-18 design doc records, after this change's last
+  dry run and its first `main` run (37412398137) both read the two
+  keywords whole. At 14 a fifteen-name partition gap is refused again;
+  the price is that a day the feed is unavailable (section 4.6) is a
+  search-only harvest, which read 29 and 22 the day before the feed,
+  and fails the build rather than publishing short.
 - CLAUDE.md's lists of network modules and pure modules gain
   `npm-feed.ts` and `feed-state.ts`, and its layout gains
   `registry/feed-state.json`.
@@ -490,6 +553,7 @@ crossing grows the residue's owners past the budget.
   grows while the feed reports healthy.
 - **Running the feed step before the publisher cells** (#38).
 - **Lowering the cap.** A separate change, after two `main` runs.
+  Built in the 2026-10-06 follow-up, at 14 (section 5).
 - **The GitHub half.** The feed is npm's.
 - **A follower outside the daily build.** The daily delta costs
   seconds; reading more often buys freshness the catalog does not

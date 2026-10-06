@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import {
   applyConfirmations, applyFeedReads, bootstrapFeedState, carrierCounts, classifyManifest, classifyPackument, describeFeedCoverage, describeFeedRun,
   FEED_BOOTSTRAP_SEQ, FEED_NAME_PATTERN, FEED_PACKAGE_NAME_MAX_LENGTH, feedCarriersByKeyword, isDeprecated,
-  isFeedPackageName, parseFeedCoverage, parseFeedPage, parseFeedRunReport, parseFeedState, planFeedVerification,
+  isFeedPackageName, parseFeedCoverage, parseFeedPage, parseFeedRunReport, parseFeedState, planConfirmations, planFeedVerification,
   selectFeedIds, serializeFeedState, type FeedCoverage, type FeedRow, type FeedRunReport, type FeedState,
 } from '../src/feed-state.ts'
 
@@ -120,6 +120,46 @@ describe('classifyPackument', () => {
 
   it.each([[null], ['text'], [['dsh-x']]])('reports a body that is not a packument (%j) as failed', (body) => {
     expect(classifyPackument('dsh-x', body, KEYWORDS)).toMatchObject({ kind: 'failed', name: 'dsh-x' })
+  })
+
+  /** npm's answer for a package whose every version was unpublished, as it
+   * served `@awiki/dsh` on 2026-10-06: a 200 with no `dist-tags` and no
+   * `versions`, the unpublish recorded in `time` (email replaced). */
+  const unpublished = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+    _id: 'dsh-x',
+    name: 'dsh-x',
+    _rev: '6-d0cd4305c39b49f4b90be56eeba169b4',
+    time: {
+      created: '2026-08-17T10:22:29.176Z',
+      modified: '2026-08-17T12:27:58.262Z',
+      '0.2.0-rc.2': '2026-08-17T10:22:29.516Z',
+      unpublished: { time: '2026-08-17T12:22:36.514Z', versions: ['0.2.0-rc.2'] },
+    },
+    maintainers: [{ email: 'alice@example.com', name: 'alice' }],
+    ...overrides,
+  })
+
+  it('reads npm\'s unpublished stub as gone, as it reads a 404', () => {
+    // An unpublish does not answer 404, as the spec first assumed: npm keeps
+    // the name's document and serves this stub. Read as failed, the first
+    // main run's two pending names were stubs and stayed pending, and a
+    // carrier unpublished after it was read kept its record -- credited
+    // unverified, every run, against a total that no longer counts it.
+    expect(classifyPackument('dsh-x', unpublished(), KEYWORDS)).toEqual({ kind: 'gone', name: 'dsh-x' })
+  })
+
+  it.each([
+    ['records no unpublish', { time: { created: '2026-08-17T10:22:29.176Z' } }],
+    ['has no time', { time: undefined }],
+    ['has a null time', { time: null }],
+    ['records an unpublish that is not an object', { time: { unpublished: '2026-08-17T12:22:36.514Z' } }],
+    ['records an unpublish that is null', { time: { unpublished: null } }],
+    ['records an unpublish that is an array', { time: { unpublished: [] } }],
+    ['still carries versions', { versions: {} }],
+    ['still carries dist-tags', { 'dist-tags': { latest: '0.2.0-rc.2' } }],
+    ['is the stub of another package', { name: 'dsh-y' }],
+  ])('keeps a versionless packument that %s failed: only npm\'s own stub says the versions are gone', (_what, overrides) => {
+    expect(classifyPackument('dsh-x', unpublished(overrides), KEYWORDS)).toMatchObject({ kind: 'failed', name: 'dsh-x' })
   })
 })
 
@@ -487,6 +527,27 @@ describe('planFeedVerification', () => {
   })
 })
 
+describe('planConfirmations', () => {
+  const omitted = ['n-e', 'n-a', 'n-c', 'n-b', 'n-d']
+
+  it('confirms every name when they fit the budget', () => {
+    expect(planConfirmations(omitted, 32, 0)).toEqual({ confirm: ['n-a', 'n-b', 'n-c', 'n-d', 'n-e'], overflow: [] })
+  })
+
+  it('confirms the budget in code-unit order rotated by the seed, wrapping round, and returns the rest', () => {
+    // Five names a..e: seed 3 starts at d; seed 4 starts at e and wraps to
+    // a; 4 + 5,000 is 4 again modulo 5. Both halves come back sorted.
+    expect(planConfirmations(omitted, 2, 3)).toEqual({ confirm: ['n-d', 'n-e'], overflow: ['n-a', 'n-b', 'n-c'] })
+    expect(planConfirmations(omitted, 2, 4)).toEqual({ confirm: ['n-a', 'n-e'], overflow: ['n-b', 'n-c', 'n-d'] })
+    expect(planConfirmations(omitted, 2, 5004)).toEqual({ confirm: ['n-a', 'n-e'], overflow: ['n-b', 'n-c', 'n-d'] })
+  })
+
+  it('confirms nothing with a zero budget or no names', () => {
+    expect(planConfirmations(omitted, 0, 0)).toEqual({ confirm: [], overflow: ['n-a', 'n-b', 'n-c', 'n-d', 'n-e'] })
+    expect(planConfirmations([], 32, 7)).toEqual({ confirm: [], overflow: [] })
+  })
+})
+
 const runReport: FeedRunReport = {
   available: true, note: '', fromSeq: 100, toSeq: 160, pages: 1, selected: 3, read: 3, failed: 1,
   unreached: 0, refused: 2, pending: 1, carriers: { 'dsh-plugin': 7, 'deepseek-harness': 5 },
@@ -497,7 +558,7 @@ const unavailableReport: FeedRunReport = {
 }
 const coverage: FeedCoverage = {
   keyword: 'deepseek-harness', feedOnly: 16, supplied: 17, ownersVerified: 12, ownersTotal: 12,
-  verified: 16, unverified: 0, withdrawn: 0, disagreed: [],
+  verified: 16, unverified: 0, withdrawn: 0, unconfirmed: 0, disagreed: [], enumerated: 8530, required: 8530,
 }
 
 describe('describeFeedRun', () => {
@@ -524,18 +585,40 @@ describe('describeFeedRun', () => {
 })
 
 describe('describeFeedCoverage', () => {
-  it('states what the feed supplied and how much of it was verified', () => {
-    expect(describeFeedCoverage(coverage)).toBe('keywords:deepseek-harness feed supplied 17 (owners verified 12 of 12)')
+  it('states what the feed supplied, how much of it was verified, and the keyword\'s final count', () => {
+    expect(describeFeedCoverage(coverage))
+      .toBe('keywords:deepseek-harness feed supplied 17 (owners verified 12 of 12); enumerated 8530 of 8530')
   })
 
   it('counts withdrawn names', () => {
     expect(describeFeedCoverage({ ...coverage, verified: 14, withdrawn: 2 }))
-      .toBe('keywords:deepseek-harness feed supplied 17 (owners verified 12 of 12; 2 withdrawn)')
+      .toBe('keywords:deepseek-harness feed supplied 17 (owners verified 12 of 12; 2 withdrawn); enumerated 8530 of 8530')
+  })
+
+  it('counts names left unconfirmed past the bound apart from the unverified ones', () => {
+    // An unconfirmed name was omitted by two complete pagings and is not
+    // credited; an unverified one was never checked and is. Folded into one
+    // count, a keyword short by its unconfirmed names would read as though
+    // they were credited (branch review).
+    expect(describeFeedCoverage({ ...coverage, verified: 11, unverified: 2, unconfirmed: 3 }))
+      .toBe('keywords:deepseek-harness feed supplied 17 (owners verified 12 of 12; 2 unverified; 3 unconfirmed); enumerated 8530 of 8530')
   })
 
   it('names unverified and disagreeing names, escaped', () => {
     expect(describeFeedCoverage({ ...coverage, verified: 13, unverified: 1, disagreed: ['dsh-a', 'dsh-b'] }))
-      .toBe('keywords:deepseek-harness feed supplied 17 (owners verified 12 of 12; 1 unverified; 2 disagreed: dsh-a, dsh-b)')
+      .toBe('keywords:deepseek-harness feed supplied 17 (owners verified 12 of 12; 1 unverified; 2 disagreed: dsh-a, dsh-b); enumerated 8530 of 8530')
+  })
+
+  it('says by how much the count passed the total, beside the unverified names that may explain it', () => {
+    // PR #74 review: a keyword reads whole when credits close it, so a
+    // whole keyword says what it was enumerated against, every run.
+    expect(describeFeedCoverage({ ...coverage, verified: 13, unverified: 3, enumerated: 8533 }))
+      .toBe('keywords:deepseek-harness feed supplied 17 (owners verified 12 of 12; 3 unverified); enumerated 8533 of 8530 (3 over)')
+  })
+
+  it('says by how much a short keyword fell under the total', () => {
+    expect(describeFeedCoverage({ ...coverage, enumerated: 8519 }))
+      .toBe('keywords:deepseek-harness feed supplied 17 (owners verified 12 of 12); enumerated 8519 of 8530 (11 short)')
   })
 })
 
@@ -566,16 +649,23 @@ describe('parseFeedCoverage', () => {
     expect(parseFeedCoverage(JSON.parse(JSON.stringify(coverage)), 'harvest.json', KEYWORDS)).toEqual(coverage)
     const withWithdrawn = { ...coverage, verified: 14, withdrawn: 2 }
     expect(parseFeedCoverage(JSON.parse(JSON.stringify(withWithdrawn)), 'harvest.json', KEYWORDS)).toEqual(withWithdrawn)
+    const withUnconfirmed = { ...coverage, verified: 13, unconfirmed: 3 }
+    expect(parseFeedCoverage(JSON.parse(JSON.stringify(withUnconfirmed)), 'harvest.json', KEYWORDS)).toEqual(withUnconfirmed)
   })
 
   it.each([
     ['a keyword that is not a harvest keyword', { keyword: 'dsh' }],
     ['parts that do not add up', { verified: 15 }],
     ['a withdrawn count that breaks the sum', { withdrawn: 1 }],
+    ['an unconfirmed count that breaks the sum', { unconfirmed: 1 }],
+    ['no unconfirmed count', { unconfirmed: undefined }],
     ['more owners verified than held', { ownersVerified: 13 }],
     ['less supplied than credited', { supplied: 15 }],
     ['a disagreed name outside the rule', { disagreed: ['DSH-X'], verified: 15 }],
     ['a disagreed list that is not an array', { disagreed: 'dsh-a' }],
+    ['no enumerated count', { enumerated: undefined }],
+    ['a fractional required count', { required: 8530.5 }],
+    ['more supplied than enumerated', { enumerated: 16 }],
   ])('throws on %s', (_what, patch) => {
     expect(() => parseFeedCoverage({ ...coverage, ...patch }, 'harvest.json', KEYWORDS))
       .toThrow(/harvest\.json: change-feed coverage record/)
