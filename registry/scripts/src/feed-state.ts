@@ -73,7 +73,9 @@ export const FEED_MAX_DISAGREEMENTS = 3
  * read, and a changed owner adds two pagings of that owner's cell, so this
  * bounds the one per-run cost the step had left open (PR #74 Windows
  * review): an owner holding hundreds of names could make a run read them
- * all. A name past it is unverified, as a name past the owner budget is.
+ * all. A name past it is unconfirmed and not credited: two complete
+ * pagings of its owner's cell already omitted it, so a blind credit would
+ * go to the one name the run has evidence against (branch review).
  * The first `main` run withdrew nothing and disagreed with nothing on
  * either keyword; 32 leaves room for one owner's names going missing at
  * once.
@@ -569,6 +571,11 @@ export interface FeedCoverage {
    * shows they no longer carry this keyword -- deprecated, the keyword
    * dropped, or gone: neither credited nor disagreeing. */
   readonly withdrawn: number
+  /** Feed-only names two complete pagings omitted that this run did not
+   * confirm, being past `FEED_MAX_CONFIRMATIONS`: not credited, because
+   * the one completed check is against them, and not disagreeing, because
+   * nothing confirmed it. A later run's rotation reaches them. */
+  readonly unconfirmed: number
   /** Feed-only names two complete pagings of a current owner's cell omitted
    * though the packument still lists the keyword: neither listed nor
    * credited. Sorted. */
@@ -649,6 +656,7 @@ export function describeFeedCoverage(coverage: FeedCoverage): string {
   const parts = [`owners verified ${coverage.ownersVerified} of ${coverage.ownersTotal}`]
   if (coverage.unverified > 0) parts.push(`${coverage.unverified} unverified`)
   if (coverage.withdrawn > 0) parts.push(`${coverage.withdrawn} withdrawn`)
+  if (coverage.unconfirmed > 0) parts.push(`${coverage.unconfirmed} unconfirmed`)
   if (coverage.disagreed.length > 0) {
     parts.push(`${coverage.disagreed.length} disagreed: ${coverage.disagreed.map(escapeCell).join(', ')}`)
   }
@@ -731,10 +739,12 @@ export function parseFeedCoverage(value: unknown, where: string, harvestKeywords
     feedOnly: count('feedOnly'), supplied: count('supplied'),
     ownersVerified: count('ownersVerified'), ownersTotal: count('ownersTotal'),
     verified: count('verified'), unverified: count('unverified'), withdrawn: count('withdrawn'),
+    unconfirmed: count('unconfirmed'),
     disagreed,
     enumerated: count('enumerated'), required: count('required'),
   }
-  if (coverage.verified + coverage.unverified + coverage.withdrawn + coverage.disagreed.length !== coverage.feedOnly) {
+  if (coverage.verified + coverage.unverified + coverage.withdrawn + coverage.unconfirmed + coverage.disagreed.length
+    !== coverage.feedOnly) {
     return fail('splits its feed-only names into parts that do not add up')
   }
   if (coverage.ownersVerified > coverage.ownersTotal) return fail('verified more owners than it holds')

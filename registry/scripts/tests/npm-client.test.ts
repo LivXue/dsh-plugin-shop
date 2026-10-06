@@ -3502,7 +3502,7 @@ describe('searchByKeywords', () => {
       expect(names).toContain(missing[0])
       expect(forHarness(coverage)).toEqual({
         keyword: 'deepseek-harness', feedOnly: overCap, supplied: overCap,
-        ownersVerified: 1, ownersTotal: 1, verified: overCap, unverified: 0, withdrawn: 0, disagreed: [],
+        ownersVerified: 1, ownersTotal: 1, verified: overCap, unverified: 0, withdrawn: 0, unconfirmed: 0, disagreed: [],
         enumerated: total, required: total,
       })
     })
@@ -3702,22 +3702,25 @@ describe('searchByKeywords', () => {
         expect(calls).toEqual([phantoms])
       })
 
-      it('confirms at most FEED_MAX_CONFIRMATIONS names a run and credits the rest unverified', async () => {
+      it('confirms at most FEED_MAX_CONFIRMATIONS names a run and leaves the rest unconfirmed, uncredited', async () => {
         // The bound the PR #74 Windows review asked for: each confirmation
         // is a serial packument read, and a changed owner adds two cell
         // pagings, so an owner holding hundreds of omitted names made one
-        // run's cost unbounded. Past the bound a name is unverified, as a
-        // name past the owner budget is. Seed 0 and zero-padded names, so
-        // the names read are the first FEED_MAX_CONFIRMATIONS in code-unit
-        // order and the five after them are the overflow.
+        // run's cost unbounded. A name past the bound is NOT credited: two
+        // complete pagings of its owner's cell already omitted it, so a
+        // blind credit would go to the one name the run has evidence
+        // against (branch review). It is counted apart, as unconfirmed, and
+        // the rotation reaches it on a later run. Seed 0 and zero-padded
+        // names, so the names read are the first FEED_MAX_CONFIRMATIONS in
+        // code-unit order and the five after them are the overflow.
         const held = Array.from({ length: FEED_MAX_CONFIRMATIONS + 5 }, (_, i) => `dsh-held-${String(i).padStart(2, '0')}`)
         const { confirm, calls } = confirmWith(name => ({ kind: 'not-carrier', name }))
         const coverage: FeedCoverage[] = []
         const names = await run(feedFixture(SEARCH_WINDOW, 0).fetchImpl, { ...feedOf(held, 'alice', coverage), confirm })
         expect(calls).toEqual([held.slice(0, FEED_MAX_CONFIRMATIONS)])
-        for (const name of held.slice(FEED_MAX_CONFIRMATIONS)) expect(names).toContain(name)
+        for (const name of held.slice(FEED_MAX_CONFIRMATIONS)) expect(names).not.toContain(name)
         expect(forHarness(coverage)).toMatchObject({
-          feedOnly: held.length, ownersVerified: 0, verified: 0, withdrawn: FEED_MAX_CONFIRMATIONS, unverified: 5, disagreed: [],
+          feedOnly: held.length, ownersVerified: 0, verified: 0, withdrawn: FEED_MAX_CONFIRMATIONS, unverified: 0, unconfirmed: 5, disagreed: [],
         })
       })
 

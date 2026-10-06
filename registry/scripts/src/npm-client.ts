@@ -2672,6 +2672,7 @@ export async function searchByKeywords(
       const verified: string[] = []
       const unverified: string[] = [...plan.unverified]
       const withdrawn: string[] = []
+      const unconfirmed: string[] = []
       const disagreed: string[] = []
       /** Check `names` against `owner`'s cell: served, omitted by two complete
        * pagings, or unknown because a paging failed or served short. */
@@ -2714,10 +2715,12 @@ export async function searchByKeywords(
         // Bounded like every other per-run cost of the feed: a confirmation
         // is a serial packument read, and a changed owner adds two cell
         // pagings below, so FEED_MAX_CONFIRMATIONS bounds both. A name past
-        // it is unverified, as a name past the owner budget is, and the
-        // rotation reaches it on a later run.
+        // it is unconfirmed and NOT credited -- unlike a name past the owner
+        // budget, which nothing checked, two complete pagings of its owner's
+        // cell already omitted it -- and the rotation reaches it on a later
+        // run.
         const confirmation = planConfirmations([...omittedBy.keys()], FEED_MAX_CONFIRMATIONS, feed.seed)
-        unverified.push(...confirmation.overflow)
+        unconfirmed.push(...confirmation.overflow)
         const current = await confirm(confirmation.confirm)
         const recheck = new Map<string, string[]>()
         for (const name of confirmation.confirm) {
@@ -2739,7 +2742,7 @@ export async function searchByKeywords(
       // report prints as "owners verified". Not `plan.owners.length`: an
       // owner whose cell failed was ASKED, not verified, and the report line
       // is the only place a degraded verification shows.
-      const undecided = new Set(unverified)
+      const undecided = new Set([...unverified, ...unconfirmed])
       const ownersVerified = plan.owners.filter(owner => (plan.namesOf.get(owner) ?? []).every(name => !undecided.has(name))).length
       feedCredited = [...verified, ...unverified].sort(compareStrings)
       for (const name of feedCredited) {
@@ -2755,6 +2758,7 @@ export async function searchByKeywords(
         verified: verified.length,
         unverified: unverified.length,
         withdrawn: withdrawn.length,
+        unconfirmed: unconfirmed.length,
         disagreed: disagreed.sort(compareStrings),
       }
     }

@@ -323,20 +323,26 @@ retry pass repeats none of its requests.
      twice while the packument still lists K **disagrees**.
    - At most `FEED_MAX_CONFIRMATIONS` twice-omitted names of K are
      confirmed in a run, in code-unit order rotated by the next state's
-     `seq`; a name past the bound is **unverified**, as a name past the
-     owner budget is. A confirmation is one packument read and, for a
-     changed owner, two pagings of that owner's cell, so the bound keeps
-     the step's cost from growing with one owner's holdings. Amended
-     2026-10-06: the PR #74 Windows review found this the one per-run
-     cost the step left unbounded.
+     `seq`. A name past the bound is **unconfirmed**: not credited,
+     because the one completed check -- two complete pagings of its
+     owner's cell -- is against it, and not disagreeing, because nothing
+     confirmed it; a later run's rotation reaches it. A confirmation is
+     one packument read and, for a changed owner, two pagings of that
+     owner's cell, so the bound keeps the step's cost from growing with
+     one owner's holdings. Amended 2026-10-06: the PR #74 Windows review
+     found this the one per-run cost the step left unbounded, and a
+     review of the follow-up found that crediting the overflow, as names
+     past the owner budget are, credits names the run has evidence
+     against.
    - A name with a `null` owner, an owner beyond the budget, or an
      owner whose cell could not be paged in full is **unverified**. A
      paging hiccup never counts as a disagreement.
    - Any other name a verification cell serves joins `forKeyword` as
      an ordinary search-served name.
 3. **Credit.** Verified and unverified names join `forKeyword`
-   (coverage) and `seen` (candidates). Withdrawn and disagreeing names
-   join neither; the report counts the first and names the second.
+   (coverage) and `seen` (candidates). Withdrawn, unconfirmed and
+   disagreeing names join neither; the report counts the first two and
+   names the third.
    What a confirmation learned -- today's owner, or that a name stopped
    being a carrier -- is applied to the next state
    (`applyConfirmations`); a confirmation that could not be read
@@ -417,10 +423,10 @@ crossing grows the residue's owners past the budget.
   (F failed, U pending); carriers: dsh-plugin X, deepseek-harness Y`
   -- or `change feed unavailable: <reason>`.
 - Per keyword, beside the publisher-axis line: `feed supplied N
-  (owners verified V of T; U unverified; W withdrawn; D disagreed:
-  <names>); enumerated E of R (G over | G short)`, each count in the
-  parentheses after the first printed only when non-zero, and the gap
-  only when E is not R. N is the feed step's own delta on
+  (owners verified V of T; U unverified; W withdrawn; C unconfirmed;
+  D disagreed: <names>); enumerated E of R (G over | G short)`, each
+  count in the parentheses after the first printed only when non-zero,
+  and the gap only when E is not R. N is the feed step's own delta on
   `forKeyword`: credited feed-only names plus any other name a
   verification cell served. V counts the owners whose every feed-only
   name reached a verdict, T every owner holding one; an owner whose

@@ -558,7 +558,7 @@ const unavailableReport: FeedRunReport = {
 }
 const coverage: FeedCoverage = {
   keyword: 'deepseek-harness', feedOnly: 16, supplied: 17, ownersVerified: 12, ownersTotal: 12,
-  verified: 16, unverified: 0, withdrawn: 0, disagreed: [], enumerated: 8530, required: 8530,
+  verified: 16, unverified: 0, withdrawn: 0, unconfirmed: 0, disagreed: [], enumerated: 8530, required: 8530,
 }
 
 describe('describeFeedRun', () => {
@@ -593,6 +593,15 @@ describe('describeFeedCoverage', () => {
   it('counts withdrawn names', () => {
     expect(describeFeedCoverage({ ...coverage, verified: 14, withdrawn: 2 }))
       .toBe('keywords:deepseek-harness feed supplied 17 (owners verified 12 of 12; 2 withdrawn); enumerated 8530 of 8530')
+  })
+
+  it('counts names left unconfirmed past the bound apart from the unverified ones', () => {
+    // An unconfirmed name was omitted by two complete pagings and is not
+    // credited; an unverified one was never checked and is. Folded into one
+    // count, a keyword short by its unconfirmed names would read as though
+    // they were credited (branch review).
+    expect(describeFeedCoverage({ ...coverage, verified: 11, unverified: 2, unconfirmed: 3 }))
+      .toBe('keywords:deepseek-harness feed supplied 17 (owners verified 12 of 12; 2 unverified; 3 unconfirmed); enumerated 8530 of 8530')
   })
 
   it('names unverified and disagreeing names, escaped', () => {
@@ -640,12 +649,16 @@ describe('parseFeedCoverage', () => {
     expect(parseFeedCoverage(JSON.parse(JSON.stringify(coverage)), 'harvest.json', KEYWORDS)).toEqual(coverage)
     const withWithdrawn = { ...coverage, verified: 14, withdrawn: 2 }
     expect(parseFeedCoverage(JSON.parse(JSON.stringify(withWithdrawn)), 'harvest.json', KEYWORDS)).toEqual(withWithdrawn)
+    const withUnconfirmed = { ...coverage, verified: 13, unconfirmed: 3 }
+    expect(parseFeedCoverage(JSON.parse(JSON.stringify(withUnconfirmed)), 'harvest.json', KEYWORDS)).toEqual(withUnconfirmed)
   })
 
   it.each([
     ['a keyword that is not a harvest keyword', { keyword: 'dsh' }],
     ['parts that do not add up', { verified: 15 }],
     ['a withdrawn count that breaks the sum', { withdrawn: 1 }],
+    ['an unconfirmed count that breaks the sum', { unconfirmed: 1 }],
+    ['no unconfirmed count', { unconfirmed: undefined }],
     ['more owners verified than held', { ownersVerified: 13 }],
     ['less supplied than credited', { supplied: 15 }],
     ['a disagreed name outside the rule', { disagreed: ['DSH-X'], verified: 15 }],
