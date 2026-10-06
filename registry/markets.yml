@@ -149,6 +149,11 @@
   by: human
   reason: "Local-first DeepSeek Harness plugin marketplace with GitHub and dshfind providers"
 
+- name: "@montersy123/dsh-skill-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: Browse, search and install SkillHub skills inside DeepSeek Harness. / 在 DeepSeek Harness 内浏览、搜索并安装 SkillHub 技能。"
+
 - name: "@mutocenew/dsh-plugin-catalog"
   market: true
   by: human
