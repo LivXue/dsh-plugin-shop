@@ -4,7 +4,8 @@ Status: **specified (2026-10-04).** Approach A, chosen by LivXue on
 2026-10-04. Reads npm's replication change feed to find dsh plugins by
 publication time, so the residue that npm search ranks beyond every
 5,250-name window is harvested instead of tolerated, and the 60-name
-stopgap in `MAX_UNREACHABLE_RESIDUAL` can come down.
+stopgap in `MAX_UNREACHABLE_RESIDUAL` can come down. Built in PR #74
+(2026-10-06); the cap came down to 14 in the follow-up (section 5).
 
 ## 0. What breaks, and when
 
@@ -502,6 +503,13 @@ crossing grows the residue's owners past the budget.
 - CLAUDE.md's failing-loudly paragraph gains the feed. The cap stays
   at 60 in this change; lowering it is a separate change once two
   `main` runs have published with the feed, at a value LivXue sets.
+  Amended 2026-10-06: the follow-up lowers it to 14, the ceiling of the
+  bracket the 2026-08-18 design doc records, after this change's last
+  dry run and its first `main` run (37412398137) both read the two
+  keywords whole. At 14 a fifteen-name partition gap is refused again;
+  the price is that a day the feed is unavailable (section 4.6) is a
+  search-only harvest, which read 29 and 22 the day before the feed,
+  and fails the build rather than publishing short.
 - CLAUDE.md's lists of network modules and pure modules gain
   `npm-feed.ts` and `feed-state.ts`, and its layout gains
   `registry/feed-state.json`.
@@ -519,6 +527,7 @@ crossing grows the residue's owners past the budget.
   grows while the feed reports healthy.
 - **Running the feed step before the publisher cells** (#38).
 - **Lowering the cap.** A separate change, after two `main` runs.
+  Built in the 2026-10-06 follow-up, at 14 (section 5).
 - **The GitHub half.** The feed is npm's.
 - **A follower outside the daily build.** The daily delta costs
   seconds; reading more often buys freshness the catalog does not

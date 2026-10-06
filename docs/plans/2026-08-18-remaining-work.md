@@ -80,6 +80,13 @@ These block a real launch, not the code.
    (`docs/design/2026-10-04-change-feed-harvest.md`).
    `MAX_UNREACHABLE_RESIDUAL` stays 60 until two `main` runs publish
    with it.
+
+   -> Amended 2026-10-06: the feed's first `main` run read both
+   keywords whole, and the follow-up change lowers the cap to 14, the
+   bracket's ceiling, so a fifteen-name partition gap is refused again.
+   Issue #38 -- search alone reaching the residue -- stays open: on a
+   day the feed cannot be read the harvest is search's alone, and that
+   day now fails the build.
 6. **dsh 0.1.7 — two open questions, raised 2026-09-26.** The shop is ready
    for it ([2026-09-26-dsh-017-readiness.md](../design/2026-09-26-dsh-017-readiness.md))
    and runs on 0.1.5-rc.3 and 0.1.7-rc.2 alike, but two things are not code

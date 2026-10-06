@@ -86,8 +86,8 @@ export const MAX_SEARCH_SHORTFALL = 3
  * the API's own ceiling leaves a small residual with the rate high. Note the
  * strictness DECAYS as the tail grows — a 0.9 floor permits 10% of it — so
  * above a tail of {@link MAX_UNREACHABLE_RESIDUAL} / (1 - this floor) names
- * (derived, not restated: it read 140 here when the cap was 14, and stayed
- * at 140 through the raise to 20) every rate violation already violates
+ * (derived, not restated: 140 at the cap of 14, and 600 at the 2026-10-03
+ * stopgap of 60) every rate violation already violates
  * that cap and the rate decides
  * nothing but which message prints. The keyword this was written for is
  * ALREADY past that crossover — {@link PARTITION_KEYWORDS} carries the
@@ -268,8 +268,26 @@ export const MIN_UNREACHABLE_RECOVERY = 0.9
  * packages through the change feed, which sees a package by when it was
  * published rather than by its rank, and so reaches exactly the residue that
  * ranks cannot. Lower it when that lands; issue #38 stays open beside it.
+ *
+ * LOWERED TO 14 ON 2026-10-06, AND THE BRACKET IS WHOLE AGAIN. The change
+ * feed landed (PR #74; design doc 2026-10-04): it reads new packages by
+ * publication time and credits the carriers no cell served, each checked
+ * against its owner's cell. The residuals were 29 for `dsh-plugin` and 22
+ * for `deepseek-harness` on 2026-10-05, the day before it; its last PR dry
+ * run and its first `main` run (37412398137) both read 0 for both
+ * keywords, the latter crediting 15 and 16 names unverified. 14 is the
+ * ceiling the bracket above allows: the floor of 9 holds, and a
+ * fifteen-name partition gap is refused again, which past a 150-name tail
+ * no other bound does.
+ *
+ * WHAT 14 COSTS. An unavailable feed leaves today's search-only harvest
+ * (design doc section 4.6), and search alone read 29 and 22 the day before
+ * the feed, so a day the feed cannot be read fails the build instead of
+ * publishing short. The cursor holds, and the next run reads both days. A
+ * family landing after the feed's read and before the search is still
+ * search's alone that run, as every new package was before the feed.
  */
-export const MAX_UNREACHABLE_RESIDUAL = 60
+export const MAX_UNREACHABLE_RESIDUAL = 14
 
 /** One keyword that enumerated fewer names than its own total promised. */
 export interface KeywordShortfall {
