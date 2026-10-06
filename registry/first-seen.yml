@@ -60,6 +60,8 @@
   added: 2026-09-02
 - name: "1014029855/dsh-codevault"
   added: 2026-09-08
+- name: "1021summer/dsh-session-search"
+  added: 2026-10-06
 - name: "1032740078/dsh-web-url-view"
   added: 2026-09-14
 - name: "1035041186/dsh-llm-ollama"
@@ -1650,6 +1652,8 @@
   added: 2026-08-25
 - name: "@cola1900/dsh-ppt"
   added: 2026-09-18
+- name: "@comecaramelos/dsh-custom-provider"
+  added: 2026-10-06
 - name: "@cooberped/dsh-evidence"
   added: 2026-08-31
 - name: "@copylee/dsh-better-display"
@@ -7894,6 +7898,8 @@
   added: 2026-10-06
 - name: "@vibedev-si/dsh-media-viewer"
   added: 2026-10-06
+- name: "@vibedev-si/dsh-vibedev"
+  added: 2026-10-06
 - name: "@vibeinging/dsh-canvas-tools"
   added: 2026-09-02
 - name: "@vibeinging/dsh-desktop-chrome"
@@ -10472,6 +10478,8 @@
   added: 2026-09-01
 - name: "billion-context-dsh"
   added: 2026-08-31
+- name: "billion-context-relief"
+  added: 2026-10-06
 - name: "billwu18/dsh-cache-hit-monitor"
   added: 2026-09-26
 - name: "billychen123/qdd"
@@ -11314,6 +11322,8 @@
   added: 2026-08-31
 - name: "citizenll/desktop-harness"
   added: 2026-09-01
+- name: "civitasv/praxis"
+  added: 2026-10-06
 - name: "cj-sh/dsh-plugin-ollama-usage"
   added: 2026-09-16
 - name: "cj-sh/dsh-plugin-trellis-statusline"
@@ -24888,6 +24898,8 @@
   added: 2026-08-26
 - name: "dsh-plugin-advisor"
   added: 2026-08-31
+- name: "dsh-plugin-adwhispr"
+  added: 2026-10-06
 - name: "dsh-plugin-agent-budget"
   added: 2026-09-04
 - name: "dsh-plugin-agent-dashboard"
@@ -27992,6 +28004,8 @@
   added: 2026-08-25
 - name: "dsh-round-rightclick"
   added: 2026-09-14
+- name: "dsh-round-table"
+  added: 2026-10-06
 - name: "dsh-roundtable"
   added: 2026-09-04
 - name: "dsh-route-certificate"
@@ -28518,6 +28532,8 @@
   added: 2026-09-02
 - name: "dsh-session-activity"
   added: 2026-08-25
+- name: "dsh-session-adapter"
+  added: 2026-10-06
 - name: "dsh-session-admin"
   added: 2026-08-28
 - name: "dsh-session-allow"
@@ -30234,6 +30250,8 @@
   added: 2026-09-01
 - name: "dsh-system-proxy"
   added: 2026-09-04
+- name: "dsh-system1-observer"
+  added: 2026-10-06
 - name: "dsh-szg-hint"
   added: 2026-09-16
 - name: "dsh-t3-model-picker"
@@ -33590,12 +33608,18 @@
   added: 2026-09-02
 - name: "dsh-wx-skin"
   added: 2026-09-02
+- name: "dsh-x-aquarium"
+  added: 2026-10-06
 - name: "dsh-x-archive"
   added: 2026-09-01
 - name: "dsh-x-connect"
   added: 2026-08-26
+- name: "dsh-x-memory"
+  added: 2026-10-06
 - name: "dsh-x-opencode-session"
   added: 2026-09-29
+- name: "dsh-x-sync"
+  added: 2026-10-06
 - name: "dsh-x402"
   added: 2026-09-04
 - name: "dsh-x9-talkjump"
@@ -35734,6 +35758,8 @@
   added: 2026-09-01
 - name: "himeope/dsh-queue-first-enter"
   added: 2026-09-09
+- name: "himoew/dsh-user-style"
+  added: 2026-10-06
 - name: "hipigod/dsh-token-monitor"
   added: 2026-09-16
 - name: "hiro-nikaitou/dsh-ocg-billing"
@@ -36660,6 +36686,8 @@
   added: 2026-09-10
 - name: "jiekesu967/dsh-plugin-opencode-usage"
   added: 2026-09-01
+- name: "jiewiw/dsh-cot-anchor"
+  added: 2026-10-06
 - name: "jihongboo/dsh-apple-mode"
   added: 2026-09-01
 - name: "jijiz1/dsh-daily-ledger"
@@ -40362,6 +40390,8 @@
   added: 2026-10-04
 - name: "oowjzzoo/dsh-read-image"
   added: 2026-08-31
+- name: "opdsh/dsh-gh-pages-artifacts"
+  added: 2026-10-06
 - name: "open-dsh-plugins/dsh-open-in-app"
   added: 2026-09-01
 - name: "open-managed-agents"
@@ -43186,6 +43216,8 @@
   added: 2026-10-06
 - name: "tenyding/dsh-aionui-layout"
   added: 2026-10-04
+- name: "teresa-coco/ohmydsh"
+  added: 2026-10-06
 - name: "termanli/dsh-fulltext-search"
   added: 2026-09-01
 - name: "terrain"
@@ -43404,6 +43436,8 @@
   added: 2026-09-01
 - name: "tleon-h/dsh-prompt-prefill"
   added: 2026-10-04
+- name: "tlning260310/dsh-compaction-fidelity"
+  added: 2026-10-06
 - name: "tlning260310/dsh-researcher"
   added: 2026-09-28
 - name: "tnt-house"
@@ -48526,6 +48560,8 @@
   added: 2026-10-05
 - name: "xx-hub/dsh-craft-your-textbook"
   added: 2026-09-02
+- name: "xxszyh/dsh-gui-handoff"
+  added: 2026-10-06
 - name: "xxww0098/dsh-plugin-oauth-subs"
   added: 2026-09-03
 - name: "xxxrickymorty-dev/dsh-rick"
@@ -49748,6 +49784,8 @@
   added: 2026-09-22
 - name: "zhy5/wxbridge"
   added: 2026-09-21
+- name: "zhz8888/dsh-radeon-cloud-patcher"
+  added: 2026-10-06
 - name: "zian-anson/dsh-prompt-seed"
   added: 2026-10-06
 - name: "zicanc/dsh-git"
