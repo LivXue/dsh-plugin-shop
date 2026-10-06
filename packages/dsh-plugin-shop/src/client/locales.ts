@@ -139,6 +139,12 @@ export const zh = {
    * that answered and then died. */
   restartFailedLogNotice: '重启后服务器没有回来，或回来后没能保持运行。新进程的日志在 {log}；也可以手动启动：dsh web',
   restartTransportFailed: '重启请求未能送达。请稍后重试。',
+  // The page reloaded into the very process it asked to restart. The pid is
+  // that process; it was started detached by an earlier restart as often as
+  // not, so there is no terminal to press Ctrl+C in.
+  notRestartedNotice: 'dsh 没有重启：页面刷新后，回答的仍是被要求重启的那个进程，所以更改还没有生效。请手动重启：退出正在运行的 dsh，再运行 dsh web。',
+  notRestartedPidNotice: 'dsh 没有重启：页面刷新后，回答的仍是被要求重启的那个进程（pid {pid}），所以更改还没有生效。请手动重启：运行 kill {pid}（进程仍不退出时用 kill -9 {pid}），再运行 dsh web。',
+  notRestartedLogNotice: '这次重启的经过记录在 {log}。',
   restartBlockedDesktopNotice: '此 profile 由 DeepSeek Harness 桌面版管理，商店无法重启它。请重启桌面版，以应用更改。',
   restartBlockedWindowsNotice: '商店暂不支持在 Windows 上重启 dsh。请退出 dsh 后重新启动，以应用更改。',
   restartBlockedSystemdNotice: '当前 dsh 由 systemd 服务托管，商店无法安全地重启它。请手动重启服务，或在商店行配置中设置 allowRestart: true。',
@@ -260,6 +266,9 @@ export const en = {
   restartFailedNotice: 'The server did not come back after the restart. Start it manually: dsh web (see restart.log in the shop cache directory)',
   restartFailedLogNotice: 'The server did not come back after the restart, or did not stay up. The new process logs to {log}; you can also start it manually: dsh web',
   restartTransportFailed: 'The restart request could not be delivered. Please retry.',
+  notRestartedNotice: 'dsh did not restart: after the reload, the process that was asked to restart is still the one answering, so the change has not taken effect. Restart it by hand: quit the running dsh, then run dsh web.',
+  notRestartedPidNotice: 'dsh did not restart: after the reload, the process that was asked to restart (pid {pid}) is still the one answering, so the change has not taken effect. Restart it by hand: run kill {pid} (kill -9 {pid} if it does not exit), then run dsh web.',
+  notRestartedLogNotice: 'What this restart did is logged in {log}.',
   restartBlockedDesktopNotice: 'This profile is managed by the DeepSeek Harness desktop app, so the shop cannot restart it. Restart the app to apply the change.',
   restartBlockedWindowsNotice: 'The shop cannot restart dsh on Windows yet. Quit dsh and start it again to apply the change.',
   restartBlockedSystemdNotice: 'This dsh process runs as a systemd service, so the shop cannot restart it safely. Restart the service manually, or set allowRestart: true in the shop row config.',

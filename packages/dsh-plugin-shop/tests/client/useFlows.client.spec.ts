@@ -72,3 +72,40 @@ describe('useKeyedFlows: the flow identity a memo depends on', () => {
     expect(result.current.flowFor('npm:other')).toBe(other)
   })
 })
+
+describe('useKeyedFlows: resetting by what a flow holds', () => {
+  // dsh restarting under the page settles every receipt that was waiting for
+  // a restart, across every card at once; the tab names which by the view,
+  // not by the key (design §8, 2026-10-06 amendment).
+
+  it('returns every key the predicate selects to idle and leaves the rest, objects included', async () => {
+    const { result } = bench()
+    await act(async () => { await result.current.flowFor('npm:a').start({ installId: 'i1' }) })
+    await act(async () => { await result.current.flowFor('npm:b').start({ installId: 'i2' }) })
+    await act(async () => { await result.current.flowFor('npm:c').start({ installId: 'i3' }) })
+    const kept = result.current.flowFor('npm:b')
+    act(() => { result.current.resetWhere(view => view.kind === 'running' && view.installId !== 'i2') })
+    expect(result.current.flowFor('npm:a').view).toEqual({ kind: 'idle' })
+    expect(result.current.flowFor('npm:c').view).toEqual({ kind: 'idle' })
+    expect(result.current.flowFor('npm:b')).toBe(kept)
+    expect([...result.current.pending]).toEqual(['npm:b'])
+  })
+
+  it('changes nothing, identities included, when the predicate selects no flow', async () => {
+    const { result } = bench()
+    await act(async () => { await result.current.flowFor('npm:a').start({ installId: 'i1' }) })
+    const pending = result.current.pending
+    const flow = result.current.flowFor('npm:a')
+    act(() => { result.current.resetWhere(() => false) })
+    expect(result.current.pending).toBe(pending)
+    expect(result.current.flowFor('npm:a')).toBe(flow)
+  })
+
+  it('keeps one identity across renders, so a subscription built on it holds', () => {
+    const { result, rerender } = bench()
+    const first = result.current.resetWhere
+    expect(first).toBeTypeOf('function')
+    rerender()
+    expect(result.current.resetWhere).toBe(first)
+  })
+})

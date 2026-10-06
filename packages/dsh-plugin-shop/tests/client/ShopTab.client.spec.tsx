@@ -4,8 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ACKNOWLEDGEMENT_EN, ACKNOWLEDGEMENT_ZH, RESTART_GRACE_MS, RESTART_STABLE_MS, RESTART_WAIT_MS, SHOP_VISIBLE_BATCH, rejectionCodeKey } from '../../src/client/present.ts'
 import { en, zh, type ShopLocaleKey } from '../../src/client/locales.ts'
 import { ShopTab, type ShopTabInjected, type ShopTabProps } from '../../src/client/ShopTab.tsx'
-import { registerRestartCarrier, resetRestartMonitor } from '../../src/client/restart-monitor.ts'
-import type { HarnessVerdict, ShopCatalogResult, ShopInstalledEntry } from '../../src/host/index.ts'
+import { noteBoot, registerRestartCarrier, resetRestartMonitor, startRestartMonitor } from '../../src/client/restart-monitor.ts'
+import type { HarnessVerdict, ShopCatalogResult, ShopInstalledEntry, ShopVersionResult } from '../../src/host/index.ts'
 
 afterEach(() => {
   cleanup()
@@ -3754,5 +3754,211 @@ describe('ShopTab staleness cues', () => {
       return delta
     }
     expect(await deltaFor(8)).toBe(await deltaFor(2))
+  })
+})
+
+describe('ShopTab when dsh restarts under it', () => {
+  // dsh reconnects to whatever server holds the origin and reloads nothing,
+  // so the client half tells the tab when the answers come from another
+  // process (index.ts `onRestarted`). What the old process answered was the
+  // old process's, and every receipt that was waiting for a restart has had
+  // it (design §8, 2026-10-06 amendment).
+
+  const answer = (installed: string, bootId: string, pendingVersion: string | null = null): ShopVersionResult =>
+    ({ installed, latest: '0.4.4', outdated: installed !== '0.4.4', restartBlocked: null, pendingVersion, bootId })
+
+  /** Offer the face's subscription the way the client half does, and hand
+   * back the means to fire it. */
+  function restartable(injected: ShopTabInjected) {
+    const listeners = new Set<(fresh: ShopVersionResult) => void>()
+    injected.onRestarted = listener => {
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    }
+    return {
+      restarted: (fresh: ShopVersionResult): void => { act(() => { for (const listener of [...listeners]) listener(fresh) }) },
+      listening: (): number => listeners.size,
+    }
+  }
+
+  it('shows the version the new process runs, and drops the self-update it finished', async () => {
+    const { injected, version, updateStart } = bench(snapshot())
+    version.mockResolvedValue(answer('0.4.3', 'boot-a'))
+    const { restarted } = restartable(injected)
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('v0.4.3')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-update-self]')!)
+    await waitFor(() => expect(updateStart).toHaveBeenCalled())
+    await waitFor(() => expect(container.querySelector('[data-shop-self-update-done]')).toBeTruthy(), { timeout: 3000 })
+    restarted(answer('0.4.4', 'boot-b'))
+    expect(screen.getByText('v0.4.4')).toBeTruthy()
+    expect(container.querySelector('[data-shop-self-update-done]')).toBeNull()
+    // Nothing waits any more: the row offers the check again, not a restart.
+    const row = container.querySelector('[data-shop-version]')?.parentElement
+    expect(row?.querySelector('[data-shop-restart]')).toBeNull()
+    expect(row?.querySelector('[data-shop-check-update]')).toBeTruthy()
+  })
+
+  it("clears every card's restart notice, and keeps the reload a card still owes", async () => {
+    // Nothing reloaded this page, so a change that is only waiting for a
+    // reload is still waiting for one.
+    const base = snapshot({ tier: 'verified' })
+    const hello = base.plugins[0]!
+    const { injected, install, installStatus } = bench({ ...base, plugins: [hello, { ...hello, name: 'dsh-other-plugin' }] })
+    install.mockImplementation(async args => ({ ok: true, installId: args.name, state: 'running' }))
+    installStatus.mockImplementation(async ({ installId }) =>
+      ({ found: true, state: 'done', log: [], activation: installId === 'dsh-hello-plugin' ? 'restart' : 'reload' }))
+    const { restarted } = restartable(injected)
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-other-plugin')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-install]')!)
+    fireEvent.click(container.querySelector('[data-shop-entry="dsh-other-plugin"] [data-shop-install]')!)
+    const helloCard = container.querySelector('[data-shop-entry="dsh-hello-plugin"]')!
+    const otherCard = container.querySelector('[data-shop-entry="dsh-other-plugin"]')!
+    await waitFor(() => expect(helloCard.textContent).toContain(en.installedRestartNotice), { timeout: 3000 })
+    await waitFor(() => expect(otherCard.querySelector('[data-shop-reload="install"]')).toBeTruthy(), { timeout: 3000 })
+    restarted(answer('0.4.4', 'boot-b'))
+    expect(helloCard.textContent).not.toContain(en.installedRestartNotice)
+    expect(helloCard.querySelector('[data-shop-restart]')).toBeNull()
+    expect(otherCard.querySelector('[data-shop-reload="install"]')).toBeTruthy()
+  })
+
+  it('clears the restart an uninstall was waiting for', async () => {
+    const { injected } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }])
+    const { restarted } = restartable(injected)
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-uninstall]')!)
+    await waitFor(() => expect(screen.getByText(en.uninstalledRestartNotice)).toBeTruthy(), { timeout: 3000 })
+    restarted(answer('0.4.4', 'boot-b'))
+    expect(screen.queryByText(en.uninstalledRestartNotice)).toBeNull()
+  })
+
+  it('clears the restart a switch was waiting for, without claiming it applied live', async () => {
+    const { injected, setEnabled } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
+    setEnabled.mockResolvedValue({ ok: true, activation: 'restart' })
+    const { restarted } = restartable(injected)
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]')!
+    fireEvent.click(row.querySelector('[data-shop-toggle]')!)
+    await waitFor(() => expect(row.querySelector('[data-shop-toggle-restart]')).toBeTruthy())
+    restarted(answer('0.4.4', 'boot-b'))
+    await waitFor(() => expect(row.querySelector('[data-shop-toggle-restart]')).toBeNull())
+    expect(row.querySelector('[data-shop-restart]')).toBeNull()
+    // A restart is what applied it; "applied without a restart" would be false.
+    expect(row.querySelector('[data-shop-hot-apply]')).toBeNull()
+  })
+
+  it('keeps the reload a switch still owes', async () => {
+    const { injected, setEnabled } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.0.0', latest: '1.2.0', outdated: true, enabled: true }])
+    setEnabled.mockResolvedValue({ ok: true, activation: 'reload' })
+    const { restarted } = restartable(injected)
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('installed v1.0.0')).toBeTruthy())
+    const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]')!
+    fireEvent.click(row.querySelector('[data-shop-toggle]')!)
+    await waitFor(() => expect(row.querySelector('[data-shop-reload]')).toBeTruthy())
+    restarted(answer('0.4.4', 'boot-b'))
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+    expect(row.querySelector('[data-shop-reload]')).toBeTruthy()
+  })
+
+  it('asks the new process for the installed list, and has the catalog judged again', async () => {
+    const { injected, catalog, installed } = bench(snapshot())
+    const { restarted } = restartable(injected)
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    await waitFor(() => expect(installed).toHaveBeenCalled())
+    const asked = installed.mock.calls.length
+    expect(catalog).not.toHaveBeenCalledWith({ reverdict: true })
+    restarted(answer('0.4.4', 'boot-b'))
+    await waitFor(() => expect(catalog).toHaveBeenCalledWith({ reverdict: true }))
+    await waitFor(() => expect(installed.mock.calls.length).toBeGreaterThan(asked))
+  })
+
+  it('stops listening once the tab is gone', async () => {
+    const { injected } = bench(snapshot())
+    const { listening } = restartable(injected)
+    const { unmount } = renderTab(injected)
+    await waitFor(() => expect(listening()).toBe(1))
+    unmount()
+    expect(listening()).toBe(0)
+  })
+})
+
+describe('ShopTab after a restart that never happened', () => {
+  // The macOS report: a self-update's restart confirmed, the page reloaded,
+  // and the row still read the version before the update — the process asked
+  // to restart was still the one answering, and nothing said so (design §8,
+  // 2026-10-06 amendment).
+
+  const LOG = '/home/you/.dsh/shop/restart.log'
+
+  /** Leave the page where that report did: reloaded after a confirmed
+   * restart, into the very process that committed it. */
+  function reloadedIntoTheSameProcess(record: { pid?: number; logFile?: string }): void {
+    startRestartMonitor({ reload: vi.fn(), bootId: 'boot-a', ...record })
+    const page = globalThis as unknown as Record<symbol, { stop?: (() => void) | null } | undefined>
+    const key = Symbol.for('dsh-plugin-shop.restart-monitor')
+    page[key]?.stop?.()
+    delete page[key]
+    noteBoot('boot-a')
+  }
+
+  const stillPending: ShopVersionResult = { installed: '0.4.3', latest: '0.4.4', outdated: true, restartBlocked: null, pendingVersion: '0.4.4', bootId: 'boot-a' }
+
+  it('says dsh did not restart, once, naming the process to stop and the command to start it', async () => {
+    reloadedIntoTheSameProcess({ pid: 4242, logFile: LOG })
+    const { injected, version } = bench(snapshot())
+    version.mockResolvedValue(stillPending)
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('v0.4.3')).toBeTruthy())
+    const notices = container.querySelectorAll('[data-shop-not-restarted]')
+    expect(notices).toHaveLength(1)
+    expect(notices[0]?.textContent).toContain('kill 4242')
+    expect(notices[0]?.textContent).toContain('dsh web')
+    expect(notices[0]?.textContent).toContain(LOG)
+    // A second press would only ask the process that already promised to go:
+    // it answers with the restart it committed, and stays.
+    expect(container.querySelector('[data-shop-restart]')).toBeNull()
+    expect(container.querySelector('[data-shop-restart-confirm]')).toBeNull()
+  })
+
+  it('names no pid it was not given', async () => {
+    reloadedIntoTheSameProcess({})
+    const { injected, version } = bench(snapshot())
+    version.mockResolvedValue(stillPending)
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('v0.4.3')).toBeTruthy())
+    const notice = container.querySelector('[data-shop-not-restarted]')
+    expect(notice?.textContent).toContain('dsh web')
+    expect(notice?.textContent).not.toContain('kill')
+  })
+
+  it('offers no restart on a card whose install lands while dsh still has not restarted', async () => {
+    // The card's notice still holds — the install needs a restart — but a
+    // press would ask the process that already promised to go, which answers
+    // with the restart it committed and stays. The notice above says how.
+    reloadedIntoTheSameProcess({ pid: 4242, logFile: LOG })
+    const { injected, version } = bench(snapshot({ tier: 'verified' }))
+    version.mockResolvedValue(stillPending)
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-entry="dsh-hello-plugin"] [data-shop-install]')!)
+    const card = container.querySelector('[data-shop-entry="dsh-hello-plugin"]')!
+    await waitFor(() => expect(card.textContent).toContain(en.installedRestartNotice), { timeout: 3000 })
+    expect(card.querySelector('[data-shop-restart]')).toBeNull()
+    expect(container.querySelectorAll('[data-shop-not-restarted]')).toHaveLength(1)
+  })
+
+  it('drops the notice once a new process answers', async () => {
+    reloadedIntoTheSameProcess({ pid: 4242, logFile: LOG })
+    const { injected, version } = bench(snapshot())
+    version.mockResolvedValue(stillPending)
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(container.querySelector('[data-shop-not-restarted]')).toBeTruthy())
+    act(() => { noteBoot('boot-b') })
+    expect(container.querySelector('[data-shop-not-restarted]')).toBeNull()
   })
 })

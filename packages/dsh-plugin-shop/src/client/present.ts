@@ -396,6 +396,17 @@ export function answeredByAnotherProcess(previous: ShopVersionResult, next: Shop
   return previous.installed !== next.installed
 }
 
+/**
+ * Whether dsh restarting under the page settles this receipt: a change that
+ * landed and was waiting for exactly that. The tab clears these once the
+ * answers come from another process, and nothing else — a reload is still
+ * owed by a page nobody reloaded, a failure still happened, and a flow still
+ * running settles by its own poll.
+ */
+export function settledByRestart(view: InstallView): boolean {
+  return view.kind === 'done' && view.activation === 'restart'
+}
+
 /** How long the check-update button reports "up to date" after a re-check
  * finds no newer release, before reverting to its idle label. */
 export const CHECK_UP_TO_DATE_MS = 3000

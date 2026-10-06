@@ -7,7 +7,7 @@
 import { Component, memo, useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ErrorInfo, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, HarnessVerdict, InstallArgs, RestartBlockedReason, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
-import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, readsIncompatible, refusedPeersText, refusesInstall, rejectionCodeKey, restartBlockedNoticeKey, reviewHashPin, sortByStars, starsOf, tierKey } from './present.ts'
+import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, readsIncompatible, refusedPeersText, refusesInstall, rejectionCodeKey, restartBlockedNoticeKey, reviewHashPin, settledByRestart, sortByStars, starsOf, tierKey } from './present.ts'
 import { readRestartMonitor, requestRestart, subscribeRestartMonitor, type RestartMonitorState } from './restart-monitor.ts'
 import { useInstallFlows, type InstallFlow } from './useInstall.ts'
 import { useUninstallFlows, type UninstallFlow } from './useUninstall.ts'
@@ -118,7 +118,7 @@ function ChevronIcon({ open }: { open: boolean }): ReactNode {
  * install controls. An installed plugin's card carries its installed row:
  * current → the non-interactive installed label, behind → the update button;
  * uninstalled → the install button. */
-const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, harness, nameTakenBy, t, flow, uninstallFlow, restart, restartBlocked, reload, setEnabled, inInstalledView }: {
+const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, harness, nameTakenBy, t, flow, uninstallFlow, restart, restartBlocked, reload, setEnabled, inInstalledView, restarts }: {
   entry: CatalogEntry
   stars: number | undefined
   installed: ShopInstalledEntry | undefined
@@ -145,6 +145,8 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, ha
    * from the same `category` state `matched` reads — so the card and the
    * filter it renders under can never disagree about which view this is. */
   inInstalledView: boolean
+  /** How many times dsh has restarted under this page — see EnabledSwitch. */
+  restarts: number
 }): ReactNode {
   const [open, setOpen] = useState(false)
   const blockers = stateBlockers(blockersOf(missing, harness, nameTakenBy), t)
@@ -347,7 +349,7 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, ha
             )}
             {/* The hot enable/disable switch (§8) sits on every installed
              * row — current or outdated — and reads the inventory state. */}
-            <EnabledSwitch row={installed} t={t} setEnabled={setEnabled} restart={restart} restartBlocked={restartBlocked} reload={reload} />
+            <EnabledSwitch row={installed} t={t} setEnabled={setEnabled} restart={restart} restartBlocked={restartBlocked} reload={reload} restarts={restarts} />
             <UninstallPanel name={entry.name} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} flow={uninstallFlow} />
           </>
         )}
@@ -860,6 +862,11 @@ function RestartPanel({ t, restart, reload, gate }: {
       </p>
     )
   }
+  // The page reloaded into the process it asked to restart. The tab says so
+  // once, above everything (NotRestartedNotice); an offer here would only ask
+  // that process again, and it answers with the restart it already committed
+  // and stays.
+  if (monitor?.kind === 'not-restarted') return null
   if (gateOpen) {
     return (
       <div className={css.gate}>
@@ -901,6 +908,25 @@ function RestartPanel({ t, restart, reload, gate }: {
         {t('restart')}
       </button>
     </>
+  )
+}
+
+/**
+ * The page reloaded into the very process it asked to restart
+ * (restart-monitor.ts `noteBoot`): said once, above everything, because
+ * whatever asked for the restart — a self-update, a card, a switch — has
+ * nothing left on screen after the reload to say it under. It names the
+ * process to stop, when the host named it, and the command that starts dsh
+ * again; the log holds what the handoff did, which tells an old process that
+ * never exited from a new one that died in boot (design §8, 2026-10-06
+ * amendment).
+ */
+function NotRestartedNotice({ t, pid, logFile }: { t: ShopTabProps['t']; pid: number | undefined; logFile: string | undefined }): ReactNode {
+  return (
+    <div className={css.selfUpdatePanel} data-shop-not-restarted>
+      <p className={css.failedDetail}>{pid === undefined ? t('notRestartedNotice') : t('notRestartedPidNotice', { pid: String(pid) })}</p>
+      {logFile !== undefined && <p className={css.notice}>{t('notRestartedLogNotice', { log: logFile })}</p>}
+    </div>
   )
 }
 
@@ -956,13 +982,16 @@ function ReloadPanel({ t, reload, where }: { t: ShopTabProps['t']; reload: () =>
  * transport throw renders the localized failure line — its private detail
  * (which can name hosts and ports) never reaches the UI.
  */
-function EnabledSwitch({ row, t, setEnabled, restart, restartBlocked, reload }: {
+function EnabledSwitch({ row, t, setEnabled, restart, restartBlocked, reload, restarts }: {
   row: ShopInstalledEntry
   t: ShopTabProps['t']
   setEnabled: ShopTabInjected['setEnabled']
   restart: ShopTabInjected['restart']
   restartBlocked: RestartBlockedReason | null
   reload: () => void
+  /** How many times dsh has restarted under this page; a change settles the
+   * restart this switch was owed (design §8, 2026-10-06 amendment). */
+  restarts: number
 }): ReactNode {
   const [enabled, setEnabledState] = useState(row.enabled)
   const [toggle, setToggle] = useState<{ kind: 'idle' } | { kind: 'saving' } | { kind: 'saved' } | { kind: 'error'; detail: string }>({ kind: 'idle' })
@@ -972,6 +1001,18 @@ function EnabledSwitch({ row, t, setEnabled, restart, restartBlocked, reload }: 
   // one that applied live does not say an earlier restart is no longer
   // owed, so it cannot dismiss that either.
   const [owed, setOwed] = useState<'nothing' | 'reload' | 'restart'>('nothing')
+  // dsh restarting under the page is the one thing that does dismiss an owed
+  // restart. The saved note goes with it: owing nothing, the switch would
+  // read "applied without a restart" about a change a restart applied. A
+  // reload is still owed, since nothing reloaded this page.
+  const restartsSeen = useRef(restarts)
+  useEffect(() => {
+    if (restartsSeen.current === restarts) return
+    restartsSeen.current = restarts
+    if (owed !== 'restart') return
+    setOwed('nothing')
+    setToggle(current => (current.kind === 'saved' ? { kind: 'idle' } : current))
+  }, [restarts, owed])
 
   const onToggle = async (): Promise<void> => {
     if (toggle.kind === 'saving') return
@@ -1037,7 +1078,7 @@ function EnabledSwitch({ row, t, setEnabled, restart, restartBlocked, reload }: 
 /** One outdated install row (§7.3): the name, the installed and latest
  * versions, the hot enable/disable switch, and the update button (the
  * install flow for `name@latest`, reusing `InstallPanel`). */
-function OutdatedRow({ row, tier, missing, harness, t, setEnabled, flowFor, restart, restartBlocked, reload }: {
+function OutdatedRow({ row, tier, missing, harness, t, setEnabled, flowFor, restart, restartBlocked, reload, restarts }: {
   row: ShopInstalledEntry
   tier: CatalogEntry['tier']
   missing: string[]
@@ -1048,6 +1089,7 @@ function OutdatedRow({ row, tier, missing, harness, t, setEnabled, flowFor, rest
   restart: ShopTabInjected['restart']
   restartBlocked: RestartBlockedReason | null
   reload: () => void
+  restarts: number
 }): ReactNode {
   return (
     <div className={css.outdatedRow} data-shop-outdated-entry={row.name}>
@@ -1059,7 +1101,7 @@ function OutdatedRow({ row, tier, missing, harness, t, setEnabled, flowFor, rest
         </span>
       </div>
       <div className={css.outdatedActions}>
-        <EnabledSwitch row={row} t={t} setEnabled={setEnabled} restart={restart} restartBlocked={restartBlocked} reload={reload} />
+        <EnabledSwitch row={row} t={t} setEnabled={setEnabled} restart={restart} restartBlocked={restartBlocked} reload={reload} restarts={restarts} />
         <InstallPanel
           target={{ name: row.name, version: row.latest, source: row.source, repo: row.repo, subdir: row.subdir }}
           tier={tier} variant="update" blockers={stateBlockers(blockersOf(missing, harness, undefined), t)}
@@ -1088,7 +1130,7 @@ const UPDATABLE_HEADING_ID = 'dsh-shop-updatable-heading'
  * tier for the update gate is looked up from the catalog by install IDENTITY,
  * never by name (community → acknowledgement); an entry absent from the
  * catalog defaults to the community gate (the safer read). */
-function OutdatedSection({ state, entriesByKey, missingByKey, harnessVerdicts, t, setEnabled, flowFor, restart, restartBlocked, reload }: {
+function OutdatedSection({ state, entriesByKey, missingByKey, harnessVerdicts, t, setEnabled, flowFor, restart, restartBlocked, reload, restarts }: {
   state: InstalledState
   entriesByKey: ReadonlyMap<string, CatalogEntry>
   missingByKey: ReadonlyMap<string, string[]>
@@ -1101,6 +1143,7 @@ function OutdatedSection({ state, entriesByKey, missingByKey, harnessVerdicts, t
   restart: ShopTabInjected['restart']
   restartBlocked: RestartBlockedReason | null
   reload: () => void
+  restarts: number
 }): ReactNode {
   if (state.kind === 'loading') return null
   if (state.kind === 'error') {
@@ -1130,6 +1173,7 @@ function OutdatedSection({ state, entriesByKey, missingByKey, harnessVerdicts, t
               restart={restart}
               restartBlocked={restartBlocked}
               reload={reload}
+              restarts={restarts}
             />
           </li>
         ))}
@@ -1201,7 +1245,7 @@ export function ShopTab(props: ShopTabProps): ReactNode {
 /** The shop tab body: browse, search, refresh, and render one card per
  * entry. Data attributes on the e2e-relevant nodes follow the Task 3 list. */
 function ShopTabBody(props: ShopTabProps): ReactNode {
-  const { t, catalog, install, installStatus, setEnabled, installed, installedSpecs, uninstall, noteUninstalled, restart, version, updateStart, reload: injectedReload } = props
+  const { t, catalog, install, installStatus, setEnabled, installed, installedSpecs, uninstall, noteUninstalled, restart, version, onRestarted, updateStart, reload: injectedReload } = props
   const [catalogState, setCatalogState] = useState<CatalogState>({ kind: 'loading' })
   const [installedState, setInstalledState] = useState<InstalledState>({ kind: 'loading' })
   /** The install gate's own input, or undefined while it is unknown — loading,
@@ -1308,6 +1352,25 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
   }, [flows, noteMutation, catalogState, noteUninstalled])
   const uninstallFlows = useUninstallFlows(uninstall, installStatus, uninstallSettled)
   uninstallResetRef.current = uninstallFlows.resetFlow
+  // dsh restarted under the page (index.ts `onRestarted`), which reloads
+  // nothing: the row shows the version the NEW process runs, every receipt
+  // that was waiting for a restart has had it — the self-update's, each
+  // card's, each switch's (through `restarts`) — and the installed list and
+  // the catalog's verdicts are asked of the process that answers now. A
+  // reload still owed stays owed (design §8, 2026-10-06 amendment).
+  const [restarts, setRestarts] = useState(0)
+  const resetSelfUpdate = selfUpdate.resetWhere
+  const resetInstalls = flows.resetWhere
+  const resetUninstalls = uninstallFlows.resetWhere
+  useEffect(() => onRestarted?.(fresh => {
+    setSelfVersion(fresh)
+    resetSelfUpdate(settledByRestart)
+    resetInstalls(settledByRestart)
+    resetUninstalls(settledByRestart)
+    setRestarts(current => current + 1)
+    noteMutation()
+    setRequest({ kind: 'reverdict' })
+  }), [onRestarted, resetSelfUpdate, resetInstalls, resetUninstalls, noteMutation])
   // A refresh deliberately leaves the current shelf on screen (§10), so the
   // reload control carries the only sign that the click did anything.
   const [reloading, setReloading] = useState(false)
@@ -1869,6 +1932,9 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
           </a>
         </div>
       </div>
+      {restartMonitor?.kind === 'not-restarted' && (
+        <NotRestartedNotice t={t} pid={restartMonitor.pid} logFile={restartMonitor.logFile} />
+      )}
       {selfUpdate.view.kind === 'running' && (
         <div className={css.selfUpdatePanel} data-shop-self-updating>
           <p className={css.installing}>{t(installPhaseKey(selfUpdate.view.phase))}</p>
@@ -2056,7 +2122,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
               const key = entryKey(entry)
               return (
                 <li key={key}>
-                  <EntryCard entry={entry} stars={starsOf(entry, stars)} installed={installedByKey.get(key)} missing={missingByKey.get(key) ?? []} harness={harnessVerdictOf(harnessVerdicts, key)} nameTakenBy={nameTakenByKey.get(key)} t={t} flow={flows.flowFor(key)} uninstallFlow={uninstallFlows.flowFor(key)} restart={restart} restartBlocked={restartBlocked} reload={reload} setEnabled={setEnabled} inInstalledView={category === 'installed'} />
+                  <EntryCard entry={entry} stars={starsOf(entry, stars)} installed={installedByKey.get(key)} missing={missingByKey.get(key) ?? []} harness={harnessVerdictOf(harnessVerdicts, key)} nameTakenBy={nameTakenByKey.get(key)} t={t} flow={flows.flowFor(key)} uninstallFlow={uninstallFlows.flowFor(key)} restart={restart} restartBlocked={restartBlocked} reload={reload} setEnabled={setEnabled} inInstalledView={category === 'installed'} restarts={restarts} />
                 </li>
               )
             })}
@@ -2082,6 +2148,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
         restart={restart}
         restartBlocked={restartBlocked}
         reload={reload}
+        restarts={restarts}
       />
     </div>
   )

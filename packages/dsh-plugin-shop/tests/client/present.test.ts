@@ -6,7 +6,7 @@ import {
   nextVisibleCount, npmPageUrl, readsIncompatible, refusedPeersText, refusesInstall,
   installPhaseKey, reduceInstall, type InstallView,
   reviewHashPin, sortByStars, starsOf, tierKey,
-  RESTART_STABLE_MS, RESTART_WAIT_MS, restartMonitorVerdict, answeredByAnotherProcess,
+  RESTART_STABLE_MS, RESTART_WAIT_MS, restartMonitorVerdict, answeredByAnotherProcess, settledByRestart,
 } from '../../src/client/present.ts'
 import { en, zh } from '../../src/client/locales.ts'
 import type { CatalogEntry, HarnessVerdict, ShopVersionResult } from '../../src/host/index.ts'
@@ -961,5 +961,24 @@ describe('answeredByAnotherProcess', () => {
     ['two older answers running different versions', answer('0.8.5'), answer('0.8.6'), true],
   ])('%s', (_case, previous, next, expected) => {
     expect(answeredByAnotherProcess(previous, next)).toBe(expected)
+  })
+})
+
+describe('settledByRestart', () => {
+  // What dsh restarting under the page settles: a change that landed and was
+  // waiting for exactly that. Everything else on the page is still true after
+  // it — a reload is still owed by a page that was not reloaded, a failure
+  // still happened, and a flow still running settles by its own poll.
+  it.each([
+    ['a change waiting for a restart', { kind: 'done', activation: 'restart', log: [] }, true],
+    ['one waiting for a restart, with the reason it needs one', { kind: 'done', activation: 'restart', log: [], restartReason: 'not-simple' }, true],
+    ['a change waiting for a reload of this page', { kind: 'done', activation: 'reload', log: [] }, false],
+    ['a change already live', { kind: 'done', activation: 'live', log: [] }, false],
+    ['a failure', { kind: 'failed', detail: 'boom', log: [] }, false],
+    ['a flow still running', { kind: 'running', installId: 'i1', log: [], phase: 'installing' }, false],
+    ['a refusal', { kind: 'rejected', code: 'denied', detail: 'no' }, false],
+    ['nothing', { kind: 'idle' }, false],
+  ] satisfies Array<[string, InstallView, boolean]>)('%s', (_case, view, expected) => {
+    expect(settledByRestart(view)).toBe(expected)
   })
 })
