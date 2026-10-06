@@ -33,15 +33,15 @@
 # 已全局安装 dsh 时，直接运行以下命令。
 # 请明确指定版本号：pnpm 11 默认限制安装刚发布的版本，省略版本号可能会装到旧版。
 # 下方使用当前版本，可用 `npm view dsh-plugin-shop version` 查询最新版本。
-dsh plugin --profile web add dsh-plugin-shop@0.8.4
+dsh plugin --profile web add dsh-plugin-shop@0.8.5
 # 也可以通过 npx 执行安装命令：
-npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.8.4
+npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.8.5
 ```
 
 如果你使用的配置不是 `web`，请将命令中的 `web` 换成对应的 profile 名称。安装后需要重启 `dsh`，
 新插件才会生效。随后打开：
 
-> **设置 → 插件 → 插件商店**
+> **设置 → 内置插件 → 插件商店**（dsh 0.1.5 上这一栏叫“插件”）
 
 ### 🤖 通过 Agent 安装
 
@@ -53,7 +53,7 @@ npx -y @deepseek-ai/dsh plugin --profile web add dsh-plugin-shop@0.8.4
 ls -1 "${DSH_HOME:-$HOME/.dsh}/profiles" | grep -v '^node_modules$'
 
 # 2. 指定版本安装，避免 pnpm 的发布冷却期影响结果，确保安装的是预期版本
-dsh plugin --profile <profile> add dsh-plugin-shop@0.8.4
+dsh plugin --profile <profile> add dsh-plugin-shop@0.8.5
 
 # 3. 确认安装结果；上一步退出码为 0 只说明 pnpm 成功解析了包
 dsh plugin --profile <profile> list --depth 0   # 列表中应包含 dsh-plugin-shop
