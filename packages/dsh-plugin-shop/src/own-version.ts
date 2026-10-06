@@ -1,10 +1,12 @@
 /** The shop's own published version, read from the package.json that ships
  * next to this package — the RUNNING version, not the manifest's range
- * spec. This lives at the package root (not under src/host) on purpose:
+ * spec — and the identity of the process running it (`bootId`). This lives
+ * at the package root (not under src/host) on purpose:
  * both the source tree (tests) and the bundled `lib/index.js` sit exactly
  * one level below the package root, so the same relative URL resolves in
  * both. */
 
+import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
@@ -40,6 +42,18 @@ export function versionAtLoad(read: () => string): () => string {
 /** The version of the code in this process, read when the module was first
  * evaluated — at boot, before any self-update could rewrite the file. */
 export const runningVersion = versionAtLoad(() => (ownManifest() as { version: string }).version)
+
+/**
+ * Which run of the code this is: drawn when the module is first evaluated,
+ * fixed for the life of the process, and different in the next one.
+ *
+ * The version cannot answer that. A restart that installed no new shop keeps
+ * it, and so does one that never happened — which is what a page reloaded
+ * into the process it asked to restart could not tell apart from success,
+ * and showed as a self-update that silently did not land (design §8,
+ * 2026-10-06 amendment).
+ */
+export const bootId: string = randomUUID()
 
 /**
  * The peer ranges this build declares — the input to the load-time harness

@@ -10,7 +10,7 @@ export { isShopLike } from '../shared/shop-like.ts'
 export { identityKey, type EntryIdentity } from '../shared/identity.ts'
 import { holderLabel, identityKey, specVerdict, type EntryIdentity } from '../shared/identity.ts'
 import type { ShopLocaleKey } from './locales.ts'
-import type { CatalogEntry, HarnessVerdict, HotRestartReason, InstallRejectionCode, RestartBlockedReason } from '../host/index.ts'
+import type { CatalogEntry, HarnessVerdict, HotRestartReason, InstallRejectionCode, RestartBlockedReason, ShopVersionResult } from '../host/index.ts'
 import type { Activation } from '../host/activation.ts'
 import { isTerminalInstallState, type InstallState } from '../shared/install-state.ts'
 
@@ -378,6 +378,33 @@ export function restartMonitorVerdict(input: { elapsedMs: number; stableSinceMs:
   if (input.stableSinceMs !== null && input.elapsedMs - input.stableSinceMs >= RESTART_STABLE_MS) return 'reload'
   if (input.stableSinceMs === null && input.elapsedMs > RESTART_WAIT_MS) return 'failed'
   return 'wait'
+}
+
+/**
+ * Whether two `version()` answers came from different dsh processes — dsh
+ * restarted under the page between them (design §8, 2026-10-06 amendment).
+ *
+ * A process names itself by `bootId` for as long as it lives, so where either
+ * answer carries one, a difference decides: a host older than the field never
+ * starts naming itself, and a newer one never stops. Where neither does, only
+ * the code they run can differ — one process runs one version, read once at
+ * its boot — which still catches the first restart after a self-update from
+ * a host older than the field, the one that matters most.
+ */
+export function answeredByAnotherProcess(previous: ShopVersionResult, next: ShopVersionResult): boolean {
+  if (previous.bootId !== undefined || next.bootId !== undefined) return previous.bootId !== next.bootId
+  return previous.installed !== next.installed
+}
+
+/**
+ * Whether dsh restarting under the page settles this receipt: a change that
+ * landed and was waiting for exactly that. The tab clears these once the
+ * answers come from another process, and nothing else — a reload is still
+ * owed by a page nobody reloaded, a failure still happened, and a flow still
+ * running settles by its own poll.
+ */
+export function settledByRestart(view: InstallView): boolean {
+  return view.kind === 'done' && view.activation === 'restart'
 }
 
 /** How long the check-update button reports "up to date" after a re-check

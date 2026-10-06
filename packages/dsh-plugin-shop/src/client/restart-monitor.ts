@@ -30,19 +30,32 @@
  * records the request before anything is awaited, and a request whose path is
  * withdrawn mid-call is asked again through a live one. The host answers a
  * repeat with the restart it already committed.
+ *
+ * The VERDICT outlives the page, since 2026-10-06. The monitor reloads on
+ * any origin that keeps answering, and a process that never exited answers
+ * as steadily as one that replaced it: on macOS a confirmed restart reloaded
+ * into the very process it had asked to go, and the row went on showing the
+ * version before the update with nothing to say why. A commit therefore
+ * records, in this tab's sessionStorage, which process committed it (its
+ * boot identity and pid), and every version answer the reloaded page
+ * receives is judged against that record (`noteBoot`).
  */
 
 import type { ShopRestartResult } from '../host/index.ts'
 import { INSTALL_POLL_MS, RESTART_GRACE_MS, restartMonitorVerdict } from './present.ts'
 
 /** What this page is doing about a restart: waiting for the host to answer
- * the confirm, waiting for the new server once it committed, or given up on
- * that server. `logFile` is where the host said the new process writes; a
- * host older than that field sends none. */
+ * the confirm, waiting for the new server once it committed, given up on
+ * that server, or reloaded into the process that was asked to restart and
+ * found it still answering — `pid` is that process. `logFile` is where the
+ * host said the new process writes; a host older than that field sends
+ * none, and one older than the boot identity sends no `pid` and is never
+ * judged `not-restarted` at all. */
 export type RestartMonitorState =
   | { kind: 'requesting' }
   | { kind: 'restarting'; logFile?: string }
   | { kind: 'failed'; logFile?: string }
+  | { kind: 'not-restarted'; pid?: number; logFile?: string }
 
 /** How one press ended, for the panel that made it: the page follows the
  * restart from here, the host refused it, or it never reached a host that
@@ -104,6 +117,67 @@ function settle(store: MonitorStore, state: RestartMonitorState | null): void {
   for (const listener of [...store.listeners]) listener()
 }
 
+/** sessionStorage key of the restart this tab last saw committed. Not the
+ * page store: the verdict belongs to the page the reload produces, and a
+ * reload clears `globalThis`. Not localStorage: it is this tab's restart, and
+ * another tab never asked for it. */
+const RECORD_KEY = 'dsh-plugin-shop.restart'
+
+/** Which process committed the restart, and what the notice names if that
+ * process is still the one answering after the reload. */
+interface RestartRecord {
+  bootId: string
+  pid?: number
+  logFile?: string
+}
+
+function writeRecord(record: RestartRecord): void {
+  try {
+    globalThis.sessionStorage.setItem(RECORD_KEY, JSON.stringify(record))
+  } catch {
+    // Storage blocked for the origin, full, or absent outside a browser: the
+    // restart goes ahead, and only the verdict after its reload is lost.
+  }
+}
+
+/** The record, or null when there is none this module could have written.
+ * Every plugin on the origin shares the tab's sessionStorage, and the pid is
+ * rendered into a command the reader is told to run, so each field is
+ * checked again on the way back in. */
+function readRecord(): RestartRecord | null {
+  let raw: string | null
+  try {
+    raw = globalThis.sessionStorage.getItem(RECORD_KEY)
+  } catch {
+    // Storage that refuses a read refused the write too: no record exists.
+    return null
+  }
+  if (raw === null) return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    // Not JSON, so not a record this module wrote.
+    return null
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null
+  const { bootId, pid, logFile } = parsed as Record<string, unknown>
+  if (typeof bootId !== 'string') return null
+  return {
+    bootId,
+    ...(typeof pid === 'number' && Number.isSafeInteger(pid) && pid > 0 ? { pid } : {}),
+    ...(typeof logFile === 'string' ? { logFile } : {}),
+  }
+}
+
+function forgetRecord(): void {
+  try {
+    globalThis.sessionStorage.removeItem(RECORD_KEY)
+  } catch {
+    // Storage that refuses access holds no record to forget.
+  }
+}
+
 /** The page's restart, or null when it has committed none. The same object
  * until the state changes, as `useSyncExternalStore` requires. */
 export function readRestartMonitor(): RestartMonitorState | null {
@@ -132,11 +206,16 @@ export function subscribeRestartMonitor(listener: () => void): () => void {
  * renders this state, so a second press can only come from a panel that has
  * not re-rendered yet, and a second loop would probe the same origin twice.
  */
-export function startRestartMonitor(options: { reload: () => void; logFile?: string }): void {
+export function startRestartMonitor(options: { reload: () => void; logFile?: string; bootId?: string; pid?: number }): void {
   const store = monitorStore()
   if (store.state?.kind === 'restarting') return
   store.stop?.()
-  const { reload, logFile } = options
+  const { reload, logFile, bootId, pid } = options
+  // For the page the reload produces, which judges this restart by the
+  // process that answers it (`noteBoot`).
+  if (bootId !== undefined) {
+    writeRecord({ bootId, ...(pid === undefined ? {} : { pid }), ...(logFile === undefined ? {} : { logFile }) })
+  }
   const started = Date.now()
   let stableSince: number | null = null
   let stopped = false
@@ -248,7 +327,12 @@ function ask(store: MonitorStore, attempt: Attempt, carrier: Carrier): void {
         // A commit is the truth about the host however late it arrives, even
         // on a path the request has since left.
         finish(store, attempt, { kind: 'started' })
-        startRestartMonitor({ reload: attempt.reload, ...(typeof result.logFile === 'string' ? { logFile: result.logFile } : {}) })
+        startRestartMonitor({
+          reload: attempt.reload,
+          ...(typeof result.logFile === 'string' ? { logFile: result.logFile } : {}),
+          ...(typeof result.bootId === 'string' ? { bootId: result.bootId } : {}),
+          ...(typeof result.pid === 'number' ? { pid: result.pid } : {}),
+        })
         return
       }
       if (superseded(attempt, carrier)) return
@@ -279,10 +363,41 @@ function finish(store: MonitorStore, attempt: Attempt, outcome: RestartRequestOu
   for (const waiter of attempt.waiters) waiter(outcome)
 }
 
-/** Stop the probe loop and forget the page's restart, its request and every
- * registered path. Nothing in the page calls this — a committed restart ends
- * in a reload or a failure — so its caller is a test isolating one case from
- * the next. */
+/**
+ * Judge this tab's last committed restart by the process answering now. The
+ * client half hands every `version()` answer here (index.ts), so the verdict
+ * is made on the first answer a reloaded page receives, before any tab opens.
+ *
+ * The same boot as the one that committed is a restart that never happened:
+ * the page says so, naming that process, for as long as it keeps answering
+ * — across reloads too, since the record stays. Any other answer, an older
+ * host's included, is a process that replaced it, and the record is spent.
+ * Nothing is judged while this page's own restart is under way: the process
+ * that committed answers until it exits, two seconds later.
+ */
+export function noteBoot(bootId: string | undefined): void {
+  const store = monitorStore()
+  if (store.state?.kind === 'requesting' || store.state?.kind === 'restarting') return
+  const record = readRecord()
+  if (record === null) return
+  if (record.bootId === bootId) {
+    if (store.state?.kind !== 'not-restarted') {
+      settle(store, {
+        kind: 'not-restarted',
+        ...(record.pid === undefined ? {} : { pid: record.pid }),
+        ...(record.logFile === undefined ? {} : { logFile: record.logFile }),
+      })
+    }
+    return
+  }
+  forgetRecord()
+  if (store.state?.kind === 'not-restarted') settle(store, null)
+}
+
+/** Stop the probe loop and forget the page's restart, its request, every
+ * registered path and the tab's record of its last commit. Nothing in the
+ * page calls this — a committed restart ends in a reload or a failure — so
+ * its caller is a test isolating one case from the next. */
 export function resetRestartMonitor(): void {
   const store = monitorStore()
   store.stop?.()
@@ -290,5 +405,6 @@ export function resetRestartMonitor(): void {
   for (const carrier of store.carriers) carrier.live = false
   store.carriers = []
   store.attempt = null
+  forgetRecord()
   settle(store, null)
 }

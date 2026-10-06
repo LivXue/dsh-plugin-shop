@@ -45,6 +45,12 @@ export interface UseKeyedFlows<TArgs> {
    * registry's settle callback can supersede the other's receipt for the same
    * key without taking a dependency on that registry's output. */
   resetFlow: (key: string) => void
+  /** Return every identity whose view `predicate` selects to `idle`, and
+   * nothing else. Stable across renders like `resetFlow`; a call selecting
+   * nothing leaves the registry — and so every flow and `pending` — exactly
+   * as it was. The tab clears the receipts dsh restarting under it settled
+   * with this (design §8, 2026-10-06 amendment). */
+  resetWhere: (predicate: (view: InstallView) => boolean) => void
   /**
    * The identities whose flow is not `idle` — asked by the shelf, which has
    * to keep a settled uninstall's row in the Installed view after the
@@ -123,6 +129,18 @@ export function useKeyedFlows<TArgs>(
     })
   }, [])
 
+  const resetWhere = useCallback((predicate: (view: InstallView) => boolean): void => {
+    setViews(current => {
+      let next: Map<string, InstallView> | null = null
+      for (const [key, view] of current) {
+        if (!predicate(view)) continue
+        next ??= new Map(current)
+        next.delete(key)
+      }
+      return next ?? current
+    })
+  }, [])
+
   // One interval polls every running identity; duplicate panels never poll
   // the same host record independently.
   useEffect(() => {
@@ -196,5 +214,5 @@ export function useKeyedFlows<TArgs>(
     return flow
   }, [views, start, reset])
 
-  return { flowFor, resetFlow: reset, pending }
+  return { flowFor, resetFlow: reset, resetWhere, pending }
 }

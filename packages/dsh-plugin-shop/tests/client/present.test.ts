@@ -6,10 +6,10 @@ import {
   nextVisibleCount, npmPageUrl, readsIncompatible, refusedPeersText, refusesInstall,
   installPhaseKey, reduceInstall, type InstallView,
   reviewHashPin, sortByStars, starsOf, tierKey,
-  RESTART_STABLE_MS, RESTART_WAIT_MS, restartMonitorVerdict,
+  RESTART_STABLE_MS, RESTART_WAIT_MS, restartMonitorVerdict, answeredByAnotherProcess, settledByRestart,
 } from '../../src/client/present.ts'
 import { en, zh } from '../../src/client/locales.ts'
-import type { CatalogEntry, HarnessVerdict } from '../../src/host/index.ts'
+import type { CatalogEntry, HarnessVerdict, ShopVersionResult } from '../../src/host/index.ts'
 import type { InstallState } from '../../src/shared/install-state.ts'
 
 const entry: CatalogEntry = {
@@ -933,5 +933,52 @@ describe('installPhaseKey', () => {
       expect(zh[key]).toBeTruthy()
       expect(en[key]).not.toBe(zh[key])
     }
+  })
+})
+
+describe('answeredByAnotherProcess', () => {
+  // The client half re-asks `version()` on every reconnect. A reconnect alone
+  // says nothing — dsh's socket also drops and comes back to the SAME
+  // process — so the answers decide whether dsh restarted under the page.
+  const answer = (installed: string, bootId?: string): ShopVersionResult => ({
+    installed, latest: null, outdated: false, restartBlocked: null, pendingVersion: null,
+    ...(bootId === undefined ? {} : { bootId }),
+  })
+
+  it.each([
+    ['the same boot', answer('0.8.6', 'boot-a'), answer('0.8.6', 'boot-a'), false],
+    ['another boot running the same version', answer('0.8.6', 'boot-a'), answer('0.8.6', 'boot-b'), true],
+    // A process never stops naming itself, so a host older than the field
+    // answering after one that named itself is another process...
+    ['an older host after a newer one', answer('0.8.6', 'boot-a'), answer('0.8.5'), true],
+    // ...and so is one naming itself where the last answer named nobody. This
+    // is the first restart after a self-update FROM a host older than the
+    // field: the case the version alone could never miss either.
+    ['a newer host after an older one', answer('0.8.5'), answer('0.8.6', 'boot-a'), true],
+    // Two answers that name no process can only be told apart by the code
+    // they run: one process runs one version, read once at its boot.
+    ['two older answers running one version', answer('0.8.5'), answer('0.8.5'), false],
+    ['two older answers running different versions', answer('0.8.5'), answer('0.8.6'), true],
+  ])('%s', (_case, previous, next, expected) => {
+    expect(answeredByAnotherProcess(previous, next)).toBe(expected)
+  })
+})
+
+describe('settledByRestart', () => {
+  // What dsh restarting under the page settles: a change that landed and was
+  // waiting for exactly that. Everything else on the page is still true after
+  // it — a reload is still owed by a page that was not reloaded, a failure
+  // still happened, and a flow still running settles by its own poll.
+  it.each([
+    ['a change waiting for a restart', { kind: 'done', activation: 'restart', log: [] }, true],
+    ['one waiting for a restart, with the reason it needs one', { kind: 'done', activation: 'restart', log: [], restartReason: 'not-simple' }, true],
+    ['a change waiting for a reload of this page', { kind: 'done', activation: 'reload', log: [] }, false],
+    ['a change already live', { kind: 'done', activation: 'live', log: [] }, false],
+    ['a failure', { kind: 'failed', detail: 'boom', log: [] }, false],
+    ['a flow still running', { kind: 'running', installId: 'i1', log: [], phase: 'installing' }, false],
+    ['a refusal', { kind: 'rejected', code: 'denied', detail: 'no' }, false],
+    ['nothing', { kind: 'idle' }, false],
+  ] satisfies Array<[string, InstallView, boolean]>)('%s', (_case, view, expected) => {
+    expect(settledByRestart(view)).toBe(expected)
   })
 })

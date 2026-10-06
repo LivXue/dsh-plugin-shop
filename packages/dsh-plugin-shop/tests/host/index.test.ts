@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import ShopGateway, { verifyTarballSha256 } from '../../src/host/index.ts'
 import { nodeVersionResolver } from '../../src/host/peers.ts'
-import { ownPeerRanges } from '../../src/own-version.ts'
+import { bootId, ownPeerRanges } from '../../src/own-version.ts'
 import type { InventoryEntry, LoaderEntryLike, RestartBlockedReason, ShopGatewayOptions, ShopInstallStatusResult } from '../../src/host/index.ts'
 import type { HotContext, HotMountResult } from '../../src/host/hot.ts'
 import type { CatalogResult, CatalogSnapshot, LoadCatalogOptions } from '../../src/host/catalog.ts'
@@ -1469,15 +1469,19 @@ describe('ShopGateway.restart', () => {
     })
   }
 
-  it('commits the handoff, names the log the new process writes, and exits after the response', async () => {
+  it('commits the handoff, names the log the new process writes and the process it replaces, and exits after the response', async () => {
     // The log's path depends on DSH_HOME and on the shop row's cacheDir, which
     // only the host knows; the client names it when the new server does not
-    // come back (design 2026-09-26-market-borrowings §3).
+    // come back (design 2026-09-26-market-borrowings §3). The answer also
+    // names the process that committed — its boot, and the pid the takeover
+    // waits on — because a page reloaded into that same process is a restart
+    // that never happened, and the page can only say so, and say which pid
+    // to stop, if it was told whom it asked (design §8, 2026-10-06 amendment).
     const exit = vi.fn<() => void>()
     const cacheDir = mkdtempSync(join(TEMP_ROOT, 'dsh-restart-cache-'))
     const gateway = restartingGateway({ exit, cacheDir })
     const result = await gateway.restart()
-    expect(result).toEqual({ ok: true, logFile: join(cacheDir, 'restart.log') })
+    expect(result).toEqual({ ok: true, logFile: join(cacheDir, 'restart.log'), bootId, pid: 1_000_000_000 })
     // The exit is delayed past the RPC round-trip, then fires.
     await new Promise(resolve => setTimeout(resolve, 50))
     expect(exit).toHaveBeenCalledWith(0)
@@ -1495,7 +1499,7 @@ describe('ShopGateway.restart', () => {
     const cacheDir = mkdtempSync(join(TEMP_ROOT, 'dsh-restart-cache-'))
     const gateway = restartingGateway({ exit, cacheDir })
     const first = await gateway.restart()
-    expect(first).toEqual({ ok: true, logFile: join(cacheDir, 'restart.log') })
+    expect(first).toEqual({ ok: true, logFile: join(cacheDir, 'restart.log'), bootId, pid: 1_000_000_000 })
     expect(await gateway.restart()).toEqual(first)
     await new Promise(resolve => setTimeout(resolve, 50))
     expect(exit).toHaveBeenCalledTimes(1)
@@ -1798,6 +1802,18 @@ describe('ShopGateway.version', () => {
     const result = await gateway.version()
     expect(result.latest).toBeNull()
     expect(result.outdated).toBe(false)
+  })
+
+  it('names the process answering, the same on every call and from every gateway in it', async () => {
+    // The page keeps the identity it last saw and compares the next answer
+    // with it: a different one after a reconnect is dsh restarted under the
+    // page, the same one after a restart's reload is a restart that never
+    // happened (design §8, 2026-10-06 amendment). Per process, not per
+    // gateway: a value drawn per call or per instance would read every
+    // answer as a restart.
+    const first = await versionGateway('9.9.9').version()
+    expect(first.bootId).toBe(bootId)
+    expect((await versionGateway(null).version()).bootId).toBe(bootId)
   })
 
   /** A profile whose installed shop copy declares `installedCopy`, or holds

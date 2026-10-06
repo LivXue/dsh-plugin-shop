@@ -99,15 +99,24 @@ These block a real launch, not the code.
    **Done 2026-09-27:** a `dsh` matrix axis runs 0.1.5-rc.3 and 0.1.7-rc.2 on
    both platforms, and each leg checks that the harness it boots is the one
    it installed (readiness, Release).
-7. **dsh 0.2 — ready, not released, 2026-10-05.** npm's `latest` became
-   0.2.0-rc.2 on 2026-09-29, and that dsh skips the shop at boot, because
+7. **dsh 0.2 — released in 0.8.5, 2026-10-06.** npm's `latest` became
+   0.2.0-rc.2 on 2026-09-29, and that dsh skipped the shop at boot, because
    the shop's harness peers read `^0.1.1-rc.2`. The peers now admit the 0.2
    line and CI runs a third harness
    ([2026-10-05-dsh-020-readiness.md](../design/2026-10-05-dsh-020-readiness.md)).
-   Open: the beta and its promotion — the promotion commit carries the
-   README pins, the six screenshots and the "Built-in plugins" path — and a
-   release note telling 0.2 readers to reinstall the shop once, since a
-   shop dsh skips cannot update itself.
+   0.8.5 carries the README pins, the six screenshots and the "Built-in
+   plugins" path, and its release note tells 0.2 readers to reinstall the
+   shop once, since a shop dsh skips cannot update itself.
+8. **The shop's restart on macOS — reported 2026-10-06, cause not
+   established.** A restart confirmed after a self-update reloaded the page
+   into the very process it had asked to go, and the row kept the old
+   version. The shop now checks which process answers it, after a
+   restart's reload and after every reconnect, and says when a restart
+   never happened. It also stamps the handoff in `restart.log` (design §8,
+   2026-10-06 amendment). Open: why that process stayed. The next report's
+   `restart.log` settles it. A commit with no exit line after it means an
+   old process that never left. Both lines followed by a boot that died
+   means a new dsh that failed.
 
 ## P1 — the Host half (done 2026-08-25)
 

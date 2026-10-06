@@ -6,8 +6,8 @@ import { act, cleanup, renderHook } from '@testing-library/react'
 import { apply, inject, NS, WARM_TTL_MS } from '../../src/client/index.ts'
 import { useInstallFlows } from '../../src/client/useInstall.ts'
 import type { ShopTabInjected } from '../../src/client/ShopTab.tsx'
-import { readRestartMonitor, requestRestart, resetRestartMonitor } from '../../src/client/restart-monitor.ts'
-import type { InstallArgs, ShopInstallResult } from '../../src/host/index.ts'
+import { readRestartMonitor, requestRestart, resetRestartMonitor, startRestartMonitor } from '../../src/client/restart-monitor.ts'
+import type { InstallArgs, ShopInstallResult, ShopVersionResult } from '../../src/host/index.ts'
 
 // The published dsh client packages expose their browser bundles (a
 // `__ModuleLoader__.load` handoff) as the `./client` default; their exports
@@ -34,6 +34,7 @@ interface ShopStub {
   updateStart?: (args: { version: string }) => Promise<unknown>
   catalog?: () => Promise<unknown>
   restart?: () => Promise<unknown>
+  version?: () => Promise<unknown>
 }
 
 /** Boot apply() against a stubbed remote and return the shop tab entry's
@@ -72,7 +73,7 @@ async function boot(shop: ShopStub = {}, modules?: unknown) {
     installed: vi.fn(),
     uninstallStart: shop.uninstallStart ?? vi.fn(),
     restart: shop.restart ?? vi.fn(),
-    version: vi.fn(),
+    version: shop.version ?? vi.fn(),
     updateStart: shop.updateStart ?? vi.fn(),
   })
   await apply(ctx)
@@ -517,5 +518,130 @@ describe('shop client apply: the restart path it registers on the page', () => {
     await expect(requestRestart({ reload: vi.fn(), restart: injected.restart })).resolves.toEqual({ kind: 'started' })
     expect(restart).toHaveBeenCalledTimes(1)
     await ctx.fiber.dispose()
+  })
+})
+
+describe('shop client apply: dsh restarting under the page', () => {
+  // dsh's client reconnects to whatever server holds the origin and emits
+  // `connection/reset` on every connect (dsh-api-gateway's
+  // ClientRemoteService, 0.1.5-rc.3 through 0.2.0-rc.2) — and nothing reloads
+  // the shop. A restart from a terminal, by a supervisor, or one whose own
+  // reload never came left an open tab on the old process's answers: the old
+  // version, an update still "waiting for a restart", and every card still
+  // asking for one (design §8, 2026-10-06 amendment).
+
+  const LOG = '/home/you/.dsh/shop/restart.log'
+  const fakeCatalog = {
+    schemaVersion: 2, builtAt: '2026-08-27T00:00:00Z', stale: false,
+    plugins: [], denied: [], stars: {}, incompatible: {}, incompatibleHarness: {},
+  }
+  const answer = (bootId: string): { ok: true; value: ShopVersionResult } => ({
+    ok: true,
+    value: { installed: '0.8.6', latest: '0.8.6', outdated: false, restartBlocked: null, pendingVersion: null, bootId },
+  })
+  /** What a reload leaves of the page: no page store and no probe loop, but
+   * the tab's sessionStorage — and so the record of the restart it asked for. */
+  const pageReloaded = (): void => {
+    const page = globalThis as unknown as Record<symbol, { stop?: (() => void) | null } | undefined>
+    const key = Symbol.for('dsh-plugin-shop.restart-monitor')
+    page[key]?.stop?.()
+    delete page[key]
+  }
+  /** The face's subscription; failing loudly rather than skipping, since an
+   * optional call on an absent one would let every case below pass. */
+  const onRestarted = (injected: ShopTabInjected): NonNullable<ShopTabInjected['onRestarted']> => {
+    if (injected.onRestarted === undefined) throw new Error('the face offers no onRestarted')
+    return injected.onRestarted
+  }
+
+  it('judges the last restart by the first answer the reloaded page gets, before any tab opens', async () => {
+    startRestartMonitor({ reload: vi.fn(), logFile: LOG, bootId: 'boot-a', pid: 4242 })
+    pageReloaded()
+    await boot({ version: vi.fn().mockResolvedValue(answer('boot-a')) })
+    await vi.waitFor(() => { expect(readRestartMonitor()).toEqual({ kind: 'not-restarted', pid: 4242, logFile: LOG }) })
+  })
+
+  it('asks who is answering on every reconnect, so a later restart clears the verdict with no tab open', async () => {
+    startRestartMonitor({ reload: vi.fn(), logFile: LOG, bootId: 'boot-a', pid: 4242 })
+    pageReloaded()
+    const version = vi.fn().mockResolvedValueOnce(answer('boot-a')).mockResolvedValue(answer('boot-b'))
+    const { ctx } = await boot({ version })
+    await vi.waitFor(() => { expect(readRestartMonitor()?.kind).toBe('not-restarted') })
+    ctx.emit('connection/reset')
+    await vi.waitFor(() => { expect(readRestartMonitor()).toBeNull() })
+    expect(version).toHaveBeenCalledTimes(2)
+  })
+
+  it('tells the tab once the answers come from another process, with the first answer from it', async () => {
+    const version = vi.fn().mockResolvedValueOnce(answer('boot-a')).mockResolvedValue(answer('boot-b'))
+    const { ctx, injected } = await boot({ version })
+    const heard = vi.fn()
+    onRestarted(injected)(heard)
+    await vi.waitFor(() => { expect(version).toHaveBeenCalledTimes(1) })
+    ctx.emit('connection/reset')
+    await vi.waitFor(() => { expect(heard).toHaveBeenCalledTimes(1) })
+    expect(heard).toHaveBeenCalledWith(expect.objectContaining({ bootId: 'boot-b' }))
+  })
+
+  it('says nothing when the reconnect finds the same process', async () => {
+    // dsh's socket also drops and comes back to the process it left.
+    const version = vi.fn().mockResolvedValue(answer('boot-a'))
+    const { ctx, injected } = await boot({ version })
+    const heard = vi.fn()
+    onRestarted(injected)(heard)
+    ctx.emit('connection/reset')
+    await vi.waitFor(() => { expect(version).toHaveBeenCalledTimes(2) })
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+    expect(heard).not.toHaveBeenCalled()
+  })
+
+  it("tells the tab when its own version check is what finds the new process", async () => {
+    // The tab's checks pass through the same face; whichever answer is first
+    // to come from the new process is the one that says so.
+    const version = vi.fn().mockResolvedValueOnce(answer('boot-a')).mockResolvedValue(answer('boot-b'))
+    const { injected } = await boot({ version })
+    const heard = vi.fn()
+    onRestarted(injected)(heard)
+    await vi.waitFor(() => { expect(version).toHaveBeenCalledTimes(1) })
+    await expect(injected.version()).resolves.toMatchObject({ bootId: 'boot-b' })
+    expect(heard).toHaveBeenCalledTimes(1)
+  })
+
+  it('stops telling a tab that unsubscribed', async () => {
+    const version = vi.fn().mockResolvedValueOnce(answer('boot-a')).mockResolvedValue(answer('boot-b'))
+    const { ctx, injected } = await boot({ version })
+    const heard = vi.fn()
+    const unsubscribe = onRestarted(injected)(heard)
+    await vi.waitFor(() => { expect(version).toHaveBeenCalledTimes(1) })
+    unsubscribe()
+    ctx.emit('connection/reset')
+    await vi.waitFor(() => { expect(version).toHaveBeenCalledTimes(2) })
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+    expect(heard).not.toHaveBeenCalled()
+  })
+
+  it("drops the warm catalog once another process answers: the old one's verdicts are not the new one's", async () => {
+    const catalog = vi.fn().mockResolvedValue({ ok: true, value: fakeCatalog })
+    const version = vi.fn().mockResolvedValueOnce(answer('boot-a')).mockResolvedValue(answer('boot-b'))
+    const { ctx, injected } = await boot({ catalog, version })
+    const heard = vi.fn()
+    onRestarted(injected)(heard)
+    expect(catalog).toHaveBeenCalledTimes(1) // the boot-time warm
+    await vi.waitFor(() => { expect(version).toHaveBeenCalledTimes(1) })
+    ctx.emit('connection/reset')
+    await vi.waitFor(() => { expect(heard).toHaveBeenCalledTimes(1) })
+    await injected.catalog(undefined)
+    expect(catalog).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the warm catalog across a reconnect to the same process', async () => {
+    const catalog = vi.fn().mockResolvedValue({ ok: true, value: fakeCatalog })
+    const version = vi.fn().mockResolvedValue(answer('boot-a'))
+    const { ctx, injected } = await boot({ catalog, version })
+    await vi.waitFor(() => { expect(version).toHaveBeenCalledTimes(1) })
+    ctx.emit('connection/reset')
+    await vi.waitFor(() => { expect(version).toHaveBeenCalledTimes(2) })
+    await injected.catalog(undefined)
+    expect(catalog).toHaveBeenCalledTimes(1)
   })
 })

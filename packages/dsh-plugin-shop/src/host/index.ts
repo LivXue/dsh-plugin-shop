@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
-import { ownPeerRanges, runningVersion } from '../own-version.ts'
+import { bootId, ownPeerRanges, runningVersion } from '../own-version.ts'
 import { catalogOrigins, loadCatalog, type LoadCatalogOptions } from './catalog.ts'
 import type { CatalogResult, CatalogSnapshot } from './catalog.ts'
 import type { CatalogOrigin } from './origin.ts'
@@ -295,6 +295,17 @@ export interface ShopVersionResult {
    * the process running (design §7.3, 2026-09-27 amendment).
    */
   pendingVersion?: string | null
+  /**
+   * Which process answered (own-version.ts `bootId`): fixed for its life and
+   * different in the next. The client compares it across a reconnect — a new
+   * one is dsh restarted under the page — and across a restart's reload —
+   * the same one is a restart that never happened (design §8, 2026-10-06
+   * amendment).
+   *
+   * This host always sends it. Absent, it comes from a host older than the
+   * field, and the client judges nothing by it.
+   */
+  bootId?: string
 }
 
 /** `shop/updateStart` result (§7.3): the self-update spawn, or a typed
@@ -503,7 +514,7 @@ export class ShopGateway extends TypertRemoteService {
    * `shop/restart` answers with it. A page that lost the first answer to an
    * HMR swap asks again (client/restart-monitor.ts), and inside the exit
    * delay that ask reaches this same process. */
-  private committedRestart: { logFile: string } | null = null
+  private committedRestart: ShopRestartResult | null = null
   private readonly latestVersion: () => Promise<string | null>
   private readonly pinFs: RepoPinFs
   private readonly allowRestart?: boolean
@@ -1919,7 +1930,7 @@ export class ShopGateway extends TypertRemoteService {
     // a second timer is a second exit. Ahead of every refusal, because the
     // commit is irrevocable: refusing a repeat over an install begun since
     // would tell the page nothing is under way while this process exits.
-    if (this.committedRestart !== null) return { ok: true, logFile: this.committedRestart.logFile }
+    if (this.committedRestart !== null) return this.committedRestart
     // A running install owns the profile: `pnpm` may be rewriting its
     // package.json, lockfile and node_modules. Exiting now would hand the
     // takeover helper a half-written profile, so refuse before anything is
@@ -1964,10 +1975,12 @@ export class ShopGateway extends TypertRemoteService {
     // The response must reach the browser before this process exits; the
     // helper holds the child back until this pid is gone, so the port is
     // free when the new dsh binds. It names the log the new process writes,
-    // for the page to point at if that process never stays up.
-    this.committedRestart = { logFile }
+    // for the page to point at if that process never stays up, and the
+    // process it replaces, for the page to recognise if it is still the one
+    // answering after the reload.
+    this.committedRestart = { ok: true, logFile, bootId, pid: this.restartParentPid }
     setTimeout(() => this.exit(0), this.restartExitDelayMs)
-    return { ok: true, logFile }
+    return this.committedRestart
   }
 
   /** The shop's own version and whether npm has a newer one (§7.3). The
@@ -1984,6 +1997,7 @@ export class ShopGateway extends TypertRemoteService {
       outdated: latest !== null && lt(installed, latest),
       restartBlocked: this.staticRestartBlock(),
       pendingVersion: this.pendingVersion(installed),
+      bootId,
     }
   }
 

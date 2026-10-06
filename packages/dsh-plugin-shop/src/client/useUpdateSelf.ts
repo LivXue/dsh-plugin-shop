@@ -12,6 +12,11 @@ import { usePollStatus } from './useInstall.ts'
 export interface UseUpdateSelfResult {
   view: InstallView
   start: (args: { version: string }) => Promise<void>
+  /** Return the view to `idle` when `predicate` selects it; stable across
+   * renders. The keyed registries' `resetWhere`, for the one self-update:
+   * dsh restarting under the page settles an update that was waiting for
+   * exactly that (design §8, 2026-10-06 amendment). */
+  resetWhere: (predicate: (view: InstallView) => boolean) => void
 }
 
 /** Drive one self-update: the host's business union, the shared polling
@@ -39,7 +44,11 @@ export function useUpdateSelf(
     }
   }, [updateStart])
 
+  const resetWhere = useCallback((predicate: (view: InstallView) => boolean) => {
+    setView(current => (predicate(current) ? { kind: 'idle' } : current))
+  }, [])
+
   usePollStatus(view, setView, installStatus)
 
-  return { view, start }
+  return { view, start, resetWhere }
 }

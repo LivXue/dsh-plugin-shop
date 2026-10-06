@@ -12,17 +12,30 @@ import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { TypertRemoteNamespaceMap } from '@deepseek-ai/dsh-typert-protocol'
 import shopRemote from 'dsh-plugin-shop/remote'
-import type { ShopCatalogResult, ShopRestartResult } from '../host/index.ts'
+import type { ShopCatalogResult, ShopRestartResult, ShopVersionResult } from '../host/index.ts'
 import type { ShopLocaleKey } from './locales.ts'
 import { en, zh } from './locales.ts'
 import { refineAgainstModuleTable } from './module-table.ts'
-import { registerRestartCarrier } from './restart-monitor.ts'
+import { answeredByAnotherProcess } from './present.ts'
+import { noteBoot, registerRestartCarrier } from './restart-monitor.ts'
 import { ShopTab, type ShopTabInjected } from './ShopTab.tsx'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
     /** Shop settings tab copy. */
     'settings.shop': ShopLocaleKey
+  }
+}
+
+declare module '@deepseek-ai/cordis' {
+  interface Events {
+    /** A connection generation was established: the first connect after
+     * plugin boot, and every reconnect. `@deepseek-ai/dsh-client-connection`
+     * declares it, in these words, from 0.1.5-rc.3 on, and dsh-api-gateway's
+     * client emits it there through 0.2.0-rc.2; the 0.1.1-rc.2 this package
+     * builds against predates the declaration. A harness that never emits
+     * it leaves the shop as it was before it listened. */
+    'connection/reset'(): void
   }
 }
 
@@ -122,7 +135,40 @@ export async function apply(ctx: ClientContext): Promise<void> {
   warmCatalog = { at: Date.now(), result: warmed }
   void warmed.catch(() => {})
   void Promise.resolve(ns.installed()).then(result => unwrap(result)).catch(() => {})
-  void Promise.resolve(ns.version()).then(result => unwrap(result)).catch(() => {})
+
+  // Which process answers the page (design §8, 2026-10-06 amendment). Every
+  // version answer passes through here — the boot warm-up just below, the
+  // tab's own checks, and the re-ask on every reconnect — so whichever is
+  // first to come from a new process is the one that says so, and the first
+  // a reloaded page gets judges the restart it reloaded after (`noteBoot`),
+  // before any tab is open. A process that differs from the last answer's is
+  // dsh restarted under the page: the warm catalog holds the old process's
+  // verdicts, and the tab holds receipts the restart has settled.
+  let lastVersion: ShopVersionResult | null = null
+  const restartListeners = new Set<(fresh: ShopVersionResult) => void>()
+  const version = async (): Promise<ShopVersionResult> => {
+    const result = unwrap(await ns.version())
+    noteBoot(result.bootId)
+    const previous = lastVersion
+    lastVersion = result
+    if (previous !== null && answeredByAnotherProcess(previous, result)) {
+      warmCatalog = null
+      for (const listener of [...restartListeners]) listener(result)
+    }
+    return result
+  }
+  // The check is advisory, and so is its failure: a transport that cannot
+  // answer leaves the last answer standing, which is all this path can do.
+  void version().catch(() => {})
+  // dsh reconnects to whatever server holds the origin and reloads nothing,
+  // so a restart from a terminal, by a supervisor, or one whose own reload
+  // never came leaves the page on the old process's answers. Asking again on
+  // every connection — the first one after boot included, which only finds
+  // the process the warm-up already found — is how the page learns it.
+  ctx.on('connection/reset', () => {
+    // Advisory, like the warm-up above: a failed ask changes nothing.
+    void version().catch(() => {})
+  })
 
   // The host's own result: the stash when it is fresh, the wire otherwise.
   // Every result becomes the stash, refresh included. A plain open only
@@ -224,7 +270,11 @@ export async function apply(ctx: ClientContext): Promise<void> {
     uninstall: async args => { warmCatalog = null; return unwrap(await ns.uninstallStart(args)) },
     noteUninstalled: name => { pageRemoved.add(name) },
     restart,
-    version: async () => unwrap(await ns.version()),
+    version,
+    onRestarted: listener => {
+      restartListeners.add(listener)
+      return () => { restartListeners.delete(listener) }
+    },
     updateStart: async args => { warmCatalog = null; return unwrap(await ns.updateStart(args)) },
   })
 
