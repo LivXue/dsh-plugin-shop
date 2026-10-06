@@ -925,7 +925,9 @@ function NotRestartedNotice({ t, pid, logFile }: { t: ShopTabProps['t']; pid: nu
   return (
     <div className={css.selfUpdatePanel} data-shop-not-restarted>
       <p className={css.failedDetail}>{pid === undefined ? t('notRestartedNotice') : t('notRestartedPidNotice', { pid: String(pid) })}</p>
-      {logFile !== undefined && <p className={css.notice}>{t('notRestartedLogNotice', { log: logFile })}</p>}
+      {/* Not `notice`: that is the success colour, and this line sits under a
+        * failure. */}
+      {logFile !== undefined && <p className={css.failedDetail}>{t('notRestartedLogNotice', { log: logFile })}</p>}
     </div>
   )
 }
