@@ -26,7 +26,7 @@
  */
 
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -211,6 +211,13 @@ const EXCUSED_REGISTRY_DIR_USES: readonly ExcusedUse[] = [
       + 'sole writer, already covered by its own check above. A write here would be '
       + 'overwritten by the build one step later and look like it had worked',
   },
+  {
+    module: 'classify.ts',
+    snippet: "const feedStatePath = join(REGISTRY_DIR, 'feed-state.json')",
+    reason: 'classify.ts only reads feed-state.json, to run the change feed; it carries '
+      + 'the next state in dist/harvest.json instead, and build.ts is the sole writer, '
+      + 'already covered by its own check above',
+  },
 ]
 
 function lineContaining(source: string, index: number): string {
@@ -337,7 +344,7 @@ describe('the daily workflow stages every registry file the build writes', () =>
     // If a refactor changes how the writes are spelled, this fails rather than
     // letting the guards below pass vacuously.
     expect(registryWrites(buildTs))
-      .toEqual(['first-seen.yml', 'publisher-state.json', 'repo-state.json', 'snapshots/manifest.lock'])
+      .toEqual(['feed-state.json', 'first-seen.yml', 'publisher-state.json', 'repo-state.json', 'snapshots/manifest.lock'])
     expect(registryWrites(classifyTs)).toEqual(['categories.yml', 'markets.yml'])
   })
 
@@ -374,6 +381,20 @@ describe('the daily workflow stages every registry file the build writes', () =>
         isStaged(`registry/${file}`, stagedByClassifierCommit),
         `"Commit the classifier's output" must git add registry/${file} (staged there: ${[...stagedByClassifierCommit].join(', ')})`,
       ).toBe(true)
+    }
+  })
+
+  it('stages only paths that are in the tree: one missing pathspec makes `git add` stage nothing', () => {
+    // `git add a b` with `b` absent exits 128 having staged NOTHING, and the
+    // step runs under bash -e, so one missing path takes every other file in
+    // the commit down with it (PR #74 review). A file build.ts may skip
+    // writing -- feed-state.json, on a handoff with no feed record -- has to
+    // be committed, not merely written.
+    const steps = [["Commit the classifier's output", stagedByClassifierCommit], ['Commit the snapshot', stagedBySnapshotCommit]] as const
+    for (const [label, staged] of steps) {
+      for (const path of staged) {
+        expect(existsSync(join(repoRoot, path)), `"${label}" stages ${path}, which is not in the tree`).toBe(true)
+      }
     }
   })
 })

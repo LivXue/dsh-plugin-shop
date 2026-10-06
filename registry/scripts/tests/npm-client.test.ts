@@ -7,6 +7,7 @@ import { type Cell, cellKey, cellQuery, COMPATIBILITY_PROFILES_MAX_COUNT, COMPAT
 import { ENTRY_PAYLOAD_MAX_BYTES, entryPayloadBytes } from '../src/gate.ts'
 import { MAX_TARBALL_BYTES } from '../src/github-client.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
+import { FEED_MAX_DISAGREEMENTS, type FeedCoverage, type FeedInput, type FeedRead } from '../src/feed-state.ts'
 
 describe('HARVEST_KEYWORDS', () => {
   it('leads with the ecosystem keyword and adds the harness keyword, neither branded', () => {
@@ -3458,6 +3459,260 @@ describe('searchByKeywords', () => {
     })
   })
 
+  describe('the change-feed step', () => {
+    const ownerQuery = 'keywords:deepseek-harness maintainer:alice'
+    /** `total` names under deepseek-harness: the window serves the first
+     * SEARCH_WINDOW, the `,dsh` refinement `recovered` of the rest, and
+     * alice's cell `ownerServes`, answering `ownerTotal` (default: what it
+     * serves). `ownerFails` answers alice's cell with a 503. */
+    const feedFixture = (
+      total: number, recovered: number, ownerServes: readonly string[] = [], ownerFails = false, ownerTotal?: number,
+    ) => {
+      const beyond = Array.from({ length: Math.max(0, total - SEARCH_WINDOW) }, (_, i) => `beyond${i}`)
+      const window = Array.from({ length: Math.min(total, SEARCH_WINDOW) }, (_, i) => `w${i}`)
+      const cell = ['w0', ...beyond.slice(0, recovered)]
+      const stub = stubSearch(
+        query => (query === 'keywords:deepseek-harness' ? total
+          : query === 'keywords:deepseek-harness,dsh' ? cell.length
+          : query === ownerQuery ? (ownerTotal ?? ownerServes.length)
+          : 0),
+        (query, from) => {
+          if (query === 'keywords:deepseek-harness') return from > MAX_SEARCH_FROM ? [] : window.slice(from, from + 250)
+          if (query === 'keywords:deepseek-harness,dsh') return cell.slice(from, from + 250)
+          if (query === ownerQuery) return ownerServes.slice(from, from + 250)
+          return []
+        },
+      )
+      const fetchImpl = ownerFails
+        ? (async (url: string | URL, init?: RequestInit) => (new URL(String(url)).searchParams.get('text') === ownerQuery
+          ? new Response('{}', { status: 503 })
+          : stub.fetchImpl(url, init))) as unknown as typeof fetch
+        : stub.fetchImpl
+      return { fetchImpl, urls: stub.urls, beyond }
+    }
+    const feedOf = (names: readonly string[], owner: string | null = 'alice', coverage?: FeedCoverage[]): FeedInput => ({
+      carriers: new Map([['deepseek-harness', new Map(names.map(name => [name, owner] as const))]]),
+      seed: 0,
+      ...(coverage === undefined ? {} : { onCoverage: (c: FeedCoverage) => { coverage.push(c) } }),
+    })
+    const run = (fetchImpl: typeof fetch, feed?: FeedInput, onShortfall?: (s: KeywordShortfall) => void) =>
+      searchByKeywords(fetchImpl, async () => {}, undefined, undefined, undefined, onShortfall, undefined, undefined, undefined, undefined, feed)
+    const forHarness = (coverage: readonly FeedCoverage[]) => coverage.find(c => c.keyword === 'deepseek-harness')
+    // The 2026-10-04 shape at today's cap: 661 names past the window, the
+    // cells recover 600, so 61 are missing. 600 / 661 = 0.908 clears the
+    // recovery floor, so the cap is what refuses it.
+    const overCap = MAX_UNREACHABLE_RESIDUAL + 1
+    const tail = Math.ceil(overCap / (1 - MIN_UNREACHABLE_RECOVERY)) + 50
+    const total = SEARCH_WINDOW + tail
+    const recovered = tail - overCap
+    const missing = Array.from({ length: overCap }, (_, i) => `beyond${recovered + i}`)
+
+    it('closes a residual the cap refuses, crediting the names their owner cell serves', async () => {
+      expect((tail - overCap) / tail).toBeGreaterThan(MIN_UNREACHABLE_RECOVERY)
+      await expect(run(feedFixture(total, recovered, missing).fetchImpl))
+        .rejects.toThrow(new RegExp(`a tail shortfall of ${overCap}`))
+      const coverage: FeedCoverage[] = []
+      const names = await run(feedFixture(total, recovered, missing).fetchImpl, feedOf(missing, 'alice', coverage))
+      expect(names).toHaveLength(total)
+      expect(names).toContain(missing[0])
+      expect(forHarness(coverage)).toEqual({
+        keyword: 'deepseek-harness', feedOnly: overCap, supplied: overCap,
+        ownersVerified: 1, ownersTotal: 1, verified: overCap, unverified: 0, withdrawn: 0, disagreed: [],
+      })
+    })
+
+    it('neither lists nor credits a name its owner cell does not serve, and names it', async () => {
+      const coverage: FeedCoverage[] = []
+      const names = await run(feedFixture(total, recovered, missing).fetchImpl, feedOf([...missing, 'dsh-phantom'], 'alice', coverage))
+      expect(names).not.toContain('dsh-phantom')
+      expect(forHarness(coverage)).toMatchObject({ feedOnly: overCap + 1, verified: overCap, disagreed: ['dsh-phantom'] })
+    })
+
+    it('throws when more names disagree than one run may absorb, after reporting them', async () => {
+      const phantoms = Array.from({ length: FEED_MAX_DISAGREEMENTS + 1 }, (_, i) => `dsh-phantom${i}`)
+      const coverage: FeedCoverage[] = []
+      await expect(run(feedFixture(SEARCH_WINDOW, 0).fetchImpl, feedOf(phantoms, 'alice', coverage)))
+        .rejects.toThrow(/membership rule no longer describes npm search/)
+      expect(forHarness(coverage)?.disagreed).toEqual(phantoms)
+    })
+
+    it('counts the names of an owner whose cell fails as unverified, never as disagreeing', async () => {
+      // Review Focus 5.
+      const coverage: FeedCoverage[] = []
+      const names = await run(feedFixture(total, recovered, missing, true).fetchImpl, feedOf(missing, 'alice', coverage))
+      expect(names).toHaveLength(total)
+      // An owner whose cell was asked but never answered in full was not
+      // verified, and the report must not say it was.
+      expect(forHarness(coverage)).toMatchObject({ ownersVerified: 0, ownersTotal: 1, verified: 0, unverified: overCap, disagreed: [] })
+    })
+
+    it('counts the names of an owner whose cell serves short of its total as unverified', async () => {
+      // Review Focus 5: the cell answers 61 but serves 60, so it was not
+      // paged in full and proves nothing about the 61st.
+      const coverage: FeedCoverage[] = []
+      await run(feedFixture(total, recovered, missing.slice(1), false, overCap).fetchImpl, feedOf(missing, 'alice', coverage))
+      expect(forHarness(coverage)).toMatchObject({ ownersVerified: 0, verified: 0, unverified: overCap, disagreed: [] })
+    })
+
+    it('changes nothing when the feed holds nothing', async () => {
+      const before: KeywordShortfall[] = []
+      const after: KeywordShortfall[] = []
+      const without = await run(feedFixture(5407, 150).fetchImpl, undefined, s => before.push(s))
+      const fixture = feedFixture(5407, 150)
+      const withEmpty = await run(fixture.fetchImpl, feedOf([]), s => after.push(s))
+      expect(withEmpty).toEqual(without)
+      expect(after).toEqual(before)
+      expect(fixture.urls.some(url => decodeURIComponent(url).includes('maintainer:'))).toBe(false)
+    })
+
+    it('repeats no verification request on the retry pass', async () => {
+      // 5407 names, 150 recovered: 7 missing. The feed holds 3 of them, so
+      // the keyword is still short after the first pass and enumerates again.
+      const held = ['beyond150', 'beyond151', 'beyond152']
+      const fixture = feedFixture(5407, 150, held)
+      const names = await run(fixture.fetchImpl, feedOf(held))
+      expect(names).toContain('beyond152')
+      expect(fixture.urls.filter(url => new URL(url).searchParams.get('text') === ownerQuery)).toHaveLength(1)
+    })
+
+    it('never counts a carrier an earlier cell already served', async () => {
+      const coverage: FeedCoverage[] = []
+      await run(feedFixture(5407, 150, ['beyond150']).fetchImpl, feedOf(['w0', 'beyond150'], 'alice', coverage))
+      expect(forHarness(coverage)).toMatchObject({ feedOnly: 1, supplied: 1, verified: 1 })
+    })
+
+    it('credits a carrier with no owner as unverified, without a request', async () => {
+      const fixture = feedFixture(5407, 150)
+      const coverage: FeedCoverage[] = []
+      const names = await run(fixture.fetchImpl, feedOf(['beyond150'], null, coverage))
+      expect(names).toContain('beyond150')
+      expect(forHarness(coverage)).toMatchObject({ unverified: 1, ownersTotal: 0 })
+      expect(fixture.urls.some(url => decodeURIComponent(url).includes('maintainer:'))).toBe(false)
+    })
+
+    it('adds any other name a verification cell serves, counting it as supplied', async () => {
+      const coverage: FeedCoverage[] = []
+      const names = await run(feedFixture(5407, 150, ['beyond150', 'beyond151']).fetchImpl, feedOf(['beyond150'], 'alice', coverage))
+      expect(names).toContain('beyond151')
+      expect(forHarness(coverage)).toMatchObject({ feedOnly: 1, supplied: 2, verified: 1 })
+    })
+
+    describe('a twice-omitted name is confirmed against its current packument', () => {
+      // `/latest` carries the maintainers recorded when the version was
+      // published, not today's owners -- 9 of 50 long-lived packages differ,
+      // `optimist` among them -- so a stored owner can be a former maintainer
+      // whose cell rightly omits the package (PR #74 review). What the full
+      // packument says decides whether a twice-omitted name disagrees.
+      /** The over-cap shape, with two owner cells: alice's and bob's. */
+      const twoOwners = (aliceServes: readonly string[], bobServes: readonly string[]) => {
+        const beyond = Array.from({ length: tail }, (_, i) => `beyond${i}`)
+        const window = Array.from({ length: SEARCH_WINDOW }, (_, i) => `w${i}`)
+        const served: Record<string, readonly string[]> = {
+          'keywords:deepseek-harness,dsh': ['w0', ...beyond.slice(0, recovered)],
+          'keywords:deepseek-harness maintainer:alice': aliceServes,
+          'keywords:deepseek-harness maintainer:bob': bobServes,
+        }
+        return stubSearch(
+          query => (query === 'keywords:deepseek-harness' ? total : served[query]?.length ?? 0),
+          (query, from) => query === 'keywords:deepseek-harness'
+            ? (from > MAX_SEARCH_FROM ? [] : window.slice(from, from + 250))
+            : (served[query] ?? []).slice(from, from + 250),
+        ).fetchImpl
+      }
+      const confirmWith = (answer: (name: string) => FeedRead) => {
+        const calls: string[][] = []
+        const confirm = async (names: readonly string[]) => {
+          calls.push([...names])
+          return new Map(names.map(name => [name, answer(name)] as const))
+        }
+        return { confirm, calls }
+      }
+      const carrierOf = (owner: string | null, keywords: readonly string[] = ['deepseek-harness']) =>
+        (name: string): FeedRead => ({ kind: 'carrier', name, carrier: { owner, keywords } })
+
+      it('re-verifies with a current owner when the stored one is a former maintainer', async () => {
+        const { confirm, calls } = confirmWith(carrierOf('bob'))
+        const coverage: FeedCoverage[] = []
+        const names = await run(twoOwners([], missing), { ...feedOf(missing, 'alice', coverage), confirm })
+        expect(calls).toEqual([missing])
+        expect(names).toHaveLength(total)
+        expect(forHarness(coverage)).toMatchObject({ ownersVerified: 1, verified: overCap, unverified: 0, withdrawn: 0, disagreed: [] })
+      })
+
+      it.each([
+        ['is no longer a carrier at all', (name: string): FeedRead => ({ kind: 'not-carrier', name })],
+        ['is gone', (name: string): FeedRead => ({ kind: 'gone', name })],
+        ['no longer carries this keyword', carrierOf('alice', ['dsh-plugin'])],
+      ])('withdraws a name whose current packument %s, neither crediting nor counting it', async (_what, answer) => {
+        const moved = missing.slice(0, FEED_MAX_DISAGREEMENTS + 1)
+        const { confirm } = confirmWith(answer)
+        const coverage: FeedCoverage[] = []
+        const names = await run(twoOwners(missing.slice(moved.length), []), { ...feedOf(missing, 'alice', coverage), confirm })
+        for (const name of moved) expect(names).not.toContain(name)
+        expect(forHarness(coverage)).toMatchObject({ verified: overCap - moved.length, withdrawn: moved.length, disagreed: [] })
+      })
+
+      it('still counts a disagreement when the current packument confirms both the owner and the keyword', async () => {
+        const phantoms = missing.slice(0, FEED_MAX_DISAGREEMENTS + 1)
+        const { confirm, calls } = confirmWith(carrierOf('alice'))
+        await expect(run(twoOwners(missing.slice(phantoms.length), []), { ...feedOf(missing, 'alice'), confirm }))
+          .rejects.toThrow(/membership rule no longer describes npm search/)
+        expect(calls).toEqual([phantoms])
+      })
+
+      it('leaves a name unverified when its packument cannot be read', async () => {
+        const unread = missing.slice(0, FEED_MAX_DISAGREEMENTS + 1)
+        const { confirm } = confirmWith(name => ({ kind: 'failed', name, reason: 'the registry answered 503' }))
+        const coverage: FeedCoverage[] = []
+        const names = await run(twoOwners(missing.slice(unread.length), []), { ...feedOf(missing, 'alice', coverage), confirm })
+        expect(names).toHaveLength(total)
+        expect(forHarness(coverage)).toMatchObject({ ownersVerified: 0, verified: overCap - unread.length, unverified: unread.length, disagreed: [] })
+      })
+    })
+
+    it('confirms a disagreement by paging the owner once more, so one empty answer disagrees with nothing', async () => {
+      // Ruling P1 (ledger): npm has answered an empty result for a real cell
+      // before -- `probeStubTransientZero` above, and the publisher axis
+      // re-probes a zero before it evicts. Alice's cell answers empty once,
+      // then serves all 61 names: they are verified and nothing throws.
+      const fixture = feedFixture(total, recovered, missing)
+      let ownerPages = 0
+      const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+        const params = new URL(String(url)).searchParams
+        if (params.get('text') === ownerQuery && params.get('size') !== '1') {
+          ownerPages += 1
+          if (ownerPages === 1) return new Response(JSON.stringify({ total: 0, objects: [] }), { status: 200 })
+        }
+        return fixture.fetchImpl(url, init)
+      }) as unknown as typeof fetch
+      const coverage: FeedCoverage[] = []
+      const names = await run(fetchImpl, feedOf(missing, 'alice', coverage))
+      expect(ownerPages).toBe(2)
+      expect(names).toHaveLength(total)
+      expect(forHarness(coverage)).toMatchObject({ ownersVerified: 1, verified: overCap, unverified: 0, disagreed: [] })
+    })
+
+    it('leaves names unverified when the confirming paging fails, never counting them as disagreeing', async () => {
+      // The empty answer again, and then a 503 where the confirmation
+      // should be: nothing confirms the disagreement, so it is not one.
+      const fixture = feedFixture(total, recovered, missing)
+      let ownerPages = 0
+      const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+        const params = new URL(String(url)).searchParams
+        if (params.get('text') === ownerQuery && params.get('size') !== '1') {
+          ownerPages += 1
+          return ownerPages === 1
+            ? new Response(JSON.stringify({ total: 0, objects: [] }), { status: 200 })
+            : new Response('{}', { status: 503 })
+        }
+        return fixture.fetchImpl(url, init)
+      }) as unknown as typeof fetch
+      const coverage: FeedCoverage[] = []
+      const names = await run(fetchImpl, feedOf(missing, 'alice', coverage))
+      expect(names).toHaveLength(total)
+      expect(forHarness(coverage)).toMatchObject({ ownersVerified: 0, verified: 0, unverified: overCap, disagreed: [] })
+    })
+  })
 })
 
 describe('fetchCandidate', () => {
@@ -4084,6 +4339,7 @@ describe('every network module bounds its requests with withTimeout', () => {
     expect(files).toContain('github-client.ts')
     expect(files).toContain('llm-client.ts')
     expect(files).toContain('github-stars.ts')
+    expect(files).toContain('npm-feed.ts')
   })
 
   it('detects a raw invocation at all, so the prohibition below cannot pass by matching nothing', () => {
@@ -4100,7 +4356,7 @@ describe('every network module bounds its requests with withTimeout', () => {
       if (file === 'npm-client.ts') {
         expect(
           codeLines(source).some(line => /export function withTimeout\(/.test(line.text)),
-          'npm-client.ts owns withTimeout and must keep exporting it: the other three network '
+          'npm-client.ts owns withTimeout and must keep exporting it: the other network '
             + 'modules import their deadline from here rather than each growing a copy.',
         ).toBe(true)
         continue

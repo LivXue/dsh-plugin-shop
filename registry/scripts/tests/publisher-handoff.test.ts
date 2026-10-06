@@ -343,3 +343,137 @@ describe('the publisher vocabulary survives the run that discovered it', () => {
     }
   })
 })
+
+describe('the change feed rides the handoff into the committed file', () => {
+  const feedState = (seq: number): string =>
+    `{\n  "seq": ${seq},\n  "carriers": {\n    "dsh-feedonly": {"owner":"alice","keywords":["dsh-plugin"]}\n  },\n  "pending": []\n}\n`
+  /** dsh-feedonly's full packument: its latest version lists dsh-plugin and
+   * was published by alice; `owners` are its maintainers today. */
+  const feedPackument = (owners: readonly string[]): unknown => ({
+    name: 'dsh-feedonly',
+    'dist-tags': { latest: '1.0.0' },
+    versions: { '1.0.0': { name: 'dsh-feedonly', version: '1.0.0', keywords: ['dsh-plugin'], maintainers: [{ name: 'alice' }] } },
+    maintainers: owners.map(name => ({ name })),
+  })
+  const feedReport = {
+    available: true, note: '', fromSeq: 117350000, toSeq: 117350001, pages: 1, selected: 1, read: 1, failed: 0,
+    unreached: 0, refused: 0, pending: 0, carriers: { 'dsh-plugin': 1, 'deepseek-harness': 0 },
+  }
+
+  it('classify.ts reads the feed, credits a verified name, and hands the next state on', () => {
+    const cwd = newWorkspace()
+    try {
+      // Specific before general, because the first match wins: the head
+      // URL is a prefix of the page URL, and alice's cell URL contains
+      // `from=0`.
+      const run = runEntry(cwd, 'classify.ts', [], [
+        { contains: 'replicate.npmjs.com/registry/_changes',
+          body: { results: [{ seq: 117350001, id: 'dsh-feedonly', changes: [{ rev: '1-a' }] }], last_seq: 117350001 } },
+        { contains: 'replicate.npmjs.com/registry/', body: { db_name: 'registry', update_seq: 117350001 } },
+        { contains: 'maintainer%3Aalice', body: searchPage(1, ['dsh-feedonly'], ['alice']) },
+        { contains: 'size=1', body: { total: 2, objects: [] } },
+        { contains: 'from=0', body: searchPage(2, ['dsh-a'], ['bob']) },
+        { contains: '/-/v1/search', body: { total: 2, objects: [] } },
+        { contains: '/dsh-feedonly', body: feedPackument(['alice']) },
+        { contains: '/dsh-a', body: packument('dsh-a') },
+      ])
+      expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
+      const handoff = JSON.parse(readFileSync(join(cwd, 'dist', 'harvest.json'), 'utf8')) as {
+        candidates: { name: string }[]; rejections: { name: string }[]
+        feed: { state: string; coverage: { keyword: string; verified: number }[] }
+      }
+      expect([...handoff.candidates, ...handoff.rejections].map(c => c.name)).toContain('dsh-feedonly')
+      expect(handoff.feed.state).toBe(feedState(117350001))
+      expect(handoff.feed.coverage.find(c => c.keyword === 'dsh-plugin')?.verified).toBe(1)
+      expect(existsSync(join(cwd, 'registry', 'feed-state.json'))).toBe(false)
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('build.ts --harvest-from writes the handed-off state, and makes no request for it', () => {
+    const cwd = newWorkspace()
+    try {
+      mkdirSync(join(cwd, 'dist'), { recursive: true })
+      writeFileSync(join(cwd, 'dist', 'harvest.json'), `${JSON.stringify({
+        candidates: [], rejections: [], shortfalls: [], publishers: [],
+        feed: { state: feedState(117350001), report: feedReport, coverage: [] },
+      })}\n`)
+      const run = runEntry(cwd, 'build.ts', ['--harvest-from', 'dist/harvest.json'], [])
+      expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
+      expect(readFileSync(join(cwd, 'registry', 'feed-state.json'), 'utf8')).toBe(feedState(117350001))
+      expect(readFileSync(join(cwd, 'dist', 'v1', 'report.md'), 'utf8')).toContain('change feed: seq 117350000 -> 117350001')
+      expect(run.urls).toEqual([])
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('build.ts refuses a handed-off state behind the committed file', () => {
+    // Review Focus 4.
+    const cwd = newWorkspace()
+    try {
+      writeFileSync(join(cwd, 'registry', 'feed-state.json'), feedState(117350005))
+      mkdirSync(join(cwd, 'dist'), { recursive: true })
+      writeFileSync(join(cwd, 'dist', 'harvest.json'), `${JSON.stringify({
+        candidates: [], rejections: [], shortfalls: [], publishers: [],
+        feed: { state: feedState(117350001), report: feedReport, coverage: [] },
+      })}\n`)
+      const run = runEntry(cwd, 'build.ts', ['--harvest-from', 'dist/harvest.json'], [])
+      expect(run.status).not.toBe(0)
+      expect(run.stderr).toContain('would move the cursor backwards')
+      expect(readFileSync(join(cwd, 'registry', 'feed-state.json'), 'utf8')).toBe(feedState(117350005))
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('build.ts leaves the committed file alone when the handoff carries no feed record', () => {
+    const cwd = newWorkspace()
+    try {
+      writeFileSync(join(cwd, 'registry', 'feed-state.json'), feedState(117350005))
+      mkdirSync(join(cwd, 'dist'), { recursive: true })
+      writeFileSync(join(cwd, 'dist', 'harvest.json'), `${JSON.stringify({
+        candidates: [], rejections: [], shortfalls: [], publishers: [],
+      })}\n`)
+      const run = runEntry(cwd, 'build.ts', ['--harvest-from', 'dist/harvest.json'], [])
+      expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
+      expect(readFileSync(join(cwd, 'registry', 'feed-state.json'), 'utf8')).toBe(feedState(117350005))
+      expect(readFileSync(join(cwd, 'dist', 'v1', 'report.md'), 'utf8')).toContain('no change-feed record in this handoff')
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('classify.ts confirms a committed owner that has since changed, and hands the current owner on', () => {
+    // The committed state stored alice for dsh-feedonly; bob owns it today
+    // and this run's feed rows do not touch it, so it is not re-read. Alice's
+    // cell omits it twice, the confirmation reads the packument, re-verifies
+    // with bob, and the next state stores bob (PR #74 review).
+    const cwd = newWorkspace()
+    try {
+      writeFileSync(join(cwd, 'registry', 'feed-state.json'),
+        '{\n  "seq": 117350000,\n  "carriers": {\n    "dsh-feedonly": {"owner":"alice","keywords":["dsh-plugin"]}\n  },\n  "pending": []\n}\n')
+      const run = runEntry(cwd, 'classify.ts', [], [
+        { contains: 'replicate.npmjs.com/registry/_changes', body: { results: [], last_seq: 117350001 } },
+        { contains: 'replicate.npmjs.com/registry/', body: { db_name: 'registry', update_seq: 117350001 } },
+        { contains: 'maintainer%3Aalice', body: searchPage(0, [], []) },
+        { contains: 'maintainer%3Abob', body: searchPage(1, ['dsh-feedonly'], ['bob']) },
+        { contains: 'size=1', body: { total: 2, objects: [] } },
+        { contains: 'from=0', body: searchPage(2, ['dsh-a'], ['carol']) },
+        { contains: '/-/v1/search', body: { total: 2, objects: [] } },
+        { contains: '/dsh-feedonly', body: feedPackument(['bob']) },
+        { contains: '/dsh-a', body: packument('dsh-a') },
+      ])
+      expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
+      const handoff = JSON.parse(readFileSync(join(cwd, 'dist', 'harvest.json'), 'utf8')) as {
+        feed: { state: string; coverage: { keyword: string; verified: number; disagreed: string[] }[] }
+      }
+      expect(handoff.feed.coverage.find(c => c.keyword === 'dsh-plugin')).toMatchObject({ verified: 1, disagreed: [] })
+      expect(handoff.feed.state).toContain('"dsh-feedonly": {"owner":"bob","keywords":["dsh-plugin"]}')
+      expect(run.urls.filter(url => url.includes('maintainer%3Aalice'))).toHaveLength(2)
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+})

@@ -504,6 +504,17 @@ The amendment above was written from the failure. This one is written from probi
 
 - **No design document survives on the replica, so no server-side view is available at all.** `_all_docs` over the `_design/` key range returns **zero rows** against a `doc_count` of **4,405,545**, and `_design/app/_view/byKeyword` answers 404. The bullet above records that one view as gone; what this adds is that there is no other view to use or fall back to, and `_changes` carries only `{seq, id, changes:[{rev}]}`. A provably-complete index therefore costs one document read per change, which is what fixes its price rather than leaving it an estimate.
 
+- **Amendment (2026-10-04): the replication feed, priced in its
+  filtered form.** The price above is the COMPLETE form, one document
+  read per change, and it holds: one day of feed is ~34,000 changed
+  packages, ~22-27 minutes of `/latest` reads. Filtering ids by name
+  before reading cuts that to ~700 reads a day at 95-96% recall, and
+  against the 2026-10-04 build the filtered feed found 26 live carriers
+  per keyword against residuals of 28 and 25 (26 against 25 is inside
+  that run's count noise). Built as
+  `docs/design/2026-10-04-change-feed-harvest.md`; the complete form
+  stays an upgrade, priced there.
+
 *What this leaves.* Every axis that reaches the registry is a query and every query is capped at 5,250, so no combination of them is provably covering; the options are to shrink the residual or to leave the search API. Shrinking it is now an allocation question rather than a mechanism question, because the mechanism exists and its yield is measured: on the 2026-09-18 publishing run the pinned half spent **226 of 500 probes and supplied 10 of the 11 names recovered**, while the rotation spent the other **274 and supplied 1**. The rotation is nonetheless the only path by which an unseen owner enters the vocabulary, so its share bounds discovery and cannot go to zero.
 
 *What the wall actually is.* Not missing data. npm counts the unreachable names in the `total` it answers and simply will not address them: `from` is capped at 5,000 and `size` at 250, so only ranks 0–5,249 can be asked for. Worse than an error — **the API silently wraps**: `from=5100` and `from=5250` both return the FIRST page of the result set (verified: both answer `dsh-context`, rank 0). A harvester without the `from > MAX_SEARCH_FROM` throw would re-read one page forever and report success.

@@ -74,6 +74,12 @@ These block a real launch, not the code.
    crossing date itself has moved again since this item's 2026-09-16
    reading — read it from the design doc's own header, which supersedes it,
    rather than trusting either figure without re-measuring.
+
+   -> Amended 2026-10-04: the fourth option above, the
+   `replicate.npmjs.com` feed, is built in its filtered form
+   (`docs/design/2026-10-04-change-feed-harvest.md`).
+   `MAX_UNREACHABLE_RESIDUAL` stays 60 until two `main` runs publish
+   with it.
 6. **dsh 0.1.7 — two open questions, raised 2026-09-26.** The shop is ready
    for it ([2026-09-26-dsh-017-readiness.md](../design/2026-09-26-dsh-017-readiness.md))
    and runs on 0.1.5-rc.3 and 0.1.7-rc.2 alike, but two things are not code

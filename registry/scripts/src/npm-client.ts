@@ -2,6 +2,7 @@ import { readCappedBody } from './http-body.ts'
 import { compareStrings } from './identity.ts'
 import { escapeCell } from './emit.ts'
 import { allocateProbeBudgets, atRiskNameCount, atRiskOwners, cursorFor, isMaintainerName, isPinnableKeyword, MAX_PINNED_PER_KEYWORD, probeOrder, type AxisOutcome, type HarvestedName, type PublisherState } from './publisher-state.ts'
+import { FEED_MAX_DISAGREEMENTS, FEED_VERIFY_OWNERS, isDeprecated, NO_FEED, planFeedVerification, type FeedCoverage, type FeedInput } from './feed-state.ts'
 import type { Candidate, Compatibility, Rejection } from './types.ts'
 
 /**
@@ -1370,7 +1371,7 @@ export const MAX_PACKUMENT_BYTES = 16 * 1024 * 1024
  * @returns the parsed value, or which of the two ways it was unusable — the
  *   callers want different consequences from the same fact.
  */
-async function readJsonCapped(
+export async function readJsonCapped(
   response: Response,
   cap: number,
 ): Promise<{ ok: true; value: unknown } | { ok: false; reason: 'too-large' | 'not-json' }> {
@@ -2110,20 +2111,6 @@ function normalizeLicense(license: unknown, licenses: unknown): string | null {
   return null
 }
 
-/**
- * Whether npm reports this version deprecated.
- *
- * `npm deprecate <pkg> ""` is the documented un-deprecate, and it leaves
- * `deprecated: ""` behind — so the presence of the key says nothing. A
- * non-empty message means deprecated; so does a bare `true`, which some
- * manifests carry and which we must not read as "fine" (audit B-5).
- * @param deprecated - the manifest `deprecated` value, unvalidated.
- */
-function isDeprecated(deprecated: unknown): boolean {
-  if (deprecated === true) return true
-  return typeof deprecated === 'string' && deprecated.trim() !== ''
-}
-
 export function toCandidate(packument: unknown): Candidate | null {
   // `null` is legal JSON, so a 200 whose whole body is those four bytes
   // parses cleanly and arrives here — and every property read below the cast
@@ -2305,6 +2292,14 @@ export async function searchByKeywords(
    * partitioned.
    */
   onPublisherAxis: (report: PublisherAxisReport) => void = () => {},
+  /**
+   * The change feed's carriers for this run (spec 2026-10-04, section
+   * 4.5): per harvest keyword, each carrier's owner. Credited after the
+   * publisher cells, so the axis selects, probes, earns and evicts exactly
+   * as before. An empty map -- the default, and what an unavailable feed
+   * passes -- is today's harvest exactly.
+   */
+  feed: FeedInput = NO_FEED,
 ): Promise<string[]> {
   const publishers = publisherState.publishers
   const seen = new Set<string>()
@@ -2319,6 +2314,8 @@ export async function searchByKeywords(
    *   own window cell, which is expected not to fit — sweeping the reachable
    *   window is the entire job, and ending at the window is the answer, not a
    *   truncation.
+   * @returns the total this cell last answered, so a caller can tell a
+   *   cell paged in full from one that served short of its own total.
    */
   const pageCell = async (
     cell: Cell,
@@ -2343,7 +2340,7 @@ export async function searchByKeywords(
      * does, outside the per-keyword loop below — pays nothing extra.
      */
     harvested?: Map<string, HarvestedName>,
-  ): Promise<void> => {
+  ): Promise<number> => {
     const query = cellQuery(cell)
     // The last total this cell answered, so a `from` past the cap can tell a
     // cell that genuinely needs a second window from one that merely served
@@ -2361,7 +2358,7 @@ export async function searchByKeywords(
         // at all: total exactly SEARCH_WINDOW and a 249-object final page is
         // enough, and it is the mirror of the overstated total this harvest
         // already tolerates.
-        if (pastWindow === 'stop' || answered <= SEARCH_WINDOW) return
+        if (pastWindow === 'stop' || answered <= SEARCH_WINDOW) return answered
         throw new Error(
           `npm search for ${query} needs from=${from}, past the ${MAX_SEARCH_FROM} the registry honors (a larger from silently returns page 0); the partition is wrong`,
         )
@@ -2428,7 +2425,7 @@ export async function searchByKeywords(
       // exactly as it does to a partition cell.
       const cellTotal = readTotal(body, query, from, 'a truncated page cannot be told from a complete one')
       answered = cellTotal
-      if (objects.length === 0 || from + objects.length >= cellTotal) return
+      if (objects.length === 0 || from + objects.length >= cellTotal) return answered
     }
   }
   /**
@@ -2603,6 +2600,141 @@ export async function searchByKeywords(
       }
       return { pinned: pinnedCells, rotated: rotatedCells }
     }
+    /**
+     * The change-feed step (spec 2026-10-04, section 4.5). It runs at the
+     * end of every `enumerate` pass, after the window, refinement,
+     * oversized and publisher cells, and is memoized like
+     * `publisherCells`: the first pass verifies and credits, and a retry
+     * pass re-adds what the first credited and repeats no request.
+     *
+     * A feed-only name -- one the feed holds and no search cell served --
+     * is checked by paging its owner's `keywords:K maintainer:U` cell,
+     * because crediting a name npm search does not count would cancel a
+     * genuinely missing one in `required - forKeyword.size`. `harvested`
+     * is withheld from those pages, so at-risk seeding sees what it saw
+     * before; their maintainers still reach `onPublishers`, as every
+     * search page's do.
+     */
+    let feedCredited: readonly string[] | undefined
+    /** Page one owner's cell under this keyword into the union. Complete
+     * when it served every name its own total promised; a failure is
+     * incomplete, never an empty answer. */
+    const pageOwnerCell = async (owner: string): Promise<{ served: ReadonlySet<string>; complete: boolean }> => {
+      const served = new Set<string>()
+      let complete: boolean
+      try {
+        const answered = await pageCell({ keywords: [keyword], maintainer: owner }, served, 'stop')
+        complete = served.size >= answered
+      } catch {
+        // A 5xx after retries, a deadline or a malformed page from ONE
+        // verification cell. It proves nothing either way about the names
+        // the cell would have shown, so they count as unverified (spec
+        // section 4.5), never as disagreeing: a registry hiccup must not
+        // throw the build. Every other request in this run still throws as
+        // it always has.
+        complete = false
+      }
+      // Whatever the cell served is search-served under this keyword, so it
+      // belongs to the union whether or not the paging finished.
+      for (const name of served) forKeyword.add(name)
+      return { served, complete }
+    }
+    const runFeedStep = async (): Promise<void> => {
+      if (feedCredited !== undefined) {
+        for (const name of feedCredited) forKeyword.add(name)
+        return
+      }
+      const ownerOf = feed.carriers.get(keyword) ?? new Map<string, string | null>()
+      const feedOnly = [...ownerOf.keys()].filter(name => !forKeyword.has(name))
+      const plan = planFeedVerification(feedOnly, ownerOf, FEED_VERIFY_OWNERS, feed.seed)
+      const before = forKeyword.size
+      const verified: string[] = []
+      const unverified: string[] = [...plan.unverified]
+      const withdrawn: string[] = []
+      const disagreed: string[] = []
+      /** Check `names` against `owner`'s cell: served, omitted by two complete
+       * pagings, or unknown because a paging failed or served short. */
+      const checkCell = async (owner: string, names: readonly string[]): Promise<{ served: string[]; omitted: string[]; unknown: string[] }> => {
+        const first = await pageOwnerCell(owner)
+        if (!first.complete) return { served: [], omitted: [], unknown: [...names] }
+        const absent = names.filter(name => !first.served.has(name))
+        const served = names.filter(name => first.served.has(name))
+        if (absent.length === 0) return { served, omitted: [], unknown: [] }
+        // A disagreement is CONFIRMED before it counts, for the reason the
+        // publisher axis confirms a zero before it evicts: npm has answered
+        // an empty result for a real cell, and acting on one sample would
+        // turn a registry hiccup into a thrown build. One more request, and
+        // only for an owner with a name its first paging did not serve.
+        const second = await pageOwnerCell(owner)
+        if (!second.complete) return { served, omitted: [], unknown: absent }
+        return {
+          served: [...served, ...absent.filter(name => second.served.has(name))],
+          omitted: absent.filter(name => !second.served.has(name)),
+          unknown: [],
+        }
+      }
+      /** Each name two complete pagings omitted, with the owner it was checked against. */
+      const omittedBy = new Map<string, string>()
+      for (const owner of plan.owners) {
+        const result = await checkCell(owner, plan.namesOf.get(owner) ?? [])
+        verified.push(...result.served)
+        unverified.push(...result.unknown)
+        for (const name of result.omitted) omittedBy.set(name, owner)
+      }
+      // Then the CURRENT packument decides (PR #74 review). The owner a run
+      // stored can be a former maintainer -- the state may predate an owner
+      // change -- and the package may have stopped carrying the keyword since
+      // it was read; neither is the membership rule failing. Without a
+      // `confirm`, such a name disagrees outright.
+      const confirm = feed.confirm
+      if (omittedBy.size > 0 && confirm === undefined) {
+        disagreed.push(...omittedBy.keys())
+      } else if (omittedBy.size > 0 && confirm !== undefined) {
+        const omitted = [...omittedBy.keys()].sort(compareStrings)
+        const current = await confirm(omitted)
+        const recheck = new Map<string, string[]>()
+        for (const name of omitted) {
+          const read = current.get(name)
+          if (read === undefined || read.kind === 'failed' || read.kind === 'unreached') unverified.push(name)
+          else if (read.kind !== 'carrier' || !read.carrier.keywords.includes(keyword)) withdrawn.push(name)
+          else if (read.carrier.owner === null) unverified.push(name)
+          else if (read.carrier.owner === omittedBy.get(name)) disagreed.push(name)
+          else recheck.set(read.carrier.owner, [...(recheck.get(read.carrier.owner) ?? []), name])
+        }
+        for (const [owner, names] of [...recheck].sort(([x], [y]) => compareStrings(x, y))) {
+          const result = await checkCell(owner, names)
+          verified.push(...result.served)
+          unverified.push(...result.unknown)
+          disagreed.push(...result.omitted)
+        }
+      }
+      // Owners whose every feed-only name reached a verdict -- the figure the
+      // report prints as "owners verified". Not `plan.owners.length`: an
+      // owner whose cell failed was ASKED, not verified, and the report line
+      // is the only place a degraded verification shows.
+      const undecided = new Set(unverified)
+      const ownersVerified = plan.owners.filter(owner => (plan.namesOf.get(owner) ?? []).every(name => !undecided.has(name))).length
+      feedCredited = [...verified, ...unverified].sort(compareStrings)
+      for (const name of feedCredited) {
+        forKeyword.add(name)
+        seen.add(name)
+      }
+      const coverage: FeedCoverage = {
+        keyword,
+        feedOnly: feedOnly.length,
+        supplied: forKeyword.size - before,
+        ownersVerified,
+        ownersTotal: plan.ownersTotal,
+        verified: verified.length,
+        unverified: unverified.length,
+        withdrawn: withdrawn.length,
+        disagreed: disagreed.sort(compareStrings),
+      }
+      feed.onCoverage?.(coverage)
+      if (disagreed.length > FEED_MAX_DISAGREEMENTS) {
+        throw new Error(`the change feed holds ${disagreed.length} name(s) carrying ${keywordQuery([keyword])} that two complete pagings of a current owner's search cell did not serve, past the ${FEED_MAX_DISAGREEMENTS} one run may absorb: its membership rule no longer describes npm search, and crediting through it would cancel missing names one for one`)
+      }
+    }
     const enumerate = async (): Promise<void> => {
       // The keyword's own reachable window, unioned in beside the refinement
       // cells and deliberately NON-COMPLETING. A refinement partition is not
@@ -2659,6 +2791,7 @@ export async function searchByKeywords(
           }
         }
       }
+      await runFeedStep()
     }
     await enumerate()
     // The API has no complement operator, so a partition's coverage is
