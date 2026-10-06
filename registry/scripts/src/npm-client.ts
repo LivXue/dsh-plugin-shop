@@ -271,11 +271,15 @@ export const MIN_UNREACHABLE_RECOVERY = 0.9
  *
  * LOWERED TO 14 ON 2026-10-06, AND THE BRACKET IS WHOLE AGAIN. The change
  * feed landed (PR #74; design doc 2026-10-04): it reads new packages by
- * publication time and credits the carriers no cell served, each checked
- * against its owner's cell. The residuals were 29 for `dsh-plugin` and 22
- * for `deepseek-harness` on 2026-10-05, the day before it; its last PR dry
+ * publication time and credits the carriers no cell served, checking each
+ * against its owner's cell for up to FEED_VERIFY_OWNERS owners a keyword a
+ * run. The residuals were 29 for `dsh-plugin` and 22 for
+ * `deepseek-harness` on 2026-10-05, the day before it; its last PR dry
  * run and its first `main` run (37412398137) both read 0 for both
- * keywords, the latter crediting 15 and 16 names unverified. 14 is the
+ * keywords. That run credited 15 and 16 names unverified: their 13 and 14
+ * owners were past the 16 then checked a run. FEED_VERIFY_OWNERS now
+ * covers every owner of that residue, so the reading 14 rests on is one
+ * search served rather than one credits made. 14 is the
  * ceiling the bracket above allows: the floor of 9 holds, and a
  * fifteen-name partition gap is refused again, which past a 150-name tail
  * no other bound does.

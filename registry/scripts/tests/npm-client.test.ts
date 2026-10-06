@@ -7,7 +7,7 @@ import { type Cell, cellKey, cellQuery, COMPATIBILITY_PROFILES_MAX_COUNT, COMPAT
 import { ENTRY_PAYLOAD_MAX_BYTES, entryPayloadBytes } from '../src/gate.ts'
 import { MAX_TARBALL_BYTES } from '../src/github-client.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
-import { FEED_MAX_CONFIRMATIONS, FEED_MAX_DISAGREEMENTS, type FeedCoverage, type FeedInput, type FeedRead } from '../src/feed-state.ts'
+import { FEED_MAX_CONFIRMATIONS, FEED_MAX_DISAGREEMENTS, FEED_VERIFY_OWNERS, type FeedCoverage, type FeedInput, type FeedRead } from '../src/feed-state.ts'
 
 describe('HARVEST_KEYWORDS', () => {
   it('leads with the ecosystem keyword and adds the harness keyword, neither branded', () => {
@@ -3560,6 +3560,57 @@ describe('searchByKeywords', () => {
       expect(forHarness(coverage)).toMatchObject({ disagreed: phantoms, enumerated: 5250, required: 5250 })
     })
 
+    /** `count` names past the window, each owned by its own owner, whose
+     * `keywords:deepseek-harness maintainer:oNN` cell serves it and nothing
+     * else does. Two-digit owners, so code-unit order is numeric order. */
+    const ownedApart = (count: number) => {
+      const pad = (i: number) => String(i).padStart(2, '0')
+      const names = Array.from({ length: count }, (_, i) => `beyond-${pad(i)}`)
+      const servedBy = new Map<string, readonly string[]>(names.map((name, i) => [`keywords:deepseek-harness maintainer:o${pad(i)}`, [name]]))
+      const window = Array.from({ length: SEARCH_WINDOW }, (_, i) => `w${i}`)
+      const stub = stubSearch(
+        query => (query === 'keywords:deepseek-harness' ? SEARCH_WINDOW + count
+          : query === 'keywords:deepseek-harness,dsh' ? 1
+          : servedBy.get(query)?.length ?? 0),
+        (query, from) => {
+          if (query === 'keywords:deepseek-harness') return from > MAX_SEARCH_FROM ? [] : window.slice(from, from + 250)
+          if (query === 'keywords:deepseek-harness,dsh') return from === 0 ? ['w0'] : []
+          return (servedBy.get(query) ?? []).slice(from, from + 250)
+        },
+      )
+      const feed: FeedInput = {
+        carriers: new Map([['deepseek-harness', new Map(names.map((name, i) => [name, `o${pad(i)}`] as const))]]),
+        seed: 0,
+      }
+      const asked = (owner: string) => stub.urls.some(url => new URL(url).searchParams.get('text') === `keywords:deepseek-harness maintainer:${owner}`)
+      return { fetchImpl: stub.fetchImpl, feed, asked }
+    }
+
+    it('verifies every owner of a residue the size of the first main run\'s', async () => {
+      // Branch review: the first `main` run held feed-only names under 29
+      // and 30 owners and checked 16 of them, crediting the other owners'
+      // names unverified -- and the cap came down to 14 on that run's
+      // reading. Thirty owners, each with one name only its own cell
+      // serves: every one is checked, so nothing is credited blind.
+      const { fetchImpl, feed } = ownedApart(30)
+      const coverage: FeedCoverage[] = []
+      await run(fetchImpl, { ...feed, onCoverage: c => { coverage.push(c) } })
+      expect(forHarness(coverage)).toMatchObject({ feedOnly: 30, ownersVerified: 30, ownersTotal: 30, verified: 30, unverified: 0 })
+    })
+
+    it('rotates the owners it verifies by the feed\'s seq when there are more than the budget', async () => {
+      // One owner past FEED_VERIFY_OWNERS and seed 1: the rotation starts
+      // at o01 and leaves o00 for a later run. Passing 0 instead of the
+      // feed's seq would check o00 and leave the last owner unasked.
+      const count = FEED_VERIFY_OWNERS + 1
+      const { fetchImpl, feed, asked } = ownedApart(count)
+      const coverage: FeedCoverage[] = []
+      await run(fetchImpl, { ...feed, seed: 1, onCoverage: c => { coverage.push(c) } })
+      expect(asked('o00')).toBe(false)
+      expect(asked(`o${count - 1}`)).toBe(true)
+      expect(forHarness(coverage)).toMatchObject({ ownersVerified: FEED_VERIFY_OWNERS, ownersTotal: count, unverified: 1 })
+    })
+
     it('still logs the line, with its count, on a run a shortfall then throws', async () => {
       // The line waits for the keyword's final count, and the shortfall
       // checks come after it. A feed holding nothing leaves the `overCap`
@@ -3722,6 +3773,16 @@ describe('searchByKeywords', () => {
         expect(forHarness(coverage)).toMatchObject({
           feedOnly: held.length, ownersVerified: 0, verified: 0, withdrawn: FEED_MAX_CONFIRMATIONS, unverified: 0, unconfirmed: 5, disagreed: [],
         })
+      })
+
+      it('rotates the names it confirms by the feed\'s seq', async () => {
+        // Seed 5 over the bound test's 37 names: the rotation starts at the
+        // sixth, so the five before it are the ones left unconfirmed this
+        // run. Passing 0 instead of the feed's seq would leave the last five.
+        const held = Array.from({ length: FEED_MAX_CONFIRMATIONS + 5 }, (_, i) => `dsh-held-${String(i).padStart(2, '0')}`)
+        const { confirm, calls } = confirmWith(name => ({ kind: 'not-carrier', name }))
+        await run(feedFixture(SEARCH_WINDOW, 0).fetchImpl, { ...feedOf(held), seed: 5, confirm })
+        expect(calls).toEqual([held.slice(5)])
       })
 
       it('leaves a name unverified when its packument cannot be read', async () => {

@@ -53,10 +53,15 @@ const FEED_PACKAGE_NAME = /^(?:@[a-z0-9~-][a-z0-9._~-]*\/)?[a-z0-9~-][a-z0-9._~-
 
 /**
  * Owners whose `keywords:K maintainer:U` cell one run pages per keyword to
- * verify feed-only names. Today's residue has 12 owners per keyword, so
- * every feed-only name is verified until a crossing grows it past 16.
+ * verify feed-only names; past it the owners rotate by the feed's `seq`
+ * and the rest are credited unverified. It was 16, sized on 2026-10-04 by
+ * a residue of 12 owners per keyword. The first `main` run held feed-only
+ * names under 29 and 30 owners and so credited 13 and 14 owners' names
+ * unchecked, on the run the residual cap came down to 14 on (branch
+ * review). 64 checks every owner of that residue with room for it to
+ * double, at one search request an owner, two when a name is omitted.
  */
-export const FEED_VERIFY_OWNERS = 16
+export const FEED_VERIFY_OWNERS = 64
 
 /**
  * Feed-only names per keyword per run that may disagree with their

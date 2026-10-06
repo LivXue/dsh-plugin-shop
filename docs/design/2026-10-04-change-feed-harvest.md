@@ -375,7 +375,13 @@ see them, because they are paged without `harvested`.
 With today's residue (12 owners per keyword) every feed-only name is
 verified, so every credited name is one that npm search served:
 approach B's guarantee at A's cost. Sampling takes over only when a
-crossing grows the residue's owners past the budget.
+crossing grows the residue's owners past the budget. Amended
+2026-10-06: it had already. The first `main` run held feed-only names
+under 29 and 30 owners against a budget of 16, so 13 and 14 owners'
+names were credited unverified -- on the run the residual cap came
+down to 14 on. The budget is now 64, which checks every owner of that
+residue with room for it to double; past it, sampling resumes and the
+line's `owners verified V of T` shows it.
 
 ### 4.6 Failure semantics
 
@@ -484,8 +490,10 @@ crossing grows the residue's owners past the budget.
 - `FEED_NAME_PATTERN = /dsh|deepseek|cordis/i` -- recall in section 2.
 - `FEED_BOOTSTRAP_SEQ = 117_350_000` -- just before 2026-07-01T00:00Z,
   ahead of the first dsh package.
-- `FEED_VERIFY_OWNERS = 16` per keyword -- today's residue has 12
-  owners per keyword.
+- `FEED_VERIFY_OWNERS = 64` per keyword -- the first `main` run's
+  residue had 29 and 30 owners (2026-10-06). It was 16, against 12
+  owners measured on 2026-10-04. One search request an owner, two when
+  a name is omitted.
 - `FEED_MAX_DISAGREEMENTS = 3` per keyword per run -- room for index
   lag on a name published minutes before the read. A systematic drift
   exceeds it at once: crediting deprecated packages would have
