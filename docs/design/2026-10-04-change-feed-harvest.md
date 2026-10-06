@@ -436,15 +436,24 @@ line's `owners verified V of T` shows it.
   `forKeyword`: credited feed-only names plus any other name a
   verification cell served. V counts the owners whose every feed-only
   name reached a verdict, T every owner holding one; an owner whose
-  cell failed or served short was asked, not verified. E is the
-  keyword's final count, after any retry pass, and R the total it is
-  measured against.
+  cell failed or served short was asked, not verified, and so was one
+  with a name left unconfirmed, or whose confirmation could not be read
+  -- two pagings omitting a name are the question, not the verdict. U
+  and C tell those causes apart (amended 2026-10-06, PR #76 review). E
+  is the keyword's final count, after any retry pass, and R the total
+  it is measured against.
 - E includes credited feed names, so a keyword the feed closes reads
   whole whether its credits were verified or not. The count is printed
   on every run, whole or short, so a keyword made whole by crediting
   shows it beside its U unverified names. Amended 2026-10-06 after the
   PR #74 review: only a short keyword printed a count, and silence was
   the only sign of a whole one.
+- R is the smallest total npm answered during the run, which absorbs a
+  package unpublished mid-run and therefore understates when packages
+  are published mid-run instead. So a healthy run can read a few
+  `over`: names a cell served after the total was read, and credits npm
+  does not count. `over` is noise to read beside U; `short` is the
+  deficit, and only it is bounded by the cap.
 - Names in the report are escaped like every other npm-sourced string.
 
 ### 4.8 CI, handoff and guards

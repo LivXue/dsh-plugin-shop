@@ -564,9 +564,14 @@ export interface FeedCoverage {
   /** The step's own delta on the keyword's union: credited names plus any
    * other name a verification cell served. */
   readonly supplied: number
-  /** Owners whose every feed-only name reached a verdict: served by their
-   * cell, or omitted by two complete pagings of it. An owner whose cell
-   * failed or served short was asked, not verified. */
+  /** Owners whose every feed-only name reached a verdict: served by a cell,
+   * or withdrawn or disagreeing once a confirmation read it. Two complete
+   * pagings omitting a name are the question, not the verdict, so a name
+   * that ended unverified or unconfirmed -- its cell failed or served
+   * short, or its confirmation was past FEED_MAX_CONFIRMATIONS, unread, or
+   * named no owner -- leaves its owner asked, not verified. The line's
+   * `unverified` and `unconfirmed` counts tell those causes apart (PR #76
+   * review). */
   readonly ownersVerified: number
   /** Distinct owners holding feed-only names, checked this run or not. */
   readonly ownersTotal: number
