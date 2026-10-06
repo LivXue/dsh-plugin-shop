@@ -10,6 +10,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { RESTART_GRACE_MS, RESTART_STABLE_MS, RESTART_WAIT_MS, INSTALL_POLL_MS } from '../../src/client/present.ts'
 import {
+  noteBoot,
   readRestartMonitor,
   registerRestartCarrier,
   requestRestart,
@@ -337,5 +338,125 @@ describe('a restart request belongs to the page too', () => {
     held.answer({ ok: false, detail: STILL_RUNNING })
     await flush()
     expect(readRestartMonitor()).toEqual({ kind: 'restarting' })
+  })
+})
+
+const LOG = '/home/you/.dsh/shop/restart.log'
+
+/** What a reload leaves of the page: its timers stopped, its globals and
+ * module instances gone, and its sessionStorage kept — as a browser tab keeps
+ * it across `location.reload()`. */
+async function reloaded(): Promise<typeof import('../../src/client/restart-monitor.ts')> {
+  const page = globalThis as unknown as Record<symbol, { stop?: (() => void) | null } | undefined>
+  const key = Symbol.for('dsh-plugin-shop.restart-monitor')
+  page[key]?.stop?.()
+  delete page[key]
+  vi.resetModules()
+  return import('../../src/client/restart-monitor.ts')
+}
+
+describe('a restart the page reloaded after', () => {
+  // On macOS a self-update's restart was confirmed, the page reloaded, and
+  // the row still read the version it had before: the process that was asked
+  // to restart was still the one answering, and nothing said so (design §8,
+  // 2026-10-06 amendment). The monitor reloads on ANY stable origin, so a
+  // process that never exited looks exactly like a restart that worked — only
+  // its boot identity tells them apart.
+
+  it('names the process that never restarted when the page reloads into it', async () => {
+    startRestartMonitor({ reload: vi.fn(), logFile: LOG, bootId: 'boot-a', pid: 4242 })
+    const page = await reloaded()
+    expect(page.readRestartMonitor()).toBeNull()
+    page.noteBoot('boot-a')
+    expect(page.readRestartMonitor()).toEqual({ kind: 'not-restarted', pid: 4242, logFile: LOG })
+  })
+
+  it('forgets the restart once a new process answers', async () => {
+    startRestartMonitor({ reload: vi.fn(), logFile: LOG, bootId: 'boot-a', pid: 4242 })
+    const page = await reloaded()
+    page.noteBoot('boot-b')
+    expect(page.readRestartMonitor()).toBeNull()
+    // Forgotten, not passed over: the next reload has nothing to judge.
+    const later = await reloaded()
+    later.noteBoot('boot-a')
+    expect(later.readRestartMonitor()).toBeNull()
+  })
+
+  it('keeps naming it across reloads until the process is replaced, then clears the notice', async () => {
+    startRestartMonitor({ reload: vi.fn(), logFile: LOG, bootId: 'boot-a', pid: 4242 })
+    await reloaded().then(page => { page.noteBoot('boot-a') })
+    const page = await reloaded()
+    page.noteBoot('boot-a')
+    const verdict = page.readRestartMonitor()
+    expect(verdict).toEqual({ kind: 'not-restarted', pid: 4242, logFile: LOG })
+    // Every version answer reaches here; an unchanged verdict keeps its
+    // identity, or useSyncExternalStore re-renders forever.
+    page.noteBoot('boot-a')
+    expect(page.readRestartMonitor()).toBe(verdict)
+    // The reader restarts dsh by hand and the socket reconnects to the new
+    // process, whose first answer is judged like any other.
+    page.noteBoot('boot-b')
+    expect(page.readRestartMonitor()).toBeNull()
+  })
+
+  it('judges nothing while its own restart is still under way', () => {
+    // The process asked to restart answers until it exits, two seconds after
+    // it committed; that is not a restart that failed.
+    startRestartMonitor({ reload: vi.fn(), bootId: 'boot-a', pid: 4242 })
+    noteBoot('boot-a')
+    expect(readRestartMonitor()).toEqual({ kind: 'restarting' })
+  })
+
+  it('judges nothing by a host that named no process', async () => {
+    // A host older than the field commits without a boot to compare.
+    startRestartMonitor({ reload: vi.fn(), logFile: LOG })
+    const page = await reloaded()
+    page.noteBoot('boot-a')
+    expect(page.readRestartMonitor()).toBeNull()
+  })
+
+  it('compares against the boot the committing host named', async () => {
+    registerRestartCarrier(vi.fn().mockResolvedValue({ ok: true, logFile: LOG, bootId: 'boot-a', pid: 4242 }))
+    await expect(requestRestart({ reload: vi.fn(), restart: vi.fn() })).resolves.toEqual({ kind: 'started' })
+    const page = await reloaded()
+    page.noteBoot('boot-a')
+    expect(page.readRestartMonitor()).toEqual({ kind: 'not-restarted', pid: 4242, logFile: LOG })
+  })
+
+  it('names only a pid that is a pid, and a log path that is text', async () => {
+    // Every plugin on the origin shares its sessionStorage, and the pid is
+    // rendered into a command the reader is told to run.
+    startRestartMonitor({ reload: vi.fn(), logFile: LOG, bootId: 'boot-a', pid: 4242 })
+    expect(sessionStorage.length).toBe(1)
+    const key = sessionStorage.key(0)
+    if (key === null) throw new Error('the restart left no record')
+    sessionStorage.setItem(key, JSON.stringify({ bootId: 'boot-a', pid: '1; rm -rf ~', logFile: 42 }))
+    const page = await reloaded()
+    page.noteBoot('boot-a')
+    expect(page.readRestartMonitor()).toEqual({ kind: 'not-restarted' })
+  })
+
+  it('reads a record it cannot parse as no record', async () => {
+    startRestartMonitor({ reload: vi.fn(), bootId: 'boot-a', pid: 4242 })
+    const key = sessionStorage.key(0)
+    if (key === null) throw new Error('the restart left no record')
+    for (const garbage of ['{', 'null', '"boot-a"', JSON.stringify({ bootId: 7 })]) {
+      sessionStorage.setItem(key, garbage)
+      const page = await reloaded()
+      expect(() => { page.noteBoot('boot-a') }).not.toThrow()
+      expect(page.readRestartMonitor()).toBeNull()
+    }
+  })
+
+  it('follows the restart where the browser refuses the page storage', () => {
+    // Storage blocked for the origin throws on every access. Losing the
+    // verdict is the cost; losing the restart would be a regression.
+    const refused = (): never => { throw new DOMException('storage is disabled', 'SecurityError') }
+    vi.stubGlobal('sessionStorage', { getItem: refused, setItem: refused, removeItem: refused, key: refused, clear: refused, length: 0 })
+    expect(() => { startRestartMonitor({ reload: vi.fn(), bootId: 'boot-a', pid: 4242 }) }).not.toThrow()
+    expect(readRestartMonitor()).toEqual({ kind: 'restarting' })
+    resetRestartMonitor()
+    expect(() => { noteBoot('boot-a') }).not.toThrow()
+    expect(readRestartMonitor()).toBeNull()
   })
 })
