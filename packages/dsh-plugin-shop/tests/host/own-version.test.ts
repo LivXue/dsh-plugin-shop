@@ -9,8 +9,10 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
+import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { runningVersion, versionAtLoad } from '../../src/own-version.ts'
 
 const packageRoot = join(import.meta.dirname, '..', '..')
@@ -61,5 +63,28 @@ describe('versionAtLoad', () => {
       .mockImplementationOnce(() => { throw new Error('EACCES') })
       .mockReturnValue('0.8.4')
     expect(versionAtLoad(read)()).toBe('0.8.4')
+  })
+})
+
+describe('bootId', () => {
+  it('differs in every process that loads the shop', () => {
+    // The page compares it across a restart: the same value after the reload
+    // means the process that was asked to restart is still the one answering
+    // (design §8, 2026-10-06 amendment). A value derived from anything a
+    // restart keeps — the version, the profile, the port — would read every
+    // restart that installed no new shop as one that never happened. Each
+    // child is a process of its own, loading this module the way a dsh boot
+    // does.
+    const module = JSON.stringify(pathToFileURL(join(packageRoot, 'src', 'own-version.ts')).href)
+    const inProcess = (): string => execFileSync(process.execPath, [
+      '--input-type=module',
+      '-e',
+      `const { bootId } = await import(${module}); process.stdout.write(String(bootId))`,
+    ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+    const first = inProcess()
+    const second = inProcess()
+    expect(first).not.toBe('undefined')
+    expect(first).not.toBe('')
+    expect(second).not.toBe(first)
   })
 })

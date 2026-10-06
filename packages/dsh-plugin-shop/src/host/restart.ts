@@ -19,9 +19,15 @@ import { spawn } from 'node:child_process'
  * manual command and `logFile`, the file the new process's output goes to:
  * where a boot that died explains itself, at a path that depends on DSH_HOME
  * and the shop row's `cacheDir`, which only the host knows. A host older than
- * the field answers without it, so the client reads it as optional. */
+ * the field answers without it, so the client reads it as optional.
+ *
+ * `bootId` and `pid` name the process that committed: its boot identity
+ * (own-version.ts) and the pid the takeover waits on. A page reloaded into a
+ * process with that same boot is a restart that never happened, and the pid
+ * is what the reader has to stop by hand (design §8, 2026-10-06 amendment).
+ * Optional for the same older-host reason as `logFile`. */
 export type RestartOutcome =
-  | { ok: true; logFile?: string }
+  | { ok: true; logFile?: string; bootId?: string; pid?: number }
   | { ok: false; detail: string }
 
 /** Spawn the two-phase handoff. The helper is a POSIX shell wrapper that
