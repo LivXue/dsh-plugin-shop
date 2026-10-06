@@ -28,6 +28,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium, type Browser, type Page } from 'playwright'
+import { gte } from 'semver'
+import { isSeq, parseDocument } from 'yaml'
 import { welcomeNoticeVersion } from '../tests/fixtures/onboarding.ts'
 
 /** The version the READMEs tell a reader to install, read from a README
@@ -57,9 +59,11 @@ const GATE_TARGET = '@ahggg/dsh-side-chat'
 // labels it Plugins / 插件; 0.1.7 relabels the same section Built-in plugins /
 // 内置插件 (`dsh-client-ui-settings-plugins`), because the plain word now names
 // the sidebar's own plugin-manager page. Anchored, so it matches nothing else.
+// `firstRun` opens the toast dsh-client-ui-workspace raises when it cannot
+// create the default workspace (`defaultWorkspace.failed`); see waitForFirstRun.
 const T = {
-  en: { settings: 'Settings', plugins: /^(?:Plugins|Built-in plugins)$/, shop: 'Plugin shop', install: 'Install', search: 'Search plugins' },
-  zh: { settings: '设置', plugins: /^(?:插件|内置插件)$/, shop: '插件商店', install: '安装', search: '搜索插件' },
+  en: { settings: 'Settings', plugins: /^(?:Plugins|Built-in plugins)$/, shop: 'Plugin shop', install: 'Install', search: 'Search plugins', firstRun: 'Unable to create default workspace' },
+  zh: { settings: '设置', plugins: /^(?:插件|内置插件)$/, shop: '插件商店', install: '安装', search: '搜索插件', firstRun: '无法创建默认工作区' },
 } as const
 type Lang = keyof typeof T
 
@@ -131,10 +135,50 @@ function kill(proc: ChildProcess | undefined): void {
   try { process.kill(-proc.pid, 'SIGTERM') } catch { proc.kill() }
 }
 
-async function openShop(page: Page, url: string, lang: Lang): Promise<void> {
+/**
+ * Keep dsh 0.1.7's first-use workspace from being created, so its failure toast
+ * is raised on every platform and nothing navigates.
+ *
+ * The same recipe as `seedNoDefaultWorkspace` in web-full-flow.e2e.ts, which
+ * records why: 0.1.7 creates `<Documents>/deepseek-harness/default-workspace` on
+ * first load and navigates into it, which closes an open Settings dialog. A
+ * Documents path that is a regular file makes the creation fail instead.
+ */
+function seedNoDefaultWorkspace(home: string): void {
+  const blocker = join(home, 'documents-is-a-file')
+  writeFileSync(blocker, 'A file, so the first-use workspace cannot be created under it (seedNoDefaultWorkspace).\n')
+  const layer = join(home, 'profiles', 'web', 'cordis.patch.yml')
+  const document = parseDocument(readFileSync(layer, 'utf8'))
+  if (!isSeq(document.contents)) throw new Error(`${layer} is not a YAML list of patch rows`)
+  document.contents.flow = false
+  document.add({ id: 'workspace-controller', config: { documentsDirectory: blocker } })
+  writeFileSync(layer, document.toString({ lineWidth: 0 }))
+}
+
+/**
+ * Let dsh 0.1.7's first run finish before Settings opens, or it closes the
+ * dialog.
+ *
+ * When the host first answers the sessions list, an onboarding step appears,
+ * and dsh-client-ui-settings-general closes an open Settings dialog. That
+ * happens once per page load. The e2e's waitForFirstRun has the measurement. Its
+ * signal is the default-workspace toast, which seedNoDefaultWorkspace
+ * guarantees. On 2026-10-06 the second boot of a reshoot on 0.2.0-rc.2 lost
+ * exactly this race: the dialog was gone and the shop's cards never appeared.
+ * The toast is also waited OUT, three seconds, so that no capture contains it.
+ */
+async function waitForFirstRun(page: Page, lang: Lang, dshVersion: string): Promise<void> {
+  if (!gte(dshVersion, '0.1.7-rc.1')) return
+  const toast = page.getByRole('alert').filter({ hasText: T[lang].firstRun })
+  await toast.waitFor({ state: 'visible', timeout: 30_000 })
+  await toast.waitFor({ state: 'hidden', timeout: 15_000 })
+}
+
+async function openShop(page: Page, url: string, lang: Lang, dshVersion: string): Promise<void> {
   const t = T[lang]
   await page.goto(url, { waitUntil: 'load' })
   await page.waitForSelector('[class*="frame"]', { timeout: 60_000 })
+  await waitForFirstRun(page, lang, dshVersion)
   await page.getByRole('button', { name: t.settings, exact: true }).click({ timeout: 30_000 })
   const dialog = page.getByRole('dialog', { name: t.settings })
   await dialog.waitFor({ state: 'visible', timeout: 15_000 })
@@ -155,12 +199,14 @@ async function main(): Promise<void> {
     // first on PATH, like every spawn here.
     const dsh = spawnSync('dsh', ['--version'], { encoding: 'utf8' })
     if (dsh.status !== 0) throw new Error(`dsh --version failed:\n${dsh.stdout}\n${dsh.stderr}`)
-    const notice = welcomeNoticeVersion(dsh.stdout.trim())
+    const dshVersion = dsh.stdout.trim()
+    const notice = welcomeNoticeVersion(dshVersion)
     seedSettings(home, 'en', 'light', notice)
     console.log(`installing dsh-plugin-shop@${SHOP_VERSION} — the version the READMEs tell a reader to run`)
     const add = spawnSync('dsh', ['plugin', '--profile', 'web', 'add', `dsh-plugin-shop@${SHOP_VERSION}`],
       { env: { ...process.env, DSH_HOME: home }, encoding: 'utf8' })
     if (add.status !== 0) throw new Error(`install failed:\n${add.stdout}\n${add.stderr}`)
+    if (gte(dshVersion, '0.1.7-rc.1')) seedNoDefaultWorkspace(home)
 
     browser = await chromium.launch()
     const plan = [
@@ -176,14 +222,17 @@ async function main(): Promise<void> {
       try {
         const t = T[step.lang]
         const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
-        await openShop(page, url, step.lang)
+        await openShop(page, url, step.lang, dshVersion)
         await assertUnobstructed(page, step.shelf, t.settings)
         await page.screenshot({ path: join(OUT, step.shelf) })
         console.log(`  wrote ${step.shelf}`)
 
         if (step.gate !== null) {
           const dialog = page.getByRole('dialog', { name: t.settings })
-          await dialog.getByPlaceholder(t.search).fill(GATE_TARGET)
+          // Scoped to the shop's own panel: from dsh 0.2 the Plugin list tab
+          // mounted beside it carries a search box with the same placeholder,
+          // and a dialog-wide lookup then matches two inputs.
+          await dialog.locator('[data-shop-tab]').getByPlaceholder(t.search).fill(GATE_TARGET)
           const card = dialog.locator(`[data-shop-entry="${GATE_TARGET}"]`)
           await card.waitFor({ state: 'visible', timeout: 30_000 })
           await card.getByRole('button', { name: t.install, exact: true }).first().click()
