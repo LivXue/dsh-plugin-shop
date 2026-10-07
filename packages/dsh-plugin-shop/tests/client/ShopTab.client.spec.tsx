@@ -2833,6 +2833,22 @@ describe('ShopTab incremental rendering', () => {
   // per-card hook is one node per card by construction.
   const cardCount = (): number => document.querySelectorAll('[data-shop-entry]').length
 
+  /** Fire the observer the component created for the sentinel.
+   *
+   * The component creates it in a passive effect, after the commit that
+   * renders the sentinel. A card in the DOM therefore does not mean the
+   * observer exists yet. Firing on sight, through an optional call, fired
+   * nothing whenever React still owed that effect, and the shelf never grew:
+   * "expected 48 to be 96", in a few percent of runs under load (measured
+   * 2026-09-26 and 2026-10-06, and in CI). An observer that never appears now
+   * fails here, by name, rather than as a silent no-op. */
+  async function fireSentinel(): Promise<void> {
+    await waitFor(() => { expect(StubIntersectionObserver.instances.length, 'the sentinel observer').toBeGreaterThan(0) })
+    const observer = StubIntersectionObserver.instances.at(-1)
+    if (observer === undefined) throw new Error('the component created no IntersectionObserver for the sentinel')
+    act(() => { observer.fire() })
+  }
+
   it('renders only the first batch of a large catalog, with a "showing" line and a sentinel', async () => {
     const { injected } = bench(manyPlugins(100))
     renderTab(injected)
@@ -2848,11 +2864,11 @@ describe('ShopTab incremental rendering', () => {
     renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-pkg-000')).toBeTruthy())
 
-    act(() => { StubIntersectionObserver.instances.at(-1)?.fire() })
+    await fireSentinel()
     await waitFor(() => expect(cardCount()).toBe(96))
     expect(screen.getByText(showingText(96, 100))).toBeTruthy()
 
-    act(() => { StubIntersectionObserver.instances.at(-1)?.fire() })
+    await fireSentinel()
     await waitFor(() => expect(cardCount()).toBe(100))
     // everything is shown: the sentinel and the showing line are gone
     expect(document.querySelector('[data-shop-sentry]')).toBeNull()
@@ -2878,7 +2894,7 @@ describe('ShopTab incremental rendering', () => {
     await waitFor(() => expect(screen.getByText('dsh-alpha-00')).toBeTruthy())
 
     // scroll two batches deep: 96 of 120 shown
-    act(() => { StubIntersectionObserver.instances.at(-1)?.fire() })
+    await fireSentinel()
     await waitFor(() => expect(cardCount()).toBe(96))
 
     // a query that matches 60 entries: the batch resets, so only 48 render
