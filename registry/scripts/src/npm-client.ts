@@ -1,6 +1,7 @@
 import { readCappedBody } from './http-body.ts'
 import { compareStrings } from './identity.ts'
-import { escapeCell } from './emit.ts'
+import { escapeCell, lockNpmNames } from './emit.ts'
+import { classifyDeparture, departedNames, departureRejection, summarizeDepartures, type DepartureAnswer, type DepartureOutcome, type DepartureSummary } from './departures.ts'
 import { deprecationMessageOf } from './gate.ts'
 import { allocateProbeBudgets, atRiskNameCount, atRiskOwners, cursorFor, isMaintainerName, isPinnableKeyword, MAX_PINNED_PER_KEYWORD, probeOrder, type AxisOutcome, type HarvestedName, type PublisherState } from './publisher-state.ts'
 import { FEED_MAX_CONFIRMATIONS, FEED_MAX_DISAGREEMENTS, FEED_VERIFY_OWNERS, isDeprecated, NO_FEED, planConfirmations, planFeedVerification, type FeedCoverage, type FeedInput } from './feed-state.ts'
@@ -3176,4 +3177,141 @@ export async function fetchCandidates(
     else rejections.push({ name, code: 'fetch-failed', detail: result.detail })
   })
   return { candidates, rejections }
+}
+
+/**
+ * Read one departed name's packument for the departure classifier (design
+ * 2026-09-26-market-borrowings §8.2), through the same failover, deadline and
+ * byte cap as {@link fetchCandidate}. Never throws: a 404 is npm's answer and
+ * comes back as such, and anything else that is not a packument comes back as
+ * a reason the published row can quote.
+ */
+export async function readDeparture(
+  name: string,
+  fetchImpl: typeof fetch = fetch,
+  sleep: (ms: number) => Promise<void> = defaultSleep,
+  token: string | undefined = undefined,
+  backupRegistry: string | undefined = undefined,
+  timeoutMs: number = REQUEST_TIMEOUT_MS,
+): Promise<DepartureAnswer> {
+  let response: Response
+  try {
+    response = await fetchWithFailover(encodeURIComponent(name), fetchImpl, sleep, token, backupRegistry, timeoutMs)
+  } catch (error) {
+    return {
+      kind: 'failed',
+      reason: error instanceof FetchTimeoutError
+        ? `the npm registry did not answer within ${timeoutMs}ms`
+        : error instanceof PrimaryStatusError
+          ? `npm registry returned ${error.status}`
+          : `could not reach the npm registry (${error instanceof Error ? error.message : String(error)})`,
+    }
+  }
+  if (response.status === 404) return { kind: 'missing' }
+  if (!response.ok) return { kind: 'failed', reason: `npm registry returned ${response.status}` }
+  try {
+    const read = await readJsonCapped(response, MAX_PACKUMENT_BYTES)
+    if (!read.ok) {
+      return {
+        kind: 'failed',
+        reason: read.reason === 'too-large'
+          ? `the registry answered a packument larger than ${MAX_PACKUMENT_BYTES} bytes`
+          : 'the response body was unreadable',
+      }
+    }
+    return { kind: 'packument', body: read.value }
+  } catch (error) {
+    // A deadline landing mid-body arrives here, as in fetchCandidate; any
+    // other throw is a body that did not parse.
+    return {
+      kind: 'failed',
+      reason: error instanceof FetchTimeoutError
+        ? `the npm registry did not answer within ${timeoutMs}ms`
+        : 'the response body was unreadable',
+    }
+  }
+}
+
+/** What the departure step adds to a harvest (design 2026-09-26-market-borrowings §8.2). */
+export interface DepartureRun {
+  /** The harvest's candidates and the carried ones, sorted by name. */
+  readonly candidates: Candidate[]
+  /** The harvest's rejections, then one row per departure that is not carried. */
+  readonly rejections: Rejection[]
+  readonly summary: DepartureSummary
+}
+
+/**
+ * Compare the last published catalog with this harvest and account for every
+ * npm name it lost: carry the ones that still qualify, row the rest.
+ *
+ * Runs where the harvest runs, right after {@link fetchCandidates}: in
+ * `classify.ts` on the daily workflow and in `build.ts` when it harvests
+ * itself, so the classifier sees a carried package as live and keeps its
+ * `categories.yml` row. A carried candidate is counted in no keyword's
+ * coverage, so carrying can neither hide a harvest that stopped working nor
+ * cancel a genuinely missing name.
+ * @param lockText - the committed `registry/snapshots/manifest.lock`, or null
+ *   when there is none (the first build), which departs nothing.
+ * @param harvest - what `fetchCandidates` produced.
+ */
+export async function accountForDepartures(
+  lockText: string | null,
+  harvest: { readonly candidates: readonly Candidate[]; readonly rejections: readonly Rejection[] },
+  options: {
+    readonly fetchImpl?: typeof fetch
+    readonly sleep?: (ms: number) => Promise<void>
+    readonly token?: string
+    readonly backupRegistry?: string
+    readonly timeoutMs?: number
+    readonly harvestKeywords?: readonly string[]
+  } = {},
+): Promise<DepartureRun> {
+  const keywords = options.harvestKeywords ?? HARVEST_KEYWORDS
+  const listed = lockText === null ? [] : lockNpmNames(lockText)
+  const harvested = new Set([...harvest.candidates.map(candidate => candidate.name), ...harvest.rejections.map(rejection => rejection.name)])
+  const names = departedNames(listed, harvested)
+  // The pool fetchCandidates uses, for the reason its comment gives: one
+  // stalled packument costs one slot, and answers land at the claimed index.
+  const answers: (DepartureAnswer | undefined)[] = names.map(() => undefined)
+  let next = 0
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const index = next
+      next += 1
+      if (index >= names.length) return
+      const name = names[index]
+      if (name === undefined) continue
+      answers[index] = await readDeparture(
+        name, options.fetchImpl ?? fetch, options.sleep ?? defaultSleep, options.token, options.backupRegistry,
+        options.timeoutMs ?? REQUEST_TIMEOUT_MS,
+      )
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(HARVEST_CONCURRENCY, names.length) }, () => worker()))
+  const carried: Candidate[] = []
+  const rows: Rejection[] = []
+  const outcomes: DepartureOutcome[] = []
+  names.forEach((name, index) => {
+    const answer = answers[index]
+    if (answer === undefined) return
+    let outcome = classifyDeparture(name, answer, keywords)
+    if (outcome.kind === 'carried') {
+      // 'carried' is answered only for a packument naming this package with
+      // an object at its latest version, which is every precondition of
+      // toCandidate, so the projection cannot be null here and its name is
+      // the packument's. The fallback row exists for the type, not for a
+      // case; no test can reach it, and none pretends to.
+      const candidate = answer.kind === 'packument' ? toCandidate(answer.body) : null
+      if (candidate !== null) carried.push(candidate)
+      else outcome = { kind: 'unanswered', name, reason: 'the registry answered a packument with no usable latest version' }
+    }
+    if (outcome.kind !== 'carried') rows.push(departureRejection(outcome, keywords))
+    outcomes.push(outcome)
+  })
+  return {
+    candidates: [...harvest.candidates, ...carried].sort((a, b) => compareStrings(a.name, b.name)),
+    rejections: [...harvest.rejections, ...rows],
+    summary: summarizeDepartures(outcomes),
+  }
 }
