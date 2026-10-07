@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { treeInstallSize } from '../src/tree-size.ts'
+import { treeBlobPaths, treeInstallSize } from '../src/tree-size.ts'
 
 /** A git tree response as the API answers it: blobs carry `size`, directories
  * do not, and a submodule is a `commit` entry with no size at all. */
@@ -108,5 +108,22 @@ describe('treeInstallSize', () => {
     // Absent means false, but a non-boolean is a shape we do not understand,
     // and guessing "not truncated" is the guess that publishes an undercount.
     expect(treeInstallSize({ truncated: 'yes', tree: [{ path: 'a.js', type: 'blob', size: 10 }] })).toBeUndefined()
+  })
+})
+
+describe('treeBlobPaths', () => {
+  it('lists every blob and nothing else', () => {
+    expect(treeBlobPaths(tree([{ path: 'a.js', size: 1 }, { path: 'src', type: 'tree' }, { path: 'vendor', type: 'commit' }])))
+      .toEqual(new Set(['a.js']))
+  })
+
+  it.each([
+    ['a truncated tree', tree([{ path: 'a.js', size: 1 }], true)],
+    ['a tree that is not a list', { truncated: false, tree: {} }],
+    ['an element it cannot read', { truncated: false, tree: [null] }],
+    ['a blob without a path', { truncated: false, tree: [{ type: 'blob', size: 1 }] }],
+    ['no body at all', undefined],
+  ])('cannot vouch for an absence in %s', (_what, body) => {
+    expect(treeBlobPaths(body)).toBeNull()
   })
 })

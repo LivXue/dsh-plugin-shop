@@ -46,7 +46,9 @@
 import { gunzipSync } from 'node:zlib'
 import { parse } from 'yaml'
 import { readTar } from '../../../packages/dsh-plugin-shop/src/shared/tar.ts'
+import { truncateWholeCharacters } from './gate.ts'
 import { hasWorkspaceDeps } from './subpackage-select.ts'
+import type { UnbuiltFinding } from './types.ts'
 
 /**
  * The packed manifest's declaration inputs, exactly as the archive holds them
@@ -113,7 +115,7 @@ export const MAX_INFLATED_BYTES = 64 * 1024 * 1024
 const ECHO_MAX = 80
 
 /** A hostile value, quoted and bounded, for a message an author reads. */
-function echo(value: unknown): string {
+export function echo(value: unknown): string {
   const text = typeof value === 'string' ? value : String(value)
   return JSON.stringify(text.length > ECHO_MAX ? `${text.slice(0, ECHO_MAX)}…` : text)
 }
@@ -191,7 +193,7 @@ function singleRoot(paths: readonly string[]): { root: string } | { detail: stri
  * same reasoning as `MAX_MANIFEST_BYTES`, kept local so this module keeps no
  * edge to the impure half.
  */
-const MAX_PATCH_BYTES = 1024 * 1024
+export const MAX_PATCH_BYTES = 1024 * 1024
 
 /**
  * Every module name an `insert` row registers, in reading order.
@@ -326,6 +328,12 @@ function declaredTargets(
  */
 const LEGACY_SUFFIXES = ['', '.js', '.json', '.node', '/index.js', '/index.json', '/index.node'] as const
 
+/** A member path under `root`: an archive's single top-level directory, a
+ * subpackage directory in a git tree, or `''` for a tree's repository root. */
+function under(root: string, relative: string): string {
+  return root === '' ? relative : `${root}/${relative}`
+}
+
 /**
  * Archive member paths any declared target could resolve to, or null when
  * none of them is resolvable.
@@ -358,7 +366,7 @@ function archiveCandidates(
     const relative = path.replace(/^\.\//, '')
     if (relative.split('/').includes('..')) continue
     for (const suffix of declared.legacy ? LEGACY_SUFFIXES : ['']) {
-      candidates.push(normalize(`${root}/${relative}${suffix}`))
+      candidates.push(normalize(under(root, `${relative}${suffix}`)))
     }
   }
   return candidates.length > 0 ? candidates : null
@@ -407,7 +415,7 @@ function missingInsertTarget(
     if (candidates.some(candidate => present.has(candidate))) continue
     const [first] = candidates
     if (first === undefined) continue
-    return { name, path: first.slice(root.length + 1) }
+    return { name, path: root === '' ? first : first.slice(root.length + 1) }
   }
   return null
 }
@@ -619,4 +627,77 @@ export function verifyReleaseAsset(bytes: Uint8Array, bundleName: string): Relea
     // on disk.
     declarations: declarationsOf(manifest),
   }
+}
+
+/** How long a recorded finding's strings may be: they reach the committed
+ * `repo-state.json` and the published detail (design §9.4). */
+export const UNBUILT_FIELD_MAX_LENGTH = 200
+
+/**
+ * The tree path of a file a manifest declares relative to its package, or
+ * null when the declaration is not a path a git tree can be asked about:
+ * empty, absolute, holding a backslash, or carrying an empty, `.` or `..`
+ * segment after the leading `./`. Null forms no verdict; the rule refuses only
+ * what it can prove is absent (design 2026-09-26-market-borrowings §9.2).
+ */
+export function treePathOf(root: string, file: string): string | null {
+  const relative = file.replace(/^\.\//, '')
+  if (relative === '' || relative.startsWith('/') || relative.includes('\\')) return null
+  if (relative.split('/').some(segment => segment === '' || segment === '.' || segment === '..')) return null
+  return under(root, relative)
+}
+
+/**
+ * The patch files a manifest's `dsh.bundle` declares, or null when it declares
+ * no loadable bundle: no `dsh.bundle` object, or a `patch` that is neither a
+ * string nor a list of strings. A bundle object without `patch` declares none.
+ * @param manifest - a parsed package.json, unvalidated.
+ */
+export function declaredPatchFiles(manifest: unknown): string[] | null {
+  if (typeof manifest !== 'object' || manifest === null || Array.isArray(manifest)) return null
+  const dsh = (manifest as { dsh?: unknown }).dsh
+  const bundle = typeof dsh === 'object' && dsh !== null ? (dsh as { bundle?: unknown }).bundle : undefined
+  if (typeof bundle !== 'object' || bundle === null || Array.isArray(bundle)) return null
+  const patch = (bundle as { patch?: unknown }).patch
+  return patch === undefined ? [] : patchFilesOf(patch)
+}
+
+/**
+ * What a commit-pinned candidate's git tree lacks that its bundle declares,
+ * or null when nothing is proven missing (design 2026-09-26-market-borrowings
+ * §9.2). This module's claim (3) against a set of paths: every declared patch
+ * file is in `present`, and every module a patch inserts from the package
+ * itself resolves, by {@link missingInsertTarget}'s rules, to a path in it.
+ * @param manifest - the manifest the candidate was projected from.
+ * @param bundleName - the candidate's name.
+ * @param root - the candidate's `subdir`, or `''` for a repository root.
+ * @param present - the tree's blob paths ({@link treeBlobPaths}).
+ * @param patchTexts - each declared patch file's text, keyed as declared; a
+ *   file missing here (past `MAX_PATCH_BYTES`) forms no verdict on its inserts.
+ */
+export function unbuiltFinding(
+  manifest: unknown,
+  bundleName: string,
+  root: string,
+  present: ReadonlySet<string>,
+  patchTexts: ReadonlyMap<string, string>,
+): UnbuiltFinding | null {
+  const files = declaredPatchFiles(manifest)
+  if (files === null) return null
+  const declared = manifest as { name?: unknown; exports?: unknown; main?: unknown }
+  for (const file of files) {
+    const path = treePathOf(root, file)
+    if (path === null) continue
+    if (!present.has(path)) return { patch: truncateWholeCharacters(file, UNBUILT_FIELD_MAX_LENGTH) }
+    const text = patchTexts.get(file)
+    if (text === undefined) continue
+    const missing = missingInsertTarget(text, declared, bundleName, root, present)
+    if (missing !== null) {
+      return {
+        insert: truncateWholeCharacters(missing.name, UNBUILT_FIELD_MAX_LENGTH),
+        path: truncateWholeCharacters(missing.path, UNBUILT_FIELD_MAX_LENGTH),
+      }
+    }
+  }
+  return null
 }

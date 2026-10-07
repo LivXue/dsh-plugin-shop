@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { gzipSync } from 'node:zlib'
-import { MAX_INFLATED_BYTES, readPackedDeclarations, verifyReleaseAsset } from '../src/release-asset.ts'
+import { declaredPatchFiles, MAX_INFLATED_BYTES, readPackedDeclarations, treePathOf, UNBUILT_FIELD_MAX_LENGTH, unbuiltFinding, verifyReleaseAsset } from '../src/release-asset.ts'
 import { packedTarball, rawTarball } from './packed-tarball.ts'
 
 
@@ -742,5 +742,97 @@ describe('verifyReleaseAsset', () => {
     for (const bytes of [Buffer.alloc(0), Buffer.alloc(512), gzipSync(Buffer.alloc(3))]) {
       expect(() => verifyReleaseAsset(bytes, 'dsh-foo')).not.toThrow()
     }
+  })
+})
+
+describe('unbuiltFinding: the patch-target rule against a git tree (design 2026-09-26-market-borrowings §9.2)', () => {
+  const manifest = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    name: 'dsh-whale', exports: { '.': './lib/index.js' }, dsh: { bundle: { patch: './cordis.patch.yml' } }, ...extra,
+  })
+  const patch = "- insert:\n    - id: whale\n      name: 'dsh-whale'\n"
+  const texts = (text = patch): ReadonlyMap<string, string> => new Map([['./cordis.patch.yml', text]])
+
+  it('finds nothing when the tree holds the patch and the module it inserts', () => {
+    expect(unbuiltFinding(manifest(), 'dsh-whale', '', new Set(['package.json', 'cordis.patch.yml', 'lib/index.js']), texts())).toBeNull()
+  })
+
+  it('names the inserted module a gitignored lib/ leaves unresolvable', () => {
+    expect(unbuiltFinding(manifest(), 'dsh-whale', '', new Set(['package.json', 'cordis.patch.yml', 'src/index.ts']), texts()))
+      .toEqual({ insert: 'dsh-whale', path: 'lib/index.js' })
+  })
+
+  it('names a declared patch file the tree does not hold, without its text', () => {
+    expect(unbuiltFinding(manifest(), 'dsh-whale', '', new Set(['package.json']), new Map()))
+      .toEqual({ patch: './cordis.patch.yml' })
+  })
+
+  it('reads a subpackage under its own directory and reports the path relative to it', () => {
+    const present = new Set(['packages/whale/package.json', 'packages/whale/cordis.patch.yml'])
+    expect(unbuiltFinding(manifest(), 'dsh-whale', 'packages/whale', present, texts()))
+      .toEqual({ insert: 'dsh-whale', path: 'lib/index.js' })
+  })
+
+  it('counts every arm of a conditions object, so one shipped arm is enough', () => {
+    const conditions = manifest({ exports: { '.': { node: './dist/node.js', default: './dist/browser.js' } } })
+    expect(unbuiltFinding(conditions, 'dsh-whale', '', new Set(['cordis.patch.yml', 'dist/node.js']), texts())).toBeNull()
+  })
+
+  it('takes main\'s directory-index lookup', () => {
+    const legacy = manifest({ exports: undefined, main: './dist' })
+    expect(unbuiltFinding(legacy, 'dsh-whale', '', new Set(['cordis.patch.yml', 'dist/index.js']), texts())).toBeNull()
+  })
+
+  it('forms no verdict on an export target it cannot decode or a wildcard', () => {
+    expect(unbuiltFinding(manifest({ exports: { '.': './lib/%zz.js' } }), 'dsh-whale', '', new Set(['cordis.patch.yml']), texts())).toBeNull()
+    expect(unbuiltFinding(manifest({ exports: { '.': './lib/*.js' } }), 'dsh-whale', '', new Set(['cordis.patch.yml']), texts())).toBeNull()
+  })
+
+  it('never refuses a module of another package, a list it cannot read, or a patch it was not given', () => {
+    const otherPatch = "- insert:\n    - id: x\n      name: 'dsh-other'\n"
+    expect(unbuiltFinding(manifest(), 'dsh-whale', '', new Set(['cordis.patch.yml']), texts(otherPatch))).toBeNull()
+    expect(unbuiltFinding(manifest(), 'dsh-whale', '', new Set(['cordis.patch.yml']), new Map())).toBeNull()
+    expect(unbuiltFinding(manifest({ dsh: { bundle: { patch: true } } }), 'dsh-whale', '', new Set(), new Map())).toBeNull()
+    expect(unbuiltFinding(manifest({ dsh: { bundle: {} } }), 'dsh-whale', '', new Set(), new Map())).toBeNull()
+  })
+
+  it('checks every file of a list-valued patch', () => {
+    const listed = manifest({ dsh: { bundle: { patch: ['./a.yml', './b.yml'] } } })
+    expect(unbuiltFinding(listed, 'dsh-whale', '', new Set(['a.yml', 'lib/index.js']), new Map([['./a.yml', patch]])))
+      .toEqual({ patch: './b.yml' })
+  })
+
+  it('bounds what it records at a whole character', () => {
+    const long = `./${'p'.repeat(250)}.yml`
+    const found = unbuiltFinding(manifest({ dsh: { bundle: { patch: long } } }), 'dsh-whale', '', new Set(), new Map())
+    expect(found).toEqual({ patch: long.slice(0, UNBUILT_FIELD_MAX_LENGTH) })
+  })
+})
+
+describe('treePathOf', () => {
+  it.each([
+    ['', './cordis.patch.yml', 'cordis.patch.yml'],
+    ['packages/whale', './cordis.patch.yml', 'packages/whale/cordis.patch.yml'],
+    ['', 'config/patch.yml', 'config/patch.yml'],
+  ])('joins %j and %j', (root, file, expected) => {
+    expect(treePathOf(root, file)).toBe(expected)
+  })
+
+  it.each([[''], ['./'], ['/abs.yml'], ['a/../b.yml'], ['a/./b.yml'], ['a\\b.yml'], ['a//b.yml']])(
+    'cannot ask a tree about %j', (file) => {
+      expect(treePathOf('', file)).toBeNull()
+    })
+})
+
+describe('declaredPatchFiles', () => {
+  it.each([
+    [{ dsh: { bundle: { patch: './x.yml' } } }, ['./x.yml']],
+    [{ dsh: { bundle: { patch: ['./a.yml', './b.yml'] } } }, ['./a.yml', './b.yml']],
+    [{ dsh: { bundle: {} } }, []],
+    [{ dsh: { bundle: { patch: 7 } } }, null],
+    [{ dsh: { bundle: true } }, null],
+    [{}, null],
+    [null, null],
+  ])('reads %j as %j', (manifest, expected) => {
+    expect(declaredPatchFiles(manifest)).toEqual(expected)
   })
 })
