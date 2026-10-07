@@ -367,3 +367,32 @@ export function emit(
 
   return { pluginsFileName, pluginsJson, indexJson, badgeJson, manifestLock, report }
 }
+
+/**
+ * The npm names a committed `manifest.lock` lists, sorted, read back by the
+ * module that writes it (`manifestLock` in {@link emit}). The last published
+ * catalog is the baseline a departure is measured against (design
+ * 2026-09-26-market-borrowings §8.2).
+ *
+ * A line is `name version integrity` for npm and `owner/slug name version` for
+ * github, and the first field tells them apart: an npm name holds a `/` only
+ * behind a leading `@`, and a repository never starts with one. Only three
+ * fields are required, so an integrity that is itself several space-separated
+ * hashes still reads. A line with fewer is not one this module wrote and
+ * throws: a malformed registry file must not read as an empty catalog, which
+ * would report every departure as nothing.
+ * @param lock - the file's text.
+ */
+export function lockNpmNames(lock: string): string[] {
+  const names = new Set<string>()
+  for (const [index, line] of lock.split('\n').entries()) {
+    if (line === '') continue
+    const fields = line.split(' ')
+    const [first] = fields
+    if (fields.length < 3 || first === undefined || first === '') {
+      throw new Error(`manifest.lock line ${index + 1} is not a lock line: ${JSON.stringify(line.slice(0, 80))}`)
+    }
+    if (first.startsWith('@') || !first.includes('/')) names.add(first)
+  }
+  return [...names].sort(compareStrings)
+}
