@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   ENTRY_PAYLOAD_MAX_BYTES, INTEGRITY_MAX_LENGTH, NAME_MAX_LENGTH, PUBLISHED_AT_MAX_LENGTH,
-  PUBLISHER_MAX_LENGTH, VERSION_MAX_LENGTH, entryPayloadBytes, gate,
+  PUBLISHER_MAX_LENGTH, VERSION_MAX_LENGTH, deprecatedDetail, deprecationMessageOf,
+  entryPayloadBytes, gate,
 } from '../src/gate.ts'
 import { parseRegistryConfig } from '../src/config.ts'
 import type { Candidate } from '../src/types.ts'
@@ -804,5 +805,40 @@ describe('a denial names a project, not one of its two spellings', () => {
     const result = gate(candidate({ name: 'dsh-x', repository: null }), denied)
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.rejection.code).toBe('no-repository')
+  })
+})
+
+describe('the deprecated row (design 2026-09-26-market-borrowings §8.2)', () => {
+  it('quotes the author\'s message', () => {
+    const result = gate(candidate({ deprecated: true, deprecationMessage: 'Renamed to dsh-new.' }), config)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.rejection.code).toBe('deprecated')
+      expect(result.rejection.detail).toBe('Marked deprecated on npm: "Renamed to dsh-new.".')
+    }
+  })
+
+  it('keeps today\'s sentence when npm carries no message', () => {
+    const result = gate(candidate({ deprecated: true }), config)
+    expect(!result.ok && result.rejection.detail).toBe('Marked deprecated on npm.')
+  })
+
+  it('quotes a message holding a double quote as JSON, so the sentence stays one string', () => {
+    expect(deprecatedDetail('Use "dsh-b" | not this')).toBe('Marked deprecated on npm: "Use \\"dsh-b\\" | not this".')
+  })
+})
+
+describe('deprecationMessageOf', () => {
+  it.each([[true], [''], ['   '], [42], [null], [undefined]])('reads %j as no message', (value) => {
+    expect(deprecationMessageOf(value)).toBeUndefined()
+  })
+
+  it('trims the message and cuts it at 200 code units without splitting a surrogate pair', () => {
+    // 199 ASCII characters, then an astral one whose HIGH half lands at
+    // index 199: the cut at 200 keeps it alone, so it is dropped.
+    const message = `${'x'.repeat(199)}\u{1F600}tail`
+    const out = deprecationMessageOf(`  ${message}  `)
+    expect(out).toBe('x'.repeat(199))
+    expect(out).not.toMatch(LONE_SURROGATE)
   })
 })

@@ -51,6 +51,13 @@ export interface Candidate {
   repository: string | null
   license: string | null
   deprecated: boolean
+  /**
+   * The author's deprecation message, trimmed and bounded
+   * (`deprecationMessageOf` in `gate.ts`); absent when the package is not
+   * deprecated or npm carries no text for it. The `deprecated` row quotes it
+   * (design 2026-09-26-market-borrowings §8.2).
+   */
+  deprecationMessage?: string
   hasBundle: boolean
   /** The raw `dsh.catalog` value; unvalidated until the gate runs. */
   catalog: unknown

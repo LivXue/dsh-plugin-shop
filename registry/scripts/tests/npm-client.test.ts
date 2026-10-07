@@ -4749,3 +4749,26 @@ describe('body bounds', () => {
     expect(MAX_PACKUMENT_BYTES).toBeLessThan(MAX_TARBALL_BYTES)
   })
 })
+
+describe('toCandidate reads the deprecation message', () => {
+  const packumentWith = (deprecated: unknown): unknown => ({
+    name: 'dsh-old',
+    'dist-tags': { latest: '1.0.0' },
+    versions: { '1.0.0': { name: 'dsh-old', version: '1.0.0', deprecated, dsh: { bundle: { patch: './cordis.patch.yml' } } } },
+  })
+
+  it('carries the bounded message beside the flag', () => {
+    const candidate = toCandidate(packumentWith('  Renamed to dsh-new.  '))
+    expect(candidate?.deprecated).toBe(true)
+    expect(candidate?.deprecationMessage).toBe('Renamed to dsh-new.')
+  })
+
+  it('carries no message for a bare true, and nothing at all for npm\'s blank un-deprecate', () => {
+    const bare = toCandidate(packumentWith(true))
+    expect(bare?.deprecated).toBe(true)
+    expect(bare && 'deprecationMessage' in bare).toBe(false)
+    const blank = toCandidate(packumentWith('   '))
+    expect(blank?.deprecated).toBe(false)
+    expect(blank && 'deprecationMessage' in blank).toBe(false)
+  })
+})

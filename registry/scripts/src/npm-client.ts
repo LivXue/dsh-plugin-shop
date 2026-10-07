@@ -1,6 +1,7 @@
 import { readCappedBody } from './http-body.ts'
 import { compareStrings } from './identity.ts'
 import { escapeCell } from './emit.ts'
+import { deprecationMessageOf } from './gate.ts'
 import { allocateProbeBudgets, atRiskNameCount, atRiskOwners, cursorFor, isMaintainerName, isPinnableKeyword, MAX_PINNED_PER_KEYWORD, probeOrder, type AxisOutcome, type HarvestedName, type PublisherState } from './publisher-state.ts'
 import { FEED_MAX_CONFIRMATIONS, FEED_MAX_DISAGREEMENTS, FEED_VERIFY_OWNERS, isDeprecated, NO_FEED, planConfirmations, planFeedVerification, type FeedCoverage, type FeedInput } from './feed-state.ts'
 import type { Candidate, Compatibility, Rejection } from './types.ts'
@@ -2190,6 +2191,12 @@ export function toCandidate(packument: unknown): Candidate | null {
     repository: normalizeRepository(manifest.repository),
     license: normalizeLicense(manifest.license, manifest.licenses),
     deprecated: isDeprecated(manifest.deprecated),
+    // Absent unless npm carries text for it: the row quotes the author, and a
+    // bare `true` has nothing to quote (design 2026-09-26-market-borrowings §8.2).
+    ...(() => {
+      const message = deprecationMessageOf(manifest.deprecated)
+      return message === undefined ? {} : { deprecationMessage: message }
+    })(),
     hasBundle: manifest.dsh?.bundle !== undefined,
     catalog: manifest.dsh?.catalog ?? null,
     description: typeof manifest.description === 'string' ? manifest.description : null,
