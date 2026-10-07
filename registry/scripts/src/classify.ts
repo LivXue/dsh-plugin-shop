@@ -19,6 +19,7 @@ import { basename, join } from 'node:path'
 import { mergeCategoryRows, serializeCategoryRows } from './categories.ts'
 import { selectPending } from './classify-select.ts'
 import { loadRegistryConfig } from './config.ts'
+import { describeDepartures } from './departures.ts'
 import { escapeCell } from './emit.ts'
 import { applyConfirmations, bootstrapFeedState, describeFeedCoverage, describeFeedRun, feedCarriersByKeyword, parseFeedState, serializeFeedState, type FeedCoverage, type FeedInput, type FeedRead } from './feed-state.ts'
 import { compareStrings } from './identity.ts'
@@ -26,7 +27,7 @@ import { classifyPackages } from './llm-client.ts'
 import { judgeMarkets, type MarketItem } from './market-judge.ts'
 import { selectMarketPending } from './market-select.ts'
 import { mergeMarketRows, serializeMarketRows } from './markets.ts'
-import { fetchCandidates, searchByKeywords, describePublisherAxis, describeShortfall, HARVEST_KEYWORDS, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall, type PublisherAxisReport } from './npm-client.ts'
+import { accountForDepartures, fetchCandidates, searchByKeywords, describePublisherAxis, describeShortfall, HARVEST_KEYWORDS, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall, type PublisherAxisReport } from './npm-client.ts'
 import { confirmCarriers, harvestFeed } from './npm-feed.ts'
 import { repoPeersEmitted, withholdRepoPeers } from './pipeline.ts'
 import { parsePublisherState } from './publisher-state.ts'
@@ -177,7 +178,19 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
   // carrying its keyword -- is in the state the next run starts from.
   const feedNext = applyConfirmations(feedRun.next, feedConfirmations)
   process.stderr.write(`classify: harvested ${names.length} candidate(s)\n`)
-  const { candidates, rejections } = await fetchCandidates(names, fetch, npmToken, npmBackupRegistry)
+  const fetched = await fetchCandidates(names, fetch, npmToken, npmBackupRegistry)
+  // Design 2026-09-26-market-borrowings §8.2: account for every name the last
+  // published catalog listed and this harvest lost. HERE, not only in
+  // build.ts: the live names below decide which categories.yml rows survive,
+  // and a carried package must be one of them.
+  const lockPath = join(REGISTRY_DIR, 'snapshots', 'manifest.lock')
+  const departureRun = await accountForDepartures(
+    existsSync(lockPath) ? readFileSync(lockPath, 'utf8') : null,
+    fetched,
+    { token: npmToken, backupRegistry: npmBackupRegistry },
+  )
+  for (const line of describeDepartures(departureRun.summary)) process.stderr.write(`classify: ${line}\n`)
+  const { candidates, rejections } = departureRun
 
   // The GitHub half, read from the committed harvest memory rather than
   // re-harvested: `repo-state.json` costs no GitHub call, needs no token, and
@@ -272,7 +285,7 @@ if (basename(process.argv[1] ?? '') === 'classify.ts') {
   // rule.
   const publishers = [...sawPublishers].sort(compareStrings)
   writeFileSync(join(DIST_DIR, 'harvest.json'),
-    `${JSON.stringify({ candidates, rejections, shortfalls, publishers, publisherAxis: axis, feed: { state: serializeFeedState(feedNext), report: feedRun.report, coverage: feedCoverage } })}\n`)
+    `${JSON.stringify({ candidates, rejections, shortfalls, publishers, publisherAxis: axis, feed: { state: serializeFeedState(feedNext), report: feedRun.report, coverage: feedCoverage }, departures: departureRun.summary })}\n`)
   const sortedDiscards = [...discarded].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
   const reportLines = [
     '# Classification report',

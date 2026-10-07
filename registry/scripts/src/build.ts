@@ -15,12 +15,13 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { loadRegistryConfig, serializeFirstSeen } from './config.ts'
+import { describeDepartures, parseDepartureSummary, type DepartureSummary } from './departures.ts'
 import { applyConfirmations, bootstrapFeedState, describeFeedCoverage, describeFeedRun, feedCarriersByKeyword, parseFeedCoverage, parseFeedRunReport, parseFeedState, serializeFeedState, type FeedInput, type FeedRead, type FeedState } from './feed-state.ts'
 import { fetchStarCounts } from './github-stars.ts'
 import { HARVEST_TOPICS, REPO_BACKFILL_BUDGET_DEFAULT, describeSearchPhantoms, harvestRepos, parseHarvestBudget } from './github-client.ts'
 import { parseRepoState, repoGoneDetail, serializeRepoState } from './repo-state.ts'
 import { githubOwnerName } from './github-repo.ts'
-import { fetchCandidates, searchByKeywords, describePublisherAxis, describeShortfall, HARVEST_KEYWORDS, parseKeywordShortfall, parsePublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall, type PublisherAxisReport } from './npm-client.ts'
+import { accountForDepartures, fetchCandidates, searchByKeywords, describePublisherAxis, describeShortfall, HARVEST_KEYWORDS, parseKeywordShortfall, parsePublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall, type PublisherAxisReport } from './npm-client.ts'
 import { confirmCarriers, harvestFeed } from './npm-feed.ts'
 import { applyAxisReport, MAX_EVICTIONS_PER_RUN, MAX_PINNED_PER_KEYWORD, mergePublishers, parsePublisherState, retainPinned, serializePublisherState } from './publisher-state.ts'
 import { pagesArtifactNames } from './pages-artifacts.ts'
@@ -89,6 +90,10 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
    * hand-rolled `'; '` between them read as a delimiter at two nesting
    * levels once both harvest keywords were past the window. */
   const npmParts: string[] = []
+  /** The departure step's counts (design 2026-09-26-market-borrowings §8.2),
+   * from this build's own harvest or the classifier's handoff. Undefined only
+   * for a handoff written before the field existed. */
+  let departureSummary: DepartureSummary | undefined
   /** What the publisher axis did per keyword, reported under its own heading
    * rather than folded into `npmParts` above: vocabulary size, probe counts,
    * seeding and eviction are routine bookkeeping that can fill this array on
@@ -170,18 +175,31 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     }
     process.stderr.write(`harvested ${names.length} npm candidate(s)\n`)
     const harvested = await fetchCandidates(names, fetch, npmToken, npmBackupRegistry)
-    candidates = harvested.candidates
-    rejections = harvested.rejections
+    const lockPath = join(REGISTRY_DIR, 'snapshots/manifest.lock')
+    const departureRun = await accountForDepartures(
+      existsSync(lockPath) ? readFileSync(lockPath, 'utf8') : null,
+      harvested,
+      { token: npmToken, backupRegistry: npmBackupRegistry },
+    )
+    candidates = departureRun.candidates
+    rejections = departureRun.rejections
+    departureSummary = departureRun.summary
   } else {
     const parsed = JSON.parse(readFileSync(harvestFrom, 'utf8')) as {
       candidates?: unknown; rejections?: unknown; shortfalls?: unknown; publishers?: unknown
-      publisherAxis?: unknown; feed?: unknown
+      publisherAxis?: unknown; feed?: unknown; departures?: unknown
     }
     if (!Array.isArray(parsed.candidates) || !Array.isArray(parsed.rejections)) {
       throw new Error(`--harvest-from ${harvestFrom}: expected { candidates, rejections } arrays`)
     }
     candidates = parsed.candidates as Candidate[]
     rejections = parsed.rejections as Rejection[]
+    // Optional as a whole, like `shortfalls`: a handoff from before the field
+    // existed must still build. A record present is validated, because its
+    // counts reach the published report.
+    if (parsed.departures !== undefined) {
+      departureSummary = parseDepartureSummary(parsed.departures, `--harvest-from ${harvestFrom}`)
+    }
     // Optional as a WHOLE — a handoff that recorded no shortfall carries no
     // array — but each record present is validated, because its fields are
     // interpolated into a published report. The cast this replaced rendered
@@ -521,7 +539,11 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   const axisLine = axisParts.length === 0 ? '' : `\npublisher axis (per-keyword pinning and probing, not itself a shortfall):\n${axisParts.map(part => `- ${part}\n`).join('')}`
   const repoLine = repoNote === '' ? '' : `\nGitHub: ${repoNote}\n`
   const feedLine = feedParts.length === 0 ? '' : `\nchange feed (npm, by publication time):\n${feedParts.map(part => `- ${part}\n`).join('')}`
-  writeFileSync(join(OUT_DIR, 'report.md'), `${artifacts.report}\nStars: ${starsNote}\n${npmLine}${axisLine}${feedLine}${repoLine}`)
+  const departureParts = departureSummary === undefined ? [] : describeDepartures(departureSummary)
+  for (const part of departureParts) process.stderr.write(`npm: ${part}\n`)
+  const [departureHead, ...departureRest] = departureParts
+  const departureLine = departureHead === undefined ? '' : `\n${departureHead}\n${departureRest.map(part => `- ${part}\n`).join('')}`
+  writeFileSync(join(OUT_DIR, 'report.md'), `${artifacts.report}\nStars: ${starsNote}\n${npmLine}${departureLine}${axisLine}${feedLine}${repoLine}`)
 
   // Pages gets a directory staged from scratch, holding exactly the artifacts
   // the spec lists. `dist/v1` is NOT cleaned and is not what deploys: the

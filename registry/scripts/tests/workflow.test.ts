@@ -193,6 +193,13 @@ const EXCUSED_REGISTRY_DIR_USES: readonly ExcusedUse[] = [
     reason: 'creates a directory; writes no file content',
   },
   {
+    module: 'build.ts',
+    snippet: "const lockPath = join(REGISTRY_DIR, 'snapshots/manifest.lock')",
+    reason: 'reads the committed lock for the departure step (design 2026-09-26-market-borrowings '
+      + '§8.2) before this build overwrites it; the overwrite joins the same path directly '
+      + 'inside writeFileSync, which this check recognises as a write',
+  },
+  {
     module: 'classify.ts',
     snippet: "const repoStatePath = join(REGISTRY_DIR, 'repo-state.json')",
     reason: 'classify.ts only reads repo-state.json (existsSync/readFileSync); '
@@ -217,6 +224,13 @@ const EXCUSED_REGISTRY_DIR_USES: readonly ExcusedUse[] = [
     reason: 'classify.ts only reads feed-state.json, to run the change feed; it carries '
       + 'the next state in dist/harvest.json instead, and build.ts is the sole writer, '
       + 'already covered by its own check above',
+  },
+  {
+    module: 'classify.ts',
+    snippet: "const lockPath = join(REGISTRY_DIR, 'snapshots', 'manifest.lock')",
+    reason: 'classify.ts only reads manifest.lock, the last published catalog its departure '
+      + 'step compares the harvest with (design 2026-09-26-market-borrowings §8.2); build.ts '
+      + 'is the sole writer, already covered by its own check above',
   },
 ]
 

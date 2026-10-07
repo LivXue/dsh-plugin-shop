@@ -288,6 +288,17 @@ describe('runPipeline', () => {
     expect(lockNpmNames(manifestLock)).toEqual(['dsh-derived-plugin', 'dsh-fs-tool', 'dsh-hello-plugin'])
     expect(report).toContain('| dsh-forger-plugin | no-integrity |')
   })
+
+  it('sorts departure rows with every other rejection, whatever order they arrive in (design 2026-09-26-market-borrowings §8.4)', () => {
+    const rows: Rejection[] = [
+      { name: 'dsh-z', code: 'npm-gone', detail: 'npm no longer has a package of this name: the registry answers 404.' },
+      { name: 'dsh-y', code: 'deprecated', detail: 'Marked deprecated on npm.' },
+    ]
+    const forward = runPipeline(candidates, [], config, BUILT_AT, rows)
+    const reversed = runPipeline(candidates, [], config, BUILT_AT, [...rows].reverse())
+    expect(forward.report).toBe(reversed.report)
+    expect(forward.report).toContain('| dsh-z | npm-gone | npm no longer has a package of this name: the registry answers 404. |')
+  })
 })
 
 describe('runPipeline with repository candidates', () => {
