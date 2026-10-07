@@ -122,6 +122,18 @@ describe('summarizeDepartures, describeDepartures and parseDepartureSummary', ()
     ])
   })
 
+  it('escapes the carried names, so one the parser never saw still cannot forge a report line', () => {
+    // Built by hand, past parseDepartureSummary. escapeCell writes `|` as `\|`
+    // and the newline as a space, so the name stays inside its own line.
+    const lines = describeDepartures({ departed: 1, carried: ['dsh-a\n- forged | cell'], deprecated: 0, npmGone: 0 })
+    expect(lines).toEqual([
+      'npm packages missing from the harvest since the last catalog: 1 (carried 1, deprecated 0, npm-gone 0)',
+      'carried, still carrying a harvest keyword that neither npm search nor the change feed returned: dsh-a - forged \\| cell',
+    ])
+    expect(lines.filter(line => line.includes('\n'))).toEqual([])
+    expect(lines[1]).toContain('\\|')
+  })
+
   it('round-trips a summary through the handoff parser', () => {
     const summary = summarizeDepartures(outcomes)
     expect(parseDepartureSummary(JSON.parse(JSON.stringify(summary)), 'test')).toEqual(summary)
@@ -131,6 +143,8 @@ describe('summarizeDepartures, describeDepartures and parseDepartureSummary', ()
     ['counts that do not add up', { departed: 3, carried: ['dsh-a'], deprecated: 1, npmGone: 0 }],
     ['a negative count', { departed: 0, carried: [], deprecated: -1, npmGone: 1 }],
     ['a carried name that is not a string', { departed: 1, carried: [1], deprecated: 0, npmGone: 0 }],
+    // 1 = 1 + 0 + 0: the counts add up, so only the name can trip.
+    ['a carried name holding a newline', { departed: 1, carried: ['dsh-a\n- forged'], deprecated: 0, npmGone: 0 }],
     ['not an object', ['departed']],
   ])('refuses %s', (_what, raw) => {
     expect(() => parseDepartureSummary(raw, '--harvest-from x')).toThrow(/--harvest-from x: expected `departures`/)
