@@ -3,11 +3,12 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { applyAxisReport, MAX_EVICTIONS_PER_RUN, MAX_PINNED_PER_KEYWORD, type PublisherState } from '../src/publisher-state.ts'
-import { type Cell, cellKey, cellQuery, COMPATIBILITY_PROFILES_MAX_COUNT, COMPATIBILITY_RANGE_MAX_LENGTH, DSH_PEER_RANGE_MAX_LENGTH, dshPeersOf, FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, keywordsOf, KEYWORD_MAX_LENGTH, KEYWORDS_MAX_COUNT, maintainersOf, MAINTAINERS_MAX_COUNT, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describePublisherAxis, describeShortfall, parseKeywordShortfall, parsePublisherAxisReport, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, PROFILE_NAME_MAX_LENGTH, type PublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
+import { accountForDepartures, type Cell, cellKey, cellQuery, COMPATIBILITY_PROFILES_MAX_COUNT, COMPATIBILITY_RANGE_MAX_LENGTH, DSH_PEER_RANGE_MAX_LENGTH, dshPeersOf, FetchTimeoutError, fetchCandidate, fetchCandidates, HARVEST_CONCURRENCY, HARVEST_KEYWORDS, keywordQuery, keywordsOf, KEYWORD_MAX_LENGTH, KEYWORDS_MAX_COUNT, maintainersOf, MAINTAINERS_MAX_COUNT, MAX_PACKUMENT_BYTES, MAX_SEARCH_BODY_BYTES, MAX_SEARCH_FROM, MAX_SEARCH_SHORTFALL, MAX_UNREACHABLE_RESIDUAL, MIN_UNREACHABLE_RECOVERY, describePublisherAxis, describeShortfall, parseKeywordShortfall, parsePublisherAxisReport, type KeywordShortfall, PARTITION_KEYWORDS, partitionKeyword, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, PROFILE_NAME_MAX_LENGTH, type PublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, readDeparture, SEARCH_WINDOW, searchByKeywords, toCandidate, withTimeout } from '../src/npm-client.ts'
 import { ENTRY_PAYLOAD_MAX_BYTES, entryPayloadBytes } from '../src/gate.ts'
 import { MAX_TARBALL_BYTES } from '../src/github-client.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
 import { FEED_MAX_CONFIRMATIONS, FEED_MAX_DISAGREEMENTS, FEED_VERIFY_OWNERS, type FeedCoverage, type FeedInput, type FeedRead } from '../src/feed-state.ts'
+import type { Candidate } from '../src/types.ts'
 
 describe('HARVEST_KEYWORDS', () => {
   it('leads with the ecosystem keyword and adds the harness keyword, neither branded', () => {
@@ -4770,5 +4771,100 @@ describe('toCandidate reads the deprecation message', () => {
     const blank = toCandidate(packumentWith('   '))
     expect(blank?.deprecated).toBe(false)
     expect(blank && 'deprecationMessage' in blank).toBe(false)
+  })
+})
+
+describe('readDeparture (design 2026-09-26-market-borrowings §8.2)', () => {
+  const noSleep = async (_ms: number) => {}
+
+  it('hands back the packument npm answered', async () => {
+    const body = { name: 'dsh-x', 'dist-tags': { latest: '1.0.0' }, versions: {} }
+    const fetchImpl = (async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch
+    expect(await readDeparture('dsh-x', fetchImpl, noSleep)).toEqual({ kind: 'packument', body })
+  })
+
+  it('reads a 404 as npm\'s answer, not a failure', async () => {
+    const fetchImpl = (async () => new Response('{}', { status: 404 })) as unknown as typeof fetch
+    expect(await readDeparture('dsh-x', fetchImpl, noSleep)).toEqual({ kind: 'missing' })
+  })
+
+  it('reads a 5xx with no backup as a failure naming the status', async () => {
+    const fetchImpl = (async () => new Response('down', { status: 503 })) as unknown as typeof fetch
+    expect(await readDeparture('dsh-x', fetchImpl, noSleep)).toEqual({ kind: 'failed', reason: 'npm registry returned 503' })
+  })
+
+  it('reads a thrown transport error as a failure, and never throws', async () => {
+    const fetchImpl = (async () => { throw new Error('ECONNRESET') }) as unknown as typeof fetch
+    const answer = await readDeparture('dsh-x', fetchImpl, noSleep)
+    expect(answer.kind).toBe('failed')
+    expect(answer.kind === 'failed' && answer.reason).toContain('could not reach the npm registry')
+  })
+})
+
+describe('accountForDepartures (design 2026-09-26-market-borrowings §8.2)', () => {
+  const noSleep = async (_ms: number) => {}
+  const harvested = (name: string): Candidate => ({
+    name, version: '1.0.0', integrity: `sha512-${name}`, publishedAt: '2026-09-01T00:00:00.000Z',
+    repository: `https://github.com/someone/${name}`, license: 'MIT', deprecated: false, hasBundle: true,
+    catalog: null, description: 'x', keywords: ['dsh-plugin'], peers: [],
+  })
+  const carrier = (name: string): unknown => ({
+    name,
+    'dist-tags': { latest: '1.0.0' },
+    time: { '1.0.0': '2026-09-01T00:00:00.000Z' },
+    versions: {
+      '1.0.0': {
+        name, version: '1.0.0', keywords: ['dsh-plugin'], license: 'MIT', description: 'Still a plugin.',
+        repository: { url: `git+https://github.com/someone/${name}.git` },
+        dist: { integrity: `sha512-${name}` }, dsh: { bundle: { patch: './cordis.patch.yml' } },
+      },
+    },
+  })
+  /** Routes a packument URL by the encoded name it ends with. */
+  const registry = (bodies: Record<string, { status: number; body: unknown }>): typeof fetch =>
+    (async (url: string | URL) => {
+      const name = decodeURIComponent(String(url).split('/').pop() ?? '')
+      const answer = bodies[name]
+      if (answer === undefined) throw new Error(`unrouted ${String(url)}`)
+      return new Response(JSON.stringify(answer.body), { status: answer.status })
+    }) as unknown as typeof fetch
+
+  it('carries a still-keyworded package, rows the rest, and leaves harvested names alone', async () => {
+    const lock = 'dsh-a 1.0.0 sha512-a\ndsh-gone 1.0.0 sha512-g\ndsh-kept 1.0.0 sha512-k\nowner/repo dsh-r abc\n'
+    const run = await accountForDepartures(lock, { candidates: [harvested('dsh-a')], rejections: [] }, {
+      sleep: noSleep,
+      fetchImpl: registry({
+        'dsh-gone': { status: 404, body: {} },
+        'dsh-kept': { status: 200, body: carrier('dsh-kept') },
+      }),
+    })
+    expect(run.candidates.map(c => c.name)).toEqual(['dsh-a', 'dsh-kept'])
+    expect(run.rejections).toEqual([
+      { name: 'dsh-gone', code: 'npm-gone', detail: 'npm no longer has a package of this name: the registry answers 404.' },
+    ])
+    expect(run.summary).toEqual({ departed: 2, carried: ['dsh-kept'], deprecated: 0, npmGone: 1 })
+  })
+
+  it('treats a name the harvest rowed as fetch-failed as harvested, not departed', async () => {
+    const run = await accountForDepartures('dsh-a 1.0.0 sha512-a\n', {
+      candidates: [], rejections: [{ name: 'dsh-a', code: 'fetch-failed', detail: 'x' }],
+    }, { sleep: noSleep, fetchImpl: registry({}) })
+    expect(run.summary).toEqual({ departed: 0, carried: [], deprecated: 0, npmGone: 0 })
+  })
+
+  it('departs nothing when there is no lock', async () => {
+    const run = await accountForDepartures(null, { candidates: [harvested('dsh-a')], rejections: [] }, { sleep: noSleep, fetchImpl: registry({}) })
+    expect(run.candidates.map(c => c.name)).toEqual(['dsh-a'])
+    expect(run.summary.departed).toBe(0)
+  })
+
+  it('rows a departed name whose read failed, quoting the failure', async () => {
+    const run = await accountForDepartures('dsh-down 1.0.0 sha512-d\n', { candidates: [], rejections: [] }, {
+      sleep: noSleep, fetchImpl: registry({ 'dsh-down': { status: 503, body: {} } }),
+    })
+    expect(run.rejections).toEqual([{
+      name: 'dsh-down', code: 'npm-gone',
+      detail: 'It left the keyword harvest, and npm did not answer when asked why: npm registry returned 503.',
+    }])
   })
 })
