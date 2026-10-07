@@ -4799,6 +4799,36 @@ describe('readDeparture (design 2026-09-26-market-borrowings §8.2)', () => {
     expect(answer.kind).toBe('failed')
     expect(answer.kind === 'failed' && answer.reason).toContain('could not reach the npm registry')
   })
+
+  it('reads a primary 5xx as the failure even when the backup answers 404, so a mirror never says npm lost it', async () => {
+    // A 404 is the one answer that becomes "npm no longer has a package of
+    // this name" in the published report, and only npm may give it.
+    const fetchImpl = (async (url: string | URL) => String(url).startsWith('https://registry.npmjs.org/')
+      ? new Response('down', { status: 503 })
+      : new Response('{}', { status: 404 })) as unknown as typeof fetch
+    expect(await readDeparture('dsh-x', fetchImpl, noSleep, undefined, 'https://registry.npmmirror.com'))
+      .toEqual({ kind: 'failed', reason: 'npm registry returned 503' })
+  })
+
+  it('takes the packument from the backup registry when the primary is down', async () => {
+    const body = { name: 'dsh-x', 'dist-tags': { latest: '1.0.0' }, versions: {} }
+    const fetchImpl = (async (url: string | URL) => String(url).startsWith('https://registry.npmjs.org/')
+      ? new Response('down', { status: 503 })
+      : new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch
+    expect(await readDeparture('dsh-x', fetchImpl, noSleep, undefined, 'https://registry.npmmirror.com'))
+      .toEqual({ kind: 'packument', body })
+  })
+
+  it('reads a deadline that fires before the headers as a failure naming the deadline', async () => {
+    const fetchImpl = (async () => new Promise<Response>(() => {})) as unknown as typeof fetch
+    expect(await readDeparture('dsh-x', fetchImpl, noSleep, undefined, undefined, 50))
+      .toEqual({ kind: 'failed', reason: 'the npm registry did not answer within 50ms' })
+  })
+
+  it('reads a deadline that lands mid-body as the same failure, not as an unreadable body', async () => {
+    expect(await readDeparture('dsh-x', headersThenStalledBody(), noSleep, undefined, undefined, 50))
+      .toEqual({ kind: 'failed', reason: 'the npm registry did not answer within 50ms' })
+  })
 })
 
 describe('accountForDepartures (design 2026-09-26-market-borrowings §8.2)', () => {
@@ -4866,5 +4896,38 @@ describe('accountForDepartures (design 2026-09-26-market-borrowings §8.2)', () 
       name: 'dsh-down', code: 'npm-gone',
       detail: 'It left the keyword harvest, and npm did not answer when asked why: npm registry returned 503.',
     }])
+  })
+
+  it('rows a name npm answers with its unpublish stub, dated, though the stub projects to no candidate', async () => {
+    // The stub is a 200 with no `dist-tags` and no `versions`: what reaches
+    // the classifier is the body itself, never a candidate projection of it.
+    const stub = { name: 'dsh-unpublished', time: { unpublished: { time: '2026-09-30T08:00:00.000Z', versions: ['1.0.0'] } } }
+    const run = await accountForDepartures('dsh-unpublished 1.0.0 sha512-u\n', { candidates: [], rejections: [] }, {
+      sleep: noSleep, fetchImpl: registry({ 'dsh-unpublished': { status: 200, body: stub } }),
+    })
+    expect(run.rejections).toEqual([{
+      name: 'dsh-unpublished', code: 'npm-gone',
+      detail: 'Unpublished from npm on 2026-09-30, so no version is left to install.',
+    }])
+    expect(run.candidates).toEqual([])
+    expect(run.summary).toEqual({ departed: 1, carried: [], deprecated: 0, npmGone: 1 })
+  })
+
+  it('sorts a carried candidate in among the harvested ones by name', async () => {
+    const run = await accountForDepartures('dsh-kept 1.0.0 sha512-k\ndsh-z 1.0.0 sha512-z\n', { candidates: [harvested('dsh-z')], rejections: [] }, {
+      sleep: noSleep, fetchImpl: registry({ 'dsh-kept': { status: 200, body: carrier('dsh-kept') } }),
+    })
+    expect(run.candidates.map(c => c.name)).toEqual(['dsh-kept', 'dsh-z'])
+  })
+
+  it('keeps the harvest\'s own rows first and appends the departure rows after them', async () => {
+    // Named so that a sort by name would put the departure row first.
+    const run = await accountForDepartures('dsh-gone 1.0.0 sha512-g\ndsh-z 1.0.0 sha512-z\n', {
+      candidates: [], rejections: [{ name: 'dsh-z', code: 'fetch-failed', detail: 'dsh-z: could not reach the npm registry (read ECONNRESET)' }],
+    }, { sleep: noSleep, fetchImpl: registry({ 'dsh-gone': { status: 404, body: {} } }) })
+    expect(run.rejections).toEqual([
+      { name: 'dsh-z', code: 'fetch-failed', detail: 'dsh-z: could not reach the npm registry (read ECONNRESET)' },
+      { name: 'dsh-gone', code: 'npm-gone', detail: 'npm no longer has a package of this name: the registry answers 404.' },
+    ])
   })
 })
