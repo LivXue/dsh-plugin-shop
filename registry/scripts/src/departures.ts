@@ -10,7 +10,8 @@
  * in, an outcome goes out; `npm-client.ts` does the reading.
  * @module departures
  */
-import { FEED_PACKAGE_NAME_MAX_LENGTH, isDeprecated, isUnpublishStub, latestVersionOf } from './feed-state.ts'
+import { escapeCell } from './emit.ts'
+import { isDeprecated, isFeedPackageName, isUnpublishStub, latestVersionOf } from './feed-state.ts'
 import { DERIVED_SUMMARY_MAX_LENGTH, VERSION_MAX_LENGTH, deprecatedDetail, deprecationMessageOf, truncateWholeCharacters } from './gate.ts'
 import { compareStrings } from './identity.ts'
 import type { Rejection } from './types.ts'
@@ -152,9 +153,11 @@ export function summarizeDepartures(outcomes: readonly DepartureOutcome[]): Depa
  */
 export function describeDepartures(summary: DepartureSummary): string[] {
   const head = `${DEPARTURES_HEADING}: ${summary.departed} (carried ${summary.carried.length}, deprecated ${summary.deprecated}, npm-gone ${summary.npmGone})`
+  // Escaped: in process the names are the lock's, on `--harvest-from` they are
+  // handoff JSON, and either way they reach the published report.md.
   return summary.carried.length === 0
     ? [head]
-    : [head, `carried, still carrying a harvest keyword that neither npm search nor the change feed returned: ${summary.carried.join(', ')}`]
+    : [head, `carried, still carrying a harvest keyword that neither npm search nor the change feed returned: ${summary.carried.map(escapeCell).join(', ')}`]
 }
 
 /**
@@ -172,10 +175,8 @@ export function parseDepartureSummary(raw: unknown, source: string): DepartureSu
   const { departed, carried, deprecated, npmGone } = raw as Record<string, unknown>
   const isCount = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
   if (!isCount(departed) || !isCount(deprecated) || !isCount(npmGone)) return fail()
-  if (!Array.isArray(carried)
-    || !carried.every(name => typeof name === 'string' && name !== '' && name.length <= FEED_PACKAGE_NAME_MAX_LENGTH)) {
-    return fail()
-  }
+  // The rule `parseFeedCoverage` holds `disagreed` to on the same handoff.
+  if (!Array.isArray(carried) || !carried.every(isFeedPackageName)) return fail()
   if (departed !== carried.length + deprecated + npmGone) return fail()
   return { departed, carried: [...(carried as string[])].sort(compareStrings), deprecated, npmGone }
 }
