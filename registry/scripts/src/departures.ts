@@ -11,7 +11,7 @@
  * @module departures
  */
 import { escapeCell } from './emit.ts'
-import { isDeprecated, isFeedPackageName, isUnpublishStub, latestVersionOf } from './feed-state.ts'
+import { FEED_PACKAGE_NAME_MAX_LENGTH, isDeprecated, isUnpublishStub, latestVersionOf, listedHarvestKeywords } from './feed-state.ts'
 import { DERIVED_SUMMARY_MAX_LENGTH, VERSION_MAX_LENGTH, deprecatedDetail, deprecationMessageOf, truncateWholeCharacters } from './gate.ts'
 import { compareStrings } from './identity.ts'
 import type { Rejection } from './types.ts'
@@ -61,9 +61,10 @@ export function departedNames(listed: readonly string[], harvested: ReadonlySet<
 /**
  * Why one departed name left, read off npm's answer.
  *
- * The membership rule is the change feed's (`classifyManifest`): the latest
- * version lists a harvest keyword by exact code-unit equality and is not
- * deprecated. A package that still passes it is carried; the gate judges it.
+ * The membership rule is the change feed's, read through its own
+ * `isDeprecated` and `listedHarvestKeywords`: the latest version lists a
+ * harvest keyword by exact code-unit equality and is not deprecated. A package
+ * that still passes it is carried; the gate judges it.
  * @param name - the departed name.
  * @param answer - what reading its packument answered.
  * @param harvestKeywords - `HARVEST_KEYWORDS`, passed in because this module is pure.
@@ -85,8 +86,7 @@ export function classifyDeparture(name: string, answer: DepartureAnswer, harvest
   }
   const { deprecated, keywords } = latest.manifest as { deprecated?: unknown; keywords?: unknown }
   if (isDeprecated(deprecated)) return { kind: 'deprecated', name, message: deprecationMessageOf(deprecated) }
-  const declared: readonly unknown[] = Array.isArray(keywords) ? keywords : []
-  if (!harvestKeywords.some(keyword => declared.includes(keyword))) {
+  if (listedHarvestKeywords(keywords, harvestKeywords).length === 0) {
     return { kind: 'keyword-dropped', name, version: truncateWholeCharacters(latest.version, VERSION_MAX_LENGTH) }
   }
   return { kind: 'carried', name }
@@ -161,22 +161,37 @@ export function describeDepartures(summary: DepartureSummary): string[] {
 }
 
 /**
- * Read the handoff's `departures` record. Its counts are interpolated into a
- * published report, so a shape this module never writes throws, the rule
- * `parseKeywordShortfall` applies to `shortfalls`.
+ * Whitespace, or a C0, C1 or bidi control character: what `escapeCell`
+ * (emit.ts) replaces in a report cell, widened to every whitespace. No name
+ * npm accepts holds one, a legacy name included.
+ */
+const WHITESPACE_OR_CONTROL = /[\s\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/
+
+/**
+ * Read the handoff's `departures` record. Its counts and carried names reach
+ * the published report, so a shape this module never writes throws, the rule
+ * `parseKeywordShortfall` applies to `shortfalls`. The writer takes carried
+ * names off `manifest.lock` and applies no grammar, so neither does this: a
+ * legacy name such as `JSONStream` passes. What no listed name can be throws:
+ * an empty name, one longer than npm's bound (the gate refuses those), and one
+ * holding whitespace or a control character (npm accepts no such name).
  * @param raw - the record, unvalidated.
  * @param source - names the file in the error.
  */
 export function parseDepartureSummary(raw: unknown, source: string): DepartureSummary {
-  const fail = (): never => {
-    throw new Error(`${source}: expected \`departures\` to be { departed, carried, deprecated, npmGone } with counts that add up`)
+  const fail = (expected: string): never => {
+    throw new Error(`${source}: expected \`departures\` ${expected}`)
   }
-  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return fail()
+  const shape = 'to be { departed, carried, deprecated, npmGone } with counts that add up'
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return fail(shape)
   const { departed, carried, deprecated, npmGone } = raw as Record<string, unknown>
   const isCount = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
-  if (!isCount(departed) || !isCount(deprecated) || !isCount(npmGone)) return fail()
-  // The rule `parseFeedCoverage` holds `disagreed` to on the same handoff.
-  if (!Array.isArray(carried) || !carried.every(isFeedPackageName)) return fail()
-  if (departed !== carried.length + deprecated + npmGone) return fail()
+  if (!isCount(departed) || !isCount(deprecated) || !isCount(npmGone) || !Array.isArray(carried)) return fail(shape)
+  const isName = (value: unknown): boolean => typeof value === 'string' && value !== ''
+    && value.length <= FEED_PACKAGE_NAME_MAX_LENGTH && !WHITESPACE_OR_CONTROL.test(value)
+  if (!carried.every(isName)) {
+    return fail(`to carry npm package names, and one in \`carried\` is not a string of 1 to ${FEED_PACKAGE_NAME_MAX_LENGTH} characters free of whitespace and control characters`)
+  }
+  if (departed !== carried.length + deprecated + npmGone) return fail(shape)
   return { departed, carried: [...(carried as string[])].sort(compareStrings), deprecated, npmGone }
 }
