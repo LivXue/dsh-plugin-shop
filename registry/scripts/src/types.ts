@@ -346,6 +346,7 @@ export type RejectionCode =
   | 'requires-build'
   | 'workspace-deps'
   | 'repo-gone'
+  | 'npm-gone'
   | 'self'
 
 /** One rejection, carrying an author-readable explanation. */

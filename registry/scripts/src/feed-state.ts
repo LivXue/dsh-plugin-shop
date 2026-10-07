@@ -184,6 +184,45 @@ export function classifyManifest(name: string, manifest: unknown, harvestKeyword
 }
 
 /**
+ * npm's unpublish stub: a 200 with no `dist-tags` and no `versions`, the
+ * unpublish recorded as an object at `time.unpublished` (change-feed design
+ * §4.6). Exactly that shape; any other versionless body is a failed read.
+ * Shared with the departure classifier (design 2026-09-26-market-borrowings
+ * §8.2) so the two cannot disagree on what "unpublished" looks like.
+ * @param packument - a parsed body, unvalidated.
+ */
+export function isUnpublishStub(packument: unknown): boolean {
+  if (packument === null || typeof packument !== 'object' || Array.isArray(packument)) return false
+  const p = packument as { versions?: unknown; 'dist-tags'?: unknown; time?: unknown }
+  const time = p.time
+  const unpublished = time !== null && typeof time === 'object' && !Array.isArray(time)
+    ? (time as { unpublished?: unknown }).unpublished
+    : undefined
+  return p.versions === undefined && p['dist-tags'] === undefined
+    && unpublished !== null && typeof unpublished === 'object' && !Array.isArray(unpublished)
+}
+
+/**
+ * The version `dist-tags.latest` names, with its manifest, or null when the
+ * packument names no usable latest version. `Object.hasOwn`, so a `latest` of
+ * `__proto__` finds no version rather than the prototype.
+ * @param packument - a packument already known to be an object.
+ */
+export function latestVersionOf(packument: object): { version: string; manifest: Record<string, unknown> } | null {
+  const p = packument as { 'dist-tags'?: unknown; versions?: unknown }
+  const tags = p['dist-tags']
+  const latest = tags !== null && typeof tags === 'object' ? (tags as { latest?: unknown }).latest : undefined
+  const versions = p.versions
+  if (typeof latest !== 'string' || versions === null || typeof versions !== 'object' || Array.isArray(versions)
+    || !Object.hasOwn(versions, latest)) {
+    return null
+  }
+  const manifest = (versions as Record<string, unknown>)[latest]
+  if (manifest === null || typeof manifest !== 'object' || Array.isArray(manifest)) return null
+  return { version: latest, manifest: manifest as Record<string, unknown> }
+}
+
+/**
  * Apply the membership rule to a FULL packument: the latest version's
  * keywords and deprecation, and the packument's top-level maintainers, which
  * are today's owners. `/latest` carries the maintainers recorded when that
@@ -206,28 +245,10 @@ export function classifyPackument(name: string, packument: unknown, harvestKeywo
   // forever, and a carrier unpublished after it was read was credited
   // unverified every run (2026-10-06, the first main run). Only that exact
   // shape: any other versionless body is still failed.
-  const time = p.time
-  const unpublished = time !== null && typeof time === 'object' && !Array.isArray(time)
-    ? (time as { unpublished?: unknown }).unpublished
-    : undefined
-  if (p.versions === undefined && p['dist-tags'] === undefined
-    && unpublished !== null && typeof unpublished === 'object' && !Array.isArray(unpublished)) {
-    return { kind: 'gone', name }
-  }
-  const tags = p['dist-tags']
-  const latest = tags !== null && typeof tags === 'object' ? (tags as { latest?: unknown }).latest : undefined
-  const versions = p.versions
-  // Object.hasOwn, so a `latest` of "__proto__" finds no version rather than
-  // the prototype.
-  if (typeof latest !== 'string' || versions === null || typeof versions !== 'object' || Array.isArray(versions)
-    || !Object.hasOwn(versions, latest)) {
-    return failed('the registry answered a packument with no latest version')
-  }
-  const version = (versions as Record<string, unknown>)[latest]
-  if (version === null || typeof version !== 'object' || Array.isArray(version)) {
-    return failed('the registry answered a packument with no latest version')
-  }
-  const v = version as { keywords?: unknown; deprecated?: unknown }
+  if (isUnpublishStub(packument)) return { kind: 'gone', name }
+  const latest = latestVersionOf(p)
+  if (latest === null) return failed('the registry answered a packument with no latest version')
+  const v = latest.manifest as { keywords?: unknown; deprecated?: unknown }
   return classifyManifest(name, { name, keywords: v.keywords, deprecated: v.deprecated, maintainers: p.maintainers }, harvestKeywords)
 }
 
