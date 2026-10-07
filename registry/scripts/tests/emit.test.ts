@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { CATALOG_SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION, emit, escapeCell, SCHEMA_VERSION } from '../src/emit.ts'
+import { CATALOG_SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION, emit, escapeCell, lockNpmNames, SCHEMA_VERSION } from '../src/emit.ts'
 import type { Entry } from '../src/types.ts'
 
 function entry(name: string, version = '1.0.0'): Entry {
@@ -692,5 +692,27 @@ describe('escapeCell is the only markdown-cell escape', () => {
     // npm-grammar-constrained today, so this is the rule holding rather than a
     // live exploit — the point is that one call site cannot be the safe one.
     expect(escapeCell('dsh-\u202eevil | forged')).toBe('dsh-\ufffdevil \\| forged')
+  })
+})
+
+describe('lockNpmNames (design 2026-09-26-market-borrowings §8.2)', () => {
+  it('reads back the npm names the lock writer wrote, and no github line', () => {
+    const { manifestLock } = emit(
+      [entry('dsh-b'), entry('@scope/dsh-a'), repoEntry('dsh-repo', 'owner/slug')],
+      [], '2026-08-18T00:00:00.000Z',
+    )
+    expect(lockNpmNames(manifestLock)).toEqual(['@scope/dsh-a', 'dsh-b'])
+  })
+
+  it('reads an empty lock as no names', () => {
+    expect(lockNpmNames('')).toEqual([])
+  })
+
+  it('reads a line whose integrity holds several space-separated hashes', () => {
+    expect(lockNpmNames('dsh-a 1.0.0 sha512-x sha1-y\n')).toEqual(['dsh-a'])
+  })
+
+  it('throws on a line this module never wrote, rather than reading it as no catalog', () => {
+    expect(() => lockNpmNames('dsh-a 1.0.0 sha512-x\ndsh-b 1.0.0\n')).toThrow(/manifest\.lock line 2/)
   })
 })
