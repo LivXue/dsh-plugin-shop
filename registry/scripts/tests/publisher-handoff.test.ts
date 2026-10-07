@@ -503,6 +503,12 @@ describe('a listed npm package the harvest lost (design 2026-09-26-market-borrow
   // cell or the row early if it reached report.md unescaped.
   const MESSAGE = 'Renamed to "dsh-new" | see the README\nfor the move'
   const DEPRECATED_DETAIL = `Marked deprecated on npm: ${JSON.stringify(MESSAGE)}.`
+  // The row report.md must carry for that detail, worked out by hand, not by
+  // the code under test. JSON.stringify writes the quote as \" and the newline
+  // as the two characters \n; escapeCell (emit.ts) then writes the pipe as \|,
+  // finds no raw CR, LF or tab left to turn into a space, and leaves every
+  // backslash alone. One row.
+  const DEPRECATED_ROW = '| dsh-gone | deprecated | Marked deprecated on npm: "Renamed to \\"dsh-new\\" \\| see the README\\nfor the move". |'
 
   it('classify.ts rows a deprecated departure and carries a qualifying one, keeping its category row', () => {
     const cwd = newWorkspace()
@@ -535,6 +541,36 @@ describe('a listed npm package the harvest lost (design 2026-09-26-market-borrow
     }
   })
 
+  it('build.ts harvesting on its own rows a deprecated departure and lists a carried one through the gate', () => {
+    // The fresh branch: what a local build runs, where daily.yml passes
+    // --harvest-from. The classify.ts test's lock and routes, through
+    // build.ts's own departure call.
+    const cwd = newWorkspace()
+    try {
+      mkdirSync(join(cwd, 'registry', 'snapshots'), { recursive: true })
+      writeFileSync(join(cwd, 'registry', 'snapshots', 'manifest.lock'),
+        'dsh-a 1.0.0 sha512-a\ndsh-gone 1.0.0 sha512-g\ndsh-kept 1.0.0 sha512-k\n')
+      const run = runEntry(cwd, 'build.ts', [], [
+        { contains: 'size=1', body: { total: 1, objects: [] } },
+        { contains: '/-/v1/search', body: searchPage(1, ['dsh-a'], ['bob']) },
+        { contains: '/dsh-gone', body: { name: 'dsh-gone', 'dist-tags': { latest: '1.0.0' }, versions: { '1.0.0': { name: 'dsh-gone', version: '1.0.0', keywords: ['dsh-plugin'], deprecated: MESSAGE } } } },
+        { contains: '/dsh-kept', body: listable('dsh-kept') },
+        { contains: '/dsh-a', body: packument('dsh-a') },
+      ])
+      expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
+      const report = readFileSync(join(cwd, 'dist', 'v1', 'report.md'), 'utf8')
+      expect(report).toContain('npm packages missing from the harvest since the last catalog: 2 (carried 1, deprecated 1, npm-gone 0)')
+      expect(report).toContain('- carried, still carrying a harvest keyword that neither npm search nor the change feed returned: dsh-kept\n')
+      expect(report.split('\n').filter(line => line.startsWith('| dsh-gone |'))).toEqual([DEPRECATED_ROW])
+      // In the published data, so the carried candidate went through the gate.
+      const index = JSON.parse(readFileSync(join(cwd, 'dist', 'v1', 'index.json'), 'utf8')) as { plugins: { url: string } }
+      const data = JSON.parse(readFileSync(join(cwd, 'dist', 'v1', index.plugins.url), 'utf8')) as { plugins: { name: string }[] }
+      expect(data.plugins.map(entry => entry.name)).toEqual(['dsh-kept'])
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
   it('build.ts --harvest-from publishes the departures line, and the message cannot break its row', () => {
     const cwd = newWorkspace()
     try {
@@ -548,13 +584,7 @@ describe('a listed npm package the harvest lost (design 2026-09-26-market-borrow
       expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
       const report = readFileSync(join(cwd, 'dist', 'v1', 'report.md'), 'utf8')
       expect(report).toContain('npm packages missing from the harvest since the last catalog: 1 (carried 0, deprecated 1, npm-gone 0)')
-      // Worked out by hand, not by the code under test. JSON.stringify writes
-      // the quote as \" and the newline as the two characters \n; escapeCell
-      // (emit.ts) then writes the pipe as \|, finds no raw CR, LF or tab left
-      // to turn into a space, and leaves every backslash alone. One row.
-      expect(report.split('\n').filter(line => line.startsWith('| dsh-gone |'))).toEqual([
-        '| dsh-gone | deprecated | Marked deprecated on npm: "Renamed to \\"dsh-new\\" \\| see the README\\nfor the move". |',
-      ])
+      expect(report.split('\n').filter(line => line.startsWith('| dsh-gone |'))).toEqual([DEPRECATED_ROW])
     } finally {
       rmSync(cwd, { recursive: true, force: true })
     }
