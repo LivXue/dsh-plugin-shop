@@ -378,9 +378,19 @@ export function emit(
  * github, and the first field tells them apart: an npm name holds a `/` only
  * behind a leading `@`, and a repository never starts with one. Only three
  * fields are required, so an integrity that is itself several space-separated
- * hashes still reads. A line with fewer is not one this module wrote and
- * throws: a malformed registry file must not read as an empty catalog, which
- * would report every departure as nothing.
+ * hashes still reads.
+ *
+ * Every line this module writes is whole, which is what lets a short one
+ * throw. On an npm line the gate (`gate.ts`) refuses a version holding
+ * whitespace or a control character and admits an integrity only as SRI
+ * hashes separated by single spaces, so neither can cut the line short or
+ * start a forged one, and the name is one npm accepted for publishing, which
+ * holds no whitespace. On a github line the `owner/slug` and the commit or
+ * release tag come from GitHub, which lets none of them hold whitespace, and
+ * the bundle name is held to `BUNDLE_NAME_RE`. A line with fewer than three
+ * fields was therefore edited or corrupted outside this build, and it throws:
+ * a malformed registry file must not read as an empty catalog, which would
+ * report every departure as nothing.
  * @param lock - the file's text.
  */
 export function lockNpmNames(lock: string): string[] {

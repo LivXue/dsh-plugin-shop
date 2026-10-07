@@ -435,6 +435,56 @@ describe('the identity and provenance fields npm hands us', () => {
       "The published version's dist.integrity is longer than 256 characters, so it cannot be recorded in the snapshot.")
   })
 
+  it('accepts an integrity that lists several SRI hashes, as SRI allows', () => {
+    expect(gate(candidate({ integrity: 'sha512-abc sha1-def' }), config).ok).toBe(true)
+  })
+
+  it('refuses an integrity that is not a list of SRI hashes, so it cannot forge a manifest.lock line', () => {
+    // The integrity is written verbatim into its lock line, `name version
+    // integrity`, and the next build reads that file back as the npm names
+    // the last catalog listed (lockNpmNames, emit.ts). A newline ends the line
+    // and starts a forged one; the rest are the other ways a value stops being
+    // the single-space-separated list npm writes. The lone surrogate is the
+    // case pipeline.test.ts's well-formedness fixture used to carry through
+    // emit: it is refused here now, before emit sees it.
+    const cases: [string, string][] = [
+      ['a newline that forges a second lock line', 'sha512-x\nforged-name 1.0.0 sha512-y'],
+      ['a tab between two hashes', 'sha512-abc\tsha1-def'],
+      ['a double space between two hashes', 'sha512-abc  sha1-def'],
+      ['an empty token after a trailing space', 'sha512-abc '],
+      ['a bare hex digest with no algorithm prefix', 'da39a3ee5e6b4b0d3255bfef95601890afd80709'],
+      ['a lone surrogate', 'sha512-x\uDC00'],
+    ]
+    for (const [label, integrity] of cases) {
+      const result = gate(candidate({ integrity }), config)
+      expect(result.ok, label).toBe(false)
+      if (result.ok) continue
+      expect(result.rejection.code, label).toBe('no-integrity')
+      expect(result.rejection.detail, label).toBe(
+        "The published version's dist.integrity is not a list of SRI hashes in the form algorithm-base64, separated by single spaces, so it cannot be recorded in the snapshot.")
+    }
+  })
+
+  it('refuses a version holding whitespace or a control character', () => {
+    // The version sits on the same lock line, between the name and the
+    // integrity, so a newline in it forges a line exactly as one in the
+    // integrity does. U+001B is the control case because it is not
+    // whitespace: a rule written as `\s` alone would let it through.
+    const cases: [string, string][] = [
+      ['a space', '1.0.0 beta'],
+      ['a newline that forges a second lock line', '1.0.0\nforged-name 1.0.0 sha512-y'],
+      ['a control character', '1.0.0\u001b'],
+    ]
+    for (const [label, version] of cases) {
+      const result = gate(candidate({ version }), config)
+      expect(result.ok, label).toBe(false)
+      if (result.ok) continue
+      expect(result.rejection.code, label).toBe('no-manifest')
+      expect(result.rejection.detail, label).toBe(
+        'Declares a version string holding whitespace or a control character, so it is not a version the snapshot can record.')
+    }
+  })
+
   it('rejects an over-long publication time under the publish-time code', () => {
     const result = gate(candidate({ publishedAt: `2026-08-01T12:00:00.000Z${' '.repeat(80)}` }), config)
     expect(result.ok).toBe(false)
@@ -463,7 +513,10 @@ describe('the identity and provenance fields npm hands us', () => {
     // every rejection test above and quietly stop listing real packages.
     expect(gate(candidate({ name: 'd'.repeat(NAME_MAX_LENGTH) }), config).ok, 'name').toBe(true)
     expect(gate(candidate({ version: '1'.repeat(VERSION_MAX_LENGTH) }), config).ok, 'version').toBe(true)
-    expect(gate(candidate({ integrity: 'i'.repeat(INTEGRITY_MAX_LENGTH) }), config).ok, 'integrity').toBe(true)
+    // An SRI token rather than a run of one letter: the gate admits an
+    // integrity only as `<alg>-<base64>` hashes, so 'i' repeated would be
+    // refused by that rule and say nothing about where the bound sits.
+    expect(gate(candidate({ integrity: `sha512-${'A'.repeat(INTEGRITY_MAX_LENGTH - 'sha512-'.length)}` }), config).ok, 'integrity').toBe(true)
     expect(gate(candidate({ publishedAt: 'p'.repeat(PUBLISHED_AT_MAX_LENGTH) }), config).ok, 'publishedAt').toBe(true)
     expect(gate(candidate({ publisher: 'p'.repeat(PUBLISHER_MAX_LENGTH) }), config).ok, 'publisher').toBe(true)
   })
