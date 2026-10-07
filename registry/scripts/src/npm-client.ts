@@ -1612,10 +1612,11 @@ export class FetchTimeoutError extends Error {}
 /**
  * The primary registry answered with a 5xx. Carries the status so that once
  * a configured backup has ALSO failed and this becomes the thrown
- * `primaryError`, the catch in {@link fetchCandidate} can report the same
- * "npm registry returned NNN fetching x" phrasing a caller with no backup
- * (or a healthy one) would have seen for the identical status, instead of
- * wrapping it as a generic, invented-sounding transport failure.
+ * `primaryError`, {@link fetchPackument} can hand that status back and
+ * {@link fetchCandidate} report the same "npm registry returned NNN fetching
+ * x" phrasing a caller with no backup (or a healthy one) would have seen for
+ * the identical status, instead of wrapping it as a generic,
+ * invented-sounding transport failure.
  */
 class PrimaryStatusError extends Error {
   readonly status: number
@@ -2145,12 +2146,12 @@ export function toCandidate(packument: unknown): Candidate | null {
   // version — one author-readable `fetch-failed` row instead of an aborted
   // harvest. github-client's twin projection took this guard on this branch
   // after a real public repository served exactly that body; a throw HERE is
-  // worse, because fetchCandidate's catches wrap the transport and the JSON
-  // parse but not the projection, so it rejects fetchCandidates' Promise.all
-  // and neither build.ts nor classify.ts has an outer catch. The Array clause
-  // is belt-and-braces: an array's `.name` is undefined and would be rejected
-  // below anyway — it is here so the guard reads as "not an object shape"
-  // rather than as a null check that happens to suffice today.
+  // worse, because fetchPackument's catches wrap the transport and the JSON
+  // parse but not the projection, so it rejects the harvest pool's
+  // Promise.all and neither build.ts nor classify.ts has an outer catch. The
+  // Array clause is belt-and-braces: an array's `.name` is undefined and would
+  // be rejected below anyway — it is here so the guard reads as "not an object
+  // shape" rather than as a null check that happens to suffice today.
   if (typeof packument !== 'object' || packument === null || Array.isArray(packument)) return null
   const doc = packument as {
     name?: unknown
@@ -3007,6 +3008,101 @@ export async function searchByKeywords(
 }
 
 /**
+ * What fetching one packument came to, before anyone words it. Two callers
+ * publish it to different readers in different sentences — {@link
+ * fetchCandidate} as a `fetch-failed` detail, {@link readDeparture} as the
+ * reason in an `npm-gone` row — so the fact travels as data and each caller
+ * words its own. One reader, so the two cannot drift on what happened: they
+ * were twins once, and the copy had already inherited a stale comment.
+ */
+type PackumentResult =
+  | { readonly kind: 'packument'; readonly body: unknown }
+  /** A non-OK status the primary answered: one under 500, such as a 404 or an
+   * exhausted 429, which the failover never re-asks a mirror, or its own 5xx
+   * when no backup is configured. A 404 here is npm's answer about the
+   * package. */
+  | { readonly kind: 'status'; readonly status: number }
+  /** Our deadline fired, before the headers or mid-body. */
+  | { readonly kind: 'timeout' }
+  /** The primary answered this 5xx and a configured backup failed as well. */
+  | { readonly kind: 'primary-status'; readonly status: number }
+  /** The request threw, for the reason the message gives. */
+  | { readonly kind: 'transport'; readonly message: string }
+  /** The body was past {@link MAX_PACKUMENT_BYTES} and was refused unparsed. */
+  | { readonly kind: 'too-large' }
+  /** The body is not JSON, or its stream failed after the headers. */
+  | { readonly kind: 'unreadable' }
+
+/**
+ * Fetch one package's packument through the failover, deadline and byte cap
+ * every packument read here shares, and say what came of it.
+ *
+ * Not npm-feed.ts's `readPackument`, which reads the change feed's
+ * confirmations with no failover and its own cap, and reaches different
+ * verdicts on purpose.
+ * @param name - the package name.
+ * @param fetchImpl - the fetch implementation, injected for testing.
+ * @param sleep - the delay implementation, injected so tests do not wait.
+ * @param token - an optional read-only npm token; see {@link fetchWithRetry}.
+ * @param backupRegistry - see {@link fetchWithFailover}.
+ * @param timeoutMs - the per-attempt deadline; see {@link withTimeout}.
+ * @returns the parsed body, the status the registry answered instead, or why
+ *   neither arrived. NEVER throws.
+ */
+async function fetchPackument(
+  name: string,
+  fetchImpl: typeof fetch,
+  sleep: (ms: number) => Promise<void>,
+  token: string | undefined,
+  backupRegistry: string | undefined,
+  timeoutMs: number,
+): Promise<PackumentResult> {
+  let response: Response
+  try {
+    response = await fetchWithFailover(encodeURIComponent(name), fetchImpl, sleep, token, backupRegistry, timeoutMs)
+  } catch (error) {
+    // One unreachable packument must never abort a harvest of thousands.
+    // CLAUDE.md: "a package that cannot be fetched becomes a fetch-failed
+    // rejection in the build report. Nothing disappears without a reason
+    // attached to its name." Before this catch that held only for HTTP-status
+    // failures: one ECONNRESET or one 30s stall rejected the whole harvest.
+    //
+    // A PrimaryStatusError means the primary DID answer — with a 5xx — and a
+    // configured backup then also failed. It comes back as that status, not as
+    // a transport failure, so a caller can word it exactly as it words the
+    // same status answered with no backup configured.
+    if (error instanceof FetchTimeoutError) return { kind: 'timeout' }
+    if (error instanceof PrimaryStatusError) return { kind: 'primary-status', status: error.status }
+    return { kind: 'transport', message: error instanceof Error ? error.message : String(error) }
+  }
+  if (!response.ok) return { kind: 'status', status: response.status }
+  try {
+    const read = await readJsonCapped(response, MAX_PACKUMENT_BYTES)
+    // A result, not a throw: nothing disappears without a reason attached to
+    // its name, and one oversized packument is not a broken harvest.
+    if (!read.ok) return read.reason === 'too-large' ? { kind: 'too-large' } : { kind: 'unreadable' }
+    return { kind: 'packument', body: read.value }
+  } catch (error) {
+    // A body that is not JSON never reaches this catch: readJsonCapped answers
+    // it as `not-json`, above. What does is a body whose STREAM failed after
+    // the headers — a connection reset mid-body, a corrupt content-encoding —
+    // or our own deadline landing mid-body, and the two must not be confused.
+    // `fetch` resolves on the headers, and {@link withTimeout} leaves its timer
+    // armed past that point precisely so a stalled body still aborts — with
+    // the FetchTimeoutError itself as the abort reason, so this catch can tell
+    // them apart. Publishing "response body was unreadable" for our own 30s
+    // stall tells the author npm sent something malformed and sends them
+    // looking at a package that is fine. The header phase above already
+    // reports it as the deadline, and readSearchBody in this module rethrows
+    // it with a comment saying a deadline is not a malformed body; this was
+    // the site that missed. Same cause, same result — never a rethrow,
+    // because this function never throws. A failed stream is an unreadable
+    // body, recorded like any other unusable response.
+    return error instanceof FetchTimeoutError ? { kind: 'timeout' } : { kind: 'unreadable' }
+  }
+}
+
+/**
  * The outcome of fetching one package: either a usable candidate, or the
  * reason none could be produced. Distinguishing the two lets a caller record
  * a transient fetch failure as its own audited rejection rather than
@@ -3028,9 +3124,10 @@ export type CandidateResult =
  *   names that cause, and {@link toCandidate} answers `null` for any body it
  *   cannot project rather than dereferencing it — one dead packument out of
  *   thousands must not take the daily catalog down with it. That last clause
- *   is the one this branch had to add twice: the three catches below wrap the
- *   transport and the JSON parse, NOT the projection, so a `null` body (legal
- *   JSON, parsed without complaint) threw straight past all of them.
+ *   is the one this branch had to add twice: the catches in {@link
+ *   fetchPackument} wrap the transport and the JSON parse, NOT the
+ *   projection, so a `null` body (legal JSON, parsed without complaint) threw
+ *   straight past all of them.
  */
 export async function fetchCandidate(
   name: string,
@@ -3040,65 +3137,9 @@ export async function fetchCandidate(
   backupRegistry: string | undefined = undefined,
   timeoutMs: number = REQUEST_TIMEOUT_MS,
 ): Promise<CandidateResult> {
-  let response: Response
-  try {
-    response = await fetchWithFailover(encodeURIComponent(name), fetchImpl, sleep, token, backupRegistry, timeoutMs)
-  } catch (error) {
-    // One unreachable packument must never abort a harvest of thousands.
-    // CLAUDE.md: "a package that cannot be fetched becomes a fetch-failed
-    // rejection in the build report. Nothing disappears without a reason
-    // attached to its name." Before this catch that held only for HTTP-status
-    // failures: one ECONNRESET or one 30s stall rejected the whole harvest.
-    // The detail names the TRUE cause, because an author reads it to find out
-    // why their package is missing.
-    //
-    // A PrimaryStatusError means the primary DID answer — with a 5xx — and a
-    // configured backup then also failed. That is the same fact a caller
-    // with no backup (or a healthy one) sees as a non-OK `response` below, so
-    // it gets identical phrasing here instead of being wrapped as a second,
-    // invented-sounding transport failure.
-    const detail = error instanceof FetchTimeoutError
-      ? `${name}: the npm registry did not answer within ${timeoutMs}ms`
-      : error instanceof PrimaryStatusError
-        ? `npm registry returned ${error.status} fetching ${name}`
-        : `${name}: could not reach the npm registry (${error instanceof Error ? error.message : String(error)})`
-    return { ok: false, detail }
-  }
-  if (!response.ok) return { ok: false, detail: `npm registry returned ${response.status} fetching ${name}` }
-  let body: unknown
-  try {
-    const read = await readJsonCapped(response, MAX_PACKUMENT_BYTES)
-    if (!read.ok) {
-      // A row, not a throw: nothing disappears without a reason attached to
-      // its name, and one oversized packument is not a broken harvest.
-      return {
-        ok: false,
-        detail: read.reason === 'too-large'
-          ? `${name}: the registry answered a packument larger than ${MAX_PACKUMENT_BYTES} bytes, so it was discarded without being parsed`
-          : `${name}: response body was unreadable`,
-      }
-    }
-    body = read.value
-  } catch (error) {
-    // A deadline landing MID-BODY arrives here, not at the header-phase catch
-    // above: `fetch` resolves on the headers, and {@link withTimeout} leaves
-    // its timer armed past that point precisely so a stalled body still
-    // aborts — with the FetchTimeoutError itself as the abort reason, so this
-    // catch can tell the two apart. Publishing "response body was unreadable"
-    // for our own 30s stall tells the author npm sent something malformed and
-    // sends them looking at a package that is fine. The header phase above
-    // already reports it correctly, and readSearchBody in this module rethrows
-    // it with a comment saying a deadline is not a malformed body; this was
-    // the site that missed. Same reason, same sentence — a rejection rather
-    // than a rethrow, because this function never throws.
-    if (error instanceof FetchTimeoutError) {
-      return { ok: false, detail: `${name}: the npm registry did not answer within ${timeoutMs}ms` }
-    }
-    // response.json() throws on a body that is not valid JSON; recorded as a
-    // rejection like any other unusable response, rather than aborting the build.
-    return { ok: false, detail: `${name}: response body was unreadable` }
-  }
-  const candidate = toCandidate(body)
+  const read = await fetchPackument(name, fetchImpl, sleep, token, backupRegistry, timeoutMs)
+  if (read.kind !== 'packument') return { ok: false, detail: fetchFailedDetail(name, read, timeoutMs) }
+  const candidate = toCandidate(read.body)
   if (candidate === null) return { ok: false, detail: `${name}: packument names no usable latest version` }
   // The packument has to BE the package we asked for. Nothing compared the
   // two, and {@link fetchWithFailover} serves a NPM_BACKUP_REGISTRY answer
@@ -3116,18 +3157,44 @@ export async function fetchCandidate(
   return { ok: true, candidate }
 }
 
+/**
+ * The `fetch-failed` detail for a packument {@link fetchCandidate} could not
+ * read. It names the TRUE cause, because an author reads it to find out why
+ * their package is missing.
+ */
+function fetchFailedDetail(name: string, read: Exclude<PackumentResult, { kind: 'packument' }>, timeoutMs: number): string {
+  switch (read.kind) {
+    case 'timeout':
+      return `${name}: the npm registry did not answer within ${timeoutMs}ms`
+    // A primary 5xx whose backup also failed is the same fact a caller with
+    // no backup (or a healthy one) sees as the answered status, so it gets
+    // identical phrasing instead of being wrapped as a second,
+    // invented-sounding transport failure.
+    case 'primary-status':
+    case 'status':
+      return `npm registry returned ${read.status} fetching ${name}`
+    case 'transport':
+      return `${name}: could not reach the npm registry (${read.message})`
+    case 'too-large':
+      return `${name}: the registry answered a packument larger than ${MAX_PACKUMENT_BYTES} bytes, so it was discarded without being parsed`
+    case 'unreadable':
+      return `${name}: response body was unreadable`
+  }
+}
+
 export const HARVEST_CONCURRENCY = 8
 
 /**
- * Fetch every name into a candidate, turning un-fetchable names into
- * `fetch-failed` rejections rather than dropping them (build.ts rationale).
+ * Call `fn` on every item through a sliding pool of `concurrency` workers,
+ * and hand each result back at its item's index. The harvest's packument
+ * reads run through it, and so do the departure reads.
  *
- * A sliding pool of {@link HARVEST_CONCURRENCY} workers, not a batch barrier.
- * Awaiting `Promise.all` over each slice of eight made every batch cost its
- * SLOWEST member: one packument stalling to the full 30s deadline idled the
- * other seven slots for those 30 seconds, and the harvest runs ~5,650 names
- * deep. Each worker claims the next index and starts on it the moment its own
- * name is done, so a stall costs one slot rather than eight.
+ * A sliding pool, not a batch barrier. Awaiting `Promise.all` over each slice
+ * of eight made every batch cost its SLOWEST member: one packument stalling
+ * to the full 30s deadline idled the other seven slots for those 30 seconds,
+ * and the harvest runs ~5,650 names deep. Each worker claims the next index
+ * and starts on it the moment its own item is done, so a stall costs one slot
+ * rather than eight.
  *
  * Results are written back at the CLAIMED INDEX and collected in input order
  * afterwards, never pushed as they land. With a pool, completion order is
@@ -3136,6 +3203,44 @@ export const HARVEST_CONCURRENCY = 8
  * the `fetch-failed` rows for no reason anyone chose. The index is claimed
  * synchronously, before the first await, so no two workers can read the same
  * one.
+ *
+ * `fn` must never reject. One rejected call takes down the `Promise.all` and
+ * the whole harvest with it, and there is no outer catch above: build.ts and
+ * classify.ts both reach this at module scope.
+ * @returns one slot per item, in input order. A hole in `items` is skipped
+ *   and leaves its slot `undefined`.
+ */
+async function mapPooled<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>,
+): Promise<(R | undefined)[]> {
+  const results: (R | undefined)[] = items.map(() => undefined)
+  let next = 0
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const index = next
+      next += 1
+      if (index >= items.length) return
+      const item = items[index]
+      // `noUncheckedIndexedAccess`: an index below `length` can still be a
+      // hole in a sparse array. Nothing here produces one — both callers pass
+      // a sorted list of names — and a hole is nothing to call `fn` on, so it
+      // leaves an empty slot the caller's collection skips rather than a
+      // rejection row naming `undefined` in the published report.
+      if (item === undefined) continue
+      results[index] = await fn(item)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()))
+  return results
+}
+
+/**
+ * Fetch every name into a candidate, turning un-fetchable names into
+ * `fetch-failed` rejections rather than dropping them (build.ts rationale).
+ * The reads run through {@link mapPooled}, which says why a sliding pool and
+ * why the results come back in input order.
  */
 export async function fetchCandidates(
   names: string[],
@@ -3145,29 +3250,10 @@ export async function fetchCandidates(
   sleep: (ms: number) => Promise<void> = defaultSleep,
   timeoutMs: number = REQUEST_TIMEOUT_MS,
 ): Promise<{ candidates: Candidate[]; rejections: Rejection[] }> {
-  const results: (CandidateResult | undefined)[] = names.map(() => undefined)
-  let next = 0
-  const worker = async (): Promise<void> => {
-    for (;;) {
-      const index = next
-      next += 1
-      if (index >= names.length) return
-      const name = names[index]
-      // `noUncheckedIndexedAccess`: an index below `length` can still be a
-      // hole in a sparse array. Nothing here produces one — the caller's list
-      // is searchByKeywords' sorted union — and a hole is no name to fetch,
-      // so it leaves an empty slot the collection below skips rather than a
-      // rejection row naming `undefined` in the published report.
-      if (name === undefined) continue
-      // `fetchCandidate` never throws — transport, parse AND projection — so
-      // no worker can reject: every name lands as a candidate or as a
-      // rejection carrying its reason. One rejected promise here takes down
-      // the `Promise.all` and the whole harvest with it, and there is no outer
-      // catch above: build.ts and classify.ts both call this at module scope.
-      results[index] = await fetchCandidate(name, fetchImpl, sleep, token, backupRegistry, timeoutMs)
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(HARVEST_CONCURRENCY, names.length) }, () => worker()))
+  // `fetchCandidate` never throws — transport, parse AND projection — so no
+  // read can reject the pool: every name lands as a candidate or as a
+  // rejection carrying its reason.
+  const results = await mapPooled(names, HARVEST_CONCURRENCY, name => fetchCandidate(name, fetchImpl, sleep, token, backupRegistry, timeoutMs))
   const candidates: Candidate[] = []
   const rejections: Rejection[] = []
   names.forEach((name, index) => {
@@ -3181,10 +3267,10 @@ export async function fetchCandidates(
 
 /**
  * Read one departed name's packument for the departure classifier (design
- * 2026-09-26-market-borrowings §8.2), through the same failover, deadline and
- * byte cap as {@link fetchCandidate}. Never throws: a 404 is npm's answer and
- * comes back as such, and anything else that is not a packument comes back as
- * a reason the published row can quote.
+ * 2026-09-26-market-borrowings §8.2), through {@link fetchPackument}: the
+ * same failover, deadline and byte cap as {@link fetchCandidate}. Never
+ * throws: a 404 is npm's answer and comes back as such, and anything else
+ * that is not a packument comes back as a reason the published row can quote.
  */
 export async function readDeparture(
   name: string,
@@ -3194,41 +3280,26 @@ export async function readDeparture(
   backupRegistry: string | undefined = undefined,
   timeoutMs: number = REQUEST_TIMEOUT_MS,
 ): Promise<DepartureAnswer> {
-  let response: Response
-  try {
-    response = await fetchWithFailover(encodeURIComponent(name), fetchImpl, sleep, token, backupRegistry, timeoutMs)
-  } catch (error) {
-    return {
-      kind: 'failed',
-      reason: error instanceof FetchTimeoutError
-        ? `the npm registry did not answer within ${timeoutMs}ms`
-        : error instanceof PrimaryStatusError
-          ? `npm registry returned ${error.status}`
-          : `could not reach the npm registry (${error instanceof Error ? error.message : String(error)})`,
-    }
-  }
-  if (response.status === 404) return { kind: 'missing' }
-  if (!response.ok) return { kind: 'failed', reason: `npm registry returned ${response.status}` }
-  try {
-    const read = await readJsonCapped(response, MAX_PACKUMENT_BYTES)
-    if (!read.ok) {
-      return {
-        kind: 'failed',
-        reason: read.reason === 'too-large'
-          ? `the registry answered a packument larger than ${MAX_PACKUMENT_BYTES} bytes`
-          : 'the response body was unreadable',
-      }
-    }
-    return { kind: 'packument', body: read.value }
-  } catch (error) {
-    // A deadline landing mid-body arrives here, as in fetchCandidate; any
-    // other throw is a body that did not parse.
-    return {
-      kind: 'failed',
-      reason: error instanceof FetchTimeoutError
-        ? `the npm registry did not answer within ${timeoutMs}ms`
-        : 'the response body was unreadable',
-    }
+  const read = await fetchPackument(name, fetchImpl, sleep, token, backupRegistry, timeoutMs)
+  switch (read.kind) {
+    case 'packument':
+      return { kind: 'packument', body: read.body }
+    // Only the primary's own answer arrives as a status. When the primary
+    // fails and a backup answers 404, the failover reports the primary's
+    // failure instead, so a mirror can never tell the published report that
+    // npm no longer has a package.
+    case 'status':
+      return read.status === 404 ? { kind: 'missing' } : { kind: 'failed', reason: `npm registry returned ${read.status}` }
+    case 'primary-status':
+      return { kind: 'failed', reason: `npm registry returned ${read.status}` }
+    case 'timeout':
+      return { kind: 'failed', reason: `the npm registry did not answer within ${timeoutMs}ms` }
+    case 'transport':
+      return { kind: 'failed', reason: `could not reach the npm registry (${read.message})` }
+    case 'too-large':
+      return { kind: 'failed', reason: `the registry answered a packument larger than ${MAX_PACKUMENT_BYTES} bytes` }
+    case 'unreadable':
+      return { kind: 'failed', reason: 'the response body was unreadable' }
   }
 }
 
@@ -3271,24 +3342,13 @@ export async function accountForDepartures(
   const listed = lockText === null ? [] : lockNpmNames(lockText)
   const harvested = new Set([...harvest.candidates.map(candidate => candidate.name), ...harvest.rejections.map(rejection => rejection.name)])
   const names = departedNames(listed, harvested)
-  // The pool fetchCandidates uses, for the reason its comment gives: one
+  // The harvest's own pool, for the reasons {@link mapPooled} gives: one
   // stalled packument costs one slot, and answers land at the claimed index.
-  const answers: (DepartureAnswer | undefined)[] = names.map(() => undefined)
-  let next = 0
-  const worker = async (): Promise<void> => {
-    for (;;) {
-      const index = next
-      next += 1
-      if (index >= names.length) return
-      const name = names[index]
-      if (name === undefined) continue
-      answers[index] = await readDeparture(
-        name, options.fetchImpl ?? fetch, options.sleep ?? defaultSleep, options.token, options.backupRegistry,
-        options.timeoutMs ?? REQUEST_TIMEOUT_MS,
-      )
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(HARVEST_CONCURRENCY, names.length) }, () => worker()))
+  // `readDeparture` never throws, so no read can reject it.
+  const answers = await mapPooled(names, HARVEST_CONCURRENCY, name => readDeparture(
+    name, options.fetchImpl ?? fetch, options.sleep ?? defaultSleep, options.token, options.backupRegistry,
+    options.timeoutMs ?? REQUEST_TIMEOUT_MS,
+  ))
   const carried: Candidate[] = []
   const rows: Rejection[] = []
   const outcomes: DepartureOutcome[] = []
