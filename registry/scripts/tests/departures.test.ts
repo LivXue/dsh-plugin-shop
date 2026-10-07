@@ -60,6 +60,24 @@ describe('classifyDeparture', () => {
       .toEqual({ kind: 'keyword-dropped', name: 'dsh-x', version: '2.0.0' })
   })
 
+  it('reads a latest version both deprecated and un-keyworded as deprecated, the cause its author gave', () => {
+    expect(classifyDeparture('dsh-x', { kind: 'packument', body: packument({ deprecated: 'Renamed to dsh-y.', keywords: ['tool'] }) }, KEYWORDS))
+      .toEqual({ kind: 'deprecated', name: 'dsh-x', message: 'Renamed to dsh-y.' })
+  })
+
+  it('compares keywords exactly, by code unit: DSH-PLUGIN lists no harvest keyword', () => {
+    expect(classifyDeparture('dsh-x', { kind: 'packument', body: packument({ keywords: ['DSH-PLUGIN'] }) }, KEYWORDS))
+      .toEqual({ kind: 'keyword-dropped', name: 'dsh-x', version: '2.0.0' })
+  })
+
+  it('cuts a keyword-dropped version at 128 characters', () => {
+    // 6 + 123 = 129 characters, one past VERSION_MAX_LENGTH; the cut keeps 6 + 122 = 128.
+    const version = `1.0.0-${'a'.repeat(123)}`
+    const body = { name: 'dsh-x', 'dist-tags': { latest: version }, versions: { [version]: { name: 'dsh-x', version, keywords: ['tool'] } } }
+    expect(classifyDeparture('dsh-x', { kind: 'packument', body }, KEYWORDS))
+      .toEqual({ kind: 'keyword-dropped', name: 'dsh-x', version: `1.0.0-${'a'.repeat(122)}` })
+  })
+
   it.each([
     ['a transport failure', { kind: 'failed', reason: 'npm registry returned 503' }, 'npm registry returned 503'],
     ['another package\'s packument', { kind: 'packument', body: packument({}, 'dsh-y') }, 'the registry answered the packument of another package'],
@@ -96,6 +114,13 @@ describe('departureRejection', () => {
     expect(deprecationMessageOf(raw)).toBe(message)
     expect(classifyDeparture('dsh-x', { kind: 'packument', body: packument({ deprecated: raw }) }, KEYWORDS))
       .toEqual({ kind: 'deprecated', name: 'dsh-x', message: deprecationMessageOf(raw) })
+  })
+
+  it('cuts an unanswered reason at 200 characters', () => {
+    // 26 + 175 = 201 characters, one past DERIVED_SUMMARY_MAX_LENGTH; the cut keeps 26 + 174 = 200.
+    const reason = `npm registry returned 503 ${'x'.repeat(175)}`
+    expect(departureRejection({ kind: 'unanswered', name: 'dsh-x', reason }, KEYWORDS).detail)
+      .toBe(`It left the keyword harvest, and npm did not answer when asked why: npm registry returned 503 ${'x'.repeat(174)}.`)
   })
 })
 
@@ -139,14 +164,33 @@ describe('summarizeDepartures, describeDepartures and parseDepartureSummary', ()
     expect(parseDepartureSummary(JSON.parse(JSON.stringify(summary)), 'test')).toEqual(summary)
   })
 
+  it('accepts any name npm can serve, legacy capitals included', () => {
+    // The writer takes carried names off manifest.lock and applies no grammar.
+    const legacy = { departed: 1, carried: ['JSONStream'], deprecated: 0, npmGone: 0 }
+    expect(parseDepartureSummary(legacy, 'test')).toEqual(legacy)
+    // 214 characters, npm's bound: the longest name the gate lets the catalog list.
+    const longest = { departed: 1, carried: ['a'.repeat(214)], deprecated: 0, npmGone: 0 }
+    expect(parseDepartureSummary(longest, 'test')).toEqual(longest)
+  })
+
   it.each([
     ['counts that do not add up', { departed: 3, carried: ['dsh-a'], deprecated: 1, npmGone: 0 }],
     ['a negative count', { departed: 0, carried: [], deprecated: -1, npmGone: 1 }],
-    ['a carried name that is not a string', { departed: 1, carried: [1], deprecated: 0, npmGone: 0 }],
-    // 1 = 1 + 0 + 0: the counts add up, so only the name can trip.
-    ['a carried name holding a newline', { departed: 1, carried: ['dsh-a\n- forged'], deprecated: 0, npmGone: 0 }],
     ['not an object', ['departed']],
   ])('refuses %s', (_what, raw) => {
-    expect(() => parseDepartureSummary(raw, '--harvest-from x')).toThrow(/--harvest-from x: expected `departures`/)
+    expect(() => parseDepartureSummary(raw, '--harvest-from x'))
+      .toThrow('--harvest-from x: expected `departures` to be { departed, carried, deprecated, npmGone } with counts that add up')
+  })
+
+  // Each summary's counts add up, 1 = 1 + 0 + 0, so only the name can trip.
+  it.each([
+    ['that is not a string', 1],
+    ['that is empty', ''],
+    ['longer than 214 characters', 'a'.repeat(215)],
+    ['holding a newline', 'dsh-a\n- forged'],
+    ['holding a bidi control', 'dsh-\u202ea'],
+  ])('refuses a carried name %s, saying the name is wrong rather than the counts', (_what, name) => {
+    expect(() => parseDepartureSummary({ departed: 1, carried: [name], deprecated: 0, npmGone: 0 }, '--harvest-from x'))
+      .toThrow('--harvest-from x: expected `departures` to carry npm package names, and one in `carried` is not a string of 1 to 214 characters free of whitespace and control characters')
   })
 })

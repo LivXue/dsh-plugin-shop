@@ -173,8 +173,7 @@ export function classifyManifest(name: string, manifest: unknown, harvestKeyword
   // retried rather than believed -- the packument reader's own rule.
   if (m.name !== name) return { kind: 'failed', name, reason: 'the registry answered with the manifest of another package' }
   if (isDeprecated(m.deprecated)) return { kind: 'not-carrier', name }
-  const declared: readonly unknown[] = Array.isArray(m.keywords) ? m.keywords : []
-  const keywords = harvestKeywords.filter(keyword => declared.includes(keyword)).sort(compareStrings)
+  const keywords = listedHarvestKeywords(m.keywords, harvestKeywords)
   if (keywords.length === 0) return { kind: 'not-carrier', name }
   const owners = (Array.isArray(m.maintainers) ? m.maintainers : [])
     .map((entry: unknown) => (entry !== null && typeof entry === 'object' ? (entry as { name?: unknown }).name : undefined))
@@ -223,6 +222,19 @@ export function latestVersionOf(packument: object): { version: string; manifest:
 }
 
 /**
+ * The harvest keywords a manifest's `keywords` value lists, matched by exact
+ * code-unit equality and sorted: the keyword half of the membership rule. A
+ * value that is not an array lists none. Shared with the departure classifier
+ * (design 2026-09-26-market-borrowings §8.2), whose rule is the change feed's.
+ * @param keywords - the manifest's `keywords` value, unvalidated.
+ * @param harvestKeywords - the keywords the harvest selects by.
+ */
+export function listedHarvestKeywords(keywords: unknown, harvestKeywords: readonly string[]): string[] {
+  const declared: readonly unknown[] = Array.isArray(keywords) ? keywords : []
+  return harvestKeywords.filter(keyword => declared.includes(keyword)).sort(compareStrings)
+}
+
+/**
  * Apply the membership rule to a FULL packument: the latest version's
  * keywords and deprecation, and the packument's top-level maintainers, which
  * are today's owners. `/latest` carries the maintainers recorded when that
@@ -236,7 +248,7 @@ export function classifyPackument(name: string, packument: unknown, harvestKeywo
   if (packument === null || typeof packument !== 'object' || Array.isArray(packument)) {
     return failed('the registry answered a body that is not a packument')
   }
-  const p = packument as { name?: unknown; 'dist-tags'?: unknown; versions?: unknown; maintainers?: unknown; time?: unknown }
+  const p = packument as { name?: unknown; maintainers?: unknown }
   if (p.name !== name) return failed('the registry answered the packument of another package')
   // An unpublish answers 200, not 404: npm keeps the name's document and
   // serves a stub with no `dist-tags` and no `versions`, the unpublish
