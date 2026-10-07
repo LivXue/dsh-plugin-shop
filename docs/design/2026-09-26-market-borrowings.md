@@ -2,7 +2,8 @@
 
 Status: **batch 1 decided and implemented (2026-09-26): §1–§4**, one commit
 per section on `fix/borrowings-batch-1`. **C7 decided and implemented
-2026-09-27: §7.** A second review of three
+2026-09-27: §7.** **Batch 2, A2 and A3, decided 2026-10-07: §8–§10, not yet
+built.** A second review of three
 dsh plugin markets — [dsh-market/dsh-market](https://github.com/dsh-market/dsh-market)
 (reviewed once before, `2026-08-31-market-borrowings.md`),
 [bradeGithub/DSH-Plugins-Marketplace](https://github.com/bradeGithub/DSH-Plugins-Marketplace)
@@ -330,8 +331,8 @@ competitors again. None of these is decided unless its row says so.
 
 | Item | What | Nature |
 |---|---|---|
-| A2 | npm packages that are deprecated or unpublished drop out of the keyword search and vanish from the catalog with no report row | harvest |
-| A3 | a share of commit-pinned GitHub entries ship a `main` that only a `build` script produces, so they install and then fail to load | gate |
+| A2 | npm packages that are deprecated or unpublished drop out of the keyword search and vanish from the catalog with no report row: **decided 2026-10-07, §8** | harvest |
+| A3 | a share of commit-pinned GitHub entries ship a `main` that only a `build` script produces, so they install and then fail to load: **decided 2026-10-07, §9** | gate |
 | B1 | dsh 0.1.7 checks every `@deepseek-ai/dsh*` peer's declared range at activation | 0.1.7 readiness |
 | B2 | dsh 0.1.7 ships its own `pluginManager` service; hand installs to it where present | 0.1.7 readiness |
 | B3 | the Desktop app's `desktop` profile refuses the CLI the shop spawns | 0.1.7 readiness |
@@ -411,3 +412,390 @@ Both captured logs, V8's heap exhaustion as the negative, and a constructed
 log with an `ERR_` line before the abort. Four mutations were each caught by
 at least one case: a loose pattern, the rule yielding to an `ERR_` line, the
 rule never consulted, and the recovery hint kept.
+
+## 8. A2: a listed npm package that leaves the harvest is accounted for
+
+Decided 2026-10-07, not yet built.
+
+### 8.1 The defect
+
+npm search returns no deprecated package, and its `total` counts none
+(`isDeprecated`, `feed-state.ts:110`, is shared by the feed and the
+packument reader for that reason). A listed package that its author
+deprecates is therefore never harvested again, and the gate's rule for it
+(`gate.ts:268`, "Marked deprecated on npm.") never receives it: the report
+built 2026-10-06T17:06Z holds 16,025 rejections and not one `deprecated`
+row. An unpublished package, one npm removed, and one whose latest version
+lists neither harvest keyword leave the harvest the same way. Nothing in the
+build compares one catalog with the next, so each of them leaves the shelf
+with no row anywhere, which CLAUDE.md's "Failing loudly" forbids by name.
+The GitHub half already does this for repositories: `diffRepoState` names
+every recorded repository the topic search stopped returning, and the build
+publishes it once as `repo-gone` (`build.ts:300`).
+
+Measured 2026-10-07 over the 27 daily `manifest.lock` snapshots on `main`
+from 2026-09-05 to 2026-10-06 (no build committed one on 09-12, 09-13 and
+09-30 to 10-02). An npm name sat in one snapshot and not the next 174 times.
+37 of those names came back later. Of the 137 still absent on 2026-10-06, 13
+carry a gate row in that day's report, and **124 left with no row**. Their
+state on npm, read 2026-10-07:
+
+| State | Names |
+|---|---|
+| Latest version deprecated | 70 |
+| Unpublished: npm's stub | 27 |
+| No longer on the registry: 404 | 21 |
+| Latest version lists neither harvest keyword | 6 |
+| Latest version still lists a keyword, not deprecated | 0 |
+
+A keyword match finds a named successor in 37 of the 70 deprecation
+messages ("Renamed to @leaf233/dsh-model-gateway", "Folded into
+@moguiyu/dsh-tavily 0.3.0"), and 13 of them are npm Support's own "Package
+no longer supported. Contact Support at https://www.npmjs.com/support for
+more info.".
+
+The 37 that came back are the other half of the defect. 29 of them still
+qualified by the change feed's membership rule on the day they left, and 23
+of those had published nothing new: only the harvest can have dropped them.
+`dsh-agnes-studio` is missing from every catalog built from 2026-09-22 to
+2026-10-03. A missing package costs more than a shelf slot. The host's
+`installed()` reports only names that have a catalog row, so every reader
+who installed it loses its card, and with the card its switch, its update
+and its uninstall.
+
+The change feed (`2026-10-04-change-feed-harvest.md`), merged 2026-10-06,
+credits most of what search drops. On that day's build it supplied 34 and 36
+names, `keywords:dsh-plugin` ended 2 short of its total, and no qualifying
+package left. It cannot reach a name its pattern does not select, a name its
+verification leaves unconfirmed or disagreeing, or anything on a run where
+the feed is unavailable.
+
+### 8.2 The rule
+
+**Who left.** `L` is the set of npm names in the last published catalog:
+the committed `registry/snapshots/manifest.lock` (`build.ts:459` writes it,
+and the daily workflow commits it), read before this build overwrites it. A
+pure reader beside its writer (`emit.ts:316`) takes the npm lines, `name
+version integrity`, and skips the github ones, `owner/slug name version`.
+`H` is every name this run's npm harvest produced: the candidates it
+fetched, and the names whose fetch became a `fetch-failed` row. The departed
+names are `L − H`, in code-unit order. A name in `H` stays the gate's to
+judge, as today.
+
+- **It runs where the npm harvest runs**, right after `fetchCandidates`: in
+  `classify.ts` on the daily workflow, and in `build.ts` when it harvests
+  itself. The carried candidates, the rows and the counts ride
+  `dist/harvest.json` with the rest of the harvest, as `shortfalls` do. That
+  placement is load-bearing. The classifier computes its live names from the
+  candidates it holds and prunes every other `categories.yml` row
+  (`mergeCategoryRows`), so a carry added only in `build.ts` would cost a
+  carried package its category on every run it is carried.
+- With no lock, the first build, nothing departs.
+- A build after a gap compares with the last catalog that was published, so
+  the departures of the gap arrive together.
+- A pull request's zero-write dry run computes the set the same way, and
+  `--harvest-from` publishes what the harvest computed.
+
+**Why each left.** One packument read per departed name, through the
+harvest's own reader: the backup-registry failover, `REQUEST_TIMEOUT_MS` and
+`MAX_PACKUMENT_BYTES`. A pure function classifies the answer. It reuses
+`isDeprecated` and the unpublish-stub test inside `classifyPackument`
+(`feed-state.ts:195`), which moves into a shared helper rather than being
+copied.
+
+| What npm answers | Outcome | Code | Detail (draft) |
+|---|---|---|---|
+| The latest version lists a harvest keyword and is not deprecated | carried | — | — |
+| The latest version is deprecated | row | `deprecated` | `Marked deprecated on npm: "<message>".` |
+| npm's unpublish stub | row | `npm-gone` | `Unpublished from npm on <date>, so no version is left to install.` |
+| 404 | row | `npm-gone` | `npm no longer has a package of this name: the registry answers 404.` |
+| The latest version lists neither harvest keyword | row | `npm-gone` | `Its latest version, <version>, no longer lists the dsh-plugin or deepseek-harness keyword, so the harvest does not select it. Add one back and the next build lists it again.` |
+| Anything else: a transport failure, a deadline, another status, a body that is not this package's packument | row | `npm-gone` | `It left the keyword harvest, and npm did not answer when asked why: <reason>.` |
+
+- **Carried** means the package stays listed. Its packument is projected by
+  `toCandidate` and joins the candidates, so the gate judges it like any
+  other and may still reject it with its own row. It is counted in no
+  keyword's coverage, not in `enumerated` and not in a shortfall or a
+  residual. Carrying therefore cannot hide a harvest that has stopped
+  working, and cannot cancel a genuinely missing name, which is why the feed
+  refuses to credit a name its owner's cell omits (change-feed design §4.5).
+  A carried name is in the next lock, so it is read again on every build
+  until the harvest returns it. LivXue chose on 2026-10-07 to carry such a
+  package rather than only report it.
+- **`npm-gone`** is a new code, the npm half of `repo-gone`: neither harvest
+  keyword returns the package any more, and the detail says why when npm
+  answered. LivXue chose it on 2026-10-07 over a code per cause, which would
+  have added three or four codes and still left the last row without one.
+- **One row, once.** A departure row appears on the build the package
+  leaves, as `repo-gone` does. The next lock no longer holds the name.
+- **The deprecation message** is the author's text bound for a published
+  artifact. It is cut at a whole character to 200 characters
+  (`DERIVED_SUMMARY_MAX_LENGTH`, the bound `summary.en` has) and escaped by
+  `escapeCell` like every cell. A bare `true` carries no message and reads
+  `Marked deprecated on npm.`, today's sentence. The gate's own branch
+  (`gate.ts:268`) builds its detail through the same function, so the two
+  paths cannot word one fact two ways, and `Candidate` carries the bounded
+  message to make that possible.
+- **The date** of an unpublish is the date part of `time.unpublished.time`
+  when that is a well-formed timestamp. Otherwise the sentence omits it.
+- **A repository the departed package shadowed** (`shadowed-by-npm`) is no
+  longer shadowed on the same build and goes through the repo gate on its
+  own, as today.
+- **The report** gains one line beside the harvest's diagnostics, `npm
+  packages missing from the harvest since the last catalog: N (carried C,
+  deprecated D, npm-gone G)`, and the carried names below it. Nothing bounds
+  `N` and nothing throws on it. A search that stops working is caught
+  earlier, by the coverage checks, and an ecosystem event such as the
+  takedown of a whole family is a real departure that has to publish.
+- **Cost.** One packument read per departed name. Over the measured window
+  that is at most 17 a build.
+
+### 8.3 Not built
+
+- **Telling a reader who installed it.** The catalog carries no departure,
+  so the shop cannot say a plugin was withdrawn. That needs a field and a
+  shop release (CLAUDE.md, "Release channels"). For now the fact lives in
+  the row in `report.md`.
+- **Rows that persist.** A departure is reported on the build it happens
+  on, like `repo-gone`.
+- **GitHub entries whose repository stays listed.** In the same window 86
+  github entries left while their repository kept other entries, and 63 of
+  those repositories listed a new entry the same day: a rename or a
+  restructure. The other 23 may have left without a row. A repository that
+  leaves entirely is `repo-gone`'s, and 44 of the 773 that left came back.
+  Neither case is this section's.
+
+### 8.4 Testing
+
+- The lock reader against its writer: npm lines read back exactly, github
+  lines skipped, scoped names, an empty lock.
+- The departed set: a harvested name the gate rejects has not departed, and
+  an absent lock departs nothing.
+- The classifier as a table: each row of §8.2, a bare-`true` deprecation, an
+  empty-string deprecation (not deprecated, by `isDeprecated`), a stub with
+  and without a date, a 404, another status, a body that is not JSON,
+  another package's packument, a packument with no latest version.
+- The details: the message cut on an astral character, and the same
+  sentence from the gate's path and the departure path for one message.
+- A carried name reaches the gate and is absent from every coverage count.
+  The report line counts each outcome, and the determinism test in
+  `pipeline.test.ts` covers the new rows and the line.
+- The packument read against fetch fixtures: 200, 404, the stub, a 5xx with
+  and without a backup registry, a deadline. And `build.ts` in both harvest
+  modes, fresh and `--harvest-from`.
+- The handoff: its new field is parsed and validated the way `shortfalls`
+  is, because its values reach the published report, and a carried package
+  keeps its `categories.yml` row through `classify.ts`.
+
+## 9. A3: a commit-pinned entry must contain what its patch loads
+
+Decided 2026-10-07, not yet built.
+
+### 9.1 The defect
+
+`verifyReleaseAsset` refuses a release asset whose patch inserts a module of
+the package that the archive does not contain (`missingInsertTarget`,
+`release-asset.ts:391`, and the 2026-09-07 "patch targets" amendment of the
+authority spec's §7.2). A commit-pinned entry gets no such check, as that
+function's own comment says (`release-asset.ts:388`): the entry that
+prompted the rule, `@open-design/dsh-runtime`, is commit-pinned and stays
+listed. The `requires-build` rule (`repo-gate.ts:146`) looks only for a
+`prepare` or `prepack` script. A repository that gitignores `lib/` and fills
+it with a plain `build` script passes every rule and is listed with nothing
+to load, because a git install runs no build script.
+
+What a missing entry module does depends on the harness, read from each
+one's `@deepseek-ai/dsh-app-boot/lib/index.js`:
+
+- **0.1.5-rc.3**: `assertEntriesLoaded` (`:1434`) throws "Cordis startup
+  failed because these plugin(s) could not be resolved", so the whole
+  profile fails to start. That is the incident shape §3.1 records for
+  2026-09-15.
+- **0.1.7-rc.2 and 0.2.0-rc.2**: an inactive entry that is not on the
+  required list produces one warning and leaves its siblings running
+  (`:3995` and `:3996`), so the plugin installs and silently does nothing.
+
+Measured 2026-10-07 on the catalog built 2026-10-06T17:06Z, over all 7,817
+commit-pinned github entries; the 274 release-rescued ones are checked
+already. For each entry, its manifest and every declared patch file were
+read at the pinned commit, and every module the patch inserts from the
+package itself was resolved by `missingInsertTarget`'s own rules, with
+presence decided by the file at that commit.
+
+| Outcome | Entries |
+|---|---|
+| Every module it inserts from itself resolves to a file at the commit | 7,148 |
+| An inserted module resolves only to files the commit does not contain | **650** |
+| A declared patch file is not in the commit | **4** |
+| `dsh.bundle` is not a loadable declaration: the bundle-components design's §5, not this section's | 6 |
+| No `package.json` at the pinned commit: not this section's | 9 |
+
+The 650 resolve through `exports` (612) or `main` (38), into `lib/` (553),
+`dist/` (92) or elsewhere (5). 617 of them declare a `build` script. They
+are 529 repository roots and 121 subpackages, in 596 repositories. Two of
+the four missing patch files are build output themselves
+(`./dist/cordis.patch.yml`). All 650 were judged a second time against the
+git tree API at the same commits: the same 650, no tree truncated, and no
+path present only under a different case. One of them: `1Lyn-en/dsh-whale`
+at `3bfc3a9` exports `./lib/index.js`, its root `.gitignore` lists `lib/`,
+and its patch inserts `@1lyn-en/dsh-whale`.
+
+### 9.2 The rule
+
+The release-asset rule's claim (3), applied to the git tree at the pinned
+commit:
+
+1. Every file `dsh.bundle.patch` declares is a blob in the tree, under the
+   entry's `subdir` when it has one.
+2. For every module a patch inserts from the package itself, meaning a name
+   equal to the bundle name or under `<name>/`, at least one path its
+   `exports` or `main` can resolve to is a blob in the tree.
+
+The resolution is `missingInsertTarget`'s, unchanged, and so is its
+direction. Every arm of a conditions object counts, `types` and `typings`
+excepted, and `main` takes Node's extension and directory-index lookups.
+None of these is ever refused: a wildcard, a `..`, an undecodable escape, a
+name belonging to another package, a subpath no map lists, an entry point
+declared nowhere. The rule can miss a defect and never invents one. The
+function is generalized from an archive root and a member list to a root
+directory and a set of paths, and both channels call it. A file that exists
+only under another case is absent, as it is in an archive: Linux and the CI
+runners resolve paths case-sensitively. No such entry exists today.
+
+No verdict is formed when the tree is truncated, is not a list, answered
+404, or was past `MAX_TREE_BYTES`; when a patch file is past
+`MAX_PATCH_BYTES`; or when a patch does not parse. A patch file that exists
+is never refused for its content.
+
+### 9.3 Where it is checked
+
+In `fetchRepoCandidate`, beside the sizing read (`github-client.ts:1498`),
+which already fetches the recursive tree at the pinned commit for every
+candidate that can list. Every candidate of a repository shares that tree.
+The manifest is handed over from the projection that read it, not read
+again, so the one new request is a raw read of each declared patch file at
+the pinned commit. Only the candidates the sizing read covers are checked:
+not release-rescued, and passing `canEverList`.
+
+### 9.4 Records and the gate
+
+- **Two fields** join `RepoCandidate` and `repo-state.json`.
+  - A **marker** that the check ran, set whichever way it went, as
+    `sizeProbed` is: whenever the tree answered, the no-verdict outcomes of
+    §9.2 included. A transport failure reading the tree or a patch file sets
+    nothing, and the next build tries again.
+  - The **finding**: the missing patch file, or the inserted module and the
+    path it resolves to. Each is author-controlled text bound for the
+    committed file and the published detail, so each is cut at a whole
+    character to 200 characters when recorded, and echoed into the detail
+    through the release path's `echo`, which cuts at `ECHO_MAX` (80).
+- **The code is `requires-build`.** `repo-gate.ts` refuses a candidate with
+  a finding and no release. The fact is the one that code names, an entry
+  that needs a build no install runs, and the release rescue already
+  answers it. No code is added.
+- **`canEverList` gains the same condition**, so the guard test in
+  `repo-gate.test.ts` keeps it in step with the gate. A refused candidate is
+  then neither sized nor checked again until its repository moves.
+- **Details** (drafts):
+  - A root's module: `Its patch inserts @1lyn-en/dsh-whale, which its
+    package.json resolves to lib/index.js, and the repository does not
+    contain that file at 3bfc3a9. A git install runs no build, so the plugin
+    would not load. Commit the built files, publish to npm, or attach a
+    packed release tarball, and it can be listed.`
+  - A subpackage's module: the same without the release tarball, because
+    the rescue is for roots only.
+  - A patch file: `Declares dsh.bundle.patch ./dist/cordis.patch.yml, which
+    the repository does not contain at <commit>, so dsh has no patch to
+    load.`, followed by the same remedies.
+  - A refused release asset appends `rescueNote`'s sentence, as it does for
+    `requires-build` today.
+
+### 9.5 The release rescue
+
+The rescue extends to this finding, for a repository root. Once the check
+has a finding, the root is probed with `fetchLatestReleaseTarball`, the same
+probe and the same `verifyReleaseAsset` the projection runs for
+`requiresBuild || hasWorkspaceDeps` (`github-client.ts:1603`). The two
+places share one helper. An asset that verifies rescues the entry as it does
+today: the entry installs the tarball, and its size and declarations come
+from the archive. A refused asset is recorded in `releaseRejected`.
+
+Measured on the 529 flagged roots: 188 have a latest release, 111 of those
+carry a `.tgz` or `.tar.gz` asset, and `verifyReleaseAsset` as it stands on
+`main` accepts 107 of them. 3 are refused, and 1 is past
+`MAX_TARBALL_BYTES` at 157,882,370 bytes.
+
+### 9.6 The backfill
+
+`diffRepoState` queues a repository for a backfill fetch when it holds a
+candidate that can list, is not release-rescued and has no marker. That is
+the same queue as `lacksSizeProbe` (`repo-state.ts:359` and `:408`) and the
+same budget, `REPO_BACKFILL_BUDGET_DEFAULT` (2,000 repositories a build,
+`github-client.ts:1702`), changed repositories first. Over the
+`repo-state.json` committed 2026-10-07T07:24Z the queue would hold 12,124
+candidates in 11,844 repositories. The 2026-10-06 build fetched 802 changed
+repositories, which leaves about 1,200 slots, so the backfill converges in
+about ten builds, in repository-name order. The marker's absence is the
+queue and a check that ran removes it, so the backfill ends by itself.
+
+### 9.7 What it delists
+
+On the 2026-10-06 catalog, 654 entries are refused (650 and 4) and 107 of
+them are rescued, so **at most 547 leave the shelf**, approved by LivXue on
+2026-10-07 with the rescue's extension. They leave as their repositories
+are re-checked over the backfill, each with its row. Whether any of the four
+missing-patch entries is rescuable was not measured, and the bound counts
+none of them as rescued.
+
+### 9.8 Not built
+
+- An entry point written in TypeScript, which Node does not strip under
+  `node_modules`.
+- A build script in a dependency, which pnpm blocks at install. The host's
+  failure detail already names `ERR_PNPM_IGNORED_BUILDS` and the approval
+  step.
+- A file the tree holds and the codeload tarball does not: an
+  `export-ignore` path, a Git LFS pointer.
+- A subpath the package does not export, which §9.2 leaves unanswered.
+- The 9 entries with no `package.json` at their pinned commit.
+
+### 9.9 Testing
+
+- The generalized check over a set of paths: a repository root and a
+  `subdir`; any arm of a conditions object, the declaration-order case
+  included, and `types` skipped; `main`'s suffixes; a wildcard, a `..` and
+  a bad escape skipped; another package's module skipped; a missing patch
+  file; a list-valued patch; a truncated tree, a 404 and a malformed tree
+  forming no verdict. The release-asset tests stay as they are and pass.
+- `repo-gate`: both details, the subpackage's without the release clause;
+  `rescueNote` appended; a release present means accepted; and the guard
+  test extended so `canEverList` false still means the gate refuses.
+- `repo-state`: the two fields parsed and serialized with their bounds, and
+  a malformed one throws; a candidate without the marker is queued as a
+  backfill, a marked one is not, a release-rescued one is not; after one
+  simulated pass the queue is empty.
+- `github-client`: the sizing step reads each patch at the pinned commit and
+  records the marker and the finding; a failed tree or patch read records
+  neither; a root with a finding is release-probed and a subpackage is not,
+  through each of the probe's three outcomes.
+- Each guard is reverted once to see a named test fail, as §7.4 did.
+
+## 10. Batch 2: docs and order
+
+- **Docs.** The authority spec takes two amendments in the same change, one
+  for §8 under its §7.1 step 4 and one for §9 after the 2026-09-07 "patch
+  targets" amendment in its §7.2. When the code lands, `docs/schema.md` and
+  `docs/schema.zh.md` tell authors what a GitHub listing must commit and
+  what deprecating or unpublishing leaves in the report, and CLAUDE.md's
+  "Failing loudly" gains the departure rule.
+- **One pull request** from `feat/borrowings-batch-2`, squash-merged. Its
+  zero-write dry run shows the departure line and the first slice of the
+  backfill. The registry is all it changes: no shop release, no README pin.
+- **After the merge**, §8 takes effect on the next daily build, and §9's
+  backfill starts there.
+- **The bundle-components design** (`2026-09-28-bundle-components-and-github-peers.md`),
+  built on branches that have not landed, edits the same files: `gate.ts`,
+  `types.ts`, `npm-client.ts`, `build.ts`, `repo-gate.ts`, `repo-state.ts`
+  and `release-asset.ts`. The two are independent in logic: §9 adds no
+  `DECLARATIONS_RULE` bump, and its marker is separate from that design's
+  rule-2 stamp. Whichever lands second resolves text conflicts only.
