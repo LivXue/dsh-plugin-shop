@@ -394,6 +394,11 @@
   by: human
   reason: "Native DSH browser integration for the DSH Plugin Store"
 
+- name: "dsh-prompt-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: 提示词市场（Prompt Market）— DeepSeek Harness 桌面端插件：输入框旁「提示词导入」按钮 + 浮层市场面板；零后端、纯 JavaScript、无编译步骤。"
+
 - name: "dsh-rerun-store"
   market: false
   by: llm
