@@ -477,3 +477,102 @@ describe('the change feed rides the handoff into the committed file', () => {
     }
   })
 })
+
+describe('a listed npm package the harvest lost (design 2026-09-26-market-borrowings §8)', () => {
+  /** A packument the gate lists: bundle, license, repository, integrity, publish time, description. */
+  function listable(name: string): unknown {
+    return {
+      name,
+      'dist-tags': { latest: '1.0.0' },
+      time: { '1.0.0': '2026-09-01T00:00:00.000Z' },
+      maintainers: [{ name: 'bob' }],
+      versions: {
+        '1.0.0': {
+          name, version: '1.0.0', keywords: ['dsh-plugin'], license: 'MIT', description: 'A plugin the search stopped returning.',
+          repository: { type: 'git', url: `git+https://github.com/bob/${name}.git` },
+          // The name in base64, not the bare name: the gate refuses a hyphen
+          // in an SRI hash, and classify-select.ts counts only a name the gate
+          // accepts as live, so a refused dsh-kept would lose its
+          // categories.yml row for a reason that is not the departure step's.
+          dist: { integrity: `sha512-${Buffer.from(name).toString('base64')}` }, dsh: { bundle: { patch: './cordis.patch.yml' } },
+        },
+      },
+    }
+  }
+  // A double quote, a pipe and a newline: each would end the quotation, the
+  // cell or the row early if it reached report.md unescaped.
+  const MESSAGE = 'Renamed to "dsh-new" | see the README\nfor the move'
+  const DEPRECATED_DETAIL = `Marked deprecated on npm: ${JSON.stringify(MESSAGE)}.`
+
+  it('classify.ts rows a deprecated departure and carries a qualifying one, keeping its category row', () => {
+    const cwd = newWorkspace()
+    try {
+      mkdirSync(join(cwd, 'registry', 'snapshots'), { recursive: true })
+      writeFileSync(join(cwd, 'registry', 'snapshots', 'manifest.lock'),
+        'dsh-a 1.0.0 sha512-a\ndsh-gone 1.0.0 sha512-g\ndsh-kept 1.0.0 sha512-k\n')
+      writeFileSync(join(cwd, 'registry', 'categories.yml'), '- name: "dsh-kept"\n  category: tool\n')
+      const run = runEntry(cwd, 'classify.ts', [], [
+        { contains: 'size=1', body: { total: 1, objects: [] } },
+        { contains: '/-/v1/search', body: searchPage(1, ['dsh-a'], ['bob']) },
+        { contains: '/dsh-gone', body: { name: 'dsh-gone', 'dist-tags': { latest: '1.0.0' }, versions: { '1.0.0': { name: 'dsh-gone', version: '1.0.0', keywords: ['dsh-plugin'], deprecated: MESSAGE } } } },
+        { contains: '/dsh-kept', body: listable('dsh-kept') },
+        { contains: '/dsh-a', body: packument('dsh-a') },
+      ])
+      expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
+      const handoff = JSON.parse(readFileSync(join(cwd, 'dist', 'harvest.json'), 'utf8')) as {
+        candidates: { name: string }[]; rejections: unknown[]; departures?: unknown
+      }
+      // 2 departed = 1 carried (dsh-kept) + 1 deprecated (dsh-gone).
+      expect(handoff.departures).toEqual({ departed: 2, carried: ['dsh-kept'], deprecated: 1, npmGone: 0 })
+      expect(handoff.rejections).toContainEqual({ name: 'dsh-gone', code: 'deprecated', detail: DEPRECATED_DETAIL })
+      expect(handoff.candidates.map(c => c.name)).toContain('dsh-kept')
+      // The classifier prunes every categories.yml row its live names do not
+      // hold; a carried package must keep its own.
+      expect(readFileSync(join(cwd, 'registry', 'categories.yml'), 'utf8')).toContain('"dsh-kept"')
+      expect(run.stderr).toContain('npm packages missing from the harvest since the last catalog: 2 (carried 1, deprecated 1, npm-gone 0)')
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('build.ts --harvest-from publishes the departures line, and the message cannot break its row', () => {
+    const cwd = newWorkspace()
+    try {
+      mkdirSync(join(cwd, 'dist'), { recursive: true })
+      writeFileSync(join(cwd, 'dist', 'harvest.json'), `${JSON.stringify({
+        candidates: [], rejections: [{ name: 'dsh-gone', code: 'deprecated', detail: DEPRECATED_DETAIL }],
+        shortfalls: [], publishers: [],
+        departures: { departed: 1, carried: [], deprecated: 1, npmGone: 0 },
+      })}\n`)
+      const run = runEntry(cwd, 'build.ts', ['--harvest-from', 'dist/harvest.json'], [])
+      expect(run.status, `stderr:\n${run.stderr}`).toBe(0)
+      const report = readFileSync(join(cwd, 'dist', 'v1', 'report.md'), 'utf8')
+      expect(report).toContain('npm packages missing from the harvest since the last catalog: 1 (carried 0, deprecated 1, npm-gone 0)')
+      // Worked out by hand, not by the code under test. JSON.stringify writes
+      // the quote as \" and the newline as the two characters \n; escapeCell
+      // (emit.ts) then writes the pipe as \|, finds no raw CR, LF or tab left
+      // to turn into a space, and leaves every backslash alone. One row.
+      expect(report.split('\n').filter(line => line.startsWith('| dsh-gone |'))).toEqual([
+        '| dsh-gone | deprecated | Marked deprecated on npm: "Renamed to \\"dsh-new\\" \\| see the README\\nfor the move". |',
+      ])
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('build.ts refuses a handoff whose departures do not add up', () => {
+    const cwd = newWorkspace()
+    try {
+      mkdirSync(join(cwd, 'dist'), { recursive: true })
+      writeFileSync(join(cwd, 'dist', 'harvest.json'), `${JSON.stringify({
+        candidates: [], rejections: [], shortfalls: [], publishers: [],
+        departures: { departed: 2, carried: [], deprecated: 1, npmGone: 0 },
+      })}\n`)
+      const run = runEntry(cwd, 'build.ts', ['--harvest-from', 'dist/harvest.json'], [])
+      expect(run.status).not.toBe(0)
+      expect(run.stderr).toContain('expected `departures`')
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+})

@@ -304,7 +304,7 @@ describe('what CI publishes to Pages', () => {
     // rides the handoff the published report cannot say this build is missing
     // packages. The write and the read have to move together.
     expect(read('registry/scripts/src/classify.ts'))
-      .toContain('JSON.stringify({ candidates, rejections, shortfalls, publishers, publisherAxis: axis, feed: { state: serializeFeedState(feedNext), report: feedRun.report, coverage: feedCoverage } })')
+      .toContain('JSON.stringify({ candidates, rejections, shortfalls, publishers, publisherAxis: axis, feed: { state: serializeFeedState(feedNext), report: feedRun.report, coverage: feedCoverage }, departures: departureRun.summary })')
     // The change feed's next state rides the same handoff: build.ts is the
     // only writer of registry/feed-state.json, and CI never runs its search.
     expect(read('registry/scripts/src/build.ts')).toContain('parsed.feed')
@@ -326,6 +326,15 @@ describe('what CI publishes to Pages', () => {
     // again what proves the field is actually spent (into pinFor/unpinFor/
     // nextCursor), not just carried and ignored.
     expect(read('registry/scripts/src/build.ts')).toContain('parsed.publisherAxis')
+    // The departures record (design 2026-09-26-market-borrowings §8.2) rides
+    // the handoff for the reason `shortfalls` does: classify.ts runs the
+    // departure step on the daily workflow, and unless its counts travel here
+    // the published report cannot say what left. publisher-handoff.test.ts
+    // runs both entry points to prove the field is written, read and reported.
+    expect(read('registry/scripts/src/build.ts')).toContain('parsed.departures')
+    expect(read('registry/scripts/src/build.ts')).toContain('describeDepartures(departureSummary)')
+    expect(read('registry/scripts/src/departures.ts'))
+      .toContain("export const DEPARTURES_HEADING = 'npm packages missing from the harvest since the last catalog'")
   })
 
   it('publishes the axis heading a reader needs to find the publisher-axis lines', () => {
