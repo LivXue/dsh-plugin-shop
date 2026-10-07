@@ -57,6 +57,37 @@ export function truncateWholeCharacters(value: string, maxLength: number): strin
 }
 
 /**
+ * The author's deprecation message, bounded for the published report, or
+ * undefined when npm carries none: a bare `true`, an empty or blank string, or
+ * no string at all.
+ *
+ * The message is the author's own text and reaches `report.md` verbatim, so it
+ * takes the bound a derived summary takes and is cut at a whole character
+ * (design 2026-09-26-market-borrowings §8.2). Whether the package IS
+ * deprecated is `isDeprecated`'s question (`feed-state.ts`); this reads only
+ * what it says.
+ * @param deprecated - the manifest's `deprecated` value, unvalidated.
+ */
+export function deprecationMessageOf(deprecated: unknown): string | undefined {
+  if (typeof deprecated !== 'string') return undefined
+  const message = deprecated.trim()
+  return message === '' ? undefined : truncateWholeCharacters(message, DERIVED_SUMMARY_MAX_LENGTH)
+}
+
+/**
+ * The one sentence a deprecated package's row carries, from the gate and from
+ * the departure step alike, so one fact is never worded two ways (design
+ * 2026-09-26-market-borrowings §8.2). The message is quoted as JSON: a quote
+ * inside it cannot end the quotation early.
+ * @param message - the bounded message, from {@link deprecationMessageOf}.
+ */
+export function deprecatedDetail(message: string | undefined): string {
+  return message === undefined
+    ? 'Marked deprecated on npm.'
+    : `Marked deprecated on npm: ${JSON.stringify(message)}.`
+}
+
+/**
  * Maximum length of a `license` string. npm takes the field verbatim and it
  * reaches every published entry; a value past this is not an SPDX identifier
  * (the longest expression in use, `Apache-2.0 WITH LLVM-exception`, is 30
@@ -265,7 +296,7 @@ export function gate(
     return reject(name, 'no-bundle',
       'Declares no dsh.bundle, so it is a library rather than an installable plugin.')
   }
-  if (candidate.deprecated) return reject(name, 'deprecated', 'Marked deprecated on npm.')
+  if (candidate.deprecated) return reject(name, 'deprecated', deprecatedDetail(candidate.deprecationMessage))
   if (candidate.version.length > VERSION_MAX_LENGTH) {
     return reject(name, 'no-manifest',
       `Declares a version string longer than ${VERSION_MAX_LENGTH} characters, so it is not a version the snapshot can record.`)
