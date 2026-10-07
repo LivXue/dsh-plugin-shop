@@ -4930,4 +4930,60 @@ describe('accountForDepartures (design 2026-09-26-market-borrowings §8.2)', () 
       { name: 'dsh-gone', code: 'npm-gone', detail: 'npm no longer has a package of this name: the registry answers 404.' },
     ])
   })
+
+  it('hands the token, the backup registry and the deadline it is given to every read', async () => {
+    const seen: { url: string; auth: string | null }[] = []
+    const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+      const at = String(url)
+      seen.push({ url: at, auth: new Headers(init?.headers).get('authorization') })
+      if (at === 'https://registry.npmjs.org/dsh-kept') return new Response('down', { status: 503 })
+      if (at === 'https://mirror.example/dsh-kept') return new Response(JSON.stringify(carrier('dsh-kept')), { status: 200 })
+      // dsh-stalled, on either host: a 404, but a second after the 50ms
+      // deadline under test. Under the 30s default the 404 lands instead, so a
+      // lost deadline fails the row below rather than this test's own timeout.
+      return new Promise<Response>(resolve => {
+        setTimeout(() => resolve(new Response('{}', { status: 404 })), 1000).unref()
+      })
+    }) as unknown as typeof fetch
+    const run = await accountForDepartures('dsh-kept 1.0.0 sha512-k\ndsh-stalled 1.0.0 sha512-s\n', { candidates: [], rejections: [] }, {
+      fetchImpl, sleep: noSleep, token: 'npm_readonly_token', backupRegistry: 'https://mirror.example', timeoutMs: 50,
+    })
+    // The backup registry: npm's 503 fails over to the mirror, whose carrier is carried.
+    expect(run.summary.carried).toEqual(['dsh-kept'])
+    // The deadline: the row names the one it was given, not the 30s default.
+    expect(run.rejections).toEqual([{
+      name: 'dsh-stalled', code: 'npm-gone',
+      detail: 'It left the keyword harvest, and npm did not answer when asked why: the npm registry did not answer within 50ms.',
+    }])
+    // The token: every request to npm carries it as fetchWithRetry sends it,
+    // and the mirror, which was never issued it, never does.
+    expect([...new Set(seen.filter(r => r.url.startsWith('https://registry.npmjs.org/')).map(r => r.auth))]).toEqual(['Bearer npm_readonly_token'])
+    expect([...new Set(seen.filter(r => r.url.startsWith('https://mirror.example/')).map(r => r.auth))]).toEqual([null])
+  })
+
+  it('judges a departed package by the harvest keywords it is given', async () => {
+    const body = {
+      name: 'dsh-custom',
+      'dist-tags': { latest: '1.0.0' },
+      time: { '1.0.0': '2026-09-01T00:00:00.000Z' },
+      versions: {
+        '1.0.0': {
+          name: 'dsh-custom', version: '1.0.0', keywords: ['custom-kw'], license: 'MIT',
+          dist: { integrity: 'sha512-dsh-custom' }, dsh: { bundle: { patch: './cordis.patch.yml' } },
+        },
+      },
+    }
+    const fetchImpl = registry({ 'dsh-custom': { status: 200, body } })
+    const lock = 'dsh-custom 1.0.0 sha512-c\n'
+    const given = await accountForDepartures(lock, { candidates: [], rejections: [] }, { sleep: noSleep, fetchImpl, harvestKeywords: ['custom-kw'] })
+    expect(given.summary).toEqual({ departed: 1, carried: ['dsh-custom'], deprecated: 0, npmGone: 0 })
+    expect(given.rejections).toEqual([])
+    // The same packument under the default keywords leaves with the keyword-dropped row.
+    const defaults = await accountForDepartures(lock, { candidates: [], rejections: [] }, { sleep: noSleep, fetchImpl })
+    expect(defaults.summary).toEqual({ departed: 1, carried: [], deprecated: 0, npmGone: 1 })
+    expect(defaults.rejections).toEqual([{
+      name: 'dsh-custom', code: 'npm-gone',
+      detail: 'Its latest version, 1.0.0, no longer lists the dsh-plugin or deepseek-harness keyword, so the harvest does not select it. Add one back and the next build lists it again.',
+    }])
+  })
 })
