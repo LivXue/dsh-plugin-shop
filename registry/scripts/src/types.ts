@@ -128,6 +128,18 @@ export interface Candidate {
 }
 
 /**
+ * What a commit-pinned candidate's git tree lacks that its bundle declares
+ * (design 2026-09-26-market-borrowings §9.2), each string bounded at
+ * `UNBUILT_FIELD_MAX_LENGTH`.
+ */
+export type UnbuiltFinding =
+  /** A declared `dsh.bundle.patch` file, as declared. */
+  | { patch: string }
+  /** A module the patch inserts from the package itself, and the path its
+   * manifest resolves it to, relative to the package. */
+  | { insert: string; path: string }
+
+/**
  * One GitHub repository as fetched, before any gating decision. The unit of
  * listing is the repo (`owner/slug`); `name` is the manifest's bundle name —
  * what `dsh` registers on install. `version` and `integrity` both carry the

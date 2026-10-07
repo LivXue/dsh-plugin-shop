@@ -71,3 +71,27 @@ export function treeInstallSize(body: unknown, subdir?: string): number | undefi
   // exists to avoid.
   return counted === 0 ? undefined : total
 }
+
+/**
+ * The blob paths of a git tree response, or null when the tree cannot vouch
+ * for an absence: truncated, not a list, or holding an element this cannot
+ * read. Feeds the patch-target check (design 2026-09-26-market-borrowings
+ * §9.2), which refuses only what it can prove missing: an unread element may
+ * be the very file it would call absent.
+ * @param body - the parsed tree response, untrusted.
+ */
+export function treeBlobPaths(body: unknown): ReadonlySet<string> | null {
+  if (body === null || typeof body !== 'object') return null
+  const { tree, truncated } = body as { tree?: unknown; truncated?: unknown }
+  if (truncated !== undefined && truncated !== false) return null
+  if (!Array.isArray(tree)) return null
+  const paths = new Set<string>()
+  for (const element of tree as unknown[]) {
+    if (element === null || typeof element !== 'object') return null
+    const { path, type } = element as { path?: unknown; type?: unknown }
+    if (type !== 'blob') continue
+    if (typeof path !== 'string') return null
+    paths.add(path)
+  }
+  return paths
+}
