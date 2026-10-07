@@ -128,11 +128,35 @@ export const NAME_MAX_LENGTH = 214
 export const VERSION_MAX_LENGTH = 128
 
 /**
+ * Whitespace or a control character (C0, DEL, C1), refused inside a version.
+ * The version is written verbatim into its `manifest.lock` line, `name version
+ * integrity`, and the next build reads that file back as the npm names the
+ * last catalog listed (`lockNpmNames`, emit.ts). A newline would end the line
+ * and start a forged one, a space would add a field, and a semver version
+ * holds neither. The control range is spelled out because `\s` alone misses
+ * most of it: U+001B and U+0085 are not whitespace.
+ */
+const WHITESPACE_OR_CONTROL = /[\s\u0000-\u001f\u007f-\u009f]/
+
+/**
  * Maximum length of a `dist.integrity` string. One `sha512-` SRI hash is 95
  * characters (`sha512-` plus 88 of base64), and SRI permits a space-separated
- * list, so the bound holds a couple of them and nothing more.
+ * list, so the bound holds a couple of them and nothing more. The bound says
+ * how much; {@link SRI_LIST} says what may fill it.
  */
 export const INTEGRITY_MAX_LENGTH = 256
+
+/**
+ * The only shape a `dist.integrity` may take: SRI hashes, each an algorithm
+ * of lowercase letters and digits, a hyphen and base64 with at most the two
+ * `=` of padding base64 allows, separated by single spaces. That is the form
+ * npm writes. The value reaches a `manifest.lock` line verbatim, as the
+ * version does (see {@link WHITESPACE_OR_CONTROL}), so anything else, a
+ * newline above all, could forge a line naming any package in the baseline a
+ * departure is measured against, or leave one the reader refuses on every
+ * later build.
+ */
+const SRI_LIST = /^[a-z0-9]+-[A-Za-z0-9+/]+={0,2}(?: [a-z0-9]+-[A-Za-z0-9+/]+={0,2})*$/
 
 /**
  * Maximum length of a `publishedAt` timestamp. npm writes an ISO 8601 instant,
@@ -301,6 +325,10 @@ export function gate(
     return reject(name, 'no-manifest',
       `Declares a version string longer than ${VERSION_MAX_LENGTH} characters, so it is not a version the snapshot can record.`)
   }
+  if (WHITESPACE_OR_CONTROL.test(candidate.version)) {
+    return reject(name, 'no-manifest',
+      'Declares a version string holding whitespace or a control character, so it is not a version the snapshot can record.')
+  }
   if (candidate.license === null || candidate.license === '') {
     // The detail names what npm expects, because the author has to act on it:
     // the projection already accepts the two legacy forms (`license: { type }`
@@ -332,6 +360,10 @@ export function gate(
   if (candidate.integrity.length > INTEGRITY_MAX_LENGTH) {
     return reject(name, 'no-integrity',
       `The published version's dist.integrity is longer than ${INTEGRITY_MAX_LENGTH} characters, so it cannot be recorded in the snapshot.`)
+  }
+  if (!SRI_LIST.test(candidate.integrity)) {
+    return reject(name, 'no-integrity',
+      "The published version's dist.integrity is not a list of SRI hashes in the form algorithm-base64, separated by single spaces, so it cannot be recorded in the snapshot.")
   }
   if (candidate.publishedAt === null) {
     return reject(name, 'no-publish-time', 'npm reports no publication time for this version.')

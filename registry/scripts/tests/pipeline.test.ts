@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { describeRereadStopped, repoPeersEmitted, runPipeline, selectEntries, unmatchedRegistryNotes, withholdRepoPeers } from '../src/pipeline.ts'
 import { parseRegistryConfig } from '../src/config.ts'
+import { lockNpmNames } from '../src/emit.ts'
 import type { Candidate, Rejection, RepoCandidate } from '../src/types.ts'
 
 const candidates = JSON.parse(
@@ -258,6 +259,35 @@ describe('runPipeline', () => {
     expect(report).toContain('| dsh-bloat-000 | no-manifest | Would publish 45608 bytes of catalog entry, past the 12288-byte budget one entry may occupy in plugins.json. |')
     expect(report.match(/\| dsh-bloat-\d\d\d \| no-manifest \|/g)).toHaveLength(HOSTILE)
   })
+
+  it('keeps an integrity that would forge a manifest.lock line out of the lock and the names read back from it', () => {
+    // The lock is `name version integrity`, one entry per line, and the next
+    // build reads it back as the npm names the last catalog listed (design
+    // 2026-09-26-market-borrowings §8.2). A newline in an author-supplied
+    // integrity would end its line and add one naming any package at all.
+    // No first-seen row is needed: an accepted name is stamped with the build
+    // date, so without the gate's rule this candidate lists and the forged
+    // line reaches the lock, which is what the assertions below would catch.
+    const forger: Candidate = {
+      name: 'dsh-forger-plugin',
+      version: '1.0.0',
+      integrity: 'sha512-x\nforged-name 1.0.0 sha512-y',
+      publishedAt: '2026-08-01T12:00:00.000Z',
+      repository: 'https://github.com/you/forger-plugin',
+      license: 'MIT',
+      deprecated: false,
+      hasBundle: true,
+      catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
+      description: 'A plugin.',
+      keywords: [],
+      peers: [],
+    }
+    const clean = runPipeline(candidates, [], config, BUILT_AT)
+    const { manifestLock, report } = runPipeline([...candidates, forger], [], config, BUILT_AT)
+    expect(manifestLock).toBe(clean.manifestLock)
+    expect(lockNpmNames(manifestLock)).toEqual(['dsh-derived-plugin', 'dsh-fs-tool', 'dsh-hello-plugin'])
+    expect(report).toContain('| dsh-forger-plugin | no-integrity |')
+  })
 })
 
 describe('runPipeline with repository candidates', () => {
@@ -415,7 +445,11 @@ describe('nothing unpaired leaves for plugins.json', () => {
   const hostile: Candidate = {
     name: 'dsh-hostile-plugin',
     version: '1.0.0\uD800',
-    integrity: 'sha512-x\uDC00',
+    // Well formed, unlike every field around it: the gate admits an integrity
+    // only as SRI hashes, so a lone surrogate there is refused before emit
+    // sees it (gate.test.ts) and would delist this entry, leaving the
+    // absence assertions below to pass over an empty catalog.
+    integrity: 'sha512-x',
     publishedAt: '2026-08-01T12:00:00.000Z',
     repository: 'https://github.com/you/p\uD800',
     license: 'MIT\uD800',
@@ -435,6 +469,10 @@ describe('nothing unpaired leaves for plugins.json', () => {
     // strings are human-authored denial reasons from denied.yml), but the
     // claim is scoped to what is actually enforced.
     const { pluginsJson } = runPipeline([hostile], [], hostileConfig, BUILT_AT)
+    // Listed first: an absence over an empty catalog proves nothing, and a
+    // gate rule that refuses this fixture empties it without turning anything
+    // here red.
+    expect((JSON.parse(pluginsJson) as { plugins: unknown[] }).plugins).toHaveLength(1)
     // JSON.stringify escapes an orphan as \udXXX, so the file stays ASCII and
     // the content hash stays stable — which is precisely why no existing test
     // noticed. The escape is what has to be absent.
@@ -446,6 +484,7 @@ describe('nothing unpaired leaves for plugins.json', () => {
     // rather than at "something somewhere in the entry".
     const { pluginsJson } = runPipeline([hostile], [], hostileConfig, BUILT_AT)
     const entry = (JSON.parse(pluginsJson) as { plugins: Record<string, unknown>[] }).plugins[0]
+    expect(entry?.name).toBe('dsh-hostile-plugin')
     const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
     for (const field of ['version', 'integrity', 'repository', 'license', 'publisher']) {
       expect(lone.test(String(entry?.[field] ?? '')), field).toBe(false)
