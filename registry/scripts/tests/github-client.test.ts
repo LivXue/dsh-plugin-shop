@@ -1190,6 +1190,181 @@ describe('fetchRepoCandidate', () => {
       expect(result.detail).toContain('larger than 1048576 bytes')
     }
   })
+
+  describe('the patch-target check (design 2026-09-26-market-borrowings §9.3)', () => {
+    const manifest = JSON.stringify({
+      name: 'dsh-repo-plugin',
+      exports: { '.': './lib/index.js' },
+      dsh: { bundle: { patch: './cordis.patch.yml' }, catalog: { category: 'tool', summary: { en: 'x' }, capabilities: [] } },
+    })
+    const patch = "- insert:\n    - id: plugin\n      name: 'dsh-repo-plugin'\n"
+    const treeUrl = `https://api.github.com/repos/someone/dsh-repo-plugin/git/trees/${commit}?recursive=1`
+    const patchUrl = `https://raw.githubusercontent.com/someone/dsh-repo-plugin/${commit}/cordis.patch.yml`
+    const releaseUrl = 'https://api.github.com/repos/someone/dsh-repo-plugin/releases/latest'
+    const tree = (paths: string[], truncated = false): Response => new Response(JSON.stringify({
+      truncated, tree: paths.map(path => ({ path, type: 'blob', size: 10 })),
+    }), { status: 200 })
+    const base = (): Record<string, Response> => ({
+      'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(manifest, { status: 200 }),
+      'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': new Response(JSON.stringify({
+        sha: commit, commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+    })
+
+    it('marks a candidate whose tree holds its patch and the module it inserts', async () => {
+      const result = await fetchRepoCandidate(meta, stubFetch({
+        ...base(),
+        [treeUrl]: tree(['package.json', 'cordis.patch.yml', 'lib/index.js']),
+        [patchUrl]: new Response(patch, { status: 200 }),
+      }), sleep, 'token')
+      expect(result.ok && result.candidates[0]?.entriesChecked).toBe(true)
+      expect(result.ok && result.candidates[0]?.unbuilt).toBeUndefined()
+    })
+
+    it('records the module a gitignored lib/ leaves unresolvable, after a release probe finds none', async () => {
+      const result = await fetchRepoCandidate(meta, stubFetch({
+        ...base(),
+        [treeUrl]: tree(['package.json', 'cordis.patch.yml', 'src/index.ts']),
+        [patchUrl]: new Response(patch, { status: 200 }),
+        [releaseUrl]: new Response('{"message":"Not Found"}', { status: 404 }),
+      }), sleep, 'token')
+      expect(result.ok).toBe(true)
+      if (result.ok) {
+        expect(result.candidates[0]?.entriesChecked).toBe(true)
+        expect(result.candidates[0]?.unbuilt).toEqual({ insert: 'dsh-repo-plugin', path: 'lib/index.js' })
+        expect(result.candidates[0]?.release).toBeUndefined()
+      }
+    })
+
+    it('records a declared patch file the tree does not hold, without reading it', async () => {
+      const result = await fetchRepoCandidate(meta, stubFetch({
+        ...base(),
+        [treeUrl]: tree(['package.json', 'lib/index.js']),
+        [releaseUrl]: new Response('{"message":"Not Found"}', { status: 404 }),
+      }), sleep, 'token')
+      expect(result.ok && result.candidates[0]?.unbuilt).toEqual({ patch: './cordis.patch.yml' })
+    })
+
+    it('marks a truncated tree without a verdict, so the backfill ends', async () => {
+      const result = await fetchRepoCandidate(meta, stubFetch({
+        ...base(),
+        [treeUrl]: tree(['package.json'], true),
+      }), sleep, 'token')
+      expect(result.ok && result.candidates[0]?.entriesChecked).toBe(true)
+      expect(result.ok && result.candidates[0]?.unbuilt).toBeUndefined()
+    })
+
+    it('leaves the candidate unmarked when the patch read fails in transport', async () => {
+      const result = await fetchRepoCandidate(meta, stubFetch({
+        ...base(),
+        [treeUrl]: tree(['package.json', 'cordis.patch.yml']),
+        [patchUrl]: new Response('upstream error', { status: 500 }),
+      }), sleep, 'token')
+      expect(result.ok && result.candidates[0]?.sizeProbed).toBe(true)
+      expect(result.ok && result.candidates[0]?.entriesChecked).toBeUndefined()
+      expect(result.ok && result.candidates[0]?.unbuilt).toBeUndefined()
+    })
+
+    it('marks a tree that answered 404 without a verdict', async () => {
+      const result = await fetchRepoCandidate(meta, stubFetch({
+        ...base(),
+        [treeUrl]: new Response('{"message":"Not Found"}', { status: 404 }),
+      }), sleep, 'token')
+      expect(result.ok && result.candidates[0]?.entriesChecked).toBe(true)
+      expect(result.ok && result.candidates[0]?.unbuilt).toBeUndefined()
+    })
+
+    const assetUrl = 'https://github.com/someone/dsh-repo-plugin/releases/download/v1.0.0/dsh-repo-plugin.tgz'
+    const releaseOf = (): Response => new Response(JSON.stringify({ tag_name: 'v1.0.0', assets: [{ browser_download_url: assetUrl }] }), { status: 200 })
+
+    it('rescues a root whose finding a verified release answers', async () => {
+      const bytes = packedTarball('dsh-repo-plugin', { exports: { '.': './lib/index.js' } }, { 'package/lib/index.js': 'export default {}\n' })
+      const result = await fetchRepoCandidate(meta, stubFetch({
+        ...base(),
+        [treeUrl]: tree(['package.json', 'cordis.patch.yml']),
+        [patchUrl]: new Response(patch, { status: 200 }),
+        [releaseUrl]: releaseOf(),
+        [assetUrl]: new Response(bytes, { status: 200 }),
+      }), sleep, 'token')
+      expect(result.ok).toBe(true)
+      if (result.ok) {
+        expect(result.candidates[0]?.release?.tag).toBe('v1.0.0')
+        expect(result.candidates[0]?.unbuilt).toEqual({ insert: 'dsh-repo-plugin', path: 'lib/index.js' })
+      }
+    })
+
+    it('keeps the finding, and says why, when the attached release is refused', async () => {
+      // An asset that packs another package: verifyReleaseAsset refuses it.
+      const result = await fetchRepoCandidate(meta, stubFetch({
+        ...base(),
+        [treeUrl]: tree(['package.json', 'cordis.patch.yml']),
+        [patchUrl]: new Response(patch, { status: 200 }),
+        [releaseUrl]: releaseOf(),
+        [assetUrl]: new Response(packedTarball('another-package'), { status: 200 }),
+      }), sleep, 'token')
+      expect(result.ok).toBe(true)
+      if (result.ok) {
+        expect(result.candidates[0]?.release).toBeUndefined()
+        expect(result.candidates[0]?.releaseRejected).toBeTypeOf('string')
+        expect(result.candidates[0]?.unbuilt).toEqual({ insert: 'dsh-repo-plugin', path: 'lib/index.js' })
+      }
+    })
+
+    it('leaves the candidate unmarked when the release probe fails in transport', async () => {
+      // Recording the finding without having asked the release would refuse
+      // an entry its asset may rescue, so neither is recorded.
+      const result = await fetchRepoCandidate(meta, stubFetch({
+        ...base(),
+        [treeUrl]: tree(['package.json', 'cordis.patch.yml']),
+        [patchUrl]: new Response(patch, { status: 200 }),
+        [releaseUrl]: new Response('upstream error', { status: 500 }),
+      }), sleep, 'token')
+      expect(result.ok).toBe(true)
+      if (result.ok) {
+        expect(result.candidates[0]?.sizeProbed).toBe(true)
+        expect(result.candidates[0]?.entriesChecked).toBeUndefined()
+        expect(result.candidates[0]?.unbuilt).toBeUndefined()
+      }
+    })
+
+    it('checks a subpackage under its own directory and never release-probes it', async () => {
+      const urls: string[] = []
+      const routes = stubFetch({
+        'https://raw.githubusercontent.com/someone/monorepo/main/package.json':
+          new Response(JSON.stringify({ private: true, workspaces: ['packages/*'] }), { status: 200 }),
+        'https://api.github.com/repos/someone/monorepo/commits/main': new Response(JSON.stringify({
+          sha: commit, commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+        }), { status: 200 }),
+        'https://api.github.com/repos/someone/monorepo/git/trees/main?recursive=1': new Response(JSON.stringify({
+          tree: [{ path: 'package.json' }, { path: 'packages/x/package.json' }],
+        }), { status: 200 }),
+        'https://raw.githubusercontent.com/someone/monorepo/main/packages/x/package.json': new Response(JSON.stringify({
+          name: 'dsh-x', exports: { '.': './lib/index.js' }, dsh: { bundle: { patch: './cordis.patch.yml' } },
+        }), { status: 200 }),
+        [`https://api.github.com/repos/someone/monorepo/git/trees/${commit}?recursive=1`]: new Response(JSON.stringify({
+          truncated: false,
+          tree: [
+            { path: 'package.json', type: 'blob', size: 10 },
+            { path: 'packages/x/package.json', type: 'blob', size: 10 },
+            { path: 'packages/x/cordis.patch.yml', type: 'blob', size: 10 },
+          ],
+        }), { status: 200 }),
+        [`https://raw.githubusercontent.com/someone/monorepo/${commit}/packages/x/cordis.patch.yml`]:
+          new Response("- insert:\n    - id: x\n      name: 'dsh-x'\n", { status: 200 }),
+      })
+      const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+        urls.push(String(url))
+        return routes(url, init)
+      }) as unknown as typeof fetch
+      const result = await fetchRepoCandidate({ ...meta, fullName: 'someone/monorepo' }, fetchImpl, sleep, 'token')
+      expect(result.ok).toBe(true)
+      if (result.ok) {
+        expect(result.candidates[0]?.subdir).toBe('packages/x')
+        expect(result.candidates[0]?.unbuilt).toEqual({ insert: 'dsh-x', path: 'lib/index.js' })
+      }
+      expect(urls.some(url => url.includes('releases/latest'))).toBe(false)
+    })
+  })
 })
 
 describe('only a 404 is a verdict about the repository', () => {
@@ -1914,6 +2089,10 @@ describe('harvestRepos', () => {
       // Without this every fixture below would queue for the one-time
       // backfill and stop testing the `pushedAt` carry it exists to test.
       sizeProbed: true,
+      // And its tree was checked for the files its patch loads (design
+      // 2026-09-26-market-borrowings §9). Unmarked, every candidate below
+      // lacksEntryCheck queues for one backfill fetch, for the same reason.
+      entriesChecked: true,
       // And its manifest's declarations were read — no peers — under the rule
       // this build applies. Unstamped, every fixture would queue for the
       // declarations re-read instead, for the same reason. (This was
