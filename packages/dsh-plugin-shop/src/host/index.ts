@@ -1837,11 +1837,19 @@ export class ShopGateway extends TypertRemoteService {
       if (spec === undefined) continue
       const origin = parseSpec(spec)
       if (origin?.kind !== 'github') continue
+      // The pin was recorded at install time under `identityKey(entry)` —
+      // `github:${repo}#${subdir}` — so a subdir-installed entry's pin does
+      // not sit under the no-subdir key. The manifest spec names no subdir,
+      // so ANY `github:${repo}#*` pin is the install this row describes.
+      const pinPrefix = `github:${origin.repo}#`
+      const pinKey = pins[pinPrefix] !== undefined
+        ? pinPrefix
+        : Object.keys(pins).find(key => key.startsWith(pinPrefix))
       installed.push({
         name,
         source: 'github',
         repo: origin.repo,
-        installed: pins[`github:${origin.repo}#`] ?? pins[name] ?? spec,
+        installed: (pinKey === undefined ? undefined : pins[pinKey]) ?? pins[name] ?? spec,
         latest: null,
         outdated: false,
         enabled: enabledOf(name),
