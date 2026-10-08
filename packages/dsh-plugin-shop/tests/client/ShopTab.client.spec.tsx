@@ -4055,3 +4055,65 @@ describe('ShopTab after a restart that never happened', () => {
     expect(container.querySelector('[data-shop-not-restarted]')).toBeNull()
   })
 })
+
+// §C10 (MVP): an installed github entry the catalog refuses `shadowed-by-npm`
+// gets a recovered row in the Installed view — the badge, the explanation, an
+// Uninstall button, and no Install/Update/Enable/Restart control.
+describe('shadowed github recovery — Installed view (C10)', () => {
+  const shadowedRow: InstalledFixture = {
+    name: 'dsh-shadowed-plugin',
+    source: 'github',
+    repo: 'alice/dsh-shadowed-plugin',
+    installed: 'a'.repeat(40),
+    latest: null,
+    outdated: false,
+    enabled: true,
+    shadowed: true,
+  }
+
+  it('renders the shadowed badge and the explanation, with Uninstall as the only action', async () => {
+    const { injected } = bench(snapshot(), [shadowedRow])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-category-installed]') as HTMLElement)
+    await waitFor(() => expect(container.querySelector('[data-shop-shadowed-entry="dsh-shadowed-plugin"]')).toBeTruthy())
+    const row = container.querySelector('[data-shop-shadowed-entry="dsh-shadowed-plugin"]')!
+    // The badge and the explanation render in the reader's language.
+    expect(row.textContent).toContain(en.shadowedBadge)
+    expect(row.textContent).toContain(en.shadowedDetail)
+    // Uninstall only: no Install / Update / Enable switch on this row.
+    expect(row.querySelector('[data-shop-uninstall]')).toBeTruthy()
+    expect(row.querySelector('[data-shop-install]')).toBeNull()
+    expect(row.querySelector('[data-shop-update]')).toBeNull()
+    expect(row.querySelector('[data-shop-enable-switch]')).toBeNull()
+  })
+
+  it('does not render outside the Installed view', async () => {
+    const { injected } = bench(snapshot(), [shadowedRow])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(container.querySelector('[data-shop-shadowed-entry="dsh-shadowed-plugin"]')).toBeNull()
+  })
+
+  it('clicking Uninstall reaches the RPC with the row\'s name', async () => {
+    const { injected, uninstall, installStatus } = bench(snapshot(), [shadowedRow])
+    installStatus.mockResolvedValue({ found: true, state: 'done', log: [], activation: 'live' })
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-category-installed]') as HTMLElement)
+    await waitFor(() => expect(container.querySelector('[data-shop-shadowed-entry="dsh-shadowed-plugin"]')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-shadowed-entry="dsh-shadowed-plugin"] [data-shop-uninstall]')!)
+    await waitFor(() => expect(uninstall).toHaveBeenCalledWith({ name: 'dsh-shadowed-plugin' }))
+    // The flow poller reaches the same uninstall record the matched rows use,
+    // then renders the done receipt on the recovered row itself.
+    await waitFor(() => expect(container.querySelector('[data-shop-shadowed-entry="dsh-shadowed-plugin"] [data-shop-uninstall-done]')).toBeTruthy(), { timeout: 3000 })
+  })
+
+  it('lists no section when no installed row is shadowed', async () => {
+    const { injected } = bench(snapshot(), [{ name: 'dsh-hello-plugin', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true }])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-category-installed]') as HTMLElement)
+    expect(container.querySelector('[data-shop-shadowed]')).toBeNull()
+  })
+})
