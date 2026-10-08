@@ -144,6 +144,11 @@ function shapeOf(value: unknown): string {
  * normalising here keeps the root rule below from seeing `.` as the root. */
 const normalize = (path: string): string => path.replace(/^\.\//, '')
 
+/** Why an asset whose members have no real top-level directory is refused.
+ * Shared by the root-level-file case and the `.//`-spelling case below. */
+const NO_TOP_LEVEL_DIRECTORY =
+  'the release asset has no top-level directory — npm and pnpm strip the first path component when they extract, so nothing would land. Attach a tarball packed by `npm pack`.'
+
 /**
  * The asset's single top-level directory, or a reason there is not exactly one.
  *
@@ -156,16 +161,33 @@ const normalize = (path: string): string => path.replace(/^\.\//, '')
  * bytes the host's integrity gate passed by construction. `npm pack` never
  * emits two roots, so requiring exactly one costs nothing real and removes
  * the substitution entirely.
+ *
+ * A member whose head segment is EMPTY — normalized to `/x`, which only a
+ * `.//x` spelling produces, since `readTar` refuses a literal leading `/` —
+ * is no top-level directory either. Only a hand-run GNU tar preserves the
+ * double slash, and `strip: 1` extraction drops the `.` and writes `/x`, an
+ * absolute path npm itself rejects. Rooting such an archive at `''` made the
+ * two joins in `verifyReleaseAsset` disagree and refuse with "the archive
+ * does not contain that file" for a file the archive holds, so it is refused
+ * here, up front, with the same detail a root-level file gets. The returned
+ * root is therefore always a real directory — `''` is a git tree's phrase,
+ * never an archive's.
  */
 function singleRoot(paths: readonly string[]): { root: string } | { detail: string } {
   const roots = new Set<string>()
   let rootLevel = false
+  let emptyHead = false
   for (const path of paths) {
     const [head, ...rest] = path.split('/')
     if (head === undefined) continue
+    if (head === '') {
+      emptyHead = true
+      continue
+    }
     if (rest.length === 0) rootLevel = true
     else roots.add(head)
   }
+  if (emptyHead) return { detail: NO_TOP_LEVEL_DIRECTORY }
   if (roots.size === 1) {
     const [only] = [...roots]
     if (only !== undefined) return { root: only }
@@ -179,7 +201,7 @@ function singleRoot(paths: readonly string[]): { root: string } | { detail: stri
   }
   return {
     detail: rootLevel
-      ? 'the release asset has no top-level directory — npm and pnpm strip the first path component when they extract, so nothing would land. Attach a tarball packed by `npm pack`.'
+      ? NO_TOP_LEVEL_DIRECTORY
       : 'the release asset holds no files',
   }
 }
@@ -328,8 +350,10 @@ function declaredTargets(
  */
 const LEGACY_SUFFIXES = ['', '.js', '.json', '.node', '/index.js', '/index.json', '/index.node'] as const
 
-/** A member path under `root`: an archive's single top-level directory, a
- * subpackage directory in a git tree, or `''` for a tree's repository root. */
+/** A member path under `root`: an archive's single top-level directory —
+ * always a REAL directory, since {@link singleRoot} refuses an archive whose
+ * root would be `''` — or, on the git-tree side, a subpackage directory, or
+ * `''` for the tree's repository root. */
 function under(root: string, relative: string): string {
   return root === '' ? relative : `${root}/${relative}`
 }
