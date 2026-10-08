@@ -1080,9 +1080,12 @@ function EnabledSwitch({ row, t, setEnabled, restart, restartBlocked, reload, re
 
 /** One outdated install row (§7.3): the name, the installed and latest
  * versions, the hot enable/disable switch, and the update button (the
- * install flow for `name@latest`, reusing `InstallPanel`). */
+ * install flow for `name@latest`, reusing `InstallPanel`). The row MUST
+ * carry a `latest` string — a catalog truth to compare against; §C10's
+ * shadowed rows hold `latest: null` and never reach this control, so the
+ * field is narrowed at the parameter. */
 function OutdatedRow({ row, tier, missing, harness, t, setEnabled, flowFor, restart, restartBlocked, reload, restarts }: {
-  row: ShopInstalledEntry
+  row: ShopInstalledEntry & { latest: string }
   tier: CatalogEntry['tier']
   missing: string[]
   harness: HarnessVerdict | undefined
@@ -1157,7 +1160,14 @@ function OutdatedSection({ state, entriesByKey, missingByKey, harnessVerdicts, t
     // succeeds and changes nothing.
     return <p className={css.stateLine} data-shop-outdated-error>{t('installedError')}</p>
   }
-  const outdated = state.entries.filter(entry => entry.outdated)
+  // A row needs a catalog truth to compare against to be updatable: the
+  // shadowed recovery rows carry `latest: null` and `outdated: false`
+  // already, so they cannot reach `OutdatedRow` here — the type predicate
+  // is what proves it (ShopInstalledEntry.latest is `string | null` since
+  // §C10; OutdatedRow's target requires a string).
+  const outdated = state.entries.filter(
+    (entry): entry is ShopInstalledEntry & { latest: string } => entry.outdated && entry.latest !== null,
+  )
   if (outdated.length === 0) return null
   return (
     <section className={css.outdatedSection} data-shop-outdated aria-labelledby={UPDATABLE_HEADING_ID}>
