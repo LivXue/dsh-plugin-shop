@@ -1118,6 +1118,206 @@ describe('ShopGateway.installed', () => {
   })
 })
 
+// C10 (MVP): an installed github entry the catalog refuses `shadowed-by-npm`
+// still gets a control row. The catalog iteration never visits it — it has no
+// catalog entry — so `installed()` runs a second pass over the profile
+// manifest's own dependencies and synthesizes one. See
+// `docs/design/2026-10-08-archived-flag-and-shadowed-recovery.md` §2.
+describe('ShopGateway.installed — shadowed github recovery (C10)', () => {
+  const bobCommit = 'b'.repeat(40)
+  const npmTwin: CatalogEntry = {
+    name: 'dsh-foo', version: '2.0.0', integrity: 'sha512-x', publishedAt: null,
+    repository: 'https://github.com/npm-owner/dsh-foo', license: 'MIT',
+    tier: 'community', metadata: 'derived', source: 'npm',
+    added: '2026-08-25',
+  }
+
+  function gatewayWith(dir: string, dependencies: Record<string, string>): ShopGateway {
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-shadowed-profile-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
+      name: 'dsh-profile-web', dsh: { profile: { bundles: Object.keys(dependencies) } }, dependencies,
+    }))
+    return new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [npmTwin], denied: [], stars: {} }, stale: false }) as CatalogResult,
+    })
+  }
+
+  it('synthesizes a shadowed row when the manifest holds github: and the catalog holds only a same-named npm entry', async () => {
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-shadowed-'))
+    mkdirSync(join(dir, 'cache'), { recursive: true })
+    writeFileSync(join(dir, 'cache/github-pins.json'), JSON.stringify({ 'github:bob/dsh-foo#': bobCommit }))
+    const gateway = gatewayWith(dir, { 'dsh-foo': 'github:bob/dsh-foo' })
+    await gateway.catalog({})
+    expect(await gateway.installed()).toEqual([{
+      name: 'dsh-foo', source: 'github', repo: 'bob/dsh-foo',
+      installed: bobCommit, latest: null, outdated: false, enabled: true, shadowed: true,
+    }])
+  })
+
+  it('falls back to the spec string itself when no pin is recorded', async () => {
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-shadowed-nopin-'))
+    const gateway = gatewayWith(dir, { 'dsh-foo': 'github:bob/dsh-foo' })
+    await gateway.catalog({})
+    expect(await gateway.installed()).toEqual([{
+      name: 'dsh-foo', source: 'github', repo: 'bob/dsh-foo',
+      installed: 'github:bob/dsh-foo', latest: null, outdated: false, enabled: true, shadowed: true,
+    }])
+  })
+
+  it('produces no shadowed row for an npm-shaped spec with no catalog row', async () => {
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-shadowed-npm-'))
+    // dsh-gone is in the manifest but matches nothing in the catalog and is
+    // npm-shaped: that is a departure (§A2), which the MVP does not recover.
+    const gateway = gatewayWith(dir, { 'dsh-foo': 'github:bob/dsh-foo', 'dsh-gone': '^1.0.0' })
+    await gateway.catalog({})
+    const rows = await gateway.installed()
+    expect(rows.find(row => row.name === 'dsh-gone')).toBeUndefined()
+  })
+
+  it('produces no shadowed row for an unparseable spec', async () => {
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-shadowed-bad-'))
+    const gateway = gatewayWith(dir, { 'dsh-foo': 'github:bob/dsh-foo', 'dsh-weird': 'workspace:*' })
+    await gateway.catalog({})
+    const rows = await gateway.installed()
+    expect(rows.find(row => row.name === 'dsh-weird')).toBeUndefined()
+  })
+
+  it('does not double-list a name the catalog iteration claimed', async () => {
+    // dsh-one IS a catalog entry: the first loop claims it. The second pass
+    // must not re-add it as shadowed, or the card shows both the catalog row
+    // and a duplicate shadowed one.
+    const entries: CatalogEntry[] = [
+      { name: 'dsh-one', version: '2.0.0', integrity: null, publishedAt: null, repository: null, license: 'MIT', tier: 'community', metadata: 'derived', source: 'npm', added: '2026-08-25' },
+      npmTwin,
+    ]
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-shadowed-claimed-'))
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-shadowed-claimed-profile-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
+      name: 'dsh-profile-web', dsh: { profile: { bundles: ['dsh-one', 'dsh-foo'] } },
+      dependencies: { 'dsh-one': '^2.0.0', 'dsh-foo': 'github:bob/dsh-foo' },
+    }))
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries, denied: [], stars: {} }, stale: false }) as CatalogResult,
+    })
+    await gateway.catalog({})
+    const rows = await gateway.installed()
+    expect(rows.filter(row => row.name === 'dsh-one').length).toBe(1)
+    expect(rows.find(row => row.name === 'dsh-one')?.shadowed).toBeUndefined()
+  })
+})
+
+// The matching uninstall arm: a name with no catalog row refuses `is not in
+// the catalog` today — including a shadowed github install, whose button then
+// refuses itself. The arm re-reads the manifest spec through `parseSpec` and
+// lets only the github shape through.
+describe('ShopGateway.uninstall — shadowed github arm (C10)', () => {
+  const npmTwin: CatalogEntry = {
+    name: 'dsh-foo', version: '2.0.0', integrity: 'sha512-x', publishedAt: null,
+    repository: 'https://github.com/npm-owner/dsh-foo', license: 'MIT',
+    tier: 'community', metadata: 'derived', source: 'npm',
+    added: '2026-08-25',
+  }
+
+  function gatewayWith(dir: string, dependencies: Record<string, string>): ShopGateway {
+    const bin = fakeDshRecording(dir, 0, { silent: true })
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-shadowed-uninstall-profile-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
+      name: 'dsh-profile-web', dsh: { profile: { bundles: Object.keys(dependencies) } }, dependencies,
+    }))
+    return new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
+      // The catalog holds a DIFFERENT-dsh-foo (the npm one that shadowed the
+      // github install it shares the name with).
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [npmTwin], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      dshBin: bin,
+      prefetcher: fixturePrefetcher(),
+    })
+  }
+
+  it('proceeds through the removal path for a github-shaped spec with no matching catalog row', async () => {
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-shadowed-uninstall-'))
+    const gateway = gatewayWith(dir, { 'dsh-foo': 'github:bob/dsh-foo' })
+    await gateway.catalog({})
+    // The catalog holds the npm dsh-foo, but the manifest's spec is github:
+    // bob/dsh-foo. `installedSpecMatches` on the catalog row answers false,
+    // so the catalog row does NOT claim the uninstall — yet the manifest
+    // still holds the dependency. Without the shadowed arm this refused with
+    // "is not in the catalog"; with it the removal spawns.
+    const result = await gateway.uninstall({ name: 'dsh-foo' })
+    if (!result.ok) throw new Error(`expected the shadowed arm to admit the uninstall, got: ${result.detail}`)
+    const deadline = Date.now() + 5000
+    let terminal = gateway.installStatus({ installId: result.installId })
+    while (!isTerminalInstallState(terminal.state) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+      terminal = gateway.installStatus({ installId: result.installId })
+    }
+    // The fake dsh records `dsh plugin remove dsh-foo` — the uninstall ran.
+    expect(readFileSync(join(dir, 'calls.log'), 'utf8')).toContain('remove dsh-foo')
+  })
+
+  // The strongest form: the catalog holds NOTHING under this name (a github
+  // install from a fork the catalog never listed, or one whose listing was
+  // later dropped). The `named.length === 0` branch is where today's refusal
+  // fires — this is the case the shadowed arm directly lifts.
+  it('proceeds through the removal path when the catalog holds no row of the name at all', async () => {
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-shadowed-empty-'))
+    const bin = fakeDshRecording(dir, 0, { silent: true })
+    const profileDir = mkdtempSync(join(TEMP_ROOT, 'dsh-shadowed-empty-profile-'))
+    writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
+      name: 'dsh-profile-web', dsh: { profile: { bundles: ['dsh-foo'] } },
+      dependencies: { 'dsh-foo': 'github:bob/dsh-foo' },
+    }))
+    const gateway = new ShopGateway(stubCtx(), {
+      catalogUrl: 'https://shop.test/v1/', cacheDir: join(dir, 'cache'), profile: 'web', profileDir,
+      loadCatalog: async () => ({ snapshot: { schemaVersion: 6, builtAt: '', entries: [], denied: [], stars: {} }, stale: false }) as CatalogResult,
+      dshBin: bin,
+      prefetcher: fixturePrefetcher(),
+    })
+    await gateway.catalog({})
+    const result = await gateway.uninstall({ name: 'dsh-foo' })
+    if (!result.ok) throw new Error(`expected the shadowed arm to admit the uninstall, got: ${result.detail}`)
+    const deadline = Date.now() + 5000
+    let terminal = gateway.installStatus({ installId: result.installId })
+    while (!isTerminalInstallState(terminal.state) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+      terminal = gateway.installStatus({ installId: result.installId })
+    }
+    expect(readFileSync(join(dir, 'calls.log'), 'utf8')).toContain('remove dsh-foo')
+  })
+
+  it('still refuses an npm-shaped spec with no catalog row', async () => {
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-shadowed-npm-refuse-'))
+    const gateway = gatewayWith(dir, { 'dsh-gone': '^1.0.0' })
+    await gateway.catalog({})
+    expect(await gateway.uninstall({ name: 'dsh-gone' })).toEqual({
+      ok: false, detail: 'dsh-plugin-shop: dsh-gone is not in the catalog',
+    })
+  })
+
+  it('still refuses an unparseable spec with no catalog row', async () => {
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-shadowed-bad-refuse-'))
+    const gateway = gatewayWith(dir, { 'dsh-weird': 'workspace:*' })
+    await gateway.catalog({})
+    expect(await gateway.uninstall({ name: 'dsh-weird' })).toEqual({
+      ok: false, detail: 'dsh-plugin-shop: dsh-weird is not in the catalog',
+    })
+  })
+
+  it('still answers "not installed" when the profile does not hold the name at all', async () => {
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-shadowed-absent-'))
+    const gateway = gatewayWith(dir, {})
+    await gateway.catalog({})
+    // The catalog HAS a same-named entry (the npm twin), so the gate's first
+    // branch is not reached; the manifest holds no such name, so the second
+    // branch answers "not installed". This is today's published refusal.
+    expect(await gateway.uninstall({ name: 'dsh-foo' })).toEqual({
+      ok: false, detail: 'dsh-plugin-shop: dsh-foo is not installed',
+    })
+  })
+})
+
 describe("the bundle switch of dsh 0.1.7's own Plugins page", () => {
   // Measured 2026-09-26 on 0.1.7-rc.2: `pluginManager.setBundleEnabled(name,
   // false)` takes the package out of `dsh.profile.bundles` and keeps it
