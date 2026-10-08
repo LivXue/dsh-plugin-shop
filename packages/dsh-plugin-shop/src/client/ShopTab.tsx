@@ -13,6 +13,7 @@ import { useInstallFlows, type InstallFlow } from './useInstall.ts'
 import { useUninstallFlows, type UninstallFlow } from './useUninstall.ts'
 import { useUpdateSelf } from './useUpdateSelf.ts'
 import { en, type ShopLocaleKey } from './locales.ts'
+import { expandZhQuery, tokenInText } from '../shared/zh-intents.ts'
 import css from './ShopTab.module.css'
 
 /** The project's home on GitHub, linked from the toolbar. */
@@ -1671,8 +1672,13 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
   // below has to say which control emptied it, and this is the only honest way
   // to know — `matched` non-empty with `filtered` empty means the modifier did
   // it, with no second copy of the filter chain to drift.
+  // expandZhQuery is a pure function of the raw query alone; computing it
+  // once per query change keeps every keystroke out of the catalog's filter
+  // loop, and the caller's `matched` memo can consult the same answer for
+  // every entry it scans.
+  const expansionMemo = useMemo(() => expandZhQuery(query), [query])
   const matched = useMemo(() => {
-    const q = query.trim().toLowerCase()
+    const q = expansionMemo.query
     // The Installed view is management, not shelf, so it reads the whole
     // catalog. The shop-like exclusion governs what the shelf ADVERTISES;
     // applying it here withheld a plugin from the one view carrying its
@@ -1701,9 +1707,22 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
       if (q === '') return true
       const summaryEn = entry.catalog?.summary.en ?? ''
       const summaryZh = entry.catalog?.summary.zh ?? ''
-      return entry.name.toLowerCase().includes(q)
-        || summaryEn.toLowerCase().includes(q)
-        || summaryZh.toLowerCase().includes(q)
+      // Chinese query expansion (design 2026-10-08-search-query-expansion §4):
+      // the raw query is always first, so a Han trigger on an entry whose author
+      // wrote a Chinese summary still hits through the query itself; the
+      // intent's recall terms reach entries carrying only English text via
+      // `name`, `summaryEn` and `summaryZh`. A `#`-marked term is matched on
+      // a word boundary (`tokenInText`), everything else as a substring, as
+      // the rest of this file already matches.
+      const expansion = expansionMemo
+      const name = entry.name.toLowerCase()
+      const en = summaryEn.toLowerCase()
+      const zh = summaryZh.toLowerCase()
+      return expansion.terms.some(term =>
+        term.startsWith('#')
+          ? tokenInText(term.slice(1), name + ' ' + en + ' ' + zh)
+          : name.includes(term) || en.includes(term) || zh.includes(term),
+      )
     })
     // `uninstallFlows.pending` (neither `uninstallFlows` nor its `flowFor`)
     // is the dependency: a membership set whose identity changes when a flow
@@ -1713,7 +1732,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
     // pass over ~9,300 entries once a second while any uninstall ran, in
     // every view, and allocated a flow object plus two closures per entry
     // while doing it. See `pending`'s own comment in useUninstall.ts.
-  }, [sortedCatalog, browsable, query, category, installedByKey, uninstallFlows.pending])
+  }, [sortedCatalog, browsable, expansionMemo, category, installedByKey, uninstallFlows.pending])
 
   // Never in the Installed view. That view is management, not shelf: an
   // installed plugin that is up to date appears in exactly one place — its
@@ -1845,6 +1864,11 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
             setVisibleCount(SHOP_VISIBLE_BATCH)
           }}
         />
+        {expansionMemo.intents.length > 0 && (
+          <p data-shop-expansion-note className={css.expansionNote}>
+            {t('zhExpansionNote', { terms: expansionMemo.terms.slice(1).map(term => term.startsWith('#') ? term.slice(1) : term).join(', ') })}
+          </p>
+        )}
         <div className={css.toolbarRight}>
           {/* Status only. The reload ACTION lives once, beside the build
             * date — two identical Refresh buttons on one screen made the
