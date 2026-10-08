@@ -1,5 +1,6 @@
 import { distance } from 'fastest-levenshtein'
 import { isOwnRepo } from './own.ts'
+import { echo } from './release-asset.ts'
 import { parseCatalogSection } from './schema.ts'
 import {
   DERIVED_SUMMARY_MAX_LENGTH, ENTRY_PAYLOAD_MAX_BYTES, LICENSE_MAX_LENGTH, REPOSITORY_MAX_LENGTH,
@@ -7,7 +8,7 @@ import {
 } from './gate.ts'
 import { repoUnit } from './identity.ts'
 import type { RegistryConfig } from './config.ts'
-import type { CatalogSection, Rejection, RepoCandidate } from './types.ts'
+import type { CatalogSection, Rejection, RepoCandidate, UnbuiltFinding } from './types.ts'
 
 /** A repo candidate that passed every gate rule. */
 export interface RepoAccepted {
@@ -32,6 +33,64 @@ function rescueNote(candidate: RepoCandidate): string {
   return candidate.releaseRejected === undefined
     ? ''
     : ` A release tarball WAS found and refused: ${candidate.releaseRejected}`
+}
+
+/**
+ * Whitespace or a control character (C0, DEL, C1), refused inside the identity
+ * fields a `manifest.lock` github line is cut from. The twin of `gate.ts`'s
+ * `WHITESPACE_OR_CONTROL`: there it guards the npm version, here the repo
+ * (`owner/slug`), the bundle name, the pinned commit, and the release tag —
+ * all of which land on a lock line verbatim. The C1 range is spelled out
+ * because `\s` alone misses most of it: U+001B and U+0085 are not whitespace.
+ */
+const GITHUB_IDENTITY_UNSAFE = /[\s\u0000-\u001f\u007f-\u009f]/
+
+/**
+ * Refuse a github entry whose stored identity fields would cut a
+ * `manifest.lock` line. The repo, the name, the commit and — when a release
+ * rescued the entry — the tag are emitted verbatim onto one line, and a
+ * whitespace or control character in any of them would end it early, add a
+ * field, or start a forged one. The gate trusts GitHub to have rejected such
+ * values; this rule is what keeps a stored record honest when that trust does
+ * not hold — hand-edited state, a bug that wrote one, or an upstream shape
+ * change. Identity fields only: the catalog and the license are already
+ * bounded, escaped or echoed elsewhere.
+ */
+export function githubFields(candidate: RepoCandidate): Rejection | null {
+  const fields: Array<readonly [string, string]> = [
+    ['repo', candidate.repo],
+    ['name', candidate.name],
+    ['commit', candidate.commit],
+  ]
+  if (candidate.release !== undefined) fields.push(['release.tag', candidate.release.tag])
+  for (const [label, value] of fields) {
+    if (GITHUB_IDENTITY_UNSAFE.test(value)) {
+      return {
+        name: repoUnit(candidate),
+        code: 'no-manifest',
+        detail: `Its recorded identity cannot be a manifest.lock line: ${label} holds whitespace or a control character.`,
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * The `requires-build` detail for an unbuilt finding (design
+ * 2026-09-26-market-borrowings §9.4). Values are echoed, quoted and cut at
+ * `ECHO_MAX`, as the release path echoes them. A subpackage is told nothing
+ * about a release tarball: the rescue is for repository roots only.
+ */
+function unbuiltDetail(candidate: RepoCandidate, finding: UnbuiltFinding): string {
+  const at = candidate.commit.slice(0, 7)
+  const remedy = (lead: string): string => candidate.subdir === undefined
+    ? `${lead}, publish to npm, or attach a packed release tarball, and it can be listed.`
+    : `${lead} or publish to npm, and it can be listed.`
+  if ('patch' in finding) {
+    return `Declares dsh.bundle.patch ${echo(finding.patch)}, which the repository does not contain at ${at}, so dsh has no patch to load. ${remedy('Commit the file')}`
+  }
+  return `Its patch inserts ${echo(finding.insert)}, which its package.json resolves to ${echo(finding.path)},`
+    + ` and the repository does not contain that file at ${at}. A git install runs no build, so the plugin would not load. ${remedy('Commit the built files')}`
 }
 
 function reject(
@@ -99,6 +158,9 @@ export function canEverList(candidate: RepoCandidate): boolean {
   // tarball needs no prepare script.
   if (candidate.requiresBuild && candidate.release === undefined) return false
   if (candidate.hasWorkspaceDeps && candidate.release === undefined) return false
+  // Design 2026-09-26-market-borrowings §9.4: the pinned tree lacks a file the
+  // bundle loads, and a release answers it like the two rules above.
+  if (candidate.unbuilt !== undefined && candidate.release === undefined) return false
   return true
 }
 
@@ -162,6 +224,21 @@ export function gateRepo(
       'Declares workspace:-protocol dependencies, which resolve only inside the repository\'s own workspace; a git install from outside it cannot succeed. Publish the package to npm, attach a packed release tarball, or drop the workspace: specifiers, and it can be listed.'
       + rescueNote(candidate))
   }
+  // Design 2026-09-26-market-borrowings §9.4. The tree at the pinned commit
+  // lacks a file the bundle loads: a patch file, or a module its patch inserts
+  // from the package itself. A git install runs no build, so the entry could
+  // not load; the code is `requires-build` because that is the fact, and the
+  // release rescue already answers it.
+  if (candidate.unbuilt !== undefined && candidate.release === undefined) {
+    return reject(unit, 'requires-build', unbuiltDetail(candidate, candidate.unbuilt) + rescueNote(candidate))
+  }
+  // Design 2026-09-26-market-borrowings §9 sits above the unbuilt rule
+  // conceptually but refuses for an odder reason, so it is wired BELOW it:
+  // unbuilt's detail names a file the candidate owns, while this one says the
+  // stored identity itself is forged — the field cannot reach a
+  // `manifest.lock` line without cutting it.
+  const forged = githubFields(candidate)
+  if (forged !== null) return { ok: false, rejection: forged }
   if (candidate.license === null || candidate.license === '') {
     return reject(unit, 'no-license', 'The repository declares no license.')
   }

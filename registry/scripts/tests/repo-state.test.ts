@@ -668,4 +668,15 @@ describe('the entry-check record (design 2026-09-26-market-borrowings §9.4, §9
     const text = serializeRepoState(stateWith(overrides as Partial<RepoCandidate>))
     expect(() => parseRepoState(text)).toThrow(/malformed entry-check record/)
   })
+
+  it('does not queue a candidate the check refused, so the backfill ends', () => {
+    // The finding makes canEverList false, and lacksEntryCheck asks it.
+    expect(diffRepoState(stateWith({ unbuilt: { patch: './cordis.patch.yml' } }), [seen('o/r')]).toFetch).toEqual([])
+  })
+
+  it('does not queue a refused candidate even when its marker is lost', () => {
+    const { entriesChecked: _marker, ...unmarked } = candidate('o/r')
+    const state: RepoState = { 'o/r': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [{ ...unmarked, unbuilt: { patch: './cordis.patch.yml' } }] } }
+    expect(diffRepoState(state, [seen('o/r')]).toFetch).toEqual([])
+  })
 })
