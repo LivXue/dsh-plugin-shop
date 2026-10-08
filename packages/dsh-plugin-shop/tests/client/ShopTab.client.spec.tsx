@@ -1554,6 +1554,83 @@ describe('ShopTab', () => {
     expect(screen.getByText(en.emptySearch)).toBeTruthy()
   })
 
+  // ── Chinese query expansion (design 2026-10-08-search-query-expansion §4). ─
+  // Two match paths are asserted APART: the `#`-marked word-boundary recall
+  // (whose whole point is to exclude substrings like `email`), and the
+  // plain-substring recall that the filter already used. A query outside the
+  // dictionary must change NOTHING, so a `zzz` query still finds 静题 (via
+  // its zh summary) and nothing else.
+  it('recalls an English-only entry through a dictionary intent the raw query cannot reach', async () => {
+    const two = snapshot()
+    two.plugins.push({
+      name: 'memory-keeper', version: '1.0.0', integrity: null, publishedAt: null,
+      repository: null, license: null, tier: 'verified', metadata: 'declared', source: 'npm', added: '2026-08-25',
+      catalog: { category: 'tool', summary: { en: 'Persists agent context across sessions.' }, capabilities: [] },
+    })
+    const { injected } = bench(two)
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    // memory-keeper is not visible without expansion — zh summary is empty,
+    // no name/summary matches either raw query.
+    const search = screen.getByRole('searchbox', { name: en.search })
+    fireEvent.change(search, { target: { value: '记忆' } })
+    expect(screen.getByText('memory-keeper')).toBeTruthy()
+    // The expansion note appears only when an intent fired, and lists the
+    // recall terms (without the `#` boundary marker) the matcher applied.
+    expect(screen.getByText(/Also matching: memory/)).toBeTruthy()
+    // '主题' is a different intent entirely: memory-keeper is not one of
+    // its recall terms, so it goes away. Whether dsh-hello-plugin still
+    // matches '主题' depends on whether its own text carries any recall
+    // term — this assertion says only that memory-keeper is gone, not
+    // what else is visible.
+    fireEvent.change(search, { target: { value: '主题' } })
+    expect(screen.queryByText('memory-keeper')).toBeNull()
+  })
+
+  it('honours the # word-boundary marker — `#ai` does NOT fire inside `email`, `main`, or `pipeline`', async () => {
+    const three = snapshot()
+    three.plugins.push(
+      {
+        name: 'dsh-ai-tools', version: '1.0.0', integrity: null, publishedAt: null,
+        repository: null, license: null, tier: 'verified', metadata: 'declared', source: 'npm', added: '2026-08-25',
+        catalog: { category: 'tool', summary: { en: 'Tools tagged ai.' }, capabilities: [] },
+      },
+      {
+        name: 'dsh-email-sender', version: '1.0.0', integrity: null, publishedAt: null,
+        repository: null, license: null, tier: 'verified', metadata: 'declared', source: 'npm', added: '2026-08-25',
+        catalog: { category: 'tool', summary: { en: 'Sends email digests.' }, capabilities: [] },
+      },
+    )
+    const { injected } = bench(three)
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const search = screen.getByRole('searchbox', { name: en.search })
+    fireEvent.change(search, { target: { value: 'AI大模型' } })
+    // `#ai` hits dsh-ai-tools as a standalone token; 'email' contains 'ai'
+    // buried inside it and must NOT match the word-boundary marker.
+    expect(screen.getByText('dsh-ai-tools')).toBeTruthy()
+    expect(screen.queryByText('dsh-email-sender')).toBeNull()
+  })
+
+  it('a query outside the dictionary still reaches a zh summary through the raw query alone', async () => {
+    const two = snapshot()
+    two.plugins.push({
+      name: 'zzz-english-only', version: '1.0.0', integrity: null, publishedAt: null,
+      repository: null, license: null, tier: 'verified', metadata: 'declared', source: 'npm', added: '2026-08-25',
+      catalog: { category: 'tool', summary: { en: 'Untranslatable.' }, capabilities: [] },
+    })
+    const { injected } = bench(two)
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const search = screen.getByRole('searchbox', { name: en.search })
+    // '打个' appears in dsh-hello-plugin's zh summary but in NO dictionary
+    // intent. The raw query must still find it, with no "Also matching" line.
+    fireEvent.change(search, { target: { value: '打个' } })
+    expect(screen.getByText('dsh-hello-plugin')).toBeTruthy()
+    expect(screen.queryByText('zzz-english-only')).toBeNull()
+    expect(screen.queryByText(/Also matching|同时匹配/)).toBeNull()
+  })
+
   it('renders the empty state for an empty catalog', async () => {
     const { injected } = bench({ ...snapshot(), plugins: [] })
     renderTab(injected)
