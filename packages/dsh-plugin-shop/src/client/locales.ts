@@ -14,6 +14,11 @@ export const zh = {
    * 2026-09-26-market-borrowings §4). */
   tabCrashed: '插件商店在显示这一页时出错了。',
   search: '搜索插件',
+  /** One subdued line under the search box when a Chinese query fired a
+   * dictionary intent (design 2026-10-08-search-query-expansion §4).
+   * `{terms}` is the comma-joined recall terms, without the `#` marker
+   * (boundary-only surface detail, not a reader's fact). */
+  zhExpansionNote: '同时匹配：{terms}',
   all: '全部',
   catalog: '插件目录',
   catalogStats: '{count} 个插件 · 构建于 {date}',
@@ -173,6 +178,9 @@ export const en = {
   retry: 'Retry',
   tabCrashed: 'The plugin shop hit an error while showing this page.',
   search: 'Search plugins',
+  /** One subdued line under the search box when a Chinese query fired a
+   * dictionary intent (design 2026-10-08-search-query-expansion §4). */
+  zhExpansionNote: 'Also matching: {terms}',
   all: 'All',
   catalog: 'Plugin catalog',
   catalogStats: '{count} packages · built {date}',

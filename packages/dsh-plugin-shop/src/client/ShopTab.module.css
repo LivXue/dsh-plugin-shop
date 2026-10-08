@@ -303,6 +303,14 @@
   outline-offset: 1px;
 }
 
+/* Subdued line under the search box when a dictionary intent fired (design
+ * 2026-10-08-search-query-expansion §4). One fact, no badge. */
+.expansionNote {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+
 .staleBadge {
   padding: 2px 8px;
   border-radius: 999px;
