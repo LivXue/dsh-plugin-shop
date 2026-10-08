@@ -314,6 +314,11 @@
   by: human
   reason: "A curated catalog of MCP SERVERS."
 
+- name: "dsh-mcp-marketplace"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: MCP Marketplace toolkit for dsh - Model Context Protocol server directory. Name reserved; first release in development."
+
 - name: "dsh-mini-store"
   market: false
   by: human
