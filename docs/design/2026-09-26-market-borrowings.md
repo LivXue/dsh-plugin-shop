@@ -2,8 +2,8 @@
 
 Status: **batch 1 decided and implemented (2026-09-26): §1–§4**, one commit
 per section on `fix/borrowings-batch-1`. **C7 decided and implemented
-2026-09-27: §7.** **Batch 2, A2 and A3, decided 2026-10-07: §8–§10, not yet
-built.** A second review of three
+2026-09-27: §7.** **Batch 2, A2 and A3, decided 2026-10-07 and built on
+`feat/borrowings-batch-2`: §8–§10.** A second review of three
 dsh plugin markets — [dsh-market/dsh-market](https://github.com/dsh-market/dsh-market)
 (reviewed once before, `2026-08-31-market-borrowings.md`),
 [bradeGithub/DSH-Plugins-Marketplace](https://github.com/bradeGithub/DSH-Plugins-Marketplace)
@@ -415,7 +415,7 @@ rule never consulted, and the recovery hint kept.
 
 ## 8. A2: a listed npm package that leaves the harvest is accounted for
 
-Decided 2026-10-07, not yet built.
+Decided and built 2026-10-07.
 
 ### 8.1 The defect
 
@@ -578,8 +578,12 @@ copied.
 - The details: the message cut on an astral character, and the same
   sentence from the gate's path and the departure path for one message.
 - A carried name reaches the gate and is absent from every coverage count.
-  The report line counts each outcome, and the determinism test in
-  `pipeline.test.ts` covers the new rows and the line.
+  The report line counts each outcome. The pinning splits three ways, one
+  per test site: the determinism test in `pipeline.test.ts` covers the new
+  rows; `departures.test.ts` covers the carried-name ordering
+  (`summarizeDepartures` sorts them); and the line itself is built in
+  `build.ts` outside `runPipeline`, where an end-to-end test pins its
+  order-independence.
 - The packument read against fetch fixtures: 200, 404, the stub, a 5xx with
   and without a backup registry, a deadline. And `build.ts` in both harvest
   modes, fresh and `--harvest-from`.
@@ -589,7 +593,7 @@ copied.
 
 ## 9. A3: a commit-pinned entry must contain what its patch loads
 
-Decided 2026-10-07, not yet built.
+Decided and built 2026-10-07.
 
 ### 9.1 The defect
 

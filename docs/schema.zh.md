@@ -45,6 +45,14 @@
 
 构建报告把每条拒绝记成 **Reason** 和 **Detail** 两列——要看的是 Detail。有些 Reason 码比它实际承载的情况更宽：`license` 或 `repository` 超长记作 `no-license`、`no-repository`；而 `no-manifest` 涵盖了"我们确实读到了你的 `package.json`、但它无法上架"的每一种情形——因体积被拒、某个字段超长、整条超出条目预算，或者 `name` 不符合 bundle 名文法——所以明明声明了，Reason 却写着"没有"。准确的那一半在 Detail 里：它会说明你越过的是哪条上限。反过来这一点在你追查"为什么根本没上架"时很有用：`no-manifest` 意味着我们读到了你的 `package.json`，或者向它发起的请求得到了 404。如果是我们自己的请求失败了，那一行记的是 `fetch-failed`——它会在下一次构建时重试，不会算在你的仓库头上。
 
+**已上架的包离开目录时，报告会写明原因。** 每次构建都会把本次收录和上次发布的目录对比。如果你的 npm 包上次在目录里、这次没被收录，构建会向 npm 查询一次。最新版仍带 `dsh-plugin` 或 `deepseek-harness` 关键词且没有弃用的包，会继续上架；否则，那次构建的报告会写一行：`deprecated` 并引用你的弃用说明（最多 200 个字符），或者 `npm-gone`，说明它是被撤销发布、已不在 registry 上（npm 返回 404）、去掉了两个关键词，还是去询问时 npm 根本没回答——最后那种情形会写明失败原因，它只代表这一次构建查到的情况，不是对你的包下的结论。把关键词加回去，下次构建就会重新上架。（见设计文档 2026-09-26-market-borrowings §8.2。）
+
+**从 GitHub 仓库收录的条目，装的就是固定 commit 的原样内容。** 从 git 安装不会运行任何构建，所以 bundle 要加载的每个文件都必须在那个 commit 里：每个 `dsh.bundle.patch` 文件，以及 patch 插入的你自己包里的每个模块经 `exports`（或 `main`）解析到的文件。被 `.gitignore` 排除的 `lib/` 或 `dist/` 不在仓库里，这样的条目会以 `requires-build` 被拒绝，并写明缺的是哪个文件。可以把构建产物提交进仓库、把包发布到 npm，或者（仅限仓库根）在最新的 release 里附上打包好的 tarball（在构建好的目录里运行 `npm pack`）。monorepo 的子包无法靠 release 补救。（见设计文档 2026-09-26-market-borrowings §9.3 和 §9.6。）
+
+**会破坏快照锁行的 version 或 integrity 会被拒绝。** 每日快照给每个上架的包在 `manifest.lock` 里写一行，后续构建会读回这个文件，所以带空白或控制字符的 `version`，或者不符合 SRI 哈希文法（`algorithm-base64`、空格分隔）的 `dist.integrity`，都会让它那一行无法解析。这样的包会被拒绝，Detail 会写明是二者中的哪一个；用普通的版本号、保留 npm 自己签发的 integrity 发布即可。（这是上面规则里 `no-manifest` / `no-integrity` 的文法情形。）
+
+**同样的文法约束 GitHub 条目的身份标识。** GitHub 条目的 `owner/slug`、bundle 名、固定的 commit 或 tag 会逐字节写进提交的产物——`manifest.lock` 的 github 行、构建报告——而且没有长度上限，所以其中任何一个带空白或控制字符都会被拒绝。用纯文本的名字和 tag 发布即可。（与 npm 行的 SRI 规则是同一道防线。）
+
 未知字段会被拒绝而不是忽略，所以拼错字段名会让构建失败并指出是哪个字段，而不是悄悄丢掉你的数据。这条提示信息本身也截断在 200 字符，被截断时结尾会带上 `… (truncated)`；字段名排在最前面，所以你真正要动手改的那部分一定还在。**校验失败的 `dsh.catalog` 段会被直接拒绝**，不会退回到推导上架——作者已经声明了这段内容却写错了，构建报告理应指出问题所在，而不是悄悄换一套数据顶上。
 
 ## 不写 `dsh.catalog` 时如何上架
