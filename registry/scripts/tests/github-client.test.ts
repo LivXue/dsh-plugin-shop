@@ -2457,6 +2457,40 @@ describe('harvestRepos', () => {
     expect(result.searchStars.has('s/no-stars')).toBe(false)
   })
 
+  it('persists the archived boolean every search item carries, on carried repositories too', async () => {
+    // Design 2026-10-08-archived-flag-and-shadowed-recovery §1.2: the probe
+    // records what the search already returns, and the NEXT build's
+    // repo-state.json is the measurement — so a repository does not have to
+    // push to be marked. All three repositories are CARRIED: budget 0 fetches
+    // nothing, and their entries still gain the flag from the enumeration
+    // alone. (A seen repository that was never recorded and is never fetched
+    // stays out of the state, flag included, until a run fetches it —
+    // nextRepoState's rule.)
+    const state: RepoState = {
+      'd/archived': entryOf('d/archived'),
+      'd/live': entryOf('d/live'),
+      'd/unmarked': entryOf('d/unmarked'),
+    }
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url)
+      const searched = searchResponder(() => [
+        repoItem('d/archived', { pushed_at: '2026-08-01T00:00:00Z', archived: true }),
+        repoItem('d/live', { pushed_at: '2026-08-01T00:00:00Z', archived: false }),
+        repoItem('d/unmarked', { pushed_at: '2026-08-01T00:00:00Z' }),
+      ])(text)
+      if (searched !== undefined) return searched
+      throw new Error(`unrouted: ${text}`)
+    }) as unknown as typeof fetch
+    const result = await harvestRepos({ state, budget: 0, fetchImpl, sleep, token: 't' })
+    expect(result.nextState['d/archived']?.archived).toBe(true)
+    expect(result.nextState['d/live']?.archived).toBe(false)
+    // An item without the field supplies no fact: the entry stays without it
+    // rather than inventing false.
+    expect(result.nextState['d/unmarked']).not.toHaveProperty('archived')
+    // Round-trip through parse: the writer's shape is the reader's.
+    expect(parseRepoState(serializeRepoState(result.nextState))['d/archived']?.archived).toBe(true)
+  })
+
   it('retires the stale candidate of a repo that deleted its package.json', async () => {
     // Replaces "keeps a failure as a reason and carries the recorded
     // candidate for that repo", which pinned the defect: the candidate
