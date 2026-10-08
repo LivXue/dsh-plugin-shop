@@ -54,6 +54,16 @@ export interface RepoStateEntry {
   commit: string
   /** The candidates produced; carried over while `pushedAt` is unchanged. */
   candidates: RepoCandidate[]
+  /**
+   * The `archived` boolean the search item reported, recorded as observed
+   * (design 2026-10-08-archived-flag-and-shadowed-recovery §1.2). Optional —
+   * every record predating the field is without it, and a search item that
+   * omits the field supplies no fact, so absence is never normalized to
+   * `false`. Updated from the enumeration on every merge, carried entries
+   * included: an archived repository's marker must not wait for a push that
+   * will never come.
+   */
+  archived?: boolean
   /** The recorded deterministic failure; re-fetched only when `pushedAt` changes. */
   failure?: { code: 'no-manifest' | 'fetch-failed'; detail: string }
   /**
@@ -80,6 +90,13 @@ export type RepoState = Record<string, RepoStateEntry>
 export interface RepoSeen {
   repo: string
   pushedAt: string
+  /**
+   * The search item's `archived`, when it carried one. Rides the diff into
+   * {@link nextRepoState}, which persists it — the flag's whole path from the
+   * API to repo-state.json is this interface, because the enumeration is the
+   * only reader of the search item.
+   */
+  archived?: boolean
 }
 
 /**
@@ -287,6 +304,7 @@ export function parseRepoState(text: string): RepoState {
     const entry = value as {
       pushedAt?: unknown
       commit?: unknown
+      archived?: unknown
       candidate?: unknown
       candidates?: unknown
       failure?: unknown
@@ -298,6 +316,11 @@ export function parseRepoState(text: string): RepoState {
     if (typeof entry.pushedAt !== 'string' || typeof entry.commit !== 'string') {
       throw new Error(`repo-state.json: ${repo} is missing pushedAt/commit`)
     }
+    if (entry.archived !== undefined && typeof entry.archived !== 'boolean') {
+      // This build is the only writer and writes a boolean; anything else
+      // means the file was edited, and a malformed registry file throws.
+      throw new Error(`repo-state.json: ${repo} has a malformed archived record`)
+    }
     let candidates: RepoCandidate[]
     if (Array.isArray(entry.candidates)) {
       candidates = entry.candidates.map(candidate => reboundCarriedSize(checkCarriedEntryCheck(repo, checkCarriedDeclarations(repo, candidate))))
@@ -306,7 +329,12 @@ export function parseRepoState(text: string): RepoState {
     } else {
       throw new Error(`repo-state.json: ${repo} has neither candidates nor a candidate`)
     }
-    state[repo] = { pushedAt: entry.pushedAt, commit: entry.commit, candidates }
+    state[repo] = {
+      pushedAt: entry.pushedAt,
+      commit: entry.commit,
+      candidates,
+      ...(entry.archived !== undefined ? { archived: entry.archived } : {}),
+    }
     if (entry.failure !== undefined) {
       const failure = entry.failure as { code?: unknown; detail?: unknown }
       if (typeof failure !== 'object' || failure === null
@@ -621,13 +649,23 @@ export function nextRepoState(
         pushedAt: entry.pushedAt,
         commit: fresh.candidates[0]?.commit ?? recorded?.commit ?? '',
         candidates: fresh.candidates,
+        ...(entry.archived !== undefined ? { archived: entry.archived } : {}),
         ...(fresh.failure !== undefined ? { failure: fresh.failure } : {}),
         ...(fresh.subpackageFailures !== undefined && fresh.subpackageFailures.length > 0
           ? { subpackageFailures: fresh.subpackageFailures }
           : {}),
       }
     } else if (recorded !== undefined) {
-      next[entry.repo] = recorded
+      // `archived` comes from this run's enumeration, not from the fetch, so
+      // a CARRIED entry takes the current observation too — an archived
+      // repository never pushes again, and gating the marker on `pushedAt`
+      // would leave it unmarked forever. An item without the field supplies
+      // no fact and the recorded entry stands as it is, absent value
+      // included: writing `false` there would record a claim the search
+      // never made.
+      next[entry.repo] = entry.archived === undefined || entry.archived === recorded.archived
+        ? recorded
+        : { ...recorded, archived: entry.archived }
     }
     // A seen repo with neither a fresh outcome nor a recorded one stays out
     // of the state — its fetch was deferred past the budget and it has never

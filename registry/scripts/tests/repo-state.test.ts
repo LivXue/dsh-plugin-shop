@@ -320,6 +320,90 @@ describe('state shape evolution', () => {
   })
 })
 
+describe('the archived marker (design 2026-10-08-archived-flag-and-shadowed-recovery §1)', () => {
+  const seen = { repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }
+
+  it('round-trips archived true and false through parse and serialize', () => {
+    const recorded: RepoState = {
+      'a/archived': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [candidate('a/archived')], archived: true },
+      'b/live': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [candidate('b/live')], archived: false },
+    }
+    expect(parseRepoState(serializeRepoState(recorded))).toEqual(recorded)
+  })
+
+  it('leaves a record written before the field existed without it, rather than inventing false', () => {
+    // Every record in the committed repo-state.json predates the field, and an
+    // archived:false written for a repository nobody observed would be a fact
+    // the search never reported. Absent stays absent; the search's own item
+    // fills it on the next merge.
+    const parsed = parseRepoState(JSON.stringify({
+      'a/one': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [candidate('a/one')] },
+    }))
+    expect(parsed['a/one']).not.toHaveProperty('archived')
+    const text = serializeRepoState(parsed)
+    expect(text).not.toContain('"archived"')
+  })
+
+  it('throws on a non-boolean archived, a shape this build never writes', () => {
+    // Same rule as the failure record: this build is the only writer, so a
+    // different shape means the file was edited, and a malformed registry file
+    // throws rather than being normalized.
+    for (const archived of ['yes', 1, null, {}]) {
+      const text = JSON.stringify({
+        'a/one': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [candidate('a/one')], archived },
+      })
+      expect(() => parseRepoState(text), JSON.stringify(archived)).toThrow('a/one has a malformed archived record')
+    }
+  })
+
+  it('writes the search\'s observed value onto fresh AND carried entries, and never invents one', () => {
+    // The field rides the search item like pushedAt does: the enumeration sees
+    // every repository daily, so the merge updates a CARRIED entry too — that
+    // is what lets one build mark the whole recorded pool rather than only the
+    // day's pushes. But a search item that omitted the field supplies no fact,
+    // and writing false there would put in the committed file a claim the
+    // search never made.
+    const fresh = new Map([['a/one', { candidates: [candidate('a/one')] }]])
+    const archivedSeen = nextRepoState(
+      state,
+      [{ ...seen, archived: true }, { repo: 'b/two', pushedAt: '2026-08-01T00:00:00Z', archived: true }],
+      fresh,
+    )
+    expect(archivedSeen['a/one']?.archived).toBe(true)
+    // The carried entry takes the search's current value even though its
+    // record predates the field — archival arrives without a push.
+    expect(archivedSeen['b/two']?.archived).toBe(true)
+    // A change of observation on a carried entry supersedes the recorded one:
+    // a repository can in principle be unarchived, and the record must not
+    // freeze the first value it ever held.
+    const flipped = nextRepoState(
+      { 'a/one': { ...state['a/one']!, archived: true } },
+      [{ ...seen, archived: false }],
+      new Map(),
+    )
+    expect(flipped['a/one']?.archived).toBe(false)
+    // And the absence stays absence on both paths.
+    const unseen = nextRepoState(state, [seen, { repo: 'b/two', pushedAt: '2026-08-01T00:00:00Z' }], fresh)
+    expect(unseen['a/one']).not.toHaveProperty('archived')
+    expect(unseen['b/two']).not.toHaveProperty('archived')
+    const carriedRecord = nextRepoState({ 'a/one': { ...state['a/one']!, archived: false } }, [seen], new Map())
+    expect(carriedRecord['a/one']?.archived).toBe(false)
+  })
+
+  it('rides a seen entry through the diff into toFetch unchanged', () => {
+    // The flag must reach nextRepoState for a NEW repository too, which means
+    // surviving RepoSeen -> RepoToFetch. `backfillOnly` uses a spread, so this
+    // is structural — the assertion pins it against a refactor that rebuilds
+    // the object field by field.
+    const { toFetch } = diffRepoState(state, [
+      { repo: 'a/one', pushedAt: '2026-08-02T00:00:00Z', archived: true },
+      { repo: 'c/three', pushedAt: '2026-08-02T00:00:00Z' },
+    ])
+    expect(toFetch.find(e => e.repo === 'a/one')?.archived).toBe(true)
+    expect(toFetch.find(e => e.repo === 'c/three')).not.toHaveProperty('archived')
+  })
+})
+
 describe('persisted subpackage failures', () => {
   const base = { pushedAt: '2026-08-02T00:00:00Z', commit: 'a'.repeat(40), candidates: [] }
 
