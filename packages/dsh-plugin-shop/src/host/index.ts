@@ -27,7 +27,7 @@ import { readRepoPins, writeRepoPins, type RepoPinFs } from './repo-pins.ts'
 import { collidingEntryId, declaredBundlePatch, discoverProfile, ownedEntries, ownedEntryIds, ownsEntryId, setUserLayerRows, type OwnedEntry } from './profile.ts'
 import { patchDeclarationHazard } from './bundle-patch.ts'
 import { isDesktopProfile } from './dsh-cli.ts'
-import { identityKey, installedSpecMatches } from '../shared/identity.ts'
+import { identityKey, installedSpecMatches, parseSpec } from '../shared/identity.ts'
 import { isTerminalInstallState, type InstallState } from '../shared/install-state.ts'
 import { createPrefetcher, type Prefetcher } from './prefetch.ts'
 import {
@@ -317,16 +317,24 @@ export type ShopUpdateResult =
 /** `shop/installed` entry (§7.3): one installed catalog plugin. The identity
  * fields distinguish same-named npm and GitHub rows; `installed` remains the
  * manifest spec or the recorded GitHub pin, and the client never does version
- * math. */
+ * math.
+ *
+ * `shadowed` marks a row synthesized from the profile manifest for an
+ * installed GitHub dependency whose name an npm catalog entry now holds: the
+ * catalog row itself is refused `shadowed-by-npm`, so this row is the only
+ * one the user can act on. It carries no catalog `latest` (hence the union)
+ * and no `outdated` verdict, because there is no catalog truth to compare
+ * against. */
 export interface ShopInstalledEntry {
   name: string
   source: 'npm' | 'github'
   repo?: string
   subdir?: string
   installed: string
-  latest: string
+  latest: string | null
   outdated: boolean
   enabled: boolean
+  shadowed?: true
 }
 
 /** One row of the row config the bundle patch (§cordis.patch.yml) supplies. */
@@ -1770,12 +1778,17 @@ export class ShopGateway extends TypertRemoteService {
       return present.length === 0 || present.every(([, enabled]) => enabled)
     }
     const installed: ShopInstalledEntry[] = []
+    // Second pass for shadowed rows, below: a manifest name no catalog row
+    // claimed may still need one of its own. Track which names the catalog
+    // iteration consumed so that pass adds only the remainder.
+    const claimed = new Set<string>()
     for (const entry of snapshot.entries) {
       const spec = ownDependencySpec(dependencies, entry.name)
       if (spec === undefined) continue
       // A profile has one dependency per name, so the spec is the only way
       // to choose among same-named catalog entries.
       if (!installedSpecMatches(entry, spec)) continue
+      claimed.add(entry.name)
       const identity = { source: entry.source, repo: entry.repo, subdir: entry.subdir }
       if (entry.source === 'github') {
         // The manifest spec is `github:owner/slug` — no commit. The pin the
@@ -1810,6 +1823,31 @@ export class ShopGateway extends TypertRemoteService {
         })
       }
     }
+    // The second pass: a manifest dependency whose name no catalog row claimed
+    // may be a shadowed github install — the catalog refuses it
+    // `shadowed-by-npm`, so the first loop never visited it, but the card list
+    // is this profile's only control. An npm-shaped spec with no catalog row
+    // reads as a departure (§A2, out of MVP scope); an unparseable spec the
+    // shop cannot act on either — both render no row at all. A github-shaped
+    // one gets a row with what the manifest knows: no catalog truth to compare
+    // against, so `latest: null` and `outdated: false`.
+    for (const name of Object.keys(dependencies)) {
+      if (claimed.has(name)) continue
+      const spec = ownDependencySpec(dependencies, name)
+      if (spec === undefined) continue
+      const origin = parseSpec(spec)
+      if (origin?.kind !== 'github') continue
+      installed.push({
+        name,
+        source: 'github',
+        repo: origin.repo,
+        installed: pins[`github:${origin.repo}#`] ?? pins[name] ?? spec,
+        latest: null,
+        outdated: false,
+        enabled: enabledOf(name),
+        shadowed: true,
+      })
+    }
     return installed
   }
 
@@ -1841,12 +1879,29 @@ export class ShopGateway extends TypertRemoteService {
     if (isDesktopProfile(this.profile) && manager === null) return { ok: false, detail: DESKTOP_PROFILE_DETAIL }
     const snapshot = await this.snapshotNow()
     const named = snapshot.entries.filter(entry => entry.name === args.name)
-    if (named.length === 0) {
-      return { ok: false, detail: `dsh-plugin-shop: ${args.name} is not in the catalog` }
-    }
     const manifest = readProfileManifest('dsh-plugin-shop', this.profileDirResolved())
     const dependencies = manifest.dependencies ?? {}
     const spec = ownDependencySpec(dependencies, args.name)
+    if (named.length === 0) {
+      // Shadowed-github arm (§C10 MVP): the catalog refused this entry
+      // `shadowed-by-npm`, so its row is absent from the snapshot by
+      // construction — yet the profile manifest still holds its spec, and the
+      // card this refusal would orphan is the only control the reader has.
+      // When the manifest's OWN spec parses as a github reference, proceed
+      // through the same removal path the matched arm uses. An npm-shaped or
+      // unparseable spec with no catalog row is a departure the MVP does not
+      // recover, and keeps today's refusal.
+      if (spec === undefined) {
+        return { ok: false, detail: `dsh-plugin-shop: ${args.name} is not in the catalog` }
+      }
+      const origin = parseSpec(spec)
+      if (origin?.kind !== 'github') {
+        return { ok: false, detail: `dsh-plugin-shop: ${args.name} is not in the catalog` }
+      }
+      // Fall through with `named` empty: `installedEntry` below is then
+      // undefined, which `forgetPins` already reads as "no catalog identity
+      // pin to forget".
+    }
     if (spec === undefined) {
       return { ok: false, detail: `dsh-plugin-shop: ${args.name} is not installed` }
     }
