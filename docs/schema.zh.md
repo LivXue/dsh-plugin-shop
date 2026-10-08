@@ -51,7 +51,7 @@
 
 **会破坏快照锁行的 version 或 integrity 会被拒绝。** 每日快照给每个上架的包在 `manifest.lock` 里写一行，后续构建会读回这个文件，所以带空白或控制字符的 `version`，或者不符合 SRI 哈希文法（`algorithm-base64`、空格分隔）的 `dist.integrity`，都会让它那一行无法解析。这样的包会被拒绝，Detail 会写明是二者中的哪一个；用普通的版本号、保留 npm 自己签发的 integrity 发布即可。（这是上面规则里 `no-manifest` / `no-integrity` 的文法情形。）
 
-**同样的文法约束 GitHub 条目的身份标识。** GitHub 条目的 `owner/slug`、bundle 名、固定的 commit 或 tag 会逐字节写进提交的产物——`manifest.lock` 的 github 行、构建报告——而且没有长度上限，所以其中任何一个带空白或控制字符都会被拒绝。用纯文本的名字和 tag 发布即可。（与 npm 行的 SRI 规则是同一道防线。）
+**同样的文法约束 GitHub 条目的身份标识。** GitHub 条目的 `owner/slug`、bundle 名、固定的 commit 或 tag 会逐字节写进提交的产物——`manifest.lock` 的 github 行、构建报告——而且没有长度上限，所以其中任何一个带空白或控制字符都会被拒绝。用纯文本的名字和 tag 发布即可。（与 npm 行的 SRI 规则是同一道防线。）（Reason 记作 `no-manifest`。）
 
 未知字段会被拒绝而不是忽略，所以拼错字段名会让构建失败并指出是哪个字段，而不是悄悄丢掉你的数据。这条提示信息本身也截断在 200 字符，被截断时结尾会带上 `… (truncated)`；字段名排在最前面，所以你真正要动手改的那部分一定还在。**校验失败的 `dsh.catalog` 段会被直接拒绝**，不会退回到推导上架——作者已经声明了这段内容却写错了，构建报告理应指出问题所在，而不是悄悄换一套数据顶上。
 
