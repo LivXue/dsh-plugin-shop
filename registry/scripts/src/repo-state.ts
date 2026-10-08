@@ -16,6 +16,7 @@
  */
 
 import { canEverList } from './repo-gate.ts'
+import { UNBUILT_FIELD_MAX_LENGTH } from './release-asset.ts'
 import type { RepoCandidate } from './types.ts'
 
 /**
@@ -216,6 +217,34 @@ function isStringArray(value: unknown): value is string[] {
 }
 
 /**
+ * Refuse a carried entry-check record of a shape this build never writes
+ * (design 2026-09-26-market-borrowings §9.4): `entriesChecked` is `true` or
+ * absent, and `unbuilt` is `{ patch }` or `{ insert, path }`, each a non-empty
+ * string within `UNBUILT_FIELD_MAX_LENGTH`, present only beside the marker.
+ * A wrong shape throws, the rule for a malformed registry file: the finding
+ * decides a listing, so a corrupt one must not be read either way.
+ */
+function checkCarriedEntryCheck(repo: string, candidate: RepoCandidate): RepoCandidate {
+  const { entriesChecked, unbuilt } = candidate as { entriesChecked?: unknown; unbuilt?: unknown }
+  const malformed = (): never => {
+    throw new Error(`repo-state.json: ${repo} has a candidate with a malformed entry-check record`)
+  }
+  if (entriesChecked !== undefined && entriesChecked !== true) malformed()
+  if (unbuilt !== undefined && (entriesChecked !== true || !isUnbuiltFinding(unbuilt))) malformed()
+  return candidate
+}
+
+function isUnbuiltFinding(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const field = (text: unknown): boolean => typeof text === 'string' && text !== '' && text.length <= UNBUILT_FIELD_MAX_LENGTH
+  const record = value as Record<string, unknown>
+  const keys = Object.keys(record).sort()
+  if (keys.length === 1 && keys[0] === 'patch') return field(record.patch)
+  if (keys.length === 2 && keys[0] === 'insert' && keys[1] === 'path') return field(record.insert) && field(record.path)
+  return false
+}
+
+/**
  * The shape `compatibilityOf` writes and nothing else: a plain object carrying
  * at least one of `dsh` (a NON-EMPTY string) and `profiles` (a NON-EMPTY array
  * of non-empty strings), and no other key. Empty is refused because that
@@ -271,9 +300,9 @@ export function parseRepoState(text: string): RepoState {
     }
     let candidates: RepoCandidate[]
     if (Array.isArray(entry.candidates)) {
-      candidates = entry.candidates.map(candidate => reboundCarriedSize(checkCarriedDeclarations(repo, candidate)))
+      candidates = entry.candidates.map(candidate => reboundCarriedSize(checkCarriedEntryCheck(repo, checkCarriedDeclarations(repo, candidate))))
     } else if (typeof entry.candidate === 'object' && entry.candidate !== null) {
-      candidates = [reboundCarriedSize(checkCarriedDeclarations(repo, entry.candidate))]
+      candidates = [reboundCarriedSize(checkCarriedEntryCheck(repo, checkCarriedDeclarations(repo, entry.candidate)))]
     } else {
       throw new Error(`repo-state.json: ${repo} has neither candidates nor a candidate`)
     }
@@ -324,7 +353,8 @@ export function serializeRepoState(state: RepoState): string {
 /**
  * Compare the search's view of the pool against the recorded state.
  * @returns `toFetch` — repos new or with a changed `pushed_at`, plus the
- *   full-fetch backfills (an unverified release, a missing size probe);
+ *   full-fetch backfills (an unverified release, a missing size probe, a
+ *   candidate the patch-target entry check never answered for);
  *   `toReread` — unchanged repos whose ONLY need is a current declarations
  *   stamp, disjoint from `toFetch` because a full fetch re-projects and stamps
  *   every candidate itself; `gone` — recorded repos the search no longer
@@ -356,7 +386,7 @@ export function diffRepoState(
     // commit already recorded — worth asking, but never at a changed repo's
     // expense, which is what `backfillOnly` lets the caller enforce.
     const changed = recorded === undefined || recorded.pushedAt !== entry.pushedAt
-    if (changed || hasUnverifiedRelease(recorded) || lacksSizeProbe(recorded, treeCap)) {
+    if (changed || hasUnverifiedRelease(recorded) || lacksSizeProbe(recorded, treeCap) || lacksEntryCheck(recorded)) {
       toFetch.push({ ...entry, backfillOnly: !changed })
     } else if (hasStaleDeclarations(recorded)) {
       // Only when nothing above applies: every full fetch re-projects the
@@ -417,6 +447,21 @@ function lacksSizeProbe(recorded: RepoState[string], treeCap: number): boolean {
         // Refused by a cap smaller than the one this build applies, so the
         // refusal was ours and is worth re-asking exactly once.
         || (candidate.sizeCappedAt !== undefined && candidate.sizeCappedAt < treeCap)),
+  )
+}
+
+/**
+ * Whether a recorded repo holds a candidate the patch-target check never
+ * answered for (design 2026-09-26-market-borrowings §9.6). The retroactivity
+ * hole `lacksSizeProbe` closed, closed the same way: the marker's absence is
+ * the queue, a check that answers sets it, and a candidate it refuses stops
+ * passing {@link canEverList}, so the backfill ends by itself. A release-rescued
+ * candidate is skipped: it installs the archive, which `verifyReleaseAsset`
+ * already holds to the same rule.
+ */
+function lacksEntryCheck(recorded: RepoState[string]): boolean {
+  return (recorded.candidates ?? []).some(
+    candidate => candidate.release === undefined && canEverList(candidate) && candidate.entriesChecked !== true,
   )
 }
 
