@@ -20,10 +20,10 @@ import { compatibilityOf, FetchTimeoutError, fetchWithRetry, peerNamesOf, withTi
 import { canEverList } from './repo-gate.ts'
 import { DECLARATIONS_RULE, diffRepoState, nextRepoState, type RepoSeen, type RepoState, type RepoStateEntry, type RepoToFetch } from './repo-state.ts'
 import { hasWorkspaceDeps, monorepoSignal, selectSubpackagePaths } from './subpackage-select.ts'
-import type { RepoCandidate } from './types.ts'
+import type { RepoCandidate, UnbuiltFinding } from './types.ts'
 import { readCappedBody } from './http-body.ts'
-import { treeInstallSize } from './tree-size.ts'
-import { type PackedDeclarations, readPackedDeclarations, verifyReleaseAsset } from './release-asset.ts'
+import { treeBlobPaths, treeInstallSize } from './tree-size.ts'
+import { declaredPatchFiles, MAX_PATCH_BYTES, type PackedDeclarations, readPackedDeclarations, treePathOf, unbuiltFinding, verifyReleaseAsset } from './release-asset.ts'
 
 const GITHUB_API = 'https://api.github.com'
 const RAW_GITHUB = 'https://raw.githubusercontent.com'
@@ -1263,7 +1263,7 @@ async function probeSubpackageCandidates(
   sleep: (ms: number) => Promise<void>,
   token: string | undefined,
   timeoutMs: number = GITHUB_REQUEST_TIMEOUT_MS,
-): Promise<{ candidates: RepoCandidate[]; failures: RepoFetchFailure[]; anyClaimed: boolean; probed: number }> {
+): Promise<{ candidates: RepoCandidate[]; failures: RepoFetchFailure[]; anyClaimed: boolean; probed: number; manifests: Map<RepoCandidate, unknown> }> {
   const treeUrl = `${GITHUB_API}/repos/${owner}/${slug}/git/trees/${meta.defaultBranch}?recursive=1`
   const treeResponse = await fetchRobust(treeUrl, fetchImpl, sleep, token, timeoutMs)
   // A 404 is a fact: there is no tree at that branch, so there are no
@@ -1273,7 +1273,7 @@ async function probeSubpackageCandidates(
   // installable subpackage" that is false. That is exactly the reasoning the
   // catch below already applies to a deadline on this same read; a 500 or a
   // rate-limit 403 differs from a stall only in how it is spelled.
-  if (treeResponse.status === 404) return { candidates: [], failures: [], anyClaimed: false, probed: 0 }
+  if (treeResponse.status === 404) return { candidates: [], failures: [], anyClaimed: false, probed: 0, manifests: new Map() }
   if (!treeResponse.ok) {
     throw new Error(`github api returned ${treeResponse.status} listing the tree of ${owner}/${slug}`)
   }
@@ -1295,7 +1295,7 @@ async function probeSubpackageCandidates(
     // Swallows a JSON syntax error on a body that arrived whole — GitHub's own
     // answer, and one this probe can read nothing out of — so there are no
     // subpackages to find. Nothing else in this block can throw.
-    return { candidates: [], failures: [], anyClaimed: false, probed: 0 }
+    return { candidates: [], failures: [], anyClaimed: false, probed: 0, manifests: new Map() }
   }
   // A truncated tree (>100k entries) may hide some subpackages; the repo is
   // re-probed when it changes, and the loss costs only a later re-probe —
@@ -1305,6 +1305,7 @@ async function probeSubpackageCandidates(
     : []
   const dirs = selectSubpackagePaths(rootManifest, paths)
   const candidates: RepoCandidate[] = []
+  const manifests = new Map<RepoCandidate, unknown>()
   const failures: RepoFetchFailure[] = []
   // Whether ANY subpackage claimed to be a plugin (declared dsh.bundle and
   // then failed the name grammar). Returned as an aggregate rather than a flag
@@ -1358,6 +1359,7 @@ async function probeSubpackageCandidates(
     const sub = projectCandidate(meta, subManifest, head, dir)
     if (sub !== null && sub.hasBundle) {
       candidates.push(sub)
+      manifests.set(sub, subManifest)
       continue
     }
     // sub === null means the name failed the grammar (projectCandidate's
@@ -1370,7 +1372,7 @@ async function probeSubpackageCandidates(
       failures.push(subpackageFailure(owner, slug, dir, describeBadName(rawName)))
     }
   }
-  return { candidates, failures, anyClaimed, probed: dirs.length }
+  return { candidates, failures, anyClaimed, probed: dirs.length, manifests }
 }
 
 /**
@@ -1452,6 +1454,73 @@ async function readSizingTree(
 }
 
 /**
+ * One declared patch file's text at the pinned commit (design
+ * 2026-09-26-market-borrowings §9.3), read only for a file the tree lists.
+ * `answered: false` for anything that is not the file: a transport failure,
+ * a deadline, a non-ok status — a 404 included, since the tree said the file
+ * is there — so the candidate stays unmarked and is checked again next run.
+ * A body past MAX_PATCH_BYTES answers with no text: claim (2) then forms no
+ * verdict for that file, as the archive path does.
+ */
+async function readPatchAtCommit(
+  fullName: string,
+  commit: string,
+  path: string,
+  fetchImpl: typeof fetch,
+  sleep: (ms: number) => Promise<void>,
+  token: string | undefined,
+  timeoutMs: number,
+): Promise<{ answered: true; text: string | undefined } | { answered: false }> {
+  const url = `${RAW_GITHUB}/${fullName}/${commit}/${path.split('/').map(encodeURIComponent).join('/')}`
+  try {
+    const response = await fetchRobust(url, fetchImpl, sleep, token, timeoutMs)
+    if (!response.ok) return { answered: false }
+    const bytes = await readCappedBody(response, MAX_PATCH_BYTES)
+    if (bytes === null) return { answered: true, text: undefined }
+    return { answered: true, text: new TextDecoder().decode(bytes).replace(/^\ufeff/, '') }
+  } catch {
+    // Swallows a transport failure of this one read — a throw from the retry
+    // ladder, a deadline, a body that broke mid-stream. It says nothing about
+    // the repository, and the caller records nothing for it, so the next run
+    // asks again; nothing else can reach this catch.
+    return { answered: false }
+  }
+}
+
+/**
+ * Run the patch-target check for one sizeable candidate (design
+ * 2026-09-26-market-borrowings §9.3).
+ * @param present - the tree's blob paths, or null when the tree answered but
+ *   cannot vouch for an absence (truncated, malformed, 404, past the cap).
+ */
+async function checkEntries(
+  candidate: RepoCandidate,
+  manifest: unknown,
+  present: ReadonlySet<string> | null,
+  fetchImpl: typeof fetch,
+  sleep: (ms: number) => Promise<void>,
+  token: string | undefined,
+  timeoutMs: number,
+): Promise<{ checked: true; finding: UnbuiltFinding | null } | { checked: false }> {
+  if (present === null) return { checked: true, finding: null }
+  if (manifest === undefined) return { checked: false }
+  const files = declaredPatchFiles(manifest)
+  if (files === null) return { checked: true, finding: null }
+  const root = candidate.subdir ?? ''
+  const texts = new Map<string, string>()
+  for (const file of files) {
+    const path = treePathOf(root, file)
+    // Unaskable or absent: `unbuiltFinding` decides which, and an absent file
+    // needs no read.
+    if (path === null || !present.has(path)) continue
+    const read = await readPatchAtCommit(candidate.repo, candidate.commit, path, fetchImpl, sleep, token, timeoutMs)
+    if (!read.answered) return { checked: false }
+    if (read.text !== undefined) texts.set(file, read.text)
+  }
+  return { checked: true, finding: unbuiltFinding(manifest, candidate.name, root, present, texts) }
+}
+
+/**
  * Fetch one repository's candidates and attach each one's measured on-disk
  * size ({@link Entry.installSize}).
  *
@@ -1473,7 +1542,7 @@ export async function fetchRepoCandidate(
   tarballTimeoutMs: number = TARBALL_REQUEST_TIMEOUT_MS,
   treeTimeoutMs: number = TREE_REQUEST_TIMEOUT_MS,
 ): Promise<RepoFetchResult> {
-  const result = await projectRepoCandidates(
+  const { manifests, ...result } = await projectRepoCandidates(
     meta, fetchImpl, sleep, token, probeSubpackages, timeoutMs, tarballTimeoutMs,
   )
   if (!result.ok) return result
@@ -1498,27 +1567,105 @@ export async function fetchRepoCandidate(
   const read = await readSizingTree(meta.fullName, first.commit, fetchImpl, sleep, token, treeTimeoutMs)
   if (!read.answered) return result
   const cappedAt = 'cappedAt' in read ? read.cappedAt : undefined
-  return {
-    ...result,
-    candidates: result.candidates.map(candidate => {
-      // Release candidates were marked where their archive was measured.
-      if (candidate.release !== undefined) return candidate
-      // Neither measured nor marked, deliberately: see `canEverList`. The
-      // ABSENCE of the marker is what re-queues it should the gate loosen.
-      if (!canEverList(candidate)) return candidate
-      const installSize = treeInstallSize(read.body, candidate.subdir)
-      // `sizeProbed` whichever way it went. A tree that answered and yielded
-      // nothing is settled for this commit, and leaving it unmarked would put
-      // the repository in every future run's backfill queue.
-      return {
-        ...candidate,
-        sizeProbed: true,
-        ...(installSize !== undefined ? { installSize } : {}),
-        ...(cappedAt !== undefined ? { sizeCappedAt: cappedAt } : {}),
+  // A 404 or a body past the cap answers with no body: the commit's tree is
+  // settled for now, so the check is marked with no verdict, as the size is.
+  const present = read.body === undefined ? null : treeBlobPaths(read.body)
+  const candidates: RepoCandidate[] = []
+  for (const candidate of result.candidates) {
+    // Release candidates were marked where their archive was measured, and a
+    // candidate that can never list is neither measured nor marked,
+    // deliberately: see `canEverList` above. The ABSENCE of the marker is
+    // what re-queues it should the gate loosen.
+    if (candidate.release !== undefined || !canEverList(candidate)) {
+      candidates.push(candidate)
+      continue
+    }
+    const installSize = treeInstallSize(read.body, candidate.subdir)
+    // `sizeProbed` whichever way it went. A tree that answered and yielded
+    // nothing is settled for this commit, and leaving it unmarked would put
+    // the repository in every future run's backfill queue.
+    let next: RepoCandidate = {
+      ...candidate,
+      sizeProbed: true,
+      ...(installSize !== undefined ? { installSize } : {}),
+      ...(cappedAt !== undefined ? { sizeCappedAt: cappedAt } : {}),
+    }
+    const check = await checkEntries(candidate, manifests?.get(candidate), present, fetchImpl, sleep, token, timeoutMs)
+    if (check.checked) {
+      next = { ...next, entriesChecked: true, ...(check.finding === null ? {} : { unbuilt: check.finding }) }
+      if (check.finding !== null && next.subdir === undefined) {
+        try {
+          next = await rescueRelease(next, meta.fullName, fetchImpl, sleep, token, timeoutMs, tarballTimeoutMs)
+        } catch {
+          // Swallows a release probe that failed in transport. Recording the
+          // finding without having asked the release would refuse an entry
+          // its asset may rescue, so the marker and the finding are dropped
+          // together and the next run checks again; nothing else can reach
+          // this catch.
+          const { entriesChecked: _marker, unbuilt: _finding, ...unchecked } = next
+          next = unchecked
+        }
       }
-    }),
+    }
+    candidates.push(next)
   }
+  return { ...result, candidates }
 }
+
+/**
+ * Probe a repository root's latest release and, when its asset verifies,
+ * rescue the root onto it. One helper for the projection's rescue
+ * (`requiresBuild || hasWorkspaceDeps`) and the patch-target check's (design
+ * 2026-09-26-market-borrowings §9.5), so the two cannot drift. Throws when the
+ * probe fails in transport, as `fetchLatestReleaseTarball` does.
+ * @returns the root rescued, the root with `releaseRejected`, or the root
+ *   unchanged when there is no release asset to try.
+ */
+async function rescueRelease(
+  root: RepoCandidate,
+  fullName: string,
+  fetchImpl: typeof fetch,
+  sleep: (ms: number) => Promise<void>,
+  token: string | undefined,
+  timeoutMs: number,
+  tarballTimeoutMs: number,
+): Promise<RepoCandidate> {
+  const [owner, slug] = fullName.split('/')
+  if (owner === undefined || slug === undefined) return root
+  const release = await fetchLatestReleaseTarball(owner, slug, root.name, fetchImpl, sleep, token, timeoutMs, tarballTimeoutMs)
+  if (release === null) return root
+  if (!release.ok) return { ...root, releaseRejected: release.detail }
+  const rescued: RepoCandidate = {
+    ...root,
+    release: { tag: release.tag, url: release.url, sha256: release.sha256, assetVerified: true },
+    // Measured from the archive the probe just inflated, and the reason the
+    // sizing tree read skips a release candidate: this entry installs the
+    // TARBALL, so the repository tree at this commit is a different
+    // artifact — it holds everything the author did not pack.
+    installSize: release.installSize,
+    // The archive IS this candidate's sizing probe — it never reaches the
+    // tree read below. Without the marker it would queue for a re-probe in
+    // every run, spending backfill budget on a repo already measured.
+    sizeProbed: true,
+  }
+  // And what it requires is what the ARCHIVE declares, by the rule the two
+  // lines above apply to its name and size. `projectCandidate` wrote HEAD's
+  // declarations, and HEAD can be a different version: wyzh0117/dsh-notebook's
+  // 0.2.3 requires nothing while the v0.1.0 tarball it installs requires
+  // @deepseek-ai/dsh-client-runtime, and a HEAD-only `"dsh": ">=0.1.7-0"`
+  // badged an old tarball "Incompatible" on 0.1.5-rc.3.
+  writeDeclarations(rescued, release.declarations)
+  return rescued
+}
+
+/**
+ * A projection's outcome, plus the manifest each candidate was projected from.
+ * Beside the array, never on the rows: a transient field on a row has to be
+ * stripped at every return that carries it, which is the leak the
+ * `anyClaimed` comment in probeSubpackageCandidates records. Read by the
+ * patch-target check (design 2026-09-26-market-borrowings §9.3).
+ */
+type ProjectedCandidates = RepoFetchResult & { readonly manifests?: ReadonlyMap<RepoCandidate, unknown> }
 
 /**
  * Fetch one repository's manifest — and, for a monorepo root without a
@@ -1539,7 +1686,7 @@ async function projectRepoCandidates(
   probeSubpackages: boolean,
   timeoutMs: number,
   tarballTimeoutMs: number,
-): Promise<RepoFetchResult> {
+): Promise<ProjectedCandidates> {
   const [owner, slug] = meta.fullName.split('/')
   if (owner === undefined || slug === undefined) {
     return { ok: false, code: 'fetch-failed', detail: `unusable repository name ${meta.fullName}` }
@@ -1599,7 +1746,7 @@ async function projectRepoCandidates(
   // `root === null` branch, after the subpackage probe has had its chance.
   const rawRootName = (manifest as { name?: unknown } | null)?.name
   const rootNameInvalid = rawRootName !== undefined && rawRootName !== null && !isBundleName(rawRootName)
-  const root = projectCandidate(meta, manifest, head, undefined)
+  let root = projectCandidate(meta, manifest, head, undefined)
   // The rescue probe: only a `requires-build` root can be rescued, so only it
   // is probed. The release rides the candidate through the state file, so a
   // repo with no release does not re-consume this budget daily.
@@ -1609,43 +1756,19 @@ async function projectRepoCandidates(
   // never probed at all — so an author who followed that advice and attached
   // a perfect tarball got no rescue and no explanation, permanently.
   if (root !== null && (root.requiresBuild || root.hasWorkspaceDeps)) {
-    const release = await fetchLatestReleaseTarball(owner, slug, root.name, fetchImpl, sleep, token, timeoutMs, tarballTimeoutMs)
-    if (release?.ok === true) {
-      root.release = { tag: release.tag, url: release.url, sha256: release.sha256, assetVerified: true }
-      // Measured from the archive the probe just inflated, and the reason the
-      // sizing tree read skips a release candidate: this entry installs the
-      // TARBALL, so the repository tree at this commit is a different
-      // artifact — it holds everything the author did not pack.
-      root.installSize = release.installSize
-      // The archive IS this candidate's sizing probe — it never reaches the
-      // tree read below. Without the marker it would queue for a re-probe in
-      // every run, spending backfill budget on a repo already measured.
-      root.sizeProbed = true
-      // And what it requires is what the ARCHIVE declares, by the rule the two
-      // lines above apply to its name and size. `projectCandidate` wrote HEAD's
-      // declarations, and HEAD can be a different version: wyzh0117/dsh-notebook's
-      // 0.2.3 requires nothing while the v0.1.0 tarball it installs requires
-      // @deepseek-ai/dsh-client-runtime, and a HEAD-only `"dsh": ">=0.1.7-0"`
-      // badged an old tarball "Incompatible" on 0.1.5-rc.3.
-      writeDeclarations(root, release.declarations)
-    } else if (release?.ok === false) {
-      // An asset was there and did not hold up. The rescue does not apply, and
-      // the standing rejection has to say that rather than blame the build
-      // script the author would otherwise go and remove for nothing.
-      root.releaseRejected = release.detail
-    }
+    root = await rescueRelease(root, meta.fullName, fetchImpl, sleep, token, timeoutMs, tarballTimeoutMs)
   }
   if (root !== null && root.hasBundle) {
-    return { ok: true, candidates: [root] }
+    return { ok: true, candidates: [root], manifests: new Map([[root, manifest]]) }
   }
   if (probeSubpackages && monorepoSignal(manifest)) {
-    const { candidates: subs, failures: subFailures, anyClaimed, probed } = await probeSubpackageCandidates(owner, slug, meta, manifest, head, fetchImpl, sleep, token, timeoutMs)
+    const { candidates: subs, failures: subFailures, anyClaimed, probed, manifests: subManifests } = await probeSubpackageCandidates(owner, slug, meta, manifest, head, fetchImpl, sleep, token, timeoutMs)
     // The probe happened and found nothing installable. Record how many
     // manifests it read so the root's rejection can say so instead of
     // pointing the author at the root manifest (B-7).
     if (root !== null && subs.length === 0 && probed > 0) root.probedSubpackages = probed
     if (subs.length > 0) {
-      return { ok: true, candidates: subs, ...(subFailures.length > 0 ? { subpackageFailures: subFailures } : {}) }
+      return { ok: true, candidates: subs, manifests: subManifests, ...(subFailures.length > 0 ? { subpackageFailures: subFailures } : {}) }
     }
     if (subFailures.length > 0) {
       // A subpackage that claimed to be a plugin and failed its name grammar
