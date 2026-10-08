@@ -256,6 +256,53 @@ describe('verifyReleaseAsset', () => {
     }), 'dsh-foo')).toMatchObject({ ok: true })
   })
 
+  it('refuses a .//-spelled archive as having no top-level directory, instead of misreading its members', () => {
+    // `.//x` is a spelling only a hand-run GNU tar emits (`tar czf x.tgz
+    // .//package.json` preserves the double slash verbatim; npm pack, pnpm
+    // pack and GitHub's source archives never produce it). `rawTarball` here
+    // writes the same bytes — its ustar writer records the member name as
+    // given. `normalize` strips one `./`, leaving `/x`, whose head segment is
+    // EMPTY, and npm/pnpm's `strip: 1` extraction drops the `.` and writes
+    // `/x` — an absolute path npm itself rejects, so nothing from this
+    // archive ever lands. The pre-task code rooted it at `''` and then
+    // disagreed with itself: the patch-file check matched `/cordis.patch.yml`
+    // while the insert check looked for `lib/index.js`, refusing with "the
+    // archive does not contain that file" for a file the archive holds. It
+    // must refuse honestly, on the root the archive does not have.
+    const verdict = verifyReleaseAsset(rawTarball({
+      './/package.json': JSON.stringify({
+        name: 'dsh-foo', version: '1.0.0',
+        exports: { '.': './lib/index.js' },
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      }),
+      './/cordis.patch.yml': '- insert:\n    - id: foo\n      name: dsh-foo\n',
+      './/lib/index.js': 'export const x = 1',
+    }), 'dsh-foo')
+    expect(verdict.ok).toBe(false)
+    if (!verdict.ok) {
+      expect(verdict.detail).toContain('no top-level directory')
+      // The misattributed reason the pre-task code published for these bytes.
+      expect(verdict.detail).not.toContain('does not contain that file')
+    }
+  })
+
+  it('refuses a .//dir/x spelling the same way: an empty head is no top-level directory', () => {
+    // Same shape with a real directory after the empty head — normalized
+    // `/dir/x`. The pre-task code rooted it at `''` as well and refused with
+    // the bogus reason `the release asset's "" directory carries no
+    // package.json`; an honest refusal is the same detail as above.
+    const verdict = verifyReleaseAsset(rawTarball({
+      './/dir/package.json': JSON.stringify({
+        name: 'dsh-foo', version: '1.0.0',
+        dsh: { bundle: { patch: './p.yml' } },
+      }),
+      './/dir/p.yml': '- insert: []\n',
+      './/dir/lib/index.js': 'export const x = 1',
+    }), 'dsh-foo')
+    expect(verdict.ok).toBe(false)
+    if (!verdict.ok) expect(verdict.detail).toContain('no top-level directory')
+  })
+
   it('refuses a root-level manifest with the reason that is actually true', () => {
     // `{'package.json': …}` IS at the root, so "carries no package.json at
     // its root" was false. Under strip:1 it has no component left and would
