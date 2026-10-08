@@ -292,6 +292,20 @@ export interface RepoCandidate {
    */
   sizeCappedAt?: number
   /**
+   * That the patch-target check (design 2026-09-26-market-borrowings §9) ran
+   * on this candidate's pinned commit and got an answer, whichever way it
+   * went. The contract of {@link RepoCandidate.sizeProbed}: written for an
+   * answer, never for a transport failure, and its absence queues the
+   * repository for one backfill fetch.
+   */
+  entriesChecked?: true
+  /**
+   * What the check found missing; present only beside `entriesChecked`. The
+   * repo gate refuses the candidate as `requires-build` unless a release
+   * rescued it.
+   */
+  unbuilt?: UnbuiltFinding
+  /**
    * How many subpackage manifests the harvest probed for this root, when it
    * probed any and none declared a bundle. Present only on a bundle-less
    * monorepo root, and only to make its rejection truthful: without it the

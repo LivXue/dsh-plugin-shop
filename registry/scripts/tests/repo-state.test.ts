@@ -32,6 +32,10 @@ function candidate(repo: string): RepoCandidate {
     // alone while the bare presence of `peers` was the marker.)
     peers: [],
     declarationsRule: DECLARATIONS_RULE,
+    // And its tree was checked for the files its patch loads (design
+    // 2026-09-26-market-borrowings §9). Unmarked, every fixture below would
+    // queue for that backfill and stop testing what it names.
+    entriesChecked: true,
   }
 }
 
@@ -622,5 +626,46 @@ describe('a cap-refused sizing read is re-asked when the cap moves', () => {
     // re-probe; the other default would leave those repositories sizeless
     // forever, and this project prefers the failure it can see.
     expect(diffRepoState(capped(24 * 1024 * 1024), seen).toFetch.map(e => e.repo)).toEqual(['a/one'])
+  })
+})
+
+describe('the entry-check record (design 2026-09-26-market-borrowings §9.4, §9.6)', () => {
+  const seen = (repo: string) => ({ repo, pushedAt: '2026-08-01T00:00:00Z' })
+  const stateWith = (overrides: Partial<RepoCandidate>): RepoState => ({
+    'o/r': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [{ ...candidate('o/r'), ...overrides }] },
+  })
+
+  it('queues an unmarked listable candidate for one backfill fetch', () => {
+    const { entriesChecked: _marker, ...unmarked } = candidate('o/r')
+    const state: RepoState = { 'o/r': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [unmarked] } }
+    expect(diffRepoState(state, [seen('o/r')]).toFetch).toEqual([{ ...seen('o/r'), backfillOnly: true }])
+  })
+
+  it('does not queue a marked candidate, or a release-rescued one', () => {
+    expect(diffRepoState(stateWith({}), [seen('o/r')]).toFetch).toEqual([])
+    const { entriesChecked: _marker, ...unmarked } = candidate('o/r')
+    const rescued: RepoState = {
+      'o/r': {
+        pushedAt: '2026-08-01T00:00:00Z', commit,
+        candidates: [{ ...unmarked, release: { tag: 'v1', url: 'https://github.com/o/r/releases/download/v1/a.tgz', sha256: 'c'.repeat(64), assetVerified: true } }],
+      },
+    }
+    expect(diffRepoState(rescued, [seen('o/r')]).toFetch).toEqual([])
+  })
+
+  it('round-trips both fields', () => {
+    const state = stateWith({ unbuilt: { insert: 'dsh-r', path: 'lib/index.js' } })
+    expect(parseRepoState(serializeRepoState(state))).toEqual(state)
+  })
+
+  it.each([
+    ['a marker that is not true', { entriesChecked: 'yes' }],
+    ['a finding without the marker', { entriesChecked: undefined, unbuilt: { patch: './x.yml' } }],
+    ['a finding of neither shape', { unbuilt: { patch: './x.yml', insert: 'x' } }],
+    ['an empty finding string', { unbuilt: { patch: '' } }],
+    ['a finding string past its bound', { unbuilt: { patch: 'p'.repeat(201) } }],
+  ])('refuses %s', (_what, overrides) => {
+    const text = serializeRepoState(stateWith(overrides as Partial<RepoCandidate>))
+    expect(() => parseRepoState(text)).toThrow(/malformed entry-check record/)
   })
 })
