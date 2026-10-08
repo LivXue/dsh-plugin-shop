@@ -1155,6 +1155,22 @@ describe('ShopGateway.installed — shadowed github recovery (C10)', () => {
     }])
   })
 
+  it('reads the pin under the subdir key when the entry was installed from a subdirectory', async () => {
+    // The install path records the pin under `identityKey(entry)` —
+    // `github:owner/slug#deep/subdir` — and the manifest still records only
+    // `github:owner/slug`. The synthesized row must show the recorded sha,
+    // not fall through to the spec string.
+    const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-shadowed-subdir-'))
+    mkdirSync(join(dir, 'cache'), { recursive: true })
+    writeFileSync(join(dir, 'cache/github-pins.json'), JSON.stringify({ 'github:bob/dsh-foo#deep/subdir': bobCommit }))
+    const gateway = gatewayWith(dir, { 'dsh-foo': 'github:bob/dsh-foo' })
+    await gateway.catalog({})
+    expect(await gateway.installed()).toEqual([{
+      name: 'dsh-foo', source: 'github', repo: 'bob/dsh-foo',
+      installed: bobCommit, latest: null, outdated: false, enabled: true, shadowed: true,
+    }])
+  })
+
   it('falls back to the spec string itself when no pin is recorded', async () => {
     const dir = mkdtempSync(join(TEMP_ROOT, 'dsh-shadowed-nopin-'))
     const gateway = gatewayWith(dir, { 'dsh-foo': 'github:bob/dsh-foo' })

@@ -116,12 +116,14 @@ export const zh = {
   nameTakenDetail: '已安装同名的另一个插件（{holder}）。\n两个同名插件声明相同的加载项 id，无法共存；安装它会替换掉已装的那个。',
   npmSource: 'npm 包',
   githubSource: '源码在 GitHub',
-  /** The badge and the explanation for an installed github entry the catalog
-   * refuses `shadowed-by-npm` (C10 MVP): its name is held by a same-named
-   * npm package, so the shelf no longer shows it, but the profile still runs
-   * it. */
-  shadowedBadge: '被同名 npm 包遮蔽',
-  shadowedDetail: '当前目录不显示它，因为另一个 npm 插件占用了它的名字；它照常运行。',
+  /** The badge and the explanation for an installed github entry no catalog
+   * row claims (C10 MVP). The mechanism synthesizes a row for ANY github spec
+   * with no catalog row — shadowed by a same-named npm package, an unlisted
+   * fork, a removed listing, or a same-named conflict with a different repo —
+   * so the copy names the catalog fact and lists the causes, rather than
+   * claiming the npm-twin one. */
+  shadowedBadge: '目录未列出此包',
+  shadowedDetail: '此包已安装，但当前的插件目录没有它（可能是被同名 npm 包遮蔽、作者已下架、或目录尚未收录）；它照常运行。',
   updatableSection: '可更新',
   installedVersion: '已安装 v{version}',
   latestVersion: '最新 v{version}',
@@ -260,8 +262,8 @@ export const en = {
   nameTakenDetail: 'A different plugin of this name is installed ({holder}).\nTwo plugins of one name declare the same loader entry id and cannot both load; installing this one would replace it.',
   npmSource: 'npm package',
   githubSource: 'source on GitHub',
-  shadowedBadge: 'Shadowed by an npm package',
-  shadowedDetail: 'The current catalog does not list it because another npm plugin holds its name; it runs as before.',
+  shadowedBadge: 'Not in the current catalog',
+  shadowedDetail: 'This package is installed but the current catalog does not list it (it may be shadowed by a same-named npm package, removed by the author, or never listed); it runs as before.',
   updatableSection: 'Updatable',
   installedVersion: 'installed v{version}',
   latestVersion: 'latest v{version}',
