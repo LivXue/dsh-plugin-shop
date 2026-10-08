@@ -670,19 +670,22 @@ describe('workspace deps and the release rescue', () => {
 })
 
 describe('canEverList agrees with the gate it is a shortcut for', () => {
-  // The predicate duplicates three of `gateRepo`'s rules so the sizing read
-  // can skip a candidate before the gate ever sees it. A duplication that
-  // drifts is the whole hazard: loosen a rule in `gateRepo` alone and the
+  // The predicate duplicates four of `gateRepo`'s rules so the sizing read
+  // can skip a candidate before the gate ever sees it — the three it has
+  // always duplicated, and the fourth rule design 2026-09-26-market-borrowings
+  // §9.4 adds: the pinned tree lacks a file the patch loads. A duplication
+  // that drifts is the whole hazard: loosen a rule in `gateRepo` alone and the
   // newly-listable candidates go unmeasured; tighten one and the sizing read
   // keeps paying for candidates that can no longer list.
   //
-  // Every combination of the three inputs it reads, against the real gate.
+  // Every combination of the four inputs it reads, against the real gate.
   const RELEASE = { tag: 'v1.0.0', url: 'https://github.com/someone/dsh-repo-plugin/releases/download/v1.0.0/a.tgz', sha256: 'c'.repeat(64), assetVerified: true } as const
   const combinations = [false, true].flatMap(hasBundle =>
     [false, true].flatMap(requiresBuild =>
       [false, true].flatMap(hasWorkspaceDeps =>
-        [undefined, RELEASE].map(release =>
-          ({ hasBundle, requiresBuild, hasWorkspaceDeps, release })))))
+        [undefined, RELEASE].flatMap(release =>
+          [undefined, { patch: './cordis.patch.yml' }].map(unbuilt =>
+            ({ hasBundle, requiresBuild, hasWorkspaceDeps, release, ...(unbuilt === undefined ? {} : { entriesChecked: true as const, unbuilt }) }))))))
 
   it.each(combinations)(
     'refuses %o only when the gate does too',
@@ -714,5 +717,79 @@ describe('canEverList agrees with the gate it is a shortcut for', () => {
     const candidate = repo({ requiresBuild: true, hasWorkspaceDeps: true, release: RELEASE })
     expect(canEverList(candidate)).toBe(true)
     expect(gateRepo(candidate, config).ok).toBe(true)
+  })
+})
+
+describe('an unbuilt finding (design 2026-09-26-market-borrowings §9.4)', () => {
+  const at = commit.slice(0, 7)
+
+  it('refuses a root whose inserted module is missing, naming the file and every remedy', () => {
+    const result = gateRepo(repo({ entriesChecked: true, unbuilt: { insert: 'dsh-repo-plugin', path: 'lib/index.js' } }), config)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.rejection.code).toBe('requires-build')
+      expect(result.rejection.detail).toBe(
+        `Its patch inserts "dsh-repo-plugin", which its package.json resolves to "lib/index.js", and the repository does not contain that file at ${at}.`
+        + ' A git install runs no build, so the plugin would not load.'
+        + ' Commit the built files, publish to npm, or attach a packed release tarball, and it can be listed.',
+      )
+    }
+  })
+
+  it('tells a subpackage nothing about a release tarball, which cannot rescue it', () => {
+    const result = gateRepo(repo({ subdir: 'packages/x', entriesChecked: true, unbuilt: { insert: 'dsh-repo-plugin', path: 'lib/index.js' } }), config)
+    expect(!result.ok && result.rejection.detail).toMatch(/Commit the built files or publish to npm, and it can be listed\.$/)
+  })
+
+  it('refuses a missing patch file in its own words', () => {
+    const result = gateRepo(repo({ entriesChecked: true, unbuilt: { patch: './dist/cordis.patch.yml' } }), config)
+    expect(!result.ok && result.rejection.detail).toBe(
+      `Declares dsh.bundle.patch "./dist/cordis.patch.yml", which the repository does not contain at ${at}, so dsh has no patch to load.`
+      + ' Commit the file, publish to npm, or attach a packed release tarball, and it can be listed.',
+    )
+  })
+
+  it('appends why an attached release did not rescue it', () => {
+    const result = gateRepo(repo({ entriesChecked: true, unbuilt: { patch: './x.yml' }, releaseRejected: 'the release asset holds no files' }), config)
+    expect(!result.ok && result.rejection.detail).toMatch(/A release tarball WAS found and refused: the release asset holds no files$/)
+  })
+
+  it('accepts the candidate a release rescued', () => {
+    const release = { tag: 'v1.0.0', url: 'https://github.com/someone/dsh-repo-plugin/releases/download/v1.0.0/a.tgz', sha256: 'c'.repeat(64), assetVerified: true } as const
+    expect(gateRepo(repo({ entriesChecked: true, unbuilt: { patch: './x.yml' }, release }), config).ok).toBe(true)
+  })
+})
+
+describe('a github identity that cannot cut a manifest.lock line (design 2026-09-26-market-borrowings §9)', () => {
+  // The repo, the bundle name, the pinned commit and the release tag all reach
+  // a `manifest.lock` line verbatim — the github side of the rule
+  // `WHITESPACE_OR_CONTROL` states for the npm side. One holding whitespace or
+  // a C0/DEL/C1 control character could cut the line short or start a forged
+  // one, so gateRepo refuses the entry before any other rule names a field.
+  const RELEASE = { tag: 'v1.0.0', url: 'https://github.com/someone/dsh-repo-plugin/releases/download/v1.0.0/a.tgz', sha256: 'c'.repeat(64), assetVerified: true } as const
+
+  it.each([
+    ['repo', { repo: 'some one/dsh-repo-plugin' }, 'repo'],
+    ['repo', { repo: 'someone/dsh-repo-plugin' }, 'repo'],
+    ['name', { name: 'dsh repo plugin' }, 'name'],
+    ['name', { name: 'dsh-repo-plugin' }, 'name'],
+    ['commit', { commit: `aaa aaaa${'a'.repeat(35)}`, version: `aaa aaaa${'a'.repeat(35)}` }, 'commit'],
+    ['commit', { commit: `aaaaaaa${'a'.repeat(32)}`, version: `aaaaaaa${'a'.repeat(32)}` }, 'commit'],
+    ['release.tag', { release: { ...RELEASE, tag: 'v1.0.0 alpha' } }, 'release.tag'],
+    ['release.tag', { release: { ...RELEASE, tag: 'v1.0.0' } }, 'release.tag'],
+  ])('refuses %s holding whitespace or a control character', (_field, overrides, _label) => {
+    const result = gateRepo(repo(overrides as Partial<RepoCandidate>), config)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.rejection.code).toBe('no-manifest')
+      expect(result.rejection.detail).toMatch(/^Its recorded identity cannot be a manifest\.lock line: /)
+      expect(result.rejection.detail).toMatch(/holds whitespace or a control character\.$/)
+    }
+  })
+
+  it('accepts the ordinary fixture', () => {
+    // The fixture shape every other test above drives must not trip the new
+    // rule; one positive pins the gate against refusing everything.
+    expect(gateRepo(repo(), config).ok).toBe(true)
   })
 })

@@ -387,7 +387,8 @@ export function emit(
  * start a forged one, and the name is one npm accepted for publishing, which
  * holds no whitespace. On a github line the `owner/slug` and the commit or
  * release tag come from GitHub, which lets none of them hold whitespace, and
- * the bundle name is held to `BUNDLE_NAME_RE`. A line with fewer than three
+ * the bundle name is held to `BUNDLE_NAME_RE`, and gate.githubFields refuses
+ * an entry it does not hold. A line with fewer than three
  * fields was therefore edited or corrupted outside this build, and it throws:
  * a malformed registry file must not read as an empty catalog, which would
  * report every departure as nothing.
