@@ -735,6 +735,15 @@
   border: 1px solid var(--dsw-alias-border-l2);
 }
 
+/* The §C10 shadowed badge: an installed github entry the catalog refuses
+ * shadowed-by-npm. Subdued/secondary rather than a warn tint — nothing is
+ * wrong with the install itself; the shelf just cannot show it. */
+.tierBadge[data-tier='shadowed'] {
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l2);
+}
+
 .incompatibleBadge {
   flex-shrink: 0;
   padding: 3px 9px;
@@ -1307,6 +1316,22 @@
   align-items: center;
   gap: 8px;
   font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* The §C10 shadowed section. Reuses the outdated list's visual language; only
+ * the section spacing and the per-row explanation paragraph are its own. */
+.shadowedSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.shadowedDetail {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
   color: var(--dsw-alias-label-secondary);
 }
 

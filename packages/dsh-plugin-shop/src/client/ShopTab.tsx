@@ -10,7 +10,7 @@ import type { CatalogEntry, HarnessVerdict, InstallArgs, RestartBlockedReason, S
 import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, readsIncompatible, refusedPeersText, refusesInstall, rejectionCodeKey, restartBlockedNoticeKey, reviewHashPin, settledByRestart, sortByStars, starsOf, tierKey } from './present.ts'
 import { readRestartMonitor, requestRestart, subscribeRestartMonitor, type RestartMonitorState } from './restart-monitor.ts'
 import { useInstallFlows, type InstallFlow } from './useInstall.ts'
-import { useUninstallFlows, type UninstallFlow } from './useUninstall.ts'
+import { useUninstallFlows, type UninstallFlow, type UseUninstallFlows } from './useUninstall.ts'
 import { useUpdateSelf } from './useUpdateSelf.ts'
 import { en, type ShopLocaleKey } from './locales.ts'
 import { expandZhQuery, tokenInText } from '../shared/zh-intents.ts'
@@ -1185,6 +1185,50 @@ function OutdatedSection({ state, entriesByKey, missingByKey, harnessVerdicts, t
   )
 }
 
+/** The §C10 shadowed rows: installed github dependencies whose name the
+ * catalog now holds as an npm package — the pipeline refused the github
+ * entry `shadowed-by-npm`, so it has no shelf card. Rendered as a single
+ * strip inside the Installed view, with the badge and the explanation
+ * naming the harness fact, and an Uninstall button as the only offered
+ * action: there is no catalog truth to compare against, so no Install /
+ * Update / Enable / Restart control makes sense. */
+function ShadowedSection({ entries, t, uninstallFlows, restart, restartBlocked, reload }: {
+  entries: readonly ShopInstalledEntry[]
+  t: ShopTabProps['t']
+  uninstallFlows: UseUninstallFlows
+  restart: ShopTabInjected['restart']
+  restartBlocked: RestartBlockedReason | null
+  reload: () => void
+}): ReactNode {
+  const shadowed = entries.filter(entry => entry.shadowed === true)
+  if (shadowed.length === 0) return null
+  return (
+    <section className={css.shadowedSection} data-shop-shadowed>
+      <ul className={css.outdatedList}>
+        {shadowed.map(row => {
+          const key = identityKey(row)
+          return (
+            <li key={key}>
+              <div className={css.outdatedRow} data-shop-shadowed-entry={row.name}>
+                <div className={css.outdatedInfo}>
+                  <span className={css.name}>{row.name}</span>
+                  <span className={css.badges}>
+                    <span className={css.tierBadge} data-tier="shadowed">{t('shadowedBadge')}</span>
+                  </span>
+                  <p className={css.shadowedDetail}>{t('shadowedDetail')}</p>
+                </div>
+                <div className={css.outdatedActions}>
+                  <UninstallPanel name={row.name} t={t} restart={restart} restartBlocked={restartBlocked} reload={reload} flow={uninstallFlows.flowFor(key)} />
+                </div>
+              </div>
+            </li>
+          )
+        })}
+      </ul>
+    </section>
+  )
+}
+
 /**
  * The shop's own error boundary (design 2026-09-26-market-borrowings §4).
  *
@@ -2176,6 +2220,20 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
         reload={reload}
         restarts={restarts}
       />
+      {/* Shadowed rows (§C10) sit only in the Installed view: that view is
+        * management, not shelf, and management is exactly what these entries
+        * lost. Everywhere else they would just repeat the shelf's "not
+        * shown here" rule. */}
+      {category === 'installed' && installedState.kind === 'ready' && (
+        <ShadowedSection
+          entries={installedState.entries}
+          t={t}
+          uninstallFlows={uninstallFlows}
+          restart={restart}
+          restartBlocked={restartBlocked}
+          reload={reload}
+        />
+      )}
     </div>
   )
 }

@@ -116,6 +116,12 @@ export const zh = {
   nameTakenDetail: '已安装同名的另一个插件（{holder}）。\n两个同名插件声明相同的加载项 id，无法共存；安装它会替换掉已装的那个。',
   npmSource: 'npm 包',
   githubSource: '源码在 GitHub',
+  /** The badge and the explanation for an installed github entry the catalog
+   * refuses `shadowed-by-npm` (C10 MVP): its name is held by a same-named
+   * npm package, so the shelf no longer shows it, but the profile still runs
+   * it. */
+  shadowedBadge: '被同名 npm 包遮蔽',
+  shadowedDetail: '当前目录不显示它，因为另一个 npm 插件占用了它的名字；它照常运行。',
   updatableSection: '可更新',
   installedVersion: '已安装 v{version}',
   latestVersion: '最新 v{version}',
@@ -254,6 +260,8 @@ export const en = {
   nameTakenDetail: 'A different plugin of this name is installed ({holder}).\nTwo plugins of one name declare the same loader entry id and cannot both load; installing this one would replace it.',
   npmSource: 'npm package',
   githubSource: 'source on GitHub',
+  shadowedBadge: 'Shadowed by an npm package',
+  shadowedDetail: 'The current catalog does not list it because another npm plugin holds its name; it runs as before.',
   updatableSection: 'Updatable',
   installedVersion: 'installed v{version}',
   latestVersion: 'latest v{version}',
