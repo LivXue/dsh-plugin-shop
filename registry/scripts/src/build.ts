@@ -17,9 +17,9 @@ import { basename, join } from 'node:path'
 import { loadRegistryConfig, serializeFirstSeen } from './config.ts'
 import { describeDepartures, parseDepartureSummary, type DepartureSummary } from './departures.ts'
 import { applyConfirmations, bootstrapFeedState, describeFeedCoverage, describeFeedRun, feedCarriersByKeyword, parseFeedCoverage, parseFeedRunReport, parseFeedState, serializeFeedState, type FeedInput, type FeedRead, type FeedState } from './feed-state.ts'
-import { fetchStarCounts } from './github-stars.ts'
+import { fetchStarCounts, fetchArchivedFlags } from './github-stars.ts'
 import { HARVEST_TOPICS, REPO_BACKFILL_BUDGET_DEFAULT, describeSearchPhantoms, harvestRepos, parseHarvestBudget } from './github-client.ts'
-import { parseRepoState, repoGoneDetail, serializeRepoState } from './repo-state.ts'
+import { applyArchivedFlags, parseRepoState, repoGoneDetail, serializeRepoState } from './repo-state.ts'
 import { githubOwnerName } from './github-repo.ts'
 import { accountForDepartures, fetchCandidates, searchByKeywords, describePublisherAxis, describeShortfall, HARVEST_KEYWORDS, parseKeywordShortfall, parsePublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall, type PublisherAxisReport } from './npm-client.ts'
 import { confirmCarriers, harvestFeed } from './npm-feed.ts'
@@ -266,12 +266,18 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   // missing piece, and the npm half still publishes.
   let repoCandidates: RepoCandidate[] = []
   let repoNote = ''
+  // Hoisted from the harvest branch so the archived-flags merge can write
+  // repo-state.json with the freshest flags after selectEntries (§1.3).
+  let repoNextState: import('./repo-state.ts').RepoState | null = null
   // Star counts the search itself carried, keyed by repo full name. Empty
   // when the github harvest skipped — every repo then goes through GraphQL.
   let repoSearchStars = new Map<string, number>()
   // Subpackage probing rides the schemaVersion-4 flag (set inside the harvest
   // branch); the emit at the bottom reads it for the version decision.
   let probeSubpackages = false
+  // The path the repo-state file writes to, hoisted so the archived-flags
+  // merge below can write it after selectEntries has run (design §1.3).
+  const repoStatePath = join(REGISTRY_DIR, 'repo-state.json')
   const repoFlag = process.env.SHOP_HARVEST_REPOS === '1'
   if (ghToken === '') {
     repoNote = 'github harvest skipped: GITHUB_TOKEN is not set'
@@ -284,7 +290,6 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     // the other registry inputs; a missing file is the first run of the
     // backfill, an unreadable one fails loudly rather than scheduling a fresh
     // full sweep by accident.
-    const repoStatePath = join(REGISTRY_DIR, 'repo-state.json')
     const repoState = existsSync(repoStatePath)
       ? parseRepoState(readFileSync(repoStatePath, 'utf8'))
       : {}
@@ -319,7 +324,11 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
         detail: repoGoneDetail(HARVEST_TOPICS),
       })
     }
-    writeFileSync(repoStatePath, serializeRepoState(repos.nextState))
+    // The state write is deferred to after selectEntries and the archived-flags
+    // merge below: the graph pass needs to know which repos are LISTED before
+    // it asks GitHub about them, and the file should carry the freshest flags
+    // in one write (design §1.3).
+    repoNextState = repos.nextState
     // `fetched` is the queue length — attempts, not successes — so the throw
     // count rides beside it. A run where every attempt threw once read
     // "300 fetched, 300 carried": the one line a human scans for an outage said
@@ -399,6 +408,42 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   // runPipeline re-derives it from the same inputs and cannot disagree
   // (pipeline.test.ts asserts the equality).
   const { entries: selectedEntries } = selectEntries(candidates, repoCandidates, config, builtAt)
+
+  // Archived flags (design 2026-10-08 §1.3): the LISTED github repositories'
+  // `isArchived` from GraphQL, written into repo-state.json in one pass.
+  // Advisory like the stars pass: every failure mode ends in a note, never a
+  // throw, and a failed pass publishes the catalog with the previous flags.
+  if (repoNextState !== null) {
+    if (ghToken !== '') {
+      const listedGitHubRepos: string[] = []
+      for (const entry of selectedEntries) {
+        if (entry.source === 'github' && entry.repo !== undefined) listedGitHubRepos.push(entry.repo)
+      }
+      if (listedGitHubRepos.length > 0) {
+        const archivedResult = await fetchArchivedFlags(listedGitHubRepos, { token: ghToken })
+        if (archivedResult.flags.size > 0) {
+          repoNextState = applyArchivedFlags(repoNextState, archivedResult.flags)
+        }
+        const archivedCount = [...archivedResult.flags.values()].filter(Boolean).length
+        const archivedNote = `github archived flags: ${archivedResult.flags.size} answered (${archivedCount} archived)${archivedResult.skipped.length > 0 ? `, ${archivedResult.skipped.length} skipped` : ''}`
+        process.stderr.write(`${archivedNote}\n`)
+      }
+    }
+    // The deferred write from the harvest branch: now carries the freshest
+    // flags, in one write.
+    writeFileSync(repoStatePath, serializeRepoState(repoNextState))
+  }
+
+  // Layer the archived flag onto the candidates so the emit step can read it.
+  // Done here, after the graph merge and before the pipeline: the flag lives
+  // on the repo-state record, not on the harvested candidate (§1.3).
+  if (repoNextState !== null) {
+    for (const candidate of repoCandidates) {
+      const record = repoNextState[candidate.repo.toLowerCase()]
+      if (record?.archived === true) candidate.archived = true
+    }
+  }
+
   const starsToken = process.env.STARS_TOKEN ?? ghToken
   let starsInfo: { url: string; sha256: string } | null = null
   let starsNote = ''
@@ -538,12 +583,18 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   const npmLine = npmParts.length === 0 ? '' : `\nnpm search shortfall (tolerated, packages missing from this build):\n${npmParts.map(part => `- ${part}\n`).join('')}`
   const axisLine = axisParts.length === 0 ? '' : `\npublisher axis (per-keyword pinning and probing, not itself a shortfall):\n${axisParts.map(part => `- ${part}\n`).join('')}`
   const repoLine = repoNote === '' ? '' : `\nGitHub: ${repoNote}\n`
+  // Count listed github entries whose repo-state record holds `archived: true`
+  // (design 2026-10-08 §1.3, R5). The line always prints — zero carries no
+  // special behavior.
+  const archivedEntryCount = (JSON.parse(artifacts.pluginsJson) as { plugins: { source?: string; archived?: true }[] })
+    .plugins.filter(p => p.source === 'github' && p.archived === true).length
+  const archivedLine = `\ngithub entries from archived repositories: ${archivedEntryCount}\n`
   const feedLine = feedParts.length === 0 ? '' : `\nchange feed (npm, by publication time):\n${feedParts.map(part => `- ${part}\n`).join('')}`
   const departureParts = departureSummary === undefined ? [] : describeDepartures(departureSummary)
   for (const part of departureParts) process.stderr.write(`npm: ${part}\n`)
   const [departureHead, ...departureRest] = departureParts
   const departureLine = departureHead === undefined ? '' : `\n${departureHead}\n${departureRest.map(part => `- ${part}\n`).join('')}`
-  writeFileSync(join(OUT_DIR, 'report.md'), `${artifacts.report}\nStars: ${starsNote}\n${npmLine}${departureLine}${axisLine}${feedLine}${repoLine}`)
+  writeFileSync(join(OUT_DIR, 'report.md'), `${artifacts.report}\nStars: ${starsNote}\n${npmLine}${departureLine}${axisLine}${feedLine}${repoLine}${archivedLine}`)
 
   // Pages gets a directory staged from scratch, holding exactly the artifacts
   // the spec lists. `dist/v1` is NOT cleaned and is not what deploys: the
