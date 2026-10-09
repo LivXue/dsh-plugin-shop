@@ -680,3 +680,20 @@ export function applyArchivedFlags(state: RepoState, flags: Map<string, boolean>
   }
   return next
 }
+
+/**
+ * Layer the recorded archived flag onto this run's candidates, so the emit
+ * step can read it (design 2026-10-08 §1.3). The lookup is VERBATIM: the
+ * state key and {@link RepoCandidate.repo} both come from GitHub's
+ * `full_name`, and share its case — a lowercased key misses every mixed-case
+ * repository (34% of the listed pool, measured 2026-10-09 over
+ * `manifest.lock`), which is exactly the set the flag then never reaches.
+ * Only `archived: true` is layered: an absent or false flag stays off the
+ * candidate, because the emitted field is `archived?: true` and `false` is
+ * its omission.
+ */
+export function layerArchivedFlags(state: RepoState, candidates: RepoCandidate[]): void {
+  for (const candidate of candidates) {
+    if (state[candidate.repo]?.archived === true) candidate.archived = true
+  }
+}

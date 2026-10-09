@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { DECLARATIONS_RULE, applyArchivedFlags, diffRepoState, nextRepoState, parseRepoState, repoGoneDetail, serializeRepoState, staleFailureRepos } from '../src/repo-state.ts'
+import { DECLARATIONS_RULE, applyArchivedFlags, diffRepoState, layerArchivedFlags, nextRepoState, parseRepoState, repoGoneDetail, serializeRepoState, staleFailureRepos } from '../src/repo-state.ts'
 import type { RepoState, RepoStateEntry } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
 
@@ -375,6 +375,34 @@ describe('the archived marker (design 2026-10-08-archived-flag-and-shadowed-reco
     // An absent record + a flag = the record gains it.
     const added = applyArchivedFlags(state, new Map([['a/one', true]]))
     expect(added['a/one']?.archived).toBe(true)
+  })
+
+  it('layers a mixed-case repository\'s recorded flag onto its candidate (verbatim lookup)', () => {
+    // The state key and the candidate's `repo` both come from GitHub's
+    // `full_name` and share its case. A lowercased lookup — which build.ts
+    // carried until this test — returned undefined for every mixed-case
+    // repository (34% of the listed pool, measured 2026-10-09 over
+    // `manifest.lock`), so the flag never reached the candidate and the
+    // catalog row never carried `archived: true`.
+    const mixed: RepoState = {
+      'Diluka/dsh-agent-plugin-market': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [candidate('Diluka/dsh-agent-plugin-market')], archived: true },
+    }
+    const candidates = [candidate('Diluka/dsh-agent-plugin-market'), candidate('a/lowercase')]
+    layerArchivedFlags(mixed, candidates)
+    expect(candidates[0]?.archived).toBe(true)
+    // No record, no flag: the candidate stays without the field.
+    expect(candidates[1]).not.toHaveProperty('archived')
+  })
+
+  it('layers only archived: true — a recorded false stays off the candidate', () => {
+    // The emitted field is `archived?: true`; `false` is its omission, so the
+    // layering writes nothing for a live repository.
+    const live: RepoState = {
+      'a/live': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [candidate('a/live')], archived: false },
+    }
+    const candidates = [candidate('a/live')]
+    layerArchivedFlags(live, candidates)
+    expect(candidates[0]).not.toHaveProperty('archived')
   })
 })
 
