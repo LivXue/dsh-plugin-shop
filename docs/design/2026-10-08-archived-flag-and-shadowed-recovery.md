@@ -1,7 +1,9 @@
 # Archived repositories marked, and a shadowed install recoverable — design
 
-Status: **decided 2026-10-08 by LivXue, in implementation.** Two borrowings
-from `2026-09-26-market-borrowings.md` §6: **C5** (archived GitHub
+Status: **C5 probe + C10 MVP merged 2026-10-08 and 2026-10-09 (PRs #81,
+#83). C5 surface PR in implementation 2026-10-09, direction D1 (GraphQL
+bulk), chosen by LivXue 2026-10-09.** Two borrowings from
+`2026-09-26-market-borrowings.md` §6: **C5** (archived GitHub
 repositories) and **C10** (a GitHub install stranded when an npm package
 shadows the name). Decisions taken on 2026-10-08:
 
@@ -64,25 +66,59 @@ is marked archived or not, and we measure the real share.
 
 ### 1.3 The rule (surface stage, follow-up PR)
 
-The catalog's `plugins.<sha>.json` gains one optional field per github
-entry, `archived?: true`, written when the repository record says so (and
-omitted otherwise, so the schema change is additive and old clients ignore
-it — the same discipline as `dshPeers` in 2026-09). The shop's `host/catalog.ts`
-parses it through the existing zod schema with `.optional()`; the shelf card
-shows a subdued "已归档 / Archived" badge beside the version, in the same
-register as the existing `tierVerifiedStale` badge.
+**Amended 2026-10-09 after the probe measurement landed.** The probe
+produced a falsified premise: over the `repo-state.json` that the first
+post-probe catalog build committed (909d6fa), every one of the 20,306
+recorded repositories carried `archived: false` — including the entries
+the live catalog lists. The GitHub search REST endpoint does not carry
+`archived` on its items, contrary to what §1.2 assumed when the probe was
+designed. The read `parseRepoMeta` now performs is a no-op for every
+repository the harvest has ever seen.
+
+The surface PR therefore needs the value from a source that actually
+carries it. The design is GraphQL bulk, which `github-stars.ts` already
+uses for the daily star counts and whose cost fits the existing daily
+budget without a new pipeline:
+
+- **Fetch**: a per-build pass over the LISTED github repositories (the
+  ~8,163 in the current catalog, not the full 20,306 repo-state pool)
+  queries `repositories(names: [...]) { isArchived }` in batches of 200 —
+  ~41 calls a build, inside the 5,000-point hourly budget the star pass
+  already amortizes. The pass lives beside `fetchStarCounts` in
+  `github-stars.ts`, sharing its timeout / `withTimeout` / auth handling.
+- **Persist**: `repo-state.json`'s per-repository `archived` field is
+  written from the GraphQL answer, not from the search projection (whose
+  read is removed in the same change — leaving it in place would keep a
+  known-broken input live, the "additive key whose consumer never landed"
+  failure mode in reverse).
+- **Unanswerable**: a batch that errors, or a repo the GraphQL response
+  omits (renamed, transferred, deleted between the search and the batch),
+  leaves the record unchanged. A repo is never marked `archived: false`
+  on the strength of a missing answer — "no fact supplied ⇒ no write",
+  the same rule the probe's `nextRepoState` arm already carries.
+- **Emit**: `plugins.<sha>.json` gains `archived?: true` on each github
+  entry whose repo-state record holds `archived: true` (omitted otherwise;
+  additive, like `dshPeers`). The build report gains one line,
+  `github entries from archived repositories: N` — this is the line the
+  probe PR deliberately did NOT carry (R5), landing here where the field
+  first reaches the published catalog.
+- **Shop**: `host/catalog.ts` parses the field through the existing zod
+  schema with `.optional()`; the shelf card shows a subdued badge
+  `已归档 / Archived` beside the version, in the same register as the
+  existing `tierVerifiedStale` badge. Bilingual locale keys
+  `archivedBadge` in `locales.ts`.
 
 Refusing nothing means the shelving, the `Outdated` verdict, the install
-button, and the harvest's coverage arithmetic are all unchanged. The same
-PR adds one build-report line, `github entries from archived repositories: N`,
-so the measured share lands where a maintainer skimming the run can see it —
-and the number cannot drift in silence afterwards.
+button, and the harvest's coverage arithmetic are all unchanged. The
+shop release that exposes the badge goes through the beta channel per
+the release rule for "a version that changes what the host reads" — the
+schema adds a field the host now parses.
 
-**The probe PR carries no report line** (ruled 2026-10-08 while the probe
-was under way): §1.2 wants the probe to change nothing observable, and the
-share is visible from the committed `repo-state.json` overnight regardless.
-The line arrives with the surface PR, where the field first reaches the
-published catalog.
+**Measurement the surface PR reports on its first catalog run**: the
+share of listed github entries whose repo is archived. Prior to this
+amendment the design promised that number from the probe alone; the
+probe proved the probe could not see it, and the surface PR is what
+measures it for real.
 
 ### 1.4 Not built
 
