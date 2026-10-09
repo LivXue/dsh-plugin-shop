@@ -90,13 +90,6 @@ export type RepoState = Record<string, RepoStateEntry>
 export interface RepoSeen {
   repo: string
   pushedAt: string
-  /**
-   * The search item's `archived`, when it carried one. Rides the diff into
-   * {@link nextRepoState}, which persists it — the flag's whole path from the
-   * API to repo-state.json is this interface, because the enumeration is the
-   * only reader of the search item.
-   */
-  archived?: boolean
 }
 
 /**
@@ -649,27 +642,41 @@ export function nextRepoState(
         pushedAt: entry.pushedAt,
         commit: fresh.candidates[0]?.commit ?? recorded?.commit ?? '',
         candidates: fresh.candidates,
-        ...(entry.archived !== undefined ? { archived: entry.archived } : {}),
+        ...(recorded?.archived !== undefined ? { archived: recorded.archived } : {}),
         ...(fresh.failure !== undefined ? { failure: fresh.failure } : {}),
         ...(fresh.subpackageFailures !== undefined && fresh.subpackageFailures.length > 0
           ? { subpackageFailures: fresh.subpackageFailures }
           : {}),
       }
     } else if (recorded !== undefined) {
-      // `archived` comes from this run's enumeration, not from the fetch, so
-      // a CARRIED entry takes the current observation too — an archived
-      // repository never pushes again, and gating the marker on `pushedAt`
-      // would leave it unmarked forever. An item without the field supplies
-      // no fact and the recorded entry stands as it is, absent value
-      // included: writing `false` there would record a claim the search
-      // never made.
-      next[entry.repo] = entry.archived === undefined || entry.archived === recorded.archived
-        ? recorded
-        : { ...recorded, archived: entry.archived }
+      // A carried entry keeps its recorded state wholesale — including any
+      // `archived` the GraphQL pass wrote — because the search item supplies
+      // no fact about it (design 2026-10-08 §1.3).
+      next[entry.repo] = recorded
     }
     // A seen repo with neither a fresh outcome nor a recorded one stays out
     // of the state — its fetch was deferred past the budget and it has never
     // been fetched; next run's toFetch picks it up again.
+  }
+  return next
+}
+
+/**
+ * Merge GraphQL-supplied archived flags into the repo state, for the listed
+ * repositories only (design 2026-10-08-archived-flag-and-shadowed-recovery
+ * §1.3). A repo the Map omits supplied no fact; its record stands as it is.
+ * A repo the Map carries supersedes the record: GitHub answered, and the
+ * answer may differ from what was recorded (a repository CAN be unarchived).
+ */
+export function applyArchivedFlags(state: RepoState, flags: Map<string, boolean>): RepoState {
+  const next: RepoState = {}
+  for (const [repo, entry] of Object.entries(state)) {
+    const flag = flags.get(repo.toLowerCase())
+    if (flag === undefined || flag === entry.archived) {
+      next[repo] = entry
+    } else {
+      next[repo] = { ...entry, archived: flag }
+    }
   }
   return next
 }

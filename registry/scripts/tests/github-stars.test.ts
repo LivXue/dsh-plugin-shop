@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fetchStarCounts, STAR_BATCH_SIZE, STARS_BUDGET_MS, STARS_REQUEST_TIMEOUT_MS } from '../src/github-stars.ts'
+import { fetchStarCounts, fetchArchivedFlags, STAR_BATCH_SIZE, STARS_BUDGET_MS, STARS_REQUEST_TIMEOUT_MS, ARCHIVED_BATCH_SIZE } from '../src/github-stars.ts'
 import { headersThenStalledBody } from './stalling-fetch.ts'
 
 const options = { token: 'gh-token' }
@@ -278,5 +278,103 @@ describe('a deadline is not a malformed body', () => {
     const result = await fetchStarCounts([repo(0), repo(1)], { ...options, fetchImpl })
     expect(result.stars.size).toBe(0)
     expect(result.skipped).toEqual(['owner0/repo0: unreadable body', 'owner1/repo1: unreadable body'])
+  })
+})
+
+describe('fetchArchivedFlags (design 2026-10-08-archived-flag-and-shadowed-recovery §1.3)', () => {
+  const archivedRepo = (i: number) => `owner${i}/repo${i}`
+  const okArchivedResponse = (flags: Record<string, boolean | null>): Response => {
+    const data = Object.fromEntries(Object.entries(flags).map(([, v], i) => [`a${i}`, v === null ? null : { isArchived: v }]))
+    return new Response(JSON.stringify({ data }), { status: 200 })
+  }
+
+  it('returns immediately for an empty repo list', async () => {
+    const fetchImpl = (async () => { throw new Error('must not be called') }) as unknown as typeof fetch
+    const result = await fetchArchivedFlags([], { token: 't', fetchImpl })
+    expect(result.flags.size).toBe(0)
+    expect(result.skipped).toEqual([])
+  })
+
+  it('returns immediately for an empty token', async () => {
+    const fetchImpl = (async () => { throw new Error('must not be called') }) as unknown as typeof fetch
+    const result = await fetchArchivedFlags(['a/b'], { token: '', fetchImpl })
+    expect(result.flags.size).toBe(0)
+    expect(result.skipped).toEqual([])
+  })
+
+  it('batches 450 repos into 200/200/50 queries', async () => {
+    const bodies: { aliases: number }[] = []
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { query: string }
+      bodies.push({ aliases: (body.query.match(/a\d+:/g) ?? []).length })
+      return new Response(JSON.stringify({ data: {} }), { status: 200 })
+    }) as unknown as typeof fetch
+    await fetchArchivedFlags(Array.from({ length: 450 }, (_, i) => archivedRepo(i)), { token: 't', fetchImpl })
+    expect(bodies.map(b => b.aliases)).toEqual([200, 200, 50])
+  })
+
+  it('reads isArchived true and false from the aliases', async () => {
+    const fetchImpl = (async () => okArchivedResponse({ 'a/one': true, 'a/two': false })) as unknown as typeof fetch
+    const result = await fetchArchivedFlags(['a/one', 'a/two'], { token: 't', fetchImpl })
+    expect(result.flags.get('a/one')).toBe(true)
+    expect(result.flags.get('a/two')).toBe(false)
+    expect(result.skipped).toEqual([])
+  })
+
+  it('drops a repo the GraphQL response omits, never writing false', async () => {
+    // A renamed or deleted repo answers with a null alias (or not at all, via
+    // `errors`). That is "no fact supplied", so the record stays as it was —
+    // the same rule the probe's nextRepoState arm carries.
+    const fetchImpl = (async () => okArchivedResponse({ 'a/one': true, 'a/two': null })) as unknown as typeof fetch
+    const result = await fetchArchivedFlags(['a/one', 'a/two'], { token: 't', fetchImpl })
+    expect(result.flags.has('a/two')).toBe(false)
+    expect(result.skipped).toContain('a/two: no answer')
+  })
+
+  it('keeps the healthy aliases when one alias errors, with the real reason on the skip', async () => {
+    const fetchImpl = (async () => new Response(JSON.stringify({
+      data: { a0: { isArchived: true }, a1: null },
+      errors: [{ message: 'Could not resolve to a Repository', path: ['a1'] }],
+    }), { status: 200 })) as unknown as typeof fetch
+    const { flags, skipped } = await fetchArchivedFlags(['a/one', 'a/gone'], { token: 't', fetchImpl, sleep: async () => {} })
+    expect(flags.get('a/one')).toBe(true)
+    expect(flags.size).toBe(1)
+    expect(skipped).toEqual(['a/gone: Could not resolve to a Repository'])
+  })
+
+  it('skips the whole batch on a gateway error', async () => {
+    const fetchImpl = (async () => new Response('bad gateway', { status: 502 })) as unknown as typeof fetch
+    const result = await fetchArchivedFlags(['a/one', 'a/two'], { token: 't', fetchImpl, sleep: async () => {} })
+    expect(result.flags.size).toBe(0)
+    expect(result.skipped).toHaveLength(2)
+    expect(result.skipped[0]).toContain('502')
+  })
+
+  it('records a transport failure for every repo in the batch', async () => {
+    const fetchImpl = (async () => { throw new Error('ECONNREFUSED') }) as unknown as typeof fetch
+    const result = await fetchArchivedFlags(['a/b', 'c/d'], { token: 't', fetchImpl })
+    expect(result.flags.size).toBe(0)
+    expect(result.skipped).toEqual([
+      'a/b: gateway unreachable: ECONNREFUSED',
+      'c/d: gateway unreachable: ECONNREFUSED',
+    ])
+  })
+
+  it('skips a batch whose request never answers instead of hanging the build', async () => {
+    const fetchImpl = (async () => new Promise<Response>(() => {})) as unknown as typeof fetch
+    const started = Date.now()
+    const result = await fetchArchivedFlags(['owner0/repo0'], {
+      token: 't', fetchImpl, sleep: async (_ms: number) => {}, timeoutMs: 50,
+    })
+    expect(result.flags.size).toBe(0)
+    expect(result.skipped).toHaveLength(1)
+    expect(result.skipped[0]).toContain('gateway unreachable')
+    expect(Date.now() - started).toBeLessThan(5000)
+  })
+
+  it('uses the batch size constant', () => {
+    // A literal, not a re-export: a fixture computed from the value it tests
+    // can never detect that value moving.
+    expect(ARCHIVED_BATCH_SIZE).toBe(200)
   })
 })

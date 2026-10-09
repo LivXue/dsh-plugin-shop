@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { DECLARATIONS_RULE, diffRepoState, nextRepoState, parseRepoState, repoGoneDetail, serializeRepoState, staleFailureRepos } from '../src/repo-state.ts'
+import { DECLARATIONS_RULE, applyArchivedFlags, diffRepoState, nextRepoState, parseRepoState, repoGoneDetail, serializeRepoState, staleFailureRepos } from '../src/repo-state.ts'
 import type { RepoState, RepoStateEntry } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
 
@@ -321,8 +321,6 @@ describe('state shape evolution', () => {
 })
 
 describe('the archived marker (design 2026-10-08-archived-flag-and-shadowed-recovery §1)', () => {
-  const seen = { repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }
-
   it('round-trips archived true and false through parse and serialize', () => {
     const recorded: RepoState = {
       'a/archived': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [candidate('a/archived')], archived: true },
@@ -334,8 +332,8 @@ describe('the archived marker (design 2026-10-08-archived-flag-and-shadowed-reco
   it('leaves a record written before the field existed without it, rather than inventing false', () => {
     // Every record in the committed repo-state.json predates the field, and an
     // archived:false written for a repository nobody observed would be a fact
-    // the search never reported. Absent stays absent; the search's own item
-    // fills it on the next merge.
+    // GitHub never reported. Absent stays absent; the GraphQL pass fills it
+    // on the next merge.
     const parsed = parseRepoState(JSON.stringify({
       'a/one': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [candidate('a/one')] },
     }))
@@ -356,51 +354,27 @@ describe('the archived marker (design 2026-10-08-archived-flag-and-shadowed-reco
     }
   })
 
-  it('writes the search\'s observed value onto fresh AND carried entries, and never invents one', () => {
-    // The field rides the search item like pushedAt does: the enumeration sees
-    // every repository daily, so the merge updates a CARRIED entry too — that
-    // is what lets one build mark the whole recorded pool rather than only the
-    // day's pushes. But a search item that omitted the field supplies no fact,
-    // and writing false there would put in the committed file a claim the
-    // search never made.
+  it('keeps a recorded archived through nextRepoState, and applyArchivedFlags supersedes it', () => {
+    // nextRepoState carries the recorded value forward on both the fresh and
+    // carried paths — the search no longer supplies it (§1.3), so a record
+    // holding it keeps it until the graph pass answers.
+    const withArchived: RepoState = {
+      'a/one': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [candidate('a/one')], archived: true },
+    }
     const fresh = new Map([['a/one', { candidates: [candidate('a/one')] }]])
-    const archivedSeen = nextRepoState(
-      state,
-      [{ ...seen, archived: true }, { repo: 'b/two', pushedAt: '2026-08-01T00:00:00Z', archived: true }],
-      fresh,
-    )
-    expect(archivedSeen['a/one']?.archived).toBe(true)
-    // The carried entry takes the search's current value even though its
-    // record predates the field — archival arrives without a push.
-    expect(archivedSeen['b/two']?.archived).toBe(true)
-    // A change of observation on a carried entry supersedes the recorded one:
-    // a repository can in principle be unarchived, and the record must not
-    // freeze the first value it ever held.
-    const flipped = nextRepoState(
-      { 'a/one': { ...state['a/one']!, archived: true } },
-      [{ ...seen, archived: false }],
-      new Map(),
-    )
-    expect(flipped['a/one']?.archived).toBe(false)
-    // And the absence stays absence on both paths.
-    const unseen = nextRepoState(state, [seen, { repo: 'b/two', pushedAt: '2026-08-01T00:00:00Z' }], fresh)
-    expect(unseen['a/one']).not.toHaveProperty('archived')
-    expect(unseen['b/two']).not.toHaveProperty('archived')
-    const carriedRecord = nextRepoState({ 'a/one': { ...state['a/one']!, archived: false } }, [seen], new Map())
-    expect(carriedRecord['a/one']?.archived).toBe(false)
-  })
-
-  it('rides a seen entry through the diff into toFetch unchanged', () => {
-    // The flag must reach nextRepoState for a NEW repository too, which means
-    // surviving RepoSeen -> RepoToFetch. `backfillOnly` uses a spread, so this
-    // is structural — the assertion pins it against a refactor that rebuilds
-    // the object field by field.
-    const { toFetch } = diffRepoState(state, [
-      { repo: 'a/one', pushedAt: '2026-08-02T00:00:00Z', archived: true },
-      { repo: 'c/three', pushedAt: '2026-08-02T00:00:00Z' },
-    ])
-    expect(toFetch.find(e => e.repo === 'a/one')?.archived).toBe(true)
-    expect(toFetch.find(e => e.repo === 'c/three')).not.toHaveProperty('archived')
+    const afterFresh = nextRepoState(withArchived, [{ repo: 'a/one', pushedAt: '2026-08-02T00:00:00Z' }], fresh)
+    expect(afterFresh['a/one']?.archived).toBe(true)
+    const afterCarried = nextRepoState(withArchived, [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }], new Map())
+    expect(afterCarried['a/one']?.archived).toBe(true)
+    // applyArchivedFlags supersedes the recorded value with the GraphQL answer.
+    const superseded = applyArchivedFlags(afterCarried, new Map([['a/one', false]]))
+    expect(superseded['a/one']?.archived).toBe(false)
+    // A repo the Map omits supplies no fact: the record stands.
+    const untouched = applyArchivedFlags(afterCarried, new Map([['x/other', true]]))
+    expect(untouched['a/one']?.archived).toBe(true)
+    // An absent record + a flag = the record gains it.
+    const added = applyArchivedFlags(state, new Map([['a/one', true]]))
+    expect(added['a/one']?.archived).toBe(true)
   })
 })
 

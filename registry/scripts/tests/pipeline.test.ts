@@ -396,6 +396,22 @@ describe('runPipeline with repository candidates', () => {
     // the lock line shows the tag, which is what the daily diff compares
     expect(manifestLock).toBe('someone/dsh-repo-plugin dsh-repo-plugin v1.0.0\n')
   })
+
+  it('emits archived: true on a github entry whose candidate carries the flag (design §1.3)', () => {
+    const { pluginsJson } = runPipeline([], [{ ...repoCandidate, archived: true }], config, BUILT_AT)
+    const parsed = JSON.parse(pluginsJson) as { plugins: { name: string; archived?: true }[] }
+    expect(parsed.plugins[0]?.archived).toBe(true)
+    // An npm entry never carries the flag — the field is github-only.
+    const npmArtifacts = runPipeline(candidates, [], config, BUILT_AT)
+    const npmParsed = JSON.parse(npmArtifacts.pluginsJson) as { plugins: { name: string; archived?: true }[] }
+    expect(npmParsed.plugins.every(p => !('archived' in p))).toBe(true)
+  })
+
+  it('omits archived on a github entry whose candidate has none', () => {
+    const { pluginsJson } = runPipeline([], [repoCandidate], config, BUILT_AT)
+    const parsed = JSON.parse(pluginsJson) as { plugins: { name: string; archived?: true }[] }
+    expect(parsed.plugins[0]).not.toHaveProperty('archived')
+  })
 })
 
 describe('subpackage entries and the schemaVersion bump', () => {
