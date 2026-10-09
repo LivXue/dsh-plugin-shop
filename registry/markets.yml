@@ -294,6 +294,11 @@
   by: llm
   reason: "Judged a dsh plugin market from: DeepSeek Harness plugin: browse, search, and install Dify Marketplace plugins from Settings, with daemon-based .difypkg installs and Cordis child fibers."
 
+- name: "dsh-lumen-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: 流明市场：DSH 插件发现、介绍与文档、GitHub 仓库查验，以及官方管线安装和更新。"
+
 - name: "dsh-mall"
   market: true
   by: human
