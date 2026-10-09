@@ -82,9 +82,10 @@ budget without a new pipeline:
 
 - **Fetch**: a per-build pass over the LISTED github repositories (the
   ~8,163 in the current catalog, not the full 20,306 repo-state pool)
-  queries `repositories(names: [...]) { isArchived }` in batches of 200 —
-  ~41 calls a build, inside the 5,000-point hourly budget the star pass
-  already amortizes. The pass lives beside `fetchStarCounts` in
+  queries `isArchived` in batches of 200, as per-repo aliases the way
+  `fetchStarCounts` does — ~41 calls a build, inside the 5,000-point
+  hourly budget the star pass already amortizes. The pass lives beside
+  `fetchStarCounts` in
   `github-stars.ts`, sharing its timeout / `withTimeout` / auth handling.
 - **Persist**: `repo-state.json`'s per-repository `archived` field is
   written from the GraphQL answer, not from the search projection (whose
@@ -104,8 +105,9 @@ budget without a new pipeline:
   first reaches the published catalog.
 - **Shop**: `host/catalog.ts` parses the field through the existing zod
   schema with `.optional()`; the shelf card shows a subdued badge
-  `已归档 / Archived` beside the version, in the same register as the
-  existing `tierVerifiedStale` badge. Bilingual locale keys
+  `已归档 / Archived` beside the version, in the same subdued register as
+  the existing `tierCommunity`/`tierShadowed` badges — informational, not
+  the warn tint of `tierVerifiedStale`. Bilingual locale keys
   `archivedBadge` in `locales.ts`.
 
 Refusing nothing means the shelving, the `Outdated` verdict, the install

@@ -19,7 +19,7 @@ import { describeDepartures, parseDepartureSummary, type DepartureSummary } from
 import { applyConfirmations, bootstrapFeedState, describeFeedCoverage, describeFeedRun, feedCarriersByKeyword, parseFeedCoverage, parseFeedRunReport, parseFeedState, serializeFeedState, type FeedInput, type FeedRead, type FeedState } from './feed-state.ts'
 import { fetchStarCounts, fetchArchivedFlags } from './github-stars.ts'
 import { HARVEST_TOPICS, REPO_BACKFILL_BUDGET_DEFAULT, describeSearchPhantoms, harvestRepos, parseHarvestBudget } from './github-client.ts'
-import { applyArchivedFlags, parseRepoState, repoGoneDetail, serializeRepoState } from './repo-state.ts'
+import { applyArchivedFlags, layerArchivedFlags, parseRepoState, repoGoneDetail, serializeRepoState } from './repo-state.ts'
 import { githubOwnerName } from './github-repo.ts'
 import { accountForDepartures, fetchCandidates, searchByKeywords, describePublisherAxis, describeShortfall, HARVEST_KEYWORDS, parseKeywordShortfall, parsePublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall, type PublisherAxisReport } from './npm-client.ts'
 import { confirmCarriers, harvestFeed } from './npm-feed.ts'
@@ -438,10 +438,7 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   // Done here, after the graph merge and before the pipeline: the flag lives
   // on the repo-state record, not on the harvested candidate (§1.3).
   if (repoNextState !== null) {
-    for (const candidate of repoCandidates) {
-      const record = repoNextState[candidate.repo.toLowerCase()]
-      if (record?.archived === true) candidate.archived = true
-    }
+    layerArchivedFlags(repoNextState, repoCandidates)
   }
 
   const starsToken = process.env.STARS_TOKEN ?? ghToken
