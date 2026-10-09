@@ -290,13 +290,6 @@ interface RepoMeta {
   license: string | null
   pushedAt: string
   /**
-   * `archived` from the search item, absent when the item omitted it (or
-   * carried a non-boolean). Unlike `stars` this one IS persisted — into
-   * repo-state.json via the seen entry — because archival is a one-directional
-   * fact the catalog's listing policy will soon read, not live daily noise.
-   */
-  archived?: boolean
-  /**
    * `stargazers_count` from the search item. The daily enumeration pages
    * the whole pool regardless of the fetch budget, so every listed repo's
    * count is a free byproduct of it. Null when the item lacks a usable
@@ -306,7 +299,8 @@ interface RepoMeta {
   stars: number | null
 }
 
-function parseRepoMeta(item: unknown): RepoMeta | null {
+/** Exported for the test asserting the projection's shape (§1.3). */
+export function parseRepoMeta(item: unknown): RepoMeta | null {
   // Total for `unknown`, the same contract subpackage-select.ts states: an
   // item this cannot read is skipped, exactly as one missing `full_name` is.
   // Only `null` ever threw — and it threw on the SEARCH path, outside the
@@ -318,7 +312,6 @@ function parseRepoMeta(item: unknown): RepoMeta | null {
     description?: unknown
     license?: { spdx_id?: unknown } | null
     pushed_at?: unknown
-    archived?: unknown
     stargazers_count?: unknown
   }
   if (typeof o.full_name !== 'string' || typeof o.default_branch !== 'string') return null
@@ -328,7 +321,6 @@ function parseRepoMeta(item: unknown): RepoMeta | null {
     description: typeof o.description === 'string' && o.description !== '' ? o.description : null,
     license: o.license != null && typeof o.license.spdx_id === 'string' ? o.license.spdx_id : null,
     pushedAt: typeof o.pushed_at === 'string' ? o.pushed_at : '',
-    ...(typeof o.archived === 'boolean' ? { archived: o.archived } : {}),
     stars: typeof o.stargazers_count === 'number' && o.stargazers_count >= 0 ? o.stargazers_count : null,
   }
 }
@@ -759,7 +751,6 @@ export async function searchReposByTopic(
     .map(([repo, meta]) => ({
       repo,
       pushedAt: meta.pushedAt,
-      ...(meta.archived !== undefined ? { archived: meta.archived } : {}),
     }))
     .sort((a, b) => (a.repo < b.repo ? -1 : a.repo > b.repo ? 1 : 0))
   return { seen, metas: byName, windowCount, phantoms }

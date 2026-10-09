@@ -178,3 +178,131 @@ export async function fetchStarCounts(
   }
   return { stars, skipped }
 }
+
+/* --------------------------------------------------------------------------
+ * Archived flags (design 2026-10-08-archived-flag-and-shadowed-recovery §1.3)
+ *
+ * The GitHub REST search does not carry `archived` on its items (the probe
+ * proved this), so the flag comes from GraphQL `isArchived` instead. The
+ * batching is wider than the stars pass: 200 repositories per call rather
+ * than 50, because `isArchived` is a single scalar on a well-bounded type
+ * and the query stays well inside the 500-point-per-cost-window budget.
+ * -------------------------------------------------------------------------- */
+
+/** Repositories per GraphQL batch. One `isArchived` scalar on a repository
+ * type costs 1 point per alias, so 200 aliases = 200 points against the
+ * 5,000-point hourly budget — the same budget the stars pass already
+ * amortizes. Larger than {@link STAR_BATCH_SIZE} because the per-item
+ * payload is one boolean, not a count plus an alias header. */
+export const ARCHIVED_BATCH_SIZE = 200
+
+export interface ArchivedFetchResult {
+  /** Keyed `owner/name`, lowercased. Present only when GitHub answered. */
+  flags: Map<string, boolean>
+  /** `owner/name` entries that ended without an answer, with a reason. */
+  skipped: string[]
+}
+
+/**
+ * Fetch `isArchived` for a set of listed repositories via GraphQL.
+ *
+ * Advisory like the stars pass: every failure mode ends in `skipped`, the
+ * module never rejects. A repo the response omits (renamed, transferred,
+ * deleted between the search and the batch) gets NO entry in the returned
+ * Map — "no fact supplied ⇒ no write", the same rule `nextRepoState`
+ * carries for absent values.
+ *
+ * @param repos - `owner/slug` full names, exactly as GitHub resolves them
+ *   (case-insensitive). Keys in the returned Map are lowercased.
+ */
+export async function fetchArchivedFlags(
+  repos: string[],
+  options: {
+    token: string
+    fetchImpl?: typeof fetch
+    sleep?: (ms: number) => Promise<void>
+    timeoutMs?: number
+  },
+): Promise<ArchivedFetchResult> {
+  const {
+    token, fetchImpl = fetch, sleep = defaultSleep,
+    timeoutMs = STARS_REQUEST_TIMEOUT_MS,
+  } = options
+  const timed = withTimeout(fetchImpl, timeoutMs, 'github graphql')
+  const flags = new Map<string, boolean>()
+  const skipped: string[] = []
+  if (token === '' || repos.length === 0) return { flags, skipped }
+
+  const batches: string[][] = []
+  for (let i = 0; i < repos.length; i += ARCHIVED_BATCH_SIZE) batches.push(repos.slice(i, i + ARCHIVED_BATCH_SIZE))
+
+  for (const batch of batches) {
+    try {
+      const aliases = batch.map((fullName, i) => {
+        const [owner, name] = fullName.split('/', 2)
+        return `a${i}: repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { isArchived }`
+      }).join('\n')
+      const query = `query {\n${aliases}\n}`
+      const request = (): Promise<Response> => timed(ENDPOINT, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query }),
+      })
+      let response = await request()
+      for (let attempt = 0; (response.status === 429 || response.status >= 500) && attempt < RETRY_LIMIT - 1; attempt += 1) {
+        const retryAfter = Number(response.headers.get('retry-after'))
+        const delay = Number.isFinite(retryAfter) && retryAfter > 0
+          ? Math.min(retryAfter * 1000, RETRY_MAX_DELAY_MS)
+          : Math.min(RETRY_BASE_DELAY_MS * 2 ** attempt, RETRY_MAX_DELAY_MS)
+        await sleep(delay)
+        response = await request()
+      }
+      if (!response.ok) {
+        for (const fullName of batch) skipped.push(`${fullName}: gateway ${response.status}`)
+        continue
+      }
+      let body: { data?: Record<string, { isArchived?: unknown } | null>; errors?: unknown[] } = {}
+      try {
+        const parsed = await response.json() as unknown
+        if (parsed !== null && typeof parsed === 'object') body = parsed as typeof body
+      } catch (error) {
+        if (error instanceof FetchTimeoutError) throw error
+        for (const fullName of batch) skipped.push(`${fullName}: unreadable body`)
+        continue
+      }
+      const errorByAlias = new Map<string, string>()
+      if (body.errors !== undefined) {
+        for (const error of body.errors) {
+          const path = (error as { path?: unknown } | null)?.path
+          const alias = Array.isArray(path) && typeof path[0] === 'string' ? path[0] : undefined
+          const message = typeof (error as { message?: unknown } | null)?.message === 'string'
+            ? (error as { message: string }).message.slice(0, 80)
+            : 'graphql error'
+          if (alias !== undefined) errorByAlias.set(alias, message)
+        }
+      }
+      for (let i = 0; i < batch.length; i++) {
+        const fullName = batch[i]
+        if (fullName === undefined) continue
+        const node = body.data?.[`a${i}`]
+        // `null` means GitHub answered for the alias but the repository is
+        // gone (renamed, deleted, private); `undefined` means the alias is
+        // absent from the response entirely (both are "no fact supplied").
+        if (node === null || node === undefined) {
+          skipped.push(errorByAlias.get(`a${i}`) !== undefined
+            ? `${fullName}: ${errorByAlias.get(`a${i}`)}`
+            : `${fullName}: no answer`)
+          continue
+        }
+        if (typeof node.isArchived === 'boolean') {
+          flags.set(fullName.toLowerCase(), node.isArchived)
+        } else {
+          skipped.push(`${fullName}: no answer`)
+        }
+      }
+    } catch (error) {
+      for (const fullName of batch) skipped.push(`${fullName}: gateway unreachable: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  return { flags, skipped }
+}

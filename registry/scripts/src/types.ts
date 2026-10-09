@@ -176,6 +176,13 @@ export interface RepoCandidate {
    */
   hasWorkspaceDeps: boolean
   /**
+   * Whether GitHub reports the repository as archived. Present only when the
+   * GraphQL pass answered for this repo — `repo-state.json` records written
+   * before the field existed carry none, and a repo the graph pass omitted
+   * (renamed, deleted, errored) supplied no fact (design 2026-10-08 §1.3).
+   */
+  archived?: boolean
+  /**
    * The names of the manifest's REQUIRED `peerDependencies`, without ranges —
    * the same record, read by the same `peerNamesOf`, as
    * {@link Candidate.peers}, so an optional peer is left out on this channel
@@ -576,4 +583,14 @@ export interface Entry {
    * `DECLARATIONS_RULE` bump (design 2026-09-26-dsh-017-readiness, B1).
    */
   dshPeers?: Record<string, string>
+  /**
+   * The repository GitHub reports as archived. `true` only — the field is
+   * omitted otherwise, like every additive optional on this type. github
+   * entries only; an npm entry's repository URL is author-declared text, not
+   * an observed fact about the package (design 2026-10-08 §1.4).
+   *
+   * Additive and optional, so it rides every schemaVersion: a client that
+   * predates it strips the key (consumer zod is non-strict by design).
+   */
+  archived?: true
 }

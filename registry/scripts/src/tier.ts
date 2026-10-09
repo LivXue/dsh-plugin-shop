@@ -148,6 +148,11 @@ export function assignRepoTier(accepted: RepoAccepted, config: RegistryConfig): 
     // After `peers`, for the same reason, and copied the same way the npm
     // path copies it.
     ...(repo.compatibility !== undefined ? { compatibility: repo.compatibility } : {}),
+    // After every other optional, because this one reached the type last
+    // (design 2026-10-08 §1.3). `true` only — omitted otherwise, and the
+    // emit path checks `=== true` rather than truthiness so a recorded
+    // `false` (a repo GraphQL answered as live) stays off the catalog row.
+    ...(repo.archived === true ? { archived: true as const } : {}),
   }
   // A release-pinned entry is reviewed by its tarball sha256: the tag is
   // display only — a mutable ref an author can re-point at different content

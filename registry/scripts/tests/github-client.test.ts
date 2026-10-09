@@ -4,7 +4,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { BUNDLE_NAME_MAX_LENGTH, BUNDLE_NAME_RE, DECLARATIONS_REREAD_BUDGET_DEFAULT, DECLARATIONS_REREAD_FAILURE_LINES, DECLARATIONS_REREAD_MAX_CONSECUTIVE_FAILURES, DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT, GITHUB_REQUEST_TIMEOUT_MS, MAX_MANIFEST_BYTES, MAX_SEARCH_PHANTOMS, MAX_TARBALL_BYTES, MAX_THROWN_FRACTION, MIN_THROWN_TO_BOUND, MAX_TREE_BYTES, REPO_BACKFILL_BUDGET_DEFAULT, SUBDIR_MAX_LENGTH, TARBALL_REQUEST_TIMEOUT_MS, TREE_REQUEST_TIMEOUT_MS, describeSearchPhantoms, fetchRepoCandidate, harvestRepos, isBundleName, parseHarvestBudget, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
+import { BUNDLE_NAME_MAX_LENGTH, BUNDLE_NAME_RE, DECLARATIONS_REREAD_BUDGET_DEFAULT, DECLARATIONS_REREAD_FAILURE_LINES, DECLARATIONS_REREAD_MAX_CONSECUTIVE_FAILURES, DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT, GITHUB_REQUEST_TIMEOUT_MS, MAX_MANIFEST_BYTES, MAX_SEARCH_PHANTOMS, MAX_TARBALL_BYTES, MAX_THROWN_FRACTION, MIN_THROWN_TO_BOUND, MAX_TREE_BYTES, REPO_BACKFILL_BUDGET_DEFAULT, SUBDIR_MAX_LENGTH, TARBALL_REQUEST_TIMEOUT_MS, TREE_REQUEST_TIMEOUT_MS, describeSearchPhantoms, fetchRepoCandidate, harvestRepos, isBundleName, parseHarvestBudget, parseRepoMeta, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
 import { DECLARATIONS_RULE, diffRepoState, parseRepoState, serializeRepoState } from '../src/repo-state.ts'
 import type { RepoState } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
@@ -2457,38 +2457,22 @@ describe('harvestRepos', () => {
     expect(result.searchStars.has('s/no-stars')).toBe(false)
   })
 
-  it('persists the archived boolean every search item carries, on carried repositories too', async () => {
-    // Design 2026-10-08-archived-flag-and-shadowed-recovery §1.2: the probe
-    // records what the search already returns, and the NEXT build's
-    // repo-state.json is the measurement — so a repository does not have to
-    // push to be marked. All three repositories are CARRIED: budget 0 fetches
-    // nothing, and their entries still gain the flag from the enumeration
-    // alone. (A seen repository that was never recorded and is never fetched
-    // stays out of the state, flag included, until a run fetches it —
-    // nextRepoState's rule.)
-    const state: RepoState = {
-      'd/archived': entryOf('d/archived'),
-      'd/live': entryOf('d/live'),
-      'd/unmarked': entryOf('d/unmarked'),
-    }
-    const fetchImpl = (async (url: string | URL) => {
-      const text = String(url)
-      const searched = searchResponder(() => [
-        repoItem('d/archived', { pushed_at: '2026-08-01T00:00:00Z', archived: true }),
-        repoItem('d/live', { pushed_at: '2026-08-01T00:00:00Z', archived: false }),
-        repoItem('d/unmarked', { pushed_at: '2026-08-01T00:00:00Z' }),
-      ])(text)
-      if (searched !== undefined) return searched
-      throw new Error(`unrouted: ${text}`)
-    }) as unknown as typeof fetch
-    const result = await harvestRepos({ state, budget: 0, fetchImpl, sleep, token: 't' })
-    expect(result.nextState['d/archived']?.archived).toBe(true)
-    expect(result.nextState['d/live']?.archived).toBe(false)
-    // An item without the field supplies no fact: the entry stays without it
-    // rather than inventing false.
-    expect(result.nextState['d/unmarked']).not.toHaveProperty('archived')
-    // Round-trip through parse: the writer's shape is the reader's.
-    expect(parseRepoState(serializeRepoState(result.nextState))['d/archived']?.archived).toBe(true)
+  it('does NOT read archived from the search item (design §1.3: the probe\'s falsified premise)', () => {
+    // The GitHub REST search does not carry `archived` on its items, so
+    // projecting it was a no-op that recorded `false` for every repository
+    // the harvest ever saw. The surface PR removes that read; the flag comes
+    // from GraphQL `isArchived` via fetchArchivedFlags instead.
+    //
+    // This test pins the shape: a search item that carries `archived: true`
+    // (as the probe's fixtures did) must NOT produce a RepoSeen with the
+    // field — the field is absent from the interface entirely.
+    const item = repoItem('a/b', { pushed_at: '2026-08-01T00:00:00Z', archived: true })
+    const meta = parseRepoMeta(item)
+    expect(meta).not.toBeNull()
+    // The parse succeeded (full_name and default_branch are present), but
+    // `archived` is not a property of the returned type — the projection
+    // removed it.
+    expect('archived' in meta!).toBe(false)
   })
 
   it('retires the stale candidate of a repo that deleted its package.json', async () => {
