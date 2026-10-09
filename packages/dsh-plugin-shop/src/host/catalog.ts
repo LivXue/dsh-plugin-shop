@@ -251,6 +251,10 @@ const entrySchema = z.object({
   // rather than inherited: until a key is declared it is stripped, so every
   // malformed value parsed in silence.
   installSize: z.number().int().nonnegative().optional(),
+  // Whether GitHub reports the repository as archived. github entries only;
+  // additive and optional, so it rides every schemaVersion and this schema
+  // strips it for a client that predates it (design 2026-10-08 §1.3).
+  archived: z.boolean().optional(),
 }).superRefine((entry, ctx) => {
   // The install spec differs by source, so the grammar does too. Refusing at
   // this boundary prevents catalog bytes from reaching the process layer.

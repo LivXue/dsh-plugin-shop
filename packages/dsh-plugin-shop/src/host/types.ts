@@ -103,6 +103,10 @@ export interface CatalogEntry {
    * 6,492 live github entries — which is the plugin's own cost and not the
    * repository's; registry `Entry.installSize` carries the measured caveat. */
   installSize?: number
+  /** Whether GitHub reports the repository as archived (design 2026-10-08
+   * §1.3). github entries only, additive and optional: the shelf badges it
+   * and nothing else — install, update, and enable are unchanged. */
+  archived?: boolean
 }
 
 export interface DeniedEntry { name: string; detail: string; replacement?: string }

@@ -4117,3 +4117,31 @@ describe('shadowed github recovery — Installed view (C10)', () => {
     expect(container.querySelector('[data-shop-shadowed]')).toBeNull()
   })
 })
+
+// §C5 (surface stage): a github entry whose repository GitHub reports as
+// archived gets a subdued badge — and keeps its Install button (mark never
+// refuse, design 2026-10-08 §1.3).
+describe('archived github entry — shelf badge (C5 surface)', () => {
+  it('renders the archived badge on a github entry marked archived, with a functional Install button', async () => {
+    const { injected } = bench(snapshot({
+      source: 'github',
+      repo: 'alice/dsh-archived-plugin',
+      version: 'a'.repeat(40),
+      archived: true,
+    }), [])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    const badge = container.querySelector('[data-tier="archived"]')
+    expect(badge).toBeTruthy()
+    expect(badge!.textContent).toBe(en.archivedBadge)
+    // The card still offers Install: archived is a mark, never a refusal.
+    expect(container.querySelector('[data-shop-install]')).toBeTruthy()
+  })
+
+  it('renders no archived badge on an entry without the flag', async () => {
+    const { injected } = bench(snapshot(), [])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-hello-plugin')).toBeTruthy())
+    expect(container.querySelector('[data-tier="archived"]')).toBeNull()
+  })
+})
