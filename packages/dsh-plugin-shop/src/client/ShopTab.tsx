@@ -215,6 +215,13 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, ha
           {entry.tier !== 'community' && (
             <span className={css.tierBadge} data-tier={entry.tier}>{t(tierKey(entry.tier))}</span>
           )}
+          {entry.archived === true && (
+            // The repository GitHub reports as archived (design 2026-10-08
+            // §1.3). A mark, never a refusal: install, update, and enable are
+            // all unchanged — the owner froze the project, the pinned commit
+            // still serves.
+            <span className={css.tierBadge} data-tier="archived">{t('archivedBadge')}</span>
+          )}
           {stars !== undefined && (
             // role="img" names the badge for assistive tech (ARIA refuses to
             // name a generic element); the name carries the RAW count — the

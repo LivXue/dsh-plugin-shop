@@ -35,6 +35,10 @@ export const zh = {
   tierVerified: '已审核',
   tierVerifiedStale: '审核版本过期',
   tierCommunity: '社区',
+  /** The github repository GitHub reports as archived (design 2026-10-08 §1.3).
+   * Subdued register, like `tierCommunity`: nothing is wrong with the install
+   * itself; the owner has simply frozen the project. */
+  archivedBadge: '已归档',
   capabilitiesNote: '作者自述，无强制约束',
   install: '安装',
   confirm: '确认',
@@ -203,6 +207,10 @@ export const en = {
   empty: 'No plugins in the catalog.',
   emptySearch: 'No matching plugins.',
   tierVerified: 'Verified',
+  /** The github repository GitHub reports as archived (design 2026-10-08 §1.3).
+   * Subdued register: nothing is wrong with the install; the owner has simply
+   * frozen the project. */
+  archivedBadge: 'Archived',
   tierVerifiedStale: 'Reviewed version stale',
   tierCommunity: 'Community',
   capabilitiesNote: 'self-declared by the author, not enforced',
