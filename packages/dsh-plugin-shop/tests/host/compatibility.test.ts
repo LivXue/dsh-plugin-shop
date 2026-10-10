@@ -463,12 +463,13 @@ describe('peerVerdictsOf', () => {
   })
 
   it('never asks about a github entry without a manifest version: a commit is no version dsh keys an exemption by', () => {
-    // The two fields arrive together or not at all (registry
-    // `Entry.manifestVersion`): an entry with peers and no version comes from
-    // a catalog that predates the version, or a repository not yet re-read
-    // under the rule that records it. Judging it by the commit would look up
-    // an exemption no profile can hold, and so disable Install on a plugin
-    // whose real `name@version` the profile may already have exempted.
+    // No build writes this entry. The registry records the two fields
+    // together or not at all (registry `Entry.manifestVersion`), and a
+    // catalog that predates `manifestVersion` carries no github peers either,
+    // so peers without a version are hand-edited or injected input. Judging
+    // it by the commit would look up an exemption no profile can hold, and so
+    // disable Install on a plugin whose real `name@version` the profile may
+    // already have exempted.
     const commit = 'a'.repeat(40)
     const { check, asked } = scriptedCheck({ [`dsh-git@${commit}`]: refusal('dsh-git', commit) })
     expect(peerVerdictsOf([{ source: 'github', name: 'dsh-git', repo: 'owner/dsh-git', version: commit, dshPeers: PINNED }], check, {}, 'web')).toEqual({})
@@ -491,10 +492,22 @@ describe('peerVerdictsOf', () => {
   })
 
   it('says nothing about a github entry whose installed name@version the profile has exempted', () => {
-    const { check } = scriptedCheck({ 'dsh-git@1.4.0': refusal('dsh-git', '1.4.0', true) })
+    // The profile's exemption is keyed by the installed manifest's
+    // `name@version`, and the rule is scripted as dsh answers: that key
+    // exempted, and the commit refused and not exempted, since dsh ignores an
+    // exemption whose version is not exact and a commit never is. Judged by
+    // its commit, this entry would show here as a verdict.
+    const commit = 'a'.repeat(40)
+    const { check, asked } = scriptedCheck({
+      'dsh-git@1.4.0': refusal('dsh-git', '1.4.0', true),
+      [`dsh-git@${commit}`]: refusal('dsh-git', commit),
+    })
+    const exemptions = { 'dsh-git@1.4.0': ['0.1.7-rc.2'] }
     expect(peerVerdictsOf([
-      { source: 'github', name: 'dsh-git', repo: 'owner/dsh-git', version: 'a'.repeat(40), dshPeers: PINNED, manifestVersion: '1.4.0' },
-    ], check, {}, 'web')).toEqual({})
+      { source: 'github', name: 'dsh-git', repo: 'owner/dsh-git', version: commit, dshPeers: PINNED, manifestVersion: '1.4.0' },
+    ], check, exemptions, 'web')).toEqual({})
+    // Asked once, about the installed manifest, with the record that clears it.
+    expect(asked).toEqual([{ manifest: { name: 'dsh-git', version: '1.4.0', peerDependencies: PINNED }, exemptions }])
   })
 
   it('keys a github verdict by install identity, so a sibling subpackage of the same repository is not accused', () => {
