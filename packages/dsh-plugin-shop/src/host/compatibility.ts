@@ -252,41 +252,66 @@ function unmetProfile(
  * could not tell".
  *
  * The rule is dsh's own (`check`, from the running app-boot), handed the
- * manifest dsh's installer reads before it installs a registry spec — `pnpm
- * view <spec> name version peerDependencies`, measured in dsh-plugin-manager
- * 0.1.7-rc.2 — with the catalog's `dshPeers` for the peers. Those are the
- * only peers the rule reads, verbatim. What this cannot see errs toward
- * silence, never toward a refusal dsh would not make: a malformed peer range
- * elsewhere in the manifest, which dsh rejects only after installing, and
- * the plugins a bundle's patch rows name, which it checks then too. Those
- * reach the reader as the install's own failure (`installFailureDetail`).
+ * manifest dsh's installer judges (`ownManifest`): the name and version dsh
+ * keys an exemption by, with the catalog's `dshPeers` for the peers. Those
+ * are the only peers the rule reads, verbatim. Both channels are judged, each
+ * by the manifest dsh reads for it:
  *
- * npm entries only. dsh keys an exemption by the INSTALLED manifest's
- * `name@version`, and a github entry's catalog version is a commit: its
- * exemption status cannot be read, and a refusal named here could never be
- * cleared from the shop. dsh refuses such an install itself, and says how
- * to exempt it.
+ * - An npm entry by its catalog `version`. dsh reads that manifest before it
+ *   installs a registry spec: `pnpm view <spec> name version
+ *   peerDependencies`, measured in dsh-plugin-manager 0.1.7-rc.2.
+ * - A github entry by `manifestVersion`, the version of the manifest dsh
+ *   installs: at the pinned commit (a subpackage's own), or in the release
+ *   asset a rescued entry installs from. dsh skips a git or tarball spec
+ *   before pnpm and judges the installed manifest after it, rolling the
+ *   install back on a refusal (the same dsh-plugin-manager). The entry's
+ *   catalog `version` is a commit or a tag, so without `manifestVersion` it
+ *   is not judged at all: judged by its commit instead, it would miss an
+ *   exemption the profile holds under its real `name@version`, disabling an
+ *   install dsh accepts, and could offer no command, since `allow-version`
+ *   records no commit (design 2026-09-28-bundle-components-and-github-peers,
+ *   sections 6.1 and 7.3).
+ *
+ * dsh's key names no channel: an exemption recorded for one `name@version`
+ * clears every entry whose manifest carries it, npm or github, here as in
+ * dsh.
+ *
+ * What this cannot see errs toward silence, never toward a refusal dsh would
+ * not make: a malformed peer range elsewhere in the manifest, which dsh
+ * rejects only after installing, and the plugins a bundle's patch rows name,
+ * which it checks then too. Those reach the reader as the install's own
+ * failure (`installFailureDetail`).
  *
  * A throw from the check forms no verdict for that entry, as a resolver's
  * throw does in `incompatibilityMap`.
  */
 export function peerVerdictsOf(
-  entries: readonly (EntryIdentity & { version: string; dshPeers?: Record<string, string> })[],
+  entries: readonly (EntryIdentity & { version: string; dshPeers?: Record<string, string>; manifestVersion?: string })[],
   check: PeerCheck,
   exemptions: Record<string, string[]>,
   profile: string,
 ): Record<string, PeerVerdict> {
   const out: Record<string, PeerVerdict> = {}
   for (const entry of entries) {
-    if (entry.source !== 'npm' || entry.dshPeers === undefined) continue
+    const manifest = ownManifest(entry)
+    if (manifest === null) continue
     let issue: ReturnType<PeerCheck['evaluate']>
     try {
-      issue = check.evaluate({ name: entry.name, version: entry.version, peerDependencies: entry.dshPeers }, exemptions)
+      issue = check.evaluate(manifest, exemptions)
     } catch {
       // Swallows the rule refusing to judge: a runtime version app-boot
-      // cannot parse, or a manifest shape it rejects, which the catalog
-      // parse keeps out and only an injected snapshot could carry. An entry
-      // nobody can judge is never accused.
+      // cannot parse, or a manifest it rejects. The catalog parse does not
+      // keep all of those out. Once the rule refuses a peer, it throws on a
+      // `name` or `version` that is blank after trimming, and the parse
+      // admits both on a github entry, holding `manifestVersion` only to
+      // being a string and the name only to a length and no control
+      // character. The registry writes neither blank (its bundle-name
+      // grammar refuses such a name, and it drops such a version together
+      // with the peers beside it), so only a hand-edited or injected catalog
+      // carries one. dsh refuses an installed manifest like that on the same
+      // throw, after pnpm, and no exemption clears the refusal (design
+      // 2026-09-28-bundle-components-and-github-peers, section 2). The shop
+      // forms no verdict even so: an entry nobody can judge is never accused.
       continue
     }
     if (issue === undefined || issue.exempted) continue
@@ -297,6 +322,22 @@ export function peerVerdictsOf(
     }
   }
   return out
+}
+
+/**
+ * The manifest dsh judges an entry's install by, as `peerVerdictsOf` hands it
+ * to the rule, or null when none can be formed: the entry declares no
+ * harness peers, or it is a github entry with no `manifestVersion`. An npm
+ * entry's catalog `version` is its manifest's; a github entry's is a commit
+ * or a tag, so its manifest's own version is the one recorded beside its
+ * peers, and the key is read on github entries only.
+ */
+function ownManifest(entry: { source: EntryIdentity['source']; name: string; version: string; dshPeers?: Record<string, string>; manifestVersion?: string }):
+  { name: string; version: string; peerDependencies: Record<string, string> } | null {
+  if (entry.dshPeers === undefined) return null
+  if (entry.source === 'npm') return { name: entry.name, version: entry.version, peerDependencies: entry.dshPeers }
+  if (entry.manifestVersion === undefined) return null
+  return { name: entry.name, version: entry.manifestVersion, peerDependencies: entry.dshPeers }
 }
 
 /** npm's package-name grammar as dsh's exemption records accept it, verbatim
