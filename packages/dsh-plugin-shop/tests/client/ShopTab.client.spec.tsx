@@ -2553,6 +2553,67 @@ describe("ShopTab refusal by the running dsh's own peer check (0.1.7)", () => {
     await waitFor(() => expect((cardOf(container).querySelector('[data-shop-install]') as HTMLButtonElement).disabled).toBe(false))
     expect(cardOf(container).querySelector('[data-shop-incompatible-detail="harness-peers"]')).toBeNull()
   })
+
+  describe('on a github entry', () => {
+    // From 2026-10-10 the host judges a github entry too, by its installed
+    // manifest's version rather than the commit the card shows (design
+    // 2026-09-28-bundle-components-and-github-peers, section 13), and keys
+    // the verdict by the entry's install identity. The card is the npm card's
+    // `harness-peers` blocker, unchanged, so nothing on this path may decide
+    // by source: each surface must treat the verdict as it treats an npm one.
+    const commit = 'c'.repeat(40)
+    const KEY = 'github:someone/dsh-hello-plugin#'
+    // The manifest's version, which the commit on the card never shows.
+    const GITHUB_COMMAND = 'dsh plugin --profile web allow-version dsh-hello-plugin@2.0.0 --dsh-version 0.1.7-rc.2 --accept-risk'
+    const GITHUB_PEERS: HarnessVerdict = { peers: { ...PEERS.peers!, allowCommand: GITHUB_COMMAND } }
+    const fromGithub = { tier: 'community' as const, source: 'github' as const, repo: 'someone/dsh-hello-plugin', version: commit }
+
+    it('disables Install, naming what dsh refused and the command, and the incompatible filter counts and hides the card', async () => {
+      const result = snapshot(fromGithub)
+      result.plugins = [result.plugins[0]!, { ...snapshot().plugins[0]!, name: 'dsh-works-here' }]
+      result.incompatibleHarness = { [KEY]: GITHUB_PEERS }
+      const { injected, install } = bench(result)
+      const { container } = renderTab(injected)
+      await waitFor(() => expect(screen.getByText('dsh-works-here')).toBeTruthy())
+      const card = cardOf(container)
+      expect(card.querySelector('[data-shop-incompatible-detail="harness-peers"]')?.textContent).toBe(peersLine)
+      const remedy = card.querySelector('[data-shop-remedy="harness-peers"]') as HTMLElement
+      expect(remedy.textContent).toContain(en.harnessPeersRemedy)
+      expect(remedy.querySelector('[data-shop-allow-command]')?.textContent).toBe(GITHUB_COMMAND)
+      expect(card.querySelector('[data-shop-blocker]')?.getAttribute('data-shop-blocker')).toBe('harness-peers')
+      expect(card.querySelector('[data-shop-blocker]')?.textContent).toBe(en.incompatibleBadge)
+
+      const button = card.querySelector('[data-shop-install]') as HTMLButtonElement
+      expect(button.disabled).toBe(true)
+      expect(button.hasAttribute('data-shop-refused')).toBe(true)
+      fireEvent.click(button)
+      expect(card.querySelector('[data-shop-confirm]')).toBeNull()
+      expect(install).not.toHaveBeenCalled()
+
+      // One predicate for the badge and the filter, whichever channel.
+      const filter = container.querySelector('[data-shop-hide-incompatible]') as HTMLElement
+      expect(filter.textContent).toContain('Hide incompatible 1')
+      fireEvent.click(filter)
+      expect(container.querySelector('[data-shop-entry="dsh-hello-plugin"]')).toBeNull()
+      expect(screen.getByText('dsh-works-here')).toBeTruthy()
+    })
+
+    it('writes the refusal and its command out on the outdated row, whose Update stays disabled', async () => {
+      // The pin the shop recorded at install differs from the catalog's
+      // commit, so the row offers an update, which dsh refuses the same way.
+      const { injected } = bench(
+        { ...snapshot(fromGithub), incompatibleHarness: { [KEY]: GITHUB_PEERS } },
+        [{ name: 'dsh-hello-plugin', installed: 'e'.repeat(40), latest: commit, outdated: true, enabled: true, source: 'github', repo: 'someone/dsh-hello-plugin' }],
+      )
+      const { container } = renderTab(injected)
+      await waitFor(() => expect(screen.getByText(en.updatableSection)).toBeTruthy())
+      const row = container.querySelector('[data-shop-outdated-entry="dsh-hello-plugin"]') as HTMLElement
+      expect((row.querySelector('[data-shop-update]') as HTMLButtonElement).disabled).toBe(true)
+      const refusal = row.querySelector('[data-shop-refusal]') as HTMLElement
+      expect(refusal.querySelector('[data-shop-incompatible-warning="harness-peers"]')?.textContent).toBe(peersLine)
+      expect(refusal.querySelector('[data-shop-allow-command]')?.textContent).toBe(GITHUB_COMMAND)
+    })
+  })
 })
 
 describe('ShopTab author-declared compatibility (§8.2)', () => {
