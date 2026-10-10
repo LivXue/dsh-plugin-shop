@@ -430,16 +430,105 @@ describe('peerVerdictsOf', () => {
     ], check, {}, 'web')).toEqual({})
   })
 
-  it('never asks about a github entry: its catalog version is a commit, and dsh keys an exemption by the manifest version', () => {
+  it('judges a github entry by its installed manifest\'s version, which is the version dsh keys an exemption by', () => {
+    // Changed 2026-10-10. This case used to pin that a github entry is never
+    // asked about: its catalog version is a commit, and dsh keys the exemption
+    // that clears a refusal by the INSTALLED manifest's `name@version`, which
+    // the catalog did not carry. The registry now records that manifest's own
+    // `version` beside its harness peers (design
+    // 2026-09-28-bundle-components-and-github-peers, sections 6.1, 7.3 and
+    // 13), so the entry is judged as dsh judges it after pnpm installs it.
+    // The commit is scripted as refused too, so a judgment by the commit
+    // would show here as a verdict with no command.
+    const commit = 'a'.repeat(40)
+    const { check, asked } = scriptedCheck({
+      'dsh-git@1.4.0': refusal('dsh-git', '1.4.0'),
+      [`dsh-git@${commit}`]: refusal('dsh-git', commit),
+    })
+    const exemptions = { 'other@1.0.0': ['0.1.7-rc.2'] }
+    const verdicts = peerVerdictsOf([
+      { source: 'github', name: 'dsh-git', repo: 'owner/dsh-git', version: commit, dshPeers: PINNED, manifestVersion: '1.4.0' },
+    ], check, exemptions, 'web')
+    expect(verdicts).toEqual({
+      'github:owner/dsh-git#': {
+        refused: { '@deepseek-ai/dsh': '0.1.5-rc.3' },
+        running: '0.1.7-rc.2',
+        allowCommand: 'dsh plugin --profile web allow-version dsh-git@1.4.0 --dsh-version 0.1.7-rc.2 --accept-risk',
+      },
+    })
+    // The manifest dsh reads once the commit is installed: its own name and
+    // version, the catalog's harness peers verbatim, and the profile's
+    // exemptions as read.
+    expect(asked).toEqual([{ manifest: { name: 'dsh-git', version: '1.4.0', peerDependencies: PINNED }, exemptions }])
+  })
+
+  it('never asks about a github entry without a manifest version: a commit is no version dsh keys an exemption by', () => {
+    // The two fields arrive together or not at all (registry
+    // `Entry.manifestVersion`): an entry with peers and no version comes from
+    // a catalog that predates the version, or a repository not yet re-read
+    // under the rule that records it. Judging it by the commit would look up
+    // an exemption no profile can hold, and so disable Install on a plugin
+    // whose real `name@version` the profile may already have exempted.
     const commit = 'a'.repeat(40)
     const { check, asked } = scriptedCheck({ [`dsh-git@${commit}`]: refusal('dsh-git', commit) })
     expect(peerVerdictsOf([{ source: 'github', name: 'dsh-git', repo: 'owner/dsh-git', version: commit, dshPeers: PINNED }], check, {}, 'web')).toEqual({})
     expect(asked).toEqual([])
   })
 
+  it('judges a github entry with an inexact manifest version, and offers no command dsh would refuse', () => {
+    // dsh's rule keys its exemption by any non-empty version, so it refuses
+    // this install all the same, while `allow-version` records exact versions
+    // only (`allowVersionCommand`). The card is disabled with no command. An
+    // install may fail even earlier, at pnpm, which refuses a package version
+    // that is not semver.
+    const { check } = scriptedCheck({ 'dsh-git@1.4': refusal('dsh-git', '1.4') })
+    const verdicts = peerVerdictsOf([
+      { source: 'github', name: 'dsh-git', repo: 'owner/dsh-git', version: 'b'.repeat(40), dshPeers: PINNED, manifestVersion: '1.4' },
+    ], check, {}, 'web')
+    expect(verdicts).toEqual({
+      'github:owner/dsh-git#': { refused: { '@deepseek-ai/dsh': '0.1.5-rc.3' }, running: '0.1.7-rc.2', allowCommand: null },
+    })
+  })
+
+  it('says nothing about a github entry whose installed name@version the profile has exempted', () => {
+    const { check } = scriptedCheck({ 'dsh-git@1.4.0': refusal('dsh-git', '1.4.0', true) })
+    expect(peerVerdictsOf([
+      { source: 'github', name: 'dsh-git', repo: 'owner/dsh-git', version: 'a'.repeat(40), dshPeers: PINNED, manifestVersion: '1.4.0' },
+    ], check, {}, 'web')).toEqual({})
+  })
+
+  it('keys a github verdict by install identity, so a sibling subpackage of the same repository is not accused', () => {
+    const commit = 'd'.repeat(40)
+    const { check } = scriptedCheck({ 'dsh-mono-a@2.0.0': refusal('dsh-mono-a', '2.0.0') })
+    const verdicts = peerVerdictsOf([
+      { source: 'github', name: 'dsh-mono-a', repo: 'owner/mono', subdir: 'packages/a', version: commit, dshPeers: PINNED, manifestVersion: '2.0.0' },
+      { source: 'github', name: 'dsh-mono-b', repo: 'owner/mono', subdir: 'packages/b', version: commit, dshPeers: { '@deepseek-ai/dsh': '*' }, manifestVersion: '2.0.0' },
+    ], check, {}, 'web')
+    expect(Object.keys(verdicts)).toEqual(['github:owner/mono#packages/a'])
+  })
+
+  it('judges an npm entry by its own version, never by a stray manifest version', () => {
+    // The key belongs to github entries: an npm entry's catalog version IS its
+    // manifest's. The parse refuses the key on neither channel, since the data
+    // file is parsed with a throw, so one arriving on an npm entry is ignored
+    // rather than trusted.
+    const { check, asked } = scriptedCheck({ 'dsh-pinned@1.2.0': refusal('dsh-pinned', '1.2.0') })
+    const verdicts = peerVerdictsOf([
+      { source: 'npm', name: 'dsh-pinned', version: '1.2.0', dshPeers: PINNED, manifestVersion: '9.9.9' },
+    ], check, {}, 'web')
+    expect(verdicts['npm:dsh-pinned']?.allowCommand)
+      .toBe('dsh plugin --profile web allow-version dsh-pinned@1.2.0 --dsh-version 0.1.7-rc.2 --accept-risk')
+    expect(asked.map(question => question.manifest)).toEqual([{ name: 'dsh-pinned', version: '1.2.0', peerDependencies: PINNED }])
+  })
+
   it('never asks about an entry that declares no harness peers, or whose catalog predates them', () => {
     const { check, asked } = scriptedCheck({})
-    expect(peerVerdictsOf([{ source: 'npm', name: 'plain', version: '1.0.0' }], check, {}, 'web')).toEqual({})
+    expect(peerVerdictsOf([
+      { source: 'npm', name: 'plain', version: '1.0.0' },
+      // A manifest version alone forms nothing either: there is nothing for
+      // the rule to refuse.
+      { source: 'github', name: 'plain-git', repo: 'owner/plain-git', version: 'c'.repeat(40), manifestVersion: '1.0.0' },
+    ], check, {}, 'web')).toEqual({})
     expect(asked).toEqual([])
   })
 
