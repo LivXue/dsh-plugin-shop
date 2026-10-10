@@ -2054,11 +2054,14 @@ export const DSH_PEER_RANGE_MAX_LENGTH = 256
  * output safe to build as a plain object: no key outside the harness scope,
  * `__proto__` included, is ever written.
  *
- * Read on the npm channel only; `Entry.dshPeers` says why a github entry
- * records none. A reader added there would be a change `DECLARATIONS_RULE`
- * (`repo-state.ts`) must be bumped for, under the rule {@link peerNamesOf}
- * states.
- * @param manifest - one npm version manifest, unvalidated.
+ * The one reader for both channels: `toCandidate` here and, since
+ * `DECLARATIONS_RULE` 2, the declarations writer in `github-client.ts`, which
+ * records it beside the manifest's own version (design
+ * 2026-09-28-bundle-components-and-github-peers, section 6.1). So it is under
+ * the rule {@link peerNamesOf} states: a change to what this returns must bump
+ * `DECLARATIONS_RULE` (`repo-state.ts`), or a recorded github candidate keeps
+ * the old answer; nothing else enforces it.
+ * @param manifest - one version manifest, npm's or a repository's, unvalidated.
  * @returns the harness peers and their ranges, or undefined when there are none.
  */
 export function dshPeersOf(manifest: { peerDependencies?: unknown }): Record<string, string> | undefined {

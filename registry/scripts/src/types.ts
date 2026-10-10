@@ -227,18 +227,47 @@ export interface RepoCandidate {
    */
   compatibility?: Compatibility
   /**
-   * The declaration rule that wrote {@link RepoCandidate.peers} and
-   * {@link RepoCandidate.compatibility} — `DECLARATIONS_RULE` in
+   * The manifest's peers on the harness itself with their ranges verbatim,
+   * read by the same `dshPeersOf` as {@link Candidate.dshPeers}: what dsh
+   * refuses an install on from 0.1.7. Recorded together with
+   * {@link RepoCandidate.manifestVersion} or not at all: dsh keys the
+   * exemption that clears a refusal by the installed manifest's
+   * `name@version`, and its rule throws on a mismatch without a version, so
+   * neither field alone forms a verdict (design
+   * 2026-09-28-bundle-components-and-github-peers, section 6.1).
+   *
+   * Written by the one declarations writer and stamped by
+   * {@link RepoCandidate.declarationsRule}. Absent beside a rule-1 stamp, or
+   * none, means not yet read; beside a rule-2 stamp, either the manifest
+   * declares no harness peer, or it declared one with an unusable version
+   * (missing, not a string, blank after trimming, or past the npm `version`
+   * bound) and both fields were dropped together. Each candidate reads its
+   * own manifest, a subpackage's included, and a release-rescued root's is
+   * its tarball's.
+   */
+  dshPeers?: Record<string, string>
+  /**
+   * The installed manifest's own `version`, verbatim and bounded by the npm
+   * `version` bound (`VERSION_MAX_LENGTH`), and never blank: the version dsh
+   * keys an exemption by, where this entry's catalog `version` is a commit,
+   * or a release tag for a rescue. Present exactly when
+   * {@link RepoCandidate.dshPeers} is.
+   */
+  manifestVersion?: string
+  /**
+   * The declaration rule that wrote {@link RepoCandidate.peers},
+   * {@link RepoCandidate.compatibility}, {@link RepoCandidate.dshPeers} and
+   * {@link RepoCandidate.manifestVersion}: `DECLARATIONS_RULE` in
    * `repo-state.ts` at the time. A positive integer; `parseRepoState` refuses
    * any other shape.
    *
-   * The re-read marker for both fields. A listable candidate whose stamp is not
-   * the current rule — absent included, which is every record written before
-   * the stamp existed — queues its repository for one manifest-only re-read
-   * (`repo-state.ts`), and a successful re-read writes exactly the two fields
-   * and this stamp. Every projection writes it beside `peers`, and a release
-   * rescue beside the tarball's declarations, so a stamped candidate's two
-   * fields are as current as the stamp says.
+   * The re-read marker for every field just named. A listable candidate whose
+   * stamp is not the current rule (absent included, which is every record
+   * written before the stamp existed) queues its repository for one
+   * manifest-only re-read (`repo-state.ts`), and a successful re-read writes
+   * exactly those fields and this stamp. Every projection writes it beside
+   * `peers`, and a release rescue beside the tarball's declarations, so a
+   * stamped candidate's declarations are as current as the stamp says.
    */
   declarationsRule?: number
   /**

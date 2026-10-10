@@ -337,9 +337,9 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
     // 9.8): repos.rereadAttempted and .rereadDeferred count REPOSITORIES the
     // phase started or queued past its budget; .rereadUpdated, .rereadFailed
     // and .rereadAssetChanged count CANDIDATES among those started — a
-    // re-read that succeeds writes only `peers`, `compatibility` and the
-    // declaration stamp, so this line is the only place that number is
-    // visible outside the harvest itself.
+    // re-read that succeeds writes only the declaration fields (`peers`,
+    // `compatibility`, `dshPeers`, `manifestVersion`) and the stamp, so this
+    // line is the only place that number is visible outside the harvest itself.
     // repos.rereadStopped says why the phase stopped starting reads early —
     // its own time budget (DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT) spent,
     // or the failure breaker (DECLARATIONS_REREAD_MAX_CONSECUTIVE_FAILURES)

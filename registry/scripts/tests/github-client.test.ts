@@ -6,9 +6,10 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { BUNDLE_NAME_MAX_LENGTH, BUNDLE_NAME_RE, DECLARATIONS_REREAD_BUDGET_DEFAULT, DECLARATIONS_REREAD_FAILURE_LINES, DECLARATIONS_REREAD_MAX_CONSECUTIVE_FAILURES, DECLARATIONS_REREAD_TIME_BUDGET_MS_DEFAULT, GITHUB_REQUEST_TIMEOUT_MS, MAX_MANIFEST_BYTES, MAX_SEARCH_PHANTOMS, MAX_TARBALL_BYTES, MAX_THROWN_FRACTION, MIN_THROWN_TO_BOUND, MAX_TREE_BYTES, REPO_BACKFILL_BUDGET_DEFAULT, SUBDIR_MAX_LENGTH, TARBALL_REQUEST_TIMEOUT_MS, TREE_REQUEST_TIMEOUT_MS, describeSearchPhantoms, fetchRepoCandidate, harvestRepos, isBundleName, parseHarvestBudget, parseRepoMeta, partitionTopic, searchReposByTopic } from '../src/github-client.ts'
 import { DECLARATIONS_RULE, diffRepoState, parseRepoState, serializeRepoState } from '../src/repo-state.ts'
+import { VERSION_MAX_LENGTH } from '../src/gate.ts'
 import type { RepoState } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
-import { COMPATIBILITY_RANGE_MAX_LENGTH, compatibilityOf, FetchTimeoutError, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, peerNamesOf } from '../src/npm-client.ts'
+import { COMPATIBILITY_RANGE_MAX_LENGTH, compatibilityOf, dshPeersOf, FetchTimeoutError, PEER_NAME_MAX_LENGTH, PEERS_MAX_COUNT, peerNamesOf } from '../src/npm-client.ts'
 import { verifyReleaseAsset } from '../src/release-asset.ts'
 import { headersThenBodyError, headersThenSlowBody, headersThenStalledBody } from './stalling-fetch.ts'
 
@@ -679,6 +680,73 @@ describe('fetchRepoCandidate', () => {
       expect(candidate, JSON.stringify(compatibility)).toBeDefined()
       expect(candidate !== undefined && 'compatibility' in candidate, JSON.stringify(compatibility)).toBe(false)
     }
+  })
+
+  it('records the harness peers and the manifest version together, from the candidate\'s own manifest', async () => {
+    // What dsh 0.1.7 judges an install by, read by the npm channel's own
+    // `dshPeersOf`, and the version dsh keys the exemption by: a github
+    // entry's catalog `version` is a commit (design
+    // 2026-09-28-bundle-components-and-github-peers, section 6.1).
+    const candidate = await candidateFromManifest({
+      name: 'dsh-peered', version: '0.2.0', dsh: { bundle: { patch: './cordis.patch.yml' } },
+      peerDependencies: { '@deepseek-ai/dsh': '0.1.5-rc.2', react: '*' },
+    })
+    expect(candidate).toMatchObject({ dshPeers: { '@deepseek-ai/dsh': '0.1.5-rc.2' }, manifestVersion: '0.2.0', declarationsRule: DECLARATIONS_RULE })
+    expect(candidate?.dshPeers).toEqual(dshPeersOf({ peerDependencies: { '@deepseek-ai/dsh': '0.1.5-rc.2', react: '*' } }))
+  })
+
+  it.each([
+    ['no version', {}],
+    ['an empty version', { version: '' }],
+    // Blank after trimming, as dsh's own `identityField` tests it: dsh throws
+    // on such a version, so its refusal names no exemption that could clear it.
+    ['a blank version', { version: '   ' }],
+    ['a version of whitespace other than spaces', { version: '\t\n' }],
+    ['a version past the npm bound', { version: '1'.repeat(VERSION_MAX_LENGTH + 1) }],
+    ['a version that is not a string', { version: 1 }],
+    // A non-string with a `length` inside the bound: only the type check
+    // keeps an array out of `manifestVersion`, where the next parse of
+    // repo-state.json would refuse it and stop the build.
+    ['a version that is an array', { version: ['1.0.0'] }],
+    ['a valid version but no harness peer', { version: '1.0.0', peerDependencies: { react: '*' } }],
+  ])('records neither field with %s, since neither alone forms a verdict', async (_label, fragment) => {
+    // Dropped, never rejected: the entry lists exactly as it would with no
+    // harness peer at all, and is still stamped, so the absence reads as
+    // "declares none usable" rather than "not yet read".
+    const candidate = await candidateFromManifest({
+      name: 'dsh-peered', dsh: { bundle: { patch: './cordis.patch.yml' } },
+      peerDependencies: { '@deepseek-ai/dsh': '0.1.5-rc.2' },
+      ...fragment,
+    })
+    expect(candidate).toBeDefined()
+    expect(candidate).not.toHaveProperty('dshPeers')
+    expect(candidate).not.toHaveProperty('manifestVersion')
+    expect(candidate?.declarationsRule).toBe(DECLARATIONS_RULE)
+  })
+
+  it.each([
+    ['a version that is not semver', '1.4'],
+    ['a padded version that is not blank', ' 1.0.0 '],
+  ])('records %s verbatim, since dsh keys its exemption by exactly that string', async (_label, version) => {
+    // Only a blank version is dropped: the record keeps what the manifest
+    // says, and the shop is what withholds an exemption command for an
+    // inexact one, since dsh's `allow-version` names exact versions only. An
+    // install may fail even earlier, at pnpm, which refuses a package
+    // version that is not semver.
+    const candidate = await candidateFromManifest({
+      name: 'dsh-peered', version, dsh: { bundle: { patch: './cordis.patch.yml' } },
+      peerDependencies: { '@deepseek-ai/dsh': '0.1.5-rc.2' },
+    })
+    expect(candidate).toMatchObject({ dshPeers: { '@deepseek-ai/dsh': '0.1.5-rc.2' }, manifestVersion: version })
+  })
+
+  it('records both fields when the version sits exactly at the npm bound', async () => {
+    const version = '1'.repeat(VERSION_MAX_LENGTH)
+    const candidate = await candidateFromManifest({
+      name: 'dsh-peered', version, dsh: { bundle: { patch: './cordis.patch.yml' } },
+      peerDependencies: { '@deepseek-ai/dsh': '0.1.5-rc.2' },
+    })
+    expect(candidate).toMatchObject({ dshPeers: { '@deepseek-ai/dsh': '0.1.5-rc.2' }, manifestVersion: version, declarationsRule: DECLARATIONS_RULE })
   })
 
   /**
@@ -1635,9 +1703,9 @@ describe('release-tarball rescue probe', () => {
       dsh: { bundle: {}, compatibility: { dsh: '>=0.1.7-0' }, catalog: { category: 'tool', summary: { en: 'x' }, capabilities: [] } },
     })
 
-    async function rescuedWith(packed: Uint8Array): Promise<RepoCandidate | undefined> {
+    async function rescuedWith(packed: Uint8Array, head: string = headManifest): Promise<RepoCandidate | undefined> {
       const fetchImpl = stubFetch({
-        'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(headManifest, { status: 200 }),
+        'https://raw.githubusercontent.com/someone/dsh-repo-plugin/main/package.json': new Response(head, { status: 200 }),
         'https://api.github.com/repos/someone/dsh-repo-plugin/commits/main': headResponse(),
         'https://api.github.com/repos/someone/dsh-repo-plugin/releases/latest': new Response(JSON.stringify({
           tag_name: 'v1.0.0',
@@ -1674,6 +1742,37 @@ describe('release-tarball rescue probe', () => {
       expect(candidate?.compatibility).toEqual({ profiles: ['web'] })
       // And a tarball requiring nothing records nothing, whatever HEAD needs.
       expect(candidate?.peers).toEqual([])
+    })
+
+    // HEAD at another version, with a harness peer of its own: what the rescue
+    // must not keep (design 2026-09-28-bundle-components-and-github-peers,
+    // section 6.1, "for a release-rescued root the packed manifest").
+    const peeredHead = JSON.stringify({
+      ...(JSON.parse(headManifest) as Record<string, unknown>),
+      version: '9.9.9',
+      peerDependencies: { '@deepseek-ai/dsh': '0.1.2' },
+    })
+
+    it('takes the harness peers and the manifest version from the tarball, never HEAD\'s', async () => {
+      const candidate = await rescuedWith(packedTarball('dsh-repo-plugin', {
+        version: '0.1.0',
+        peerDependencies: { '@deepseek-ai/dsh-client-runtime': '^0.1.5-rc.2' },
+      }), peeredHead)
+      expect(candidate).toMatchObject({
+        dshPeers: { '@deepseek-ai/dsh-client-runtime': '^0.1.5-rc.2' },
+        manifestVersion: '0.1.0',
+        declarationsRule: DECLARATIONS_RULE,
+      })
+    })
+
+    it('drops HEAD\'s harness peers and version when the tarball declares no harness peer', async () => {
+      // Removed, not left at HEAD's values: the entry installs the tarball, and
+      // a refusal judged on HEAD's peers would name a version it never installs.
+      const candidate = await rescuedWith(packedTarball('dsh-repo-plugin'), peeredHead)
+      expect(candidate).toBeDefined()
+      expect(candidate).not.toHaveProperty('dshPeers')
+      expect(candidate).not.toHaveProperty('manifestVersion')
+      expect(candidate?.declarationsRule).toBe(DECLARATIONS_RULE)
     })
   })
 
@@ -2716,7 +2815,7 @@ describe('harvestRepos', () => {
       return { fetchImpl, requested, authorizations }
     }
 
-    it('writes exactly peers, compatibility and the stamp, from the manifest at the recorded commit and subdir', async () => {
+    it('writes exactly peers, compatibility and the stamp when no harness peer is declared, from the manifest at the recorded commit and subdir', async () => {
       // A root whose recorded compatibility the manifest no longer declares
       // (removed), and a subpackage whose manifest declares one (set). Two
       // distinct commits, neither the branch, so the URLs prove which one
@@ -2797,6 +2896,76 @@ describe('harvestRepos', () => {
       expect(result.rereadUpdated).toBe(1)
     })
 
+    it('fills dshPeers and manifestVersion from the manifest at the recorded commit, under the current stamp', async () => {
+      // Stamped `1` on purpose, the stamp every record carried into rule 2
+      // holds: the bump is what queues it, and the re-read is what writes the
+      // two fields rule 1 never read (design
+      // 2026-09-28-bundle-components-and-github-peers, section 6.2).
+      const root = unstamped('a/root', commitA, { peers: [], declarationsRule: 1 })
+      const state: RepoState = { 'a/root': { pushedAt: quietAt, commit: commitA, candidates: [root] } }
+      const seen = [{ repo: 'a/root', pushedAt: quietAt }]
+      const { fetchImpl, requested } = rereadFetch(seen, url => (
+        url === `https://raw.githubusercontent.com/a/root/${commitA}/package.json`
+          ? new Response(JSON.stringify({
+            name: 'root',
+            version: '2.1.0',
+            dsh: { bundle: { patch: './cordis.patch.yml' } },
+            peerDependencies: { '@deepseek-ai/dsh': '0.1.5-rc.2', react: '*' },
+          }), { status: 200 })
+          : undefined))
+      const result = await harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' })
+      expect(requested).toEqual([`https://raw.githubusercontent.com/a/root/${commitA}/package.json`])
+      expect(result.nextState['a/root']?.candidates).toEqual([{
+        ...root,
+        peers: ['@deepseek-ai/dsh', 'react'],
+        dshPeers: { '@deepseek-ai/dsh': '0.1.5-rc.2' },
+        manifestVersion: '2.1.0',
+        declarationsRule: DECLARATIONS_RULE,
+      }])
+      // Once per rule: what this run wrote queues nothing next run.
+      expect(diffRepoState(result.nextState, seen).toReread).toEqual([])
+    })
+
+    it('drops a recorded pair the manifest at the recorded commit no longer supports', async () => {
+      // A field with nothing usable in the fresh manifest is removed, never
+      // left as a fact about a manifest this read superseded
+      // (`writeDeclarations`): here the manifest still declares a harness peer
+      // but no version, so neither field can form a verdict.
+      const root = unstamped('a/root', commitA, { dshPeers: { '@deepseek-ai/dsh': '0.1.2' }, manifestVersion: '0.0.9', declarationsRule: 1 })
+      const state: RepoState = { 'a/root': { pushedAt: quietAt, commit: commitA, candidates: [root] } }
+      const { fetchImpl } = rereadFetch([{ repo: 'a/root', pushedAt: quietAt }], url => (
+        url === `https://raw.githubusercontent.com/a/root/${commitA}/package.json`
+          ? new Response(JSON.stringify({ name: 'root', dsh: { bundle: {} }, peerDependencies: { '@deepseek-ai/dsh': '0.1.5-rc.2' } }), { status: 200 })
+          : undefined))
+      const result = await harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' })
+      const updated = result.nextState['a/root']?.candidates[0]
+      expect(updated).not.toHaveProperty('dshPeers')
+      expect(updated).not.toHaveProperty('manifestVersion')
+      expect(updated).toMatchObject({ peers: ['@deepseek-ai/dsh'], declarationsRule: DECLARATIONS_RULE })
+      expect(result.rereadUpdated).toBe(1)
+    })
+
+    it('re-reads a subpackage\'s harness peers and version from its own manifest at the recorded commit and subdir', async () => {
+      const sub = unstamped('b/mono', commitB, { name: 'the-plugin', subdir: 'packages/p', declarationsRule: 1 })
+      const state: RepoState = { 'b/mono': { pushedAt: quietAt, commit: commitB, candidates: [sub] } }
+      const { fetchImpl, requested } = rereadFetch([{ repo: 'b/mono', pushedAt: quietAt }], url => (
+        url === `https://raw.githubusercontent.com/b/mono/${commitB}/packages/p/package.json`
+          ? new Response(JSON.stringify({
+            name: 'the-plugin',
+            version: '0.3.0',
+            dsh: { bundle: {} },
+            peerDependencies: { '@deepseek-ai/dsh-tools': '^0.1.7-0' },
+          }), { status: 200 })
+          : undefined))
+      const result = await harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' })
+      expect(requested).toEqual([`https://raw.githubusercontent.com/b/mono/${commitB}/packages/p/package.json`])
+      expect(result.nextState['b/mono']?.candidates[0]).toMatchObject({
+        dshPeers: { '@deepseek-ai/dsh-tools': '^0.1.7-0' },
+        manifestVersion: '0.3.0',
+        declarationsRule: DECLARATIONS_RULE,
+      })
+    })
+
     describe('a rescued root', () => {
       // A rescued entry installs its recorded asset, so that — not the commit —
       // is what the re-read opens (design 2026-09-01-harness-compatibility
@@ -2839,6 +3008,21 @@ describe('harvestRepos', () => {
           { ...rest, peers: ['peer-b'], declarationsRule: DECLARATIONS_RULE },
         ])
         expect(result.rereadUpdated).toBe(1)
+      })
+
+      it('takes the harness peers and the version from the recorded asset', async () => {
+        // The asset the entry installs, never HEAD: a carried rescue gains both
+        // fields from the tarball it would install (design
+        // 2026-09-28-bundle-components-and-github-peers, section 6.1).
+        const versioned = packedTarball('rescued', { version: '2.0.0', peerDependencies: { '@deepseek-ai/dsh': '0.1.5-rc.2' } })
+        const pin = createHash('sha256').update(versioned).digest('hex')
+        const state = recordedRescue(pin)
+        const { fetchImpl, requested } = rereadFetch(seen, url => (url === assetUrl ? new Response(versioned, { status: 200 }) : undefined))
+        const result = await harvestRepos({ state, budget: 5, fetchImpl, sleep, token: 't' })
+        expect(requested).toEqual([assetUrl])
+        expect(result.nextState['r/rescued']?.candidates[0]).toMatchObject({
+          peers: ['@deepseek-ai/dsh'], dshPeers: { '@deepseek-ai/dsh': '0.1.5-rc.2' }, manifestVersion: '2.0.0', declarationsRule: DECLARATIONS_RULE,
+        })
       })
 
       it.each([
@@ -3840,6 +4024,51 @@ describe('subpackage probe', () => {
         ['packages/unpeered', [], undefined],
       ])
     }
+  })
+
+  it('records each subpackage\'s harness peers and manifest version from its OWN manifest, never the root\'s', async () => {
+    // The subpackage is what installs, so dsh judges its manifest and keys any
+    // exemption by its own version (design
+    // 2026-09-28-bundle-components-and-github-peers, section 6.1). The root
+    // declares a harness peer and a version of its own, so inheriting either
+    // is visible; the second subpackage declares a version and no harness
+    // peer, so it records neither field.
+    const fetchImpl = stubFetch({
+      'https://raw.githubusercontent.com/someone/monorepo/main/package.json': new Response(JSON.stringify({
+        private: true,
+        workspaces: ['packages/*'],
+        version: '9.9.9',
+        peerDependencies: { '@deepseek-ai/dsh': '0.1.2' },
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/commits/main': new Response(JSON.stringify({
+        sha: commit,
+        commit: { author: { date: '2026-08-01T12:00:00.000Z' } },
+      }), { status: 200 }),
+      'https://api.github.com/repos/someone/monorepo/git/trees/main?recursive=1': new Response(JSON.stringify({
+        tree: [
+          { path: 'package.json' },
+          { path: 'packages/peered/package.json' },
+          { path: 'packages/unpeered/package.json' },
+        ],
+      }), { status: 200 }),
+      'https://raw.githubusercontent.com/someone/monorepo/main/packages/peered/package.json': new Response(JSON.stringify({
+        name: 'peered',
+        version: '0.3.0',
+        dsh: { bundle: {} },
+        peerDependencies: { '@deepseek-ai/dsh-tools': '^0.1.7-0', react: '*' },
+      }), { status: 200 }),
+      'https://raw.githubusercontent.com/someone/monorepo/main/packages/unpeered/package.json': new Response(JSON.stringify({
+        name: 'unpeered',
+        version: '0.4.0',
+        dsh: { bundle: {} },
+      }), { status: 200 }),
+    })
+    const result = await fetchRepoCandidate(meta, fetchImpl, sleep, 'token')
+    if (!result.ok) throw new Error(`fixture monorepo was not projected: ${result.detail}`)
+    expect(result.candidates.map(c => [c.subdir, c.dshPeers, c.manifestVersion, c.declarationsRule])).toEqual([
+      ['packages/peered', { '@deepseek-ai/dsh-tools': '^0.1.7-0' }, '0.3.0', DECLARATIONS_RULE],
+      ['packages/unpeered', undefined, undefined, DECLARATIONS_RULE],
+    ])
   })
 
   it('stamps each subpackage candidate beside its own peers', async () => {

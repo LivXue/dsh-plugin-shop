@@ -113,7 +113,11 @@ describe('verifyReleaseAsset', () => {
       packedTarball('dsh-foo', { peerDependencies, peerDependenciesMeta, dsh }), 'dsh-foo',
     )
     expect(verdict.ok).toBe(true)
-    if (verdict.ok) expect(verdict.declarations).toStrictEqual({ peerDependencies, peerDependenciesMeta, dsh })
+    // `version` rides the declarations since DECLARATIONS_RULE 2 (design
+    // 2026-09-28-bundle-components-and-github-peers, section 6.1): dsh keys
+    // the exemption that clears a refused install by the installed manifest's
+    // version, and `packedTarball` packs '1.0.0'.
+    if (verdict.ok) expect(verdict.declarations).toStrictEqual({ peerDependencies, peerDependenciesMeta, dsh, version: '1.0.0' })
   })
 
   it('hands back nothing for a declaration the packed manifest does not make', () => {
@@ -146,8 +150,25 @@ describe('verifyReleaseAsset', () => {
     const read = readPackedDeclarations(bytes, 'dsh-foo')
     expect(read).toStrictEqual({
       ok: true,
-      declarations: { peerDependencies: { a: '*' }, peerDependenciesMeta: undefined, dsh: { bundle: { patch: './missing.yml' } } },
+      declarations: {
+        peerDependencies: { a: '*' }, peerDependenciesMeta: undefined, dsh: { bundle: { patch: './missing.yml' } },
+        version: undefined,
+      },
     })
+  })
+
+  it('hands back the packed manifest version, raw, on both the verifier and the re-read', () => {
+    // A rescued root's `manifestVersion` is its tarball's (design
+    // 2026-09-28-bundle-components-and-github-peers, section 6.1), so both
+    // readers of a packed manifest carry it. Raw like every declaration input:
+    // whether it is usable is decided in the shell, beside `dshPeersOf`.
+    const bytes = packedTarball('dsh-foo', { version: '3.1.0' })
+    const verified = verifyReleaseAsset(bytes, 'dsh-foo')
+    expect(verified.ok && verified.declarations.version).toBe('3.1.0')
+    const read = readPackedDeclarations(bytes, 'dsh-foo')
+    expect(read.ok && read.declarations.version).toBe('3.1.0')
+    const odd = readPackedDeclarations(packedTarball('dsh-foo', { version: 3 }), 'dsh-foo')
+    expect(odd.ok && odd.declarations.version).toBe(3)
   })
 
   it('still refuses to read declarations out of bytes that are not this package', () => {

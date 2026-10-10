@@ -15,10 +15,10 @@
  */
 
 import { createHash } from 'node:crypto'
-import { truncateWholeCharacters } from './gate.ts'
-import { compatibilityOf, FetchTimeoutError, fetchWithRetry, peerNamesOf, withTimeout } from './npm-client.ts'
+import { truncateWholeCharacters, VERSION_MAX_LENGTH } from './gate.ts'
+import { compatibilityOf, dshPeersOf, FetchTimeoutError, fetchWithRetry, peerNamesOf, withTimeout } from './npm-client.ts'
 import { canEverList } from './repo-gate.ts'
-import { DECLARATIONS_RULE, diffRepoState, nextRepoState, type RepoSeen, type RepoState, type RepoStateEntry, type RepoToFetch } from './repo-state.ts'
+import { DECLARATIONS_RULE, diffRepoState, needsDeclarationsReread, nextRepoState, type RepoSeen, type RepoState, type RepoStateEntry, type RepoToFetch } from './repo-state.ts'
 import { hasWorkspaceDeps, monorepoSignal, selectSubpackagePaths } from './subpackage-select.ts'
 import type { RepoCandidate, UnbuiltFinding } from './types.ts'
 import { readCappedBody } from './http-body.ts'
@@ -1031,6 +1031,7 @@ function projectCandidate(
     name?: unknown
     description?: unknown
     scripts?: { prepare?: unknown; prepack?: unknown }
+    version?: unknown
     peerDependencies?: unknown
     peerDependenciesMeta?: unknown
     dsh?: { bundle?: unknown; catalog?: unknown }
@@ -1060,39 +1061,63 @@ function projectCandidate(
     description: meta.description ?? (typeof m.description === 'string' ? m.description : null),
     ...(subdir !== undefined ? { subdir } : {}),
   }
-  // `peers` (`[]` included), `compatibility` and the rule stamp, always and
-  // together: a missing stamp is what queues a carried repository for a
-  // re-read (repo-state.ts), and a stamp beside peers that were never read
-  // would freeze them. `manifest` is this candidate's own — the subpackage's
-  // for a subpackage, never the root's.
+  // Every declaration field (`peers`, `[]` included) and the rule stamp,
+  // always and together: a missing stamp is what queues a carried repository
+  // for a re-read (repo-state.ts), and a stamp beside peers that were never
+  // read would freeze them. `manifest` is this candidate's own: the
+  // subpackage's for a subpackage, never the root's.
   writeDeclarations(candidate, m)
   return candidate
 }
 
 /**
- * Write one manifest's declarations onto a candidate: `peers` and
- * `compatibility`, each through the one reader it has on both channels, and
- * the {@link DECLARATIONS_RULE} stamp that says which rule wrote them.
+ * Write one manifest's declarations onto a candidate, each through the one
+ * reader it has on both channels, and the {@link DECLARATIONS_RULE} stamp that
+ * says which rule wrote them.
+ *
+ * `peers` and `compatibility`, as rule 1 wrote them. Since rule 2 (design
+ * 2026-09-28-bundle-components-and-github-peers, section 6.1), `dshPeers` and
+ * `manifestVersion` as well: the harness peers `dshPeersOf` reads, and the
+ * manifest's own `version`, verbatim. The two are written together or not at
+ * all, because neither alone forms a verdict: dsh keys the exemption that
+ * clears a refusal by the installed manifest's `name@version`, and its rule
+ * throws on a mismatch without a usable version. So a version that is
+ * missing, not a string, blank after trimming (what dsh's own `identityField`
+ * refuses: it throws, and no exemption could ever clear that refusal) or past
+ * the npm `version` bound ({@link VERSION_MAX_LENGTH}) drops both, and never
+ * the listing. Every other version is kept verbatim, `1.4` included: dsh keys
+ * its exemption by exactly that string, so an inexact one is refused with no
+ * command that could clear it. An install may fail even earlier, at pnpm,
+ * which refuses a package version that is not semver.
  *
  * The one writer, and every place that writes a candidate's declarations goes
  * through it: the projection, a rescued root overwriting the ones its HEAD
  * projection wrote with its tarball's, and the manifest-only re-read. So the
- * stamp can never be written without the two fields, nor the fields without
- * the stamp, and the places that decide WHERE declarations come from cannot
- * drift in how they are read. `compatibility` is removed when nothing usable
- * survives — absent means "declares none", and leaving the previous source's
+ * stamp can never be written without the fields, nor the fields without the
+ * stamp, and the places that decide WHERE declarations come from cannot drift
+ * in how they are read. A field with nothing usable is removed: absent beside
+ * the current stamp means "declares none", and leaving the previous source's
  * value would publish a declaration this manifest never made.
  * @param candidate - the candidate to write onto, mutated in place.
- * @param declarations - the manifest (or its three declaration inputs).
+ * @param declarations - the manifest, or its declaration inputs.
  */
 function writeDeclarations(
   candidate: RepoCandidate,
-  declarations: { peerDependencies?: unknown; peerDependenciesMeta?: unknown; dsh?: unknown },
+  declarations: { peerDependencies?: unknown; peerDependenciesMeta?: unknown; dsh?: unknown; version?: unknown },
 ): void {
   candidate.peers = peerNamesOf(declarations)
   const compatibility = compatibilityOf(declarations.dsh)
   if (compatibility === undefined) delete candidate.compatibility
   else candidate.compatibility = compatibility
+  const dshPeers = dshPeersOf(declarations)
+  const { version } = declarations
+  if (dshPeers !== undefined && typeof version === 'string' && version.trim() !== '' && version.length <= VERSION_MAX_LENGTH) {
+    candidate.dshPeers = dshPeers
+    candidate.manifestVersion = version
+  } else {
+    delete candidate.dshPeers
+    delete candidate.manifestVersion
+  }
   candidate.declarationsRule = DECLARATIONS_RULE
 }
 
@@ -2099,8 +2124,9 @@ export interface RepoHarvestResult {
    * re-projected and stamped by that fetch, so it is never also re-read.
    */
   rereadAttempted: number
-  /** Candidates whose re-read succeeded: `peers`, `compatibility` and the
-   * stamp written, and nothing else about them changed. */
+  /** Candidates whose re-read succeeded: their declaration fields (`peers`,
+   * `compatibility`, `dshPeers`, `manifestVersion`) and the stamp written,
+   * and nothing else about them changed. */
   rereadUpdated: number
   /**
    * Candidates whose re-read failed, of every kind: a request that threw; on
@@ -2405,7 +2431,7 @@ async function harvestOnce(options: RepoHarvestOptions): Promise<Omit<RepoHarves
 
 /** What one carried candidate's declarations re-read came to. */
 type RereadOutcome =
-  /** Read: the candidate with `peers`, `compatibility` and the stamp written. */
+  /** Read: the candidate with its declaration fields and the stamp written. */
   | { outcome: 'updated'; candidate: RepoCandidate }
   /** The recorded asset is no longer the verified one: the candidate unverified. */
   | { outcome: 'asset-changed'; candidate: RepoCandidate; reason: string }
@@ -2571,7 +2597,7 @@ async function rereadCandidate(
     }
     const read = await readManifest(response)
     if (!read.ok) return { outcome: 'unusable', reason: read.detail }
-    const manifest = read.manifest as { name?: unknown; peerDependencies?: unknown; peerDependenciesMeta?: unknown; dsh?: unknown } | null
+    const manifest = read.manifest as { name?: unknown; version?: unknown; peerDependencies?: unknown; peerDependenciesMeta?: unknown; dsh?: unknown } | null
     // The name decides whether these are this candidate's declarations, and it
     // decides every manifest that is not an object as well: `null` has no name
     // through the optional chain, and an array or a primitive has none that can
@@ -2693,9 +2719,10 @@ function rereadPhase(timeBudgetMs: number, now: () => number): RereadPhase {
  * equal to what was recorded but identical to it.
  *
  * Only listable candidates whose stamp is stale are read, by the predicate the
- * diff queued the repository on; the rest, a candidate that can never list
- * included, are carried as they are. No candidate is added, removed or renamed
- * and no failure record is written: a re-read can only ever refine a record.
+ * diff queued the repository on ({@link needsDeclarationsReread}, the same
+ * function); the rest, a candidate that can never list included, are carried
+ * as they are. No candidate is added, removed or renamed and no failure
+ * record is written: a re-read can only ever refine a record.
  *
  * Every read after the repository's first asks the phase first. A monorepo's
  * stale subpackages are read one after another — eight in one queued
@@ -2715,7 +2742,7 @@ async function rereadEntry(
   let changed = false
   const candidates: RepoCandidate[] = []
   for (const candidate of entry.candidates) {
-    if (!canEverList(candidate) || candidate.declarationsRule === DECLARATIONS_RULE || (reads > 0 && !phase.mayStart())) {
+    if (!needsDeclarationsReread(candidate) || (reads > 0 && !phase.mayStart())) {
       candidates.push(candidate)
       continue
     }

@@ -52,20 +52,25 @@ import type { UnbuiltFinding } from './types.ts'
 
 /**
  * The packed manifest's declaration inputs, exactly as the archive holds them
- * and not yet read: the three values `peerNamesOf` and `compatibilityOf` take.
+ * and not yet read: the values `peerNamesOf`, `compatibilityOf` and
+ * `dshPeersOf` take, and the manifest `version` dsh keys an exemption by.
  *
- * Untyped on purpose. A rescued entry installs the archive, so its `peers` and
- * `compatibility` must come from the archive's own package.json rather than the
- * default-branch HEAD it was projected from (a live scan found 7 of 220 rescued
- * repositories whose installed peers differ). But those two readers are the one
- * reader each for both channels, and they live in the network module this pure
- * one may not import — so the values cross the boundary raw, and the shell
- * reads them with the same functions it reads every other manifest with.
+ * Untyped on purpose. A rescued entry installs the archive, so its `peers`,
+ * `compatibility`, `dshPeers` and `manifestVersion` must come from the
+ * archive's own package.json rather than the default-branch HEAD it was
+ * projected from (a live scan found 7 of 220 rescued repositories whose
+ * installed peers differ). But those readers are the one reader each for both
+ * channels, and they live in the network module this pure one may not import;
+ * so the values cross the boundary raw, and the shell reads them with the same
+ * functions it reads every other manifest with. `version` is no exception:
+ * whether it is usable is decided there, beside `dshPeersOf` (design
+ * 2026-09-28-bundle-components-and-github-peers, section 6.1).
  */
 export interface PackedDeclarations {
   peerDependencies: unknown
   peerDependenciesMeta: unknown
   dsh: unknown
+  version: unknown
 }
 
 export type ReleaseAssetVerdict =
@@ -452,6 +457,7 @@ interface PackedManifest {
   main?: unknown
   peerDependencies?: unknown
   peerDependenciesMeta?: unknown
+  version?: unknown
 }
 
 /**
@@ -516,13 +522,14 @@ function openPackedManifest(
   return { ok: true, files, paths, root: rooted.root, manifest }
 }
 
-/** The three declaration inputs of a manifest the caller has already opened. */
+/** The declaration inputs of a manifest the caller has already opened. */
 function declarationsOf(manifest: PackedManifest): PackedDeclarations {
   // By fixed keys, never an input-derived one.
   return {
     peerDependencies: manifest.peerDependencies,
     peerDependenciesMeta: manifest.peerDependenciesMeta,
     dsh: manifest.dsh,
+    version: manifest.version,
   }
 }
 
