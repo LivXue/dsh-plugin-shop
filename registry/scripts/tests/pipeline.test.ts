@@ -521,6 +521,35 @@ describe('nothing unpaired leaves for plugins.json', () => {
     }
   })
 
+  it('covers a github entry\'s manifest version and its harness peer names, keys included', () => {
+    // Both are manifest text copied verbatim (design
+    // 2026-09-28-bundle-components-and-github-peers, section 6.1), bounded on
+    // length alone, and a harness peer's NAME is a key of `dshPeers`.
+    const commit = 'f'.repeat(40)
+    const hostileRepo: RepoCandidate = {
+      name: 'dsh-hostile-repo',
+      repo: 'someone/dsh-hostile-repo',
+      commit,
+      version: commit,
+      publishedAt: '2026-08-01T12:00:00.000Z',
+      repository: 'https://github.com/someone/dsh-hostile-repo',
+      license: 'MIT',
+      hasBundle: true,
+      requiresBuild: false,
+      hasWorkspaceDeps: false,
+      catalog: { category: 'tool', summary: { en: 'x', zh: 'y' }, capabilities: [] },
+      description: 'x',
+      dshPeers: { '@deepseek-ai/dsh-x\uD800': '^0.1.7-0\uDC00' },
+      manifestVersion: '1.0.0\uD800',
+    }
+    const { pluginsJson } = runPipeline([], [hostileRepo], hostileConfig, BUILT_AT)
+    const entry = (JSON.parse(pluginsJson) as { plugins: { dshPeers?: Record<string, string>; manifestVersion?: string }[] }).plugins[0]
+    // Listed first, for the reason the case above gives.
+    expect(entry?.manifestVersion).toBe('1.0.0\uFFFD')
+    expect(entry?.dshPeers).toEqual({ '@deepseek-ai/dsh-x\uFFFD': '^0.1.7-0\uFFFD' })
+    expect(LONE_SURROGATE_ESCAPE.test(pluginsJson)).toBe(false)
+  })
+
   it('preserves every entry\'s key order through the well-formedness pass', () => {
     // The pass rebuilds each object (Object.fromEntries over Object.entries),
     // so key order is a property it can silently change — and a reorder
@@ -634,9 +663,12 @@ describe('determinism under every perturbation', () => {
 
   // Four accepted entries sharing two bundle names, two of them subpackages
   // of one repository, plus two rejected subpackages of another — every tie
-  // the comparators have to break.
+  // the comparators have to break. The first carries the github harness peers
+  // and its manifest version (design
+  // 2026-09-28-bundle-components-and-github-peers, section 6), so every
+  // artifact each case below compares covers both fields.
   const repos = [
-    repoAt('dsh-shared', 'alice/dsh-shared', commitA),
+    { ...repoAt('dsh-shared', 'alice/dsh-shared', commitA), dshPeers: { '@deepseek-ai/dsh': '0.1.5-rc.2' }, manifestVersion: '1.0.0' },
     repoAt('dsh-shared', 'bob/dsh-shared', commitB),
     repoAt('dsh-sub', 'carol/monorepo', commitA, 'packages/one'),
     repoAt('dsh-sub', 'carol/monorepo', commitA, 'packages/two'),
@@ -700,6 +732,17 @@ describe('determinism under every perturbation', () => {
     // builtAt belongs to the index and the badge alone.
     expect(second.indexJson).not.toBe(first.indexJson)
     expect(second.badgeJson).not.toBe(first.badgeJson)
+  })
+
+  it('publishes the harness peers and manifest version it is handed, on that github entry alone', () => {
+    // The two cases above are only as strong as the fields the artifacts
+    // carry: an emitter that dropped both would be byte-identical too.
+    const { pluginsJson } = runPipeline(candidates, repos, dated, BUILT_AT, preexisting, stars)
+    const plugins = (JSON.parse(pluginsJson) as { plugins: { repo?: string; dshPeers?: unknown; manifestVersion?: unknown }[] }).plugins
+    const carrying = plugins.filter(plugin => plugin.dshPeers !== undefined || plugin.manifestVersion !== undefined)
+    expect(carrying.map(plugin => [plugin.repo, plugin.dshPeers, plugin.manifestVersion])).toEqual([
+      ['alice/dsh-shared', { '@deepseek-ai/dsh': '0.1.5-rc.2' }, '1.0.0'],
+    ])
   })
 
   it('names each shadowed subpackage by its repo#subdir unit', () => {
@@ -970,6 +1013,23 @@ describe('withholdRepoPeers (SHOP_EMIT_REPO_PEERS)', () => {
   it('passes every candidate through unchanged once the flag is on', () => {
     const input = [repo('with-peers', ['react']), repo('unread', undefined)]
     expect(withholdRepoPeers(input, true)).toEqual({ candidates: input, withheld: 0 })
+  })
+
+  it('withholds `peers` alone: a github entry\'s harness peers and manifest version are published either way', () => {
+    // No flag gates these two (design
+    // 2026-09-28-bundle-components-and-github-peers, section 6.1): every shop
+    // published before section 7.3 skips github entries in its peer verdict
+    // and strips a key it does not declare, so no older reader acts on
+    // either, unlike the `peers` a 0.8.3 shop misjudges.
+    const dshPeers = { '@deepseek-ai/dsh': '0.1.5-rc.2' }
+    const input = [{ ...repo('dsh-repo-peers', ['@deepseek-ai/dsh']), dshPeers, manifestVersion: '1.0.0' }]
+    const kept = withholdRepoPeers(input, false).candidates[0]
+    expect(kept).not.toHaveProperty('peers')
+    expect(kept).toMatchObject({ dshPeers, manifestVersion: '1.0.0' })
+    const parse = (json: string) => (JSON.parse(json) as { plugins: { name: string; peers?: string[]; dshPeers?: unknown; manifestVersion?: unknown }[] }).plugins
+    const published = parse(runPipeline([], withholdRepoPeers(input, false).candidates, config, BUILT_AT).pluginsJson)
+    expect(published.map(entry => [entry.name, entry.peers, entry.dshPeers, entry.manifestVersion]))
+      .toEqual([['dsh-repo-peers', undefined, dshPeers, '1.0.0']])
   })
 
   it('publishes no github peers while withheld, and publishes them once emitted', () => {

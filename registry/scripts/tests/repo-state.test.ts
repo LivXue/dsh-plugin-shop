@@ -600,11 +600,11 @@ describe('a carried installSize is re-bounded on the way in', () => {
 
 describe('a carried declarations record is checked on the way in', () => {
   // Carried candidates are revived by a bare cast, and nothing downstream
-  // re-derives a declaration field: `tier.ts` copies `peers` and
-  // `compatibility` into the published entry as they stand, and `dshPeers` and
-  // `manifestVersion` are copied the same way once they are emitted. So a
-  // shape this build never writes is a malformed registry file, and a
-  // malformed registry file throws rather than publishing it.
+  // re-derives a declaration field: `tier.ts` copies `peers`,
+  // `compatibility`, `dshPeers` and `manifestVersion` into the published
+  // entry as they stand. So a shape this build never writes is a malformed
+  // registry file, and a malformed registry file throws rather than
+  // publishing it.
   const rowWith = (extra: Record<string, unknown>): string => JSON.stringify({
     'a/one': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [{ ...candidate('a/one'), ...extra }] },
   })

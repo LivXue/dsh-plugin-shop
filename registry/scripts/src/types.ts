@@ -598,20 +598,32 @@ export interface Entry {
   compatibility?: Compatibility
   /**
    * The package's peers on the harness itself with their ranges verbatim
-   * (see {@link Candidate.dshPeers}), present exactly when it declares any.
-   * The Host hands them to the running dsh's own check, which is what refuses
-   * an install on dsh 0.1.7; the catalog records the requirement, never a
-   * verdict. Additive and optional, so it rides every schemaVersion: no shop
-   * that predates it reads the key.
+   * (see {@link Candidate.dshPeers}). The Host hands them to the running
+   * dsh's own check, which is what refuses an install from dsh 0.1.7; the
+   * catalog records the requirement, never a verdict. Additive and optional,
+   * so it rides every schemaVersion: no shop that predates it reads the key.
    *
-   * npm entries only. dsh keys the exemption that clears its refusal by the
-   * INSTALLED manifest's `name@version`, and a github entry's catalog version
-   * is a commit, so the shop forms no verdict for one and a record here would
-   * be a key nothing reads. A verdict for github entries needs the manifest
-   * version as well; both would then be harvested under one
-   * `DECLARATIONS_RULE` bump (design 2026-09-26-dsh-017-readiness, B1).
+   * Both channels, on different terms. An npm entry carries it exactly when
+   * its manifest declares any. A github entry carries it together with
+   * {@link Entry.manifestVersion} or not at all: dsh keys the exemption that
+   * clears its refusal by the INSTALLED manifest's `name@version`, and a
+   * github entry's catalog `version` is a commit or a release tag (design
+   * 2026-09-28-bundle-components-and-github-peers, section 6). So a github
+   * entry also lacks both when its manifest names no usable version, and
+   * until its repository is re-read under `DECLARATIONS_RULE` 2.
    */
   dshPeers?: Record<string, string>
+  /**
+   * A github entry's installed manifest `version` (see
+   * {@link RepoCandidate.manifestVersion}), present exactly when its
+   * {@link Entry.dshPeers} is: the version dsh keys an exemption by, so the
+   * one a verdict on this entry judges and names in dsh's exemption command
+   * (design 2026-09-28-bundle-components-and-github-peers, section 7.3).
+   * Never on an npm entry, whose `version` already is its manifest's.
+   * Additive and optional, so it rides every schemaVersion: a client that
+   * predates it strips the key.
+   */
+  manifestVersion?: string
   /**
    * The repository GitHub reports as archived. `true` only — the field is
    * omitted otherwise, like every additive optional on this type. github

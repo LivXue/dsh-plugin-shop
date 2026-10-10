@@ -153,6 +153,14 @@ export function assignRepoTier(accepted: RepoAccepted, config: RegistryConfig): 
     // emit path checks `=== true` rather than truthiness so a recorded
     // `false` (a repo GraphQL answered as live) stays off the catalog row.
     ...(repo.archived === true ? { archived: true as const } : {}),
+    // After `archived`, which was last until these two reached this channel
+    // (design 2026-09-28-bundle-components-and-github-peers, section 6), and
+    // together: the declarations writer records both or neither. Copied,
+    // never judged: whether the running dsh accepts these peers is decided on
+    // the reader's machine (section 7.3), keyed by `manifestVersion` because
+    // this entry's `version` is a commit or a tag.
+    ...(repo.dshPeers !== undefined ? { dshPeers: repo.dshPeers } : {}),
+    ...(repo.manifestVersion !== undefined ? { manifestVersion: repo.manifestVersion } : {}),
   }
   // A release-pinned entry is reviewed by its tarball sha256: the tag is
   // display only — a mutable ref an author can re-point at different content

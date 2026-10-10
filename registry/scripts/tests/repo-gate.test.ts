@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { canEverList, gateRepo } from '../src/repo-gate.ts'
-import { ENTRY_PAYLOAD_MAX_BYTES, LICENSE_MAX_LENGTH, REPOSITORY_MAX_LENGTH, entryPayloadBytes, gate } from '../src/gate.ts'
+import { ENTRY_PAYLOAD_MAX_BYTES, LICENSE_MAX_LENGTH, REPOSITORY_MAX_LENGTH, VERSION_MAX_LENGTH, entryPayloadBytes, gate } from '../src/gate.ts'
 import { parseRegistryConfig } from '../src/config.ts'
 import type { RepoCandidate } from '../src/types.ts'
 
@@ -419,6 +419,58 @@ describe('the per-entry size budget on the github channel', () => {
     const peers = ['react']
     expect(reported({ peers, compatibility }) - reported({}))
       .toBe(marginal('peers', peers) + marginal('compatibility', compatibility))
+  })
+
+  it('counts dshPeers and manifestVersion toward the payload budget', () => {
+    // Both are emitted on a github entry (design
+    // 2026-09-28-bundle-components-and-github-peers, section 6.3), so both
+    // are counted, as the npm gate counts `dshPeers`. 128 is
+    // `PEERS_MAX_COUNT` and every name here is within `PEER_NAME_MAX_LENGTH`,
+    // so this is a record the harvest itself can write and the field bounds
+    // admit. The names and ranges are copied verbatim into the entry and the
+    // budget is what refuses their sum, as it does on npm.
+    const dshPeers = Object.fromEntries(Array.from({ length: 128 }, (_, i) => [`@deepseek-ai/dsh-${'p'.repeat(100)}${i}`, '0.1.5-rc.2']))
+    expect(entryPayloadBytes({ dshPeers })).toBeGreaterThan(ENTRY_PAYLOAD_MAX_BYTES)
+    const result = gateRepo(repo({ dshPeers, manifestVersion: '1.0.0' }), config)
+    expect(!result.ok && result.rejection.code).toBe('no-manifest')
+  })
+
+  it('counts manifestVersion on its own, which the case above cannot tell apart from dshPeers', () => {
+    // That case crosses the budget on `dshPeers` alone, so a probe that
+    // forgot `manifestVersion` passes it. This pair is identical except for
+    // that one field, one short and one at the bound the harvest enforces
+    // (`VERSION_MAX_LENGTH`), and the pad beside them is sized so the short
+    // one lands EXACTLY on the budget, which lists because the budget refuses
+    // only what is strictly past it. The size is not written down: it is read
+    // off the byte count a refusal reports and the pad is trimmed by the
+    // excess, so it follows whatever else the entry carries. Both outcomes are
+    // asserted, so a fixture that drifts fails on its own instead of passing
+    // either way. A probe that leaves `manifestVersion` out weighs the pair
+    // identically and lists both.
+    //
+    // The pad rides `compatibility`, a field counted already, NOT `dshPeers`:
+    // padding through `dshPeers` would fail this case when either field's
+    // counting was removed, so a red run could not say which one it was; here
+    // it fails on `manifestVersion` alone. It is one range far longer than the
+    // harvest would record, which is fine here: the gate does not re-bound
+    // what it is handed, and one value keeps the byte count linear in the pad.
+    const SHORT = '1.0.0'
+    const LONG = '1'.repeat(VERSION_MAX_LENGTH)
+    const dshPeers = { '@deepseek-ai/dsh': '0.1.5-rc.2' }
+    const gated = (padLength: number, manifestVersion: string) =>
+      gateRepo(repo({ compatibility: { dsh: 'p'.repeat(padLength) }, dshPeers, manifestVersion }), config)
+    const bytesOf = (result: ReturnType<typeof gateRepo>): number => {
+      expect(result.ok).toBe(false)
+      if (result.ok) throw new Error('fixture must be over budget for the probe to report')
+      return Number(/Would publish (\d+) bytes/.exec(result.rejection.detail)?.[1])
+    }
+    const overshoot = 13_000
+    const pad = overshoot - (bytesOf(gated(overshoot, SHORT)) - ENTRY_PAYLOAD_MAX_BYTES)
+    expect(pad).toBeGreaterThan(0)
+    expect(gated(pad, SHORT).ok).toBe(true)
+    const refused = gated(pad, LONG)
+    expect(!refused.ok && refused.rejection.code).toBe('no-manifest')
+    expect(bytesOf(refused)).toBe(ENTRY_PAYLOAD_MAX_BYTES + (LONG.length - SHORT.length))
   })
 
   it('rejects a repo entry whose published payload is past the budget', () => {
