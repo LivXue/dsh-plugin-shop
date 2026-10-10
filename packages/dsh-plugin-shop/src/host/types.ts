@@ -78,6 +78,15 @@ export interface CatalogEntry {
    * (registry `Entry.dshPeers`). Absent when the package declares none, or
    * when its catalog predates the field. */
   dshPeers?: Record<string, string>
+  /** A github entry's installed manifest `version` (registry
+   * `Entry.manifestVersion`): the version dsh keys an exemption by, where the
+   * entry's catalog `version` is a commit or a release tag. The registry
+   * writes it on github entries only, together with their `dshPeers` or not
+   * at all. Declared so the catalog parse keeps it; nothing in the shop reads
+   * it yet: judging a github entry by it arrives with the shop change for
+   * design 2026-09-28-bundle-components-and-github-peers, section 7.3. Absent
+   * when the catalog predates the field. */
+  manifestVersion?: string
   /** Wire-compatibility key, not a field to read — see {@link installSize},
    * which the catalog parse fills from this one. It names npm's OWN quantity
    * (`dist.unpackedSize`), so it is npm-only and the parse REFUSES one on a
