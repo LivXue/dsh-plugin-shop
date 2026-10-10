@@ -1282,6 +1282,13 @@ manifest version its catalog record does not carry); dsh refuses it after
 the attempt, and the failed install now names dsh's refusal and its
 exemption command instead of "pnpm failed".
 
+Amended 2026-10-10: github entries now carry the manifest version their
+exemption is keyed by, with their harness peers, so the verdict that
+blocks can cover them; the shop does so from the release that ships
+section 7.3 of
+[2026-09-28-bundle-components-and-github-peers.md](2026-09-28-bundle-components-and-github-peers.md).
+A bundle's components stay unpredicted (section 13 there).
+
 ## 11. Amendment (2026-09-26): dsh 0.1.7 serves its packages without the link farm
 
 **What dsh changed.** §9.5's walk finds harness packages because

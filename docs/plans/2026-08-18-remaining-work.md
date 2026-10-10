@@ -124,6 +124,15 @@ These block a real launch, not the code.
    `restart.log` settles it. A commit with no exit line after it means an
    old process that never left. Both lines followed by a boot that died
    means a new dsh that failed.
+9. **Refusals the card did not predict — raised 2026-09-28, re-scoped
+   2026-10-10.** The shop disables an install dsh refuses only on an npm
+   entry's own harness peers, so every github entry dsh refuses fails after
+   pnpm instead: 1,270 of them on dsh 0.2.0-rc.2, measured 2026-10-10. The
+   catalog now records github entries' harness peers with their manifest
+   version, and the shop's verdict on them follows as a beta. A bundle's
+   components (2 cards) and the unloadable-bundle rule (6 entries) are not
+   built. [2026-09-28-bundle-components-and-github-peers.md](../design/2026-09-28-bundle-components-and-github-peers.md)
+   section 13.
 
 ## P1 — the Host half (done 2026-08-25)
 

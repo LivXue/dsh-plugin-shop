@@ -168,6 +168,12 @@ for data no consumer used. It was removed before commit. A github verdict
 needs the manifest's `version` as well; both would then be harvested under
 one bump.
 
+Amended 2026-10-10: github entries record `dshPeers` and the manifest's
+own `version` (`manifestVersion`), together, under `DECLARATIONS_RULE` 2.
+The shop judges them from the release that ships section 7.3 of
+[2026-09-28-bundle-components-and-github-peers.md](2026-09-28-bundle-components-and-github-peers.md);
+its section 6 is the record, and section 13 why only this half is built.
+
 **Cost, measured on the catalog of 2026-09-26** (7,916,197 bytes, 12,236
 entries). 2,239 npm entries declare 10,330 REQUIRED harness peers; at the
 shortest possible range, `"*"`, the field would add 391,742 bytes (4.95%).
@@ -233,6 +239,14 @@ non-string range on any peer is refused after pnpm whatever the
 exemptions, because the rule throws before it reads them; if its harness
 peers are also refused, the card offers a command that clears only half
 of that. Both surface as the install's own failure, in dsh's words.
+
+Amended 2026-10-10, not built: recording a bundle's exact-pinned components
+was designed in
+[2026-09-28-bundle-components-and-github-peers.md](2026-09-28-bundle-components-and-github-peers.md)
+sections 4 and 7, and built on branches that never landed. Re-measured on
+2026-10-10, it would have changed 2 cards on dsh 0.2.0-rc.2, and it is not
+built (section 13 there). A component's refusal still surfaces as dsh's
+own, after pnpm.
 
 **The decision this amends.** The harness-compatibility design refused to
 block an install on its own inference (§4: warn, never block). This is not

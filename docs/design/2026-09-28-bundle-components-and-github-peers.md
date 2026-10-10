@@ -757,7 +757,21 @@ the stack's reviewed code:
 - **Order:**
   1. The registry change lands first, with this document. Its pull
      request's zero-write dry run re-reads the first slice of
-     repositories, and the backfill takes about three catalog runs.
+     repositories. Measured on the `repo-state.json` committed at
+     `cfc1520`, 12,593 listable candidates in 12,340 repositories queue
+     for rule 2, 638 of them release-rescued. 6,168 of those repositories
+     take the declarations re-read, every rescue among them: two runs at
+     `DECLARATIONS_REREAD_BUDGET_DEFAULT`, 4,000 a run. The other 6,172
+     still owe the entry-check backfill of
+     [2026-09-26-market-borrowings.md](2026-09-26-market-borrowings.md)
+     section 9.6, whose full fetch writes both fields as well. That
+     backfill shares `REPO_BACKFILL_BUDGET_DEFAULT`, 2,000 repositories
+     a run, with the changed and new repositories, which are served
+     first; that section counts about 1,200 slots a build. Over the five
+     runs up to `cfc1520` the entry-check queue fell by 1,140, 1,147,
+     1,215, 1,303 and 867 repositories, so the 6,172 take about six
+     runs, five to eight. Section 6.2's "three runs" is the 2026-09-28
+     figure.
   2. The shop's verdict follows as a beta, checked by hand on a real
      0.2.0-rc.2 profile against the live catalog: a refused github card
      shows dsh's sentence and the command, and after the command and
