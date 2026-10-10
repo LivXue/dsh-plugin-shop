@@ -360,6 +360,11 @@ export function gateRepo(
     ...(candidate.peers !== undefined && candidate.peers.length > 0 ? { peers: candidate.peers } : {}),
     // The author's own text, counted as the npm gate counts it.
     ...(candidate.compatibility !== undefined ? { compatibility: candidate.compatibility } : {}),
+    // Names and ranges copied verbatim, and the manifest's own version:
+    // counted as the npm gate counts `dshPeers` (design
+    // 2026-09-28-bundle-components-and-github-peers, section 6.3).
+    ...(candidate.dshPeers !== undefined ? { dshPeers: candidate.dshPeers } : {}),
+    ...(candidate.manifestVersion !== undefined ? { manifestVersion: candidate.manifestVersion } : {}),
   })
   if (payloadBytes > ENTRY_PAYLOAD_MAX_BYTES) {
     return reject(unit, 'no-manifest',

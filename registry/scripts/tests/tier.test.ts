@@ -308,16 +308,43 @@ describe('assignRepoTier', () => {
     // and nothing more. `peers` arrived on this channel later than
     // `installSize` did, so by the same rule it sits after it, not in the
     // npm path's slot ahead of the sizes — and `compatibility` after both.
+    // `archived` came next (design 2026-10-08, section 1.3), and `dshPeers` with
+    // `manifestVersion` last (design
+    // 2026-09-28-bundle-components-and-github-peers, section 6), so they
+    // follow it. (`archived` was missing from this pin while its title said
+    // every optional slot was filled; it is filled now.)
     const full = repoAccepted('dsh-repo-plugin', { tag: 'v1.0.0', url: 'https://example.com/a.tgz', sha256: 'a'.repeat(64) })
     full.repo.subdir = 'packages/plugin'
     full.repo.installSize = 43_859
     full.repo.peers = ['@deepseek-ai/cordis']
     full.repo.compatibility = { profiles: ['web'] }
+    full.repo.archived = true
+    full.repo.dshPeers = { '@deepseek-ai/dsh': '0.1.5-rc.2' }
+    full.repo.manifestVersion = '1.0.0'
     expect(Object.keys(assignRepoTier(full, config))).toEqual([
       'name', 'version', 'integrity', 'publishedAt', 'repository', 'license',
       'metadata', 'catalog', 'source', 'repo', 'subdir', 'tarball', 'added',
-      'installSize', 'peers', 'compatibility', 'tier',
+      'installSize', 'peers', 'compatibility', 'archived', 'dshPeers', 'manifestVersion', 'tier',
     ])
+  })
+
+  it('carries a github entry\'s harness peers and manifest version verbatim, and omits both when absent', () => {
+    // Copied, never judged: a shop that ships section 7.3 judges them with
+    // the dsh that runs on the reader's machine (design
+    // 2026-09-28-bundle-components-and-github-peers, section 7.3). Absent on a
+    // record rule 1 wrote, and on a manifest with no usable harness peer.
+    const input = repoAccepted('dsh-repo-plugin')
+    input.repo.dshPeers = { '@deepseek-ai/dsh-app-boot': '', '@deepseek-ai/dsh': '^0.1.7-0' }
+    input.repo.manifestVersion = '0.2.0'
+    const entry = assignRepoTier(input, config)
+    expect(entry.dshPeers).toEqual({ '@deepseek-ai/dsh-app-boot': '', '@deepseek-ai/dsh': '^0.1.7-0' })
+    expect(entry.manifestVersion).toBe('0.2.0')
+    // The catalog version stays the pinned commit: the manifest version is
+    // a separate key, never a replacement for the pin.
+    expect(entry.version).toBe(commit)
+    const plain = assignRepoTier(repoAccepted('dsh-repo-plugin'), config)
+    expect('dshPeers' in plain).toBe(false)
+    expect('manifestVersion' in plain).toBe(false)
   })
 
   it('carries the author’s compatibility declaration onto a github entry, and omits it when there is none', () => {
