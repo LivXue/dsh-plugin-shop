@@ -196,10 +196,13 @@ export function readsIncompatible(blockers: readonly { kind: BlockerKind }[]): b
  *
  * The second is the one harness reason that blocks (design
  * 2026-09-26-dsh-017-readiness, B1, amending "warn, never block"): dsh 0.1.7
- * refuses the install itself, before pnpm runs, and the shop cannot install
- * past it. The verdict is dsh's own rule on the profile's own exemptions, so
- * a disabled button is dsh's answer given early, never the shop's opinion —
- * and recording the exemption the card shows is what enables it again.
+ * refuses the install itself, an npm entry before pnpm runs and a github
+ * entry after it, rolling the profile back, and the shop cannot install past
+ * it. The verdict is dsh's own rule on the profile's own exemptions, whichever
+ * channel the entry comes from (design
+ * 2026-09-28-bundle-components-and-github-peers, section 7.3), so a disabled
+ * button is dsh's answer given early, never the shop's opinion — and
+ * recording the exemption the card shows is what enables it again.
  */
 export function refusesInstall(blockers: readonly { kind: BlockerKind }[]): boolean {
   return blockers.some(blocker => blocker.kind === 'name-taken' || blocker.kind === 'harness-peers')
