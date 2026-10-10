@@ -213,6 +213,20 @@ const entrySchema = z.object({
   // Declared for the reason `compatibility` is, and typed like it: the
   // registry writes strings only (`dshPeersOf`), the empty range included.
   dshPeers: z.record(z.string(), z.string()).optional(),
+  // A github entry's installed manifest `version` (registry
+  // `Entry.manifestVersion`; design
+  // 2026-09-28-bundle-components-and-github-peers, section 6.1): the version
+  // dsh keys an exemption by, where the entry's catalog `version` is a commit
+  // or a release tag. The registry writes it on github entries only, together
+  // with their `dshPeers` or not at all.
+  //
+  // Declared so this non-strict schema keeps it instead of stripping it in
+  // silence: the registry's catalog-parity guard requires every key the
+  // registry publishes to be declared here. Typed like `dshPeers`: the
+  // registry writes a string only. Nothing in the shop reads it yet;
+  // `peerVerdictsOf` skips github entries, and judging one by this version
+  // arrives with the shop change for section 7.3 of that design.
+  manifestVersion: z.string().optional(),
   // npm's `dist.unpackedSize`, additive and optional for the same reason as
   // `publisher` — this schema strips a key it does not know, so old and new
   // hosts share one catalog, while bumping the version NUMBER would make
