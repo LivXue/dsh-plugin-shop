@@ -300,9 +300,18 @@ export function peerVerdictsOf(
       issue = check.evaluate(manifest, exemptions)
     } catch {
       // Swallows the rule refusing to judge: a runtime version app-boot
-      // cannot parse, or a manifest shape it rejects, which the catalog
-      // parse keeps out and only an injected snapshot could carry. An entry
-      // nobody can judge is never accused.
+      // cannot parse, or a manifest it rejects. The catalog parse does not
+      // keep all of those out. Once the rule refuses a peer, it throws on a
+      // `name` or `version` that is blank after trimming, and the parse
+      // admits both on a github entry, holding `manifestVersion` only to
+      // being a string and the name only to a length and no control
+      // character. The registry writes neither blank (its bundle-name
+      // grammar refuses such a name, and it drops such a version together
+      // with the peers beside it), so only a hand-edited or injected catalog
+      // carries one. dsh refuses an installed manifest like that on the same
+      // throw, after pnpm, and no exemption clears the refusal (design
+      // 2026-09-28-bundle-components-and-github-peers, section 2). The shop
+      // forms no verdict even so: an entry nobody can judge is never accused.
       continue
     }
     if (issue === undefined || issue.exempted) continue
