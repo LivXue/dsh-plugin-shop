@@ -769,6 +769,55 @@ describe('compatibility', () => {
   })
 })
 
+describe('dshPeers and manifestVersion on a github entry', () => {
+  // A github entry's harness peers, and its installed manifest's own
+  // `version` beside them: the version dsh keys an exemption by, where the
+  // entry's catalog `version` is a commit or a tag (design
+  // 2026-09-28-bundle-components-and-github-peers, sections 6.1 and 7.3;
+  // registry `Entry.manifestVersion`). Declared or stripped, for the reason
+  // `compatibility` is: the schema is non-strict, and an undeclared key is how
+  // `installSize` was published for weeks and shown to nobody.
+  const github = { ...baseEntry, version: 'a'.repeat(40), source: 'github', repo: 'someone/thing' }
+  const PEERS = { '@deepseek-ai/dsh': '0.1.5-rc.3', '@deepseek-ai/dsh-web-app': '^0.1.2' }
+
+  it('carries both through the catalog parse to the entry the host judges', async () => {
+    const result = await load([{ ...github, dshPeers: PEERS, manifestVersion: '2.0.0' }], 5)
+    expect(result.snapshot.entries[0]?.dshPeers).toEqual(PEERS)
+    expect(result.snapshot.entries[0]?.manifestVersion).toBe('2.0.0')
+  })
+
+  it('parses a github entry carrying neither', async () => {
+    // Every github entry until its repository is re-read under the rule that
+    // records them, and every catalog built before it. Requiring either key
+    // would be the 0.5.0 regression again: the data file is parsed with a
+    // throw, so it would cost every installed shop the whole catalog.
+    const result = await load([github], 5)
+    expect(result.snapshot.entries[0]?.dshPeers).toBeUndefined()
+    expect(result.snapshot.entries[0]?.manifestVersion).toBeUndefined()
+    expect(result.snapshot.entries).toHaveLength(1)
+  })
+
+  it('refuses manifestVersion on neither channel, since the data file is parsed with a throw', async () => {
+    // The registry writes it on github entries only, and the host reads it on
+    // github entries only (`peerVerdictsOf`), but a stray one on an npm entry
+    // must not cost every reader the whole catalog.
+    const result = await load([
+      { ...baseEntry, name: 'dsh-npm', dshPeers: PEERS, manifestVersion: '1.0.0' },
+      { ...github, dshPeers: PEERS, manifestVersion: '2.0.0' },
+    ], 5)
+    expect(result.snapshot.entries).toHaveLength(2)
+    expect(result.snapshot.entries[1]?.manifestVersion).toBe('2.0.0')
+  })
+
+  it('refuses a manifestVersion that is not the type the registry writes', async () => {
+    // The one thing this key refuses, and the price of typing it: a
+    // non-string costs the whole catalog rather than one row. The registry
+    // writes a bounded string or nothing, so anything else is our own build
+    // having written what it cannot write.
+    await expect(load([{ ...github, dshPeers: PEERS, manifestVersion: 2 }], 5)).rejects.toThrow()
+  })
+})
+
 describe('unpackedSize', () => {
   it('carries the size through to the entry the client renders', async () => {
     // Additive and optional, so it rides EVERY schemaVersion — including the
