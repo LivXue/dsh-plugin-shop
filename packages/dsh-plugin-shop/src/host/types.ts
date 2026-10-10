@@ -72,20 +72,25 @@ export interface CatalogEntry {
   /** The package's peers on the harness itself (`@deepseek-ai/dsh` and
    * `@deepseek-ai/dsh-*`) with their ranges verbatim, optional ones and empty
    * ranges included — what dsh 0.1.7 refuses an install on. The host hands
-   * them to the running dsh's own check (`peerVerdictsOf`). npm entries only:
-   * dsh keys the exemption that clears its refusal by the installed
-   * manifest's version, which a github entry's catalog version is not
-   * (registry `Entry.dshPeers`). Absent when the package declares none, or
-   * when its catalog predates the field. */
+   * them to the running dsh's own check (`peerVerdictsOf`) on both channels:
+   * an npm entry is judged by its catalog `version`, a github entry by
+   * {@link manifestVersion}, because dsh keys the exemption that clears its
+   * refusal by the installed manifest's version, which a github entry's
+   * catalog version is not (registry `Entry.dshPeers`; design
+   * 2026-09-28-bundle-components-and-github-peers, section 7.3). Absent when
+   * the package declares none, or when its catalog predates the field; on a
+   * github entry also when its manifest names no usable version, since both
+   * keys drop together, and until the registry re-reads its repository under
+   * the rule that records them. */
   dshPeers?: Record<string, string>
   /** A github entry's installed manifest `version` (registry
    * `Entry.manifestVersion`): the version dsh keys an exemption by, where the
-   * entry's catalog `version` is a commit or a release tag. The registry
-   * writes it on github entries only, together with their `dshPeers` or not
-   * at all. Declared so the catalog parse keeps it; nothing in the shop reads
-   * it yet: judging a github entry by it arrives with the shop change for
-   * design 2026-09-28-bundle-components-and-github-peers, section 7.3. Absent
-   * when the catalog predates the field. */
+   * entry's catalog `version` is a commit or a release tag. Present exactly
+   * when a github entry's {@link dshPeers} is. An npm entry's own `version` is
+   * its manifest's, so `peerVerdictsOf` never reads this key on one, and a
+   * github entry without it is not judged at all (design
+   * 2026-09-28-bundle-components-and-github-peers, section 7.3). Absent when
+   * the catalog predates the field. */
   manifestVersion?: string
   /** Wire-compatibility key, not a field to read — see {@link installSize},
    * which the catalog parse fills from this one. It names npm's OWN quantity

@@ -263,10 +263,12 @@ const REFUSAL_WARNING_TAIL = ' Running it may cause crashes or data loss.'
 /**
  * dsh's own refusal of an install (0.1.7 on) as one detail, or null when the
  * log holds none. The install was dsh's to refuse, not pnpm's to fail: it
- * refuses before pnpm runs, when it can read the manifest — a registry spec,
- * which the catalog's peer verdict already predicts — and after pnpm
- * succeeded otherwise, restoring the profile. Reading that as a pnpm failure
- * sent the reader to `dsh plugin install`, which repairs nothing.
+ * refuses before pnpm runs, when it can read the manifest — a registry spec —
+ * and after pnpm succeeded otherwise, restoring the profile. The catalog's
+ * peer verdict predicts the first, and the second for a github entry whose
+ * manifest version the catalog records (`peerVerdictsOf`). Reading either as
+ * a pnpm failure sent the reader to `dsh plugin install`, which repairs
+ * nothing.
  *
  * The detail is what dsh refused, what it restored, and the command that
  * records its exact-version exemption, rebuilt from what dsh printed through

@@ -3416,6 +3416,24 @@ describe('ShopGateway.catalog: what the running dsh itself refuses', () => {
     expect((await gateway.catalog({})).incompatibleHarness).toEqual({})
   })
 
+  it("judges a github entry by its installed manifest's version, so only an exemption under that version clears it", async () => {
+    // A github entry's catalog version is its commit, and dsh keys the
+    // exemption by the installed manifest's `name@version`, which the
+    // registry records as `manifestVersion` (design
+    // 2026-09-28-bundle-components-and-github-peers, section 7.3). The whole
+    // host path: the entry as the parse keeps it, through the gateway, to the
+    // verdict the card disables Install on.
+    const commit = 'a'.repeat(40)
+    const fromGithub: CatalogEntry = { ...pinned, source: 'github', repo: 'owner/dsh-pinned', version: commit, manifestVersion: '1.2.0' }
+    // An exemption recorded under the commit is one dsh never reads.
+    const held: { record: Record<string, string[]> } = { record: { [`dsh-pinned@${commit}`]: ['0.1.7-rc.2'] } }
+    const { readHarness } = refusingHarness(held)
+    const { gateway } = gatewayWithSnapshot({ schemaVersion: 5, builtAt: '', entries: [fromGithub], denied: [], stars: {} }, { readHarness })
+    expect((await gateway.catalog({})).incompatibleHarness).toEqual({ 'github:owner/dsh-pinned#': { peers: REFUSAL } })
+    held.record = { 'dsh-pinned@1.2.0': ['0.1.7-rc.2'] }
+    expect((await gateway.catalog({})).incompatibleHarness).toEqual({})
+  })
+
   it('says nothing on a dsh that has no such check, which refuses no install on its peers', async () => {
     const { gateway } = gatewayWithSnapshot(
       { schemaVersion: 5, builtAt: '', entries: [pinned], denied: [], stars: {} },

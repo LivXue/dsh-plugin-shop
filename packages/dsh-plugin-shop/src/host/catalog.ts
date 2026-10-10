@@ -212,20 +212,28 @@ const entrySchema = z.object({
   // install on, handed to the running dsh's own check (`peerVerdictsOf`).
   // Declared for the reason `compatibility` is, and typed like it: the
   // registry writes strings only (`dshPeersOf`), the empty range included.
+  // Both channels carry it: an npm entry is judged by its own `version`, a
+  // github entry by `manifestVersion` below, and not at all without one
+  // (design 2026-09-28-bundle-components-and-github-peers, section 7.3).
   dshPeers: z.record(z.string(), z.string()).optional(),
-  // A github entry's installed manifest `version` (registry
-  // `Entry.manifestVersion`; design
-  // 2026-09-28-bundle-components-and-github-peers, section 6.1): the version
-  // dsh keys an exemption by, where the entry's catalog `version` is a commit
-  // or a release tag. The registry writes it on github entries only, together
-  // with their `dshPeers` or not at all.
+  // A github entry's installed manifest `version` (same design, section 6.1;
+  // registry `Entry.manifestVersion`): the version dsh keys an exemption by,
+  // where the entry's catalog `version` is a commit or a release tag. The
+  // registry writes it on github entries only, together with `dshPeers` or
+  // not at all: an npm entry's own `version` is already its manifest's.
+  // Declared for the reason every key above is: this schema strips a key it
+  // does not know, and `installSize` was published for weeks stripped this
+  // same way.
   //
-  // Declared so this non-strict schema keeps it instead of stripping it in
-  // silence: the registry's catalog-parity guard requires every key the
-  // registry publishes to be declared here. Typed like `dshPeers`: the
-  // registry writes a string only. Nothing in the shop reads it yet;
-  // `peerVerdictsOf` skips github entries, and judging one by this version
-  // arrives with the shop change for section 7.3 of that design.
+  // Typed, and refused on the one thing typing can refuse: a non-string, on
+  // either channel, which costs the whole data file, since it is parsed with
+  // a throw. Nothing else is refused, so neither a stray key on an npm entry
+  // nor a github entry carrying one half of the pair costs a reader the
+  // catalog: the host reads the key on github entries only, and judges no
+  // github entry without both. Unbounded, unlike `version`: the registry
+  // bounds it, dsh's rule reads it only as an exemption key, and the one
+  // place it reaches a terminal, the exemption command, is offered only for
+  // an exact version (`allowVersionCommand`).
   manifestVersion: z.string().optional(),
   // npm's `dist.unpackedSize`, additive and optional for the same reason as
   // `publisher` — this schema strips a key it does not know, so old and new
