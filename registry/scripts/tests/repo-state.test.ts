@@ -2,9 +2,10 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { DECLARATIONS_RULE, applyArchivedFlags, diffRepoState, layerArchivedFlags, nextRepoState, parseRepoState, repoGoneDetail, serializeRepoState, staleFailureRepos } from '../src/repo-state.ts'
+import { DECLARATIONS_RULE, applyArchivedFlags, diffRepoState, layerArchivedFlags, needsDeclarationsReread, nextRepoState, parseRepoState, repoGoneDetail, serializeRepoState, staleFailureRepos } from '../src/repo-state.ts'
 import type { RepoState, RepoStateEntry } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
+import { dshPeersOf } from '../src/npm-client.ts'
 
 const commit = 'a'.repeat(40)
 
@@ -209,9 +210,11 @@ describe('repo-state', () => {
     // declarations verbatim, so a candidate written under an older
     // `peerNamesOf` would otherwise publish the old rule's answer forever. The
     // comparison is equality, so a LATER stamp (a build rolled back) is
-    // re-read too. With the rule at 1 an older stamp is 0, which only this
-    // in-memory fixture can hold — `parseRepoState` refuses 0 below — and the
-    // point here is the diff's predicate, not the file's grammar.
+    // re-read too. In-memory on purpose: the point here is the diff's
+    // predicate, not the file's grammar, which the parse cases below pin.
+    // (This said the older stamp was 0, which only an in-memory fixture can
+    // hold, while the rule was 1; since rule 2 it is 1, the stamp every
+    // committed record carries.)
     for (const other of [DECLARATIONS_RULE - 1, DECLARATIONS_RULE + 1]) {
       const stale: RepoState = { 'a/one': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [stamped('a/one', other)] } }
       const { toFetch, toReread } = diffRepoState(stale, unchanged)
@@ -258,6 +261,46 @@ describe('repo-state', () => {
     const { toFetch, toReread } = diffRepoState(unlistable, unchanged)
     expect(toFetch).toEqual([])
     expect(toReread).toEqual([])
+  })
+
+  describe('needsDeclarationsReread, the one predicate the diff and the re-read both ask', () => {
+    // Two halves, each its own case: a stamp that is not the current rule, and
+    // a candidate that could list once read (`canEverList`). The re-read
+    // phase in github-client.ts skips a candidate by this same predicate, so
+    // the queue and the reads it buys cannot disagree.
+    const release = { tag: 'v1', url: 'https://github.com/a/one/releases/download/v1/one.tgz', sha256: 'a'.repeat(64), assetVerified: true as const }
+
+    it('asks for a listable candidate whose stamp is not the current rule, and only for one', () => {
+      for (const rule of [undefined, DECLARATIONS_RULE - 1, DECLARATIONS_RULE + 1]) {
+        expect(needsDeclarationsReread(stamped('a/one', rule)), String(rule)).toBe(true)
+      }
+      expect(needsDeclarationsReread(stamped('a/one', DECLARATIONS_RULE))).toBe(false)
+      // A rescued root lists on its release, so it is re-read too: from the
+      // recorded asset, which is what it installs.
+      expect(needsDeclarationsReread(stamped('a/one', DECLARATIONS_RULE - 1, { requiresBuild: true, release }))).toBe(true)
+    })
+
+    it.each([
+      ['no bundle', { hasBundle: false }],
+      ['a build script and no release', { requiresBuild: true }],
+      ['workspace: dependencies and no release', { hasWorkspaceDeps: true }],
+      ['an unbuilt finding and no release', { unbuilt: { patch: './cordis.patch.yml' } }],
+    ] as const)('never asks for a candidate that can never list (%s), stale stamp or not', (_label, extra) => {
+      expect(needsDeclarationsReread(stamped('a/one', DECLARATIONS_RULE - 1, extra))).toBe(false)
+      expect(needsDeclarationsReread(stamped('a/one', undefined, extra))).toBe(false)
+    })
+
+    it('is what queues a repository for the re-read, candidate for candidate', () => {
+      const cases: RepoCandidate[] = [
+        stamped('a/one', DECLARATIONS_RULE - 1),
+        stamped('a/one', DECLARATIONS_RULE),
+        stamped('a/one', DECLARATIONS_RULE - 1, { hasBundle: false }),
+      ]
+      for (const recorded of cases) {
+        const { toReread } = diffRepoState({ 'a/one': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [recorded] } }, unchanged)
+        expect(toReread.length > 0, JSON.stringify(recorded.declarationsRule)).toBe(needsDeclarationsReread(recorded))
+      }
+    })
   })
 
   it('diff: recorded repos absent from the search are gone', () => {
@@ -555,11 +598,13 @@ describe('a carried installSize is re-bounded on the way in', () => {
   })
 })
 
-describe('a carried peers or compatibility record is checked on the way in', () => {
+describe('a carried declarations record is checked on the way in', () => {
   // Carried candidates are revived by a bare cast, and nothing downstream
-  // re-derives either field: `tier.ts` copies both into the published entry
-  // as they stand. So a shape this build never writes is a malformed registry
-  // file, and a malformed registry file throws rather than publishing it.
+  // re-derives a declaration field: `tier.ts` copies `peers` and
+  // `compatibility` into the published entry as they stand, and `dshPeers` and
+  // `manifestVersion` are copied the same way once they are emitted. So a
+  // shape this build never writes is a malformed registry file, and a
+  // malformed registry file throws rather than publishing it.
   const rowWith = (extra: Record<string, unknown>): string => JSON.stringify({
     'a/one': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [{ ...candidate('a/one'), ...extra }] },
   })
@@ -654,6 +699,73 @@ describe('a carried peers or compatibility record is checked on the way in', () 
     ['carrying a key the harvest never writes', { dsh: '0.1.5', node: '>=22' }],
   ])('throws on a compatibility that is %s', (_label, compatibility) => {
     expect(() => parseRepoState(rowWith({ compatibility }))).toThrow('a/one has a candidate with a malformed compatibility record')
+  })
+
+  it('queues a record stamped by the previous rule for one re-read', () => {
+    // The bump's whole effect on a carried record (design
+    // 2026-09-28-bundle-components-and-github-peers, section 6.2): a stamp
+    // one rule behind is re-read once, and nothing else about it moves.
+    const parsed = parseRepoState(rowWith({ declarationsRule: DECLARATIONS_RULE - 1 }))
+    const { toFetch, toReread } = diffRepoState(parsed, [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }])
+    expect(toFetch).toEqual([])
+    expect(toReread).toEqual(['a/one'])
+  })
+
+  it('queues a record stamped by the literal rule 1, the stamp every committed record holds when rule 2 lands', () => {
+    // The case above passes for any DECLARATIONS_RULE greater than the stamp
+    // it writes, so it does not depend on that constant's value. This one
+    // names the stamp the committed records carry, and breaks the moment rule
+    // 1 becomes current again: a record stamped 1 would then already be
+    // current and never queued, and no github entry would ever gain the
+    // rule-2 fields.
+    const parsed = parseRepoState(rowWith({ declarationsRule: 1 }))
+    const { toFetch, toReread } = diffRepoState(parsed, [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }])
+    expect(toFetch).toEqual([])
+    expect(toReread).toEqual(['a/one'])
+  })
+
+  it('round-trips the rule-2 pair, and leaves a record without it as it is', () => {
+    const recorded: RepoState = {
+      'a/one': {
+        pushedAt: '2026-08-01T00:00:00Z',
+        commit,
+        candidates: [{ ...candidate('a/one'), dshPeers: { '@deepseek-ai/dsh': '0.1.5-rc.2' }, manifestVersion: '1.0.0' }],
+      },
+    }
+    expect(parseRepoState(serializeRepoState(recorded))).toEqual(recorded)
+    // Both absent is the ordinary shape: a manifest with no harness peer, or
+    // one not yet read under rule 2. Nothing is invented for either.
+    const plain = parseRepoState(rowWith({}))['a/one']?.candidates[0]
+    expect(plain).not.toHaveProperty('dshPeers')
+    expect(plain).not.toHaveProperty('manifestVersion')
+  })
+
+  it('round-trips a dshPeers built by its real producer, not one literal shape', () => {
+    // `dshPeersOf` can return several keys, and keeps an EMPTY range, which dsh
+    // reads as unsatisfiable: every shape it writes must parse back.
+    const dshPeers = dshPeersOf({ peerDependencies: { '@deepseek-ai/dsh': '0.1.5-rc.2', '@deepseek-ai/dsh-tools': '*', '@deepseek-ai/dsh-app-boot': '' } })
+    expect(dshPeers).toEqual({ '@deepseek-ai/dsh': '0.1.5-rc.2', '@deepseek-ai/dsh-tools': '*', '@deepseek-ai/dsh-app-boot': '' })
+    const parsed = parseRepoState(rowWith({ dshPeers, manifestVersion: '1.0.0' }))['a/one']?.candidates[0]
+    expect(parsed?.dshPeers).toEqual(dshPeers)
+  })
+
+  it.each([
+    ['dshPeers without manifestVersion', { dshPeers: { '@deepseek-ai/dsh': '*' } }, 'dshPeers and manifestVersion recorded apart'],
+    ['manifestVersion without dshPeers', { manifestVersion: '1.0.0' }, 'dshPeers and manifestVersion recorded apart'],
+    ['a dshPeers key outside the harness scope', { dshPeers: { react: '*' }, manifestVersion: '1.0.0' }, 'a malformed dshPeers record'],
+    ['an empty dshPeers', { dshPeers: {}, manifestVersion: '1.0.0' }, 'a malformed dshPeers record'],
+    ['a dshPeers that is an array', { dshPeers: ['@deepseek-ai/dsh'], manifestVersion: '1.0.0' }, 'a malformed dshPeers record'],
+    ['a null dshPeers', { dshPeers: null, manifestVersion: '1.0.0' }, 'a malformed dshPeers record'],
+    ['a non-string range', { dshPeers: { '@deepseek-ai/dsh': 1 }, manifestVersion: '1.0.0' }, 'a malformed dshPeers record'],
+    ['an empty manifestVersion', { dshPeers: { '@deepseek-ai/dsh': '*' }, manifestVersion: '' }, 'a malformed manifestVersion'],
+    ['a blank manifestVersion', { dshPeers: { '@deepseek-ai/dsh': '*' }, manifestVersion: ' \t' }, 'a malformed manifestVersion'],
+    ['a non-string manifestVersion', { dshPeers: { '@deepseek-ai/dsh': '*' }, manifestVersion: 1 }, 'a malformed manifestVersion'],
+  ])('throws on %s', (_label, extra, message) => {
+    // Each row pins the exact tail `parseRepoState` throws for one malformed
+    // rule-2 shape. Both fields are copied into the published entry, so one
+    // this build never writes is a malformed registry file, like a malformed
+    // `peers` or `compatibility`.
+    expect(() => parseRepoState(rowWith(extra))).toThrow(`a/one has a candidate with ${message}`)
   })
 
   it('throws on a candidate that is not an object at all', () => {

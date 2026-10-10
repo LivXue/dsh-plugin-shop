@@ -20,19 +20,22 @@ import { UNBUILT_FIELD_MAX_LENGTH } from './release-asset.ts'
 import type { RepoCandidate } from './types.ts'
 
 /**
- * The version of the rule that writes a repository candidate's `peers` and
- * `compatibility`, stamped beside them as {@link RepoCandidate.declarationsRule}.
+ * The version of the rule that writes a repository candidate's declaration
+ * fields (`peers`, `compatibility`, `dshPeers` and `manifestVersion`), stamped
+ * beside them as {@link RepoCandidate.declarationsRule}.
  *
- * Bump it whenever `peerNamesOf` or `compatibilityOf` (npm-client.ts) changes
- * what it returns, or whenever WHERE a candidate's declarations are read from
- * changes — a release-rescued root reading its tarball's manifest instead of
- * HEAD's was that kind of change. Every recorded listable candidate stamped
- * with any other value is then re-read once, cheaply: one manifest at the
- * recorded commit, or the recorded release asset (`harvestRepos` in
- * github-client.ts, under its own per-run budget), and stamped again.
+ * Bump it whenever `peerNamesOf`, `compatibilityOf` or `dshPeersOf`
+ * (npm-client.ts) changes what it returns, whenever the declarations writer
+ * (`writeDeclarations`, github-client.ts) starts or stops recording a field,
+ * or whenever WHERE a candidate's declarations are read from changes: a
+ * release-rescued root reading its tarball's manifest instead of HEAD's was
+ * that kind of change. Every recorded listable candidate stamped with any
+ * other value is then re-read once, cheaply: one manifest at the recorded
+ * commit, or the recorded release asset (`harvestRepos` in github-client.ts,
+ * under its own per-run budget), and stamped again.
  *
  * A version, not the presence of `peers`, because `tier.ts` republishes a
- * carried candidate's two fields verbatim, so a record is only as current as
+ * carried candidate's declarations verbatim, so a record is only as current as
  * the rule that wrote it. The presence marker this replaced knew "read or not"
  * and never "read under which rule": a reader change reached npm entries on
  * the next build and never reached a dormant repository — a carried
@@ -42,8 +45,15 @@ import type { RepoCandidate } from './types.ts'
  *
  * Compared for equality, so a stamp from a LATER rule — a build that was rolled
  * back — is re-read as well rather than trusted.
+ *
+ * 1 (2026-09-24): `peers` and `compatibility`.
+ * 2 (2026-10-10): `dshPeers` and `manifestVersion` as well, what dsh judges a
+ * github install by from 0.1.7 on (design
+ * 2026-09-28-bundle-components-and-github-peers, sections 6 and 13). Every
+ * listable carried candidate stamped 1 is re-read once to gain them; until
+ * it is, it carries neither.
  */
-export const DECLARATIONS_RULE = 1
+export const DECLARATIONS_RULE = 2
 
 /** One repository's recorded state. Exactly one of the outcome fields is
  * present: candidates for a usable fetch, or a failure reason. */
@@ -168,32 +178,38 @@ function reboundCarriedSize(candidate: RepoCandidate): RepoCandidate {
 }
 
 /**
- * Refuse a carried candidate whose `peers`, `compatibility` or declarations
- * stamp is a shape this build never writes, and return it typed.
+ * Refuse a carried candidate whose `peers`, `compatibility`, `dshPeers`,
+ * `manifestVersion` or declarations stamp is a shape this build never writes,
+ * and return it typed.
  *
- * All three ride the bare cast `parseRepoState` revives candidates with, and
- * none is re-derived on the way out: `tier.ts` copies the first two into the
- * published entry as they stand, and the stamp decides whether they are ever
- * read again. This build is their only writer, so a wrong shape means the file
- * was edited or corrupted by something else, and it throws — the rule for a
- * malformed registry file, as for a malformed `failure` record. `installSize`
- * is repaired instead (`reboundCarriedSize`) because a size is a decoration;
- * these feed a warning published against someone's plugin, which is the kind
- * of output this project would rather stop than publish wrong. A stamp in
+ * Every field just named rides the bare cast `parseRepoState` revives
+ * candidates with, and none is re-derived on the way out: whatever `tier.ts`
+ * publishes of them it copies as it stands, and the stamp decides whether
+ * they are ever read again. This build is their only writer, so a wrong shape
+ * means the file was edited or corrupted by something else, and it throws:
+ * the rule for a malformed registry file, as for a malformed `failure`
+ * record. `installSize` is repaired instead (`reboundCarriedSize`) because a
+ * size is a decoration; these feed a warning or a refusal published against
+ * someone's plugin, which is the kind of output this project would rather
+ * stop than publish wrong. A stamp in
  * particular has to be exact: one that compared unequal by accident would
  * re-read its repository every run, and one that compared equal by accident
  * would freeze its declarations under a rule nobody applied.
  *
- * ABSENT is not a wrong shape for any of the three. A record written before a
- * field existed carries none of it, and it stays absent: a missing stamp is
- * what queues `diffRepoState`'s re-read, and a missing `peers` is what that
- * re-read fills in.
+ * ABSENT is not a wrong shape for `peers`, `compatibility` or the stamp. A
+ * record written before a field existed carries none of it, and it stays
+ * absent: a missing stamp is what queues `diffRepoState`'s re-read, and a
+ * missing `peers` is what that re-read fills in. `dshPeers` and
+ * `manifestVersion` are absent together on every record rule 1 wrote and on
+ * every manifest with no usable harness peer, which is their ordinary shape;
+ * one present without the other is a record the one writer never makes
+ * (`writeDeclarations`), and this throws on it.
  *
  * Types only, not the harvest's length and count bounds. Those are applied
- * where the value is read (`peerNamesOf`, `compatibilityOf`), and a bound
- * lowered later must not turn every row written under the old one into a
- * build that cannot start; the payload budget in `repo-gate.ts` still
- * measures whatever a carried row would publish.
+ * where the value is read (`peerNamesOf`, `compatibilityOf`, `dshPeersOf`, the
+ * writer's version bound), and a bound lowered later must not turn every row
+ * written under the old one into a build that cannot start; the payload budget
+ * in `repo-gate.ts` still measures whatever a carried row would publish.
  * @param repo - the state key, for the error.
  * @param candidate - one carried candidate, unvalidated.
  */
@@ -201,10 +217,12 @@ function checkCarriedDeclarations(repo: string, candidate: unknown): RepoCandida
   if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) {
     throw new Error(`repo-state.json: ${repo} has a candidate that is not an object`)
   }
-  const { peers, compatibility, declarationsRule } = candidate as {
+  const { peers, compatibility, declarationsRule, dshPeers, manifestVersion } = candidate as {
     peers?: unknown
     compatibility?: unknown
     declarationsRule?: unknown
+    dshPeers?: unknown
+    manifestVersion?: unknown
   }
   if (peers !== undefined && !isStringArray(peers)) {
     throw new Error(`repo-state.json: ${repo} has a candidate with a malformed peers record`)
@@ -219,11 +237,39 @@ function checkCarriedDeclarations(repo: string, candidate: unknown): RepoCandida
     && !(typeof declarationsRule === 'number' && Number.isSafeInteger(declarationsRule) && declarationsRule > 0)) {
     throw new Error(`repo-state.json: ${repo} has a candidate with a malformed declarationsRule stamp`)
   }
+  if (dshPeers !== undefined && !isDshPeersRecord(dshPeers)) {
+    throw new Error(`repo-state.json: ${repo} has a candidate with a malformed dshPeers record`)
+  }
+  // Blank after trimming, the empty string included, is a version the writer
+  // drops (dsh's own `identityField` refuses it), so one here is a record no
+  // build wrote.
+  if (manifestVersion !== undefined && (typeof manifestVersion !== 'string' || manifestVersion.trim() === '')) {
+    throw new Error(`repo-state.json: ${repo} has a candidate with a malformed manifestVersion`)
+  }
+  // Written together or not at all (`writeDeclarations`), so one without the
+  // other is a record no build wrote.
+  if ((dshPeers === undefined) !== (manifestVersion === undefined)) {
+    throw new Error(`repo-state.json: ${repo} has a candidate with dshPeers and manifestVersion recorded apart`)
+  }
   return candidate as RepoCandidate
 }
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every(item => typeof item === 'string')
+}
+
+/**
+ * The shape `dshPeersOf` writes: a non-empty plain object whose keys are
+ * harness package names (`@deepseek-ai/dsh` and `@deepseek-ai/dsh-*`) and
+ * whose values are strings, the empty string included, since that reader
+ * keeps an empty range (dsh reads it as unsatisfiable). Published whole, so a
+ * key outside that scope would go out under the author's name.
+ */
+function isDshPeersRecord(value: unknown): value is Record<string, string> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+  const entries = Object.entries(value)
+  return entries.length > 0 && entries.every(([name, range]) =>
+    (name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-')) && typeof range === 'string')
 }
 
 /**
@@ -487,9 +533,10 @@ function lacksEntryCheck(recorded: RepoState[string]): boolean {
 }
 
 /**
- * Whether a recorded repo has listable candidates whose `peers` and
- * `compatibility` were not written under the current {@link DECLARATIONS_RULE}
- * — never stamped at all included, which is every record from before the stamp.
+ * Whether a recorded repo has listable candidates whose declarations were not
+ * written under the current {@link DECLARATIONS_RULE}, never stamped at all
+ * included, which is every record from before the stamp: whether any of its
+ * candidates {@link needsDeclarationsReread}.
  *
  * The same retroactivity hole as {@link lacksSizeProbe}, and this time nothing
  * else closes it. The size backfill re-read every recorded repository once,
@@ -508,7 +555,8 @@ function lacksEntryCheck(recorded: RepoState[string]): boolean {
  * requires nothing, so keying on an EMPTY list, which would re-queue every
  * peerless plugin forever, is not the test — and a successful re-read writes
  * it too, so the queue is once per repository per rule and self-terminating.
- * One stamp serves both fields because one writer writes both.
+ * One stamp serves every declaration field because one writer writes them
+ * all.
  *
  * What it queues is a RE-READ, not a fetch: the diff's separate `toReread`,
  * which harvestRepos serves after every full fetch with one manifest read per
@@ -528,9 +576,37 @@ function lacksEntryCheck(recorded: RepoState[string]): boolean {
  * re-queues exactly the candidates it made listable.
  */
 function hasStaleDeclarations(recorded: RepoState[string]): boolean {
-  return (recorded.candidates ?? []).some(
-    candidate => canEverList(candidate) && candidate.declarationsRule !== DECLARATIONS_RULE,
-  )
+  return (recorded.candidates ?? []).some(candidate => needsDeclarationsReread(candidate))
+}
+
+/**
+ * Whether a recorded candidate's declarations must be re-read: its stamp is
+ * not the current {@link DECLARATIONS_RULE}, and it could list once they are
+ * read ({@link canEverList}).
+ *
+ * The ONE predicate the diff and the re-read itself ask: `hasStaleDeclarations`
+ * queues a repository on it, and `rereadEntry` (github-client.ts) reads
+ * exactly the candidates it names, so the queue and the reads it buys cannot
+ * disagree about which candidates they mean. Exported for that second caller,
+ * and so a count of the queue asks the same question the build does.
+ *
+ * Both halves are load-bearing, and each has its own case in
+ * `repo-state.test.ts`. The stamp half is the whole reason the marker is a
+ * version: `tier.ts` republishes a carried candidate's declarations verbatim,
+ * so one written under an older rule would publish that rule's answer forever,
+ * and comparing by equality also re-reads a stamp from a LATER rule, a build
+ * that was rolled back. The listability half is the reason
+ * `hasStaleDeclarations` gives above.
+ *
+ * Self-terminating, at most one successful read per candidate per rule: a
+ * successful re-read writes the current stamp, so this stops naming the
+ * candidate. A failed or unusable read leaves the candidate as recorded, so
+ * it is read again next run.
+ * @param candidate - a recorded candidate, as carried in `repo-state.json`.
+ * @returns whether its declarations must be re-read.
+ */
+export function needsDeclarationsReread(candidate: RepoCandidate): boolean {
+  return candidate.declarationsRule !== DECLARATIONS_RULE && canEverList(candidate)
 }
 
 /**
