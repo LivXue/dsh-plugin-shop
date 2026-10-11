@@ -293,7 +293,8 @@ describe('fetchArchivedFlags (design 2026-10-08-archived-flag-and-shadowed-recov
     const result = await fetchArchivedFlags([], { token: 't', fetchImpl })
     expect(result.archived.size).toBe(0)
     expect(result.forked.size).toBe(0)
-    expect(result.skipped).toEqual([])
+    expect(result.archivedSkipped).toEqual([])
+    expect(result.forkSkipped).toEqual([])
   })
 
   it('returns immediately for an empty token', async () => {
@@ -301,7 +302,8 @@ describe('fetchArchivedFlags (design 2026-10-08-archived-flag-and-shadowed-recov
     const result = await fetchArchivedFlags(['a/b'], { token: '', fetchImpl })
     expect(result.archived.size).toBe(0)
     expect(result.forked.size).toBe(0)
-    expect(result.skipped).toEqual([])
+    expect(result.archivedSkipped).toEqual([])
+    expect(result.forkSkipped).toEqual([])
   })
 
   it('batches 450 repos into 200/200/50 queries and asks both flags on the same aliases', async () => {
@@ -331,7 +333,8 @@ describe('fetchArchivedFlags (design 2026-10-08-archived-flag-and-shadowed-recov
     expect(result.forked.get('a/one')).toBe(true)
     expect(result.archived.get('a/two')).toBe(true)
     expect(result.forked.get('a/two')).toBe(false)
-    expect(result.skipped).toEqual([])
+    expect(result.archivedSkipped).toEqual([])
+    expect(result.forkSkipped).toEqual([])
   })
 
   it('a node with only one boolean scalar contributes only that map, no skip', async () => {
@@ -347,14 +350,16 @@ describe('fetchArchivedFlags (design 2026-10-08-archived-flag-and-shadowed-recov
     expect(result.forked.has('a/one')).toBe(false)
     expect(result.archived.has('a/two')).toBe(false)
     expect(result.forked.get('a/two')).toBe(false)
-    // One skip per repo, flagged by the bad scalar only.
-    expect(result.skipped).toEqual(['a/one: no answer', 'a/two: no answer'])
+    // One skip per repo, flagged by the bad scalar only — on its OWN list.
+    expect(result.archivedSkipped).toEqual(['a/two: no answer'])
+    expect(result.forkSkipped).toEqual(['a/one: no answer'])
   })
 
-  it('a null node (renamed/deleted repo) yields no entry in either map and one skip', async () => {
+  it('a null node (renamed/deleted repo) yields no entry in either map and one skip per scalar', async () => {
     // A renamed or deleted repo answers with a null alias (or not at all, via
     // `errors`). That is "no fact supplied", so the record stays as it was —
-    // the same rule the probe's nextRepoState arm carries.
+    // the same rule the probe's nextRepoState arm carries. A null alias fails
+    // BOTH scalars, so both lists carry the entry.
     const fetchImpl = (async () => okRepoFlagsResponse({
       'a/one': { isArchived: true, isFork: false },
       'a/gone': null,
@@ -362,18 +367,20 @@ describe('fetchArchivedFlags (design 2026-10-08-archived-flag-and-shadowed-recov
     const result = await fetchArchivedFlags(['a/one', 'a/gone'], { token: 't', fetchImpl })
     expect(result.archived.has('a/gone')).toBe(false)
     expect(result.forked.has('a/gone')).toBe(false)
-    expect(result.skipped).toEqual(['a/gone: no answer'])
+    expect(result.archivedSkipped).toEqual(['a/gone: no answer'])
+    expect(result.forkSkipped).toEqual(['a/gone: no answer'])
   })
 
-  it('keeps the healthy aliases when one alias errors, with the real reason on the skip', async () => {
+  it('keeps the healthy aliases when one alias errors, with the real reason on both skip lists', async () => {
     const fetchImpl = (async () => new Response(JSON.stringify({
       data: { a0: { isArchived: true, isFork: false }, a1: null },
       errors: [{ message: 'Could not resolve to a Repository', path: ['a1'] }],
     }), { status: 200 })) as unknown as typeof fetch
-    const { archived, skipped } = await fetchArchivedFlags(['a/one', 'a/gone'], { token: 't', fetchImpl, sleep: async () => {} })
+    const { archived, archivedSkipped, forkSkipped } = await fetchArchivedFlags(['a/one', 'a/gone'], { token: 't', fetchImpl, sleep: async () => {} })
     expect(archived.get('a/one')).toBe(true)
     expect(archived.size).toBe(1)
-    expect(skipped).toEqual(['a/gone: Could not resolve to a Repository'])
+    expect(archivedSkipped).toEqual(['a/gone: Could not resolve to a Repository'])
+    expect(forkSkipped).toEqual(['a/gone: Could not resolve to a Repository'])
   })
 
   it('skips the whole batch on a gateway error', async () => {
@@ -381,8 +388,10 @@ describe('fetchArchivedFlags (design 2026-10-08-archived-flag-and-shadowed-recov
     const result = await fetchArchivedFlags(['a/one', 'a/two'], { token: 't', fetchImpl, sleep: async () => {} })
     expect(result.archived.size).toBe(0)
     expect(result.forked.size).toBe(0)
-    expect(result.skipped).toHaveLength(2)
-    expect(result.skipped[0]).toContain('502')
+    expect(result.archivedSkipped).toHaveLength(2)
+    expect(result.forkSkipped).toHaveLength(2)
+    expect(result.archivedSkipped[0]).toContain('502')
+    expect(result.forkSkipped[0]).toContain('502')
   })
 
   it('records a transport failure for every repo in the batch', async () => {
@@ -390,7 +399,11 @@ describe('fetchArchivedFlags (design 2026-10-08-archived-flag-and-shadowed-recov
     const result = await fetchArchivedFlags(['a/b', 'c/d'], { token: 't', fetchImpl })
     expect(result.archived.size).toBe(0)
     expect(result.forked.size).toBe(0)
-    expect(result.skipped).toEqual([
+    expect(result.archivedSkipped).toEqual([
+      'a/b: gateway unreachable: ECONNREFUSED',
+      'c/d: gateway unreachable: ECONNREFUSED',
+    ])
+    expect(result.forkSkipped).toEqual([
       'a/b: gateway unreachable: ECONNREFUSED',
       'c/d: gateway unreachable: ECONNREFUSED',
     ])
@@ -404,8 +417,10 @@ describe('fetchArchivedFlags (design 2026-10-08-archived-flag-and-shadowed-recov
     })
     expect(result.archived.size).toBe(0)
     expect(result.forked.size).toBe(0)
-    expect(result.skipped).toHaveLength(1)
-    expect(result.skipped[0]).toContain('gateway unreachable')
+    expect(result.archivedSkipped).toHaveLength(1)
+    expect(result.forkSkipped).toHaveLength(1)
+    expect(result.archivedSkipped[0]).toContain('gateway unreachable')
+    expect(result.forkSkipped[0]).toContain('gateway unreachable')
     expect(Date.now() - started).toBeLessThan(5000)
   })
 
