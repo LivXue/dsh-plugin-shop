@@ -183,6 +183,14 @@ export interface RepoCandidate {
    */
   archived?: boolean
   /**
+   * Whether GitHub reports the repository as a fork (the `isFork` scalar the
+   * same GraphQL pass answers, design 2026-10-11 §1.1). The same presence
+   * rule as {@link RepoCandidate.archived}: recorded only on a GitHub
+   * answer, so a record written before the field existed carries none and
+   * absence is never normalized to `false`.
+   */
+  forked?: boolean
+  /**
    * The names of the manifest's REQUIRED `peerDependencies`, without ranges —
    * the same record, read by the same `peerNamesOf`, as
    * {@link Candidate.peers}, so an optional peer is left out on this channel
@@ -634,4 +642,14 @@ export interface Entry {
    * predates it strips the key (consumer zod is non-strict by design).
    */
   archived?: true
+  /**
+   * The repository GitHub reports as a fork. `true` only — the field is
+   * omitted otherwise, exactly {@link Entry.archived}'s emit shape (design
+   * 2026-10-11 §1.1). github entries only, and informative: it changes what a
+   * reader sees, never the gate, the verified/denied path, or the shelf.
+   *
+   * Additive and optional, so it rides every schemaVersion: a client that
+   * predates it strips the key (consumer zod is non-strict by design).
+   */
+  forked?: true
 }

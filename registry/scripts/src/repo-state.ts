@@ -74,6 +74,16 @@ export interface RepoStateEntry {
    * will never come.
    */
   archived?: boolean
+  /**
+   * The `forked` boolean the GraphQL pass answered, recorded as observed
+   * (design 2026-10-11-fork-flag §1.1), mirroring {@link RepoStateEntry.archived}'s
+   * rule: optional — every record predating the field is without it, a repo
+   * the graph pass omitted supplied no fact, and absence is never normalized
+   * to `false`. Unlike `archived`, the fact is a creation-time attribute and
+   * virtually immutable, so a write is virtually the first answer rather than
+   * a correction; a third fact receiver still does not normalize one.
+   */
+  forked?: boolean
   /** The recorded deterministic failure; re-fetched only when `pushedAt` changes. */
   failure?: { code: 'no-manifest' | 'fetch-failed'; detail: string }
   /**
@@ -344,6 +354,7 @@ export function parseRepoState(text: string): RepoState {
       pushedAt?: unknown
       commit?: unknown
       archived?: unknown
+      forked?: unknown
       candidate?: unknown
       candidates?: unknown
       failure?: unknown
@@ -360,6 +371,11 @@ export function parseRepoState(text: string): RepoState {
       // means the file was edited, and a malformed registry file throws.
       throw new Error(`repo-state.json: ${repo} has a malformed archived record`)
     }
+    if (entry.forked !== undefined && typeof entry.forked !== 'boolean') {
+      // The archived rule verbatim: this build is the only writer of this
+      // record too, so a non-boolean here was not written by a build.
+      throw new Error(`repo-state.json: ${repo} has a malformed forked record`)
+    }
     let candidates: RepoCandidate[]
     if (Array.isArray(entry.candidates)) {
       candidates = entry.candidates.map(candidate => reboundCarriedSize(checkCarriedEntryCheck(repo, checkCarriedDeclarations(repo, candidate))))
@@ -373,6 +389,7 @@ export function parseRepoState(text: string): RepoState {
       commit: entry.commit,
       candidates,
       ...(entry.archived !== undefined ? { archived: entry.archived } : {}),
+      ...(entry.forked !== undefined ? { forked: entry.forked } : {}),
     }
     if (entry.failure !== undefined) {
       const failure = entry.failure as { code?: unknown; detail?: unknown }
@@ -719,6 +736,7 @@ export function nextRepoState(
         commit: fresh.candidates[0]?.commit ?? recorded?.commit ?? '',
         candidates: fresh.candidates,
         ...(recorded?.archived !== undefined ? { archived: recorded.archived } : {}),
+        ...(recorded?.forked !== undefined ? { forked: recorded.forked } : {}),
         ...(fresh.failure !== undefined ? { failure: fresh.failure } : {}),
         ...(fresh.subpackageFailures !== undefined && fresh.subpackageFailures.length > 0
           ? { subpackageFailures: fresh.subpackageFailures }
@@ -726,8 +744,8 @@ export function nextRepoState(
       }
     } else if (recorded !== undefined) {
       // A carried entry keeps its recorded state wholesale — including any
-      // `archived` the GraphQL pass wrote — because the search item supplies
-      // no fact about it (design 2026-10-08 §1.3).
+      // `archived` and `forked` the GraphQL pass wrote — because the search
+      // item supplies no fact about either (design 2026-10-08 §1.3).
       next[entry.repo] = recorded
     }
     // A seen repo with neither a fresh outcome nor a recorded one stays out
