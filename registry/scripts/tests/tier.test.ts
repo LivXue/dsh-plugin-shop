@@ -326,7 +326,7 @@ describe('assignRepoTier', () => {
     expect(Object.keys(assignRepoTier(full, config))).toEqual([
       'name', 'version', 'integrity', 'publishedAt', 'repository', 'license',
       'metadata', 'catalog', 'source', 'repo', 'subdir', 'tarball', 'added',
-      'installSize', 'peers', 'compatibility', 'archived', 'forked', 'dshPeers', 'manifestVersion', 'tier',
+      'installSize', 'peers', 'compatibility', 'archived', 'dshPeers', 'manifestVersion', 'forked', 'tier',
     ])
   })
 
