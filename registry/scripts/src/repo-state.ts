@@ -791,3 +791,40 @@ export function layerArchivedFlags(state: RepoState, candidates: RepoCandidate[]
     if (state[candidate.repo]?.archived === true) candidate.archived = true
   }
 }
+
+/**
+ * Merge GraphQL-supplied fork flags into the repo state, for the listed
+ * repositories only (design 2026-10-11-fork-flag §1.3). A repo the Map omits
+ * supplied no fact; its record stands as it is. A repo the Map carries
+ * supersedes the record: GitHub answered, and the answer may differ from what
+ * was recorded (a repository CAN stop being a fork).
+ */
+export function applyForkFlags(state: RepoState, flags: Map<string, boolean>): RepoState {
+  const next: RepoState = {}
+  for (const [repo, entry] of Object.entries(state)) {
+    const flag = flags.get(repo.toLowerCase())
+    if (flag === undefined || flag === entry.forked) {
+      next[repo] = entry
+    } else {
+      next[repo] = { ...entry, forked: flag }
+    }
+  }
+  return next
+}
+
+/**
+ * Layer the recorded fork flag onto this run's candidates, so the emit step
+ * can read it (design 2026-10-11-fork-flag §1.3). The lookup is VERBATIM: the
+ * state key and {@link RepoCandidate.repo} both come from GitHub's
+ * `full_name`, and share its case — a lowercased key misses every mixed-case
+ * repository (34% of the listed pool, measured 2026-10-09 over
+ * `manifest.lock`), which is exactly the set the flag then never reaches.
+ * Only `forked: true` is layered: an absent or false flag stays off the
+ * candidate, because the emitted field is `forked?: true` and `false` is its
+ * omission.
+ */
+export function layerForkFlags(state: RepoState, candidates: RepoCandidate[]): void {
+  for (const candidate of candidates) {
+    if (state[candidate.repo]?.forked === true) candidate.forked = true
+  }
+}

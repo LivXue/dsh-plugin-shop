@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { DECLARATIONS_RULE, applyArchivedFlags, diffRepoState, layerArchivedFlags, needsDeclarationsReread, nextRepoState, parseRepoState, repoGoneDetail, serializeRepoState, staleFailureRepos } from '../src/repo-state.ts'
+import { DECLARATIONS_RULE, applyArchivedFlags, applyForkFlags, diffRepoState, layerArchivedFlags, layerForkFlags, needsDeclarationsReread, nextRepoState, parseRepoState, repoGoneDetail, serializeRepoState, staleFailureRepos } from '../src/repo-state.ts'
 import type { RepoState, RepoStateEntry } from '../src/repo-state.ts'
 import type { RepoCandidate } from '../src/types.ts'
 import { dshPeersOf } from '../src/npm-client.ts'
@@ -518,6 +518,51 @@ describe('the forked marker (design 2026-10-11-fork-flag §1.1)', () => {
       },
     }
     expect(parseRepoState(serializeRepoState(recorded))).toEqual(recorded)
+  })
+
+  it('applyForkFlags supersedes the recorded forked with the GraphQL answer', () => {
+    // Mirrored on applyArchivedFlags above: the Map keys are lowercased, an
+    // omitted repo supplies no fact, and an answer equal to the record leaves
+    // the entry object untouched — no churn in the serialized file.
+    const carried: RepoState = {
+      'a/one': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [candidate('a/one')], forked: false },
+    }
+    const superseded = applyForkFlags(carried, new Map([['a/one', true]]))
+    expect(superseded['a/one']?.forked).toBe(true)
+    // A repo the Map omits supplies no fact: the record stands.
+    const untouched = applyForkFlags(carried, new Map([['x/other', true]]))
+    expect(untouched['a/one']?.forked).toBe(false)
+    // An absent record + a flag = the record gains it.
+    const added = applyForkFlags(state, new Map([['a/one', true]]))
+    expect(added['a/one']?.forked).toBe(true)
+    // A flag equal to the record: the entry object is reused, identity for identity.
+    const unchanged = applyForkFlags(carried, new Map([['a/one', false]]))
+    expect(unchanged['a/one']).toBe(carried['a/one'])
+  })
+
+  it('layers a mixed-case repository\'s recorded forked onto its candidate (verbatim lookup)', () => {
+    // Same verbatim rule as layerArchivedFlags: the state key and the
+    // candidate share `full_name` case, and a lowercased lookup would miss
+    // exactly the mixed-case repositories the flag exists to describe.
+    const mixed: RepoState = {
+      'Diluka/dsh-agent-plugin-market': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [candidate('Diluka/dsh-agent-plugin-market')], forked: true },
+    }
+    const candidates = [candidate('Diluka/dsh-agent-plugin-market'), candidate('a/lowercase')]
+    layerForkFlags(mixed, candidates)
+    expect(candidates[0]?.forked).toBe(true)
+    // No record, no flag: the candidate stays without the field.
+    expect(candidates[1]).not.toHaveProperty('forked')
+  })
+
+  it('layers only forked: true — a recorded false stays off the candidate', () => {
+    // The emitted field is `forked?: true`; `false` is its omission, so the
+    // layering writes nothing for an original repository.
+    const original: RepoState = {
+      'a/original': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [candidate('a/original')], forked: false },
+    }
+    const candidates = [candidate('a/original')]
+    layerForkFlags(original, candidates)
+    expect(candidates[0]).not.toHaveProperty('forked')
   })
 })
 
