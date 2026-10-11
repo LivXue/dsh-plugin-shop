@@ -148,17 +148,11 @@ export function assignRepoTier(accepted: RepoAccepted, config: RegistryConfig): 
     // After `peers`, for the same reason, and copied the same way the npm
     // path copies it.
     ...(repo.compatibility !== undefined ? { compatibility: repo.compatibility } : {}),
-    // After every other optional, because this one reached the type last
+    // After every other optional that reached this channel before it
     // (design 2026-10-08 §1.3). `true` only — omitted otherwise, and the
     // emit path checks `=== true` rather than truthiness so a recorded
     // `false` (a repo GraphQL answered as live) stays off the catalog row.
     ...(repo.archived === true ? { archived: true as const } : {}),
-    // After `archived`, beside the record it was layered with — the same
-    // GraphQL pass answers both (design 2026-10-11 §1.1). `true` only —
-    // omitted otherwise, and the emit path checks `=== true` rather than
-    // truthiness so a recorded `false` (a repo GraphQL answered as an
-    // original) stays off the catalog row.
-    ...(repo.forked === true ? { forked: true as const } : {}),
     // After `archived`, which was last until these two reached this channel
     // (design 2026-09-28-bundle-components-and-github-peers, section 6), and
     // together: the declarations writer records both or neither. Copied,
@@ -167,6 +161,11 @@ export function assignRepoTier(accepted: RepoAccepted, config: RegistryConfig): 
     // this entry's `version` is a commit or a tag.
     ...(repo.dshPeers !== undefined ? { dshPeers: repo.dshPeers } : {}),
     ...(repo.manifestVersion !== undefined ? { manifestVersion: repo.manifestVersion } : {}),
+    // After `manifestVersion` — a new optional key goes at the END (§7.1).
+    // `true` only — omitted otherwise, and the emit path checks `=== true`
+    // rather than truthiness so a recorded `false` (a repo GraphQL answered
+    // as an original) stays off the catalog row (design 2026-10-11 §1.1).
+    ...(repo.forked === true ? { forked: true as const } : {}),
   }
   // A release-pinned entry is reviewed by its tarball sha256: the tag is
   // display only — a mutable ref an author can re-point at different content
