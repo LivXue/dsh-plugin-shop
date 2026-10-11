@@ -449,6 +449,78 @@ describe('the archived marker (design 2026-10-08-archived-flag-and-shadowed-reco
   })
 })
 
+describe('the forked marker (design 2026-10-11-fork-flag §1.1)', () => {
+  // Mirrored on the archived block above, assertion for assertion: the two
+  // kinds decay independently, so the record keeps them as two fields following
+  // one discipline. GraphQL fetching (`applyForkFlags`) and emit layering
+  // (`layerForkFlags`) land in later tasks; what is pinned here is the field
+  // and its round-trip through the file.
+
+  it('round-trips forked true and false through parse and serialize', () => {
+    const recorded: RepoState = {
+      'a/fork': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [candidate('a/fork')], forked: true },
+      'b/original': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [candidate('b/original')], forked: false },
+    }
+    expect(parseRepoState(serializeRepoState(recorded))).toEqual(recorded)
+  })
+
+  it('leaves a record written before the field existed without it, rather than inventing false', () => {
+    // Every record in the committed repo-state.json predates the field, and a
+    // forked:false written for a repository nobody observed would be a fact
+    // GitHub never reported. Absent stays absent; the GraphQL pass fills it
+    // on the next merge.
+    const parsed = parseRepoState(JSON.stringify({
+      'a/one': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [candidate('a/one')] },
+    }))
+    expect(parsed['a/one']).not.toHaveProperty('forked')
+    const text = serializeRepoState(parsed)
+    expect(text).not.toContain('"forked"')
+  })
+
+  it('throws on a non-boolean forked, a shape this build never writes', () => {
+    // Same rule as the archived record: this build is the only writer, so a
+    // different shape means the file was edited, and a malformed registry file
+    // throws rather than being normalized.
+    for (const forked of ['yes', 1, null, {}]) {
+      const text = JSON.stringify({
+        'a/one': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [candidate('a/one')], forked },
+      })
+      expect(() => parseRepoState(text), JSON.stringify(forked)).toThrow('a/one has a malformed forked record')
+    }
+  })
+
+  it('keeps a recorded forked through nextRepoState, on the fresh path and the carried one', () => {
+    // nextRepoState carries the recorded value forward on both the fresh
+    // and carried paths — the search item supplies no fork fact, so a record
+    // holding one keeps it until the graph pass answers (design §1.3).
+    const withForked: RepoState = {
+      'a/one': { pushedAt: '2026-08-01T00:00:00Z', commit, candidates: [candidate('a/one')], forked: true },
+    }
+    const fresh = new Map([['a/one', { candidates: [candidate('a/one')] }]])
+    const afterFresh = nextRepoState(withForked, [{ repo: 'a/one', pushedAt: '2026-08-02T00:00:00Z' }], fresh)
+    expect(afterFresh['a/one']?.forked).toBe(true)
+    const afterCarried = nextRepoState(withForked, [{ repo: 'a/one', pushedAt: '2026-08-01T00:00:00Z' }], new Map())
+    expect(afterCarried['a/one']?.forked).toBe(true)
+  })
+
+  it("records forked and archived as two fields, so neither's absence costs the other", () => {
+    // The two kinds decay independently (design §1.3): a parse that fused
+    // them, or a record shape that required them together, would lose one
+    // kind's observation whenever the other's GraphQL answer was skipped.
+    const recorded: RepoState = {
+      'a/fork': {
+        pushedAt: '2026-08-01T00:00:00Z', commit,
+        candidates: [candidate('a/fork')], archived: false, forked: true,
+      },
+      'b/original-archived': {
+        pushedAt: '2026-08-01T00:00:00Z', commit,
+        candidates: [candidate('b/original-archived')], archived: true, forked: false,
+      },
+    }
+    expect(parseRepoState(serializeRepoState(recorded))).toEqual(recorded)
+  })
+})
+
 describe('persisted subpackage failures', () => {
   const base = { pushedAt: '2026-08-02T00:00:00Z', commit: 'a'.repeat(40), candidates: [] }
 
