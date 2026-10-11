@@ -153,6 +153,12 @@ export function assignRepoTier(accepted: RepoAccepted, config: RegistryConfig): 
     // emit path checks `=== true` rather than truthiness so a recorded
     // `false` (a repo GraphQL answered as live) stays off the catalog row.
     ...(repo.archived === true ? { archived: true as const } : {}),
+    // After `archived`, beside the record it was layered with — the same
+    // GraphQL pass answers both (design 2026-10-11 §1.1). `true` only —
+    // omitted otherwise, and the emit path checks `=== true` rather than
+    // truthiness so a recorded `false` (a repo GraphQL answered as an
+    // original) stays off the catalog row.
+    ...(repo.forked === true ? { forked: true as const } : {}),
     // After `archived`, which was last until these two reached this channel
     // (design 2026-09-28-bundle-components-and-github-peers, section 6), and
     // together: the declarations writer records both or neither. Copied,

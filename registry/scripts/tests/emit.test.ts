@@ -128,6 +128,27 @@ describe('emit publisher', () => {
     expect(pluginsJson).not.toContain('installSize')
   })
 
+  it('publishes forked on a GITHUB entry at every schemaVersion', () => {
+    // Additive and optional, exactly `archived`'s emit shape (design
+    // 2026-10-11 §1.1) — and pinned in the published bytes rather than trusted
+    // to emit's pass-through for the reason the size cases above give: emit
+    // is the only module that treats entries differently per schemaVersion,
+    // so it is the only place a gate can strand a field.
+    const forked = { ...repoEntry('dsh-b', 'you/dsh-b'), archived: true as const, forked: true as const }
+    for (const version of [SCHEMA_VERSION, SUBPACKAGE_SCHEMA_VERSION, CATALOG_SCHEMA_VERSION]) {
+      const { pluginsJson } = emit([forked], [], '2026-08-26T00:00:00.000Z', null, version)
+      const parsed = JSON.parse(pluginsJson) as { schemaVersion: number; plugins: { archived?: true; forked?: true }[] }
+      expect(parsed.schemaVersion).toBe(version)
+      expect(parsed.plugins[0]?.archived).toBe(true)
+      expect(parsed.plugins[0]?.forked).toBe(true)
+    }
+  })
+
+  it('emits no forked key for an entry without one', () => {
+    const { pluginsJson } = emit([entry('dsh-a'), repoEntry('dsh-b', 'you/dsh-b')], [], '2026-08-26T00:00:00.000Z')
+    expect(pluginsJson).not.toContain('forked')
+  })
+
   it('publishes peers on a GITHUB entry at every schemaVersion', () => {
     // Additive and optional, and new to this channel on 2026-09-24. Pinned in
     // the published bytes for the reason the size cases above give: emit is

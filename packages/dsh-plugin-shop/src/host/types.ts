@@ -121,6 +121,11 @@ export interface CatalogEntry {
    * §1.3). github entries only, additive and optional: the shelf badges it
    * and nothing else — install, update, and enable are unchanged. */
   archived?: boolean
+  /** Whether GitHub reports the repository as a fork (design 2026-10-11
+   * §1.1). github entries only, additive and optional, and informative:
+   * nothing reads it here yet — it is telemetry the catalog publishes, not a
+   * gate, a badge, or an install decision. */
+  forked?: boolean
 }
 
 export interface DeniedEntry { name: string; detail: string; replacement?: string }

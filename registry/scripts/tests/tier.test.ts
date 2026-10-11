@@ -308,8 +308,9 @@ describe('assignRepoTier', () => {
     // and nothing more. `peers` arrived on this channel later than
     // `installSize` did, so by the same rule it sits after it, not in the
     // npm path's slot ahead of the sizes — and `compatibility` after both.
-    // `archived` came next (design 2026-10-08, section 1.3), and `dshPeers` with
-    // `manifestVersion` last (design
+    // `archived` came next (design 2026-10-08, section 1.3), then `forked`
+    // beside it — the same GraphQL pass answers both (design 2026-10-11
+    // §1.1) — and `dshPeers` with `manifestVersion` last (design
     // 2026-09-28-bundle-components-and-github-peers, section 6), so they
     // follow it. (`archived` was missing from this pin while its title said
     // every optional slot was filled; it is filled now.)
@@ -319,13 +320,36 @@ describe('assignRepoTier', () => {
     full.repo.peers = ['@deepseek-ai/cordis']
     full.repo.compatibility = { profiles: ['web'] }
     full.repo.archived = true
+    full.repo.forked = true
     full.repo.dshPeers = { '@deepseek-ai/dsh': '0.1.5-rc.2' }
     full.repo.manifestVersion = '1.0.0'
     expect(Object.keys(assignRepoTier(full, config))).toEqual([
       'name', 'version', 'integrity', 'publishedAt', 'repository', 'license',
       'metadata', 'catalog', 'source', 'repo', 'subdir', 'tarball', 'added',
-      'installSize', 'peers', 'compatibility', 'archived', 'dshPeers', 'manifestVersion', 'tier',
+      'installSize', 'peers', 'compatibility', 'archived', 'forked', 'dshPeers', 'manifestVersion', 'tier',
     ])
+  })
+
+  it('emits forked only on a recorded true, exactly as archived', () => {
+    // `false` is a fact too — GraphQL answered "an original" — but it is
+    // `forked`'s omission, like archived's (design 2026-10-11 §1.1): the
+    // catalog row carries `true` only, so the check is `=== true`, never
+    // truthiness.
+    const both = repoAccepted('dsh-repo-plugin')
+    both.repo.archived = true
+    both.repo.forked = true
+    const entry = assignRepoTier(both, config)
+    expect(entry.archived).toBe(true)
+    expect(entry.forked).toBe(true)
+
+    const original = repoAccepted('dsh-repo-plugin')
+    original.repo.forked = false
+    const originalEntry = assignRepoTier(original, config)
+    expect('forked' in originalEntry).toBe(false)
+
+    const unanswered = repoAccepted('dsh-repo-plugin')
+    const unansweredEntry = assignRepoTier(unanswered, config)
+    expect('forked' in unansweredEntry).toBe(false)
   })
 
   it('carries a github entry\'s harness peers and manifest version verbatim, and omits both when absent', () => {
