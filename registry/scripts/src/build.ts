@@ -19,7 +19,7 @@ import { describeDepartures, parseDepartureSummary, type DepartureSummary } from
 import { applyConfirmations, bootstrapFeedState, describeFeedCoverage, describeFeedRun, feedCarriersByKeyword, parseFeedCoverage, parseFeedRunReport, parseFeedState, serializeFeedState, type FeedInput, type FeedRead, type FeedState } from './feed-state.ts'
 import { fetchStarCounts, fetchArchivedFlags } from './github-stars.ts'
 import { HARVEST_TOPICS, REPO_BACKFILL_BUDGET_DEFAULT, describeSearchPhantoms, harvestRepos, parseHarvestBudget } from './github-client.ts'
-import { applyArchivedFlags, layerArchivedFlags, parseRepoState, repoGoneDetail, serializeRepoState } from './repo-state.ts'
+import { applyArchivedFlags, applyForkFlags, layerArchivedFlags, layerForkFlags, parseRepoState, repoGoneDetail, serializeRepoState } from './repo-state.ts'
 import { githubOwnerName } from './github-repo.ts'
 import { accountForDepartures, fetchCandidates, searchByKeywords, describePublisherAxis, describeShortfall, HARVEST_KEYWORDS, parseKeywordShortfall, parsePublisherAxisReport, PUBLISHER_PROBE_BUDGET_DEFAULT, type KeywordShortfall, type PublisherAxisReport } from './npm-client.ts'
 import { confirmCarriers, harvestFeed } from './npm-feed.ts'
@@ -421,12 +421,22 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
       }
       if (listedGitHubRepos.length > 0) {
         const archivedResult = await fetchArchivedFlags(listedGitHubRepos, { token: ghToken })
-        if (archivedResult.flags.size > 0) {
-          repoNextState = applyArchivedFlags(repoNextState, archivedResult.flags)
+        if (archivedResult.archived.size > 0) {
+          repoNextState = applyArchivedFlags(repoNextState, archivedResult.archived)
         }
-        const archivedCount = [...archivedResult.flags.values()].filter(Boolean).length
-        const archivedNote = `github archived flags: ${archivedResult.flags.size} answered (${archivedCount} archived)${archivedResult.skipped.length > 0 ? `, ${archivedResult.skipped.length} skipped` : ''}`
+        const archivedCount = [...archivedResult.archived.values()].filter(Boolean).length
+        const archivedNote = `github archived flags: ${archivedResult.archived.size} answered (${archivedCount} archived)${archivedResult.skipped.length > 0 ? `, ${archivedResult.skipped.length} skipped` : ''}`
         process.stderr.write(`${archivedNote}\n`)
+        // Fork flags (design 2026-10-11-fork-flag §1.1): the same pass answers
+        // `isFork` on the same aliases, so the skip list above is shared. The
+        // fork half is reported here alone — the design mandates no
+        // report-file line for it, unlike the archived one (§1.3).
+        if (archivedResult.forked.size > 0) {
+          repoNextState = applyForkFlags(repoNextState, archivedResult.forked)
+        }
+        const forkedCount = [...archivedResult.forked.values()].filter(Boolean).length
+        const forkedNote = `github fork flags: ${archivedResult.forked.size} answered (${forkedCount} forked)${archivedResult.skipped.length > 0 ? `, ${archivedResult.skipped.length} skipped` : ''}`
+        process.stderr.write(`${forkedNote}\n`)
       }
     }
     // The deferred write from the harvest branch: now carries the freshest
@@ -439,6 +449,7 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   // on the repo-state record, not on the harvested candidate (§1.3).
   if (repoNextState !== null) {
     layerArchivedFlags(repoNextState, repoCandidates)
+    layerForkFlags(repoNextState, repoCandidates)
   }
 
   const starsToken = process.env.STARS_TOKEN ?? ghToken
