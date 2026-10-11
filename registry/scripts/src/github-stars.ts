@@ -182,11 +182,14 @@ export async function fetchStarCounts(
 /* --------------------------------------------------------------------------
  * Archived flags (design 2026-10-08-archived-flag-and-shadowed-recovery §1.3)
  *
- * The GitHub REST search does not carry `archived` on its items (the probe
- * proved this), so the flag comes from GraphQL `isArchived` instead. The
- * batching is wider than the stars pass: 200 repositories per call rather
- * than 50, because `isArchived` is a single scalar on a well-bounded type
- * and the query stays well inside the 500-point-per-cost-window budget.
+ * The GitHub REST search does carry both `archived` and `fork` on its
+ * items; what the probe disproved was only that the REST projection feeds
+ * the emit, not that the field is absent. The build reads both flags from
+ * GraphQL (`isArchived`, `isFork`) so the full repo-state pool can be
+ * answered in one batched pass. The batching is wider than the stars pass:
+ * 200 repositories per call rather than 50, because each flag is a single
+ * scalar on a well-bounded type and the query stays well inside the
+ * 500-point-per-cost-window budget.
  * -------------------------------------------------------------------------- */
 
 /** Repositories per GraphQL batch. One `isArchived` scalar on a repository
