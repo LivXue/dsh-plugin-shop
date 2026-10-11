@@ -337,7 +337,7 @@ describe('fetchArchivedFlags (design 2026-10-08-archived-flag-and-shadowed-recov
     expect(result.forkSkipped).toEqual([])
   })
 
-  it('a node with only one boolean scalar contributes only that map, no skip', async () => {
+  it('a node with one bad scalar contributes only the good map, and one skip on the bad scalar\'s own list', async () => {
     // Each scalar is answered independently: a good isArchived beside a bad
     // isFork records archived and stays silent about fork — no fact supplied
     // for the fork half, but no reason both fail.
