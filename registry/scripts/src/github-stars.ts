@@ -205,23 +205,27 @@ export const ARCHIVED_BATCH_SIZE = 200
 export interface RepoFlagsFetchResult {
   /** Keyed `owner/name`, lowercased. Present only when GitHub answered. */
   archived: Map<string, boolean>
+  /** `owner/name` entries whose `isArchived` ended without an answer, with a reason. */
+  archivedSkipped: string[]
   /** Keyed `owner/name`, lowercased. Present only when GitHub answered. */
   forked: Map<string, boolean>
-  /** `owner/name` entries that ended without an answer, with a reason. */
-  skipped: string[]
+  /** `owner/name` entries whose `isFork` ended without an answer, with a reason. */
+  forkSkipped: string[]
 }
 
 /**
  * Fetch `isArchived` and `isFork` for a set of listed repositories via
  * GraphQL, on the same aliases in one batched pass.
  *
- * Advisory like the stars pass: every failure mode ends in `skipped`, the
+ * Advisory like the stars pass: every failure mode ends in a skip list, the
  * module never rejects. A repo the response omits (renamed, transferred,
  * deleted between the search and the batch) gets NO entry in either returned
  * Map — "no fact supplied ⇒ no write", the same rule `nextRepoState`
  * carries for absent values. Each scalar is its own fact: an alias whose
  * `isArchived` is boolean but whose `isFork` is not (schema drift) records
- * the archived half and skips on the fork half.
+ * the archived half and skips on the fork half alone. The skip lists are
+ * per-scalar so a fork-only failure never inflates the archived skip count
+ * the build prints, and vice versa.
  *
  * @param repos - `owner/slug` full names, exactly as GitHub resolves them
  *   (case-insensitive). Keys in the returned Maps are lowercased.
@@ -242,8 +246,9 @@ export async function fetchArchivedFlags(
   const timed = withTimeout(fetchImpl, timeoutMs, 'github graphql')
   const archived = new Map<string, boolean>()
   const forked = new Map<string, boolean>()
-  const skipped: string[] = []
-  if (token === '' || repos.length === 0) return { archived, forked, skipped }
+  const archivedSkipped: string[] = []
+  const forkSkipped: string[] = []
+  if (token === '' || repos.length === 0) return { archived, archivedSkipped, forked, forkSkipped }
 
   const batches: string[][] = []
   for (let i = 0; i < repos.length; i += ARCHIVED_BATCH_SIZE) batches.push(repos.slice(i, i + ARCHIVED_BATCH_SIZE))
@@ -270,7 +275,10 @@ export async function fetchArchivedFlags(
         response = await request()
       }
       if (!response.ok) {
-        for (const fullName of batch) skipped.push(`${fullName}: gateway ${response.status}`)
+        for (const fullName of batch) {
+          archivedSkipped.push(`${fullName}: gateway ${response.status}`)
+          forkSkipped.push(`${fullName}: gateway ${response.status}`)
+        }
         continue
       }
       let body: { data?: Record<string, { isArchived?: unknown; isFork?: unknown } | null>; errors?: unknown[] } = {}
@@ -279,7 +287,10 @@ export async function fetchArchivedFlags(
         if (parsed !== null && typeof parsed === 'object') body = parsed as typeof body
       } catch (error) {
         if (error instanceof FetchTimeoutError) throw error
-        for (const fullName of batch) skipped.push(`${fullName}: unreadable body`)
+        for (const fullName of batch) {
+          archivedSkipped.push(`${fullName}: unreadable body`)
+          forkSkipped.push(`${fullName}: unreadable body`)
+        }
         continue
       }
       const errorByAlias = new Map<string, string>()
@@ -299,27 +310,34 @@ export async function fetchArchivedFlags(
         const node = body.data?.[`a${i}`]
         // `null` means GitHub answered for the alias but the repository is
         // gone (renamed, deleted, private); `undefined` means the alias is
-        // absent from the response entirely (both are "no fact supplied").
+        // absent from the response entirely (both are "no fact supplied"). A
+        // null node fails BOTH scalars, so it lands on both skip lists.
         if (node === null || node === undefined) {
-          skipped.push(errorByAlias.get(`a${i}`) !== undefined
+          const reason = errorByAlias.get(`a${i}`) !== undefined
             ? `${fullName}: ${errorByAlias.get(`a${i}`)}`
-            : `${fullName}: no answer`)
+            : `${fullName}: no answer`
+          archivedSkipped.push(reason)
+          forkSkipped.push(reason)
           continue
         }
         const key = fullName.toLowerCase()
         // Each scalar is answered independently: a good isArchived beside a
-        // malformed isFork still records archived, and vice versa. A repo
-        // whose BOTH scalars failed records nothing, and the skip names the
-        // reason once for the whole alias.
+        // malformed isFork still records archived, and vice versa. A failure
+        // names its own list only — a bad isFork does NOT charge a skip to
+        // archived, and vice versa.
         const isArchived = node.isArchived
         const isFork = node.isFork
         if (typeof isArchived === 'boolean') archived.set(key, isArchived)
+        else archivedSkipped.push(`${fullName}: no answer`)
         if (typeof isFork === 'boolean') forked.set(key, isFork)
-        if (typeof isArchived !== 'boolean' || typeof isFork !== 'boolean') skipped.push(`${fullName}: no answer`)
+        else forkSkipped.push(`${fullName}: no answer`)
       }
     } catch (error) {
-      for (const fullName of batch) skipped.push(`${fullName}: gateway unreachable: ${error instanceof Error ? error.message : String(error)}`)
+      for (const fullName of batch) {
+        archivedSkipped.push(`${fullName}: gateway unreachable: ${error instanceof Error ? error.message : String(error)}`)
+        forkSkipped.push(`${fullName}: gateway unreachable: ${error instanceof Error ? error.message : String(error)}`)
+      }
     }
   }
-  return { archived, forked, skipped }
+  return { archived, archivedSkipped, forked, forkSkipped }
 }

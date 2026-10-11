@@ -425,17 +425,19 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
           repoNextState = applyArchivedFlags(repoNextState, archivedResult.archived)
         }
         const archivedCount = [...archivedResult.archived.values()].filter(Boolean).length
-        const archivedNote = `github archived flags: ${archivedResult.archived.size} answered (${archivedCount} archived)${archivedResult.skipped.length > 0 ? `, ${archivedResult.skipped.length} skipped` : ''}`
+        const archivedNote = `github archived flags: ${archivedResult.archived.size} answered (${archivedCount} archived)${archivedResult.archivedSkipped.length > 0 ? `, ${archivedResult.archivedSkipped.length} skipped` : ''}`
         process.stderr.write(`${archivedNote}\n`)
         // Fork flags (design 2026-10-11-fork-flag §1.1): the same pass answers
-        // `isFork` on the same aliases, so the skip list above is shared. The
-        // fork half is reported here alone — the design mandates no
-        // report-file line for it, unlike the archived one (§1.3).
+        // `isFork` on the same aliases, but each scalar's skip list is its
+        // own — a fork-only failure (or an archived-only drift) lands on the
+        // line for the scalar that failed, not on the other's. The fork half
+        // is reported here alone — the design mandates no report-file line
+        // for it, unlike the archived one (§1.3).
         if (archivedResult.forked.size > 0) {
           repoNextState = applyForkFlags(repoNextState, archivedResult.forked)
         }
         const forkedCount = [...archivedResult.forked.values()].filter(Boolean).length
-        const forkedNote = `github fork flags: ${archivedResult.forked.size} answered (${forkedCount} forked)${archivedResult.skipped.length > 0 ? `, ${archivedResult.skipped.length} skipped` : ''}`
+        const forkedNote = `github fork flags: ${archivedResult.forked.size} answered (${forkedCount} forked)${archivedResult.forkSkipped.length > 0 ? `, ${archivedResult.forkSkipped.length} skipped` : ''}`
         process.stderr.write(`${forkedNote}\n`)
       }
     }
