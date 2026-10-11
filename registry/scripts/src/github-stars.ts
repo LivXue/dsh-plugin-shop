@@ -192,14 +192,16 @@ export async function fetchStarCounts(
  * 500-point-per-cost-window budget.
  * -------------------------------------------------------------------------- */
 
-/** Repositories per GraphQL batch. Two scalars on a repository type
- * (`isArchived` and `isFork`) cost 1 point per alias per flag, so 200
- * aliases = 400 points against the 5,000-point hourly budget — the same
- * budget the stars pass already amortizes. Larger than {@link STAR_BATCH_SIZE}
- * because the per-item payload is two booleans, not a count plus an alias
- * header. The flags the pass returns persist (`archived`/`forked` on the
- * repo-state record, mirrored to the catalog entry); stars and repo-gone
- * read per-item summaries, per the github-release-assets §1.3 fairness. */
+/** Repositories per GraphQL batch. The pass asks two scalars
+ * (`isArchived` and `isFork`) on 200 aliases per call; the GitHub GraphQL
+ * `rateLimit.cost` response for this query measures 1 point per response,
+ * well inside the 5,000-point hourly budget the stars pass already
+ * amortizes (and would still fit even at a hypothetical 400/call). Larger
+ * than {@link STAR_BATCH_SIZE} because the per-item payload is two
+ * booleans, not a count plus an alias header. The flags the pass returns
+ * persist (`archived`/`forked` on the repo-state record, mirrored to the
+ * catalog entry); stars and repo-gone read per-item summaries, per the
+ * github-release-assets §1.3 fairness. */
 export const ARCHIVED_BATCH_SIZE = 200
 
 export interface RepoFlagsFetchResult {
