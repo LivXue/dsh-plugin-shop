@@ -192,31 +192,39 @@ export async function fetchStarCounts(
  * 500-point-per-cost-window budget.
  * -------------------------------------------------------------------------- */
 
-/** Repositories per GraphQL batch. One `isArchived` scalar on a repository
- * type costs 1 point per alias, so 200 aliases = 200 points against the
- * 5,000-point hourly budget — the same budget the stars pass already
- * amortizes. Larger than {@link STAR_BATCH_SIZE} because the per-item
- * payload is one boolean, not a count plus an alias header. */
+/** Repositories per GraphQL batch. Two scalars on a repository type
+ * (`isArchived` and `isFork`) cost 1 point per alias per flag, so 200
+ * aliases = 400 points against the 5,000-point hourly budget — the same
+ * budget the stars pass already amortizes. Larger than {@link STAR_BATCH_SIZE}
+ * because the per-item payload is two booleans, not a count plus an alias
+ * header. The flags the pass returns persist (`archived`/`forked` on the
+ * repo-state record, mirrored to the catalog entry); stars and repo-gone
+ * read per-item summaries, per the github-release-assets §1.3 fairness. */
 export const ARCHIVED_BATCH_SIZE = 200
 
-export interface ArchivedFetchResult {
+export interface RepoFlagsFetchResult {
   /** Keyed `owner/name`, lowercased. Present only when GitHub answered. */
-  flags: Map<string, boolean>
+  archived: Map<string, boolean>
+  /** Keyed `owner/name`, lowercased. Present only when GitHub answered. */
+  forked: Map<string, boolean>
   /** `owner/name` entries that ended without an answer, with a reason. */
   skipped: string[]
 }
 
 /**
- * Fetch `isArchived` for a set of listed repositories via GraphQL.
+ * Fetch `isArchived` and `isFork` for a set of listed repositories via
+ * GraphQL, on the same aliases in one batched pass.
  *
  * Advisory like the stars pass: every failure mode ends in `skipped`, the
  * module never rejects. A repo the response omits (renamed, transferred,
- * deleted between the search and the batch) gets NO entry in the returned
+ * deleted between the search and the batch) gets NO entry in either returned
  * Map — "no fact supplied ⇒ no write", the same rule `nextRepoState`
- * carries for absent values.
+ * carries for absent values. Each scalar is its own fact: an alias whose
+ * `isArchived` is boolean but whose `isFork` is not (schema drift) records
+ * the archived half and skips on the fork half.
  *
  * @param repos - `owner/slug` full names, exactly as GitHub resolves them
- *   (case-insensitive). Keys in the returned Map are lowercased.
+ *   (case-insensitive). Keys in the returned Maps are lowercased.
  */
 export async function fetchArchivedFlags(
   repos: string[],
@@ -226,15 +234,16 @@ export async function fetchArchivedFlags(
     sleep?: (ms: number) => Promise<void>
     timeoutMs?: number
   },
-): Promise<ArchivedFetchResult> {
+): Promise<RepoFlagsFetchResult> {
   const {
     token, fetchImpl = fetch, sleep = defaultSleep,
     timeoutMs = STARS_REQUEST_TIMEOUT_MS,
   } = options
   const timed = withTimeout(fetchImpl, timeoutMs, 'github graphql')
-  const flags = new Map<string, boolean>()
+  const archived = new Map<string, boolean>()
+  const forked = new Map<string, boolean>()
   const skipped: string[] = []
-  if (token === '' || repos.length === 0) return { flags, skipped }
+  if (token === '' || repos.length === 0) return { archived, forked, skipped }
 
   const batches: string[][] = []
   for (let i = 0; i < repos.length; i += ARCHIVED_BATCH_SIZE) batches.push(repos.slice(i, i + ARCHIVED_BATCH_SIZE))
@@ -243,7 +252,7 @@ export async function fetchArchivedFlags(
     try {
       const aliases = batch.map((fullName, i) => {
         const [owner, name] = fullName.split('/', 2)
-        return `a${i}: repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { isArchived }`
+        return `a${i}: repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { isArchived isFork }`
       }).join('\n')
       const query = `query {\n${aliases}\n}`
       const request = (): Promise<Response> => timed(ENDPOINT, {
@@ -264,7 +273,7 @@ export async function fetchArchivedFlags(
         for (const fullName of batch) skipped.push(`${fullName}: gateway ${response.status}`)
         continue
       }
-      let body: { data?: Record<string, { isArchived?: unknown } | null>; errors?: unknown[] } = {}
+      let body: { data?: Record<string, { isArchived?: unknown; isFork?: unknown } | null>; errors?: unknown[] } = {}
       try {
         const parsed = await response.json() as unknown
         if (parsed !== null && typeof parsed === 'object') body = parsed as typeof body
@@ -297,15 +306,20 @@ export async function fetchArchivedFlags(
             : `${fullName}: no answer`)
           continue
         }
-        if (typeof node.isArchived === 'boolean') {
-          flags.set(fullName.toLowerCase(), node.isArchived)
-        } else {
-          skipped.push(`${fullName}: no answer`)
-        }
+        const key = fullName.toLowerCase()
+        // Each scalar is answered independently: a good isArchived beside a
+        // malformed isFork still records archived, and vice versa. A repo
+        // whose BOTH scalars failed records nothing, and the skip names the
+        // reason once for the whole alias.
+        const isArchived = node.isArchived
+        const isFork = node.isFork
+        if (typeof isArchived === 'boolean') archived.set(key, isArchived)
+        if (typeof isFork === 'boolean') forked.set(key, isFork)
+        if (typeof isArchived !== 'boolean' || typeof isFork !== 'boolean') skipped.push(`${fullName}: no answer`)
       }
     } catch (error) {
       for (const fullName of batch) skipped.push(`${fullName}: gateway unreachable: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
-  return { flags, skipped }
+  return { archived, forked, skipped }
 }

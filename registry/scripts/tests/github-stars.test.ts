@@ -281,71 +281,106 @@ describe('a deadline is not a malformed body', () => {
   })
 })
 
-describe('fetchArchivedFlags (design 2026-10-08-archived-flag-and-shadowed-recovery §1.3)', () => {
+describe('fetchArchivedFlags (design 2026-10-08-archived-flag-and-shadowed-recovery §1.3; 2026-10-11-fork-flag §1.3)', () => {
   const archivedRepo = (i: number) => `owner${i}/repo${i}`
-  const okArchivedResponse = (flags: Record<string, boolean | null>): Response => {
-    const data = Object.fromEntries(Object.entries(flags).map(([, v], i) => [`a${i}`, v === null ? null : { isArchived: v }]))
+  const okRepoFlagsResponse = (nodes: Record<string, { isArchived?: unknown; isFork?: unknown } | null>): Response => {
+    const data = Object.fromEntries(Object.entries(nodes).map(([, node], i) => [`a${i}`, node]))
     return new Response(JSON.stringify({ data }), { status: 200 })
   }
 
   it('returns immediately for an empty repo list', async () => {
     const fetchImpl = (async () => { throw new Error('must not be called') }) as unknown as typeof fetch
     const result = await fetchArchivedFlags([], { token: 't', fetchImpl })
-    expect(result.flags.size).toBe(0)
+    expect(result.archived.size).toBe(0)
+    expect(result.forked.size).toBe(0)
     expect(result.skipped).toEqual([])
   })
 
   it('returns immediately for an empty token', async () => {
     const fetchImpl = (async () => { throw new Error('must not be called') }) as unknown as typeof fetch
     const result = await fetchArchivedFlags(['a/b'], { token: '', fetchImpl })
-    expect(result.flags.size).toBe(0)
+    expect(result.archived.size).toBe(0)
+    expect(result.forked.size).toBe(0)
     expect(result.skipped).toEqual([])
   })
 
-  it('batches 450 repos into 200/200/50 queries', async () => {
-    const bodies: { aliases: number }[] = []
+  it('batches 450 repos into 200/200/50 queries and asks both flags on the same aliases', async () => {
+    const bodies: { aliases: number; forks: number; archiveds: number }[] = []
     const fetchImpl = (async (_url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as { query: string }
-      bodies.push({ aliases: (body.query.match(/a\d+:/g) ?? []).length })
+      bodies.push({
+        aliases: (body.query.match(/a\d+:/g) ?? []).length,
+        forks: (body.query.match(/isFork/g) ?? []).length,
+        archiveds: (body.query.match(/isArchived/g) ?? []).length,
+      })
       return new Response(JSON.stringify({ data: {} }), { status: 200 })
     }) as unknown as typeof fetch
     await fetchArchivedFlags(Array.from({ length: 450 }, (_, i) => archivedRepo(i)), { token: 't', fetchImpl })
     expect(bodies.map(b => b.aliases)).toEqual([200, 200, 50])
+    // Each alias carries both scalars — one extra field per alias, no extra request.
+    expect(bodies.every(b => b.forks === b.aliases && b.archiveds === b.aliases)).toBe(true)
   })
 
-  it('reads isArchived true and false from the aliases', async () => {
-    const fetchImpl = (async () => okArchivedResponse({ 'a/one': true, 'a/two': false })) as unknown as typeof fetch
+  it('reads isArchived and isFork from the same alias', async () => {
+    const fetchImpl = (async () => okRepoFlagsResponse({
+      'a/one': { isArchived: false, isFork: true },
+      'a/two': { isArchived: true, isFork: false },
+    })) as unknown as typeof fetch
     const result = await fetchArchivedFlags(['a/one', 'a/two'], { token: 't', fetchImpl })
-    expect(result.flags.get('a/one')).toBe(true)
-    expect(result.flags.get('a/two')).toBe(false)
+    expect(result.archived.get('a/one')).toBe(false)
+    expect(result.forked.get('a/one')).toBe(true)
+    expect(result.archived.get('a/two')).toBe(true)
+    expect(result.forked.get('a/two')).toBe(false)
     expect(result.skipped).toEqual([])
   })
 
-  it('drops a repo the GraphQL response omits, never writing false', async () => {
+  it('a node with only one boolean scalar contributes only that map, no skip', async () => {
+    // Each scalar is answered independently: a good isArchived beside a bad
+    // isFork records archived and stays silent about fork — no fact supplied
+    // for the fork half, but no reason both fail.
+    const fetchImpl = (async () => okRepoFlagsResponse({
+      'a/one': { isArchived: true, isFork: 'yes' },
+      'a/two': { isArchived: 'no', isFork: false },
+    })) as unknown as typeof fetch
+    const result = await fetchArchivedFlags(['a/one', 'a/two'], { token: 't', fetchImpl })
+    expect(result.archived.get('a/one')).toBe(true)
+    expect(result.forked.has('a/one')).toBe(false)
+    expect(result.archived.has('a/two')).toBe(false)
+    expect(result.forked.get('a/two')).toBe(false)
+    // One skip per repo, flagged by the bad scalar only.
+    expect(result.skipped).toEqual(['a/one: no answer', 'a/two: no answer'])
+  })
+
+  it('a null node (renamed/deleted repo) yields no entry in either map and one skip', async () => {
     // A renamed or deleted repo answers with a null alias (or not at all, via
     // `errors`). That is "no fact supplied", so the record stays as it was —
     // the same rule the probe's nextRepoState arm carries.
-    const fetchImpl = (async () => okArchivedResponse({ 'a/one': true, 'a/two': null })) as unknown as typeof fetch
-    const result = await fetchArchivedFlags(['a/one', 'a/two'], { token: 't', fetchImpl })
-    expect(result.flags.has('a/two')).toBe(false)
-    expect(result.skipped).toContain('a/two: no answer')
+    const fetchImpl = (async () => okRepoFlagsResponse({
+      'a/one': { isArchived: true, isFork: false },
+      'a/gone': null,
+    })) as unknown as typeof fetch
+    const result = await fetchArchivedFlags(['a/one', 'a/gone'], { token: 't', fetchImpl })
+    expect(result.archived.has('a/gone')).toBe(false)
+    expect(result.forked.has('a/gone')).toBe(false)
+    expect(result.skipped).toEqual(['a/gone: no answer'])
   })
 
   it('keeps the healthy aliases when one alias errors, with the real reason on the skip', async () => {
     const fetchImpl = (async () => new Response(JSON.stringify({
-      data: { a0: { isArchived: true }, a1: null },
+      data: { a0: { isArchived: true, isFork: false }, a1: null },
       errors: [{ message: 'Could not resolve to a Repository', path: ['a1'] }],
     }), { status: 200 })) as unknown as typeof fetch
-    const { flags, skipped } = await fetchArchivedFlags(['a/one', 'a/gone'], { token: 't', fetchImpl, sleep: async () => {} })
-    expect(flags.get('a/one')).toBe(true)
-    expect(flags.size).toBe(1)
+    const { archived, skipped } = await fetchArchivedFlags(['a/one', 'a/gone'], { token: 't', fetchImpl, sleep: async () => {} })
+    expect(archived.get('a/one')).toBe(true)
+    expect(archived.size).toBe(1)
     expect(skipped).toEqual(['a/gone: Could not resolve to a Repository'])
   })
 
   it('skips the whole batch on a gateway error', async () => {
     const fetchImpl = (async () => new Response('bad gateway', { status: 502 })) as unknown as typeof fetch
     const result = await fetchArchivedFlags(['a/one', 'a/two'], { token: 't', fetchImpl, sleep: async () => {} })
-    expect(result.flags.size).toBe(0)
+    expect(result.archived.size).toBe(0)
+    expect(result.forked.size).toBe(0)
     expect(result.skipped).toHaveLength(2)
     expect(result.skipped[0]).toContain('502')
   })
@@ -353,7 +388,8 @@ describe('fetchArchivedFlags (design 2026-10-08-archived-flag-and-shadowed-recov
   it('records a transport failure for every repo in the batch', async () => {
     const fetchImpl = (async () => { throw new Error('ECONNREFUSED') }) as unknown as typeof fetch
     const result = await fetchArchivedFlags(['a/b', 'c/d'], { token: 't', fetchImpl })
-    expect(result.flags.size).toBe(0)
+    expect(result.archived.size).toBe(0)
+    expect(result.forked.size).toBe(0)
     expect(result.skipped).toEqual([
       'a/b: gateway unreachable: ECONNREFUSED',
       'c/d: gateway unreachable: ECONNREFUSED',
@@ -366,7 +402,8 @@ describe('fetchArchivedFlags (design 2026-10-08-archived-flag-and-shadowed-recov
     const result = await fetchArchivedFlags(['owner0/repo0'], {
       token: 't', fetchImpl, sleep: async (_ms: number) => {}, timeoutMs: 50,
     })
-    expect(result.flags.size).toBe(0)
+    expect(result.archived.size).toBe(0)
+    expect(result.forked.size).toBe(0)
     expect(result.skipped).toHaveLength(1)
     expect(result.skipped[0]).toContain('gateway unreachable')
     expect(Date.now() - started).toBeLessThan(5000)
