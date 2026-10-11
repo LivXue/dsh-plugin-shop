@@ -887,6 +887,10 @@ describe('forked', () => {
       ...baseEntry, version: 'a'.repeat(40), source: 'github', repo: 'someone/thing',
     }], 5)
     expect(result.snapshot.entries[0]?.forked).toBeUndefined()
+    // toBeUndefined returns undefined both when the key is absent and when
+    // the schema strips an undeclared key, so assert absence directly: this
+    // fails if the schema is SHAPED to strip `forked`, not if it is deleted.
+    expect(result.snapshot.entries[0] !== undefined && 'forked' in result.snapshot.entries[0]).toBe(false)
   })
 })
 
