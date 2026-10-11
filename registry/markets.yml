@@ -229,6 +229,11 @@
   by: llm
   reason: "Judged a dsh plugin market from: Visual plugin market inside DeepSeek Harness — browse, search, and one-click install community plugins. · DSH 可视化插件市场：逛一逛，点一下，装好。"
 
+- name: "cqai-dsh-plugin-market"
+  market: true
+  by: llm
+  reason: "Judged a dsh plugin market from: e宝工坊，简单易用的数字员工"
+
 - name: "deepseek-plugin-store"
   market: true
   by: human
@@ -538,6 +543,11 @@
   market: true
   by: human
   reason: "KPM'H 纪代插件市场（Hub）：侧边栏一键启动的独立全屏市场页，支持多源目录（GitHub/npm/awesome）、一键安装、已装管理与卸载、孤儿插件扫描、通用安全防线（审计/入口校验/运行时兼容/自动修补）。"
+
+- name: "portfolio-os-marketplace"
+  market: false
+  by: llm
+  reason: "Judged NOT a dsh plugin market from: (no description)"
 
 - name: "safer-dsh-market"
   market: true
