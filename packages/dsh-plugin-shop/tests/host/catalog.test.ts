@@ -868,6 +868,28 @@ describe('installSize', () => {
   })
 })
 
+describe('forked', () => {
+  it('carries a github entry\'s fork flag through to the entry the client renders', async () => {
+    // The consumer half of the registry's `forked?: true` emit (design
+    // 2026-10-11 §1.1): zod strips what it does not declare, so until this
+    // schema declared the key the live catalog published it and every shop
+    // dropped it in silence — `installSize`'s defect, caught this time by the
+    // parity guard rather than by an empty card.
+    const result = await load([{
+      ...baseEntry, version: 'a'.repeat(40), source: 'github', repo: 'someone/thing', archived: true, forked: true,
+    }], 5)
+    expect(result.snapshot.entries[0]?.archived).toBe(true)
+    expect(result.snapshot.entries[0]?.forked).toBe(true)
+  })
+
+  it('parses an entry that carries no forked key unchanged', async () => {
+    const result = await load([{
+      ...baseEntry, version: 'a'.repeat(40), source: 'github', repo: 'someone/thing',
+    }], 5)
+    expect(result.snapshot.entries[0]?.forked).toBeUndefined()
+  })
+})
+
 describe('the two size keys carry one bound', () => {
   // Our own artifact, so a violation is our build having written something it
   // cannot write — and this project stops rather than render a size label

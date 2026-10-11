@@ -277,6 +277,11 @@ const entrySchema = z.object({
   // additive and optional, so it rides every schemaVersion and this schema
   // strips it for a client that predates it (design 2026-10-08 §1.3).
   archived: z.boolean().optional(),
+  // Whether GitHub reports the repository as a fork, answered by the same
+  // GraphQL pass as `archived` and emitted the same way (design 2026-10-11
+  // §1.1). github entries only; additive and optional, so it rides every
+  // schemaVersion and this schema strips it for a client that predates it.
+  forked: z.boolean().optional(),
 }).superRefine((entry, ctx) => {
   // The install spec differs by source, so the grammar does too. Refusing at
   // this boundary prevents catalog bytes from reaching the process layer.
