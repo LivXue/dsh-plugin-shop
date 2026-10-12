@@ -451,10 +451,10 @@ describe('the archived marker (design 2026-10-08-archived-flag-and-shadowed-reco
 
 describe('the forked marker (design 2026-10-11-fork-flag §1.1)', () => {
   // Mirrored on the archived block above, assertion for assertion: the two
-  // kinds decay independently, so the record keeps them as two fields following
-  // one discipline. GraphQL fetching (`applyForkFlags`) and emit layering
-  // (`layerForkFlags`) land in later tasks; what is pinned here is the field
-  // and its round-trip through the file.
+  // kinds decay independently, so the record keeps them as two fields
+  // following one discipline. The field landed in this PR along with its
+  // GraphQL-side apply (`applyForkFlags`) and its emit-side layer
+  // (`layerForkFlags`); all three share this block.
 
   it('round-trips forked true and false through parse and serialize', () => {
     const recorded: RepoState = {
