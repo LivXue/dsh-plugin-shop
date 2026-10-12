@@ -1075,7 +1075,8 @@ pnpm -C packages/dsh-plugin-shop typecheck
 ### Task 4: Full verification and the design doc's status
 
 **Files:**
-- Modify: `docs/design/2026-10-12-shelf-orders.md` (the `Status:` line only)
+- Modify: `docs/design/2026-10-12-shelf-orders.md` (the `Status:` line, and
+  §5's `orderShelf` signature — see Step 3)
 
 Not in this task: looking at the result in a real dsh (both themes, two
 widths). That is the controller's, after the final whole-branch review.
@@ -1128,7 +1129,7 @@ pnpm -C /Evermind/sh_evermind/xuedizhan/dsh-plugin-store/.claude/worktrees/shelf
 ```
 Expected: all three exit 0.
 
-- [ ] **Step 3: Record the built status in the design doc**
+- [ ] **Step 3: Record the built status in the design doc, and bring §5 in line with the code**
 
 Change the `Status:` line of `docs/design/2026-10-12-shelf-orders.md` from
 "implementation not started" to name the branch and what built it, e.g.:
@@ -1137,6 +1138,25 @@ Change the `Status:` line of `docs/design/2026-10-12-shelf-orders.md` from
 Status: **built on `feat/shelf-orders`** (2026-10-12), three commits: the pure
 core, the toggle, and the card's date label. Decided 2026-10-12 by LivXue.
 This amends D1 of `../../superpowers/specs/2026-08-26-github-stars-design.md`…
+```
+
+Then, in the same file's §5 code block, the `orderShelf` signature returns
+`CatalogEntry[]` while the code returns `readonly CatalogEntry[]`. The code is
+right and the spec is amended to match (CLAUDE.md: when the two disagree, the
+spec is amended in the same change). The readonly return is forced: the
+`'stars'` path returns the very array it was handed, which is readonly.
+Replace that one line:
+
+```ts
+export function orderShelf(starOrdered: readonly CatalogEntry[], order: ShelfOrder, builtAt: string): readonly CatalogEntry[]
+```
+
+and extend the `'stars'` bullet beneath the block so the reason is recorded:
+
+```markdown
+- **`'stars'` returns the input reference**, so the default path allocates
+  nothing and does not invalidate the memos downstream of `sortedCatalog`.
+  That is also why the result is `readonly`: on that path it IS the input.
 ```
 
 - [ ] **Step 4: Commit — do not push**
