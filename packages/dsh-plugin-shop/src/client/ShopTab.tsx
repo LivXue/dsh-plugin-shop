@@ -1665,6 +1665,8 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
 
   // The catalog's own build time, which bounds every date: an entry dated
   // later than it counts as undated. Off `catalogState`, so a refresh moves it.
+  // Sound as a bound because the registry reads its clock after the harvest,
+  // so no entry this build fetched can be post-dated by it (build.ts).
   const builtAt = catalogState.kind === 'ready' ? catalogState.result.builtAt : ''
 
   // Every catalog entry, in shelf order. `browsable` FILTERS this instead of
@@ -1684,6 +1686,15 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
   // of them. Advertising is all it governs: an INSTALLED shop-like plugin is
   // still managed from the Installed view, which reads `sortedCatalog`.
   // The repo slug gets the same check for github entries.
+  //
+  // This pass, `matched` down the file and the three counts share
+  // `sortedCatalog`, so a toggle click re-runs all of them over the whole
+  // catalog — around 14.5k entries — even though none of their outputs
+  // depends on the order. That is deliberate: they are a few linear passes
+  // (the design's own 60 ms keystroke budget covers the sort alone, and these
+  // are cheaper than it), and an order-independent base list would need a
+  // second memo the category counts and the Installed view would both have to
+  // read instead, splitting one list into two that can disagree.
   const browsable = useMemo(() => {
     if (catalogState.kind !== 'ready') return []
     // `notAShop` is the catalog's own exemption list (registry/not-a-shop.yml):

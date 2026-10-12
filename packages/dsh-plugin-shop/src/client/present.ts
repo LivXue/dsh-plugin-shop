@@ -494,8 +494,10 @@ const SHELF_ORDER_KEYS = {
  * never repeats the three literals. */
 export type ShelfOrder = keyof typeof SHELF_ORDER_KEYS
 
-/** The three orders in display order (map insertion order). */
-export const SHELF_ORDERS = Object.keys(SHELF_ORDER_KEYS) as ShelfOrder[]
+/** The three orders in display order (map insertion order). `readonly`: this
+ * is a shared vocabulary, and an order list a caller can push to is a bug
+ * waiting for its second caller. */
+export const SHELF_ORDERS: readonly ShelfOrder[] = Object.keys(SHELF_ORDER_KEYS) as ShelfOrder[]
 
 /** The locale key naming one order (the toggle's buttons). */
 export function shelfOrderLocaleKey(order: ShelfOrder): ShopLocaleKey {
