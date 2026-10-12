@@ -475,8 +475,27 @@
 .catalogStatsRow {
   display: flex;
   align-items: center;
+  /* The row holds the catalog line, the refresh button and the shelf order's
+   * three pills (design 2026-10-12-shelf-orders §4). Without wrapping, the
+   * last of them overflows the tab at a narrow width. */
+  flex-wrap: wrap;
   gap: 10px;
   margin: 6px 0 0;
+}
+
+/* The shelf's order control, at the right end of the stats row. `margin-left:
+ * auto` is what puts it there while the line and the refresh button stay
+ * left — and it is safe on a wrapping row, unlike a width. */
+.sortGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.sortLabel {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
 }
 
 .catalogStats {

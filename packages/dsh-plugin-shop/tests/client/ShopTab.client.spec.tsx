@@ -2466,6 +2466,106 @@ describe('ShopTab', () => {
   })
 })
 
+describe('ShopTab shelf orders', () => {
+  /** Three orders, three answers:
+   *   stars   bare (9999) > old (900) > new-a (20) > new-b (10)
+   *   added   new-a, new-b (10-12, in star order) > old (10-01) > bare (none)
+   *   updated old (09:30) > new-b (08:00) > bare (07:00) > new-a (10-06)
+   * 10-12 is the catalog's build day, so no entry is future-dated. */
+  function datedCatalog(): ShopCatalogResult {
+    const base = snapshot().plugins[0]!
+    return {
+      ...snapshot(),
+      builtAt: '2026-10-12T09:33:35.944Z',
+      plugins: [
+        { ...base, name: 'dsh-bare', added: undefined, publishedAt: '2026-10-12T07:00:00Z' },
+        { ...base, name: 'dsh-old', added: '2026-10-01', publishedAt: '2026-10-12T09:30:00Z' },
+        { ...base, name: 'dsh-new-a', added: '2026-10-12', publishedAt: '2026-10-06T00:00:00Z' },
+        { ...base, name: 'dsh-new-b', added: '2026-10-12', publishedAt: '2026-10-12T08:00:00Z' },
+      ],
+      stars: { 'dsh-bare': 9999, 'dsh-old': 900, 'dsh-new-a': 20, 'dsh-new-b': 10 },
+    }
+  }
+
+  const cardNames = (): (string | null)[] =>
+    [...document.querySelectorAll('[data-shop-entry]')].map(card => card.getAttribute('data-shop-entry'))
+
+  const orderButton = (label: string): HTMLElement => screen.getByRole('button', { name: label })
+
+  it('opens in the star order, with the star order pressed', async () => {
+    const { injected } = bench(datedCatalog())
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-bare')).toBeTruthy())
+    expect(cardNames()).toEqual(['dsh-bare', 'dsh-old', 'dsh-new-a', 'dsh-new-b'])
+    expect(orderButton(en.sortStars).getAttribute('aria-pressed')).toBe('true')
+    expect(orderButton(en.sortAdded).getAttribute('aria-pressed')).toBe('false')
+    expect(orderButton(en.sortUpdated).getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('orders by listing date, keeping the star order inside one day, and moves the pressed state', async () => {
+    const { injected } = bench(datedCatalog())
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-old')).toBeTruthy())
+    fireEvent.click(orderButton(en.sortAdded))
+    // `dsh-bare` carries the most stars and is still last, because it has no
+    // `added` date at all.
+    expect(cardNames()).toEqual(['dsh-new-a', 'dsh-new-b', 'dsh-old', 'dsh-bare'])
+    expect(orderButton(en.sortAdded).getAttribute('aria-pressed')).toBe('true')
+    expect(orderButton(en.sortStars).getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('orders by publication date', async () => {
+    const { injected } = bench(datedCatalog())
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-old')).toBeTruthy())
+    fireEvent.click(orderButton(en.sortUpdated))
+    // `dsh-bare` has no `added` and a perfectly good `publishedAt`, so the two
+    // date orders must disagree about it — and they do.
+    expect(cardNames()).toEqual(['dsh-old', 'dsh-new-b', 'dsh-bare', 'dsh-new-a'])
+    expect(orderButton(en.sortUpdated).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('goes back to the star order', async () => {
+    const { injected } = bench(datedCatalog())
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-old')).toBeTruthy())
+    fireEvent.click(orderButton(en.sortUpdated))
+    fireEvent.click(orderButton(en.sortStars))
+    expect(cardNames()).toEqual(['dsh-bare', 'dsh-old', 'dsh-new-a', 'dsh-new-b'])
+    expect(orderButton(en.sortStars).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('keeps the order when a search narrows the shelf, and the filter when the order changes', async () => {
+    const { injected } = bench(datedCatalog())
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-old')).toBeTruthy())
+    fireEvent.click(orderButton(en.sortAdded))
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'dsh-new' } })
+    expect(cardNames()).toEqual(['dsh-new-a', 'dsh-new-b'])
+    fireEvent.click(orderButton(en.sortUpdated))
+    expect(cardNames()).toEqual(['dsh-new-b', 'dsh-new-a'])
+  })
+
+  it('orders the Installed view as well as the shelf', async () => {
+    // The Installed view reads the ordered catalog directly (`matched`), so it
+    // must follow the toggle exactly as the shelf does. The installed rows'
+    // `installed` equals the catalog version, so neither is outdated and
+    // neither moves into the Updatable section.
+    const { injected } = bench(datedCatalog(), [
+      { name: 'dsh-old', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true },
+      { name: 'dsh-new-b', installed: '1.2.0', latest: '1.2.0', outdated: false, enabled: true },
+    ])
+    const { container } = renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-old')).toBeTruthy())
+    fireEvent.click(container.querySelector('[data-shop-category-installed]') as HTMLElement)
+    // star order: old (900) before new-b (10)
+    await waitFor(() => expect(cardNames()).toEqual(['dsh-old', 'dsh-new-b']))
+    fireEvent.click(orderButton(en.sortAdded))
+    // listing order: new-b (10-12) before old (10-01)
+    expect(cardNames()).toEqual(['dsh-new-b', 'dsh-old'])
+  })
+})
+
 describe("ShopTab refusal by the running dsh's own peer check (0.1.7)", () => {
   // What the host sends when dsh 0.1.7 would refuse the install on its
   // harness peers and the profile holds no exemption for this exact version:
@@ -3040,6 +3140,27 @@ describe('ShopTab incremental rendering', () => {
     await waitFor(() => expect(screen.getByText(showingText(48, 60))).toBeTruthy())
     expect(cardCount()).toBe(48)
     expect(screen.queryByText('dsh-beta-00')).toBeNull()
+  })
+
+  it('resets to the first batch when the shelf order changes', async () => {
+    const base = manyPlugins(1).plugins[0]!
+    const plugins = [
+      ...Array.from({ length: 60 }, (_, i) => ({ ...base, name: `dsh-alpha-${String(i).padStart(2, '0')}`, added: '2026-08-01' })),
+      ...Array.from({ length: 60 }, (_, i) => ({ ...base, name: `dsh-beta-${String(i).padStart(2, '0')}`, added: '2026-09-01' })),
+    ] as ShopCatalogResult['plugins']
+    const { injected } = bench({ ...manyPlugins(1), plugins, builtAt: '2026-10-12T00:00:00Z' })
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-alpha-00')).toBeTruthy())
+
+    // scroll two batches deep: 96 of 120 shown
+    await fireSentinel()
+    await waitFor(() => expect(cardCount()).toBe(96))
+
+    // the newer block leads under 最新上架, and the window is back to one batch
+    fireEvent.click(screen.getByRole('button', { name: en.sortAdded }))
+    await waitFor(() => expect(cardCount()).toBe(48))
+    expect(screen.getByText('dsh-beta-00')).toBeTruthy()
+    expect(screen.queryByText('dsh-alpha-00')).toBeNull()
   })
 })
 

@@ -7,7 +7,7 @@
 import { Component, memo, useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ErrorInfo, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, HarnessVerdict, InstallArgs, RestartBlockedReason, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
-import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, readsIncompatible, refusedPeersText, refusesInstall, rejectionCodeKey, restartBlockedNoticeKey, reviewHashPin, settledByRestart, sortByStars, starsOf, tierKey } from './present.ts'
+import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, SHELF_ORDERS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, type ShelfOrder, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, orderShelf, readsIncompatible, refusedPeersText, refusesInstall, rejectionCodeKey, restartBlockedNoticeKey, reviewHashPin, settledByRestart, shelfOrderLocaleKey, sortByStars, starsOf, tierKey } from './present.ts'
 import { readRestartMonitor, requestRestart, subscribeRestartMonitor, type RestartMonitorState } from './restart-monitor.ts'
 import { useInstallFlows, type InstallFlow } from './useInstall.ts'
 import { useUninstallFlows, type UninstallFlow, type UseUninstallFlows } from './useUninstall.ts'
@@ -1443,6 +1443,9 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
   // `installed` is a filter mode alongside the six catalog categories, not a
   // seventh category: it selects by installed state, not by `catalog.category`.
   const [category, setCategory] = useState<Category | 'installed' | null>(null)
+  // Which order the shelf is in (design 2026-10-12-shelf-orders §4). In-memory
+  // like every other control here: a reload starts at the star order.
+  const [order, setOrder] = useState<ShelfOrder>('stars')
   // Whether the shelf leaves out entries badged "Incompatible" — components
   // missing here, or an author's declaration this dsh does not meet. Off by
   // default: a filter nobody asked for must not hide listings on
@@ -1459,6 +1462,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
   const [visibleCount, setVisibleCount] = useState(SHOP_VISIBLE_BATCH)
   const sentinelRef = useRef<HTMLLIElement>(null)
   const filteredLenRef = useRef(0)
+  const sortLabelId = useId()
   // Which `refresh` request (if any) a reader is still waiting on. A
   // reverdict or a later refresh can supersede a Refresh click before its own
   // request settles; if the superseded one then fails, that failure must
@@ -1632,13 +1636,26 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
     [catalogState],
   )
 
+  // Every catalog entry, in star order: the default shelf order AND the
+  // tie-break of both date orders (design 2026-10-12-shelf-orders §2), which
+  // is why it stays its own memo — switching to a date order must not re-run
+  // the star sort, which is the expensive one.
+  const starOrder = useMemo(
+    () => (catalogState.kind === 'ready' ? sortByStars(catalogState.result.plugins, stars) : []),
+    [catalogState, stars],
+  )
+
+  // The catalog's own build time, which bounds every date: an entry dated
+  // later than it counts as undated. Off `catalogState`, so a refresh moves it.
+  const builtAt = catalogState.kind === 'ready' ? catalogState.result.builtAt : ''
+
   // Every catalog entry, in shelf order. `browsable` FILTERS this instead of
   // sorting its own result: a filter preserves relative order and the sort is
   // stable, so one ordering is computed once and both lists carry it. The
   // Installed view reads this list directly — see `matched`.
   const sortedCatalog = useMemo(
-    () => (catalogState.kind === 'ready' ? sortByStars(catalogState.result.plugins, stars) : []),
-    [catalogState, stars],
+    () => orderShelf(starOrder, order, builtAt),
+    [starOrder, order, builtAt],
   )
 
   // Entries the shelf will ADVERTISE: what the catalog carries, less the
@@ -2181,6 +2198,29 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
           {reloading ? t('refreshing') : t('refresh')}
         </button>
         {reloadFailed && <span className={css.catalogRefreshFailed} data-shop-catalog-refresh-failed>{t('refreshFailed')}</span>}
+        <span className={css.sortGroup} role="group" aria-labelledby={sortLabelId} data-shop-sort>
+          {/* A visible label, not only an accessible name: three bare pills
+            * beside the category bar read as three more categories. The
+            * group is named by this text through `aria-labelledby` rather
+            * than an `aria-label`, so a screen reader does not hear it
+            * twice. */}
+          <span className={css.sortLabel} id={sortLabelId}>{t('sortLabel')}</span>
+          {SHELF_ORDERS.map(name => (
+            <button
+              key={name}
+              type="button"
+              // The category pills' own classes: a choice among a few, which
+              // is what this is — and the pressed rule they carry is already
+              // pinned to colour only, so the row cannot reflow on a click.
+              className={order === name ? `${css.categoryButton} ${css.categoryButtonOn}` : css.categoryButton}
+              aria-pressed={order === name}
+              data-shop-order={name}
+              onClick={() => { setOrder(name); setVisibleCount(SHOP_VISIBLE_BATCH) }}
+            >
+              {t(shelfOrderLocaleKey(name))}
+            </button>
+          ))}
+        </span>
       </div>
       {result.plugins.length === 0 ? (
         <p className={css.emptyLine}>{t('empty')}</p>

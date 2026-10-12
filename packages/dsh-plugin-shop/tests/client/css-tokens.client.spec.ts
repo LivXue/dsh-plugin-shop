@@ -92,6 +92,20 @@ describe('class references', () => {
     expect(rule).toMatch(/display:\s*(inline-)?flex/)
     expect(rule).toMatch(/gap:\s*\d+px/)
   })
+
+  it('lets the stats row wrap rather than overflow once the order control joins it', () => {
+    // jsdom applies no layout, so the declaration is the only place a test can
+    // see this: the row holds the catalog line, the refresh button and now
+    // three pills, and a non-wrapping flex row overflows a narrow window.
+    const row = rules.get('.catalogStatsRow') ?? ''
+    expect(row, 'no .catalogStatsRow rule').not.toBe('')
+    expect(row).toMatch(/display:\s*flex/)
+    expect(row).toMatch(/flex-wrap:\s*wrap/)
+
+    const group = rules.get('.sortGroup') ?? ''
+    expect(group, 'no .sortGroup rule').not.toBe('')
+    expect(group).toMatch(/margin-left:\s*auto/)
+  })
 })
 
 describe('summary clamp', () => {
