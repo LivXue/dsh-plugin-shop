@@ -75,6 +75,13 @@ the live catalog lists. The GitHub search REST endpoint does not carry
 designed. The read `parseRepoMeta` now performs is a no-op for every
 repository the harvest has ever seen.
 
+> **Addendum 2026-10-12.** The sentence "REST … does not carry `archived`"
+> was true for the 2026-10-08 probe as it was designed (the probe read the
+> wrong projection), but the GitHub REST search DOES carry both `archived`
+> and `fork` on its items — the field has always been there. See
+> `docs/design/2026-10-11-fork-flag.md` (the wrong comment this design
+> fixes). The statement above was not false when written; it is stale now.
+
 The surface PR therefore needs the value from a source that actually
 carries it. The design is GraphQL bulk, which `github-stars.ts` already
 uses for the daily star counts and whose cost fits the existing daily
