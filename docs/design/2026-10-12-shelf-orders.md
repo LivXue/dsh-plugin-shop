@@ -4,7 +4,7 @@ Status: **built on `feat/shelf-orders`** (2026-10-12), three commits: the pure
 core, the toggle, and the card's date label. Decided 2026-10-12 by LivXue, who
 chose both date orders, a date label on the card under either of them, and a
 three-way toggle at the right end of the catalog's stats row. This amends D1 of
-`../../superpowers/specs/2026-08-26-github-stars-design.md`, whose fixed sort
+`../superpowers/specs/2026-08-26-github-stars-design.md`, whose fixed sort
 becomes the default rather than the only order, and D1's non-goals line. It
 implements borrowing C1 of `2026-09-26-market-borrowings.md`. English only,
 per convention.
@@ -244,7 +244,7 @@ change.
 | Document | Change |
 |---|---|
 | This file | New. |
-| `superpowers/specs/2026-08-26-github-stars-design.md` | D1 amended: the star order stays the default and the tie-break; the two date orders join behind a toggle. The §9 non-goal "No sort toggle (D1)" is superseded. |
+| `docs/superpowers/specs/2026-08-26-github-stars-design.md` | D1 amended: the star order stays the default and the tie-break; the two date orders join behind a toggle. The §9 non-goal "No sort toggle (D1)" is superseded. |
 | `docs/design/2026-09-26-market-borrowings.md` | §6, the C1 row marked decided, pointing here. |
 | `packages/dsh-plugin-shop/src/host/catalog.ts` | A stale comment beside `added` says "the client never renders it". It renders it from this change on; the comment is corrected with the code, not here. |
 

@@ -1137,7 +1137,7 @@ Change the `Status:` line of `docs/design/2026-10-12-shelf-orders.md` from
 ```markdown
 Status: **built on `feat/shelf-orders`** (2026-10-12), three commits: the pure
 core, the toggle, and the card's date label. Decided 2026-10-12 by LivXue.
-This amends D1 of `../../superpowers/specs/2026-08-26-github-stars-design.md`…
+This amends D1 of `../superpowers/specs/2026-08-26-github-stars-design.md`…
 ```
 
 Then, in the same file's §5 code block, the `orderShelf` signature returns
