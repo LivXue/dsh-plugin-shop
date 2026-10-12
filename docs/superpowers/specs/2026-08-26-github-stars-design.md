@@ -14,7 +14,7 @@ so the plugin data file keeps its cache-stable hash.
 
 | # | Decision |
 |---|---|
-| D1 | Fixed sort: stars descending, un-starred entries last, ties by name (ascending, case-insensitive). No sort toggle. |
+| D1 | Fixed sort: stars descending, un-starred entries last, ties by name (ascending, case-insensitive). No sort toggle. **Amended 2026-10-12** (design `docs/design/2026-10-12-shelf-orders.md`): this remains the DEFAULT order and the tie-break of both date orders, which join it behind a three-way toggle — newest listed (`added`) and recently updated (`publishedAt`). |
 | D2 | Data source: the GitHub GraphQL API, batched 50 repositories per request via aliases, using the workflow's existing `GITHUB_TOKEN`. No new secret. |
 | D3 | Stars live in a sidecar file `stars.<sha256>.json`, referenced by an OPTIONAL `stars` pointer in `index.json`. `schemaVersion` stays 2: an optional additive key must not brick every installed shop with a loud version refusal. |
 | D4 | Star fetching follows the advisory-source philosophy: any failure (rate limit, down API, bad token) publishes the catalog without stars and retries on the next build. Stars never block a publish. |
@@ -158,7 +158,9 @@ formatStars(n: number): string
 
 ## 9. Non-goals
 
-- No sort toggle (D1).
+- No sort toggle (D1). **Superseded 2026-10-12** by the two date orders of
+  `docs/design/2026-10-12-shelf-orders.md`, behind the toggle that design
+  describes; the star order stays the default.
 - No stars for non-GitHub repositories; no alternative signals (downloads,
   ratings) in this change.
 - No per-entry stars inside `plugins.json`; no `manifest.lock` involvement.
