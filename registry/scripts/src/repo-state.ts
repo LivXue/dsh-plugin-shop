@@ -763,16 +763,7 @@ export function nextRepoState(
  * answer may differ from what was recorded (a repository CAN be unarchived).
  */
 export function applyArchivedFlags(state: RepoState, flags: Map<string, boolean>): RepoState {
-  const next: RepoState = {}
-  for (const [repo, entry] of Object.entries(state)) {
-    const flag = flags.get(repo.toLowerCase())
-    if (flag === undefined || flag === entry.archived) {
-      next[repo] = entry
-    } else {
-      next[repo] = { ...entry, archived: flag }
-    }
-  }
-  return next
+  return applyFlag(state, flags, 'archived')
 }
 
 /**
@@ -800,13 +791,31 @@ export function layerArchivedFlags(state: RepoState, candidates: RepoCandidate[]
  * was recorded (a repository CAN stop being a fork).
  */
 export function applyForkFlags(state: RepoState, flags: Map<string, boolean>): RepoState {
+  return applyFlag(state, flags, 'forked')
+}
+
+/**
+ * The shared body behind {@link applyArchivedFlags} and {@link applyForkFlags}.
+ * The two scalar facts stay separate on the state — the design's rule — but
+ * the merge discipline is one: a repo the Map omits supplied no fact and
+ * stands; a repo the Map carries supersedes; an answer equal to the record
+ * preserves the entry object verbatim so the serialized file does not churn.
+ * The flags Map keys are the LOWERCASED full_name; the state keys share
+ * GitHub's `full_name` case — the verbatim-case lookup is on the candidates
+ * side, not here.
+ */
+function applyFlag(
+  state: RepoState,
+  flags: Map<string, boolean>,
+  key: 'archived' | 'forked',
+): RepoState {
   const next: RepoState = {}
   for (const [repo, entry] of Object.entries(state)) {
     const flag = flags.get(repo.toLowerCase())
-    if (flag === undefined || flag === entry.forked) {
+    if (flag === undefined || flag === entry[key]) {
       next[repo] = entry
     } else {
-      next[repo] = { ...entry, forked: flag }
+      next[repo] = { ...entry, [key]: flag }
     }
   }
   return next
