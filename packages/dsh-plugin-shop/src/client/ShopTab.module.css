@@ -1000,8 +1000,14 @@
  * qualifies the entry rather than announcing it.
  *
  * `font-variant-numeric` is safe HERE and would not be on a pill: this element
- * has no state rules, so nothing it does can reflow a wrapping row. */
-.size {
+ * has no state rules, so nothing it does can reflow a wrapping row.
+ *
+ * `.shelfDate` shares this rule because it is the same kind of fact — a
+ * fixed-width figure a reader compares down the shelf (design
+ * 2026-10-12-shelf-orders §4) — and two copies of these declarations would
+ * drift. */
+.size,
+.shelfDate {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-variant-numeric: tabular-nums;
   font-size: 12px;
