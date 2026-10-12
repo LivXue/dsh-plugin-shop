@@ -337,7 +337,7 @@ competitors again. None of these is decided unless its row says so.
 | B2 | dsh 0.1.7 ships its own `pluginManager` service; hand installs to it where present | 0.1.7 readiness |
 | B3 | the Desktop app's `desktop` profile refuses the CLI the shop spawns | 0.1.7 readiness |
 | B4 | `dsh.bundle.patch` may be an array from 0.1.7 | 0.1.7 readiness |
-| C1 | a newest / recently-updated sort (`added`, `publishedAt` are in every entry and unread) | client |
+| C1 | a newest / recently-updated sort (`added`, `publishedAt` are in every entry and unread): **decided 2026-10-12, `2026-10-12-shelf-orders.md`** | client |
 | C2 | a Chinese-to-English query dictionary for search, matched on word boundaries | client |
 | C4 | `windowsHide`, `GIT_TERMINAL_PROMPT=0` and ssh `BatchMode` on spawned installs | host |
 | C5 | archived GitHub repositories | gate |
