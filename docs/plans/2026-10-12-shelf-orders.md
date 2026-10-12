@@ -1075,8 +1075,8 @@ pnpm -C packages/dsh-plugin-shop typecheck
 ### Task 4: Full verification and the design doc's status
 
 **Files:**
-- Modify: `docs/design/2026-10-12-shelf-orders.md` (the `Status:` line, and
-  §5's `orderShelf` signature — see Step 3)
+- Modify: `docs/design/2026-10-12-shelf-orders.md` (the `Status:` line,
+  §5's `orderShelf` signature, and §4's group-naming clause — see Step 3)
 
 Not in this task: looking at the result in a real dsh (both themes, two
 widths). That is the controller's, after the final whole-branch review.
@@ -1157,6 +1157,18 @@ and extend the `'stars'` bullet beneath the block so the reason is recorded:
 - **`'stars'` returns the input reference**, so the default path allocates
   nothing and does not invalidate the memos downstream of `sortedCatalog`.
   That is also why the result is `readonly`: on that path it IS the input.
+```
+
+Finally, §4's toggle bullet says the group "carries an `aria-label`", but the
+code (Task 2) names it through `aria-labelledby`, pointing at the visible
+「排序」 label. The code is right: a group with both a visible label and an
+`aria-label` is announced twice. Replace that clause:
+
+```markdown
+  The three labels come from the locale table; the group is named by its
+  visible 「排序」 label through `aria-labelledby` (an `aria-label` beside a
+  visible label would be announced twice), and each button carries
+  `aria-pressed`, as the category bar's buttons do.
 ```
 
 - [ ] **Step 4: Commit — do not push**
