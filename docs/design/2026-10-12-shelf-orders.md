@@ -1,8 +1,9 @@
 # Shelf orders: newest listed and recently updated — design
 
-Status: **decided 2026-10-12; implementation not started.** LivXue chose both
-date orders, a date label on the card under either of them, and a three-way
-toggle at the right end of the catalog's stats row. This amends D1 of
+Status: **built on `feat/shelf-orders`** (2026-10-12), three commits: the pure
+core, the toggle, and the card's date label. Decided 2026-10-12 by LivXue, who
+chose both date orders, a date label on the card under either of them, and a
+three-way toggle at the right end of the catalog's stats row. This amends D1 of
 `../../superpowers/specs/2026-08-26-github-stars-design.md`, whose fixed sort
 becomes the default rather than the only order, and D1's non-goals line. It
 implements borrowing C1 of `2026-09-26-market-borrowings.md`. English only,
@@ -102,9 +103,11 @@ agree, which is the property that matters here.
 
 - **The toggle** sits at the right end of the catalog's stats row, where the
   build date and the refresh button are: `排序 [星标] [最新上架] [最近更新]`.
-  The three labels come from the locale table; the group carries an
-  `aria-label` and each button `aria-pressed`, as the category bar's buttons
-  do. Keyboard reach is the browser's own tab order.
+  The three labels come from the locale table; the group is named by its
+  visible 「排序」 label through `aria-labelledby` (an `aria-label` beside a
+  visible label would be announced twice), and each button carries
+  `aria-pressed`, as the category bar's buttons do. Keyboard reach is the
+  browser's own tab order.
 - **Default `stars`, no persistence.** A reload, a remount (the tab's error
   boundary, a self-update's client swap) and a first paint all start at the
   star order. Category, query and the incompatible switch are equally
@@ -137,7 +140,7 @@ export function shelfTime(entry: CatalogEntry, order: ShelfOrder, builtAt: strin
 export function utcDay(ms: number): string
 
 /** The shelf in `order`. `'stars'` returns the input array itself. */
-export function orderShelf(starOrdered: readonly CatalogEntry[], order: ShelfOrder, builtAt: string): CatalogEntry[]
+export function orderShelf(starOrdered: readonly CatalogEntry[], order: ShelfOrder, builtAt: string): readonly CatalogEntry[]
 ```
 
 - **Stability** is the language's: `Array.prototype.sort` has been stable since
@@ -146,6 +149,7 @@ export function orderShelf(starOrdered: readonly CatalogEntry[], order: ShelfOrd
   `sortByStars`.
 - **`'stars'` returns the input reference**, so the default path allocates
   nothing and does not invalidate the memos downstream of `sortedCatalog`.
+  That is also why the result is `readonly`: on that path it IS the input.
 - **Each key is computed once per entry** before the sort, never inside the
   comparator: `2·n·log n` `Date.parse` calls became `n`, and the comparator
   stays numeric.
