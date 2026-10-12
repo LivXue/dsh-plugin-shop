@@ -7,7 +7,7 @@
 import { Component, memo, useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ErrorInfo, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CatalogEntry, HarnessVerdict, InstallArgs, RestartBlockedReason, ShopCatalogResult, ShopInstalledEntry, ShopInstallResult, ShopInstallStatusResult, ShopRestartResult, ShopSetEnabledResult, ShopUninstallResult, ShopUpdateResult, ShopVersionResult } from '../host/index.ts'
-import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, SHELF_ORDERS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, type ShelfOrder, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, orderShelf, readsIncompatible, refusedPeersText, refusesInstall, rejectionCodeKey, restartBlockedNoticeKey, reviewHashPin, settledByRestart, shelfOrderLocaleKey, sortByStars, starsOf, tierKey } from './present.ts'
+import { CATEGORY_ORDER, CHECK_UP_TO_DATE_MS, SHELF_ORDERS, SHOP_VISIBLE_BATCH, type Activation, type Blocker, type BlockerKind, type Category, type ShelfOrder, activationNoticeKey, uninstallActivationNoticeKey, authorOf, blockerBadgeKey, blockersOf, categoryKey, categoryLocaleKey, displayVersion, entryKey, formatSize, formatStars, harnessVerdictOf, hasGithubHome, heldBy, identityKey, installPhaseKey, isCustomLicense, isShopLike, missingPeersOf, nextVisibleCount, npmPageUrl, orderShelf, readsIncompatible, refusedPeersText, refusesInstall, rejectionCodeKey, restartBlockedNoticeKey, reviewHashPin, settledByRestart, shelfOrderLocaleKey, shelfTime, sortByStars, starsOf, tierKey, utcDay } from './present.ts'
 import { readRestartMonitor, requestRestart, subscribeRestartMonitor, type RestartMonitorState } from './restart-monitor.ts'
 import { useInstallFlows, type InstallFlow } from './useInstall.ts'
 import { useUninstallFlows, type UninstallFlow, type UseUninstallFlows } from './useUninstall.ts'
@@ -119,9 +119,15 @@ function ChevronIcon({ open }: { open: boolean }): ReactNode {
  * install controls. An installed plugin's card carries its installed row:
  * current → the non-interactive installed label, behind → the update button;
  * uninstalled → the install button. */
-const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, harness, nameTakenBy, t, flow, uninstallFlow, restart, restartBlocked, reload, setEnabled, inInstalledView, restarts }: {
+const EntryCard = memo(function EntryCard({ entry, stars, order, shelfDay, installed, missing, harness, nameTakenBy, t, flow, uninstallFlow, restart, restartBlocked, reload, setEnabled, inInstalledView, restarts }: {
   entry: CatalogEntry
   stars: number | undefined
+  /** The shelf's order, so the card can name the date it shows (design
+   * 2026-10-12-shelf-orders §4). */
+  order: ShelfOrder
+  /** The entry's date under that order as a UTC calendar day, or undefined
+   * when it has no usable date. A string, never an object: see above. */
+  shelfDay: string | undefined
   installed: ShopInstalledEntry | undefined
   missing: string[]
   /** What the author declared in `dsh.compatibility` that this installation
@@ -380,9 +386,21 @@ const EntryCard = memo(function EntryCard({ entry, stars, installed, missing, ha
          * the COMMON state while a github entry had no size; now every live
          * entry carries one, so it takes an unmeasurable size together with a
          * missing `publisher` — which the live catalog still omits for most
-         * entries until the daily build that first harvested them. */}
-        {(size !== undefined || author !== null) && (
+         * entries until the daily build that first harvested them.
+         *
+         * Under a date order the row opens with the shelf date, the date the
+         * shelf is ordered by (design 2026-10-12-shelf-orders §4). It sits
+         * first because, like the size, it is a fixed-width figure, and the
+         * author stays at the outer edge that absorbs variable width. */}
+        {(size !== undefined || author !== null || shelfDay !== undefined) && (
           <span className={css.cardMeta}>
+            {shelfDay !== undefined && (
+              // Which calendar this is: the catalog's (UTC), the same one the
+              // stats row's build date prints, never the reader's own zone.
+              <span className={css.shelfDate} data-shop-shelf-date>
+                {t(order === 'added' ? 'listedOn' : 'updatedOn', { date: shelfDay })}
+              </span>
+            )}
             {size !== undefined && (
               // role="img" + aria-label is this file's idiom for naming an
               // otherwise-generic element (see .starsBadge): the visible text
@@ -1853,6 +1871,15 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
 
   const visible = incremental ? filtered.slice(0, visibleCount) : filtered
 
+  /** The date a card shows under the current order, or undefined under the
+   * star order and for an entry with no usable date. Computed from the same
+   * `shelfTime` the order keyed on, so a label can never name a date the
+   * order ignored. */
+  const shelfDayOf = (entry: CatalogEntry): string | undefined => {
+    const ms = shelfTime(entry, order, builtAt)
+    return ms === undefined ? undefined : utcDay(ms)
+  }
+
   // One button per category plus All; each shows how many of the browsable
   // (shop-like-excluded) entries carry that category.
   const categoryCounts = useMemo(() => {
@@ -2249,7 +2276,7 @@ function ShopTabBody(props: ShopTabProps): ReactNode {
               const key = entryKey(entry)
               return (
                 <li key={key}>
-                  <EntryCard entry={entry} stars={starsOf(entry, stars)} installed={installedByKey.get(key)} missing={missingByKey.get(key) ?? []} harness={harnessVerdictOf(harnessVerdicts, key)} nameTakenBy={nameTakenByKey.get(key)} t={t} flow={flows.flowFor(key)} uninstallFlow={uninstallFlows.flowFor(key)} restart={restart} restartBlocked={restartBlocked} reload={reload} setEnabled={setEnabled} inInstalledView={category === 'installed'} restarts={restarts} />
+                  <EntryCard entry={entry} stars={starsOf(entry, stars)} order={order} shelfDay={shelfDayOf(entry)} installed={installedByKey.get(key)} missing={missingByKey.get(key) ?? []} harness={harnessVerdictOf(harnessVerdicts, key)} nameTakenBy={nameTakenByKey.get(key)} t={t} flow={flows.flowFor(key)} uninstallFlow={uninstallFlows.flowFor(key)} restart={restart} restartBlocked={restartBlocked} reload={reload} setEnabled={setEnabled} inInstalledView={category === 'installed'} restarts={restarts} />
                 </li>
               )
             })}

@@ -169,7 +169,8 @@ const entrySchema = z.object({
   // own repo. `added` is OPTIONAL on the consumer: the live v4 catalog (and
   // any cached pre-v5 data file) carries no such field, and requiring it
   // made 0.5.0 refuse the still-published v4 catalog outright. Our own
-  // builds always carry it (registry E9); the client never renders it.
+  // builds always carry it (registry E9); the client shows it on a card under
+  // the shelf's 「最新上架」 order (design 2026-10-12-shelf-orders §4).
   added: z.string().optional(),
   tarball: z.object({ url: z.string(), sha256: z.string().regex(/^[0-9a-f]{64}$/) }).optional(),
   // The npm publishing account, additive and optional — deliberately NOT a

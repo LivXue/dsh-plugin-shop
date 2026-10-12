@@ -2564,6 +2564,85 @@ describe('ShopTab shelf orders', () => {
     // listing order: new-b (10-12) before old (10-01)
     expect(cardNames()).toEqual(['dsh-new-b', 'dsh-old'])
   })
+
+  const dates = (): (string | null)[] =>
+    [...document.querySelectorAll('[data-shop-shelf-date]')].map(node => node.textContent)
+
+  const filled = (template: string, date: string): string => template.replace('{date}', date)
+
+  it('shows no date on any card under the star order', async () => {
+    const { injected } = bench(datedCatalog())
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-bare')).toBeTruthy())
+    expect(dates()).toEqual([])
+  })
+
+  it('labels each card with its listing day under Newest, and an undated card with none', async () => {
+    const { injected } = bench(datedCatalog())
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-old')).toBeTruthy())
+    fireEvent.click(orderButton(en.sortAdded))
+    // In card order: new-a, new-b, old, bare. `dsh-bare` has no `added`, so
+    // it is the one card with no label.
+    expect(dates()).toEqual([
+      filled(en.listedOn, '2026-10-12'),
+      filled(en.listedOn, '2026-10-12'),
+      filled(en.listedOn, '2026-10-01'),
+    ])
+    const bare = document.querySelector('[data-shop-entry="dsh-bare"]')
+    expect(bare?.querySelector('[data-shop-shelf-date]')).toBeNull()
+  })
+
+  it('labels each card with its publication day under Recently updated', async () => {
+    const { injected } = bench(datedCatalog())
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-old')).toBeTruthy())
+    fireEvent.click(orderButton(en.sortUpdated))
+    // In card order: old, new-b, bare, new-a — and `dsh-bare`, undated under
+    // the listing order, has a perfectly good publication date.
+    expect(dates()).toEqual([
+      filled(en.updatedOn, '2026-10-12'),
+      filled(en.updatedOn, '2026-10-12'),
+      filled(en.updatedOn, '2026-10-12'),
+      filled(en.updatedOn, '2026-10-06'),
+    ])
+  })
+
+  it('takes the labels away on the way back to the star order', async () => {
+    const { injected } = bench(datedCatalog())
+    renderTab(injected)
+    await waitFor(() => expect(screen.getByText('dsh-old')).toBeTruthy())
+    fireEvent.click(orderButton(en.sortUpdated))
+    expect(dates()).toHaveLength(4)
+    fireEvent.click(orderButton(en.sortStars))
+    expect(dates()).toEqual([])
+  })
+
+  it("labels a card with the catalog's UTC day, not the reader's", async () => {
+    // 20:00 UTC on 10-11 is already 10-12 in UTC+8. The label must still read
+    // 2026-10-11: the calendar the stats row's build date is printed in.
+    const original = process.env.TZ
+    try {
+      process.env.TZ = 'Asia/Shanghai'
+      // The precondition, asserted: without it this test would pass on any
+      // UTC runner even if the label were built from local getters. A
+      // runtime TZ switch was measured to take effect in this repo's vitest
+      // pool, under jsdom and node alike, on 2026-10-12.
+      expect(new Date(Date.parse('2026-10-11T20:00:00Z')).getDate(), 'the zone change took effect').toBe(12)
+      const catalog = datedCatalog()
+      catalog.plugins = catalog.plugins.map(item =>
+        item.name === 'dsh-old' ? { ...item, publishedAt: '2026-10-11T20:00:00Z' } : item)
+      const { injected } = bench(catalog)
+      renderTab(injected)
+      await waitFor(() => expect(screen.getByText('dsh-old')).toBeTruthy())
+      fireEvent.click(orderButton(en.sortUpdated))
+      const old = document.querySelector('[data-shop-entry="dsh-old"]')
+      expect(old?.querySelector('[data-shop-shelf-date]')?.textContent).toBe(filled(en.updatedOn, '2026-10-11'))
+    } finally {
+      if (original === undefined) delete process.env.TZ
+      else process.env.TZ = original
+    }
+  })
 })
 
 describe("ShopTab refusal by the running dsh's own peer check (0.1.7)", () => {
