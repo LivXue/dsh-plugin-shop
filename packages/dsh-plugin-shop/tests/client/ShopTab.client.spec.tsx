@@ -2494,12 +2494,33 @@ describe('ShopTab shelf orders', () => {
 
   it('opens in the star order, with the star order pressed', async () => {
     const { injected } = bench(datedCatalog())
-    renderTab(injected)
+    const { container } = renderTab(injected)
     await waitFor(() => expect(screen.getByText('dsh-bare')).toBeTruthy())
     expect(cardNames()).toEqual(['dsh-bare', 'dsh-old', 'dsh-new-a', 'dsh-new-b'])
     expect(orderButton(en.sortStars).getAttribute('aria-pressed')).toBe('true')
     expect(orderButton(en.sortAdded).getAttribute('aria-pressed')).toBe('false')
     expect(orderButton(en.sortUpdated).getAttribute('aria-pressed')).toBe('false')
+    // The sort group is reached through the hook the component publishes for
+    // it — `data-shop-sort` in the DOM, not a CSS class name, which a
+    // stylesheet edit could rename out from under this test.
+    const group = container.querySelector('[data-shop-sort]')
+    expect(group?.getAttribute('role')).toBe('group')
+    // Its accessible name is the VISIBLE 「排序」/「Sort」 label, attached by
+    // `aria-labelledby`, so a reader who sees the row and one who only hears
+    // it get the same word. Followed through the id relationship by hand
+    // because the id is React's `useId` value and `querySelector('#:r0:')` is
+    // not a valid selector — the lookup must go through `getElementById`.
+    // Asserted here rather than by `getByRole` so the hook above is what the
+    // group is FOUND by; `getByRole('group', { name: en.sortLabel })` does
+    // also resolve this group, and the category bar is `role="group"` too, so
+    // the name is the only thing that tells them apart.
+    const labelId = group?.getAttribute('aria-labelledby') ?? ''
+    expect(labelId).not.toBe('')
+    expect(container.ownerDocument.getElementById(labelId)?.textContent).toBe(en.sortLabel)
+    // The group holds exactly the three orders, and nothing else — the
+    // category bar's buttons sit outside it.
+    expect([...(group?.querySelectorAll('button') ?? [])].map(button => button.getAttribute('data-shop-order')))
+      .toEqual(['stars', 'added', 'updated'])
   })
 
   it('orders by listing date, keeping the star order inside one day, and moves the pressed state', async () => {
@@ -3351,6 +3372,12 @@ describe('ShopTab duplicate catalog names', () => {
   const cardNames = (container: HTMLElement): (string | null)[] =>
     [...container.querySelectorAll('[data-shop-entry]')].map(card => card.getAttribute('data-shop-entry'))
 
+  // Matches BOTH `role="group"` containers in the tab: the category bar
+  // (`aria-label={t('catalog')}`) and the shelf-order group beside the stats
+  // row. They are told apart by their buttons' labels alone, so a future
+  // label starting with 'Stars' / 'Newest' / 'Recently updated' would be
+  // found by whichever of these looks for it first — scope this to the
+  // category bar at that point rather than adding a second label.
   const categoryButton = (container: HTMLElement, label: string): HTMLButtonElement => {
     const button = [...container.querySelectorAll('[role="group"] button')]
       .find(candidate => candidate.textContent?.startsWith(label))

@@ -670,13 +670,33 @@ describe('orderShelf', () => {
 
   it('holds its three promises over a generated catalog', () => {
     // Deterministic by construction: no `Math.random` anywhere in this repo's
-    // tests. The generator mixes dated, undated, future-dated and tied
-    // entries so the properties are exercised on all four classes.
+    // tests, and no clock either — the future-dated class is past `BUILT_AT`
+    // by its own literals (10:00-19:00 on `BUILT_AT`'s own day against its
+    // 09:33:35.944Z), never by comparing to `Date.now()`, so this generator
+    // reads the same on any machine on any day.
+    //
+    // `publishedAt` puts the 400 indices in three classes, in this order: the
+    // 31 where `i % 13 === 0` are dated past `BUILT_AT`; the 34 where
+    // `i % 11 === 0` are `null` — three fewer than a naive count, because
+    // indices 0, 143 and 286 divide by both and the first branch wins them;
+    // the other 335 land on one of twelve days and one of ten hours, which is
+    // 120 keys for 335 entries, so the tied class is guaranteed rather than
+    // hoped for. Under `'added'` the generator is coarser: 58 indices carry no
+    // `added` date at all (`i % 7 === 0`), 48 of which still have a usable
+    // `publishedAt` — the entries that make the two date orders disagree.
+    //
+    // The future class is the one worth reading twice: under `'updated'` it
+    // fails `ms > built` inside `shelfTime` and is therefore UNKNOWN, so
+    // promise 1 (the undated tail) is what governs where it lands. The mix
+    // this replaced had 37 undated entries and no future-dated one at all, so
+    // that promise was never exercised against a future date.
     const made: CatalogEntry[] = Array.from({ length: 400 }, (_, i) => ({
       ...entry,
       name: `dsh-gen-${String(i).padStart(3, '0')}`,
       added: i % 7 === 0 ? undefined : `2026-10-${String((i * 13) % 29 + 1).padStart(2, '0')}`,
-      publishedAt: i % 11 === 0 ? null : `2026-10-${String((i * 7) % 12 + 1).padStart(2, '0')}T0${i % 10}:00:00Z`,
+      publishedAt: i % 13 === 0
+        ? `2026-10-12T1${i % 10}:00:00Z`
+        : i % 11 === 0 ? null : `2026-10-${String((i * 7) % 12 + 1).padStart(2, '0')}T0${i % 10}:00:00Z`,
     }))
     const inputIndex = new Map(made.map((item, i) => [item, i]))
     // `noUncheckedIndexedAccess`: a guarded read, never an assertion.
