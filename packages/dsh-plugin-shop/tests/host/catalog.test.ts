@@ -887,9 +887,16 @@ describe('forked', () => {
       ...baseEntry, version: 'a'.repeat(40), source: 'github', repo: 'someone/thing',
     }], 5)
     expect(result.snapshot.entries[0]?.forked).toBeUndefined()
-    // toBeUndefined returns undefined both when the key is absent and when
-    // the schema strips an undeclared key, so assert absence directly: this
-    // fails if the schema is SHAPED to strip `forked`, not if it is deleted.
+    // Promise stated accurately: this guards the NORMALIZED absence only —
+    // an entry whose wire form carries no `forked` must round-trip through
+    // the parse with the key still absent (no default false invented, no
+    // `undefined` written back). It is NOT a guard against zod stripping
+    // the key had the fixture supplied it: zod omits an undeclared optional,
+    // so stripping and absence are indistinguishable here. The schema-exposure
+    // work for `forked` is pinned by the POSITIVE case above — that one fails
+    // if `forked` is ever deleted from `entrySchema`, because the entry it
+    // loads carries `forked: true` on the wire and the expectation is that
+    // the parse surfaces it.
     expect(result.snapshot.entries[0] !== undefined && 'forked' in result.snapshot.entries[0]).toBe(false)
   })
 })
