@@ -269,6 +269,10 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   // Hoisted from the harvest branch so the archived-flags merge can write
   // repo-state.json with the freshest flags after selectEntries (§1.3).
   let repoNextState: import('./repo-state.ts').RepoState | null = null
+  // The GraphQL fork-flag half's one report line, hoisted so the report
+  // composition below can quote the counters the flag pass measured — the
+  // line lives on report.md, not on stderr (design 2026-10-11-fork-flag §1.1).
+  let forkedNote = ''
   // Star counts the search itself carried, keyed by repo full name. Empty
   // when the github harvest skipped — every repo then goes through GraphQL.
   let repoSearchStars = new Map<string, number>()
@@ -430,15 +434,14 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
         // Fork flags (design 2026-10-11-fork-flag §1.1): the same pass answers
         // `isFork` on the same aliases, but each scalar's skip list is its
         // own — a fork-only failure (or an archived-only drift) lands on the
-        // line for the scalar that failed, not on the other's. The fork half
-        // is reported here alone — the design mandates no report-file line
-        // for it, unlike the archived one (§1.3).
+        // line for the scalar that failed, not on the other's. The report
+        // line is composed below beside `archivedLine`, in the report file the
+        // design quotes it on (§1.1, §1.3) — not here on stderr.
         if (archivedResult.forked.size > 0) {
           repoNextState = applyForkFlags(repoNextState, archivedResult.forked)
         }
         const forkedCount = [...archivedResult.forked.values()].filter(Boolean).length
-        const forkedNote = `github fork flags: ${archivedResult.forked.size} answered (${forkedCount} forked)${archivedResult.forkSkipped.length > 0 ? `, ${archivedResult.forkSkipped.length} skipped` : ''}`
-        process.stderr.write(`${forkedNote}\n`)
+        forkedNote = `github fork flags: ${archivedResult.forked.size} answered (${forkedCount} forked)${archivedResult.forkSkipped.length > 0 ? `, ${archivedResult.forkSkipped.length} skipped` : ''}`
       }
     }
     // The deferred write from the harvest branch: now carries the freshest
@@ -599,12 +602,17 @@ if (basename(process.argv[1] ?? '') === 'build.ts') {
   const archivedEntryCount = (JSON.parse(artifacts.pluginsJson) as { plugins: { source?: string; archived?: true }[] })
     .plugins.filter(p => p.source === 'github' && p.archived === true).length
   const archivedLine = `\ngithub entries from archived repositories: ${archivedEntryCount}\n`
+  // The fork flag's one report line (design 2026-10-11-fork-flag §1.1 — "The
+  // build report gains one line"). The line names the fact and its magnitude;
+  // same conditional-count shape as `archivedLine`: empty when no flag pass
+  // ran, the GraphQL counters when one did.
+  const forkedLine = forkedNote === '' ? '' : `\n${forkedNote}\n`
   const feedLine = feedParts.length === 0 ? '' : `\nchange feed (npm, by publication time):\n${feedParts.map(part => `- ${part}\n`).join('')}`
   const departureParts = departureSummary === undefined ? [] : describeDepartures(departureSummary)
   for (const part of departureParts) process.stderr.write(`npm: ${part}\n`)
   const [departureHead, ...departureRest] = departureParts
   const departureLine = departureHead === undefined ? '' : `\n${departureHead}\n${departureRest.map(part => `- ${part}\n`).join('')}`
-  writeFileSync(join(OUT_DIR, 'report.md'), `${artifacts.report}\nStars: ${starsNote}\n${npmLine}${departureLine}${axisLine}${feedLine}${repoLine}${archivedLine}`)
+  writeFileSync(join(OUT_DIR, 'report.md'), `${artifacts.report}\nStars: ${starsNote}\n${npmLine}${departureLine}${axisLine}${feedLine}${repoLine}${archivedLine}${forkedLine}`)
 
   // Pages gets a directory staged from scratch, holding exactly the artifacts
   // the spec lists. `dist/v1` is NOT cleaned and is not what deploys: the
